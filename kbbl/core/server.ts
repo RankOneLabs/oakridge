@@ -73,6 +73,7 @@ const runtime = await createClaudeCodeRuntime({
 const manager = new SessionManager({
   sessionsDir,
   buildSpawnCmd: runtime.buildSpawnCmd,
+  classifyEvent: runtime.classifyEvent,
 });
 
 // === Hono app ===

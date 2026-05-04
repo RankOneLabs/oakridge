@@ -42,6 +42,13 @@ export interface SessionOpts {
   parentCcSid?: string;
   parentOakridgeSid?: string;
   callbacks?: SessionCallbacks;
+  /**
+   * Optional runtime-adapter classifier called for each parsed stdout event
+   * after core has emitted it. The adapter inspects events and may update
+   * Session metadata (observeRuntimeSessionId, setLastResultUsage) or emit
+   * follow-on events. Errors are caught + logged; the pump survives.
+   */
+  classifyEvent?: (rawEvent: unknown, session: Session) => Promise<void>;
 }
 
 export type SessionStatus = "starting" | "live" | "ended";
@@ -101,6 +108,10 @@ export class Session {
   readonly createdAt: string;
 
   private readonly callbacks: SessionCallbacks;
+  private readonly classifyEvent?: (
+    rawEvent: unknown,
+    session: Session,
+  ) => Promise<void>;
   private readonly jsonlWriter: import("bun").FileSink;
   private nextId = 0;
   private subscribers = new Set<Subscriber>();
@@ -140,6 +151,7 @@ export class Session {
     this.createdAt = new Date().toISOString();
     this.lastActivityTs = this.createdAt;
     this.callbacks = opts.callbacks ?? {};
+    this.classifyEvent = opts.classifyEvent;
     this.jsonlWriter = Bun.file(this.jsonlPath).writer();
   }
 
@@ -149,6 +161,41 @@ export class Session {
 
   get currentCcSid(): string | null {
     return this.ccSid;
+  }
+
+  /**
+   * Runtime-adapter injection point: called by the classifier when it
+   * observes the underlying runtime's internal session id (e.g., CC's
+   * system/init event carries its session_id). First-write-wins; later
+   * calls are ignored. Emits cc_session_id_observed into JSONL so resume
+   * survives a server restart, and notifies the manager via
+   * onCcSidObserved so adapter HTTP routes (CC's gate) can map runtime
+   * session ids back to this oakridge session.
+   */
+  async observeRuntimeSessionId(id: string): Promise<void> {
+    if (this.ccSid !== null) return;
+    this.ccSid = id;
+    await this.emit("cc_session_id_observed", { cc_session_id: id });
+    try {
+      this.callbacks.onCcSidObserved?.(this, id);
+    } catch (e) {
+      console.error(
+        `cc-deck: onCcSidObserved callback failed: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
+
+  /**
+   * Runtime-adapter injection point: called by the classifier when it
+   * observes a token-usage block (e.g., CC's `result` event). Replaces any
+   * prior usage; the snapshot's `lastResultUsage` always reflects the most
+   * recent runtime-reported usage so the PWA's Resume cost preview is
+   * accurate.
+   */
+  setLastResultUsage(usage: ResultUsage): void {
+    this.lastResultUsage = usage;
   }
 
   get endedSignal(): AbortSignal {
@@ -217,14 +264,6 @@ export class Session {
           e instanceof Error ? e.message : String(e)
         }`,
       );
-    }
-    // Capture the usage block off CC's result events so the PWA can
-    // surface a rough parent-context size on the Resume button. Each new
-    // result overwrites the prior one — the most recent usage is what
-    // matters for "how much will a resume cost."
-    if (type === "result") {
-      const usage = extractResultUsage(payload);
-      if (usage) this.lastResultUsage = usage;
     }
     const task = async () => {
       this.jsonlWriter.write(JSON.stringify(evt) + "\n");
@@ -315,29 +354,16 @@ export class Session {
           const raw = JSON.parse(line);
           const type = typeof raw?.type === "string" ? raw.type : "unknown";
           await this.emit(type, raw);
-          // Capture CC's session id from its init event. Recorded into this
-          // session's own JSONL as cc_session_id_observed so resume survives
-          // a server restart, and also reported to the manager so
-          // /hook/approval can route CC's hooks (which carry CC's session_id)
-          // back to this oakridge session.
-          if (
-            type === "system" &&
-            raw &&
-            typeof raw === "object" &&
-            raw.subtype === "init" &&
-            typeof raw.session_id === "string" &&
-            this.ccSid === null
-          ) {
-            this.ccSid = raw.session_id;
-            const capturedCcSid = raw.session_id;
-            await this.emit("cc_session_id_observed", {
-              cc_session_id: capturedCcSid,
-            });
+          // Runtime-adapter classifier: inspects the raw event for any
+          // adapter-specific metadata (e.g., CC's system/init carries its
+          // session_id; CC's result carries usage tokens). Errors here are
+          // logged but never kill the pump.
+          if (this.classifyEvent) {
             try {
-              this.callbacks.onCcSidObserved?.(this, capturedCcSid);
+              await this.classifyEvent(raw, this);
             } catch (e) {
               console.error(
-                `cc-deck: onCcSidObserved callback failed: ${
+                `cc-deck: runtime classifier failed: ${
                   e instanceof Error ? e.message : String(e)
                 }`,
               );

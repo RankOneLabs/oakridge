@@ -4,6 +4,7 @@ import type { Session, SpawnCmd } from "../../core/session/session";
 import type { SessionManager } from "../../core/session/session-manager";
 import type { AppRuntime } from "../../core/runtime";
 
+import { classifyCcEvent } from "./event-classifier";
 import { hookApprovalHandler } from "./hook-route";
 import { makeBuildSpawnCmd, writeCcSettings } from "./spawn";
 
@@ -57,5 +58,6 @@ export async function createClaudeCodeRuntime(
         }),
       );
     },
+    classifyEvent: classifyCcEvent,
   };
 }

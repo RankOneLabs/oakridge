@@ -48,4 +48,21 @@ export interface AppRuntime {
       getBunServer: () => import("bun").Server<unknown> | null;
     },
   ): void;
+
+  /**
+   * Optional: inspect each parsed runtime stdout event after core has
+   * already emitted it to JSONL/subscribers. Called by the Session stdout
+   * pump. The adapter may:
+   *   - Update Session metadata via `session.observeRuntimeSessionId()` /
+   *     `session.setLastResultUsage()` (e.g., capture CC's session_id from
+   *     the system/init event for hook routing).
+   *   - Emit additional events via `session.emit()`.
+   *
+   * Errors from the classifier are caught and logged; classifier failure
+   * never kills the pump or affects the original event delivery.
+   *
+   * Adapters with no per-event work (or that classify exclusively via the
+   * raw events the PWA already receives) can omit this method.
+   */
+  classifyEvent?(rawEvent: unknown, session: Session): Promise<void>;
 }
