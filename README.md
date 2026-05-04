@@ -1,8 +1,8 @@
 # oakridge
 
-Multi-agent workspace built on jig (separate repo, agent kit) and kbbl (operator surface for CLI coding agents). The trajectory is described in `comms/multi-agent-collab-design.md`.
+Multi-agent workspace built on jig (separate repo, agent kit) and kbbl (operator surface for CLI coding agents).
 
-This repo is **mid-restructure**. Until the workspace layer ships, oakridge is a top-level monorepo containing kbbl as its operational sub-package. See `comms/oakridge-restructure-spec.md` for the restructure plan.
+This repo is **mid-restructure**. Until the workspace layer ships, oakridge is a top-level monorepo containing kbbl as its operational sub-package.
 
 ## Layout
 
@@ -39,9 +39,4 @@ bun run typecheck          # typecheck across the repo
 
 ## Trajectory
 
-The architectural direction is laid out in:
-
-- `comms/multi-agent-collab-design.md` — the workspace design memo
-- `comms/oakridge-restructure-spec.md` — the restructure spec being executed
-
-Both are internal-comms-grade documents (gitignored from the repo for now); when the design stabilizes for public consumption, durable docs land under `docs/`.
+The architectural direction (multi-agent collaboration over a shared artifact, runtime-agnostic operator surface, jig as the agent substrate) is captured in internal architecture memos that are not currently checked in. When the design stabilizes for public consumption, durable docs will land under `docs/`. Until then, `docs/` is a placeholder.

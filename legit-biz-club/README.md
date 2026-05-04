@@ -2,7 +2,7 @@
 
 The workspace layer of oakridge: multi-agent collaboration over a shared artifact, built on jig (agent kit) and consumed via kbbl (operator surface).
 
-**Status:** placeholder. No code yet. The design is in `comms/multi-agent-collab-design.md`; the v1 implementation lands in subsequent work.
+**Status:** placeholder. No code yet. The v1 implementation follows an internal multi-agent-collaboration design memo (not currently checked in); a public-facing version lands under `docs/` when the design stabilizes.
 
 When v1 ships, this directory will host:
 

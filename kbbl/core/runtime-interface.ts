@@ -7,7 +7,7 @@
  * the core/adapter split (PR 2 + PR 3 of the restructure) lands and again
  * when the codex adapter exposes assumptions baked into the CC adapter.
  *
- * See comms/oakridge-restructure-spec.md for the design rationale.
+ * Design rationale lives in internal architecture memos (not checked in).
  */
 
 import type { Hono } from "hono";

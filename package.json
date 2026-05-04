@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Multi-agent workspace built on jig and kbbl. See comms/multi-agent-collab-design.md.",
+  "description": "Multi-agent workspace built on jig and kbbl.",
   "workspaces": ["kbbl", "legit-biz-club"],
   "scripts": {
     "typecheck": "bunx tsc --noEmit"
