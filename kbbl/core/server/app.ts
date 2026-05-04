@@ -3,7 +3,7 @@ import { serveStatic } from "hono/bun";
 
 import type { SessionManager } from "../session/session-manager";
 import { inboxHandler } from "../stream/inbox";
-import { hookApprovalHandler } from "./handlers/hook";
+import { hookApprovalHandler } from "../../adapters/claude-code/hook-route";
 import { mountPerSidRoutes } from "./handlers/per-sid";
 import { mountSessionsRoutes } from "./handlers/sessions";
 

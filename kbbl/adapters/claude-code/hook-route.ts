@@ -1,8 +1,8 @@
 import type { Context } from "hono";
 import { randomUUID } from "node:crypto";
 
-import type { Decision, Session } from "../../session/session";
-import type { SessionManager } from "../../session/session-manager";
+import type { Decision, Session } from "../../core/session/session";
+import type { SessionManager } from "../../core/session/session-manager";
 
 /**
  * CC PreToolUse hook payload.
