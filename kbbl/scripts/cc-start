@@ -23,4 +23,4 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # anything useful, so eat the cost unconditionally.
 (cd "$REPO_ROOT" && bun run build:pwa)
 
-exec bun run "$REPO_ROOT/server.ts" --workdir="$WORKDIR_ABS" "$@"
+exec bun run "$REPO_ROOT/core/server.ts" --workdir="$WORKDIR_ABS" "$@"

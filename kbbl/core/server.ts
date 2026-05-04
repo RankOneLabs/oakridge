@@ -60,14 +60,15 @@ const host = values.host ?? "127.0.0.1";
 const claudeBin = values.claudeBin ?? "claude";
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
-const dataDir = values.dataDir ?? join(moduleDir, "data");
+// server.ts lives at kbbl/core/server.ts; data/ is a sibling of core/, the CC adapter is two dirs up.
+const dataDir = values.dataDir ?? join(moduleDir, "..", "data");
 const pwaDistDir = join(moduleDir, "pwa", "dist");
 const sessionsDir = join(dataDir, "sessions");
 await mkdir(sessionsDir, { recursive: true });
 
 // === settings.json for spawned CC (shared across all sessions) ===
 
-const gatePath = resolve(moduleDir, "scripts", "gate.sh");
+const gatePath = resolve(moduleDir, "..", "adapters", "claude-code", "scripts", "gate.sh");
 const settingsPath = join(dataDir, "settings.json");
 await writeFile(
   settingsPath,

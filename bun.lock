@@ -4,6 +4,10 @@
   "workspaces": {
     "": {
       "name": "cc-deck",
+    },
+    "kbbl": {
+      "name": "kbbl",
+      "version": "0.0.0",
       "dependencies": {
         "hono": "^4.6.14",
         "react": "^19.0.0",
@@ -19,6 +23,10 @@
         "typescript": "^5.7.2",
         "vite": "^6.0.0",
       },
+    },
+    "legit-biz-club": {
+      "name": "legit-biz-club",
+      "version": "0.0.0",
     },
   },
   "packages": {
@@ -285,6 +293,10 @@
     "jsesc": ["jsesc@3.1.0", "", { "bin": { "jsesc": "bin/jsesc" } }, "sha512-/sM3dO2FOzXjKQhJuo0Q173wf2KOo8t4I8vHy6lF9poUp7bKT0/NHE8fPX23PwfhnykfqnC2xRxOnVw5XuGIaA=="],
 
     "json5": ["json5@2.2.3", "", { "bin": { "json5": "lib/cli.js" } }, "sha512-XmOWe7eyHYH14cLdVPoyg+GOH3rYX++KpzrylJwSW98t3Nk+U8XOl8FWKOgwtzdb8lXGf6zYwDUzeHMWfxasyg=="],
+
+    "kbbl": ["kbbl@workspace:kbbl"],
+
+    "legit-biz-club": ["legit-biz-club@workspace:legit-biz-club"],
 
     "longest-streak": ["longest-streak@3.1.0", "", {}, "sha512-9Ri+o0JYgehTaVBBDoMqIl8GXtbWg711O3srftcHhZ0dqnETqLaoIK0x17fUw9rFSlK/0NlsKe0Ahhyl5pXE2g=="],
 
