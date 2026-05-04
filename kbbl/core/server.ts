@@ -1,4 +1,4 @@
-import { Hono, type Context } from "hono";
+import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import { parseArgs } from "node:util";
 import { mkdir, stat } from "node:fs/promises";
@@ -12,18 +12,13 @@ import {
 } from "./session/session-manager";
 import {
   Session,
-  SessionNotReadyError,
   readJsonlOrEmpty,
   type EnvelopeEvent,
 } from "./session/session";
-import {
-  eventsForSession,
-  parseEventsSince,
-  streamForSession,
-} from "./stream/sse";
 import { inboxHandler } from "./stream/inbox";
 import { makeBuildSpawnCmd, writeCcSettings } from "./server/spawn-cmd";
 import { hookApprovalHandler } from "./server/handlers/hook";
+import { isValidSid, mountPerSidRoutes } from "./server/handlers/per-sid";
 
 // === args ===
 
@@ -85,132 +80,6 @@ const manager = new SessionManager({ sessionsDir, buildSpawnCmd });
 
 // === HTTP handlers ===
 
-// SSE plumbing (streamForSession, eventsForSession, parseEventsSince) lives
-// in ./stream/sse.ts. Per-sid route handlers below call into it.
-
-// UUID v4 specifically — sids come from crypto.randomUUID(), which always
-// produces v4. Accepting other versions would be dead space that never
-// matches any real sid the server wrote.
-const SID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-function isValidSid(sid: string): boolean {
-  return SID_PATTERN.test(sid);
-}
-
-async function inputForSession(session: Session, c: Context) {
-  let body: { text?: unknown };
-  try {
-    body = (await c.req.json()) as { text?: unknown };
-  } catch {
-    return c.json({ error: "invalid json" }, 400);
-  }
-  if (typeof body.text !== "string") {
-    return c.json({ error: "text must be a string" }, 400);
-  }
-  const text = body.text.trim();
-  if (text.length === 0) {
-    return c.json({ error: "text must be non-empty" }, 400);
-  }
-  try {
-    await session.writeInput(text);
-  } catch (err) {
-    if (err instanceof SessionNotReadyError) {
-      return c.json({ error: "subprocess not ready" }, 503);
-    }
-    const msg = err instanceof Error ? err.message : String(err);
-    return c.json({ error: `subprocess write failed: ${msg}` }, 503);
-  }
-  return c.json({ ok: true });
-}
-
-async function yoloForSession(session: Session, c: Context) {
-  if (session.status !== "live") {
-    return c.json({ error: "session not live" }, 409);
-  }
-  let body: { enabled?: unknown };
-  try {
-    body = (await c.req.json()) as { enabled?: unknown };
-  } catch {
-    return c.json({ error: "invalid json" }, 400);
-  }
-  if (typeof body.enabled !== "boolean") {
-    return c.json({ error: "enabled must be a boolean" }, 400);
-  }
-  const enabled = await session.setYolo(body.enabled);
-  return c.json({ ok: true, enabled });
-}
-
-interface ApprovalBody {
-  request_id: string;
-  decision: "approve" | "deny";
-  scope: "once" | "always";
-}
-
-function parseApprovalBody(raw: unknown): ApprovalBody | string {
-  if (typeof raw !== "object" || raw === null) return "invalid json";
-  const body = raw as {
-    request_id?: unknown;
-    decision?: unknown;
-    scope?: unknown;
-  };
-  if (typeof body.request_id !== "string") return "request_id must be a string";
-  if (body.decision !== "approve" && body.decision !== "deny") {
-    return "decision must be 'approve' or 'deny'";
-  }
-  if (
-    body.scope !== undefined &&
-    body.scope !== "once" &&
-    body.scope !== "always"
-  ) {
-    return "scope must be 'once' or 'always'";
-  }
-  return {
-    request_id: body.request_id,
-    decision: body.decision,
-    scope: (body.scope ?? "once") as "once" | "always",
-  };
-}
-
-async function applyApproval(
-  session: Session,
-  body: ApprovalBody,
-  c: Context,
-) {
-  if (session.status !== "live") {
-    return c.json({ error: "session not live" }, 409);
-  }
-  const pending = session.deleteApproval(body.request_id);
-  if (!pending) {
-    return c.json({ error: "unknown or already-resolved request_id" }, 404);
-  }
-  pending.resolve(body.decision === "approve" ? "allow" : "deny");
-  if (body.scope === "always" && body.decision === "approve") {
-    try {
-      await session.allowlistTool(pending.toolName);
-    } catch (err) {
-      console.error(
-        `cc-deck: allowlist side-effect for ${pending.toolName} failed: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-    }
-  }
-  return c.json({ ok: true });
-}
-
-async function approvalForSession(session: Session, c: Context) {
-  let raw: unknown;
-  try {
-    raw = await c.req.json();
-  } catch {
-    return c.json({ error: "invalid json" }, 400);
-  }
-  const parsed = parseApprovalBody(raw);
-  if (typeof parsed === "string") return c.json({ error: parsed }, 400);
-  return applyApproval(session, parsed, c);
-}
-
 // === Hono app ===
 
 const app = new Hono();
@@ -228,59 +97,9 @@ app.post(
 );
 
 // ---- per-sid routes ----
-
-app.get("/:sid/stream", (c) => {
-  const session = manager.get(c.req.param("sid"));
-  if (!session) return c.json({ error: "unknown session" }, 404);
-  return streamForSession(session, c);
-});
-
-app.get("/:sid/events", async (c) => {
-  const sid = c.req.param("sid");
-  // Validate sid before falling through to the filesystem — the archived
-  // path joins sid into sessionsDir, and a URL-encoded traversal like
-  // `..%2F..%2Fetc%2Fpasswd` would otherwise let a tailnet peer read
-  // arbitrary *.jsonl files the server has access to. sids are generated
-  // by randomUUID() so a strict UUID-v4 regex is tight enough without
-  // needing a path-prefix check.
-  if (!isValidSid(sid)) return c.json({ error: "invalid sid" }, 400);
-  const session = manager.get(sid);
-  if (session) return eventsForSession(session, c);
-  // Fall through to on-disk JSONL for sessions that aren't loaded in
-  // memory (e.g. after a server restart). Matches the snapshot view an
-  // archived session gets from /sessions?include=archived: fully-formed
-  // transcript, no live updates.
-  const sinceRaw = c.req.query("since");
-  const since = sinceRaw !== undefined ? Number(sinceRaw) : -1;
-  if (!Number.isFinite(since)) {
-    return c.json({ error: "invalid since" }, 400);
-  }
-  const jsonlPath = join(sessionsDir, `${sid}.jsonl`);
-  const contents = await readJsonlOrEmpty(jsonlPath);
-  if (!contents) return c.json({ error: "unknown session" }, 404);
-  return c.json({
-    session_id: sid,
-    events: parseEventsSince(contents, since),
-  });
-});
-
-app.post("/:sid/input", async (c) => {
-  const session = manager.get(c.req.param("sid"));
-  if (!session) return c.json({ error: "unknown session" }, 404);
-  return inputForSession(session, c);
-});
-
-app.post("/:sid/yolo", async (c) => {
-  const session = manager.get(c.req.param("sid"));
-  if (!session) return c.json({ error: "unknown session" }, 404);
-  return yoloForSession(session, c);
-});
-
-app.post("/:sid/approval", async (c) => {
-  const session = manager.get(c.req.param("sid"));
-  if (!session) return c.json({ error: "unknown session" }, 404);
-  return approvalForSession(session, c);
-});
+// All five (/stream, /events, /input, /yolo, /approval) live in
+// ./server/handlers/per-sid.ts.
+mountPerSidRoutes(app, { manager, sessionsDir });
 
 // ---- server config ----
 //
