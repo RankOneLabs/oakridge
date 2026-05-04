@@ -12,9 +12,17 @@
     "resolveJsonModule": true,
     "allowJs": false,
     "jsx": "react-jsx",
-    "types": ["bun-types"],
+    "types": ["bun"],
+    "typeRoots": ["./kbbl/node_modules/@types", "./node_modules/@types"],
     "lib": ["ESNext", "DOM"]
   },
-  "include": ["server.ts", "pwa/**/*.ts", "pwa/**/*.tsx"],
-  "exclude": ["node_modules", "pwa/dist", "data"]
+  "include": [
+    "kbbl/core/**/*.ts",
+    "kbbl/core/**/*.tsx"
+  ],
+  "exclude": [
+    "node_modules",
+    "kbbl/core/pwa/dist",
+    "kbbl/data"
+  ]
 }

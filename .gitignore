@@ -1,6 +1,7 @@
 node_modules/
-data/
-pwa/dist/
+comms/
+kbbl/data/
+kbbl/core/pwa/dist/
 .claude/settings.local.json
 
 *.db

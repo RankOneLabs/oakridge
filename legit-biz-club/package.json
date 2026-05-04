@@ -1,0 +1,7 @@
+{
+  "name": "legit-biz-club",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Workspace layer (multi-agent collaboration over a shared artifact). v1 build, placeholder."
+}

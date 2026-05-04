@@ -1,0 +1,29 @@
+{
+  "name": "kbbl",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Operator surface for CLI coding agents. Tablet-first PWA over Tailscale.",
+  "scripts": {
+    "dev": "bun run --hot core/server.ts",
+    "prestart": "bun run build:pwa",
+    "start": "bun run core/server.ts",
+    "build:pwa": "cd core/pwa && vite build",
+    "dev:pwa": "cd core/pwa && vite"
+  },
+  "dependencies": {
+    "hono": "^4.6.14",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-markdown": "^9.0.1",
+    "rehype-sanitize": "^6.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.13",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.0"
+  }
+}

@@ -1,0 +1,98 @@
+# kbbl
+
+Operator surface for CLI coding agents. Drives one or more agent sessions from a browser — at your desk, on your phone over Tailscale, or any viewport in between. Tablet-first.
+
+The v0 runtime adapter is for Claude Code (`claude --print --input-format stream-json --output-format stream-json`). A second adapter for codex is on the roadmap; the architecture treats the runtime as a plugin behind a typed interface.
+
+## How it works
+
+A single Bun + Hono server hosts many sessions. Each session is a runtime-spawned subprocess; the server pipes its NDJSON events through a per-session JSONL transcript and broadcasts them over SSE to connected PWA clients. A PreToolUse hook (currently `adapters/claude-code/scripts/gate.sh`) routes every tool call through the server, which parks the decision until the operator taps Approve or Deny in the PWA — approval latency = time to tap.
+
+The PWA opens to a session list backed by a `/inbox` delta stream (snapshot + create/end/status/pending/activity events). New sessions are created from the list view, not by launching another server. Ended sessions linger on disk and can be resumed from their row in the list — the resumed session is a new fork that inherits the parent's context.
+
+## Quick start
+
+```bash
+bun install
+bun run build:pwa
+./scripts/cc-start /path/to/your/repo
+```
+
+Defaults to `127.0.0.1:8788` — open `http://localhost:8788/` in a browser on the same machine. From the session list, click **+ New session** to spawn a session in the workdir of your choice.
+
+For phone/tablet access over Tailscale, bind all interfaces:
+
+```bash
+./scripts/cc-start /path/to/your/repo --host=0.0.0.0
+```
+
+Then open `http://<machine>:8788/` on your phone. Add to Home Screen for a full-screen standalone app. Only do this on networks where every reachable peer is trusted (Tailscale-only, or a LAN you control) — control endpoints are unauthenticated in v0.
+
+The workdir passed to `cc-start` is the *default* for new sessions; each session can pick its own workdir from the **+ New session** form.
+
+## Development
+
+```bash
+# Terminal 1: server with the agent subprocesses
+./scripts/cc-start /path/to/your/repo
+
+# Terminal 2: Vite dev server with HMR (proxies API calls to :8788)
+bun run dev:pwa
+# open http://localhost:5173
+```
+
+## Running
+
+The primary flow is `./scripts/cc-start <workdir>` in a terminal — that's the *server*. Adding more sessions happens in the PWA (or via `POST /sessions`); a second `cc-start` would just collide on the port.
+
+Ctrl-C stops the server; all live agent subprocesses die with it. Ended sessions remain readable via their on-disk JSONL the next time the server starts.
+
+### Optional: cgroup limits via systemd-run
+
+If you want to bound resource use (shared box, or a box hosting other workloads), wrap the invocation:
+
+```bash
+systemd-run --user --scope --unit=kbbl \
+  -p MemoryMax=2G -p CPUQuota=200% \
+  ./scripts/cc-start /path/to/your/repo
+```
+
+Stop with `systemctl --user stop kbbl`. Not needed on a dedicated workstation.
+
+## Endpoints
+
+- `GET /sessions` — list live sessions (add `?include=archived` to fold in on-disk JSONL)
+- `POST /sessions` — create a session; body: `{ workdir, resume_from? }`. With `resume_from`, forks an ended session.
+- `DELETE /sessions/:sid` — kill a live session
+- `GET /inbox` — SSE delta stream for the session list (snapshot + create/end/status/pending/activity)
+- `GET /:sid/stream` — SSE event stream for one session
+- `GET /:sid/events` — replay JSONL history (falls through to disk for archived sessions)
+- `POST /:sid/input` — send operator text to the session
+- `POST /:sid/approval` — Approve / Deny / Always-{tool} reply for a parked PreToolUse
+- `POST /:sid/yolo` — toggle the session's auto-approve mode
+- `POST /hook/approval` — `127.0.0.1`-only; the gate script's parking endpoint (currently CC-specific, will be moved into the adapter in a follow-up)
+- `GET /config` — server config snapshot for the PWA
+
+## Layout
+
+- `core/server.ts` — Hono + Bun process supervisor (route handlers, SSE broadcast, `/inbox` deltas, hook approval parking). Will be split into submodules (`session/`, `approval/`, `stream/`, `server/`) in a follow-up PR.
+- `core/session-manager.ts` — owns the `Map<sid, Session>`, `/inbox` subscriptions, archived-snapshot reads
+- `core/session.ts` — one agent subprocess: spawn, JSONL persistence, per-session event broadcast, YOLO / always-allow state
+- `core/pwa/` — React + Vite client (responsive across phone / tablet / desktop), built to `core/pwa/dist/` and served statically by Hono. Hash routing (`#sid=…`), no router library.
+- `core/runtime-interface.ts` — the typed contract between core and runtime adapters (draft, not yet load-bearing). Sharpened when the second adapter lands.
+- `adapters/claude-code/` — Claude Code runtime adapter. Currently most CC-specific code is still inline in core; it migrates here in a follow-up PR.
+- `scripts/cc-start` — launcher that validates the workdir and execs `bun run core/server.ts`. Will be renamed to `kbbl-start` in a follow-up.
+- `data/sessions/` — one JSONL transcript per session (gitignored)
+
+## Security posture
+
+- **Network:** binds to `127.0.0.1` by default. Operator opts into wider exposure with `--host=0.0.0.0` for tailnet/phone access, and is responsible for ensuring only trusted peers can reach the port (Tailscale-only, LAN firewall, etc.). Control endpoints are unauthenticated in v0 — token-based auth is planned follow-up work.
+- **Hook endpoint:** `/hook/approval` is filtered to `127.0.0.1` at the route handler — only the in-process gate script can park approval requests, not a tailnet peer.
+- **Path-traversal guard:** `:sid` route params are validated against a strict v4 UUID regex before any filesystem access.
+- **Markdown:** assistant text is rendered with `react-markdown` + `rehype-sanitize`; no `dangerouslySetInnerHTML`, so prompt-injected HTML from web-fetched content can't execute.
+- **Agent user settings (Claude Code adapter):** the server spawns CC with `--setting-sources user` so your user-level skills and slash commands are available inside the spawned subprocess. Tradeoff: user-level allowlists and permission settings in `~/.claude/settings.json` can bypass kbbl's approval gate — if you've globally approved a tool there, the PreToolUse hook won't fire for it. The operator-controlled escape hatches below (YOLO, "Always {tool}") are the intended path for short-circuiting the gate; don't rely on the gate to stop things you've already auto-approved at the user level.
+- **YOLO mode and per-tool always-allow** are operator-controlled escape hatches, scoped to a single session. YOLO mode (top-bar toggle) auto-approves every PreToolUse for the rest of the session — useful for setting an agent loose on a long task without tapping each prompt. The "Always {tool}" button on a permission card adds that tool name to a session-scoped allowlist; matching future calls auto-approve. Both reset on server restart, are emitted as visible events, and turn the gate into "see what happened" rather than "decide each call." Use them deliberately.
+
+## Known issue: permission_required stream events
+
+Agents running under `--print --output-format stream-json` emit permission prompts as events in the JSON stream rather than as interactive terminal prompts. The PWA currently does not render these events as approval cards (only PreToolUse hook calls are rendered). If your runtime's permission system rejects something pre-hook, the rejection drops silently. Workaround: configure the runtime so the gate is the only approval surface (for Claude Code, ensure user-level allowlist covers the tool so the permission system passes through to the hook). Surfacing permission_required events in the PWA is on the roadmap.
