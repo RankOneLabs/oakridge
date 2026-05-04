@@ -13,7 +13,7 @@
     "allowJs": false,
     "jsx": "react-jsx",
     "types": ["bun"],
-    "typeRoots": ["./kbbl/node_modules/@types"],
+    "typeRoots": ["./kbbl/node_modules/@types", "./node_modules/@types"],
     "lib": ["ESNext", "DOM"]
   },
   "include": [

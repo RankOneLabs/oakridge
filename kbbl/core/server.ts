@@ -60,7 +60,8 @@ const host = values.host ?? "127.0.0.1";
 const claudeBin = values.claudeBin ?? "claude";
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
-// server.ts lives at kbbl/core/server.ts; data/ is a sibling of core/, the CC adapter is two dirs up.
+// server.ts lives at kbbl/core/server.ts. From its directory, `..` is the kbbl package root;
+// data/ and adapters/ are both children of that root (siblings of core/).
 const dataDir = values.dataDir ?? join(moduleDir, "..", "data");
 const pwaDistDir = join(moduleDir, "pwa", "dist");
 const sessionsDir = join(dataDir, "sessions");

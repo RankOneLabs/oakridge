@@ -6,7 +6,7 @@ This repo is **mid-restructure**. Until the workspace layer ships, oakridge is a
 
 ## Layout
 
-```
+```text
 oakridge/
 ├── kbbl/                  # operator surface for CLI coding agents (v0)
 ├── legit-biz-club/        # workspace layer (v1, placeholder)

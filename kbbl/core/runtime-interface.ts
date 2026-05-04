@@ -22,7 +22,9 @@ export type SessionHandle = {
 /** opaque pointer to a stored prior session, used by resume() */
 export type ArchiveRef = string;
 
-export type ApprovalDecision = "approve" | "deny" | "always_allow" | "always_deny";
+// Aligns with the existing `Decision` type in session.ts; `always_*` variants are
+// forward-looking primitives for the v2 conflict-resolution work.
+export type ApprovalDecision = "allow" | "deny" | "always_allow" | "always_deny";
 
 export type RuntimeConfig = {
   workingDirectory: string;
@@ -90,7 +92,17 @@ export interface AgentRuntime {
 
   // --- streams ---
 
-  /** Runtime emits events; core consumes (writes JSONL, broadcasts SSE). */
+  /**
+   * Runtime emits events; core consumes (writes JSONL, broadcasts SSE).
+   *
+   * Cancellation contract: callers stop reading by breaking the for-await loop,
+   * which triggers the iterator's `return()` method. Adapters that wrap
+   * long-lived resources (subprocess stdio pipes, network sockets, timers)
+   * MUST implement `return()` on the returned iterator to release them —
+   * otherwise breaking the loop leaks the underlying resource silently.
+   * Adapters that need explicit signalling can accept an `AbortSignal` via
+   * `runtimeSpecific` config at spawn time.
+   */
   events(session: SessionHandle): AsyncIterable<RuntimeEvent>;
 
   // --- approval protocol ---
