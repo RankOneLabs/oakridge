@@ -2,7 +2,6 @@ import { Hono, type Context } from "hono";
 import { serveStatic } from "hono/bun";
 import { parseArgs } from "node:util";
 import { mkdir, stat } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -15,7 +14,6 @@ import {
   Session,
   SessionNotReadyError,
   readJsonlOrEmpty,
-  type Decision,
   type EnvelopeEvent,
 } from "./session/session";
 import {
@@ -25,6 +23,7 @@ import {
 } from "./stream/sse";
 import { inboxHandler } from "./stream/inbox";
 import { makeBuildSpawnCmd, writeCcSettings } from "./server/spawn-cmd";
+import { hookApprovalHandler } from "./server/handlers/hook";
 
 // === args ===
 
@@ -212,16 +211,6 @@ async function approvalForSession(session: Session, c: Context) {
   return applyApproval(session, parsed, c);
 }
 
-// === hook payload type ===
-
-interface HookInput {
-  session_id: string;
-  tool_name: string;
-  tool_input: unknown;
-  tool_use_id: string;
-  hook_event_name: string;
-}
-
 // === Hono app ===
 
 const app = new Hono();
@@ -230,165 +219,13 @@ const app = new Hono();
 //
 // Registered BEFORE /:sid/* so Hono's registration-order match doesn't
 // catch POST /hook/approval as /:sid/approval with sid="hook".
+// Handler in ./server/handlers/hook.ts (CC-coupled; will move into the
+// claude-code adapter in PR 3).
 
-app.post("/hook/approval", async (c) => {
-  if (!bunServer) return c.text("server not ready", 503);
-  const info = bunServer.requestIP(c.req.raw);
-  if (!info || (info.address !== "127.0.0.1" && info.address !== "::1")) {
-    return c.text("forbidden", 403);
-  }
-
-  let hook: HookInput;
-  try {
-    hook = (await c.req.json()) as HookInput;
-  } catch {
-    return c.json({ error: "invalid json" }, 400);
-  }
-  if (hook.hook_event_name !== "PreToolUse") {
-    return c.json(
-      { error: `unexpected hook_event_name: ${hook.hook_event_name}` },
-      400,
-    );
-  }
-
-  const session = await resolveSessionForHook(hook.session_id);
-  if (!session) {
-    // The gate reached us before system/init mapped this ccSid to a session.
-    // Deny rather than hang so CC isn't wedged waiting on us.
-    return c.json(
-      {
-        hookSpecificOutput: {
-          hookEventName: "PreToolUse",
-          permissionDecision: "deny",
-          permissionDecisionReason:
-            "cc-deck: no oakridge session for this CC session_id",
-        },
-      },
-      200,
-    );
-  }
-
-  const autoReason = session.yolo
-    ? "yolo"
-    : session.toolAllowlist.has(hook.tool_name)
-      ? "allowlist"
-      : null;
-  if (autoReason) {
-    // Log the auto-approve best-effort. If emit throws (disk full, perm
-    // error), still return the allow decision — the auto-approve policy
-    // doesn't depend on the log being durable, and wedging CC on a log
-    // failure would be worse than a missing event line.
-    try {
-      await session.emit("permission_auto_approved", {
-        tool_name: hook.tool_name,
-        tool_input: hook.tool_input,
-        tool_use_id: hook.tool_use_id,
-        reason: autoReason,
-      });
-    } catch (err) {
-      console.error(
-        `cc-deck: failed to log auto-approve for ${hook.tool_name}: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-    }
-    return c.json({
-      hookSpecificOutput: {
-        hookEventName: "PreToolUse",
-        permissionDecision: "allow",
-        permissionDecisionReason:
-          autoReason === "yolo"
-            ? "auto-approved (yolo mode)"
-            : `auto-approved (always allow ${hook.tool_name})`,
-      },
-    });
-  }
-
-  const requestId = randomUUID();
-  const signal = c.req.raw.signal;
-  let resolveDecision: (d: Decision) => void;
-  let rejectDecision: (e: Error) => void;
-  const decisionPromise = new Promise<Decision>((res, rej) => {
-    resolveDecision = res;
-    rejectDecision = rej;
-  });
-  session.registerApproval(requestId, {
-    resolve: resolveDecision!,
-    toolName: hook.tool_name,
-  });
-  signal.addEventListener(
-    "abort",
-    () => rejectDecision!(new Error("gate_aborted")),
-    { once: true },
-  );
-
-  try {
-    await session.emit("permission_request", {
-      request_id: requestId,
-      tool_name: hook.tool_name,
-      tool_input: hook.tool_input,
-      tool_use_id: hook.tool_use_id,
-    });
-    const decision = await decisionPromise;
-    await session.emit("permission_resolved", {
-      request_id: requestId,
-      decision,
-    });
-    return c.json({
-      hookSpecificOutput: {
-        hookEventName: "PreToolUse",
-        permissionDecision: decision,
-        permissionDecisionReason:
-          decision === "allow"
-            ? "operator approved via cc-deck"
-            : "operator denied via cc-deck",
-      },
-    });
-  } catch (err) {
-    const isGateAbort =
-      err instanceof Error && err.message === "gate_aborted";
-    session.deleteApproval(requestId);
-    if (isGateAbort) {
-      await session
-        .emit("permission_resolved", {
-          request_id: requestId,
-          decision: "deny",
-          reason: "gate_aborted",
-        })
-        .catch((e) => {
-          console.error(
-            `cc-deck: failed to emit gate-aborted resolution: ${
-              e instanceof Error ? e.message : String(e)
-            }`,
-          );
-        });
-      return c.json({ error: "gate aborted" }, 408);
-    }
-    console.error(
-      `cc-deck: /hook/approval failed: ${err instanceof Error ? err.message : String(err)}`,
-    );
-    return c.json({ error: "internal error" }, 500);
-  }
-});
-
-/**
- * Map a hook's CC session_id to our Session. Waits briefly if the
- * manager hasn't seen the ccSid yet: CC emits system/init before any
- * PreToolUse under normal conditions, but hooks and stdout are separate
- * pipes and in theory could race. 2s should cover any realistic scheduling
- * jitter while still failing fast on a genuinely-unknown ccSid.
- */
-async function resolveSessionForHook(
-  ccSid: string,
-): Promise<Session | undefined> {
-  const deadline = Date.now() + 2000;
-  while (true) {
-    const session = manager.getByCcSid(ccSid);
-    if (session) return session;
-    if (Date.now() >= deadline) return undefined;
-    await new Promise((r) => setTimeout(r, 50));
-  }
-}
+app.post(
+  "/hook/approval",
+  hookApprovalHandler({ manager, getBunServer: () => bunServer }),
+);
 
 // ---- per-sid routes ----
 
