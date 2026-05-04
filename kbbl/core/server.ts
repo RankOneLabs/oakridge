@@ -6,10 +6,7 @@ import { fileURLToPath } from "node:url";
 import { SessionManager } from "./session/session-manager";
 import { Session } from "./session/session";
 import { createApp } from "./server/app";
-import {
-  makeBuildSpawnCmd,
-  writeCcSettings,
-} from "../adapters/claude-code/spawn";
+import { createClaudeCodeRuntime } from "../adapters/claude-code";
 import { validateWorkdir } from "./server/handlers/sessions";
 
 // === args ===
@@ -58,22 +55,32 @@ const pwaDistDir = join(moduleDir, "pwa", "dist");
 const sessionsDir = join(dataDir, "sessions");
 await mkdir(sessionsDir, { recursive: true });
 
-// === settings.json for spawned CC (shared across all sessions) ===
-// CC-specific spawn config lives in ../adapters/claude-code/spawn.ts.
+// === runtime adapter ===
+// The Claude Code adapter owns its CLI flags, settings.json, and the
+// PreToolUse gate route. Core consumes it through the AppRuntime contract
+// and never imports CC-specific files directly.
 
 const gatePath = resolve(moduleDir, "..", "adapters", "claude-code", "scripts", "gate.sh");
-const settingsPath = await writeCcSettings({ dataDir, gatePath });
-const buildSpawnCmd = makeBuildSpawnCmd({ claudeBin, port, settingsPath });
+const runtime = await createClaudeCodeRuntime({
+  claudeBin,
+  port,
+  dataDir,
+  gatePath,
+});
 
 // === manager ===
 
-const manager = new SessionManager({ sessionsDir, buildSpawnCmd });
+const manager = new SessionManager({
+  sessionsDir,
+  buildSpawnCmd: runtime.buildSpawnCmd,
+});
 
 // === Hono app ===
 
 let bunServer: ReturnType<typeof Bun.serve> | null = null;
 const app = createApp({
   manager,
+  runtime,
   defaultWorkdir: workdir,
   sessionsDir,
   pwaDistDir,
