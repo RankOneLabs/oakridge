@@ -1,6 +1,5 @@
 import { Hono, type Context } from "hono";
 import { serveStatic } from "hono/bun";
-import { streamSSE } from "hono/streaming";
 import { parseArgs } from "node:util";
 import { mkdir, stat, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
@@ -25,6 +24,7 @@ import {
   parseEventsSince,
   streamForSession,
 } from "./stream/sse";
+import { inboxHandler } from "./stream/inbox";
 
 // === args ===
 
@@ -519,68 +519,8 @@ app.get("/sessions", async (c) => {
   return c.json({ sessions: merged });
 });
 
-// ---- /inbox (always-on delta stream) ----
-//
-// Snapshot-on-connect then named-event deltas. No replay log: if a client
-// drops and reconnects, the fresh snapshot is authoritative — deltas in
-// between are presumed lost, which is fine since the snapshot carries every
-// field the deltas mutate.
-
-app.get("/inbox", (c) => {
-  return streamSSE(c, async (stream) => {
-    const signal = c.req.raw.signal;
-    // Per-connection buffer of deltas pending writeSSE. Unbounded by
-    // design for v0: each delta is ~100 bytes, sessions move slowly, and
-    // snapshot-on-reconnect makes drop-on-overflow safe if we ever need
-    // to cap it. If a backgrounded client on a busy server ever shows up
-    // as a memory regression, swap this for a ring buffer + forced close
-    // on overflow — the reconnect will pull a fresh snapshot.
-    const queue: import("./session/session-manager").InboxDelta[] = [];
-    let notify: (() => void) | null = null;
-    const unsub = manager.subscribeInbox((delta) => {
-      queue.push(delta);
-      if (notify) {
-        const n = notify;
-        notify = null;
-        n();
-      }
-    });
-    const onAbort = () => {
-      if (notify) {
-        const n = notify;
-        notify = null;
-        n();
-      }
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
-    const heartbeat = setInterval(() => {
-      stream.write(": ping\n\n").catch(() => {});
-    }, 15000);
-    try {
-      await stream.writeSSE({
-        event: "snapshot",
-        data: JSON.stringify({ sessions: manager.listSnapshots() }),
-      });
-      while (!signal.aborted) {
-        if (queue.length === 0) {
-          await new Promise<void>((r) => {
-            notify = r;
-          });
-          continue;
-        }
-        const delta = queue.shift()!;
-        await stream.writeSSE({
-          event: "delta",
-          data: JSON.stringify(delta),
-        });
-      }
-    } finally {
-      clearInterval(heartbeat);
-      signal.removeEventListener("abort", onAbort);
-      unsub();
-    }
-  });
-});
+// ---- /inbox (always-on delta stream) ---- handler in ./stream/inbox.ts
+app.get("/inbox", inboxHandler(manager));
 
 app.post("/sessions", async (c) => {
   // Optional body: { resume_from?: string, workdir?: string, name?: string
