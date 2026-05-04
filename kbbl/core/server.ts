@@ -1,5 +1,3 @@
-import { Hono } from "hono";
-import { serveStatic } from "hono/bun";
 import { parseArgs } from "node:util";
 import { mkdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -7,14 +5,9 @@ import { fileURLToPath } from "node:url";
 
 import { SessionManager } from "./session/session-manager";
 import { Session } from "./session/session";
-import { inboxHandler } from "./stream/inbox";
+import { createApp } from "./server/app";
 import { makeBuildSpawnCmd, writeCcSettings } from "./server/spawn-cmd";
-import { hookApprovalHandler } from "./server/handlers/hook";
-import { mountPerSidRoutes } from "./server/handlers/per-sid";
-import {
-  mountSessionsRoutes,
-  validateWorkdir,
-} from "./server/handlers/sessions";
+import { validateWorkdir } from "./server/handlers/sessions";
 
 // === args ===
 
@@ -74,66 +67,19 @@ const buildSpawnCmd = makeBuildSpawnCmd({ claudeBin, port, settingsPath });
 
 const manager = new SessionManager({ sessionsDir, buildSpawnCmd });
 
-// === HTTP handlers ===
-
 // === Hono app ===
 
-const app = new Hono();
-
-// ---- hook (loopback-only) ----
-//
-// Registered BEFORE /:sid/* so Hono's registration-order match doesn't
-// catch POST /hook/approval as /:sid/approval with sid="hook".
-// Handler in ./server/handlers/hook.ts (CC-coupled; will move into the
-// claude-code adapter in PR 3).
-
-app.post(
-  "/hook/approval",
-  hookApprovalHandler({ manager, getBunServer: () => bunServer }),
-);
-
-// ---- per-sid routes ----
-// All five (/stream, /events, /input, /yolo, /approval) live in
-// ./server/handlers/per-sid.ts.
-mountPerSidRoutes(app, { manager, sessionsDir });
-
-// ---- server config ----
-//
-// Exposes the operator-configured defaults the PWA needs to render forms
-// (currently just the default workdir). Kept tiny on purpose: this is not a
-// place to grow generic settings — anything per-session belongs in the
-// session snapshot.
-
-app.get("/config", (c) => {
-  return c.json({ defaultWorkdir: workdir });
-});
-
-// ---- sessions CRUD ----
-// All three routes (GET /sessions, POST /sessions, DELETE /sessions/:sid)
-// plus validateWorkdir and resolveResumeParent live in
-// ./server/handlers/sessions.ts.
-mountSessionsRoutes(app, {
+let bunServer: ReturnType<typeof Bun.serve> | null = null;
+const app = createApp({
   manager,
   defaultWorkdir: workdir,
   sessionsDir,
+  pwaDistDir,
+  getBunServer: () => bunServer,
 });
-
-// ---- /inbox (always-on delta stream) ---- handler in ./stream/inbox.ts
-app.get("/inbox", inboxHandler(manager));
-
-// ---- static PWA ----
-
-app.use(
-  "/*",
-  serveStatic({
-    root: pwaDistDir,
-    rewriteRequestPath: (path) => (path === "/" ? "/index.html" : path),
-  }),
-);
 
 // === bind port (fail fast before spawning CC) ===
 
-let bunServer: ReturnType<typeof Bun.serve> | null = null;
 try {
   bunServer = Bun.serve({
     port,
