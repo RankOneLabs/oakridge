@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { serveStatic } from "hono/bun";
 import { parseArgs } from "node:util";
-import { mkdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,7 +17,6 @@ import {
   readJsonlOrEmpty,
   type Decision,
   type EnvelopeEvent,
-  type SpawnCmd,
 } from "./session/session";
 import {
   eventsForSession,
@@ -25,6 +24,7 @@ import {
   streamForSession,
 } from "./stream/sse";
 import { inboxHandler } from "./stream/inbox";
+import { makeBuildSpawnCmd, writeCcSettings } from "./server/spawn-cmd";
 
 // === args ===
 
@@ -73,59 +73,12 @@ const sessionsDir = join(dataDir, "sessions");
 await mkdir(sessionsDir, { recursive: true });
 
 // === settings.json for spawned CC (shared across all sessions) ===
+// CC-specific spawn config lives in ./server/spawn-cmd.ts. Will move to
+// kbbl/adapters/claude-code/ in PR 3.
 
 const gatePath = resolve(moduleDir, "..", "adapters", "claude-code", "scripts", "gate.sh");
-const settingsPath = join(dataDir, "settings.json");
-await writeFile(
-  settingsPath,
-  JSON.stringify(
-    {
-      hooks: {
-        PreToolUse: [
-          {
-            matcher: ".*",
-            hooks: [{ type: "command", command: gatePath }],
-          },
-        ],
-      },
-    },
-    null,
-    2,
-  ),
-);
-
-// === spawn command builder ===
-
-function buildSpawnCmd(session: Session): SpawnCmd {
-  const cmd = [
-    claudeBin,
-    "--print",
-    "--input-format",
-    "stream-json",
-    "--output-format",
-    "stream-json",
-    "--include-hook-events",
-    "--replay-user-messages",
-    "--verbose",
-    "--setting-sources",
-    "user",
-    "--settings",
-    settingsPath,
-  ];
-  // Resume in a fresh session id so multiple live forks off the same parent
-  // don't collide on CC's internal session id.
-  if (session.parentCcSid) {
-    cmd.push("--resume", session.parentCcSid, "--fork-session");
-  }
-  return {
-    cmd,
-    cwd: session.workdir,
-    env: {
-      ...process.env,
-      CC_DECK_PORT: String(port),
-    } as Record<string, string>,
-  };
-}
+const settingsPath = await writeCcSettings({ dataDir, gatePath });
+const buildSpawnCmd = makeBuildSpawnCmd({ claudeBin, port, settingsPath });
 
 // === manager ===
 
