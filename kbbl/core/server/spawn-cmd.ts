@@ -26,6 +26,11 @@ export interface CcSettingsOpts {
  * The file is regenerated on every server startup (no idempotence check)
  * so a moved gate script or relocated dataDir is picked up without operator
  * action.
+ *
+ * The gate path is shell-quoted before serialization because CC executes
+ * `hooks[].command` as a bash command. A checkout path containing spaces or
+ * other shell-significant characters would otherwise be split by the shell
+ * and break the approval gate.
  */
 export async function writeCcSettings(opts: CcSettingsOpts): Promise<string> {
   const settingsPath = join(opts.dataDir, "settings.json");
@@ -37,7 +42,7 @@ export async function writeCcSettings(opts: CcSettingsOpts): Promise<string> {
           PreToolUse: [
             {
               matcher: ".*",
-              hooks: [{ type: "command", command: opts.gatePath }],
+              hooks: [{ type: "command", command: shellQuote(opts.gatePath) }],
             },
           ],
         },
@@ -47,6 +52,16 @@ export async function writeCcSettings(opts: CcSettingsOpts): Promise<string> {
     ),
   );
   return settingsPath;
+}
+
+/**
+ * Wrap a string in single quotes for safe inclusion in a bash command.
+ * Embedded single quotes are escaped via the standard `'\''` close-reopen
+ * idiom. Single-quoted strings in bash don't interpret any metacharacters,
+ * so wrapping is sufficient for any filesystem path.
+ */
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 export interface BuildSpawnCmdContext {

@@ -27,8 +27,15 @@ export async function validateWorkdir(path: string): Promise<string | null> {
   try {
     const s = await stat(path);
     if (!s.isDirectory()) return "workdir is not a directory";
-  } catch {
-    return "workdir does not exist";
+  } catch (err) {
+    // Distinguish "doesn't exist" (operator typo) from "exists but unreadable"
+    // (permission error). The path-prefix logging hint matters when an
+    // operator's stat fails on EACCES — they'd otherwise be told "doesn't
+    // exist" while it's right there.
+    const code = (err as { code?: string } | null)?.code;
+    if (code === "ENOENT") return "workdir does not exist";
+    const msg = err instanceof Error ? err.message : String(err);
+    return `workdir not accessible: ${msg}`;
   }
   return null;
 }
@@ -47,12 +54,12 @@ export async function validateWorkdir(path: string): Promise<string | null> {
 type ResumeParentResult =
   | { kind: "unknown" }
   | { kind: "no_cc_sid" }
+  | { kind: "no_workdir" }
   | { kind: "ok"; parentCcSid: string; workdir: string };
 
 async function resolveResumeParent(
   manager: SessionManager,
   sessionsDir: string,
-  defaultWorkdir: string,
   sid: string,
 ): Promise<ResumeParentResult> {
   const live = manager.get(sid);
@@ -102,14 +109,13 @@ async function resolveResumeParent(
     if (parentCcSid && parentWorkdir) break;
   }
   if (!parentCcSid) return { kind: "no_cc_sid" };
-  // Fall back to server --workdir if the parent's session_started frame
-  // is missing a workdir (very early truncated transcript). Same cwd
-  // the operator is running under now; best-effort.
-  return {
-    kind: "ok",
-    parentCcSid,
-    workdir: parentWorkdir ?? defaultWorkdir,
-  };
+  // Fail rather than guess if the parent transcript is missing the workdir
+  // (e.g. truncated very early). Falling back to the current --workdir would
+  // silently launch the resumed session in a different repo if the operator
+  // restarted the server with a different default — quietly applying tool
+  // edits against the wrong tree.
+  if (!parentWorkdir) return { kind: "no_workdir" };
+  return { kind: "ok", parentCcSid, workdir: parentWorkdir };
 }
 
 export interface SessionsRouteDeps {
@@ -224,7 +230,6 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       const parentInfo = await resolveResumeParent(
         manager,
         sessionsDir,
-        defaultWorkdir,
         resumeFrom,
       );
       if (parentInfo.kind === "unknown") {
@@ -238,6 +243,19 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
           {
             error:
               "resume_from parent never observed a cc session id — can't resume",
+          },
+          400,
+        );
+      }
+      if (parentInfo.kind === "no_workdir") {
+        // Parent transcript exists but is missing session_started.workdir
+        // (truncated very early). Fail explicitly rather than guess at the
+        // current --workdir, which could be a different repo entirely after
+        // a server restart.
+        return c.json(
+          {
+            error:
+              "resume_from parent transcript is missing the workdir — can't resume safely",
           },
           400,
         );
