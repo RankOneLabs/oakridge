@@ -215,13 +215,19 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
 
     let spawnOpts: CreateSessionOpts;
     if (resumeFrom === null) {
-      // Normalize via resolve() so /repo, /repo/, and /repo/..//repo all
-      // collapse to one canonical workdir before validation + persistence —
-      // matches the startup --workdir handling so the same path doesn't
-      // show up as two distinct workdirs across the UI.
-      const target = resolve(bodyWorkdir ?? defaultWorkdir);
-      const err = await validateWorkdir(target);
+      // Validate the raw input first so the absolute-path guard fires for
+      // client-supplied relative paths. resolve() would otherwise turn
+      // "./foo" into the server's cwd + "./foo" and silently accept it as
+      // an absolute path, reintroducing the cwd-dependent behavior the API
+      // is meant to forbid.
+      const requestedWorkdir = bodyWorkdir ?? defaultWorkdir;
+      const err = await validateWorkdir(requestedWorkdir);
       if (err) return c.json({ error: err }, 400);
+      // Now canonicalize so /repo, /repo/, and /repo/..//repo all collapse
+      // to one canonical workdir before persistence — matches the startup
+      // --workdir handling so the same path doesn't show up as two distinct
+      // workdirs across the UI.
+      const target = resolve(requestedWorkdir);
       spawnOpts = { workdir: target, name: bodyName ?? undefined };
     } else {
       if (!isValidSid(resumeFrom)) {
