@@ -11,7 +11,7 @@ import {
   RemoveFailedError,
   SessionManager,
   type CreateSessionOpts,
-} from "./session-manager";
+} from "./session/session-manager";
 import {
   Session,
   SessionNotReadyError,
@@ -19,7 +19,7 @@ import {
   type Decision,
   type EnvelopeEvent,
   type SpawnCmd,
-} from "./session";
+} from "./session/session";
 
 // === args ===
 
@@ -655,7 +655,7 @@ app.get("/inbox", (c) => {
     // to cap it. If a backgrounded client on a busy server ever shows up
     // as a memory regression, swap this for a ring buffer + forced close
     // on overflow — the reconnect will pull a fresh snapshot.
-    const queue: import("./session-manager").InboxDelta[] = [];
+    const queue: import("./session/session-manager").InboxDelta[] = [];
     let notify: (() => void) | null = null;
     const unsub = manager.subscribeInbox((delta) => {
       queue.push(delta);
