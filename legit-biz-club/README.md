@@ -2,7 +2,7 @@
 
 The workspace layer of oakridge: multi-agent collaboration over a shared artifact, built on jig (agent kit) and consumed by kbbl (operator surface).
 
-**Status:** v1 in progress. Foundation (data model, lifecycle, composition policy, polyglot adapter scaffolding) is the first PR; coordination modes, evals, memory commit, and the study harness follow per the implementation plan.
+**Status:** v1 build complete. All five phases (foundation, incremental coordination, convergence, evals + memory commit, study harness) are shipped on `main` across PRs #19, #23, and #24. Workstream D — actually running the v1 study — is research output and lives outside this package.
 
 ## Layout
 
@@ -13,6 +13,10 @@ legit-biz-club/
 │   └── legit_biz_club/
 │       ├── core/             # data model + lifecycle state machine
 │       ├── composition.py    # composition policy + heterogeneity check
+│       ├── coordination/     # incremental + convergence; mediator, OCC, consensus mechanisms, JigProposer
+│       ├── eval/             # code + prose eval primitives (jig-grader-backed)
+│       ├── memory.py         # operator-driven MemoryCommitter (Python API)
+│       ├── study/            # four-condition study harness — targets, conditions, runner, results
 │       └── adapters/
 │           └── kbbl/         # Python HTTP client against kbbl's TS server
 └── tests/
@@ -34,8 +38,9 @@ Per the design memo:
 - Agents are persistent peers with their own memory and identity, accumulating skill across projects.
 - Projects are bounded contexts that own one artifact, one brief, and an enrolled ensemble (default 5 agents).
 - Coordination is substrate-mediated, not message-passing — agents read the canonical artifact state plus, in convergence rounds, peer proposals exposed as substrate.
-- Three coordination modes: incremental commits (default), convergence rounds (operator-triggered, multi-round protocol with peer-aware revision), and escalation (mechanical disagreement surface, operator picks).
+- Three coordination modes: incremental commits (default), convergence (coordinator-internal — driven by the project's coordination-protocol config, not operator-triggered), and escalation (automated `DisagreementSurface` default; operator-in-loop is an optional callback).
 - Pluggable consensus mechanism, round budget policy, disagreement surface, and termination policy — v1 ships sensible defaults behind interfaces so v2+ can swap.
+- Memory commit is **operator-driven and Python-API-only** in v1 — the operator (or a script) calls `MemoryCommitter.commit(...)` after a project ends to persist approved observations into the agent's jig SqliteStore. A kbbl review UI is deferred; kbbl stays out of the memory commit path.
 
 ## Polyglot setup
 
