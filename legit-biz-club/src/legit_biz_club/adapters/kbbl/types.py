@@ -30,7 +30,17 @@ class _KbblModel(BaseModel):
 SessionStatus = Literal["starting", "live", "ended"]
 
 
-class ResultUsage(_KbblModel):
+class ResultUsage(BaseModel):
+    """Token usage block from kbbl's `result` event.
+
+    Unlike :class:`SessionSnapshot`, kbbl serializes ``ResultUsage``
+    fields in snake_case (matching Anthropic's wire shape:
+    ``input_tokens``, ``cache_creation_input_tokens``, etc.). No
+    alias generator is applied here; field names are the wire names.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
     input_tokens: int
     output_tokens: int
     cache_creation_input_tokens: int | None = None

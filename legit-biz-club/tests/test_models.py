@@ -53,6 +53,21 @@ def test_enrollment_records_timestamp() -> None:
     e = Enrollment(agent_id="a-1", project_id="p-1")
     assert e.binding is None
     assert e.enrolled_at is not None
+    assert e.enrolled_at.tzinfo is not None  # UTC-aware, not naive
+
+
+def test_enrollment_rejects_unserializable_binding() -> None:
+    from pydantic import ValidationError
+
+    # Path objects, sets, and similar non-JSON-native values must be
+    # rejected at construction time so the heterogeneity check can't
+    # crash on them later.
+    with pytest.raises(ValidationError):
+        Enrollment(
+            agent_id="a-1",
+            project_id="p-1",
+            binding={"section": Path("/tmp")},  # type: ignore[dict-item]
+        )
 
 
 def test_project_starts_initialized(tmp_path: Path) -> None:
