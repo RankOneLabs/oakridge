@@ -1,7 +1,7 @@
 {
   "name": "kbbl",
   "short_name": "kbbl",
-  "description": "Mobile command center for Claude Code",
+  "description": "Mobile operator surface for CLI coding agents",
   "start_url": "/",
   "display": "standalone",
   "orientation": "portrait",

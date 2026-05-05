@@ -116,7 +116,7 @@ try {
   initialSession = await manager.create({ workdir });
 } catch (err) {
   const msg = err instanceof Error ? err.message : String(err);
-  console.error(`kbbl: failed to spawn initial CC subprocess: ${msg}`);
+  console.error(`kbbl: failed to spawn initial ${runtime.id} subprocess: ${msg}`);
   server.stop();
   process.exit(1);
 }
