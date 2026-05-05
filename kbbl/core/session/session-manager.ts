@@ -37,6 +37,13 @@ export interface CreateSessionOpts {
   name?: string;
   parentCcSid?: string;
   parentOakridgeSid?: string;
+  /**
+   * Tag this session with an artifact id. Sessions sharing an
+   * artifactId can be enumerated via SessionManager.listByArtifact() —
+   * the workspace layer (legit-biz-club) uses this to track ensembles
+   * working on the same artifact. kbbl treats the id as opaque.
+   */
+  artifactId?: string;
 }
 
 /**
@@ -122,6 +129,7 @@ export class SessionManager {
       sessionsDir: this.opts.sessionsDir,
       parentCcSid: opts.parentCcSid,
       parentOakridgeSid: opts.parentOakridgeSid,
+      artifactId: opts.artifactId,
       classifyEvent: this.opts.classifyEvent,
       callbacks: {
         onCcSidObserved: (s, ccSid) => {
@@ -197,6 +205,20 @@ export class SessionManager {
    */
   listLive(): Session[] {
     return [...this.sessions.values()].filter((s) => s.status === "live");
+  }
+
+  /**
+   * Sessions tagged with the given artifactId — the workspace layer's
+   * primary query for enumerating an ensemble. Includes live and ended
+   * in-memory sessions; archived (on-disk) sessions are not consulted.
+   * Callers that need the archived merge should pull listArchivedSnapshots()
+   * separately and filter by ``artifactId`` client-side, the same pattern
+   * GET /sessions uses for include=archived.
+   */
+  listByArtifact(artifactId: string): Session[] {
+    return [...this.sessions.values()].filter(
+      (s) => s.artifactId === artifactId,
+    );
   }
 
   listSnapshots(): SessionSnapshot[] {
@@ -568,6 +590,7 @@ async function loadArchivedSnapshot(
   let ccSid: string | null = null;
   let parentCcSid: string | null = null;
   let parentOakridgeSid: string | null = null;
+  let artifactId: string | null = null;
   let lastActivityTs = "";
   const allowedTools = new Set<string>();
   let yoloMode = false;
@@ -592,6 +615,9 @@ async function loadArchivedSnapshot(
         }
         if (typeof payload.parentOakridgeSid === "string") {
           parentOakridgeSid = payload.parentOakridgeSid;
+        }
+        if (typeof payload.artifactId === "string") {
+          artifactId = payload.artifactId;
         }
         break;
       }
@@ -634,6 +660,7 @@ async function loadArchivedSnapshot(
     ccSid,
     parentCcSid,
     parentOakridgeSid,
+    artifactId,
     pendingCount: 0,
     yoloMode,
     allowedTools: [...allowedTools],

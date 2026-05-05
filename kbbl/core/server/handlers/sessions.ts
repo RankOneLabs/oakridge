@@ -157,6 +157,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
     let resumeFrom: string | null = null;
     let bodyWorkdir: string | null = null;
     let bodyName: string | null = null;
+    let bodyArtifactId: string | null = null;
     // Read raw text first so we can distinguish "no body" (treat as no
     // options, preserves the old POST /sessions behavior) from "bad body"
     // (400). Using c.req.json() with an inner .catch() would silently
@@ -177,6 +178,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
           resume_from?: unknown;
           workdir?: unknown;
           name?: unknown;
+          artifact_id?: unknown;
         };
         if (parsed.resume_from !== undefined) {
           if (typeof parsed.resume_from !== "string") {
@@ -208,6 +210,23 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
           }
           bodyName = trimmedName;
         }
+        if (parsed.artifact_id !== undefined) {
+          if (typeof parsed.artifact_id !== "string") {
+            return c.json({ error: "artifact_id must be a string" }, 400);
+          }
+          // Empty string would silently degrade to "no tag" once it
+          // hits Session.artifactId (?? null), masking client bugs that
+          // forgot to populate the id. Reject explicitly so the
+          // workspace layer can't accidentally tag a whole ensemble as
+          // "anonymous artifact".
+          if (parsed.artifact_id.trim() === "") {
+            return c.json(
+              { error: "artifact_id must be non-empty when provided" },
+              400,
+            );
+          }
+          bodyArtifactId = parsed.artifact_id;
+        }
       }
     } catch {
       return c.json({ error: "invalid json" }, 400);
@@ -228,7 +247,11 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       // --workdir handling so the same path doesn't show up as two distinct
       // workdirs across the UI.
       const target = resolve(requestedWorkdir);
-      spawnOpts = { workdir: target, name: bodyName ?? undefined };
+      spawnOpts = {
+        workdir: target,
+        name: bodyName ?? undefined,
+        artifactId: bodyArtifactId ?? undefined,
+      };
     } else {
       if (!isValidSid(resumeFrom)) {
         return c.json({ error: "invalid resume_from" }, 400);
@@ -288,6 +311,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
         name: bodyName ?? undefined,
         parentCcSid: parentInfo.parentCcSid,
         parentOakridgeSid: resumeFrom,
+        artifactId: bodyArtifactId ?? undefined,
       };
     }
 
@@ -298,6 +322,18 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       const msg = err instanceof Error ? err.message : String(err);
       return c.json({ error: `spawn failed: ${msg}` }, 500);
     }
+  });
+
+  app.get("/artifacts/:artifactId/sessions", (c) => {
+    const artifactId = c.req.param("artifactId");
+    // Empty / missing artifactId would land here only via bizarre routing
+    // anomalies (Hono normally 404s before this), but explicit guard keeps
+    // the failure clear for any future router substitution.
+    if (!artifactId) return c.json({ error: "missing artifactId" }, 400);
+    const sessions = manager
+      .listByArtifact(artifactId)
+      .map((s) => s.snapshot());
+    return c.json({ sessions });
   });
 
   app.delete("/sessions/:sid", async (c) => {
