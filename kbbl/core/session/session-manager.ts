@@ -47,9 +47,34 @@ export interface CreateSessionOpts {
 }
 
 /**
+ * Workspace-layer event broadcast through the inbox stream. legit-biz-club
+ * (the workspace layer) emits these via POST /inbox/workspace-events;
+ * kbbl re-broadcasts them to inbox subscribers without interpreting the
+ * payload. Adding new event kinds at the workspace layer requires no
+ * kbbl change — `kind` is a free-form string and `payload` is a generic
+ * record. Reconnect-with-snapshot does not replay workspace events;
+ * legit-biz-club is the authoritative source for project state.
+ */
+export interface WorkspaceEvent {
+  /** Event kind, e.g. "project_created", "convergence_round_started". */
+  kind: string;
+  /** Opaque project id from legit-biz-club. */
+  projectId: string;
+  /** Wall-clock ISO timestamp; emitter-supplied or defaulted on receipt. */
+  ts: string;
+  /** Event-specific payload. Treated as opaque by kbbl. */
+  payload: Record<string, unknown>;
+}
+
+/**
  * /inbox delta shapes. `session_created` carries the full snapshot so clients
  * can add a row without a follow-up fetch; the later deltas only carry the
  * fields that actually change so a reconnect-with-snapshot is authoritative.
+ *
+ * `workspace_event` is the workspace layer's escape hatch — its payload
+ * is opaque to kbbl and shaped by legit-biz-club. Workspace events are
+ * NOT replayed on reconnect; subscribers that need authoritative project
+ * state should query legit-biz-club directly.
  */
 export type InboxDelta =
   | { type: "session_created"; session: SessionSnapshot }
@@ -58,7 +83,8 @@ export type InboxDelta =
   | { type: "status_changed"; sid: string; status: SessionStatus }
   | { type: "pending_count_changed"; sid: string; count: number }
   | { type: "last_activity_changed"; sid: string; ts: string }
-  | { type: "yolo_changed"; sid: string; yoloMode: boolean };
+  | { type: "yolo_changed"; sid: string; yoloMode: boolean }
+  | { type: "workspace_event"; event: WorkspaceEvent };
 
 export interface InboxSnapshot {
   sessions: SessionSnapshot[];
@@ -468,6 +494,17 @@ export class SessionManager {
   subscribeInbox(cb: InboxSubscriber): () => void {
     this.inboxSubscribers.add(cb);
     return () => this.inboxSubscribers.delete(cb);
+  }
+
+  /**
+   * Broadcast a workspace-layer event (project lifecycle, convergence
+   * round status, etc.) to inbox subscribers. The event is treated as
+   * opaque pass-through; kbbl does not interpret or persist it. Same
+   * delivery contract as session-scoped deltas: best-effort to current
+   * subscribers, no replay on reconnect.
+   */
+  broadcastWorkspaceEvent(event: WorkspaceEvent): void {
+    this.broadcastDelta({ type: "workspace_event", event });
   }
 
   private broadcastDelta(delta: InboxDelta): void {
