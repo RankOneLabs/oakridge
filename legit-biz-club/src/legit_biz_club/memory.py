@@ -120,7 +120,7 @@ class MemoryCommitter:
         for either — an observation with no text isn't an observation,
         and an unscoped commit can't be filtered by project later.
         """
-        if not project_id:
+        if not project_id.strip():
             raise ValueError("project_id must be non-empty")
         if not observation_text.strip():
             raise ValueError("observation_text must be non-empty")

@@ -32,6 +32,7 @@ from legit_biz_club.coordination.project_coordinator import (
     ProjectCoordinator,
     ProjectRunResult,
 )
+from legit_biz_club.coordination.proposal import ProposalResult
 from legit_biz_club.coordination.proposer import Proposer
 from legit_biz_club.core.models import (
     Agent,
@@ -281,7 +282,9 @@ def _summarize_metrics(run_result: ProjectRunResult) -> CellMetrics:
     else:
         commits_attempted = len(incremental.outcomes)
         commits_applied = sum(
-            1 for o in incremental.outcomes if o.result.value == "applied"
+            1
+            for o in incremental.outcomes
+            if o.result == ProposalResult.APPLIED
         )
 
     if consensus is None:
@@ -291,7 +294,11 @@ def _summarize_metrics(run_result: ProjectRunResult) -> CellMetrics:
     else:
         rounds_run = len(consensus.rounds)
         converged_at = consensus.converged_at_round
-        escalated = converged_at is None
+        # Read the authoritative signal from the consensus mechanism —
+        # not "no round converged". SingleRoundConsensus always runs
+        # the escalate step (its DisagreementSurface is authoritative)
+        # even when round 1 happens to converge byte-identically.
+        escalated = consensus.picked_via_escalation
 
     return CellMetrics(
         incremental_commits_attempted=commits_attempted,

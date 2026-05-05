@@ -95,20 +95,27 @@ def _mean(values: Iterable[float]) -> float:
 
 
 def _convergence_rate(cells: Sequence[CellResult]) -> float:
-    """Fraction of cells where convergence fired (vs escalated or
-    convergence-not-applicable).
+    """Fraction of consensus-running cells where the protocol resolved
+    by convergence (escalation NOT invoked).
 
     Cells without a consensus phase (e.g., INCREMENTAL_ONLY) don't
     count toward the denominator — the rate is meaningful only over
     cells that actually ran consensus. If no cells ran consensus,
     returns 0.0.
+
+    Reads the authoritative ``escalation_invoked`` flag rather than
+    inferring from ``convergence_round_converged``. Under the
+    post-Phase-3 semantics, :class:`SingleRoundConsensus`'s escalate
+    step is always-runs and authoritative — a round that happens to
+    be byte-identical there isn't "the protocol converging," because
+    the surface is the only path to the applied pick. Inferring from
+    ``converged_at_round`` would over-count single-round as
+    converging.
     """
     relevant = [c for c in cells if c.metrics.convergence_rounds_run > 0]
     if not relevant:
         return 0.0
     converged = sum(
-        1
-        for c in relevant
-        if c.metrics.convergence_round_converged is not None
+        1 for c in relevant if not c.metrics.escalation_invoked
     )
     return converged / len(relevant)

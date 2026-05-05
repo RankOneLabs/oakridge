@@ -179,7 +179,35 @@ async def test_run_cell_with_consensus_records_convergence(
     # Consensus phase ran and converged in round 1.
     assert result.metrics.convergence_rounds_run >= 1
     assert result.metrics.convergence_round_converged == 1
+    # Multi-round skip_when fires → escalate didn't run → not escalated.
     assert result.metrics.escalation_invoked is False
+
+
+async def test_run_cell_singleround_marks_escalation_even_when_converged(
+    tmp_path: Path,
+) -> None:
+    """SingleRoundConsensus's escalate step always runs and is
+    authoritative — escalation_invoked must be True even when round 1
+    happens to be byte-identical. Inferring from converged_at_round
+    alone would undercount escalations and distort cross-condition
+    aggregation."""
+    target = prose_target(seed_content="seed")
+    condition = ensemble_with_single_round(n=3)
+
+    def proposer_factory(_agent: Agent) -> _ConvergingProposer:
+        return _ConvergingProposer("identical content")
+
+    result = await run_cell(
+        target=target,
+        condition=condition,
+        proposer_factory=proposer_factory,
+        output_dir=tmp_path,
+        tracer=StdoutTracer(color=False),
+    )
+    # Round 1 may report converged (byte-identical proposals)...
+    assert result.metrics.convergence_round_converged == 1
+    # ...but the surface still ran and produced the applied pick.
+    assert result.metrics.escalation_invoked is True
 
 
 async def test_run_cell_runs_grader_when_factory_supplied(

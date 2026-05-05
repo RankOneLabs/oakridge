@@ -78,6 +78,12 @@ def run_command_check(
             )
         except subprocess.TimeoutExpired:
             return 0.0
+        except OSError:
+            # FileNotFoundError when the executable isn't on PATH;
+            # PermissionError when it isn't executable; etc. Treat
+            # any of these as a failed check rather than letting the
+            # exception escape and abort the grader.
+            return 0.0
         result = CommandResult(
             returncode=completed.returncode,
             stdout=completed.stdout or "",
