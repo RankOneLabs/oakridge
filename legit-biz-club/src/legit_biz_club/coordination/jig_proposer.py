@@ -70,7 +70,11 @@ class JigProposer:
         *,
         agent: Agent,
         brief: Brief,
-        artifact: Artifact,
+        # ``artifact`` is accepted to satisfy the Proposer protocol but
+        # not used in v1 prompt assembly — ``current_content`` already
+        # carries everything the model needs. Kept on the signature so
+        # protocol consumers don't have to special-case JigProposer.
+        artifact: Artifact,  # noqa: ARG002
         current_content: str,
         current_version: str,
         peer_proposals: list[Proposal] | None = None,

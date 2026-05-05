@@ -180,12 +180,9 @@ async def test_incremental_then_converge_protocol(tmp_path: Path) -> None:
     project = _make_project(
         tmp_path, agents, CoordinationProtocol.INCREMENTAL_THEN_CONVERGE
     )
-    # Counting proposers run during incremental (each call produces unique
-    # content). For consensus we want a quick converge; switch them to
-    # IdenticalProposer for the consensus phase by exhausting budgets and
-    # relying on the reset. Actually simpler: use IdenticalProposer
-    # throughout — incremental still progresses (each "shared" write
-    # is the same content but mediator only counts apply()s).
+    # IdenticalProposer in both phases: incremental terminates by
+    # policy (mediator counts each apply regardless of identical
+    # content), then consensus converges quickly on the same content.
     proposers: dict[str, _IdenticalProposer] = {
         a.id: _IdenticalProposer("shared") for a in agents
     }

@@ -132,7 +132,7 @@ class ProjectCoordinator:
                 # converged / escalation-picked proposal — consensus
                 # has no retry semantics, so the budget check is
                 # meaningless for a one-shot apply.
-                self.mediator.reset_retry_budgets()
+                await self.mediator.reset_retry_budgets()
             consensus_result = await self._run_consensus()
 
         return ProjectRunResult(

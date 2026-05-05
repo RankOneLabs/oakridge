@@ -152,7 +152,7 @@ async def test_reset_retry_budgets_restores_initial(mediator: Mediator) -> None:
         )
     assert mediator.retry_remaining["a-1"] == 0
 
-    mediator.reset_retry_budgets()
+    await mediator.reset_retry_budgets()
 
     # All agents back to initial budget.
     assert mediator.retry_remaining["a-1"] == 3
