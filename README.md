@@ -25,7 +25,7 @@ For the v0 operator surface (single-agent CC sessions over Tailscale):
 
 ```bash
 bun install
-./kbbl/scripts/cc-start /path/to/your/repo
+./kbbl/scripts/kbbl-start /path/to/your/repo
 ```
 
 See `kbbl/README.md` for full usage.

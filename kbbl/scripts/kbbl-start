@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [ $# -lt 1 ]; then
-  echo "usage: cc-start <workdir> [--port=<port>] [--host=<addr>]" >&2
+  echo "usage: kbbl-start <workdir> [--port=<port>] [--host=<addr>]" >&2
   echo "  --host defaults to 127.0.0.1; pass 0.0.0.0 for tailnet/phone access" >&2
   exit 1
 fi
@@ -11,7 +11,7 @@ WORKDIR="$1"
 shift
 
 if [ ! -d "$WORKDIR" ]; then
-  echo "cc-start: workdir not found: $WORKDIR" >&2
+  echo "kbbl-start: workdir not found: $WORKDIR" >&2
   exit 1
 fi
 

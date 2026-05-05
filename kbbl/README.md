@@ -15,7 +15,7 @@ The PWA opens to a session list backed by a `/inbox` delta stream (snapshot + cr
 ```bash
 bun install
 bun run build:pwa
-./scripts/cc-start /path/to/your/repo
+./scripts/kbbl-start /path/to/your/repo
 ```
 
 Defaults to `127.0.0.1:8788` — open `http://localhost:8788/` in a browser on the same machine. From the session list, click **+ New session** to spawn a session in the workdir of your choice.
@@ -23,18 +23,18 @@ Defaults to `127.0.0.1:8788` — open `http://localhost:8788/` in a browser on t
 For phone/tablet access over Tailscale, bind all interfaces:
 
 ```bash
-./scripts/cc-start /path/to/your/repo --host=0.0.0.0
+./scripts/kbbl-start /path/to/your/repo --host=0.0.0.0
 ```
 
 Then open `http://<machine>:8788/` on your phone. Add to Home Screen for a full-screen standalone app. Only do this on networks where every reachable peer is trusted (Tailscale-only, or a LAN you control) — control endpoints are unauthenticated in v0.
 
-The workdir passed to `cc-start` is the *default* for new sessions; each session can pick its own workdir from the **+ New session** form.
+The workdir passed to `kbbl-start` is the *default* for new sessions; each session can pick its own workdir from the **+ New session** form.
 
 ## Development
 
 ```bash
 # Terminal 1: server with the agent subprocesses
-./scripts/cc-start /path/to/your/repo
+./scripts/kbbl-start /path/to/your/repo
 
 # Terminal 2: Vite dev server with HMR (proxies API calls to :8788)
 bun run dev:pwa
@@ -43,7 +43,7 @@ bun run dev:pwa
 
 ## Running
 
-The primary flow is `./scripts/cc-start <workdir>` in a terminal — that's the *server*. Adding more sessions happens in the PWA (or via `POST /sessions`); a second `cc-start` would just collide on the port.
+The primary flow is `./scripts/kbbl-start <workdir>` in a terminal — that's the *server*. Adding more sessions happens in the PWA (or via `POST /sessions`); a second `kbbl-start` would just collide on the port.
 
 Ctrl-C stops the server; all live agent subprocesses die with it. Ended sessions remain readable via their on-disk JSONL the next time the server starts.
 
@@ -54,7 +54,7 @@ If you want to bound resource use (shared box, or a box hosting other workloads)
 ```bash
 systemd-run --user --scope --unit=kbbl \
   -p MemoryMax=2G -p CPUQuota=200% \
-  ./scripts/cc-start /path/to/your/repo
+  ./scripts/kbbl-start /path/to/your/repo
 ```
 
 Stop with `systemctl --user stop kbbl`. Not needed on a dedicated workstation.
@@ -81,7 +81,7 @@ Stop with `systemctl --user stop kbbl`. Not needed on a dedicated workstation.
 - `core/pwa/` — React + Vite client (responsive across phone / tablet / desktop), built to `core/pwa/dist/` and served statically by Hono. Hash routing (`#sid=…`), no router library.
 - `core/runtime-interface.ts` — the typed contract between core and runtime adapters (draft, not yet load-bearing). Sharpened when the second adapter lands.
 - `adapters/claude-code/` — Claude Code runtime adapter. Currently most CC-specific code is still inline in core; it migrates here in a follow-up PR.
-- `scripts/cc-start` — launcher that validates the workdir and execs `bun run core/server.ts`. Will be renamed to `kbbl-start` in a follow-up.
+- `scripts/kbbl-start` — launcher that validates the workdir and execs `bun run core/server.ts`.
 - `data/sessions/` — one JSONL transcript per session (gitignored)
 
 ## Security posture

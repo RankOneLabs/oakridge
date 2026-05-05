@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# cc-deck PreToolUse approval gate.
+# kbbl PreToolUse approval gate.
 # Invoked by Claude Code as a PreToolUse hook. Reads the hook input JSON
-# on stdin, forwards it to the cc-deck server, blocks on the operator's
+# on stdin, forwards it to the kbbl server, blocks on the operator's
 # decision, echoes the server's ready-to-emit hookSpecificOutput reply.
 set -euo pipefail
 
-PORT="${CC_DECK_PORT:-8788}"
+PORT="${KBBL_PORT:-8788}"
 INPUT="$(cat)"
 
 # -sSf: silent but show curl's own errors on stderr; -f fails on HTTP 4xx/5xx
@@ -20,5 +20,5 @@ if RESPONSE=$(curl -sSf -X POST \
   "http://127.0.0.1:${PORT}/hook/approval"); then
   printf '%s' "$RESPONSE"
 else
-  printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"cc-deck gate could not reach server"}}'
+  printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"kbbl gate could not reach server"}}'
 fi

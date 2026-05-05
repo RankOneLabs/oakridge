@@ -1,6 +1,6 @@
 {
-  "name": "cc-deck",
-  "short_name": "cc-deck",
+  "name": "kbbl",
+  "short_name": "kbbl",
   "description": "Mobile command center for Claude Code",
   "start_url": "/",
   "display": "standalone",

@@ -115,7 +115,7 @@ async function applyApproval(
       await session.allowlistTool(pending.toolName);
     } catch (err) {
       console.error(
-        `cc-deck: allowlist side-effect for ${pending.toolName} failed: ${
+        `kbbl: allowlist side-effect for ${pending.toolName} failed: ${
           err instanceof Error ? err.message : String(err)
         }`,
       );

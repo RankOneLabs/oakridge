@@ -193,7 +193,7 @@ export class Session {
       this.callbacks.onCcSidObserved?.(this, id);
     } catch (e) {
       console.error(
-        `cc-deck: onCcSidObserved callback failed: ${
+        `kbbl: onCcSidObserved callback failed: ${
           e instanceof Error ? e.message : String(e)
         }`,
       );
@@ -228,7 +228,7 @@ export class Session {
       this.callbacks.onStatusChanged?.(this, status);
     } catch (e) {
       console.error(
-        `cc-deck: onStatusChanged callback failed: ${
+        `kbbl: onStatusChanged callback failed: ${
           e instanceof Error ? e.message : String(e)
         }`,
       );
@@ -260,7 +260,7 @@ export class Session {
       // to "ended" and closed (or is about to close) the writer. Log and
       // return a sentinel instead of queueing work onto a doomed writer.
       console.error(
-        `cc-deck: dropping emit(${type}) on ended session ${this.oakridgeSid}`,
+        `kbbl: dropping emit(${type}) on ended session ${this.oakridgeSid}`,
       );
       return { id: -1, type, ts: new Date().toISOString(), payload };
     }
@@ -279,7 +279,7 @@ export class Session {
       this.callbacks.onLastActivityChanged?.(this, evt.ts);
     } catch (e) {
       console.error(
-        `cc-deck: onLastActivityChanged callback failed: ${
+        `kbbl: onLastActivityChanged callback failed: ${
           e instanceof Error ? e.message : String(e)
         }`,
       );
@@ -361,7 +361,7 @@ export class Session {
 
     const fatalPumpError = (where: string) => (err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(`cc-deck: ${where} [${this.oakridgeSid}] failed: ${msg}`);
+      console.error(`kbbl: ${where} [${this.oakridgeSid}] failed: ${msg}`);
       this.shutdownSignalReceived = true;
       activeProc.kill();
     };
@@ -382,7 +382,7 @@ export class Session {
               await this.classifyEvent(raw, this);
             } catch (e) {
               console.error(
-                `cc-deck: runtime classifier failed: ${
+                `kbbl: runtime classifier failed: ${
                   e instanceof Error ? e.message : String(e)
                 }`,
               );
@@ -432,7 +432,7 @@ export class Session {
     this.exitPromise.catch((err) => {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(
-        `cc-deck: session ${this.oakridgeSid} shutdown failed: ${msg}`,
+        `kbbl: session ${this.oakridgeSid} shutdown failed: ${msg}`,
       );
     });
   }
@@ -470,7 +470,7 @@ export class Session {
         });
       } catch (err) {
         console.error(
-          `cc-deck: failed to emit terminal permission_resolved for ${requestId}: ${
+          `kbbl: failed to emit terminal permission_resolved for ${requestId}: ${
             err instanceof Error ? err.message : String(err)
           }`,
         );
@@ -511,7 +511,7 @@ export class Session {
       await this.emitQueue;
     } catch (err) {
       console.error(
-        `cc-deck: emit queue drain failed for ${this.oakridgeSid}: ${
+        `kbbl: emit queue drain failed for ${this.oakridgeSid}: ${
           err instanceof Error ? err.message : String(err)
         }`,
       );
@@ -520,7 +520,7 @@ export class Session {
       await this.jsonlWriter.end();
     } catch (err) {
       console.error(
-        `cc-deck: jsonl writer end failed for ${this.oakridgeSid}: ${
+        `kbbl: jsonl writer end failed for ${this.oakridgeSid}: ${
           err instanceof Error ? err.message : String(err)
         }`,
       );
@@ -529,7 +529,7 @@ export class Session {
       this.callbacks.onEnded?.(this);
     } catch (e) {
       console.error(
-        `cc-deck: onEnded callback failed: ${
+        `kbbl: onEnded callback failed: ${
           e instanceof Error ? e.message : String(e)
         }`,
       );
@@ -573,7 +573,7 @@ export class Session {
       this.callbacks.onPendingCountChanged?.(this, this.pendingApprovals.size);
     } catch (e) {
       console.error(
-        `cc-deck: onPendingCountChanged callback failed: ${
+        `kbbl: onPendingCountChanged callback failed: ${
           e instanceof Error ? e.message : String(e)
         }`,
       );
@@ -609,7 +609,7 @@ export class Session {
       this.callbacks.onYoloChanged?.(this, this.yoloMode);
     } catch (e) {
       console.error(
-        `cc-deck: onYoloChanged callback failed: ${
+        `kbbl: onYoloChanged callback failed: ${
           e instanceof Error ? e.message : String(e)
         }`,
       );

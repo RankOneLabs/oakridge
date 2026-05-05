@@ -10,7 +10,7 @@ import { makeBuildSpawnCmd, writeCcSettings } from "./spawn";
 
 export interface CreateClaudeCodeRuntimeOpts {
   claudeBin: string;
-  /** Server's HTTP port — passed into the gate via CC_DECK_PORT env var. */
+  /** Server's HTTP port — passed into the gate via KBBL_PORT env var. */
   port: number;
   /** Directory where the generated settings.json lives. */
   dataDir: string;
