@@ -47,6 +47,7 @@ class SessionSnapshot(_KbblModel):
     cc_sid: str | None = None
     parent_cc_sid: str | None = None
     parent_oakridge_sid: str | None = None
+    artifact_id: str | None = None
     pending_count: int
     yolo_mode: bool
     allowed_tools: list[str]
