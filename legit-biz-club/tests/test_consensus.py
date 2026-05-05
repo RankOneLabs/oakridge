@@ -337,6 +337,104 @@ async def test_wrong_agent_id_proposer_raises(tmp_path: Path) -> None:
         await mechanism.execute()
 
 
+async def test_singleround_uses_surface_even_when_round_converges(
+    tmp_path: Path,
+) -> None:
+    """SingleRoundConsensus's escalate is always_runs=True, so the
+    DisagreementSurface must be authoritative even if round 1 happens
+    to converge. The apply step prefers ``ctx["escalate"]`` over the
+    converged-round-pick path for exactly this reason."""
+
+    class _CountingPicker:
+        """Wraps StableOrderingByAgentId to verify the surface ran."""
+
+        def __init__(self) -> None:
+            self.calls = 0
+            self._inner = StableOrderingByAgentId()
+
+        async def pick(self, proposals):  # type: ignore[no-untyped-def]
+            self.calls += 1
+            return await self._inner.pick(proposals)
+
+    agents = _make_agents(tmp_path, 3)
+    project = _make_project(tmp_path, agents)
+    # Identical content in round 1 → would converge under multi-round,
+    # but single-round must still ask the surface to pick.
+    proposers: dict[str, _IdenticalProposer] = {
+        a.id: _IdenticalProposer("same content") for a in agents
+    }
+    mediator = Mediator(project.artifact, [a.id for a in agents])
+    surface = _CountingPicker()
+    mechanism = SingleRoundConsensus(
+        project=project,
+        agents=agents,
+        proposers=proposers,
+        mediator=mediator,
+        round_budget_policy=StringEqualConvergence(max_rounds=1),
+        disagreement_surface=surface,  # type: ignore[arg-type]
+        tracer=StdoutTracer(color=False),
+    )
+    result = await mechanism.execute()
+    assert surface.calls == 1, (
+        "SingleRoundConsensus must consult the DisagreementSurface "
+        "even when round 1 converges"
+    )
+    assert result.apply_outcome.result == ProposalResult.APPLIED
+    # Rationale comes from the surface (rather than "converged at round N")
+    # confirming the apply step preferred the surface's pick.
+    assert "stable-ordering-by-agent-id" in result.rationale
+
+
+async def test_duplicate_enrolled_agent_id_proposer_raises(
+    tmp_path: Path,
+) -> None:
+    """A buggy Proposer that returns another enrolled agent's id (so
+    one agent appears twice and another is missing) must surface as a
+    programmer error — set-membership-only checks would silently let
+    this slip past and skew convergence/picking."""
+
+    class _DupeAgentProposer:
+        """Always returns the FIRST agent's id regardless of who's calling."""
+
+        def __init__(self, fixed_agent_id: str) -> None:
+            self.fixed = fixed_agent_id
+
+        async def propose(
+            self,
+            *,
+            agent: Agent,
+            brief: Brief,
+            artifact: Artifact,
+            current_content: str,
+            current_version: str,
+            peer_proposals: list[Proposal] | None = None,
+        ) -> Proposal:
+            return Proposal(
+                agent_id=self.fixed,
+                based_on_version=current_version,
+                new_content="x",
+            )
+
+    agents = _make_agents(tmp_path, 3)
+    project = _make_project(tmp_path, agents)
+    # Every proposer returns agent[0].id → duplicates + 2 missing.
+    proposers: dict[str, _DupeAgentProposer] = {
+        a.id: _DupeAgentProposer(agents[0].id) for a in agents
+    }
+    mediator = Mediator(project.artifact, [a.id for a in agents])
+    mechanism = MultiRoundConsensus(
+        project=project,
+        agents=agents,
+        proposers=proposers,
+        mediator=mediator,
+        round_budget_policy=StringEqualConvergence(max_rounds=1),
+        disagreement_surface=StableOrderingByAgentId(),
+        tracer=StdoutTracer(color=False),
+    )
+    with pytest.raises(ValueError, match="don't match enrolled agents"):
+        await mechanism.execute()
+
+
 async def test_emit_failures_do_not_abort_consensus(tmp_path: Path) -> None:
     """Same safe-emit pattern as the incremental coordinator — a flaky
     HTTP emit shouldn't kill a consensus run."""

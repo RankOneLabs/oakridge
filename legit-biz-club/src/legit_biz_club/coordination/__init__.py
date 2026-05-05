@@ -16,10 +16,12 @@ that dispatches based on the project's :class:`CoordinationProtocol`:
   — automated by default; human-in-loop is an optional alternative
   strategy.
 
-Real LLM calls flow through :class:`JigProposer`, which wraps
-``jig.run_agent`` and parses the model's JSON envelope into a
-:class:`Proposal`. Tests substitute a stub :class:`LLMClient` to avoid
-real API calls.
+Real LLM calls flow through :class:`JigProposer`, which dispatches an
+``LLMClient`` via ``jig.llm.factory.from_model`` and calls
+``LLMClient.complete()`` directly (one shot per propose() call — no
+tool-loop, no agent-state). The model's JSON envelope is parsed into
+a :class:`Proposal`. Tests substitute a stub :class:`LLMClient` to
+avoid real API calls.
 """
 
 from legit_biz_club.coordination.consensus import (

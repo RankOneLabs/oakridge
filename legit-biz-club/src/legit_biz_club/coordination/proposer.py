@@ -1,9 +1,11 @@
 """Proposer protocol: how the coordinator asks an agent for a change.
 
 Abstracts the "agent reads context and produces a proposal" step. The
-production implementation wraps ``jig.run_agent`` with the project
-brief and current artifact content as inputs; tests use a small
-deterministic stub.
+production implementation (:class:`JigProposer`) dispatches a jig
+``LLMClient`` via ``jig.llm.factory.from_model`` and calls
+``LLMClient.complete()`` directly with a structured user message
+assembled from the project brief and current artifact content. Tests
+use a small deterministic stub.
 
 A single :class:`Proposer` protocol covers both incremental and
 convergence modes. Incremental mode and convergence round 1 pass

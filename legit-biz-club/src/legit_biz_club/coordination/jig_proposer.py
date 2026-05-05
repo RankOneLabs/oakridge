@@ -188,6 +188,11 @@ def _parse_response(content: str) -> dict[str, str]:
     isn't valid JSON. The malformed-response path raises rather than
     silently substituting defaults; prompt-tuning is the right
     response when this happens.
+
+    Returns a normalized dict containing only the expected keys
+    (``new_content`` always; ``rationale`` if supplied and a string).
+    Any other top-level keys the model emits are dropped so unexpected
+    nested objects can't sneak through to downstream consumers.
     """
     stripped = content.strip()
     try:
@@ -205,9 +210,19 @@ def _parse_response(content: str) -> dict[str, str]:
         raise ProposerOutputParseError(
             "agent response missing required 'new_content' field"
         )
-    if not isinstance(data["new_content"], str):
+    new_content = data["new_content"]
+    if not isinstance(new_content, str):
         raise ProposerOutputParseError(
             f"'new_content' must be a string, got "
-            f"{type(data['new_content']).__name__}"
+            f"{type(new_content).__name__}"
         )
-    return data
+    normalized: dict[str, str] = {"new_content": new_content}
+    if "rationale" in data:
+        rationale = data["rationale"]
+        if not isinstance(rationale, str):
+            raise ProposerOutputParseError(
+                f"'rationale' must be a string when present, got "
+                f"{type(rationale).__name__}"
+            )
+        normalized["rationale"] = rationale
+    return normalized

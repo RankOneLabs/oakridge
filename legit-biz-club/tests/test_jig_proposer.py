@@ -217,6 +217,51 @@ async def test_parse_failure_when_new_content_is_not_string(
         )
 
 
+async def test_parse_failure_when_rationale_is_not_string(
+    tmp_path: Path,
+) -> None:
+    """A non-string `rationale` would otherwise pass through silently
+    and undermine the `malformed output raises` contract."""
+    agent = _agent(tmp_path)
+    stub = _StubLLM(
+        response_content='{"new_content": "x", "rationale": {"nested": "obj"}}'
+    )
+    proposer = JigProposer(agent, llm=stub)
+    with pytest.raises(
+        ProposerOutputParseError, match="rationale.*must be a string"
+    ):
+        await proposer.propose(
+            agent=agent,
+            brief=_brief(),
+            artifact=_artifact(tmp_path),
+            current_content="seed",
+            current_version="v0",
+        )
+
+
+async def test_parse_drops_unexpected_top_level_keys(tmp_path: Path) -> None:
+    """Extra top-level keys the model emits don't sneak through."""
+    agent = _agent(tmp_path)
+    stub = _StubLLM(
+        response_content=(
+            '{"new_content": "x", "rationale": "ok", '
+            '"extra_field": "should not appear"}'
+        )
+    )
+    proposer = JigProposer(agent, llm=stub)
+    proposal = await proposer.propose(
+        agent=agent,
+        brief=_brief(),
+        artifact=_artifact(tmp_path),
+        current_content="seed",
+        current_version="v0",
+    )
+    # Only new_content + rationale make it onto the Proposal; extra
+    # keys don't get attached anywhere downstream.
+    assert proposal.new_content == "x"
+    assert proposal.rationale == "ok"
+
+
 # --- prompt assembly ----------------------------------------------------
 
 

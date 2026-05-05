@@ -295,16 +295,28 @@ class ConsensusMechanism(ABC):
     def _make_apply_step(self) -> Step:
         """Build the final apply step.
 
-        Determines the picked proposal: when convergence fired, picks
-        the converged round's lowest-agent_id proposal (all identical
-        by definition); when escalation ran, uses the
-        DisagreementSurface's pick. Applies via the mediator.
+        Resolution order: if a :class:`DisagreementSurface` produced a
+        pick (the ``escalate`` step ran), that pick is authoritative —
+        the surface's strategy is what the project configured for
+        choosing the winner, and bypassing it would silently override
+        the operator's intent. If escalation didn't run (multi-round
+        converged early via ``skip_when``), pick the converged round's
+        lowest-agent_id proposal (all identical by definition).
+
+        The "escalation wins when present" rule is what keeps
+        :class:`SingleRoundConsensus` honest: that mechanism's escalate
+        step is ``always_runs=True``, so the surface always gets to
+        pick — even if round 1 happened to converge.
         """
 
         async def fn(ctx: dict[str, Any]) -> dict[str, Any]:
             picked: Proposal
             rationale: str
-            if ctx.get("converged"):
+            if "escalate" in ctx:
+                pick_result: PickResult = ctx["escalate"]
+                picked = pick_result.proposal
+                rationale = pick_result.rationale
+            elif ctx.get("converged"):
                 converged_idx: int = ctx["converged_at_round"]
                 round_outcome: RoundOutcome = ctx[f"round_{converged_idx}"]
                 picked = min(
@@ -312,9 +324,12 @@ class ConsensusMechanism(ABC):
                 )
                 rationale = f"converged at round {converged_idx}"
             else:
-                pick_result: PickResult = ctx["escalate"]
-                picked = pick_result.proposal
-                rationale = pick_result.rationale
+                # Pipeline construction bug: neither escalate ran nor
+                # any round converged. Surface as a hard failure.
+                raise RuntimeError(
+                    "apply step reached without a converged round or "
+                    "an escalation pick — pipeline construction bug"
+                )
             outcome = await self.mediator.apply(picked)
             if outcome.result != ProposalResult.APPLIED:
                 logger.warning(
@@ -334,17 +349,24 @@ class ConsensusMechanism(ABC):
         self, proposals: list[Proposal]
     ) -> None:
         """A buggy Proposer that returns the wrong agent_id can't be
-        retried meaningfully (the mediator would REJECTED_VALIDATION it
-        and the consensus loop has no retry semantics). Surface as a
-        programmer error immediately."""
-        agent_ids = {a.id for a in self.agents}
-        for proposal in proposals:
-            if proposal.agent_id not in agent_ids:
-                raise ValueError(
-                    f"Proposer returned a proposal with agent_id="
-                    f"{proposal.agent_id!r} that does not match any "
-                    "enrolled agent — programmer error in the Proposer"
-                )
+        retried meaningfully (the mediator would REJECTED_VALIDATION
+        it and the consensus loop has no retry semantics). Surface as
+        a programmer error immediately.
+
+        Multiset comparison rather than set membership: catches both
+        the unknown-id case (agent_id not enrolled) AND the
+        duplicate-id case (same enrolled agent_id twice with one
+        missing). The latter would silently skew convergence detection
+        and the disagreement-surface pick — fail loud instead.
+        """
+        expected = sorted(a.id for a in self.agents)
+        actual = sorted(p.agent_id for p in proposals)
+        if expected != actual:
+            raise ValueError(
+                "proposal agent_ids don't match enrolled agents — "
+                f"expected {expected}, got {actual} — "
+                "programmer error in one of the Proposers"
+            )
 
     async def _safe_emit(
         self, kind: str, payload: dict[str, object]
