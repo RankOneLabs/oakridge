@@ -15,6 +15,7 @@ pass a no-op emitter; production wires it to the kbbl adapter's
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
@@ -26,6 +27,8 @@ from legit_biz_club.coordination.proposal import (
 from legit_biz_club.coordination.proposer import Proposer
 from legit_biz_club.coordination.termination import TerminationPolicy
 from legit_biz_club.core.models import Agent, Project
+
+logger = logging.getLogger(__name__)
 
 WorkspaceEventEmitter = Callable[[str, dict[str, object]], Awaitable[None]]
 """Callback for emitting workspace events.
@@ -93,6 +96,20 @@ class IncrementalCoordinator:
                 f"(agents={sorted(agent_ids)}, "
                 f"enrollments={sorted(enrollment_ids)})"
             )
+        # Mediator must know about every enrolled agent or its retry/
+        # commit dicts will silently report 0 budget for the missing
+        # agent, which ``_agent_exhausted`` then treats as already-done.
+        # The run could terminate via "all_exhausted" without ever
+        # giving an enrolled agent a turn. Same fail-loud principle as
+        # above.
+        mediator_ids = set(mediator.retry_remaining.keys())
+        if agent_ids != mediator_ids:
+            raise ValueError(
+                "mediator must be initialized with the same agent ids "
+                "as the coordinator's agents "
+                f"(agents={sorted(agent_ids)}, "
+                f"mediator={sorted(mediator_ids)})"
+            )
         self.project = project
         self.agents = agents
         self.proposers = proposers
@@ -102,7 +119,7 @@ class IncrementalCoordinator:
 
     async def run(self) -> IncrementalRunResult:
         outcomes: list[ProposalOutcome] = []
-        await self._emit(
+        await self._safe_emit(
             "incremental_started",
             {
                 "agent_ids": [a.id for a in self.agents],
@@ -138,7 +155,7 @@ class IncrementalCoordinator:
             if mid_round_terminated:
                 # Outer-loop top will re-detect and break with terminated_by="policy".
                 continue
-        await self._emit(
+        await self._safe_emit(
             "incremental_terminated",
             {
                 "terminated_by": terminated_by,
@@ -186,7 +203,7 @@ class IncrementalCoordinator:
         )
 
     async def _emit_outcome(self, outcome: ProposalOutcome) -> None:
-        await self._emit(
+        await self._safe_emit(
             _RESULT_TO_EVENT_KIND[outcome.result],
             {
                 "agent_id": outcome.proposal.agent_id,
@@ -195,3 +212,23 @@ class IncrementalCoordinator:
                 "new_version": outcome.new_version,
             },
         )
+
+    async def _safe_emit(self, kind: str, payload: dict[str, object]) -> None:
+        """Emit, but never abort the coordination loop on emit failure.
+
+        In production ``self._emit`` is wired to an HTTP call (the kbbl
+        adapter's ``post_workspace_event``); a transient kbbl outage
+        would otherwise stop the whole project mid-run even though the
+        underlying proposal already mediated successfully. Workspace
+        events are best-effort observability — losing one is recoverable
+        (legit-biz-club is the source of truth for project state); losing
+        the rest of the run is not.
+        """
+        try:
+            await self._emit(kind, payload)
+        except Exception as e:
+            logger.warning(
+                "workspace event emit failed for kind=%s: %s",
+                kind,
+                e,
+            )

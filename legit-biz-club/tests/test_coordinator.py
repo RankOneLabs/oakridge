@@ -154,6 +154,56 @@ async def test_constructor_validates_agents_match_enrollments(
         )
 
 
+async def test_constructor_validates_mediator_agents(tmp_path: Path) -> None:
+    """If the Mediator is missing an enrolled agent, _agent_exhausted
+    treats the agent as already-done (retry_remaining.get returns 0).
+    The run could terminate via all_exhausted without ever giving the
+    missing agent a turn — fail loud at construction time."""
+    agents = _make_agents(tmp_path, 2)
+    project = _make_project(tmp_path, agents)
+    proposers: dict[str, _CountingProposer] = {
+        a.id: _CountingProposer() for a in agents
+    }
+    # Mediator only knows about the first agent.
+    mediator = Mediator(project.artifact, [agents[0].id])
+    with pytest.raises(ValueError, match="mediator must be initialized"):
+        IncrementalCoordinator(
+            project=project,
+            agents=agents,
+            proposers=proposers,
+            mediator=mediator,
+            termination_policy=KCommitsPerAgent(k=1),
+        )
+
+
+async def test_emit_failures_do_not_abort_loop(tmp_path: Path) -> None:
+    """Production emit is wired to an HTTP call; a transient kbbl outage
+    must not stop a coordination run mid-flight after the proposal
+    already mediated successfully."""
+
+    async def flaky_emit(_kind: str, _payload: dict[str, object]) -> None:
+        raise RuntimeError("simulated kbbl outage")
+
+    agents = _make_agents(tmp_path, 2)
+    project = _make_project(tmp_path, agents)
+    proposers: dict[str, _CountingProposer] = {
+        a.id: _CountingProposer() for a in agents
+    }
+    mediator = Mediator(project.artifact, [a.id for a in agents], retry_budget=3)
+    coordinator = IncrementalCoordinator(
+        project=project,
+        agents=agents,
+        proposers=proposers,
+        mediator=mediator,
+        termination_policy=KCommitsPerAgent(k=2),
+        emit=flaky_emit,
+    )
+    # Loop completes despite every emit raising — all 4 commits land.
+    result = await coordinator.run()
+    assert result.terminated_by == "policy"
+    assert all(c == 2 for c in result.final_commit_counts.values())
+
+
 async def test_step_raises_on_wrong_agent_id_proposal(tmp_path: Path) -> None:
     """A buggy Proposer returning the wrong agent_id is a programmer error
     — surface immediately rather than spinning on REJECTED_VALIDATION

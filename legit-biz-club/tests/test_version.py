@@ -41,3 +41,14 @@ def test_code_artifact_raises(tmp_path: Path) -> None:
     artifact = Artifact(type=ArtifactType.CODE, path=code_dir)
     with pytest.raises(NotImplementedError):
         compute_version(artifact)
+
+
+def test_code_artifact_with_content_still_raises(tmp_path: Path) -> None:
+    """The content shortcut must not bypass the artifact-type check —
+    callers that have content for a CODE artifact should still hit
+    NotImplementedError, not silently get a hash."""
+    code_dir = tmp_path / "code"
+    code_dir.mkdir()
+    artifact = Artifact(type=ArtifactType.CODE, path=code_dir)
+    with pytest.raises(NotImplementedError):
+        compute_version(artifact, content="some bytes")

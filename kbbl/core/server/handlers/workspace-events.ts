@@ -48,10 +48,18 @@ export function mountWorkspaceEventsRoutes(
       ts?: unknown;
       payload?: unknown;
     };
-    if (typeof parsed.kind !== "string" || parsed.kind === "") {
+    // Trim before the empty check so whitespace-only values are rejected
+    // too — matches the artifact_id handling in handlers/sessions.ts and
+    // keeps subscribers from receiving events they can't meaningfully
+    // filter on.
+    const kind =
+      typeof parsed.kind === "string" ? parsed.kind.trim() : "";
+    if (kind === "") {
       return c.json({ error: "kind must be a non-empty string" }, 400);
     }
-    if (typeof parsed.projectId !== "string" || parsed.projectId === "") {
+    const projectId =
+      typeof parsed.projectId === "string" ? parsed.projectId.trim() : "";
+    if (projectId === "") {
       return c.json({ error: "projectId must be a non-empty string" }, 400);
     }
     // Default the timestamp to receipt time if the emitter omitted it.
@@ -84,8 +92,8 @@ export function mountWorkspaceEventsRoutes(
       payload = parsed.payload as Record<string, unknown>;
     }
     const event: WorkspaceEvent = {
-      kind: parsed.kind,
-      projectId: parsed.projectId,
+      kind,
+      projectId,
       ts,
       payload,
     };

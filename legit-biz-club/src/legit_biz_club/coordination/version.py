@@ -21,17 +21,21 @@ def compute_version(artifact: Artifact, *, content: str | None = None) -> str:
     for callers that already have the bytes in hand and want a single
     consistent read of disk + version. When omitted, reads the artifact
     from disk and hashes the bytes (PROSE only).
+
+    Artifact-type support is checked first so callers with content for
+    a CODE artifact still hit ``NotImplementedError`` rather than
+    silently getting a hash through the content shortcut.
     """
-    if content is not None:
-        return _hash_text(content)
-    if artifact.type == ArtifactType.PROSE:
-        return _hash_prose(artifact.path)
     if artifact.type == ArtifactType.CODE:
         raise NotImplementedError(
             "CODE incremental versioning is deferred; v1 incremental mode "
             "supports PROSE artifacts only"
         )
-    raise ValueError(f"unknown artifact type: {artifact.type}")
+    if artifact.type != ArtifactType.PROSE:
+        raise ValueError(f"unknown artifact type: {artifact.type}")
+    if content is not None:
+        return _hash_text(content)
+    return _hash_prose(artifact.path)
 
 
 def _hash_text(text: str) -> str:
