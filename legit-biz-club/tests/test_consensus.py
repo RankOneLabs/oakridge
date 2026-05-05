@@ -254,6 +254,133 @@ async def test_singleround_always_picks(tmp_path: Path) -> None:
 # --- constructor validation ------------------------------------------------
 
 
+async def test_constructor_rejects_duplicate_agents(tmp_path: Path) -> None:
+    """A duplicated agent in the agents list would collapse under
+    set(...) and silently bias round participation. Catch it loud."""
+    agents = _make_agents(tmp_path, 2)
+    duped = [agents[0], agents[0], agents[1]]  # agents[0] appears twice
+    project = _make_project(tmp_path, agents)
+    proposers: dict[str, _IdenticalProposer] = {
+        a.id: _IdenticalProposer() for a in agents
+    }
+    mediator = Mediator(project.artifact, [a.id for a in agents])
+    with pytest.raises(ValueError, match="agents must contain unique"):
+        MultiRoundConsensus(
+            project=project,
+            agents=duped,
+            proposers=proposers,
+            mediator=mediator,
+            round_budget_policy=StringEqualConvergence(),
+            disagreement_surface=StableOrderingByAgentId(),
+            tracer=StdoutTracer(color=False),
+        )
+
+
+async def test_constructor_rejects_duplicate_enrollments(
+    tmp_path: Path,
+) -> None:
+    """Same defense for the enrollments side: a duplicated
+    Enrollment.agent_id would slip past the original set comparison."""
+    agents = _make_agents(tmp_path, 2)
+    artifact_path = tmp_path / "draft.md"
+    artifact_path.write_text("seed", encoding="utf-8")
+    project = Project(
+        artifact=Artifact(type=ArtifactType.PROSE, path=artifact_path),
+        brief=Brief(target_spec="x", success_criteria=["y"]),
+        enrollments=[
+            Enrollment(agent_id=agents[0].id, project_id="p"),
+            Enrollment(agent_id=agents[0].id, project_id="p"),  # dupe
+            Enrollment(agent_id=agents[1].id, project_id="p"),
+        ],
+    )
+    proposers: dict[str, _IdenticalProposer] = {
+        a.id: _IdenticalProposer() for a in agents
+    }
+    mediator = Mediator(project.artifact, [a.id for a in agents])
+    with pytest.raises(
+        ValueError, match="project.enrollments must contain unique"
+    ):
+        MultiRoundConsensus(
+            project=project,
+            agents=agents,
+            proposers=proposers,
+            mediator=mediator,
+            round_budget_policy=StringEqualConvergence(),
+            disagreement_surface=StableOrderingByAgentId(),
+            tracer=StdoutTracer(color=False),
+        )
+
+
+async def test_peer_proposals_exclude_self_in_rounds_2_plus(
+    tmp_path: Path,
+) -> None:
+    """Each agent's prior proposal must not be passed back to itself
+    as 'peer' context — peers means other agents."""
+
+    captured_peer_ids_by_agent: dict[str, list[list[str]]] = {}
+
+    class _RecordingProposer:
+        """Records the peer_proposal agent_ids it was given on each call."""
+
+        def __init__(self) -> None:
+            self.calls: list[list[str] | None] = []
+
+        async def propose(
+            self,
+            *,
+            agent: Agent,
+            brief: Brief,
+            artifact: Artifact,
+            current_content: str,
+            current_version: str,
+            peer_proposals: list[Proposal] | None = None,
+        ) -> Proposal:
+            ids = (
+                None
+                if peer_proposals is None
+                else [p.agent_id for p in peer_proposals]
+            )
+            captured_peer_ids_by_agent.setdefault(agent.id, []).append(
+                ids if ids is not None else []
+            )
+            return Proposal(
+                agent_id=agent.id,
+                based_on_version=current_version,
+                new_content=f"r1-{agent.id}",  # unique per agent so no convergence
+            )
+
+    agents = _make_agents(tmp_path, 3)
+    project = _make_project(tmp_path, agents)
+    proposers: dict[str, _RecordingProposer] = {
+        a.id: _RecordingProposer() for a in agents
+    }
+    mediator = Mediator(project.artifact, [a.id for a in agents])
+    mechanism = MultiRoundConsensus(
+        project=project,
+        agents=agents,
+        proposers=proposers,
+        mediator=mediator,
+        round_budget_policy=StringEqualConvergence(max_rounds=2),
+        disagreement_surface=StableOrderingByAgentId(),
+        tracer=StdoutTracer(color=False),
+    )
+    await mechanism.execute()
+
+    # Round 1 (call index 0) every agent saw peer_proposals=None.
+    for agent in agents:
+        assert captured_peer_ids_by_agent[agent.id][0] == []
+
+    # Round 2 (call index 1) every agent saw the OTHER 2 agents' ids,
+    # never its own.
+    other_ids_by_agent = {
+        a.id: sorted(o.id for o in agents if o.id != a.id) for a in agents
+    }
+    for agent in agents:
+        round_2_peers = sorted(captured_peer_ids_by_agent[agent.id][1])
+        assert round_2_peers == other_ids_by_agent[agent.id]
+        assert agent.id not in round_2_peers
+
+
 async def test_constructor_validates_proposer_keys(tmp_path: Path) -> None:
     agents = _make_agents(tmp_path, 2)
     project = _make_project(tmp_path, agents)

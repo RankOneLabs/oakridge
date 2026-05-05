@@ -37,7 +37,20 @@ class RoundBudgetPolicy(ABC):
     def is_converged(self, proposals: Sequence[Proposal]) -> bool:
         """Return ``True`` if the round's proposals are equivalent
         enough to stop. Called once per round after every agent has
-        proposed."""
+        proposed.
+
+        **Contract:** when this returns ``True``, all proposals'
+        ``new_content`` fields MUST be byte-identical. The consensus
+        pipeline's apply step relies on this to safely pick any
+        proposal from the converged round (it picks the
+        lowest-agent_id one for stable ordering). v1's
+        :class:`StringEqualConvergence` enforces this directly. Future
+        looser-equivalence detectors (semantic, eval-equivalence) need
+        a separate canonical-pick hook on the policy — a v2+ concern;
+        attempting to mark non-identical proposals as converged today
+        risks the apply step landing on an arbitrary non-canonical
+        proposal.
+        """
 
 
 class StringEqualConvergence(RoundBudgetPolicy):

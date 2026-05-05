@@ -62,8 +62,13 @@ class JigProposer:
     ) -> None:
         self.agent = agent
         # Default to dispatching the LLMClient by model name. Tests can
-        # inject a stub via ``llm=`` to avoid real API calls.
-        self._llm: LLMClient = llm or from_model(agent.model)
+        # inject a stub via ``llm=`` to avoid real API calls. Use an
+        # explicit None check rather than ``llm or ...`` so a valid
+        # but falsey injected client (unlikely in practice but cheap
+        # to defend against) doesn't get silently overridden.
+        self._llm: LLMClient = (
+            llm if llm is not None else from_model(agent.model)
+        )
 
     async def propose(
         self,

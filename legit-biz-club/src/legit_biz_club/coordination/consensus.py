@@ -106,12 +106,28 @@ class ConsensusMechanism(ABC):
         tracer: TracingLogger,
         emit: WorkspaceEventEmitter | None = None,
     ) -> None:
-        agent_ids = {a.id for a in agents}
+        # Validate uniqueness BEFORE the set-based comparisons below.
+        # Without these checks, a duplicated agent_id in the input
+        # lists would silently collapse to a single entry under
+        # set(...) and pass the equality checks — biasing round
+        # participation and the convergence detector.
+        agent_id_list = [a.id for a in agents]
+        if len(agent_id_list) != len(set(agent_id_list)):
+            raise ValueError(
+                f"agents must contain unique agent ids (got {agent_id_list})"
+            )
+        enrollment_id_list = [e.agent_id for e in project.enrollments]
+        if len(enrollment_id_list) != len(set(enrollment_id_list)):
+            raise ValueError(
+                "project.enrollments must contain unique agent ids "
+                f"(got {enrollment_id_list})"
+            )
+        agent_ids = set(agent_id_list)
         if agent_ids != set(proposers.keys()):
             raise ValueError(
                 "proposers must be keyed by agent_id for every enrolled agent"
             )
-        if agent_ids != {e.agent_id for e in project.enrollments}:
+        if agent_ids != set(enrollment_id_list):
             raise ValueError(
                 "agents must match project.enrollments exactly"
             )
@@ -200,13 +216,14 @@ class ConsensusMechanism(ABC):
             version = ctx["initial_version"]
 
             # Round 1: independence (no peer context). Rounds 2+: peer
-            # proposals from the prior round. The pipeline's skip_when
-            # already guarantees we don't reach round N+1 if round N
-            # converged.
-            peer_proposals: list[Proposal] | None = None
+            # proposals from the prior round, with each agent's OWN
+            # prior proposal filtered out — "peers" means other agents,
+            # not self. The pipeline's skip_when already guarantees we
+            # don't reach round N+1 if round N converged.
+            prior_proposals: list[Proposal] | None = None
             if round_index > 1:
                 prior: RoundOutcome = ctx[f"round_{round_index - 1}"]
-                peer_proposals = list(prior.proposals)
+                prior_proposals = list(prior.proposals)
 
             proposals = await asyncio.gather(
                 *[
@@ -216,7 +233,15 @@ class ConsensusMechanism(ABC):
                         artifact=self.project.artifact,
                         current_content=content,
                         current_version=version,
-                        peer_proposals=peer_proposals,
+                        peer_proposals=(
+                            None
+                            if prior_proposals is None
+                            else [
+                                p
+                                for p in prior_proposals
+                                if p.agent_id != agent.id
+                            ]
+                        ),
                     )
                     for agent in self.agents
                 ]
@@ -320,6 +345,12 @@ class ConsensusMechanism(ABC):
             elif ctx.get("converged"):
                 converged_idx: int = ctx["converged_at_round"]
                 round_outcome: RoundOutcome = ctx[f"round_{converged_idx}"]
+                # Per the RoundBudgetPolicy.is_converged contract,
+                # convergence guarantees byte-identical new_content
+                # across all proposals in this round. lowest-agent_id
+                # is just stable-ordering for traceability — any
+                # proposal in the round would yield the same applied
+                # content.
                 picked = min(
                     round_outcome.proposals, key=lambda p: p.agent_id
                 )
