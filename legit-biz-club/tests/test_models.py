@@ -57,8 +57,6 @@ def test_enrollment_records_timestamp() -> None:
 
 
 def test_enrollment_rejects_unserializable_binding() -> None:
-    from pydantic import ValidationError
-
     # Path objects, sets, and similar non-JSON-native values must be
     # rejected at construction time so the heterogeneity check can't
     # crash on them later.

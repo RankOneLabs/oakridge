@@ -48,16 +48,26 @@ class ResultUsage(BaseModel):
 
 
 class SessionSnapshot(_KbblModel):
+    """Mirror of kbbl's `SessionSnapshot` interface.
+
+    Nullable fields (``cc_sid``, ``parent_cc_sid``, etc.) are typed as
+    ``T | None`` but **without** a ``None`` default, so a missing key
+    in kbbl's response triggers a pydantic validation error rather than
+    silently defaulting to ``None``. That keeps contract drift loud.
+    Only fields that are genuinely optional in kbbl's contract carry
+    explicit defaults.
+    """
+
     sid: str
     name: str
     workdir: str
     status: SessionStatus
     created_at: str
     last_activity_ts: str
-    cc_sid: str | None = None
-    parent_cc_sid: str | None = None
-    parent_oakridge_sid: str | None = None
+    cc_sid: str | None
+    parent_cc_sid: str | None
+    parent_oakridge_sid: str | None
     pending_count: int
     yolo_mode: bool
     allowed_tools: list[str]
-    last_result_usage: ResultUsage | None = None
+    last_result_usage: ResultUsage | None
