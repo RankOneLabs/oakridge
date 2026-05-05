@@ -41,10 +41,15 @@ class ConditionSummary:
 
 @dataclass(frozen=True, slots=True)
 class StudyResult:
-    """Aggregate of every cell in a study run."""
+    """Aggregate of every cell in a study run.
+
+    ``by_condition`` is a read-only :class:`MappingProxyType` so the
+    summary is genuinely immutable across downstream consumers — same
+    rationale as :class:`ConditionSummary.avg_scores_by_dimension`.
+    """
 
     cells: tuple[CellResult, ...]
-    by_condition: dict[str, ConditionSummary]
+    by_condition: Mapping[str, ConditionSummary]
 
 
 def aggregate(cells: Iterable[CellResult]) -> StudyResult:
@@ -63,7 +68,9 @@ def aggregate(cells: Iterable[CellResult]) -> StudyResult:
         name: _summarize_condition(name, group)
         for name, group in by_condition.items()
     }
-    return StudyResult(cells=cell_list, by_condition=summaries)
+    return StudyResult(
+        cells=cell_list, by_condition=MappingProxyType(summaries)
+    )
 
 
 def _summarize_condition(

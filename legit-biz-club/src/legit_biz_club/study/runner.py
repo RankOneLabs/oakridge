@@ -18,6 +18,7 @@ itself is LLM-agnostic.
 from __future__ import annotations
 
 import logging
+import shutil
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePath
@@ -145,20 +146,29 @@ async def run_cell(
             f"{target.artifact_filename!r} resolves to the cell "
             "directory or its parent — must be a real filename"
         )
-    if len(PurePath(target.artifact_filename).parts) != 1:
+    if len(PurePath(stripped).parts) != 1:
         raise ValueError(
             f"target {target.name!r} artifact_filename "
             f"{target.artifact_filename!r} contains path separators; "
             "v1 supports single-file artifacts only — directory-based "
             "CODE artifacts are v1.x"
         )
-    artifact_path = cell_dir / target.artifact_filename
+    artifact_path = cell_dir / stripped
     artifact_path.write_text(target.seed_content, encoding="utf-8")
 
+    # Reset agent memory state per run_cell invocation. The harness
+    # treats each cell as an independent experiment — cross-run
+    # contamination would skew results when the same (target,
+    # condition) pair runs more than once in the same output_dir.
+    # Studies that *want* to observe cross-run memory effects can
+    # opt in by varying output_dir (e.g., per-run timestamp).
+    agent_data_root = cell_dir / "agent_memory"
+    if agent_data_root.exists():
+        shutil.rmtree(agent_data_root)
     agents = _build_agents(
         target=target,
         n=condition.n,
-        agent_data_root=cell_dir / "agent_memory",
+        agent_data_root=agent_data_root,
     )
     # Stable cell-id string used for both Project.id and the
     # Enrollment.project_id pointers so downstream consumers that

@@ -129,9 +129,11 @@ def prose_target(
             ],
             constraints=["no marketing language"],
         ),
-        model_pool=tuple(model_pool) if model_pool else _DEFAULT_PROSE_MODELS,
+        model_pool=(
+            tuple(model_pool) if model_pool is not None else _DEFAULT_PROSE_MODELS
+        ),
         frame_pool=(
-            tuple(frame_pool) if frame_pool else _DEFAULT_PROSE_FRAMES
+            tuple(frame_pool) if frame_pool is not None else _DEFAULT_PROSE_FRAMES
         ),
     )
 
@@ -180,8 +182,10 @@ def code_target(
                 "no breaking changes to existing public APIs",
             ],
         ),
-        model_pool=tuple(model_pool) if model_pool else _DEFAULT_CODE_MODELS,
+        model_pool=(
+            tuple(model_pool) if model_pool is not None else _DEFAULT_CODE_MODELS
+        ),
         frame_pool=(
-            tuple(frame_pool) if frame_pool else _DEFAULT_CODE_FRAMES
+            tuple(frame_pool) if frame_pool is not None else _DEFAULT_CODE_FRAMES
         ),
     )

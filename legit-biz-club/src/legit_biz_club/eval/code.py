@@ -89,7 +89,14 @@ def run_command_check(
             stdout=completed.stdout or "",
             stderr=completed.stderr or "",
         )
-        return _clamp(score(result))
+        try:
+            return _clamp(score(result))
+        except Exception:
+            # ``score`` is operator-supplied — a buggy scorer
+            # shouldn't take down the whole grading pass. Treat any
+            # raise as a failed check (the same posture as
+            # subprocess errors above).
+            return 0.0
 
     return Check(name=name, pattern=_runner)
 

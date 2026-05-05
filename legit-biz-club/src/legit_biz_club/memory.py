@@ -132,6 +132,16 @@ class MemoryCommitter:
             raise ValueError("project_id must be non-empty")
         if not observation_text.strip():
             raise ValueError("observation_text must be non-empty")
+        # str is itself a Sequence[str] at runtime — passing
+        # ``tags="style"`` would silently get stored as
+        # ``["s", "t", "y", "l", "e"]`` via list(tags). Reject the
+        # common caller mistake explicitly so the operator sees the
+        # error rather than discovering character-tags later.
+        if isinstance(tags, str):
+            raise TypeError(
+                "tags must be a sequence of strings (e.g., a list or "
+                "tuple), not a single str — pass [tags] for one tag"
+            )
         observation = CommitObservation(
             agent_id=self.agent.id,
             project_id=project_id,
@@ -201,16 +211,25 @@ def _deserialize_observation(entry: MemoryEntry) -> CommitObservation | None:
 
     Catches ``KeyError`` (missing required field), ``ValueError`` (e.g.,
     bad enum value, unparseable timestamp), ``TypeError`` (e.g.,
-    non-iterable ``tags``, non-string ``timestamp``), and pydantic's
-    ``ValidationError`` (e.g., an ``agent_id`` that's not a string,
-    which gets past the dict access but fails the model's type check)
-    — anything that indicates a malformed row should fail-soft and be
-    skipped on load_observations() rather than blow up the entire read.
+    non-iterable ``tags``, non-string ``timestamp``), ``AttributeError``
+    (e.g., ``entry.metadata`` is None or non-dict, so ``.get()`` blows
+    up), and pydantic's ``ValidationError`` (e.g., an ``agent_id``
+    that's not a string, which gets past the dict access but fails the
+    model's type check) — anything that indicates a malformed row
+    should fail-soft and be skipped on load_observations() rather than
+    blow up the entire read.
+
+    Rejects rows whose ``tags`` is a bare string explicitly: list(str)
+    would silently produce one-character "tags", which is never what
+    the writer intended.
     """
-    metadata = entry.metadata
-    if metadata.get("lbc_kind") != _LBC_METADATA_KIND:
-        return None
     try:
+        if entry.metadata.get("lbc_kind") != _LBC_METADATA_KIND:
+            return None
+        metadata = entry.metadata
+        raw_tags = metadata.get("tags") or []
+        if isinstance(raw_tags, str):
+            return None
         return CommitObservation(
             agent_id=metadata["agent_id"],
             project_id=metadata["project_id"],
@@ -218,9 +237,9 @@ def _deserialize_observation(entry: MemoryEntry) -> CommitObservation | None:
             operator_confidence=OperatorConfidence(
                 metadata["operator_confidence"]
             ),
-            tags=list(metadata.get("tags") or []),
+            tags=list(raw_tags),
             supersedes=metadata.get("supersedes"),
             timestamp=datetime.fromisoformat(metadata["timestamp"]),
         )
-    except (KeyError, ValueError, TypeError, ValidationError):
+    except (KeyError, ValueError, TypeError, AttributeError, ValidationError):
         return None
