@@ -23,6 +23,13 @@ export interface SessionManagerOpts {
    * builder inspects session.parentCcSid.
    */
   buildSpawnCmd: (session: Session) => SpawnCmd;
+  /**
+   * Optional runtime-adapter classifier wired into each Session's stdout
+   * pump. The adapter inspects raw events and updates Session metadata
+   * (observeRuntimeSessionId, setLastResultUsage). Adapters with no
+   * per-event work omit this.
+   */
+  classifyEvent?: (rawEvent: unknown, session: Session) => Promise<void>;
 }
 
 export interface CreateSessionOpts {
@@ -115,6 +122,7 @@ export class SessionManager {
       sessionsDir: this.opts.sessionsDir,
       parentCcSid: opts.parentCcSid,
       parentOakridgeSid: opts.parentOakridgeSid,
+      classifyEvent: this.opts.classifyEvent,
       callbacks: {
         onCcSidObserved: (s, ccSid) => {
           this.ccSidToOakridgeSid.set(ccSid, s.oakridgeSid);

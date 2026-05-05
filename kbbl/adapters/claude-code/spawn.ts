@@ -1,7 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { Session, SpawnCmd } from "../session/session";
+import type { Session, SpawnCmd } from "../../core/session/session";
 
 /**
  * CC-specific spawn-command construction and settings-file generation.
