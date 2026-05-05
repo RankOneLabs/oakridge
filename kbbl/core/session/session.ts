@@ -172,6 +172,14 @@ export class Session {
    * onCcSidObserved so adapter HTTP routes (CC's gate) can map runtime
    * session ids back to this oakridge session.
    *
+   * v0 abstraction caveat: the method takes a generic runtime id, but the
+   * persisted JSONL event is CC-shaped (`cc_session_id_observed` with key
+   * `cc_session_id`). This is deliberate for v0 — the JSONL transcript
+   * format is preserved across the adapter extraction so existing on-disk
+   * sessions stay readable. When a second adapter ships and the format
+   * needs to be neutral, the persisted event names move with the rest of
+   * the snapshot-reconstruction logic into adapter-aware code.
+   *
    * Emit happens before the ccSid mutation so a flush error doesn't leave
    * us in a half-applied state (ccSid set but no JSONL record + no manager
    * callback). If emit throws, ccSid stays null and a later call can
@@ -198,6 +206,12 @@ export class Session {
    * prior usage; the snapshot's `lastResultUsage` always reflects the most
    * recent runtime-reported usage so the PWA's Resume cost preview is
    * accurate.
+   *
+   * v0 abstraction caveat: `ResultUsage` is currently shaped as a subset
+   * of CC's `result.usage` block (input_tokens, output_tokens, cache_*).
+   * A runtime-neutral usage type would be premature without a second
+   * adapter informing what the union should look like; defer until codex
+   * or another runtime exposes a different usage shape.
    */
   setLastResultUsage(usage: ResultUsage): void {
     this.lastResultUsage = usage;
