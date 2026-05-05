@@ -3,6 +3,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { stat } from "node:fs/promises";
 
 import {
+  MAX_ARTIFACT_ID_LENGTH,
   readJsonlOrEmpty,
   type EnvelopeEvent,
 } from "../../session/session";
@@ -226,14 +227,15 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
               400,
             );
           }
-          // Cap length: artifactId rides on every JSONL session_started
-          // record and every session_created SSE delta. Operator-supplied
-          // ids should be opaque short tokens; an unbounded id would
-          // bloat the transcript and inbox stream. 200 chars is generous
-          // for any reasonable id scheme (UUIDs, slugs, hashes).
-          if (trimmedArtifactId.length > 200) {
+          // Cap length: shared MAX_ARTIFACT_ID_LENGTH is enforced at
+          // every entry point (handler, Session constructor, archived
+          // snapshot reconstruction) so the invariant holds wherever
+          // an id might come from.
+          if (trimmedArtifactId.length > MAX_ARTIFACT_ID_LENGTH) {
             return c.json(
-              { error: "artifact_id must be ≤ 200 chars after trimming" },
+              {
+                error: `artifact_id must be ≤ ${MAX_ARTIFACT_ID_LENGTH} chars after trimming`,
+              },
               400,
             );
           }
@@ -339,14 +341,27 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
   });
 
   app.get("/artifacts/:artifactId/sessions", (c) => {
-    const artifactId = c.req.param("artifactId");
-    // Empty / missing artifactId would land here only via bizarre routing
-    // anomalies (Hono normally 404s before this), but explicit guard keeps
-    // the failure clear for any future router substitution.
-    if (!artifactId) return c.json({ error: "missing artifactId" }, 400);
-    const sessions = manager
-      .listByArtifact(artifactId)
-      .map((s) => s.snapshot());
+    const rawArtifactId = c.req.param("artifactId");
+    // Empty/missing artifactId would land here only via bizarre routing
+    // anomalies (Hono normally 404s before this), but explicit guard
+    // keeps the failure clear for any future router substitution.
+    if (!rawArtifactId) return c.json({ error: "missing artifactId" }, 400);
+    // Mirror POST /sessions validation so behavior is consistent across
+    // the artifact-tag entry points: trim, reject empty-after-trim,
+    // enforce the shared length cap.
+    const trimmed = rawArtifactId.trim();
+    if (!trimmed) {
+      return c.json({ error: "artifactId must be non-empty" }, 400);
+    }
+    if (trimmed.length > MAX_ARTIFACT_ID_LENGTH) {
+      return c.json(
+        {
+          error: `artifactId must be ≤ ${MAX_ARTIFACT_ID_LENGTH} chars after trimming`,
+        },
+        400,
+      );
+    }
+    const sessions = manager.listByArtifact(trimmed).map((s) => s.snapshot());
     return c.json({ sessions });
   });
 

@@ -2,6 +2,7 @@ import { readdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
+  MAX_ARTIFACT_ID_LENGTH,
   Session,
   extractResultUsage,
   newSessionId,
@@ -215,10 +216,19 @@ export class SessionManager {
    * archived merge should pull listArchivedSnapshots() separately and
    * filter by ``artifactId`` client-side, the same pattern GET
    * /sessions uses for include=archived.
+   *
+   * Input is trimmed to match the normalization Session.artifactId
+   * applies on the write side; whitespace differences in the query
+   * would otherwise silently miss matches. Empty-after-trim returns
+   * an empty list rather than matching every session whose artifactId
+   * happens to be null (which "" === null would never do anyway, but
+   * the guard makes the intent explicit).
    */
   listByArtifact(artifactId: string): Session[] {
+    const normalized = artifactId.trim();
+    if (!normalized) return [];
     return [...this.sessions.values()].filter(
-      (s) => s.artifactId === artifactId,
+      (s) => s.artifactId === normalized,
     );
   }
 
@@ -618,12 +628,15 @@ async function loadArchivedSnapshot(
           parentOakridgeSid = payload.parentOakridgeSid;
         }
         if (typeof payload.artifactId === "string") {
-          // Mirror POST /sessions validation: trim and ignore empty so
-          // malformed/legacy JSONL doesn't yield artifactId: "" in
-          // archived snapshots. The Session constructor applies the
-          // same normalization on the live path.
+          // Mirror POST /sessions validation: trim, ignore empty, and
+          // ignore over-cap so malformed/legacy JSONL can't yield
+          // artifactId: "" or an unbounded tag in archived snapshots.
+          // The Session constructor enforces the same invariants on
+          // the live path; this is the read-side fallback.
           const trimmed = payload.artifactId.trim();
-          if (trimmed) artifactId = trimmed;
+          if (trimmed && trimmed.length <= MAX_ARTIFACT_ID_LENGTH) {
+            artifactId = trimmed;
+          }
         }
         break;
       }

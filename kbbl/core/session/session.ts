@@ -61,6 +61,16 @@ export interface SessionOpts {
 export type SessionStatus = "starting" | "live" | "ended";
 
 /**
+ * Hard cap on `artifactId` length. Enforced at the Session constructor,
+ * the POST /sessions handler, the GET /artifacts/:artifactId/sessions
+ * handler, and the archived-snapshot reconstruction so the invariant
+ * holds at every entry point. Bounds the bytes that ride on every
+ * JSONL session_started record and every session_created SSE delta;
+ * 200 is generous for any reasonable id scheme (UUIDs, slugs, hashes).
+ */
+export const MAX_ARTIFACT_ID_LENGTH = 200;
+
+/**
  * Subset of CC's `result`-event usage block. Captured on every `result`
  * emit and snapshotted so the PWA can show a rough token footprint on
  * the Resume button — important on Claude Max where a resume re-ingests
@@ -164,10 +174,17 @@ export class Session {
     this.parentCcSid = opts.parentCcSid ?? null;
     this.parentOakridgeSid = opts.parentOakridgeSid ?? null;
     // Normalize at the constructor so direct SessionManager.create()
-    // callers can't sneak in empty/whitespace tags even though the HTTP
-    // route rejects them. JSONL session_started and snapshots will
-    // never contain an empty artifactId string regardless of call site.
-    this.artifactId = opts.artifactId?.trim() || null;
+    // callers can't sneak in empty/whitespace or oversized tags even
+    // though the HTTP route rejects them. JSONL session_started and
+    // snapshots will never contain a malformed artifactId regardless
+    // of call site.
+    const trimmedArtifactId = opts.artifactId?.trim() || null;
+    if (trimmedArtifactId !== null && trimmedArtifactId.length > MAX_ARTIFACT_ID_LENGTH) {
+      throw new Error(
+        `artifactId must be ≤ ${MAX_ARTIFACT_ID_LENGTH} chars after trimming (got ${trimmedArtifactId.length})`,
+      );
+    }
+    this.artifactId = trimmedArtifactId;
     this.createdAt = new Date().toISOString();
     this.lastActivityTs = this.createdAt;
     this.callbacks = opts.callbacks ?? {};
