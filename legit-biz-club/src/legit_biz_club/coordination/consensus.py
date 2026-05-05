@@ -1,0 +1,396 @@
+"""Consensus mechanisms: pluggable strategies for resolving an ensemble's
+proposals into a single committed next-state.
+
+Each mechanism builds a jig ``PipelineConfig`` internally and runs it
+via ``run_pipeline``. The pipeline shape is mechanism-specific:
+
+- :class:`MultiRoundConsensus` — N round-propose steps (one per
+  ``RoundBudgetPolicy.max_rounds``), an escalation step gated on
+  convergence, and an apply step. Later rounds short-circuit via
+  ``skip_when`` once any round detects convergence.
+- :class:`SingleRoundConsensus` — one round-propose step, an
+  always-runs pick step, and an apply step. No convergence detection —
+  the disagreement surface always picks. Useful as a baseline in the
+  v1 study.
+
+Both mechanisms share a base class that wires the dependencies and
+extracts a structured :class:`ConsensusResult` from the pipeline's
+context. Tracing, grading, and feedback hooks come from jig's
+per-step machinery — Phase 4's eval surface plugs in via ``Step.grader``
+without touching this module.
+
+Workspace events emitted at lifecycle points: ``convergence_started``,
+``round_completed`` (per round), ``escalation_triggered`` (when not
+converged), ``proposal_picked``. The mechanism takes an optional emit
+callback; tests pass a no-op.
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from typing import Any
+
+from jig.core.pipeline import PipelineConfig, Step, run_pipeline
+from jig.core.types import TracingLogger
+
+from legit_biz_club.coordination.disagreement import (
+    DisagreementSurface,
+    PickResult,
+)
+from legit_biz_club.coordination.mediator import Mediator
+from legit_biz_club.coordination.proposal import (
+    Proposal,
+    ProposalOutcome,
+    ProposalResult,
+)
+from legit_biz_club.coordination.proposer import Proposer
+from legit_biz_club.coordination.round_budget import RoundBudgetPolicy
+from legit_biz_club.core.models import Agent, Project
+
+logger = logging.getLogger(__name__)
+
+
+WorkspaceEventEmitter = Callable[[str, dict[str, object]], Awaitable[None]]
+"""Same shape as :data:`legit_biz_club.coordination.coordinator.WorkspaceEventEmitter`.
+Coordinator and consensus emit through the same workspace-event channel.
+"""
+
+
+async def _no_op_emitter(_kind: str, _payload: dict[str, object]) -> None:
+    await asyncio.sleep(0)
+
+
+@dataclass
+class RoundOutcome:
+    """One round's record: which round (1-indexed), the proposals it
+    produced, and whether the round-budget policy declared convergence."""
+
+    round_index: int
+    proposals: list[Proposal]
+    converged: bool
+
+
+@dataclass
+class ConsensusResult:
+    """The mechanism's final verdict.
+
+    ``converged_at_round`` is the 1-indexed round whose proposals
+    matched (or ``None`` if escalation picked). ``apply_outcome`` is
+    the mediator's response to applying the picked proposal —
+    typically ``APPLIED``, but a malformed picked proposal could
+    surface as a rejection.
+    """
+
+    picked: Proposal
+    rationale: str
+    rounds: list[RoundOutcome]
+    converged_at_round: int | None
+    apply_outcome: ProposalOutcome
+
+
+class ConsensusMechanism(ABC):
+    """Pluggable strategy for resolving an ensemble's proposals."""
+
+    def __init__(
+        self,
+        *,
+        project: Project,
+        agents: list[Agent],
+        proposers: dict[str, Proposer],
+        mediator: Mediator,
+        round_budget_policy: RoundBudgetPolicy,
+        disagreement_surface: DisagreementSurface,
+        tracer: TracingLogger,
+        emit: WorkspaceEventEmitter | None = None,
+    ) -> None:
+        agent_ids = {a.id for a in agents}
+        if agent_ids != set(proposers.keys()):
+            raise ValueError(
+                "proposers must be keyed by agent_id for every enrolled agent"
+            )
+        if agent_ids != {e.agent_id for e in project.enrollments}:
+            raise ValueError(
+                "agents must match project.enrollments exactly"
+            )
+        if agent_ids != set(mediator.retry_remaining.keys()):
+            raise ValueError(
+                "mediator must be initialized with the same agent ids"
+            )
+        self.project = project
+        self.agents = agents
+        self.proposers = proposers
+        self.mediator = mediator
+        self.round_budget_policy = round_budget_policy
+        self.disagreement_surface = disagreement_surface
+        self.tracer = tracer
+        self._emit = emit or _no_op_emitter
+
+    async def execute(self) -> ConsensusResult:
+        """Run the mechanism's pipeline and return the structured result."""
+        await self._safe_emit(
+            "convergence_started",
+            {
+                "mechanism": type(self).__name__,
+                "agent_ids": [a.id for a in self.agents],
+            },
+        )
+        config = self._build_pipeline()
+        pipeline_result = await run_pipeline(config, input=self.project.id)
+        result = self._extract_result(pipeline_result.step_outputs)
+        await self._safe_emit(
+            "proposal_picked",
+            {
+                "agent_id": result.picked.agent_id,
+                "proposal_id": result.picked.id,
+                "rationale": result.rationale,
+                "converged_at_round": result.converged_at_round,
+            },
+        )
+        return result
+
+    @abstractmethod
+    def _build_pipeline(self) -> PipelineConfig:
+        """Construct the mechanism's jig PipelineConfig."""
+
+    def _extract_result(
+        self, step_outputs: dict[str, Any]
+    ) -> ConsensusResult:
+        rounds: list[RoundOutcome] = []
+        converged_at_round: int | None = None
+        for key, value in step_outputs.items():
+            if not key.startswith("round_"):
+                continue
+            outcome: RoundOutcome = value
+            rounds.append(outcome)
+            if outcome.converged and converged_at_round is None:
+                converged_at_round = outcome.round_index
+
+        # The "apply" step's output is the final ProposalOutcome plus
+        # the rationale. Mechanisms write a tuple (outcome, picked, rationale).
+        apply_payload = step_outputs["apply"]
+        apply_outcome: ProposalOutcome = apply_payload["outcome"]
+        picked: Proposal = apply_payload["picked"]
+        rationale: str = apply_payload["rationale"]
+
+        return ConsensusResult(
+            picked=picked,
+            rationale=rationale,
+            rounds=sorted(rounds, key=lambda r: r.round_index),
+            converged_at_round=converged_at_round,
+            apply_outcome=apply_outcome,
+        )
+
+    # ------ shared step factories ------
+
+    def _make_round_step(self, round_index: int) -> Step:
+        async def fn(ctx: dict[str, Any]) -> RoundOutcome:
+            # First round populates the starting state in ctx so all
+            # later rounds operate on the same baseline (per the design
+            # memo: every round proposes from the same starting state).
+            if "initial_content" not in ctx:
+                content, version = await self.mediator.current_state()
+                ctx["initial_content"] = content
+                ctx["initial_version"] = version
+
+            content = ctx["initial_content"]
+            version = ctx["initial_version"]
+
+            # Round 1: independence (no peer context). Rounds 2+: peer
+            # proposals from the prior round. The pipeline's skip_when
+            # already guarantees we don't reach round N+1 if round N
+            # converged.
+            peer_proposals: list[Proposal] | None = None
+            if round_index > 1:
+                prior: RoundOutcome = ctx[f"round_{round_index - 1}"]
+                peer_proposals = list(prior.proposals)
+
+            proposals = await asyncio.gather(
+                *[
+                    self.proposers[agent.id].propose(
+                        agent=agent,
+                        brief=self.project.brief,
+                        artifact=self.project.artifact,
+                        current_content=content,
+                        current_version=version,
+                        peer_proposals=peer_proposals,
+                    )
+                    for agent in self.agents
+                ]
+            )
+            self._validate_proposals_match_agents(proposals)
+
+            converged = self.round_budget_policy.is_converged(proposals)
+            outcome = RoundOutcome(
+                round_index=round_index,
+                proposals=list(proposals),
+                converged=converged,
+            )
+            await self._safe_emit(
+                "round_completed",
+                {
+                    "round_index": round_index,
+                    "converged": converged,
+                    "n_proposals": len(proposals),
+                },
+            )
+            if converged:
+                # Mark ctx so later round steps and the escalate step skip.
+                ctx["converged"] = True
+                ctx["converged_at_round"] = round_index
+            return outcome
+
+        skip_if_already_converged = (
+            (lambda c: bool(c.get("converged", False)))
+            if round_index > 1
+            else None
+        )
+        return Step(
+            name=f"round_{round_index}",
+            fn=fn,
+            skip_when=skip_if_already_converged,
+        )
+
+    def _make_escalate_step(self, *, always_runs: bool) -> Step:
+        """Build the escalation step.
+
+        ``always_runs=True`` for single-round-then-pick (no convergence
+        detection — the surface always picks). ``always_runs=False``
+        for multi-round (skip when any round converged).
+        """
+
+        async def fn(ctx: dict[str, Any]) -> PickResult:
+            # Find the most recent round's proposals.
+            last_round: RoundOutcome | None = None
+            for round_idx in range(
+                self.round_budget_policy.max_rounds, 0, -1
+            ):
+                key = f"round_{round_idx}"
+                if key in ctx:
+                    last_round = ctx[key]
+                    break
+            if last_round is None:
+                raise RuntimeError(
+                    "escalate step ran with no prior round outcomes — "
+                    "pipeline construction bug"
+                )
+            await self._safe_emit(
+                "escalation_triggered",
+                {
+                    "round_index": last_round.round_index,
+                    "n_residual_proposals": len(last_round.proposals),
+                },
+            )
+            return await self.disagreement_surface.pick(last_round.proposals)
+
+        skip_when = (
+            None
+            if always_runs
+            else (lambda c: bool(c.get("converged", False)))
+        )
+        return Step(name="escalate", fn=fn, skip_when=skip_when)
+
+    def _make_apply_step(self) -> Step:
+        """Build the final apply step.
+
+        Determines the picked proposal: when convergence fired, picks
+        the converged round's lowest-agent_id proposal (all identical
+        by definition); when escalation ran, uses the
+        DisagreementSurface's pick. Applies via the mediator.
+        """
+
+        async def fn(ctx: dict[str, Any]) -> dict[str, Any]:
+            picked: Proposal
+            rationale: str
+            if ctx.get("converged"):
+                converged_idx: int = ctx["converged_at_round"]
+                round_outcome: RoundOutcome = ctx[f"round_{converged_idx}"]
+                picked = min(
+                    round_outcome.proposals, key=lambda p: p.agent_id
+                )
+                rationale = f"converged at round {converged_idx}"
+            else:
+                pick_result: PickResult = ctx["escalate"]
+                picked = pick_result.proposal
+                rationale = pick_result.rationale
+            outcome = await self.mediator.apply(picked)
+            if outcome.result != ProposalResult.APPLIED:
+                logger.warning(
+                    "consensus apply did not succeed: result=%s reason=%s",
+                    outcome.result,
+                    outcome.reason,
+                )
+            return {
+                "outcome": outcome,
+                "picked": picked,
+                "rationale": rationale,
+            }
+
+        return Step(name="apply", fn=fn)
+
+    def _validate_proposals_match_agents(
+        self, proposals: list[Proposal]
+    ) -> None:
+        """A buggy Proposer that returns the wrong agent_id can't be
+        retried meaningfully (the mediator would REJECTED_VALIDATION it
+        and the consensus loop has no retry semantics). Surface as a
+        programmer error immediately."""
+        agent_ids = {a.id for a in self.agents}
+        for proposal in proposals:
+            if proposal.agent_id not in agent_ids:
+                raise ValueError(
+                    f"Proposer returned a proposal with agent_id="
+                    f"{proposal.agent_id!r} that does not match any "
+                    "enrolled agent — programmer error in the Proposer"
+                )
+
+    async def _safe_emit(
+        self, kind: str, payload: dict[str, object]
+    ) -> None:
+        """Same safe-emit pattern as IncrementalCoordinator: catch and
+        log emit failures so a transient kbbl outage can't abort
+        consensus mid-run after a proposal already mediated."""
+        try:
+            await self._emit(kind, payload)
+        except Exception as e:
+            logger.warning(
+                "workspace event emit failed for kind=%s: %s", kind, e
+            )
+
+
+class MultiRoundConsensus(ConsensusMechanism):
+    """v1 default. Builds N round steps + escalate + apply pipeline."""
+
+    def _build_pipeline(self) -> PipelineConfig:
+        steps: list[Step] = []
+        for i in range(1, self.round_budget_policy.max_rounds + 1):
+            steps.append(self._make_round_step(i))
+        steps.append(self._make_escalate_step(always_runs=False))
+        steps.append(self._make_apply_step())
+        return PipelineConfig(
+            name="multi_round_consensus",
+            steps=steps,
+            tracer=self.tracer,
+        )
+
+
+class SingleRoundConsensus(ConsensusMechanism):
+    """Single-round-then-pick baseline.
+
+    No convergence detection — the disagreement surface always picks,
+    regardless of whether the proposals happen to match. Useful as the
+    v1 study's baseline against multi-round.
+    """
+
+    def _build_pipeline(self) -> PipelineConfig:
+        return PipelineConfig(
+            name="single_round_consensus",
+            steps=[
+                self._make_round_step(1),
+                self._make_escalate_step(always_runs=True),
+                self._make_apply_step(),
+            ],
+            tracer=self.tracer,
+        )

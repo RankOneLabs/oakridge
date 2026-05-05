@@ -41,6 +41,12 @@ warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
 
+[[tool.mypy.overrides]]
+# jig doesn't ship a py.typed marker yet. Treat its public imports as
+# untyped rather than failing strict mypy on every consumer.
+module = "jig.*"
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
