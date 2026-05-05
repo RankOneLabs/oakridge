@@ -1,11 +1,19 @@
 """Async HTTP client against kbbl's Hono server.
 
-Stub for v1 PR #3 (foundation). Endpoint methods are wired up in PR #4
-once kbbl PR #1 (artifact-scoped sessions) and PR #2 (inbox extension)
-land. Method signatures here describe the intended surface so
-legit-biz-club code can be written against typed stubs.
+Wraps the kbbl endpoints legit-biz-club consumes:
+
+- ``POST /sessions`` — spawn a session, optionally artifact-tagged
+- ``GET /sessions`` — list all sessions kbbl knows about
+- ``GET /artifacts/{artifactId}/sessions`` — list sessions for one artifact
+- ``POST /inbox/workspace-events`` — push project events to the inbox
+
+Methods raise on non-2xx responses (httpx default). Trust model:
+Tailscale-network trust, no per-request auth. ``base_url`` defaults to
+kbbl's local default; override for remote / test instances.
 """
 from __future__ import annotations
+
+from typing import Any
 
 import httpx
 
@@ -13,7 +21,7 @@ from legit_biz_club.adapters.kbbl.types import SessionSnapshot
 
 
 class KbblClient:
-    """Typed HTTP client against the local kbbl server.
+    """Typed async HTTP client against the local kbbl server.
 
     Trust: assumes Tailscale-network trust. ``base_url`` defaults to
     kbbl's local default (127.0.0.1:8788); override for remote/test
@@ -43,12 +51,90 @@ class KbblClient:
         )
 
     async def list_sessions(self) -> list[SessionSnapshot]:
-        """List sessions kbbl knows about.
+        """``GET /sessions`` — every session kbbl knows about, in-memory only."""
+        response = await self._http.get(
+            f"{self._base_url}/sessions",
+            timeout=self._timeout,
+        )
+        response.raise_for_status()
+        body = response.json()
+        return [
+            SessionSnapshot.model_validate(s) for s in body.get("sessions", [])
+        ]
 
-        Stub. PR #4 wires this against ``GET /sessions`` once the
-        artifact-scoped variant ships in kbbl PR #1.
+    async def list_artifact_sessions(
+        self, artifact_id: str
+    ) -> list[SessionSnapshot]:
+        """``GET /artifacts/{artifactId}/sessions`` — sessions tagged with this artifact."""
+        if not artifact_id:
+            raise ValueError("artifact_id must be non-empty")
+        response = await self._http.get(
+            f"{self._base_url}/artifacts/{artifact_id}/sessions",
+            timeout=self._timeout,
+        )
+        response.raise_for_status()
+        body = response.json()
+        return [
+            SessionSnapshot.model_validate(s) for s in body.get("sessions", [])
+        ]
+
+    async def create_artifact_session(
+        self,
+        *,
+        workdir: str,
+        artifact_id: str,
+        name: str | None = None,
+    ) -> SessionSnapshot:
+        """``POST /sessions`` with an ``artifact_id`` body field.
+
+        Returns the freshly-created session's snapshot. The artifact tag
+        flows through to ``listByArtifact`` on the kbbl side and the
+        operator UI; kbbl treats it as opaque.
         """
-        raise NotImplementedError("PR #4 wires this against kbbl PR #1")
+        if not artifact_id:
+            raise ValueError("artifact_id must be non-empty")
+        body: dict[str, Any] = {
+            "workdir": workdir,
+            "artifact_id": artifact_id,
+        }
+        if name is not None:
+            body["name"] = name
+        response = await self._http.post(
+            f"{self._base_url}/sessions",
+            json=body,
+            timeout=self._timeout,
+        )
+        response.raise_for_status()
+        return SessionSnapshot.model_validate(response.json())
+
+    async def post_workspace_event(
+        self,
+        *,
+        kind: str,
+        project_id: str,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        """``POST /inbox/workspace-events`` — push a project event to the inbox.
+
+        kbbl treats the event as opaque pass-through. ``kind`` and
+        ``project_id`` are required and must be non-empty; ``payload``
+        defaults to ``{}`` if omitted.
+        """
+        if not kind:
+            raise ValueError("kind must be non-empty")
+        if not project_id:
+            raise ValueError("project_id must be non-empty")
+        # Body uses camelCase to match kbbl's TS shape — the route
+        # accepts ``projectId`` and ``payload`` directly.
+        body: dict[str, Any] = {"kind": kind, "projectId": project_id}
+        if payload is not None:
+            body["payload"] = payload
+        response = await self._http.post(
+            f"{self._base_url}/inbox/workspace-events",
+            json=body,
+            timeout=self._timeout,
+        )
+        response.raise_for_status()
 
     async def aclose(self) -> None:
         if self._owns_http:

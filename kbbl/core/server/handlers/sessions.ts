@@ -3,6 +3,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { stat } from "node:fs/promises";
 
 import {
+  MAX_ARTIFACT_ID_LENGTH,
   readJsonlOrEmpty,
   type EnvelopeEvent,
 } from "../../session/session";
@@ -157,6 +158,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
     let resumeFrom: string | null = null;
     let bodyWorkdir: string | null = null;
     let bodyName: string | null = null;
+    let bodyArtifactId: string | null = null;
     // Read raw text first so we can distinguish "no body" (treat as no
     // options, preserves the old POST /sessions behavior) from "bad body"
     // (400). Using c.req.json() with an inner .catch() would silently
@@ -177,6 +179,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
           resume_from?: unknown;
           workdir?: unknown;
           name?: unknown;
+          artifact_id?: unknown;
         };
         if (parsed.resume_from !== undefined) {
           if (typeof parsed.resume_from !== "string") {
@@ -208,6 +211,38 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
           }
           bodyName = trimmedName;
         }
+        if (parsed.artifact_id !== undefined) {
+          if (typeof parsed.artifact_id !== "string") {
+            return c.json({ error: "artifact_id must be a string" }, 400);
+          }
+          const trimmedArtifactId = parsed.artifact_id.trim();
+          // Empty string would silently degrade to "no tag" once it
+          // hits Session.artifactId, masking client bugs that forgot
+          // to populate the id. Reject explicitly so the workspace
+          // layer can't accidentally tag a whole ensemble as
+          // "anonymous artifact".
+          if (trimmedArtifactId === "") {
+            return c.json(
+              { error: "artifact_id must be non-empty when provided" },
+              400,
+            );
+          }
+          // Cap length: shared MAX_ARTIFACT_ID_LENGTH is enforced at
+          // every entry point (handler, Session constructor, archived
+          // snapshot reconstruction) so the invariant holds wherever
+          // an id might come from.
+          if (trimmedArtifactId.length > MAX_ARTIFACT_ID_LENGTH) {
+            return c.json(
+              {
+                error: `artifact_id must be ≤ ${MAX_ARTIFACT_ID_LENGTH} chars after trimming`,
+              },
+              400,
+            );
+          }
+          // Store the trimmed value so leading/trailing whitespace can't
+          // make listByArtifact() lookups brittle.
+          bodyArtifactId = trimmedArtifactId;
+        }
       }
     } catch {
       return c.json({ error: "invalid json" }, 400);
@@ -228,7 +263,11 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       // --workdir handling so the same path doesn't show up as two distinct
       // workdirs across the UI.
       const target = resolve(requestedWorkdir);
-      spawnOpts = { workdir: target, name: bodyName ?? undefined };
+      spawnOpts = {
+        workdir: target,
+        name: bodyName ?? undefined,
+        artifactId: bodyArtifactId ?? undefined,
+      };
     } else {
       if (!isValidSid(resumeFrom)) {
         return c.json({ error: "invalid resume_from" }, 400);
@@ -288,6 +327,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
         name: bodyName ?? undefined,
         parentCcSid: parentInfo.parentCcSid,
         parentOakridgeSid: resumeFrom,
+        artifactId: bodyArtifactId ?? undefined,
       };
     }
 
@@ -298,6 +338,31 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       const msg = err instanceof Error ? err.message : String(err);
       return c.json({ error: `spawn failed: ${msg}` }, 500);
     }
+  });
+
+  app.get("/artifacts/:artifactId/sessions", (c) => {
+    const rawArtifactId = c.req.param("artifactId");
+    // Empty/missing artifactId would land here only via bizarre routing
+    // anomalies (Hono normally 404s before this), but explicit guard
+    // keeps the failure clear for any future router substitution.
+    if (!rawArtifactId) return c.json({ error: "missing artifactId" }, 400);
+    // Mirror POST /sessions validation so behavior is consistent across
+    // the artifact-tag entry points: trim, reject empty-after-trim,
+    // enforce the shared length cap.
+    const trimmed = rawArtifactId.trim();
+    if (!trimmed) {
+      return c.json({ error: "artifactId must be non-empty" }, 400);
+    }
+    if (trimmed.length > MAX_ARTIFACT_ID_LENGTH) {
+      return c.json(
+        {
+          error: `artifactId must be ≤ ${MAX_ARTIFACT_ID_LENGTH} chars after trimming`,
+        },
+        400,
+      );
+    }
+    const sessions = manager.listByArtifact(trimmed).map((s) => s.snapshot());
+    return c.json({ sessions });
   });
 
   app.delete("/sessions/:sid", async (c) => {

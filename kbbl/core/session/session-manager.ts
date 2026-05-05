@@ -2,6 +2,7 @@ import { readdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
+  MAX_ARTIFACT_ID_LENGTH,
   Session,
   extractResultUsage,
   newSessionId,
@@ -37,12 +38,44 @@ export interface CreateSessionOpts {
   name?: string;
   parentCcSid?: string;
   parentOakridgeSid?: string;
+  /**
+   * Tag this session with an artifact id. Sessions sharing an
+   * artifactId can be enumerated via SessionManager.listByArtifact() —
+   * the workspace layer (legit-biz-club) uses this to track ensembles
+   * working on the same artifact. kbbl treats the id as opaque.
+   */
+  artifactId?: string;
+}
+
+/**
+ * Workspace-layer event broadcast through the inbox stream. legit-biz-club
+ * (the workspace layer) emits these via POST /inbox/workspace-events;
+ * kbbl re-broadcasts them to inbox subscribers without interpreting the
+ * payload. Adding new event kinds at the workspace layer requires no
+ * kbbl change — `kind` is a free-form string and `payload` is a generic
+ * record. Reconnect-with-snapshot does not replay workspace events;
+ * legit-biz-club is the authoritative source for project state.
+ */
+export interface WorkspaceEvent {
+  /** Event kind, e.g. "project_created", "convergence_round_started". */
+  kind: string;
+  /** Opaque project id from legit-biz-club. */
+  projectId: string;
+  /** Wall-clock ISO timestamp; emitter-supplied or defaulted on receipt. */
+  ts: string;
+  /** Event-specific payload. Treated as opaque by kbbl. */
+  payload: Record<string, unknown>;
 }
 
 /**
  * /inbox delta shapes. `session_created` carries the full snapshot so clients
  * can add a row without a follow-up fetch; the later deltas only carry the
  * fields that actually change so a reconnect-with-snapshot is authoritative.
+ *
+ * `workspace_event` is the workspace layer's escape hatch — its payload
+ * is opaque to kbbl and shaped by legit-biz-club. Workspace events are
+ * NOT replayed on reconnect; subscribers that need authoritative project
+ * state should query legit-biz-club directly.
  */
 export type InboxDelta =
   | { type: "session_created"; session: SessionSnapshot }
@@ -51,7 +84,8 @@ export type InboxDelta =
   | { type: "status_changed"; sid: string; status: SessionStatus }
   | { type: "pending_count_changed"; sid: string; count: number }
   | { type: "last_activity_changed"; sid: string; ts: string }
-  | { type: "yolo_changed"; sid: string; yoloMode: boolean };
+  | { type: "yolo_changed"; sid: string; yoloMode: boolean }
+  | { type: "workspace_event"; event: WorkspaceEvent };
 
 export interface InboxSnapshot {
   sessions: SessionSnapshot[];
@@ -122,6 +156,7 @@ export class SessionManager {
       sessionsDir: this.opts.sessionsDir,
       parentCcSid: opts.parentCcSid,
       parentOakridgeSid: opts.parentOakridgeSid,
+      artifactId: opts.artifactId,
       classifyEvent: this.opts.classifyEvent,
       callbacks: {
         onCcSidObserved: (s, ccSid) => {
@@ -197,6 +232,30 @@ export class SessionManager {
    */
   listLive(): Session[] {
     return [...this.sessions.values()].filter((s) => s.status === "live");
+  }
+
+  /**
+   * Sessions tagged with the given artifactId — the workspace layer's
+   * primary query for enumerating an ensemble. Includes every in-memory
+   * session regardless of status (starting, live, or ended); archived
+   * (on-disk) sessions are not consulted. Callers that need the
+   * archived merge should pull listArchivedSnapshots() separately and
+   * filter by ``artifactId`` client-side, the same pattern GET
+   * /sessions uses for include=archived.
+   *
+   * Input is trimmed to match the normalization Session.artifactId
+   * applies on the write side; whitespace differences in the query
+   * would otherwise silently miss matches. Empty-after-trim returns
+   * an empty list rather than matching every session whose artifactId
+   * happens to be null (which "" === null would never do anyway, but
+   * the guard makes the intent explicit).
+   */
+  listByArtifact(artifactId: string): Session[] {
+    const normalized = artifactId.trim();
+    if (!normalized) return [];
+    return [...this.sessions.values()].filter(
+      (s) => s.artifactId === normalized,
+    );
   }
 
   listSnapshots(): SessionSnapshot[] {
@@ -448,6 +507,17 @@ export class SessionManager {
     return () => this.inboxSubscribers.delete(cb);
   }
 
+  /**
+   * Broadcast a workspace-layer event (project lifecycle, convergence
+   * round status, etc.) to inbox subscribers. The event is treated as
+   * opaque pass-through; kbbl does not interpret or persist it. Same
+   * delivery contract as session-scoped deltas: best-effort to current
+   * subscribers, no replay on reconnect.
+   */
+  broadcastWorkspaceEvent(event: WorkspaceEvent): void {
+    this.broadcastDelta({ type: "workspace_event", event });
+  }
+
   private broadcastDelta(delta: InboxDelta): void {
     for (const cb of this.inboxSubscribers) {
       try {
@@ -568,6 +638,7 @@ async function loadArchivedSnapshot(
   let ccSid: string | null = null;
   let parentCcSid: string | null = null;
   let parentOakridgeSid: string | null = null;
+  let artifactId: string | null = null;
   let lastActivityTs = "";
   const allowedTools = new Set<string>();
   let yoloMode = false;
@@ -592,6 +663,17 @@ async function loadArchivedSnapshot(
         }
         if (typeof payload.parentOakridgeSid === "string") {
           parentOakridgeSid = payload.parentOakridgeSid;
+        }
+        if (typeof payload.artifactId === "string") {
+          // Mirror POST /sessions validation: trim, ignore empty, and
+          // ignore over-cap so malformed/legacy JSONL can't yield
+          // artifactId: "" or an unbounded tag in archived snapshots.
+          // The Session constructor enforces the same invariants on
+          // the live path; this is the read-side fallback.
+          const trimmed = payload.artifactId.trim();
+          if (trimmed && trimmed.length <= MAX_ARTIFACT_ID_LENGTH) {
+            artifactId = trimmed;
+          }
         }
         break;
       }
@@ -634,6 +716,7 @@ async function loadArchivedSnapshot(
     ccSid,
     parentCcSid,
     parentOakridgeSid,
+    artifactId,
     pendingCount: 0,
     yoloMode,
     allowedTools: [...allowedTools],
