@@ -31,6 +31,25 @@ uv run ruff check            # lint
 uv run mypy src              # type-check (strict)
 ```
 
+## Running a project
+
+legit-biz-club is a **library** — there is no CLI, no UI, and no config-file driver in v1. The operator (or a script) writes Python that builds the agents, project, mediator, and proposers, then awaits a coordinator. kbbl is an *observation* surface (workspace events arrive in its inbox); it does not drive legit-biz-club.
+
+Two API levels:
+
+- **One project:** wire `ProjectCoordinator(...)` directly. Use this when you have one artifact, one brief, one ensemble, and no need for the study harness.
+- **Study harness:** call `run_cell(...)` for one (target × condition) pair, or `run_study(...)` for the full grid. Use this when you want the harness's per-cell output layout, fresh-memory-per-run guarantee, and `CellMetrics` capture.
+
+A worked example is in `scripts/run_one_project.py` — drives a single cell end-to-end against real LLMs:
+
+```bash
+export ANTHROPIC_API_KEY=...    # jig reads provider env vars
+cd legit-biz-club
+uv run python scripts/run_one_project.py
+```
+
+The script's config block is hardcoded; edit-and-rerun is the iteration loop in v0. Output lands under `legit-biz-club/.run/<timestamp>/` (gitignored).
+
 ## Architecture
 
 Per the design memo:
