@@ -147,11 +147,17 @@ def code_target(
 ) -> TargetConfig:
     """Code domain: implementing a small but non-trivial feature.
 
+    v1 supports **single-file CODE artifacts only** — the artifact is
+    one file (e.g., ``feature.py``), and incremental coordination
+    treats it the same way it treats a PROSE markdown file (full-file
+    rewrites with content-hash versioning). Directory-based CODE
+    artifacts with git-commit semantics (per the design memo's
+    "next state = next commit" framing) need git-aware versioning
+    and are deferred to v1.x — see :mod:`legit_biz_club.coordination.version`.
+
     Default brief and seed are placeholder; Workstream D supplies the
-    real ones (the design memo suggests "a small but non-trivial
-    feature in jig itself or another existing repo"). Model pool
-    favors models with strong code-generation reputations; frames
-    cover orthogonal code-quality stances.
+    real ones. Model pool favors models with strong code-generation
+    reputations; frames cover orthogonal code-quality stances.
     """
     return TargetConfig(
         name=name,

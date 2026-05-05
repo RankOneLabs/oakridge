@@ -132,6 +132,43 @@ def test_mediator_rejects_non_positive_retry_budget(tmp_path: Path) -> None:
         Mediator(artifact, ["a-1"], retry_budget=-2)
 
 
+async def test_mediator_handles_single_file_code_artifact(
+    tmp_path: Path,
+) -> None:
+    """v1 supports single-file CODE artifacts — same read/write path as
+    PROSE. Directory-based CODE is the deferred case."""
+    code_path = tmp_path / "feature.py"
+    code_path.write_text("def hello(): pass\n", encoding="utf-8")
+    artifact = Artifact(type=ArtifactType.CODE, path=code_path)
+    mediator = Mediator(artifact, ["a-1"])
+    content, version = await mediator.current_state()
+    proposal = Proposal(
+        agent_id="a-1",
+        based_on_version=version,
+        new_content="def hello(): return 'world'\n",
+    )
+    outcome = await mediator.apply(proposal)
+    assert outcome.result == ProposalResult.APPLIED
+    assert (
+        code_path.read_text(encoding="utf-8")
+        == "def hello(): return 'world'\n"
+    )
+
+
+async def test_mediator_rejects_directory_code_artifact(
+    tmp_path: Path,
+) -> None:
+    """Directory-based CODE artifacts are deferred to v1.x — the
+    mediator surfaces this clearly when current_state or apply is
+    invoked."""
+    code_dir = tmp_path / "src"
+    code_dir.mkdir()
+    artifact = Artifact(type=ArtifactType.CODE, path=code_dir)
+    mediator = Mediator(artifact, ["a-1"])
+    with pytest.raises(NotImplementedError, match="directory-based CODE"):
+        await mediator.current_state()
+
+
 async def test_reset_retry_budgets_restores_initial(mediator: Mediator) -> None:
     """ProjectCoordinator calls this between incremental and consensus
     phases under INCREMENTAL_THEN_CONVERGE so a budget-exhausted agent

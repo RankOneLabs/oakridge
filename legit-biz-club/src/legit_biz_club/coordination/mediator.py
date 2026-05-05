@@ -140,17 +140,11 @@ class Mediator:
             )
 
     def _read_content(self) -> str:
-        if self.artifact.type != ArtifactType.PROSE:
-            raise NotImplementedError(
-                "v1 incremental mode supports PROSE artifacts only"
-            )
+        self._reject_directory_code()
         return self.artifact.path.read_text(encoding="utf-8")
 
     def _write_content(self, content: str) -> None:
-        if self.artifact.type != ArtifactType.PROSE:
-            raise NotImplementedError(
-                "v1 incremental mode supports PROSE artifacts only"
-            )
+        self._reject_directory_code()
         # Atomic-ish: write to a sibling tmpfile then rename. POSIX
         # rename is atomic on the same filesystem; a mid-write crash
         # leaves the previous version intact rather than truncated.
@@ -159,3 +153,20 @@ class Mediator:
         )
         tmp.write_text(content, encoding="utf-8")
         tmp.replace(self.artifact.path)
+
+    def _reject_directory_code(self) -> None:
+        """v1 supports file-based artifacts of either type
+        (PROSE markdown, CODE single-file) — both go through the same
+        read_text / atomic-rename path. Directory-based CODE
+        (git-commit semantics per the design memo) needs its own
+        versioning strategy and is deferred to v1.x.
+        """
+        if (
+            self.artifact.type == ArtifactType.CODE
+            and self.artifact.path.exists()
+            and self.artifact.path.is_dir()
+        ):
+            raise NotImplementedError(
+                "directory-based CODE artifacts are deferred to v1.x; "
+                "v1 supports single-file CODE artifacts only"
+            )

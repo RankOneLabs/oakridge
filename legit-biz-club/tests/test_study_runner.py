@@ -35,7 +35,7 @@ from legit_biz_club.study.runner import (
     run_cell,
     run_study,
 )
-from legit_biz_club.study.targets import prose_target
+from legit_biz_club.study.targets import code_target, prose_target
 
 
 class _AppendingProposer:
@@ -181,6 +181,52 @@ async def test_run_cell_with_consensus_records_convergence(
     assert result.metrics.convergence_round_converged == 1
     # Multi-round skip_when fires → escalate didn't run → not escalated.
     assert result.metrics.escalation_invoked is False
+
+
+async def test_run_cell_handles_code_target_single_file(
+    tmp_path: Path,
+) -> None:
+    """v1 supports single-file CODE targets — runner builds them the
+    same as prose targets, mediator handles the read/write path."""
+    target = code_target(seed_content="def stub(): ...\n")
+    condition = single_agent_baseline()
+
+    def proposer_factory(_agent: Agent) -> _AppendingProposer:
+        return _AppendingProposer()
+
+    result = await run_cell(
+        target=target,
+        condition=condition,
+        proposer_factory=proposer_factory,
+        output_dir=tmp_path,
+        tracer=StdoutTracer(color=False),
+    )
+    # Cell ran end-to-end; the .py artifact reflects the appended commits.
+    assert result.artifact_path.suffix == ".py"
+    assert result.final_artifact_content.startswith("def stub(): ...")
+
+
+async def test_run_cell_uses_consistent_project_id(tmp_path: Path) -> None:
+    """Project.id and Enrollment.project_id must match — they refer
+    to the same project. The runner uses a stable cell-id string for
+    both."""
+    target = prose_target(seed_content="seed")
+    condition = ensemble_incremental_only(n=2)
+
+    def proposer_factory(_agent: Agent) -> _AppendingProposer:
+        return _AppendingProposer()
+
+    result = await run_cell(
+        target=target,
+        condition=condition,
+        proposer_factory=proposer_factory,
+        output_dir=tmp_path,
+        tracer=StdoutTracer(color=False),
+    )
+    project = result.run_result.project
+    assert project.id == f"{target.name}-{condition.name}"
+    for enrollment in project.enrollments:
+        assert enrollment.project_id == project.id
 
 
 async def test_run_cell_singleround_marks_escalation_even_when_converged(

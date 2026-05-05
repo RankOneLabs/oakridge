@@ -35,20 +35,44 @@ def test_explicit_content_overrides_disk(tmp_path: Path) -> None:
     assert on_disk_version != explicit_version
 
 
-def test_code_artifact_raises(tmp_path: Path) -> None:
+def test_code_directory_artifact_raises(tmp_path: Path) -> None:
+    """Directory-based CODE artifacts (git-commit semantics) are
+    deferred to v1.x — single-file CODE works, directory does not."""
     code_dir = tmp_path / "code"
     code_dir.mkdir()
     artifact = Artifact(type=ArtifactType.CODE, path=code_dir)
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(NotImplementedError, match="directory-based CODE"):
         compute_version(artifact)
 
 
-def test_code_artifact_with_content_still_raises(tmp_path: Path) -> None:
-    """The content shortcut must not bypass the artifact-type check —
-    callers that have content for a CODE artifact should still hit
-    NotImplementedError, not silently get a hash."""
+def test_code_directory_with_content_still_raises(tmp_path: Path) -> None:
+    """Same defense via the content shortcut — a caller with content
+    in hand for a directory-CODE artifact still hits the deferred
+    path."""
     code_dir = tmp_path / "code"
     code_dir.mkdir()
     artifact = Artifact(type=ArtifactType.CODE, path=code_dir)
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(NotImplementedError, match="directory-based CODE"):
         compute_version(artifact, content="some bytes")
+
+
+def test_code_single_file_hashes_like_prose(tmp_path: Path) -> None:
+    """v1 supports single-file CODE artifacts — content-hash versioning
+    works the same as for PROSE markdown."""
+    p = tmp_path / "feature.py"
+    p.write_text("def hello(): return 1\n", encoding="utf-8")
+    artifact = Artifact(type=ArtifactType.CODE, path=p)
+    version = compute_version(artifact)
+    # Same hash as the equivalent prose file with the same bytes.
+    prose_artifact = Artifact(type=ArtifactType.PROSE, path=p)
+    assert version == compute_version(prose_artifact)
+
+
+def test_code_single_file_with_content_kwarg(tmp_path: Path) -> None:
+    """Content shortcut works for single-file CODE artifacts too."""
+    p = tmp_path / "feature.py"
+    p.write_text("seed", encoding="utf-8")
+    artifact = Artifact(type=ArtifactType.CODE, path=p)
+    v_explicit = compute_version(artifact, content="explicit content")
+    v_disk = compute_version(artifact)
+    assert v_explicit != v_disk

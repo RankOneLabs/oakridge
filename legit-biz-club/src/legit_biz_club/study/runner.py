@@ -123,6 +123,17 @@ async def run_cell(
     cell_dir = output_dir / target.name / condition.name
     cell_dir.mkdir(parents=True, exist_ok=True)
     artifact_path = cell_dir / target.artifact_filename
+    # The runner only handles file-based artifacts (PROSE markdown or
+    # single-file CODE). Directory-based CODE is deferred to v1.x;
+    # fail loud here so the failure is attached to construction
+    # rather than the first mediator call.
+    if target.artifact_filename.endswith("/") or "/" in target.artifact_filename:
+        raise ValueError(
+            f"target {target.name!r} artifact_filename "
+            f"{target.artifact_filename!r} looks like a directory path; "
+            "v1 supports single-file artifacts only — directory-based "
+            "CODE artifacts are v1.x"
+        )
     artifact_path.write_text(target.seed_content, encoding="utf-8")
 
     agents = _build_agents(
@@ -130,11 +141,18 @@ async def run_cell(
         n=condition.n,
         agent_data_root=cell_dir / "agent_memory",
     )
+    # Stable cell-id string used for both Project.id and the
+    # Enrollment.project_id pointers so downstream consumers that
+    # expect them to match (the design memo's data model invariant)
+    # see a consistent reference. Also gives Workstream D a
+    # human-readable handle for cross-cell aggregation.
+    cell_project_id = f"{target.name}-{condition.name}"
     project = Project(
+        id=cell_project_id,
         artifact=Artifact(type=target.artifact_type, path=artifact_path),
         brief=target.brief,
         enrollments=[
-            Enrollment(agent_id=a.id, project_id=f"{target.name}-{condition.name}")
+            Enrollment(agent_id=a.id, project_id=cell_project_id)
             for a in agents
         ],
         coordination_protocol=condition.coordination_protocol,
