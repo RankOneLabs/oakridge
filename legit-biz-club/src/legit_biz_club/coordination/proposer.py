@@ -3,10 +3,12 @@
 Abstracts the "agent reads context and produces a proposal" step. The
 production implementation wraps ``jig.run_agent`` with the project
 brief and current artifact content as inputs; tests use a small
-deterministic stub. Plugging real LLMs in is mechanical once the
-interface is stable — that wiring lands in a follow-up PR rather than
-this one, since v1 incremental coordination is meaningful to validate
-architecturally before paying real LLM cost.
+deterministic stub.
+
+A single :class:`Proposer` protocol covers both incremental and
+convergence modes. Incremental mode and convergence round 1 pass
+``peer_proposals=None`` (independence); convergence rounds 2+ pass the
+prior round's proposals so agents can revise with peer context.
 """
 from __future__ import annotations
 
@@ -27,6 +29,7 @@ class Proposer(Protocol):
         artifact: Artifact,
         current_content: str,
         current_version: str,
+        peer_proposals: list[Proposal] | None = None,
     ) -> Proposal:
         """Return the agent's proposal for the artifact's next state.
 
@@ -36,6 +39,13 @@ class Proposer(Protocol):
         ``based_on_version`` should be set to ``current_version`` so the
         mediator's OCC check can detect drift if the state moved
         between this read and the eventual apply.
+
+        ``peer_proposals`` is the prior convergence round's proposals
+        (``None`` for incremental commits and convergence round 1).
+        When supplied, implementations should expose them to the agent
+        as substrate context — read like the canonical state, not like
+        messages from peers — so revision happens through the
+        artifact-mediated channel rather than direct exchange.
 
         The Proposer must NOT apply the proposal — that's the
         mediator's job.

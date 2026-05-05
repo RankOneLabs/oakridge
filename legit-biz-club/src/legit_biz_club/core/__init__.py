@@ -8,6 +8,7 @@ from legit_biz_club.core.models import (
     Artifact,
     ArtifactType,
     Brief,
+    CoordinationProtocol,
     Enrollment,
     Project,
 )
@@ -17,6 +18,7 @@ __all__ = [
     "Artifact",
     "ArtifactType",
     "Brief",
+    "CoordinationProtocol",
     "Enrollment",
     "InvalidTransitionError",
     "Project",

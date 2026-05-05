@@ -38,6 +38,7 @@ class _CountingProposer:
         artifact: Artifact,
         current_content: str,
         current_version: str,
+        peer_proposals: list[Proposal] | None = None,
     ) -> Proposal:
         self.calls += 1
         return Proposal(
@@ -218,6 +219,7 @@ async def test_step_raises_on_wrong_agent_id_proposal(tmp_path: Path) -> None:
             artifact: Artifact,
             current_content: str,
             current_version: str,
+            peer_proposals: list[Proposal] | None = None,
         ) -> Proposal:
             return Proposal(
                 agent_id="not-the-right-id",
@@ -256,6 +258,7 @@ async def test_terminated_by_all_exhausted(tmp_path: Path) -> None:
             artifact: Artifact,
             current_content: str,
             current_version: str,
+            peer_proposals: list[Proposal] | None = None,
         ) -> Proposal:
             return Proposal(
                 agent_id=agent.id,

@@ -77,3 +77,28 @@ def test_project_starts_initialized(tmp_path: Path) -> None:
     assert project.enrollments == []
     assert project.shipped_at is None
     assert project.archived_at is None
+
+
+def test_project_default_coordination_protocol(tmp_path: Path) -> None:
+    """Default protocol is incremental-only — backward-compatible with
+    pre-Phase-3 projects."""
+    from legit_biz_club import CoordinationProtocol
+
+    project = Project(
+        artifact=Artifact(type=ArtifactType.PROSE, path=tmp_path / "a.md"),
+        brief=Brief(target_spec="x", success_criteria=["y"]),
+    )
+    assert project.coordination_protocol == CoordinationProtocol.INCREMENTAL_ONLY
+
+
+def test_project_accepts_explicit_coordination_protocol(tmp_path: Path) -> None:
+    from legit_biz_club import CoordinationProtocol
+
+    project = Project(
+        artifact=Artifact(type=ArtifactType.PROSE, path=tmp_path / "a.md"),
+        brief=Brief(target_spec="x", success_criteria=["y"]),
+        coordination_protocol=CoordinationProtocol.MULTI_ROUND_FROM_START,
+    )
+    assert (
+        project.coordination_protocol == CoordinationProtocol.MULTI_ROUND_FROM_START
+    )
