@@ -4,6 +4,14 @@ kbbl/data/
 kbbl/core/pwa/dist/
 .claude/settings.local.json
 
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
 *.db
 *.jsonl
 .env

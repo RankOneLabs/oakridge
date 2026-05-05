@@ -6,6 +6,7 @@ import type { SessionManager } from "../session/session-manager";
 import { inboxHandler } from "../stream/inbox";
 import { mountPerSidRoutes } from "./handlers/per-sid";
 import { mountSessionsRoutes } from "./handlers/sessions";
+import { mountWorkspaceEventsRoutes } from "./handlers/workspace-events";
 
 export interface CreateAppDeps {
   manager: SessionManager;
@@ -62,6 +63,13 @@ export function createApp(deps: CreateAppDeps): Hono {
 
   // ---- sessions CRUD ----
   mountSessionsRoutes(app, { manager, defaultWorkdir, sessionsDir });
+
+  // ---- workspace-layer event ingest ----
+  //
+  // POST /inbox/workspace-events lets legit-biz-club push project
+  // lifecycle and coordination events through to inbox subscribers
+  // without kbbl interpreting them.
+  mountWorkspaceEventsRoutes(app, { manager });
 
   // ---- /inbox (always-on delta stream) ----
   app.get("/inbox", inboxHandler(manager));

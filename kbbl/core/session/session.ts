@@ -41,6 +41,13 @@ export interface SessionOpts {
   sessionsDir: string;
   parentCcSid?: string;
   parentOakridgeSid?: string;
+  /**
+   * Opaque identifier from legit-biz-club tagging this session as part of
+   * an artifact-scoped ensemble. kbbl doesn't model the artifact itself —
+   * the id is passed through to snapshots and queryable via
+   * SessionManager.listByArtifact() for grouping in the operator UI.
+   */
+  artifactId?: string;
   callbacks?: SessionCallbacks;
   /**
    * Optional runtime-adapter classifier called for each parsed stdout event
@@ -52,6 +59,16 @@ export interface SessionOpts {
 }
 
 export type SessionStatus = "starting" | "live" | "ended";
+
+/**
+ * Hard cap on `artifactId` length. Enforced at the Session constructor,
+ * the POST /sessions handler, the GET /artifacts/:artifactId/sessions
+ * handler, and the archived-snapshot reconstruction so the invariant
+ * holds at every entry point. Bounds the bytes that ride on every
+ * JSONL session_started record and every session_created SSE delta;
+ * 200 is generous for any reasonable id scheme (UUIDs, slugs, hashes).
+ */
+export const MAX_ARTIFACT_ID_LENGTH = 200;
 
 /**
  * Subset of CC's `result`-event usage block. Captured on every `result`
@@ -76,6 +93,13 @@ export interface SessionSnapshot {
   ccSid: string | null;
   parentCcSid: string | null;
   parentOakridgeSid: string | null;
+  /**
+   * Tag from legit-biz-club identifying the artifact this session is
+   * working on. null for ad-hoc sessions created outside the workspace
+   * layer (the existing kbbl-direct flow). Surfaces to the PWA so
+   * approvals can be rendered with artifact context.
+   */
+  artifactId: string | null;
   pendingCount: number;
   yoloMode: boolean;
   allowedTools: string[];
@@ -105,6 +129,7 @@ export class Session {
   readonly jsonlPath: string;
   readonly parentCcSid: string | null;
   readonly parentOakridgeSid: string | null;
+  readonly artifactId: string | null;
   readonly createdAt: string;
 
   private readonly callbacks: SessionCallbacks;
@@ -148,6 +173,18 @@ export class Session {
     this.jsonlPath = join(opts.sessionsDir, `${opts.oakridgeSid}.jsonl`);
     this.parentCcSid = opts.parentCcSid ?? null;
     this.parentOakridgeSid = opts.parentOakridgeSid ?? null;
+    // Normalize at the constructor so direct SessionManager.create()
+    // callers can't sneak in empty/whitespace or oversized tags even
+    // though the HTTP route rejects them. JSONL session_started and
+    // snapshots will never contain a malformed artifactId regardless
+    // of call site.
+    const trimmedArtifactId = opts.artifactId?.trim() || null;
+    if (trimmedArtifactId !== null && trimmedArtifactId.length > MAX_ARTIFACT_ID_LENGTH) {
+      throw new Error(
+        `artifactId must be ≤ ${MAX_ARTIFACT_ID_LENGTH} chars after trimming (got ${trimmedArtifactId.length})`,
+      );
+    }
+    this.artifactId = trimmedArtifactId;
     this.createdAt = new Date().toISOString();
     this.lastActivityTs = this.createdAt;
     this.callbacks = opts.callbacks ?? {};
@@ -246,6 +283,7 @@ export class Session {
       ccSid: this.ccSid,
       parentCcSid: this.parentCcSid,
       parentOakridgeSid: this.parentOakridgeSid,
+      artifactId: this.artifactId,
       pendingCount: this.pendingApprovals.size,
       yoloMode: this.yoloMode,
       allowedTools: [...this.allowedTools],
@@ -332,6 +370,7 @@ export class Session {
       sessionId: this.oakridgeSid,
       parentCcSid: this.parentCcSid,
       parentOakridgeSid: this.parentOakridgeSid,
+      artifactId: this.artifactId,
     });
 
     try {
