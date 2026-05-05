@@ -14,8 +14,6 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 
-from jig.core.types import Score
-
 from legit_biz_club.study.runner import CellResult
 
 
@@ -75,9 +73,7 @@ def _summarize_condition(
         condition_name=name,
         n_cells=len(cells),
         avg_scores_by_dimension=MappingProxyType(
-            _avg_scores_by_dimension(
-                score for cell in cells for score in cell.eval_scores
-            )
+            _avg_scores_by_dimension(cells)
         ),
         avg_incremental_commits_applied=_mean(
             cell.metrics.incremental_commits_applied for cell in cells
@@ -87,11 +83,25 @@ def _summarize_condition(
 
 
 def _avg_scores_by_dimension(
-    scores: Iterable[Score],
+    cells: Sequence[CellResult],
 ) -> dict[str, float]:
+    """Average a dimension's score across cells.
+
+    Per-cell collapse first: if a cell's grader returns multiple
+    scores for the same dimension (e.g., a heuristic grader that
+    contributes several signals all tagged ``"rigor"``), collapse
+    them to a per-cell mean before averaging across cells. Otherwise
+    a cell with extra scores would weight the overall mean more
+    heavily than a cell with one — each cell should count once per
+    dimension regardless of how its grader is shaped.
+    """
     by_dim: dict[str, list[float]] = defaultdict(list)
-    for score in scores:
-        by_dim[score.dimension].append(score.value)
+    for cell in cells:
+        per_cell: dict[str, list[float]] = defaultdict(list)
+        for score in cell.eval_scores:
+            per_cell[score.dimension].append(score.value)
+        for dim, values in per_cell.items():
+            by_dim[dim].append(sum(values) / len(values))
     return {dim: sum(values) / len(values) for dim, values in by_dim.items()}
 
 

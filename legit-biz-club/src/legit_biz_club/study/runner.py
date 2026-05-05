@@ -126,8 +126,25 @@ async def run_cell(
     # single-file CODE). artifact_filename must be a bare filename
     # with no path separators — anything multi-component would be a
     # directory-style path, and directory-based CODE is deferred to
-    # v1.x. Use PurePath.parts so the check catches both POSIX and
-    # Windows separators (and anything else pathlib recognizes).
+    # v1.x.
+    #
+    # Rejects (in order): empty/whitespace-only (would degenerate to
+    # the cell directory itself); ``.`` or ``..`` (would point at the
+    # cell dir or its parent — silently writing seed_content there
+    # would clobber sibling cell state); and multi-component paths
+    # via PurePath.parts (catches both POSIX `/` and Windows `\\`).
+    stripped = target.artifact_filename.strip()
+    if not stripped:
+        raise ValueError(
+            f"target {target.name!r} artifact_filename is empty or "
+            "whitespace-only — must be a real filename"
+        )
+    if stripped in {".", ".."}:
+        raise ValueError(
+            f"target {target.name!r} artifact_filename "
+            f"{target.artifact_filename!r} resolves to the cell "
+            "directory or its parent — must be a real filename"
+        )
     if len(PurePath(target.artifact_filename).parts) != 1:
         raise ValueError(
             f"target {target.name!r} artifact_filename "

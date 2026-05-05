@@ -28,7 +28,7 @@ from typing import Any
 
 from jig.core.types import MemoryEntry
 from jig.memory.local import SqliteStore
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from legit_biz_club.core.models import Agent
 
@@ -200,10 +200,12 @@ def _deserialize_observation(entry: MemoryEntry) -> CommitObservation | None:
     that aren't legit-biz-club observations or whose metadata is malformed.
 
     Catches ``KeyError`` (missing required field), ``ValueError`` (e.g.,
-    bad enum value, unparseable timestamp), and ``TypeError`` (e.g.,
-    non-iterable ``tags``, non-string ``timestamp``) — anything that
-    indicates a malformed row should fail-soft and be skipped on
-    load_observations() rather than blow up the entire read.
+    bad enum value, unparseable timestamp), ``TypeError`` (e.g.,
+    non-iterable ``tags``, non-string ``timestamp``), and pydantic's
+    ``ValidationError`` (e.g., an ``agent_id`` that's not a string,
+    which gets past the dict access but fails the model's type check)
+    — anything that indicates a malformed row should fail-soft and be
+    skipped on load_observations() rather than blow up the entire read.
     """
     metadata = entry.metadata
     if metadata.get("lbc_kind") != _LBC_METADATA_KIND:
@@ -220,5 +222,5 @@ def _deserialize_observation(entry: MemoryEntry) -> CommitObservation | None:
             supersedes=metadata.get("supersedes"),
             timestamp=datetime.fromisoformat(metadata["timestamp"]),
         )
-    except (KeyError, ValueError, TypeError):
+    except (KeyError, ValueError, TypeError, ValidationError):
         return None
