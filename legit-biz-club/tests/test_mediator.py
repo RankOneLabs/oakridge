@@ -130,3 +130,31 @@ def test_mediator_rejects_non_positive_retry_budget(tmp_path: Path) -> None:
         Mediator(artifact, ["a-1"], retry_budget=0)
     with pytest.raises(ValueError):
         Mediator(artifact, ["a-1"], retry_budget=-2)
+
+
+async def test_reset_retry_budgets_restores_initial(mediator: Mediator) -> None:
+    """ProjectCoordinator calls this between incremental and consensus
+    phases under INCREMENTAL_THEN_CONVERGE so a budget-exhausted agent
+    can still land a converged / picked proposal."""
+    _, version = await mediator.current_state()
+    # Force a-1 into OCC-rejection territory: bump the version, then
+    # submit stale proposals until budget is exhausted.
+    await mediator.apply(
+        Proposal(agent_id="a-2", based_on_version=version, new_content="x")
+    )
+    for _ in range(3):
+        await mediator.apply(
+            Proposal(
+                agent_id="a-1",
+                based_on_version=version,
+                new_content="stale",
+            )
+        )
+    assert mediator.retry_remaining["a-1"] == 0
+
+    mediator.reset_retry_budgets()
+
+    # All agents back to initial budget.
+    assert mediator.retry_remaining["a-1"] == 3
+    assert mediator.retry_remaining["a-2"] == 3
+    assert mediator.retry_remaining["a-3"] == 3
