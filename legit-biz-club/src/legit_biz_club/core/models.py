@@ -15,7 +15,8 @@ Neither scope leaks into the other.
 """
 from __future__ import annotations
 
-from datetime import datetime
+import json
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,13 @@ from legit_biz_club.core.lifecycle import ProjectState
 
 def _new_id() -> str:
     return str(uuid4())
+
+
+def _utc_now() -> datetime:
+    """UTC-aware ``datetime.now``. Naive timestamps would compare wrong
+    across machines in different timezones and trip serialization.
+    """
+    return datetime.now(UTC)
 
 
 class ArtifactType(StrEnum):
@@ -113,8 +121,31 @@ class Enrollment(BaseModel):
 
     agent_id: str
     project_id: str
-    enrolled_at: datetime = Field(default_factory=datetime.now)
+    enrolled_at: datetime = Field(default_factory=_utc_now)
     binding: dict[str, Any] | None = None
+
+    @field_validator("binding")
+    @classmethod
+    def _binding_is_json_serializable(
+        cls, v: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        """Reject bindings that can't survive ``json.dumps``.
+
+        The heterogeneity check serializes the binding to a stable
+        string key for uniqueness comparison; if serialization fails
+        there it surfaces as a runtime error far from the construction
+        site. Validating at the model boundary keeps the failure
+        attached to the bad input.
+        """
+        if v is None:
+            return v
+        try:
+            json.dumps(v, sort_keys=True)
+        except (TypeError, ValueError) as e:
+            raise ValueError(
+                f"binding must be JSON-serializable: {e}"
+            ) from e
+        return v
 
 
 class Project(BaseModel):
@@ -131,6 +162,6 @@ class Project(BaseModel):
     brief: Brief
     enrollments: list[Enrollment] = Field(default_factory=list)
     state: ProjectState = ProjectState.INITIALIZED
-    created_at: datetime = Field(default_factory=datetime.now)
+    created_at: datetime = Field(default_factory=_utc_now)
     shipped_at: datetime | None = None
     archived_at: datetime | None = None

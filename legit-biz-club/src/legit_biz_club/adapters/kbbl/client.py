@@ -39,7 +39,16 @@ class KbblClient:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
         self._owns_http = http is None
-        self._http = http or httpx.AsyncClient()
+        # Apply base_url + timeout to the owned client so endpoint
+        # methods can use relative paths and inherit the configured
+        # timeout. Without these, an injected `httpx.AsyncClient()`
+        # would silently default to httpx's 5s timeout and require
+        # callers to repeat the base URL on every request — making the
+        # constructor args dead code.
+        self._http = http or httpx.AsyncClient(
+            base_url=self._base_url,
+            timeout=self._timeout,
+        )
 
     async def list_sessions(self) -> list[SessionSnapshot]:
         """``GET /sessions`` — every session kbbl knows about, in-memory only."""
