@@ -52,12 +52,20 @@ from legit_biz_club.core import (
     ProjectState,
     transition_to,
 )
+from legit_biz_club.memory import (
+    CommitObservation,
+    CommitResult,
+    MemoryCommitter,
+    OperatorConfidence,
+)
 
 __all__ = [
     "Agent",
     "Artifact",
     "ArtifactType",
     "Brief",
+    "CommitObservation",
+    "CommitResult",
     "CompositionMode",
     "CompositionPolicy",
     "ConsensusMechanism",
@@ -74,7 +82,9 @@ __all__ = [
     "JigProposer",
     "KCommitsPerAgent",
     "Mediator",
+    "MemoryCommitter",
     "MultiRoundConsensus",
+    "OperatorConfidence",
     "PickResult",
     "Project",
     "ProjectCoordinator",
