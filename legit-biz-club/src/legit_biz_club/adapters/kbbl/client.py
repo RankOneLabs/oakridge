@@ -52,10 +52,7 @@ class KbblClient:
 
     async def list_sessions(self) -> list[SessionSnapshot]:
         """``GET /sessions`` — every session kbbl knows about, in-memory only."""
-        response = await self._http.get(
-            f"{self._base_url}/sessions",
-            timeout=self._timeout,
-        )
+        response = await self._http.get("/sessions")
         response.raise_for_status()
         body = response.json()
         return [
@@ -68,10 +65,7 @@ class KbblClient:
         """``GET /artifacts/{artifactId}/sessions`` — sessions tagged with this artifact."""
         if not artifact_id:
             raise ValueError("artifact_id must be non-empty")
-        response = await self._http.get(
-            f"{self._base_url}/artifacts/{artifact_id}/sessions",
-            timeout=self._timeout,
-        )
+        response = await self._http.get(f"/artifacts/{artifact_id}/sessions")
         response.raise_for_status()
         body = response.json()
         return [
@@ -99,11 +93,7 @@ class KbblClient:
         }
         if name is not None:
             body["name"] = name
-        response = await self._http.post(
-            f"{self._base_url}/sessions",
-            json=body,
-            timeout=self._timeout,
-        )
+        response = await self._http.post("/sessions", json=body)
         response.raise_for_status()
         return SessionSnapshot.model_validate(response.json())
 
@@ -117,8 +107,11 @@ class KbblClient:
         """``POST /inbox/workspace-events`` — push a project event to the inbox.
 
         kbbl treats the event as opaque pass-through. ``kind`` and
-        ``project_id`` are required and must be non-empty; ``payload``
-        defaults to ``{}`` if omitted.
+        ``project_id`` are required and must be non-empty. When
+        ``payload`` is omitted, the body's ``payload`` key is omitted
+        too — kbbl applies its own server-side default of ``{}`` so
+        subscribers can dereference ``event.payload`` without
+        null-checking either way.
         """
         if not kind:
             raise ValueError("kind must be non-empty")
@@ -129,11 +122,7 @@ class KbblClient:
         body: dict[str, Any] = {"kind": kind, "projectId": project_id}
         if payload is not None:
             body["payload"] = payload
-        response = await self._http.post(
-            f"{self._base_url}/inbox/workspace-events",
-            json=body,
-            timeout=self._timeout,
-        )
+        response = await self._http.post("/inbox/workspace-events", json=body)
         response.raise_for_status()
 
     async def aclose(self) -> None:

@@ -43,7 +43,9 @@ async def test_create_artifact_session_posts_correct_body() -> None:
         return httpx.Response(200, json=_FIXTURE_SNAPSHOT)
 
     transport = httpx.MockTransport(handler)
-    async with httpx.AsyncClient(transport=transport) as http:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://kbbl.test"
+    ) as http:
         client = KbblClient(http=http)
         snap = await client.create_artifact_session(
             workdir="/tmp/repo", artifact_id="art-42", name="test-session"
@@ -69,7 +71,9 @@ async def test_create_artifact_session_omits_optional_name() -> None:
         return httpx.Response(200, json=_FIXTURE_SNAPSHOT)
 
     transport = httpx.MockTransport(handler)
-    async with httpx.AsyncClient(transport=transport) as http:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://kbbl.test"
+    ) as http:
         client = KbblClient(http=http)
         await client.create_artifact_session(
             workdir="/tmp/repo", artifact_id="art-42"
@@ -98,7 +102,9 @@ async def test_list_artifact_sessions() -> None:
         )
 
     transport = httpx.MockTransport(handler)
-    async with httpx.AsyncClient(transport=transport) as http:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://kbbl.test"
+    ) as http:
         client = KbblClient(http=http)
         sessions = await client.list_artifact_sessions("art-42")
     assert captured["method"] == "GET"
@@ -117,7 +123,9 @@ async def test_post_workspace_event_sends_camelcase() -> None:
         return httpx.Response(200, json={"ok": True})
 
     transport = httpx.MockTransport(handler)
-    async with httpx.AsyncClient(transport=transport) as http:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://kbbl.test"
+    ) as http:
         client = KbblClient(http=http)
         await client.post_workspace_event(
             kind="proposal_applied",
@@ -144,7 +152,9 @@ async def test_post_workspace_event_omits_payload_when_none() -> None:
         return httpx.Response(200, json={"ok": True})
 
     transport = httpx.MockTransport(handler)
-    async with httpx.AsyncClient(transport=transport) as http:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://kbbl.test"
+    ) as http:
         client = KbblClient(http=http)
         await client.post_workspace_event(kind="x", project_id="p-1")
     # payload omitted from body — kbbl defaults it server-side.
@@ -174,7 +184,9 @@ async def test_raises_on_non_2xx() -> None:
         return httpx.Response(400, json={"error": "bad request"})
 
     transport = httpx.MockTransport(handler)
-    async with httpx.AsyncClient(transport=transport) as http:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://kbbl.test"
+    ) as http:
         client = KbblClient(http=http)
         with pytest.raises(httpx.HTTPStatusError):
             await client.list_artifact_sessions("art-42")
@@ -193,7 +205,9 @@ async def test_list_sessions() -> None:
         )
 
     transport = httpx.MockTransport(handler)
-    async with httpx.AsyncClient(transport=transport) as http:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://kbbl.test"
+    ) as http:
         client = KbblClient(http=http)
         sessions = await client.list_sessions()
     assert captured["method"] == "GET"
@@ -210,7 +224,9 @@ async def test_list_sessions_empty() -> None:
         return httpx.Response(200, json={"sessions": []})
 
     transport = httpx.MockTransport(handler)
-    async with httpx.AsyncClient(transport=transport) as http:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://kbbl.test"
+    ) as http:
         client = KbblClient(http=http)
         sessions = await client.list_sessions()
     assert sessions == []

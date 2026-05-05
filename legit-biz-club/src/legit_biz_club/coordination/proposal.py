@@ -9,7 +9,7 @@ event for the operator surface.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from uuid import uuid4
 
@@ -18,6 +18,14 @@ from pydantic import BaseModel, Field
 
 def _new_id() -> str:
     return str(uuid4())
+
+
+def _utc_now() -> datetime:
+    """UTC-aware ``datetime.now`` — matches the helper in core.models so
+    proposal/outcome timestamps compare cleanly against project /
+    enrollment timestamps.
+    """
+    return datetime.now(UTC)
 
 
 class ProposalResult(StrEnum):
@@ -44,7 +52,7 @@ class Proposal(BaseModel):
     based_on_version: str
     new_content: str
     rationale: str = ""
-    proposed_at: datetime = Field(default_factory=datetime.now)
+    proposed_at: datetime = Field(default_factory=_utc_now)
 
 
 class ProposalOutcome(BaseModel):
@@ -59,4 +67,4 @@ class ProposalOutcome(BaseModel):
     result: ProposalResult
     new_version: str | None = None
     reason: str | None = None
-    decided_at: datetime = Field(default_factory=datetime.now)
+    decided_at: datetime = Field(default_factory=_utc_now)
