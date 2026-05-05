@@ -15,7 +15,7 @@ The PWA opens to a session list backed by a `/inbox` delta stream (snapshot + cr
 ```bash
 bun install
 bun run build:pwa
-./scripts/cc-start /path/to/your/repo
+./scripts/kbbl-start /path/to/your/repo
 ```
 
 Defaults to `127.0.0.1:8788` — open `http://localhost:8788/` in a browser on the same machine. From the session list, click **+ New session** to spawn a session in the workdir of your choice.
@@ -23,18 +23,18 @@ Defaults to `127.0.0.1:8788` — open `http://localhost:8788/` in a browser on t
 For phone/tablet access over Tailscale, bind all interfaces:
 
 ```bash
-./scripts/cc-start /path/to/your/repo --host=0.0.0.0
+./scripts/kbbl-start /path/to/your/repo --host=0.0.0.0
 ```
 
 Then open `http://<machine>:8788/` on your phone. Add to Home Screen for a full-screen standalone app. Only do this on networks where every reachable peer is trusted (Tailscale-only, or a LAN you control) — control endpoints are unauthenticated in v0.
 
-The workdir passed to `cc-start` is the *default* for new sessions; each session can pick its own workdir from the **+ New session** form.
+The workdir passed to `kbbl-start` is the *default* for new sessions; each session can pick its own workdir from the **+ New session** form.
 
 ## Development
 
 ```bash
 # Terminal 1: server with the agent subprocesses
-./scripts/cc-start /path/to/your/repo
+./scripts/kbbl-start /path/to/your/repo
 
 # Terminal 2: Vite dev server with HMR (proxies API calls to :8788)
 bun run dev:pwa
@@ -43,7 +43,7 @@ bun run dev:pwa
 
 ## Running
 
-The primary flow is `./scripts/cc-start <workdir>` in a terminal — that's the *server*. Adding more sessions happens in the PWA (or via `POST /sessions`); a second `cc-start` would just collide on the port.
+The primary flow is `./scripts/kbbl-start <workdir>` in a terminal — that's the *server*. Adding more sessions happens in the PWA (or via `POST /sessions`); a second `kbbl-start` would just collide on the port.
 
 Ctrl-C stops the server; all live agent subprocesses die with it. Ended sessions remain readable via their on-disk JSONL the next time the server starts.
 
@@ -54,7 +54,7 @@ If you want to bound resource use (shared box, or a box hosting other workloads)
 ```bash
 systemd-run --user --scope --unit=kbbl \
   -p MemoryMax=2G -p CPUQuota=200% \
-  ./scripts/cc-start /path/to/your/repo
+  ./scripts/kbbl-start /path/to/your/repo
 ```
 
 Stop with `systemctl --user stop kbbl`. Not needed on a dedicated workstation.
@@ -70,19 +70,43 @@ Stop with `systemctl --user stop kbbl`. Not needed on a dedicated workstation.
 - `POST /:sid/input` — send operator text to the session
 - `POST /:sid/approval` — Approve / Deny / Always-{tool} reply for a parked PreToolUse
 - `POST /:sid/yolo` — toggle the session's auto-approve mode
-- `POST /hook/approval` — `127.0.0.1`-only; the gate script's parking endpoint (currently CC-specific, will be moved into the adapter in a follow-up)
+- `POST /hook/approval` — `127.0.0.1`-only loopback endpoint mounted by the Claude Code adapter's gate script
 - `GET /config` — server config snapshot for the PWA
 
 ## Layout
 
-- `core/server.ts` — Hono + Bun process supervisor (route handlers, SSE broadcast, `/inbox` deltas, hook approval parking). Will be split into submodules (`session/`, `approval/`, `stream/`, `server/`) in a follow-up PR.
-- `core/session-manager.ts` — owns the `Map<sid, Session>`, `/inbox` subscriptions, archived-snapshot reads
-- `core/session.ts` — one agent subprocess: spawn, JSONL persistence, per-session event broadcast, YOLO / always-allow state
-- `core/pwa/` — React + Vite client (responsive across phone / tablet / desktop), built to `core/pwa/dist/` and served statically by Hono. Hash routing (`#sid=…`), no router library.
-- `core/runtime-interface.ts` — the typed contract between core and runtime adapters (draft, not yet load-bearing). Sharpened when the second adapter lands.
-- `adapters/claude-code/` — Claude Code runtime adapter. Currently most CC-specific code is still inline in core; it migrates here in a follow-up PR.
-- `scripts/cc-start` — launcher that validates the workdir and execs `bun run core/server.ts`. Will be renamed to `kbbl-start` in a follow-up.
-- `data/sessions/` — one JSONL transcript per session (gitignored)
+```text
+kbbl/
+├── core/                          # runtime-agnostic
+│   ├── server.ts                  # entry: arg parsing, manager + app + Bun.serve wiring, signals
+│   ├── runtime.ts                 # AppRuntime contract that adapters implement
+│   ├── runtime-interface.ts       # richer aspirational interface (sketch)
+│   ├── session/
+│   │   ├── session.ts             # one agent subprocess: spawn, JSONL persistence,
+│   │   │                          # per-session event broadcast, YOLO / always-allow state
+│   │   └── session-manager.ts     # Map<sid, Session>, /inbox subscriptions, archived snapshots
+│   ├── server/
+│   │   ├── app.ts                 # Hono app factory; mounts adapter + per-sid + sessions routes
+│   │   └── handlers/
+│   │       ├── per-sid.ts         # /:sid/{stream,events,input,yolo,approval}
+│   │       └── sessions.ts        # GET/POST/DELETE /sessions
+│   ├── stream/
+│   │   ├── sse.ts                 # streamForSession, eventsForSession, parseEventsSince
+│   │   └── inbox.ts               # /inbox SSE handler
+│   └── pwa/                       # React + Vite client (built to core/pwa/dist/)
+├── adapters/
+│   └── claude-code/               # Claude Code runtime adapter
+│       ├── index.ts               # createClaudeCodeRuntime — implements AppRuntime
+│       ├── spawn.ts               # CLI flags + settings.json generator
+│       ├── hook-route.ts          # /hook/approval handler
+│       ├── event-classifier.ts    # parses CC stdout for ccSid + result usage
+│       └── scripts/gate.sh        # PreToolUse hook script invoked by CC
+├── scripts/
+│   └── kbbl-start                 # launcher: validates workdir, execs core/server.ts
+└── data/sessions/                 # one JSONL transcript per session (gitignored)
+```
+
+The `core/` ↔ `adapters/` boundary is enforced by import direction: only `core/server.ts` (the entry) imports from the adapter, to wire it in. Everything else in `core/` consumes runtimes through the `AppRuntime` interface in `core/runtime.ts`.
 
 ## Security posture
 

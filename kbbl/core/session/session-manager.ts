@@ -235,7 +235,7 @@ export class SessionManager {
       }
       await this.archivedScanPromise.catch((err) => {
         console.error(
-          `cc-deck: archived snapshot scan failed: ${
+          `kbbl: archived snapshot scan failed: ${
             err instanceof Error ? err.message : String(err)
           }`,
         );
@@ -365,7 +365,7 @@ export class SessionManager {
         await session.abort();
       } catch (err) {
         console.error(
-          `cc-deck: abort during remove failed for ${oakridgeSid}: ${
+          `kbbl: abort during remove failed for ${oakridgeSid}: ${
             err instanceof Error ? err.message : String(err)
           }`,
         );
@@ -456,7 +456,7 @@ export class SessionManager {
         // One bad subscriber shouldn't block the others or corrupt
         // in-session state — mirror the Session.emit subscriber contract.
         console.error(
-          `cc-deck: inbox subscriber failed: ${
+          `kbbl: inbox subscriber failed: ${
             err instanceof Error ? err.message : String(err)
           }`,
         );
@@ -555,7 +555,7 @@ async function loadArchivedSnapshot(
     // EACCES, EISDIR, I/O errors). Skip the entry rather than 500 the
     // caller — the admin can chase it in logs.
     console.error(
-      `cc-deck: failed to read archived jsonl ${jsonlPath}: ${
+      `kbbl: failed to read archived jsonl ${jsonlPath}: ${
         err instanceof Error ? err.message : String(err)
       }`,
     );

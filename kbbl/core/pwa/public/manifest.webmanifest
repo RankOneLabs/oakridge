@@ -1,7 +1,7 @@
 {
-  "name": "cc-deck",
-  "short_name": "cc-deck",
-  "description": "Mobile command center for Claude Code",
+  "name": "kbbl",
+  "short_name": "kbbl",
+  "description": "Mobile operator surface for CLI coding agents",
   "start_url": "/",
   "display": "standalone",
   "orientation": "portrait",

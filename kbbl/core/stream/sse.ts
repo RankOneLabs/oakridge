@@ -55,7 +55,7 @@ export async function streamForSession(session: Session, c: Context) {
           evt = JSON.parse(line) as EnvelopeEvent;
         } catch {
           console.error(
-            `cc-deck: skipping malformed JSONL line: ${line.slice(0, 120)}`,
+            `kbbl: skipping malformed JSONL line: ${line.slice(0, 120)}`,
           );
           continue;
         }
@@ -140,7 +140,7 @@ export function parseEventsSince(contents: string, since: number): EnvelopeEvent
       evt = JSON.parse(line) as EnvelopeEvent;
     } catch {
       console.error(
-        `cc-deck: skipping malformed JSONL line: ${line.slice(0, 120)}`,
+        `kbbl: skipping malformed JSONL line: ${line.slice(0, 120)}`,
       );
       continue;
     }

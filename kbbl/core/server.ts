@@ -32,11 +32,11 @@ if (!values.workdir) {
 
 // Resolve to an absolute path before validation so /config and the initial
 // session both see the same canonical workdir regardless of how the operator
-// invoked cc-start (e.g. `--workdir=.` or a relative path from a script).
+// invoked kbbl-start (e.g. `--workdir=.` or a relative path from a script).
 const workdir = resolve(values.workdir);
 const startupWorkdirErr = await validateWorkdir(workdir);
 if (startupWorkdirErr) {
-  console.error(`cc-deck: invalid --workdir=${values.workdir}: ${startupWorkdirErr}`);
+  console.error(`kbbl: invalid --workdir=${values.workdir}: ${startupWorkdirErr}`);
   process.exit(1);
 }
 const port = Number(values.port);
@@ -99,14 +99,14 @@ try {
   });
 } catch (err) {
   const msg = err instanceof Error ? err.message : String(err);
-  console.error(`cc-deck: failed to bind port ${port}: ${msg}`);
-  console.error(`is another cc-deck running? try: lsof -i :${port}`);
+  console.error(`kbbl: failed to bind port ${port}: ${msg}`);
+  console.error(`is another kbbl running? try: lsof -i :${port}`);
   process.exit(1);
 }
 const server = bunServer;
 
 console.error(
-  `cc-deck listening on http://${server.hostname}:${server.port}, workdir=${workdir}`,
+  `kbbl listening on http://${server.hostname}:${server.port}, workdir=${workdir}`,
 );
 
 // === auto-create initial session ===
@@ -116,11 +116,11 @@ try {
   initialSession = await manager.create({ workdir });
 } catch (err) {
   const msg = err instanceof Error ? err.message : String(err);
-  console.error(`cc-deck: failed to spawn initial CC subprocess: ${msg}`);
+  console.error(`kbbl: failed to spawn initial ${runtime.id} subprocess: ${msg}`);
   server.stop();
   process.exit(1);
 }
-console.error(`cc-deck initial session ${initialSession.oakridgeSid}`);
+console.error(`kbbl initial session ${initialSession.oakridgeSid}`);
 
 // === signals ===
 

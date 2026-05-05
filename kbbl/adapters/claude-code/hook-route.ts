@@ -68,7 +68,7 @@ export function hookApprovalHandler(deps: HookHandlerDeps) {
             hookEventName: "PreToolUse",
             permissionDecision: "deny",
             permissionDecisionReason:
-              "cc-deck: no oakridge session for this CC session_id",
+              "kbbl: no oakridge session for this CC session_id",
           },
         },
         200,
@@ -94,7 +94,7 @@ export function hookApprovalHandler(deps: HookHandlerDeps) {
         });
       } catch (err) {
         console.error(
-          `cc-deck: failed to log auto-approve for ${hook.tool_name}: ${
+          `kbbl: failed to log auto-approve for ${hook.tool_name}: ${
             err instanceof Error ? err.message : String(err)
           }`,
         );
@@ -147,8 +147,8 @@ export function hookApprovalHandler(deps: HookHandlerDeps) {
           permissionDecision: decision,
           permissionDecisionReason:
             decision === "allow"
-              ? "operator approved via cc-deck"
-              : "operator denied via cc-deck",
+              ? "operator approved via kbbl"
+              : "operator denied via kbbl",
         },
       });
     } catch (err) {
@@ -164,7 +164,7 @@ export function hookApprovalHandler(deps: HookHandlerDeps) {
           })
           .catch((e) => {
             console.error(
-              `cc-deck: failed to emit gate-aborted resolution: ${
+              `kbbl: failed to emit gate-aborted resolution: ${
                 e instanceof Error ? e.message : String(e)
               }`,
             );
@@ -172,7 +172,7 @@ export function hookApprovalHandler(deps: HookHandlerDeps) {
         return c.json({ error: "gate aborted" }, 408);
       }
       console.error(
-        `cc-deck: /hook/approval failed: ${err instanceof Error ? err.message : String(err)}`,
+        `kbbl: /hook/approval failed: ${err instanceof Error ? err.message : String(err)}`,
       );
       return c.json({ error: "internal error" }, 500);
     }

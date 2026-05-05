@@ -66,7 +66,7 @@ function shellQuote(value: string): string {
 
 export interface BuildSpawnCmdContext {
   claudeBin: string;
-  /** The server's HTTP port — passed to the gate via CC_DECK_PORT env var. */
+  /** The server's HTTP port — passed to the gate via KBBL_PORT env var. */
   port: number;
   /** Absolute path to the settings.json from writeCcSettings(). */
   settingsPath: string;
@@ -106,7 +106,7 @@ export function makeBuildSpawnCmd(
       cwd: session.workdir,
       env: {
         ...process.env,
-        CC_DECK_PORT: String(ctx.port),
+        KBBL_PORT: String(ctx.port),
       } as Record<string, string>,
     };
   };

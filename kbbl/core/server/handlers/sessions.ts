@@ -79,7 +79,7 @@ async function resolveResumeParent(
     // (the alternative is indistinguishable from a genuinely unknown
     // sid).
     console.error(
-      `cc-deck: failed to read parent jsonl ${jsonlPath}: ${
+      `kbbl: failed to read parent jsonl ${jsonlPath}: ${
         err instanceof Error ? err.message : String(err)
       }`,
     );
@@ -331,7 +331,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
           // logged server-side; the response body intentionally omits the
           // path since the server runs on 0.0.0.0 (tailnet) and we don't
           // want to disclose filesystem layout to anyone who can hit it.
-          console.error(`cc-deck: ${err.message}`);
+          console.error(`kbbl: ${err.message}`);
           return c.json({ error: "purge failed" }, 500);
         }
         throw err;
