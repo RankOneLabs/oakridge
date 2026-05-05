@@ -18,11 +18,15 @@ import type { SessionManager } from "./session/session-manager";
  * - Mount any adapter-specific HTTP routes (e.g., the CC PreToolUse gate)
  *
  * What still leaks across the boundary in v0 (deferred follow-up):
- * - Session.stdout pump knows about CC's `system + subtype:init` event for
- *   ccSid capture. Should become a runtime-provided classifier callback.
- * - SessionManager owns `ccSidToOakridgeSid`. Should be adapter-owned.
- * - `resolveResumeParent` parses CC-specific event types out of JSONL.
- *   Should become `runtime.resolveResumeRef()`.
+ * - SessionManager.loadArchivedSnapshot parses CC-specific event types
+ *   (cc_session_id_observed, tool_allowlisted, yolo_mode_changed, result)
+ *   to reconstruct snapshots from on-disk JSONL. Should become an
+ *   adapter-aware reconstruction.
+ * - SessionManager owns `ccSidToOakridgeSid`. Should be adapter-owned;
+ *   manager exposes a generic lookup if needed.
+ * - `resolveResumeParent` (in core/server/handlers/sessions.ts) parses
+ *   CC-specific event types out of archived JSONL. Should become
+ *   `runtime.resolveResumeRef()`.
  */
 export interface AppRuntime {
   /** Stable identifier for the runtime (e.g., "claude-code", "codex"). */

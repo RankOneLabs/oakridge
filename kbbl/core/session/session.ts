@@ -171,11 +171,16 @@ export class Session {
    * survives a server restart, and notifies the manager via
    * onCcSidObserved so adapter HTTP routes (CC's gate) can map runtime
    * session ids back to this oakridge session.
+   *
+   * Emit happens before the ccSid mutation so a flush error doesn't leave
+   * us in a half-applied state (ccSid set but no JSONL record + no manager
+   * callback). If emit throws, ccSid stays null and a later call can
+   * retry. Same pattern as setYolo / allowlistTool.
    */
   async observeRuntimeSessionId(id: string): Promise<void> {
     if (this.ccSid !== null) return;
-    this.ccSid = id;
     await this.emit("cc_session_id_observed", { cc_session_id: id });
+    this.ccSid = id;
     try {
       this.callbacks.onCcSidObserved?.(this, id);
     } catch (e) {
