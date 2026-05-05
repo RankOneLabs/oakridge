@@ -163,7 +163,11 @@ export class Session {
     this.jsonlPath = join(opts.sessionsDir, `${opts.oakridgeSid}.jsonl`);
     this.parentCcSid = opts.parentCcSid ?? null;
     this.parentOakridgeSid = opts.parentOakridgeSid ?? null;
-    this.artifactId = opts.artifactId ?? null;
+    // Normalize at the constructor so direct SessionManager.create()
+    // callers can't sneak in empty/whitespace tags even though the HTTP
+    // route rejects them. JSONL session_started and snapshots will
+    // never contain an empty artifactId string regardless of call site.
+    this.artifactId = opts.artifactId?.trim() || null;
     this.createdAt = new Date().toISOString();
     this.lastActivityTs = this.createdAt;
     this.callbacks = opts.callbacks ?? {};

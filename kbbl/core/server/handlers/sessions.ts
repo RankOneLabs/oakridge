@@ -214,18 +214,32 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
           if (typeof parsed.artifact_id !== "string") {
             return c.json({ error: "artifact_id must be a string" }, 400);
           }
+          const trimmedArtifactId = parsed.artifact_id.trim();
           // Empty string would silently degrade to "no tag" once it
-          // hits Session.artifactId (?? null), masking client bugs that
-          // forgot to populate the id. Reject explicitly so the
-          // workspace layer can't accidentally tag a whole ensemble as
+          // hits Session.artifactId, masking client bugs that forgot
+          // to populate the id. Reject explicitly so the workspace
+          // layer can't accidentally tag a whole ensemble as
           // "anonymous artifact".
-          if (parsed.artifact_id.trim() === "") {
+          if (trimmedArtifactId === "") {
             return c.json(
               { error: "artifact_id must be non-empty when provided" },
               400,
             );
           }
-          bodyArtifactId = parsed.artifact_id;
+          // Cap length: artifactId rides on every JSONL session_started
+          // record and every session_created SSE delta. Operator-supplied
+          // ids should be opaque short tokens; an unbounded id would
+          // bloat the transcript and inbox stream. 200 chars is generous
+          // for any reasonable id scheme (UUIDs, slugs, hashes).
+          if (trimmedArtifactId.length > 200) {
+            return c.json(
+              { error: "artifact_id must be ≤ 200 chars after trimming" },
+              400,
+            );
+          }
+          // Store the trimmed value so leading/trailing whitespace can't
+          // make listByArtifact() lookups brittle.
+          bodyArtifactId = trimmedArtifactId;
         }
       }
     } catch {

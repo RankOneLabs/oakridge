@@ -209,11 +209,12 @@ export class SessionManager {
 
   /**
    * Sessions tagged with the given artifactId — the workspace layer's
-   * primary query for enumerating an ensemble. Includes live and ended
-   * in-memory sessions; archived (on-disk) sessions are not consulted.
-   * Callers that need the archived merge should pull listArchivedSnapshots()
-   * separately and filter by ``artifactId`` client-side, the same pattern
-   * GET /sessions uses for include=archived.
+   * primary query for enumerating an ensemble. Includes every in-memory
+   * session regardless of status (starting, live, or ended); archived
+   * (on-disk) sessions are not consulted. Callers that need the
+   * archived merge should pull listArchivedSnapshots() separately and
+   * filter by ``artifactId`` client-side, the same pattern GET
+   * /sessions uses for include=archived.
    */
   listByArtifact(artifactId: string): Session[] {
     return [...this.sessions.values()].filter(
@@ -617,7 +618,12 @@ async function loadArchivedSnapshot(
           parentOakridgeSid = payload.parentOakridgeSid;
         }
         if (typeof payload.artifactId === "string") {
-          artifactId = payload.artifactId;
+          // Mirror POST /sessions validation: trim and ignore empty so
+          // malformed/legacy JSONL doesn't yield artifactId: "" in
+          // archived snapshots. The Session constructor applies the
+          // same normalization on the live path.
+          const trimmed = payload.artifactId.trim();
+          if (trimmed) artifactId = trimmed;
         }
         break;
       }
