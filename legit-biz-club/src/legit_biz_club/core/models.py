@@ -148,6 +148,38 @@ class Enrollment(BaseModel):
         return v
 
 
+class CoordinationProtocol(StrEnum):
+    """How the project's coordinator orchestrates incremental + consensus phases.
+
+    Selected per-project at construction time. The :class:`ProjectCoordinator`
+    reads this field and dispatches to the matching combination of
+    :class:`IncrementalCoordinator` and :class:`ConsensusMechanism`. v1
+    supports three protocols; eval-driven dynamic protocols are v2+.
+
+    Members:
+
+    - ``INCREMENTAL_ONLY`` — only incremental commits; no convergence
+      phase. Terminates via the configured :class:`TerminationPolicy`
+      (default K commits per agent).
+    - ``INCREMENTAL_THEN_CONVERGE`` — run incremental commits to
+      termination, then run a final consensus phase to resolve any
+      remaining disagreement before ship.
+    - ``MULTI_ROUND_FROM_START`` — skip incremental; go straight to
+      multi-round consensus. Useful when the artifact starts from a
+      clean slate and the goal is the ensemble's collective best
+      output rather than a sequence of edits.
+    """
+
+    #: Only incremental commits; no convergence phase.
+    INCREMENTAL_ONLY = "incremental_only"
+
+    #: Incremental commits to termination, then a final consensus phase.
+    INCREMENTAL_THEN_CONVERGE = "incremental_then_converge"
+
+    #: Multi-round consensus from the start; no incremental phase.
+    MULTI_ROUND_FROM_START = "multi_round_from_start"
+
+
 class Project(BaseModel):
     """A bounded context that owns a shared artifact, a brief, and a set of
     enrolled agents.
@@ -162,6 +194,10 @@ class Project(BaseModel):
     brief: Brief
     enrollments: list[Enrollment] = Field(default_factory=list)
     state: ProjectState = ProjectState.INITIALIZED
+    coordination_protocol: CoordinationProtocol = CoordinationProtocol.INCREMENTAL_ONLY
+    """Selects how :class:`ProjectCoordinator` runs the project. Default
+    matches the v1 incremental-only behavior; opt into convergence
+    phases per-project."""
     created_at: datetime = Field(default_factory=_utc_now)
     shipped_at: datetime | None = None
     archived_at: datetime | None = None

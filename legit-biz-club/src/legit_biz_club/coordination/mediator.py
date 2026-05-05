@@ -55,6 +55,28 @@ class Mediator:
         """Snapshot of per-agent retry budget remaining."""
         return dict(self._retry_remaining)
 
+    async def reset_retry_budgets(self) -> None:
+        """Restore every agent's retry budget to the initial value.
+
+        Called by :class:`ProjectCoordinator` between coordination
+        phases under ``incremental_then_converge``: an agent that
+        burned its retry budget during incremental commits should still
+        be allowed to land a converged or escalation-picked proposal,
+        because consensus has no retry semantics — the budget check
+        is meaningless for a one-shot apply.
+
+        Acquires the same lock as :meth:`apply` so a reset can't race
+        an in-flight apply's budget check at one of apply's
+        ``await asyncio.to_thread`` yield points. The intended call
+        pattern (strictly between phases) makes that race impossible
+        in practice, but enforcing it in code is cheap and avoids
+        bugs if a future caller reaches for this method outside the
+        coordinator.
+        """
+        async with self._lock:
+            for agent_id in self._retry_remaining:
+                self._retry_remaining[agent_id] = self._retry_budget_initial
+
     async def current_state(self) -> tuple[str, str]:
         """Return ``(content, version)`` for the artifact's current state.
 
