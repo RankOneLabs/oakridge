@@ -62,15 +62,27 @@ export function mountWorkspaceEventsRoutes(
       typeof parsed.ts === "string" && parsed.ts !== ""
         ? parsed.ts
         : new Date().toISOString();
-    // Default payload to empty object so subscribers can dereference
-    // ``event.payload`` without null-checking. Reject arrays explicitly:
-    // they'd type-pass as `object` but break expectations downstream.
-    const payload =
-      typeof parsed.payload === "object" &&
-      parsed.payload !== null &&
-      !Array.isArray(parsed.payload)
-        ? (parsed.payload as Record<string, unknown>)
-        : {};
+    // Default payload to empty object only when it's omitted (or
+    // explicitly null) so subscribers can dereference ``event.payload``
+    // without null-checking. If it's PRESENT but malformed (string,
+    // number, array), reject 400 instead of silently coercing — silent
+    // coercion would tell the caller the broadcast succeeded while
+    // dropping the event details, masking client bugs and leaving
+    // workspace-event consumers without the coordination metadata.
+    let payload: Record<string, unknown>;
+    if (parsed.payload === undefined || parsed.payload === null) {
+      payload = {};
+    } else if (
+      typeof parsed.payload !== "object" ||
+      Array.isArray(parsed.payload)
+    ) {
+      return c.json(
+        { error: "payload must be an object when provided" },
+        400,
+      );
+    } else {
+      payload = parsed.payload as Record<string, unknown>;
+    }
     const event: WorkspaceEvent = {
       kind: parsed.kind,
       projectId: parsed.projectId,

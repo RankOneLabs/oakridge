@@ -75,9 +75,23 @@ class IncrementalCoordinator:
         termination_policy: TerminationPolicy,
         emit: WorkspaceEventEmitter | None = None,
     ) -> None:
-        if {a.id for a in agents} != set(proposers.keys()):
+        agent_ids = {a.id for a in agents}
+        if agent_ids != set(proposers.keys()):
             raise ValueError(
                 "proposers must be keyed by agent_id for every enrolled agent"
+            )
+        # Project enrollments are the source of truth for who's in the
+        # ensemble. If the agents list is a subset, ``KCommitsPerAgent``
+        # would terminate after only the subset reaches K — violating
+        # the documented "every enrolled agent" contract. Catch the
+        # mismatch at construction so it can't surface as a misleading
+        # early-termination at run time.
+        enrollment_ids = {e.agent_id for e in project.enrollments}
+        if agent_ids != enrollment_ids:
+            raise ValueError(
+                "agents must match project.enrollments exactly "
+                f"(agents={sorted(agent_ids)}, "
+                f"enrollments={sorted(enrollment_ids)})"
             )
         self.project = project
         self.agents = agents
@@ -149,6 +163,17 @@ class IncrementalCoordinator:
             current_content=content,
             current_version=version,
         )
+        # A buggy Proposer that returns the wrong agent_id would land
+        # as REJECTED_VALIDATION in the mediator, which doesn't decrement
+        # the retry budget — the loop could spin indefinitely emitting
+        # rejection events. Treat this as a programmer error and raise
+        # so the coordinator stops rather than chasing its tail.
+        if proposal.agent_id != agent.id:
+            raise ValueError(
+                f"Proposer for agent {agent.id} returned a proposal with "
+                f"agent_id={proposal.agent_id!r}; this is a programmer "
+                "error in the Proposer implementation"
+            )
         return await self.mediator.apply(proposal)
 
     def _agent_exhausted(self, agent_id: str) -> bool:

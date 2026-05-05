@@ -131,6 +131,67 @@ async def test_constructor_validates_proposer_keys(tmp_path: Path) -> None:
         )
 
 
+async def test_constructor_validates_agents_match_enrollments(
+    tmp_path: Path,
+) -> None:
+    """Subset of enrollments would let KCommitsPerAgent terminate early."""
+    agents = _make_agents(tmp_path, 3)
+    project = _make_project(tmp_path, agents)
+    # Coordinator gets only 2 of the 3 enrolled agents — would terminate
+    # after the subset hits K, violating the "every enrolled agent" contract.
+    subset_agents = agents[:2]
+    proposers: dict[str, _CountingProposer] = {
+        a.id: _CountingProposer() for a in subset_agents
+    }
+    mediator = Mediator(project.artifact, [a.id for a in subset_agents])
+    with pytest.raises(ValueError, match="must match project.enrollments"):
+        IncrementalCoordinator(
+            project=project,
+            agents=subset_agents,
+            proposers=proposers,
+            mediator=mediator,
+            termination_policy=KCommitsPerAgent(k=1),
+        )
+
+
+async def test_step_raises_on_wrong_agent_id_proposal(tmp_path: Path) -> None:
+    """A buggy Proposer returning the wrong agent_id is a programmer error
+    — surface immediately rather than spinning on REJECTED_VALIDATION
+    (which doesn't decrement retry budget)."""
+
+    class _WrongAgentIdProposer:
+        async def propose(
+            self,
+            *,
+            agent: Agent,
+            brief: Brief,
+            artifact: Artifact,
+            current_content: str,
+            current_version: str,
+        ) -> Proposal:
+            return Proposal(
+                agent_id="not-the-right-id",
+                based_on_version=current_version,
+                new_content="x",
+            )
+
+    agents = _make_agents(tmp_path, 2)
+    project = _make_project(tmp_path, agents)
+    proposers: dict[str, _WrongAgentIdProposer] = {
+        a.id: _WrongAgentIdProposer() for a in agents
+    }
+    mediator = Mediator(project.artifact, [a.id for a in agents])
+    coordinator = IncrementalCoordinator(
+        project=project,
+        agents=agents,
+        proposers=proposers,
+        mediator=mediator,
+        termination_policy=KCommitsPerAgent(k=1),
+    )
+    with pytest.raises(ValueError, match="programmer error"):
+        await coordinator.run()
+
+
 async def test_terminated_by_all_exhausted(tmp_path: Path) -> None:
     """A proposer that always returns a stale version drains the retry
     budget; the coordinator should surface ``all_exhausted`` rather than

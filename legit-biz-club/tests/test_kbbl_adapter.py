@@ -178,3 +178,39 @@ async def test_raises_on_non_2xx() -> None:
         client = KbblClient(http=http)
         with pytest.raises(httpx.HTTPStatusError):
             await client.list_artifact_sessions("art-42")
+
+
+async def test_list_sessions() -> None:
+    """`GET /sessions` is the in-memory enumeration; verify request shape
+    and that the response is parsed through ``SessionSnapshot``."""
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["method"] = request.method
+        captured["path"] = request.url.path
+        return httpx.Response(
+            200, json={"sessions": [_FIXTURE_SNAPSHOT, _FIXTURE_SNAPSHOT]}
+        )
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as http:
+        client = KbblClient(http=http)
+        sessions = await client.list_sessions()
+    assert captured["method"] == "GET"
+    assert captured["path"] == "/sessions"
+    assert len(sessions) == 2
+    assert all(isinstance(s, SessionSnapshot) for s in sessions)
+
+
+async def test_list_sessions_empty() -> None:
+    """Empty `sessions` array round-trips as an empty list, not a crash
+    on a missing key (the contract uses ``body.get('sessions', [])``)."""
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"sessions": []})
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as http:
+        client = KbblClient(http=http)
+        sessions = await client.list_sessions()
+    assert sessions == []
