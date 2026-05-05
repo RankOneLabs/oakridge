@@ -150,7 +150,7 @@ wheels = [
 [[package]]
 name = "jig"
 version = "0.1.0"
-source = { git = "https://github.com/rankonelabs/jig.git#bd048b9bc2dacdfa976e11442cc8526e50ac2820" }
+source = { git = "https://github.com/rankonelabs/jig.git#4b1bedae77c5bc7e0fff778e6dd02c7eb1db4578" }
 dependencies = [
     { name = "aiosqlite" },
     { name = "httpx" },
