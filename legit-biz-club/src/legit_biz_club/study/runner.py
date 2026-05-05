@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePath
 
 from jig.core.types import Grader, Score, TracingLogger
 from jig.tracing.stdout import StdoutTracer
@@ -122,18 +122,20 @@ async def run_cell(
     """
     cell_dir = output_dir / target.name / condition.name
     cell_dir.mkdir(parents=True, exist_ok=True)
-    artifact_path = cell_dir / target.artifact_filename
     # The runner only handles file-based artifacts (PROSE markdown or
-    # single-file CODE). Directory-based CODE is deferred to v1.x;
-    # fail loud here so the failure is attached to construction
-    # rather than the first mediator call.
-    if target.artifact_filename.endswith("/") or "/" in target.artifact_filename:
+    # single-file CODE). artifact_filename must be a bare filename
+    # with no path separators — anything multi-component would be a
+    # directory-style path, and directory-based CODE is deferred to
+    # v1.x. Use PurePath.parts so the check catches both POSIX and
+    # Windows separators (and anything else pathlib recognizes).
+    if len(PurePath(target.artifact_filename).parts) != 1:
         raise ValueError(
             f"target {target.name!r} artifact_filename "
-            f"{target.artifact_filename!r} looks like a directory path; "
+            f"{target.artifact_filename!r} contains path separators; "
             "v1 supports single-file artifacts only — directory-based "
             "CODE artifacts are v1.x"
         )
+    artifact_path = cell_dir / target.artifact_filename
     artifact_path.write_text(target.seed_content, encoding="utf-8")
 
     agents = _build_agents(

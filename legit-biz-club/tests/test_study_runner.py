@@ -183,6 +183,32 @@ async def test_run_cell_with_consensus_records_convergence(
     assert result.metrics.escalation_invoked is False
 
 
+async def test_run_cell_rejects_artifact_filename_with_separators(
+    tmp_path: Path,
+) -> None:
+    """Directory-shaped artifact_filenames are deferred to v1.x —
+    catch both POSIX `/` and Windows `\\` separators via PurePath."""
+    target = prose_target(
+        artifact_filename="subdir/draft.md",
+        seed_content="seed",
+    )
+    condition = single_agent_baseline()
+
+    def proposer_factory(_agent: Agent) -> _AppendingProposer:
+        return _AppendingProposer()
+
+    import pytest
+
+    with pytest.raises(ValueError, match="path separators"):
+        await run_cell(
+            target=target,
+            condition=condition,
+            proposer_factory=proposer_factory,
+            output_dir=tmp_path,
+            tracer=StdoutTracer(color=False),
+        )
+
+
 async def test_run_cell_handles_code_target_single_file(
     tmp_path: Path,
 ) -> None:

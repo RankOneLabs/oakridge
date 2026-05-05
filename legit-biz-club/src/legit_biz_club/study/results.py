@@ -10,8 +10,9 @@ script.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 
 from jig.core.types import Score
 
@@ -26,11 +27,16 @@ class ConditionSummary:
     ``eval_scores`` contained that dimension. A dimension that's only
     relevant to one target (e.g., a prose-only criterion) shows up
     here only if the cells under this condition included that target.
+
+    The dict is wrapped in a read-only :class:`MappingProxyType` so
+    the summary is genuinely immutable across downstream consumers —
+    ``frozen=True`` only locks the dataclass attributes, not the
+    contents of mutable values they hold.
     """
 
     condition_name: str
     n_cells: int
-    avg_scores_by_dimension: dict[str, float]
+    avg_scores_by_dimension: Mapping[str, float]
     avg_incremental_commits_applied: float
     convergence_rate: float
 
@@ -68,8 +74,10 @@ def _summarize_condition(
     return ConditionSummary(
         condition_name=name,
         n_cells=len(cells),
-        avg_scores_by_dimension=_avg_scores_by_dimension(
-            score for cell in cells for score in cell.eval_scores
+        avg_scores_by_dimension=MappingProxyType(
+            _avg_scores_by_dimension(
+                score for cell in cells for score in cell.eval_scores
+            )
         ),
         avg_incremental_commits_applied=_mean(
             cell.metrics.incremental_commits_applied for cell in cells

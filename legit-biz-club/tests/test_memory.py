@@ -189,6 +189,38 @@ async def test_load_filters_to_this_agents_observations(
 # --- non-lbc entries are skipped ----------------------------------------
 
 
+async def test_load_skips_malformed_lbc_entries(tmp_path: Path) -> None:
+    """A row tagged as an lbc observation but with malformed metadata
+    (e.g., non-string timestamp, missing required field) is skipped
+    rather than crashing load_observations()."""
+    agent = _agent(tmp_path)
+    store = _store(tmp_path)
+    # Write a malformed lbc entry — has the marker key but a
+    # non-string timestamp (would TypeError out of fromisoformat).
+    await store.add(
+        "malformed observation",
+        {
+            "lbc_kind": "commit_observation",
+            "agent_id": agent.id,
+            "project_id": "p-1",
+            "timestamp": 12345,  # int, not string — TypeError
+            "tags": [],
+            "operator_confidence": "high",
+            "supersedes": None,
+        },
+    )
+    committer = MemoryCommitter(agent, store)
+    await committer.commit(
+        project_id="p-1",
+        observation_text="real observation",
+        operator_confidence=OperatorConfidence.HIGH,
+    )
+    # Malformed row dropped; real one survives.
+    loaded = await committer.load_observations()
+    assert len(loaded) == 1
+    assert loaded[0][1].observation_text == "real observation"
+
+
 async def test_load_skips_non_lbc_entries(tmp_path: Path) -> None:
     """A SqliteStore shared with non-legit-biz-club code (e.g., jig
     agent memory written by a different consumer) shouldn't have its

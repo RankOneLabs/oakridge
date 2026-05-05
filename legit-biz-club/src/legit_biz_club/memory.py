@@ -92,12 +92,20 @@ _LBC_METADATA_KIND = "commit_observation"
 class MemoryCommitter:
     """Operator-driven memory commit for one agent.
 
-    Caller provides a pre-configured :class:`SqliteStore` (typically
-    constructed via ``jig.memory.LocalMemory(db_path=agent.memory_db_path)``)
-    bound to the agent's persistent memory file. The committer
-    enforces the agent_id <-> store binding by tagging every commit
-    with this agent's id; reads filter by it too so a shared store
-    won't leak observations across agents.
+    Caller provides a pre-configured :class:`SqliteStore` bound to
+    the agent's persistent memory file::
+
+        from jig.memory.local import SqliteStore
+        store = SqliteStore(db_path=str(agent.memory_db_path))
+        committer = MemoryCommitter(agent, store)
+
+    (jig also exposes :func:`jig.memory.LocalMemory` which returns a
+    ``(store, retriever)`` pair if you want jig's default dense
+    retriever wired up; only the store is needed here.)
+
+    The committer enforces the agent_id <-> store binding by tagging
+    every commit with this agent's id; reads filter by it too so a
+    shared store won't leak observations across agents.
     """
 
     def __init__(self, agent: Agent, store: SqliteStore) -> None:
@@ -190,6 +198,12 @@ def _serialize_metadata(observation: CommitObservation) -> dict[str, Any]:
 def _deserialize_observation(entry: MemoryEntry) -> CommitObservation | None:
     """Inverse of :func:`_serialize_metadata`. Returns ``None`` for entries
     that aren't legit-biz-club observations or whose metadata is malformed.
+
+    Catches ``KeyError`` (missing required field), ``ValueError`` (e.g.,
+    bad enum value, unparseable timestamp), and ``TypeError`` (e.g.,
+    non-iterable ``tags``, non-string ``timestamp``) — anything that
+    indicates a malformed row should fail-soft and be skipped on
+    load_observations() rather than blow up the entire read.
     """
     metadata = entry.metadata
     if metadata.get("lbc_kind") != _LBC_METADATA_KIND:
@@ -206,5 +220,5 @@ def _deserialize_observation(entry: MemoryEntry) -> CommitObservation | None:
             supersedes=metadata.get("supersedes"),
             timestamp=datetime.fromisoformat(metadata["timestamp"]),
         )
-    except (KeyError, ValueError):
+    except (KeyError, ValueError, TypeError):
         return None

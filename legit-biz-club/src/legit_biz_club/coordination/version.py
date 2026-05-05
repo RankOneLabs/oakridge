@@ -29,10 +29,13 @@ def compute_version(artifact: Artifact, *, content: str | None = None) -> str:
     for callers that already have the bytes in hand and want a single
     consistent read of disk + version.
 
-    Artifact-type validation runs first so callers with content for
-    an artifact type that's structurally unsupported (directory-based
-    CODE) still hit ``NotImplementedError`` rather than silently
-    getting a hash through the content shortcut.
+    Validation runs first so callers with content for an *existing*
+    directory-based CODE artifact still hit ``NotImplementedError``
+    rather than silently getting a hash through the content shortcut.
+    A path *intended* as a directory but not yet on disk can't be
+    distinguished from a not-yet-created file, so this function
+    accepts it; the directory case raises only once the path
+    materializes.
     """
     if artifact.type not in {ArtifactType.PROSE, ArtifactType.CODE}:
         raise ValueError(f"unknown artifact type: {artifact.type}")

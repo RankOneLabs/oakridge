@@ -180,6 +180,28 @@ def test_aggregate_convergence_rate_zero_when_no_consensus_cells(
     assert result.by_condition["c"].convergence_rate == 0.0
 
 
+def test_avg_scores_dict_is_read_only(tmp_path: Path) -> None:
+    """ConditionSummary is frozen but the score dict needs an
+    immutable view too — frozen=True only locks attribute reassignment,
+    not mutation of mutable values it holds."""
+    cells = [
+        _cell(
+            condition_name="c",
+            eval_scores=[
+                Score(dimension="d", value=0.5, source=ScoreSource.LLM_JUDGE),
+            ],
+            tmp_path=tmp_path,
+        ),
+    ]
+    result = aggregate(cells)
+    summary = result.by_condition["c"]
+    import pytest
+
+    with pytest.raises(TypeError):
+        # MappingProxyType blocks item assignment.
+        summary.avg_scores_by_dimension["d"] = 999.0  # type: ignore[index]
+
+
 def test_condition_summary_is_frozen() -> None:
     summary = ConditionSummary(
         condition_name="x",
