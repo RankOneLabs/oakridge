@@ -11,7 +11,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
-      - run: bun install
+      # --frozen-lockfile fails fast if bun.lock has drifted from
+      # package.json — keeps CI builds reproducible against the
+      # committed lock.
+      - run: bun install --frozen-lockfile
       - run: bun run typecheck
 
   legit-biz-club:
@@ -25,7 +28,9 @@ jobs:
       - uses: astral-sh/setup-uv@v4
         with:
           python-version: "3.12"
-      - run: uv sync
+      # --frozen fails fast if uv.lock has drifted from pyproject.toml,
+      # matching the bun side's reproducibility guarantee.
+      - run: uv sync --frozen
       - run: uv run ruff check
       - run: uv run mypy src
       - run: uv run pytest

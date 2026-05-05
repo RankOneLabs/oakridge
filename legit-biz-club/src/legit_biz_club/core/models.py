@@ -155,20 +155,29 @@ class CoordinationProtocol(StrEnum):
     reads this field and dispatches to the matching combination of
     :class:`IncrementalCoordinator` and :class:`ConsensusMechanism`. v1
     supports three protocols; eval-driven dynamic protocols are v2+.
+
+    Members:
+
+    - ``INCREMENTAL_ONLY`` — only incremental commits; no convergence
+      phase. Terminates via the configured :class:`TerminationPolicy`
+      (default K commits per agent).
+    - ``INCREMENTAL_THEN_CONVERGE`` — run incremental commits to
+      termination, then run a final consensus phase to resolve any
+      remaining disagreement before ship.
+    - ``MULTI_ROUND_FROM_START`` — skip incremental; go straight to
+      multi-round consensus. Useful when the artifact starts from a
+      clean slate and the goal is the ensemble's collective best
+      output rather than a sequence of edits.
     """
 
+    #: Only incremental commits; no convergence phase.
     INCREMENTAL_ONLY = "incremental_only"
-    """Only incremental commits; no convergence phase. Terminates via
-    the configured :class:`TerminationPolicy` (default K commits per agent)."""
 
+    #: Incremental commits to termination, then a final consensus phase.
     INCREMENTAL_THEN_CONVERGE = "incremental_then_converge"
-    """Run incremental commits to termination, then run a final
-    consensus phase to resolve any remaining disagreement before ship."""
 
+    #: Multi-round consensus from the start; no incremental phase.
     MULTI_ROUND_FROM_START = "multi_round_from_start"
-    """Skip incremental; go straight to multi-round consensus. Useful
-    when the artifact starts from a clean slate and the goal is the
-    ensemble's collective best output rather than a sequence of edits."""
 
 
 class Project(BaseModel):

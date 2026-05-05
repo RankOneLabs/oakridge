@@ -198,7 +198,15 @@ def _parse_response(content: str) -> dict[str, str]:
     try:
         data = json.loads(stripped)
     except json.JSONDecodeError as e:
-        logger.warning("proposer output is not valid JSON: %s", stripped[:200])
+        # Don't log the raw output — it may contain artifact content
+        # the operator considers sensitive (drafts, internal docs, etc.).
+        # The exception detail (line/column) plus the length is enough
+        # to diagnose a malformed-response issue without leaking content.
+        logger.warning(
+            "proposer output is not valid JSON (length=%d): %s",
+            len(stripped),
+            e,
+        )
         raise ProposerOutputParseError(
             f"agent response was not valid JSON: {e}"
         ) from e

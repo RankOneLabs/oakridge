@@ -168,8 +168,9 @@ class ConsensusMechanism(ABC):
             if outcome.converged and converged_at_round is None:
                 converged_at_round = outcome.round_index
 
-        # The "apply" step's output is the final ProposalOutcome plus
-        # the rationale. Mechanisms write a tuple (outcome, picked, rationale).
+        # The "apply" step's output is a dict with keys "outcome",
+        # "picked", and "rationale". The mediator's ProposalOutcome,
+        # the picked Proposal, and the human-readable rationale string.
         apply_payload = step_outputs["apply"]
         apply_outcome: ProposalOutcome = apply_payload["outcome"]
         picked: Proposal = apply_payload["picked"]
