@@ -78,16 +78,25 @@ class ConsensusResult:
     """The mechanism's final verdict.
 
     ``converged_at_round`` is the 1-indexed round whose proposals
-    matched (or ``None`` if escalation picked). ``apply_outcome`` is
-    the mediator's response to applying the picked proposal —
-    typically ``APPLIED``, but a malformed picked proposal could
-    surface as a rejection.
+    matched (or ``None`` if no round converged).
+    ``picked_via_escalation`` is ``True`` when the
+    :class:`DisagreementSurface` actually ran and produced the
+    applied pick — distinct from "no round converged" because
+    :class:`SingleRoundConsensus`'s escalate step is
+    ``always_runs=True`` and is authoritative even when round 1's
+    proposals happen to be byte-identical. Consumers tracking
+    operator-burden / escalation rate should read this flag, not
+    infer from ``converged_at_round``.
+    ``apply_outcome`` is the mediator's response to applying the
+    picked proposal — typically ``APPLIED``, but a malformed picked
+    proposal could surface as a rejection.
     """
 
     picked: Proposal
     rationale: str
     rounds: list[RoundOutcome]
     converged_at_round: int | None
+    picked_via_escalation: bool
     apply_outcome: ProposalOutcome
 
 
@@ -192,11 +201,20 @@ class ConsensusMechanism(ABC):
         picked: Proposal = apply_payload["picked"]
         rationale: str = apply_payload["rationale"]
 
+        # The escalate step writes ctx["escalate"] only when it
+        # actually runs. SingleRoundConsensus's escalate is
+        # always_runs=True; multi-round's is skip_when=converged.
+        # So ``"escalate" in step_outputs`` is the authoritative
+        # signal for "the DisagreementSurface produced the pick" —
+        # independent of whether a round happened to converge.
+        picked_via_escalation = "escalate" in step_outputs
+
         return ConsensusResult(
             picked=picked,
             rationale=rationale,
             rounds=sorted(rounds, key=lambda r: r.round_index),
             converged_at_round=converged_at_round,
+            picked_via_escalation=picked_via_escalation,
             apply_outcome=apply_outcome,
         )
 

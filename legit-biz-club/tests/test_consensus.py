@@ -162,6 +162,9 @@ async def test_multiround_converges_at_round_1(tmp_path: Path) -> None:
 
     assert isinstance(result, ConsensusResult)
     assert result.converged_at_round == 1
+    # Multi-round under skip_when: escalation step was skipped, so the
+    # apply path went through the converged-round pick.
+    assert result.picked_via_escalation is False
     assert result.picked.new_content == "the agreed text"
     assert result.apply_outcome.result == ProposalResult.APPLIED
     # Each proposer called exactly once (round 1 only).
@@ -208,6 +211,8 @@ async def test_multiround_escalates_when_no_convergence(
     result = await mechanism.execute()
 
     assert result.converged_at_round is None
+    # Escalation actually ran — the surface produced the applied pick.
+    assert result.picked_via_escalation is True
     # All agents proposed in both rounds (no skip).
     assert len(result.rounds) == 2
     assert all(not r.converged for r in result.rounds)
@@ -510,6 +515,9 @@ async def test_singleround_uses_surface_even_when_round_converges(
     # Rationale comes from the surface (rather than "converged at round N")
     # confirming the apply step preferred the surface's pick.
     assert "stable-ordering-by-agent-id" in result.rationale
+    # Even though round 1 was byte-identical, the authoritative
+    # signal is that escalation produced the applied pick.
+    assert result.picked_via_escalation is True
 
 
 async def test_duplicate_enrolled_agent_id_proposer_raises(
