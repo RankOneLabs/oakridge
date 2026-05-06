@@ -107,6 +107,19 @@ class _FixedScoreGrader(Grader):
         ]
 
 
+class _EmptyScoreGrader(Grader):
+    """Always returns no scores. Pins the 'grader wired but produced
+    nothing' contract path."""
+
+    async def grade(
+        self,
+        input: str,  # noqa: A002 — Grader protocol
+        output: str,
+        context: dict[str, object] | None = None,
+    ) -> list[Score]:
+        return []
+
+
 # --- run_cell --------------------------------------------------------------
 
 
@@ -291,7 +304,12 @@ async def test_run_cell_rejects_reserved_sidecar_filenames(
 
     proposer_factory = stub_proposer_factory(_AppendingProposer)
 
-    for reserved in ("commits", "agent_memory", "events.jsonl"):
+    for reserved in (
+        "commits",
+        "agent_memory",
+        "events.jsonl",
+        "eval_scores.json",
+    ):
         target = prose_target(
             artifact_filename=reserved, seed_content="seed"
         )
@@ -301,6 +319,39 @@ async def test_run_cell_rejects_reserved_sidecar_filenames(
                 condition=condition,
                 proposer_factory=proposer_factory,
                 output_dir=tmp_path / reserved,  # fresh dir per attempt
+                tracer=StdoutTracer(color=False),
+            )
+
+
+async def test_run_cell_rejects_reserved_sidecar_filenames_case_insensitive(
+    tmp_path: Path,
+) -> None:
+    """The reserved-name check casefolds both sides so a target
+    named `Eval_Scores.json` (or any case variant) is rejected too.
+    On case-insensitive filesystems (macOS APFS, Windows NTFS) the
+    case-variant name resolves to the same on-disk file as its
+    lowercase counterpart, so a case-sensitive guard would let the
+    foot-shoot leak back in on those platforms."""
+    import pytest
+
+    condition = single_agent_baseline()
+    proposer_factory = stub_proposer_factory(_AppendingProposer)
+
+    for reserved in (
+        "Eval_Scores.json",
+        "EVAL_SCORES.JSON",
+        "Events.JSONL",
+        "Commits",
+    ):
+        target = prose_target(
+            artifact_filename=reserved, seed_content="seed"
+        )
+        with pytest.raises(ValueError, match="reserved sidecar"):
+            await run_cell(
+                target=target,
+                condition=condition,
+                proposer_factory=proposer_factory,
+                output_dir=tmp_path / reserved,
                 tracer=StdoutTracer(color=False),
             )
 
@@ -496,6 +547,181 @@ async def test_run_cell_with_no_grader_factory_yields_empty_scores(
         tracer=StdoutTracer(color=False),
     )
     assert result.eval_scores == []
+
+
+async def test_run_cell_writes_eval_scores_sidecar(tmp_path: Path) -> None:
+    """When the grader produces scores, run_cell drops them at
+    cell_dir/eval_scores.json in a documented shape so the dashboard
+    (and any other reader) can pick them up without re-running the
+    grader. Format::
+
+        {"scores": [{"dimension": "...", "value": 0.7, "source": "llm_judge"}, ...]}
+
+    The wrapper envelope leaves room for future grader metadata."""
+    import json
+
+    target = prose_target(seed_content="seed")
+    condition = single_agent_baseline()
+
+    proposer_factory = stub_proposer_factory(_AppendingProposer)
+
+    def grader_factory(t):  # type: ignore[no-untyped-def]
+        return _FixedScoreGrader([c for c in t.brief.success_criteria])
+
+    result = await run_cell(
+        target=target,
+        condition=condition,
+        proposer_factory=proposer_factory,
+        output_dir=tmp_path,
+        grader_factory=grader_factory,
+        tracer=StdoutTracer(color=False),
+    )
+    sidecar = (
+        tmp_path / target.name / condition.name / "eval_scores.json"
+    )
+    assert sidecar.exists()
+    payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    assert "scores" in payload
+    assert len(payload["scores"]) == len(result.eval_scores)
+    first = payload["scores"][0]
+    assert set(first.keys()) == {"dimension", "value", "source"}
+    assert first["value"] == 0.7
+    assert first["source"] == "llm_judge"
+
+
+async def test_run_cell_skips_eval_scores_sidecar_when_no_grader(
+    tmp_path: Path,
+) -> None:
+    """No grader → no eval_scores.json. An absent file is the
+    cleanest "no grader was wired" signal — readers don't have to
+    distinguish "{}" from "{scores: []}" — and avoids littering
+    cells with empty sidecars that mean nothing."""
+    target = prose_target(seed_content="seed")
+    condition = single_agent_baseline()
+
+    proposer_factory = stub_proposer_factory(_AppendingProposer)
+
+    await run_cell(
+        target=target,
+        condition=condition,
+        proposer_factory=proposer_factory,
+        output_dir=tmp_path,
+        tracer=StdoutTracer(color=False),
+    )
+    sidecar = (
+        tmp_path / target.name / condition.name / "eval_scores.json"
+    )
+    assert not sidecar.exists()
+
+
+async def test_run_cell_skips_eval_scores_sidecar_when_grader_returns_no_scores(
+    tmp_path: Path,
+) -> None:
+    """Grader wired but returns [] → no eval_scores.json. The
+    contract collapses 'no grader' and 'grader returned zero scores'
+    into the same absent-file signal — both render as 'no scores'
+    downstream."""
+    target = prose_target(seed_content="seed")
+    condition = single_agent_baseline()
+
+    proposer_factory = stub_proposer_factory(_AppendingProposer)
+
+    def grader_factory(t):  # type: ignore[no-untyped-def]
+        return _EmptyScoreGrader()
+
+    result = await run_cell(
+        target=target,
+        condition=condition,
+        proposer_factory=proposer_factory,
+        output_dir=tmp_path,
+        grader_factory=grader_factory,
+        tracer=StdoutTracer(color=False),
+    )
+    assert result.eval_scores == []
+    sidecar = (
+        tmp_path / target.name / condition.name / "eval_scores.json"
+    )
+    assert not sidecar.exists()
+
+
+async def test_run_cell_eval_scores_tmp_doesnt_clobber_artifact_named_like_tmp(
+    tmp_path: Path,
+) -> None:
+    """A target whose artifact_filename happens to look like the
+    eval-scores tmp file (``eval_scores.json.tmp``) passes the
+    reserved-name guard, so the sidecar's atomic write must not
+    use a deterministic ``<sidecar>.tmp`` sibling. The randomized
+    dotfile-prefixed tmp via ``tempfile.mkstemp`` makes the collision
+    impossible regardless of artifact name."""
+    target = prose_target(
+        seed_content="seed", artifact_filename="eval_scores.json.tmp"
+    )
+    condition = single_agent_baseline()
+
+    proposer_factory = stub_proposer_factory(_AppendingProposer)
+
+    def grader_factory(t):  # type: ignore[no-untyped-def]
+        return _FixedScoreGrader([c for c in t.brief.success_criteria])
+
+    result = await run_cell(
+        target=target,
+        condition=condition,
+        proposer_factory=proposer_factory,
+        output_dir=tmp_path,
+        grader_factory=grader_factory,
+        tracer=StdoutTracer(color=False),
+    )
+    artifact = (
+        tmp_path / target.name / condition.name / "eval_scores.json.tmp"
+    )
+    sidecar = (
+        tmp_path / target.name / condition.name / "eval_scores.json"
+    )
+    # Both files survive — artifact wasn't clobbered by the sidecar
+    # write, and the sidecar landed at its expected path.
+    assert artifact.exists()
+    assert sidecar.exists()
+    assert result.eval_scores  # grader actually ran
+
+
+async def test_run_cell_clears_stale_eval_scores_sidecar_on_rerun(
+    tmp_path: Path,
+) -> None:
+    """A rerun into the same cell_dir must not leak the previous
+    run's sidecar. If run 1 wrote scores and run 2 has no grader (or
+    returns []), the on-disk file has to disappear so the absent-file
+    contract still holds."""
+    target = prose_target(seed_content="seed")
+    condition = single_agent_baseline()
+
+    proposer_factory = stub_proposer_factory(_AppendingProposer)
+    sidecar = (
+        tmp_path / target.name / condition.name / "eval_scores.json"
+    )
+
+    # Run 1: grader produces scores → sidecar present.
+    def grader_factory(t):  # type: ignore[no-untyped-def]
+        return _FixedScoreGrader([c for c in t.brief.success_criteria])
+
+    await run_cell(
+        target=target,
+        condition=condition,
+        proposer_factory=proposer_factory,
+        output_dir=tmp_path,
+        grader_factory=grader_factory,
+        tracer=StdoutTracer(color=False),
+    )
+    assert sidecar.exists()
+
+    # Run 2: no grader → stale sidecar cleared.
+    await run_cell(
+        target=target,
+        condition=condition,
+        proposer_factory=proposer_factory,
+        output_dir=tmp_path,
+        tracer=StdoutTracer(color=False),
+    )
+    assert not sidecar.exists()
 
 
 # --- run_study -------------------------------------------------------------

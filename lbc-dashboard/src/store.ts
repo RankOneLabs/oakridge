@@ -6,6 +6,7 @@
  *     ├── <artifact_filename>     final artifact
  *     ├── events.jsonl            workspace event log (one JSON record/line)
  *     ├── commits/v0001.<ext> ... per-commit snapshots
+ *     ├── eval_scores.json        present when grader-produced scores were persisted
  *     └── agent_memory/           per-agent SqliteStores (we ignore)
  *
  * Cell IDs are stable derivations of the on-disk path so they survive
@@ -19,6 +20,12 @@ export interface CellEvent {
   ts: string;
   kind: string;
   payload: Record<string, unknown>;
+}
+
+export interface EvalScore {
+  dimension: string;
+  value: number;
+  source: string;
 }
 
 export interface CellSummary {
@@ -289,13 +296,27 @@ async function detectArtifactFilename(cellDir: string): Promise<string | null> {
   // The artifact lives at <cell_dir>/<artifact_filename>. We don't
   // know the filename a priori (target-dependent), so scan the dir
   // for the file that isn't a known sidecar.
-  const known = new Set(["events.jsonl", "commits", "agent_memory"]);
+  //
+  // Also skip dotfiles and ``.tmp`` files: the harness's writers use
+  // those for atomic-rename intermediates (eval-scores writer uses
+  // ``.eval_scores.*.tmp``; Mediator uses ``<artifact>.tmp``). A
+  // crash mid-write can leave one orphaned in the cell dir, and
+  // readdir's non-deterministic order would otherwise let one of
+  // those mis-resolve as the artifact.
+  const known = new Set([
+    "events.jsonl",
+    "commits",
+    "agent_memory",
+    "eval_scores.json",
+  ]);
   try {
     const entries = await readdir(cellDir, { withFileTypes: true });
     for (const e of entries) {
-      if (e.isFile() && !known.has(e.name)) {
-        return e.name;
-      }
+      if (!e.isFile()) continue;
+      if (known.has(e.name)) continue;
+      if (e.name.startsWith(".")) continue;
+      if (e.name.endsWith(".tmp")) continue;
+      return e.name;
     }
   } catch {
     return null;
@@ -311,6 +332,70 @@ async function countCommits(cellDir: string): Promise<number> {
     return 0;
   }
 }
+
+/**
+ * Read eval_scores.json sidecar. Returns null when no scores were
+ * persisted for this cell — either the operator didn't wire a
+ * ``grader_factory``, or the grader ran but produced no scores.
+ * Per the harness contract (legit-biz-club README), consumers
+ * shouldn't distinguish those cases; both surface as "no scores."
+ *
+ * Also returns null when the file is malformed or its shape is
+ * wrong, and folds the degenerate "all entries failed coercion"
+ * case into null too — so the public contract is simply
+ * ``EvalScore[] (non-empty) | null``.
+ */
+export async function readEvalScores(
+  cellId: string,
+): Promise<EvalScore[] | null> {
+  const parts = parseCellId(cellId);
+  if (parts === null) return null;
+  const path = join(
+    resolveRunRoot(),
+    parts.runTs,
+    parts.target,
+    parts.condition,
+    "eval_scores.json",
+  );
+  let raw: string;
+  try {
+    raw = await readFile(path, "utf-8");
+  } catch {
+    return null;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const scores = (parsed as { scores?: unknown }).scores;
+  if (!Array.isArray(scores)) return null;
+  // Defensive coercion — a malformed entry shouldn't break the
+  // whole list. Drop entries that don't have the right keys; trust
+  // the harness's writer for the rest.
+  const coerced = scores.flatMap((s: unknown) => {
+    if (typeof s !== "object" || s === null) return [];
+    const obj = s as { dimension?: unknown; value?: unknown; source?: unknown };
+    if (
+      typeof obj.dimension !== "string" ||
+      typeof obj.value !== "number" ||
+      typeof obj.source !== "string"
+    ) {
+      return [];
+    }
+    return [
+      {
+        dimension: obj.dimension,
+        value: obj.value,
+        source: obj.source,
+      },
+    ];
+  });
+  return coerced.length > 0 ? coerced : null;
+}
+
 
 export async function readArtifact(cellId: string): Promise<string | null> {
   const parts = parseCellId(cellId);

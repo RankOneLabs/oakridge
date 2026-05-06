@@ -53,9 +53,10 @@ The script's config block is hardcoded; edit-and-rerun is the iteration loop in 
 - `<artifact_filename>` — the final artifact
 - `commits/v0001.<ext>`, `v0002.<ext>`, ... — per-commit snapshots (one per successful apply, in order; extension matches the artifact's, e.g. `.md` for prose targets, `.py` for single-file CODE)
 - `events.jsonl` — workspace-event log (one line per event, with timestamp + kind + payload)
+- `eval_scores.json` — present when a `grader_factory` is wired AND returns at least one score. Shape: `{"scores": [{"dimension": "explains the thesis", "value": 0.95, "source": "llm_judge"}, ...]}`. The wrapper envelope leaves room for future grader metadata. Absent file means "no scores were persisted" — either no grader wired, or grader returned zero scores. Consumers shouldn't distinguish those.
 - `agent_memory/` — per-agent SqliteStore files (currently unused by `JigProposer`; placeholder for v1.x)
 
-`commits`, `agent_memory`, and `events.jsonl` are reserved sidecar names — `run_cell` rejects targets whose `artifact_filename` collides with any of them.
+`commits`, `agent_memory`, `events.jsonl`, and `eval_scores.json` are reserved sidecar names — `run_cell` rejects targets whose `artifact_filename` collides with any of them (case-insensitive, so `Eval_Scores.json` is rejected too on case-sensitive filesystems where it would otherwise sneak past).
 
 ## Architecture
 

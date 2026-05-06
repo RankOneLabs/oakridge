@@ -23,6 +23,7 @@ import {
   listCells,
   readArtifact,
   readCommits,
+  readEvalScores,
   resolveCellDir,
   resolveRunRoot,
 } from "./src/store";
@@ -46,6 +47,20 @@ app.get("/api/cells/:cellId/artifact", async (c) => {
   const content = await readArtifact(c.req.param("cellId"));
   if (content === null) return c.json({ error: "not found" }, 404);
   return c.json({ content });
+});
+
+app.get("/api/cells/:cellId/eval", async (c) => {
+  const cellId = c.req.param("cellId");
+  const cellDir = await resolveCellDir(cellId);
+  if (cellDir === null) return c.json({ error: "not found" }, 404);
+  // ``scores`` is either a non-empty ``EvalScore[]`` or ``null``.
+  // ``null`` means no scores were persisted for this cell — either
+  // no grader was wired, or the grader ran but produced no scores.
+  // The harness writer skips zero-score sidecars and ``readEvalScores``
+  // folds any empty/all-malformed list back to ``null``, so an empty
+  // array never reaches the wire.
+  const scores = await readEvalScores(cellId);
+  return c.json({ scores });
 });
 
 app.get("/api/cells/:cellId/commits", async (c) => {

@@ -18,8 +18,12 @@ itself is LLM-agnostic.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
 import logging
+import os
 import shutil
+import tempfile
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePath
@@ -61,7 +65,16 @@ logger = logging.getLogger(__name__)
 # lib-internal sidecars — operators inheriting that script don't have
 # to re-discover the collision.
 _RESERVED_CELL_DIR_NAMES: frozenset[str] = frozenset(
-    {"commits", "agent_memory", "events.jsonl"}
+    {"commits", "agent_memory", "events.jsonl", "eval_scores.json"}
+)
+# Casefolded copy for the membership check. The harness runs on
+# operator machines that may use case-insensitive filesystems
+# (macOS APFS by default, Windows NTFS), where ``Eval_Scores.json``
+# and ``eval_scores.json`` resolve to the same on-disk file. The
+# reserved-name guard has to reject both shapes or the foot-shoot
+# leaks back in on those filesystems.
+_RESERVED_CELL_DIR_NAMES_CASEFOLDED: frozenset[str] = frozenset(
+    n.casefold() for n in _RESERVED_CELL_DIR_NAMES
 )
 
 
@@ -187,7 +200,7 @@ async def run_cell(
             "v1 supports single-file artifacts only — directory-based "
             "CODE artifacts are v1.x"
         )
-    if stripped in _RESERVED_CELL_DIR_NAMES:
+    if stripped.casefold() in _RESERVED_CELL_DIR_NAMES_CASEFOLDED:
         raise ValueError(
             f"target {target.name!r} artifact_filename "
             f"{target.artifact_filename!r} collides with a reserved "
@@ -255,6 +268,23 @@ async def run_cell(
     snapshot_dir = cell_dir / "commits"
     if snapshot_dir.exists():
         shutil.rmtree(snapshot_dir)
+    # Clear any stale eval_scores.json from a previous run alongside
+    # the other per-run sidecar resets above. The absent-file semantics
+    # ("no scores were persisted") have to hold across reruns even when
+    # the coordinator crashes mid-run — clearing here rather than after
+    # ``coordinator.run()`` ensures a failed rerun can't leak the
+    # previous run's scores to the dashboard.
+    sidecar_path = cell_dir / "eval_scores.json"
+    try:
+        sidecar_path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        logger.warning(
+            "eval_scores sidecar cleanup failed (path=%s): %s",
+            sidecar_path,
+            e,
+        )
     mediator = Mediator(
         project.artifact,
         [a.id for a in agents],
@@ -288,6 +318,7 @@ async def run_cell(
                 input=target.brief.target_spec, output=final_content
             )
         )
+        _write_eval_scores_sidecar(cell_dir, eval_scores)
     return CellResult(
         target_name=target.name,
         condition_name=condition.name,
@@ -397,6 +428,83 @@ def _default_system_prompt(target_name: str, index: int) -> str:
         "Read the brief and current artifact carefully and propose the "
         "next version. Stay focused on the success criteria."
     )
+
+
+def _write_eval_scores_sidecar(
+    cell_dir: Path, scores: list[Score]
+) -> None:
+    """Persist eval scores alongside the cell's other sidecars.
+
+    Writes ``cell_dir/eval_scores.json`` with the shape::
+
+        {"scores": [{"dimension": "...", "value": 0.95, "source": "llm_judge"}, ...]}
+
+    The wrapper envelope (``{"scores": [...]}`` rather than a bare
+    list) leaves room for future grader metadata — judge model id,
+    grader run timestamp, rubric hash, etc. — without breaking the
+    consumer contract.
+
+    Empty scores skips the write entirely. An absent file therefore
+    means "no scores were persisted" — either no grader was wired,
+    or the grader was wired but produced zero scores. Consumers
+    don't need to distinguish those cases (both render as the same
+    empty state).
+
+    Atomic write: serialize to a randomly-named dotfile tmp in the
+    same directory then ``replace()`` so a concurrent reader (the
+    dashboard) can't ever observe a partially-written JSON. The
+    Mediator's artifact write uses a deterministic ``<path>.tmp``
+    sibling, but that's safe there because the tmp self-targets the
+    artifact path; here the tmp lives next to a *foreign*
+    user-controlled artifact, so a target named e.g.
+    ``eval_scores.json.tmp`` would otherwise be clobbered. Random
+    naming via ``tempfile.mkstemp`` rules that collision out
+    regardless of artifact filename. Best-effort observability: if
+    the write fails (disk full, permissions, etc.) we log a warning
+    and continue. ``CellResult.eval_scores`` in the returned object
+    is still authoritative; the sidecar is the dashboard's read path.
+    """
+    if not scores:
+        return
+    payload = {
+        "scores": [
+            {
+                "dimension": s.dimension,
+                "value": s.value,
+                "source": s.source.value,
+            }
+            for s in scores
+        ],
+    }
+    sidecar = cell_dir / "eval_scores.json"
+    fd, tmp_str = tempfile.mkstemp(
+        dir=cell_dir, prefix=".eval_scores.", suffix=".tmp"
+    )
+    tmp = Path(tmp_str)
+    # ``os.fdopen`` takes ownership of the raw fd from mkstemp and
+    # the resulting file object closes it on context exit. The
+    # explicit ``os.close`` fallback covers the (vanishingly rare)
+    # case where ``fdopen`` itself raises before that ownership
+    # transfers — without it the fd would leak, and on Windows an
+    # open handle would also block the unlink below.
+    fd_owned_by_file = False
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            fd_owned_by_file = True
+            f.write(json.dumps(payload, indent=2) + "\n")
+        tmp.replace(sidecar)
+    except OSError as e:
+        logger.warning(
+            "eval_scores sidecar write failed (path=%s): %s", sidecar, e
+        )
+        # Best-effort cleanup of the orphan tmpfile if the write
+        # made it that far.
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+    finally:
+        if not fd_owned_by_file:
+            with contextlib.suppress(OSError):
+                os.close(fd)
 
 
 def _summarize_metrics(run_result: ProjectRunResult) -> CellMetrics:

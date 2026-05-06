@@ -11,7 +11,12 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { getCellDetail, listCells, readEvents } from "./store";
+import {
+  getCellDetail,
+  listCells,
+  readEvalScores,
+  readEvents,
+} from "./store";
 
 // parseCellId is intentionally NOT exported from store.ts (internal
 // helper). The path-traversal test below verifies rejection at the
@@ -167,6 +172,58 @@ describe("getCellDetail", () => {
     expect(detail!.events.length).toBe(2);
   });
 
+  test("ignores eval_scores.json when detecting the artifact filename", async () => {
+    // The artifact-detection scan walks the cell dir for the file
+    // that isn't a known sidecar. eval_scores.json must be in the
+    // sidecar allowlist or readdir's non-deterministic order can
+    // pick it as the artifact, hiding the real one.
+    const cellDir = await makeCell(
+      "2026-05-06T20-30-00Z",
+      "prose",
+      "incremental_n2",
+      [eventLine("incremental_started")],
+      { artifact: "# real artifact\n", commits: 1 },
+    );
+    await writeFile(
+      join(cellDir, "eval_scores.json"),
+      JSON.stringify({
+        scores: [{ dimension: "x", value: 0.5, source: "llm_judge" }],
+      }),
+      "utf-8",
+    );
+    const cells = await listCells();
+    const cell = cells.find((c) => c.run_ts === "2026-05-06T20-30-00Z");
+    expect(cell).toBeDefined();
+    const detail = await getCellDetail(cell!.cell_id);
+    expect(detail!.artifact_filename).toBe("draft.md");
+  });
+
+  test("ignores dotfiles and .tmp orphans when detecting the artifact filename", async () => {
+    // The harness's atomic-rename writers leave dotfile/.tmp
+    // intermediates on disk during writes; a crash mid-write can
+    // orphan them. Those must not be eligible for artifact
+    // resolution — readdir order would otherwise let the orphan win
+    // over the real artifact.
+    const cellDir = await makeCell(
+      "2026-05-06T20-15-00Z",
+      "prose",
+      "incremental_n2",
+      [eventLine("incremental_started")],
+      { artifact: "# real artifact\n" },
+    );
+    await writeFile(
+      join(cellDir, ".eval_scores.abc123.tmp"),
+      "{}",
+      "utf-8",
+    );
+    await writeFile(join(cellDir, "draft.md.tmp"), "stale", "utf-8");
+    const cells = await listCells();
+    const cell = cells.find((c) => c.run_ts === "2026-05-06T20-15-00Z");
+    expect(cell).toBeDefined();
+    const detail = await getCellDetail(cell!.cell_id);
+    expect(detail!.artifact_filename).toBe("draft.md");
+  });
+
   test("cell_id round-trips through encodeURIComponent + : delimiter", async () => {
     // Names containing the OLD ``__`` delimiter would have mis-split
     // before; the encode/decode round-trip preserves them. Also
@@ -212,6 +269,94 @@ describe("getCellDetail", () => {
     expect(await getCellDetail("a:b:c:d")).toBeNull();
     // Malformed percent-encoding shouldn't escape decodeURIComponent.
     expect(await getCellDetail("a:%E0%A4:c")).toBeNull();
+  });
+});
+
+describe("readEvalScores", () => {
+  test("parses well-formed sidecar", async () => {
+    const cellDir = await makeCell("2026-05-06T22-00-00Z", "p", "c", [
+      eventLine("incremental_started"),
+    ]);
+    await writeFile(
+      join(cellDir, "eval_scores.json"),
+      JSON.stringify({
+        scores: [
+          { dimension: "clarity", value: 0.9, source: "llm_judge" },
+          { dimension: "rigor", value: 0.6, source: "llm_judge" },
+        ],
+      }),
+      "utf-8",
+    );
+    const scores = await readEvalScores(
+      "2026-05-06T22-00-00Z:p:c",
+    );
+    expect(scores).not.toBeNull();
+    expect(scores!.length).toBe(2);
+    expect(scores![0]).toEqual({
+      dimension: "clarity",
+      value: 0.9,
+      source: "llm_judge",
+    });
+  });
+
+  test("returns null when sidecar is absent", async () => {
+    await makeCell("2026-05-06T22-30-00Z", "p", "c", [
+      eventLine("incremental_started"),
+    ]);
+    const scores = await readEvalScores(
+      "2026-05-06T22-30-00Z:p:c",
+    );
+    expect(scores).toBeNull();
+  });
+
+  test("returns null on malformed JSON", async () => {
+    const cellDir = await makeCell("2026-05-06T23-00-00Z", "p", "c", [
+      eventLine("incremental_started"),
+    ]);
+    await writeFile(
+      join(cellDir, "eval_scores.json"),
+      "not json at all",
+      "utf-8",
+    );
+    const scores = await readEvalScores(
+      "2026-05-06T23-00-00Z:p:c",
+    );
+    expect(scores).toBeNull();
+  });
+
+  test("filters out malformed score entries, keeps the rest", async () => {
+    // A row with the wrong types or missing keys shouldn't break
+    // the whole list — drop the bad entry, return the good ones.
+    // Same fail-soft posture as readEvents.
+    const cellDir = await makeCell("2026-05-06T23-30-00Z", "p", "c", [
+      eventLine("incremental_started"),
+    ]);
+    await writeFile(
+      join(cellDir, "eval_scores.json"),
+      JSON.stringify({
+        scores: [
+          { dimension: "good", value: 0.7, source: "llm_judge" },
+          { dimension: "bad-value-type", value: "high", source: "x" },
+          { dimension: "missing-source", value: 0.5 },
+          "totally not an object",
+          { dimension: "also-good", value: 0.4, source: "heuristic" },
+        ],
+      }),
+      "utf-8",
+    );
+    const scores = await readEvalScores(
+      "2026-05-06T23-30-00Z:p:c",
+    );
+    expect(scores).not.toBeNull();
+    expect(scores!.map((s) => s.dimension)).toEqual([
+      "good",
+      "also-good",
+    ]);
+  });
+
+  test("rejects path-traversal cell_ids", async () => {
+    expect(await readEvalScores("..:..:..")).toBeNull();
+    expect(await readEvalScores("a%2Fb:c:d")).toBeNull();
   });
 });
 
