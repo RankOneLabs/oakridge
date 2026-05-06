@@ -1,0 +1,6 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+/* No custom CSS yet — utility classes carry the styling. Add a
+   theme block here when project-specific tokens (lbc colors,
+   custom font stack, etc.) crystallize. */

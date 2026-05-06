@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 
 // Dev workflow: `bun run dev` (Hono on :8765) and
 // `bun run dev:pwa` (Vite on :5173) in two terminals. Vite proxies
@@ -10,7 +11,7 @@ import react from "@vitejs/plugin-react";
 const backendTarget = `http://localhost:${process.env.LBC_DASHBOARD_PORT ?? "8765"}`;
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   server: {
     proxy: {
       "/api": { target: backendTarget, changeOrigin: true },
