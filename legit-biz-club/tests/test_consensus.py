@@ -178,7 +178,8 @@ async def test_multiround_converges_at_round_1(tmp_path: Path) -> None:
     assert kinds[0] == "convergence_started"
     assert "round_completed" in kinds
     assert "escalation_triggered" not in kinds
-    assert kinds[-1] == "proposal_picked"
+    # Order at the tail: pick decision, then commit.
+    assert kinds[-2:] == ["proposal_picked", "proposal_applied"]
 
 
 async def test_multiround_escalates_when_no_convergence(
@@ -223,7 +224,48 @@ async def test_multiround_escalates_when_no_convergence(
 
     kinds = [k for k, _ in events]
     assert "escalation_triggered" in kinds
-    assert kinds[-1] == "proposal_picked"
+    assert kinds[-2:] == ["proposal_picked", "proposal_applied"]
+
+
+async def test_consensus_emits_proposal_applied_with_outcome_payload(
+    tmp_path: Path,
+) -> None:
+    """The proposal_applied event mirrors the incremental coordinator's
+    payload shape (agent_id / proposal_id / reason / new_version) so a
+    kbbl observer can treat both event sources uniformly. Without this
+    event, the consensus commit is invisible to a `proposal_applied`-
+    only consumer — only the picked decision shows up."""
+    agents = _make_agents(tmp_path, 3)
+    project = _make_project(tmp_path, agents)
+    proposers: dict[str, _UniquePerAgentProposer] = {
+        a.id: _UniquePerAgentProposer() for a in agents
+    }
+    mediator = Mediator(project.artifact, [a.id for a in agents])
+
+    events: list[tuple[str, dict[str, object]]] = []
+
+    async def emit(kind: str, payload: dict[str, object]) -> None:
+        events.append((kind, payload))
+
+    mechanism = MultiRoundConsensus(
+        project=project,
+        agents=agents,
+        proposers=proposers,
+        mediator=mediator,
+        round_budget_policy=StringEqualConvergence(max_rounds=1),
+        disagreement_surface=StableOrderingByAgentId(),
+        tracer=StdoutTracer(color=False),
+        emit=emit,
+    )
+    result = await mechanism.execute()
+
+    applied = [(k, p) for k, p in events if k == "proposal_applied"]
+    assert len(applied) == 1
+    payload = applied[0][1]
+    assert payload["agent_id"] == result.picked.agent_id
+    assert payload["proposal_id"] == result.picked.id
+    # new_version is the post-apply hash — non-None on success.
+    assert payload["new_version"] is not None
 
 
 # --- SingleRoundConsensus -------------------------------------------------
