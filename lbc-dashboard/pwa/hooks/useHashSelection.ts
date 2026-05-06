@@ -6,12 +6,12 @@
 import { useCallback, useEffect, useState } from "react";
 
 function readHash(): string | null {
-  const h = window.location.hash.slice(1);
-  for (const part of h.split("&")) {
-    const [k, v] = part.split("=");
-    if (k === "cell" && v) return decodeURIComponent(v);
-  }
-  return null;
+  const found = window.location.hash
+    .slice(1)
+    .split("&")
+    .map((p) => p.split("="))
+    .find(([k]) => k === "cell");
+  return found?.[1] ? decodeURIComponent(found[1]) : null;
 }
 
 export function useHashSelection(): [string | null, (id: string) => void] {

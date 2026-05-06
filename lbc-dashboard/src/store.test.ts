@@ -150,13 +150,45 @@ describe("getCellDetail", () => {
       { artifact: "# title\n\ncontent\n", commits: 4 },
     );
 
-    const detail = await getCellDetail(
-      "2026-05-06T19-00-00Z__prose_substrate_thesis__ensemble_multi_round_n3",
-    );
+    // cell_id = encodeURIComponent(seg) joined with ":"; the segments
+    // here have no special chars so encoding is a no-op for the IDs
+    // listCells / cellIdFor produce. The discovered cell_id from
+    // listCells is the source of truth — read it from there.
+    const cells = await listCells();
+    const cellId = cells.find(
+      (c) => c.condition_name === "ensemble_multi_round_n3",
+    )?.cell_id;
+    expect(cellId).toBeDefined();
+
+    const detail = await getCellDetail(cellId!);
     expect(detail).not.toBeNull();
     expect(detail!.artifact_filename).toBe("draft.md");
     expect(detail!.commit_count).toBe(4);
     expect(detail!.events.length).toBe(2);
+  });
+
+  test("cell_id round-trips through encodeURIComponent + : delimiter", async () => {
+    // Names containing the OLD ``__`` delimiter would have mis-split
+    // before; the encode/decode round-trip preserves them. Also
+    // covers names with `:` (encoded to %3A so they can't alias the
+    // segment separator) and `/` (rejected at isSafeSegment for
+    // safety even after decode).
+    await makeCell(
+      "2026-05-06T21-00-00Z",
+      "my__custom_target",
+      "weird:condition_name",
+      [eventLine("incremental_started")],
+    );
+    const cells = await listCells();
+    const cell = cells.find((c) => c.target_name === "my__custom_target");
+    expect(cell).toBeDefined();
+    expect(cell!.condition_name).toBe("weird:condition_name");
+
+    // The cell_id round-trips back to the same target/condition.
+    const detail = await getCellDetail(cell!.cell_id);
+    expect(detail).not.toBeNull();
+    expect(detail!.target_name).toBe("my__custom_target");
+    expect(detail!.condition_name).toBe("weird:condition_name");
   });
 
   test("rejects path-traversal cell_ids without touching disk", async () => {
@@ -164,15 +196,22 @@ describe("getCellDetail", () => {
     // path-join. Each must return null without a file lookup, so a
     // missing-segment file outside RUN_ROOT can't accidentally
     // surface.
-    expect(await getCellDetail("..__..__..")).toBeNull();
-    expect(await getCellDetail("../etc__passwd__x")).toBeNull();
-    expect(await getCellDetail("a/b__c__d")).toBeNull();
-    expect(await getCellDetail("a__b\\c__d")).toBeNull();
-    expect(await getCellDetail("a__.__b")).toBeNull();
-    expect(await getCellDetail("__b__c")).toBeNull();
+    //
+    // Format is now segments joined with ``:``. For each crafted
+    // input, parseCellId either gets the wrong number of segments
+    // or one segment fails isSafeSegment after decoding.
+    expect(await getCellDetail("..:..:..")).toBeNull();
+    // ``%2F`` decodes to ``/`` which fails isSafeSegment.
+    expect(await getCellDetail("a%2Fb:c:d")).toBeNull();
+    // ``%5C`` decodes to ``\`` which fails isSafeSegment.
+    expect(await getCellDetail("a:b%5Cc:d")).toBeNull();
+    expect(await getCellDetail("a:.:b")).toBeNull();
+    expect(await getCellDetail(":b:c")).toBeNull();
     // Wrong number of segments.
-    expect(await getCellDetail("a__b")).toBeNull();
-    expect(await getCellDetail("a__b__c__d")).toBeNull();
+    expect(await getCellDetail("a:b")).toBeNull();
+    expect(await getCellDetail("a:b:c:d")).toBeNull();
+    // Malformed percent-encoding shouldn't escape decodeURIComponent.
+    expect(await getCellDetail("a:%E0%A4:c")).toBeNull();
   });
 });
 

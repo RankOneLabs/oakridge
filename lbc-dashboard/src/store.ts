@@ -55,12 +55,18 @@ export function resolveRunRoot(): string {
 }
 
 /**
- * Build the cell_id from the path segments. Stable + URL-safe; the
- * combination of run-timestamp + target + condition uniquely
- * identifies a cell in the v1 layout.
+ * Build the cell_id from the path segments. URL-safe and resilient
+ * to unusual characters in target/condition names: each segment is
+ * encodeURIComponent'd, joined with ``:`` (which encodeURIComponent
+ * escapes to ``%3A`` so it can't appear inside an encoded segment).
+ *
+ * The previous ``__`` delimiter would mis-split a target named e.g.
+ * ``my__custom_target``. The harness doesn't validate target/
+ * condition names, so a future operator-supplied name with any
+ * delimiter would be a footgun.
  */
 function cellIdFor(runTs: string, target: string, condition: string): string {
-  return `${runTs}__${target}__${condition}`;
+  return [runTs, target, condition].map(encodeURIComponent).join(":");
 }
 
 /**
@@ -76,10 +82,18 @@ function isSafeSegment(s: string): boolean {
 function parseCellId(
   cellId: string,
 ): { runTs: string; target: string; condition: string } | null {
-  const parts = cellId.split("__");
+  const parts = cellId.split(":");
   if (parts.length !== 3) return null;
-  if (!parts.every(isSafeSegment)) return null;
-  return { runTs: parts[0]!, target: parts[1]!, condition: parts[2]! };
+  let decoded: string[];
+  try {
+    decoded = parts.map(decodeURIComponent);
+  } catch {
+    // Malformed percent-encoding (e.g., trailing % with no hex pair)
+    // — treat as invalid rather than letting URIError escape.
+    return null;
+  }
+  if (!decoded.every(isSafeSegment)) return null;
+  return { runTs: decoded[0]!, target: decoded[1]!, condition: decoded[2]! };
 }
 
 /**
@@ -163,9 +177,17 @@ async function summarize(
       status = cached.status;
     } else {
       const contents = await readFile(eventsPath, "utf-8");
-      const lines = contents.split("\n").filter((l) => l.trim());
-      eventCount = lines.length;
-      status = classifyStatus(lines);
+      // Parse once. eventCount counts what's actually parseable so
+      // the sidebar matches the timeline (readEvents skips malformed
+      // lines, and showing "10 events" while the UI renders 9 is
+      // exactly the kind of inconsistency that ages into a real bug).
+      const parsedKinds = contents
+        .split("\n")
+        .filter((l) => l.trim())
+        .map(parseEventKind)
+        .filter((k): k is string => k !== null);
+      eventCount = parsedKinds.length;
+      status = classifyStatusFromKinds(parsedKinds);
       summaryCache.set(eventsPath, { mtimeMs, eventCount, status });
     }
   } catch {
@@ -191,8 +213,8 @@ async function summarize(
 }
 
 /**
- * Decide whether a cell is `ended` from its event log. A cell ends
- * with one of two terminal patterns:
+ * Decide whether a cell is `ended` from the parsed event kinds in
+ * order. A cell ends with one of two terminal patterns:
  *
  * - INCREMENTAL_ONLY → the very last event is `incremental_terminated`.
  * - INCREMENTAL_THEN_CONVERGE → the last event is `proposal_applied`
@@ -201,17 +223,15 @@ async function summarize(
  *
  * Naive substring matching is wrong: `proposal_applied` ALSO fires
  * for every commit during the incremental phase, so a mid-run cell
- * would be misclassified as ended. Parse the last line's kind
- * specifically and require the picked-then-applied pair for the
- * consensus case.
+ * would be misclassified as ended. Look at the last kind specifically
+ * and require the picked-then-applied pair for the consensus case.
  */
-function classifyStatus(lines: string[]): CellSummary["status"] {
-  if (lines.length === 0) return "active";
-  const lastKind = parseEventKind(lines[lines.length - 1]!);
-  if (lastKind === "incremental_terminated") return "ended";
-  if (lastKind === "proposal_applied" && lines.length > 1) {
-    const priorKind = parseEventKind(lines[lines.length - 2]!);
-    if (priorKind === "proposal_picked") return "ended";
+function classifyStatusFromKinds(kinds: string[]): CellSummary["status"] {
+  if (kinds.length === 0) return "active";
+  const last = kinds[kinds.length - 1];
+  if (last === "incremental_terminated") return "ended";
+  if (last === "proposal_applied" && kinds.length > 1) {
+    if (kinds[kinds.length - 2] === "proposal_picked") return "ended";
   }
   return "active";
 }

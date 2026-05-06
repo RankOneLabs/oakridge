@@ -3,36 +3,58 @@
  * connect, then appends as new events arrive. Resets when cellId
  * changes; guards against late deliveries from a previously-
  * selected cell.
+ *
+ * Incoming events are buffered in a closure-local array and flushed
+ * on the next animation frame in one setState call. Without
+ * batching, replay of a cell with N backlog events would call
+ * ``setEvents((prev) => [...prev, evt])`` N times — O(N²) array
+ * copies. With it, a backlog burst becomes one append per frame.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 import type { CellEvent } from "../lib/types";
 
 export function useCellEvents(cellId: string | null): CellEvent[] {
   const [events, setEvents] = useState<CellEvent[]>([]);
-  const cellIdRef = useRef(cellId);
-  cellIdRef.current = cellId;
   useEffect(() => {
     if (cellId === null) {
       setEvents([]);
       return;
     }
     setEvents([]);
+    // Per-effect buffer + flush flag, reset cleanly on cellId change.
+    let pendingBuffer: CellEvent[] = [];
+    let flushScheduled = false;
+    let cancelled = false;
     const es = new EventSource(
       `/api/cells/${encodeURIComponent(cellId)}/events`,
     );
     es.addEventListener("message", (ev) => {
-      // Guard: a slow SSE response from a previously-selected cell
-      // could land after the user picked a different cell.
-      if (cellIdRef.current !== cellId) return;
+      if (cancelled) return;
+      let evt: CellEvent;
       try {
-        const evt = JSON.parse(ev.data) as CellEvent;
-        setEvents((prev) => [...prev, evt]);
+        evt = JSON.parse(ev.data) as CellEvent;
       } catch {
-        // Skip malformed lines.
+        return;
+      }
+      pendingBuffer.push(evt);
+      if (!flushScheduled) {
+        flushScheduled = true;
+        requestAnimationFrame(() => {
+          if (cancelled) return;
+          const toFlush = pendingBuffer;
+          pendingBuffer = [];
+          flushScheduled = false;
+          if (toFlush.length > 0) {
+            setEvents((prev) => [...prev, ...toFlush]);
+          }
+        });
       }
     });
-    return () => es.close();
+    return () => {
+      cancelled = true;
+      es.close();
+    };
   }, [cellId]);
   return events;
 }
