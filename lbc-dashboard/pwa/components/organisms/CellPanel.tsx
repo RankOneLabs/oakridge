@@ -109,7 +109,13 @@ function CommitsView({ commits }: { commits: CommitSnapshot[] }) {
 }
 
 function ScoresView({ scores }: { scores: EvalScore[] | null }) {
-  if (scores === null) {
+  // ``readEvalScores`` already folds empty/all-malformed lists into
+  // null, so the contract guarantees ``scores`` is non-empty when
+  // not null. The ``length === 0`` guard is defense in depth — the
+  // type ``EvalScore[] | null`` permits empty at compile time even
+  // though the runtime invariant rules it out, and the avg below
+  // would otherwise be NaN if the contract ever drifted.
+  if (scores === null || scores.length === 0) {
     return (
       <EmptyMessage>
         No eval scores were written for this cell — either no{" "}
