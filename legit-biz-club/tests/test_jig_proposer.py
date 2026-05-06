@@ -102,6 +102,44 @@ async def test_propose_returns_proposal_from_json(tmp_path: Path) -> None:
     assert proposal.rationale == "tightened wording"
 
 
+async def test_propose_passes_max_tokens_through_to_llm(tmp_path: Path) -> None:
+    """The max_tokens kwarg has to actually reach CompletionParams,
+    not silently default to jig's adapter floor (4096) which truncates
+    larger artifact rewrites mid-JSON. The default of 8192 — and any
+    operator override — is load-bearing for cells where the artifact
+    grows past a few KB."""
+    agent = _agent(tmp_path)
+    stub = _StubLLM(
+        response_content='{"new_content": "x", "rationale": "y"}'
+    )
+    # Default: 8192.
+    proposer = JigProposer(agent, llm=stub)
+    await proposer.propose(
+        agent=agent,
+        brief=_brief(),
+        artifact=_artifact(tmp_path),
+        current_content="seed",
+        current_version="v0",
+    )
+    assert stub.last_params is not None
+    assert stub.last_params.max_tokens == 8192
+
+    # Override flows through.
+    stub2 = _StubLLM(
+        response_content='{"new_content": "x", "rationale": "y"}'
+    )
+    proposer2 = JigProposer(agent, llm=stub2, max_tokens=32000)
+    await proposer2.propose(
+        agent=agent,
+        brief=_brief(),
+        artifact=_artifact(tmp_path),
+        current_content="seed",
+        current_version="v0",
+    )
+    assert stub2.last_params is not None
+    assert stub2.last_params.max_tokens == 32000
+
+
 async def test_propose_tolerates_missing_rationale(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
     stub = _StubLLM(response_content='{"new_content": "x"}')

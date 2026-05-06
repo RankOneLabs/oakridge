@@ -61,6 +61,7 @@ class JigProposer:
         *,
         llm: LLMClient | None = None,
         context: str = "",
+        max_tokens: int = 8192,
     ) -> None:
         self.agent = agent
         # Default to dispatching the LLMClient by model name. Tests can
@@ -71,6 +72,16 @@ class JigProposer:
         self._llm: LLMClient = (
             llm if llm is not None else from_model(agent.model)
         )
+        # Output-token cap for the underlying LLM call. The proposer's
+        # whole-artifact-in-JSON shape means output tokens scale with
+        # artifact size — a 1500-word prose target round-trips through
+        # JSON as ~3000 tokens, more once peer proposals get echoed
+        # back in the rationale. jig's adapter default (4096) hits the
+        # cap mid-artifact for ensemble cells where the artifact grows
+        # past commit #3 or #4. 8192 is comfortably above that floor
+        # and below every modern Claude model's per-call cap; bump
+        # higher for richer artifacts or longer rounds.
+        self._max_tokens = max_tokens
         # Per-project peer context — what the agent brings into this
         # project from prior memory. Loaded by the harness via a
         # PeerContextLoader (operator-supplied) and added to the
@@ -116,6 +127,7 @@ class JigProposer:
         params = CompletionParams(
             messages=[Message(role=Role.USER, content=user_message)],
             system=system_prompt,
+            max_tokens=self._max_tokens,
         )
         response = await self._llm.complete(params)
         parsed = _parse_response(response.content)
