@@ -20,7 +20,7 @@ as a ``supersedes`` target for later commits.
 """
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -30,7 +30,7 @@ from jig.core.types import MemoryEntry
 from jig.memory.local import SqliteStore
 from pydantic import BaseModel, Field, ValidationError
 
-from legit_biz_club.core.models import Agent
+from legit_biz_club.core.models import Agent, Project
 
 
 def _utc_now() -> datetime:
@@ -243,3 +243,86 @@ def _deserialize_observation(entry: MemoryEntry) -> CommitObservation | None:
         )
     except (KeyError, ValueError, TypeError, AttributeError, ValidationError):
         return None
+
+
+# --- peer context loaders ----------------------------------------------
+
+
+PeerContextLoader = Callable[[Agent, Project], Awaitable[str]]
+"""Returns the agent's peer context for a project as a string.
+
+The string is what the agent "brings to" this project — typically a
+formatted summary of past observations and learnings — and gets
+prepended to the proposer's system prompt. The proposer is agnostic
+about how the string was assembled, which is the seam that lets us
+swap memory backends (today: SqliteStore-backed observations;
+v1.x: honcho's reasoning-informed peer queries; etc.) without
+touching the proposer or the consensus path.
+
+Loaders are operator-supplied and called once per agent per cell at
+proposer construction time. ``None`` (the run_cell default) means
+"no context loading" — current behavior, agents start each project
+fresh.
+"""
+
+
+def make_sqlite_observation_loader(
+    store: SqliteStore,
+    *,
+    exclude_current_project: bool = True,
+) -> PeerContextLoader:
+    """Build a loader that formats this agent's prior observations.
+
+    Reads operator-approved observations via :class:`MemoryCommitter`'s
+    storage convention (the ``lbc_kind == 'commit_observation'`` rows
+    written by :func:`_serialize_metadata`), filters to this agent,
+    and returns a markdown bullet list. Empty store or no observations
+    for this agent → empty string (proposer falls back to its base
+    prompt).
+
+    ``exclude_current_project`` (default ``True``) drops observations
+    whose ``project_id`` matches the project being started — those
+    were committed by an earlier run of this same project and aren't
+    "what you bring from elsewhere." Operators studying within-project
+    memory accumulation can pass ``False`` to include them.
+
+    Returns a coroutine; matches the :data:`PeerContextLoader`
+    signature so it slots into ``run_cell``'s
+    ``peer_context_loader=`` parameter directly.
+    """
+    async def _load(agent: Agent, project: Project) -> str:
+        committer = MemoryCommitter(agent, store)
+        loaded = await committer.load_observations()
+        # Honor the design memo's "override rather than accumulate"
+        # semantics on supersedes: drop any entry that another loaded
+        # entry explicitly supersedes. Computed from the FULL load
+        # before the current-project filter — a superseder committed
+        # during the current project should still suppress the older
+        # entry it replaces, even though the superseder itself gets
+        # filtered out below. Without this ordering, a stale
+        # observation can resurface as "prior context" because the
+        # signal that retired it was thrown out first.
+        superseded_ids = {
+            obs.supersedes for _eid, obs in loaded if obs.supersedes
+        }
+        loaded = [
+            (eid, obs) for eid, obs in loaded if eid not in superseded_ids
+        ]
+        if exclude_current_project:
+            loaded = [
+                (entry_id, obs)
+                for entry_id, obs in loaded
+                if obs.project_id != project.id
+            ]
+        if not loaded:
+            return ""
+        # Stable ordering for reproducibility: oldest first by
+        # timestamp, then by entry_id as tiebreaker.
+        loaded.sort(key=lambda eo: (eo[1].timestamp, eo[0]))
+        lines = ["From your prior project work:"]
+        for _entry_id, obs in loaded:
+            tags = f" [{', '.join(obs.tags)}]" if obs.tags else ""
+            lines.append(f"- ({obs.operator_confidence.value}){tags} {obs.observation_text}")
+        return "\n".join(lines)
+
+    return _load

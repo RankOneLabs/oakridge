@@ -36,6 +36,7 @@ from legit_biz_club.study.runner import (
     run_study,
 )
 from legit_biz_club.study.targets import code_target, prose_target
+from tests._helpers import stub_proposer_factory
 
 
 class _AppendingProposer:
@@ -113,8 +114,7 @@ async def test_run_cell_writes_artifact_to_cell_dir(tmp_path: Path) -> None:
     target = prose_target(seed_content="seed")
     condition = single_agent_baseline()
 
-    def proposer_factory(_agent: Agent) -> _AppendingProposer:
-        return _AppendingProposer()
+    proposer_factory = stub_proposer_factory(_AppendingProposer)
 
     result = await run_cell(
         target=target,
@@ -138,8 +138,7 @@ async def test_run_cell_metrics_capture_incremental_counters(
     target = prose_target(seed_content="seed")
     condition = ensemble_incremental_only(n=3)
 
-    def proposer_factory(_agent: Agent) -> _AppendingProposer:
-        return _AppendingProposer()
+    proposer_factory = stub_proposer_factory(_AppendingProposer)
 
     result = await run_cell(
         target=target,
@@ -166,8 +165,7 @@ async def test_run_cell_with_consensus_records_convergence(
     target = prose_target(seed_content="seed")
     condition = ensemble_with_multi_round(n=3)
 
-    def proposer_factory(_agent: Agent) -> _ConvergingProposer:
-        return _ConvergingProposer("the agreed text")
+    proposer_factory = stub_proposer_factory(_ConvergingProposer, content="the agreed text")
 
     result = await run_cell(
         target=target,
@@ -194,8 +192,7 @@ async def test_run_cell_rejects_artifact_filename_with_separators(
     )
     condition = single_agent_baseline()
 
-    def proposer_factory(_agent: Agent) -> _AppendingProposer:
-        return _AppendingProposer()
+    proposer_factory = stub_proposer_factory(_AppendingProposer)
 
     import pytest
 
@@ -217,8 +214,7 @@ async def test_run_cell_handles_code_target_single_file(
     target = code_target(seed_content="def stub(): ...\n")
     condition = single_agent_baseline()
 
-    def proposer_factory(_agent: Agent) -> _AppendingProposer:
-        return _AppendingProposer()
+    proposer_factory = stub_proposer_factory(_AppendingProposer)
 
     result = await run_cell(
         target=target,
@@ -239,8 +235,7 @@ async def test_run_cell_uses_consistent_project_id(tmp_path: Path) -> None:
     target = prose_target(seed_content="seed")
     condition = ensemble_incremental_only(n=2)
 
-    def proposer_factory(_agent: Agent) -> _AppendingProposer:
-        return _AppendingProposer()
+    proposer_factory = stub_proposer_factory(_AppendingProposer)
 
     result = await run_cell(
         target=target,
@@ -266,8 +261,7 @@ async def test_run_cell_singleround_marks_escalation_even_when_converged(
     target = prose_target(seed_content="seed")
     condition = ensemble_with_single_round(n=3)
 
-    def proposer_factory(_agent: Agent) -> _ConvergingProposer:
-        return _ConvergingProposer("identical content")
+    proposer_factory = stub_proposer_factory(_ConvergingProposer, content="identical content")
 
     result = await run_cell(
         target=target,
@@ -295,8 +289,7 @@ async def test_run_cell_rejects_reserved_sidecar_filenames(
 
     condition = single_agent_baseline()
 
-    def proposer_factory(_agent: Agent) -> _AppendingProposer:
-        return _AppendingProposer()
+    proposer_factory = stub_proposer_factory(_AppendingProposer)
 
     for reserved in ("commits", "agent_memory", "events.jsonl"):
         target = prose_target(
@@ -322,8 +315,7 @@ async def test_run_cell_resets_commits_dir_between_runs(
     target = prose_target(seed_content="seed")
     condition = single_agent_baseline()
 
-    def proposer_factory(_agent: Agent) -> _AppendingProposer:
-        return _AppendingProposer()
+    proposer_factory = stub_proposer_factory(_AppendingProposer)
 
     # Drop a stale snapshot from a "previous" run before invoking
     # run_cell — it should be gone after.
@@ -341,6 +333,96 @@ async def test_run_cell_resets_commits_dir_between_runs(
         tracer=StdoutTracer(color=False),
     )
     assert not (cell_dir / "commits" / "v9999.md").exists()
+
+
+async def test_run_cell_threads_peer_context_to_proposer_factory(
+    tmp_path: Path,
+) -> None:
+    """When peer_context_loader is supplied, it's called once per
+    agent and the result is passed to proposer_factory via the
+    `context` kwarg. A factory that records the contexts it received
+    proves the loader -> factory wiring."""
+    target = prose_target(seed_content="seed")
+    condition = ensemble_incremental_only(n=2)
+
+    contexts_seen: dict[str, str] = {}
+    loader_calls: dict[str, int] = {}
+
+    class _ContextRecordingProposer:
+        def __init__(self, agent_id: str, context: str) -> None:
+            self._agent_id = agent_id
+            self._context = context
+
+        async def propose(
+            self,
+            *,
+            agent: Agent,
+            brief: Brief,
+            artifact: Artifact,
+            current_content: str,
+            current_version: str,
+            peer_proposals: list[Proposal] | None = None,
+        ) -> Proposal:
+            return Proposal(
+                agent_id=agent.id,
+                based_on_version=current_version,
+                new_content=f"{current_content}\n[{agent.name}]",
+            )
+
+    def proposer_factory(
+        agent: Agent, *, context: str = ""
+    ) -> _ContextRecordingProposer:
+        contexts_seen[agent.id] = context
+        return _ContextRecordingProposer(agent.id, context)
+
+    async def loader(agent: Agent, project) -> str:  # type: ignore[no-untyped-def]
+        loader_calls[agent.id] = loader_calls.get(agent.id, 0) + 1
+        return f"context-for-{agent.name}-in-{project.id}"
+
+    await run_cell(
+        target=target,
+        condition=condition,
+        proposer_factory=proposer_factory,
+        output_dir=tmp_path,
+        peer_context_loader=loader,
+        tracer=StdoutTracer(color=False),
+    )
+    # Both agents got their loader-produced context.
+    assert len(contexts_seen) == 2
+    for ctx in contexts_seen.values():
+        assert ctx.startswith("context-for-prose_blog_post-agent-")
+        assert "in-prose_blog_post-ensemble_incremental_n2" in ctx
+    # Loader called exactly once per agent (the dict-overwrite assertion
+    # above could mask multiple-call regressions otherwise).
+    assert len(loader_calls) == 2
+    assert all(calls == 1 for calls in loader_calls.values())
+
+
+async def test_run_cell_passes_empty_context_when_no_loader(
+    tmp_path: Path,
+) -> None:
+    """Without peer_context_loader the factory still receives
+    ``context=""`` — uniform call shape so the factory protocol is
+    predictable."""
+    target = prose_target(seed_content="seed")
+    condition = single_agent_baseline()
+
+    received: list[str] = []
+
+    def proposer_factory(
+        _agent: Agent, *, context: str = ""
+    ) -> _AppendingProposer:
+        received.append(context)
+        return _AppendingProposer()
+
+    await run_cell(
+        target=target,
+        condition=condition,
+        proposer_factory=proposer_factory,
+        output_dir=tmp_path,
+        tracer=StdoutTracer(color=False),
+    )
+    assert received == [""]
 
 
 async def test_run_cell_uses_termination_policy_factory_when_set(
@@ -362,8 +444,7 @@ async def test_run_cell_uses_termination_policy_factory_when_set(
         termination_policy_factory=lambda: KCommitsPerAgent(k=1),
     )
 
-    def proposer_factory(_agent: Agent) -> _AppendingProposer:
-        return _AppendingProposer()
+    proposer_factory = stub_proposer_factory(_AppendingProposer)
 
     result = await run_cell(
         target=target,
@@ -382,8 +463,7 @@ async def test_run_cell_runs_grader_when_factory_supplied(
     target = prose_target(seed_content="seed")
     condition = single_agent_baseline()
 
-    def proposer_factory(_agent: Agent) -> _AppendingProposer:
-        return _AppendingProposer()
+    proposer_factory = stub_proposer_factory(_AppendingProposer)
 
     def grader_factory(t):  # type: ignore[no-untyped-def]
         return _FixedScoreGrader([c for c in t.brief.success_criteria])
@@ -406,8 +486,7 @@ async def test_run_cell_with_no_grader_factory_yields_empty_scores(
     target = prose_target(seed_content="seed")
     condition = single_agent_baseline()
 
-    def proposer_factory(_agent: Agent) -> _AppendingProposer:
-        return _AppendingProposer()
+    proposer_factory = stub_proposer_factory(_AppendingProposer)
 
     result = await run_cell(
         target=target,
@@ -432,8 +511,7 @@ async def test_run_study_runs_every_target_condition_pair(
         ensemble_with_single_round(n=2),
     ]
 
-    def proposer_factory(_agent: Agent) -> _AppendingProposer:
-        return _AppendingProposer()
+    proposer_factory = stub_proposer_factory(_AppendingProposer)
 
     results = await run_study(
         targets=targets,
@@ -458,8 +536,7 @@ async def test_run_study_isolates_cells_via_subdirectories(
         ensemble_incremental_only(n=2),
     ]
 
-    def proposer_factory(_agent: Agent) -> _AppendingProposer:
-        return _AppendingProposer()
+    proposer_factory = stub_proposer_factory(_AppendingProposer)
 
     results = await run_study(
         targets=[target],

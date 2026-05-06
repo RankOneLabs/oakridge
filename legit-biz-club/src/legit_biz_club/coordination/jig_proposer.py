@@ -60,6 +60,7 @@ class JigProposer:
         agent: Agent,
         *,
         llm: LLMClient | None = None,
+        context: str = "",
     ) -> None:
         self.agent = agent
         # Default to dispatching the LLMClient by model name. Tests can
@@ -70,6 +71,17 @@ class JigProposer:
         self._llm: LLMClient = (
             llm if llm is not None else from_model(agent.model)
         )
+        # Per-project peer context — what the agent brings into this
+        # project from prior memory. Loaded by the harness via a
+        # PeerContextLoader (operator-supplied) and added to the
+        # system prompt as a stanza after the agent's identity prompt
+        # (and optional frame), before the JSON output instructions.
+        # Empty / whitespace-only string = no context section, prompt
+        # is unchanged. The proposer is intentionally agnostic about
+        # how this string was assembled (SqliteStore observations,
+        # honcho deriver query, hand-curated text, etc.) — that's the
+        # loader's job.
+        self._context = context
 
     async def propose(
         self,
@@ -119,6 +131,11 @@ class JigProposer:
         if self.agent.frame:
             parts.append(
                 f"\nApproach this work with a {self.agent.frame} stance."
+            )
+        if self._context.strip():
+            parts.append(
+                "\n# What you bring to this project\n"
+                f"{self._context.rstrip()}"
             )
         parts.append(_OUTPUT_INSTRUCTIONS)
         return "\n".join(parts)

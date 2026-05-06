@@ -58,6 +58,8 @@ from legit_biz_club.memory import (
     CommitResult,
     MemoryCommitter,
     OperatorConfidence,
+    PeerContextLoader,
+    make_sqlite_observation_loader,
 )
 
 __all__ = [
@@ -87,6 +89,7 @@ __all__ = [
     "MemoryCommitter",
     "MultiRoundConsensus",
     "OperatorConfidence",
+    "PeerContextLoader",
     "PickResult",
     "Project",
     "ProjectCoordinator",
@@ -107,5 +110,6 @@ __all__ = [
     "check_heterogeneity",
     "compute_version",
     "make_proposers",
+    "make_sqlite_observation_loader",
     "transition_to",
 ]

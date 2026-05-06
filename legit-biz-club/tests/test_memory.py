@@ -18,11 +18,13 @@ import pytest
 from jig.memory.local import SqliteStore
 
 from legit_biz_club import Agent
+from legit_biz_club.core.models import Artifact, ArtifactType, Brief, Project
 from legit_biz_club.memory import (
     CommitObservation,
     CommitResult,
     MemoryCommitter,
     OperatorConfidence,
+    make_sqlite_observation_loader,
 )
 
 
@@ -266,3 +268,192 @@ async def test_rejects_empty_observation_text(tmp_path: Path) -> None:
             observation_text="   ",  # whitespace-only counts as empty
             operator_confidence=OperatorConfidence.HIGH,
         )
+
+
+# --- make_sqlite_observation_loader -------------------------------------
+
+
+def _stub_project(project_id: str = "p-current") -> Project:
+    """Minimal Project with the right id — the loader only reads .id."""
+    return Project(
+        id=project_id,
+        artifact=Artifact(type=ArtifactType.PROSE, path=Path("/tmp/x.md")),
+        brief=Brief(target_spec="x", success_criteria=["x"]),
+    )
+
+
+async def test_loader_returns_empty_when_no_observations(
+    tmp_path: Path,
+) -> None:
+    """Empty store → empty string. JigProposer's empty-context branch
+    keeps the prompt unchanged in this case."""
+    agent = _agent(tmp_path)
+    store = _store(tmp_path)
+    loader = make_sqlite_observation_loader(store)
+    result = await loader(agent, _stub_project())
+    assert result == ""
+
+
+async def test_loader_formats_observations_as_bullets(
+    tmp_path: Path,
+) -> None:
+    """The loader returns the agent's observations as a markdown
+    bullet list with confidence + tags inline. Format is stable so
+    operators can rely on it for prompt-template tweaking."""
+    agent = _agent(tmp_path)
+    store = _store(tmp_path)
+    committer = MemoryCommitter(agent, store)
+    await committer.commit(
+        project_id="p-1",
+        observation_text="prefers concise prose",
+        operator_confidence=OperatorConfidence.HIGH,
+        tags=["style"],
+    )
+    await committer.commit(
+        project_id="p-2",
+        observation_text="over-explains technical sections",
+        operator_confidence=OperatorConfidence.MEDIUM,
+        tags=["pattern", "writing"],
+    )
+    loader = make_sqlite_observation_loader(store)
+    result = await loader(agent, _stub_project())
+    assert "From your prior project work:" in result
+    assert "(high) [style] prefers concise prose" in result
+    assert "(medium) [pattern, writing] over-explains" in result
+
+
+async def test_loader_excludes_current_project_by_default(
+    tmp_path: Path,
+) -> None:
+    """Observations committed under the current project_id are dropped
+    by default — those were committed by an earlier run of the same
+    project and aren't 'what you bring from elsewhere.'"""
+    agent = _agent(tmp_path)
+    store = _store(tmp_path)
+    committer = MemoryCommitter(agent, store)
+    await committer.commit(
+        project_id="p-current",
+        observation_text="should be excluded",
+        operator_confidence=OperatorConfidence.HIGH,
+    )
+    await committer.commit(
+        project_id="p-other",
+        observation_text="should appear",
+        operator_confidence=OperatorConfidence.HIGH,
+    )
+    loader = make_sqlite_observation_loader(store)  # default: exclude
+    result = await loader(agent, _stub_project("p-current"))
+    assert "should appear" in result
+    assert "should be excluded" not in result
+
+
+async def test_loader_includes_current_project_when_opted_in(
+    tmp_path: Path,
+) -> None:
+    agent = _agent(tmp_path)
+    store = _store(tmp_path)
+    committer = MemoryCommitter(agent, store)
+    await committer.commit(
+        project_id="p-current",
+        observation_text="from same project",
+        operator_confidence=OperatorConfidence.HIGH,
+    )
+    loader = make_sqlite_observation_loader(
+        store, exclude_current_project=False
+    )
+    result = await loader(agent, _stub_project("p-current"))
+    assert "from same project" in result
+
+
+async def test_loader_drops_superseded_observations(
+    tmp_path: Path,
+) -> None:
+    """The design memo's supersedes contract is 'override rather than
+    accumulate' — when a revised observation points at an earlier
+    entry_id, the original should NOT surface alongside it. Otherwise
+    the prompt shows both the stale read and its replacement."""
+    agent = _agent(tmp_path)
+    store = _store(tmp_path)
+    committer = MemoryCommitter(agent, store)
+    earlier = await committer.commit(
+        project_id="p-1",
+        observation_text="initial (stale) read",
+        operator_confidence=OperatorConfidence.MEDIUM,
+    )
+    await committer.commit(
+        project_id="p-2",
+        observation_text="revised read — this one wins",
+        operator_confidence=OperatorConfidence.HIGH,
+        supersedes=earlier.entry_id,
+    )
+    loader = make_sqlite_observation_loader(store)
+    result = await loader(agent, _stub_project("p-other"))
+    assert "revised read" in result
+    assert "initial (stale)" not in result
+
+
+async def test_loader_supersedes_applied_before_current_project_filter(
+    tmp_path: Path,
+) -> None:
+    """When the superseding observation lives in the current project,
+    it gets dropped by exclude_current_project — but its supersedes
+    pointer must still suppress the older entry it replaces.
+    Otherwise a stale observation from a prior project resurfaces
+    because the signal that retired it was filtered out first."""
+    agent = _agent(tmp_path)
+    store = _store(tmp_path)
+    committer = MemoryCommitter(agent, store)
+    # The stale read lives in a prior project — survives the
+    # current-project filter on its own.
+    earlier = await committer.commit(
+        project_id="p-prior",
+        observation_text="initial (stale) read",
+        operator_confidence=OperatorConfidence.MEDIUM,
+    )
+    # The revision lives in the CURRENT project — the operator
+    # committed it during an earlier run of the same project. It
+    # should be filtered out (as "earlier work in this project") but
+    # its supersedes pointer must still take effect.
+    await committer.commit(
+        project_id="p-current",
+        observation_text="revised read — committed during current project",
+        operator_confidence=OperatorConfidence.HIGH,
+        supersedes=earlier.entry_id,
+    )
+    loader = make_sqlite_observation_loader(store)  # default: exclude
+    result = await loader(agent, _stub_project("p-current"))
+    # Stale observation must be dropped by the supersedes signal even
+    # though its superseder got filtered out as current-project work.
+    assert "initial (stale)" not in result
+    # Current-project superseder is still excluded from the bullets.
+    assert "revised read" not in result
+    # And with no observations left, the loader returns "".
+    assert result == ""
+
+
+async def test_loader_filters_to_this_agents_observations(
+    tmp_path: Path,
+) -> None:
+    """A shared store with two agents' observations: each agent's
+    loader only surfaces its own. Same isolation guarantee as
+    MemoryCommitter.load_observations() — the loader inherits it."""
+    alice = _agent(tmp_path, name="alice")
+    bob = _agent(tmp_path, name="bob")
+    shared_store = _store(tmp_path, name="shared")
+    await MemoryCommitter(alice, shared_store).commit(
+        project_id="p-1",
+        observation_text="alice's read",
+        operator_confidence=OperatorConfidence.HIGH,
+    )
+    await MemoryCommitter(bob, shared_store).commit(
+        project_id="p-1",
+        observation_text="bob's read",
+        operator_confidence=OperatorConfidence.HIGH,
+    )
+    loader = make_sqlite_observation_loader(shared_store)
+    alice_ctx = await loader(alice, _stub_project())
+    bob_ctx = await loader(bob, _stub_project())
+    assert "alice's read" in alice_ctx
+    assert "bob's read" not in alice_ctx
+    assert "bob's read" in bob_ctx
+    assert "alice's read" not in bob_ctx

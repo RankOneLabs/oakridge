@@ -17,11 +17,13 @@ itself is LLM-agnostic.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import shutil
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePath
+from typing import Protocol
 
 from jig.core.types import Grader, Score, TracingLogger
 from jig.tracing.stdout import StdoutTracer
@@ -41,6 +43,7 @@ from legit_biz_club.core.models import (
     Enrollment,
     Project,
 )
+from legit_biz_club.memory import PeerContextLoader
 from legit_biz_club.study.conditions import ConditionConfig
 from legit_biz_club.study.targets import TargetConfig
 
@@ -62,13 +65,23 @@ _RESERVED_CELL_DIR_NAMES: frozenset[str] = frozenset(
 )
 
 
-ProposerFactory = Callable[[Agent], Proposer]
-"""Build a :class:`Proposer` for a single agent.
+class ProposerFactory(Protocol):
+    """Build a :class:`Proposer` for a single agent.
 
-Production: ``lambda agent: JigProposer(agent)``. Tests pass a
-stub-returning factory so the runner can be exercised without LLM
-calls.
-"""
+    Production: ``lambda agent, *, context="": JigProposer(agent, context=context)``.
+    Tests use stub-returning factories that ignore ``context``.
+
+    ``context`` is the peer context string the harness loaded for
+    this agent (via :data:`PeerContextLoader`); empty when no loader
+    is wired or when the loader returned an empty string. The
+    factory is responsible for plumbing it into the proposer (most
+    just pass it through to the constructor); ignoring it is fine
+    when the proposer doesn't care.
+    """
+
+    def __call__(
+        self, agent: Agent, *, context: str = ""
+    ) -> Proposer: ...
 
 
 GraderFactory = Callable[["TargetConfig"], Grader]
@@ -126,6 +139,7 @@ async def run_cell(
     proposer_factory: ProposerFactory,
     output_dir: Path,
     grader_factory: GraderFactory | None = None,
+    peer_context_loader: PeerContextLoader | None = None,
     tracer: TracingLogger | None = None,
     emit: WorkspaceEventEmitter | None = None,
 ) -> CellResult:
@@ -135,6 +149,11 @@ async def run_cell(
     ``output_dir/{target.name}/{condition.name}/{artifact_filename}``
     so multiple cells don't stomp on each other. The directory is
     created if missing; the seed content is written before the run.
+
+    ``peer_context_loader`` (when provided) is called once per agent
+    after enrollment to assemble the context string the proposer
+    factory receives via the ``context`` kwarg. Default ``None``
+    passes empty context — agents start the project fresh.
     """
     cell_dir = output_dir / target.name / condition.name
     cell_dir.mkdir(parents=True, exist_ok=True)
@@ -207,7 +226,26 @@ async def run_cell(
         ],
         coordination_protocol=condition.coordination_protocol,
     )
-    proposers: dict[str, Proposer] = {a.id: proposer_factory(a) for a in agents}
+    # Load peer context per agent if a loader was provided. The factory
+    # always receives a ``context`` kwarg — empty string when no loader
+    # is wired (or when a loader returned ""). Calling factories
+    # uniformly keeps the protocol predictable.
+    #
+    # asyncio.gather rather than a sequential await chain so per-agent
+    # latency adds up to max() rather than sum() — negligible for the
+    # SQLite loader, but PeerContextLoader is the documented seam for
+    # future remote backends (honcho deriver queries, LLM-summarized
+    # context, etc.) where it scales linearly with n.
+    if peer_context_loader is not None:
+        loaded = await asyncio.gather(
+            *(peer_context_loader(a, project) for a in agents)
+        )
+        contexts = {a.id: ctx for a, ctx in zip(agents, loaded, strict=True)}
+    else:
+        contexts = {a.id: "" for a in agents}
+    proposers: dict[str, Proposer] = {
+        a.id: proposer_factory(a, context=contexts[a.id]) for a in agents
+    }
     # Per-commit snapshots colocated with the final artifact so a
     # post-mortem can diff the cell's evolution after the run. Best-
     # effort observation; failure to snapshot doesn't fail the apply.
@@ -268,6 +306,7 @@ async def run_study(
     proposer_factory: ProposerFactory,
     output_dir: Path,
     grader_factory: GraderFactory | None = None,
+    peer_context_loader: PeerContextLoader | None = None,
     tracer: TracingLogger | None = None,
     emit: WorkspaceEventEmitter | None = None,
 ) -> list[CellResult]:
@@ -297,6 +336,7 @@ async def run_study(
                 proposer_factory=proposer_factory,
                 output_dir=output_dir,
                 grader_factory=grader_factory,
+                peer_context_loader=peer_context_loader,
                 tracer=tracer,
                 emit=emit,
             )

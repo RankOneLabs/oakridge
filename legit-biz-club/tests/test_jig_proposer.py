@@ -228,6 +228,54 @@ async def test_parse_failure_on_prose_then_fence(tmp_path: Path) -> None:
         )
 
 
+async def test_context_appears_in_system_prompt(tmp_path: Path) -> None:
+    """Non-empty `context` is prepended to the system prompt under a
+    'What you bring to this project' header so the model sees the
+    agent's prior memory at the top of every propose call."""
+    agent = _agent(tmp_path)
+    stub = _StubLLM(
+        response_content='{"new_content": "x", "rationale": "y"}'
+    )
+    proposer = JigProposer(
+        agent,
+        llm=stub,
+        context="- you tend to over-explain\n- prior project shipped late",
+    )
+    await proposer.propose(
+        agent=agent,
+        brief=_brief(),
+        artifact=_artifact(tmp_path),
+        current_content="seed",
+        current_version="v0",
+    )
+    assert stub.last_params is not None
+    system = stub.last_params.system or ""
+    assert "What you bring to this project" in system
+    assert "you tend to over-explain" in system
+    assert "prior project shipped late" in system
+
+
+async def test_empty_context_leaves_prompt_unchanged(tmp_path: Path) -> None:
+    """Default ``context=''`` keeps the system prompt unchanged — no
+    empty 'What you bring' section, no behavioral change for callers
+    who haven't wired a peer_context_loader."""
+    agent = _agent(tmp_path)
+    stub = _StubLLM(
+        response_content='{"new_content": "x", "rationale": "y"}'
+    )
+    proposer = JigProposer(agent, llm=stub)  # context defaults to ""
+    await proposer.propose(
+        agent=agent,
+        brief=_brief(),
+        artifact=_artifact(tmp_path),
+        current_content="seed",
+        current_version="v0",
+    )
+    assert stub.last_params is not None
+    system = stub.last_params.system or ""
+    assert "What you bring" not in system
+
+
 async def test_parse_failure_on_non_json(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
     stub = _StubLLM(response_content="this is not JSON at all")
