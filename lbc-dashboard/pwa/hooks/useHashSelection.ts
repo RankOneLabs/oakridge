@@ -2,16 +2,19 @@
  * Tracks the selected cell in the URL hash (`#cell=<cell_id>`) so
  * refreshes preserve position and links work. Listens to
  * hashchange so back/forward also update state.
+ *
+ * Read + write both go through ``URLSearchParams`` so encoding stays
+ * symmetric and the read path doesn't throw on a hand-crafted hash
+ * with malformed percent-encoding (which ``decodeURIComponent``
+ * would). URLSearchParams uses the form-urlencoded decoder that
+ * returns literals for invalid sequences instead of raising
+ * URIError.
  */
 import { useCallback, useEffect, useState } from "react";
 
 function readHash(): string | null {
-  const found = window.location.hash
-    .slice(1)
-    .split("&")
-    .map((p) => p.split("="))
-    .find(([k]) => k === "cell");
-  return found?.[1] ? decodeURIComponent(found[1]) : null;
+  const params = new URLSearchParams(window.location.hash.slice(1));
+  return params.get("cell");
 }
 
 export function useHashSelection(): [string | null, (id: string) => void] {
@@ -22,12 +25,11 @@ export function useHashSelection(): [string | null, (id: string) => void] {
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
   const select = useCallback((id: string) => {
-    // encodeURIComponent on write keeps the hash symmetric with
-    // readHash's decodeURIComponent — `&` or `=` in a cell_id
-    // (today they're produced from sanitized segments, but a future
-    // cell_id shape might allow them) would otherwise break the
-    // hash parser asymmetrically.
-    window.location.hash = `cell=${encodeURIComponent(id)}`;
+    // Preserve any other hash params already present (none today,
+    // but future filter / route state would live alongside ``cell``).
+    const params = new URLSearchParams(window.location.hash.slice(1));
+    params.set("cell", id);
+    window.location.hash = params.toString();
   }, []);
   return [cellId, select];
 }
