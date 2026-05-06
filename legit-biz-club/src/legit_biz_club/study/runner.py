@@ -292,6 +292,23 @@ async def run_cell(
     final_content = artifact_path.read_text(encoding="utf-8")
     metrics = _summarize_metrics(run_result)
     eval_scores: list[Score] = []
+    # Clear any stale sidecar from a previous run before grading. The
+    # absent-file semantics ("no scores were persisted") have to hold
+    # across reruns into the same cell_dir — otherwise a rerun with no
+    # grader (or one that returns []) leaves the previous run's scores
+    # on disk for the dashboard to render. Same defensive cleanup that
+    # ``commits/`` and ``agent_memory/`` already get above.
+    sidecar_path = cell_dir / "eval_scores.json"
+    try:
+        sidecar_path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        logger.warning(
+            "eval_scores sidecar cleanup failed (path=%s): %s",
+            sidecar_path,
+            e,
+        )
     if grader_factory is not None:
         grader = grader_factory(target)
         eval_scores = list(

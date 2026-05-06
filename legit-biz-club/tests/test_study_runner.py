@@ -107,6 +107,19 @@ class _FixedScoreGrader(Grader):
         ]
 
 
+class _EmptyScoreGrader(Grader):
+    """Always returns no scores. Pins the 'grader wired but produced
+    nothing' contract path."""
+
+    async def grade(
+        self,
+        input: str,  # noqa: A002 — Grader protocol
+        output: str,
+        context: dict[str, object] | None = None,
+    ) -> list[Score]:
+        return []
+
+
 # --- run_cell --------------------------------------------------------------
 
 
@@ -597,6 +610,76 @@ async def test_run_cell_skips_eval_scores_sidecar_when_no_grader(
     )
     sidecar = (
         tmp_path / target.name / condition.name / "eval_scores.json"
+    )
+    assert not sidecar.exists()
+
+
+async def test_run_cell_skips_eval_scores_sidecar_when_grader_returns_no_scores(
+    tmp_path: Path,
+) -> None:
+    """Grader wired but returns [] → no eval_scores.json. The
+    contract collapses 'no grader' and 'grader returned zero scores'
+    into the same absent-file signal — both render as 'no scores'
+    downstream."""
+    target = prose_target(seed_content="seed")
+    condition = single_agent_baseline()
+
+    proposer_factory = stub_proposer_factory(_AppendingProposer)
+
+    def grader_factory(t):  # type: ignore[no-untyped-def]
+        return _EmptyScoreGrader()
+
+    result = await run_cell(
+        target=target,
+        condition=condition,
+        proposer_factory=proposer_factory,
+        output_dir=tmp_path,
+        grader_factory=grader_factory,
+        tracer=StdoutTracer(color=False),
+    )
+    assert result.eval_scores == []
+    sidecar = (
+        tmp_path / target.name / condition.name / "eval_scores.json"
+    )
+    assert not sidecar.exists()
+
+
+async def test_run_cell_clears_stale_eval_scores_sidecar_on_rerun(
+    tmp_path: Path,
+) -> None:
+    """A rerun into the same cell_dir must not leak the previous
+    run's sidecar. If run 1 wrote scores and run 2 has no grader (or
+    returns []), the on-disk file has to disappear so the absent-file
+    contract still holds."""
+    target = prose_target(seed_content="seed")
+    condition = single_agent_baseline()
+
+    proposer_factory = stub_proposer_factory(_AppendingProposer)
+    sidecar = (
+        tmp_path / target.name / condition.name / "eval_scores.json"
+    )
+
+    # Run 1: grader produces scores → sidecar present.
+    def grader_factory(t):  # type: ignore[no-untyped-def]
+        return _FixedScoreGrader([c for c in t.brief.success_criteria])
+
+    await run_cell(
+        target=target,
+        condition=condition,
+        proposer_factory=proposer_factory,
+        output_dir=tmp_path,
+        grader_factory=grader_factory,
+        tracer=StdoutTracer(color=False),
+    )
+    assert sidecar.exists()
+
+    # Run 2: no grader → stale sidecar cleared.
+    await run_cell(
+        target=target,
+        condition=condition,
+        proposer_factory=proposer_factory,
+        output_dir=tmp_path,
+        tracer=StdoutTracer(color=False),
     )
     assert not sidecar.exists()
 
