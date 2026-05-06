@@ -18,6 +18,7 @@ itself is LLM-agnostic.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import shutil
 from collections.abc import Callable, Sequence
@@ -61,7 +62,7 @@ logger = logging.getLogger(__name__)
 # lib-internal sidecars — operators inheriting that script don't have
 # to re-discover the collision.
 _RESERVED_CELL_DIR_NAMES: frozenset[str] = frozenset(
-    {"commits", "agent_memory", "events.jsonl"}
+    {"commits", "agent_memory", "events.jsonl", "eval_scores.json"}
 )
 
 
@@ -288,6 +289,7 @@ async def run_cell(
                 input=target.brief.target_spec, output=final_content
             )
         )
+        _write_eval_scores_sidecar(cell_dir, eval_scores)
     return CellResult(
         target_name=target.name,
         condition_name=condition.name,
@@ -397,6 +399,50 @@ def _default_system_prompt(target_name: str, index: int) -> str:
         "Read the brief and current artifact carefully and propose the "
         "next version. Stay focused on the success criteria."
     )
+
+
+def _write_eval_scores_sidecar(
+    cell_dir: Path, scores: list[Score]
+) -> None:
+    """Persist eval scores alongside the cell's other sidecars.
+
+    Writes ``cell_dir/eval_scores.json`` with the shape::
+
+        {"scores": [{"dimension": ..., "value": ..., "source": ...}, ...]}
+
+    The wrapper envelope (``{"scores": [...]}`` rather than a bare
+    list) leaves room for future grader metadata — judge model id,
+    grader run timestamp, rubric hash, etc. — without breaking the
+    consumer contract. Empty scores skips the write entirely; an
+    absent file means "no grader was wired" cleanly without consumers
+    having to special-case ``"scores": []``.
+
+    Best-effort observability: if the write fails (disk full, permissions,
+    etc.) we log a warning and continue. The artifact itself and
+    ``CellResult.eval_scores`` in the returned object are still the
+    authoritative sources; the sidecar is the dashboard's read path.
+    """
+    if not scores:
+        return
+    payload = {
+        "scores": [
+            {
+                "dimension": s.dimension,
+                "value": s.value,
+                "source": s.source.value,
+            }
+            for s in scores
+        ],
+    }
+    sidecar = cell_dir / "eval_scores.json"
+    try:
+        sidecar.write_text(
+            json.dumps(payload, indent=2) + "\n", encoding="utf-8"
+        )
+    except OSError as e:
+        logger.warning(
+            "eval_scores sidecar write failed (path=%s): %s", sidecar, e
+        )
 
 
 def _summarize_metrics(run_result: ProjectRunResult) -> CellMetrics:

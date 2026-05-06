@@ -291,7 +291,12 @@ async def test_run_cell_rejects_reserved_sidecar_filenames(
 
     proposer_factory = stub_proposer_factory(_AppendingProposer)
 
-    for reserved in ("commits", "agent_memory", "events.jsonl"):
+    for reserved in (
+        "commits",
+        "agent_memory",
+        "events.jsonl",
+        "eval_scores.json",
+    ):
         target = prose_target(
             artifact_filename=reserved, seed_content="seed"
         )
@@ -496,6 +501,69 @@ async def test_run_cell_with_no_grader_factory_yields_empty_scores(
         tracer=StdoutTracer(color=False),
     )
     assert result.eval_scores == []
+
+
+async def test_run_cell_writes_eval_scores_sidecar(tmp_path: Path) -> None:
+    """When the grader produces scores, run_cell drops them at
+    cell_dir/eval_scores.json in a documented shape so the dashboard
+    (and any other reader) can pick them up without re-running the
+    grader. Format: ``{"scores": [{"dimension", "value", "source"},
+    ...]}`` — wrapper envelope to leave room for future grader
+    metadata."""
+    import json
+
+    target = prose_target(seed_content="seed")
+    condition = single_agent_baseline()
+
+    proposer_factory = stub_proposer_factory(_AppendingProposer)
+
+    def grader_factory(t):  # type: ignore[no-untyped-def]
+        return _FixedScoreGrader([c for c in t.brief.success_criteria])
+
+    result = await run_cell(
+        target=target,
+        condition=condition,
+        proposer_factory=proposer_factory,
+        output_dir=tmp_path,
+        grader_factory=grader_factory,
+        tracer=StdoutTracer(color=False),
+    )
+    sidecar = (
+        tmp_path / target.name / condition.name / "eval_scores.json"
+    )
+    assert sidecar.exists()
+    payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    assert "scores" in payload
+    assert len(payload["scores"]) == len(result.eval_scores)
+    first = payload["scores"][0]
+    assert set(first.keys()) == {"dimension", "value", "source"}
+    assert first["value"] == 0.7
+    assert first["source"] == "llm_judge"
+
+
+async def test_run_cell_skips_eval_scores_sidecar_when_no_grader(
+    tmp_path: Path,
+) -> None:
+    """No grader → no eval_scores.json. An absent file is the
+    cleanest "no grader was wired" signal — readers don't have to
+    distinguish "{}" from "{scores: []}" — and avoids littering
+    cells with empty sidecars that mean nothing."""
+    target = prose_target(seed_content="seed")
+    condition = single_agent_baseline()
+
+    proposer_factory = stub_proposer_factory(_AppendingProposer)
+
+    await run_cell(
+        target=target,
+        condition=condition,
+        proposer_factory=proposer_factory,
+        output_dir=tmp_path,
+        tracer=StdoutTracer(color=False),
+    )
+    sidecar = (
+        tmp_path / target.name / condition.name / "eval_scores.json"
+    )
+    assert not sidecar.exists()
 
 
 # --- run_study -------------------------------------------------------------
