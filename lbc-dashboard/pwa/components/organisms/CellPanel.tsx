@@ -19,6 +19,16 @@ import type {
 
 const TABS: Tab[] = ["events", "artifact", "commits", "scores"];
 
+interface CellPanelProps {
+  detail: CellDetail | null;
+  events: CellEvent[];
+  artifact: string | null;
+  commits: CommitSnapshot[];
+  scores: EvalScore[] | null;
+  tab: Tab;
+  onTab: (t: Tab) => void;
+}
+
 export function CellPanel({
   detail,
   events,
@@ -27,15 +37,7 @@ export function CellPanel({
   scores,
   tab,
   onTab,
-}: {
-  detail: CellDetail | null;
-  events: CellEvent[];
-  artifact: string | null;
-  commits: CommitSnapshot[];
-  scores: EvalScore[] | null;
-  tab: Tab;
-  onTab: (t: Tab) => void;
-}) {
+}: CellPanelProps) {
   return (
     <>
       <header className="border-b border-stone-300 bg-white px-6 py-4">
@@ -108,7 +110,11 @@ function CommitsView({ commits }: { commits: CommitSnapshot[] }) {
   );
 }
 
-function ScoresView({ scores }: { scores: EvalScore[] | null }) {
+interface ScoresViewProps {
+  scores: EvalScore[] | null;
+}
+
+function ScoresView({ scores }: ScoresViewProps) {
   // ``readEvalScores`` already folds empty/all-malformed lists into
   // null, so the contract guarantees ``scores`` is non-empty when
   // not null. The ``length === 0`` guard is defense in depth — the
@@ -135,8 +141,8 @@ function ScoresView({ scores }: { scores: EvalScore[] | null }) {
         across {scores.length} dimension{scores.length === 1 ? "" : "s"}
       </div>
       <ol className="m-0 list-none p-0">
-        {scores.map((s, i) => (
-          <ScoreRow key={i} score={s} />
+        {scores.map((s) => (
+          <ScoreRow key={`${s.dimension}:${s.source}`} score={s} />
         ))}
       </ol>
     </div>

@@ -296,6 +296,13 @@ async function detectArtifactFilename(cellDir: string): Promise<string | null> {
   // The artifact lives at <cell_dir>/<artifact_filename>. We don't
   // know the filename a priori (target-dependent), so scan the dir
   // for the file that isn't a known sidecar.
+  //
+  // Also skip dotfiles and ``.tmp`` files: the harness's writers use
+  // those for atomic-rename intermediates (eval-scores writer uses
+  // ``.eval_scores.*.tmp``; Mediator uses ``<artifact>.tmp``). A
+  // crash mid-write can leave one orphaned in the cell dir, and
+  // readdir's non-deterministic order would otherwise let one of
+  // those mis-resolve as the artifact.
   const known = new Set([
     "events.jsonl",
     "commits",
@@ -305,9 +312,11 @@ async function detectArtifactFilename(cellDir: string): Promise<string | null> {
   try {
     const entries = await readdir(cellDir, { withFileTypes: true });
     for (const e of entries) {
-      if (e.isFile() && !known.has(e.name)) {
-        return e.name;
-      }
+      if (!e.isFile()) continue;
+      if (known.has(e.name)) continue;
+      if (e.name.startsWith(".")) continue;
+      if (e.name.endsWith(".tmp")) continue;
+      return e.name;
     }
   } catch {
     return null;

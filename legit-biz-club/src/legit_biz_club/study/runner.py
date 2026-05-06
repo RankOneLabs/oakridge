@@ -21,6 +21,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 import shutil
 import tempfile
 from collections.abc import Callable, Sequence
@@ -480,8 +481,16 @@ def _write_eval_scores_sidecar(
         dir=cell_dir, prefix=".eval_scores.", suffix=".tmp"
     )
     tmp = Path(tmp_str)
+    # ``os.fdopen`` takes ownership of the raw fd from mkstemp and
+    # the resulting file object closes it on context exit. The
+    # explicit ``os.close`` fallback covers the (vanishingly rare)
+    # case where ``fdopen`` itself raises before that ownership
+    # transfers — without it the fd would leak, and on Windows an
+    # open handle would also block the unlink below.
+    fd_owned_by_file = False
     try:
-        with open(fd, "w", encoding="utf-8") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            fd_owned_by_file = True
             f.write(json.dumps(payload, indent=2) + "\n")
         tmp.replace(sidecar)
     except OSError as e:
@@ -492,6 +501,10 @@ def _write_eval_scores_sidecar(
         # made it that far.
         with contextlib.suppress(OSError):
             tmp.unlink()
+    finally:
+        if not fd_owned_by_file:
+            with contextlib.suppress(OSError):
+                os.close(fd)
 
 
 def _summarize_metrics(run_result: ProjectRunResult) -> CellMetrics:

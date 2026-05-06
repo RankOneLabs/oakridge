@@ -198,6 +198,32 @@ describe("getCellDetail", () => {
     expect(detail!.artifact_filename).toBe("draft.md");
   });
 
+  test("ignores dotfiles and .tmp orphans when detecting the artifact filename", async () => {
+    // The harness's atomic-rename writers leave dotfile/.tmp
+    // intermediates on disk during writes; a crash mid-write can
+    // orphan them. Those must not be eligible for artifact
+    // resolution — readdir order would otherwise let the orphan win
+    // over the real artifact.
+    const cellDir = await makeCell(
+      "2026-05-06T20-15-00Z",
+      "prose",
+      "incremental_n2",
+      [eventLine("incremental_started")],
+      { artifact: "# real artifact\n" },
+    );
+    await writeFile(
+      join(cellDir, ".eval_scores.abc123.tmp"),
+      "{}",
+      "utf-8",
+    );
+    await writeFile(join(cellDir, "draft.md.tmp"), "stale", "utf-8");
+    const cells = await listCells();
+    const cell = cells.find((c) => c.run_ts === "2026-05-06T20-15-00Z");
+    expect(cell).toBeDefined();
+    const detail = await getCellDetail(cell!.cell_id);
+    expect(detail!.artifact_filename).toBe("draft.md");
+  });
+
   test("cell_id round-trips through encodeURIComponent + : delimiter", async () => {
     // Names containing the OLD ``__`` delimiter would have mis-split
     // before; the encode/decode round-trip preserves them. Also
