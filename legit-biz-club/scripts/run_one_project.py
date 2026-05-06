@@ -21,6 +21,7 @@ what events kbbl *would* receive once an interface is sketched out.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -41,12 +42,15 @@ from legit_biz_club import (
 from legit_biz_club.core.models import Project
 from legit_biz_club.study.conditions import ensemble_incremental_only
 from legit_biz_club.study.runner import run_cell
-from legit_biz_club.study.targets import prose_target
+from legit_biz_club.study.v1_targets import prose_substrate_thesis
 
 # --- config ----------------------------------------------------------
 
-TARGET = prose_target(
-    seed_content="",
+# Pin to Anthropic for cost-conscious smoke runs (one provider key
+# suffices). The thesis target's default model_pool spans three
+# providers; override here when iterating.
+TARGET = dataclasses.replace(
+    prose_substrate_thesis(),
     model_pool=("claude-sonnet-4-5", "claude-haiku-4-5"),
 )
 CONDITION = ensemble_incremental_only(n=2)
