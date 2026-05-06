@@ -293,23 +293,27 @@ def make_sqlite_observation_loader(
     async def _load(agent: Agent, project: Project) -> str:
         committer = MemoryCommitter(agent, store)
         loaded = await committer.load_observations()
-        if exclude_current_project:
-            loaded = [
-                (entry_id, obs)
-                for entry_id, obs in loaded
-                if obs.project_id != project.id
-            ]
         # Honor the design memo's "override rather than accumulate"
         # semantics on supersedes: drop any entry that another loaded
-        # entry explicitly supersedes. Without this, a revised
-        # observation surfaces alongside the stale one it was meant
-        # to replace, and the prompt shows both.
+        # entry explicitly supersedes. Computed from the FULL load
+        # before the current-project filter — a superseder committed
+        # during the current project should still suppress the older
+        # entry it replaces, even though the superseder itself gets
+        # filtered out below. Without this ordering, a stale
+        # observation can resurface as "prior context" because the
+        # signal that retired it was thrown out first.
         superseded_ids = {
             obs.supersedes for _eid, obs in loaded if obs.supersedes
         }
         loaded = [
             (eid, obs) for eid, obs in loaded if eid not in superseded_ids
         ]
+        if exclude_current_project:
+            loaded = [
+                (entry_id, obs)
+                for entry_id, obs in loaded
+                if obs.project_id != project.id
+            ]
         if not loaded:
             return ""
         # Stable ordering for reproducibility: oldest first by

@@ -392,6 +392,45 @@ async def test_loader_drops_superseded_observations(
     assert "initial (stale)" not in result
 
 
+async def test_loader_supersedes_applied_before_current_project_filter(
+    tmp_path: Path,
+) -> None:
+    """When the superseding observation lives in the current project,
+    it gets dropped by exclude_current_project — but its supersedes
+    pointer must still suppress the older entry it replaces.
+    Otherwise a stale observation from a prior project resurfaces
+    because the signal that retired it was filtered out first."""
+    agent = _agent(tmp_path)
+    store = _store(tmp_path)
+    committer = MemoryCommitter(agent, store)
+    # The stale read lives in a prior project — survives the
+    # current-project filter on its own.
+    earlier = await committer.commit(
+        project_id="p-prior",
+        observation_text="initial (stale) read",
+        operator_confidence=OperatorConfidence.MEDIUM,
+    )
+    # The revision lives in the CURRENT project — the operator
+    # committed it during an earlier run of the same project. It
+    # should be filtered out (as "earlier work in this project") but
+    # its supersedes pointer must still take effect.
+    await committer.commit(
+        project_id="p-current",
+        observation_text="revised read — committed during current project",
+        operator_confidence=OperatorConfidence.HIGH,
+        supersedes=earlier.entry_id,
+    )
+    loader = make_sqlite_observation_loader(store)  # default: exclude
+    result = await loader(agent, _stub_project("p-current"))
+    # Stale observation must be dropped by the supersedes signal even
+    # though its superseder got filtered out as current-project work.
+    assert "initial (stale)" not in result
+    # Current-project superseder is still excluded from the bullets.
+    assert "revised read" not in result
+    # And with no observations left, the loader returns "".
+    assert result == ""
+
+
 async def test_loader_filters_to_this_agents_observations(
     tmp_path: Path,
 ) -> None:
