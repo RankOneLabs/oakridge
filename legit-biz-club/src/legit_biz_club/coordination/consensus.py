@@ -183,16 +183,14 @@ class ConsensusMechanism(ABC):
         # at warning level inside the apply step and aren't a
         # kbbl-facing event in this protocol (no retry semantics in
         # consensus).
-        apply_output = pipeline_result.step_outputs.get("apply", {})
-        apply_outcome: ProposalOutcome | None = apply_output.get("outcome")
-        if apply_outcome is not None and apply_outcome.result == ProposalResult.APPLIED:
+        if result.apply_outcome.result == ProposalResult.APPLIED:
             await self._safe_emit(
                 "proposal_applied",
                 {
                     "agent_id": result.picked.agent_id,
                     "proposal_id": result.picked.id,
-                    "reason": apply_outcome.reason,
-                    "new_version": apply_outcome.new_version,
+                    "reason": result.apply_outcome.reason,
+                    "new_version": result.apply_outcome.new_version,
                 },
             )
         return result

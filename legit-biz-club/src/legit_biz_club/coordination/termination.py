@@ -1,5 +1,13 @@
 """Termination policies for the incremental coordination mode.
 
+The :meth:`TerminationPolicy.should_terminate` signature gained a
+``recent_versions`` parameter for stability-aware termination. The
+default value (empty tuple) keeps callers source-compatible, but
+**subclasses that override `should_terminate` must accept the new
+parameter** — Python's ABC method overrides aren't covariant on
+signature. Accepted as a deliberate breaking change since this
+package has no external consumers yet (pre-1.0).
+
 A :class:`TerminationPolicy` decides when the project layer should stop
 accepting new proposals. v1 ships two implementations:
 

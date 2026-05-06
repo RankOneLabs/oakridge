@@ -201,6 +201,28 @@ async def test_snapshot_dir_writes_per_commit_files(tmp_path: Path) -> None:
     assert not (snapshot_dir / "v0003.md").exists()
 
 
+async def test_snapshot_extension_matches_artifact_suffix(tmp_path: Path) -> None:
+    """Snapshots must mirror the artifact's extension so post-mortem
+    tooling sees the right file type — a CODE feature.py becomes
+    v0001.py (not v0001.md), keeping linters/syntax highlighters
+    relevant."""
+    p = tmp_path / "feature.py"
+    p.write_text("def stub(): ...\n", encoding="utf-8")
+    artifact = Artifact(type=ArtifactType.CODE, path=p)
+    snapshot_dir = tmp_path / "commits"
+    mediator = Mediator(artifact, ["a-1"], snapshot_dir=snapshot_dir)
+    _, v0 = await mediator.current_state()
+    await mediator.apply(
+        Proposal(
+            agent_id="a-1",
+            based_on_version=v0,
+            new_content="def stub(): return 1\n",
+        )
+    )
+    assert (snapshot_dir / "v0001.py").exists()
+    assert not (snapshot_dir / "v0001.md").exists()
+
+
 async def test_snapshot_dir_none_disables_snapshots(tmp_path: Path) -> None:
     """No ``snapshot_dir`` means no observation sidecar. The artifact
     on disk is still source of truth — snapshots are purely additive."""

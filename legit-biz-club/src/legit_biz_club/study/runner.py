@@ -190,17 +190,29 @@ async def run_cell(
     # Per-commit snapshots colocated with the final artifact so a
     # post-mortem can diff the cell's evolution after the run. Best-
     # effort observation; failure to snapshot doesn't fail the apply.
+    # Wipe any prior commits/ first — a shorter rerun would otherwise
+    # leave stale higher-numbered files from the previous run because
+    # Mediator restarts numbering at v0001 each invocation.
+    snapshot_dir = cell_dir / "commits"
+    if snapshot_dir.exists():
+        shutil.rmtree(snapshot_dir)
     mediator = Mediator(
         project.artifact,
         [a.id for a in agents],
-        snapshot_dir=cell_dir / "commits",
+        snapshot_dir=snapshot_dir,
     )
 
+    termination_policy = (
+        condition.termination_policy_factory()
+        if condition.termination_policy_factory is not None
+        else None
+    )
     coordinator = ProjectCoordinator(
         project=project,
         agents=agents,
         proposers=proposers,
         mediator=mediator,
+        termination_policy=termination_policy,
         consensus_mechanism_factory=condition.consensus_mechanism_factory,
         tracer=tracer or StdoutTracer(color=False),
         emit=emit,

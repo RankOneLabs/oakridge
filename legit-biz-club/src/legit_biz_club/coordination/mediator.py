@@ -182,10 +182,16 @@ class Mediator:
         Failures here are logged and swallowed — the artifact on disk
         is already the source of truth, and an observability sidecar
         shouldn't fail the apply (which has already committed).
+
+        Snapshot extension matches the artifact's so post-mortem
+        tooling (syntax highlighters, formatters, type checkers) sees
+        the right file type — ``feature.py`` snapshots become
+        ``v0001.py``, not ``v0001.md``.
         """
         assert self._snapshot_dir is not None  # guarded at the call site
         try:
-            path = self._snapshot_dir / f"v{n:04d}.md"
+            suffix = self.artifact.path.suffix or ".txt"
+            path = self._snapshot_dir / f"v{n:04d}{suffix}"
             path.write_text(content, encoding="utf-8")
         except OSError as e:
             logger.warning(

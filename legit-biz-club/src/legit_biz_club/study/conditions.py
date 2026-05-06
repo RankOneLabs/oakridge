@@ -16,6 +16,7 @@ Per the design memo's v1 test design:
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from legit_biz_club.coordination.consensus import (
@@ -23,6 +24,7 @@ from legit_biz_club.coordination.consensus import (
     MultiRoundConsensus,
     SingleRoundConsensus,
 )
+from legit_biz_club.coordination.termination import TerminationPolicy
 from legit_biz_club.core.models import CoordinationProtocol
 
 
@@ -35,12 +37,21 @@ class ConditionConfig:
     ``coordination_protocol`` selects which combination of phases
     runs; ``consensus_mechanism_factory`` is consulted only when the
     protocol invokes consensus (and is ignored otherwise).
+
+    ``termination_policy_factory`` overrides the incremental-phase
+    termination policy. ``None`` (default) lets
+    :class:`ProjectCoordinator` pick its own default
+    (:class:`KCommitsOrStable` in v1). Pass e.g.
+    ``lambda: KCommitsPerAgent(k=5)`` for a fixed call budget when
+    cross-condition cost comparison matters more than artifact-
+    stability cost-saving.
     """
 
     name: str
     n: int
     coordination_protocol: CoordinationProtocol
     consensus_mechanism_factory: type[ConsensusMechanism] | None = None
+    termination_policy_factory: Callable[[], TerminationPolicy] | None = None
 
 
 def single_agent_baseline() -> ConditionConfig:

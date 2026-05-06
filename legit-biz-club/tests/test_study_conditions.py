@@ -24,6 +24,10 @@ def test_single_agent_baseline_is_n1_incremental_only() -> None:
     assert cfg.n == 1
     assert cfg.coordination_protocol == CoordinationProtocol.INCREMENTAL_ONLY
     assert cfg.consensus_mechanism_factory is None
+    # Factories don't pin a termination policy by default — the
+    # coordinator picks its default. Studies that want a fixed call
+    # budget construct ConditionConfig directly with their own factory.
+    assert cfg.termination_policy_factory is None
 
 
 def test_ensemble_incremental_only_uses_protocol_and_no_mechanism() -> None:

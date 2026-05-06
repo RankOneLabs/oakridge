@@ -42,9 +42,13 @@ TARGET = prose_target(
 CONDITION = ensemble_incremental_only(n=2)
 
 # Anchor the run dir at the repo's legit-biz-club/ regardless of where
-# the script is launched from.
+# the script is launched from. UTC + trailing 'Z' so the directory
+# name aligns with the UTC timestamps in events.jsonl — easier to
+# correlate during post-mortems.
 _REPO_LBC = Path(__file__).resolve().parent.parent
-RUN_ROOT = _REPO_LBC / ".run" / datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+RUN_ROOT = (
+    _REPO_LBC / ".run" / datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
+)
 # run_cell builds <output_dir>/<target.name>/<condition.name>/ — we
 # precompute that here so the events.jsonl tee writes alongside
 # draft.md and commits/.
