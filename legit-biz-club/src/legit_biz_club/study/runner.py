@@ -22,6 +22,7 @@ import contextlib
 import json
 import logging
 import shutil
+import tempfile
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePath
@@ -266,6 +267,23 @@ async def run_cell(
     snapshot_dir = cell_dir / "commits"
     if snapshot_dir.exists():
         shutil.rmtree(snapshot_dir)
+    # Clear any stale eval_scores.json from a previous run alongside
+    # the other per-run sidecar resets above. The absent-file semantics
+    # ("no scores were persisted") have to hold across reruns even when
+    # the coordinator crashes mid-run — clearing here rather than after
+    # ``coordinator.run()`` ensures a failed rerun can't leak the
+    # previous run's scores to the dashboard.
+    sidecar_path = cell_dir / "eval_scores.json"
+    try:
+        sidecar_path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        logger.warning(
+            "eval_scores sidecar cleanup failed (path=%s): %s",
+            sidecar_path,
+            e,
+        )
     mediator = Mediator(
         project.artifact,
         [a.id for a in agents],
@@ -292,23 +310,6 @@ async def run_cell(
     final_content = artifact_path.read_text(encoding="utf-8")
     metrics = _summarize_metrics(run_result)
     eval_scores: list[Score] = []
-    # Clear any stale sidecar from a previous run before grading. The
-    # absent-file semantics ("no scores were persisted") have to hold
-    # across reruns into the same cell_dir — otherwise a rerun with no
-    # grader (or one that returns []) leaves the previous run's scores
-    # on disk for the dashboard to render. Same defensive cleanup that
-    # ``commits/`` and ``agent_memory/`` already get above.
-    sidecar_path = cell_dir / "eval_scores.json"
-    try:
-        sidecar_path.unlink()
-    except FileNotFoundError:
-        pass
-    except OSError as e:
-        logger.warning(
-            "eval_scores sidecar cleanup failed (path=%s): %s",
-            sidecar_path,
-            e,
-        )
     if grader_factory is not None:
         grader = grader_factory(target)
         eval_scores = list(
@@ -448,13 +449,19 @@ def _write_eval_scores_sidecar(
     don't need to distinguish those cases (both render as the same
     empty state).
 
-    Atomic write: serialize to a tmpfile in the same directory then
-    ``replace()`` so a concurrent reader (the dashboard) can't ever
-    observe a partially-written JSON. Same pattern as the mediator's
-    artifact write. Best-effort observability: if the write fails
-    (disk full, permissions, etc.) we log a warning and continue.
-    ``CellResult.eval_scores`` in the returned object is still
-    authoritative; the sidecar is the dashboard's read path.
+    Atomic write: serialize to a randomly-named dotfile tmp in the
+    same directory then ``replace()`` so a concurrent reader (the
+    dashboard) can't ever observe a partially-written JSON. The
+    Mediator's artifact write uses a deterministic ``<path>.tmp``
+    sibling, but that's safe there because the tmp self-targets the
+    artifact path; here the tmp lives next to a *foreign*
+    user-controlled artifact, so a target named e.g.
+    ``eval_scores.json.tmp`` would otherwise be clobbered. Random
+    naming via ``tempfile.mkstemp`` rules that collision out
+    regardless of artifact filename. Best-effort observability: if
+    the write fails (disk full, permissions, etc.) we log a warning
+    and continue. ``CellResult.eval_scores`` in the returned object
+    is still authoritative; the sidecar is the dashboard's read path.
     """
     if not scores:
         return
@@ -469,11 +476,13 @@ def _write_eval_scores_sidecar(
         ],
     }
     sidecar = cell_dir / "eval_scores.json"
-    tmp = sidecar.with_suffix(sidecar.suffix + ".tmp")
+    fd, tmp_str = tempfile.mkstemp(
+        dir=cell_dir, prefix=".eval_scores.", suffix=".tmp"
+    )
+    tmp = Path(tmp_str)
     try:
-        tmp.write_text(
-            json.dumps(payload, indent=2) + "\n", encoding="utf-8"
-        )
+        with open(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(payload, indent=2) + "\n")
         tmp.replace(sidecar)
     except OSError as e:
         logger.warning(

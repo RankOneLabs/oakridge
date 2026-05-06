@@ -644,6 +644,46 @@ async def test_run_cell_skips_eval_scores_sidecar_when_grader_returns_no_scores(
     assert not sidecar.exists()
 
 
+async def test_run_cell_eval_scores_tmp_doesnt_clobber_artifact_named_like_tmp(
+    tmp_path: Path,
+) -> None:
+    """A target whose artifact_filename happens to look like the
+    eval-scores tmp file (``eval_scores.json.tmp``) passes the
+    reserved-name guard, so the sidecar's atomic write must not
+    use a deterministic ``<sidecar>.tmp`` sibling. The randomized
+    dotfile-prefixed tmp via ``tempfile.mkstemp`` makes the collision
+    impossible regardless of artifact name."""
+    target = prose_target(
+        seed_content="seed", artifact_filename="eval_scores.json.tmp"
+    )
+    condition = single_agent_baseline()
+
+    proposer_factory = stub_proposer_factory(_AppendingProposer)
+
+    def grader_factory(t):  # type: ignore[no-untyped-def]
+        return _FixedScoreGrader([c for c in t.brief.success_criteria])
+
+    result = await run_cell(
+        target=target,
+        condition=condition,
+        proposer_factory=proposer_factory,
+        output_dir=tmp_path,
+        grader_factory=grader_factory,
+        tracer=StdoutTracer(color=False),
+    )
+    artifact = (
+        tmp_path / target.name / condition.name / "eval_scores.json.tmp"
+    )
+    sidecar = (
+        tmp_path / target.name / condition.name / "eval_scores.json"
+    )
+    # Both files survive — artifact wasn't clobbered by the sidecar
+    # write, and the sidecar landed at its expected path.
+    assert artifact.exists()
+    assert sidecar.exists()
+    assert result.eval_scores  # grader actually ran
+
+
 async def test_run_cell_clears_stale_eval_scores_sidecar_on_rerun(
     tmp_path: Path,
 ) -> None:
