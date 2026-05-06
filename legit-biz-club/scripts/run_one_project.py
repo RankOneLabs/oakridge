@@ -42,18 +42,32 @@ from legit_biz_club import (
 from legit_biz_club.core.models import Project
 from legit_biz_club.study.conditions import ensemble_incremental_only
 from legit_biz_club.study.runner import run_cell
-from legit_biz_club.study.v1_targets import prose_substrate_thesis
+from legit_biz_club.study.v1_graders import (
+    make_prose_substrate_thesis_grader_factory,
+)
+from legit_biz_club.study.v1_targets import (
+    prose_substrate_thesis,
+)
 
 # --- config ----------------------------------------------------------
 
 # Pin to Anthropic for cost-conscious smoke runs (one provider key
-# suffices). The thesis target's default model_pool spans three
-# providers; override here when iterating.
+# suffices). The target's default model_pool spans three providers;
+# override here when iterating.
 TARGET = dataclasses.replace(
     prose_substrate_thesis(),
     model_pool=("claude-sonnet-4-5", "claude-haiku-4-5"),
 )
 CONDITION = ensemble_incremental_only(n=2)
+GRADER_FACTORY = make_prose_substrate_thesis_grader_factory()
+# Switch to leetcode by importing + swapping:
+#   from legit_biz_club.study.v1_graders import make_leetcode_longest_substring_grader_factory
+#   from legit_biz_club.study.v1_targets import code_leetcode_longest_substring
+#   TARGET = dataclasses.replace(
+#       code_leetcode_longest_substring(),
+#       model_pool=("claude-sonnet-4-5", "claude-haiku-4-5"),
+#   )
+#   GRADER_FACTORY = make_leetcode_longest_substring_grader_factory()
 
 # Anchor the run dir at the repo's legit-biz-club/ regardless of where
 # the script is launched from. UTC + microseconds + trailing 'Z' so
@@ -190,6 +204,7 @@ async def main() -> None:
         proposer_factory=_proposer_factory,
         output_dir=RUN_ROOT,
         peer_context_loader=peer_context_loader,
+        grader_factory=GRADER_FACTORY,
         tracer=StdoutTracer(color=True),
         emit=_build_event_tee(CELL_DIR / "events.jsonl"),
     )
@@ -198,6 +213,11 @@ async def main() -> None:
     print(f"cell: {result.target_name} × {result.condition_name}")
     print(f"artifact: {result.artifact_path}")
     print(f"metrics: {result.metrics}")
+    if result.eval_scores:
+        print()
+        print("--- eval scores -----------------------------------------------")
+        for s in result.eval_scores:
+            print(f"  {s.dimension:32s} {s.value:.3f}  ({s.source.value})")
     print("=" * 72)
     print()
     print("--- final artifact -----------------------------------------------")

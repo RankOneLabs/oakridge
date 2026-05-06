@@ -54,6 +54,10 @@ from legit_biz_club.study.targets import (
     code_target,
     prose_target,
 )
+from legit_biz_club.study.v1_graders import (
+    make_leetcode_longest_substring_grader_factory,
+    make_prose_substrate_thesis_grader_factory,
+)
 from legit_biz_club.study.v1_targets import (
     code_leetcode_longest_substring,
     prose_substrate_thesis,
@@ -72,6 +76,8 @@ __all__ = [
     "aggregate",
     "code_leetcode_longest_substring",
     "code_target",
+    "make_leetcode_longest_substring_grader_factory",
+    "make_prose_substrate_thesis_grader_factory",
     "ensemble_incremental_only",
     "ensemble_with_multi_round",
     "ensemble_with_single_round",
