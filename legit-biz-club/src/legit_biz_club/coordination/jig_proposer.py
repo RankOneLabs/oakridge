@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import Sequence
 
 from jig.core.types import CompletionParams, LLMClient, Message, Role
@@ -186,20 +187,47 @@ def make_proposers(
     }
 
 
+_FENCE_RE = re.compile(
+    r"\A\s*```(?:json)?\s*\n(?P<body>.*?)\n```\s*\Z",
+    re.DOTALL,
+)
+
+
+def _strip_markdown_fence(text: str) -> str:
+    """Strip a surrounding ``` fence (with optional ``json`` lang tag).
+
+    Claude in particular tends to wrap structured output in a fenced
+    code block even when the prompt explicitly forbids it — that's
+    its default formatting habit and instructions don't reliably
+    override it. Stripping the fence here keeps v0 moving without
+    waiting on structured-output / tool-use plumbing in jig.
+
+    Conservative: only strips when the *entire* response is one
+    fenced block. A response with leading prose and a fenced block
+    in the middle is still treated as malformed — that's a real
+    prompt-tuning issue, not a formatting quirk.
+    """
+    match = _FENCE_RE.match(text)
+    if match is None:
+        return text
+    return match.group("body")
+
+
 def _parse_response(content: str) -> dict[str, str]:
     """Parse the LLM's response as a JSON envelope.
 
-    Tolerates leading/trailing whitespace but rejects anything that
-    isn't valid JSON. The malformed-response path raises rather than
-    silently substituting defaults; prompt-tuning is the right
-    response when this happens.
+    Tolerates leading/trailing whitespace and a surrounding markdown
+    code fence (a common Claude formatting habit). Rejects anything
+    further from valid JSON — the malformed-response path raises
+    rather than silently substituting defaults; prompt-tuning is the
+    right response when this happens.
 
     Returns a normalized dict containing only the expected keys
     (``new_content`` always; ``rationale`` if supplied and a string).
     Any other top-level keys the model emits are dropped so unexpected
     nested objects can't sneak through to downstream consumers.
     """
-    stripped = content.strip()
+    stripped = _strip_markdown_fence(content.strip())
     try:
         data = json.loads(stripped)
     except json.JSONDecodeError as e:

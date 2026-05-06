@@ -16,6 +16,7 @@ from legit_biz_club import (
     Brief,
     Enrollment,
     IncrementalCoordinator,
+    KCommitsOrStable,
     KCommitsPerAgent,
     Mediator,
     Project,
@@ -115,6 +116,71 @@ async def test_full_loop_terminates_via_policy(tmp_path: Path) -> None:
     final = project.artifact.path.read_text(encoding="utf-8")
     for agent in agents:
         assert agent.name in final
+
+
+class _StableProposer:
+    """Returns the same content regardless of agent or current state —
+    every commit produces a byte-identical artifact, so KCommitsOrStable's
+    stability check fires after stable_n+1 applies."""
+
+    def __init__(self, content: str = "the agreed text") -> None:
+        self.calls = 0
+        self._content = content
+
+    async def propose(
+        self,
+        *,
+        agent: Agent,
+        brief: Brief,
+        artifact: Artifact,
+        current_content: str,
+        current_version: str,
+        peer_proposals: list[Proposal] | None = None,
+    ) -> Proposal:
+        self.calls += 1
+        return Proposal(
+            agent_id=agent.id,
+            based_on_version=current_version,
+            new_content=self._content,
+        )
+
+
+async def test_stability_check_runs_at_round_boundary_only(
+    tmp_path: Path,
+) -> None:
+    """KCommitsOrStable's stability signal must not fire mid-round —
+    otherwise the loop stops as soon as stable_n+1 consecutive
+    identical commits land, skipping later agents in that round and
+    making commit_counts agent-order-dependent. With n=4 stable
+    proposers and stable_n=2, the policy needs 3 identical commits.
+    Mid-round stability would terminate after agent 3 leaving agent 4
+    with 0 commits in round 1; the round-boundary fix ensures all 4
+    agents finish round 1 (commit_counts == 1 each) before the
+    round-top check fires for round 2."""
+    agents = _make_agents(tmp_path, 4)
+    project = _make_project(tmp_path, agents)
+    proposers: dict[str, _StableProposer] = {
+        a.id: _StableProposer() for a in agents
+    }
+    mediator = Mediator(project.artifact, [a.id for a in agents])
+    policy = KCommitsOrStable(k=99, stable_n=2)  # k high, only stability fires
+
+    coordinator = IncrementalCoordinator(
+        project=project,
+        agents=agents,
+        proposers=proposers,
+        mediator=mediator,
+        termination_policy=policy,
+    )
+    result = await coordinator.run()
+
+    # Every agent should have proposed exactly once — round 1
+    # completes for all 4, round 2 doesn't start because the
+    # round-top stability check fires.
+    assert all(c == 1 for c in result.final_commit_counts.values())
+    assert result.terminated_by == "policy"
+    # Exactly 4 outcomes (one per agent), all APPLIED.
+    assert len(result.outcomes) == 4
 
 
 async def test_constructor_validates_proposer_keys(tmp_path: Path) -> None:

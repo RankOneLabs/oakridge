@@ -62,6 +62,7 @@ from legit_biz_club.coordination.round_budget import (
     StringEqualConvergence,
 )
 from legit_biz_club.coordination.termination import (
+    KCommitsOrStable,
     KCommitsPerAgent,
     TerminationPolicy,
 )
@@ -74,6 +75,7 @@ __all__ = [
     "IncrementalCoordinator",
     "IncrementalRunResult",
     "JigProposer",
+    "KCommitsOrStable",
     "KCommitsPerAgent",
     "Mediator",
     "MultiRoundConsensus",

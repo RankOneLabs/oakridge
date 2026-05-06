@@ -2,6 +2,7 @@ node_modules/
 comms/
 kbbl/data/
 kbbl/core/pwa/dist/
+legit-biz-club/.run/
 .claude/settings.local.json
 
 # Python

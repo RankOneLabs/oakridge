@@ -282,6 +282,100 @@ async def test_run_cell_singleround_marks_escalation_even_when_converged(
     assert result.metrics.escalation_invoked is True
 
 
+async def test_run_cell_rejects_reserved_sidecar_filenames(
+    tmp_path: Path,
+) -> None:
+    """Sidecars (commits/, agent_memory/, events.jsonl) live in the
+    cell directory next to the artifact. A target whose
+    artifact_filename collides with one of them would either crash
+    the runner (commits/ rmtree on a file) or silently corrupt the
+    artifact (events.jsonl tee from the driver). Validate at
+    run_cell entry rather than waiting for the failure mode."""
+    import pytest
+
+    condition = single_agent_baseline()
+
+    def proposer_factory(_agent: Agent) -> _AppendingProposer:
+        return _AppendingProposer()
+
+    for reserved in ("commits", "agent_memory", "events.jsonl"):
+        target = prose_target(
+            artifact_filename=reserved, seed_content="seed"
+        )
+        with pytest.raises(ValueError, match="reserved sidecar"):
+            await run_cell(
+                target=target,
+                condition=condition,
+                proposer_factory=proposer_factory,
+                output_dir=tmp_path / reserved,  # fresh dir per attempt
+                tracer=StdoutTracer(color=False),
+            )
+
+
+async def test_run_cell_resets_commits_dir_between_runs(
+    tmp_path: Path,
+) -> None:
+    """commits/ from a prior run must be wiped before the new run —
+    Mediator restarts numbering at v0001, so a shorter rerun would
+    otherwise leave stale higher-numbered files mixing two runs'
+    history into one cell directory."""
+    target = prose_target(seed_content="seed")
+    condition = single_agent_baseline()
+
+    def proposer_factory(_agent: Agent) -> _AppendingProposer:
+        return _AppendingProposer()
+
+    # Drop a stale snapshot from a "previous" run before invoking
+    # run_cell — it should be gone after.
+    cell_dir = tmp_path / target.name / condition.name
+    (cell_dir / "commits").mkdir(parents=True)
+    (cell_dir / "commits" / "v9999.md").write_text(
+        "stale from a previous run", encoding="utf-8"
+    )
+
+    await run_cell(
+        target=target,
+        condition=condition,
+        proposer_factory=proposer_factory,
+        output_dir=tmp_path,
+        tracer=StdoutTracer(color=False),
+    )
+    assert not (cell_dir / "commits" / "v9999.md").exists()
+
+
+async def test_run_cell_uses_termination_policy_factory_when_set(
+    tmp_path: Path,
+) -> None:
+    """ConditionConfig.termination_policy_factory propagates to the
+    coordinator. Pass a factory that caps at k=1 commits per agent and
+    the cell terminates after n*1 commits regardless of what the
+    default policy would have done."""
+    from legit_biz_club import KCommitsPerAgent
+    from legit_biz_club.core.models import CoordinationProtocol
+    from legit_biz_club.study.conditions import ConditionConfig
+
+    target = prose_target(seed_content="seed")
+    condition = ConditionConfig(
+        name="custom_term",
+        n=2,
+        coordination_protocol=CoordinationProtocol.INCREMENTAL_ONLY,
+        termination_policy_factory=lambda: KCommitsPerAgent(k=1),
+    )
+
+    def proposer_factory(_agent: Agent) -> _AppendingProposer:
+        return _AppendingProposer()
+
+    result = await run_cell(
+        target=target,
+        condition=condition,
+        proposer_factory=proposer_factory,
+        output_dir=tmp_path,
+        tracer=StdoutTracer(color=False),
+    )
+    # k=1 with n=2 → 2 commits attempted/applied (vs default k=5 → 10).
+    assert result.metrics.incremental_commits_applied == 2
+
+
 async def test_run_cell_runs_grader_when_factory_supplied(
     tmp_path: Path,
 ) -> None:

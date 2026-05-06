@@ -159,6 +159,75 @@ async def test_rejects_different_agent(tmp_path: Path) -> None:
 # --- parse failures -----------------------------------------------------
 
 
+async def test_parse_tolerates_fenced_json(tmp_path: Path) -> None:
+    """Claude (in particular) tends to wrap structured output in a
+    ```json ... ``` block even when the prompt forbids it. The parser
+    strips a surrounding fence so the loop keeps moving without
+    needing structured-output / tool-use plumbing in jig."""
+    agent = _agent(tmp_path)
+    stub = _StubLLM(
+        response_content=(
+            "```json\n"
+            '{"new_content": "fenced content", "rationale": "ok"}\n'
+            "```"
+        )
+    )
+    proposer = JigProposer(agent, llm=stub)
+    proposal = await proposer.propose(
+        agent=agent,
+        brief=_brief(),
+        artifact=_artifact(tmp_path),
+        current_content="seed",
+        current_version="v0",
+    )
+    assert proposal.new_content == "fenced content"
+    assert proposal.rationale == "ok"
+
+
+async def test_parse_tolerates_fenced_json_no_language_tag(
+    tmp_path: Path,
+) -> None:
+    """Bare ``` fence (no `json` lang tag) is also stripped."""
+    agent = _agent(tmp_path)
+    stub = _StubLLM(
+        response_content='```\n{"new_content": "bare fence"}\n```'
+    )
+    proposer = JigProposer(agent, llm=stub)
+    proposal = await proposer.propose(
+        agent=agent,
+        brief=_brief(),
+        artifact=_artifact(tmp_path),
+        current_content="seed",
+        current_version="v0",
+    )
+    assert proposal.new_content == "bare fence"
+
+
+async def test_parse_failure_on_prose_then_fence(tmp_path: Path) -> None:
+    """Leading prose followed by a fenced block is treated as
+    malformed — that's a prompt-tuning problem, not a formatting
+    quirk to absorb. The parser only strips when the whole response
+    is one fenced block."""
+    agent = _agent(tmp_path)
+    stub = _StubLLM(
+        response_content=(
+            "Here's my proposal:\n"
+            "```json\n"
+            '{"new_content": "x"}\n'
+            "```"
+        )
+    )
+    proposer = JigProposer(agent, llm=stub)
+    with pytest.raises(ProposerOutputParseError, match="not valid JSON"):
+        await proposer.propose(
+            agent=agent,
+            brief=_brief(),
+            artifact=_artifact(tmp_path),
+            current_content="seed",
+            current_version="v0",
+        )
+
+
 async def test_parse_failure_on_non_json(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
     stub = _StubLLM(response_content="this is not JSON at all")
