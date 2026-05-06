@@ -142,12 +142,32 @@ app.use(
 
 // --- entry -------------------------------------------------------------
 
-const port = Number(process.env.LBC_DASHBOARD_PORT ?? "8765");
+function parsePort(raw: string | undefined): number {
+  const n = Number(raw ?? "8765");
+  if (!Number.isInteger(n) || n < 1 || n > 65535) {
+    console.error(
+      `[lbc-dashboard] invalid LBC_DASHBOARD_PORT=${JSON.stringify(raw)} ` +
+        "— must be an integer in [1, 65535]",
+    );
+    process.exit(1);
+  }
+  return n;
+}
+
+const port = parsePort(process.env.LBC_DASHBOARD_PORT);
 
 console.log(`[lbc-dashboard] run root: ${resolveRunRoot()}`);
-console.log(`[lbc-dashboard] listening on http://localhost:${port}`);
+console.log(`[lbc-dashboard] listening on http://127.0.0.1:${port}`);
 
+// Bind to loopback by default — the dashboard has no auth and is
+// intended for the operator's own machine. Bun's default would bind
+// to 0.0.0.0 and expose the port on any LAN interface; that's a
+// trust-model leak the README explicitly avoids by saying
+// "localhost-only by design." Override LBC_DASHBOARD_HOST to bind
+// elsewhere (e.g., "0.0.0.0" on a Tailnet-only host where
+// every interface is trusted).
 export default {
   port,
+  hostname: process.env.LBC_DASHBOARD_HOST ?? "127.0.0.1",
   fetch: app.fetch,
 };

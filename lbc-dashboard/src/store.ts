@@ -127,6 +127,23 @@ async function safeReaddir(dir: string): Promise<string[]> {
   }
 }
 
+/**
+ * Per-cell summary cache. The frontend polls /api/cells every 2s,
+ * which currently kicks off ``summarize`` for every cell on the
+ * disk; without caching, each call re-reads the full
+ * ``events.jsonl`` to count lines and classify the tail. The list
+ * of cells grows with every study run and the per-cell log grows
+ * with every commit — at study scale this becomes O(total log
+ * bytes) per poll. Caching by mtime turns that into O(1) on the
+ * steady state and only re-reads when the file actually changes.
+ */
+interface SummaryCacheEntry {
+  mtimeMs: number;
+  eventCount: number;
+  status: CellSummary["status"];
+}
+const summaryCache = new Map<string, SummaryCacheEntry>();
+
 async function summarize(
   runTs: string,
   target: string,
@@ -140,10 +157,17 @@ async function summarize(
   try {
     const st = await stat(eventsPath);
     mtimeMs = st.mtimeMs;
-    const contents = await readFile(eventsPath, "utf-8");
-    const lines = contents.split("\n").filter((l) => l.trim());
-    eventCount = lines.length;
-    status = classifyStatus(lines);
+    const cached = summaryCache.get(eventsPath);
+    if (cached !== undefined && cached.mtimeMs === mtimeMs) {
+      eventCount = cached.eventCount;
+      status = cached.status;
+    } else {
+      const contents = await readFile(eventsPath, "utf-8");
+      const lines = contents.split("\n").filter((l) => l.trim());
+      eventCount = lines.length;
+      status = classifyStatus(lines);
+      summaryCache.set(eventsPath, { mtimeMs, eventCount, status });
+    }
   } catch {
     // No events.jsonl yet — cell directory exists but the run hasn't
     // emitted its first event. Treat as active with zero events.

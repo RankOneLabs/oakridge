@@ -22,7 +22,12 @@ export function useHashSelection(): [string | null, (id: string) => void] {
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
   const select = useCallback((id: string) => {
-    window.location.hash = `cell=${id}`;
+    // encodeURIComponent on write keeps the hash symmetric with
+    // readHash's decodeURIComponent — `&` or `=` in a cell_id
+    // (today they're produced from sanitized segments, but a future
+    // cell_id shape might allow them) would otherwise break the
+    // hash parser asymmetrically.
+    window.location.hash = `cell=${encodeURIComponent(id)}`;
   }, []);
   return [cellId, select];
 }
