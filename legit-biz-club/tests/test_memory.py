@@ -18,6 +18,7 @@ import pytest
 from jig.memory.local import SqliteStore
 
 from legit_biz_club import Agent
+from legit_biz_club.core.models import Artifact, ArtifactType, Brief, Project
 from legit_biz_club.memory import (
     CommitObservation,
     CommitResult,
@@ -272,17 +273,8 @@ async def test_rejects_empty_observation_text(tmp_path: Path) -> None:
 # --- make_sqlite_observation_loader -------------------------------------
 
 
-def _stub_project(project_id: str = "p-current"):  # type: ignore[no-untyped-def]
+def _stub_project(project_id: str = "p-current") -> Project:
     """Minimal Project with the right id — the loader only reads .id."""
-    from pathlib import Path
-
-    from legit_biz_club.core.models import (
-        Artifact,
-        ArtifactType,
-        Brief,
-        Project,
-    )
-
     return Project(
         id=project_id,
         artifact=Artifact(type=ArtifactType.PROSE, path=Path("/tmp/x.md")),
@@ -371,6 +363,33 @@ async def test_loader_includes_current_project_when_opted_in(
     )
     result = await loader(agent, _stub_project("p-current"))
     assert "from same project" in result
+
+
+async def test_loader_drops_superseded_observations(
+    tmp_path: Path,
+) -> None:
+    """The design memo's supersedes contract is 'override rather than
+    accumulate' — when a revised observation points at an earlier
+    entry_id, the original should NOT surface alongside it. Otherwise
+    the prompt shows both the stale read and its replacement."""
+    agent = _agent(tmp_path)
+    store = _store(tmp_path)
+    committer = MemoryCommitter(agent, store)
+    earlier = await committer.commit(
+        project_id="p-1",
+        observation_text="initial (stale) read",
+        operator_confidence=OperatorConfidence.MEDIUM,
+    )
+    await committer.commit(
+        project_id="p-2",
+        observation_text="revised read — this one wins",
+        operator_confidence=OperatorConfidence.HIGH,
+        supersedes=earlier.entry_id,
+    )
+    loader = make_sqlite_observation_loader(store)
+    result = await loader(agent, _stub_project("p-other"))
+    assert "revised read" in result
+    assert "initial (stale)" not in result
 
 
 async def test_loader_filters_to_this_agents_observations(

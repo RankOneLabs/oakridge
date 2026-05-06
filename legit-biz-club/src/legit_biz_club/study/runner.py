@@ -17,9 +17,10 @@ itself is LLM-agnostic.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import shutil
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePath
 from typing import Protocol
@@ -42,6 +43,7 @@ from legit_biz_club.core.models import (
     Enrollment,
     Project,
 )
+from legit_biz_club.memory import PeerContextLoader
 from legit_biz_club.study.conditions import ConditionConfig
 from legit_biz_club.study.targets import TargetConfig
 
@@ -128,16 +130,6 @@ class CellResult:
     run_result: ProjectRunResult
     metrics: CellMetrics
     eval_scores: list[Score]
-
-
-PeerContextLoader = Callable[[Agent, "Project"], Awaitable[str]]
-"""Returns the agent's peer context for a project as a string.
-
-Mirrors :data:`legit_biz_club.memory.PeerContextLoader` exactly —
-the alias is re-exported here so harness consumers don't have to
-reach into the memory module just for the type. See that module's
-docstring for the full contract.
-"""
 
 
 async def run_cell(
@@ -238,10 +230,17 @@ async def run_cell(
     # always receives a ``context`` kwarg — empty string when no loader
     # is wired (or when a loader returned ""). Calling factories
     # uniformly keeps the protocol predictable.
+    #
+    # asyncio.gather rather than a sequential await chain so per-agent
+    # latency adds up to max() rather than sum() — negligible for the
+    # SQLite loader, but PeerContextLoader is the documented seam for
+    # future remote backends (honcho deriver queries, LLM-summarized
+    # context, etc.) where it scales linearly with n.
     if peer_context_loader is not None:
-        contexts = {
-            a.id: await peer_context_loader(a, project) for a in agents
-        }
+        loaded = await asyncio.gather(
+            *(peer_context_loader(a, project) for a in agents)
+        )
+        contexts = {a.id: ctx for a, ctx in zip(agents, loaded, strict=True)}
     else:
         contexts = {a.id: "" for a in agents}
     proposers: dict[str, Proposer] = {

@@ -346,6 +346,7 @@ async def test_run_cell_threads_peer_context_to_proposer_factory(
     condition = ensemble_incremental_only(n=2)
 
     contexts_seen: dict[str, str] = {}
+    loader_calls: dict[str, int] = {}
 
     class _ContextRecordingProposer:
         def __init__(self, agent_id: str, context: str) -> None:
@@ -375,6 +376,7 @@ async def test_run_cell_threads_peer_context_to_proposer_factory(
         return _ContextRecordingProposer(agent.id, context)
 
     async def loader(agent: Agent, project) -> str:  # type: ignore[no-untyped-def]
+        loader_calls[agent.id] = loader_calls.get(agent.id, 0) + 1
         return f"context-for-{agent.name}-in-{project.id}"
 
     await run_cell(
@@ -390,6 +392,10 @@ async def test_run_cell_threads_peer_context_to_proposer_factory(
     for ctx in contexts_seen.values():
         assert ctx.startswith("context-for-prose_blog_post-agent-")
         assert "in-prose_blog_post-ensemble_incremental_n2" in ctx
+    # Loader called exactly once per agent (the dict-overwrite assertion
+    # above could mask multiple-call regressions otherwise).
+    assert len(loader_calls) == 2
+    assert all(calls == 1 for calls in loader_calls.values())
 
 
 async def test_run_cell_passes_empty_context_when_no_loader(

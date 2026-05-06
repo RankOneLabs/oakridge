@@ -28,6 +28,7 @@ Modules:
   (artifacts, traces, eval scores, operator-burden telemetry).
 """
 
+from legit_biz_club.memory import PeerContextLoader
 from legit_biz_club.study.conditions import (
     ConditionConfig,
     ensemble_incremental_only,
@@ -44,7 +45,6 @@ from legit_biz_club.study.runner import (
     CellMetrics,
     CellResult,
     GraderFactory,
-    PeerContextLoader,
     ProposerFactory,
     run_cell,
     run_study,

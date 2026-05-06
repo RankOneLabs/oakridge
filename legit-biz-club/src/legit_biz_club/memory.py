@@ -299,6 +299,17 @@ def make_sqlite_observation_loader(
                 for entry_id, obs in loaded
                 if obs.project_id != project.id
             ]
+        # Honor the design memo's "override rather than accumulate"
+        # semantics on supersedes: drop any entry that another loaded
+        # entry explicitly supersedes. Without this, a revised
+        # observation surfaces alongside the stale one it was meant
+        # to replace, and the prompt shows both.
+        superseded_ids = {
+            obs.supersedes for _eid, obs in loaded if obs.supersedes
+        }
+        loaded = [
+            (eid, obs) for eid, obs in loaded if eid not in superseded_ids
+        ]
         if not loaded:
             return ""
         # Stable ordering for reproducibility: oldest first by

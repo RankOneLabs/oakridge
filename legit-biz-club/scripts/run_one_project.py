@@ -35,6 +35,7 @@ from legit_biz_club import (
     JigProposer,
     MemoryCommitter,
     OperatorConfidence,
+    PeerContextLoader,
     make_sqlite_observation_loader,
 )
 from legit_biz_club.core.models import Project
@@ -128,7 +129,7 @@ async def _stub_embed(_text: str) -> np.ndarray:
     return np.zeros(8, dtype=np.float32)
 
 
-def _build_peer_context_loader(store_path: Path):  # type: ignore[no-untyped-def]
+def _build_peer_context_loader(store_path: Path) -> PeerContextLoader:
     """Return a peer_context_loader that uses the real
     make_sqlite_observation_loader against a stable shared store.
 
@@ -173,6 +174,9 @@ async def main() -> None:
     # per-cell rmtree(agent_memory) doesn't wipe it. In production
     # this path would point at a long-lived per-agent store the
     # operator has been writing observations into across projects.
+    # Ensure RUN_ROOT exists before constructing SqliteStore: run_cell
+    # creates it later, but we open the store path now.
+    RUN_ROOT.mkdir(parents=True, exist_ok=True)
     shared_memory_path = RUN_ROOT / "shared-memory.db"
     print(f"shared mem: {shared_memory_path}", flush=True)
     peer_context_loader = _build_peer_context_loader(shared_memory_path)
