@@ -15,7 +15,7 @@ The Python harness writes everything to disk; the dashboard is purely a reader. 
 
 ## Layout
 
-```
+```text
 lbc-dashboard/
 ├── server.ts            Hono entry — read-only API + serves the built PWA
 ├── src/
@@ -24,7 +24,10 @@ lbc-dashboard/
 ├── pwa/
 │   ├── index.html
 │   ├── main.tsx
-│   ├── App.tsx          single-component dashboard (cell list + tabs)
+│   ├── App.tsx          orchestrator — composes CellList + CellPanel
+│   ├── components/      Atomic Design (atoms / molecules / organisms)
+│   ├── hooks/           one hook per resource
+│   ├── lib/types.ts     shared API response types
 │   └── vite.config.ts
 └── package.json
 ```

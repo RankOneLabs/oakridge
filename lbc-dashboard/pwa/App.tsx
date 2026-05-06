@@ -22,10 +22,19 @@ export function App() {
   const { cells } = useCells();
   const [selectedId, select] = useHashSelection();
   const events = useCellEvents(selectedId);
-  // Use the event count as the artifact / commits / detail
-  // refresh-key — when a new event lands, those resources may
-  // have changed so re-fetch.
-  const refreshKey = events.length;
+  // Debounce the artifact / commits / detail re-fetch. Without this,
+  // selecting a cell with a long backlog turns one SSE replay into a
+  // request burst — events.length increments per replayed message, so
+  // each one would refetch all three resources independently. 150ms
+  // coalesces the burst into one re-fetch after the replay settles.
+  const [refreshKey, setRefreshKey] = useState(0);
+  useEffect(() => {
+    if (events.length === 0) return;
+    const t = window.setTimeout(() => {
+      setRefreshKey((n) => n + 1);
+    }, 150);
+    return () => window.clearTimeout(t);
+  }, [events.length]);
   const detail = useCellDetail(selectedId, refreshKey);
   const artifact = useArtifact(selectedId, refreshKey);
   const commits = useCommits(selectedId, refreshKey);

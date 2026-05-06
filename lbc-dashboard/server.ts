@@ -15,8 +15,10 @@
 import { serveStatic } from "hono/bun";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
+import { stat } from "node:fs/promises";
 import { join } from "node:path";
 
+import type { CellEvent } from "./src/store";
 import {
   getCellDetail,
   listCells,
@@ -54,38 +56,62 @@ app.get("/api/cells/:cellId/commits", async (c) => {
 });
 
 /**
- * SSE stream for one cell. Replays existing events from
- * events.jsonl, then polls the file mtime every 250ms for new
- * events. Closes when the client disconnects.
- *
- * Polling rather than fs.watch because events.jsonl is appended-to
- * incrementally; we just track the line count we've sent and read
- * any new ones each tick.
+ * SSE stream for one cell. Honors ``Last-Event-Id`` on reconnect so
+ * a brief disconnect doesn't replay the full backlog. Caches the
+ * parsed events list keyed by the file's mtime so the 250ms polling
+ * loop doesn't re-read a multi-KB file on every tick when nothing
+ * has changed.
  */
 app.get("/api/cells/:cellId/events", async (c) => {
   const cellId = c.req.param("cellId");
   const cellDir = await resolveCellDir(cellId);
   if (cellDir === null) return c.json({ error: "not found" }, 404);
   const clientSignal = c.req.raw.signal;
+  const lastEventIdHeader = c.req.header("last-event-id");
+  const parsedResumeId = lastEventIdHeader
+    ? Number(lastEventIdHeader)
+    : NaN;
+  // Browsers auto-send Last-Event-Id when the prior connection emitted
+  // ``id:`` fields. Resume from the next event rather than replaying
+  // the backlog into the UI.
+  const initialSent = Number.isFinite(parsedResumeId)
+    ? parsedResumeId + 1
+    : 0;
   return streamSSE(c, async (stream) => {
-    let sentCount = 0;
+    let sentCount = initialSent;
+    let cachedEvents: CellEvent[] = [];
+    let lastMtimeMs = -1;
+    const eventsPath = join(cellDir, "events.jsonl");
     const heartbeat = setInterval(() => {
       stream.write(": ping\n\n").catch(() => {});
     }, 15000);
     try {
       while (!clientSignal.aborted) {
-        const events = await readEvents(cellDir);
-        for (let i = sentCount; i < events.length; i++) {
+        // mtime-keyed cache: only re-parse the JSONL when the file
+        // has actually changed since the last tick. As event logs
+        // grow this is the difference between O(n) per-tick disk +
+        // CPU and O(1) on the steady-state.
+        let mtimeMs = -1;
+        try {
+          const st = await stat(eventsPath);
+          mtimeMs = st.mtimeMs;
+        } catch {
+          // File doesn't exist yet — first tick of a brand new cell.
+        }
+        if (mtimeMs !== lastMtimeMs) {
+          cachedEvents = await readEvents(cellDir);
+          lastMtimeMs = mtimeMs;
+        }
+        for (let i = sentCount; i < cachedEvents.length; i++) {
           await stream.writeSSE({
             event: "message",
-            data: JSON.stringify(events[i]),
+            data: JSON.stringify(cachedEvents[i]),
             id: String(i),
           });
         }
-        sentCount = events.length;
-        // Cheap polling tick. 250ms is fine UX latency for events
-        // that fire every few seconds; tighten if a faster harness
-        // emerges.
+        sentCount = Math.max(sentCount, cachedEvents.length);
+        // 250ms is fine UX latency for events that fire every few
+        // seconds; tighten if a faster harness emerges.
         await new Promise((r) => setTimeout(r, 250));
       }
     } finally {
@@ -99,9 +125,20 @@ app.get("/api/cells/:cellId/events", async (c) => {
 // In dev (`bun run dev:pwa`) Vite serves the PWA on its own port and
 // proxies API requests here. In prod (`bun run build:pwa && bun start`)
 // the built static bundle is served from this Hono process directly.
+//
+// Single registration with rewriteRequestPath mapping `/` →
+// `/index.html` (mirrors kbbl's pattern). The previous `app.get("/")`
+// fallback after the wildcard was unreachable: the wildcard
+// middleware matches `/` first and handles it. Explicit rewrite is
+// less brittle than relying on serveStatic's default index lookup.
 const pwaDist = join(import.meta.dirname, "pwa", "dist");
-app.use("/*", serveStatic({ root: pwaDist }));
-app.get("/", serveStatic({ path: join(pwaDist, "index.html") }));
+app.use(
+  "/*",
+  serveStatic({
+    root: pwaDist,
+    rewriteRequestPath: (path) => (path === "/" ? "/index.html" : path),
+  }),
+);
 
 // --- entry -------------------------------------------------------------
 

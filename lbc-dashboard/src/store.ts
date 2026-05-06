@@ -12,7 +12,7 @@
  * across dashboard restarts and can be used as URL fragments. The
  * Python harness writes everything; the dashboard is purely a reader.
  */
-import { mkdir, readFile, readdir, stat } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 
 export interface CellEvent {
@@ -43,6 +43,9 @@ export interface CellDetail extends CellSummary {
  * Resolve the run-root directory. Defaults to the sibling
  * legit-biz-club/.run/ — the standard layout when both packages live
  * under oakridge/. Override with LBC_RUN_ROOT for unusual setups.
+ *
+ * Resolved per call (NOT cached at module scope) so tests can override
+ * via process.env.LBC_RUN_ROOT without ESM module-cache gymnastics.
  */
 export function resolveRunRoot(): string {
   const fromEnv = process.env.LBC_RUN_ROOT;
@@ -50,8 +53,6 @@ export function resolveRunRoot(): string {
   // server.ts runs from lbc-dashboard/, so the sibling path is ../legit-biz-club/.run.
   return resolve(import.meta.dirname, "..", "..", "legit-biz-club", ".run");
 }
-
-const RUN_ROOT = resolveRunRoot();
 
 /**
  * Build the cell_id from the path segments. Stable + URL-safe; the
@@ -62,11 +63,22 @@ function cellIdFor(runTs: string, target: string, condition: string): string {
   return `${runTs}__${target}__${condition}`;
 }
 
+/**
+ * Validate that a cell_id segment is safe to use in filesystem
+ * paths. Reject empty, ``.``, ``..``, and anything containing
+ * path separators — otherwise a crafted cell_id could escape
+ * RUN_ROOT via getCellDetail / readArtifact / etc.
+ */
+function isSafeSegment(s: string): boolean {
+  return s.length > 0 && s !== "." && s !== ".." && !s.includes("/") && !s.includes("\\");
+}
+
 function parseCellId(
   cellId: string,
 ): { runTs: string; target: string; condition: string } | null {
   const parts = cellId.split("__");
   if (parts.length !== 3) return null;
+  if (!parts.every(isSafeSegment)) return null;
   return { runTs: parts[0]!, target: parts[1]!, condition: parts[2]! };
 }
 
@@ -74,13 +86,17 @@ function parseCellId(
  * Walk the run-root and enumerate every cell directory. A cell is
  * any 3-deep dir under the run-root that contains an events.jsonl;
  * the absence of events.jsonl just means the cell hasn't started.
+ *
+ * Read-only: returns an empty list when the run-root doesn't exist
+ * yet (rather than creating it). The dashboard is a viewer; the
+ * Python harness owns directory creation.
  */
 export async function listCells(): Promise<CellSummary[]> {
-  await mkdir(RUN_ROOT, { recursive: true });
+  const runRoot = resolveRunRoot();
   const summaries: CellSummary[] = [];
-  const runDirs = await safeReaddir(RUN_ROOT);
+  const runDirs = await safeReaddir(runRoot);
   for (const runTs of runDirs) {
-    const runDir = join(RUN_ROOT, runTs);
+    const runDir = join(runRoot, runTs);
     const targetDirs = await safeReaddir(runDir);
     for (const target of targetDirs) {
       const targetDir = join(runDir, target);
@@ -127,20 +143,7 @@ async function summarize(
     const contents = await readFile(eventsPath, "utf-8");
     const lines = contents.split("\n").filter((l) => l.trim());
     eventCount = lines.length;
-    // Heuristic: a cell is "ended" if its log contains a terminal
-    // event (incremental_terminated alone for INCREMENTAL_ONLY, or
-    // proposal_picked / proposal_applied at the tail for protocols
-    // that include consensus). Cheap-and-cheerful: any line whose
-    // kind contains "terminated" or "picked" near the tail flags
-    // ended. The harness doesn't currently emit a unified
-    // "cell_ended" event; if it ever does, prefer that.
-    const tail = lines.slice(-3).join("\n");
-    if (
-      tail.includes("incremental_terminated") ||
-      tail.includes("proposal_picked")
-    ) {
-      status = "ended";
-    }
+    status = classifyStatus(lines);
   } catch {
     // No events.jsonl yet — cell directory exists but the run hasn't
     // emitted its first event. Treat as active with zero events.
@@ -156,11 +159,46 @@ async function summarize(
     run_ts: runTs,
     target_name: target,
     condition_name: condition,
-    cell_dir: relative(RUN_ROOT, cellDir),
+    cell_dir: relative(resolveRunRoot(), cellDir),
     status,
     last_activity_ms: mtimeMs,
     event_count: eventCount,
   };
+}
+
+/**
+ * Decide whether a cell is `ended` from its event log. A cell ends
+ * with one of two terminal patterns:
+ *
+ * - INCREMENTAL_ONLY → the very last event is `incremental_terminated`.
+ * - INCREMENTAL_THEN_CONVERGE → the last event is `proposal_applied`
+ *   AND it's preceded by `proposal_picked` (the consensus pick was
+ *   applied; PR #26 made this the final emission).
+ *
+ * Naive substring matching is wrong: `proposal_applied` ALSO fires
+ * for every commit during the incremental phase, so a mid-run cell
+ * would be misclassified as ended. Parse the last line's kind
+ * specifically and require the picked-then-applied pair for the
+ * consensus case.
+ */
+function classifyStatus(lines: string[]): CellSummary["status"] {
+  if (lines.length === 0) return "active";
+  const lastKind = parseEventKind(lines[lines.length - 1]!);
+  if (lastKind === "incremental_terminated") return "ended";
+  if (lastKind === "proposal_applied" && lines.length > 1) {
+    const priorKind = parseEventKind(lines[lines.length - 2]!);
+    if (priorKind === "proposal_picked") return "ended";
+  }
+  return "active";
+}
+
+function parseEventKind(line: string): string | null {
+  try {
+    const obj = JSON.parse(line) as { kind?: unknown };
+    return typeof obj.kind === "string" ? obj.kind : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -171,7 +209,7 @@ async function summarize(
 export async function getCellDetail(cellId: string): Promise<CellDetail | null> {
   const parts = parseCellId(cellId);
   if (parts === null) return null;
-  const cellDir = join(RUN_ROOT, parts.runTs, parts.target, parts.condition);
+  const cellDir = join(resolveRunRoot(), parts.runTs, parts.target, parts.condition);
   const summary = await summarize(parts.runTs, parts.target, parts.condition, cellDir);
   if (summary === null) return null;
   const events = await readEvents(cellDir);
@@ -233,7 +271,7 @@ async function countCommits(cellDir: string): Promise<number> {
 export async function readArtifact(cellId: string): Promise<string | null> {
   const parts = parseCellId(cellId);
   if (parts === null) return null;
-  const cellDir = join(RUN_ROOT, parts.runTs, parts.target, parts.condition);
+  const cellDir = join(resolveRunRoot(), parts.runTs, parts.target, parts.condition);
   const filename = await detectArtifactFilename(cellDir);
   if (filename === null) return null;
   try {
@@ -252,7 +290,7 @@ export interface CommitSnapshot {
 export async function readCommits(cellId: string): Promise<CommitSnapshot[]> {
   const parts = parseCellId(cellId);
   if (parts === null) return [];
-  const cellDir = join(RUN_ROOT, parts.runTs, parts.target, parts.condition);
+  const cellDir = join(resolveRunRoot(), parts.runTs, parts.target, parts.condition);
   const commitsDir = join(cellDir, "commits");
   let entries: string[];
   try {
@@ -284,7 +322,7 @@ export async function readCommits(cellId: string): Promise<CommitSnapshot[]> {
 export async function resolveCellDir(cellId: string): Promise<string | null> {
   const parts = parseCellId(cellId);
   if (parts === null) return null;
-  const cellDir = join(RUN_ROOT, parts.runTs, parts.target, parts.condition);
+  const cellDir = join(resolveRunRoot(), parts.runTs, parts.target, parts.condition);
   try {
     const st = await stat(cellDir);
     if (!st.isDirectory()) return null;
