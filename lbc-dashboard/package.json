@@ -1,0 +1,31 @@
+{
+  "name": "lbc-dashboard",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Localhost dashboard for legit-biz-club study runs. Project-shaped (ensemble + artifact + eval scores), separate from kbbl's session-shaped operator surface.",
+  "scripts": {
+    "dev": "bun run --hot server.ts",
+    "dev:pwa": "cd pwa && vite",
+    "start": "bun run server.ts",
+    "build:pwa": "cd pwa && vite build",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "hono": "^4.6.14",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-markdown": "^9.0.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/typography": "^0.5.15",
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/bun": "^1.3.13",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.0"
+  }
+}

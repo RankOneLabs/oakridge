@@ -13,16 +13,23 @@
     "allowJs": false,
     "jsx": "react-jsx",
     "types": ["bun"],
-    "typeRoots": ["./kbbl/node_modules/@types", "./node_modules/@types"],
+    "typeRoots": [
+      "./kbbl/node_modules/@types",
+      "./lbc-dashboard/node_modules/@types",
+      "./node_modules/@types"
+    ],
     "lib": ["ESNext", "DOM"]
   },
   "include": [
     "kbbl/core/**/*.ts",
-    "kbbl/core/**/*.tsx"
+    "kbbl/core/**/*.tsx",
+    "lbc-dashboard/**/*.ts",
+    "lbc-dashboard/**/*.tsx"
   ],
   "exclude": [
     "node_modules",
     "kbbl/core/pwa/dist",
-    "kbbl/data"
+    "kbbl/data",
+    "lbc-dashboard/pwa/dist"
   ]
 }
