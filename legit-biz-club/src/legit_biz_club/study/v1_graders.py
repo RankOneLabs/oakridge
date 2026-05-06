@@ -57,15 +57,27 @@ def make_prose_substrate_thesis_grader_factory(
     the brief's ``target_spec`` and ``constraints`` as rubric context.
 
     ``judge_llm`` defaults to ``from_model("claude-sonnet-4-5")`` —
-    cheap, strong reasoner, distinct from Opus. Override for
-    production studies: the judge should ideally be in a different
-    provider from the writer pool so identity-driven self-bias is
-    impossible. The smoke pool is Anthropic-only by default; pinning
-    the judge to OpenAI or Google needs that provider's API key.
+    cheap, strong reasoner, distinct from Opus. The default is
+    constructed lazily inside the inner factory rather than at
+    builder-call time, so importing this module (or building the
+    factory) doesn't reach an LLM provider until ``run_cell``
+    actually invokes the factory. Override for production studies:
+    the judge should ideally be in a different provider from the
+    writer pool so identity-driven self-bias is impossible. The
+    smoke pool is Anthropic-only by default; pinning the judge to
+    OpenAI or Google needs that provider's API key.
     """
-    llm = judge_llm if judge_llm is not None else from_model(_DEFAULT_JUDGE_MODEL)
 
     def factory(target: TargetConfig) -> Grader:
+        # Resolve the LLM here rather than at builder-call time so
+        # the env-var dependency surfaces at run_cell construction
+        # (when the operator clearly intended to use it) rather than
+        # at module import.
+        llm = (
+            judge_llm
+            if judge_llm is not None
+            else from_model(_DEFAULT_JUDGE_MODEL)
+        )
         return make_brief_judge(target.brief, judge_llm=llm)
 
     return factory
@@ -195,17 +207,30 @@ def make_leetcode_longest_substring_grader_factory() -> GraderFactory:
     """Build a grader factory for :func:`code_leetcode_longest_substring`.
 
     Returns a grader that, on each ``grade()`` call, writes the
-    artifact + a fixed test file into a fresh tmpdir, then runs:
+    artifact + a fixed test file + a stub ``pyproject.toml`` mirroring
+    legit-biz-club's tool sections into a fresh tmpdir, then runs:
 
     - pytest against the 8 canonical leetcode #3 cases
-    - mypy on solution.py (uses the project's mypy defaults via
-      :func:`mypy_check`)
-    - ruff on solution.py (project defaults via :func:`ruff_check`)
+    - mypy on solution.py — strictness comes from the stub
+      pyproject.toml (``strict=true``), NOT mypy's defaults
+    - ruff on solution.py — rule selection comes from the stub
+      pyproject.toml (``select=[E,F,W,I,UP,B,SIM]``), NOT ruff's
+      defaults
 
     Each check returns a 0..1 score. ``HeuristicGrader`` aggregates
     them into one :class:`Score` per check name. No LLM calls — fully
     mechanical — so this grader is cheap and deterministic compared
     to the prose judge.
+
+    Trust posture: the grader runs LLM-generated code via subprocess
+    with the parent process's environment inherited (so e.g. API
+    keys leak through). v1's operator runs the harness on their own
+    machine against agents using their own API keys; the agents are
+    operator-trusted by design. If the harness is ever run in a
+    less-trusted operator context, the subprocess invocations should
+    move to a sandboxed env (scrubbed env vars, isolated venv,
+    network disabled) — which probably belongs in jig's
+    :mod:`jig.feedback.heuristic` ``Check`` machinery, not here.
     """
 
     def factory(_target: TargetConfig) -> Grader:
