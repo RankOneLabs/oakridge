@@ -15,6 +15,8 @@ v2 candidates once we have data on what the loop looks like in practice.
 from __future__ import annotations
 
 import asyncio
+import logging
+from pathlib import Path
 
 from legit_biz_club.coordination.proposal import (
     Proposal,
@@ -23,6 +25,8 @@ from legit_biz_club.coordination.proposal import (
 )
 from legit_biz_club.coordination.version import compute_version
 from legit_biz_club.core.models import Artifact, ArtifactType
+
+logger = logging.getLogger(__name__)
 
 
 class Mediator:
@@ -34,6 +38,7 @@ class Mediator:
         agent_ids: list[str],
         *,
         retry_budget: int = 3,
+        snapshot_dir: Path | None = None,
     ) -> None:
         if retry_budget <= 0:
             raise ValueError(
@@ -44,6 +49,16 @@ class Mediator:
         self._retry_remaining: dict[str, int] = {a: retry_budget for a in agent_ids}
         self._commit_counts: dict[str, int] = dict.fromkeys(agent_ids, 0)
         self._lock = asyncio.Lock()
+        # Per-commit snapshot dir. When set, every successful apply
+        # writes the new content to ``snapshot_dir/v{N:04d}.md`` so a
+        # post-mortem can inspect how the artifact evolved across
+        # commits. Best-effort observation: if the snapshot write
+        # fails, the apply still succeeds — the artifact on disk is
+        # source of truth, snapshots are observation.
+        self._snapshot_dir = snapshot_dir
+        self._snapshot_count = 0
+        if snapshot_dir is not None:
+            snapshot_dir.mkdir(parents=True, exist_ok=True)
 
     @property
     def commit_counts(self) -> dict[str, int]:
@@ -133,6 +148,13 @@ class Mediator:
                 self.artifact, content=proposal.new_content
             )
             self._commit_counts[agent_id] += 1
+            self._snapshot_count += 1
+            if self._snapshot_dir is not None:
+                await asyncio.to_thread(
+                    self._write_snapshot,
+                    self._snapshot_count,
+                    proposal.new_content,
+                )
             return ProposalOutcome(
                 proposal=proposal,
                 result=ProposalResult.APPLIED,
@@ -153,6 +175,25 @@ class Mediator:
         )
         tmp.write_text(content, encoding="utf-8")
         tmp.replace(self.artifact.path)
+
+    def _write_snapshot(self, n: int, content: str) -> None:
+        """Best-effort per-commit snapshot.
+
+        Failures here are logged and swallowed — the artifact on disk
+        is already the source of truth, and an observability sidecar
+        shouldn't fail the apply (which has already committed).
+        """
+        assert self._snapshot_dir is not None  # guarded at the call site
+        try:
+            path = self._snapshot_dir / f"v{n:04d}.md"
+            path.write_text(content, encoding="utf-8")
+        except OSError as e:
+            logger.warning(
+                "snapshot write failed (n=%d, dir=%s): %s",
+                n,
+                self._snapshot_dir,
+                e,
+            )
 
     def _reject_directory_code(self) -> None:
         """v1 supports file-based artifacts of either type

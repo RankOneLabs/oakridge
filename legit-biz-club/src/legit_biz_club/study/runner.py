@@ -187,7 +187,14 @@ async def run_cell(
         coordination_protocol=condition.coordination_protocol,
     )
     proposers: dict[str, Proposer] = {a.id: proposer_factory(a) for a in agents}
-    mediator = Mediator(project.artifact, [a.id for a in agents])
+    # Per-commit snapshots colocated with the final artifact so a
+    # post-mortem can diff the cell's evolution after the run. Best-
+    # effort observation; failure to snapshot doesn't fail the apply.
+    mediator = Mediator(
+        project.artifact,
+        [a.id for a in agents],
+        snapshot_dir=cell_dir / "commits",
+    )
 
     coordinator = ProjectCoordinator(
         project=project,

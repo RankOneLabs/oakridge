@@ -21,7 +21,9 @@ what events kbbl *would* receive once an interface is sketched out.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+import json
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from pathlib import Path
 
 from jig.tracing.stdout import StdoutTracer
@@ -43,19 +45,39 @@ CONDITION = ensemble_incremental_only(n=2)
 # the script is launched from.
 _REPO_LBC = Path(__file__).resolve().parent.parent
 RUN_ROOT = _REPO_LBC / ".run" / datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+# run_cell builds <output_dir>/<target.name>/<condition.name>/ — we
+# precompute that here so the events.jsonl tee writes alongside
+# draft.md and commits/.
+CELL_DIR = RUN_ROOT / TARGET.name / CONDITION.name
 
 
 # --- emit ------------------------------------------------------------
 
 
-async def _print_event(kind: str, payload: dict[str, object]) -> None:
-    """Stand-in for kbbl's workspace-event ingest.
+def _build_event_tee(
+    jsonl_path: Path,
+) -> Callable[[str, dict[str, object]], Awaitable[None]]:
+    """Build an emit callback that prints AND appends to a JSONL log.
 
-    The kbbl interface for these events is still an open question —
-    until we sketch one, surfacing the events to the terminal lets us
-    see the shape an operator would consume.
+    Live print stays for terminal visibility (``flush=True`` so it
+    streams when stdout is a pipe). The JSONL log is the durable
+    record — post-mortems shouldn't depend on terminal scrollback.
+
+    Each line: ``{"ts": iso8601, "kind": str, "payload": dict}``.
     """
-    print(f"[workspace_event] {kind} :: {payload}")
+    jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+
+    async def _emit(kind: str, payload: dict[str, object]) -> None:
+        record = {
+            "ts": datetime.now(UTC).isoformat(),
+            "kind": kind,
+            "payload": payload,
+        }
+        print(f"[workspace_event] {kind} :: {payload}", flush=True)
+        with jsonl_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record) + "\n")
+
+    return _emit
 
 
 # --- main ------------------------------------------------------------
@@ -66,14 +88,15 @@ def _proposer_factory(agent: Agent) -> JigProposer:
 
 
 async def main() -> None:
-    print(f"output dir: {RUN_ROOT}")
+    print(f"output dir: {RUN_ROOT}", flush=True)
+    print(f"cell dir:   {CELL_DIR}", flush=True)
     result = await run_cell(
         target=TARGET,
         condition=CONDITION,
         proposer_factory=_proposer_factory,
         output_dir=RUN_ROOT,
         tracer=StdoutTracer(color=True),
-        emit=_print_event,
+        emit=_build_event_tee(CELL_DIR / "events.jsonl"),
     )
     print()
     print("=" * 72)

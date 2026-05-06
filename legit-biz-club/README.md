@@ -48,7 +48,12 @@ cd legit-biz-club
 uv run python scripts/run_one_project.py
 ```
 
-The script's config block is hardcoded; edit-and-rerun is the iteration loop in v0. Output lands under `legit-biz-club/.run/<timestamp>/` (gitignored).
+The script's config block is hardcoded; edit-and-rerun is the iteration loop in v0. Output lands under `legit-biz-club/.run/<timestamp>/` (gitignored). Each cell directory contains:
+
+- `<artifact_filename>` — the final artifact
+- `commits/v0001.md`, `v0002.md`, ... — per-commit snapshots (one per successful apply, in order)
+- `events.jsonl` — workspace-event log (one line per event, with timestamp + kind + payload)
+- `agent_memory/` — per-agent SqliteStore files (currently unused by `JigProposer`; placeholder for v1.x)
 
 ## Architecture
 
