@@ -119,6 +119,11 @@ class IncrementalCoordinator:
 
     async def run(self) -> IncrementalRunResult:
         outcomes: list[ProposalOutcome] = []
+        # Recent applied versions, in apply order — feeds the
+        # termination policy so stability-aware policies (e.g.,
+        # KCommitsOrStable) can short-circuit when the artifact has
+        # been byte-identical for N consecutive applies.
+        applied_versions: list[str] = []
         await self._safe_emit(
             "incremental_started",
             {
@@ -131,7 +136,7 @@ class IncrementalCoordinator:
         terminated_by: str
         while True:
             if self.termination_policy.should_terminate(
-                self.mediator.commit_counts
+                self.mediator.commit_counts, applied_versions
             ):
                 terminated_by = "policy"
                 break
@@ -144,11 +149,13 @@ class IncrementalCoordinator:
                     continue
                 outcome = await self._step(agent)
                 outcomes.append(outcome)
+                if outcome.new_version is not None:
+                    applied_versions.append(outcome.new_version)
                 await self._emit_outcome(outcome)
                 # Re-check policy mid-round so we don't burn extra
                 # proposals after the policy fires.
                 if self.termination_policy.should_terminate(
-                    self.mediator.commit_counts
+                    self.mediator.commit_counts, applied_versions
                 ):
                     mid_round_terminated = True
                     break

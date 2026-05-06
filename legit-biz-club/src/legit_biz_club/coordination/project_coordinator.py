@@ -45,7 +45,7 @@ from legit_biz_club.coordination.round_budget import (
     StringEqualConvergence,
 )
 from legit_biz_club.coordination.termination import (
-    KCommitsPerAgent,
+    KCommitsOrStable,
     TerminationPolicy,
 )
 from legit_biz_club.core.models import Agent, CoordinationProtocol, Project
@@ -96,7 +96,12 @@ class ProjectCoordinator:
         self.agents = agents
         self.proposers = proposers
         self.mediator = mediator
-        self.termination_policy = termination_policy or KCommitsPerAgent()
+        # Default to the stability-aware policy: same upper bound as
+        # KCommitsPerAgent(k=5), but short-circuits when the artifact's
+        # last 3 commits are byte-identical (agents agreed, further
+        # commits are no-ops). Pass an explicit KCommitsPerAgent to opt
+        # into a fixed call budget for cross-condition cost comparison.
+        self.termination_policy = termination_policy or KCommitsOrStable()
         self.round_budget_policy = (
             round_budget_policy or StringEqualConvergence()
         )
