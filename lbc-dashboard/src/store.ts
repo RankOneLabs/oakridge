@@ -296,7 +296,12 @@ async function detectArtifactFilename(cellDir: string): Promise<string | null> {
   // The artifact lives at <cell_dir>/<artifact_filename>. We don't
   // know the filename a priori (target-dependent), so scan the dir
   // for the file that isn't a known sidecar.
-  const known = new Set(["events.jsonl", "commits", "agent_memory"]);
+  const known = new Set([
+    "events.jsonl",
+    "commits",
+    "agent_memory",
+    "eval_scores.json",
+  ]);
   try {
     const entries = await readdir(cellDir, { withFileTypes: true });
     for (const e of entries) {
@@ -320,12 +325,16 @@ async function countCommits(cellDir: string): Promise<number> {
 }
 
 /**
- * Read eval_scores.json sidecar. Returns null when absent or
- * malformed so the consumer can render an empty state without
- * having to distinguish "no grader was wired" from "grader wired
- * but produced an empty list" — the harness only writes the
- * sidecar when it has at least one score, so absent file IS the
- * "no grader" signal.
+ * Read eval_scores.json sidecar. Returns null when no scores were
+ * persisted for this cell — either the operator didn't wire a
+ * ``grader_factory``, or the grader ran but produced no scores.
+ * Per the harness contract (legit-biz-club README), consumers
+ * shouldn't distinguish those cases; both surface as "no scores."
+ *
+ * Also returns null when the file is malformed or its shape is
+ * wrong, and folds the degenerate "all entries failed coercion"
+ * case into null too — so the public contract is simply
+ * ``EvalScore[] (non-empty) | null``.
  */
 export async function readEvalScores(
   cellId: string,
@@ -357,7 +366,7 @@ export async function readEvalScores(
   // Defensive coercion — a malformed entry shouldn't break the
   // whole list. Drop entries that don't have the right keys; trust
   // the harness's writer for the rest.
-  return scores.flatMap((s: unknown) => {
+  const coerced = scores.flatMap((s: unknown) => {
     if (typeof s !== "object" || s === null) return [];
     const obj = s as { dimension?: unknown; value?: unknown; source?: unknown };
     if (
@@ -375,6 +384,7 @@ export async function readEvalScores(
       },
     ];
   });
+  return coerced.length > 0 ? coerced : null;
 }
 
 

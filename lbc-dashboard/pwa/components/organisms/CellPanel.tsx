@@ -112,13 +112,11 @@ function ScoresView({ scores }: { scores: EvalScore[] | null }) {
   if (scores === null) {
     return (
       <EmptyMessage>
-        No eval scores. Wire a <code>grader_factory</code> on{" "}
-        <code>run_cell</code> to populate this tab.
+        No eval scores were written for this cell — either no{" "}
+        <code>grader_factory</code> was wired on <code>run_cell</code>,
+        or the grader ran but produced no scores.
       </EmptyMessage>
     );
-  }
-  if (scores.length === 0) {
-    return <EmptyMessage>Grader ran but produced no scores.</EmptyMessage>;
   }
   const avg = scores.reduce((a, s) => a + s.value, 0) / scores.length;
   return (

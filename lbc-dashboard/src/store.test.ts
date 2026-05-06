@@ -172,6 +172,32 @@ describe("getCellDetail", () => {
     expect(detail!.events.length).toBe(2);
   });
 
+  test("ignores eval_scores.json when detecting the artifact filename", async () => {
+    // The artifact-detection scan walks the cell dir for the file
+    // that isn't a known sidecar. eval_scores.json must be in the
+    // sidecar allowlist or readdir's non-deterministic order can
+    // pick it as the artifact, hiding the real one.
+    const cellDir = await makeCell(
+      "2026-05-06T20-30-00Z",
+      "prose",
+      "incremental_n2",
+      [eventLine("incremental_started")],
+      { artifact: "# real artifact\n", commits: 1 },
+    );
+    await writeFile(
+      join(cellDir, "eval_scores.json"),
+      JSON.stringify({
+        scores: [{ dimension: "x", value: 0.5, source: "llm_judge" }],
+      }),
+      "utf-8",
+    );
+    const cells = await listCells();
+    const cell = cells.find((c) => c.run_ts === "2026-05-06T20-30-00Z");
+    expect(cell).toBeDefined();
+    const detail = await getCellDetail(cell!.cell_id);
+    expect(detail!.artifact_filename).toBe("draft.md");
+  });
+
   test("cell_id round-trips through encodeURIComponent + : delimiter", async () => {
     // Names containing the OLD ``__`` delimiter would have mis-split
     // before; the encode/decode round-trip preserves them. Also
