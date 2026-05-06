@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Multi-agent workspace built on jig and kbbl.",
-  "workspaces": ["kbbl"],
+  "workspaces": ["kbbl", "lbc-dashboard"],
   "scripts": {
     "typecheck": "bunx tsc --noEmit"
   }
