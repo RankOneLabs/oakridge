@@ -19,7 +19,7 @@ Localhost dashboard for `legit-biz-club` study runs. Read-only over `legit-biz-c
 Components live under `pwa/components/` and follow [Atomic Design](https://atomicdesign.bradfrost.com/chapter-2/):
 
 - `pwa/components/atoms/` — irreducible UI elements: `StatusPill`, `EmptyMessage`, `TabButton`
-- `pwa/components/molecules/` — small groups of atoms: `CellRow`, `EventRow`, `CommitCard`
+- `pwa/components/molecules/` — small groups of atoms: `CellRow`, `EventRow`, `CommitCard`, `ScoreRow`
 - `pwa/components/organisms/` — complex sections: `CellList`, `CellPanel`
 - `pwa/App.tsx` — top-level orchestrator (not under `components/`); wires hooks + state, renders organisms.
 

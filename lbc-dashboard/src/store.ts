@@ -6,6 +6,7 @@
  *     ├── <artifact_filename>     final artifact
  *     ├── events.jsonl            workspace event log (one JSON record/line)
  *     ├── commits/v0001.<ext> ... per-commit snapshots
+ *     ├── eval_scores.json        present when a grader was wired
  *     └── agent_memory/           per-agent SqliteStores (we ignore)
  *
  * Cell IDs are stable derivations of the on-disk path so they survive
@@ -19,6 +20,12 @@ export interface CellEvent {
   ts: string;
   kind: string;
   payload: Record<string, unknown>;
+}
+
+export interface EvalScore {
+  dimension: string;
+  value: number;
+  source: string;
 }
 
 export interface CellSummary {
@@ -311,6 +318,65 @@ async function countCommits(cellDir: string): Promise<number> {
     return 0;
   }
 }
+
+/**
+ * Read eval_scores.json sidecar. Returns null when absent or
+ * malformed so the consumer can render an empty state without
+ * having to distinguish "no grader was wired" from "grader wired
+ * but produced an empty list" — the harness only writes the
+ * sidecar when it has at least one score, so absent file IS the
+ * "no grader" signal.
+ */
+export async function readEvalScores(
+  cellId: string,
+): Promise<EvalScore[] | null> {
+  const parts = parseCellId(cellId);
+  if (parts === null) return null;
+  const path = join(
+    resolveRunRoot(),
+    parts.runTs,
+    parts.target,
+    parts.condition,
+    "eval_scores.json",
+  );
+  let raw: string;
+  try {
+    raw = await readFile(path, "utf-8");
+  } catch {
+    return null;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const scores = (parsed as { scores?: unknown }).scores;
+  if (!Array.isArray(scores)) return null;
+  // Defensive coercion — a malformed entry shouldn't break the
+  // whole list. Drop entries that don't have the right keys; trust
+  // the harness's writer for the rest.
+  return scores.flatMap((s: unknown) => {
+    if (typeof s !== "object" || s === null) return [];
+    const obj = s as { dimension?: unknown; value?: unknown; source?: unknown };
+    if (
+      typeof obj.dimension !== "string" ||
+      typeof obj.value !== "number" ||
+      typeof obj.source !== "string"
+    ) {
+      return [];
+    }
+    return [
+      {
+        dimension: obj.dimension,
+        value: obj.value,
+        source: obj.source,
+      },
+    ];
+  });
+}
+
 
 export async function readArtifact(cellId: string): Promise<string | null> {
   const parts = parseCellId(cellId);

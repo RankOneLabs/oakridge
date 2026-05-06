@@ -9,6 +9,7 @@ The dashboard is the v0 of the lbc operator surface. Future iterations grow into
 - Discovers cells under `legit-biz-club/.run/<ts>/<target>/<condition>/`
 - Tails each cell's `events.jsonl` over SSE so the page updates as the harness runs
 - Renders the current artifact (markdown), per-commit snapshots, and the workspace-event timeline
+- Eval scores tab: when a `grader_factory` was wired, shows per-dimension scores (with a value bar) and the average
 - Status pill: `active` / `ended` (heuristic on the events.jsonl tail)
 
 The Python harness writes everything to disk; the dashboard is purely a reader. There is no write surface — operators trigger cells from the terminal.
@@ -65,5 +66,5 @@ Cell URLs are stable. The hash carries a ``cell`` key whose value is the cell_id
 - **No write side** — no triggering or canceling runs from the UI.
 - **No multi-cell comparison view** — single-cell drilldown only. Cross-condition deltas + n-sweep aggregation is the next iteration.
 - **No commit diff viewer** — per-commit content shown standalone, not as an inline diff.
-- **No eval-score charts** — scores aren't yet surfaced (the harness writes them to `CellResult` but not to a sidecar file the dashboard can read; a small lbc-side change would expose them).
+- **No eval-score charts** — single-cell tab renders scores as a table; cross-cell aggregation / charting comes with the multi-cell view.
 - **No auth** — localhost-only.

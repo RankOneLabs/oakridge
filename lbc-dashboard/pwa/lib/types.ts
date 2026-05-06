@@ -33,4 +33,10 @@ export interface CommitSnapshot {
   content: string;
 }
 
-export type Tab = "events" | "artifact" | "commits";
+export interface EvalScore {
+  dimension: string;
+  value: number;
+  source: string;
+}
+
+export type Tab = "events" | "artifact" | "commits" | "scores";

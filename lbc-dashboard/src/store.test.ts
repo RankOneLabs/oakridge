@@ -11,7 +11,12 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { getCellDetail, listCells, readEvents } from "./store";
+import {
+  getCellDetail,
+  listCells,
+  readEvalScores,
+  readEvents,
+} from "./store";
 
 // parseCellId is intentionally NOT exported from store.ts (internal
 // helper). The path-traversal test below verifies rejection at the
@@ -212,6 +217,94 @@ describe("getCellDetail", () => {
     expect(await getCellDetail("a:b:c:d")).toBeNull();
     // Malformed percent-encoding shouldn't escape decodeURIComponent.
     expect(await getCellDetail("a:%E0%A4:c")).toBeNull();
+  });
+});
+
+describe("readEvalScores", () => {
+  test("parses well-formed sidecar", async () => {
+    const cellDir = await makeCell("2026-05-06T22-00-00Z", "p", "c", [
+      eventLine("incremental_started"),
+    ]);
+    await writeFile(
+      join(cellDir, "eval_scores.json"),
+      JSON.stringify({
+        scores: [
+          { dimension: "clarity", value: 0.9, source: "llm_judge" },
+          { dimension: "rigor", value: 0.6, source: "llm_judge" },
+        ],
+      }),
+      "utf-8",
+    );
+    const scores = await readEvalScores(
+      "2026-05-06T22-00-00Z:p:c",
+    );
+    expect(scores).not.toBeNull();
+    expect(scores!.length).toBe(2);
+    expect(scores![0]).toEqual({
+      dimension: "clarity",
+      value: 0.9,
+      source: "llm_judge",
+    });
+  });
+
+  test("returns null when sidecar is absent", async () => {
+    await makeCell("2026-05-06T22-30-00Z", "p", "c", [
+      eventLine("incremental_started"),
+    ]);
+    const scores = await readEvalScores(
+      "2026-05-06T22-30-00Z:p:c",
+    );
+    expect(scores).toBeNull();
+  });
+
+  test("returns null on malformed JSON", async () => {
+    const cellDir = await makeCell("2026-05-06T23-00-00Z", "p", "c", [
+      eventLine("incremental_started"),
+    ]);
+    await writeFile(
+      join(cellDir, "eval_scores.json"),
+      "not json at all",
+      "utf-8",
+    );
+    const scores = await readEvalScores(
+      "2026-05-06T23-00-00Z:p:c",
+    );
+    expect(scores).toBeNull();
+  });
+
+  test("filters out malformed score entries, keeps the rest", async () => {
+    // A row with the wrong types or missing keys shouldn't break
+    // the whole list — drop the bad entry, return the good ones.
+    // Same fail-soft posture as readEvents.
+    const cellDir = await makeCell("2026-05-06T23-30-00Z", "p", "c", [
+      eventLine("incremental_started"),
+    ]);
+    await writeFile(
+      join(cellDir, "eval_scores.json"),
+      JSON.stringify({
+        scores: [
+          { dimension: "good", value: 0.7, source: "llm_judge" },
+          { dimension: "bad-value-type", value: "high", source: "x" },
+          { dimension: "missing-source", value: 0.5 },
+          "totally not an object",
+          { dimension: "also-good", value: 0.4, source: "heuristic" },
+        ],
+      }),
+      "utf-8",
+    );
+    const scores = await readEvalScores(
+      "2026-05-06T23-30-00Z:p:c",
+    );
+    expect(scores).not.toBeNull();
+    expect(scores!.map((s) => s.dimension)).toEqual([
+      "good",
+      "also-good",
+    ]);
+  });
+
+  test("rejects path-traversal cell_ids", async () => {
+    expect(await readEvalScores("..:..:..")).toBeNull();
+    expect(await readEvalScores("a%2Fb:c:d")).toBeNull();
   });
 });
 
