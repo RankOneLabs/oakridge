@@ -9,7 +9,7 @@ The dashboard is the v0 of the lbc operator surface. Future iterations grow into
 - Discovers cells under `legit-biz-club/.run/<ts>/<target>/<condition>/`
 - Tails each cell's `events.jsonl` over SSE so the page updates as the harness runs
 - Renders the current artifact (markdown), per-commit snapshots, and the workspace-event timeline
-- Eval scores tab: when a `grader_factory` was wired, shows per-dimension scores (with a value bar) and the average
+- Eval scores tab: when `eval_scores.json` is present for the cell, shows per-dimension scores (with a value bar) and the average
 - Status pill: `active` / `ended` (heuristic on the events.jsonl tail)
 
 The Python harness writes everything to disk; the dashboard is purely a reader. There is no write surface — operators trigger cells from the terminal.

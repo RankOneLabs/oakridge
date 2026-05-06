@@ -53,12 +53,12 @@ app.get("/api/cells/:cellId/eval", async (c) => {
   const cellId = c.req.param("cellId");
   const cellDir = await resolveCellDir(cellId);
   if (cellDir === null) return c.json({ error: "not found" }, 404);
-  // ``scores: null`` means the sidecar is absent (no grader was
-  // wired). The frontend renders that as an empty state
-  // distinct from "grader wired, scores empty" (which the harness
-  // doesn't actually write either, but the API leaves room for it
-  // — an array would be the consumer signal that the grader did
-  // run but had nothing to report).
+  // ``scores`` is either a non-empty ``EvalScore[]`` or ``null``.
+  // ``null`` means no scores were persisted for this cell — either
+  // no grader was wired, or the grader ran but produced no scores.
+  // The harness writer skips zero-score sidecars and ``readEvalScores``
+  // folds any empty/all-malformed list back to ``null``, so an empty
+  // array never reaches the wire.
   const scores = await readEvalScores(cellId);
   return c.json({ scores });
 });

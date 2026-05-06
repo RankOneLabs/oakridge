@@ -6,7 +6,7 @@
  *     ├── <artifact_filename>     final artifact
  *     ├── events.jsonl            workspace event log (one JSON record/line)
  *     ├── commits/v0001.<ext> ... per-commit snapshots
- *     ├── eval_scores.json        present when a grader was wired
+ *     ├── eval_scores.json        present when grader-produced scores were persisted
  *     └── agent_memory/           per-agent SqliteStores (we ignore)
  *
  * Cell IDs are stable derivations of the on-disk path so they survive
