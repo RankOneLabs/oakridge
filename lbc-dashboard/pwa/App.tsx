@@ -15,6 +15,7 @@ import {
   useCommits,
 } from "./hooks/useCellResources";
 import { useCells } from "./hooks/useCells";
+import { useEvalScores } from "./hooks/useEvalScores";
 import { useHashSelection } from "./hooks/useHashSelection";
 import type { Tab } from "./lib/types";
 
@@ -38,6 +39,7 @@ export function App() {
   const detail = useCellDetail(selectedId, refreshKey);
   const artifact = useArtifact(selectedId, refreshKey);
   const commits = useCommits(selectedId, refreshKey);
+  const scores = useEvalScores(selectedId, refreshKey);
   const [tab, setTab] = useState<Tab>("events");
 
   // Auto-select the first cell on initial load if nothing's hashed.
@@ -59,6 +61,7 @@ export function App() {
             events={events}
             artifact={artifact}
             commits={commits}
+            scores={scores}
             tab={tab}
             onTab={setTab}
           />
