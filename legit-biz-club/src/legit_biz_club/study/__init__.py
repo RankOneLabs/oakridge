@@ -54,6 +54,10 @@ from legit_biz_club.study.targets import (
     code_target,
     prose_target,
 )
+from legit_biz_club.study.v1_targets import (
+    code_leetcode_longest_substring,
+    prose_substrate_thesis,
+)
 
 __all__ = [
     "CellMetrics",
@@ -66,10 +70,12 @@ __all__ = [
     "StudyResult",
     "TargetConfig",
     "aggregate",
+    "code_leetcode_longest_substring",
     "code_target",
     "ensemble_incremental_only",
     "ensemble_with_multi_round",
     "ensemble_with_single_round",
+    "prose_substrate_thesis",
     "prose_target",
     "run_cell",
     "run_study",
