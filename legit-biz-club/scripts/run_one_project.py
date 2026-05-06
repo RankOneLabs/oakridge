@@ -26,9 +26,18 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
+import numpy as np
+from jig.memory.local import SqliteStore
 from jig.tracing.stdout import StdoutTracer
 
-from legit_biz_club import Agent, JigProposer
+from legit_biz_club import (
+    Agent,
+    JigProposer,
+    MemoryCommitter,
+    OperatorConfidence,
+    make_sqlite_observation_loader,
+)
+from legit_biz_club.core.models import Project
 from legit_biz_club.study.conditions import ensemble_incremental_only
 from legit_biz_club.study.runner import run_cell
 from legit_biz_club.study.targets import prose_target
@@ -87,21 +96,92 @@ def _build_event_tee(
     return _emit
 
 
+# --- peer context loader ---------------------------------------------
+
+
+# Hardcoded "prior observations" the demo pre-populates into the
+# shared store before run_cell. In a real workflow these would have
+# been committed weeks ago by the operator after past projects ended.
+_DEMO_OBSERVATIONS: list[tuple[str, OperatorConfidence, list[str]]] = [
+    (
+        "you tend to bury the lede in introductions; lead with the claim",
+        OperatorConfidence.HIGH,
+        ["style"],
+    ),
+    (
+        "prior reviewers said your conclusions felt rushed — give them time",
+        OperatorConfidence.MEDIUM,
+        ["pattern"],
+    ),
+    (
+        "you over-cite when one concrete example would do",
+        OperatorConfidence.HIGH,
+        ["voice"],
+    ),
+]
+
+
+async def _stub_embed(_text: str) -> np.ndarray:
+    """SqliteStore wants an embedder for add(); contents don't matter
+    for the loader's metadata-filter path. Zero vector keeps the
+    smoke independent of an embedding service."""
+    return np.zeros(8, dtype=np.float32)
+
+
+def _build_peer_context_loader(store_path: Path):  # type: ignore[no-untyped-def]
+    """Return a peer_context_loader that uses the real
+    make_sqlite_observation_loader against a stable shared store.
+
+    The first time the loader sees an agent, it pre-populates the
+    store with synthetic prior observations attributed to THIS
+    runtime agent's id (so the loader's agent_id filter passes).
+    Subsequent calls for the same agent just read what's already
+    there. Demo-only: in production those observations would have
+    been written by MemoryCommitter at the end of past projects.
+    """
+    store = SqliteStore(db_path=str(store_path), embedder=_stub_embed)
+    inner_loader = make_sqlite_observation_loader(store)
+    seeded: set[str] = set()
+
+    async def _load(agent: Agent, project: Project) -> str:
+        if agent.id not in seeded:
+            committer = MemoryCommitter(agent, store)
+            for text, confidence, tags in _DEMO_OBSERVATIONS:
+                await committer.commit(
+                    project_id="prior-blog-post-2026-04",
+                    observation_text=text,
+                    operator_confidence=confidence,
+                    tags=tags,
+                )
+            seeded.add(agent.id)
+        return await inner_loader(agent, project)
+
+    return _load
+
+
 # --- main ------------------------------------------------------------
 
 
-def _proposer_factory(agent: Agent) -> JigProposer:
-    return JigProposer(agent)
+def _proposer_factory(agent: Agent, *, context: str = "") -> JigProposer:
+    return JigProposer(agent, context=context)
 
 
 async def main() -> None:
     print(f"output dir: {RUN_ROOT}", flush=True)
     print(f"cell dir:   {CELL_DIR}", flush=True)
+    # Stable shared store — outside the cell dir so the harness's
+    # per-cell rmtree(agent_memory) doesn't wipe it. In production
+    # this path would point at a long-lived per-agent store the
+    # operator has been writing observations into across projects.
+    shared_memory_path = RUN_ROOT / "shared-memory.db"
+    print(f"shared mem: {shared_memory_path}", flush=True)
+    peer_context_loader = _build_peer_context_loader(shared_memory_path)
     result = await run_cell(
         target=TARGET,
         condition=CONDITION,
         proposer_factory=_proposer_factory,
         output_dir=RUN_ROOT,
+        peer_context_loader=peer_context_loader,
         tracer=StdoutTracer(color=True),
         emit=_build_event_tee(CELL_DIR / "events.jsonl"),
     )
