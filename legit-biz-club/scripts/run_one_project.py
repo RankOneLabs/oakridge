@@ -42,12 +42,15 @@ TARGET = prose_target(
 CONDITION = ensemble_incremental_only(n=2)
 
 # Anchor the run dir at the repo's legit-biz-club/ regardless of where
-# the script is launched from. UTC + trailing 'Z' so the directory
-# name aligns with the UTC timestamps in events.jsonl — easier to
-# correlate during post-mortems.
+# the script is launched from. UTC + microseconds + trailing 'Z' so
+# the directory name aligns with the UTC timestamps in events.jsonl
+# (easier post-mortem correlation) AND two same-second launches in
+# the edit-and-rerun loop don't silently mix runs into one directory.
 _REPO_LBC = Path(__file__).resolve().parent.parent
 RUN_ROOT = (
-    _REPO_LBC / ".run" / datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
+    _REPO_LBC
+    / ".run"
+    / datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%S-%fZ")
 )
 # run_cell builds <output_dir>/<target.name>/<condition.name>/ — we
 # precompute that here so the events.jsonl tee writes alongside

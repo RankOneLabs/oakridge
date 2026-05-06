@@ -152,10 +152,16 @@ class IncrementalCoordinator:
                 if outcome.new_version is not None:
                     applied_versions.append(outcome.new_version)
                 await self._emit_outcome(outcome)
-                # Re-check policy mid-round so we don't burn extra
-                # proposals after the policy fires.
+                # Re-check policy mid-round on commit_counts only —
+                # NOT applied_versions. Stability checks fire only at
+                # round boundary so every agent in a round gets to
+                # propose; otherwise stability triggered by an earlier
+                # sequence would skip later agents in the same round
+                # and make commit_counts agent-order-dependent. The
+                # cost-saving payoff (skip the rest of an unproductive
+                # round) still kicks in next round-top check.
                 if self.termination_policy.should_terminate(
-                    self.mediator.commit_counts, applied_versions
+                    self.mediator.commit_counts
                 ):
                     mid_round_terminated = True
                     break

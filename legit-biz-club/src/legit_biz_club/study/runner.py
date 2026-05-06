@@ -47,6 +47,21 @@ from legit_biz_club.study.targets import TargetConfig
 logger = logging.getLogger(__name__)
 
 
+# Names that v1's harness colocates with the artifact inside the cell
+# directory. Reserving these as artifact_filename values keeps a
+# foot-shooting target spec from clobbering (or being clobbered by) a
+# sidecar — `commits/` would crash rmtree/mkdir, `agent_memory/`
+# would mix into per-agent SqliteStore files, `events.jsonl` would
+# get appended to by the driver's tee callback. The shared driver
+# script (`scripts/run_one_project.py`) writes events.jsonl, so the
+# reserved set covers script-level conventions too rather than just
+# lib-internal sidecars — operators inheriting that script don't have
+# to re-discover the collision.
+_RESERVED_CELL_DIR_NAMES: frozenset[str] = frozenset(
+    {"commits", "agent_memory", "events.jsonl"}
+)
+
+
 ProposerFactory = Callable[[Agent], Proposer]
 """Build a :class:`Proposer` for a single agent.
 
@@ -152,6 +167,12 @@ async def run_cell(
             f"{target.artifact_filename!r} contains path separators; "
             "v1 supports single-file artifacts only — directory-based "
             "CODE artifacts are v1.x"
+        )
+    if stripped in _RESERVED_CELL_DIR_NAMES:
+        raise ValueError(
+            f"target {target.name!r} artifact_filename "
+            f"{target.artifact_filename!r} collides with a reserved "
+            "sidecar name — pick a different filename"
         )
     artifact_path = cell_dir / stripped
     artifact_path.write_text(target.seed_content, encoding="utf-8")

@@ -282,6 +282,36 @@ async def test_run_cell_singleround_marks_escalation_even_when_converged(
     assert result.metrics.escalation_invoked is True
 
 
+async def test_run_cell_rejects_reserved_sidecar_filenames(
+    tmp_path: Path,
+) -> None:
+    """Sidecars (commits/, agent_memory/, events.jsonl) live in the
+    cell directory next to the artifact. A target whose
+    artifact_filename collides with one of them would either crash
+    the runner (commits/ rmtree on a file) or silently corrupt the
+    artifact (events.jsonl tee from the driver). Validate at
+    run_cell entry rather than waiting for the failure mode."""
+    import pytest
+
+    condition = single_agent_baseline()
+
+    def proposer_factory(_agent: Agent) -> _AppendingProposer:
+        return _AppendingProposer()
+
+    for reserved in ("commits", "agent_memory", "events.jsonl"):
+        target = prose_target(
+            artifact_filename=reserved, seed_content="seed"
+        )
+        with pytest.raises(ValueError, match="reserved sidecar"):
+            await run_cell(
+                target=target,
+                condition=condition,
+                proposer_factory=proposer_factory,
+                output_dir=tmp_path / reserved,  # fresh dir per attempt
+                tracer=StdoutTracer(color=False),
+            )
+
+
 async def test_run_cell_resets_commits_dir_between_runs(
     tmp_path: Path,
 ) -> None:
