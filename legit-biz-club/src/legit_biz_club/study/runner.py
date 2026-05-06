@@ -18,6 +18,7 @@ itself is LLM-agnostic.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import shutil
@@ -63,6 +64,15 @@ logger = logging.getLogger(__name__)
 # to re-discover the collision.
 _RESERVED_CELL_DIR_NAMES: frozenset[str] = frozenset(
     {"commits", "agent_memory", "events.jsonl", "eval_scores.json"}
+)
+# Casefolded copy for the membership check. The harness runs on
+# operator machines that may use case-insensitive filesystems
+# (macOS APFS by default, Windows NTFS), where ``Eval_Scores.json``
+# and ``eval_scores.json`` resolve to the same on-disk file. The
+# reserved-name guard has to reject both shapes or the foot-shoot
+# leaks back in on those filesystems.
+_RESERVED_CELL_DIR_NAMES_CASEFOLDED: frozenset[str] = frozenset(
+    n.casefold() for n in _RESERVED_CELL_DIR_NAMES
 )
 
 
@@ -188,7 +198,7 @@ async def run_cell(
             "v1 supports single-file artifacts only — directory-based "
             "CODE artifacts are v1.x"
         )
-    if stripped in _RESERVED_CELL_DIR_NAMES:
+    if stripped.casefold() in _RESERVED_CELL_DIR_NAMES_CASEFOLDED:
         raise ValueError(
             f"target {target.name!r} artifact_filename "
             f"{target.artifact_filename!r} collides with a reserved "
@@ -408,19 +418,26 @@ def _write_eval_scores_sidecar(
 
     Writes ``cell_dir/eval_scores.json`` with the shape::
 
-        {"scores": [{"dimension": ..., "value": ..., "source": ...}, ...]}
+        {"scores": [{"dimension": "...", "value": 0.95, "source": "llm_judge"}, ...]}
 
     The wrapper envelope (``{"scores": [...]}`` rather than a bare
     list) leaves room for future grader metadata — judge model id,
     grader run timestamp, rubric hash, etc. — without breaking the
-    consumer contract. Empty scores skips the write entirely; an
-    absent file means "no grader was wired" cleanly without consumers
-    having to special-case ``"scores": []``.
+    consumer contract.
 
-    Best-effort observability: if the write fails (disk full, permissions,
-    etc.) we log a warning and continue. The artifact itself and
-    ``CellResult.eval_scores`` in the returned object are still the
-    authoritative sources; the sidecar is the dashboard's read path.
+    Empty scores skips the write entirely. An absent file therefore
+    means "no scores were persisted" — either no grader was wired,
+    or the grader was wired but produced zero scores. Consumers
+    don't need to distinguish those cases (both render as the same
+    empty state).
+
+    Atomic write: serialize to a tmpfile in the same directory then
+    ``replace()`` so a concurrent reader (the dashboard) can't ever
+    observe a partially-written JSON. Same pattern as the mediator's
+    artifact write. Best-effort observability: if the write fails
+    (disk full, permissions, etc.) we log a warning and continue.
+    ``CellResult.eval_scores`` in the returned object is still
+    authoritative; the sidecar is the dashboard's read path.
     """
     if not scores:
         return
@@ -435,14 +452,20 @@ def _write_eval_scores_sidecar(
         ],
     }
     sidecar = cell_dir / "eval_scores.json"
+    tmp = sidecar.with_suffix(sidecar.suffix + ".tmp")
     try:
-        sidecar.write_text(
+        tmp.write_text(
             json.dumps(payload, indent=2) + "\n", encoding="utf-8"
         )
+        tmp.replace(sidecar)
     except OSError as e:
         logger.warning(
             "eval_scores sidecar write failed (path=%s): %s", sidecar, e
         )
+        # Best-effort cleanup of the orphan tmpfile if the write
+        # made it that far.
+        with contextlib.suppress(OSError):
+            tmp.unlink()
 
 
 def _summarize_metrics(run_result: ProjectRunResult) -> CellMetrics:

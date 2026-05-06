@@ -310,6 +310,39 @@ async def test_run_cell_rejects_reserved_sidecar_filenames(
             )
 
 
+async def test_run_cell_rejects_reserved_sidecar_filenames_case_insensitive(
+    tmp_path: Path,
+) -> None:
+    """The reserved-name check casefolds both sides so a target
+    named `Eval_Scores.json` (or any case variant) is rejected too.
+    On case-insensitive filesystems (macOS APFS, Windows NTFS) the
+    case-variant name resolves to the same on-disk file as its
+    lowercase counterpart, so a case-sensitive guard would let the
+    foot-shoot leak back in on those platforms."""
+    import pytest
+
+    condition = single_agent_baseline()
+    proposer_factory = stub_proposer_factory(_AppendingProposer)
+
+    for reserved in (
+        "Eval_Scores.json",
+        "EVAL_SCORES.JSON",
+        "Events.JSONL",
+        "Commits",
+    ):
+        target = prose_target(
+            artifact_filename=reserved, seed_content="seed"
+        )
+        with pytest.raises(ValueError, match="reserved sidecar"):
+            await run_cell(
+                target=target,
+                condition=condition,
+                proposer_factory=proposer_factory,
+                output_dir=tmp_path / reserved,
+                tracer=StdoutTracer(color=False),
+            )
+
+
 async def test_run_cell_resets_commits_dir_between_runs(
     tmp_path: Path,
 ) -> None:
@@ -507,9 +540,11 @@ async def test_run_cell_writes_eval_scores_sidecar(tmp_path: Path) -> None:
     """When the grader produces scores, run_cell drops them at
     cell_dir/eval_scores.json in a documented shape so the dashboard
     (and any other reader) can pick them up without re-running the
-    grader. Format: ``{"scores": [{"dimension", "value", "source"},
-    ...]}`` — wrapper envelope to leave room for future grader
-    metadata."""
+    grader. Format::
+
+        {"scores": [{"dimension": "...", "value": 0.7, "source": "llm_judge"}, ...]}
+
+    The wrapper envelope leaves room for future grader metadata."""
     import json
 
     target = prose_target(seed_content="seed")
