@@ -1,4 +1,5 @@
 import {
+  Fragment,
   memo,
   useCallback,
   useEffect,
@@ -1108,19 +1109,21 @@ function PendingUserBubble({
   }, [sentAt]);
   const slow = Date.now() - sentAt > 2000;
   return (
-    <div className="row row-user">
-      <div className="row-user-stack">
+    <>
+      {isLatest && (
+        <div className="row row-user">
+          <MessageTimestamp iso={new Date(sentAt).toISOString()} />
+        </div>
+      )}
+      <div className="row row-user">
         <div className="bubble bubble-user bubble-user-pending">
           {text}
           <span className="bubble-pending-tag">
             {slow ? "delivered · awaiting reply" : "sending…"}
           </span>
         </div>
-        {isLatest && (
-          <MessageTimestamp iso={new Date(sentAt).toISOString()} />
-        )}
       </div>
-    </div>
+    </>
   );
 }
 
@@ -1923,8 +1926,13 @@ function UserRow({
     const slash = parseSlashCommand(content);
     if (slash) {
       return (
-        <div className="row row-user">
-          <div className="row-user-stack">
+        <>
+          {isLatest && (
+            <div className="row row-user">
+              <MessageTimestamp iso={event.ts} />
+            </div>
+          )}
+          <div className="row row-user">
             <details className="bubble bubble-user bubble-user-slash">
               <summary>
                 <span className="bubble-slash-name">/{slash.name}</span>
@@ -1934,18 +1942,21 @@ function UserRow({
               </summary>
               <pre className="bubble-slash-body">{content}</pre>
             </details>
-            {isLatest && <MessageTimestamp iso={event.ts} />}
           </div>
-        </div>
+        </>
       );
     }
     return (
-      <div className="row row-user">
-        <div className="row-user-stack">
+      <>
+        {isLatest && (
+          <div className="row row-user">
+            <MessageTimestamp iso={event.ts} />
+          </div>
+        )}
+        <div className="row row-user">
           <div className="bubble bubble-user">{content}</div>
-          {isLatest && <MessageTimestamp iso={event.ts} />}
         </div>
-      </div>
+      </>
     );
   }
 
@@ -2003,16 +2014,20 @@ function AssistantRow({
         if (block.type === "text") {
           const showTs = isLatest && idx === lastTextIdx;
           return (
-            <div key={key} className="row row-assistant">
-              <div className="row-assistant-stack">
+            <Fragment key={key}>
+              {showTs && (
+                <div className="row row-assistant">
+                  <MessageTimestamp iso={event.ts} />
+                </div>
+              )}
+              <div className="row row-assistant">
                 <div className="bubble bubble-assistant">
                   <Markdown rehypePlugins={[rehypeSanitize]}>
                     {block.text}
                   </Markdown>
                 </div>
-                {showTs && <MessageTimestamp iso={event.ts} />}
               </div>
-            </div>
+            </Fragment>
           );
         }
         if (block.type === "thinking") {

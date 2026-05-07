@@ -283,7 +283,8 @@ body {
 .row-thinking summary:focus-visible,
 .tool-batch-summary:focus-visible,
 .tool-entry summary:focus-visible,
-.bubble-user-slash > summary:focus-visible {
+.bubble-user-slash > summary:focus-visible,
+.metrics-summary:focus-visible {
   outline: 2px solid var(--accent-blue);
   outline-offset: 2px;
 }
@@ -1125,34 +1126,18 @@ body {
   letter-spacing: 0.02em;
 }
 
-/* Stack a bubble + its timestamp tag vertically so the tag aligns under
-   the bubble's edge instead of the row's edge. Only the bottom-most
-   message renders a timestamp, so this stack is mostly a no-op wrapper
-   around the bubble itself. */
-.row-user-stack {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  max-width: 80%;
-  gap: 0.2rem;
-}
-.row-assistant-stack {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  max-width: 80%;
-  gap: 0.2rem;
-}
-.row-user-stack .bubble,
-.row-assistant-stack .bubble {
-  max-width: 100%;
-}
+/* Timestamp pinned under only the bottom-most message bubble. Rendered as
+   its own sibling row directly after the bubble row — .row-user /
+   .row-assistant already handle the left/right alignment via
+   justify-content, so the tag lands under the correct bubble edge without
+   wrapping the bubble in a layout that would override its max-width. */
 .bubble-ts {
   font-size: 0.7rem;
   color: var(--text-muted);
   font-family: "SF Mono", Menlo, monospace;
   padding: 0 0.4rem;
   letter-spacing: 0.02em;
+  margin-bottom: -0.25rem;
 }
 
 /* === metrics strip === */
