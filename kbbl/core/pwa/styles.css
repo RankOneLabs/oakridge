@@ -1125,6 +1125,123 @@ body {
   letter-spacing: 0.02em;
 }
 
+/* Stack a bubble + its timestamp tag vertically so the tag aligns under
+   the bubble's edge instead of the row's edge. Only the bottom-most
+   message renders a timestamp, so this stack is mostly a no-op wrapper
+   around the bubble itself. */
+.row-user-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  max-width: 80%;
+  gap: 0.2rem;
+}
+.row-assistant-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  max-width: 80%;
+  gap: 0.2rem;
+}
+.row-user-stack .bubble,
+.row-assistant-stack .bubble {
+  max-width: 100%;
+}
+.bubble-ts {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-family: "SF Mono", Menlo, monospace;
+  padding: 0 0.4rem;
+  letter-spacing: 0.02em;
+}
+
+/* === metrics strip === */
+.metrics-strip {
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-app);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-family: "SF Mono", Menlo, monospace;
+}
+.metrics-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.85rem;
+  padding: 0.4rem 0.6rem;
+  cursor: pointer;
+  list-style: none;
+  min-height: 36px;
+}
+.metrics-summary::-webkit-details-marker {
+  display: none;
+}
+.metrics-summary::before {
+  content: "▸";
+  opacity: 0.6;
+  flex-shrink: 0;
+  transition: transform 0.12s ease-out;
+}
+.metrics-strip[open] > .metrics-summary::before {
+  transform: rotate(90deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .metrics-summary::before {
+    transition: none;
+  }
+}
+.metric {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  white-space: nowrap;
+}
+.metric-label {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.65rem;
+  opacity: 0.7;
+}
+.metric-value {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.metric-sep {
+  opacity: 0.4;
+}
+.metrics-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  padding: 0.5rem 0.8rem 0.7rem 1.4rem;
+  border-top: 1px dashed var(--border-subtle);
+}
+.metrics-detail-section {
+  min-width: 12rem;
+}
+.metrics-detail-heading {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.65rem;
+  opacity: 0.7;
+  margin-bottom: 0.3rem;
+}
+.metrics-detail dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.15rem 0.8rem;
+  margin: 0;
+}
+.metrics-detail dt {
+  opacity: 0.75;
+}
+.metrics-detail dd {
+  margin: 0;
+  color: var(--text-secondary);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 .thinking-indicator {
   display: inline-flex;
   align-items: center;
