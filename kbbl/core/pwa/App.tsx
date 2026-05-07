@@ -769,10 +769,18 @@ function formatRelative(iso: string): string {
   return `${days}d ago`;
 }
 
+// Module-scope formatter so the hover tooltip is locale-stable (seconds and
+// time zone always present) and we don't spin up a new Intl instance per
+// timestamp render. `medium` time style includes seconds across locales.
+const exactTimeFormatter = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "medium",
+  timeZoneName: "short",
+});
 function formatExactTime(iso: string): string {
   const t = Date.parse(iso);
   if (!Number.isFinite(t)) return iso;
-  return new Date(t).toLocaleString();
+  return exactTimeFormatter.format(t);
 }
 
 function MessageTimestamp({ iso }: { iso: string }) {
@@ -1277,7 +1285,7 @@ function MetricsStrip({ events }: { events: EnvelopeEvent[] }) {
     <details className="metrics-strip">
       <summary className="metrics-summary">
         {last && (
-          <span className="metric" title="Last turn billed tokens (input + cache_creation + output)">
+          <span className="metric" title="Last turn input (incl. cache creation) → output tokens">
             <span className="metric-label">last</span>
             <span className="metric-value">
               {fmtTokensCompact(last.inT + last.cacheCreate)}→
