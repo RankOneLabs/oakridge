@@ -241,7 +241,17 @@ def make_leetcode_longest_substring_grader_factory() -> GraderFactory:
     :mod:`jig.feedback.heuristic` ``Check`` machinery, not here.
     """
 
-    def factory(_target: TargetConfig) -> Grader:
+    def factory(target: TargetConfig) -> Grader:
+        # Wiring guard: each factory ships its own test-file string,
+        # so routing the wrong target through this factory would
+        # silently grade against the longest-substring tests. Fail
+        # loud at factory call time rather than burying the mismatch
+        # in test failures the operator has to diff manually.
+        if target.name != "code_leetcode_longest_substring":
+            raise ValueError(
+                f"longest-substring grader factory called with "
+                f"target {target.name!r}"
+            )
         return _LeetcodeMechanicalGrader(
             test_file_content=_LEETCODE_TEST_FILE
         )
@@ -455,7 +465,13 @@ def make_leetcode_regex_matching_grader_factory() -> GraderFactory:
     the 0..1 range rather than clustering at the ceiling.
     """
 
-    def factory(_target: TargetConfig) -> Grader:
+    def factory(target: TargetConfig) -> Grader:
+        # Wiring guard — see longest-substring factory for rationale.
+        if target.name != "code_leetcode_regex_matching":
+            raise ValueError(
+                f"regex-matching grader factory called with "
+                f"target {target.name!r}"
+            )
         return _LeetcodeMechanicalGrader(
             test_file_content=_REGEX_MATCHING_TEST_FILE
         )
@@ -474,7 +490,13 @@ def make_leetcode_trapping_rain_water_grader_factory() -> GraderFactory:
     naive implementations.
     """
 
-    def factory(_target: TargetConfig) -> Grader:
+    def factory(target: TargetConfig) -> Grader:
+        # Wiring guard — see longest-substring factory for rationale.
+        if target.name != "code_leetcode_trapping_rain_water":
+            raise ValueError(
+                f"trapping-rain-water grader factory called with "
+                f"target {target.name!r}"
+            )
         return _LeetcodeMechanicalGrader(
             test_file_content=_TRAPPING_RAIN_WATER_TEST_FILE
         )
