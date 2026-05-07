@@ -1250,8 +1250,11 @@ function fmtDuration(ms: number): string {
   if (!ms) return "";
   if (ms < 1000) return `${ms}ms`;
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
-  const mins = Math.floor(ms / 60_000);
-  const secs = Math.round((ms % 60_000) / 1000);
+  // Round to total seconds first, then split — splitting independently lets
+  // the seconds round up to 60 and produce strings like "1m60s".
+  const totalSec = Math.round(ms / 1000);
+  const mins = Math.floor(totalSec / 60);
+  const secs = totalSec % 60;
   return `${mins}m${secs.toString().padStart(2, "0")}s`;
 }
 

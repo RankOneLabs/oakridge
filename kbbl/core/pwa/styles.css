@@ -1126,10 +1126,10 @@ body {
   letter-spacing: 0.02em;
 }
 
-/* Timestamp pinned under only the bottom-most message bubble. Rendered as
-   its own sibling row directly after the bubble row — .row-user /
+/* Timestamp pinned above only the bottom-most message bubble. Rendered as
+   its own sibling row directly before the bubble row — .row-user /
    .row-assistant already handle the left/right alignment via
-   justify-content, so the tag lands under the correct bubble edge without
+   justify-content, so the tag lands above the correct bubble edge without
    wrapping the bubble in a layout that would override its max-width. */
 .bubble-ts {
   font-size: 0.7rem;
