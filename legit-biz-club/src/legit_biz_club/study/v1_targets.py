@@ -7,12 +7,16 @@ Per the design memo's two-domain v1 test:
   facts inline so models don't fall back on training-data priors and
   invent coordination modes the system doesn't have.
 - Code domain: leetcode-shaped problems with mechanical graders.
-  Two targets:
+  Three targets:
   - longest-substring (#3) — sliding window classic, easy to solve;
     works as a smoke target to verify the grader path runs.
   - trapping-rain-water (#42) — Hard tier, multiple valid approaches
     (two-pointer, DP, stack); enough complexity that cheap models
     partially fail and the rubric has room to discriminate.
+  - regex-matching (#10) — Hard tier, ``.`` and ``*`` matching
+    against the entire input. Adversarial pattern cases (greedy
+    backtracking, empty-pattern corners) push cells across the 0..1
+    score range rather than clustering at the ceiling.
 
 Generic :func:`legit_biz_club.study.targets.prose_target` and
 :func:`legit_biz_club.study.targets.code_target` stay as the API
@@ -142,12 +146,13 @@ _CODE_LEETCODE_LONGEST_SUBSTRING_TARGET_SPEC = (
     "  ''         → 0\n"
     "  'au'       → 2\n"
     "  ' '        → 1  (single space is one character)\n"
-    "  'dvdf'     → 3  (longest: 'vdf')\n\n"
+    "  'dvdf'     → 3  (longest: 'vdf')\n"
+    "  'Aa'       → 2  (case-sensitive)\n\n"
     "The function must:\n"
     "  - Accept any string including empty, single-character, or "
     "whitespace\n"
     "  - Return 0 for empty input\n"
-    "  - Be case-sensitive ('Aa' → 2)\n"
+    "  - Be case-sensitive\n"
     "  - Treat Unicode characters as single units\n\n"
     "Recommended approach: O(n) sliding window with a dict mapping "
     "character → last-seen index. Brute force O(n²) also "
@@ -182,10 +187,9 @@ def code_leetcode_longest_substring() -> TargetConfig:
     brief = Brief(
         target_spec=_CODE_LEETCODE_LONGEST_SUBSTRING_TARGET_SPEC,
         success_criteria=[
-            "function passes all 7 example test cases above",
+            "function passes all 8 example test cases above",
             "type-checks under strict mypy (no Any in the function "
             "signature)",
-            "runtime is O(n) or O(n²) — no worse",
         ],
         constraints=[
             "single file, single function — no helper classes",
@@ -320,8 +324,6 @@ def code_leetcode_regex_matching() -> TargetConfig:
             "single file, single function — no helper classes, but "
             "internal recursive helpers / memo dicts are fine",
             "no third-party imports (typing and functools are fine)",
-            "no use of Python's `re` module — implement the matcher "
-            "yourself; using `re.fullmatch` defeats the purpose",
         ],
     )
     return code_target(
@@ -352,7 +354,6 @@ def code_leetcode_trapping_rain_water() -> TargetConfig:
             "function passes all 11 canonical test cases",
             "type-checks under strict mypy (no Any in the function "
             "signature)",
-            "runtime is O(n) — both two-pointer and DP achieve this",
         ],
         constraints=[
             "single file, single function — no helper classes",

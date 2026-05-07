@@ -10,11 +10,12 @@ a corresponding grader factory:
   a judge LLM with a sensible default; operator overrides for
   production studies (the judge should be distinct from the writer
   pool).
-- :func:`make_leetcode_longest_substring_grader_factory` and
-  :func:`make_leetcode_trapping_rain_water_grader_factory` — both
+- :func:`make_leetcode_longest_substring_grader_factory`,
+  :func:`make_leetcode_trapping_rain_water_grader_factory`, and
+  :func:`make_leetcode_regex_matching_grader_factory` — all three
   wrap a generic mechanical grader that materializes the artifact +
   a per-target test file + a stub pyproject.toml into a tmpdir,
-  then runs pytest + mypy. The two factories share the grader; only
+  then runs pytest + mypy. The factories share the grader; only
   the test file string differs.
 
   Lint (ruff) was removed from the leetcode pipeline: the brief told
@@ -166,8 +167,8 @@ def test_case_sensitive_aa() -> None:
 
 class _LeetcodeMechanicalGrader:
     """Grader that materializes the artifact + a per-target test file
-    into a tmpdir, then runs pytest / mypy / ruff against it via
-    jig's :class:`HeuristicGrader`.
+    into a tmpdir, then runs pytest / mypy against it via jig's
+    :class:`HeuristicGrader`.
 
     Test-file content is injected at construction so the same grader
     class serves any leetcode-shaped target (longest-substring,
@@ -466,8 +467,8 @@ def make_leetcode_trapping_rain_water_grader_factory() -> GraderFactory:
     """Build a grader factory for :func:`code_leetcode_trapping_rain_water`.
 
     Same mechanical pipeline as the longest-substring factory
-    (pytest + mypy + ruff against solution.py in a tmpdir), only the
-    test file string differs — 11 canonical trapping-rain-water cases
+    (pytest + mypy against solution.py in a tmpdir), only the test
+    file string differs — 11 canonical trapping-rain-water cases
     covering the standard examples plus edge cases (empty, single,
     two-element, flat, monotonic, pyramid, multi-basin) that trip
     naive implementations.

@@ -34,6 +34,8 @@ import asyncio
 import dataclasses
 import json
 import sys
+import tempfile
+import traceback
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -206,18 +208,20 @@ _REPO_LBC = Path(__file__).resolve().parent.parent
 
 
 def _fresh_run_root() -> Path:
-    """Return a fresh ``.run/<ISO microsecond>/`` path under the repo.
+    """Return a fresh ``.run/<ISO microsecond>-<rand>/`` path under the repo.
 
-    Microsecond-precision timestamps disambiguate consecutive
-    replicates without colliding on the runner's reserved sidecar
-    children. UTC + trailing 'Z' aligns with events.jsonl timestamps
-    for post-mortem correlation.
+    ``tempfile.mkdtemp`` atomically creates a uniquely-named directory
+    so two invocations that land on the same microsecond (e.g., the
+    operator running the script twice in different terminals) don't
+    silently merge into one run-root. The timestamp prefix preserves
+    chronological sort order; the random suffix is short and ignored
+    by glob patterns. UTC + trailing 'Z' aligns with events.jsonl
+    timestamps for post-mortem correlation.
     """
-    return (
-        _REPO_LBC
-        / ".run"
-        / datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%S-%fZ")
-    )
+    base = _REPO_LBC / ".run"
+    base.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%S-%fZ")
+    return Path(tempfile.mkdtemp(prefix=f"{ts}-", dir=base))
 
 
 # --- argparse --------------------------------------------------------
@@ -405,7 +409,6 @@ async def main() -> int:
 
     for replicate_idx in range(1, args.replicates + 1):
         run_root = _fresh_run_root()
-        run_root.mkdir(parents=True, exist_ok=True)
         run_roots.append(run_root)
         # Shared peer-context store at run-root (not inside any cell
         # dir) so the harness's per-cell agent_memory rmtree doesn't
@@ -422,6 +425,12 @@ async def main() -> int:
             for condition in conditions:
                 cell_dir = run_root / target.name / condition.name
                 events_path = cell_dir / "events.jsonl"
+                # Build the emit once so the except path can reuse it
+                # to write a durable cell_failed record (the dashboard
+                # can then distinguish "failed early" from "never
+                # started" — without this, a crash before run_cell
+                # emitted anything leaves an empty/missing JSONL).
+                emit = _build_event_tee(events_path)
                 cell_label = f"{target.name} × {condition.name}"
                 print(
                     f"{rep_label} starting: {cell_label}",
@@ -436,10 +445,20 @@ async def main() -> int:
                         peer_context_loader=peer_context_loader,
                         grader_factory=grader_factory,
                         tracer=StdoutTracer(color=True),
-                        emit=_build_event_tee(events_path),
+                        emit=emit,
                     )
                 except Exception as exc:  # noqa: BLE001
                     cells_failed += 1
+                    await emit(
+                        "cell_failed",
+                        {
+                            "target": target.name,
+                            "condition": condition.name,
+                            "replicate": replicate_idx,
+                            "error_repr": repr(exc),
+                            "traceback": traceback.format_exc(),
+                        },
+                    )
                     msg = f"{rep_label} FAILED: {cell_label}: {exc!r}"
                     failures.append(msg)
                     print(msg, flush=True)
