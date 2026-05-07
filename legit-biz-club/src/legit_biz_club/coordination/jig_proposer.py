@@ -92,7 +92,7 @@ When you respond, place your proposal inside these tags:
 <proposal_new_content>
 The full proposed next version of the artifact, exactly as it should
 appear. Write the content verbatim — no escaping, no formatting
-transformations. Whatever is between the tags becomes the artifact.
+transformations.
 </proposal_new_content>
 <proposal_rationale>
 One or two sentences explaining what you changed and why.
@@ -100,6 +100,13 @@ One or two sentences explaining what you changed and why.
 
 The rationale tag is optional but recommended. Do not place anything
 inside the new_content tag that isn't part of the artifact itself.
+
+Newline handling: one newline immediately after the opening tag and
+one immediately before the closing tag are treated as formatting and
+stripped. Everything else between the tags — internal whitespace,
+indentation, blank lines — is preserved exactly. If your artifact is
+meant to begin or end with a blank line, emit two newlines at that
+boundary so one survives the strip.
 """
 
 
@@ -326,8 +333,11 @@ def _parse_response(content: str) -> dict[str, str]:
     Sentinel-tag transport replaced an earlier JSON-envelope shape
     that consistently failed on prose artifacts containing literal
     double quotes (paper titles, dialogue) — JSON requires escaping
-    those, and models routinely don't. Tag-bounded content is taken
-    verbatim, sidestepping that entire failure class.
+    those, and models routinely don't. Tag-bounded content is
+    preserved exactly except for one optional framing newline
+    adjacent to each tag (see comment by the body extraction below);
+    that single normalization is documented in the prompt so models
+    can compensate when they need a leading/trailing blank line.
     """
     # finditer + take-last so a preamble that mentions both opening
     # and closing tags before the real proposal doesn't capture the
@@ -368,11 +378,16 @@ def _parse_response(content: str) -> dict[str, str]:
         _maybe_dump_failed_output(content, reason)
         raise ProposerOutputParseError(reason)
     normalized: dict[str, str] = {"new_content": new_content}
-    rationale_matches = list(_RATIONALE_RE.finditer(content))
-    if rationale_matches:
+    # Scope rationale search to AFTER the chosen new_content block —
+    # otherwise a rationale tag in a preamble (or paired with an
+    # earlier dummy new_content block) could pair with a later real
+    # new_content and silently mislead the operator. Default to
+    # empty rationale if the model didn't emit one alongside the
+    # real proposal.
+    rationale_match = _RATIONALE_RE.search(content, pos=new_match.end())
+    if rationale_match is not None:
         rationale = (
-            rationale_matches[-1]
-            .group("body")
+            rationale_match.group("body")
             .removeprefix("\n")
             .removesuffix("\n")
         )

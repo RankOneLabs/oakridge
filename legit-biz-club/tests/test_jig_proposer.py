@@ -16,6 +16,7 @@ tests don't make real API calls. Covers:
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -358,6 +359,40 @@ async def test_parse_failure_when_new_content_tag_is_empty(
             current_content="seed",
             current_version="v0",
         )
+
+
+async def test_parse_failure_writes_debug_dump_when_env_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When ``LBC_PROPOSER_DEBUG_DIR`` is set, a parse failure writes
+    a ``parse-fail-<ts>.txt`` dump to that directory containing the
+    failure reason and the raw model output. Created with mode 0o600
+    on POSIX so the dump (which can hold sensitive artifact content)
+    isn't readable by other users on shared hosts."""
+    debug_dir = tmp_path / "debug-dumps"
+    monkeypatch.setenv("LBC_PROPOSER_DEBUG_DIR", str(debug_dir))
+
+    agent = _agent(tmp_path)
+    stub = _StubLLM(response_content="no tags here")
+    proposer = JigProposer(agent, llm=stub)
+
+    with pytest.raises(ProposerOutputParseError):
+        await proposer.propose(
+            agent=agent,
+            brief=_brief(),
+            artifact=_artifact(tmp_path),
+            current_content="seed",
+            current_version="v0",
+        )
+
+    dumps = list(debug_dir.glob("parse-fail-*.txt"))
+    assert len(dumps) == 1
+    body = dumps[0].read_text(encoding="utf-8")
+    assert "missing <proposal_new_content> sentinel tag" in body
+    assert "no tags here" in body
+
+    if os.name == "posix":
+        assert (dumps[0].stat().st_mode & 0o777) == 0o600
 
 
 # --- prompt assembly ----------------------------------------------------
