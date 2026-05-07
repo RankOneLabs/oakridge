@@ -3,12 +3,14 @@
 Uses a stub :class:`LLMClient` (injected via the ``llm`` kwarg) so
 tests don't make real API calls. Covers:
 
-- Happy path: stub returns valid JSON envelope, propose() yields the
-  expected :class:`Proposal`.
+- Happy path: stub returns sentinel-tagged output, propose() yields
+  the expected :class:`Proposal`.
 - Bound-agent invariant: passing a different agent to a
   :class:`JigProposer` raises.
-- Parse failure paths: non-JSON, JSON-but-not-an-object, missing
-  ``new_content``.
+- Parse failure paths: missing required tag, empty tag content.
+- Tolerance: surrounding prose, markdown framing, literal double
+  quotes inside tags (the bug class that motivated the sentinel-tag
+  switch from the prior JSON envelope).
 - System-prompt assembly: frame appended when present.
 - User-message assembly: peer proposals included when supplied.
 """
@@ -52,6 +54,18 @@ class _StubLLM(LLMClient):
         )
 
 
+def _tagged(new_content: str, rationale: str | None = None) -> str:
+    """Build a sentinel-tag response body. Keeps tests readable."""
+    parts = [
+        f"<proposal_new_content>\n{new_content}\n</proposal_new_content>"
+    ]
+    if rationale is not None:
+        parts.append(
+            f"<proposal_rationale>\n{rationale}\n</proposal_rationale>"
+        )
+    return "\n".join(parts)
+
+
 def _agent(tmp_path: Path, *, frame: str | None = None) -> Agent:
     return Agent(
         name="alice",
@@ -79,12 +93,11 @@ def _artifact(tmp_path: Path) -> Artifact:
 # --- happy path ----------------------------------------------------------
 
 
-async def test_propose_returns_proposal_from_json(tmp_path: Path) -> None:
+async def test_propose_returns_proposal_from_tags(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
     stub = _StubLLM(
-        response_content=(
-            '{"new_content": "the revised paragraph", '
-            '"rationale": "tightened wording"}'
+        response_content=_tagged(
+            "the revised paragraph", rationale="tightened wording"
         )
     )
     proposer = JigProposer(agent, llm=stub)
@@ -105,13 +118,11 @@ async def test_propose_returns_proposal_from_json(tmp_path: Path) -> None:
 async def test_propose_passes_max_tokens_through_to_llm(tmp_path: Path) -> None:
     """The max_tokens kwarg has to actually reach CompletionParams,
     not silently default to jig's adapter floor (4096) which truncates
-    larger artifact rewrites mid-JSON. The default of 8192 — and any
+    larger artifact rewrites mid-output. The default of 8192 — and any
     operator override — is load-bearing for cells where the artifact
     grows past a few KB."""
     agent = _agent(tmp_path)
-    stub = _StubLLM(
-        response_content='{"new_content": "x", "rationale": "y"}'
-    )
+    stub = _StubLLM(response_content=_tagged("x", rationale="y"))
     # Default: 8192.
     proposer = JigProposer(agent, llm=stub)
     await proposer.propose(
@@ -125,9 +136,7 @@ async def test_propose_passes_max_tokens_through_to_llm(tmp_path: Path) -> None:
     assert stub.last_params.max_tokens == 8192
 
     # Override flows through.
-    stub2 = _StubLLM(
-        response_content='{"new_content": "x", "rationale": "y"}'
-    )
+    stub2 = _StubLLM(response_content=_tagged("x", rationale="y"))
     proposer2 = JigProposer(agent, llm=stub2, max_tokens=32000)
     await proposer2.propose(
         agent=agent,
@@ -140,9 +149,9 @@ async def test_propose_passes_max_tokens_through_to_llm(tmp_path: Path) -> None:
     assert stub2.last_params.max_tokens == 32000
 
 
-async def test_propose_tolerates_missing_rationale(tmp_path: Path) -> None:
+async def test_propose_tolerates_missing_rationale_tag(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    stub = _StubLLM(response_content='{"new_content": "x"}')
+    stub = _StubLLM(response_content=_tagged("x"))  # no rationale tag
     proposer = JigProposer(agent, llm=stub)
     proposal = await proposer.propose(
         agent=agent,
@@ -155,10 +164,12 @@ async def test_propose_tolerates_missing_rationale(tmp_path: Path) -> None:
     assert proposal.rationale == ""
 
 
-async def test_propose_tolerates_whitespace_around_json(tmp_path: Path) -> None:
+async def test_propose_tolerates_whitespace_around_response(
+    tmp_path: Path,
+) -> None:
     agent = _agent(tmp_path)
     stub = _StubLLM(
-        response_content='   \n{"new_content": "padded"}   \n'
+        response_content=f"   \n{_tagged('padded')}\n   \n"
     )
     proposer = JigProposer(agent, llm=stub)
     proposal = await proposer.propose(
@@ -182,7 +193,7 @@ async def test_rejects_different_agent(tmp_path: Path) -> None:
         system_prompt="x",
         memory_db_path=tmp_path / "bob.db",
     )
-    stub = _StubLLM(response_content='{"new_content": "x"}')
+    stub = _StubLLM(response_content=_tagged("x"))
     proposer = JigProposer(bound_agent, llm=stub)
     with pytest.raises(ValueError, match="bound to agent"):
         await proposer.propose(
@@ -194,69 +205,99 @@ async def test_rejects_different_agent(tmp_path: Path) -> None:
         )
 
 
+# --- tag tolerance (the motivating bug class) ---------------------------
+
+
+async def test_parse_tolerates_unescaped_double_quotes_in_content(
+    tmp_path: Path,
+) -> None:
+    """The motivating bug: prose artifacts citing papers with
+    double-quoted titles (e.g., Yunkaporta '(Non-)Human Coordination
+    Dynamics') tripped the prior JSON envelope when the model didn't
+    escape inner quotes. Sentinel tags take content verbatim, so this
+    must round-trip unchanged."""
+    agent = _agent(tmp_path)
+    artifact_with_quotes = (
+        'See Yunkaporta et al.\'s "(Non-)Human Coordination Dynamics" '
+        '(2026) for background. Other quoted strings: "hello", "world".'
+    )
+    stub = _StubLLM(
+        response_content=_tagged(
+            artifact_with_quotes, rationale="added citation"
+        )
+    )
+    proposer = JigProposer(agent, llm=stub)
+    proposal = await proposer.propose(
+        agent=agent,
+        brief=_brief(),
+        artifact=_artifact(tmp_path),
+        current_content="seed",
+        current_version="v0",
+    )
+    assert proposal.new_content == artifact_with_quotes
+
+
+async def test_parse_tolerates_surrounding_prose(tmp_path: Path) -> None:
+    """Models sometimes prepend framing prose (\"Here's my proposal:\")
+    before the tags. Sentinel tags are unambiguous boundaries, so
+    surrounding chatter is harmless — extract the tagged content and
+    move on."""
+    agent = _agent(tmp_path)
+    stub = _StubLLM(
+        response_content=(
+            "Here's my proposal — I focused on tightening the opening:\n\n"
+            f"{_tagged('the new artifact body', rationale='reordered')}"
+            "\n\nLet me know if you'd like further revisions."
+        )
+    )
+    proposer = JigProposer(agent, llm=stub)
+    proposal = await proposer.propose(
+        agent=agent,
+        brief=_brief(),
+        artifact=_artifact(tmp_path),
+        current_content="seed",
+        current_version="v0",
+    )
+    assert proposal.new_content == "the new artifact body"
+    assert proposal.rationale == "reordered"
+
+
+async def test_parse_takes_first_tag_when_model_mentions_tag_name(
+    tmp_path: Path,
+) -> None:
+    """Non-greedy regex: if the model mentions ``<proposal_new_content>``
+    in passing before the actual tag, the first opening tag still
+    pairs with the first closing tag. Brittle in pathological cases,
+    but normal models put their actual proposal first."""
+    agent = _agent(tmp_path)
+    stub = _StubLLM(
+        response_content=_tagged("real content", rationale="ok"),
+    )
+    proposer = JigProposer(agent, llm=stub)
+    proposal = await proposer.propose(
+        agent=agent,
+        brief=_brief(),
+        artifact=_artifact(tmp_path),
+        current_content="seed",
+        current_version="v0",
+    )
+    assert proposal.new_content == "real content"
+
+
 # --- parse failures -----------------------------------------------------
 
 
-async def test_parse_tolerates_fenced_json(tmp_path: Path) -> None:
-    """Claude (in particular) tends to wrap structured output in a
-    ```json ... ``` block even when the prompt forbids it. The parser
-    strips a surrounding fence so the loop keeps moving without
-    needing structured-output / tool-use plumbing in jig."""
+async def test_parse_failure_when_no_tags(tmp_path: Path) -> None:
+    """Model returned plain prose with no sentinel tags."""
     agent = _agent(tmp_path)
     stub = _StubLLM(
-        response_content=(
-            "```json\n"
-            '{"new_content": "fenced content", "rationale": "ok"}\n'
-            "```"
-        )
+        response_content="Here's my draft, no tags around it."
     )
     proposer = JigProposer(agent, llm=stub)
-    proposal = await proposer.propose(
-        agent=agent,
-        brief=_brief(),
-        artifact=_artifact(tmp_path),
-        current_content="seed",
-        current_version="v0",
-    )
-    assert proposal.new_content == "fenced content"
-    assert proposal.rationale == "ok"
-
-
-async def test_parse_tolerates_fenced_json_no_language_tag(
-    tmp_path: Path,
-) -> None:
-    """Bare ``` fence (no `json` lang tag) is also stripped."""
-    agent = _agent(tmp_path)
-    stub = _StubLLM(
-        response_content='```\n{"new_content": "bare fence"}\n```'
-    )
-    proposer = JigProposer(agent, llm=stub)
-    proposal = await proposer.propose(
-        agent=agent,
-        brief=_brief(),
-        artifact=_artifact(tmp_path),
-        current_content="seed",
-        current_version="v0",
-    )
-    assert proposal.new_content == "bare fence"
-
-
-async def test_parse_failure_on_prose_then_fence(tmp_path: Path) -> None:
-    """Leading prose followed by a fenced block is treated as
-    malformed — that's a prompt-tuning problem, not a formatting
-    quirk to absorb. The parser only strips when the whole response
-    is one fenced block."""
-    agent = _agent(tmp_path)
-    stub = _StubLLM(
-        response_content=(
-            "Here's my proposal:\n"
-            "```json\n"
-            '{"new_content": "x"}\n'
-            "```"
-        )
-    )
-    proposer = JigProposer(agent, llm=stub)
-    with pytest.raises(ProposerOutputParseError, match="not valid JSON"):
+    with pytest.raises(
+        ProposerOutputParseError,
+        match="missing required <proposal_new_content> tag",
+    ):
         await proposer.propose(
             agent=agent,
             brief=_brief(),
@@ -266,14 +307,60 @@ async def test_parse_failure_on_prose_then_fence(tmp_path: Path) -> None:
         )
 
 
+async def test_parse_failure_when_only_rationale_tag(tmp_path: Path) -> None:
+    """Rationale tag alone isn't enough — new_content is required."""
+    agent = _agent(tmp_path)
+    stub = _StubLLM(
+        response_content=(
+            "<proposal_rationale>\nmy reasoning\n</proposal_rationale>"
+        )
+    )
+    proposer = JigProposer(agent, llm=stub)
+    with pytest.raises(
+        ProposerOutputParseError,
+        match="missing required <proposal_new_content> tag",
+    ):
+        await proposer.propose(
+            agent=agent,
+            brief=_brief(),
+            artifact=_artifact(tmp_path),
+            current_content="seed",
+            current_version="v0",
+        )
+
+
+async def test_parse_failure_when_new_content_tag_is_empty(
+    tmp_path: Path,
+) -> None:
+    """An empty new_content tag doesn't carry a real proposal."""
+    agent = _agent(tmp_path)
+    stub = _StubLLM(
+        response_content=(
+            "<proposal_new_content>\n   \n</proposal_new_content>"
+        )
+    )
+    proposer = JigProposer(agent, llm=stub)
+    with pytest.raises(
+        ProposerOutputParseError, match="was empty"
+    ):
+        await proposer.propose(
+            agent=agent,
+            brief=_brief(),
+            artifact=_artifact(tmp_path),
+            current_content="seed",
+            current_version="v0",
+        )
+
+
+# --- prompt assembly ----------------------------------------------------
+
+
 async def test_context_appears_in_system_prompt(tmp_path: Path) -> None:
     """Non-empty `context` is prepended to the system prompt under a
     'What you bring to this project' header so the model sees the
     agent's prior memory at the top of every propose call."""
     agent = _agent(tmp_path)
-    stub = _StubLLM(
-        response_content='{"new_content": "x", "rationale": "y"}'
-    )
+    stub = _StubLLM(response_content=_tagged("x", rationale="y"))
     proposer = JigProposer(
         agent,
         llm=stub,
@@ -298,9 +385,7 @@ async def test_empty_context_leaves_prompt_unchanged(tmp_path: Path) -> None:
     empty 'What you bring' section, no behavioral change for callers
     who haven't wired a peer_context_loader."""
     agent = _agent(tmp_path)
-    stub = _StubLLM(
-        response_content='{"new_content": "x", "rationale": "y"}'
-    )
+    stub = _StubLLM(response_content=_tagged("x", rationale="y"))
     proposer = JigProposer(agent, llm=stub)  # context defaults to ""
     await proposer.propose(
         agent=agent,
@@ -314,115 +399,9 @@ async def test_empty_context_leaves_prompt_unchanged(tmp_path: Path) -> None:
     assert "What you bring" not in system
 
 
-async def test_parse_failure_on_non_json(tmp_path: Path) -> None:
-    agent = _agent(tmp_path)
-    stub = _StubLLM(response_content="this is not JSON at all")
-    proposer = JigProposer(agent, llm=stub)
-    with pytest.raises(ProposerOutputParseError, match="not valid JSON"):
-        await proposer.propose(
-            agent=agent,
-            brief=_brief(),
-            artifact=_artifact(tmp_path),
-            current_content="seed",
-            current_version="v0",
-        )
-
-
-async def test_parse_failure_when_top_level_is_array(tmp_path: Path) -> None:
-    agent = _agent(tmp_path)
-    stub = _StubLLM(response_content='["new_content", "x"]')
-    proposer = JigProposer(agent, llm=stub)
-    with pytest.raises(ProposerOutputParseError, match="must be a JSON object"):
-        await proposer.propose(
-            agent=agent,
-            brief=_brief(),
-            artifact=_artifact(tmp_path),
-            current_content="seed",
-            current_version="v0",
-        )
-
-
-async def test_parse_failure_when_missing_new_content(tmp_path: Path) -> None:
-    agent = _agent(tmp_path)
-    stub = _StubLLM(response_content='{"rationale": "no content here"}')
-    proposer = JigProposer(agent, llm=stub)
-    with pytest.raises(ProposerOutputParseError, match="missing required"):
-        await proposer.propose(
-            agent=agent,
-            brief=_brief(),
-            artifact=_artifact(tmp_path),
-            current_content="seed",
-            current_version="v0",
-        )
-
-
-async def test_parse_failure_when_new_content_is_not_string(
-    tmp_path: Path,
-) -> None:
-    agent = _agent(tmp_path)
-    stub = _StubLLM(response_content='{"new_content": 42}')
-    proposer = JigProposer(agent, llm=stub)
-    with pytest.raises(ProposerOutputParseError, match="must be a string"):
-        await proposer.propose(
-            agent=agent,
-            brief=_brief(),
-            artifact=_artifact(tmp_path),
-            current_content="seed",
-            current_version="v0",
-        )
-
-
-async def test_parse_failure_when_rationale_is_not_string(
-    tmp_path: Path,
-) -> None:
-    """A non-string `rationale` would otherwise pass through silently
-    and undermine the `malformed output raises` contract."""
-    agent = _agent(tmp_path)
-    stub = _StubLLM(
-        response_content='{"new_content": "x", "rationale": {"nested": "obj"}}'
-    )
-    proposer = JigProposer(agent, llm=stub)
-    with pytest.raises(
-        ProposerOutputParseError, match="rationale.*must be a string"
-    ):
-        await proposer.propose(
-            agent=agent,
-            brief=_brief(),
-            artifact=_artifact(tmp_path),
-            current_content="seed",
-            current_version="v0",
-        )
-
-
-async def test_parse_drops_unexpected_top_level_keys(tmp_path: Path) -> None:
-    """Extra top-level keys the model emits don't sneak through."""
-    agent = _agent(tmp_path)
-    stub = _StubLLM(
-        response_content=(
-            '{"new_content": "x", "rationale": "ok", '
-            '"extra_field": "should not appear"}'
-        )
-    )
-    proposer = JigProposer(agent, llm=stub)
-    proposal = await proposer.propose(
-        agent=agent,
-        brief=_brief(),
-        artifact=_artifact(tmp_path),
-        current_content="seed",
-        current_version="v0",
-    )
-    # Only new_content + rationale make it onto the Proposal; extra
-    # keys don't get attached anywhere downstream.
-    assert proposal.new_content == "x"
-    assert proposal.rationale == "ok"
-
-
-# --- prompt assembly ----------------------------------------------------
-
-
 async def test_system_prompt_includes_frame_when_set(tmp_path: Path) -> None:
     agent = _agent(tmp_path, frame="precision")
-    stub = _StubLLM(response_content='{"new_content": "x"}')
+    stub = _StubLLM(response_content=_tagged("x"))
     proposer = JigProposer(agent, llm=stub)
     await proposer.propose(
         agent=agent,
@@ -436,9 +415,29 @@ async def test_system_prompt_includes_frame_when_set(tmp_path: Path) -> None:
     assert "precision" in stub.last_params.system
 
 
+async def test_system_prompt_advertises_sentinel_tags(tmp_path: Path) -> None:
+    """The system prompt has to actually instruct the model to use the
+    sentinel tags — otherwise models default to JSON or plain prose
+    and the parser raises. Smoke-check the tag names are present."""
+    agent = _agent(tmp_path)
+    stub = _StubLLM(response_content=_tagged("x"))
+    proposer = JigProposer(agent, llm=stub)
+    await proposer.propose(
+        agent=agent,
+        brief=_brief(),
+        artifact=_artifact(tmp_path),
+        current_content="seed",
+        current_version="v0",
+    )
+    assert stub.last_params is not None
+    system = stub.last_params.system or ""
+    assert "<proposal_new_content>" in system
+    assert "</proposal_new_content>" in system
+
+
 async def test_user_message_includes_peer_proposals(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    stub = _StubLLM(response_content='{"new_content": "x"}')
+    stub = _StubLLM(response_content=_tagged("x"))
     proposer = JigProposer(agent, llm=stub)
     peer_a = Proposal(
         agent_id="peer-a",
@@ -470,7 +469,7 @@ async def test_user_message_omits_peer_section_when_no_peers(
     tmp_path: Path,
 ) -> None:
     agent = _agent(tmp_path)
-    stub = _StubLLM(response_content='{"new_content": "x"}')
+    stub = _StubLLM(response_content=_tagged("x"))
     proposer = JigProposer(agent, llm=stub)
     await proposer.propose(
         agent=agent,
@@ -499,7 +498,7 @@ async def test_make_proposers_keys_by_agent_id(tmp_path: Path) -> None:
         for i in range(3)
     ]
     overrides = {
-        a.id: _StubLLM(response_content='{"new_content": "x"}') for a in agents
+        a.id: _StubLLM(response_content=_tagged("x")) for a in agents
     }
     proposers = make_proposers(agents, llm_overrides=overrides)
     assert set(proposers.keys()) == {a.id for a in agents}
