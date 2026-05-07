@@ -5,11 +5,16 @@ with a production-shaped path. One :class:`JigProposer` per enrolled
 agent — instances are bound to a single :class:`Agent` and dispatch
 ``LLMClient`` based on ``agent.model`` via :func:`jig.llm.factory.from_model`.
 
-Output parsing: the proposer instructs the model to return a JSON
-envelope ``{"new_content": ..., "rationale": ...}`` and parses that
-into a :class:`Proposal`. Malformed output raises so the failure
-surfaces immediately rather than silently producing a "stuck" agent;
-prompt-tuning is the right response when this happens, not retry.
+Output parsing: the proposer instructs the model to return its
+proposal inside ``<proposal_new_content>...</proposal_new_content>``
+and ``<proposal_rationale>...</proposal_rationale>`` tags and extracts
+the contents into a :class:`Proposal`. Sentinel-tag transport (vs an
+earlier JSON envelope) sidesteps the worst Claude failure mode for
+prose targets: artifacts containing literal double quotes (paper
+titles, dialogue, code samples) routinely tripped the JSON parser
+when the model didn't escape them, and that error class is
+intentionally non-retryable. Tag-bounded content is verbatim — no
+escaping required — which removes the entire failure mode.
 
 Tests inject a stub :class:`LLMClient` to avoid real API calls. The
 :func:`make_proposers` helper constructs one :class:`JigProposer` per
@@ -17,10 +22,12 @@ agent in a list and returns the dict the coordinator wants.
 """
 from __future__ import annotations
 
-import json
 import logging
+import os
 import re
 from collections.abc import Sequence
+from datetime import UTC, datetime
+from pathlib import Path
 
 from jig.core.types import CompletionParams, LLMClient, Message, Role
 from jig.llm.factory import from_model
@@ -31,23 +38,83 @@ from legit_biz_club.core.models import Agent, Artifact, Brief
 logger = logging.getLogger(__name__)
 
 
+# Opt-in diagnostic for parse failures. When set to a writable
+# directory path, sentinel-tag-extraction failures dump the raw LLM
+# output to ``<dir>/parse-fail-<ts>.txt`` so the operator can inspect
+# what the model actually emitted (e.g., omitted tags, mismatched
+# closing tags, content placed outside the tags). Default off —
+# artifact content may be sensitive; the warning log line (length +
+# error detail) is enough for most diagnostics.
+_PROPOSER_DEBUG_DIR_ENV = "LBC_PROPOSER_DEBUG_DIR"
+
+
+def _maybe_dump_failed_output(raw: str, reason: str) -> None:
+    debug_dir = os.environ.get(_PROPOSER_DEBUG_DIR_ENV)
+    if not debug_dir:
+        return
+    target = Path(debug_dir)
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%S-%fZ")
+        out = target / f"parse-fail-{ts}.txt"
+        # 0o600 at create time so the dump (which can contain raw
+        # artifact content) isn't readable by other users on shared
+        # hosts. Process umask alone isn't enough — be explicit.
+        fd = os.open(
+            out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600
+        )
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(
+                f"--- reason: {reason}\n"
+                f"--- raw_length: {len(raw)}\n"
+                f"--- raw output ---\n"
+                f"{raw}\n"
+                f"--- end raw ---\n"
+            )
+        logger.warning(
+            "proposer parse-failure dump written to %s", out
+        )
+    except OSError as dump_err:
+        # Diagnostic shouldn't ever crash the harness — if the dump
+        # write fails, the parse error still propagates with its
+        # original detail.
+        logger.warning(
+            "failed to write proposer parse-failure dump to %s: %s",
+            target,
+            dump_err,
+        )
+
+
 _OUTPUT_INSTRUCTIONS = """\
 
-When you respond, output only valid JSON in this exact shape and nothing else:
-{
-  "new_content": "<the full proposed next version of the artifact>",
-  "rationale": "<one or two sentences explaining what you changed and why>"
-}
+When you respond, place your proposal inside these tags:
 
-Do not include markdown code fences. Do not include any prose outside the JSON.
+<proposal_new_content>
+The full proposed next version of the artifact, exactly as it should
+appear. Write the content verbatim — no escaping, no formatting
+transformations.
+</proposal_new_content>
+<proposal_rationale>
+One or two sentences explaining what you changed and why.
+</proposal_rationale>
+
+The rationale tag is optional but recommended. Do not place anything
+inside the new_content tag that isn't part of the artifact itself.
+
+Newline handling: one newline immediately after the opening tag and
+one immediately before the closing tag are treated as formatting and
+stripped. Everything else between the tags — internal whitespace,
+indentation, blank lines — is preserved exactly. If your artifact is
+meant to begin or end with a blank line, emit two newlines at that
+boundary so one survives the strip.
 """
 
 
 class ProposerOutputParseError(ValueError):
-    """The agent's response did not match the expected JSON envelope.
+    """The agent's response did not contain the expected sentinel tags.
 
     Surfaces as a hard failure rather than a recoverable one because
-    a Proposer that can't produce parseable output isn't going to
+    a Proposer that can't follow the tag protocol isn't going to
     self-correct via retry — prompt-tuning is the right response.
     """
 
@@ -192,8 +259,9 @@ class JigProposer:
 
         sections.append(
             "\n# Your task\n"
-            "Produce the next version of the artifact. Return only the "
-            "JSON envelope specified in your system prompt."
+            "Produce the next version of the artifact. Wrap your "
+            "proposal in the sentinel tags specified in your system "
+            "prompt."
         )
 
         return "\n".join(sections)
@@ -216,83 +284,113 @@ def make_proposers(
     }
 
 
-_FENCE_RE = re.compile(
-    r"\A\s*```(?:json)?\s*\n(?P<body>.*?)\n```\s*\Z",
+# Sentinel tags. Distinct, lowercase-with-underscore names that
+# won't collide with anything a real artifact would plausibly contain
+# (markdown, prose, code samples, citations). Two regex defenses
+# against models that mention the protocol in a preamble before
+# emitting the real proposal:
+#   1. The body is a tempered-greedy ``(?:(?!<open>).)*`` rather than
+#      plain ``.*?`` so the body can't span a second opening tag —
+#      important when a preamble has only the *opening* tag mentioned
+#      (no matching close) and the real block comes later.
+#   2. ``_parse_response`` picks the *last* finditer match rather than
+#      the first — covers preambles that include both an opening AND
+#      closing mention before the real tagged block. Real proposals
+#      always come last in normal model output.
+# Together these handle both common preamble shapes. The regex still
+# can't disambiguate an artifact that contains the literal sentinel
+# string, but study artifacts mentioning the harness's own protocol
+# tags are far less likely than models thinking-aloud about the
+# prompt before responding.
+_NEW_CONTENT_RE = re.compile(
+    r"<proposal_new_content>"
+    r"(?P<body>(?:(?!<proposal_new_content>).)*)"
+    r"</proposal_new_content>",
+    re.DOTALL,
+)
+_RATIONALE_RE = re.compile(
+    r"<proposal_rationale>"
+    r"(?P<body>(?:(?!<proposal_rationale>).)*)"
+    r"</proposal_rationale>",
     re.DOTALL,
 )
 
 
-def _strip_markdown_fence(text: str) -> str:
-    """Strip a surrounding ``` fence (with optional ``json`` lang tag).
-
-    Claude in particular tends to wrap structured output in a fenced
-    code block even when the prompt explicitly forbids it — that's
-    its default formatting habit and instructions don't reliably
-    override it. Stripping the fence here keeps v0 moving without
-    waiting on structured-output / tool-use plumbing in jig.
-
-    Conservative: only strips when the *entire* response is one
-    fenced block. A response with leading prose and a fenced block
-    in the middle is still treated as malformed — that's a real
-    prompt-tuning issue, not a formatting quirk.
-    """
-    match = _FENCE_RE.match(text)
-    if match is None:
-        return text
-    return match.group("body")
-
-
 def _parse_response(content: str) -> dict[str, str]:
-    """Parse the LLM's response as a JSON envelope.
+    """Extract proposal content from sentinel tags in the LLM response.
 
-    Tolerates leading/trailing whitespace and a surrounding markdown
-    code fence (a common Claude formatting habit). Rejects anything
-    further from valid JSON — the malformed-response path raises
-    rather than silently substituting defaults; prompt-tuning is the
-    right response when this happens.
+    Looks for ``<proposal_new_content>...</proposal_new_content>``
+    (required) and ``<proposal_rationale>...</proposal_rationale>``
+    (optional) anywhere in the response. Surrounding prose, markdown
+    fences, or framing text from the model are tolerated — the tags
+    are unambiguous boundaries, so leading/trailing chatter doesn't
+    corrupt extraction.
 
-    Returns a normalized dict containing only the expected keys
-    (``new_content`` always; ``rationale`` if supplied and a string).
-    Any other top-level keys the model emits are dropped so unexpected
-    nested objects can't sneak through to downstream consumers.
+    Returns a normalized dict: ``{"new_content": ..., "rationale": ...}``
+    where ``rationale`` is only present when the rationale tag was
+    found and non-empty.
+
+    Sentinel-tag transport replaced an earlier JSON-envelope shape
+    that consistently failed on prose artifacts containing literal
+    double quotes (paper titles, dialogue) — JSON requires escaping
+    those, and models routinely don't. Tag-bounded content is
+    preserved exactly except for one optional framing newline
+    adjacent to each tag (see comment by the body extraction below);
+    that single normalization is documented in the prompt so models
+    can compensate when they need a leading/trailing blank line.
     """
-    stripped = _strip_markdown_fence(content.strip())
-    try:
-        data = json.loads(stripped)
-    except json.JSONDecodeError as e:
-        # Don't log the raw output — it may contain artifact content
-        # the operator considers sensitive (drafts, internal docs, etc.).
-        # The exception detail (line/column) plus the length is enough
-        # to diagnose a malformed-response issue without leaking content.
+    # finditer + take-last so a preamble that mentions both opening
+    # and closing tags before the real proposal doesn't capture the
+    # preamble (see regex docstring above). For normal single-block
+    # outputs, this is equivalent to a single search.
+    new_matches = list(_NEW_CONTENT_RE.finditer(content))
+    if not new_matches:
+        reason = "missing <proposal_new_content> sentinel tag"
         logger.warning(
-            "proposer output is not valid JSON (length=%d): %s",
-            len(stripped),
-            e,
+            "proposer parse failed (length=%d): %s",
+            len(content),
+            reason,
         )
+        _maybe_dump_failed_output(content, reason)
         raise ProposerOutputParseError(
-            f"agent response was not valid JSON: {e}"
-        ) from e
-    if not isinstance(data, dict):
-        raise ProposerOutputParseError(
-            f"agent response must be a JSON object, got {type(data).__name__}"
+            f"agent response was missing required "
+            f"<proposal_new_content> tag (response length={len(content)})"
         )
-    if "new_content" not in data:
-        raise ProposerOutputParseError(
-            "agent response missing required 'new_content' field"
+    new_match = new_matches[-1]
+    # Strip only the single framing newline adjacent to each tag.
+    # Models reliably emit the tag block as ``<tag>\nbody\n</tag>``
+    # for legibility — those newlines are formatting, not artifact
+    # content. Keep everything else verbatim so artifacts that rely
+    # on internal whitespace, indentation, or a trailing newline
+    # (e.g., code, poetry, files where W292 matters) round-trip
+    # unchanged. ``str.removeprefix`` / ``str.removesuffix`` only
+    # strip a single occurrence each, which is exactly what we want.
+    new_content = (
+        new_match.group("body").removeprefix("\n").removesuffix("\n")
+    )
+    if not new_content.strip():
+        reason = "<proposal_new_content> tag was empty"
+        logger.warning(
+            "proposer parse failed (length=%d): %s",
+            len(content),
+            reason,
         )
-    new_content = data["new_content"]
-    if not isinstance(new_content, str):
-        raise ProposerOutputParseError(
-            f"'new_content' must be a string, got "
-            f"{type(new_content).__name__}"
-        )
+        _maybe_dump_failed_output(content, reason)
+        raise ProposerOutputParseError(reason)
     normalized: dict[str, str] = {"new_content": new_content}
-    if "rationale" in data:
-        rationale = data["rationale"]
-        if not isinstance(rationale, str):
-            raise ProposerOutputParseError(
-                f"'rationale' must be a string when present, got "
-                f"{type(rationale).__name__}"
-            )
-        normalized["rationale"] = rationale
+    # Scope rationale search to AFTER the chosen new_content block —
+    # otherwise a rationale tag in a preamble (or paired with an
+    # earlier dummy new_content block) could pair with a later real
+    # new_content and silently mislead the operator. Default to
+    # empty rationale if the model didn't emit one alongside the
+    # real proposal.
+    rationale_match = _RATIONALE_RE.search(content, pos=new_match.end())
+    if rationale_match is not None:
+        rationale = (
+            rationale_match.group("body")
+            .removeprefix("\n")
+            .removesuffix("\n")
+        )
+        if rationale.strip():
+            normalized["rationale"] = rationale
     return normalized

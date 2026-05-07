@@ -11,7 +11,6 @@ test validates that path produces a clean :class:`ProjectRunResult`.
 """
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from jig.core.types import CompletionParams, LLMClient, LLMResponse, Usage
@@ -36,15 +35,13 @@ from legit_biz_club import (
 
 
 class _CannedLLM(LLMClient):
-    """Returns the same JSON envelope on every call. Identical content
-    across all agents lets multi-round converge in round 1."""
+    """Returns the same sentinel-tag envelope on every call. Identical
+    content across all agents lets multi-round converge in round 1."""
 
     def __init__(self, content: str) -> None:
-        # Use json.dumps so the payload is genuinely valid JSON;
-        # f-string + !r would emit single-quoted strings which JSON
-        # rejects.
-        self._payload = json.dumps(
-            {"new_content": content, "rationale": "stubbed"}
+        self._payload = (
+            f"<proposal_new_content>\n{content}\n</proposal_new_content>\n"
+            "<proposal_rationale>\nstubbed\n</proposal_rationale>"
         )
 
     async def complete(self, params: CompletionParams) -> LLMResponse:
