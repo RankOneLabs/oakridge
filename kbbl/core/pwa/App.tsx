@@ -1,4 +1,5 @@
 import {
+  Fragment,
   memo,
   useCallback,
   useEffect,
@@ -768,6 +769,49 @@ function formatRelative(iso: string): string {
   return `${days}d ago`;
 }
 
+// Module-scope formatter so the hover tooltip is locale-stable (seconds and
+// time zone always present) and we don't spin up a new Intl instance per
+// timestamp render. `medium` time style includes seconds across locales.
+const exactTimeFormatter = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "medium",
+  timeZoneName: "short",
+});
+function formatExactTime(iso: string): string {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return iso;
+  return exactTimeFormatter.format(t);
+}
+
+function MessageTimestamp({ iso }: { iso: string }) {
+  const rel = useRelativeTime(iso);
+  if (!rel) return null;
+  return (
+    <span className="bubble-ts" title={formatExactTime(iso)}>
+      {rel}
+    </span>
+  );
+}
+
+// Find the id of the last event that renders as a textual message bubble (a
+// user string or an assistant text block). Tool calls, results, system
+// notices, etc. are skipped. Used to pin a timestamp to the bottom-most
+// message only — every-message timestamps drown the transcript.
+function lastMessageEventId(events: EnvelopeEvent[]): number | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.type === "user") {
+      const p = e.payload as CCUserPayload;
+      if (typeof p.message?.content === "string") return e.id;
+    } else if (e.type === "assistant") {
+      const p = e.payload as CCAssistantPayload;
+      const blocks = p.message?.content ?? [];
+      if (blocks.some((b) => b.type === "text")) return e.id;
+    }
+  }
+  return null;
+}
+
 // === session view ===
 
 interface PendingMessage {
@@ -989,6 +1033,17 @@ function SessionView({
   }, [sid, inMemory]);
 
   const canInput = snapshot?.status === "live";
+  // Only the bottom-most message bubble carries a timestamp. When a pending
+  // bubble is in flight, that's the bottom; otherwise it's the latest text
+  // event in the transcript.
+  const latestEventId = useMemo(
+    () => (pendingMessages.length > 0 ? null : lastMessageEventId(events)),
+    [events, pendingMessages.length],
+  );
+  const lastPendingLocalId =
+    pendingMessages.length > 0
+      ? pendingMessages[pendingMessages.length - 1].localId
+      : null;
   return (
     <div className="app">
       <SessionTopBar
@@ -1004,6 +1059,7 @@ function SessionView({
         onToggleTheme={onToggleTheme}
         onBack={onBack}
       />
+      <MetricsStrip events={events} />
       <EventList
         events={events}
         resolutions={resolutions}
@@ -1011,9 +1067,15 @@ function SessionView({
         sid={sid}
         sessionStatus={sessionStatus}
         showSystemEvents={showSystemEvents}
+        latestEventId={latestEventId}
       />
       {pendingMessages.map((m) => (
-        <PendingUserBubble key={m.localId} text={m.text} sentAt={m.sentAt} />
+        <PendingUserBubble
+          key={m.localId}
+          text={m.text}
+          sentAt={m.sentAt}
+          isLatest={m.localId === lastPendingLocalId}
+        />
       ))}
       {awaitingResult && <ThinkingIndicator />}
       {canInput && (
@@ -1038,9 +1100,11 @@ function SessionView({
 function PendingUserBubble({
   text,
   sentAt,
+  isLatest,
 }: {
   text: string;
   sentAt: number;
+  isLatest: boolean;
 }) {
   // Re-render once after the 2s threshold so the label rolls from "sending"
   // to "delivered, awaiting reply" without polling forever.
@@ -1053,14 +1117,21 @@ function PendingUserBubble({
   }, [sentAt]);
   const slow = Date.now() - sentAt > 2000;
   return (
-    <div className="row row-user">
-      <div className="bubble bubble-user bubble-user-pending">
-        {text}
-        <span className="bubble-pending-tag">
-          {slow ? "delivered · awaiting reply" : "sending…"}
-        </span>
+    <>
+      {isLatest && (
+        <div className="row row-user">
+          <MessageTimestamp iso={new Date(sentAt).toISOString()} />
+        </div>
+      )}
+      <div className="row row-user">
+        <div className="bubble bubble-user bubble-user-pending">
+          {text}
+          <span className="bubble-pending-tag">
+            {slow ? "delivered · awaiting reply" : "sending…"}
+          </span>
+        </div>
       </div>
-    </div>
+    </>
   );
 }
 
@@ -1122,6 +1193,175 @@ function EndedBanner({
         </div>
       )}
     </div>
+  );
+}
+
+interface SessionMetrics {
+  turns: number;
+  totalIn: number;
+  totalOut: number;
+  totalCacheRead: number;
+  totalCacheCreate: number;
+  totalCost: number;
+  totalDur: number;
+  last: {
+    inT: number;
+    outT: number;
+    cacheRead: number;
+    cacheCreate: number;
+    dur: number;
+    cost: number;
+  } | null;
+}
+
+function computeMetrics(events: EnvelopeEvent[]): SessionMetrics {
+  const m: SessionMetrics = {
+    turns: 0,
+    totalIn: 0,
+    totalOut: 0,
+    totalCacheRead: 0,
+    totalCacheCreate: 0,
+    totalCost: 0,
+    totalDur: 0,
+    last: null,
+  };
+  const num = (v: unknown): number => (typeof v === "number" ? v : 0);
+  for (const e of events) {
+    if (e.type !== "result") continue;
+    const p = e.payload as Record<string, unknown>;
+    const usage = (p.usage as Record<string, unknown> | undefined) ?? {};
+    const inT = num(usage.input_tokens);
+    const outT = num(usage.output_tokens);
+    const cacheRead = num(usage.cache_read_input_tokens);
+    const cacheCreate = num(usage.cache_creation_input_tokens);
+    const dur = num(p.duration_ms);
+    const cost = num(p.total_cost_usd);
+    m.turns++;
+    m.totalIn += inT;
+    m.totalOut += outT;
+    m.totalCacheRead += cacheRead;
+    m.totalCacheCreate += cacheCreate;
+    m.totalCost += cost;
+    m.totalDur += dur;
+    m.last = { inT, outT, cacheRead, cacheCreate, dur, cost };
+  }
+  return m;
+}
+
+function fmtTokensCompact(n: number): string {
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
+  return `${(n / 1_000_000).toFixed(1)}M`;
+}
+
+function fmtDuration(ms: number): string {
+  if (!ms) return "";
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  // Round to total seconds first, then split — splitting independently lets
+  // the seconds round up to 60 and produce strings like "1m60s".
+  const totalSec = Math.round(ms / 1000);
+  const mins = Math.floor(totalSec / 60);
+  const secs = totalSec % 60;
+  return `${mins}m${secs.toString().padStart(2, "0")}s`;
+}
+
+function fmtCost(cost: number): string {
+  if (cost < 0.01) return `$${cost.toFixed(4)}`;
+  if (cost < 1) return `$${cost.toFixed(3)}`;
+  return `$${cost.toFixed(2)}`;
+}
+
+function MetricsStrip({ events }: { events: EnvelopeEvent[] }) {
+  const m = useMemo(() => computeMetrics(events), [events]);
+  if (m.turns === 0) return null;
+  const last = m.last;
+  // Cache reads are essentially free per Anthropic billing — surface them as
+  // a separate stat so a big cache_read number doesn't make the operator
+  // think they just burned a million-token turn.
+  const lastBilled = last ? last.inT + last.cacheCreate + last.outT : 0;
+  const totalBilled = m.totalIn + m.totalCacheCreate + m.totalOut;
+  return (
+    <details className="metrics-strip">
+      <summary className="metrics-summary">
+        {last && (
+          <span className="metric" title="Last turn input (incl. cache creation) → output tokens">
+            <span className="metric-label">last</span>
+            <span className="metric-value">
+              {fmtTokensCompact(last.inT + last.cacheCreate)}→
+              {fmtTokensCompact(last.outT)}
+            </span>
+          </span>
+        )}
+        {last && last.dur > 0 && (
+          <span className="metric" title="Last turn wall-clock duration">
+            <span className="metric-value">{fmtDuration(last.dur)}</span>
+          </span>
+        )}
+        {last && last.cost > 0 && (
+          <span className="metric" title="Last turn cost (Anthropic API billing; $0 on Claude Max)">
+            <span className="metric-value">{fmtCost(last.cost)}</span>
+          </span>
+        )}
+        <span className="metric-sep">·</span>
+        <span className="metric" title="Cumulative billed tokens across all turns this session">
+          <span className="metric-label">session</span>
+          <span className="metric-value">{fmtTokensCompact(totalBilled)}</span>
+        </span>
+        <span className="metric" title={`${m.turns} turn${m.turns === 1 ? "" : "s"}`}>
+          <span className="metric-value">
+            {m.turns} turn{m.turns === 1 ? "" : "s"}
+          </span>
+        </span>
+        {m.totalCost > 0 && (
+          <span className="metric" title="Cumulative session cost">
+            <span className="metric-value">{fmtCost(m.totalCost)}</span>
+          </span>
+        )}
+      </summary>
+      <div className="metrics-detail">
+        {last && (
+          <div className="metrics-detail-section">
+            <div className="metrics-detail-heading">Last turn</div>
+            <dl>
+              <dt>input</dt>
+              <dd>{last.inT.toLocaleString()}</dd>
+              <dt>output</dt>
+              <dd>{last.outT.toLocaleString()}</dd>
+              <dt>cache create</dt>
+              <dd>{last.cacheCreate.toLocaleString()}</dd>
+              <dt>cache read</dt>
+              <dd>{last.cacheRead.toLocaleString()}</dd>
+              <dt>duration</dt>
+              <dd>{fmtDuration(last.dur) || "—"}</dd>
+              <dt>cost</dt>
+              <dd>{last.cost > 0 ? fmtCost(last.cost) : "—"}</dd>
+              <dt>billed</dt>
+              <dd>{lastBilled.toLocaleString()}</dd>
+            </dl>
+          </div>
+        )}
+        <div className="metrics-detail-section">
+          <div className="metrics-detail-heading">Session ({m.turns} turns)</div>
+          <dl>
+            <dt>input</dt>
+            <dd>{m.totalIn.toLocaleString()}</dd>
+            <dt>output</dt>
+            <dd>{m.totalOut.toLocaleString()}</dd>
+            <dt>cache create</dt>
+            <dd>{m.totalCacheCreate.toLocaleString()}</dd>
+            <dt>cache read</dt>
+            <dd>{m.totalCacheRead.toLocaleString()}</dd>
+            <dt>duration</dt>
+            <dd>{fmtDuration(m.totalDur) || "—"}</dd>
+            <dt>cost</dt>
+            <dd>{m.totalCost > 0 ? fmtCost(m.totalCost) : "—"}</dd>
+            <dt>billed</dt>
+            <dd>{totalBilled.toLocaleString()}</dd>
+          </dl>
+        </div>
+      </div>
+    </details>
   );
 }
 
@@ -1339,6 +1579,7 @@ function EventList({
   sid,
   sessionStatus,
   showSystemEvents,
+  latestEventId,
 }: {
   events: EnvelopeEvent[];
   resolutions: ResolutionMap;
@@ -1346,6 +1587,7 @@ function EventList({
   sid: string;
   sessionStatus: SessionStatus | null;
   showSystemEvents: boolean;
+  latestEventId: number | null;
 }) {
   const items = useMemo(
     () => buildListItems(events, resolutions, showSystemEvents),
@@ -1368,6 +1610,7 @@ function EventList({
             sid={sid}
             sessionStatus={sessionStatus}
             showSystemEvents={showSystemEvents}
+            isLatest={item.event.id === latestEventId}
           />
         );
       })}
@@ -1579,6 +1822,7 @@ function EventRow({
   sid,
   sessionStatus,
   showSystemEvents,
+  isLatest,
 }: {
   event: EnvelopeEvent;
   resolutions: ResolutionMap;
@@ -1586,14 +1830,25 @@ function EventRow({
   sid: string;
   sessionStatus: SessionStatus | null;
   showSystemEvents: boolean;
+  isLatest: boolean;
 }) {
   if (!showSystemEvents && isLowSignalEvent(event)) return null;
   switch (event.type) {
     case "user":
-      return <UserRow event={event} showSystemEvents={showSystemEvents} />;
+      return (
+        <UserRow
+          event={event}
+          showSystemEvents={showSystemEvents}
+          isLatest={isLatest}
+        />
+      );
     case "assistant":
       return (
-        <AssistantRow event={event} showSystemEvents={showSystemEvents} />
+        <AssistantRow
+          event={event}
+          showSystemEvents={showSystemEvents}
+          isLatest={isLatest}
+        />
       );
     case "permission_request":
       return (
@@ -1669,9 +1924,11 @@ function parseSlashCommand(
 function UserRow({
   event,
   showSystemEvents,
+  isLatest,
 }: {
   event: EnvelopeEvent;
   showSystemEvents: boolean;
+  isLatest: boolean;
 }) {
   const p = event.payload as CCUserPayload;
   const content = p.message?.content;
@@ -1680,23 +1937,37 @@ function UserRow({
     const slash = parseSlashCommand(content);
     if (slash) {
       return (
-        <div className="row row-user">
-          <details className="bubble bubble-user bubble-user-slash">
-            <summary>
-              <span className="bubble-slash-name">/{slash.name}</span>
-              {slash.args && (
-                <span className="bubble-slash-args">{slash.args}</span>
-              )}
-            </summary>
-            <pre className="bubble-slash-body">{content}</pre>
-          </details>
-        </div>
+        <>
+          {isLatest && (
+            <div className="row row-user">
+              <MessageTimestamp iso={event.ts} />
+            </div>
+          )}
+          <div className="row row-user">
+            <details className="bubble bubble-user bubble-user-slash">
+              <summary>
+                <span className="bubble-slash-name">/{slash.name}</span>
+                {slash.args && (
+                  <span className="bubble-slash-args">{slash.args}</span>
+                )}
+              </summary>
+              <pre className="bubble-slash-body">{content}</pre>
+            </details>
+          </div>
+        </>
       );
     }
     return (
-      <div className="row row-user">
-        <div className="bubble bubble-user">{content}</div>
-      </div>
+      <>
+        {isLatest && (
+          <div className="row row-user">
+            <MessageTimestamp iso={event.ts} />
+          </div>
+        )}
+        <div className="row row-user">
+          <div className="bubble bubble-user">{content}</div>
+        </div>
+      </>
     );
   }
 
@@ -1730,25 +2001,44 @@ function UserRow({
 function AssistantRow({
   event,
   showSystemEvents,
+  isLatest,
 }: {
   event: EnvelopeEvent;
   showSystemEvents: boolean;
+  isLatest: boolean;
 }) {
   const p = event.payload as CCAssistantPayload;
   const blocks = p.message?.content ?? [];
+  // Pin the timestamp to the last text block in this event so a turn that
+  // ends with a tool_use doesn't drop the stamp on the wrong card.
+  let lastTextIdx = -1;
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    if (blocks[i].type === "text") {
+      lastTextIdx = i;
+      break;
+    }
+  }
   return (
     <>
       {blocks.map((block, idx) => {
         const key = `${event.id}-${idx}`;
         if (block.type === "text") {
+          const showTs = isLatest && idx === lastTextIdx;
           return (
-            <div key={key} className="row row-assistant">
-              <div className="bubble bubble-assistant">
-                <Markdown rehypePlugins={[rehypeSanitize]}>
-                  {block.text}
-                </Markdown>
+            <Fragment key={key}>
+              {showTs && (
+                <div className="row row-assistant">
+                  <MessageTimestamp iso={event.ts} />
+                </div>
+              )}
+              <div className="row row-assistant">
+                <div className="bubble bubble-assistant">
+                  <Markdown rehypePlugins={[rehypeSanitize]}>
+                    {block.text}
+                  </Markdown>
+                </div>
               </div>
-            </div>
+            </Fragment>
           );
         }
         if (block.type === "thinking") {
