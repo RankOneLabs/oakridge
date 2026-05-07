@@ -57,14 +57,20 @@ def _maybe_dump_failed_output(raw: str, reason: str) -> None:
         target.mkdir(parents=True, exist_ok=True)
         ts = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%S-%fZ")
         out = target / f"parse-fail-{ts}.txt"
-        out.write_text(
-            f"--- reason: {reason}\n"
-            f"--- raw_length: {len(raw)}\n"
-            f"--- raw output ---\n"
-            f"{raw}\n"
-            f"--- end raw ---\n",
-            encoding="utf-8",
+        # 0o600 at create time so the dump (which can contain raw
+        # artifact content) isn't readable by other users on shared
+        # hosts. Process umask alone isn't enough — be explicit.
+        fd = os.open(
+            out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600
         )
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(
+                f"--- reason: {reason}\n"
+                f"--- raw_length: {len(raw)}\n"
+                f"--- raw output ---\n"
+                f"{raw}\n"
+                f"--- end raw ---\n"
+            )
         logger.warning(
             "proposer parse-failure dump written to %s", out
         )
@@ -273,17 +279,32 @@ def make_proposers(
 
 # Sentinel tags. Distinct, lowercase-with-underscore names that
 # won't collide with anything a real artifact would plausibly contain
-# (markdown, prose, code samples, citations). Non-greedy ``.*?`` so
-# the FIRST opening tag pairs with the FIRST closing tag — if a model
-# emits the tag string twice (e.g., mentions it in a thinking-aloud
-# preamble before the real proposal), the regex still picks a sane
-# pairing rather than swallowing intermediate prose into new_content.
+# (markdown, prose, code samples, citations). Two regex defenses
+# against models that mention the protocol in a preamble before
+# emitting the real proposal:
+#   1. The body is a tempered-greedy ``(?:(?!<open>).)*`` rather than
+#      plain ``.*?`` so the body can't span a second opening tag —
+#      important when a preamble has only the *opening* tag mentioned
+#      (no matching close) and the real block comes later.
+#   2. ``_parse_response`` picks the *last* finditer match rather than
+#      the first — covers preambles that include both an opening AND
+#      closing mention before the real tagged block. Real proposals
+#      always come last in normal model output.
+# Together these handle both common preamble shapes. The regex still
+# can't disambiguate an artifact that contains the literal sentinel
+# string, but study artifacts mentioning the harness's own protocol
+# tags are far less likely than models thinking-aloud about the
+# prompt before responding.
 _NEW_CONTENT_RE = re.compile(
-    r"<proposal_new_content>(?P<body>.*?)</proposal_new_content>",
+    r"<proposal_new_content>"
+    r"(?P<body>(?:(?!<proposal_new_content>).)*)"
+    r"</proposal_new_content>",
     re.DOTALL,
 )
 _RATIONALE_RE = re.compile(
-    r"<proposal_rationale>(?P<body>.*?)</proposal_rationale>",
+    r"<proposal_rationale>"
+    r"(?P<body>(?:(?!<proposal_rationale>).)*)"
+    r"</proposal_rationale>",
     re.DOTALL,
 )
 
@@ -308,8 +329,12 @@ def _parse_response(content: str) -> dict[str, str]:
     those, and models routinely don't. Tag-bounded content is taken
     verbatim, sidestepping that entire failure class.
     """
-    new_match = _NEW_CONTENT_RE.search(content)
-    if new_match is None:
+    # finditer + take-last so a preamble that mentions both opening
+    # and closing tags before the real proposal doesn't capture the
+    # preamble (see regex docstring above). For normal single-block
+    # outputs, this is equivalent to a single search.
+    new_matches = list(_NEW_CONTENT_RE.finditer(content))
+    if not new_matches:
         reason = "missing <proposal_new_content> sentinel tag"
         logger.warning(
             "proposer parse failed (length=%d): %s",
@@ -321,8 +346,19 @@ def _parse_response(content: str) -> dict[str, str]:
             f"agent response was missing required "
             f"<proposal_new_content> tag (response length={len(content)})"
         )
-    new_content = new_match.group("body").strip()
-    if not new_content:
+    new_match = new_matches[-1]
+    # Strip only the single framing newline adjacent to each tag.
+    # Models reliably emit the tag block as ``<tag>\nbody\n</tag>``
+    # for legibility — those newlines are formatting, not artifact
+    # content. Keep everything else verbatim so artifacts that rely
+    # on internal whitespace, indentation, or a trailing newline
+    # (e.g., code, poetry, files where W292 matters) round-trip
+    # unchanged. ``str.removeprefix`` / ``str.removesuffix`` only
+    # strip a single occurrence each, which is exactly what we want.
+    new_content = (
+        new_match.group("body").removeprefix("\n").removesuffix("\n")
+    )
+    if not new_content.strip():
         reason = "<proposal_new_content> tag was empty"
         logger.warning(
             "proposer parse failed (length=%d): %s",
@@ -332,9 +368,14 @@ def _parse_response(content: str) -> dict[str, str]:
         _maybe_dump_failed_output(content, reason)
         raise ProposerOutputParseError(reason)
     normalized: dict[str, str] = {"new_content": new_content}
-    rationale_match = _RATIONALE_RE.search(content)
-    if rationale_match is not None:
-        rationale = rationale_match.group("body").strip()
-        if rationale:
+    rationale_matches = list(_RATIONALE_RE.finditer(content))
+    if rationale_matches:
+        rationale = (
+            rationale_matches[-1]
+            .group("body")
+            .removeprefix("\n")
+            .removesuffix("\n")
+        )
+        if rationale.strip():
             normalized["rationale"] = rationale
     return normalized

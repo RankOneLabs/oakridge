@@ -262,16 +262,23 @@ async def test_parse_tolerates_surrounding_prose(tmp_path: Path) -> None:
     assert proposal.rationale == "reordered"
 
 
-async def test_parse_takes_first_tag_when_model_mentions_tag_name(
+async def test_parse_skips_preamble_mention_of_tag(
     tmp_path: Path,
 ) -> None:
-    """Non-greedy regex: if the model mentions ``<proposal_new_content>``
-    in passing before the actual tag, the first opening tag still
-    pairs with the first closing tag. Brittle in pathological cases,
-    but normal models put their actual proposal first."""
+    """If the model thinks aloud about the protocol — mentioning
+    ``<proposal_new_content>`` (and even a stray closing tag) in a
+    preamble before emitting the actual tagged block — the body's
+    tempered-greedy match refuses to span a second opening tag, so
+    the regex backtracks to start at the *real* tagged block. The
+    preamble must not leak into ``new_content``."""
     agent = _agent(tmp_path)
     stub = _StubLLM(
-        response_content=_tagged("real content", rationale="ok"),
+        response_content=(
+            "I'll wrap my proposal in <proposal_new_content> tags "
+            "and close with </proposal_new_content> as instructed.\n\n"
+            "Here it is:\n\n"
+            f"{_tagged('real content', rationale='ok')}"
+        ),
     )
     proposer = JigProposer(agent, llm=stub)
     proposal = await proposer.propose(
@@ -282,6 +289,7 @@ async def test_parse_takes_first_tag_when_model_mentions_tag_name(
         current_version="v0",
     )
     assert proposal.new_content == "real content"
+    assert proposal.rationale == "ok"
 
 
 # --- parse failures -----------------------------------------------------
