@@ -1,6 +1,6 @@
 """Tests for the v1 study grader factories.
 
-The leetcode grader runs real subprocesses (pytest / mypy / ruff)
+The leetcode grader runs real subprocesses (pytest / mypy)
 against materialized files, so these tests run those tools too —
 slower than pure-Python tests but deterministic. Skipped if the
 binaries aren't on PATH.
@@ -25,10 +25,14 @@ from jig.core.types import (
 from legit_biz_club.study.v1_graders import (
     _LEETCODE_TEST_FILE,
     make_leetcode_longest_substring_grader_factory,
+    make_leetcode_regex_matching_grader_factory,
+    make_leetcode_trapping_rain_water_grader_factory,
     make_prose_substrate_thesis_grader_factory,
 )
 from legit_biz_club.study.v1_targets import (
     code_leetcode_longest_substring,
+    code_leetcode_regex_matching,
+    code_leetcode_trapping_rain_water,
     prose_substrate_thesis,
 )
 
@@ -96,12 +100,12 @@ async def test_prose_grader_factory_default_llm_lazy_constructed() -> None:
 
 
 def _binaries_on_path() -> bool:
-    return all(shutil.which(b) for b in ("pytest", "mypy", "ruff"))
+    return all(shutil.which(b) for b in ("pytest", "mypy"))
 
 
 _NEEDS_TOOLCHAIN = pytest.mark.skipif(
     not _binaries_on_path(),
-    reason="leetcode grader needs pytest/mypy/ruff on PATH",
+    reason="leetcode grader needs pytest/mypy on PATH",
 )
 
 
@@ -127,8 +131,9 @@ _BROKEN_SOLUTION = (
 
 @_NEEDS_TOOLCHAIN
 async def test_leetcode_grader_correct_solution_passes_all_checks() -> None:
-    """A correct sliding-window solution should score 1.0 on tests,
-    mypy, and ruff."""
+    """A correct sliding-window solution should score 1.0 on tests
+    and mypy. Lint was removed from the leetcode pipeline (see module
+    docstring on v1_graders)."""
     target = code_leetcode_longest_substring()
     factory = make_leetcode_longest_substring_grader_factory()
     grader = factory(target)
@@ -138,14 +143,14 @@ async def test_leetcode_grader_correct_solution_passes_all_checks() -> None:
     by_dim = {s.dimension: s.value for s in scores}
     assert by_dim["tests"] == 1.0
     assert by_dim["mypy"] == 1.0
-    assert by_dim["ruff"] == 1.0
+    assert "ruff" not in by_dim
 
 
 @_NEEDS_TOOLCHAIN
 async def test_leetcode_grader_broken_solution_fails_tests() -> None:
-    """A trivially-wrong solution (always returns 0) passes mypy +
-    ruff but fails most tests. The grader should reflect that —
-    tests dimension scores below 1.0, mypy/ruff stay at 1.0."""
+    """A trivially-wrong solution (always returns 0) passes mypy but
+    fails most tests. The grader should reflect that — tests
+    dimension scores below 1.0, mypy stays at 1.0."""
     target = code_leetcode_longest_substring()
     factory = make_leetcode_longest_substring_grader_factory()
     grader = factory(target)
@@ -156,46 +161,12 @@ async def test_leetcode_grader_broken_solution_fails_tests() -> None:
     # Only the empty-string case passes; 1/8 = 0.125.
     assert by_dim["tests"] < 0.5
     assert by_dim["mypy"] == 1.0
-    assert by_dim["ruff"] == 1.0
-
-
-_NO_TRAILING_NEWLINE_SOLUTION = (
-    "def length_of_longest_substring(s: str) -> int:\n"
-    "    seen: dict[str, int] = {}\n"
-    "    start = 0\n"
-    "    best = 0\n"
-    "    for i, ch in enumerate(s):\n"
-    "        if ch in seen and seen[ch] >= start:\n"
-    "            start = seen[ch] + 1\n"
-    "        seen[ch] = i\n"
-    "        best = max(best, i - start + 1)\n"
-    "    return best"  # no trailing newline — should fail W292
-)
 
 
 _UNTYPED_SOLUTION = (
     "def length_of_longest_substring(s):\n"  # missing annotations
     "    return 0\n"
 )
-
-
-@_NEEDS_TOOLCHAIN
-async def test_leetcode_grader_enforces_w292_via_project_config() -> None:
-    """Without a pyproject.toml stub in the tmpdir, ruff falls back
-    to its default rule set (no W rules selected) and W292 doesn't
-    fire — the artifact's missing-trailing-newline regression that
-    surfaced in real smoke runs would silently score 1.0 on ruff.
-    The grader stubs in the project's ruff config; this test pins
-    that the stub is actually applied."""
-    target = code_leetcode_longest_substring()
-    factory = make_leetcode_longest_substring_grader_factory()
-    grader = factory(target)
-    scores = await grader.grade(
-        input=target.brief.target_spec,
-        output=_NO_TRAILING_NEWLINE_SOLUTION,
-    )
-    by_dim = {s.dimension: s.value for s in scores}
-    assert by_dim["ruff"] < 1.0
 
 
 @_NEEDS_TOOLCHAIN
@@ -222,3 +193,91 @@ def test_leetcode_test_file_constant_imports_solution() -> None:
     files in the tmpdir and the import has to resolve. A drift in
     artifact filename would break this silently otherwise."""
     assert "from solution import length_of_longest_substring" in _LEETCODE_TEST_FILE
+
+
+# --- new-factory smoke tests --------------------------------------------
+#
+# The shared _LeetcodeMechanicalGrader is exercised end-to-end above
+# against the longest-substring target. The two newer factories
+# (trapping rain water, regex matching) reuse the same grader class
+# but ship their own test-file strings — these smoke tests catch
+# import-name drift between target/test-file/grader-factory and
+# verify a known-correct reference solution scores 1.0 on tests +
+# mypy. They're not exhaustive correctness tests; they're a
+# wired-up-correctly check.
+
+
+_TRAPPING_RAIN_WATER_REFERENCE_SOLUTION = (
+    "def trap(height: list[int]) -> int:\n"
+    "    if len(height) < 3:\n"
+    "        return 0\n"
+    "    left, right = 0, len(height) - 1\n"
+    "    left_max, right_max = 0, 0\n"
+    "    total = 0\n"
+    "    while left < right:\n"
+    "        if height[left] < height[right]:\n"
+    "            if height[left] >= left_max:\n"
+    "                left_max = height[left]\n"
+    "            else:\n"
+    "                total += left_max - height[left]\n"
+    "            left += 1\n"
+    "        else:\n"
+    "            if height[right] >= right_max:\n"
+    "                right_max = height[right]\n"
+    "            else:\n"
+    "                total += right_max - height[right]\n"
+    "            right -= 1\n"
+    "    return total\n"
+)
+
+
+@_NEEDS_TOOLCHAIN
+async def test_trapping_rain_water_factory_reference_solution_passes() -> None:
+    """Two-pointer reference scores 1.0 on tests + mypy. Catches
+    drift in the test-file's solution-import name or signature."""
+    target = code_leetcode_trapping_rain_water()
+    factory = make_leetcode_trapping_rain_water_grader_factory()
+    grader = factory(target)
+    scores = await grader.grade(
+        input=target.brief.target_spec,
+        output=_TRAPPING_RAIN_WATER_REFERENCE_SOLUTION,
+    )
+    by_dim = {s.dimension: s.value for s in scores}
+    assert by_dim["tests"] == 1.0
+    assert by_dim["mypy"] == 1.0
+
+
+_REGEX_MATCHING_REFERENCE_SOLUTION = (
+    "from functools import lru_cache\n"
+    "\n"
+    "\n"
+    "def is_match(s: str, p: str) -> bool:\n"
+    "    @lru_cache(maxsize=None)\n"
+    "    def helper(i: int, j: int) -> bool:\n"
+    "        if j == len(p):\n"
+    "            return i == len(s)\n"
+    "        first = i < len(s) and (p[j] == s[i] or p[j] == '.')\n"
+    "        if j + 1 < len(p) and p[j + 1] == '*':\n"
+    "            return helper(i, j + 2) or (\n"
+    "                first and helper(i + 1, j)\n"
+    "            )\n"
+    "        return first and helper(i + 1, j + 1)\n"
+    "    return helper(0, 0)\n"
+)
+
+
+@_NEEDS_TOOLCHAIN
+async def test_regex_matching_factory_reference_solution_passes() -> None:
+    """Recursive memoized reference scores 1.0 on tests + mypy.
+    Catches drift in the test-file's solution-import name or
+    signature."""
+    target = code_leetcode_regex_matching()
+    factory = make_leetcode_regex_matching_grader_factory()
+    grader = factory(target)
+    scores = await grader.grade(
+        input=target.brief.target_spec,
+        output=_REGEX_MATCHING_REFERENCE_SOLUTION,
+    )
+    by_dim = {s.dimension: s.value for s in scores}
+    assert by_dim["tests"] == 1.0
+    assert by_dim["mypy"] == 1.0

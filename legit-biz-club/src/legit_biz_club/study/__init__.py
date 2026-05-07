@@ -56,10 +56,14 @@ from legit_biz_club.study.targets import (
 )
 from legit_biz_club.study.v1_graders import (
     make_leetcode_longest_substring_grader_factory,
+    make_leetcode_regex_matching_grader_factory,
+    make_leetcode_trapping_rain_water_grader_factory,
     make_prose_substrate_thesis_grader_factory,
 )
 from legit_biz_club.study.v1_targets import (
     code_leetcode_longest_substring,
+    code_leetcode_regex_matching,
+    code_leetcode_trapping_rain_water,
     prose_substrate_thesis,
 )
 
@@ -75,8 +79,12 @@ __all__ = [
     "TargetConfig",
     "aggregate",
     "code_leetcode_longest_substring",
+    "code_leetcode_regex_matching",
+    "code_leetcode_trapping_rain_water",
     "code_target",
     "make_leetcode_longest_substring_grader_factory",
+    "make_leetcode_regex_matching_grader_factory",
+    "make_leetcode_trapping_rain_water_grader_factory",
     "make_prose_substrate_thesis_grader_factory",
     "ensemble_incremental_only",
     "ensemble_with_multi_round",

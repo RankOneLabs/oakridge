@@ -6,9 +6,17 @@ Per the design memo's two-domain v1 test:
   workspace architecture itself. The brief carries the architecture
   facts inline so models don't fall back on training-data priors and
   invent coordination modes the system doesn't have.
-- Code domain: a leetcode-shaped problem (longest substring without
-  repeating characters). Well-specified, narrow scope, easy to eval
-  mechanically once we wire a grader.
+- Code domain: leetcode-shaped problems with mechanical graders.
+  Three targets:
+  - longest-substring (#3) — sliding window classic, easy to solve;
+    works as a smoke target to verify the grader path runs.
+  - trapping-rain-water (#42) — Hard tier, multiple valid approaches
+    (two-pointer, DP, stack); enough complexity that cheap models
+    partially fail and the rubric has room to discriminate.
+  - regex-matching (#10) — Hard tier, ``.`` and ``*`` matching
+    against the entire input. Adversarial pattern cases (greedy
+    backtracking, empty-pattern corners) push cells across the 0..1
+    score range rather than clustering at the ceiling.
 
 Generic :func:`legit_biz_club.study.targets.prose_target` and
 :func:`legit_biz_club.study.targets.code_target` stay as the API
@@ -138,12 +146,13 @@ _CODE_LEETCODE_LONGEST_SUBSTRING_TARGET_SPEC = (
     "  ''         → 0\n"
     "  'au'       → 2\n"
     "  ' '        → 1  (single space is one character)\n"
-    "  'dvdf'     → 3  (longest: 'vdf')\n\n"
+    "  'dvdf'     → 3  (longest: 'vdf')\n"
+    "  'Aa'       → 2  (case-sensitive)\n\n"
     "The function must:\n"
     "  - Accept any string including empty, single-character, or "
     "whitespace\n"
     "  - Return 0 for empty input\n"
-    "  - Be case-sensitive ('Aa' → 2)\n"
+    "  - Be case-sensitive\n"
     "  - Treat Unicode characters as single units\n\n"
     "Recommended approach: O(n) sliding window with a dict mapping "
     "character → last-seen index. Brute force O(n²) also "
@@ -178,11 +187,9 @@ def code_leetcode_longest_substring() -> TargetConfig:
     brief = Brief(
         target_spec=_CODE_LEETCODE_LONGEST_SUBSTRING_TARGET_SPEC,
         success_criteria=[
-            "function passes all 7 example test cases above",
+            "function passes all 8 example test cases above",
             "type-checks under strict mypy (no Any in the function "
             "signature)",
-            "passes ruff lint with project defaults",
-            "runtime is O(n) or O(n²) — no worse",
         ],
         constraints=[
             "single file, single function — no helper classes",
@@ -195,5 +202,169 @@ def code_leetcode_longest_substring() -> TargetConfig:
         name="code_leetcode_longest_substring",
         artifact_filename="solution.py",
         seed_content=_CODE_LEETCODE_LONGEST_SUBSTRING_SEED,
+        brief=brief,
+    )
+
+
+# --- code: leetcode #42 (trapping rain water) ----------------------------
+
+
+_CODE_LEETCODE_TRAPPING_RAIN_WATER_TARGET_SPEC = (
+    "Implement `trap(height: list[int]) -> int` in solution.py.\n\n"
+    "Given n non-negative integers representing an elevation map "
+    "where the width of each bar is 1, compute how much water it "
+    "can trap after raining.\n\n"
+    "Examples:\n"
+    "  [0,1,0,2,1,0,1,3,2,1,2,1] → 6\n"
+    "  [4,2,0,3,2,5]             → 9\n"
+    "  [3,0,2,0,4]               → 7\n"
+    "  []                        → 0\n"
+    "  [5]                       → 0\n"
+    "  [3,3,3]                   → 0\n"
+    "  [5,0,5]                   → 5\n"
+    "  [1,2,3,4,5]               → 0  (monotonic increasing traps "
+    "nothing)\n"
+    "  [5,4,3,2,1]               → 0  (monotonic decreasing traps "
+    "nothing)\n\n"
+    "The function must:\n"
+    "  - Accept any list[int] including empty / single-element\n"
+    "  - Return 0 for empty or single-element input\n"
+    "  - Handle all-zero, monotonic, flat, and pyramid terrains\n\n"
+    "Recommended approaches (each is O(n) time; brute-force O(n²) "
+    "is also acceptable as long as results are correct):\n"
+    "  - Two-pointer: maintain left_max / right_max and walk inward\n"
+    "  - Dynamic programming: prefix-max + suffix-max arrays\n"
+    "  - Stack-based monotonic decreasing\n"
+    "  All three are valid; pick whichever is cleanest for you."
+)
+
+
+_CODE_LEETCODE_TRAPPING_RAIN_WATER_SEED = (
+    "def trap(height: list[int]) -> int:\n"
+    "    raise NotImplementedError\n"
+)
+
+
+# --- code: leetcode #10 (regular expression matching) -------------------
+
+
+_CODE_LEETCODE_REGEX_MATCHING_TARGET_SPEC = (
+    "Implement `is_match(s: str, p: str) -> bool` in solution.py.\n\n"
+    "Given an input string `s` and a pattern `p`, implement regular "
+    "expression matching with support for `.` and `*`:\n\n"
+    "  - `.` matches any single character\n"
+    "  - `*` matches zero or more of the preceding element\n\n"
+    "The matching must cover the ENTIRE input string (not partial).\n\n"
+    "Examples:\n"
+    "  is_match('aa', 'a')           → False  (single 'a' doesn't match 'aa')\n"
+    "  is_match('aa', 'a*')          → True   (a* matches one or more 'a')\n"
+    "  is_match('ab', '.*')          → True   (.* matches any sequence)\n"
+    "  is_match('aab', 'c*a*b')      → True   (c* matches zero c, a* matches aa, b matches b)\n"
+    "  is_match('mississippi', 'mis*is*p*.') → False\n"
+    "  is_match('mississippi', 'mis*is*ip*.') → True\n"
+    "  is_match('', '')              → True\n"
+    "  is_match('', 'a*')            → True   (a* matches zero a's)\n"
+    "  is_match('', '.*')            → True\n"
+    "  is_match('a', '')             → False\n"
+    "  is_match('a', 'ab*')          → True   (b* matches zero b's)\n\n"
+    "The function must:\n"
+    "  - Match the ENTIRE input string (e.g., is_match('ab', 'a') is False)\n"
+    "  - Handle empty `s` and empty `p`\n"
+    "  - Treat `*` as a quantifier on the IMMEDIATELY preceding token "
+    "(`a*`, `.*`); `*` never appears as the first character of `p`\n"
+    "  - Handle nested quantifiers correctly (`a*b*c*` should match "
+    "many strings including empty)\n"
+    "  - Handle `.` and `*` in the same pattern correctly\n\n"
+    "Recommended approaches (both work):\n"
+    "  - Recursion with memoization: handle '*' by trying both 'consume "
+    "zero' and 'consume one and recurse' branches\n"
+    "  - Bottom-up DP on a 2D table: dp[i][j] = does s[:i] match p[:j]\n\n"
+    "Watch out for: greedy `.*` swallowing too much; off-by-one with "
+    "trailing `*` patterns; empty-string edge cases."
+)
+
+
+_CODE_LEETCODE_REGEX_MATCHING_SEED = (
+    "def is_match(s: str, p: str) -> bool:\n"
+    "    raise NotImplementedError\n"
+)
+
+
+def code_leetcode_regex_matching() -> TargetConfig:
+    """Real code target for the v1 study: leetcode #10 (Hard).
+
+    Regular Expression Matching is the discrimination champion among
+    Hard leetcode problems: even strong models routinely fail on
+    subtle interactions between `*` and `.`, empty-string corner
+    cases, and patterns like ``a*b*c*`` where multiple quantifiers
+    interact. Two distinct correct approaches (recursion+memo vs
+    bottom-up DP) so ensembles can show real differential signal.
+
+    The 22 canonical test cases span LeetCode's official examples,
+    classic edge cases (empty s, empty p, long quantifier chains),
+    and adversarial patterns (greedy `.*` overshoot, trailing `*`
+    quantifier, must-match-entire-string). Per-test granularity
+    (~4.5%) gives the mechanical grader real resolution.
+
+    Same fresh-per-call brief discipline as
+    :func:`code_leetcode_longest_substring`.
+    """
+    brief = Brief(
+        target_spec=_CODE_LEETCODE_REGEX_MATCHING_TARGET_SPEC,
+        success_criteria=[
+            "function passes all 22 canonical test cases",
+            "type-checks under strict mypy (no Any in the function "
+            "signature)",
+            "handles empty-string and empty-pattern edge cases "
+            "correctly",
+            "matches the ENTIRE input (not partial) — ``is_match('ab', "
+            "'a')`` must return False",
+        ],
+        constraints=[
+            "single file, single function — no helper classes, but "
+            "internal recursive helpers / memo dicts are fine",
+            "no third-party imports (typing and functools are fine)",
+        ],
+    )
+    return code_target(
+        name="code_leetcode_regex_matching",
+        artifact_filename="solution.py",
+        seed_content=_CODE_LEETCODE_REGEX_MATCHING_SEED,
+        brief=brief,
+    )
+
+
+def code_leetcode_trapping_rain_water() -> TargetConfig:
+    """Real code target for the v1 study: leetcode #42 (Hard).
+
+    Trapping Rain Water is the discrimination-friendly counterpart to
+    longest-substring. Multiple valid O(n) approaches (two-pointer, DP
+    with prefix/suffix max, monotonic stack) give ensembles real
+    differential signal. Edge cases — empty, single element, all-zero,
+    monotonic, pyramid, multiple basins — trip naive O(n²) attempts
+    and partial implementations, so the mechanical grader's
+    pytest-pass-rate ranges across cells rather than clustering at 1.
+
+    Same fresh-per-call brief discipline as
+    :func:`code_leetcode_longest_substring`.
+    """
+    brief = Brief(
+        target_spec=_CODE_LEETCODE_TRAPPING_RAIN_WATER_TARGET_SPEC,
+        success_criteria=[
+            "function passes all 11 canonical test cases",
+            "type-checks under strict mypy (no Any in the function "
+            "signature)",
+        ],
+        constraints=[
+            "single file, single function — no helper classes",
+            "no third-party imports (typing is fine)",
+            "no comments inside the function unless they explain a "
+            "non-obvious algorithmic choice",
+        ],
+    )
+    return code_target(
+        name="code_leetcode_trapping_rain_water",
+        artifact_filename="solution.py",
+        seed_content=_CODE_LEETCODE_TRAPPING_RAIN_WATER_SEED,
         brief=brief,
     )

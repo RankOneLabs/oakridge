@@ -10,10 +10,23 @@ a corresponding grader factory:
   a judge LLM with a sensible default; operator overrides for
   production studies (the judge should be distinct from the writer
   pool).
-- :func:`make_leetcode_longest_substring_grader_factory` — runs the
-  artifact through pytest + mypy + ruff. The 8 canonical leetcode
-  cases live as a string constant materialized into a tmpdir per
-  grade call so subprocess-based checks have something to point at.
+- :func:`make_leetcode_longest_substring_grader_factory`,
+  :func:`make_leetcode_trapping_rain_water_grader_factory`, and
+  :func:`make_leetcode_regex_matching_grader_factory` — all three
+  wrap a generic mechanical grader that materializes the artifact +
+  a per-target test file + a stub pyproject.toml into a tmpdir,
+  then runs pytest + mypy. The factories share the grader; only
+  the test file string differs.
+
+  Lint (ruff) was removed from the leetcode pipeline: the brief told
+  agents "passes ruff lint with project defaults" but the grader
+  enforced a stricter selection (E,F,W,I,UP,B,SIM) than ruff's true
+  defaults (E,F). Agents were graded on a config they couldn't see,
+  which produced uniform 0.0 scores that were noise on the
+  condition-effect signal rather than real discrimination. If
+  lint-quality discrimination is wanted later, ship a target whose
+  brief is explicitly "produce idiomatic, lint-clean Python" with
+  the rule selection in the brief.
 
 Both fit the ``GraderFactory = Callable[[TargetConfig], Grader]``
 signature and slot into ``run_cell``'s ``grader_factory=`` parameter.
@@ -30,7 +43,6 @@ from jig.llm.factory import from_model
 from legit_biz_club.eval.code import (
     mypy_check,
     pytest_check,
-    ruff_check,
 )
 from legit_biz_club.eval.prose import make_brief_judge
 from legit_biz_club.study.runner import GraderFactory
@@ -86,24 +98,14 @@ def make_prose_substrate_thesis_grader_factory(
 # --- code grader ---------------------------------------------------------
 
 
-# Stub pyproject.toml materialized in the grader's tmpdir so ruff
-# and mypy run with the project's strictness, not their defaults.
-# Without this, ruff falls back to its default rule set (which
-# doesn't include W*, so W292 trailing-newline doesn't fire) and
-# mypy falls back to non-strict (no required annotations, etc.) —
-# the brief's "passes ruff lint with project defaults" /
-# "type-checks under strict mypy" criteria would silently grade as
-# lenient pass-throughs. Mirrors legit-biz-club's pyproject.toml
-# tool sections; keep in sync if the project's lint/typecheck
-# config drifts.
+# Stub pyproject.toml materialized in the grader's tmpdir so mypy
+# runs in strict mode, not its lenient defaults. Without this, mypy
+# accepts untyped function defs and the brief's "type-checks under
+# strict mypy" criterion would silently grade as a pass-through.
+# Mirrors legit-biz-club's mypy config; keep in sync if the
+# project's typecheck strictness drifts. Ruff is intentionally
+# omitted (see module docstring).
 _PROJECT_PYPROJECT_STUB = """\
-[tool.ruff]
-target-version = "py312"
-line-length = 100
-
-[tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "B", "SIM"]
-
 [tool.mypy]
 python_version = "3.12"
 strict = true
@@ -163,10 +165,16 @@ def test_case_sensitive_aa() -> None:
 '''
 
 
-class _LeetcodeLongestSubstringGrader:
-    """Grader that materializes the artifact + tests into a tmpdir,
-    then runs pytest / mypy / ruff against it via jig's
+class _LeetcodeMechanicalGrader:
+    """Grader that materializes the artifact + a per-target test file
+    into a tmpdir, then runs pytest / mypy against it via jig's
     :class:`HeuristicGrader`.
+
+    Test-file content is injected at construction so the same grader
+    class serves any leetcode-shaped target (longest-substring,
+    trapping-rain-water, future Hard problems). Adding a new code
+    target now means defining a test file string + wiring a new
+    factory — no new grader class.
 
     The tmpdir lives only for the duration of the ``grade()`` call —
     we don't keep the artifact lying around because the cell's
@@ -174,6 +182,9 @@ class _LeetcodeLongestSubstringGrader:
     tmpdir is purely for the subprocess checks that need a real
     file on disk.
     """
+
+    def __init__(self, *, test_file_content: str) -> None:
+        self._test_file = test_file_content
 
     async def grade(
         self,
@@ -188,13 +199,12 @@ class _LeetcodeLongestSubstringGrader:
             )
             (dpath / "solution.py").write_text(output, encoding="utf-8")
             (dpath / "test_solution.py").write_text(
-                _LEETCODE_TEST_FILE, encoding="utf-8"
+                self._test_file, encoding="utf-8"
             )
             heuristic = HeuristicGrader(
                 checks=[
                     pytest_check(dpath, name="tests", cwd=dpath),
                     mypy_check(dpath, name="mypy", cwd=dpath),
-                    ruff_check(dpath, name="ruff", cwd=dpath),
                 ]
             )
             scores: list[Score] = await heuristic.grade(
@@ -207,15 +217,13 @@ def make_leetcode_longest_substring_grader_factory() -> GraderFactory:
     """Build a grader factory for :func:`code_leetcode_longest_substring`.
 
     Returns a grader that, on each ``grade()`` call, writes the
-    artifact + a fixed test file + a stub ``pyproject.toml`` mirroring
-    legit-biz-club's tool sections into a fresh tmpdir, then runs:
+    artifact + the fixed leetcode-#3 test file + a stub
+    ``pyproject.toml`` for mypy strictness into a fresh tmpdir, then
+    runs:
 
     - pytest against the 8 canonical leetcode #3 cases
     - mypy on solution.py — strictness comes from the stub
       pyproject.toml (``strict=true``), NOT mypy's defaults
-    - ruff on solution.py — rule selection comes from the stub
-      pyproject.toml (``select=[E,F,W,I,UP,B,SIM]``), NOT ruff's
-      defaults
 
     Each check returns a 0..1 score. ``HeuristicGrader`` aggregates
     them into one :class:`Score` per check name. No LLM calls — fully
@@ -233,7 +241,264 @@ def make_leetcode_longest_substring_grader_factory() -> GraderFactory:
     :mod:`jig.feedback.heuristic` ``Check`` machinery, not here.
     """
 
-    def factory(_target: TargetConfig) -> Grader:
-        return _LeetcodeLongestSubstringGrader()
+    def factory(target: TargetConfig) -> Grader:
+        # Wiring guard: each factory ships its own test-file string,
+        # so routing the wrong target through this factory would
+        # silently grade against the longest-substring tests. Fail
+        # loud at factory call time rather than burying the mismatch
+        # in test failures the operator has to diff manually.
+        if target.name != "code_leetcode_longest_substring":
+            raise ValueError(
+                f"longest-substring grader factory called with "
+                f"target {target.name!r}"
+            )
+        return _LeetcodeMechanicalGrader(
+            test_file_content=_LEETCODE_TEST_FILE
+        )
+
+    return factory
+
+
+# --- code grader: leetcode #42 (trapping rain water) -------------------
+
+
+_TRAPPING_RAIN_WATER_TEST_FILE = '''\
+"""Tests for the leetcode #42 artifact (trapping rain water).
+
+Materialized into the grader's tmpdir alongside the agent-produced
+solution.py. Pytest auto-discovers test_*.py files and imports trap
+from the same directory.
+"""
+from solution import trap
+
+
+def test_canonical_a() -> None:
+    assert trap([0, 1, 0, 2, 1, 0, 1, 3, 2, 1, 2, 1]) == 6
+
+
+def test_canonical_b() -> None:
+    assert trap([4, 2, 0, 3, 2, 5]) == 9
+
+
+def test_multiple_basins() -> None:
+    assert trap([3, 0, 2, 0, 4]) == 7
+
+
+def test_empty() -> None:
+    assert trap([]) == 0
+
+
+def test_single() -> None:
+    assert trap([5]) == 0
+
+
+def test_two_elements() -> None:
+    """Two bars trap nothing — no enclosing wall on the right."""
+    assert trap([2, 3]) == 0
+
+
+def test_flat() -> None:
+    assert trap([3, 3, 3]) == 0
+
+
+def test_simple_basin() -> None:
+    """One valley between two equal walls."""
+    assert trap([5, 0, 5]) == 5
+
+
+def test_monotonic_increasing() -> None:
+    assert trap([1, 2, 3, 4, 5]) == 0
+
+
+def test_monotonic_decreasing() -> None:
+    assert trap([5, 4, 3, 2, 1]) == 0
+
+
+def test_pyramid() -> None:
+    """Single peak — no enclosing wall on either descent."""
+    assert trap([1, 2, 3, 4, 3, 2, 1]) == 0
+'''
+
+
+# --- code grader: leetcode #10 (regular expression matching) -----------
+
+
+_REGEX_MATCHING_TEST_FILE = '''\
+"""Tests for the leetcode #10 artifact (regular expression matching).
+
+Materialized into the grader's tmpdir alongside the agent-produced
+solution.py. Pytest auto-discovers test_*.py files and imports
+is_match from the same directory.
+
+22 cases covering: LeetCode's canonical examples; empty-string and
+empty-pattern edges; long quantifier chains; greedy `.*` overshoot;
+trailing `*`; the 'must match entire string' invariant. Per-test
+granularity is ~4.5% so the mechanical grader has real resolution
+on partial implementations.
+"""
+from solution import is_match
+
+
+# --- LeetCode canonical examples ---
+
+def test_canonical_aa_a_false() -> None:
+    assert is_match("aa", "a") is False
+
+
+def test_canonical_aa_a_star_true() -> None:
+    assert is_match("aa", "a*") is True
+
+
+def test_canonical_ab_dot_star_true() -> None:
+    assert is_match("ab", ".*") is True
+
+
+def test_canonical_aab_c_star_a_star_b_true() -> None:
+    assert is_match("aab", "c*a*b") is True
+
+
+def test_canonical_mississippi_false() -> None:
+    assert is_match("mississippi", "mis*is*p*.") is False
+
+
+def test_canonical_mississippi_true() -> None:
+    assert is_match("mississippi", "mis*is*ip*.") is True
+
+
+# --- empty-string / empty-pattern edges ---
+
+def test_empty_string_empty_pattern() -> None:
+    assert is_match("", "") is True
+
+
+def test_non_empty_string_empty_pattern() -> None:
+    assert is_match("a", "") is False
+
+
+def test_empty_string_zero_quantifier() -> None:
+    """``a*`` matches zero a's, so empty string matches."""
+    assert is_match("", "a*") is True
+
+
+def test_empty_string_dot_star() -> None:
+    assert is_match("", ".*") is True
+
+
+def test_empty_string_long_zero_chain() -> None:
+    """Long chain of optional quantifiers all consume zero."""
+    assert is_match("", "a*b*c*") is True
+
+
+# --- partial / full match invariant ---
+
+def test_must_match_entire_string() -> None:
+    """is_match('ab', 'a') is False — pattern must cover the whole string."""
+    assert is_match("ab", "a") is False
+
+
+def test_pattern_longer_than_string() -> None:
+    assert is_match("a", "ab*") is True
+
+
+def test_dot_star_with_trailing_required() -> None:
+    """``.*c`` on 'ab' is False because there's no 'c' anywhere."""
+    assert is_match("ab", ".*c") is False
+
+
+# --- greedy / quantifier interactions ---
+
+def test_a_star_greedy_then_a() -> None:
+    """``a*a`` on 'aaa' — a* takes 2, then 'a' matches the last."""
+    assert is_match("aaa", "a*a") is True
+
+
+def test_a_star_consumes_all_then_required_a() -> None:
+    """``a*`` could greedily take all 3 'a's but then 'a' has nothing —
+    correct: backtrack so a* takes 2 and trailing 'a' matches one."""
+    assert is_match("aaaa", "a*a") is True
+
+
+def test_dot_star_greedy_with_trailing_dot() -> None:
+    """``.*..`` on 'aaa' must NOT let .* consume all three — needs to
+    leave 2 chars for the trailing dots."""
+    assert is_match("aaa", ".*..") is True
+
+
+def test_dot_star_too_short_for_trailing() -> None:
+    assert is_match("a", ".*..") is False
+
+
+# --- nested quantifiers ---
+
+def test_a_star_b_star_a_star() -> None:
+    """``a*b*a*`` matches anything composed of a's and b's where a's
+    come before any b's, then a's again — including empty string."""
+    assert is_match("aabba", "a*b*a*") is True
+
+
+def test_a_star_b_star_a_star_empty() -> None:
+    assert is_match("", "a*b*a*") is True
+
+
+def test_alternating_zero_quantifiers() -> None:
+    """``ab*c*`` on 'a': b* and c* both match zero."""
+    assert is_match("a", "ab*c*") is True
+
+
+# --- adversarial corner ---
+
+def test_dot_quantifier_only() -> None:
+    """``.*`` matches anything including the empty string."""
+    assert is_match("xyz", ".*") is True
+'''
+
+
+def make_leetcode_regex_matching_grader_factory() -> GraderFactory:
+    """Build a grader factory for :func:`code_leetcode_regex_matching`.
+
+    Same mechanical pipeline as the other leetcode targets
+    (pytest + mypy against solution.py in a tmpdir), with 22
+    canonical regex-matching test cases. Picked for partial-credit
+    discrimination: most agents pass the canonical LeetCode examples
+    but stumble on the greedy/backtrack cases (``.*..``, ``a*a`` on
+    long inputs) and empty-pattern corners — so cells score across
+    the 0..1 range rather than clustering at the ceiling.
+    """
+
+    def factory(target: TargetConfig) -> Grader:
+        # Wiring guard — see longest-substring factory for rationale.
+        if target.name != "code_leetcode_regex_matching":
+            raise ValueError(
+                f"regex-matching grader factory called with "
+                f"target {target.name!r}"
+            )
+        return _LeetcodeMechanicalGrader(
+            test_file_content=_REGEX_MATCHING_TEST_FILE
+        )
+
+    return factory
+
+
+def make_leetcode_trapping_rain_water_grader_factory() -> GraderFactory:
+    """Build a grader factory for :func:`code_leetcode_trapping_rain_water`.
+
+    Same mechanical pipeline as the longest-substring factory
+    (pytest + mypy against solution.py in a tmpdir), only the test
+    file string differs — 11 canonical trapping-rain-water cases
+    covering the standard examples plus edge cases (empty, single,
+    two-element, flat, monotonic, pyramid, multi-basin) that trip
+    naive implementations.
+    """
+
+    def factory(target: TargetConfig) -> Grader:
+        # Wiring guard — see longest-substring factory for rationale.
+        if target.name != "code_leetcode_trapping_rain_water":
+            raise ValueError(
+                f"trapping-rain-water grader factory called with "
+                f"target {target.name!r}"
+            )
+        return _LeetcodeMechanicalGrader(
+            test_file_content=_TRAPPING_RAIN_WATER_TEST_FILE
+        )
 
     return factory
