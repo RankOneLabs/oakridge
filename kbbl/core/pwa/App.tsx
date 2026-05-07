@@ -771,10 +771,15 @@ function formatRelative(iso: string): string {
 
 // Module-scope formatter so the hover tooltip is locale-stable (seconds and
 // time zone always present) and we don't spin up a new Intl instance per
-// timestamp render. `medium` time style includes seconds across locales.
+// timestamp render. Use granular options because ECMA-402 forbids combining
+// dateStyle/timeStyle with timeZoneName.
 const exactTimeFormatter = new Intl.DateTimeFormat(undefined, {
-  dateStyle: "medium",
-  timeStyle: "medium",
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+  second: "2-digit",
   timeZoneName: "short",
 });
 function formatExactTime(iso: string): string {
