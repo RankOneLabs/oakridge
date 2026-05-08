@@ -1,0 +1,18 @@
+{
+  "compact": {
+    "t_quiet_seconds": 30,
+    "t_quiet_after_subagent_seconds": 15,
+    "t_warm_seconds": 180,
+    "soft_threshold_tokens": 30000,
+    "hard_threshold_tokens": 70000,
+    "compact_call_timeout_seconds": 90,
+    "max_consecutive_failures_before_force": 3
+  },
+  "retention": { "session_events_full_days": 14 },
+  "safir": {
+    "base_url": "http://localhost:7145",
+    "api_token": null,
+    "webhook_token": null,
+    "queue_drain_interval_seconds": 30
+  }
+}
