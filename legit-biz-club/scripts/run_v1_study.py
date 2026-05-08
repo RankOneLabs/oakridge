@@ -36,12 +36,14 @@ import json
 import sys
 import tempfile
 import traceback
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
+from jig.core.types import LLMClient
 from jig.llm.factory import from_model
+from jig.llm.openrouter import OpenRouterClient
 from jig.memory.local import SqliteStore
 from jig.tracing.stdout import StdoutTracer
 
@@ -65,12 +67,14 @@ from legit_biz_club.study.runner import GraderFactory, run_cell
 from legit_biz_club.study.targets import TargetConfig
 from legit_biz_club.study.v1_graders import (
     make_leetcode_longest_substring_grader_factory,
+    make_leetcode_median_two_sorted_arrays_grader_factory,
     make_leetcode_regex_matching_grader_factory,
     make_leetcode_trapping_rain_water_grader_factory,
     make_prose_substrate_thesis_grader_factory,
 )
 from legit_biz_club.study.v1_targets import (
     code_leetcode_longest_substring,
+    code_leetcode_median_two_sorted_arrays,
     code_leetcode_regex_matching,
     code_leetcode_trapping_rain_water,
     prose_substrate_thesis,
@@ -84,6 +88,9 @@ _TARGET_FACTORIES: dict[str, Callable[[], TargetConfig]] = {
     "code_leetcode_longest_substring": code_leetcode_longest_substring,
     "code_leetcode_trapping_rain_water": code_leetcode_trapping_rain_water,
     "code_leetcode_regex_matching": code_leetcode_regex_matching,
+    "code_leetcode_median_two_sorted_arrays": (
+        code_leetcode_median_two_sorted_arrays
+    ),
 }
 
 
@@ -193,12 +200,88 @@ def _build_peer_context_loader(store_path: Path) -> PeerContextLoader:
 # --- proposer --------------------------------------------------------
 
 
+# OpenRouter providers we steer requests AWAY from. Cloudflare's
+# Workers AI hosting truncates output regardless of ``max_tokens``
+# (we've observed responses ending mid-token at ~50-100 tokens with
+# ``finish_reason=None``), which surfaces as opaque protocol-violation
+# parse errors. Steering away surfaces a richer-output provider for
+# any model that has one; if the model is *only* hosted on Cloudflare
+# (e.g., qwen-2.5-coder-32b at the time of writing), the request
+# returns HTTP 404 and the run_cell handler logs cell_failed —
+# fail-loud rather than silently truncate.
+_OPENROUTER_BAD_PROVIDERS: tuple[str, ...] = ("Cloudflare",)
+
+
+class _ProviderFilteredOpenRouterClient(OpenRouterClient):
+    """OpenRouter client that excludes named upstream providers.
+
+    Subclasses :class:`OpenRouterClient` solely to override
+    :meth:`_apply_extra_kwargs` and inject ``provider.ignore`` into
+    every request's ``extra_body``. Subclassing is the right hook
+    because the parent's ``_apply_extra_kwargs`` already handles
+    deep-merging ``extra_body`` fields like ``usage.include`` —
+    we extend that contract rather than reimplement it.
+    """
+
+    def __init__(
+        self,
+        model: str,
+        *,
+        ignore_providers: Sequence[str] = (),
+        **kwargs: object,
+    ) -> None:
+        super().__init__(model, **kwargs)
+        self._ignore_providers = tuple(ignore_providers)
+
+    def _apply_extra_kwargs(
+        self, kwargs: dict[str, object]
+    ) -> None:
+        super()._apply_extra_kwargs(kwargs)
+        if not self._ignore_providers:
+            return
+        extra_body = kwargs.setdefault("extra_body", {})
+        assert isinstance(extra_body, dict)
+        provider = extra_body.setdefault("provider", {})
+        assert isinstance(provider, dict)
+        existing = list(provider.get("ignore", []) or [])
+        for name in self._ignore_providers:
+            if name not in existing:
+                existing.append(name)
+        provider["ignore"] = existing
+
+
+def _build_llm(model_name: str) -> LLMClient:
+    """Resolve a model name to an LLMClient, applying our
+    OpenRouter provider-filter for any ``openrouter/*`` slug.
+
+    Non-OpenRouter models pass through to ``from_model`` unchanged
+    (Anthropic, OpenAI, etc. don't have a hidden-truncation problem
+    we need to route around).
+    """
+    if model_name.startswith("openrouter/"):
+        slug = model_name[len("openrouter/"):]
+        if not slug:
+            raise ValueError(
+                f"empty OpenRouter slug in model name {model_name!r}"
+            )
+        return _ProviderFilteredOpenRouterClient(
+            model=slug,
+            ignore_providers=_OPENROUTER_BAD_PROVIDERS,
+        )
+    return from_model(model_name)
+
+
 def _proposer_factory(agent: Agent, *, context: str = "") -> JigProposer:
     # max_tokens=16384 (vs JigProposer's 8192 default): cushion for
     # ensemble cells where the artifact + tag overhead grow past 8192
     # in later commits. 16384 stays well under every modern Claude
     # model's per-call cap and avoids tuning per-target.
-    return JigProposer(agent, context=context, max_tokens=16384)
+    return JigProposer(
+        agent,
+        llm=_build_llm(agent.model),
+        context=context,
+        max_tokens=16384,
+    )
 
 
 # --- run-root --------------------------------------------------------
@@ -384,6 +467,10 @@ async def main() -> int:
         elif target.name == "code_leetcode_regex_matching":
             grader_factories[target.name] = (
                 make_leetcode_regex_matching_grader_factory()
+            )
+        elif target.name == "code_leetcode_median_two_sorted_arrays":
+            grader_factories[target.name] = (
+                make_leetcode_median_two_sorted_arrays_grader_factory()
             )
         else:
             # Unreachable — _TARGET_FACTORIES gates target tokens.
