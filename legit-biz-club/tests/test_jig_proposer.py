@@ -55,6 +55,32 @@ class _StubLLM(LLMClient):
         )
 
 
+class _SequencedStubLLM(LLMClient):
+    """Returns a different canned response per call. Used by retry
+    tests to simulate a model that violates the protocol on attempt
+    N then recovers on N+1."""
+
+    def __init__(self, response_contents: list[str]) -> None:
+        self._contents = list(response_contents)
+        self.call_count = 0
+
+    async def complete(self, params: CompletionParams) -> LLMResponse:
+        if self.call_count >= len(self._contents):
+            raise AssertionError(
+                f"_SequencedStubLLM exhausted after "
+                f"{self.call_count} calls"
+            )
+        content = self._contents[self.call_count]
+        self.call_count += 1
+        return LLMResponse(
+            content=content,
+            tool_calls=None,
+            usage=Usage(input_tokens=10, output_tokens=20),
+            latency_ms=42.0,
+            model="stub",
+        )
+
+
 def _tagged(new_content: str, rationale: str | None = None) -> str:
     """Build a sentinel-tag response body. Keeps tests readable."""
     parts = [
@@ -361,6 +387,102 @@ async def test_parse_failure_when_new_content_tag_is_empty(
         )
 
 
+async def test_parse_retry_recovers_after_first_violation(
+    tmp_path: Path,
+) -> None:
+    """Default ``max_parse_retries=1``: a model that violates the
+    protocol on attempt 1 then complies on attempt 2 should produce
+    a clean Proposal. Two LLM calls were made; no error propagates.
+    This is the common-case fix for stochastic protocol violations
+    we see from weak open models."""
+    agent = _agent(tmp_path)
+    stub = _SequencedStubLLM(
+        [
+            "I'll just write the code:\n\ndef foo(): pass",
+            _tagged("the real proposal", rationale="reasoned"),
+        ]
+    )
+    proposer = JigProposer(agent, llm=stub)
+    proposal = await proposer.propose(
+        agent=agent,
+        brief=_brief(),
+        artifact=_artifact(tmp_path),
+        current_content="seed",
+        current_version="v0",
+    )
+    assert proposal.new_content == "the real proposal"
+    assert proposal.rationale == "reasoned"
+    assert stub.call_count == 2
+
+
+async def test_parse_retry_exhausts_and_raises(tmp_path: Path) -> None:
+    """When EVERY attempt violates the protocol — including the final
+    retry — the parse error propagates so the cell-level handler
+    records cell_failed. Verifies the retry budget has a finite
+    ceiling rather than looping forever."""
+    agent = _agent(tmp_path)
+    stub = _SequencedStubLLM(
+        [
+            "no tags here, attempt 1",
+            "still no tags, attempt 2",
+            "still no tags, attempt 3",
+        ]
+    )
+    proposer = JigProposer(agent, llm=stub, max_parse_retries=2)
+    with pytest.raises(
+        ProposerOutputParseError,
+        match="missing required <proposal_new_content> tag",
+    ):
+        await proposer.propose(
+            agent=agent,
+            brief=_brief(),
+            artifact=_artifact(tmp_path),
+            current_content="seed",
+            current_version="v0",
+        )
+    # Three attempts: 1 initial + 2 retries.
+    assert stub.call_count == 3
+
+
+async def test_parse_retry_disabled_when_max_is_zero(
+    tmp_path: Path,
+) -> None:
+    """``max_parse_retries=0`` restores the original one-shot
+    behavior. A single violation propagates immediately; the LLM is
+    only called once."""
+    agent = _agent(tmp_path)
+    stub = _SequencedStubLLM(
+        [
+            "no tags",
+            _tagged("would succeed if we retried"),
+        ]
+    )
+    proposer = JigProposer(agent, llm=stub, max_parse_retries=0)
+    with pytest.raises(ProposerOutputParseError):
+        await proposer.propose(
+            agent=agent,
+            brief=_brief(),
+            artifact=_artifact(tmp_path),
+            current_content="seed",
+            current_version="v0",
+        )
+    assert stub.call_count == 1
+
+
+def test_parse_retry_rejects_negative_budget(tmp_path: Path) -> None:
+    """Negative retry budgets are nonsense — fail loud at construction
+    rather than silently treating them as zero."""
+    agent = _agent(tmp_path)
+    with pytest.raises(
+        ValueError, match="max_parse_retries must be non-negative"
+    ):
+        JigProposer(
+            agent,
+            llm=_StubLLM(_tagged("x")),
+            max_parse_retries=-1,
+        )
+
+
 async def test_parse_failure_writes_debug_dump_when_env_set(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -374,7 +496,12 @@ async def test_parse_failure_writes_debug_dump_when_env_set(
 
     agent = _agent(tmp_path)
     stub = _StubLLM(response_content="no tags here")
-    proposer = JigProposer(agent, llm=stub)
+    # max_parse_retries=0 so the parse fails on the first (only)
+    # attempt — we want to assert the dump-creation contract for
+    # ONE failed parse, not the cumulative behavior of N retries.
+    # Retry-induced multi-dump behavior has its own coverage in the
+    # parse-retry tests above.
+    proposer = JigProposer(agent, llm=stub, max_parse_retries=0)
 
     with pytest.raises(ProposerOutputParseError):
         await proposer.propose(
