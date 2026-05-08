@@ -451,8 +451,8 @@ def code_leetcode_median_two_sorted_arrays() -> TargetConfig:
             "``from typing import List``. The seed and target "
             "signature use the built-in spelling and mypy strict "
             "is configured for it",
-            "do not call ``sorted()`` or ``list.sort()`` on the "
-            "combined arrays. The perf grader runs a static AST "
+            "do not call ``sorted()`` or ``list.sort()`` anywhere "
+            "in solution.py. The perf grader runs a static AST "
             "check on solution.py before the timing test; either "
             "function call (canonical spelling) fails the perf "
             "dimension regardless of wall-clock time",

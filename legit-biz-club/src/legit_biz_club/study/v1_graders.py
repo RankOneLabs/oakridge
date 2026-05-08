@@ -213,7 +213,8 @@ class _LeetcodeMechanicalGrader:
             (dpath / "pyproject.toml").write_text(
                 _PROJECT_PYPROJECT_STUB, encoding="utf-8"
             )
-            (dpath / "solution.py").write_text(output, encoding="utf-8")
+            solution_path = dpath / "solution.py"
+            solution_path.write_text(output, encoding="utf-8")
             test_solution_path = dpath / "test_solution.py"
             test_solution_path.write_text(
                 self._test_file, encoding="utf-8"
@@ -228,7 +229,10 @@ class _LeetcodeMechanicalGrader:
                     cwd=dpath,
                     test_paths=[test_solution_path],
                 ),
-                mypy_check(dpath, name="mypy", cwd=dpath),
+                # Scope mypy to solution.py only — the harness's
+                # test files share the tmpdir but aren't student
+                # output and shouldn't influence the mypy score.
+                mypy_check(solution_path, name="mypy", cwd=dpath),
             ]
             if self._perf_test is not None:
                 test_perf_path = dpath / "test_perf.py"
