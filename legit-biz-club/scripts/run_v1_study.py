@@ -243,7 +243,20 @@ class _ProviderFilteredOpenRouterClient(OpenRouterClient):
         assert isinstance(extra_body, dict)
         provider = extra_body.setdefault("provider", {})
         assert isinstance(provider, dict)
-        existing = list(provider.get("ignore", []) or [])
+        # Existing ``ignore`` should be a list/tuple of provider
+        # names per the OpenRouter API. Reject anything else loudly
+        # — silently coercing a string to a list of characters would
+        # produce a broken request without surfacing the misuse.
+        raw = provider.get("ignore")
+        if raw is None:
+            existing: list[str] = []
+        elif isinstance(raw, list | tuple):
+            existing = [str(x) for x in raw]
+        else:
+            raise TypeError(
+                f"provider.ignore must be a list/tuple of strings, "
+                f"got {type(raw).__name__}: {raw!r}"
+            )
         for name in self._ignore_providers:
             if name not in existing:
                 existing.append(name)

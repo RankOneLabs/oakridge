@@ -397,13 +397,13 @@ _CODE_LEETCODE_MEDIAN_TWO_SORTED_ARRAYS_TARGET_SPEC = (
     "  - Return the median as a float (single-element median is "
     "still a float)\n"
     "  - Handle negative numbers, duplicates, and large arrays "
-    "(up to ~10^5 elements per array)\n"
+    "(up to ~3×10^6 elements per array)\n"
     "  - Run in O(log(min(m, n))) time — this is graded.\n\n"
     "The performance constraint is real: the grader runs a perf "
-    "test with combined input size 10^7 under a 200ms wall-clock "
+    "test with combined input size 6×10^6 under a 100ms wall-clock "
     "budget timed around your function call. An O(m+n) merge in "
-    "pure Python takes ~440ms on this input and will exceed the "
-    "budget by ~2x. Recommended approach: binary search on partition "
+    "pure Python takes ~270ms on this input and will exceed the "
+    "budget by ~2.7x. Recommended approach: binary search on partition "
     "position in the smaller array (LeetCode editorial 'Approach "
     "4').\n\n"
     "Reference: https://leetcode.com/problems/median-of-two-sorted-arrays/"
@@ -424,10 +424,11 @@ def code_leetcode_median_two_sorted_arrays() -> TargetConfig:
     Median of Two Sorted Arrays is the first v1 target whose brief's
     complexity claim is actually mechanically graded. The grader's
     ``perf`` dimension runs the agent's solution against a synthetic
-    2×10^5 input under a wall-clock budget; only the O(log(min(m,n)))
-    partition algorithm finishes in time. The naive O(m+n) merge
-    passes the correctness tests but tanks the perf score — exactly
-    the discrimination behavior we wanted from a Hard target.
+    6×10^6 input (3M per array) under a 100ms function-call budget;
+    only the O(log(min(m,n))) partition algorithm finishes in time.
+    The naive O(m+n) merge passes the correctness tests but tanks
+    the perf score — exactly the discrimination behavior we wanted
+    from a Hard target.
 
     Same fresh-per-call brief discipline as
     :func:`code_leetcode_longest_substring`.
@@ -438,21 +439,23 @@ def code_leetcode_median_two_sorted_arrays() -> TargetConfig:
             "function passes all 13 canonical correctness test cases",
             "type-checks under strict mypy (no Any in the function "
             "signature)",
-            "completes the 10^7-element perf test within the 200ms "
+            "completes the 6×10^6-element perf test within the 100ms "
             "function-call budget — only the O(log(min(m, n))) "
             "partition algorithm achieves this",
         ],
         constraints=[
             "single file, single function — no helper classes, but "
             "internal helpers (e.g., a recursive partition) are fine",
-            "no imports needed — use Python 3.10+ built-in generics "
-            "for type hints (``list[int]`` not ``List[int]``); do "
-            "NOT ``from typing import List`` (mypy strict will "
-            "accept either, but the seed and signature use the "
-            "built-in spelling)",
+            "no imports needed — use built-in generics for type "
+            "hints (``list[int]`` not ``List[int]``); do NOT "
+            "``from typing import List``. The seed and target "
+            "signature use the built-in spelling and mypy strict "
+            "is configured for it",
             "do not call ``sorted()`` or ``list.sort()`` on the "
-            "combined arrays — the perf budget is set such that the "
-            "O((m+n) log(m+n)) sort-then-pick approach will fail it",
+            "combined arrays. Note: the perf grader cannot reliably "
+            "catch this on its own (CPython's timsort is C-optimized "
+            "and slips under the 100ms budget); the operator inspects "
+            "solutions for compliance with this constraint",
         ],
     )
     return code_target(

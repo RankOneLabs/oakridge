@@ -607,22 +607,24 @@ def test_returns_float_type() -> None:
 # safety net for genuinely-hung solutions so the grader subprocess
 # doesn't sit at the outer pytest timeout for the full 30s.
 #
-# Sizing tuned empirically on the dev box:
-#   - 5M elements per array, 10M combined
+# Sizing tuned empirically on the dev box, then halved for portability
+# (~280MB of int allocations was OOM-fragile on smaller runners):
+#   - 3M elements per array, 6M combined (~170MB allocations)
 #   - O(log(min(m,n))) partition: ~10µs
-#   - O(m+n) pure-Python merge: ~440ms (CPython is fast at int
-#     comparisons; we needed an order of magnitude more elements
+#   - O(m+n) pure-Python merge: ~270ms (CPython is fast at int
+#     comparisons; we still need an order of magnitude more elements
 #     than the leetcode editorial suggests to push the merge past
 #     a tight budget)
 #   - O(m*n) brute force: instant timeout
-#   - O((m+n) log(m+n)) sorted(): ~80ms — slips past the budget
+#   - O((m+n) log(m+n)) sorted(): ~50ms — slips past the budget
 #     because timsort is C-optimized. The brief forbids ``sorted()``
 #     in constraints; operator inspection is the backstop here.
 #     Documented trade-off, not a bug.
-# Function-call budget of 200ms catches pure-Python O(m+n) with ~2x
-# margin while leaving 4-5 orders of magnitude of headroom for the
-# partition algorithm. GC noise on this machine sits well below 200ms
-# so the budget shouldn't flake.
+# Function-call budget of 100ms catches pure-Python O(m+n) with ~2.7x
+# margin while leaving 4 orders of magnitude of headroom for the
+# partition algorithm. GC noise on a typical Python runtime sits in
+# the 1-30ms range, so the budget gives ~3x margin to jitter on the
+# fail side and effectively no risk on the pass side.
 _MEDIAN_TWO_SORTED_ARRAYS_PERF_TEST_FILE = '''\
 """Perf test for the leetcode #4 artifact.
 
@@ -643,7 +645,7 @@ import pytest
 from solution import find_median_sorted_arrays
 
 
-_FUNCTION_CALL_BUDGET_S = 0.2
+_FUNCTION_CALL_BUDGET_S = 0.1
 _HANG_SAFETY_NET_S = 25
 
 
@@ -661,13 +663,14 @@ def test_perf_large_disjoint_arrays() -> None:
     detectable, not just slow.
 
     Two budgets layered:
-    - function-call budget (1.5s) timed around the call only, so
-      list-allocation jitter doesn't bleed into the perf score
+    - function-call budget (100ms, see ``_FUNCTION_CALL_BUDGET_S``)
+      timed around the call only, so list-allocation jitter doesn't
+      bleed into the perf score
     - hang safety net (25s) via SIGALRM covers the whole test for
       genuinely-stuck solutions; lets the test fail cleanly before
       the outer grader-level subprocess timeout fires
     """
-    n = 5_000_000
+    n = 3_000_000
     nums1 = list(range(0, n))
     nums2 = list(range(n, 2 * n))
     expected = float(n) - 0.5
@@ -705,9 +708,16 @@ def make_leetcode_median_two_sorted_arrays_grader_factory() -> GraderFactory:
 
     - ``tests`` — 13 canonical correctness cases (small inputs)
     - ``mypy`` — strict typecheck via the standard pyproject stub
-    - ``perf`` — one large-input case (2×10^5 elements) under a
-      per-test SIGALRM budget. O(log) finishes in microseconds; O(n)
-      merge or O(n log n) sort exceeds the budget and the test fails.
+    - ``perf`` — one large-input case (2 × 3M = 6×10^6 elements)
+      timed around the function call only, with a 100ms wall-clock
+      budget. O(log(min(m,n))) finishes in microseconds; pure-Python
+      O(m+n) merge takes ~270ms and fails the budget by ~2.7x. A
+      SIGALRM safety net covers the whole test for genuinely-stuck
+      solutions. C-optimized ``sorted(nums1 + nums2)`` slips past
+      because timsort is C — the brief forbids ``sorted()`` in
+      constraints, but the mechanical grader can't distinguish that
+      approach on the perf dimension; operator inspection is the
+      backstop.
 
     The perf dimension is the discrimination point this target was
     added for. A "passes tests but fails perf" cell tells us the
