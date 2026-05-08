@@ -471,8 +471,12 @@ async def main() -> int:
     prose_judge_needed = any(
         t.name == "prose_substrate_thesis" for t in targets
     )
+    # Route the judge through ``_build_llm`` so any
+    # ``openrouter/...`` judge model gets the same provider-filter
+    # the proposers do (Cloudflare hosting truncates output, see
+    # ``_OPENROUTER_BAD_PROVIDERS`` and the wrapper class above).
     prose_judge_llm = (
-        from_model(args.judge_model) if prose_judge_needed else None
+        _build_llm(args.judge_model) if prose_judge_needed else None
     )
     for target in targets:
         if target.name == "prose_substrate_thesis":

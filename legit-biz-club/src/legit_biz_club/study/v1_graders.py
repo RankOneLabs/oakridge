@@ -616,10 +616,13 @@ def test_returns_float_type() -> None:
 #     than the leetcode editorial suggests to push the merge past
 #     a tight budget)
 #   - O(m*n) brute force: instant timeout
-#   - O((m+n) log(m+n)) sorted(): ~50ms — slips past the budget
-#     because timsort is C-optimized. The brief forbids ``sorted()``
-#     in constraints; operator inspection is the backstop here.
-#     Documented trade-off, not a bug.
+#   - O((m+n) log(m+n)) sorted(): ~50ms — would slip past the
+#     wall-clock budget because timsort is C-optimized, but the perf
+#     test runs an AST guard against the artifact's source first
+#     and fails on any ``sorted(...)`` or ``.sort()`` call. The
+#     mechanical guard catches canonical spellings; obscure
+#     indirections (e.g. ``s = sorted; s(...)``) still slip but the
+#     common cheat is closed.
 # Function-call budget of 100ms catches pure-Python O(m+n) with ~2.7x
 # margin while leaving 4 orders of magnitude of headroom for the
 # partition algorithm. GC noise on a typical Python runtime sits in
@@ -643,8 +646,10 @@ supported and this file would crash with ``AttributeError`` on
 import there. If Windows ever needs to run this, swap the alarm
 for a ``threading.Timer`` fallback.
 """
+import ast
 import signal
 import time
+from pathlib import Path
 
 import pytest
 
@@ -663,6 +668,49 @@ def _raise_timeout(_signum: int, _frame: object) -> None:
     raise _PerfTimeout()
 
 
+def _assert_no_full_sort_in_solution() -> None:
+    """Static-analysis guard: fail the perf test if the agent's
+    solution.py contains ``sorted(...)`` or any ``.sort()`` call.
+
+    The brief forbids those approaches because they're correctness-
+    equivalent to the partition algorithm but exploit CPython's
+    C-optimized timsort to slip under the wall-clock budget. Without
+    this guard a sort-then-pick solution scores 1.0 on perf, which
+    isn't the discrimination signal the target was added for.
+
+    AST-level matching catches the canonical cases (``sorted(x)``,
+    ``x.sort()``). It does NOT catch obscure indirections (``sortd =
+    sorted; sortd(x)`` or ``getattr(x, 'sort')()``); operators who
+    care about those cases can spot-check the artifact, but the
+    common-case loophole is closed.
+    """
+    src = Path(__file__).with_name("solution.py").read_text(
+        encoding="utf-8"
+    )
+    tree = ast.parse(src)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if (
+            isinstance(node.func, ast.Name)
+            and node.func.id == "sorted"
+        ):
+            pytest.fail(
+                "perf forbids ``sorted(...)``: the brief requires an "
+                "O(log(min(m, n))) partition; sort-then-pick is "
+                "O((m+n) log(m+n)) and fails the spirit of the rubric"
+            )
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "sort"
+        ):
+            pytest.fail(
+                "perf forbids ``.sort()``: the brief requires an "
+                "O(log(min(m, n))) partition; in-place sort is "
+                "O((m+n) log(m+n)) and fails the spirit of the rubric"
+            )
+
+
 def test_perf_large_disjoint_arrays() -> None:
     """nums1 holds [0..N), nums2 holds [N..2N). True median is the
     midpoint of the seam — N - 0.5 — so wrong solutions are
@@ -676,12 +724,17 @@ def test_perf_large_disjoint_arrays() -> None:
       genuinely-stuck solutions; lets the test fail cleanly before
       the outer grader-level subprocess timeout fires
     """
+    _assert_no_full_sort_in_solution()
+
     n = 3_000_000
     nums1 = list(range(0, n))
     nums2 = list(range(n, 2 * n))
     expected = float(n) - 0.5
 
-    signal.signal(signal.SIGALRM, _raise_timeout)
+    # Capture the prior SIGALRM handler so we can restore it on the
+    # way out. Some pytest plugins install their own handler; leaving
+    # ours in place would break them on subsequent tests.
+    prev_handler = signal.signal(signal.SIGALRM, _raise_timeout)
     signal.alarm(_HANG_SAFETY_NET_S)
     try:
         start = time.perf_counter()
@@ -694,6 +747,7 @@ def test_perf_large_disjoint_arrays() -> None:
         )
     finally:
         signal.alarm(0)
+        signal.signal(signal.SIGALRM, prev_handler)
 
     assert result == expected, (
         f"correctness failure on the perf input: got {result}, "
@@ -719,11 +773,10 @@ def make_leetcode_median_two_sorted_arrays_grader_factory() -> GraderFactory:
       budget. O(log(min(m,n))) finishes in microseconds; pure-Python
       O(m+n) merge takes ~270ms and fails the budget by ~2.7x. A
       SIGALRM safety net covers the whole test for genuinely-stuck
-      solutions. C-optimized ``sorted(nums1 + nums2)`` slips past
-      because timsort is C — the brief forbids ``sorted()`` in
-      constraints, but the mechanical grader can't distinguish that
-      approach on the perf dimension; operator inspection is the
-      backstop.
+      solutions. An AST guard runs before the timing test and fails
+      on any ``sorted(...)`` or ``.sort()`` call in solution.py —
+      C-optimized timsort would otherwise slip under the wall-clock
+      budget despite being the wrong algorithm.
 
     The perf dimension is the discrimination point this target was
     added for. A "passes tests but fails perf" cell tells us the

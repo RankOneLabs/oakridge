@@ -452,10 +452,10 @@ def code_leetcode_median_two_sorted_arrays() -> TargetConfig:
             "signature use the built-in spelling and mypy strict "
             "is configured for it",
             "do not call ``sorted()`` or ``list.sort()`` on the "
-            "combined arrays. Note: the perf grader cannot reliably "
-            "catch this on its own (CPython's timsort is C-optimized "
-            "and slips under the 100ms budget); the operator inspects "
-            "solutions for compliance with this constraint",
+            "combined arrays. The perf grader runs a static AST "
+            "check on solution.py before the timing test; either "
+            "function call (canonical spelling) fails the perf "
+            "dimension regardless of wall-clock time",
         ],
     )
     return code_target(

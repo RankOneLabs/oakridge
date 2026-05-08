@@ -383,3 +383,39 @@ async def test_median_two_sorted_arrays_slow_solution_fails_perf_only() -> None:
     assert by_dim["tests"] == 1.0
     assert by_dim["mypy"] == 1.0
     assert by_dim["perf"] < 1.0
+
+
+# Sort-then-pick: correct + would slip under the wall-clock budget
+# (timsort is C-optimized) but fails the AST guard the perf test
+# runs first. Without the guard this would silently score 1.0 on
+# perf despite violating the brief's complexity requirement.
+_MEDIAN_TWO_SORTED_ARRAYS_SORT_SOLUTION = (
+    "def find_median_sorted_arrays(\n"
+    "    nums1: list[int], nums2: list[int]\n"
+    ") -> float:\n"
+    "    merged = sorted(nums1 + nums2)\n"
+    "    n = len(merged)\n"
+    "    if n % 2 == 1:\n"
+    "        return float(merged[n // 2])\n"
+    "    return (merged[n // 2 - 1] + merged[n // 2]) / 2.0\n"
+)
+
+
+@_NEEDS_TOOLCHAIN
+async def test_median_two_sorted_arrays_sort_solution_fails_perf_via_ast_guard() -> None:
+    """Sort-then-pick: correct on tests + clean on mypy, but the
+    perf test's AST guard rejects ``sorted(...)`` before timing —
+    so perf still scores < 1.0. Closes the loophole CPython's
+    timsort would otherwise open (sorted at this scale finishes in
+    ~50ms, well under the 100ms wall-clock budget)."""
+    target = code_leetcode_median_two_sorted_arrays()
+    factory = make_leetcode_median_two_sorted_arrays_grader_factory()
+    grader = factory(target)
+    scores = await grader.grade(
+        input=target.brief.target_spec,
+        output=_MEDIAN_TWO_SORTED_ARRAYS_SORT_SOLUTION,
+    )
+    by_dim = {s.dimension: s.value for s in scores}
+    assert by_dim["tests"] == 1.0
+    assert by_dim["mypy"] == 1.0
+    assert by_dim["perf"] < 1.0
