@@ -7,7 +7,7 @@ Per the design memo's two-domain v1 test:
   facts inline so models don't fall back on training-data priors and
   invent coordination modes the system doesn't have.
 - Code domain: leetcode-shaped problems with mechanical graders.
-  Three targets:
+  Four targets:
   - longest-substring (#3) — sliding window classic, easy to solve;
     works as a smoke target to verify the grader path runs.
   - trapping-rain-water (#42) — Hard tier, multiple valid approaches
@@ -17,6 +17,11 @@ Per the design memo's two-domain v1 test:
     against the entire input. Adversarial pattern cases (greedy
     backtracking, empty-pattern corners) push cells across the 0..1
     score range rather than clustering at the ceiling.
+  - median-two-sorted-arrays (#4) — Hard tier paired with a
+    mechanically-enforced perf budget: an O(m+n) merge passes the
+    correctness tests but times out on the perf dimension, while the
+    O(log(min(m,n))) partition algorithm scores 1.0 on both. First
+    target where the brief's complexity claim is actually graded.
 
 Generic :func:`legit_biz_club.study.targets.prose_target` and
 :func:`legit_biz_club.study.targets.code_target` stay as the API
@@ -366,5 +371,96 @@ def code_leetcode_trapping_rain_water() -> TargetConfig:
         name="code_leetcode_trapping_rain_water",
         artifact_filename="solution.py",
         seed_content=_CODE_LEETCODE_TRAPPING_RAIN_WATER_SEED,
+        brief=brief,
+    )
+
+
+# --- code: leetcode #4 (median of two sorted arrays) --------------------
+
+
+_CODE_LEETCODE_MEDIAN_TWO_SORTED_ARRAYS_TARGET_SPEC = (
+    "Implement `find_median_sorted_arrays(nums1: list[int], "
+    "nums2: list[int]) -> float` in solution.py.\n\n"
+    "Given two sorted integer arrays of arbitrary sizes, return the "
+    "median of the combined sorted array as a float.\n\n"
+    "Examples:\n"
+    "  ([1, 3], [2])              → 2.0\n"
+    "  ([1, 2], [3, 4])           → 2.5\n"
+    "  ([0, 0], [0, 0])           → 0.0\n"
+    "  ([], [1])                  → 1.0\n"
+    "  ([2], [])                  → 2.0\n"
+    "  ([], [2, 3])               → 2.5\n"
+    "  ([-5, 3, 6, 12, 15], [-12, -10, -6, -3, 4, 10]) → 3.0\n\n"
+    "The function must:\n"
+    "  - Accept arrays where either or both may be empty (but not "
+    "both empty)\n"
+    "  - Return the median as a float (single-element median is "
+    "still a float)\n"
+    "  - Handle negative numbers, duplicates, and large arrays "
+    "(up to ~3×10^6 elements per array)\n"
+    "  - Run in O(log(min(m, n))) time — this is graded.\n\n"
+    "The performance constraint is real: the grader runs a perf "
+    "test with combined input size 6×10^6 under a 100ms wall-clock "
+    "budget timed around your function call. An O(m+n) merge in "
+    "pure Python takes ~270ms on this input and will exceed the "
+    "budget by ~2.7x. Recommended approach: binary search on partition "
+    "position in the smaller array (LeetCode editorial 'Approach "
+    "4').\n\n"
+    "Reference: https://leetcode.com/problems/median-of-two-sorted-arrays/"
+)
+
+
+_CODE_LEETCODE_MEDIAN_TWO_SORTED_ARRAYS_SEED = (
+    "def find_median_sorted_arrays(\n"
+    "    nums1: list[int], nums2: list[int]\n"
+    ") -> float:\n"
+    "    raise NotImplementedError\n"
+)
+
+
+def code_leetcode_median_two_sorted_arrays() -> TargetConfig:
+    """Real code target for the v1 study: leetcode #4 (Hard).
+
+    Median of Two Sorted Arrays is the first v1 target whose brief's
+    complexity claim is actually mechanically graded. The grader's
+    ``perf`` dimension runs the agent's solution against a synthetic
+    6×10^6 input (3M per array) under a 100ms function-call budget;
+    only the O(log(min(m,n))) partition algorithm finishes in time.
+    The naive O(m+n) merge passes the correctness tests but tanks
+    the perf score — exactly the discrimination behavior we wanted
+    from a Hard target.
+
+    Same fresh-per-call brief discipline as
+    :func:`code_leetcode_longest_substring`.
+    """
+    brief = Brief(
+        target_spec=_CODE_LEETCODE_MEDIAN_TWO_SORTED_ARRAYS_TARGET_SPEC,
+        success_criteria=[
+            "function passes all 13 canonical correctness test cases",
+            "type-checks under strict mypy (no Any in the function "
+            "signature)",
+            "completes the 6×10^6-element perf test within the 100ms "
+            "function-call budget — only the O(log(min(m, n))) "
+            "partition algorithm achieves this",
+        ],
+        constraints=[
+            "single file, single function — no helper classes, but "
+            "internal helpers (e.g., a recursive partition) are fine",
+            "no imports needed — use built-in generics for type "
+            "hints (``list[int]`` not ``List[int]``); do NOT "
+            "``from typing import List``. The seed and target "
+            "signature use the built-in spelling and mypy strict "
+            "is configured for it",
+            "do not call ``sorted()`` or ``list.sort()`` anywhere "
+            "in solution.py. The perf grader runs a static AST "
+            "check on solution.py before the timing test; either "
+            "function call (canonical spelling) fails the perf "
+            "dimension regardless of wall-clock time",
+        ],
+    )
+    return code_target(
+        name="code_leetcode_median_two_sorted_arrays",
+        artifact_filename="solution.py",
+        seed_content=_CODE_LEETCODE_MEDIAN_TWO_SORTED_ARRAYS_SEED,
         brief=brief,
     )

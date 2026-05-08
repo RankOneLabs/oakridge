@@ -176,6 +176,14 @@ class _LeetcodeMechanicalGrader:
     target now means defining a test file string + wiring a new
     factory — no new grader class.
 
+    Optional ``perf_test_content``: when set, materializes a second
+    ``test_perf.py`` alongside ``test_solution.py`` and runs it as a
+    separate ``perf`` dimension. Perf tests use signal-based timeouts
+    inside the test body (see the median target's perf file for the
+    pattern) so a slow algorithm fails the perf dimension without
+    crashing the run. Targets without a meaningful complexity bound
+    (e.g., regex matching) leave it ``None``.
+
     The tmpdir lives only for the duration of the ``grade()`` call —
     we don't keep the artifact lying around because the cell's
     ``solution.py`` (under ``.run/<ts>/...``) is the durable copy. The
@@ -183,8 +191,16 @@ class _LeetcodeMechanicalGrader:
     file on disk.
     """
 
-    def __init__(self, *, test_file_content: str) -> None:
+    def __init__(
+        self,
+        *,
+        test_file_content: str,
+        perf_test_content: str | None = None,
+        perf_timeout_s: float = 30.0,
+    ) -> None:
         self._test_file = test_file_content
+        self._perf_test = perf_test_content
+        self._perf_timeout_s = perf_timeout_s
 
     async def grade(
         self,
@@ -197,16 +213,42 @@ class _LeetcodeMechanicalGrader:
             (dpath / "pyproject.toml").write_text(
                 _PROJECT_PYPROJECT_STUB, encoding="utf-8"
             )
-            (dpath / "solution.py").write_text(output, encoding="utf-8")
-            (dpath / "test_solution.py").write_text(
+            solution_path = dpath / "solution.py"
+            solution_path.write_text(output, encoding="utf-8")
+            test_solution_path = dpath / "test_solution.py"
+            test_solution_path.write_text(
                 self._test_file, encoding="utf-8"
             )
-            heuristic = HeuristicGrader(
-                checks=[
-                    pytest_check(dpath, name="tests", cwd=dpath),
-                    mypy_check(dpath, name="mypy", cwd=dpath),
-                ]
-            )
+            checks = [
+                # Scope the correctness pytest run to test_solution.py
+                # explicitly so perf tests (when present) don't leak
+                # into the tests dimension via auto-discovery.
+                pytest_check(
+                    dpath,
+                    name="tests",
+                    cwd=dpath,
+                    test_paths=[test_solution_path],
+                ),
+                # Scope mypy to solution.py only — the harness's
+                # test files share the tmpdir but aren't student
+                # output and shouldn't influence the mypy score.
+                mypy_check(solution_path, name="mypy", cwd=dpath),
+            ]
+            if self._perf_test is not None:
+                test_perf_path = dpath / "test_perf.py"
+                test_perf_path.write_text(
+                    self._perf_test, encoding="utf-8"
+                )
+                checks.append(
+                    pytest_check(
+                        dpath,
+                        name="perf",
+                        cwd=dpath,
+                        test_paths=[test_perf_path],
+                        timeout_s=self._perf_timeout_s,
+                    )
+                )
+            heuristic = HeuristicGrader(checks=checks)
             scores: list[Score] = await heuristic.grade(
                 input, output, context
             )
@@ -474,6 +516,289 @@ def make_leetcode_regex_matching_grader_factory() -> GraderFactory:
             )
         return _LeetcodeMechanicalGrader(
             test_file_content=_REGEX_MATCHING_TEST_FILE
+        )
+
+    return factory
+
+
+# --- code grader: leetcode #4 (median of two sorted arrays) -------------
+
+
+_MEDIAN_TWO_SORTED_ARRAYS_TEST_FILE = '''\
+"""Tests for the leetcode #4 artifact (median of two sorted arrays).
+
+Materialized into the grader's tmpdir alongside the agent-produced
+solution.py. Pytest auto-discovers test_*.py files and imports
+solution from the same directory.
+"""
+from solution import find_median_sorted_arrays
+
+
+def test_canonical_odd_total() -> None:
+    assert find_median_sorted_arrays([1, 3], [2]) == 2.0
+
+
+def test_canonical_even_total() -> None:
+    assert find_median_sorted_arrays([1, 2], [3, 4]) == 2.5
+
+
+def test_all_zeros() -> None:
+    assert find_median_sorted_arrays([0, 0], [0, 0]) == 0.0
+
+
+def test_first_empty() -> None:
+    assert find_median_sorted_arrays([], [1]) == 1.0
+
+
+def test_second_empty() -> None:
+    assert find_median_sorted_arrays([2], []) == 2.0
+
+
+def test_second_empty_pair() -> None:
+    assert find_median_sorted_arrays([], [2, 3]) == 2.5
+
+
+def test_negatives_and_positives() -> None:
+    assert (
+        find_median_sorted_arrays(
+            [-5, 3, 6, 12, 15], [-12, -10, -6, -3, 4, 10]
+        )
+        == 3.0
+    )
+
+
+def test_disjoint_first_smaller() -> None:
+    assert find_median_sorted_arrays([1, 2, 3], [4, 5, 6]) == 3.5
+
+
+def test_disjoint_first_larger() -> None:
+    assert find_median_sorted_arrays([7, 8, 9], [1, 2, 3]) == 5.0
+
+
+def test_duplicate_across_arrays() -> None:
+    """Both arrays contain 5; median should still be the middle of
+    the merged sorted view, not deduplicated."""
+    assert find_median_sorted_arrays([1, 5, 9], [2, 5, 8]) == 5.0
+
+
+def test_single_element_each_odd_total() -> None:
+    """Two singletons + an odd-total via one-empty path differ; this
+    pair is even-total so median is the average."""
+    assert find_median_sorted_arrays([3], [7]) == 5.0
+
+
+def test_long_skewed_arrays() -> None:
+    """Imbalanced sizes exercise the binary-search-on-the-smaller-array
+    invariant — solutions that always partition the first array fail
+    when nums1 is the larger one."""
+    nums1 = list(range(0, 100))
+    nums2 = list(range(100, 105))
+    # Combined has 105 elements; median is index 52.
+    assert find_median_sorted_arrays(nums1, nums2) == 52.0
+
+
+def test_returns_float_type() -> None:
+    """Return type must be float even when the median is a whole
+    number — the brief is explicit about this."""
+    result = find_median_sorted_arrays([1, 2, 3], [])
+    assert isinstance(result, float)
+    assert result == 2.0
+'''
+
+
+# Perf test: time the agent's function call alone (excluding setup
+# overhead) and fail if it exceeds the budget. signal.SIGALRM is a
+# safety net for genuinely-hung solutions so the grader subprocess
+# doesn't sit at the outer pytest timeout for the full 30s.
+#
+# Sizing tuned empirically on the dev box, then halved for portability
+# (~280MB of int allocations was OOM-fragile on smaller runners):
+#   - 3M elements per array, 6M combined (~170MB allocations)
+#   - O(log(min(m,n))) partition: ~10µs
+#   - O(m+n) pure-Python merge: ~270ms (CPython is fast at int
+#     comparisons; we still need an order of magnitude more elements
+#     than the leetcode editorial suggests to push the merge past
+#     a tight budget)
+#   - O(m*n) brute force: instant timeout
+#   - O((m+n) log(m+n)) sorted(): ~50ms — would slip past the
+#     wall-clock budget because timsort is C-optimized, but the perf
+#     test runs an AST guard against the artifact's source first
+#     and fails on any ``sorted(...)`` or ``.sort()`` call. The
+#     mechanical guard catches canonical spellings; obscure
+#     indirections (e.g. ``s = sorted; s(...)``) still slip but the
+#     common cheat is closed.
+# Function-call budget of 100ms catches pure-Python O(m+n) with ~2.7x
+# margin while leaving 4 orders of magnitude of headroom for the
+# partition algorithm. GC noise on a typical Python runtime sits in
+# the 1-30ms range, so the budget gives ~3x margin to jitter on the
+# fail side and effectively no risk on the pass side.
+_MEDIAN_TWO_SORTED_ARRAYS_PERF_TEST_FILE = '''\
+"""Perf test for the leetcode #4 artifact.
+
+Times the agent's solution on a large-input case. Slow algorithms
+(O(m+n) merge in pure Python, O(m*n) brute force) exceed the budget
+and fail; the O(log(min(m, n))) partition algorithm returns in
+microseconds and passes with several orders of magnitude of headroom.
+
+Materialized into the grader's tmpdir alongside ``test_solution.py``;
+the grader scopes pytest to this file via ``test_paths=`` so perf
+runs aren't mixed into the correctness ``tests`` dimension.
+
+Platform: ``signal.SIGALRM`` and ``signal.alarm`` are POSIX-only.
+The harness targets Linux (homelab) and macOS (dev); Windows isn't
+supported and this file would crash with ``AttributeError`` on
+import there. If Windows ever needs to run this, swap the alarm
+for a ``threading.Timer`` fallback.
+"""
+import ast
+import signal
+import time
+from pathlib import Path
+
+import pytest
+
+from solution import find_median_sorted_arrays
+
+
+_FUNCTION_CALL_BUDGET_S = 0.1
+_HANG_SAFETY_NET_S = 25
+
+
+class _PerfTimeout(Exception):
+    pass
+
+
+def _raise_timeout(_signum: int, _frame: object) -> None:
+    raise _PerfTimeout()
+
+
+def _assert_no_full_sort_in_solution() -> None:
+    """Static-analysis guard: fail the perf test if the agent's
+    solution.py contains ``sorted(...)`` or any ``.sort()`` call.
+
+    The brief forbids those approaches because they're correctness-
+    equivalent to the partition algorithm but exploit CPython's
+    C-optimized timsort to slip under the wall-clock budget. Without
+    this guard a sort-then-pick solution scores 1.0 on perf, which
+    isn't the discrimination signal the target was added for.
+
+    AST-level matching catches the canonical cases (``sorted(x)``,
+    ``x.sort()``). It does NOT catch obscure indirections (``sortd =
+    sorted; sortd(x)`` or ``getattr(x, 'sort')()``); operators who
+    care about those cases can spot-check the artifact, but the
+    common-case loophole is closed.
+    """
+    src = Path(__file__).with_name("solution.py").read_text(
+        encoding="utf-8"
+    )
+    tree = ast.parse(src)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if (
+            isinstance(node.func, ast.Name)
+            and node.func.id == "sorted"
+        ):
+            pytest.fail(
+                "perf forbids ``sorted(...)``: the brief requires an "
+                "O(log(min(m, n))) partition; sort-then-pick is "
+                "O((m+n) log(m+n)) and fails the spirit of the rubric"
+            )
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "sort"
+        ):
+            pytest.fail(
+                "perf forbids ``.sort()``: the brief requires an "
+                "O(log(min(m, n))) partition; in-place sort is "
+                "O((m+n) log(m+n)) and fails the spirit of the rubric"
+            )
+
+
+def test_perf_large_disjoint_arrays() -> None:
+    """nums1 holds [0..N), nums2 holds [N..2N). True median is the
+    midpoint of the seam — N - 0.5 — so wrong solutions are
+    detectable, not just slow.
+
+    Two budgets layered:
+    - function-call budget (100ms, see ``_FUNCTION_CALL_BUDGET_S``)
+      timed around the call only, so list-allocation jitter doesn't
+      bleed into the perf score
+    - hang safety net (25s) via SIGALRM covers the whole test for
+      genuinely-stuck solutions; lets the test fail cleanly before
+      the outer grader-level subprocess timeout fires
+    """
+    _assert_no_full_sort_in_solution()
+
+    n = 3_000_000
+    nums1 = list(range(0, n))
+    nums2 = list(range(n, 2 * n))
+    expected = float(n) - 0.5
+
+    # Capture the prior SIGALRM handler so we can restore it on the
+    # way out. Some pytest plugins install their own handler; leaving
+    # ours in place would break them on subsequent tests.
+    prev_handler = signal.signal(signal.SIGALRM, _raise_timeout)
+    signal.alarm(_HANG_SAFETY_NET_S)
+    try:
+        start = time.perf_counter()
+        result = find_median_sorted_arrays(nums1, nums2)
+        elapsed = time.perf_counter() - start
+    except _PerfTimeout:
+        pytest.fail(
+            f"perf hang: solution did not return within "
+            f"{_HANG_SAFETY_NET_S}s on a 2x{n}-element input."
+        )
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, prev_handler)
+
+    assert result == expected, (
+        f"correctness failure on the perf input: got {result}, "
+        f"expected {expected}"
+    )
+    assert elapsed < _FUNCTION_CALL_BUDGET_S, (
+        f"perf budget exceeded: function call took {elapsed:.2f}s, "
+        f"budget is {_FUNCTION_CALL_BUDGET_S}s on a 2x{n}-element "
+        f"input. The brief requires O(log(min(m, n))) time."
+    )
+'''
+
+
+def make_leetcode_median_two_sorted_arrays_grader_factory() -> GraderFactory:
+    """Build a grader factory for :func:`code_leetcode_median_two_sorted_arrays`.
+
+    First v1 grader to use the perf dimension. Pipeline:
+
+    - ``tests`` — 13 canonical correctness cases (small inputs)
+    - ``mypy`` — strict typecheck via the standard pyproject stub
+    - ``perf`` — one large-input case (2 × 3M = 6×10^6 elements)
+      timed around the function call only, with a 100ms wall-clock
+      budget. O(log(min(m,n))) finishes in microseconds; pure-Python
+      O(m+n) merge takes ~270ms and fails the budget by ~2.7x. A
+      SIGALRM safety net covers the whole test for genuinely-stuck
+      solutions. An AST guard runs before the timing test and fails
+      on any ``sorted(...)`` or ``.sort()`` call in solution.py —
+      C-optimized timsort would otherwise slip under the wall-clock
+      budget despite being the wrong algorithm.
+
+    The perf dimension is the discrimination point this target was
+    added for. A "passes tests but fails perf" cell tells us the
+    agent solved the problem functionally but didn't meet the
+    complexity bound — exactly the signal weak open models will
+    typically produce on this target.
+    """
+
+    def factory(target: TargetConfig) -> Grader:
+        # Wiring guard — see longest-substring factory for rationale.
+        if target.name != "code_leetcode_median_two_sorted_arrays":
+            raise ValueError(
+                f"median-two-sorted-arrays grader factory called with "
+                f"target {target.name!r}"
+            )
+        return _LeetcodeMechanicalGrader(
+            test_file_content=_MEDIAN_TWO_SORTED_ARRAYS_TEST_FILE,
+            perf_test_content=_MEDIAN_TWO_SORTED_ARRAYS_PERF_TEST_FILE,
         )
 
     return factory

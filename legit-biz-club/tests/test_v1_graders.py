@@ -25,12 +25,14 @@ from jig.core.types import (
 from legit_biz_club.study.v1_graders import (
     _LEETCODE_TEST_FILE,
     make_leetcode_longest_substring_grader_factory,
+    make_leetcode_median_two_sorted_arrays_grader_factory,
     make_leetcode_regex_matching_grader_factory,
     make_leetcode_trapping_rain_water_grader_factory,
     make_prose_substrate_thesis_grader_factory,
 )
 from legit_biz_club.study.v1_targets import (
     code_leetcode_longest_substring,
+    code_leetcode_median_two_sorted_arrays,
     code_leetcode_regex_matching,
     code_leetcode_trapping_rain_water,
     prose_substrate_thesis,
@@ -281,3 +283,139 @@ async def test_regex_matching_factory_reference_solution_passes() -> None:
     by_dim = {s.dimension: s.value for s in scores}
     assert by_dim["tests"] == 1.0
     assert by_dim["mypy"] == 1.0
+
+
+# Reference O(log(min(m, n))) partition algorithm (the canonical
+# LeetCode editorial Approach 4). Sentinels typed as int — using
+# ``float('-inf')`` would force a float|int union that mypy strict
+# rejects without explicit annotations.
+_MEDIAN_TWO_SORTED_ARRAYS_REFERENCE_SOLUTION = (
+    "def find_median_sorted_arrays(\n"
+    "    nums1: list[int], nums2: list[int]\n"
+    ") -> float:\n"
+    "    if len(nums1) > len(nums2):\n"
+    "        nums1, nums2 = nums2, nums1\n"
+    "    m, n = len(nums1), len(nums2)\n"
+    "    total = m + n\n"
+    "    half = (total + 1) // 2\n"
+    "    neg_inf = -(10 ** 18)\n"
+    "    pos_inf = 10 ** 18\n"
+    "    lo, hi = 0, m\n"
+    "    while lo <= hi:\n"
+    "        i = (lo + hi) // 2\n"
+    "        j = half - i\n"
+    "        a_left = nums1[i - 1] if i > 0 else neg_inf\n"
+    "        a_right = nums1[i] if i < m else pos_inf\n"
+    "        b_left = nums2[j - 1] if j > 0 else neg_inf\n"
+    "        b_right = nums2[j] if j < n else pos_inf\n"
+    "        if a_left <= b_right and b_left <= a_right:\n"
+    "            if total % 2 == 1:\n"
+    "                return float(max(a_left, b_left))\n"
+    "            return (max(a_left, b_left) + min(a_right, b_right)) / 2.0\n"
+    "        if a_left > b_right:\n"
+    "            hi = i - 1\n"
+    "        else:\n"
+    "            lo = i + 1\n"
+    "    raise ValueError('inputs were not sorted')\n"
+)
+
+
+@_NEEDS_TOOLCHAIN
+async def test_median_two_sorted_arrays_factory_reference_solution_passes() -> None:
+    """Reference partition algorithm scores 1.0 on tests + mypy + perf.
+    Catches drift in test-file import names and verifies the perf
+    dimension actually runs (no signal-handler import issues, no
+    SIGALRM permission problems on this runner)."""
+    target = code_leetcode_median_two_sorted_arrays()
+    factory = make_leetcode_median_two_sorted_arrays_grader_factory()
+    grader = factory(target)
+    scores = await grader.grade(
+        input=target.brief.target_spec,
+        output=_MEDIAN_TWO_SORTED_ARRAYS_REFERENCE_SOLUTION,
+    )
+    by_dim = {s.dimension: s.value for s in scores}
+    assert by_dim["tests"] == 1.0
+    assert by_dim["mypy"] == 1.0
+    assert by_dim["perf"] == 1.0
+
+
+# A correct-but-slow O(m+n) merge solution. Should pass tests + mypy
+# (correctness is fine, types are clean) but FAIL the perf dimension
+# on the 2×3M input — pure-Python merge takes ~270ms, well past the
+# 100ms budget. This is the honest discrimination signal the median
+# target was added to produce — no fake pessimization, just the kind
+# of merge a model writes when it doesn't know the partition trick.
+_MEDIAN_TWO_SORTED_ARRAYS_SLOW_SOLUTION = (
+    "def find_median_sorted_arrays(\n"
+    "    nums1: list[int], nums2: list[int]\n"
+    ") -> float:\n"
+    "    merged: list[int] = []\n"
+    "    i = j = 0\n"
+    "    while i < len(nums1) and j < len(nums2):\n"
+    "        if nums1[i] <= nums2[j]:\n"
+    "            merged.append(nums1[i])\n"
+    "            i += 1\n"
+    "        else:\n"
+    "            merged.append(nums2[j])\n"
+    "            j += 1\n"
+    "    merged.extend(nums1[i:])\n"
+    "    merged.extend(nums2[j:])\n"
+    "    n = len(merged)\n"
+    "    if n % 2 == 1:\n"
+    "        return float(merged[n // 2])\n"
+    "    return (merged[n // 2 - 1] + merged[n // 2]) / 2.0\n"
+)
+
+
+@_NEEDS_TOOLCHAIN
+async def test_median_two_sorted_arrays_slow_solution_fails_perf_only() -> None:
+    """Slow (but correct) O(m+n) solution: passes tests + mypy, fails
+    perf. Verifies the perf dimension actually discriminates rather
+    than just rubber-stamping anything that compiles."""
+    target = code_leetcode_median_two_sorted_arrays()
+    factory = make_leetcode_median_two_sorted_arrays_grader_factory()
+    grader = factory(target)
+    scores = await grader.grade(
+        input=target.brief.target_spec,
+        output=_MEDIAN_TWO_SORTED_ARRAYS_SLOW_SOLUTION,
+    )
+    by_dim = {s.dimension: s.value for s in scores}
+    assert by_dim["tests"] == 1.0
+    assert by_dim["mypy"] == 1.0
+    assert by_dim["perf"] < 1.0
+
+
+# Sort-then-pick: correct + would slip under the wall-clock budget
+# (timsort is C-optimized) but fails the AST guard the perf test
+# runs first. Without the guard this would silently score 1.0 on
+# perf despite violating the brief's complexity requirement.
+_MEDIAN_TWO_SORTED_ARRAYS_SORT_SOLUTION = (
+    "def find_median_sorted_arrays(\n"
+    "    nums1: list[int], nums2: list[int]\n"
+    ") -> float:\n"
+    "    merged = sorted(nums1 + nums2)\n"
+    "    n = len(merged)\n"
+    "    if n % 2 == 1:\n"
+    "        return float(merged[n // 2])\n"
+    "    return (merged[n // 2 - 1] + merged[n // 2]) / 2.0\n"
+)
+
+
+@_NEEDS_TOOLCHAIN
+async def test_median_two_sorted_arrays_sort_solution_fails_perf_via_ast_guard() -> None:
+    """Sort-then-pick: correct on tests + clean on mypy, but the
+    perf test's AST guard rejects ``sorted(...)`` before timing —
+    so perf still scores < 1.0. Closes the loophole CPython's
+    timsort would otherwise open (sorted at this scale finishes in
+    ~50ms, well under the 100ms wall-clock budget)."""
+    target = code_leetcode_median_two_sorted_arrays()
+    factory = make_leetcode_median_two_sorted_arrays_grader_factory()
+    grader = factory(target)
+    scores = await grader.grade(
+        input=target.brief.target_spec,
+        output=_MEDIAN_TWO_SORTED_ARRAYS_SORT_SOLUTION,
+    )
+    by_dim = {s.dimension: s.value for s in scores}
+    assert by_dim["tests"] == 1.0
+    assert by_dim["mypy"] == 1.0
+    assert by_dim["perf"] < 1.0

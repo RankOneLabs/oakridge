@@ -113,9 +113,11 @@ boundary so one survives the strip.
 class ProposerOutputParseError(ValueError):
     """The agent's response did not contain the expected sentinel tags.
 
-    Surfaces as a hard failure rather than a recoverable one because
-    a Proposer that can't follow the tag protocol isn't going to
-    self-correct via retry — prompt-tuning is the right response.
+    Surfaced after exhausting ``max_parse_retries`` (see
+    :class:`JigProposer`). Single-shot violations from weak open
+    models are usually stochastic and recover on a re-roll; only a
+    model that consistently refuses the protocol (or a genuinely
+    broken prompt) bubbles this up.
     """
 
 
@@ -129,6 +131,7 @@ class JigProposer:
         llm: LLMClient | None = None,
         context: str = "",
         max_tokens: int = 8192,
+        max_parse_retries: int = 1,
     ) -> None:
         self.agent = agent
         # Default to dispatching the LLMClient by model name. Tests can
@@ -160,6 +163,19 @@ class JigProposer:
         # honcho deriver query, hand-curated text, etc.) — that's the
         # loader's job.
         self._context = context
+        # Number of additional attempts after the first one when the
+        # model emits output that doesn't match the sentinel-tag
+        # protocol. Default 1 (so up to 2 attempts total). Weak open
+        # models occasionally violate the protocol stochastically —
+        # a single re-roll recovers the common case without a
+        # prompt-engineering loop. Set to 0 to keep the original
+        # one-shot behavior; raise it for known-flaky model tiers.
+        if max_parse_retries < 0:
+            raise ValueError(
+                f"max_parse_retries must be non-negative, got "
+                f"{max_parse_retries}"
+            )
+        self._max_parse_retries = max_parse_retries
 
     async def propose(
         self,
@@ -196,8 +212,42 @@ class JigProposer:
             system=system_prompt,
             max_tokens=self._max_tokens,
         )
-        response = await self._llm.complete(params)
-        parsed = _parse_response(response.content)
+        # Retry the LLM call + parse on protocol violations. Same
+        # prompt each attempt — single-shot tag-protocol violations
+        # from weak open models are usually stochastic, so a re-roll
+        # at the same temperature recovers the common case. A model
+        # that consistently violates the protocol exhausts the
+        # budget and the final ProposerOutputParseError propagates,
+        # which the cell-level handler then records as a cell_failed
+        # event (per the run_v1_study driver).
+        last_error: ProposerOutputParseError | None = None
+        for attempt in range(self._max_parse_retries + 1):
+            response = await self._llm.complete(params)
+            try:
+                parsed = _parse_response(response.content)
+                break
+            except ProposerOutputParseError as exc:
+                last_error = exc
+                remaining = self._max_parse_retries - attempt
+                if remaining > 0:
+                    logger.warning(
+                        "proposer parse failed on attempt %d/%d for "
+                        "agent %s (will retry %d more): %s",
+                        attempt + 1,
+                        self._max_parse_retries + 1,
+                        self.agent.id,
+                        remaining,
+                        exc,
+                    )
+                else:
+                    raise
+        else:
+            # Loop exited via the for/else — only reachable if
+            # max_parse_retries < 0, which __init__ rejects. Belt-
+            # and-suspenders so type-checkers see ``parsed``
+            # initialized in every reachable path.
+            assert last_error is not None
+            raise last_error
         return Proposal(
             agent_id=agent.id,
             based_on_version=current_version,
