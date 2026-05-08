@@ -123,10 +123,11 @@ def pytest_check(
     dimensions (e.g., a correctness suite and a perf suite materialized
     side-by-side, scored separately).
     """
-    if test_paths is not None:
-        targets = [str(p) for p in test_paths]
-    else:
-        targets = [str(test_dir)]
+    targets = (
+        [str(p) for p in test_paths]
+        if test_paths is not None
+        else [str(test_dir)]
+    )
     return run_command_check(
         name=name,
         cmd=["pytest", *targets, "-q", "--tb=no"],
