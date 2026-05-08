@@ -107,6 +107,7 @@ def pytest_check(
     name: str = "pytest",
     cwd: Path | None = None,
     timeout_s: float | None = 120.0,
+    test_paths: Sequence[Path] | None = None,
 ) -> Check:
     """Run pytest under ``test_dir`` and return the fraction passing.
 
@@ -115,10 +116,20 @@ def pytest_check(
     pytest didn't run or every test failed. Errors during collection
     score as ``0.0`` (failure to even reach the tests is worse than a
     test that failed cleanly).
+
+    ``test_paths``: when provided, run pytest against those specific
+    files instead of letting it discover everything under ``test_dir``.
+    Useful for splitting a single tmpdir's tests into multiple scored
+    dimensions (e.g., a correctness suite and a perf suite materialized
+    side-by-side, scored separately).
     """
+    if test_paths is not None:
+        targets = [str(p) for p in test_paths]
+    else:
+        targets = [str(test_dir)]
     return run_command_check(
         name=name,
-        cmd=["pytest", str(test_dir), "-q", "--tb=no"],
+        cmd=["pytest", *targets, "-q", "--tb=no"],
         cwd=cwd,
         score=_score_pytest,
         timeout_s=timeout_s,
