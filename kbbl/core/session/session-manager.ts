@@ -1,6 +1,7 @@
 import { readdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 
+import type { KbblConfig } from "../config";
 import {
   MAX_ARTIFACT_ID_LENGTH,
   Session,
@@ -37,6 +38,14 @@ export interface SessionManagerOpts {
    * for rationale.
    */
   nonPersistedEventTypes?: ReadonlySet<string>;
+  /**
+   * Validated kbbl config (compact thresholds, retention window, safir
+   * endpoint). Loaded once at server startup and threaded through here so
+   * Phase 1+ consumers (compactor, retention sweep, safir client) can
+   * read from a single source of truth. Phase 0 stores it without
+   * consuming it; subsequent phases pull what they need.
+   */
+  config: KbblConfig;
 }
 
 export interface CreateSessionOpts {

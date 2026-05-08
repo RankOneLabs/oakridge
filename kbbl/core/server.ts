@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { loadConfig, type KbblConfig } from "./config";
 import { SessionManager } from "./session/session-manager";
 import { Session } from "./session/session";
 import { createApp } from "./server/app";
@@ -22,11 +23,17 @@ const { values } = parseArgs({
     host: { type: "string", default: "127.0.0.1" },
     claudeBin: { type: "string", default: "claude" },
     dataDir: { type: "string" },
+    // Path to kbbl/config.json. Default is `<kbbl-root>/config.json`. A
+    // missing file resolves to schema defaults; tests and dev workflows
+    // can pass an alternate path here without touching the canonical file.
+    config: { type: "string" },
   },
 });
 
 if (!values.workdir) {
-  console.error("usage: bun run server.ts --workdir=<path> [--port=8788]");
+  console.error(
+    "usage: bun run server.ts --workdir=<path> [--port=8788] [--host=<addr>] [--config=<path>]",
+  );
   process.exit(1);
 }
 
@@ -50,10 +57,25 @@ const claudeBin = values.claudeBin ?? "claude";
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 // server.ts lives at kbbl/core/server.ts. From its directory, `..` is the kbbl package root;
 // data/ and adapters/ are both children of that root (siblings of core/).
-const dataDir = values.dataDir ?? join(moduleDir, "..", "data");
+const kbblRoot = join(moduleDir, "..");
+const dataDir = values.dataDir ?? join(kbblRoot, "data");
 const pwaDistDir = join(moduleDir, "pwa", "dist");
 const sessionsDir = join(dataDir, "sessions");
 await mkdir(sessionsDir, { recursive: true });
+
+// === config ===
+// Load before binding the port so a malformed config.json fails fast, with
+// the file path in the message, rather than crashing later inside a session
+// when the first compact threshold is consulted.
+
+const configPath = values.config ?? join(kbblRoot, "config.json");
+let config: KbblConfig;
+try {
+  config = loadConfig(configPath);
+} catch (err) {
+  console.error(err instanceof Error ? err.message : String(err));
+  process.exit(1);
+}
 
 // === runtime adapter ===
 // The Claude Code adapter owns its CLI flags, settings.json, and the
@@ -75,6 +97,7 @@ const manager = new SessionManager({
   buildSpawnCmd: runtime.buildSpawnCmd,
   classifyEvent: runtime.classifyEvent,
   nonPersistedEventTypes: runtime.nonPersistedEventTypes,
+  config,
 });
 
 // === Hono app ===
