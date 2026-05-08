@@ -74,6 +74,7 @@ const manager = new SessionManager({
   sessionsDir,
   buildSpawnCmd: runtime.buildSpawnCmd,
   classifyEvent: runtime.classifyEvent,
+  nonPersistedEventTypes: runtime.nonPersistedEventTypes,
 });
 
 // === Hono app ===

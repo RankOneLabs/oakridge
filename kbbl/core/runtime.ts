@@ -69,4 +69,15 @@ export interface AppRuntime {
    * raw events the PWA already receives) can omit this method.
    */
   classifyEvent?(rawEvent: unknown, session: Session): Promise<void>;
+
+  /**
+   * Optional: event types that should NOT be persisted to the on-disk JSONL
+   * transcript but still fan out to live subscribers. CC's
+   * `--include-partial-messages` produces a `stream_event` per delta — many
+   * thousands per long turn — and the canonical transcript is the final
+   * `assistant` event that follows. Persisting them inflates JSONL size and
+   * replay latency without adding forensic value. Adapters that emit
+   * intrinsically high-volume, transient events list them here.
+   */
+  nonPersistedEventTypes?: ReadonlySet<string>;
 }

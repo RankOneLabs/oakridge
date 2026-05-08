@@ -817,46 +817,95 @@ function lastMessageEventId(events: EnvelopeEvent[]): number | null {
   return null;
 }
 
+// Returns ms-since-epoch for an ISO timestamp, or null if Date.parse fails.
+// Stream events flow from the network and a malformed ts would otherwise
+// poison the elapsed-timer math (NaN propagates through arithmetic and
+// nullish-coalescing to never-render NaN).
+function parseIsoMs(s: string): number | null {
+  const ms = Date.parse(s);
+  return Number.isFinite(ms) ? ms : null;
+}
+
 // Reconstructs a live partial assistant message from --include-partial-messages
 // stream_event records. CC emits an Anthropic-style sequence: message_start →
 // content_block_start (per block) → content_block_delta (many) →
-// content_block_stop → message_delta → message_stop. Returns null when the
-// scoped window contains no stream_events, or when a complete `assistant`
-// event has already overtaken them (the EventList renders the final form).
+// content_block_stop → message_delta → message_stop.
+//
+// Built incrementally: a useRef accumulator advances as new events append to
+// the array, so a long stream stays O(N) overall instead of O(N²) (each
+// useMemo run previously rescanned the entire post-`result` window). Block
+// updates are immutable — `blocks.set(idx, { ...block, text: block.text + ... })`
+// — so cached prior renders can't be mutated by a future delta under React
+// Strict Mode or the React Compiler.
 interface InFlightAssistant {
   blocks: ContentBlock[];
   outputTokens: number | null;
   startedAt: number;
 }
 
+interface InFlightAccum {
+  blocks: Map<number, ContentBlock>;
+  outputTokens: number | null;
+  startedAtMs: number | null;
+  lastEventIdx: number;
+  sid: string;
+}
+
+function emptyAccum(sid: string): InFlightAccum {
+  return {
+    blocks: new Map(),
+    outputTokens: null,
+    startedAtMs: null,
+    lastEventIdx: -1,
+    sid,
+  };
+}
+
+function snapshotAccum(a: InFlightAccum): InFlightAssistant | null {
+  if (a.blocks.size === 0 && a.outputTokens === null) return null;
+  const ordered = [...a.blocks.entries()]
+    .sort((x, y) => x[0] - y[0])
+    .map(([, v]) => v);
+  return {
+    blocks: ordered,
+    outputTokens: a.outputTokens,
+    startedAt: a.startedAtMs ?? Date.now(),
+  };
+}
+
 function useInFlightAssistant(
   events: EnvelopeEvent[],
-  awaitingResult: boolean,
+  sid: string,
 ): InFlightAssistant | null {
-  return useMemo(() => {
-    if (!awaitingResult) return null;
-    let startIdx = 0;
-    for (let i = events.length - 1; i >= 0; i--) {
-      if (events[i].type === "result") {
-        startIdx = i + 1;
-        break;
-      }
-    }
-    let lastStreamIdx = -1;
-    let lastFullAssistantIdx = -1;
-    for (let i = startIdx; i < events.length; i++) {
-      const t = events[i].type;
-      if (t === "stream_event") lastStreamIdx = i;
-      else if (t === "assistant") lastFullAssistantIdx = i;
-    }
-    if (lastStreamIdx === -1) return null;
-    if (lastFullAssistantIdx > lastStreamIdx) return null;
+  const [value, setValue] = useState<InFlightAssistant | null>(null);
+  const accumRef = useRef<InFlightAccum>(emptyAccum(sid));
 
-    const blockMap = new Map<number, ContentBlock>();
-    let outputTokens: number | null = null;
-    let startedAtMs: number | null = null;
-    for (let i = startIdx; i < events.length; i++) {
+  useEffect(() => {
+    const a = accumRef.current;
+    if (a.sid !== sid) {
+      accumRef.current = emptyAccum(sid);
+      setValue(null);
+      return;
+    }
+    let dirty = false;
+    for (let i = a.lastEventIdx + 1; i < events.length; i++) {
       const evt = events[i];
+      // Turn boundary: clear so the canonical AssistantRow takes over once
+      // the final assistant event lands, and reset for the next user turn
+      // when a `result` arrives.
+      if (evt.type === "result" || evt.type === "assistant") {
+        if (
+          a.blocks.size > 0 ||
+          a.outputTokens !== null ||
+          a.startedAtMs !== null
+        ) {
+          a.blocks = new Map();
+          a.outputTokens = null;
+          a.startedAtMs = null;
+          dirty = true;
+        }
+        continue;
+      }
       if (evt.type !== "stream_event") continue;
       const wrapped = evt.payload as { event?: unknown };
       const e = wrapped?.event as
@@ -882,9 +931,13 @@ function useInFlightAssistant(
         | undefined;
       if (!e || typeof e.type !== "string") continue;
       if (e.type === "message_start") {
-        if (startedAtMs === null) startedAtMs = Date.parse(evt.ts);
+        if (a.startedAtMs === null) {
+          const ms = parseIsoMs(evt.ts);
+          if (ms !== null) a.startedAtMs = ms;
+        }
         const ot = e.message?.usage?.output_tokens;
-        if (typeof ot === "number") outputTokens = ot;
+        if (typeof ot === "number") a.outputTokens = ot;
+        dirty = true;
       } else if (e.type === "content_block_start") {
         const idx = e.index;
         const cb = e.content_block;
@@ -892,22 +945,25 @@ function useInFlightAssistant(
           continue;
         }
         if (cb.type === "text") {
-          blockMap.set(idx, {
+          a.blocks.set(idx, {
             type: "text",
             text: typeof cb.text === "string" ? cb.text : "",
           });
+          dirty = true;
         } else if (cb.type === "thinking") {
-          blockMap.set(idx, {
+          a.blocks.set(idx, {
             type: "thinking",
             thinking: typeof cb.thinking === "string" ? cb.thinking : "",
           });
+          dirty = true;
         } else if (cb.type === "tool_use") {
-          blockMap.set(idx, {
+          a.blocks.set(idx, {
             type: "tool_use",
             id: typeof cb.id === "string" ? cb.id : "",
             name: typeof cb.name === "string" ? cb.name : "",
             input: cb.input ?? {},
           });
+          dirty = true;
         }
       } else if (e.type === "content_block_delta") {
         const idx = e.index;
@@ -915,49 +971,53 @@ function useInFlightAssistant(
         if (typeof idx !== "number" || !d || typeof d.type !== "string") {
           continue;
         }
-        const block = blockMap.get(idx);
+        const block = a.blocks.get(idx);
         if (!block) continue;
         if (
           d.type === "text_delta" &&
           block.type === "text" &&
           typeof d.text === "string"
         ) {
-          block.text += d.text;
+          a.blocks.set(idx, { ...block, text: block.text + d.text });
+          dirty = true;
         } else if (
           d.type === "thinking_delta" &&
           block.type === "thinking" &&
           typeof d.thinking === "string"
         ) {
-          block.thinking += d.thinking;
+          a.blocks.set(idx, {
+            ...block,
+            thinking: block.thinking + d.thinking,
+          });
+          dirty = true;
         }
       } else if (e.type === "message_delta") {
         const ot = e.usage?.output_tokens;
-        if (typeof ot === "number") outputTokens = ot;
+        if (typeof ot === "number") {
+          a.outputTokens = ot;
+          dirty = true;
+        }
       }
     }
-    if (blockMap.size === 0 && outputTokens === null) return null;
-    if (startedAtMs === null) {
-      for (let i = startIdx; i < events.length; i++) {
+    if (a.startedAtMs === null && a.blocks.size > 0) {
+      for (let i = 0; i < events.length; i++) {
         if (events[i].type === "stream_event") {
-          startedAtMs = Date.parse(events[i].ts);
+          const ms = parseIsoMs(events[i].ts);
+          if (ms !== null) a.startedAtMs = ms;
           break;
         }
       }
     }
-    const ordered = [...blockMap.entries()]
-      .sort((a, b) => a[0] - b[0])
-      .map(([, v]) => v);
-    return {
-      blocks: ordered,
-      outputTokens,
-      startedAt: startedAtMs ?? Date.now(),
-    };
-  }, [events, awaitingResult]);
+    a.lastEventIdx = events.length - 1;
+    if (dirty) setValue(snapshotAccum(a));
+  }, [events, sid]);
+
+  return value;
 }
 
-// Timestamp of the first event that triggered awaitingResult — falls back to
-// non-stream events so the elapsed counter starts the moment the user's
-// message is in the transcript, even before CC's first stream_event arrives.
+// Timestamp of the first event after the most recent `result` — drives the
+// elapsed counter even before CC's first stream_event arrives. Returns null
+// for a malformed ts so NaN doesn't reach the elapsed math.
 function turnStartedAtMs(
   events: EnvelopeEvent[],
   awaitingResult: boolean,
@@ -977,7 +1037,7 @@ function turnStartedAtMs(
       e.type === "assistant" ||
       e.type === "stream_event"
     ) {
-      return Date.parse(e.ts);
+      return parseIsoMs(e.ts);
     }
   }
   return null;
@@ -1236,7 +1296,7 @@ function SessionView({
     () => (pendingMessages.length > 0 ? null : lastMessageEventId(events)),
     [events, pendingMessages.length],
   );
-  const inFlightAssistant = useInFlightAssistant(events, awaitingResult);
+  const inFlightAssistant = useInFlightAssistant(events, sid);
   const turnStart = useMemo(
     () => turnStartedAtMs(events, awaitingResult),
     [events, awaitingResult],
@@ -1282,7 +1342,7 @@ function SessionView({
           isLatest={m.localId === lastPendingLocalId}
         />
       ))}
-      {inFlightAssistant && (
+      {awaitingResult && inFlightAssistant && (
         <InFlightAssistantRow message={inFlightAssistant} />
       )}
       {awaitingResult && (
@@ -1357,21 +1417,27 @@ function ThinkingIndicator({
 }) {
   const showElapsed = elapsedSec !== null && elapsedSec > 0;
   const showTokens = outputTokens !== null && outputTokens > 0;
+  // Only the static "thinking" label sits in the live region — the elapsed
+  // counter ticks every second and a polite re-announcement of "thinking ·
+  // 47s · 1283 tok" each second is wildly noisy on a screen reader. The
+  // outer container drops role=status; an inner span owns the announcement
+  // with a stable accessible name and the meta is aria-hidden.
   return (
     <div className="row row-system">
-      <div
-        className="thinking-indicator"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-        aria-label="Claude is working"
-      >
+      <div className="thinking-indicator">
         <span className="thinking-dot" aria-hidden="true" />
         <span className="thinking-dot" aria-hidden="true" />
         <span className="thinking-dot" aria-hidden="true" />
-        <span className="thinking-label">thinking</span>
+        <span
+          className="thinking-label"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          thinking
+        </span>
         {(showElapsed || showTokens) && (
-          <span className="thinking-meta">
+          <span className="thinking-meta" aria-hidden="true">
             {showElapsed && ` · ${formatElapsedSeconds(elapsedSec!)}`}
             {showTokens && ` · ${outputTokens} tok`}
           </span>
@@ -1799,6 +1865,11 @@ function isFilteredEvent(
   // Mirrors what EventRow returns null for, so batching doesn't accidentally
   // break across an event that wouldn't have rendered anyway.
   if (e.type === "permission_resolved") return true;
+  // Hard-filter stream_event independent of showSystemEvents — the partial-
+  // message deltas are reconstructed by InFlightAssistantRow, never as a row.
+  // Without this, "show system events" would flood the transcript with one
+  // chunk per token during long generations.
+  if (e.type === "stream_event") return true;
   if (showSystemEvents) return false;
   if (isLowSignalEvent(e)) return true;
   if (e.type === "permission_auto_approved") return true;
@@ -2100,6 +2171,9 @@ function EventRow({
   showSystemEvents: boolean;
   isLatest: boolean;
 }) {
+  // stream_event deltas are reconstructed by InFlightAssistantRow; never
+  // surface them as a row, even with showSystemEvents on.
+  if (event.type === "stream_event") return null;
   if (!showSystemEvents && isLowSignalEvent(event)) return null;
   switch (event.type) {
     case "user":
