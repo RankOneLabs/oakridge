@@ -341,10 +341,10 @@ async def test_median_two_sorted_arrays_factory_reference_solution_passes() -> N
 
 # A correct-but-slow O(m+n) merge solution. Should pass tests + mypy
 # (correctness is fine, types are clean) but FAIL the perf dimension
-# on the 2x2M input. This is the honest discrimination signal the
-# median target was added to produce — no fake pessimization, just
-# the kind of merge a model writes when it doesn't know the
-# partition trick.
+# on the 2×3M input — pure-Python merge takes ~270ms, well past the
+# 100ms budget. This is the honest discrimination signal the median
+# target was added to produce — no fake pessimization, just the kind
+# of merge a model writes when it doesn't know the partition trick.
 _MEDIAN_TWO_SORTED_ARRAYS_SLOW_SOLUTION = (
     "def find_median_sorted_arrays(\n"
     "    nums1: list[int], nums2: list[int]\n"

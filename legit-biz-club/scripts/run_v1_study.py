@@ -240,9 +240,21 @@ class _ProviderFilteredOpenRouterClient(OpenRouterClient):
         if not self._ignore_providers:
             return
         extra_body = kwargs.setdefault("extra_body", {})
-        assert isinstance(extra_body, dict)
+        # Explicit type checks (not ``assert``) so ``python -O`` can't
+        # strip them — this guards against malformed kwargs from
+        # upstream callers / parent class, which is a real failure mode
+        # we want to surface even in optimized runs.
+        if not isinstance(extra_body, dict):
+            raise TypeError(
+                f"extra_body must be a dict, got "
+                f"{type(extra_body).__name__}"
+            )
         provider = extra_body.setdefault("provider", {})
-        assert isinstance(provider, dict)
+        if not isinstance(provider, dict):
+            raise TypeError(
+                f"extra_body.provider must be a dict, got "
+                f"{type(provider).__name__}"
+            )
         # Existing ``ignore`` should be a list/tuple of provider
         # names per the OpenRouter API. Reject anything else loudly
         # — silently coercing a string to a list of characters would

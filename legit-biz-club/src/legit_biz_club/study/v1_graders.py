@@ -636,6 +636,12 @@ microseconds and passes with several orders of magnitude of headroom.
 Materialized into the grader's tmpdir alongside ``test_solution.py``;
 the grader scopes pytest to this file via ``test_paths=`` so perf
 runs aren't mixed into the correctness ``tests`` dimension.
+
+Platform: ``signal.SIGALRM`` and ``signal.alarm`` are POSIX-only.
+The harness targets Linux (homelab) and macOS (dev); Windows isn't
+supported and this file would crash with ``AttributeError`` on
+import there. If Windows ever needs to run this, swap the alarm
+for a ``threading.Timer`` fallback.
 """
 import signal
 import time
