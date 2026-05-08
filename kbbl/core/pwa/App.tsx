@@ -907,6 +907,22 @@ function useInFlightAssistant(
         continue;
       }
       if (evt.type !== "stream_event") continue;
+      // Capture the turn-start timestamp on the first stream_event of the
+      // current turn (turn-boundary reset above clears startedAtMs). Doing
+      // this at the top of the stream_event branch — instead of only inside
+      // the message_start handler — covers two edge cases: a late-joining
+      // SSE viewer who missed message_start, and a stream that opens with
+      // content_block_start (CC has been observed to do this with cached
+      // prefixes). It also keeps the start-time scoped to the current turn,
+      // so a malformed ts can't snap the elapsed counter to a historical
+      // event from a previous turn.
+      if (a.startedAtMs === null) {
+        const ms = parseIsoMs(evt.ts);
+        if (ms !== null) {
+          a.startedAtMs = ms;
+          dirty = true;
+        }
+      }
       const wrapped = evt.payload as { event?: unknown };
       const e = wrapped?.event as
         | {
@@ -931,10 +947,6 @@ function useInFlightAssistant(
         | undefined;
       if (!e || typeof e.type !== "string") continue;
       if (e.type === "message_start") {
-        if (a.startedAtMs === null) {
-          const ms = parseIsoMs(evt.ts);
-          if (ms !== null) a.startedAtMs = ms;
-        }
         const ot = e.message?.usage?.output_tokens;
         if (typeof ot === "number") a.outputTokens = ot;
         dirty = true;
@@ -971,8 +983,19 @@ function useInFlightAssistant(
         if (typeof idx !== "number" || !d || typeof d.type !== "string") {
           continue;
         }
-        const block = a.blocks.get(idx);
-        if (!block) continue;
+        let block = a.blocks.get(idx);
+        if (!block) {
+          // Late-join: an SSE reconnect can land us mid-stream after the
+          // matching content_block_start has already been delivered to
+          // earlier subscribers. Synthesize an empty block of the right
+          // kind from the delta type so the partial UI keeps rendering
+          // instead of silently dropping every chunk.
+          if (d.type === "text_delta") block = { type: "text", text: "" };
+          else if (d.type === "thinking_delta") {
+            block = { type: "thinking", thinking: "" };
+          } else continue;
+          a.blocks.set(idx, block);
+        }
         if (
           d.type === "text_delta" &&
           block.type === "text" &&
@@ -996,15 +1019,6 @@ function useInFlightAssistant(
         if (typeof ot === "number") {
           a.outputTokens = ot;
           dirty = true;
-        }
-      }
-    }
-    if (a.startedAtMs === null && a.blocks.size > 0) {
-      for (let i = 0; i < events.length; i++) {
-        if (events[i].type === "stream_event") {
-          const ms = parseIsoMs(events[i].ts);
-          if (ms !== null) a.startedAtMs = ms;
-          break;
         }
       }
     }
