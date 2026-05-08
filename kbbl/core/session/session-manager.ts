@@ -31,6 +31,12 @@ export interface SessionManagerOpts {
    * per-event work omit this.
    */
   classifyEvent?: (rawEvent: unknown, session: Session) => Promise<void>;
+  /**
+   * Optional set of event types Session.emit() will broadcast but skip
+   * writing to the JSONL transcript. See AppRuntime.nonPersistedEventTypes
+   * for rationale.
+   */
+  nonPersistedEventTypes?: ReadonlySet<string>;
 }
 
 export interface CreateSessionOpts {
@@ -158,6 +164,7 @@ export class SessionManager {
       parentOakridgeSid: opts.parentOakridgeSid,
       artifactId: opts.artifactId,
       classifyEvent: this.opts.classifyEvent,
+      nonPersistedEventTypes: this.opts.nonPersistedEventTypes,
       callbacks: {
         onCcSidObserved: (s, ccSid) => {
           this.ccSidToOakridgeSid.set(ccSid, s.oakridgeSid);

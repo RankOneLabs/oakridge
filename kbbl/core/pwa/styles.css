@@ -1255,6 +1255,15 @@ body {
 .thinking-label {
   margin-left: 0.25rem;
 }
+.thinking-meta {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.bubble-assistant-inflight {
+  opacity: 0.85;
+  border-left: 2px solid var(--text-muted);
+}
 @keyframes thinking-bounce {
   0%,
   60%,

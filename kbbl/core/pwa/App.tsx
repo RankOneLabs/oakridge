@@ -817,6 +817,270 @@ function lastMessageEventId(events: EnvelopeEvent[]): number | null {
   return null;
 }
 
+// Returns ms-since-epoch for an ISO timestamp, or null if Date.parse fails.
+// Stream events flow from the network and a malformed ts would otherwise
+// poison the elapsed-timer math (NaN propagates through arithmetic and
+// nullish-coalescing to never-render NaN).
+function parseIsoMs(s: string): number | null {
+  const ms = Date.parse(s);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+// Reconstructs a live partial assistant message from --include-partial-messages
+// stream_event records. CC emits an Anthropic-style sequence: message_start →
+// content_block_start (per block) → content_block_delta (many) →
+// content_block_stop → message_delta → message_stop.
+//
+// Built incrementally: a useRef accumulator advances as new events append to
+// the array, so a long stream stays O(N) overall instead of O(N²) (each
+// useMemo run previously rescanned the entire post-`result` window). Block
+// updates are immutable — `blocks.set(idx, { ...block, text: block.text + ... })`
+// — so cached prior renders can't be mutated by a future delta under React
+// Strict Mode or the React Compiler.
+interface InFlightAssistant {
+  blocks: ContentBlock[];
+  outputTokens: number | null;
+  startedAt: number;
+}
+
+interface InFlightAccum {
+  blocks: Map<number, ContentBlock>;
+  outputTokens: number | null;
+  startedAtMs: number | null;
+  lastEventIdx: number;
+  sid: string;
+}
+
+function emptyAccum(sid: string): InFlightAccum {
+  return {
+    blocks: new Map(),
+    outputTokens: null,
+    startedAtMs: null,
+    lastEventIdx: -1,
+    sid,
+  };
+}
+
+function snapshotAccum(a: InFlightAccum): InFlightAssistant | null {
+  if (a.blocks.size === 0 && a.outputTokens === null) return null;
+  const ordered = [...a.blocks.entries()]
+    .sort((x, y) => x[0] - y[0])
+    .map(([, v]) => v);
+  return {
+    blocks: ordered,
+    outputTokens: a.outputTokens,
+    startedAt: a.startedAtMs ?? Date.now(),
+  };
+}
+
+function useInFlightAssistant(
+  events: EnvelopeEvent[],
+  sid: string,
+): InFlightAssistant | null {
+  const [value, setValue] = useState<InFlightAssistant | null>(null);
+  const accumRef = useRef<InFlightAccum>(emptyAccum(sid));
+
+  useEffect(() => {
+    const a = accumRef.current;
+    if (a.sid !== sid) {
+      accumRef.current = emptyAccum(sid);
+      setValue(null);
+      return;
+    }
+    let dirty = false;
+    for (let i = a.lastEventIdx + 1; i < events.length; i++) {
+      const evt = events[i];
+      // Turn boundary: clear so the canonical AssistantRow takes over once
+      // the final assistant event lands, and reset for the next user turn
+      // when a `result` arrives.
+      if (evt.type === "result" || evt.type === "assistant") {
+        if (
+          a.blocks.size > 0 ||
+          a.outputTokens !== null ||
+          a.startedAtMs !== null
+        ) {
+          a.blocks = new Map();
+          a.outputTokens = null;
+          a.startedAtMs = null;
+          dirty = true;
+        }
+        continue;
+      }
+      if (evt.type !== "stream_event") continue;
+      // Capture the turn-start timestamp on the first stream_event of the
+      // current turn (turn-boundary reset above clears startedAtMs). Doing
+      // this at the top of the stream_event branch — instead of only inside
+      // the message_start handler — covers two edge cases: a late-joining
+      // SSE viewer who missed message_start, and a stream that opens with
+      // content_block_start (CC has been observed to do this with cached
+      // prefixes). It also keeps the start-time scoped to the current turn,
+      // so a malformed ts can't snap the elapsed counter to a historical
+      // event from a previous turn.
+      if (a.startedAtMs === null) {
+        const ms = parseIsoMs(evt.ts);
+        if (ms !== null) {
+          a.startedAtMs = ms;
+          dirty = true;
+        }
+      }
+      const wrapped = evt.payload as { event?: unknown };
+      const e = wrapped?.event as
+        | {
+            type?: string;
+            index?: number;
+            message?: { usage?: { output_tokens?: unknown } };
+            content_block?: {
+              type?: string;
+              id?: unknown;
+              name?: unknown;
+              input?: unknown;
+              text?: unknown;
+              thinking?: unknown;
+            };
+            delta?: {
+              type?: string;
+              text?: unknown;
+              thinking?: unknown;
+            };
+            usage?: { output_tokens?: unknown };
+          }
+        | undefined;
+      if (!e || typeof e.type !== "string") continue;
+      if (e.type === "message_start") {
+        const ot = e.message?.usage?.output_tokens;
+        if (typeof ot === "number") a.outputTokens = ot;
+        dirty = true;
+      } else if (e.type === "content_block_start") {
+        const idx = e.index;
+        const cb = e.content_block;
+        if (typeof idx !== "number" || !cb || typeof cb.type !== "string") {
+          continue;
+        }
+        if (cb.type === "text") {
+          a.blocks.set(idx, {
+            type: "text",
+            text: typeof cb.text === "string" ? cb.text : "",
+          });
+          dirty = true;
+        } else if (cb.type === "thinking") {
+          a.blocks.set(idx, {
+            type: "thinking",
+            thinking: typeof cb.thinking === "string" ? cb.thinking : "",
+          });
+          dirty = true;
+        } else if (cb.type === "tool_use") {
+          a.blocks.set(idx, {
+            type: "tool_use",
+            id: typeof cb.id === "string" ? cb.id : "",
+            name: typeof cb.name === "string" ? cb.name : "",
+            input: cb.input ?? {},
+          });
+          dirty = true;
+        }
+      } else if (e.type === "content_block_delta") {
+        const idx = e.index;
+        const d = e.delta;
+        if (typeof idx !== "number" || !d || typeof d.type !== "string") {
+          continue;
+        }
+        let block = a.blocks.get(idx);
+        if (!block) {
+          // Late-join: an SSE reconnect can land us mid-stream after the
+          // matching content_block_start has already been delivered to
+          // earlier subscribers. Synthesize an empty block of the right
+          // kind from the delta type so the partial UI keeps rendering
+          // instead of silently dropping every chunk.
+          if (d.type === "text_delta") block = { type: "text", text: "" };
+          else if (d.type === "thinking_delta") {
+            block = { type: "thinking", thinking: "" };
+          } else continue;
+          a.blocks.set(idx, block);
+        }
+        if (
+          d.type === "text_delta" &&
+          block.type === "text" &&
+          typeof d.text === "string"
+        ) {
+          a.blocks.set(idx, { ...block, text: block.text + d.text });
+          dirty = true;
+        } else if (
+          d.type === "thinking_delta" &&
+          block.type === "thinking" &&
+          typeof d.thinking === "string"
+        ) {
+          a.blocks.set(idx, {
+            ...block,
+            thinking: block.thinking + d.thinking,
+          });
+          dirty = true;
+        }
+      } else if (e.type === "message_delta") {
+        const ot = e.usage?.output_tokens;
+        if (typeof ot === "number") {
+          a.outputTokens = ot;
+          dirty = true;
+        }
+      }
+    }
+    a.lastEventIdx = events.length - 1;
+    if (dirty) setValue(snapshotAccum(a));
+  }, [events, sid]);
+
+  return value;
+}
+
+// Timestamp of the first event after the most recent `result` — drives the
+// elapsed counter even before CC's first stream_event arrives. Returns null
+// for a malformed ts so NaN doesn't reach the elapsed math.
+function turnStartedAtMs(
+  events: EnvelopeEvent[],
+  awaitingResult: boolean,
+): number | null {
+  if (!awaitingResult) return null;
+  let lastResultIdx = -1;
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i].type === "result") {
+      lastResultIdx = i;
+      break;
+    }
+  }
+  for (let i = lastResultIdx + 1; i < events.length; i++) {
+    const e = events[i];
+    if (
+      e.type === "user" ||
+      e.type === "assistant" ||
+      e.type === "stream_event"
+    ) {
+      return parseIsoMs(e.ts);
+    }
+  }
+  return null;
+}
+
+// 1Hz tick while `active` so derived elapsed-time UI re-renders without
+// polluting unrelated state.
+function useElapsedSeconds(
+  startedAtMs: number | null,
+  active: boolean,
+): number | null {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return;
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [active]);
+  if (startedAtMs === null) return null;
+  return Math.max(0, Math.floor((now - startedAtMs) / 1000));
+}
+
+function formatElapsedSeconds(s: number): string {
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return `${m}m${rem.toString().padStart(2, "0")}s`;
+}
+
 // === session view ===
 
 interface PendingMessage {
@@ -884,6 +1148,7 @@ function SessionView({
         if (typeof p.message?.content === "string") return true;
       }
       if (e.type === "assistant") return true;
+      if (e.type === "stream_event") return true;
     }
     return false;
   }, [events, pendingMessages.length, sessionStatus]);
@@ -1045,6 +1310,15 @@ function SessionView({
     () => (pendingMessages.length > 0 ? null : lastMessageEventId(events)),
     [events, pendingMessages.length],
   );
+  const inFlightAssistant = useInFlightAssistant(events, sid);
+  const turnStart = useMemo(
+    () => turnStartedAtMs(events, awaitingResult),
+    [events, awaitingResult],
+  );
+  const elapsedSec = useElapsedSeconds(
+    inFlightAssistant?.startedAt ?? turnStart,
+    awaitingResult,
+  );
   const lastPendingLocalId =
     pendingMessages.length > 0
       ? pendingMessages[pendingMessages.length - 1].localId
@@ -1082,7 +1356,15 @@ function SessionView({
           isLatest={m.localId === lastPendingLocalId}
         />
       ))}
-      {awaitingResult && <ThinkingIndicator />}
+      {awaitingResult && inFlightAssistant && (
+        <InFlightAssistantRow message={inFlightAssistant} />
+      )}
+      {awaitingResult && (
+        <ThinkingIndicator
+          elapsedSec={elapsedSec}
+          outputTokens={inFlightAssistant?.outputTokens ?? null}
+        />
+      )}
       {canInput && (
         <InputBox
           sid={sid}
@@ -1140,22 +1422,78 @@ function PendingUserBubble({
   );
 }
 
-function ThinkingIndicator() {
+function ThinkingIndicator({
+  elapsedSec,
+  outputTokens,
+}: {
+  elapsedSec: number | null;
+  outputTokens: number | null;
+}) {
+  const showElapsed = elapsedSec !== null && elapsedSec > 0;
+  const showTokens = outputTokens !== null && outputTokens > 0;
+  // Only the static "thinking" label sits in the live region — the elapsed
+  // counter ticks every second and a polite re-announcement of "thinking ·
+  // 47s · 1283 tok" each second is wildly noisy on a screen reader. The
+  // outer container drops role=status; an inner span owns the announcement
+  // with a stable accessible name and the meta is aria-hidden.
   return (
     <div className="row row-system">
-      <div
-        className="thinking-indicator"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-        aria-label="Claude is working"
-      >
+      <div className="thinking-indicator">
         <span className="thinking-dot" aria-hidden="true" />
         <span className="thinking-dot" aria-hidden="true" />
         <span className="thinking-dot" aria-hidden="true" />
-        <span className="thinking-label">thinking</span>
+        <span
+          className="thinking-label"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          thinking
+        </span>
+        {(showElapsed || showTokens) && (
+          <span className="thinking-meta" aria-hidden="true">
+            {showElapsed && ` · ${formatElapsedSeconds(elapsedSec!)}`}
+            {showTokens && ` · ${outputTokens} tok`}
+          </span>
+        )}
       </div>
     </div>
+  );
+}
+
+// Renders the live assistant turn reconstructed from --include-partial-messages
+// stream events. Stays mounted only until the matching final `assistant` event
+// arrives, at which point useInFlightAssistant returns null and the EventList's
+// AssistantRow takes over with the canonical version.
+function InFlightAssistantRow({ message }: { message: InFlightAssistant }) {
+  return (
+    <>
+      {message.blocks.map((block, idx) => {
+        const key = `inflight-${idx}`;
+        if (block.type === "thinking") {
+          if (block.thinking.length === 0) return null;
+          return (
+            <details key={key} className="row row-thinking" open>
+              <summary>thinking · live</summary>
+              <pre>{block.thinking}</pre>
+            </details>
+          );
+        }
+        if (block.type === "text") {
+          if (block.text.length === 0) return null;
+          return (
+            <div key={key} className="row row-assistant">
+              <div className="bubble bubble-assistant bubble-assistant-inflight">
+                <Markdown rehypePlugins={[rehypeSanitize]}>
+                  {block.text}
+                </Markdown>
+              </div>
+            </div>
+          );
+        }
+        return null;
+      })}
+    </>
   );
 }
 
@@ -1541,6 +1879,11 @@ function isFilteredEvent(
   // Mirrors what EventRow returns null for, so batching doesn't accidentally
   // break across an event that wouldn't have rendered anyway.
   if (e.type === "permission_resolved") return true;
+  // Hard-filter stream_event independent of showSystemEvents — the partial-
+  // message deltas are reconstructed by InFlightAssistantRow, never as a row.
+  // Without this, "show system events" would flood the transcript with one
+  // chunk per token during long generations.
+  if (e.type === "stream_event") return true;
   if (showSystemEvents) return false;
   if (isLowSignalEvent(e)) return true;
   if (e.type === "permission_auto_approved") return true;
@@ -1815,6 +2158,11 @@ function isLowSignalEvent(event: EnvelopeEvent): boolean {
       // None of these are operator-actionable; the transcript already
       // shows the work happening via assistant/tool events.
       return true;
+    case "stream_event":
+      // Partial-message deltas from --include-partial-messages. The
+      // InFlightAssistantRow renders the reconstructed message; the raw
+      // per-chunk events would just be transcript noise.
+      return true;
     default:
       return false;
   }
@@ -1837,6 +2185,9 @@ function EventRow({
   showSystemEvents: boolean;
   isLatest: boolean;
 }) {
+  // stream_event deltas are reconstructed by InFlightAssistantRow; never
+  // surface them as a row, even with showSystemEvents on.
+  if (event.type === "stream_event") return null;
   if (!showSystemEvents && isLowSignalEvent(event)) return null;
   switch (event.type) {
     case "user":

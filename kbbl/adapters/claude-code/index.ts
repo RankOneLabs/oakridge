@@ -59,5 +59,11 @@ export async function createClaudeCodeRuntime(
       );
     },
     classifyEvent: classifyCcEvent,
+    // CC's --include-partial-messages emits one stream_event per delta —
+    // many thousands per long turn. Subscribers (the PWA's
+    // InFlightAssistantRow) need them live, but the canonical transcript
+    // record is the final `assistant` event that follows. Skipping JSONL
+    // persistence keeps session files small and `/events` replay fast.
+    nonPersistedEventTypes: new Set(["stream_event"]),
   };
 }

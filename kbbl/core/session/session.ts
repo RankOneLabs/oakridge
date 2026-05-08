@@ -56,6 +56,14 @@ export interface SessionOpts {
    * follow-on events. Errors are caught + logged; the pump survives.
    */
   classifyEvent?: (rawEvent: unknown, session: Session) => Promise<void>;
+  /**
+   * Event types whose emit() calls fan out to subscribers and run the
+   * classifier but skip the JSONL writer. CC's --include-partial-messages
+   * `stream_event` records are the motivating case — high volume, the final
+   * `assistant` event is the canonical record, persisting them would bloat
+   * the transcript and slow `/events` replay.
+   */
+  nonPersistedEventTypes?: ReadonlySet<string>;
 }
 
 export type SessionStatus = "starting" | "live" | "ended";
@@ -137,6 +145,7 @@ export class Session {
     rawEvent: unknown,
     session: Session,
   ) => Promise<void>;
+  private readonly nonPersistedEventTypes: ReadonlySet<string>;
   private readonly jsonlWriter: import("bun").FileSink;
   private nextId = 0;
   private subscribers = new Set<Subscriber>();
@@ -189,6 +198,7 @@ export class Session {
     this.lastActivityTs = this.createdAt;
     this.callbacks = opts.callbacks ?? {};
     this.classifyEvent = opts.classifyEvent;
+    this.nonPersistedEventTypes = opts.nonPersistedEventTypes ?? new Set();
     this.jsonlWriter = Bun.file(this.jsonlPath).writer();
   }
 
@@ -322,9 +332,12 @@ export class Session {
         }`,
       );
     }
+    const persist = !this.nonPersistedEventTypes.has(type);
     const task = async () => {
-      this.jsonlWriter.write(JSON.stringify(evt) + "\n");
-      await this.jsonlWriter.flush();
+      if (persist) {
+        this.jsonlWriter.write(JSON.stringify(evt) + "\n");
+        await this.jsonlWriter.flush();
+      }
       for (const cb of this.subscribers) {
         try {
           cb(evt);

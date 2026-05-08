@@ -42,7 +42,18 @@ export async function writeCcSettings(opts: CcSettingsOpts): Promise<string> {
           PreToolUse: [
             {
               matcher: ".*",
-              hooks: [{ type: "command", command: shellQuote(opts.gatePath) }],
+              hooks: [
+                {
+                  type: "command",
+                  command: shellQuote(opts.gatePath),
+                  // CC's default PreToolUse hook timeout (~10 min) silently
+                  // cancels the gate when the operator's away from the PWA;
+                  // the deny that comes back as "you haven't granted it yet"
+                  // confuses the agent. Match gate.sh's curl --max-time so
+                  // approval latency really is "time to tap".
+                  timeout: 3600,
+                },
+              ],
             },
           ],
         },
@@ -89,6 +100,11 @@ export function makeBuildSpawnCmd(
       "--output-format",
       "stream-json",
       "--include-hook-events",
+      // Without partial-messages, kbbl only sees the final assistant message
+      // when the model is fully done — a long thinking phase is indistinguishable
+      // from a wedge. Partial events let the PWA stream incremental thinking +
+      // text and surface a live token counter.
+      "--include-partial-messages",
       "--replay-user-messages",
       "--verbose",
       "--setting-sources",
