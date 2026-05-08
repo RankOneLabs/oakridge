@@ -38,11 +38,16 @@ const RetentionSchema = z
   })
   .strict();
 
+// Secret-bearing tokens are intentionally NOT in the schema. The kbbl→safir
+// API bearer (`SAFIR_API_TOKEN`) and the shared webhook secret
+// (`SAFIR_WEBHOOK_TOKEN`, same value on both processes) are read from
+// process.env at the point of use in Phase 2/3, so a checked-in
+// config.json can never carry a real credential. Strict-mode rejection
+// also means an old config with `api_token`/`webhook_token` keys will
+// fail loud at startup, prompting the operator to move them to env.
 const SafirSchema = z
   .object({
     base_url: z.url().default("http://localhost:7145"),
-    api_token: z.string().nullable().default(null),
-    webhook_token: z.string().nullable().default(null),
     queue_drain_interval_seconds: z.number().positive().default(30),
   })
   .strict();
@@ -88,15 +93,14 @@ function checkInvariants(cfg: KbblConfig, path: string): void {
 // half-applied override.
 
 export function loadConfig(path: string): KbblConfig {
-  let parsed: unknown;
+  // Read and parse stages live in separate try/catch blocks so each error
+  // category gets its own `kbbl config: <path>:` prefix without inner
+  // catches having to be careful about not re-wrapping. ENOENT on read
+  // is the documented "no file" path; every other fs error (EACCES,
+  // EISDIR, EIO) gets wrapped to keep startup error logs greppable.
+  let contents: string;
   try {
-    const contents = readFileSync(path, "utf8");
-    try {
-      parsed = JSON.parse(contents);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      throw new Error(`kbbl config: ${path}: invalid JSON: ${msg}`);
-    }
+    contents = readFileSync(path, "utf8");
   } catch (err) {
     if (
       err &&
@@ -104,15 +108,22 @@ export function loadConfig(path: string): KbblConfig {
       "code" in err &&
       (err as { code: string }).code === "ENOENT"
     ) {
-      // No file = use schema defaults across the board. Still flow the
-      // empty object through KbblConfigSchema so the same invariant
-      // checks run on the resolved defaults.
       const cfg = KbblConfigSchema.parse({});
       checkInvariants(cfg, path);
       return cfg;
     }
-    throw err;
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`kbbl config: ${path}: failed to read file: ${msg}`);
   }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(contents);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`kbbl config: ${path}: invalid JSON: ${msg}`);
+  }
+
   const result = KbblConfigSchema.safeParse(parsed);
   if (!result.success) {
     const formatted = result.error.issues

@@ -11,8 +11,6 @@
   "retention": { "session_events_full_days": 14 },
   "safir": {
     "base_url": "http://localhost:7145",
-    "api_token": null,
-    "webhook_token": null,
     "queue_drain_interval_seconds": 30
   }
 }

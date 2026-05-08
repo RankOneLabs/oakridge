@@ -3,7 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { loadConfig } from "./config";
+import { loadConfig, type KbblConfig } from "./config";
 import { SessionManager } from "./session/session-manager";
 import { Session } from "./session/session";
 import { createApp } from "./server/app";
@@ -31,7 +31,9 @@ const { values } = parseArgs({
 });
 
 if (!values.workdir) {
-  console.error("usage: bun run server.ts --workdir=<path> [--port=8788]");
+  console.error(
+    "usage: bun run server.ts --workdir=<path> [--port=8788] [--host=<addr>] [--config=<path>]",
+  );
   process.exit(1);
 }
 
@@ -67,7 +69,7 @@ await mkdir(sessionsDir, { recursive: true });
 // when the first compact threshold is consulted.
 
 const configPath = values.config ?? join(kbblRoot, "config.json");
-let config;
+let config: KbblConfig;
 try {
   config = loadConfig(configPath);
 } catch (err) {
