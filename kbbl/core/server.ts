@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { loadConfig, type KbblConfig } from "./config";
 import { SessionManager } from "./session/session-manager";
 import { Session } from "./session/session";
-import { isGitRepo, isPathInside } from "./session/worktree";
+import { isGitRepo, isPathInside, resolveRepoTopLevel } from "./session/worktree";
 import { createApp } from "./server/app";
 import { createClaudeCodeRuntime } from "../adapters/claude-code";
 import { validateWorkdir } from "./server/handlers/sessions";
@@ -84,18 +84,25 @@ try {
 const worktreesDir = join(dataDir, config.sessions.worktree_dir_name);
 await mkdir(worktreesDir, { recursive: true });
 
-// Nesting check: when the operator's --workdir is a git repo AND
+// Nesting check: when the operator's --workdir is inside a git repo AND
 // worktreesDir lives inside that repo's tree, every per-session worktree
 // would land inside the outer repo's working tree. That's only safe if the
 // outer repo gitignores the path; otherwise `git status` from the outer
 // repo surfaces every session's checkout as untracked — exactly the
 // cross-session pollution per-worktree isolation is meant to prevent.
+//
+// We compare against `git rev-parse --show-toplevel`, not against `workdir`
+// directly: an operator launching kbbl from a subdirectory of a repo would
+// otherwise sneak past the check whenever worktreesDir landed in a sibling
+// of that subdir but still inside the repo root.
+//
 // Only enforced when worktrees are actually enabled; flag-off operators
 // don't need to care.
 if (config.sessions.worktree_per_session && (await isGitRepo(workdir))) {
-  if (isPathInside(worktreesDir, workdir)) {
+  const repoRoot = await resolveRepoTopLevel(workdir);
+  if (isPathInside(worktreesDir, repoRoot)) {
     const ignoreCheck = Bun.spawn({
-      cmd: ["git", "-C", workdir, "check-ignore", "-q", worktreesDir],
+      cmd: ["git", "-C", repoRoot, "check-ignore", "-q", worktreesDir],
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -103,7 +110,7 @@ if (config.sessions.worktree_per_session && (await isGitRepo(workdir))) {
     // git check-ignore: 0 = ignored (safe), 1 = not ignored (unsafe), 128 = error.
     if (ignoreCode !== 0) {
       console.error(
-        `kbbl: worktreesDir ${worktreesDir} is inside the operator workdir ${workdir}`,
+        `kbbl: worktreesDir ${worktreesDir} is inside the repo at ${repoRoot}`,
       );
       console.error(
         `kbbl: but is not gitignored by it. Per-session worktrees would pollute`,
@@ -112,10 +119,10 @@ if (config.sessions.worktree_per_session && (await isGitRepo(workdir))) {
         `kbbl: the outer repo's git status. Either:`,
       );
       console.error(
-        `kbbl:   - add ${worktreesDir} to ${workdir}/.gitignore, or`,
+        `kbbl:   - add ${worktreesDir} to ${repoRoot}/.gitignore, or`,
       );
       console.error(
-        `kbbl:   - pass --dataDir=<path-outside-${workdir}>`,
+        `kbbl:   - pass --dataDir=<path-outside-${repoRoot}>`,
       );
       process.exit(1);
     }

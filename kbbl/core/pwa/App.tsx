@@ -66,8 +66,11 @@ function generateSlug(): string {
 
 function workdirBasename(p: string): string {
   if (!p) return "";
-  const trimmed = p.replace(/\/+$/, "");
-  const parts = trimmed.split("/");
+  // Split on both POSIX and Windows separators so a path coming from a
+  // Windows operator's worktree (back-slashed) renders as the basename
+  // instead of the full path string.
+  const trimmed = p.replace(/[\\/]+$/, "");
+  const parts = trimmed.split(/[\\/]/);
   return parts[parts.length - 1] || trimmed;
 }
 

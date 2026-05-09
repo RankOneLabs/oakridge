@@ -213,9 +213,28 @@ export class SessionManager {
     let projectWorkdir: string | null = null;
     const wantsWorktree = this.opts.config.sessions.worktree_per_session;
     if (wantsWorktree && (await isGitRepo(opts.workdir))) {
-      const resumeDepth = opts.parentOakridgeSid
-        ? await this.computeResumeDepth(opts.parentOakridgeSid)
-        : 0;
+      // On resume, opts.workdir is the parent's workdir — which (Phase 1+)
+      // is the parent's worktree path, NOT the operator's original repo.
+      // Resolve both depth and the original projectWorkdir from the parent
+      // so the new session's metadata points at the original repo (for the
+      // PWA dual-label) instead of mistaking the parent's worktree for
+      // the project root.
+      let resumeDepth = 0;
+      let inheritedProjectWorkdir: string | null = null;
+      if (opts.parentOakridgeSid) {
+        const meta = await this.lookupParentSessionMeta(opts.parentOakridgeSid);
+        if (meta === null) {
+          console.error(
+            `kbbl: resume chain broken at ${opts.parentOakridgeSid} — defaulting depth to 1`,
+          );
+          resumeDepth = 1;
+        } else {
+          resumeDepth = meta.worktreeBranch
+            ? parseDepthFromBranch(meta.worktreeBranch) + 1
+            : 1;
+          inheritedProjectWorkdir = meta.projectWorkdir;
+        }
+      }
       try {
         const created = await createWorktree({
           workdir: opts.workdir,
@@ -226,7 +245,12 @@ export class SessionManager {
         worktreePath = created.worktreePath;
         worktreeBranch = created.worktreeBranch;
         worktreeBaseRef = created.worktreeBaseRef;
-        projectWorkdir = opts.workdir;
+        // Fresh session: opts.workdir IS the operator workdir.
+        // Resume of a Phase-1 parent: inherit parent.projectWorkdir.
+        // Resume of a pre-Phase-1 parent: meta.projectWorkdir falls back
+        // to parent.workdir (which IS the original repo for that case),
+        // so this still resolves to the right thing.
+        projectWorkdir = inheritedProjectWorkdir ?? opts.workdir;
       } catch (err) {
         if (err instanceof WorktreeCreateError) {
           throw new Error(
@@ -332,35 +356,40 @@ export class SessionManager {
   }
 
   /**
-   * Compute the depth of a new resume off `parentOakridgeSid`. Depth = parent's
-   * depth + 1; encoded into the new branch as `kbbl/<sid8>-r<depth>`. We don't
-   * walk the whole chain — each parent's branch was correctly encoded with
-   * its own depth at creation time, so reading the immediate parent's
-   * suffix gives the same answer as a full traversal.
+   * Look up `worktreeBranch` + `projectWorkdir` from a parent session's
+   * `session_started` event. Both are consumed by create() at resume time:
+   *   - branch suffix → next resume depth (`kbbl/<sid8>-r<n>`).
+   *   - projectWorkdir → the original repo, propagated to the child so its
+   *     PWA dual-label and worktree-cleanup point at the right place
+   *     instead of treating the parent's worktree as the project root.
    *
    * Lookup precedence: in-memory map (cheap, authoritative for live/ended
-   * sessions) → JSONL session_started.worktreeBranch (for parents whose
-   * Session is no longer in memory after restart). If the parent's JSONL
-   * is gone (purged) or predates Phase 1 (no worktreeBranch), fall back to
-   * depth = 1 with a logged breadcrumb so an operator chasing a surprising
-   * branch name has a starting point.
+   * sessions) → JSONL session_started (for parents whose Session is no
+   * longer in memory after restart). Returns null if the parent is unknown
+   * to both sources, its JSONL is unreadable, or its JSONL has no usable
+   * session_started event — caller treats null as a broken chain and logs.
+   * Even pre-Phase-1 sessions emitted session_started, so a readable JSONL
+   * without one is genuinely broken, not just old.
+   *
+   * For a pre-Phase-1 parent the JSONL stored only `workdir` (which IS the
+   * operator's repo) and no worktreeBranch. projectWorkdir falls back to
+   * `workdir` so a child resuming off such a parent still gets a usable
+   * repo root, and worktreeBranch=null tells the caller to treat resume
+   * depth as 1.
    */
-  private async computeResumeDepth(parentOakridgeSid: string): Promise<number> {
-    const parentBranch = await this.lookupParentWorktreeBranch(parentOakridgeSid);
-    if (parentBranch === null) {
-      console.error(
-        `kbbl: resume chain broken at ${parentOakridgeSid} — defaulting depth to 1`,
-      );
-      return 1;
-    }
-    return parseDepthFromBranch(parentBranch) + 1;
-  }
-
-  private async lookupParentWorktreeBranch(
+  private async lookupParentSessionMeta(
     parentOakridgeSid: string,
-  ): Promise<string | null> {
+  ): Promise<{
+    worktreeBranch: string | null;
+    projectWorkdir: string | null;
+  } | null> {
     const live = this.sessions.get(parentOakridgeSid);
-    if (live) return live.worktreeBranch;
+    if (live) {
+      return {
+        worktreeBranch: live.worktreeBranch,
+        projectWorkdir: live.projectWorkdir ?? live.workdir,
+      };
+    }
     const jsonlPath = join(this.opts.sessionsDir, `${parentOakridgeSid}.jsonl`);
     let contents: string;
     try {
@@ -379,11 +408,19 @@ export class SessionManager {
       }
       if (evt.type !== "session_started") continue;
       const payload = (evt.payload ?? {}) as Record<string, unknown>;
-      if (typeof payload.worktreeBranch === "string") {
-        return payload.worktreeBranch;
-      }
-      // session_started found but no worktreeBranch — pre-Phase-1 session.
-      return null;
+      const worktreeBranch =
+        typeof payload.worktreeBranch === "string"
+          ? payload.worktreeBranch
+          : null;
+      // Phase-1 JSONLs persist projectWorkdir directly. Pre-Phase-1 only
+      // has `workdir` (which IS the original repo), so fall back to that.
+      const projectWorkdir =
+        typeof payload.projectWorkdir === "string"
+          ? payload.projectWorkdir
+          : typeof payload.workdir === "string"
+            ? payload.workdir
+            : null;
+      return { worktreeBranch, projectWorkdir };
     }
     return null;
   }

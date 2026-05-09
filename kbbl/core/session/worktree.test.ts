@@ -82,6 +82,25 @@ describe("isGitRepo", () => {
     await proc.exited;
     expect(await isGitRepo(notRepo)).toBe(false);
   });
+
+  test("returns false for a bare repo (no working tree)", async () => {
+    // kbbl operates on tracked files via CC, which needs a working tree.
+    // A bare repo would also break resolveRepoTopLevel (empty stdout).
+    // Easier to reject upfront than handle the bare case downstream.
+    const bare = join(tmpRoot, "bare.git");
+    await git(tmpRoot, "init", "-q", "--bare", bare);
+    expect(await isGitRepo(bare)).toBe(false);
+  });
+
+  test("throws on a nonexistent path (not silently 'not a repo')", async () => {
+    // git -C <missing> exits 128 with "cannot change to '<path>': No such
+    // file or directory" — same exit code as "not a git repository" but a
+    // distinct cause. Pre-fix we'd swallow this and silently disable
+    // worktrees; post-fix it throws so the operator sees the real problem.
+    await expect(
+      isGitRepo(join(tmpRoot, "definitely-does-not-exist")),
+    ).rejects.toThrow();
+  });
 });
 
 describe("resolveHead", () => {
@@ -185,6 +204,30 @@ describe("removeWorktree", () => {
       worktreeBranch: "kbbl/00000000",
     });
     expect(ok).toBe(false);
+  });
+
+  test("still deletes the branch even if the worktree dir was manually pruned", async () => {
+    // Operator manually `rm -rf`s the worktree dir + `git worktree prune`s,
+    // then the kbbl session is removed via the API. The `git worktree
+    // remove` call will fail (nothing to remove), but the kbbl/<sid>
+    // branch is still in the repo and would leak forever pre-fix.
+    const created = await createWorktree({
+      workdir: repoDir,
+      worktreesRoot,
+      oakridgeSid: "abcd1234deadbeef",
+    });
+    rmSync(created.worktreePath, { recursive: true, force: true });
+    await git(repoDir, "worktree", "prune");
+
+    const ok = await removeWorktree({
+      workdir: repoDir,
+      worktreePath: created.worktreePath,
+      worktreeBranch: created.worktreeBranch,
+    });
+    // worktree-remove failed → false; branch deletion is the side benefit.
+    expect(ok).toBe(false);
+    const branches = await git(repoDir, "branch", "--list", created.worktreeBranch);
+    expect(branches.trim()).toBe("");
   });
 });
 

@@ -141,6 +141,10 @@ describe("SessionManager.create with non-repo workdir + flag on", () => {
 });
 
 describe("Resume worktree depth", () => {
+  // POST /sessions resume passes `workdir = parent.workdir` (which Phase 1+
+  // is the parent's worktree path, not the operator's repo). Mirroring that
+  // here so the tests exercise the production code path — using `repoDir`
+  // would skip the projectWorkdir-inheritance logic entirely.
   test("first resume off a fresh parent gets -r1 suffix", async () => {
     const mgr = makeManager(buildConfig(true));
     const parent = await mgr.create({ workdir: repoDir });
@@ -148,12 +152,15 @@ describe("Resume worktree depth", () => {
     expect(parent.worktreeBranch).toBe(`kbbl/${parentSid8}`);
 
     const child = await mgr.create({
-      workdir: repoDir,
+      workdir: parent.workdir,
       parentOakridgeSid: parent.oakridgeSid,
       parentCcSid: "fake-cc-sid",
     });
     const childSid8 = child.oakridgeSid.slice(0, 8);
     expect(child.worktreeBranch).toBe(`kbbl/${childSid8}-r1`);
+    // Inherited from parent so the dual-label still points at the operator's
+    // original repo, not at the parent's worktree dir.
+    expect(child.projectWorkdir).toBe(repoDir);
     await mgr.endAll();
   });
 
@@ -161,17 +168,19 @@ describe("Resume worktree depth", () => {
     const mgr = makeManager(buildConfig(true));
     const parent = await mgr.create({ workdir: repoDir });
     const child = await mgr.create({
-      workdir: repoDir,
+      workdir: parent.workdir,
       parentOakridgeSid: parent.oakridgeSid,
       parentCcSid: "fake",
     });
     const grandchild = await mgr.create({
-      workdir: repoDir,
+      workdir: child.workdir,
       parentOakridgeSid: child.oakridgeSid,
       parentCcSid: "fake",
     });
     const sid8 = grandchild.oakridgeSid.slice(0, 8);
     expect(grandchild.worktreeBranch).toBe(`kbbl/${sid8}-r2`);
+    // Resume chain of length 2 still inherits the original repo.
+    expect(grandchild.projectWorkdir).toBe(repoDir);
     await mgr.endAll();
   });
 });
