@@ -106,12 +106,16 @@ export function mountSafirWebhookRoutes(
   const { manager, dedupe = moduleDedupe } = deps;
 
   app.post("/webhooks/safir", async (c) => {
-    const expected = process.env.SAFIR_WEBHOOK_TOKEN;
-    if (!expected || expected.trim() === "") {
+    const expectedRaw = process.env.SAFIR_WEBHOOK_TOKEN;
+    if (!expectedRaw || expectedRaw.trim() === "") {
       // No configured token = the receiver is not provisioned. Refuse all
       // calls so a misconfigured deploy fails closed, not silently open.
       return c.json({ error: "webhook receiver not configured" }, 401);
     }
+    // Trim before comparing so a stray trailing newline or space in the
+    // env var (common when set via `printf "%s\n" ... > .env`) doesn't
+    // 401 every otherwise-valid request.
+    const expected = expectedRaw.trim();
     const supplied = parseBearer(c.req.header("authorization"));
     if (!supplied || !tokensEqual(supplied, expected)) {
       return c.json({ error: "unauthorized" }, 401);
@@ -126,29 +130,33 @@ export function mountSafirWebhookRoutes(
     if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
       return c.json({ error: "json body must be an object" }, 400);
     }
-    const env = raw as Partial<SafirWebhookEnvelope>;
-    if (typeof env.event !== "string" || env.event.trim() === "") {
+    const envIn = raw as Partial<SafirWebhookEnvelope>;
+    if (typeof envIn.event !== "string" || envIn.event.trim() === "") {
       return c.json({ error: "event must be a non-empty string" }, 400);
     }
-    if (typeof env.delivery_id !== "string" || env.delivery_id.trim() === "") {
+    if (typeof envIn.delivery_id !== "string" || envIn.delivery_id.trim() === "") {
       return c.json({ error: "delivery_id must be a non-empty string" }, 400);
     }
-    if (typeof env.ts !== "string" || env.ts.trim() === "") {
+    if (typeof envIn.ts !== "string" || envIn.ts.trim() === "") {
       return c.json({ error: "ts must be a non-empty string" }, 400);
     }
-    if (typeof env.data !== "object" || env.data === null || Array.isArray(env.data)) {
+    if (typeof envIn.data !== "object" || envIn.data === null || Array.isArray(envIn.data)) {
       return c.json({ error: "data must be an object" }, 400);
     }
+    // Use trimmed values for everything downstream so a stray trailing
+    // space or newline (e.g. `"run.completed "`) doesn't pass validation
+    // and then mismatch DISPATCHABLE_EVENTS / change the dedupe key.
+    const event = envIn.event.trim() as SafirWebhookEvent;
+    const deliveryId = envIn.delivery_id.trim();
+    const ts = envIn.ts.trim();
+    const data = envIn.data as Record<string, unknown>;
 
-    if (dedupe.has(env.delivery_id)) {
+    if (dedupe.has(deliveryId)) {
       // Idempotent ack. Do NOT 409: safir treats non-2xx as retry, so a
       // 409 would cause the same delivery to keep firing until safir
       // exhausts its retry budget.
       return c.json({ ok: true, deduped: true });
     }
-
-    const event = env.event as SafirWebhookEvent;
-    const data = env.data as Record<string, unknown>;
 
     if (DISPATCHABLE_EVENTS.has(event)) {
       const runId = typeof data.run_id === "string" ? data.run_id : null;
@@ -163,23 +171,24 @@ export function mountSafirWebhookRoutes(
           for (const session of sessions) {
             await session.emit("safir_event", {
               event,
-              ts: env.ts,
-              delivery_id: env.delivery_id,
+              ts,
+              delivery_id: deliveryId,
               data,
             });
           }
-          dedupe.add(env.delivery_id);
+          dedupe.add(deliveryId);
           return c.json({ ok: true, dispatched: true });
         }
       }
     }
     // Unknown event type, missing run_id, or no live-session match.
     // Log structured line so the operator can grep for it; still ack 200.
-    console.log(
+    // stderr matches kbbl's other operational logs (server.ts, session.ts).
+    console.error(
       JSON.stringify({
         kbbl: "safir_webhook_drop",
         event,
-        delivery_id: env.delivery_id,
+        delivery_id: deliveryId,
         reason:
           !DISPATCHABLE_EVENTS.has(event)
             ? "event_not_dispatched_in_pr_c"
@@ -188,7 +197,7 @@ export function mountSafirWebhookRoutes(
               : "no_live_session_match",
       }),
     );
-    dedupe.add(env.delivery_id);
+    dedupe.add(deliveryId);
     return c.json({ ok: true, dispatched: false });
   });
 }
