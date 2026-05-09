@@ -455,6 +455,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       purgeParam !== "no" &&
       purgeParam !== "off";
     if (purge) {
+      manager.get(sid)?.markEndReason("user_closed");
       let removed: boolean;
       try {
         removed = await manager.remove(sid);
@@ -477,6 +478,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
     }
     const session = manager.get(sid);
     if (!session) return c.json({ error: "unknown session" }, 404);
+    session.markEndReason("user_closed");
     const code = await session.abort();
     return c.json({ ok: true, code });
   });

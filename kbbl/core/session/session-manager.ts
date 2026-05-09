@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { KbblConfig } from "../config";
 import type { SafirClient } from "../safir/client";
 import type { SafirQueue } from "../safir/queue";
+import { safirCall } from "../safir/safir-call";
 import {
   MAX_ARTIFACT_ID_LENGTH,
   Session,
@@ -12,6 +13,7 @@ import {
   readJsonlOrEmpty,
   type EnvelopeEvent,
   type ResultUsage,
+  type SessionEndReason,
   type SessionSnapshot,
   type SessionStatus,
   type SpawnCmd,
@@ -92,6 +94,9 @@ export interface CreateSessionOpts {
    * HTTP route, not here.
    */
   model?: string | null;
+  taskId?: number;
+  runId?: string;
+  parentPhaseId?: string;
 }
 
 /**
@@ -316,6 +321,13 @@ export class SessionManager {
           }
           this.clearActivityTimer(s.oakridgeSid);
           this.broadcastDelta({ type: "session_ended", sid: s.oakridgeSid });
+          this.afterSessionEnded(s).catch((err) => {
+            console.error(
+              `kbbl: afterSessionEnded for ${s.oakridgeSid}: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            );
+          });
         },
         onStatusChanged: (s, status) => {
           this.broadcastDelta({
@@ -366,6 +378,9 @@ export class SessionManager {
     // read the failure via /:sid/events. Reaping of ended sessions is a
     // future PR; for now they accumulate, bounded by server lifetime.
     this.sessions.set(session.oakridgeSid, session);
+    if (opts.taskId !== undefined) {
+      await this.openSafirContext(session, opts);
+    }
     // Broadcast session_created with the starting-state snapshot before we
     // await spawn(). That way /inbox subscribers see the new row appear
     // immediately and then receive status/pending/activity deltas as the
@@ -373,6 +388,80 @@ export class SessionManager {
     this.broadcastDelta({ type: "session_created", session: session.snapshot() });
     await session.spawn(this.opts.buildSpawnCmd(session));
     return session;
+  }
+
+  private async openSafirContext(
+    session: Session,
+    opts: CreateSessionOpts,
+  ): Promise<void> {
+    const ctx = { queue: this.opts.safirQueue };
+    const oakridgeSid = session.oakridgeSid;
+
+    if (opts.runId === undefined) {
+      const runBody = {
+        executor: "claude_code" as const,
+        status: "running" as const,
+        created_by: "kbbl",
+        created_by_session: oakridgeSid,
+      };
+      const created = await safirCall(
+        ctx,
+        () => this.opts.safirClient.createRun(opts.taskId!, runBody),
+        { method: "POST", path: `/tasks/${opts.taskId}/runs`, body: runBody },
+      );
+      if (!created) return;
+
+      const phaseBody = {
+        oakridge_session_id: oakridgeSid,
+        parent_phase_id: opts.parentPhaseId ?? null,
+      };
+      const phase = await safirCall(
+        ctx,
+        () => this.opts.safirClient.createPhase(created.id, phaseBody),
+        { method: "POST", path: `/runs/${created.id}/phases`, body: phaseBody },
+      );
+      session.attachSafirContext(created.id, phase ? phase.id : undefined);
+      return;
+    }
+
+    const phaseBody = {
+      oakridge_session_id: oakridgeSid,
+      parent_phase_id: opts.parentPhaseId ?? null,
+    };
+    const phase = await safirCall(
+      ctx,
+      () => this.opts.safirClient.createPhase(opts.runId!, phaseBody),
+      { method: "POST", path: `/runs/${opts.runId}/phases`, body: phaseBody },
+    );
+    if (phase) session.attachSafirContext(opts.runId, phase.id);
+  }
+
+  private async afterSessionEnded(s: Session): Promise<void> {
+    if (!s.phaseId) return;
+    const reason: SessionEndReason = s.endReason ?? "subprocess_exited";
+    const isTerminal = reason !== "compacted";
+    const ctx = { queue: this.opts.safirQueue };
+    const endedAt = new Date().toISOString();
+
+    const phaseBody = {
+      ended_at: endedAt,
+      end_reason: reason,
+      is_terminal: isTerminal,
+    };
+    await safirCall(
+      ctx,
+      () => this.opts.safirClient.updatePhase(s.phaseId!, phaseBody),
+      { method: "PATCH", path: `/phases/${s.phaseId}`, body: phaseBody },
+    );
+
+    if (reason === "user_closed" && s.runId) {
+      const runBody = { status: "completed" as const };
+      await safirCall(
+        ctx,
+        () => this.opts.safirClient.updateRun(s.runId!, runBody),
+        { method: "PATCH", path: `/runs/${s.runId}`, body: runBody },
+      );
+    }
   }
 
   /**
@@ -811,7 +900,10 @@ export class SessionManager {
    */
   async endAll(): Promise<number> {
     const exits = await Promise.all(
-      [...this.sessions.values()].map((s) => s.abort().catch(() => 1)),
+      [...this.sessions.values()].map((s) => {
+        s.markEndReason("user_closed");
+        return s.abort().catch(() => 1);
+      }),
     );
     return Math.max(0, ...exits);
   }

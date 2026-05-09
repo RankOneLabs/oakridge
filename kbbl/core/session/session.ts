@@ -74,6 +74,9 @@ export interface SessionOpts {
   worktreeBranch?: string | null;
   worktreeBaseRef?: string | null;
   projectWorkdir?: string | null;
+  taskId?: number;
+  runId?: string;
+  phaseId?: string;
   callbacks?: SessionCallbacks;
   /**
    * Optional runtime-adapter classifier called for each parsed stdout event
@@ -93,6 +96,8 @@ export interface SessionOpts {
 }
 
 export type SessionStatus = "starting" | "live" | "ended";
+
+export type SessionEndReason = "user_closed" | "subprocess_exited" | "compacted";
 
 /**
  * Hard cap on `artifactId` length. Enforced at the Session constructor,
@@ -208,6 +213,11 @@ export class Session {
   readonly projectWorkdir: string | null;
   readonly model: string | null;
 
+  private _taskId: number | undefined;
+  private _runId: string | undefined;
+  private _phaseId: string | undefined;
+  private _endReason: SessionEndReason | undefined;
+
   private readonly callbacks: SessionCallbacks;
   private readonly classifyEvent?: (
     rawEvent: unknown,
@@ -274,6 +284,9 @@ export class Session {
     this.worktreeBaseRef = opts.worktreeBaseRef ?? null;
     this.projectWorkdir = opts.projectWorkdir ?? null;
     this.model = opts.model ?? null;
+    this._taskId = opts.taskId;
+    this._runId = opts.runId;
+    this._phaseId = opts.phaseId;
     this.createdAt = new Date().toISOString();
     this.lastActivityTs = this.createdAt;
     this.lastResultTs = this.createdAt;
@@ -399,6 +412,20 @@ export class Session {
 
   get endedSignal(): AbortSignal {
     return this.endedController.signal;
+  }
+
+  get taskId(): number | undefined { return this._taskId; }
+  get runId(): string | undefined { return this._runId; }
+  get phaseId(): string | undefined { return this._phaseId; }
+  get endReason(): SessionEndReason | undefined { return this._endReason; }
+
+  attachSafirContext(runId: string, phaseId: string | undefined): void {
+    this._runId = runId;
+    this._phaseId = phaseId;
+  }
+
+  markEndReason(reason: SessionEndReason): void {
+    this._endReason = reason;
   }
 
   private setStatus(status: SessionStatus): void {
