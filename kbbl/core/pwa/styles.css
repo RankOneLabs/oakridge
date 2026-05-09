@@ -134,7 +134,7 @@ body {
   max-width: 800px;
   margin: 0 auto;
   padding: 0 1rem;
-  padding-bottom: calc(env(safe-area-inset-bottom) + 4rem);
+  padding-bottom: env(safe-area-inset-bottom);
   position: relative;
 }
 
@@ -298,7 +298,11 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  padding: 0.5rem 0;
+  /* CSS vars are pushed in by SessionView's useLayoutEffect after measuring
+     the rendered top-bar / bottom-bar heights — keeps the first/last messages
+     clear of the sticky bars on first paint and on iOS visual-viewport jumps. */
+  padding-top: var(--top-bar-h, 0.5rem);
+  padding-bottom: var(--bottom-bar-h, 0.5rem);
 }
 
 .row {
@@ -984,9 +988,8 @@ body {
 }
 
 .session-ended-banner {
-  position: fixed;
-  left: 0;
-  right: 0;
+  /* Sticky for the same reason as .input-bar — see the comment there. */
+  position: sticky;
   bottom: 0;
   padding: 0.75rem;
   padding-bottom: calc(env(safe-area-inset-bottom) + 0.75rem);
@@ -1028,9 +1031,11 @@ body {
 }
 
 .input-bar {
-  position: fixed;
-  left: 0;
-  right: 0;
+  /* Sticky (not fixed) so the bar follows the body scroll without iOS
+     Safari's address-bar / soft-keyboard fixed-positioning glitches. The
+     bar sits inline at the bottom of .app and pins to the viewport bottom
+     on scroll. */
+  position: sticky;
   bottom: 0;
   padding: 0.5rem;
   padding-bottom: calc(env(safe-area-inset-bottom) + 0.5rem);
@@ -1336,8 +1341,16 @@ body {
 @media (min-width: 1024px) {
   .app {
     max-width: 1200px;
-    /* No fixed-bottom input to reserve space for at desktop widths. */
     padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .events {
+    /* The desktop input-bar is `position: static` and the top-bar's sticky
+       behavior plays nicely at this size — neither overlays the message list,
+       so the measured-height padding the mobile layout uses is just dead
+       space here. */
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
   }
 
   .card {
