@@ -40,7 +40,7 @@ export function createSafirQueueWorker(
   };
   const now = opts.now ?? (() => new Date());
   let timer: ReturnType<typeof setInterval> | null = null;
-  let running: Promise<void> = Promise.resolve();
+  let active: Promise<void> | null = null;
 
   async function tick(): Promise<void> {
     let pending: QueueEntry[];
@@ -131,17 +131,25 @@ export function createSafirQueueWorker(
     start() {
       if (timer !== null) return;
       timer = setInterval(() => {
-        // Chain ticks so a slow drain can't overlap with the next interval —
-        // queue.ts isn't safe under concurrent rewriteAll. The chain swallows
-        // errors so one bad tick doesn't kill the worker.
-        running = running
-          .then(() => tick())
+        // Skip this fire if a previous tick is still running. Chaining ticks
+        // onto a shared promise (the previous approach) would let setInterval
+        // build an unbounded backlog behind a slow drain — e.g. during a
+        // safir outage or a stretch of timeouts — and then run them all
+        // back-to-back when the slow tick finishes, defeating the configured
+        // pacing. Skipping is also the correctness path: readPending is
+        // lock-free, so two overlapping ticks would each see the same
+        // pending entries and double-dispatch.
+        if (active !== null) return;
+        active = tick()
           .catch((err) => {
             log.error(
               `safir queue: tick threw: ${
                 err instanceof Error ? err.message : String(err)
               }`,
             );
+          })
+          .finally(() => {
+            active = null;
           });
       }, opts.intervalSeconds * 1000);
     },
@@ -150,7 +158,7 @@ export function createSafirQueueWorker(
         clearInterval(timer);
         timer = null;
       }
-      await running.catch(() => undefined);
+      if (active !== null) await active;
     },
   };
 }
