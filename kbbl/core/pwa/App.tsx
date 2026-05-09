@@ -845,6 +845,11 @@ interface InFlightAssistant {
 
 interface InFlightAccum {
   blocks: Map<number, ContentBlock>;
+  // Per-block-index accumulator for `input_json_delta` chunks. Anthropic
+  // streams tool_use inputs as concatenated partial JSON; we buffer the
+  // string and parse opportunistically so the live panel can preview the
+  // call (Bash command, file path, etc.) before the turn closes.
+  partialToolInputs: Map<number, string>;
   outputTokens: number | null;
   startedAtMs: number | null;
   lastEventIdx: number;
@@ -854,6 +859,7 @@ interface InFlightAccum {
 function emptyAccum(sid: string): InFlightAccum {
   return {
     blocks: new Map(),
+    partialToolInputs: new Map(),
     outputTokens: null,
     startedAtMs: null,
     lastEventIdx: -1,
@@ -900,6 +906,7 @@ function useInFlightAssistant(
           a.startedAtMs !== null
         ) {
           a.blocks = new Map();
+          a.partialToolInputs = new Map();
           a.outputTokens = null;
           a.startedAtMs = null;
           dirty = true;
@@ -941,6 +948,7 @@ function useInFlightAssistant(
               type?: string;
               text?: unknown;
               thinking?: unknown;
+              partial_json?: unknown;
             };
             usage?: { output_tokens?: unknown };
           }
@@ -993,6 +1001,8 @@ function useInFlightAssistant(
           if (d.type === "text_delta") block = { type: "text", text: "" };
           else if (d.type === "thinking_delta") {
             block = { type: "thinking", thinking: "" };
+          } else if (d.type === "input_json_delta") {
+            block = { type: "tool_use", id: "", name: "", input: {} };
           } else continue;
           a.blocks.set(idx, block);
         }
@@ -1012,6 +1022,36 @@ function useInFlightAssistant(
             ...block,
             thinking: block.thinking + d.thinking,
           });
+          dirty = true;
+        } else if (
+          d.type === "input_json_delta" &&
+          block.type === "tool_use" &&
+          typeof d.partial_json === "string"
+        ) {
+          // Buffer the partial-JSON chunks per block index. JSON.parse
+          // only succeeds once the chunks accumulate to a complete value,
+          // so for the first several deltas we silently keep accumulating
+          // and the live panel just shows the tool name. Once parseable,
+          // the parsed object replaces the block's input — previewToolInput
+          // can now show e.g. "Bash" + "npm test" before the turn closes.
+          //
+          // Only attempt parse when the buffer ends with `}` or `]` — the
+          // outermost terminator of a JSON object or array value, which is
+          // what tool inputs always are. Without this gate, every chunk
+          // re-parses the full accumulated string (O(N×M)); large Write
+          // contents would noticeably stall the UI thread mid-stream.
+          const prev = a.partialToolInputs.get(idx) ?? "";
+          const next = prev + d.partial_json;
+          a.partialToolInputs.set(idx, next);
+          const last = next.charCodeAt(next.length - 1);
+          if (last === 0x7d /* } */ || last === 0x5d /* ] */) {
+            try {
+              a.blocks.set(idx, { ...block, input: JSON.parse(next) });
+            } catch {
+              // brace inside a string value, not the outermost close;
+              // keep accumulating
+            }
+          }
           dirty = true;
         }
       } else if (e.type === "message_delta") {
@@ -1466,6 +1506,10 @@ function ThinkingIndicator({
 // arrives, at which point useInFlightAssistant returns null and the EventList's
 // AssistantRow takes over with the canonical version.
 function InFlightAssistantRow({ message }: { message: InFlightAssistant }) {
+  const toolUseBlocks = message.blocks.filter(
+    (b): b is Extract<ContentBlock, { type: "tool_use" }> =>
+      b.type === "tool_use",
+  );
   return (
     <>
       {message.blocks.map((block, idx) => {
@@ -1493,7 +1537,54 @@ function InFlightAssistantRow({ message }: { message: InFlightAssistant }) {
         }
         return null;
       })}
+      {toolUseBlocks.length > 0 && (
+        <InFlightToolPanel blocks={toolUseBlocks} />
+      )}
     </>
+  );
+}
+
+// Collapsible "what's CC doing right now" panel that surfaces tool_use
+// blocks reconstructed from in-flight stream_events. Closed by default —
+// the operator only needs the call count + tool names at a glance to know
+// the session is making progress, and can expand to see individual calls
+// when something looks stuck.
+function InFlightToolPanel({
+  blocks,
+}: {
+  blocks: Array<Extract<ContentBlock, { type: "tool_use" }>>;
+}) {
+  return (
+    <details className="tool-batch tool-batch-live">
+      <summary className="tool-batch-summary">
+        <span className="tool-batch-count">
+          {blocks.length} tool call{blocks.length === 1 ? "" : "s"}
+        </span>
+        <span className="tool-batch-names">
+          {summarizeToolNames(blocks.map((b) => b.name || "?"))}
+        </span>
+        <span className="tool-batch-status tool-batch-status-live">
+          working
+        </span>
+      </summary>
+      <div className="tool-batch-body">
+        {blocks.map((block, idx) => {
+          const preview = previewToolInput(block.name, block.input);
+          return (
+            <div
+              key={`live-${idx}`}
+              className="tool-entry tool-entry-live is-pending"
+            >
+              <div className="tool-entry-live-summary">
+                <span className="tool-entry-name">{block.name || "?"}</span>
+                <span className="tool-entry-preview">{preview}</span>
+                <span className="tool-entry-status">running…</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </details>
   );
 }
 
@@ -2162,6 +2253,11 @@ function isLowSignalEvent(event: EnvelopeEvent): boolean {
       // Partial-message deltas from --include-partial-messages. The
       // InFlightAssistantRow renders the reconstructed message; the raw
       // per-chunk events would just be transcript noise.
+      return true;
+    case "usage_observation":
+      // Per-turn cache-vs-idle telemetry (kbbl/core/session/session.ts).
+      // Phase 6.2 will consume these for the cost panel; until then,
+      // hiding them keeps the transcript clean during the baseline soak.
       return true;
     default:
       return false;
