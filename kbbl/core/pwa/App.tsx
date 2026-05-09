@@ -1034,13 +1034,23 @@ function useInFlightAssistant(
           // and the live panel just shows the tool name. Once parseable,
           // the parsed object replaces the block's input — previewToolInput
           // can now show e.g. "Bash" + "npm test" before the turn closes.
+          //
+          // Only attempt parse when the buffer ends with `}` or `]` — the
+          // outermost terminator of a JSON object or array value, which is
+          // what tool inputs always are. Without this gate, every chunk
+          // re-parses the full accumulated string (O(N×M)); large Write
+          // contents would noticeably stall the UI thread mid-stream.
           const prev = a.partialToolInputs.get(idx) ?? "";
           const next = prev + d.partial_json;
           a.partialToolInputs.set(idx, next);
-          try {
-            a.blocks.set(idx, { ...block, input: JSON.parse(next) });
-          } catch {
-            // partial JSON; keep accumulating
+          const last = next.charCodeAt(next.length - 1);
+          if (last === 0x7d /* } */ || last === 0x5d /* ] */) {
+            try {
+              a.blocks.set(idx, { ...block, input: JSON.parse(next) });
+            } catch {
+              // brace inside a string value, not the outermost close;
+              // keep accumulating
+            }
           }
           dirty = true;
         }
@@ -2243,6 +2253,11 @@ function isLowSignalEvent(event: EnvelopeEvent): boolean {
       // Partial-message deltas from --include-partial-messages. The
       // InFlightAssistantRow renders the reconstructed message; the raw
       // per-chunk events would just be transcript noise.
+      return true;
+    case "usage_observation":
+      // Per-turn cache-vs-idle telemetry (kbbl/core/session/session.ts).
+      // Phase 6.2 will consume these for the cost panel; until then,
+      // hiding them keeps the transcript clean during the baseline soak.
       return true;
     default:
       return false;

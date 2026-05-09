@@ -315,15 +315,22 @@ export class Session {
       model: input.model,
     };
 
-    await this.emit("usage_observation", observation);
+    // Defensive shallow copies on every boundary: emit a clone (so a
+    // subscriber that mutates evt.payload can't reach the ring-buffer
+    // entry), push another clone (so a caller of getUsageObservations()
+    // mutating its result can't reach the live entry — orthogonal but
+    // cheap), and copy input.usage (so the classifier's own ResultUsage
+    // object can't alias lastResultUsage). UsageObservation and
+    // ResultUsage are both flat; one spread layer is sufficient.
+    await this.emit("usage_observation", { ...observation });
 
     this.turnSeq += 1;
-    this.usageObservations.push(observation);
+    this.usageObservations.push({ ...observation });
     if (this.usageObservations.length > USAGE_OBSERVATION_BUFFER_CAPACITY) {
       this.usageObservations.shift();
     }
     this.lastResultTs = now.toISOString();
-    this.lastResultUsage = input.usage;
+    this.lastResultUsage = { ...input.usage };
   }
 
   /**
