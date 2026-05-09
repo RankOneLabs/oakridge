@@ -22,6 +22,7 @@ import {
   isGitRepo,
   removeWorktree,
 } from "./worktree";
+import { isAllowedModel } from "../../adapters/claude-code/models";
 
 export interface SessionManagerOpts {
   sessionsDir: string;
@@ -84,6 +85,13 @@ export interface CreateSessionOpts {
    * working on the same artifact. kbbl treats the id as opaque.
    */
   artifactId?: string;
+  /**
+   * Runtime model id; passed through to Session and into the spawn argv
+   * by the adapter's buildSpawnCmd. null/omitted → no --model flag,
+   * CC picks its default. Validation (allowlist, length) happens at the
+   * HTTP route, not here.
+   */
+  model?: string | null;
 }
 
 /**
@@ -294,6 +302,7 @@ export class SessionManager {
       worktreeBranch,
       worktreeBaseRef,
       projectWorkdir,
+      model: opts.model ?? null,
       classifyEvent: this.opts.classifyEvent,
       nonPersistedEventTypes: this.opts.nonPersistedEventTypes,
       callbacks: {
@@ -957,6 +966,7 @@ async function loadArchivedSnapshot(
   let worktreeBranch: string | null = null;
   let worktreeBaseRef: string | null = null;
   let projectWorkdir: string | null = null;
+  let model: string | null = null;
   for (const line of contents.split("\n")) {
     if (!line.trim()) continue;
     let evt: EnvelopeEvent;
@@ -1000,6 +1010,9 @@ async function loadArchivedSnapshot(
         }
         if (typeof payload.projectWorkdir === "string") {
           projectWorkdir = payload.projectWorkdir;
+        }
+        if (typeof payload.model === "string" && isAllowedModel(payload.model)) {
+          model = payload.model;
         }
         break;
       }
@@ -1051,5 +1064,6 @@ async function loadArchivedSnapshot(
     worktreeBranch,
     worktreeBaseRef,
     projectWorkdir,
+    model,
   };
 }

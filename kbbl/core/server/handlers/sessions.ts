@@ -7,6 +7,7 @@ import {
   readJsonlOrEmpty,
   type EnvelopeEvent,
 } from "../../session/session";
+import { isAllowedModel } from "../../../adapters/claude-code/models";
 import {
   RemoveFailedError,
   SessionManager,
@@ -67,6 +68,7 @@ type ResumeParentResult =
        * "workdir doesn't exist" so the caller sees an actionable error.
        */
       parentWorktreePath: string | null;
+      parentModel: string | null;
     };
 
 async function resolveResumeParent(
@@ -83,6 +85,7 @@ async function resolveResumeParent(
       parentCcSid: ccSid,
       workdir: live.workdir,
       parentWorktreePath: live.worktreePath,
+      parentModel: live.model,
     };
   }
   const jsonlPath = join(sessionsDir, `${sid}.jsonl`);
@@ -106,6 +109,7 @@ async function resolveResumeParent(
   let parentCcSid: string | null = null;
   let parentWorkdir: string | null = null;
   let parentWorktreePath: string | null = null;
+  let parentModel: string | null = null;
   for (const line of contents.split("\n")) {
     if (!line.trim()) continue;
     let evt: EnvelopeEvent;
@@ -128,6 +132,9 @@ async function resolveResumeParent(
       if (typeof payload.worktreePath === "string") {
         parentWorktreePath = payload.worktreePath;
       }
+      if (typeof payload.model === "string" && isAllowedModel(payload.model)) {
+        parentModel = payload.model;
+      }
     }
     if (parentCcSid && parentWorkdir) break;
   }
@@ -143,6 +150,7 @@ async function resolveResumeParent(
     parentCcSid,
     workdir: parentWorkdir,
     parentWorktreePath,
+    parentModel,
   };
 }
 
@@ -186,6 +194,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
     let bodyWorkdir: string | null = null;
     let bodyName: string | null = null;
     let bodyArtifactId: string | null = null;
+    let bodyModel: string | null = null;
     // Read raw text first so we can distinguish "no body" (treat as no
     // options, preserves the old POST /sessions behavior) from "bad body"
     // (400). Using c.req.json() with an inner .catch() would silently
@@ -207,6 +216,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
           workdir?: unknown;
           name?: unknown;
           artifact_id?: unknown;
+          model?: unknown;
         };
         if (parsed.resume_from !== undefined) {
           if (typeof parsed.resume_from !== "string") {
@@ -270,6 +280,22 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
           // make listByArtifact() lookups brittle.
           bodyArtifactId = trimmedArtifactId;
         }
+        if (parsed.model !== undefined) {
+          if (typeof parsed.model !== "string") {
+            return c.json({ error: "model must be a string" }, 400);
+          }
+          const trimmedModel = parsed.model.trim();
+          if (trimmedModel === "") {
+            return c.json(
+              { error: "model must be non-empty when provided" },
+              400,
+            );
+          }
+          if (!isAllowedModel(trimmedModel)) {
+            return c.json({ error: `unknown model: ${trimmedModel}` }, 400);
+          }
+          bodyModel = trimmedModel;
+        }
       }
     } catch {
       return c.json({ error: "invalid json" }, 400);
@@ -294,6 +320,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
         workdir: target,
         name: bodyName ?? undefined,
         artifactId: bodyArtifactId ?? undefined,
+        model: bodyModel ?? undefined,
       };
     } else {
       if (!isValidSid(resumeFrom)) {
@@ -371,6 +398,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
         parentCcSid: parentInfo.parentCcSid,
         parentOakridgeSid: resumeFrom,
         artifactId: bodyArtifactId ?? undefined,
+        model: bodyModel ?? parentInfo.parentModel ?? undefined,
       };
     }
 
