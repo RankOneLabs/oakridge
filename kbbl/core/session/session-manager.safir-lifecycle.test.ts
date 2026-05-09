@@ -90,7 +90,9 @@ afterEach(() => {
   rmSync(tmpRoot, { recursive: true, force: true });
 });
 
-const flushFireAndForget = () => new Promise<void>((r) => setImmediate(r));
+const flushFireAndForget = async (ticks = 3) => {
+  for (let i = 0; i < ticks; i++) await new Promise<void>((r) => setImmediate(r));
+};
 
 describe("SessionManager safir lifecycle", () => {
   test("opens a fresh run + phase when taskId is supplied", async () => {

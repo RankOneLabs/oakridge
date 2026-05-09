@@ -206,6 +206,7 @@ export class SessionManager {
    * later cache write and resurrect a purged sid.
    */
   private archivedScanPromise: Promise<void> | null = null;
+  private readonly pendingLifecycle = new Set<Promise<void>>();
 
   constructor(opts: SessionManagerOpts) {
     this.opts = opts;
@@ -321,13 +322,15 @@ export class SessionManager {
           }
           this.clearActivityTimer(s.oakridgeSid);
           this.broadcastDelta({ type: "session_ended", sid: s.oakridgeSid });
-          this.afterSessionEnded(s).catch((err) => {
+          const p = this.afterSessionEnded(s).catch((err) => {
             console.error(
               `kbbl: afterSessionEnded for ${s.oakridgeSid}: ${
                 err instanceof Error ? err.message : String(err)
               }`,
             );
           });
+          this.pendingLifecycle.add(p);
+          void p.finally(() => this.pendingLifecycle.delete(p));
         },
         onStatusChanged: (s, status) => {
           this.broadcastDelta({
@@ -464,6 +467,10 @@ export class SessionManager {
         { method: "PATCH", path: `/runs/${s.runId}`, body: runBody },
       );
     }
+  }
+
+  async drainLifecycle(): Promise<void> {
+    await Promise.allSettled([...this.pendingLifecycle]);
   }
 
   /**

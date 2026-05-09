@@ -234,6 +234,7 @@ for (const sig of ["SIGINT", "SIGTERM"] as const) {
     shuttingDown = true;
     void (async () => {
       const worstCode = await manager.endAll();
+      await manager.drainLifecycle();
       // Stop the safir queue worker after sessions have ended so any
       // teardown enqueues from afterSessionEnded (PR-B) drain into the
       // JSONL rather than the timer interval. Worker.stop() awaits the
