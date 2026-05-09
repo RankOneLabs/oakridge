@@ -55,10 +55,26 @@ const SafirSchema = z
 // Per-session git worktree isolation. Default-off in Phase 1 so existing
 // operators see no behavioral change; flipped to true in Phase 3 once
 // soak data is in. See comms/kbbl-session-worktrees-handoff.md.
+//
+// worktree_dir_name is a single dir-name component, NOT a path: it's
+// joined onto dataDir to form `<dataDir>/<worktree_dir_name>`. Empty
+// would resolve to dataDir itself (worktrees end up sitting alongside
+// sessions/ — operator confusion + collisions on sid==filename) and
+// any separator or `..` could escape the data dir entirely. Reject all
+// of those at parse time so a misconfigured config.json fails loud at
+// startup rather than producing surprising filesystem layout.
 const SessionsSchema = z
   .object({
     worktree_per_session: z.boolean().default(false),
-    worktree_dir_name: z.string().default("worktrees"),
+    worktree_dir_name: z
+      .string()
+      .min(1, "worktree_dir_name cannot be empty")
+      .refine(
+        (s) =>
+          !s.includes("..") && !s.includes("/") && !s.includes("\\"),
+        "worktree_dir_name must be a simple name (no '/', '\\', or '..')",
+      )
+      .default("worktrees"),
   })
   .strict();
 

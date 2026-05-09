@@ -49,9 +49,10 @@ export class WorktreeCreateError extends Error {
  * from any subdirectory of the repo, not just the root — a `stat .git`
  * check would miss sessions opened in a subdirectory.
  *
- * Returns false for non-repos. Throws on unexpected failures (git missing,
- * permission errors) so the caller can distinguish "definitely not a repo"
- * from "couldn't tell."
+ * Returns false only for the genuine "not a git repository" case. Throws on
+ * any other failure (chdir/EACCES/ENOENT, missing binary, signal) so the
+ * caller can't silently disable worktrees because a real I/O problem looked
+ * like a non-repo.
  */
 export async function isGitRepo(path: string): Promise<boolean> {
   const proc = Bun.spawn({
@@ -59,15 +60,47 @@ export async function isGitRepo(path: string): Promise<boolean> {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const code = await proc.exited;
+  const [stderr, code] = await Promise.all([
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
   if (code === 0) return true;
-  // git exits 128 for "not a git repository" and similar known errors.
-  // Anything else (missing binary, signal) is a real failure.
-  if (code === 128) return false;
-  const stderr = await new Response(proc.stderr).text();
+  // git uses exit 128 for both "not a git repository" and other fatals
+  // (cannot chdir into <path>, permission errors, ...). Match on stderr so
+  // a non-repo returns false but an inaccessible path throws.
+  if (code === 128 && /not a git repository/i.test(stderr)) return false;
   throw new Error(
     `isGitRepo(${path}) failed with exit ${code}: ${stderr.trim()}`,
   );
+}
+
+/**
+ * Resolves the top-level directory of the repo containing `path` via
+ * `git rev-parse --show-toplevel`. Used by the startup nesting check so
+ * an operator who launches kbbl from a *subdirectory* of a repo still
+ * gets `worktreesDir` compared against the actual repo root, not the
+ * subdir — otherwise nested worktrees inside the repo could escape the
+ * check and pollute `git status` from the outer repo.
+ *
+ * Caller must ensure `isGitRepo(path)` already returned true.
+ */
+export async function resolveRepoTopLevel(path: string): Promise<string> {
+  const proc = Bun.spawn({
+    cmd: ["git", "-C", path, "rev-parse", "--show-toplevel"],
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  if (code !== 0) {
+    throw new Error(
+      `git rev-parse --show-toplevel failed in ${path} (exit ${code}): ${stderr.trim()}`,
+    );
+  }
+  return stdout.trim();
 }
 
 /**
@@ -144,8 +177,13 @@ export async function createWorktree(
  * Errors are swallowed-and-logged rather than thrown, because the caller
  * (DELETE handler, end-of-session reaper) has already committed to its
  * primary action — the JSONL unlink succeeded — and a leftover worktree is
- * recoverable manually or via the Phase 2 reconcile pass. Returns true if
- * the worktree directory is gone after the call.
+ * recoverable manually or via the Phase 2 reconcile pass.
+ *
+ * Branch removal runs unconditionally — even if `git worktree remove`
+ * failed — so a manually-pruned worktree dir doesn't leak the
+ * `kbbl/<sid>` branch behind. Returns true iff `git worktree remove`
+ * itself succeeded (the orphan-prevention contract); branch cleanup
+ * status is logged but not surfaced.
  */
 export async function removeWorktree(opts: {
   workdir: string;
@@ -169,15 +207,17 @@ export async function removeWorktree(opts: {
     new Response(wt.stderr).text(),
     wt.exited,
   ]);
-  if (wtCode !== 0) {
+  const wtRemoved = wtCode === 0;
+  if (!wtRemoved) {
     console.error(
       `kbbl: git worktree remove ${opts.worktreePath} failed: ${wtStderr.trim()}`,
     );
-    return false;
   }
-  // Branch removal can legitimately fail if the branch is already gone (e.g.
-  // operator deleted it manually). Log either way; success of the worktree
-  // removal is what matters for the orphan-prevention contract.
+  // Branch removal runs regardless: a worktree-remove failure is most
+  // commonly "the dir was already manually pruned," in which case the
+  // branch is the only state still tying us to the kbbl-managed history
+  // and would otherwise leak forever. -D is force, so a checked-out
+  // branch that's no longer a worktree still gets cleaned.
   const br = Bun.spawn({
     cmd: ["git", "-C", opts.workdir, "branch", "-D", opts.worktreeBranch],
     stdout: "pipe",
@@ -192,7 +232,7 @@ export async function removeWorktree(opts: {
       `kbbl: git branch -D ${opts.worktreeBranch} failed: ${brStderr.trim()}`,
     );
   }
-  return true;
+  return wtRemoved;
 }
 
 /**
