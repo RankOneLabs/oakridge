@@ -2,6 +2,8 @@ import { readdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { KbblConfig } from "../config";
+import type { SafirClient } from "../safir/client";
+import type { SafirQueue } from "../safir/queue";
 import {
   MAX_ARTIFACT_ID_LENGTH,
   Session,
@@ -59,6 +61,15 @@ export interface SessionManagerOpts {
    * consuming it; subsequent phases pull what they need.
    */
   config: KbblConfig;
+  /**
+   * safir HTTP client + persistent retry queue for kbbl→safir lifecycle
+   * writes. Wired in PR-A; first consumed in PR-B (createSession opens a
+   * run/phase, markEnded closes the phase). Always provided by the server
+   * boot path; tests pass stubs or lightweight real implementations
+   * depending on what the test exercises.
+   */
+  safirClient: SafirClient;
+  safirQueue: SafirQueue;
 }
 
 export interface CreateSessionOpts {
