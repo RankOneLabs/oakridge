@@ -54,10 +54,10 @@ function noopSpawn(_session: Session): SpawnCmd {
 }
 
 function makeManager(config: KbblConfig): SessionManager {
-  // Worktree tests don't exercise the safir lifecycle; supply a real client
-  // pointed at an unreachable host (every call would TypeError, which the
-  // queue catches) and a real on-disk queue. Cheap enough that we don't
-  // bother with a mock layer here.
+  // Worktree tests don't exercise the safir lifecycle — nothing in these
+  // tests calls into the client. Supply inert deps (an offline fetch and
+  // a real on-disk queue scoped to tmpRoot) so the SessionManager
+  // constructor is satisfied without a mock layer.
   const offlineFetch: FetchFn = async () => {
     throw new TypeError("safir disabled in worktree tests");
   };

@@ -57,19 +57,29 @@ export function createSafirQueueWorker(
 
     for (const entry of pending) {
       if (entry.attempts >= MAX_ATTEMPTS) continue;
+
+      let dispatched = false;
       try {
         await dispatch(opts.client, entry.request);
-        await opts.queue.recordSuccess(entry.id);
+        dispatched = true;
       } catch (err) {
         if (err instanceof SafirHttpError && err.status >= 400 && err.status < 500) {
           // 4xx is permanent — replays will never succeed. Drop the entry
           // (recordSuccess) but log loud so the operator notices the
-          // underlying request was malformed. Don't log err.body: 4xx
-          // bodies can echo request payload fields that may be sensitive.
+          // underlying request was malformed. err.message comes from our
+          // own SafirHttpError construction (controlled string), not the
+          // raw response body — safe to include and useful for synthetic
+          // 4xx like dispatch()'s "unknown queue path".
           log.error(
-            `safir queue: dropping ${entry.request.method} ${entry.request.path}: 4xx ${err.status}`,
+            `safir queue: dropping ${entry.request.method} ${entry.request.path}: 4xx ${err.status} ${err.message}`,
           );
-          await opts.queue.recordSuccess(entry.id);
+          try {
+            await opts.queue.recordSuccess(entry.id);
+          } catch (persistErr) {
+            log.error(
+              `safir queue: recordSuccess failed for dropped 4xx ${entry.id}: ${persistErr instanceof Error ? persistErr.message : String(persistErr)}`,
+            );
+          }
           continue;
         }
         const msg = err instanceof Error ? err.message : String(err);
@@ -82,6 +92,25 @@ export function createSafirQueueWorker(
         if (entry.attempts + 1 >= MAX_ATTEMPTS) {
           log.error(
             `safir queue: ${entry.request.method} ${entry.request.path} hit retry cap (${MAX_ATTEMPTS} attempts); manual intervention required for entry ${entry.id}`,
+          );
+        }
+        continue;
+      }
+
+      // Dispatch landed. recordSuccess is in its own try so a persistence
+      // error doesn't get classified as a delivery failure — that would
+      // call recordFailure → replay the already-succeeded request next
+      // tick → duplicate side-effect on non-idempotent routes (createRun,
+      // createPhase, submitHandoff). The duplicate window still exists if
+      // recordSuccess fails here: next tick WILL redispatch since the
+      // entry has no delivered_at. The proper fix is safir-side
+      // Idempotency-Key support, which is out of scope for PR-A.
+      if (dispatched) {
+        try {
+          await opts.queue.recordSuccess(entry.id);
+        } catch (persistErr) {
+          log.error(
+            `safir queue: dispatched ${entry.id} but recordSuccess failed: ${persistErr instanceof Error ? persistErr.message : String(persistErr)} — duplicate replay possible next tick`,
           );
         }
       }
