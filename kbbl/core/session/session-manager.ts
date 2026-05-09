@@ -553,19 +553,24 @@ export class SessionManager {
   }
 
   /**
-   * Find a live session whose `runId` matches. Used by the safir webhook
-   * receiver (`handlers/safir-webhook.ts`) to dispatch incoming run events
-   * onto the session that owns the run. Returns undefined when no live
-   * session matches — the receiver logs and drops in that case rather
-   * than buffering. Scans the live map; sessions with status !== "live"
-   * (starting, ended) are excluded so a webhook arriving moments after
-   * `markEnded` doesn't fan out into a closing session.
+   * Return every live session whose `runId` matches. Used by the safir
+   * webhook receiver (`handlers/safir-webhook.ts`) to dispatch incoming
+   * run-scoped events onto every session attached to the run — `create()`
+   * allows multiple sessions to share a runId via `opts.runId` (one phase
+   * each), and a `run.completed` / `run.failed` delivery is meaningful to
+   * all of them. Returns `[]` when no live session matches; the receiver
+   * logs and drops in that case rather than buffering. Scans the full
+   * sessions map and filters to `status === "live"`, so sessions that
+   * have already transitioned to `ended` (or are still in `starting`)
+   * are skipped — a webhook arriving moments after `markEnded` does not
+   * fan out into a closing session.
    */
-  findLiveByRunId(runId: string): Session | undefined {
+  findAllLiveByRunId(runId: string): Session[] {
+    const out: Session[] = [];
     for (const s of this.sessions.values()) {
-      if (s.status === "live" && s.runId === runId) return s;
+      if (s.status === "live" && s.runId === runId) out.push(s);
     }
-    return undefined;
+    return out;
   }
 
   list(): Session[] {

@@ -24,18 +24,19 @@ interface SafirWebhookEnvelope {
 }
 
 /**
- * In-memory LRU keyed by delivery_id. Capacity 1000 matches plan §3.4.
- * On restart the cache is empty — that is acceptable because safir's
- * retry budget caps at 5 attempts per delivery and the LRU only protects
- * against the within-session duplicate case (a re-delivery during the
- * same kbbl uptime). If a duplicate slips through across a restart, the
- * dispatch is idempotent in practice (re-emitting a `safir_event` to a
- * still-matching session is harmless) and the operator will see two
- * lines in the session JSONL — visible, not catastrophic.
+ * Bounded FIFO dedupe set keyed by delivery_id. Capacity 1000 matches
+ * plan §3.4. Insertion-order eviction (not true LRU — recency is not
+ * tracked on `has` lookups) is sufficient because safir's retry budget
+ * caps at 5 attempts per delivery and dedupe only protects the
+ * within-uptime duplicate case. On restart the set is empty; if a
+ * duplicate slips through across a restart, the dispatch is idempotent
+ * in practice (re-emitting a `safir_event` to a still-matching session
+ * is harmless) and the operator will see two lines in the session
+ * JSONL — visible, not catastrophic.
  */
-const LRU_CAPACITY = 1000;
+const DEDUPE_CAPACITY = 1000;
 
-class DeliveryIdLru {
+class DeliveryIdDedupe {
   private readonly seen = new Set<string>();
   private readonly order: string[] = [];
 
@@ -47,7 +48,7 @@ class DeliveryIdLru {
     if (this.seen.has(id)) return;
     this.seen.add(id);
     this.order.push(id);
-    if (this.order.length > LRU_CAPACITY) {
+    if (this.order.length > DEDUPE_CAPACITY) {
       const evicted = this.order.shift();
       if (evicted !== undefined) this.seen.delete(evicted);
     }
@@ -58,13 +59,13 @@ export interface SafirWebhookRouteDeps {
   manager: SessionManager;
   /**
    * Override only for tests that need to assert behavior across a fresh
-   * LRU per case. Production callers omit this and get the module-level
-   * singleton.
+   * dedupe set per case. Production callers omit this and get the
+   * module-level singleton.
    */
-  lru?: DeliveryIdLru;
+  dedupe?: DeliveryIdDedupe;
 }
 
-const moduleLru = new DeliveryIdLru();
+const moduleDedupe = new DeliveryIdDedupe();
 
 /**
  * Constant-time compare so a token-mismatch handler can't be timing-side-
@@ -83,7 +84,7 @@ function tokensEqual(a: string, b: string): boolean {
 
 function parseBearer(header: string | undefined): string | null {
   if (!header) return null;
-  const m = /^Bearer\s+(.+)$/.exec(header.trim());
+  const m = /^Bearer\s+(.+)$/i.exec(header.trim());
   return m ? m[1].trim() : null;
 }
 
@@ -102,7 +103,7 @@ export function mountSafirWebhookRoutes(
   app: Hono,
   deps: SafirWebhookRouteDeps,
 ): void {
-  const { manager, lru = moduleLru } = deps;
+  const { manager, dedupe = moduleDedupe } = deps;
 
   app.post("/webhooks/safir", async (c) => {
     const expected = process.env.SAFIR_WEBHOOK_TOKEN;
@@ -132,17 +133,19 @@ export function mountSafirWebhookRoutes(
     if (typeof env.delivery_id !== "string" || env.delivery_id.trim() === "") {
       return c.json({ error: "delivery_id must be a non-empty string" }, 400);
     }
+    if (typeof env.ts !== "string" || env.ts.trim() === "") {
+      return c.json({ error: "ts must be a non-empty string" }, 400);
+    }
     if (typeof env.data !== "object" || env.data === null || Array.isArray(env.data)) {
       return c.json({ error: "data must be an object" }, 400);
     }
 
-    if (lru.has(env.delivery_id)) {
+    if (dedupe.has(env.delivery_id)) {
       // Idempotent ack. Do NOT 409: safir treats non-2xx as retry, so a
       // 409 would cause the same delivery to keep firing until safir
       // exhausts its retry budget.
       return c.json({ ok: true, deduped: true });
     }
-    lru.add(env.delivery_id);
 
     const event = env.event as SafirWebhookEvent;
     const data = env.data as Record<string, unknown>;
@@ -150,14 +153,22 @@ export function mountSafirWebhookRoutes(
     if (DISPATCHABLE_EVENTS.has(event)) {
       const runId = typeof data.run_id === "string" ? data.run_id : null;
       if (runId !== null) {
-        const session = manager.findLiveByRunId(runId);
-        if (session) {
-          await session.emit("safir_event", {
-            event,
-            ts: env.ts,
-            delivery_id: env.delivery_id,
-            data,
-          });
+        // Fan out to every live session attached to this run. `create()`
+        // permits multiple sessions to share a runId (one phase each), so
+        // a run-scoped event like `run.completed` is meaningful to all of
+        // them. Emit sequentially; if any throw, propagate so safir
+        // retries — dedupe is recorded only on full success below.
+        const sessions = manager.findAllLiveByRunId(runId);
+        if (sessions.length > 0) {
+          for (const session of sessions) {
+            await session.emit("safir_event", {
+              event,
+              ts: env.ts,
+              delivery_id: env.delivery_id,
+              data,
+            });
+          }
+          dedupe.add(env.delivery_id);
           return c.json({ ok: true, dispatched: true });
         }
       }
@@ -177,6 +188,7 @@ export function mountSafirWebhookRoutes(
               : "no_live_session_match",
       }),
     );
+    dedupe.add(env.delivery_id);
     return c.json({ ok: true, dispatched: false });
   });
 }

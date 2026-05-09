@@ -316,6 +316,72 @@ describe("safir-webhook receiver", () => {
     await mgr.endAll();
   });
 
+  test("missing ts returns 400", async () => {
+    const stub = makeSafirStub();
+    const mgr = makeManager(stub.fetch);
+    const app = buildApp(mgr);
+
+    const res = await app.fetch(
+      new Request("http://kbbl.test/webhooks/safir", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${TEST_TOKEN}`,
+        },
+        body: JSON.stringify({
+          event: "run.completed",
+          delivery_id: "delivery-no-ts",
+          data: { run_id: "any", task_id: 1, finished_at: "2026-05-09T00:00:01.000Z" },
+        }),
+      }),
+    );
+
+    expect(res.status).toBe(400);
+  });
+
+  test("fan-out: two live sessions sharing a runId both receive safir_event", async () => {
+    const stub = makeSafirStub();
+    const mgr = makeManager(stub.fetch);
+    const first = await mgr.create({ workdir: "/tmp", taskId: 17 });
+    const sharedRunId = first.runId;
+    if (!sharedRunId) throw new Error("expected first.runId to be set after create");
+    const second = await mgr.create({ workdir: "/tmp", runId: sharedRunId });
+    if (second.runId !== sharedRunId) throw new Error("expected second session to attach to shared runId");
+
+    const firstEvents: Array<{ type: string; payload: unknown }> = [];
+    const secondEvents: Array<{ type: string; payload: unknown }> = [];
+    const unsub1 = first.subscribe((evt) => firstEvents.push({ type: evt.type, payload: evt.payload }));
+    const unsub2 = second.subscribe((evt) => secondEvents.push({ type: evt.type, payload: evt.payload }));
+
+    const app = buildApp(mgr);
+    const res = await app.fetch(
+      new Request("http://kbbl.test/webhooks/safir", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${TEST_TOKEN}`,
+        },
+        body: JSON.stringify(
+          envelope({
+            event: "run.completed",
+            delivery_id: "delivery-fanout",
+            data: { run_id: sharedRunId, task_id: 17, finished_at: "2026-05-09T00:00:01.000Z" },
+          }),
+        ),
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; dispatched: boolean };
+    expect(body).toEqual({ ok: true, dispatched: true });
+    expect(firstEvents.filter((e) => e.type === "safir_event")).toHaveLength(1);
+    expect(secondEvents.filter((e) => e.type === "safir_event")).toHaveLength(1);
+
+    unsub1();
+    unsub2();
+    await mgr.endAll();
+  });
+
   test("malformed JSON and array bodies return 400", async () => {
     const stub = makeSafirStub();
     const mgr = makeManager(stub.fetch);
