@@ -378,7 +378,7 @@ export class SessionManager {
     // read the failure via /:sid/events. Reaping of ended sessions is a
     // future PR; for now they accumulate, bounded by server lifetime.
     this.sessions.set(session.oakridgeSid, session);
-    if (opts.taskId !== undefined) {
+    if (opts.taskId !== undefined || opts.runId !== undefined) {
       await this.openSafirContext(session, opts);
     }
     // Broadcast session_created with the starting-state snapshot before we
@@ -437,22 +437,24 @@ export class SessionManager {
   }
 
   private async afterSessionEnded(s: Session): Promise<void> {
-    if (!s.phaseId) return;
+    if (!s.phaseId && !s.runId) return;
     const reason: SessionEndReason = s.endReason ?? "subprocess_exited";
     const isTerminal = reason !== "compacted";
     const ctx = { queue: this.opts.safirQueue };
     const endedAt = new Date().toISOString();
 
-    const phaseBody = {
-      ended_at: endedAt,
-      end_reason: reason,
-      is_terminal: isTerminal,
-    };
-    await safirCall(
-      ctx,
-      () => this.opts.safirClient.updatePhase(s.phaseId!, phaseBody),
-      { method: "PATCH", path: `/phases/${s.phaseId}`, body: phaseBody },
-    );
+    if (s.phaseId) {
+      const phaseBody = {
+        ended_at: endedAt,
+        end_reason: reason,
+        is_terminal: isTerminal,
+      };
+      await safirCall(
+        ctx,
+        () => this.opts.safirClient.updatePhase(s.phaseId!, phaseBody),
+        { method: "PATCH", path: `/phases/${s.phaseId}`, body: phaseBody },
+      );
+    }
 
     if (reason === "user_closed" && s.runId) {
       const runBody = { status: "completed" as const };

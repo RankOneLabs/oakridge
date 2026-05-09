@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -78,12 +78,12 @@ function makeManager(fetchFn: FetchFn): SessionManager {
   });
 }
 
-beforeEach(async () => {
+beforeEach(() => {
   tmpRoot = mkdtempSync(join(tmpdir(), "kbbl-mgr-safir-test-"));
   sessionsDir = join(tmpRoot, "sessions");
   worktreesDir = join(tmpRoot, "worktrees");
-  const init = Bun.spawn({ cmd: ["mkdir", "-p", sessionsDir, worktreesDir] });
-  await init.exited;
+  mkdirSync(sessionsDir, { recursive: true });
+  mkdirSync(worktreesDir, { recursive: true });
 });
 
 afterEach(() => {
