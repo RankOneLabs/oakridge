@@ -57,9 +57,12 @@ export interface AppRuntime {
    * Optional: inspect each parsed runtime stdout event after core has
    * already emitted it to JSONL/subscribers. Called by the Session stdout
    * pump. The adapter may:
-   *   - Update Session metadata via `session.observeRuntimeSessionId()` /
-   *     `session.observeTurnEnd()` (e.g., capture CC's session_id from
-   *     the system/init event for hook routing).
+   *   - Update Session metadata via:
+   *       - `session.observeRuntimeSessionId()` to capture the runtime's
+   *         internal session id (e.g., CC's system/init `session_id` used
+   *         for hook routing).
+   *       - `session.observeTurnEnd()` to record per-turn usage tokens +
+   *         model id at each turn-end (e.g., CC's `result` event).
    *   - Emit additional events via `session.emit()`.
    *
    * Errors from the classifier are caught and logged; classifier failure

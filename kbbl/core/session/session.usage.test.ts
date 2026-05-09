@@ -136,7 +136,7 @@ describe("Session.observeTurnEnd", () => {
     expect(payload.model).toBe("claude-haiku-4-5");
   });
 
-  test("getUsageObservations returns a defensive copy", async () => {
+  test("getUsageObservations returns a defensive copy of the array", async () => {
     await session.observeTurnEnd({
       usage: { input_tokens: 1, output_tokens: 1 },
       model: null,
@@ -145,5 +145,20 @@ describe("Session.observeTurnEnd", () => {
     const snapshot = session.getUsageObservations();
     snapshot.length = 0;
     expect(session.getUsageObservations().length).toBe(1);
+  });
+
+  test("getUsageObservations returns deep copies; mutating a returned item does not affect the buffer", async () => {
+    await session.observeTurnEnd({
+      usage: { input_tokens: 5, output_tokens: 7 },
+      model: "claude-opus-4-7",
+    });
+
+    const snapshot = session.getUsageObservations();
+    snapshot[0]!.input_tokens = 999;
+    snapshot[0]!.model = "tampered";
+
+    const fresh = session.getUsageObservations();
+    expect(fresh[0]!.input_tokens).toBe(5);
+    expect(fresh[0]!.model).toBe("claude-opus-4-7");
   });
 });

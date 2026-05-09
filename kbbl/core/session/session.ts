@@ -299,9 +299,14 @@ export class Session {
     const prevMs = Date.parse(this.lastResultTs);
     const seconds_since_prev_turn = (now.getTime() - prevMs) / 1000;
 
-    this.turnSeq += 1;
+    // Build the observation with the next turn_seq value (turnSeq is not
+    // yet incremented). Emit before mutating any state so a JSONL flush
+    // failure leaves the session at the prior turn_seq / lastResultTs and
+    // a later result event can retry without dropping or duplicating an
+    // observation. Same emit-first-then-commit pattern as
+    // observeRuntimeSessionId, setYolo, and allowlistTool.
     const observation: UsageObservation = {
-      turn_seq: this.turnSeq,
+      turn_seq: this.turnSeq + 1,
       seconds_since_prev_turn,
       input_tokens: input.usage.input_tokens,
       output_tokens: input.usage.output_tokens,
@@ -310,26 +315,27 @@ export class Session {
       model: input.model,
     };
 
+    await this.emit("usage_observation", observation);
+
+    this.turnSeq += 1;
     this.usageObservations.push(observation);
     if (this.usageObservations.length > USAGE_OBSERVATION_BUFFER_CAPACITY) {
       this.usageObservations.shift();
     }
-
     this.lastResultTs = now.toISOString();
     this.lastResultUsage = input.usage;
-
-    await this.emit("usage_observation", observation);
   }
 
   /**
    * In-memory snapshot of recent per-turn usage, capped at
-   * USAGE_OBSERVATION_BUFFER_CAPACITY. Returns a defensive copy so callers
-   * can't mutate session state. Phase 6's cost panel reads live data from
-   * here; historical data lives in the JSONL via `usage_observation`
-   * envelope events.
+   * USAGE_OBSERVATION_BUFFER_CAPACITY. Returns a deep copy so callers
+   * can't mutate session state — UsageObservation is flat (all primitive
+   * fields) so a shallow per-element spread is sufficient. Phase 6's cost
+   * panel reads live data from here; historical data lives in the JSONL
+   * via `usage_observation` envelope events.
    */
   getUsageObservations(): UsageObservation[] {
-    return [...this.usageObservations];
+    return this.usageObservations.map((o) => ({ ...o }));
   }
 
   get endedSignal(): AbortSignal {
