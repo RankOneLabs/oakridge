@@ -2571,7 +2571,7 @@ function UserRow({
               <span className="notice-tag">stdout</span>
               {firstLine || "(empty)"}
             </summary>
-            <pre className="bubble-slash-body">{trimmed}</pre>
+            <pre className="bubble-slash-body">{stdout}</pre>
           </details>
         </div>
       );

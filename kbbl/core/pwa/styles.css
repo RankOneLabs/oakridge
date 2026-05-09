@@ -284,9 +284,14 @@ body {
 .tool-batch-summary:focus-visible,
 .tool-entry summary:focus-visible,
 .bubble-user-slash > summary:focus-visible,
+.notice summary:focus-visible,
 .metrics-summary:focus-visible {
   outline: 2px solid var(--accent-blue);
   outline-offset: 2px;
+}
+
+.notice summary {
+  cursor: pointer;
 }
 
 .events {
