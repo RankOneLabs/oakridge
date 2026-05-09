@@ -132,7 +132,7 @@ async function resolveResumeParent(
       if (typeof payload.worktreePath === "string") {
         parentWorktreePath = payload.worktreePath;
       }
-      if (typeof payload.model === "string") {
+      if (typeof payload.model === "string" && isAllowedModel(payload.model)) {
         parentModel = payload.model;
       }
     }

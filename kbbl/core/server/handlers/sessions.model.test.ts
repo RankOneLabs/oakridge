@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -105,8 +105,8 @@ beforeEach(async () => {
   tmpRoot = mkdtempSync(join(tmpdir(), "kbbl-model-test-"));
   sessionsDir = join(tmpRoot, "sessions");
   worktreesDir = join(tmpRoot, "worktrees");
-  const init = Bun.spawn({ cmd: ["mkdir", "-p", sessionsDir, worktreesDir] });
-  await init.exited;
+  await mkdir(sessionsDir, { recursive: true });
+  await mkdir(worktreesDir, { recursive: true });
 });
 
 afterEach(async () => {
@@ -126,29 +126,41 @@ describe("POST /sessions model validation", () => {
 
   test("case 2: unknown model returns 400 with error", async () => {
     const manager = makeManager();
-    const app = makeApp(manager);
-    const res = await postSessions(app, { model: "garbage", workdir: "/tmp" });
-    expect(res.status).toBe(400);
-    const body = await res.json() as { error: string };
-    expect(body.error).toBe("unknown model: garbage");
+    try {
+      const app = makeApp(manager);
+      const res = await postSessions(app, { model: "garbage", workdir: "/tmp" });
+      expect(res.status).toBe(400);
+      const body = await res.json() as { error: string };
+      expect(body.error).toBe("unknown model: garbage");
+    } finally {
+      await manager.endAll();
+    }
   });
 
   test("case 3: empty string model returns 400 with error", async () => {
     const manager = makeManager();
-    const app = makeApp(manager);
-    const res = await postSessions(app, { model: "", workdir: "/tmp" });
-    expect(res.status).toBe(400);
-    const body = await res.json() as { error: string };
-    expect(body.error).toBe("model must be non-empty when provided");
+    try {
+      const app = makeApp(manager);
+      const res = await postSessions(app, { model: "", workdir: "/tmp" });
+      expect(res.status).toBe(400);
+      const body = await res.json() as { error: string };
+      expect(body.error).toBe("model must be non-empty when provided");
+    } finally {
+      await manager.endAll();
+    }
   });
 
   test("case 4: non-string model returns 400 with error", async () => {
     const manager = makeManager();
-    const app = makeApp(manager);
-    const res = await postSessions(app, { model: 42, workdir: "/tmp" });
-    expect(res.status).toBe(400);
-    const body = await res.json() as { error: string };
-    expect(body.error).toBe("model must be a string");
+    try {
+      const app = makeApp(manager);
+      const res = await postSessions(app, { model: 42, workdir: "/tmp" });
+      expect(res.status).toBe(400);
+      const body = await res.json() as { error: string };
+      expect(body.error).toBe("model must be a string");
+    } finally {
+      await manager.endAll();
+    }
   });
 
   test("case 5: omitted model → snapshot.model is null", async () => {

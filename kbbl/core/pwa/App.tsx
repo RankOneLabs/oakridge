@@ -66,16 +66,15 @@ function generateSlug(): string {
   return `${a}-${n}-${num}`;
 }
 
+const PWA_MODEL_OPTIONS = [
+  { value: "claude-sonnet-4-6", label: "sonnet 4.6" },
+  { value: "claude-opus-4-7", label: "opus 4.7" },
+  { value: "claude-haiku-4-5-20251001", label: "haiku 4.5" },
+  { value: "", label: "default" },
+] as const;
+
 function prettyModelLabel(model: string): string {
-  // Map full ids to the same short labels the dropdown uses, so the
-  // row badge and the dropdown stay visually consistent. Unknown ids
-  // (aliases, future versions) fall through to the raw string.
-  switch (model) {
-    case "claude-sonnet-4-6": return "sonnet 4.6";
-    case "claude-opus-4-7": return "opus 4.7";
-    case "claude-haiku-4-5-20251001": return "haiku 4.5";
-    default: return model;
-  }
+  return PWA_MODEL_OPTIONS.find((o) => o.value === model)?.label ?? model;
 }
 
 function workdirBasename(p: string): string {
@@ -124,13 +123,6 @@ type ResolutionMap = Map<string, "allow" | "deny">;
 
 const THEME_STORAGE_KEY = "oakridge.theme";
 const NEW_SESSION_MODEL_STORAGE_KEY = "oakridge.newSessionModel";
-
-const PWA_MODEL_OPTIONS = [
-  { value: "claude-sonnet-4-6", label: "sonnet 4.6" },
-  { value: "claude-opus-4-7", label: "opus 4.7" },
-  { value: "claude-haiku-4-5-20251001", label: "haiku 4.5" },
-  { value: "", label: "default" },
-] as const;
 
 function readStoredNewSessionModel(): string {
   try {
