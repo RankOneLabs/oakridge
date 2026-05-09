@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type Ref,
 } from "react";
 import Markdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
@@ -1201,6 +1202,9 @@ function SessionView({
   const seenIds = useRef<Set<number>>(new Set());
   const pendingIdSeq = useRef(0);
   const endRef = useRef<HTMLDivElement>(null);
+  const appRef = useRef<HTMLDivElement>(null);
+  const topBarRef = useRef<HTMLElement>(null);
+  const bottomBarRef = useRef<HTMLDivElement>(null);
 
   // Awaiting a turn result if the session is live AND (we have an optimistic
   // message in flight OR the transcript shows a user-input event more recent
@@ -1235,6 +1239,32 @@ function SessionView({
   useLayoutEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
   }, [events.length, pendingMessages.length, awaitingResult]);
+
+  // Push the rendered top-bar / bottom-bar heights onto .app as CSS vars so
+  // .events can pad first/last messages clear of the sticky bars. Both bars
+  // resize at runtime — top bar grows when YOLO error chips appear, input
+  // bar grows as the textarea expands and when the error row toggles — so
+  // we re-measure via ResizeObserver. The bottom ref lands on whichever of
+  // InputBox / EndedBanner is mounted; re-running on sessionStatus changes
+  // re-binds the observer to the new node when the bar swaps.
+  useLayoutEffect(() => {
+    const app = appRef.current;
+    if (!app) return;
+    const top = topBarRef.current;
+    const bottom = bottomBarRef.current;
+    const update = () => {
+      if (top) app.style.setProperty("--top-bar-h", `${top.offsetHeight}px`);
+      if (bottom)
+        app.style.setProperty("--bottom-bar-h", `${bottom.offsetHeight}px`);
+      else app.style.removeProperty("--bottom-bar-h");
+    };
+    update();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(update);
+    if (top) ro.observe(top);
+    if (bottom) ro.observe(bottom);
+    return () => ro.disconnect();
+  }, [sessionStatus]);
 
   // Reset per-session state when navigating between sids so stale events
   // from the previous session's EventSource don't leak into this view.
@@ -1403,8 +1433,9 @@ function SessionView({
       ? pendingMessages[pendingMessages.length - 1].localId
       : null;
   return (
-    <div className="app">
+    <div className="app" ref={appRef}>
       <SessionTopBar
+        ref={topBarRef}
         sid={sid}
         snapshot={snapshot}
         streamStatus={streamStatus}
@@ -1446,6 +1477,7 @@ function SessionView({
       )}
       {canInput && (
         <InputBox
+          ref={bottomBarRef}
           sid={sid}
           onSend={addPendingMessage}
           onSendFailed={removePendingMessage}
@@ -1454,6 +1486,7 @@ function SessionView({
       )}
       {!canInput && snapshot?.status === "ended" && (
         <EndedBanner
+          ref={bottomBarRef}
           sid={sid}
           onResume={onResume}
         />
@@ -1628,16 +1661,18 @@ function InFlightToolPanel({
 }
 
 function EndedBanner({
+  ref,
   sid,
   onResume,
 }: {
+  ref?: Ref<HTMLDivElement>;
   sid: string;
   onResume: (parentSid: string) => Promise<string | null>;
 }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   return (
-    <div className="session-ended-banner">
+    <div className="session-ended-banner" ref={ref}>
       <div className="session-ended-text">
         Session ended · read-only transcript
       </div>
@@ -1839,6 +1874,7 @@ function MetricsStrip({ events }: { events: EnvelopeEvent[] }) {
 }
 
 function SessionTopBar({
+  ref,
   sid,
   snapshot,
   streamStatus,
@@ -1851,6 +1887,7 @@ function SessionTopBar({
   onToggleTheme,
   onBack,
 }: {
+  ref?: Ref<HTMLElement>;
   sid: string;
   snapshot: SessionSnapshot | null;
   streamStatus: Status;
@@ -1897,7 +1934,7 @@ function SessionTopBar({
   // just means the one-shot fetch finished).
   const shownStatus = snapshot?.status === "live" ? streamStatus : inboxStatus;
   return (
-    <header className="top-bar">
+    <header className="top-bar" ref={ref}>
       <button
         type="button"
         className="back-button"
@@ -3017,11 +3054,13 @@ function UnknownRow({
 }
 
 function InputBox({
+  ref,
   sid,
   onSend,
   onSendFailed,
   canStop,
 }: {
+  ref?: Ref<HTMLDivElement>;
   sid: string;
   onSend: (text: string) => number;
   onSendFailed: (localId: number) => void;
@@ -3105,7 +3144,7 @@ function InputBox({
   }
 
   return (
-    <div className="input-bar">
+    <div className="input-bar" ref={ref}>
       {error && <div className="input-error">error: {error}</div>}
       <div className="input-bar-row">
         {canStop && (
