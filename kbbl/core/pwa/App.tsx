@@ -834,8 +834,19 @@ function lastMessageEventId(events: EnvelopeEvent[]): number | null {
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
     if (e.type === "user") {
-      const p = e.payload as CCUserPayload;
-      if (typeof p.message?.content === "string") return e.id;
+      const p = e.payload as CCUserPayload & { isSynthetic?: boolean };
+      const content = p.message?.content;
+      // Synthetic users (post-compact summaries, skill bodies) and
+      // <local-command-stdout> wrappers don't render a normal bubble, so
+      // they shouldn't claim the "latest" timestamp slot — that would
+      // strand the timestamp on an invisible row.
+      if (
+        p.isSynthetic !== true &&
+        typeof content === "string" &&
+        parseLocalCommandStdout(content) === null
+      ) {
+        return e.id;
+      }
     } else if (e.type === "assistant") {
       const p = e.payload as CCAssistantPayload;
       const blocks = p.message?.content ?? [];
@@ -2555,10 +2566,13 @@ function UserRow({
       const firstLine = trimmed.split("\n", 1)[0] ?? "";
       return (
         <div className="row row-system" title={`event #${event.id}`}>
-          <div className="notice">
-            <span className="notice-tag">stdout</span>
-            {firstLine || "(empty)"}
-          </div>
+          <details className="notice">
+            <summary>
+              <span className="notice-tag">stdout</span>
+              {firstLine || "(empty)"}
+            </summary>
+            <pre className="bubble-slash-body">{trimmed}</pre>
+          </details>
         </div>
       );
     }
@@ -2880,7 +2894,7 @@ function CompactingRow({
   startEvent: EnvelopeEvent;
   doneEvent: EnvelopeEvent | null;
 }) {
-  const startMs = useMemo(() => Date.parse(startEvent.ts), [startEvent.ts]);
+  const startMs = useMemo(() => parseIsoMs(startEvent.ts), [startEvent.ts]);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (doneEvent) return;
@@ -2889,25 +2903,29 @@ function CompactingRow({
   }, [doneEvent]);
 
   if (doneEvent) {
-    const elapsed = Math.max(
-      0,
-      Math.round((Date.parse(doneEvent.ts) - startMs) / 1000),
-    );
+    const doneMs = parseIsoMs(doneEvent.ts);
+    const elapsed =
+      startMs !== null && doneMs !== null
+        ? Math.max(0, Math.round((doneMs - startMs) / 1000))
+        : null;
     const result =
       (doneEvent.payload as SystemStatusPayload | null)?.compact_result ??
       "done";
     return (
       <div className="row row-system" title={`event #${startEvent.id}`}>
         <div className="notice">
-          compacted in {elapsed}s ({result})
+          compacted{elapsed !== null ? ` in ${elapsed}s` : ""} ({result})
         </div>
       </div>
     );
   }
-  const elapsed = Math.max(0, Math.round((now - startMs) / 1000));
+  const elapsed =
+    startMs === null ? null : Math.max(0, Math.round((now - startMs) / 1000));
   return (
     <div className="row row-system" title={`event #${startEvent.id}`}>
-      <div className="notice">compacting ({elapsed}s)…</div>
+      <div className="notice">
+        {elapsed === null ? "compacting…" : `compacting (${elapsed}s)…`}
+      </div>
     </div>
   );
 }
