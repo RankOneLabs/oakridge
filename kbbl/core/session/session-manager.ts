@@ -552,6 +552,22 @@ export class SessionManager {
     return oakridgeSid ? this.sessions.get(oakridgeSid) : undefined;
   }
 
+  /**
+   * Find a live session whose `runId` matches. Used by the safir webhook
+   * receiver (`handlers/safir-webhook.ts`) to dispatch incoming run events
+   * onto the session that owns the run. Returns undefined when no live
+   * session matches — the receiver logs and drops in that case rather
+   * than buffering. Scans the live map; sessions with status !== "live"
+   * (starting, ended) are excluded so a webhook arriving moments after
+   * `markEnded` doesn't fan out into a closing session.
+   */
+  findLiveByRunId(runId: string): Session | undefined {
+    for (const s of this.sessions.values()) {
+      if (s.status === "live" && s.runId === runId) return s;
+    }
+    return undefined;
+  }
+
   list(): Session[] {
     return [...this.sessions.values()];
   }
