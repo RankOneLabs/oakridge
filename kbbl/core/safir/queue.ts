@@ -51,6 +51,20 @@ export interface CreateSafirQueueOpts {
 export function createSafirQueue(opts: CreateSafirQueueOpts): SafirQueue {
   const path = join(opts.dataDir, "safir-queue.jsonl");
 
+  // Serialize mutations so an enqueue's appendFile can't race with a
+  // recordSuccess/recordFailure/compact rewrite (which would replace the
+  // file via rename and silently drop the appended line). Reads stay
+  // lock-free — readPending only opens the file for read.
+  let mutationChain: Promise<unknown> = Promise.resolve();
+  function runExclusive<T>(op: () => Promise<T>): Promise<T> {
+    const next = mutationChain.then(op, op);
+    mutationChain = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
+  }
+
   async function readAll(): Promise<QueueEntry[]> {
     let raw: string;
     try {
@@ -94,18 +108,20 @@ export function createSafirQueue(opts: CreateSafirQueueOpts): SafirQueue {
   }
 
   return {
-    async enqueue(req) {
-      const id = randomUUID();
-      const nowIso = new Date().toISOString();
-      const entry: QueueEntry = {
-        id,
-        enqueued_at: nowIso,
-        attempts: 0,
-        next_attempt_at: nowIso,
-        request: req,
-      };
-      await appendFile(path, `${JSON.stringify(entry)}\n`);
-      return id;
+    enqueue(req) {
+      return runExclusive(async () => {
+        const id = randomUUID();
+        const nowIso = new Date().toISOString();
+        const entry: QueueEntry = {
+          id,
+          enqueued_at: nowIso,
+          attempts: 0,
+          next_attempt_at: nowIso,
+          request: req,
+        };
+        await appendFile(path, `${JSON.stringify(entry)}\n`);
+        return id;
+      });
     },
 
     async readPending(now) {
@@ -115,46 +131,52 @@ export function createSafirQueue(opts: CreateSafirQueueOpts): SafirQueue {
       );
     },
 
-    async recordSuccess(id) {
-      const entries = await readAll();
-      const next: QueueEntry[] = [];
-      for (const e of entries) {
-        if (e.id === id) {
-          next.push({ ...e, delivered_at: new Date().toISOString() });
-        } else {
-          next.push(e);
+    recordSuccess(id) {
+      return runExclusive(async () => {
+        const entries = await readAll();
+        const next: QueueEntry[] = [];
+        for (const e of entries) {
+          if (e.id === id) {
+            next.push({ ...e, delivered_at: new Date().toISOString() });
+          } else {
+            next.push(e);
+          }
         }
-      }
-      await rewriteAll(next);
+        await rewriteAll(next);
+      });
     },
 
-    async recordFailure(id, error, now) {
-      const entries = await readAll();
-      const next: QueueEntry[] = [];
-      for (const e of entries) {
-        if (e.id === id) {
-          const attempts = e.attempts + 1;
-          const nextAttemptMs =
-            now.getTime() + backoffSeconds(attempts) * 1000;
-          next.push({
-            ...e,
-            attempts,
-            next_attempt_at: new Date(nextAttemptMs).toISOString(),
-            last_error: error,
-          });
-        } else {
-          next.push(e);
+    recordFailure(id, error, now) {
+      return runExclusive(async () => {
+        const entries = await readAll();
+        const next: QueueEntry[] = [];
+        for (const e of entries) {
+          if (e.id === id) {
+            const attempts = e.attempts + 1;
+            const nextAttemptMs =
+              now.getTime() + backoffSeconds(attempts) * 1000;
+            next.push({
+              ...e,
+              attempts,
+              next_attempt_at: new Date(nextAttemptMs).toISOString(),
+              last_error: error,
+            });
+          } else {
+            next.push(e);
+          }
         }
-      }
-      await rewriteAll(next);
+        await rewriteAll(next);
+      });
     },
 
-    async compactIfAllDelivered() {
-      const entries = await readAll();
-      if (entries.length === 0) return;
-      if (entries.every((e) => e.delivered_at)) {
-        await rewriteAll([]);
-      }
+    compactIfAllDelivered() {
+      return runExclusive(async () => {
+        const entries = await readAll();
+        if (entries.length === 0) return;
+        if (entries.every((e) => e.delivered_at)) {
+          await rewriteAll([]);
+        }
+      });
     },
   };
 }

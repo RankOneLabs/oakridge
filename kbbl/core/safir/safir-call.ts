@@ -30,8 +30,11 @@ export async function safirCall<T>(
       );
       return null;
     }
-    if (err instanceof TypeError) {
-      // fetch surfaces network failures + AbortError as TypeError.
+    // fetch surfaces network failures as TypeError; AbortController.abort()
+    // (timeout path in client.ts) surfaces as a DOMException with name
+    // "AbortError" in both Node's undici and Bun. Treat both as transient.
+    const isAbortError = err instanceof Error && err.name === "AbortError";
+    if (err instanceof TypeError || isAbortError) {
       await ctx.queue.enqueue(fallback);
       ctx.logger?.warn(
         `safir network error queued: ${fallback.method} ${fallback.path}`,

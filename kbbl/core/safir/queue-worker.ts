@@ -1,7 +1,8 @@
 // Periodic drain of the safir queue. Replays each pending entry against the
 // SafirClient, recording success/failure back into the queue. The worker
 // owns the 5-strike retry cap (queue.ts is dumb storage); after that the
-// entry sits in the JSONL with delivered_at: null forever, visible to an
+// entry sits in the JSONL with delivered_at absent (the field is optional
+// and never set on cap-out) and attempts >= MAX_ATTEMPTS — visible to an
 // operator who can manually edit the file to retry. 4xx replays are
 // classified as success-with-warning at this layer — they will never
 // transition to 2xx, so leaving them in the queue would cause permanent
@@ -63,9 +64,10 @@ export function createSafirQueueWorker(
         if (err instanceof SafirHttpError && err.status >= 400 && err.status < 500) {
           // 4xx is permanent — replays will never succeed. Drop the entry
           // (recordSuccess) but log loud so the operator notices the
-          // underlying request was malformed.
+          // underlying request was malformed. Don't log err.body: 4xx
+          // bodies can echo request payload fields that may be sensitive.
           log.error(
-            `safir queue: dropping ${entry.request.method} ${entry.request.path}: 4xx ${err.status} ${stringifyBody(err.body)}`,
+            `safir queue: dropping ${entry.request.method} ${entry.request.path}: 4xx ${err.status}`,
           );
           await opts.queue.recordSuccess(entry.id);
           continue;
@@ -112,15 +114,6 @@ export function createSafirQueueWorker(
       await running.catch(() => undefined);
     },
   };
-}
-
-function stringifyBody(body: unknown): string {
-  if (typeof body === "string") return body;
-  try {
-    return JSON.stringify(body);
-  } catch {
-    return String(body);
-  }
 }
 
 // Path → client-method dispatcher. Exported for the worker's table-driven

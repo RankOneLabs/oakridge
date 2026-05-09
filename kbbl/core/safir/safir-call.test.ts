@@ -64,6 +64,21 @@ describe("safirCall", () => {
     expect(enqueued[0]!.method).toBe("PATCH");
   });
 
+  test("AbortError (DOMException) enqueues and returns null", async () => {
+    const { queue, enqueued } = makeQueueStub();
+    const result = await safirCall(
+      { queue },
+      async () => {
+        throw typeof DOMException === "function"
+          ? new DOMException("aborted", "AbortError")
+          : Object.assign(new Error("aborted"), { name: "AbortError" });
+      },
+      { method: "POST", path: "/tasks/1/runs", body: { executor: "x" } },
+    );
+    expect(result).toBeNull();
+    expect(enqueued.length).toBe(1);
+  });
+
   test("4xx throws (does not enqueue)", async () => {
     const { queue, enqueued } = makeQueueStub();
     let caught: unknown;
