@@ -44,27 +44,36 @@ export class WorktreeCreateError extends Error {
 }
 
 /**
- * Returns true if `path` is inside a git working tree (or is a bare repo).
- * Uses `git -C <path> rev-parse --git-dir` because it tolerates being run
- * from any subdirectory of the repo, not just the root — a `stat .git`
- * check would miss sessions opened in a subdirectory.
+ * Returns true if `path` is inside a git working tree. Bare repos return
+ * false: kbbl operates on tracked files via CC, which needs a working
+ * tree, and `resolveRepoTopLevel` would fail downstream on a bare repo
+ * anyway.
  *
- * Returns false only for the genuine "not a git repository" case. Throws on
- * any other failure (chdir/EACCES/ENOENT, missing binary, signal) so the
- * caller can't silently disable worktrees because a real I/O problem looked
- * like a non-repo.
+ * Uses `git rev-parse --is-inside-work-tree`, which tolerates being run
+ * from any subdirectory of the repo and distinguishes working tree
+ * ("true") from bare repo ("false") by stdout rather than exit code.
+ *
+ * Returns false for the genuine "not a git repository" case (exit 128 +
+ * matching stderr). Throws on any other failure (chdir/EACCES/ENOENT,
+ * missing binary, signal) so the caller can't silently disable worktrees
+ * because a real I/O problem looked like a non-repo.
+ *
+ * Forces LC_ALL=C / LANG=C so the stderr probe stays English-stable under
+ * non-default operator locales.
  */
 export async function isGitRepo(path: string): Promise<boolean> {
   const proc = Bun.spawn({
-    cmd: ["git", "-C", path, "rev-parse", "--git-dir"],
+    cmd: ["git", "-C", path, "rev-parse", "--is-inside-work-tree"],
     stdout: "pipe",
     stderr: "pipe",
+    env: { ...process.env, LC_ALL: "C", LANG: "C" },
   });
-  const [stderr, code] = await Promise.all([
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
     proc.exited,
   ]);
-  if (code === 0) return true;
+  if (code === 0) return stdout.trim() === "true";
   // git uses exit 128 for both "not a git repository" and other fatals
   // (cannot chdir into <path>, permission errors, ...). Match on stderr so
   // a non-repo returns false but an inaccessible path throws.

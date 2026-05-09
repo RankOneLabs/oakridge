@@ -83,6 +83,15 @@ describe("isGitRepo", () => {
     expect(await isGitRepo(notRepo)).toBe(false);
   });
 
+  test("returns false for a bare repo (no working tree)", async () => {
+    // kbbl operates on tracked files via CC, which needs a working tree.
+    // A bare repo would also break resolveRepoTopLevel (empty stdout).
+    // Easier to reject upfront than handle the bare case downstream.
+    const bare = join(tmpRoot, "bare.git");
+    await git(tmpRoot, "init", "-q", "--bare", bare);
+    expect(await isGitRepo(bare)).toBe(false);
+  });
+
   test("throws on a nonexistent path (not silently 'not a repo')", async () => {
     // git -C <missing> exits 128 with "cannot change to '<path>': No such
     // file or directory" — same exit code as "not a git repository" but a
