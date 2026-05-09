@@ -28,7 +28,7 @@ export interface SessionManagerOpts {
   /**
    * Optional runtime-adapter classifier wired into each Session's stdout
    * pump. The adapter inspects raw events and updates Session metadata
-   * (observeRuntimeSessionId, setLastResultUsage). Adapters with no
+   * (observeRuntimeSessionId, observeTurnEnd). Adapters with no
    * per-event work omit this.
    */
   classifyEvent?: (rawEvent: unknown, session: Session) => Promise<void>;

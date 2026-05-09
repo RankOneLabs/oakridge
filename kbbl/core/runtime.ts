@@ -58,7 +58,7 @@ export interface AppRuntime {
    * already emitted it to JSONL/subscribers. Called by the Session stdout
    * pump. The adapter may:
    *   - Update Session metadata via `session.observeRuntimeSessionId()` /
-   *     `session.setLastResultUsage()` (e.g., capture CC's session_id from
+   *     `session.observeTurnEnd()` (e.g., capture CC's session_id from
    *     the system/init event for hook routing).
    *   - Emit additional events via `session.emit()`.
    *

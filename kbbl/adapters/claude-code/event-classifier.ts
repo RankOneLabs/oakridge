@@ -18,9 +18,11 @@ import {
  *   session).
  *
  * - `result`: the per-turn completion event, carrying a `usage` block of
- *   token counts. The latest usage is what the PWA's Resume cost preview
- *   reads — important on Claude Max where a resume re-ingests parent
- *   context against the 5-hour rate-limit window.
+ *   token counts plus the model id. We hand it off via
+ *   session.observeTurnEnd(), which updates `lastResultUsage` for the
+ *   Resume cost preview, appends a UsageObservation to the in-memory ring
+ *   buffer, and emits a `usage_observation` envelope event into JSONL.
+ *   Cache-vs-idle bucketing in Phase 6 reads from the latter.
  */
 export async function classifyCcEvent(
   rawEvent: unknown,
@@ -40,7 +42,9 @@ export async function classifyCcEvent(
 
   if (evt.type === "result") {
     const usage = extractResultUsage(evt);
-    if (usage) session.setLastResultUsage(usage);
+    if (!usage) return;
+    const model = typeof evt.model === "string" ? evt.model : null;
+    await session.observeTurnEnd({ usage, model });
     return;
   }
 }

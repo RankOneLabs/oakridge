@@ -52,7 +52,7 @@ export interface SessionOpts {
   /**
    * Optional runtime-adapter classifier called for each parsed stdout event
    * after core has emitted it. The adapter inspects events and may update
-   * Session metadata (observeRuntimeSessionId, setLastResultUsage) or emit
+   * Session metadata (observeRuntimeSessionId, observeTurnEnd) or emit
    * follow-on events. Errors are caught + logged; the pump survives.
    */
   classifyEvent?: (rawEvent: unknown, session: Session) => Promise<void>;
@@ -90,6 +90,27 @@ export interface ResultUsage {
   cache_creation_input_tokens?: number;
   cache_read_input_tokens?: number;
 }
+
+/**
+ * Per-turn usage observation. Fed into the cache-vs-idle diagnostic — the
+ * 5-minute Anthropic prompt cache TTL means cache hit ratio collapses past
+ * ~300s of inter-turn idle, and this is the data point the histogram
+ * buckets on. `seconds_since_prev_turn` for the first turn is measured
+ * from session creation (cold-start latency), so consumers that want a
+ * "between-turn" view should filter on `turn_seq > 1`.
+ */
+export interface UsageObservation {
+  turn_seq: number;
+  seconds_since_prev_turn: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_input_tokens: number;
+  cache_read_input_tokens: number;
+  model: string | null;
+}
+
+/** Bound on per-session in-memory usage history. */
+export const USAGE_OBSERVATION_BUFFER_CAPACITY = 200;
 
 export interface SessionSnapshot {
   sid: string;
@@ -165,6 +186,13 @@ export class Session {
   private yoloMode = false;
   private allowedTools = new Set<string>();
   private lastResultUsage: ResultUsage | null = null;
+  // Wall-clock of the most recent observed turn end. Initialized to
+  // createdAt so the first turn's seconds_since_prev_turn is the cold-start
+  // gap (user opens session → first reply lands), which is real signal for
+  // the cache-vs-idle bucketing.
+  private lastResultTs: string;
+  private turnSeq = 0;
+  private usageObservations: UsageObservation[] = [];
   private exitPromise: Promise<number> | null = null;
   // Tracks the in-flight spawn so an abort() that arrives during the
   // starting window (between manager.sessions.set() and spawn() finishing
@@ -196,6 +224,7 @@ export class Session {
     this.artifactId = trimmedArtifactId;
     this.createdAt = new Date().toISOString();
     this.lastActivityTs = this.createdAt;
+    this.lastResultTs = this.createdAt;
     this.callbacks = opts.callbacks ?? {};
     this.classifyEvent = opts.classifyEvent;
     this.nonPersistedEventTypes = opts.nonPersistedEventTypes ?? new Set();
@@ -248,11 +277,13 @@ export class Session {
   }
 
   /**
-   * Runtime-adapter injection point: called by the classifier when it
-   * observes a token-usage block (e.g., CC's `result` event). Replaces any
-   * prior usage; the snapshot's `lastResultUsage` always reflects the most
-   * recent runtime-reported usage so the PWA's Resume cost preview is
-   * accurate.
+   * Runtime-adapter injection point: called by the classifier on each
+   * turn-end event (e.g., CC's `result`). Updates `lastResultUsage` for
+   * the PWA's Resume cost preview, appends a UsageObservation to the
+   * in-memory ring buffer, and emits a `usage_observation` envelope event
+   * that lands in the JSONL for retention/rollup. The ring buffer is
+   * bounded by USAGE_OBSERVATION_BUFFER_CAPACITY; oldest entries are
+   * dropped when full so the buffer is always cheap to scan.
    *
    * v0 abstraction caveat: `ResultUsage` is currently shaped as a subset
    * of CC's `result.usage` block (input_tokens, output_tokens, cache_*).
@@ -260,8 +291,45 @@ export class Session {
    * adapter informing what the union should look like; defer until codex
    * or another runtime exposes a different usage shape.
    */
-  setLastResultUsage(usage: ResultUsage): void {
-    this.lastResultUsage = usage;
+  async observeTurnEnd(input: {
+    usage: ResultUsage;
+    model: string | null;
+  }): Promise<void> {
+    const now = new Date();
+    const prevMs = Date.parse(this.lastResultTs);
+    const seconds_since_prev_turn = (now.getTime() - prevMs) / 1000;
+
+    this.turnSeq += 1;
+    const observation: UsageObservation = {
+      turn_seq: this.turnSeq,
+      seconds_since_prev_turn,
+      input_tokens: input.usage.input_tokens,
+      output_tokens: input.usage.output_tokens,
+      cache_creation_input_tokens: input.usage.cache_creation_input_tokens ?? 0,
+      cache_read_input_tokens: input.usage.cache_read_input_tokens ?? 0,
+      model: input.model,
+    };
+
+    this.usageObservations.push(observation);
+    if (this.usageObservations.length > USAGE_OBSERVATION_BUFFER_CAPACITY) {
+      this.usageObservations.shift();
+    }
+
+    this.lastResultTs = now.toISOString();
+    this.lastResultUsage = input.usage;
+
+    await this.emit("usage_observation", observation);
+  }
+
+  /**
+   * In-memory snapshot of recent per-turn usage, capped at
+   * USAGE_OBSERVATION_BUFFER_CAPACITY. Returns a defensive copy so callers
+   * can't mutate session state. Phase 6's cost panel reads live data from
+   * here; historical data lives in the JSONL via `usage_observation`
+   * envelope events.
+   */
+  getUsageObservations(): UsageObservation[] {
+    return [...this.usageObservations];
   }
 
   get endedSignal(): AbortSignal {
