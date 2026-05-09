@@ -365,14 +365,17 @@ export class SessionManager {
    *
    * Lookup precedence: in-memory map (cheap, authoritative for live/ended
    * sessions) → JSONL session_started (for parents whose Session is no
-   * longer in memory after restart). Returns null only if the parent is
-   * unknown to both sources OR its JSONL was unreadable; an
-   * absent/malformed session_started yields a meta with worktreeBranch=null
-   * (caller treats that as resume-from-pre-Phase-1, depth = 1).
+   * longer in memory after restart). Returns null if the parent is unknown
+   * to both sources, its JSONL is unreadable, or its JSONL has no usable
+   * session_started event — caller treats null as a broken chain and logs.
+   * Even pre-Phase-1 sessions emitted session_started, so a readable JSONL
+   * without one is genuinely broken, not just old.
    *
    * For a pre-Phase-1 parent the JSONL stored only `workdir` (which IS the
-   * operator's repo). projectWorkdir falls back to `workdir` so a child
-   * resuming off such a parent still gets a usable repo root.
+   * operator's repo) and no worktreeBranch. projectWorkdir falls back to
+   * `workdir` so a child resuming off such a parent still gets a usable
+   * repo root, and worktreeBranch=null tells the caller to treat resume
+   * depth as 1.
    */
   private async lookupParentSessionMeta(
     parentOakridgeSid: string,

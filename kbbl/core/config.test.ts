@@ -15,6 +15,13 @@ describe("sessions.worktree_dir_name validation", () => {
     expect(r.success).toBe(false);
   });
 
+  test("rejects '.'", () => {
+    const r = KbblConfigSchema.safeParse({
+      sessions: { worktree_dir_name: "." },
+    });
+    expect(r.success).toBe(false);
+  });
+
   test("rejects '..'", () => {
     const r = KbblConfigSchema.safeParse({
       sessions: { worktree_dir_name: "../escape" },

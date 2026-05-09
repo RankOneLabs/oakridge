@@ -71,8 +71,11 @@ const SessionsSchema = z
       .min(1, "worktree_dir_name cannot be empty")
       .refine(
         (s) =>
-          !s.includes("..") && !s.includes("/") && !s.includes("\\"),
-        "worktree_dir_name must be a simple name (no '/', '\\', or '..')",
+          s !== "." &&
+          !s.includes("..") &&
+          !s.includes("/") &&
+          !s.includes("\\"),
+        "worktree_dir_name must be a simple name (no '.', '/', '\\', or '..')",
       )
       .default("worktrees"),
   })
