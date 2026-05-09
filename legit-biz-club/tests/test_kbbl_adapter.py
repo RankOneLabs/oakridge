@@ -30,6 +30,7 @@ _FIXTURE_SNAPSHOT: dict[str, Any] = {
     "yoloMode": False,
     "allowedTools": [],
     "lastResultUsage": None,
+    "model": None,
 }
 
 
