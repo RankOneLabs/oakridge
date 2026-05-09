@@ -89,6 +89,22 @@ function parseBearer(header: string | undefined): string | null {
 }
 
 /**
+ * Every event safir is known to send. Mirrors `SafirWebhookEvent` so
+ * unrecognized values can be split out from the drop-log as a distinct
+ * `event_unknown` reason — that's the surface schema drift would show up
+ * on (e.g. safir adds `phase.created` and forgets to update kbbl). Kept
+ * as a runtime Set rather than derived from the type so a missed entry
+ * here trips a typecheck failure on the type alias change.
+ */
+const KNOWN_EVENTS: ReadonlySet<SafirWebhookEvent> = new Set([
+  "run.created",
+  "run.status_changed",
+  "run.completed",
+  "run.failed",
+  "phase.handoff_submitted",
+]);
+
+/**
  * Routes that dispatch a known event to a matching live session emit a
  * `safir_event` envelope event onto the session's stream. Type is
  * lower-snake-case to match existing kbbl envelope-event naming
@@ -182,19 +198,26 @@ export function mountSafirWebhookRoutes(
       }
     }
     // Unknown event type, missing run_id, or no live-session match.
-    // Log structured line so the operator can grep for it; still ack 200.
-    // stderr matches kbbl's other operational logs (server.ts, session.ts).
+    // Log structured line so the operator can grep for it; still ack 200
+    // (a non-2xx would burn safir's per-delivery retry budget without
+    // changing the outcome). stderr matches kbbl's other operational
+    // logs (server.ts, session.ts). The reason split distinguishes a
+    // safir-side typo / new-event drift (`event_unknown`) from a
+    // known-but-not-yet-dispatched event (`event_not_dispatched_in_pr_c`)
+    // so operators can alert on drift without alerting on the latter.
     console.error(
       JSON.stringify({
         kbbl: "safir_webhook_drop",
         event,
         delivery_id: deliveryId,
         reason:
-          !DISPATCHABLE_EVENTS.has(event)
-            ? "event_not_dispatched_in_pr_c"
-            : typeof data.run_id !== "string"
-              ? "missing_run_id"
-              : "no_live_session_match",
+          !KNOWN_EVENTS.has(event)
+            ? "event_unknown"
+            : !DISPATCHABLE_EVENTS.has(event)
+              ? "event_not_dispatched_in_pr_c"
+              : typeof data.run_id !== "string"
+                ? "missing_run_id"
+                : "no_live_session_match",
       }),
     );
     dedupe.add(deliveryId);

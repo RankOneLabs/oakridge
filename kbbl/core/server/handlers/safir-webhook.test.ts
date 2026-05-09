@@ -382,6 +382,33 @@ describe("safir-webhook receiver", () => {
     await mgr.endAll();
   });
 
+  test("unknown event type returns 200 dispatched:false (logged as event_unknown)", async () => {
+    const stub = makeSafirStub();
+    const mgr = makeManager(stub.fetch);
+    const app = buildApp(mgr);
+
+    const res = await app.fetch(
+      new Request("http://kbbl.test/webhooks/safir", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${TEST_TOKEN}`,
+        },
+        body: JSON.stringify(
+          envelope({
+            event: "phase.created" as unknown as string,
+            delivery_id: "delivery-unknown-event",
+            data: { run_id: "any", task_id: 1 },
+          }),
+        ),
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; dispatched: boolean };
+    expect(body).toEqual({ ok: true, dispatched: false });
+  });
+
   test("malformed JSON and array bodies return 400", async () => {
     const stub = makeSafirStub();
     const mgr = makeManager(stub.fetch);
