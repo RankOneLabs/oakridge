@@ -56,7 +56,18 @@ type ResumeParentResult =
   | { kind: "unknown" }
   | { kind: "no_cc_sid" }
   | { kind: "no_workdir" }
-  | { kind: "ok"; parentCcSid: string; workdir: string };
+  | {
+      kind: "ok";
+      parentCcSid: string;
+      workdir: string;
+      /**
+       * Set if the parent had a per-session worktree (Phase 1+); null for
+       * pre-Phase-1 archived parents. When set, lets the POST handler
+       * distinguish "parent's worktree was discarded" from a generic
+       * "workdir doesn't exist" so the caller sees an actionable error.
+       */
+      parentWorktreePath: string | null;
+    };
 
 async function resolveResumeParent(
   manager: SessionManager,
@@ -67,7 +78,12 @@ async function resolveResumeParent(
   if (live) {
     const ccSid = live.currentCcSid;
     if (!ccSid) return { kind: "no_cc_sid" };
-    return { kind: "ok", parentCcSid: ccSid, workdir: live.workdir };
+    return {
+      kind: "ok",
+      parentCcSid: ccSid,
+      workdir: live.workdir,
+      parentWorktreePath: live.worktreePath,
+    };
   }
   const jsonlPath = join(sessionsDir, `${sid}.jsonl`);
   let contents: string;
@@ -89,6 +105,7 @@ async function resolveResumeParent(
   if (!contents) return { kind: "unknown" };
   let parentCcSid: string | null = null;
   let parentWorkdir: string | null = null;
+  let parentWorktreePath: string | null = null;
   for (const line of contents.split("\n")) {
     if (!line.trim()) continue;
     let evt: EnvelopeEvent;
@@ -104,8 +121,13 @@ async function resolveResumeParent(
     ) {
       parentCcSid = payload.cc_session_id;
     }
-    if (evt.type === "session_started" && typeof payload.workdir === "string") {
-      parentWorkdir = payload.workdir;
+    if (evt.type === "session_started") {
+      if (typeof payload.workdir === "string") {
+        parentWorkdir = payload.workdir;
+      }
+      if (typeof payload.worktreePath === "string") {
+        parentWorktreePath = payload.worktreePath;
+      }
     }
     if (parentCcSid && parentWorkdir) break;
   }
@@ -116,7 +138,12 @@ async function resolveResumeParent(
   // restarted the server with a different default — quietly applying tool
   // edits against the wrong tree.
   if (!parentWorkdir) return { kind: "no_workdir" };
-  return { kind: "ok", parentCcSid, workdir: parentWorkdir };
+  return {
+    kind: "ok",
+    parentCcSid,
+    workdir: parentWorkdir,
+    parentWorktreePath,
+  };
 }
 
 export interface SessionsRouteDeps {
@@ -313,6 +340,22 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       const parentWorkdir = resolve(parentInfo.workdir);
       const parentErr = await validateWorkdir(parentWorkdir);
       if (parentErr) {
+        // Distinguish "the parent's worktree was discarded" from a generic
+        // missing-workdir. Discard is a documented Phase 2 operator action,
+        // so the message should make the cause clear instead of reading
+        // like a kbbl bug. Detected via: parent had a worktreePath at
+        // session_started time AND the dir is gone now.
+        if (
+          parentInfo.parentWorktreePath !== null &&
+          parentErr === "workdir does not exist"
+        ) {
+          return c.json(
+            {
+              error: "resume_from parent's worktree was discarded",
+            },
+            400,
+          );
+        }
         return c.json(
           { error: `resume_from parent workdir invalid: ${parentErr}` },
           400,

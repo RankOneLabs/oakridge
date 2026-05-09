@@ -14,9 +14,22 @@ import {
   type SessionStatus,
   type SpawnCmd,
 } from "./session";
+import {
+  WorktreeCreateError,
+  createWorktree,
+  isGitRepo,
+  removeWorktree,
+} from "./worktree";
 
 export interface SessionManagerOpts {
   sessionsDir: string;
+  /**
+   * Parent dir of all per-session worktrees: `<dataDir>/<worktree_dir_name>`.
+   * Created by the server at startup before the manager is constructed.
+   * Required even when worktrees are off so the manager doesn't have to
+   * branch on the flag at every consumer.
+   */
+  worktreesDir: string;
   /**
    * Build the command + spawn env for a new session. Receives the session
    * object (so the manager doesn't need to know which flags come from where)
@@ -110,6 +123,24 @@ type InboxSubscriber = (delta: InboxDelta) => void;
 
 const LAST_ACTIVITY_THROTTLE_MS = 1000;
 
+/**
+ * Parse the depth encoded in a kbbl worktree branch. `kbbl/<sid8>-r<n>`
+ * → n; bare `kbbl/<sid8>` → 0. Anything else (an operator-renamed branch,
+ * a non-kbbl branch we shouldn't have been handed) → 0 with a logged
+ * warning, since assuming any other value would silently produce a wrong
+ * depth on the next resume.
+ */
+function parseDepthFromBranch(branch: string): number {
+  const m = /^kbbl\/[0-9a-f]{8}(?:-r(\d+))?$/.exec(branch);
+  if (!m) {
+    console.error(
+      `kbbl: parent branch ${branch} doesn't match kbbl/<sid8>[-r<n>] — depth defaulting to 0`,
+    );
+    return 0;
+  }
+  return m[1] ? Number.parseInt(m[1], 10) : 0;
+}
+
 export class SessionManager {
   private readonly opts: SessionManagerOpts;
   private readonly sessions = new Map<string, Session>();
@@ -164,14 +195,70 @@ export class SessionManager {
     // client traffic as well as direct API hits.
     const name =
       opts.name && opts.name.trim() ? opts.name.trim() : `session-${oakridgeSid.slice(0, 8)}`;
-    const session = new Session({
+
+    // Per-session worktree (Phase 1). On = each session gets its own
+    // checkout + branch off the operator workdir's HEAD; spawn cwd becomes
+    // the worktree path. Off (or non-repo workdir) = pre-Phase-1 behavior,
+    // spawn into the operator workdir directly. The flag exists for
+    // rollout safety; Phase 3 flips the default. See
+    // comms/kbbl-session-worktrees-handoff.md.
+    let worktreePath: string | null = null;
+    let worktreeBranch: string | null = null;
+    let worktreeBaseRef: string | null = null;
+    // projectWorkdir is non-null only when a worktree is created — in the
+    // flag-off / non-repo path, session.workdir IS the operator workdir
+    // and there's nothing to dual-label. Keeping it null for those
+    // sessions also keeps session_started / SessionSnapshot tight for
+    // pre-Phase-1-equivalent payloads.
+    let projectWorkdir: string | null = null;
+    const wantsWorktree = this.opts.config.sessions.worktree_per_session;
+    if (wantsWorktree && (await isGitRepo(opts.workdir))) {
+      const resumeDepth = opts.parentOakridgeSid
+        ? await this.computeResumeDepth(opts.parentOakridgeSid)
+        : 0;
+      try {
+        const created = await createWorktree({
+          workdir: opts.workdir,
+          worktreesRoot: this.opts.worktreesDir,
+          oakridgeSid,
+          resumeDepth,
+        });
+        worktreePath = created.worktreePath;
+        worktreeBranch = created.worktreeBranch;
+        worktreeBaseRef = created.worktreeBaseRef;
+        projectWorkdir = opts.workdir;
+      } catch (err) {
+        if (err instanceof WorktreeCreateError) {
+          throw new Error(
+            `worktree create failed: ${err.message}\n${err.stderr}`,
+          );
+        }
+        throw err;
+      }
+    }
+    const effectiveWorkdir = worktreePath ?? opts.workdir;
+
+    // Roll back the worktree if Session construction throws (e.g. artifactId
+    // length validation). The worktree exists on disk but no Session, no map
+    // entry, no broadcast — leaving it would orphan a branch + dir that the
+    // operator never asked for. Spawn failure (after this point) is a
+    // different case: the Session is already in the map and the operator
+    // can see/clean up; that's covered by the existing "failed sessions
+    // linger" behavior + Phase 2 reconcile.
+    let session: Session;
+    try {
+      session = new Session({
       oakridgeSid,
-      workdir: opts.workdir,
+      workdir: effectiveWorkdir,
       name,
       sessionsDir: this.opts.sessionsDir,
       parentCcSid: opts.parentCcSid,
       parentOakridgeSid: opts.parentOakridgeSid,
       artifactId: opts.artifactId,
+      worktreePath,
+      worktreeBranch,
+      worktreeBaseRef,
+      projectWorkdir,
       classifyEvent: this.opts.classifyEvent,
       nonPersistedEventTypes: this.opts.nonPersistedEventTypes,
       callbacks: {
@@ -211,7 +298,24 @@ export class SessionManager {
           });
         },
       },
-    });
+      });
+    } catch (ctorErr) {
+      if (worktreePath && worktreeBranch) {
+        // Best-effort cleanup; log on failure rather than masking ctorErr.
+        await removeWorktree({
+          workdir: opts.workdir,
+          worktreePath,
+          worktreeBranch,
+        }).catch((e) => {
+          console.error(
+            `kbbl: worktree rollback after ctor failure failed: ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          );
+        });
+      }
+      throw ctorErr;
+    }
     // Register in the live map before spawn so /hook/approval can find the
     // session as soon as system/init arrives. If spawn throws, we keep it
     // in the map (as ended) so a client that POSTed /sessions can still
@@ -225,6 +329,63 @@ export class SessionManager {
     this.broadcastDelta({ type: "session_created", session: session.snapshot() });
     await session.spawn(this.opts.buildSpawnCmd(session));
     return session;
+  }
+
+  /**
+   * Compute the depth of a new resume off `parentOakridgeSid`. Depth = parent's
+   * depth + 1; encoded into the new branch as `kbbl/<sid8>-r<depth>`. We don't
+   * walk the whole chain — each parent's branch was correctly encoded with
+   * its own depth at creation time, so reading the immediate parent's
+   * suffix gives the same answer as a full traversal.
+   *
+   * Lookup precedence: in-memory map (cheap, authoritative for live/ended
+   * sessions) → JSONL session_started.worktreeBranch (for parents whose
+   * Session is no longer in memory after restart). If the parent's JSONL
+   * is gone (purged) or predates Phase 1 (no worktreeBranch), fall back to
+   * depth = 1 with a logged breadcrumb so an operator chasing a surprising
+   * branch name has a starting point.
+   */
+  private async computeResumeDepth(parentOakridgeSid: string): Promise<number> {
+    const parentBranch = await this.lookupParentWorktreeBranch(parentOakridgeSid);
+    if (parentBranch === null) {
+      console.error(
+        `kbbl: resume chain broken at ${parentOakridgeSid} — defaulting depth to 1`,
+      );
+      return 1;
+    }
+    return parseDepthFromBranch(parentBranch) + 1;
+  }
+
+  private async lookupParentWorktreeBranch(
+    parentOakridgeSid: string,
+  ): Promise<string | null> {
+    const live = this.sessions.get(parentOakridgeSid);
+    if (live) return live.worktreeBranch;
+    const jsonlPath = join(this.opts.sessionsDir, `${parentOakridgeSid}.jsonl`);
+    let contents: string;
+    try {
+      contents = await readJsonlOrEmpty(jsonlPath);
+    } catch {
+      return null;
+    }
+    if (!contents) return null;
+    for (const line of contents.split("\n")) {
+      if (!line.trim()) continue;
+      let evt: EnvelopeEvent;
+      try {
+        evt = JSON.parse(line) as EnvelopeEvent;
+      } catch {
+        continue;
+      }
+      if (evt.type !== "session_started") continue;
+      const payload = (evt.payload ?? {}) as Record<string, unknown>;
+      if (typeof payload.worktreeBranch === "string") {
+        return payload.worktreeBranch;
+      }
+      // session_started found but no worktreeBranch — pre-Phase-1 session.
+      return null;
+    }
+    return null;
   }
 
   get(oakridgeSid: string): Session | undefined {
@@ -429,6 +590,12 @@ export class SessionManager {
         this.archivedScanPromise = null;
       });
     }
+    // Snapshot worktree info BEFORE eviction. The in-memory Session is the
+    // cheap source; archived JSONL is the fallback. We need all three
+    // (workdir, worktreePath, worktreeBranch) to drive `git worktree
+    // remove` against the original repo. Pre-Phase-1 sessions have null
+    // worktreePath and skip cleanup entirely.
+    const worktreeInfo = await this.lookupWorktreeForRemove(oakridgeSid);
     const session = this.sessions.get(oakridgeSid);
     if (session) {
       // abort() is idempotent on already-ended sessions, so this is safe
@@ -499,7 +666,83 @@ export class SessionManager {
     if (removed) {
       this.broadcastDelta({ type: "session_removed", sid: oakridgeSid });
     }
+    // Best-effort worktree cleanup AFTER the JSONL is gone. JSONL is the
+    // source of truth — if we removed the worktree first and the unlink
+    // then failed, the next startup would see a JSONL pointing at a dead
+    // worktree and `resolveResumeParent` would 400 on resume. With this
+    // ordering, a worktree-remove failure leaves an orphan that Phase 2's
+    // reconcile can clean up; no JSONL lies. Skipped entirely for
+    // pre-Phase-1 sessions (worktreeInfo === null).
+    if (worktreeInfo !== null) {
+      await removeWorktree(worktreeInfo).catch((e) => {
+        console.error(
+          `kbbl: worktree cleanup during remove(${oakridgeSid}) threw: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      });
+    }
     return removed;
+  }
+
+  /**
+   * Returns the (workdir, worktreePath, worktreeBranch) tuple needed to
+   * shell out `git worktree remove`, or null if the session predates
+   * Phase 1 / has no worktree. Live in-memory sessions are the cheap
+   * source; archived ones come from JSONL via the cache or a direct read.
+   */
+  private async lookupWorktreeForRemove(
+    oakridgeSid: string,
+  ): Promise<{ workdir: string; worktreePath: string; worktreeBranch: string } | null> {
+    const live = this.sessions.get(oakridgeSid);
+    if (live) {
+      if (
+        live.worktreePath === null ||
+        live.worktreeBranch === null ||
+        live.projectWorkdir === null
+      ) {
+        return null;
+      }
+      return {
+        workdir: live.projectWorkdir,
+        worktreePath: live.worktreePath,
+        worktreeBranch: live.worktreeBranch,
+      };
+    }
+    // Archived: prefer the cache so we don't re-read the JSONL we may have
+    // already parsed during populateArchivedCache. Fall back to a fresh
+    // read (cache unpopulated, or this sid was filtered out for being
+    // empty/malformed at scan time).
+    const cached = this.archivedSnapshotCache?.get(oakridgeSid);
+    if (cached) {
+      if (
+        cached.worktreePath === null ||
+        cached.worktreeBranch === null ||
+        cached.projectWorkdir === null
+      ) {
+        return null;
+      }
+      return {
+        workdir: cached.projectWorkdir,
+        worktreePath: cached.worktreePath,
+        worktreeBranch: cached.worktreeBranch,
+      };
+    }
+    const jsonlPath = join(this.opts.sessionsDir, `${oakridgeSid}.jsonl`);
+    const snap = await loadArchivedSnapshot(oakridgeSid, jsonlPath);
+    if (
+      !snap ||
+      snap.worktreePath === null ||
+      snap.worktreeBranch === null ||
+      snap.projectWorkdir === null
+    ) {
+      return null;
+    }
+    return {
+      workdir: snap.projectWorkdir,
+      worktreePath: snap.worktreePath,
+      worktreeBranch: snap.worktreeBranch,
+    };
   }
 
   /**
@@ -659,6 +902,13 @@ async function loadArchivedSnapshot(
   const allowedTools = new Set<string>();
   let yoloMode = false;
   let lastResultUsage: ResultUsage | null = null;
+  // Phase 1+ worktree metadata. All four absent = pre-Phase-1 session;
+  // present = isolated worktree may still be on disk (or may have been
+  // discarded via Phase 2 — caller must handle ENOENT on worktreePath).
+  let worktreePath: string | null = null;
+  let worktreeBranch: string | null = null;
+  let worktreeBaseRef: string | null = null;
+  let projectWorkdir: string | null = null;
   for (const line of contents.split("\n")) {
     if (!line.trim()) continue;
     let evt: EnvelopeEvent;
@@ -690,6 +940,18 @@ async function loadArchivedSnapshot(
           if (trimmed && trimmed.length <= MAX_ARTIFACT_ID_LENGTH) {
             artifactId = trimmed;
           }
+        }
+        if (typeof payload.worktreePath === "string") {
+          worktreePath = payload.worktreePath;
+        }
+        if (typeof payload.worktreeBranch === "string") {
+          worktreeBranch = payload.worktreeBranch;
+        }
+        if (typeof payload.worktreeBaseRef === "string") {
+          worktreeBaseRef = payload.worktreeBaseRef;
+        }
+        if (typeof payload.projectWorkdir === "string") {
+          projectWorkdir = payload.projectWorkdir;
         }
         break;
       }
@@ -737,5 +999,9 @@ async function loadArchivedSnapshot(
     yoloMode,
     allowedTools: [...allowedTools],
     lastResultUsage,
+    worktreePath,
+    worktreeBranch,
+    worktreeBaseRef,
+    projectWorkdir,
   };
 }

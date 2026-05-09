@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { loadConfig, type KbblConfig } from "./config";
 import { SessionManager } from "./session/session-manager";
 import { Session } from "./session/session";
+import { isGitRepo, isPathInside } from "./session/worktree";
 import { createApp } from "./server/app";
 import { createClaudeCodeRuntime } from "../adapters/claude-code";
 import { validateWorkdir } from "./server/handlers/sessions";
@@ -77,6 +78,50 @@ try {
   process.exit(1);
 }
 
+// === worktrees ===
+// Created unconditionally so the manager doesn't have to branch on the flag
+// for path resolution. With the flag off the dir is empty and harmless.
+const worktreesDir = join(dataDir, config.sessions.worktree_dir_name);
+await mkdir(worktreesDir, { recursive: true });
+
+// Nesting check: when the operator's --workdir is a git repo AND
+// worktreesDir lives inside that repo's tree, every per-session worktree
+// would land inside the outer repo's working tree. That's only safe if the
+// outer repo gitignores the path; otherwise `git status` from the outer
+// repo surfaces every session's checkout as untracked — exactly the
+// cross-session pollution per-worktree isolation is meant to prevent.
+// Only enforced when worktrees are actually enabled; flag-off operators
+// don't need to care.
+if (config.sessions.worktree_per_session && (await isGitRepo(workdir))) {
+  if (isPathInside(worktreesDir, workdir)) {
+    const ignoreCheck = Bun.spawn({
+      cmd: ["git", "-C", workdir, "check-ignore", "-q", worktreesDir],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const ignoreCode = await ignoreCheck.exited;
+    // git check-ignore: 0 = ignored (safe), 1 = not ignored (unsafe), 128 = error.
+    if (ignoreCode !== 0) {
+      console.error(
+        `kbbl: worktreesDir ${worktreesDir} is inside the operator workdir ${workdir}`,
+      );
+      console.error(
+        `kbbl: but is not gitignored by it. Per-session worktrees would pollute`,
+      );
+      console.error(
+        `kbbl: the outer repo's git status. Either:`,
+      );
+      console.error(
+        `kbbl:   - add ${worktreesDir} to ${workdir}/.gitignore, or`,
+      );
+      console.error(
+        `kbbl:   - pass --dataDir=<path-outside-${workdir}>`,
+      );
+      process.exit(1);
+    }
+  }
+}
+
 // === runtime adapter ===
 // The Claude Code adapter owns its CLI flags, settings.json, and the
 // PreToolUse gate route. Core consumes it through the AppRuntime contract
@@ -94,6 +139,7 @@ const runtime = await createClaudeCodeRuntime({
 
 const manager = new SessionManager({
   sessionsDir,
+  worktreesDir,
   buildSpawnCmd: runtime.buildSpawnCmd,
   classifyEvent: runtime.classifyEvent,
   nonPersistedEventTypes: runtime.nonPersistedEventTypes,
