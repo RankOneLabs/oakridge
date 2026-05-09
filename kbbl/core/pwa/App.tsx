@@ -834,8 +834,19 @@ function lastMessageEventId(events: EnvelopeEvent[]): number | null {
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
     if (e.type === "user") {
-      const p = e.payload as CCUserPayload;
-      if (typeof p.message?.content === "string") return e.id;
+      const p = e.payload as CCUserPayload & { isSynthetic?: boolean };
+      const content = p.message?.content;
+      // Synthetic users (post-compact summaries, skill bodies) and
+      // <local-command-stdout> wrappers don't render a normal bubble, so
+      // they shouldn't claim the "latest" timestamp slot — that would
+      // strand the timestamp on an invisible row.
+      if (
+        p.isSynthetic !== true &&
+        typeof content === "string" &&
+        parseLocalCommandStdout(content) === null
+      ) {
+        return e.id;
+      }
     } else if (e.type === "assistant") {
       const p = e.payload as CCAssistantPayload;
       const blocks = p.message?.content ?? [];
@@ -1982,7 +1993,34 @@ function SessionTopBar({
 
 type ListItem =
   | { kind: "event"; event: EnvelopeEvent }
-  | { kind: "tool_batch"; events: EnvelopeEvent[]; firstId: number };
+  | { kind: "tool_batch"; events: EnvelopeEvent[]; firstId: number }
+  | {
+      kind: "compact";
+      startEvent: EnvelopeEvent;
+      doneEvent: EnvelopeEvent | null;
+    };
+
+interface SystemStatusPayload {
+  subtype?: string;
+  status?: string | null;
+  compact_result?: string;
+}
+
+function isCompactStartEvent(e: EnvelopeEvent): boolean {
+  if (e.type !== "system") return false;
+  const p = e.payload as SystemStatusPayload | null;
+  return p?.subtype === "status" && p.status === "compacting";
+}
+
+function isCompactDoneEvent(e: EnvelopeEvent): boolean {
+  if (e.type !== "system") return false;
+  const p = e.payload as SystemStatusPayload | null;
+  return (
+    p?.subtype === "status" &&
+    p.status === null &&
+    typeof p.compact_result === "string"
+  );
+}
 
 // Consecutive tool_use / tool_result events get folded into a single
 // collapsible "N tool calls" section so a YOLO-mode turn that fires 20 file
@@ -2042,6 +2080,25 @@ function buildListItems(
     }
   };
   for (const e of events) {
+    // Compact-status events are operator-actionable signal regardless of
+    // showSystemEvents — fold the start+done pair into a single live pill.
+    if (isCompactStartEvent(e)) {
+      flush();
+      items.push({ kind: "compact", startEvent: e, doneEvent: null });
+      continue;
+    }
+    if (isCompactDoneEvent(e)) {
+      let attached = false;
+      for (let i = items.length - 1; i >= 0; i--) {
+        const it = items[i];
+        if (it.kind === "compact" && it.doneEvent === null) {
+          it.doneEvent = e;
+          attached = true;
+          break;
+        }
+      }
+      if (attached) continue;
+    }
     if (isFilteredEvent(e, resolutions, showSystemEvents)) continue;
     if (isToolOnlyEvent(e)) {
       batch.push(e);
@@ -2081,6 +2138,15 @@ function EventList({
         if (item.kind === "tool_batch") {
           return (
             <ToolBatchSection key={`batch-${item.firstId}`} events={item.events} />
+          );
+        }
+        if (item.kind === "compact") {
+          return (
+            <CompactingRow
+              key={`compact-${item.startEvent.id}`}
+              startEvent={item.startEvent}
+              doneEvent={item.doneEvent}
+            />
           );
         }
         return (
@@ -2416,6 +2482,19 @@ function parseSlashCommand(
   };
 }
 
+// CC re-injects local command output (e.g. a leading `!` bash invocation)
+// as a synthetic user message wrapped in <local-command-stdout>…</local-
+// command-stdout>. Rendered raw it looks like an operator typed the output;
+// collapse to a single system pill so the transcript doesn't lie about who
+// produced the bytes.
+function parseLocalCommandStdout(text: string): string | null {
+  if (!text.startsWith("<local-command-stdout>")) return null;
+  const m = text.match(
+    /<local-command-stdout>([\s\S]*?)<\/local-command-stdout>/,
+  );
+  return m ? m[1] : null;
+}
+
 function UserRow({
   event,
   showSystemEvents,
@@ -2425,8 +2504,37 @@ function UserRow({
   showSystemEvents: boolean;
   isLatest: boolean;
 }) {
-  const p = event.payload as CCUserPayload;
+  const p = event.payload as CCUserPayload & { isSynthetic?: boolean };
   const content = p.message?.content;
+
+  // CC stamps post-compact summaries and skill-body injections with
+  // isSynthetic. The summary is multi-page text; rendering it as a user
+  // bubble misattributes it to the operator. Collapse behind an expand
+  // affordance — the previous compact pill already marked when it ran.
+  if (p.isSynthetic === true) {
+    const text =
+      typeof content === "string"
+        ? content
+        : Array.isArray(content)
+          ? content
+              .map((b) =>
+                b.type === "text"
+                  ? b.text
+                  : JSON.stringify(b, null, 2),
+              )
+              .join("\n\n")
+          : JSON.stringify(content, null, 2);
+    return (
+      <div className="row row-user">
+        <details className="bubble bubble-user bubble-user-slash">
+          <summary>
+            <span className="bubble-slash-name">[compacted — expand]</span>
+          </summary>
+          <pre className="bubble-slash-body">{text}</pre>
+        </details>
+      </div>
+    );
+  }
 
   if (typeof content === "string") {
     const slash = parseSlashCommand(content);
@@ -2450,6 +2558,22 @@ function UserRow({
             </details>
           </div>
         </>
+      );
+    }
+    const stdout = parseLocalCommandStdout(content);
+    if (stdout !== null) {
+      const trimmed = stdout.trim();
+      const firstLine = trimmed.split("\n", 1)[0] ?? "";
+      return (
+        <div className="row row-system" title={`event #${event.id}`}>
+          <details className="notice">
+            <summary>
+              <span className="notice-tag">stdout</span>
+              {firstLine || "(empty)"}
+            </summary>
+            <pre className="bubble-slash-body">{stdout}</pre>
+          </details>
+        </div>
       );
     }
     return (
@@ -2758,6 +2882,49 @@ function AutoApprovedNotice({ event }: { event: EnvelopeEvent }) {
     <div className="row row-system">
       <div className="notice notice-allow">
         auto-approved · {tool} <span className="notice-tag">({reason})</span>
+      </div>
+    </div>
+  );
+}
+
+function CompactingRow({
+  startEvent,
+  doneEvent,
+}: {
+  startEvent: EnvelopeEvent;
+  doneEvent: EnvelopeEvent | null;
+}) {
+  const startMs = useMemo(() => parseIsoMs(startEvent.ts), [startEvent.ts]);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (doneEvent) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [doneEvent]);
+
+  if (doneEvent) {
+    const doneMs = parseIsoMs(doneEvent.ts);
+    const elapsed =
+      startMs !== null && doneMs !== null
+        ? Math.max(0, Math.round((doneMs - startMs) / 1000))
+        : null;
+    const result =
+      (doneEvent.payload as SystemStatusPayload | null)?.compact_result ??
+      "done";
+    return (
+      <div className="row row-system" title={`event #${startEvent.id}`}>
+        <div className="notice">
+          compacted{elapsed !== null ? ` in ${elapsed}s` : ""} ({result})
+        </div>
+      </div>
+    );
+  }
+  const elapsed =
+    startMs === null ? null : Math.max(0, Math.round((now - startMs) / 1000));
+  return (
+    <div className="row row-system" title={`event #${startEvent.id}`}>
+      <div className="notice">
+        {elapsed === null ? "compacting…" : `compacting (${elapsed}s)…`}
       </div>
     </div>
   );
