@@ -436,7 +436,7 @@ export class SessionManager {
       () => this.opts.safirClient.createPhase(opts.runId!, phaseBody),
       { method: "POST", path: `/runs/${opts.runId}/phases`, body: phaseBody },
     );
-    if (phase) session.attachSafirContext(opts.runId, phase.id);
+    session.attachSafirContext(opts.runId, phase?.id);
   }
 
   private async afterSessionEnded(s: Session): Promise<void> {

@@ -90,9 +90,6 @@ afterEach(() => {
   rmSync(tmpRoot, { recursive: true, force: true });
 });
 
-const flushFireAndForget = async (ticks = 3) => {
-  for (let i = 0; i < ticks; i++) await new Promise<void>((r) => setImmediate(r));
-};
 
 describe("SessionManager safir lifecycle", () => {
   test("opens a fresh run + phase when taskId is supplied", async () => {
@@ -168,7 +165,7 @@ describe("SessionManager safir lifecycle", () => {
 
     session.markEndReason("user_closed");
     await mgr.end(session.oakridgeSid);
-    await flushFireAndForget();
+    await mgr.drainLifecycle();
 
     const phaseUpdate = stub.calls.find(
       (c) => c.method === "PATCH" && c.path === `/phases/${session.phaseId}`,
@@ -193,7 +190,7 @@ describe("SessionManager safir lifecycle", () => {
     const session = await mgr.create({ workdir: "/tmp", taskId: 42 });
 
     await mgr.end(session.oakridgeSid);
-    await flushFireAndForget();
+    await mgr.drainLifecycle();
 
     const phaseUpdate = stub.calls.find(
       (c) => c.method === "PATCH" && c.path === `/phases/${session.phaseId}`,
@@ -222,7 +219,7 @@ describe("SessionManager safir lifecycle", () => {
 
     session.markEndReason("user_closed");
     await mgr.end(session.oakridgeSid);
-    await flushFireAndForget();
+    await mgr.drainLifecycle();
     // Nothing to assert on safir; just confirm no exception escaped.
   });
 

@@ -425,7 +425,7 @@ export class Session {
   }
 
   markEndReason(reason: SessionEndReason): void {
-    if (this._endReason !== undefined) return;
+    if (this._endReason !== undefined || this._status === "ended") return;
     this._endReason = reason;
   }
 
