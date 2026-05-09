@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { KbblConfigSchema, type KbblConfig } from "../config";
+import { createSafirClient, type FetchFn } from "../safir/client";
+import { createSafirQueue } from "../safir/queue";
 import { SessionManager } from "./session-manager";
 import type { Session, SpawnCmd } from "./session";
 
@@ -52,11 +54,25 @@ function noopSpawn(_session: Session): SpawnCmd {
 }
 
 function makeManager(config: KbblConfig): SessionManager {
+  // Worktree tests don't exercise the safir lifecycle; supply a real client
+  // pointed at an unreachable host (every call would TypeError, which the
+  // queue catches) and a real on-disk queue. Cheap enough that we don't
+  // bother with a mock layer here.
+  const offlineFetch: FetchFn = async () => {
+    throw new TypeError("safir disabled in worktree tests");
+  };
+  const safirClient = createSafirClient({
+    baseUrl: "http://127.0.0.1:1",
+    fetch: offlineFetch,
+  });
+  const safirQueue = createSafirQueue({ dataDir: tmpRoot });
   return new SessionManager({
     sessionsDir,
     worktreesDir,
     buildSpawnCmd: noopSpawn,
     config,
+    safirClient,
+    safirQueue,
   });
 }
 
