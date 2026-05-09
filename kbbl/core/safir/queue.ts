@@ -1,10 +1,15 @@
 // Pending-write queue for safir requests that failed transiently. JSONL on
 // disk so it survives restart; rewrites happen via temp+rename so a crash
-// mid-write can't leave a half-line. Read patterns are O(file): the queue
-// is expected to stay small (transient failures only — 4xx are dropped at
-// the worker, 2xx never enter), so we re-parse on every readPending rather
-// than maintaining an in-memory index that would have to stay coherent
-// with the file across crash recovery.
+// mid-rewrite can't leave a half-line. The append path (enqueue) is *not*
+// crash-safe in the same way: a process/host crash mid-appendFile can
+// leave a truncated trailing line, which readAll will skip and log. We
+// accept that trade-off — making enqueue go through read+rewrite would
+// turn every transient failure into an O(file) write, and the operator-
+// visible warning is enough for a rare crash window. Read patterns are
+// O(file): the queue is expected to stay small (transient failures only
+// — 4xx are dropped at the worker, 2xx never enter), so we re-parse on
+// every readPending rather than maintaining an in-memory index that
+// would have to stay coherent with the file across crash recovery.
 
 import { randomUUID } from "node:crypto";
 import { appendFile, readFile, rename, writeFile } from "node:fs/promises";
@@ -46,10 +51,12 @@ export interface SafirQueue {
 
 export interface CreateSafirQueueOpts {
   dataDir: string;
+  logger?: { warn: (m: string) => void };
 }
 
 export function createSafirQueue(opts: CreateSafirQueueOpts): SafirQueue {
   const path = join(opts.dataDir, "safir-queue.jsonl");
+  const log = opts.logger ?? { warn: (m: string) => console.error(m) };
 
   // Serialize mutations so an enqueue's appendFile can't race with a
   // recordSuccess/recordFailure/compact rewrite (which would replace the
@@ -81,13 +88,18 @@ export function createSafirQueue(opts: CreateSafirQueueOpts): SafirQueue {
       throw err;
     }
     const out: QueueEntry[] = [];
-    for (const line of raw.split("\n")) {
+    const lines = raw.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]!;
       if (!line.trim()) continue;
       try {
         out.push(JSON.parse(line) as QueueEntry);
       } catch {
-        // Malformed line — skip. Don't crash the worker over a single bad
-        // entry; an operator inspecting the file can spot it.
+        // Malformed line — skip. Likely a crash truncated the trailing
+        // append; log so an operator notices the dropped retry.
+        log.warn(
+          `safir queue: discarding malformed line ${i + 1} in ${path} (${line.length} bytes)`,
+        );
       }
     }
     return out;

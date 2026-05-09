@@ -74,6 +74,16 @@ export function createSafirQueueWorker(
         }
         const msg = err instanceof Error ? err.message : String(err);
         await opts.queue.recordFailure(entry.id, msg, now());
+        // One-shot log when this attempt was the one that crossed the cap.
+        // entry.attempts is the pre-recordFailure count, so the new total
+        // is entry.attempts + 1. Logging here (vs. on every subsequent
+        // skip) avoids spamming an unattended worker once a stuck entry
+        // sits in the file.
+        if (entry.attempts + 1 >= MAX_ATTEMPTS) {
+          log.error(
+            `safir queue: ${entry.request.method} ${entry.request.path} hit retry cap (${MAX_ATTEMPTS} attempts); manual intervention required for entry ${entry.id}`,
+          );
+        }
       }
     }
 

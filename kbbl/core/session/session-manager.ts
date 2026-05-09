@@ -65,8 +65,8 @@ export interface SessionManagerOpts {
    * safir HTTP client + persistent retry queue for kbbl→safir lifecycle
    * writes. Wired in PR-A; first consumed in PR-B (createSession opens a
    * run/phase, markEnded closes the phase). Always provided by the server
-   * boot path; tests that don't exercise the safir lifecycle pass a noop
-   * client + an in-memory queue stub.
+   * boot path; tests pass stubs or lightweight real implementations
+   * depending on what the test exercises.
    */
   safirClient: SafirClient;
   safirQueue: SafirQueue;
