@@ -52,6 +52,16 @@ const SafirSchema = z
   })
   .strict();
 
+// Per-session git worktree isolation. Default-off in Phase 1 so existing
+// operators see no behavioral change; flipped to true in Phase 3 once
+// soak data is in. See comms/kbbl-session-worktrees-handoff.md.
+const SessionsSchema = z
+  .object({
+    worktree_per_session: z.boolean().default(false),
+    worktree_dir_name: z.string().default("worktrees"),
+  })
+  .strict();
+
 export const KbblConfigSchema = z
   .object({
     // .prefault({}) is the input-side default in Zod 4: when the key is
@@ -62,6 +72,7 @@ export const KbblConfigSchema = z
     compact: CompactSchema.prefault({}),
     retention: RetentionSchema.prefault({}),
     safir: SafirSchema.prefault({}),
+    sessions: SessionsSchema.prefault({}),
   })
   .strict();
 

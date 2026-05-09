@@ -41,6 +41,10 @@ interface SessionSnapshot {
   yoloMode: boolean;
   allowedTools: string[];
   lastResultUsage: ResultUsage | null;
+  worktreePath: string | null;
+  worktreeBranch: string | null;
+  worktreeBaseRef: string | null;
+  projectWorkdir: string | null;
 }
 
 const SLUG_ADJ = [
@@ -65,6 +69,27 @@ function workdirBasename(p: string): string {
   const trimmed = p.replace(/\/+$/, "");
   const parts = trimmed.split("/");
   return parts[parts.length - 1] || trimmed;
+}
+
+function sessionLabelTitle(snapshot: SessionSnapshot, sid: string): string {
+  // Tooltip surface — show full paths (operator workdir + worktree path)
+  // and the branch so an operator hovering can confirm where edits land
+  // without opening DevTools. Falls back to just workdir for pre-Phase-1
+  // sessions, matching the pre-existing tooltip shape.
+  const lines = [snapshot.name];
+  const project = snapshot.projectWorkdir ?? snapshot.workdir;
+  if (project) lines.push(project);
+  if (snapshot.worktreePath && snapshot.worktreePath !== project) {
+    lines.push(`worktree: ${snapshot.worktreePath}`);
+  }
+  if (snapshot.worktreeBranch) {
+    lines.push(`branch: ${snapshot.worktreeBranch}`);
+  }
+  if (snapshot.worktreeBaseRef) {
+    lines.push(`base: ${snapshot.worktreeBaseRef.slice(0, 12)}`);
+  }
+  lines.push(`sid ${sid}`);
+  return lines.join("\n");
 }
 
 type InboxDelta =
@@ -1920,18 +1945,33 @@ function SessionTopBar({
         className="session-label"
         title={
           snapshot
-            ? `${snapshot.name}\n${snapshot.workdir}\nsid ${sid}`
+            ? sessionLabelTitle(snapshot, sid)
             : `session ${sid}`
         }
       >
         <span className="session-label-name">
           {snapshot?.name || sid.slice(0, 8)}
         </span>
-        {snapshot?.workdir && (
-          <span className="session-label-workdir">
-            {workdirBasename(snapshot.workdir)}
-          </span>
-        )}
+        {snapshot && (() => {
+          // projectWorkdir is the operator's original repo when worktrees
+          // are on; falls back to workdir for pre-Phase-1 archived
+          // sessions where projectWorkdir is null.
+          const project = snapshot.projectWorkdir ?? snapshot.workdir;
+          if (!project) return null;
+          // worktreeBranch slug — strip the kbbl/ prefix and show what's
+          // left ("abc12345" or "abc12345-r1") next to the project basename
+          // so the operator can tell at a glance which branch this
+          // session's edits land on.
+          const slug = snapshot.worktreeBranch
+            ? snapshot.worktreeBranch.replace(/^kbbl\//, "")
+            : null;
+          return (
+            <span className="session-label-workdir">
+              {workdirBasename(project)}
+              {slug && <span className="session-label-slug"> › {slug}</span>}
+            </span>
+          );
+        })()}
       </span>
     </header>
   );

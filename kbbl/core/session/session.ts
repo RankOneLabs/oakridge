@@ -36,6 +36,14 @@ export interface SessionCallbacks {
 
 export interface SessionOpts {
   oakridgeSid: string;
+  /**
+   * Spawn cwd. With per-session worktrees on, this is the worktree path
+   * (`<dataDir>/worktrees/<sid>`) and `projectWorkdir` carries the operator's
+   * original repo. With worktrees off, both are the operator workdir. Every
+   * downstream consumer (spawn cwd, JSONL session_started.workdir, snapshot
+   * label) reads `workdir` and gets the right thing — there is no separate
+   * "spawn cwd" field by design.
+   */
   workdir: string;
   name: string;
   sessionsDir: string;
@@ -48,6 +56,16 @@ export interface SessionOpts {
    * SessionManager.listByArtifact() for grouping in the operator UI.
    */
   artifactId?: string;
+  /**
+   * Per-session git worktree metadata. All four are null when worktrees are
+   * off (or when the operator workdir isn't a git repo). When set,
+   * `workdir` above equals `worktreePath` and `projectWorkdir` is the
+   * operator's original repo — the dual-label PWA rendering reads both.
+   */
+  worktreePath?: string | null;
+  worktreeBranch?: string | null;
+  worktreeBaseRef?: string | null;
+  projectWorkdir?: string | null;
   callbacks?: SessionCallbacks;
   /**
    * Optional runtime-adapter classifier called for each parsed stdout event
@@ -133,6 +151,17 @@ export interface SessionSnapshot {
   yoloMode: boolean;
   allowedTools: string[];
   lastResultUsage: ResultUsage | null;
+  /**
+   * Per-session worktree metadata, all null when worktrees are off (or
+   * the operator workdir isn't a repo, or the session predates Phase 1).
+   * `workdir` above is the spawn cwd (= worktreePath when set);
+   * `projectWorkdir` is the operator's original repo so the PWA can show
+   * "this session is editing <project> on branch <kbbl/sid>".
+   */
+  worktreePath: string | null;
+  worktreeBranch: string | null;
+  worktreeBaseRef: string | null;
+  projectWorkdir: string | null;
 }
 
 export async function readJsonlOrEmpty(path: string): Promise<string> {
@@ -160,6 +189,10 @@ export class Session {
   readonly parentOakridgeSid: string | null;
   readonly artifactId: string | null;
   readonly createdAt: string;
+  readonly worktreePath: string | null;
+  readonly worktreeBranch: string | null;
+  readonly worktreeBaseRef: string | null;
+  readonly projectWorkdir: string | null;
 
   private readonly callbacks: SessionCallbacks;
   private readonly classifyEvent?: (
@@ -222,6 +255,10 @@ export class Session {
       );
     }
     this.artifactId = trimmedArtifactId;
+    this.worktreePath = opts.worktreePath ?? null;
+    this.worktreeBranch = opts.worktreeBranch ?? null;
+    this.worktreeBaseRef = opts.worktreeBaseRef ?? null;
+    this.projectWorkdir = opts.projectWorkdir ?? null;
     this.createdAt = new Date().toISOString();
     this.lastActivityTs = this.createdAt;
     this.lastResultTs = this.createdAt;
@@ -379,6 +416,10 @@ export class Session {
       yoloMode: this.yoloMode,
       allowedTools: [...this.allowedTools],
       lastResultUsage: this.lastResultUsage,
+      worktreePath: this.worktreePath,
+      worktreeBranch: this.worktreeBranch,
+      worktreeBaseRef: this.worktreeBaseRef,
+      projectWorkdir: this.projectWorkdir,
     };
   }
 
@@ -465,6 +506,10 @@ export class Session {
       parentCcSid: this.parentCcSid,
       parentOakridgeSid: this.parentOakridgeSid,
       artifactId: this.artifactId,
+      worktreePath: this.worktreePath,
+      worktreeBranch: this.worktreeBranch,
+      worktreeBaseRef: this.worktreeBaseRef,
+      projectWorkdir: this.projectWorkdir,
     });
 
     try {
