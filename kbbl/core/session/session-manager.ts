@@ -22,6 +22,7 @@ import {
   isGitRepo,
   removeWorktree,
 } from "./worktree";
+import { isAllowedModel } from "../../adapters/claude-code/models";
 
 export interface SessionManagerOpts {
   sessionsDir: string;
@@ -1010,7 +1011,7 @@ async function loadArchivedSnapshot(
         if (typeof payload.projectWorkdir === "string") {
           projectWorkdir = payload.projectWorkdir;
         }
-        if (typeof payload.model === "string") {
+        if (typeof payload.model === "string" && isAllowedModel(payload.model)) {
           model = payload.model;
         }
         break;

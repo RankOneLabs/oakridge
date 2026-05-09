@@ -72,3 +72,4 @@ class SessionSnapshot(_KbblModel):
     yolo_mode: bool
     allowed_tools: list[str]
     last_result_usage: ResultUsage | None
+    model: str | None
