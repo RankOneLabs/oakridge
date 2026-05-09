@@ -112,6 +112,9 @@ export function makeBuildSpawnCmd(
       "--settings",
       ctx.settingsPath,
     ];
+    if (session.model) {
+      cmd.push("--model", session.model);
+    }
     // Resume in a fresh session id so multiple live forks off the same parent
     // don't collide on CC's internal session id.
     if (session.parentCcSid) {

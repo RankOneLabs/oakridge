@@ -57,6 +57,14 @@ export interface SessionOpts {
    */
   artifactId?: string;
   /**
+   * Per-session runtime model id (e.g., "claude-sonnet-4-6"). null means
+   * "no --model flag at spawn" — CC will pick its own default. Persisted
+   * into session_started.payload.model so resume-from-disk can recover it.
+   * Adapter-specific opaque string; codex sessions will use a different
+   * namespace.
+   */
+  model?: string | null;
+  /**
    * Per-session git worktree metadata. All four are null when worktrees are
    * off (or when the operator workdir isn't a git repo). When set,
    * `workdir` above equals `worktreePath` and `projectWorkdir` is the
@@ -162,6 +170,11 @@ export interface SessionSnapshot {
   worktreeBranch: string | null;
   worktreeBaseRef: string | null;
   projectWorkdir: string | null;
+  /**
+   * Runtime model id this session was spawned with, or null for sessions
+   * created before this field existed / spawned with no override.
+   */
+  model: string | null;
 }
 
 export async function readJsonlOrEmpty(path: string): Promise<string> {
@@ -193,6 +206,7 @@ export class Session {
   readonly worktreeBranch: string | null;
   readonly worktreeBaseRef: string | null;
   readonly projectWorkdir: string | null;
+  readonly model: string | null;
 
   private readonly callbacks: SessionCallbacks;
   private readonly classifyEvent?: (
@@ -259,6 +273,7 @@ export class Session {
     this.worktreeBranch = opts.worktreeBranch ?? null;
     this.worktreeBaseRef = opts.worktreeBaseRef ?? null;
     this.projectWorkdir = opts.projectWorkdir ?? null;
+    this.model = opts.model ?? null;
     this.createdAt = new Date().toISOString();
     this.lastActivityTs = this.createdAt;
     this.lastResultTs = this.createdAt;
@@ -420,6 +435,7 @@ export class Session {
       worktreeBranch: this.worktreeBranch,
       worktreeBaseRef: this.worktreeBaseRef,
       projectWorkdir: this.projectWorkdir,
+      model: this.model,
     };
   }
 
@@ -510,6 +526,7 @@ export class Session {
       worktreeBranch: this.worktreeBranch,
       worktreeBaseRef: this.worktreeBaseRef,
       projectWorkdir: this.projectWorkdir,
+      model: this.model,
     });
 
     try {

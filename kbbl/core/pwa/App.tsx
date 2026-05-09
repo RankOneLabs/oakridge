@@ -46,6 +46,7 @@ interface SessionSnapshot {
   worktreeBranch: string | null;
   worktreeBaseRef: string | null;
   projectWorkdir: string | null;
+  model: string | null;
 }
 
 const SLUG_ADJ = [
@@ -63,6 +64,18 @@ function generateSlug(): string {
   const n = SLUG_NOUN[Math.floor(Math.random() * SLUG_NOUN.length)];
   const num = Math.floor(Math.random() * 90) + 10;
   return `${a}-${n}-${num}`;
+}
+
+function prettyModelLabel(model: string): string {
+  // Map full ids to the same short labels the dropdown uses, so the
+  // row badge and the dropdown stay visually consistent. Unknown ids
+  // (aliases, future versions) fall through to the raw string.
+  switch (model) {
+    case "claude-sonnet-4-6": return "sonnet 4.6";
+    case "claude-opus-4-7": return "opus 4.7";
+    case "claude-haiku-4-5-20251001": return "haiku 4.5";
+    default: return model;
+  }
 }
 
 function workdirBasename(p: string): string {
@@ -110,6 +123,27 @@ type Theme = "dark" | "light";
 type ResolutionMap = Map<string, "allow" | "deny">;
 
 const THEME_STORAGE_KEY = "oakridge.theme";
+const NEW_SESSION_MODEL_STORAGE_KEY = "oakridge.newSessionModel";
+
+const PWA_MODEL_OPTIONS = [
+  { value: "claude-sonnet-4-6", label: "sonnet 4.6" },
+  { value: "claude-opus-4-7", label: "opus 4.7" },
+  { value: "claude-haiku-4-5-20251001", label: "haiku 4.5" },
+  { value: "", label: "default" },
+] as const;
+
+function readStoredNewSessionModel(): string {
+  try {
+    const v = localStorage.getItem(NEW_SESSION_MODEL_STORAGE_KEY);
+    if (v !== null && PWA_MODEL_OPTIONS.some((o) => o.value === v)) {
+      return v;
+    }
+  } catch {}
+  // First-mount default: cost-engineering nudge per the design doc —
+  // make sonnet the implicit choice so absent-minded "+ New" clicks
+  // route to Sonnet pricing.
+  return "claude-sonnet-4-6";
+}
 
 function readStoredTheme(): Theme {
   // SSR-safe guard; also swallows SecurityError from sandboxed localStorage.
@@ -458,6 +492,7 @@ function SessionListView({
   const [workdirInput, setWorkdirInput] = useState("");
   const [workdirTouched, setWorkdirTouched] = useState(false);
   const [nameInput, setNameInput] = useState("");
+  const [modelInput, setModelInput] = useState<string>(readStoredNewSessionModel);
   // Generated once per mount so the placeholder is stable while the operator
   // is filling out the form (otherwise it would flicker on every re-render).
   // Submit uses the current placeholder if name field is empty, so what they
@@ -476,6 +511,12 @@ function SessionListView({
     }
   }, [defaultWorkdir, workdirInput, workdirTouched]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(NEW_SESSION_MODEL_STORAGE_KEY, modelInput);
+    } catch {}
+  }, [modelInput]);
+
   // Shared POST /sessions path for both the "+ New session" button and
   // row-level Resume buttons. Resume passes resume_from and ignores
   // workdir (parent's workdir wins server-side); a fresh session requires
@@ -484,7 +525,12 @@ function SessionListView({
   async function startSession(resumeFrom?: string) {
     if (pending) return;
     setPendingError(null);
-    const body: { resume_from?: string; workdir?: string; name?: string } = {};
+    const body: {
+      resume_from?: string;
+      workdir?: string;
+      name?: string;
+      model?: string;
+    } = {};
     if (resumeFrom) {
       body.resume_from = resumeFrom;
     } else {
@@ -496,6 +542,9 @@ function SessionListView({
       body.workdir = trimmed;
       const nameTrim = nameInput.trim();
       body.name = nameTrim || namePlaceholder;
+      if (modelInput !== "") {
+        body.model = modelInput;
+      }
     }
     setPending(true);
     try {
@@ -576,6 +625,19 @@ function SessionListView({
             autoCorrect="off"
             aria-label="Workdir for new session"
           />
+          <select
+            className="new-session-model"
+            value={modelInput}
+            onChange={(e) => setModelInput(e.target.value)}
+            disabled={pending}
+            aria-label="Model for new session"
+          >
+            {PWA_MODEL_OPTIONS.map((opt) => (
+              <option key={opt.value || "default"} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
           <input
             type="text"
             className="new-session-name"
@@ -686,6 +748,11 @@ function SessionRow({
           <span className="session-row-name" title={snapshot.sid}>
             {snapshot.name || snapshot.sid.slice(0, 8)}
           </span>
+          {snapshot.model && (
+            <span className="session-row-model" title={snapshot.model}>
+              {prettyModelLabel(snapshot.model)}
+            </span>
+          )}
           {snapshot.pendingCount > 0 && (
             <span className="session-row-pending" aria-label={`${snapshot.pendingCount} pending approvals`}>
               {snapshot.pendingCount} pending
