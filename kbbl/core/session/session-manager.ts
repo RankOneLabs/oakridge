@@ -403,10 +403,18 @@ export class SessionManager {
     // invokes runCompact via the manager.
     const compactor = new Compactor(this.opts.config.compact, {
       onSuggested: (reason, sessionTokens) => {
-        void session.emit("compact_suggested", {
-          reason: reason.kind,
-          session_tokens: sessionTokens,
-        });
+        session
+          .emit("compact_suggested", {
+            reason: reason.kind,
+            session_tokens: sessionTokens,
+          })
+          .catch((err) => {
+            console.error(
+              `kbbl: compact_suggested emit failed for ${session.oakridgeSid}: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            );
+          });
         this.broadcastDelta({
           type: "compact_suggested",
           sid: session.oakridgeSid,

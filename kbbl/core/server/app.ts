@@ -131,8 +131,13 @@ export function createApp(deps: CreateAppDeps): Hono {
         400,
       );
     }
+    try {
+      await writeFile(configPath, JSON.stringify({ ...config, compact: { ...config.compact, soft_threshold_tokens: softThresholdTokens } }, null, 2), "utf8");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return c.json({ error: `failed to persist config: ${msg}` }, 500);
+    }
     config.compact.soft_threshold_tokens = softThresholdTokens;
-    await writeFile(configPath, JSON.stringify(config, null, 2), "utf8");
     return c.json({ softThresholdTokens });
   });
 

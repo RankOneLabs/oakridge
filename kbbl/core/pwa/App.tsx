@@ -399,7 +399,13 @@ function useInbox(opts: { onSessionRemoved?: (sid: string) => void } = {}): Inbo
       if (delta.type === "compact_suggested") {
         setCompactSuggestion({ sid: delta.sid, tokens: delta.tokens });
       }
-      if (delta.type === "status_changed" && delta.status === "compacting") {
+      if (
+        delta.type === "status_changed" &&
+        (delta.status === "compacting" || delta.status === "ended")
+      ) {
+        setCompactSuggestion((prev) => (prev?.sid === delta.sid ? null : prev));
+      }
+      if (delta.type === "session_ended") {
         setCompactSuggestion((prev) => (prev?.sid === delta.sid ? null : prev));
       }
       if (delta.type === "session_compacted") {
@@ -2046,10 +2052,14 @@ function CompactSuggestionBanner({
         type="button"
         className="compact-suggestion-banner__action"
         onClick={async () => {
-          onClear();
-          await fetch(`/sessions/${encodeURIComponent(sid)}/compact`, {
-            method: "POST",
-          });
+          try {
+            const res = await fetch(`/${encodeURIComponent(sid)}/compact`, {
+              method: "POST",
+            });
+            if (res.ok) onClear();
+          } catch {
+            // keep banner visible so operator can retry
+          }
         }}
       >
         Compact Now
@@ -2417,19 +2427,23 @@ function SessionTopBar({
           step={1000}
           onChange={(e) => onThresholdChange(softThresholdTokens, e.target.value)}
           onBlur={async () => {
-            const n = parseInt(thresholdInput, 10);
-            if (!Number.isFinite(n) || n <= 0) {
+            const n = Number(thresholdInput);
+            if (!Number.isInteger(n) || n <= 0) {
               onThresholdChange(softThresholdTokens, String(softThresholdTokens));
               return;
             }
-            const res = await fetch("/config", {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ softThresholdTokens: n }),
-            });
-            if (res.ok) {
-              onThresholdChange(n, String(n));
-            } else {
+            try {
+              const res = await fetch("/config", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ softThresholdTokens: n }),
+              });
+              if (res.ok) {
+                onThresholdChange(n, String(n));
+              } else {
+                onThresholdChange(softThresholdTokens, String(softThresholdTokens));
+              }
+            } catch {
               onThresholdChange(softThresholdTokens, String(softThresholdTokens));
             }
           }}
