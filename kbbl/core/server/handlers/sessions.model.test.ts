@@ -17,7 +17,7 @@ let tmpRoot: string;
 let sessionsDir: string;
 let worktreesDir: string;
 
-function noopSpawn(_session: Session): SpawnCmd {
+async function noopSpawn(_session: Session): Promise<SpawnCmd> {
   return { cmd: ["true"], cwd: "/tmp", env: {} };
 }
 

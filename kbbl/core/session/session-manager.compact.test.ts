@@ -34,7 +34,7 @@ function buildConfig(
   };
 }
 
-function spawnEcho(_session: Session): SpawnCmd {
+async function spawnEcho(_session: Session): Promise<SpawnCmd> {
   return {
     cmd: ["bun", "run", mockCcPath],
     cwd: tmpRoot,
@@ -45,7 +45,7 @@ function spawnEcho(_session: Session): SpawnCmd {
   };
 }
 
-function spawnGarbage(_session: Session): SpawnCmd {
+async function spawnGarbage(_session: Session): Promise<SpawnCmd> {
   return {
     cmd: ["bun", "run", mockCcPath],
     cwd: tmpRoot,
@@ -56,7 +56,7 @@ function spawnGarbage(_session: Session): SpawnCmd {
   };
 }
 
-function spawnStall(_session: Session): SpawnCmd {
+async function spawnStall(_session: Session): Promise<SpawnCmd> {
   return {
     cmd: ["bun", "run", mockCcPath],
     cwd: tmpRoot,
@@ -137,7 +137,7 @@ function makeSafirStub(): { fetch: FetchFn; calls: StubCall[] } {
 
 function makeManager(opts: {
   fetchFn: FetchFn;
-  spawn: (s: Session) => SpawnCmd;
+  spawn: (s: Session) => Promise<SpawnCmd>;
   config?: Partial<KbblConfig["compact"]>;
 }): SessionManager {
   const safirClient = createSafirClient({
@@ -332,7 +332,7 @@ describe("runCompact failure modes", () => {
   test("successor spawn failure: compact_succeeded_but_resume_failed; old session stays live", async () => {
     const stub = makeSafirStub();
     let callCount = 0;
-    const switchSpawn = (s: Session): SpawnCmd => {
+    const switchSpawn = async (s: Session): Promise<SpawnCmd> => {
       callCount++;
       if (callCount === 1) return spawnEcho(s);
       // Force Bun.spawn to throw ENOENT for the successor.

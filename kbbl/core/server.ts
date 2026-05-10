@@ -134,19 +134,6 @@ if (config.sessions.worktree_per_session && (await isGitRepo(workdir))) {
   }
 }
 
-// === runtime adapter ===
-// The Claude Code adapter owns its CLI flags, settings.json, and the
-// PreToolUse gate route. Core consumes it through the AppRuntime contract
-// and never imports CC-specific files directly.
-
-const gatePath = resolve(moduleDir, "..", "adapters", "claude-code", "scripts", "gate.sh");
-const runtime = await createClaudeCodeRuntime({
-  claudeBin,
-  port,
-  dataDir,
-  gatePath,
-});
-
 // === safir client + retry queue ===
 // Constructed before the manager so SessionManagerOpts.safirClient/safirQueue
 // are populated. The worker drains queued kbbl→safir writes on a fixed
@@ -167,6 +154,21 @@ const safirWorker = createSafirQueueWorker({
   intervalSeconds: config.safir.queue_drain_interval_seconds,
 });
 safirWorker.start();
+
+// === runtime adapter ===
+// The Claude Code adapter owns its CLI flags, settings.json, and the
+// PreToolUse gate route. Core consumes it through the AppRuntime contract
+// and never imports CC-specific files directly.
+
+const gatePath = resolve(moduleDir, "..", "adapters", "claude-code", "scripts", "gate.sh");
+const runtime = await createClaudeCodeRuntime({
+  claudeBin,
+  port,
+  dataDir,
+  gatePath,
+  safirClient,
+  safirBaseUrl: config.safir.base_url.replace(/\/+$/, ""),
+});
 
 // === manager ===
 

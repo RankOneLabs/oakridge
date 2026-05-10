@@ -53,7 +53,7 @@ export interface SessionManagerOpts {
    * via parentCcSid on the Session, not as a separate flag here — the
    * builder inspects session.parentCcSid.
    */
-  buildSpawnCmd: (session: Session) => SpawnCmd;
+  buildSpawnCmd: (session: Session) => Promise<SpawnCmd>;
   /**
    * Optional runtime-adapter classifier wired into each Session's stdout
    * pump. The adapter inspects raw events and updates Session metadata
@@ -439,7 +439,7 @@ export class SessionManager {
     // immediately and then receive status/pending/activity deltas as the
     // subprocess comes up.
     this.broadcastDelta({ type: "session_created", session: session.snapshot() });
-    await session.spawn(this.opts.buildSpawnCmd(session));
+    await session.spawn(await this.opts.buildSpawnCmd(session));
     return session;
   }
 
