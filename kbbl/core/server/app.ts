@@ -5,6 +5,7 @@ import type { AppRuntime } from "../runtime";
 import type { SessionManager } from "../session/session-manager";
 import { inboxHandler } from "../stream/inbox";
 import { mountPerSidRoutes } from "./handlers/per-sid";
+import { mountSafirWebhookRoutes } from "./handlers/safir-webhook";
 import { mountSessionsRoutes } from "./handlers/sessions";
 import { mountWorkspaceEventsRoutes } from "./handlers/workspace-events";
 
@@ -70,6 +71,12 @@ export function createApp(deps: CreateAppDeps): Hono {
   // lifecycle and coordination events through to inbox subscribers
   // without kbbl interpreting them.
   mountWorkspaceEventsRoutes(app, { manager });
+
+  // ---- safir webhook receiver ----
+  //
+  // POST /webhooks/safir is registered before the static `/*` catch-all
+  // so the webhook path doesn't get rewritten as a static-file lookup.
+  mountSafirWebhookRoutes(app, { manager });
 
   // ---- /inbox (always-on delta stream) ----
   app.get("/inbox", inboxHandler(manager));

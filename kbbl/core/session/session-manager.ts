@@ -552,6 +552,27 @@ export class SessionManager {
     return oakridgeSid ? this.sessions.get(oakridgeSid) : undefined;
   }
 
+  /**
+   * Return every live session whose `runId` matches. Used by the safir
+   * webhook receiver (`handlers/safir-webhook.ts`) to dispatch incoming
+   * run-scoped events onto every session attached to the run — `create()`
+   * allows multiple sessions to share a runId via `opts.runId` (one phase
+   * each), and a `run.completed` / `run.failed` delivery is meaningful to
+   * all of them. Returns `[]` when no live session matches; the receiver
+   * logs and drops in that case rather than buffering. Scans the full
+   * sessions map and filters to `status === "live"`, so sessions that
+   * have already transitioned to `ended` (or are still in `starting`)
+   * are skipped — a webhook arriving moments after `markEnded` does not
+   * fan out into a closing session.
+   */
+  findAllLiveByRunId(runId: string): Session[] {
+    const out: Session[] = [];
+    for (const s of this.sessions.values()) {
+      if (s.status === "live" && s.runId === runId) out.push(s);
+    }
+    return out;
+  }
+
   list(): Session[] {
     return [...this.sessions.values()];
   }
