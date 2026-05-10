@@ -1489,13 +1489,12 @@ async function loadArchivedSnapshot(
         break;
       }
       case "compact_completed": {
-        // The success path always emits successor_sid: <sid> alongside the
-        // handoff doc; the resume-failed path emits successor_sid: null
-        // followed by a separate compact_succeeded_but_resume_failed event.
-        // Either way, the moment we see compact_completed the session ended
-        // for the "compacted" reason — even when no successor came up.
-        endReason = "compacted";
+        // Only the success path (successor_sid is a string) marks this as a
+        // terminal compaction. Resume-failed paths emit successor_sid: null
+        // and keep the old session live, so a later event (subprocess_exited)
+        // decides the true endReason.
         if (typeof payload.successor_sid === "string") {
+          endReason = "compacted";
           successorSid = payload.successor_sid;
         }
         break;

@@ -1428,6 +1428,12 @@ body {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.55; }
 }
+@media (prefers-reduced-motion: reduce) {
+  .session-row-status-compacting,
+  .compacting-banner__dot {
+    animation: none;
+  }
+}
 
 /* === compacted-row successor link === */
 .session-row-successor {
@@ -1561,5 +1567,4 @@ body {
     border-radius: 10px;
     background: var(--bg-input-bar-desktop);
   }
-}
 }

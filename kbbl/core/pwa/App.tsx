@@ -1629,6 +1629,7 @@ function SessionView({
         snapshot?.status === "ended" &&
         snapshot.endReason === "compacted" && (
           <CompactedBanner
+            key={sid}
             ref={bottomBarRef}
             sid={sid}
             successorSid={snapshot.successorSid}
