@@ -107,7 +107,7 @@ describe("makeBuildSpawnCmd safir backlog flags", () => {
     const allowIdx = cmd.indexOf("--allowedTools");
     expect(allowIdx).toBeGreaterThanOrEqual(0);
     expect(cmd[allowIdx + 1]).toBe(
-      `Bash(curl -s -X POST ${SAFIR_BASE}/tasks:*)`,
+      `Bash(curl -s -X POST ${SAFIR_BASE}/tasks :*)`,
     );
 
     const promptIdx = cmd.indexOf("--append-system-prompt");

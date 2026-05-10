@@ -167,7 +167,7 @@ const runtime = await createClaudeCodeRuntime({
   dataDir,
   gatePath,
   safirClient,
-  safirBaseUrl: config.safir.base_url,
+  safirBaseUrl: config.safir.base_url.replace(/\/+$/, ""),
 });
 
 // === manager ===

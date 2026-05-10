@@ -35,12 +35,12 @@ will trip a permission prompt):
 
     curl -s -X POST ${ctx.safirBaseUrl}/tasks \\
       -H "Content-Type: application/json" \\
-      -d '{"project_id":"${ctx.projectId}","title":"<short title>","status":"backlog","parent_id":${ctx.taskId},"notes":"<optional brief>"}'
+      -d "{\"project_id\":\"${ctx.projectId}\",\"title\":\"<short title>\",\"status\":\"backlog\",\"parent_id\":${ctx.taskId},\"notes\":\"<optional brief>\"}"
 
 Print the \`id\` from the response so the operator can see what was filed.
 
-Do not vary the flag order or substitute long flags (\`--silent\`,
-\`--data\`); the allowlist matches the literal command prefix.
+Do not vary the flag order or substitute long flags (\`--silent\`);
+the allowlist matches the literal command prefix up to the URL.
 
 Stay focused on the current task.
 `;

@@ -97,7 +97,7 @@ export interface BuildSpawnCmdContext {
 /**
  * Returns a function that constructs the per-session SpawnCmd consumed by
  * SessionManager. The returned closure captures the static context so the
- * manager only needs `(session) => SpawnCmd`.
+ * manager only needs `(session) => Promise<SpawnCmd>`.
  */
 export function makeBuildSpawnCmd(
   ctx: BuildSpawnCmdContext,
@@ -154,7 +154,7 @@ export function makeBuildSpawnCmd(
       // shape the model was never told to use.
       cmd.push(
         "--allowedTools",
-        `Bash(curl -s -X POST ${ctx.safirBaseUrl}/tasks:*)`,
+        `Bash(curl -s -X POST ${ctx.safirBaseUrl}/tasks :*)`,
       );
       cmd.push("--append-system-prompt", backlogBlock);
     }
