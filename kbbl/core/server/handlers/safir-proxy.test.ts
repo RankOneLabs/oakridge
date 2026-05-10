@@ -162,6 +162,23 @@ describe("safir-proxy GET /safir/tasks/:taskId", () => {
     expect(res.status).toBe(502);
     expect(await res.json()).toEqual({ error: "safir unreachable" });
   });
+
+  test("timeout on getTask becomes 502", async () => {
+    const { client } = makeStubClient({
+      getTask: async () => {
+        const err = new DOMException("signal timed out", "TimeoutError");
+        throw err;
+      },
+    });
+    const app = buildApp(client);
+
+    const res = await app.fetch(
+      new Request("http://kbbl.test/safir/tasks/1"),
+    );
+
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({ error: "safir unreachable" });
+  });
 });
 
 describe("safir-proxy GET /safir/tasks", () => {
@@ -236,5 +253,18 @@ describe("safir-proxy GET /safir/handoffs/:handoffId", () => {
     expect(body.id).toBe("deadbeef");
     expect(body.raw_markdown).toBeTruthy();
     expect(calls).toEqual([{ method: "getHandoff", args: ["deadbeef"] }]);
+  });
+
+  test("rejects whitespace-only handoffId with 400 and no upstream call", async () => {
+    const { client, calls } = makeStubClient({});
+    const app = buildApp(client);
+
+    const res = await app.fetch(
+      new Request("http://kbbl.test/safir/handoffs/%20"),
+    );
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "handoffId must be a non-empty string" });
+    expect(calls.length).toBe(0);
   });
 });
