@@ -2291,6 +2291,7 @@ function TaskView({
   useEffect(() => {
     let cancelled = false;
     setState({ kind: "loading" });
+    setExpanded(new Set());
     fetchTaskAndHandoffs(taskId).then((next) => {
       if (!cancelled) setState(next);
     });
@@ -2319,6 +2320,8 @@ function TaskView({
           type="button"
           className="task-view__theme"
           onClick={onToggleTheme}
+          title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
         >
           {theme === "dark" ? "☼" : "☾"}
         </button>

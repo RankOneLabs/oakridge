@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 
 import { SafirHttpError, type SafirClient } from "../../safir/client";
@@ -95,16 +95,6 @@ function makeHandoff(over: Partial<HandoffDocRecord> = {}): HandoffDocRecord {
   };
 }
 
-// Suppress noisy console.error from the proxy's drop-log paths so the test
-// output stays scannable. Tests assert on response status + body, not on
-// log lines.
-const originalConsoleError = console.error;
-beforeEach(() => {
-  console.error = () => {};
-});
-afterEach(() => {
-  console.error = originalConsoleError;
-});
 
 describe("safir-proxy GET /safir/tasks/:taskId", () => {
   test("forwards to safirClient.getTask and returns the task body", async () => {
