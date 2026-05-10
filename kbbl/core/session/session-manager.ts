@@ -402,16 +402,32 @@ export class SessionManager {
     // invokes runCompact via the manager.
     const compactor = new Compactor(this.opts.config.compact, {
       onScheduled: (fireAt, reason, sessionTokens) => {
-        // void: callbacks are sync (typed `void`) but emit is async.
-        // Fire-and-forget keeps the JSONL record best-effort.
-        void session.emit("compact_scheduled", {
-          fire_at: fireAt.toISOString(),
-          reason,
-          session_tokens: sessionTokens,
-        });
+        // Callbacks are typed `void` but emit is async. Fire-and-forget
+        // is intentional (best-effort JSONL); .catch logs any
+        // write/flush rejection so it doesn't surface as an unhandled
+        // promise rejection.
+        session
+          .emit("compact_scheduled", {
+            fire_at: fireAt.toISOString(),
+            reason,
+            session_tokens: sessionTokens,
+          })
+          .catch((err) => {
+            console.error(
+              `kbbl: compact_scheduled emit failed for ${session.oakridgeSid}: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            );
+          });
       },
       onCancelled: (reason) => {
-        void session.emit("compact_cancelled", { reason });
+        session.emit("compact_cancelled", { reason }).catch((err) => {
+          console.error(
+            `kbbl: compact_cancelled emit failed for ${session.oakridgeSid}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        });
       },
       onFire: async (reason, sessionTokens) => {
         await this.runCompact(session.oakridgeSid, reason, sessionTokens);
@@ -1186,8 +1202,15 @@ export class SessionManager {
   ): Promise<string | null> {
     let unsubscribe: (() => void) | null = null;
     let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-    let markerId = -1;
     try {
+      // Emit the marker BEFORE subscribing so any result event still
+      // draining through emitQueue from earlier activity has already
+      // been delivered (or has a smaller id than markerId). The
+      // subscriber then only sees events with id strictly greater than
+      // the marker — i.e. the COMPACT_PROMPT response and anything
+      // emitted afterward.
+      const marker = await session.emit("compact_prompt_sent", {});
+      const markerId = marker.id;
       const got = new Promise<string | null>((resolve) => {
         unsubscribe = session.subscribe((evt) => {
           if (evt.id <= markerId) return;
@@ -1197,8 +1220,6 @@ export class SessionManager {
           resolve(md);
         });
       });
-      const marker = await session.emit("compact_prompt_sent", {});
-      markerId = marker.id;
       await session.writeInput(COMPACT_PROMPT, { internal: true });
       const timed = new Promise<null>((resolve) => {
         timeoutHandle = setTimeout(() => resolve(null), timeoutMs);

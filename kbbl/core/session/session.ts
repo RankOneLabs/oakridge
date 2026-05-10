@@ -845,11 +845,13 @@ export class Session {
       await stdin.flush();
     };
     this.inputQueue = this.inputQueue.then(task, task);
-    await this.inputQueue;
-    // Internal writes don't represent a fresh user message — they
-    // shouldn't cancel a scheduled compaction by feeding
-    // observeUserMessage. The Compactor's "user activity" signal is
-    // for organic operator typing, not manager-driven injections.
+    // Notify the compactor BEFORE awaiting the queue. If a prior write
+    // is still flushing, the compaction timer could fire in the gap
+    // between "we accepted this user message" and "we finished writing
+    // the previous one" — and runCompact would start despite fresh
+    // operator activity having been accepted. Internal writes don't
+    // represent a fresh user message — they shouldn't cancel a
+    // scheduled compaction by feeding observeUserMessage.
     if (!isInternal && this._compactor) {
       try {
         this._compactor.observeUserMessage();
@@ -861,6 +863,7 @@ export class Session {
         );
       }
     }
+    await this.inputQueue;
   }
 
   registerApproval(requestId: string, pending: PendingApproval): void {
