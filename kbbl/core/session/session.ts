@@ -182,6 +182,25 @@ export interface SessionSnapshot {
    * created before this field existed / spawned with no override.
    */
   model: string | null;
+  /**
+   * Reason this session ended, or null if the reason is unknown (session is
+   * still live/starting/compacting, or ended without an explicit reason being
+   * recorded — e.g. reconstructed from JSONL without a terminal event).
+   * "compacted" means runCompact handed off to a successor (paired with
+   * `successorSid`); "user_closed" is a deliberate operator close;
+   * "subprocess_exited" is a CC subprocess death we did not initiate. The
+   * tri-state distinction lets the PWA pick CompactedBanner vs EndedBanner.
+   */
+  endReason: SessionEndReason | null;
+  /**
+   * oakridgeSid of the successor session created by runCompact, or null
+   * if this session was not compacted (or compaction failed before the
+   * successor spawned). Set even when status is still "compacting" the
+   * brief gap between successor.spawn() and oldSession.abort(); the PWA
+   * uses it to render the "→ session NNN" link as soon as the live snapshot
+   * gains it.
+   */
+  successorSid: string | null;
 }
 
 export async function readJsonlOrEmpty(path: string): Promise<string> {
@@ -219,6 +238,7 @@ export class Session {
   private _runId: string | undefined;
   private _phaseId: string | undefined;
   private _endReason: SessionEndReason | undefined;
+  private _successorSid: string | null = null;
   private _compactor: Compactor | null = null;
 
   private readonly callbacks: SessionCallbacks;
@@ -421,6 +441,7 @@ export class Session {
   get runId(): string | undefined { return this._runId; }
   get phaseId(): string | undefined { return this._phaseId; }
   get endReason(): SessionEndReason | undefined { return this._endReason; }
+  get successorSid(): string | null { return this._successorSid; }
 
   attachSafirContext(runId: string, phaseId: string | undefined): void {
     this._runId = runId;
@@ -443,6 +464,24 @@ export class Session {
   markEndReason(reason: SessionEndReason): void {
     if (this._endReason !== undefined || this._status === "ended") return;
     this._endReason = reason;
+  }
+
+  /**
+   * Records the oakridgeSid of the successor session that took over after a
+   * successful compaction. Set by SessionManager.runCompact between
+   * markEndReason("compacted") and abort(); idempotent (subsequent calls
+   * with the same sid are no-ops; calls with a different sid throw to
+   * surface a logic bug rather than silently overwrite).
+   */
+  markCompactedTo(successorSid: string): void {
+    if (this._successorSid === successorSid) return;
+    if (this._successorSid !== null) {
+      throw new Error(
+        `kbbl: markCompactedTo called twice on session ${this.oakridgeSid} ` +
+          `(was=${this._successorSid}, now=${successorSid})`,
+      );
+    }
+    this._successorSid = successorSid;
   }
 
   private setStatus(status: SessionStatus): void {
@@ -497,6 +536,8 @@ export class Session {
       worktreeBaseRef: this.worktreeBaseRef,
       projectWorkdir: this.projectWorkdir,
       model: this.model,
+      endReason: this._endReason ?? null,
+      successorSid: this._successorSid,
     };
   }
 

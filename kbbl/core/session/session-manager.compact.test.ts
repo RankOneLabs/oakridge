@@ -240,6 +240,13 @@ describe("runCompact happy path", () => {
 
     expect(session.endReason).toBe("compacted");
     expect(session.status).toBe("ended");
+    const successorSnap = successor!.snapshot();
+    const oldSnap = session.snapshot();
+    expect(oldSnap.endReason).toBe("compacted");
+    expect(oldSnap.successorSid).toBe(successor!.oakridgeSid);
+    expect(oldSnap.status).toBe("ended");
+    expect(successorSnap.endReason).toBeNull();
+    expect(successorSnap.successorSid).toBeNull();
 
     const oldPhasePatchCalls = stub.calls.filter(
       (c) => c.method === "PATCH" && c.path === `/phases/${oldPhaseId}`,
