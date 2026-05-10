@@ -33,6 +33,13 @@ import { isAllowedModel } from "../../adapters/claude-code/models";
 export interface SessionManagerOpts {
   sessionsDir: string;
   /**
+   * Directory where compaction handoff markdown is persisted, one file
+   * per old session keyed by oakridgeSid. Threaded explicitly (rather
+   * than derived from sessionsDir) so manager consumers don't bake in
+   * the `<dataDir>/sessions` + `<dataDir>/handoffs` sibling layout.
+   */
+  handoffsDir: string;
+  /**
    * Parent dir of all per-session worktrees: `<dataDir>/<worktree_dir_name>`.
    * Created by the server at startup before the manager is constructed.
    * Required even when worktrees are off so the manager doesn't have to
@@ -1022,18 +1029,11 @@ export class SessionManager {
       return;
     }
 
-    // setStatus is private on Session; bracket access is the seam. A
-    // cleaner refactor would expose a public markCompactingStarted
-    // method, but bracket access keeps the diff narrow.
-    const setSessionStatus = (s: SessionStatus): void => {
-      (oldSession as unknown as { setStatus(x: SessionStatus): void }).setStatus(
-        s,
-      );
-    };
-
     // Transition status BEFORE the prompt write so subscribers see
     // "compacting" before the COMPACT_PROMPT line lands in JSONL.
-    setSessionStatus("compacting");
+    // markCompacting validates the current status is "live" — a no-op
+    // otherwise — so we can't accidentally resurrect an ended session.
+    oldSession.markCompacting();
 
     let succeeded = false;
     try {
@@ -1061,10 +1061,12 @@ export class SessionManager {
       // Persist the raw markdown to disk so the PWA (Phase 1.8 follow-up
       // PR) can render it later. Directory is created at server startup;
       // first-compaction recursive mkdir is belt-and-suspenders.
-      const handoffsDir = join(this.opts.sessionsDir, "..", "handoffs");
-      const handoffPath = join(handoffsDir, `${oldSession.oakridgeSid}.md`);
+      const handoffPath = join(
+        this.opts.handoffsDir,
+        `${oldSession.oakridgeSid}.md`,
+      );
       try {
-        await mkdir(handoffsDir, { recursive: true });
+        await mkdir(this.opts.handoffsDir, { recursive: true });
         await writeFile(handoffPath, handoff.raw_markdown, "utf8");
       } catch (err) {
         console.error(
@@ -1154,17 +1156,11 @@ export class SessionManager {
         compactor.recordSuccess();
       } else {
         compactor.recordFailure();
-        // Only revert if the session is still "compacting". If the
-        // subprocess exited mid-compact and finalize() already moved
-        // status to "ended", reverting to "live" would resurrect an
-        // ended session and let later writes hit a closed JSONL writer.
-        // Cast: TS narrowed status to "live" at the top-of-function
-        // early-return; setSessionStatus mutates the underlying value
-        // but the getter type doesn't widen back automatically.
-        const currentStatus = oldSession.status as SessionStatus;
-        if (currentStatus === "compacting") {
-          setSessionStatus("live");
-        }
+        // markLive only flips when current status is "compacting"; if
+        // the subprocess exited mid-compact and finalize() already moved
+        // status to "ended", this is a no-op so the closed JSONL writer
+        // doesn't get resurrected.
+        oldSession.markLive();
       }
     }
   }

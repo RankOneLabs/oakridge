@@ -172,6 +172,7 @@ safirWorker.start();
 
 const manager = new SessionManager({
   sessionsDir,
+  handoffsDir,
   worktreesDir,
   buildSpawnCmd: runtime.buildSpawnCmd,
   classifyEvent: runtime.classifyEvent,

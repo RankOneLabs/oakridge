@@ -468,6 +468,23 @@ export class Session {
     }
   }
 
+  /**
+   * Manager-driven status transitions for the compaction lifecycle.
+   * Validated to prevent accidental misuse (e.g. resurrecting an ended
+   * session). markCompacting requires "live"; markLive requires
+   * "compacting". No-ops on any other current status — callers (notably
+   * runCompact's failure-revert) tolerate the no-op for safety.
+   */
+  markCompacting(): void {
+    if (this._status !== "live") return;
+    this.setStatus("compacting");
+  }
+
+  markLive(): void {
+    if (this._status !== "compacting") return;
+    this.setStatus("live");
+  }
+
   snapshot(): SessionSnapshot {
     return {
       sid: this.oakridgeSid,

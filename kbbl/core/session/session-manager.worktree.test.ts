@@ -68,6 +68,7 @@ function makeManager(config: KbblConfig): SessionManager {
   const safirQueue = createSafirQueue({ dataDir: tmpRoot });
   return new SessionManager({
     sessionsDir,
+    handoffsDir: join(tmpRoot, "handoffs"),
     worktreesDir,
     buildSpawnCmd: noopSpawn,
     config,

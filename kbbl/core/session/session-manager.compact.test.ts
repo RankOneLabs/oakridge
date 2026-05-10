@@ -147,6 +147,7 @@ function makeManager(opts: {
   const safirQueue = createSafirQueue({ dataDir: tmpRoot });
   return new SessionManager({
     sessionsDir,
+    handoffsDir,
     worktreesDir,
     buildSpawnCmd: opts.spawn,
     classifyEvent: classifyCcEvent,
