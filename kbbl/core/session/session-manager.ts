@@ -414,8 +414,8 @@ export class SessionManager {
       onCancelled: (reason) => {
         void session.emit("compact_cancelled", { reason });
       },
-      onFire: async (reason) => {
-        await this.runCompact(session.oakridgeSid, reason);
+      onFire: async (reason, sessionTokens) => {
+        await this.runCompact(session.oakridgeSid, reason, sessionTokens);
       },
     });
     session.attachCompactor(compactor);
@@ -997,14 +997,20 @@ export class SessionManager {
    *
    *  - timeout awaiting CC's compact response → compact_failed{phase:timeout}
    *  - parse error → defaults; successor still gets raw_markdown
-   *  - successor spawn throws → compact_succeeded_but_resume_failed; old
-   *    session stays live
+   *  - successor spawn throws → compact_completed{null sid} +
+   *    compact_succeeded_but_resume_failed; old session stays live
    *
-   * On any failure, the old session's status is reverted from
-   * "compacting" back to "live" before returning. compactor.recordFailure
-   * advances the consecutive-failure counter; recordSuccess resets it.
+   * Status transitions are guarded: failure paths revert "compacting" →
+   * "live" only when the session is still in "compacting" state. If the
+   * subprocess exited mid-compact and finalize() already moved status to
+   * "ended", we don't resurrect it. The outer try/finally guarantees
+   * recordSuccess/recordFailure runs even on unexpected throws.
    */
-  async runCompact(sid: string, reason: CompactReason): Promise<void> {
+  async runCompact(
+    sid: string,
+    reason: CompactReason,
+    sessionTokens: number = 0,
+  ): Promise<void> {
     const oldSession = this.sessions.get(sid);
     if (!oldSession || oldSession.status !== "live") return;
 
@@ -1016,123 +1022,151 @@ export class SessionManager {
       return;
     }
 
+    // setStatus is private on Session; bracket access is the seam. A
+    // cleaner refactor would expose a public markCompactingStarted
+    // method, but bracket access keeps the diff narrow.
+    const setSessionStatus = (s: SessionStatus): void => {
+      (oldSession as unknown as { setStatus(x: SessionStatus): void }).setStatus(
+        s,
+      );
+    };
+
     // Transition status BEFORE the prompt write so subscribers see
     // "compacting" before the COMPACT_PROMPT line lands in JSONL.
-    // setStatus is private on Session; bracket access is the seam.
-    // A cleaner refactor would expose a public markCompactingStarted
-    // method, but bracket access keeps the diff narrow.
-    (oldSession as unknown as { setStatus(s: SessionStatus): void }).setStatus(
-      "compacting",
-    );
+    setSessionStatus("compacting");
 
-    await oldSession.emit("compact_fired", {
-      reason,
-      session_tokens: 0,
-    });
-
-    const compactTimeoutMs =
-      this.opts.config.compact.compact_call_timeout_seconds * 1000;
-
-    const md = await this.awaitCompactResult(oldSession, compactTimeoutMs);
-    if (md === null) {
-      await oldSession.emit("compact_failed", { phase: "timeout" });
-      (oldSession as unknown as {
-        setStatus(s: SessionStatus): void;
-      }).setStatus("live");
-      compactor.recordFailure();
-      return;
-    }
-
-    const handoff = parseHandoffMarkdown(md, {
-      from_session_id: oldSession.oakridgeSid,
-      produced_at: new Date().toISOString(),
-      task_id: oldSession.taskId,
-      run_id: oldSession.runId,
-    });
-
-    // Persist the raw markdown to disk so the PWA (Phase 1.8 follow-up
-    // PR) can render it later. Directory is created at server startup;
-    // first-compaction recursive mkdir is belt-and-suspenders.
-    const handoffsDir = join(this.opts.sessionsDir, "..", "handoffs");
-    const handoffPath = join(handoffsDir, `${oldSession.oakridgeSid}.md`);
+    let succeeded = false;
     try {
-      await mkdir(handoffsDir, { recursive: true });
-      await writeFile(handoffPath, handoff.raw_markdown, "utf8");
+      await oldSession.emit("compact_fired", {
+        reason,
+        session_tokens: sessionTokens,
+      });
+
+      const compactTimeoutMs =
+        this.opts.config.compact.compact_call_timeout_seconds * 1000;
+
+      const md = await this.awaitCompactResult(oldSession, compactTimeoutMs);
+      if (md === null) {
+        await oldSession.emit("compact_failed", { phase: "timeout" });
+        return;
+      }
+
+      const handoff = parseHandoffMarkdown(md, {
+        from_session_id: oldSession.oakridgeSid,
+        produced_at: new Date().toISOString(),
+        task_id: oldSession.taskId,
+        run_id: oldSession.runId,
+      });
+
+      // Persist the raw markdown to disk so the PWA (Phase 1.8 follow-up
+      // PR) can render it later. Directory is created at server startup;
+      // first-compaction recursive mkdir is belt-and-suspenders.
+      const handoffsDir = join(this.opts.sessionsDir, "..", "handoffs");
+      const handoffPath = join(handoffsDir, `${oldSession.oakridgeSid}.md`);
+      try {
+        await mkdir(handoffsDir, { recursive: true });
+        await writeFile(handoffPath, handoff.raw_markdown, "utf8");
+      } catch (err) {
+        console.error(
+          `kbbl: failed to persist handoff for ${oldSession.oakridgeSid}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+
+      if (oldSession.phaseId) {
+        try {
+          await submitCompactionHandoff(
+            {
+              safirClient: this.opts.safirClient,
+              safirQueue: this.opts.safirQueue,
+            },
+            oldSession.phaseId,
+            handoff,
+          );
+        } catch (err) {
+          await oldSession.emit("compact_failed", {
+            phase: "handoff_submit",
+            error: err instanceof Error ? err.message : String(err),
+          });
+          return;
+        }
+      }
+
+      // Spawn the successor BEFORE emitting compact_completed so the
+      // event records the actual successor_sid on the success path. On
+      // spawn failure, emit compact_completed with successor_sid: null
+      // followed by compact_succeeded_but_resume_failed — the JSONL
+      // preserves the "completed-then-resume-failed" trail.
+      let successor: Session;
+      try {
+        successor = await this.create({
+          workdir: oldSession.workdir,
+          parentCcSid: oldSession.currentCcSid ?? undefined,
+          parentOakridgeSid: oldSession.oakridgeSid,
+          taskId: oldSession.taskId,
+          runId: oldSession.runId,
+          parentPhaseId: oldSession.phaseId,
+          initialMessage: handoff.raw_markdown,
+          model: oldSession.model ?? null,
+        });
+      } catch (err) {
+        await oldSession.emit("compact_completed", {
+          handoff_doc: handoff,
+          successor_sid: null,
+        });
+        await oldSession.emit("compact_succeeded_but_resume_failed", {
+          handoff_doc: handoff,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return;
+      }
+
+      await oldSession.emit("compact_completed", {
+        handoff_doc: handoff,
+        successor_sid: successor.oakridgeSid,
+      });
+
+      // Mark + abort. afterSessionEnded closes the phase with
+      // is_terminal: false because reason === "compacted".
+      oldSession.markEndReason("compacted");
+      void oldSession.abort();
+
+      this.broadcastDelta({
+        type: "session_compacted",
+        sid: oldSession.oakridgeSid,
+        successor_sid: successor.oakridgeSid,
+      });
+
+      succeeded = true;
     } catch (err) {
+      // Defensive: writeInput / emit / parseHandoffMarkdown / etc. could
+      // throw something we didn't model above. Log and let finally clean
+      // up state. Without this, an unexpected throw would leave the
+      // session stuck in "compacting" with no recordFailure.
       console.error(
-        `kbbl: failed to persist handoff for ${oldSession.oakridgeSid}: ${
+        `kbbl: runCompact unexpected error for ${oldSession.oakridgeSid}: ${
           err instanceof Error ? err.message : String(err)
         }`,
       );
-    }
-
-    if (oldSession.phaseId) {
-      try {
-        await submitCompactionHandoff(
-          {
-            safirClient: this.opts.safirClient,
-            safirQueue: this.opts.safirQueue,
-          },
-          oldSession.phaseId,
-          handoff,
-        );
-      } catch (err) {
-        await oldSession.emit("compact_failed", {
-          phase: "handoff_submit",
-          error: err instanceof Error ? err.message : String(err),
-        });
-        (oldSession as unknown as {
-          setStatus(s: SessionStatus): void;
-        }).setStatus("live");
+    } finally {
+      if (succeeded) {
+        compactor.recordSuccess();
+      } else {
         compactor.recordFailure();
-        return;
+        // Only revert if the session is still "compacting". If the
+        // subprocess exited mid-compact and finalize() already moved
+        // status to "ended", reverting to "live" would resurrect an
+        // ended session and let later writes hit a closed JSONL writer.
+        // Cast: TS narrowed status to "live" at the top-of-function
+        // early-return; setSessionStatus mutates the underlying value
+        // but the getter type doesn't widen back automatically.
+        const currentStatus = oldSession.status as SessionStatus;
+        if (currentStatus === "compacting") {
+          setSessionStatus("live");
+        }
       }
     }
-
-    // emit compact_completed before spawning the successor so a successor
-    // spawn failure leaves a clear "completed-then-failed" trail in the
-    // old session's JSONL.
-    await oldSession.emit("compact_completed", {
-      handoff_doc: handoff,
-      successor_sid: null,
-    });
-
-    let successor: Session;
-    try {
-      successor = await this.create({
-        workdir: oldSession.workdir,
-        parentCcSid: oldSession.currentCcSid ?? undefined,
-        parentOakridgeSid: oldSession.oakridgeSid,
-        taskId: oldSession.taskId,
-        runId: oldSession.runId,
-        parentPhaseId: oldSession.phaseId,
-        initialMessage: handoff.raw_markdown,
-        model: oldSession.model ?? null,
-      });
-    } catch (err) {
-      await oldSession.emit("compact_succeeded_but_resume_failed", {
-        handoff_doc: handoff,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      (oldSession as unknown as {
-        setStatus(s: SessionStatus): void;
-      }).setStatus("live");
-      compactor.recordFailure();
-      return;
-    }
-
-    // Mark + abort. afterSessionEnded closes the phase with
-    // is_terminal: false because reason === "compacted".
-    oldSession.markEndReason("compacted");
-    void oldSession.abort();
-
-    this.broadcastDelta({
-      type: "session_compacted",
-      sid: oldSession.oakridgeSid,
-      successor_sid: successor.oakridgeSid,
-    });
-
-    compactor.recordSuccess();
   }
 
   /**

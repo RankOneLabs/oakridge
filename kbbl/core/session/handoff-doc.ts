@@ -79,16 +79,20 @@ function slugify(s: string): string {
     .join(" ");
 }
 
+const BULLET_RE = /^\s*(?:[-*]|\d+\.)\s+(.*)$/;
+
 function parseBullets(body: string): string[] {
   if (!body.trim()) return [];
   const items: string[] = [];
   let current: string | null = null;
   for (const line of body.split("\n")) {
-    const m = /^\s*(?:[-*]|\d+\.)\s+(.*)$/.exec(line);
+    const m = BULLET_RE.exec(line);
     if (m) {
       if (current !== null) items.push(current.trim());
       current = m[1]!;
-    } else if (current !== null && /^\s+\S/.test(line)) {
+    } else if (current !== null && line.trim().length > 0) {
+      // Continuation: any non-empty, non-bullet line after a bullet.
+      // CC sometimes wraps long bullets without indenting the wrap.
       current += " " + line.trim();
     }
   }

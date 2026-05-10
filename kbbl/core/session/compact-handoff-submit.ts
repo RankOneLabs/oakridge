@@ -34,10 +34,12 @@ export async function submitCompactionHandoff(
       { method: "POST", path: `/phases/${phaseId}/handoff`, body },
     );
   } catch (err) {
+    // Only treat explicit permanent statuses as non-fatal swallow.
+    // 408/429 and other transient 4xx rethrow so the caller can handle
+    // them (runCompact emits compact_failed and reverts status).
     if (
       err instanceof SafirHttpError &&
-      err.status >= 400 &&
-      err.status < 500
+      (err.status === 404 || err.status === 422)
     ) {
       console.error(
         `kbbl: submitHandoff 4xx for phase ${phaseId}: ${err.status} ${err.message}; compaction proceeding without safir handoff record`,

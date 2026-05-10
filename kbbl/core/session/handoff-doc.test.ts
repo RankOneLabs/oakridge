@@ -150,4 +150,17 @@ describe("parseHandoffMarkdown bullet-shape variants", () => {
       "a second question",
     ]);
   });
+
+  test("multi-line bullet (unindented continuation) is concatenated", () => {
+    const md = `## Open questions
+- this question
+has an unindented wrap
+- a second question
+`;
+    const result = parseHandoffMarkdown(md, ctx);
+    expect(result.open_questions).toEqual([
+      "this question has an unindented wrap",
+      "a second question",
+    ]);
+  });
 });

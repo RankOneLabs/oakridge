@@ -174,6 +174,9 @@ async function waitForStatus(
     if (session.status === target) return;
     await Bun.sleep(20);
   }
+  throw new Error(
+    `waitForStatus(${target}) timed out after ${timeoutMs}ms; last=${session.status}`,
+  );
 }
 
 beforeEach(() => {

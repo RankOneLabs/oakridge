@@ -40,7 +40,11 @@ export interface CompactorCallbacks {
     sessionTokens: number,
   ) => void;
   onCancelled: (reason: CancelReason) => void;
-  onFire: (reason: CompactReason) => Promise<void>;
+  // sessionTokens is the token pressure recorded when the schedule was
+  // created (or 0 for forceFire/manual where there is no recorded
+  // pressure). Threaded through so compact_fired can report the same
+  // tokens that triggered the compaction.
+  onFire: (reason: CompactReason, sessionTokens: number) => Promise<void>;
 }
 
 interface ScheduledState {
@@ -145,7 +149,7 @@ export class Compactor {
     if (this.disposed) return;
     if (this.state === "firing") return;
     if (this.state === "scheduled") this.clearScheduled();
-    await this.fire(reason);
+    await this.fire(reason, 0);
   }
 
   getScheduledFireAt(): Date | null {
@@ -176,7 +180,7 @@ export class Compactor {
     const now = this.clock();
     const fireAt = new Date(now.getTime() + delayMs);
     const timer = setTimeout(() => {
-      void this.fire(reason);
+      void this.fire(reason, sessionTokens);
     }, delayMs);
 
     let warmCapTimer: ReturnType<typeof setTimeout> | null = null;
@@ -233,7 +237,10 @@ export class Compactor {
     this.state = "idle";
   }
 
-  private async fire(reason: CompactReason): Promise<void> {
+  private async fire(
+    reason: CompactReason,
+    sessionTokens: number,
+  ): Promise<void> {
     if (this.disposed) return;
     if (this.state !== "scheduled" && this.state !== "idle") return;
     // Clear scheduled state BEFORE entering firing so a re-entry
@@ -242,7 +249,7 @@ export class Compactor {
     if (this.scheduled !== null) this.clearScheduled();
     this.state = "firing";
     try {
-      await this.callbacks.onFire(reason);
+      await this.callbacks.onFire(reason, sessionTokens);
     } catch (err) {
       console.error(
         `kbbl: compactor onFire threw: ${

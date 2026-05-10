@@ -807,13 +807,15 @@ export class Session {
   }
 
   async writeInput(text: string): Promise<void> {
-    // Accept "compacting" alongside "live" so runCompact can deliver the
-    // /compact prompt after flipping status. The PWA's input path is
-    // hidden for compacting sessions, so this only opens the door for
-    // the manager's runCompact flow.
+    // Accept "compacting" only when the manager has set _compactInFlight
+    // — that flag is the gate that proves the writer is runCompact's own
+    // COMPACT_PROMPT injection, not an external client racing the
+    // /compact exchange via HTTP /input.
+    const compactingAndAuthorized =
+      this._status === "compacting" && this._compactInFlight;
     if (
       !this.proc ||
-      (this._status !== "live" && this._status !== "compacting")
+      (this._status !== "live" && !compactingAndAuthorized)
     ) {
       throw new SessionNotReadyError();
     }

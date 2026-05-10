@@ -263,4 +263,36 @@ describe("submitCompactionHandoff permanent failures", () => {
       expect(contents.trim()).toBe("");
     }
   });
+
+  test("429 rethrows so caller can handle/retry", async () => {
+    const stub = makeSafirStub({
+      status: 429,
+      responseBody: { error: "rate limited" },
+    });
+    const deps = makeDeps(stub.fetch);
+    const handoff = makeHandoff();
+
+    await expect(
+      submitCompactionHandoff(deps, "p-42", handoff),
+    ).rejects.toThrow();
+
+    const queueExists = existsSync(queuePath(tmpRoot));
+    if (queueExists) {
+      const contents = readFileSync(queuePath(tmpRoot), "utf8");
+      expect(contents.trim()).toBe("");
+    }
+  });
+
+  test("408 rethrows so caller can handle/retry", async () => {
+    const stub = makeSafirStub({
+      status: 408,
+      responseBody: { error: "request timeout" },
+    });
+    const deps = makeDeps(stub.fetch);
+    const handoff = makeHandoff();
+
+    await expect(
+      submitCompactionHandoff(deps, "p-42", handoff),
+    ).rejects.toThrow();
+  });
 });

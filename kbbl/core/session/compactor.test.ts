@@ -14,7 +14,7 @@ interface ObservedCalls {
     sessionTokens: number;
   }>;
   cancelled: CancelReason[];
-  fired: CompactReason[];
+  fired: Array<{ reason: CompactReason; sessionTokens: number }>;
 }
 
 function makeCompactor(opts?: {
@@ -36,8 +36,8 @@ function makeCompactor(opts?: {
         calls.scheduled.push({ fireAt, reason, sessionTokens });
       },
       onCancelled: (reason) => calls.cancelled.push(reason),
-      onFire: async (reason) => {
-        calls.fired.push(reason);
+      onFire: async (reason, sessionTokens) => {
+        calls.fired.push({ reason, sessionTokens });
         if (opts?.onFireImpl) await opts.onFireImpl(reason);
       },
     },
@@ -200,6 +200,30 @@ describe("Compactor cancellation", () => {
     expect(calls.fired.length).toBe(0);
     compactor.dispose();
   }, 10000);
+});
+
+describe("Compactor onFire sessionTokens threading", () => {
+  test("hard-threshold fire passes the recorded tokens to onFire", async () => {
+    const { compactor, calls } = makeCompactor();
+    compactor.observeAssistantTurn({
+      stop_reason: "end_turn",
+      session_tokens: 80000,
+      was_subagent_synthesis: false,
+    });
+    // Hard threshold fires immediately (delay 0); flush microtasks.
+    await Bun.sleep(10);
+    expect(calls.fired.length).toBe(1);
+    expect(calls.fired[0]!.sessionTokens).toBe(80000);
+    compactor.dispose();
+  });
+
+  test("forceFire passes 0 since no schedule recorded the pressure", async () => {
+    const { compactor, calls } = makeCompactor();
+    await compactor.forceFire({ kind: "manual" });
+    expect(calls.fired.length).toBe(1);
+    expect(calls.fired[0]!.sessionTokens).toBe(0);
+    compactor.dispose();
+  });
 });
 
 describe("Compactor force-after-failures", () => {
