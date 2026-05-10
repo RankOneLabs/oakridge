@@ -1151,6 +1151,12 @@ export class SessionManager {
       // recordSuccess only fires after the subprocess teardown
       // resolves — a rejected abort can't slip past us into success.
       oldSession.markEndReason("compacted");
+      // markCompactedTo BEFORE abort so the snapshot fired by the
+      // session_ended delta (broadcast inside abort → finalize → onEnded)
+      // already carries successorSid — the PWA doesn't have to wait for
+      // the trailing session_compacted delta to render the "→ session NNN"
+      // link.
+      oldSession.markCompactedTo(successor.oakridgeSid);
       await oldSession.abort();
 
       this.broadcastDelta({
@@ -1410,6 +1416,8 @@ async function loadArchivedSnapshot(
   let worktreeBaseRef: string | null = null;
   let projectWorkdir: string | null = null;
   let model: string | null = null;
+  let endReason: SessionEndReason | null = null;
+  let successorSid: string | null = null;
   for (const line of contents.split("\n")) {
     if (!line.trim()) continue;
     let evt: EnvelopeEvent;
@@ -1480,6 +1488,26 @@ async function loadArchivedSnapshot(
         if (usage) lastResultUsage = usage;
         break;
       }
+      case "compact_completed": {
+        // The success path always emits successor_sid: <sid> alongside the
+        // handoff doc; the resume-failed path emits successor_sid: null
+        // followed by a separate compact_succeeded_but_resume_failed event.
+        // Either way, the moment we see compact_completed the session ended
+        // for the "compacted" reason — even when no successor came up.
+        endReason = "compacted";
+        if (typeof payload.successor_sid === "string") {
+          successorSid = payload.successor_sid;
+        }
+        break;
+      }
+      case "subprocess_exited": {
+        // Only set when no terminal reason has already been resolved by an
+        // earlier compact_completed. A compacted session always exits its
+        // subprocess afterwards, and we want endReason to remain "compacted"
+        // for that case rather than getting clobbered by the trailing exit.
+        if (endReason === null) endReason = "subprocess_exited";
+        break;
+      }
     }
   }
   if (!createdAt) return null;
@@ -1508,5 +1536,7 @@ async function loadArchivedSnapshot(
     worktreeBaseRef,
     projectWorkdir,
     model,
+    endReason,
+    successorSid,
   };
 }

@@ -19,7 +19,7 @@ export interface EnvelopeEvent {
   payload: unknown;
 }
 
-type SessionStatus = "starting" | "live" | "ended";
+type SessionStatus = "starting" | "live" | "compacting" | "ended";
 
 interface ResultUsage {
   input_tokens: number;
@@ -47,6 +47,8 @@ interface SessionSnapshot {
   worktreeBaseRef: string | null;
   projectWorkdir: string | null;
   model: string | null;
+  endReason: "user_closed" | "subprocess_exited" | "compacted" | null;
+  successorSid: string | null;
 }
 
 const SLUG_ADJ = [
@@ -112,6 +114,7 @@ type InboxDelta =
   | { type: "session_created"; session: SessionSnapshot }
   | { type: "session_ended"; sid: string }
   | { type: "session_removed"; sid: string }
+  | { type: "session_compacted"; sid: string; successor_sid: string }
   | { type: "status_changed"; sid: string; status: SessionStatus }
   | { type: "pending_count_changed"; sid: string; count: number }
   | { type: "last_activity_changed"; sid: string; ts: string }
@@ -407,6 +410,23 @@ function applyDelta(
     }
     case "session_removed": {
       next.delete(delta.sid);
+      break;
+    }
+    case "session_compacted": {
+      const s = next.get(delta.sid);
+      // The server emits this AFTER session_ended (status already flipped
+      // to "ended" by the trailing status_changed). Patch in endReason +
+      // successorSid so CompactedBanner has the data it needs without
+      // waiting for a snapshot refetch. If the predecessor isn't in the
+      // map (rare race during initial /sessions hydration), the next
+      // snapshot fetch carries the same fields from disk.
+      if (s) {
+        next.set(delta.sid, {
+          ...s,
+          endReason: "compacted",
+          successorSid: delta.successor_sid,
+        });
+      }
       break;
     }
     case "status_changed": {
@@ -786,7 +806,7 @@ function SessionRow({
       >
         <div className="session-row-line">
           <span className={`session-row-status session-row-status-${snapshot.status}`}>
-            {snapshot.status}
+            {snapshot.status === "compacting" ? "compacting…" : snapshot.status}
           </span>
           <span className="session-row-name" title={snapshot.sid}>
             {snapshot.name || snapshot.sid.slice(0, 8)}
@@ -809,6 +829,14 @@ function SessionRow({
         <div className="session-row-workdir" title={snapshot.workdir}>
           {snapshot.workdir}
         </div>
+        {snapshot.endReason === "compacted" && snapshot.successorSid && (
+          <div
+            className="session-row-successor"
+            title={`Continued in successor session ${snapshot.successorSid}`}
+          >
+            → {snapshot.successorSid.slice(0, 8)}
+          </div>
+        )}
       </button>
       {canResume && (
         <button
@@ -1594,13 +1622,26 @@ function SessionView({
           canStop={true}
         />
       )}
-      {!canInput && snapshot?.status === "ended" && (
-        <EndedBanner
-          ref={bottomBarRef}
-          sid={sid}
-          onResume={onResume}
-        />
+      {!canInput && snapshot?.status === "compacting" && (
+        <CompactingBanner ref={bottomBarRef} />
       )}
+      {!canInput &&
+        snapshot?.status === "ended" &&
+        snapshot.endReason === "compacted" && (
+          <CompactedBanner
+            ref={bottomBarRef}
+            sid={sid}
+            successorSid={snapshot.successorSid}
+            onOpenSuccessor={(nextSid) => {
+              window.location.hash = `sid=${encodeURIComponent(nextSid)}`;
+            }}
+          />
+        )}
+      {!canInput &&
+        snapshot?.status === "ended" &&
+        snapshot.endReason !== "compacted" && (
+          <EndedBanner ref={bottomBarRef} sid={sid} onResume={onResume} />
+        )}
       <div ref={endRef} aria-hidden="true" />
     </div>
   );
@@ -1810,6 +1851,133 @@ function EndedBanner({
           error: {error}
         </div>
       )}
+    </div>
+  );
+}
+
+function CompactedBanner({
+  ref,
+  sid,
+  successorSid,
+  onOpenSuccessor,
+}: {
+  ref?: Ref<HTMLDivElement>;
+  sid: string;
+  /**
+   * Successor oakridgeSid surfaced from the snapshot. May be null when the
+   * predecessor's compaction succeeded but the successor spawn or handoff
+   * delivery failed (compact_succeeded_but_resume_failed) — the PWA still
+   * shows the banner with the handoff body but the "open successor"
+   * action is hidden.
+   */
+  successorSid: string | null;
+  onOpenSuccessor: (nextSid: string) => void;
+}) {
+  // Default the handoff to expanded so an operator who taps a compacted
+  // row lands directly on the rendered handoff (matches plan §1.8 "tap a
+  // compacted session row → render handoff").
+  const [showHandoff, setShowHandoff] = useState(true);
+  const [handoff, setHandoff] = useState<string | null>(null);
+  const [handoffStatus, setHandoffStatus] = useState<
+    "idle" | "loading" | "ok" | "missing" | "error"
+  >("idle");
+
+  useEffect(() => {
+    if (!showHandoff) return;
+    if (handoffStatus !== "idle") return;
+    let cancelled = false;
+    setHandoffStatus("loading");
+    fetch(`/${encodeURIComponent(sid)}/handoff`)
+      .then(async (r) => {
+        if (cancelled) return;
+        if (r.status === 404) {
+          setHandoffStatus("missing");
+          return;
+        }
+        if (!r.ok) {
+          setHandoffStatus("error");
+          return;
+        }
+        const text = await r.text();
+        if (cancelled) return;
+        setHandoff(text);
+        setHandoffStatus("ok");
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setHandoffStatus("error");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [showHandoff, sid, handoffStatus]);
+
+  return (
+    <div className="compacted-banner" ref={ref}>
+      <div className="compacted-banner__row">
+        <span className="compacted-banner__label">Compacted</span>
+        {successorSid !== null ? (
+          <button
+            type="button"
+            className="btn-resume btn-resume-banner compacted-banner__open"
+            onClick={() => onOpenSuccessor(successorSid)}
+            title={`Open successor session ${successorSid}`}
+          >
+            → session {successorSid.slice(0, 8)}
+          </button>
+        ) : (
+          <span
+            className="compacted-banner__no-successor"
+            title="The successor session never started — the handoff is below for review."
+          >
+            (no successor — resume failed)
+          </span>
+        )}
+        <button
+          type="button"
+          className="compacted-banner__toggle"
+          onClick={() => setShowHandoff((p) => !p)}
+          aria-expanded={showHandoff}
+        >
+          {showHandoff ? "Hide handoff" : "Show handoff"}
+        </button>
+      </div>
+      {showHandoff && (
+        <div className="compacted-banner__handoff">
+          {handoffStatus === "loading" && (
+            <div className="compacted-banner__status">loading handoff…</div>
+          )}
+          {handoffStatus === "missing" && (
+            <div className="compacted-banner__status">
+              no handoff document on disk for this session
+            </div>
+          )}
+          {handoffStatus === "error" && (
+            <div className="compacted-banner__status">
+              failed to load handoff
+            </div>
+          )}
+          {handoffStatus === "ok" && handoff !== null && (
+            <Markdown rehypePlugins={[rehypeSanitize]}>{handoff}</Markdown>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CompactingBanner({ ref }: { ref?: Ref<HTMLDivElement> }) {
+  return (
+    <div className="compacting-banner" ref={ref}>
+      <span className="compacting-banner__dot" aria-hidden="true" />
+      <span className="compacting-banner__dot" aria-hidden="true" />
+      <span className="compacting-banner__dot" aria-hidden="true" />
+      <span className="compacting-banner__label" role="status" aria-live="polite">
+        compacting…
+      </span>
+      <span className="compacting-banner__hint">
+        building handoff doc · successor will spawn when complete
+      </span>
     </div>
   );
 }

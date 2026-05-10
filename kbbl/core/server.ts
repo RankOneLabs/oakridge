@@ -192,6 +192,7 @@ const app = createApp({
   runtime,
   defaultWorkdir: workdir,
   sessionsDir,
+  handoffsDir,
   pwaDistDir,
   safirClient,
   getBunServer: () => bunServer,

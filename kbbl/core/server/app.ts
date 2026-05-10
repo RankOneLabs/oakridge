@@ -5,6 +5,7 @@ import type { AppRuntime } from "../runtime";
 import type { SafirClient } from "../safir/client";
 import type { SessionManager } from "../session/session-manager";
 import { inboxHandler } from "../stream/inbox";
+import { mountHandoffRoutes } from "./handlers/handoff";
 import { mountPerSidRoutes } from "./handlers/per-sid";
 import { mountSafirProxyRoutes } from "./handlers/safir-proxy";
 import { mountSafirWebhookRoutes } from "./handlers/safir-webhook";
@@ -19,6 +20,8 @@ export interface CreateAppDeps {
   defaultWorkdir: string;
   /** Path to the on-disk sessions directory. */
   sessionsDir: string;
+  /** Path to the on-disk handoffs directory (`<dataDir>/handoffs`). */
+  handoffsDir: string;
   /** Path to the built PWA dist directory served as static files. */
   pwaDistDir: string;
   /**
@@ -50,6 +53,7 @@ export function createApp(deps: CreateAppDeps): Hono {
     runtime,
     defaultWorkdir,
     sessionsDir,
+    handoffsDir,
     pwaDistDir,
     safirClient,
     getBunServer,
@@ -64,6 +68,14 @@ export function createApp(deps: CreateAppDeps): Hono {
 
   // ---- per-sid routes ----
   mountPerSidRoutes(app, { manager, sessionsDir });
+
+  // ---- per-sid handoff ----
+  //
+  // GET /:sid/handoff serves the compaction handoff markdown the PWA's
+  // CompactedBanner renders for compacted predecessors. Mounted alongside
+  // the other per-sid routes so it shares the UUID-v4 sid validator and
+  // stays grouped with the per-session surfaces.
+  mountHandoffRoutes(app, { handoffsDir });
 
   // ---- server config ----
   //

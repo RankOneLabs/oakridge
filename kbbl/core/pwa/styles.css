@@ -1414,3 +1414,152 @@ body {
     display: block;
   }
 }
+
+/* === compacting status badge === */
+/* Reuses the amber palette already used for permission/yolo affordances —
+   compaction is operator-relevant signal but not an error. */
+.session-row-status-compacting {
+  background: var(--amber-bg);
+  color: var(--amber-fg);
+  border: 1px solid var(--amber-border);
+  animation: compacting-pulse 1.4s ease-in-out infinite;
+}
+@keyframes compacting-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+/* === compacted-row successor link === */
+.session-row-successor {
+  margin-top: 0.25rem;
+  font-family: "SF Mono", Menlo, monospace;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+/* === compacting banner (bottom of SessionView while status === "compacting") === */
+.compacting-banner {
+  position: sticky;
+  bottom: 0;
+  padding: 0.75rem;
+  padding-bottom: calc(env(safe-area-inset-bottom) + 0.75rem);
+  background: var(--bg-input-bar);
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  z-index: 10;
+}
+.compacting-banner__dot {
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 50%;
+  background: var(--amber-fg);
+  animation: compacting-pulse 1.4s ease-in-out infinite;
+}
+.compacting-banner__dot:nth-child(2) { animation-delay: 0.2s; }
+.compacting-banner__dot:nth-child(3) { animation-delay: 0.4s; }
+.compacting-banner__label {
+  color: var(--amber-fg);
+  font-weight: 600;
+}
+.compacting-banner__hint {
+  color: var(--text-faint);
+  font-size: 0.78rem;
+}
+@media (min-width: 1024px) {
+  .compacting-banner {
+    position: static;
+    margin: 0.75rem 0 1rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    background: var(--bg-input-bar-desktop);
+  }
+}
+
+/* === compacted banner (bottom of SessionView when endReason === "compacted") === */
+.compacted-banner {
+  position: sticky;
+  bottom: 0;
+  padding: 0.75rem;
+  padding-bottom: calc(env(safe-area-inset-bottom) + 0.75rem);
+  background: var(--bg-input-bar);
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  z-index: 10;
+}
+.compacted-banner__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+.compacted-banner__label {
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.compacted-banner__open {
+  /* Reuses .btn-resume-banner sizing/colors via the className applied in
+     CompactedBanner; this rule just handles the inline-with-label layout. */
+  margin-left: 0.25rem;
+}
+.compacted-banner__no-successor {
+  color: var(--text-faint);
+  font-size: 0.8rem;
+}
+.compacted-banner__toggle {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--border-muted);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  padding: 0.35rem 0.7rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.compacted-banner__toggle:hover {
+  border-color: var(--border-hover);
+}
+.compacted-banner__handoff {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 0.5rem;
+  max-height: 60vh;
+  overflow-y: auto;
+  font-size: 0.88rem;
+  color: var(--text-primary);
+}
+.compacted-banner__handoff h1,
+.compacted-banner__handoff h2,
+.compacted-banner__handoff h3 {
+  margin: 0.6rem 0 0.3rem;
+}
+.compacted-banner__handoff pre {
+  background: var(--bg-code);
+  border-radius: 6px;
+  padding: 0.5rem 0.6rem;
+  overflow-x: auto;
+}
+.compacted-banner__handoff code {
+  font-family: "SF Mono", Menlo, monospace;
+  font-size: 0.85em;
+}
+.compacted-banner__status {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  padding: 0.5rem 0;
+}
+@media (min-width: 1024px) {
+  .compacted-banner {
+    position: static;
+    margin: 0.75rem 0 1rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    background: var(--bg-input-bar-desktop);
+  }
+}
+}

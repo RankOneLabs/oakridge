@@ -267,6 +267,55 @@ describe("loadArchivedSnapshot round-trips worktree fields", () => {
     expect(snap!.worktreeBaseRef).toBeNull();
     expect(snap!.projectWorkdir).toBeNull();
   });
+
+  test("compact_completed in JSONL → snapshot exposes endReason + successorSid", async () => {
+    const sid = "feedface-cafe-1234-5678-bbbbbbbbbbbb";
+    const successorSid = "feedface-cafe-1234-5678-cccccccccccc";
+    const baseTs = new Date().toISOString();
+    const sessionStarted = {
+      id: 0,
+      type: "session_started",
+      ts: baseTs,
+      payload: {
+        command: ["true"],
+        workdir: "/tmp/workdir",
+        name: `session-${sid.slice(0, 8)}`,
+        sessionId: sid,
+        parentCcSid: null,
+        parentOakridgeSid: null,
+        artifactId: null,
+      },
+    };
+    const compactCompleted = {
+      id: 1,
+      type: "compact_completed",
+      ts: baseTs,
+      payload: {
+        handoff_doc: { schema_version: 1 },
+        successor_sid: successorSid,
+      },
+    };
+    const subprocessExited = {
+      id: 2,
+      type: "subprocess_exited",
+      ts: baseTs,
+      payload: { code: 0, reason: "clean" },
+    };
+    Bun.write(
+      join(sessionsDir, `${sid}.jsonl`),
+      [sessionStarted, compactCompleted, subprocessExited]
+        .map((e) => JSON.stringify(e))
+        .join("\n") + "\n",
+    );
+    await new Promise((r) => setTimeout(r, 10));
+
+    const mgr = makeManager(buildConfig(false));
+    const archived = await mgr.listArchivedSnapshots();
+    const snap = archived.find((s) => s.sid === sid);
+    expect(snap).toBeTruthy();
+    expect(snap!.endReason).toBe("compacted");
+    expect(snap!.successorSid).toBe(successorSid);
+  });
 });
 
 describe("SessionManager.remove cleans up worktrees", () => {
