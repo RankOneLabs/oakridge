@@ -3,6 +3,7 @@ import type { Hono } from "hono";
 import type { Session, SpawnCmd } from "../../core/session/session";
 import type { SessionManager } from "../../core/session/session-manager";
 import type { AppRuntime } from "../../core/runtime";
+import type { SafirClient } from "../../core/safir/client";
 
 import { classifyCcEvent } from "./event-classifier";
 import { hookApprovalHandler } from "./hook-route";
@@ -16,6 +17,10 @@ export interface CreateClaudeCodeRuntimeOpts {
   dataDir: string;
   /** Absolute path to the PreToolUse gate script. */
   gatePath: string;
+  /** Used by the spawn flow to resolve project_id for safir-task-bound sessions. */
+  safirClient: SafirClient;
+  /** Same base URL the SafirClient was constructed with, e.g. "http://localhost:7145". */
+  safirBaseUrl: string;
 }
 
 /**
@@ -40,11 +45,13 @@ export async function createClaudeCodeRuntime(
     claudeBin: opts.claudeBin,
     port: opts.port,
     settingsPath,
+    safirClient: opts.safirClient,
+    safirBaseUrl: opts.safirBaseUrl,
   });
 
   return {
     id: "claude-code",
-    buildSpawnCmd: (session: Session): SpawnCmd => buildSpawnCmd(session),
+    buildSpawnCmd: (session: Session): Promise<SpawnCmd> => buildSpawnCmd(session),
     mountRoutes: (app: Hono, deps: {
       manager: SessionManager;
       getBunServer: () => import("bun").Server<unknown> | null;

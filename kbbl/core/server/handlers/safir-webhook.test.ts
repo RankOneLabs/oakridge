@@ -52,7 +52,7 @@ function buildConfig(): KbblConfig {
   return KbblConfigSchema.parse({ sessions: { worktree_per_session: false } });
 }
 
-function hangingSpawn(_session: Session): SpawnCmd {
+async function hangingSpawn(_session: Session): Promise<SpawnCmd> {
   return { cmd: ["cat"], cwd: "/tmp", env: {} };
 }
 

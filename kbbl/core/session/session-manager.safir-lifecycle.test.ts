@@ -58,7 +58,7 @@ function buildConfig(): KbblConfig {
   });
 }
 
-function hangingSpawn(_session: Session): SpawnCmd {
+async function hangingSpawn(_session: Session): Promise<SpawnCmd> {
   return { cmd: ["cat"], cwd: "/tmp", env: {} };
 }
 

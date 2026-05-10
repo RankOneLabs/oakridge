@@ -46,7 +46,7 @@ function buildConfig(worktreePerSession: boolean): KbblConfig {
   });
 }
 
-function noopSpawn(_session: Session): SpawnCmd {
+async function noopSpawn(_session: Session): Promise<SpawnCmd> {
   // `true` exits 0 immediately, so the session reaches "live" briefly then
   // ends. We just need create() to complete; the test asserts on disk +
   // snapshot state, not on the subprocess lifecycle.

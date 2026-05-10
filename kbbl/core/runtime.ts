@@ -37,8 +37,11 @@ export interface AppRuntime {
    * for each new session. The adapter captures any static state (settings
    * path, env vars, CLI flags) at adapter-creation time and uses the
    * Session here only for per-instance values (workdir, parentCcSid).
+   * The async return shape exists so the CC adapter can pre-fetch
+   * runtime metadata (e.g., a safir task's project_id) at session-start
+   * before constructing the command.
    */
-  buildSpawnCmd(session: Session): SpawnCmd;
+  buildSpawnCmd(session: Session): Promise<SpawnCmd>;
 
   /**
    * Mount adapter HTTP routes on the Hono app. Called once at server

@@ -2,6 +2,8 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { Session, SpawnCmd } from "../../core/session/session";
+import type { SafirClient } from "../../core/safir/client";
+import { buildSafirBacklogPromptBlock } from "./safir-backlog-prompt";
 
 /**
  * CC-specific spawn-command construction and settings-file generation.
@@ -81,6 +83,15 @@ export interface BuildSpawnCmdContext {
   port: number;
   /** Absolute path to the settings.json from writeCcSettings(). */
   settingsPath: string;
+  /** Used to pre-fetch project_id for safir-task-bound sessions. */
+  safirClient: SafirClient;
+  /**
+   * Base URL with no trailing slash, e.g. "http://localhost:7145".
+   * The same value the SafirClient was constructed with — fed into both
+   * the system-prompt block and the --allowedTools pattern so the
+   * literal-prefix match works.
+   */
+  safirBaseUrl: string;
 }
 
 /**
@@ -90,8 +101,8 @@ export interface BuildSpawnCmdContext {
  */
 export function makeBuildSpawnCmd(
   ctx: BuildSpawnCmdContext,
-): (session: Session) => SpawnCmd {
-  return function buildSpawnCmd(session: Session): SpawnCmd {
+): (session: Session) => Promise<SpawnCmd> {
+  return async function buildSpawnCmd(session: Session): Promise<SpawnCmd> {
     const cmd = [
       ctx.claudeBin,
       "--print",
@@ -112,6 +123,42 @@ export function makeBuildSpawnCmd(
       "--settings",
       ctx.settingsPath,
     ];
+
+    // Resolve project_id for safir-task-bound sessions. A failed lookup
+    // (network error, 404, timeout) leaves projectId undefined; the prompt
+    // builder returns null and the allowlist is skipped — the session
+    // still spawns successfully, just without backlog integration.
+    let projectId: string | undefined;
+    if (session.taskId !== undefined) {
+      try {
+        const task = await ctx.safirClient.getTask(session.taskId);
+        projectId = task.project_id;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(
+          `kbbl: safir.getTask(${session.taskId}) failed for session ${session.oakridgeSid}; spawning without backlog integration: ${msg}`,
+        );
+      }
+    }
+
+    const backlogBlock = buildSafirBacklogPromptBlock({
+      taskId: session.taskId,
+      projectId,
+      sid: session.oakridgeSid,
+      safirBaseUrl: ctx.safirBaseUrl,
+    });
+
+    if (backlogBlock) {
+      // Allowlist + prompt are paired: only emit the allowlist when the
+      // prompt is actually being delivered. Avoids advertising a curl
+      // shape the model was never told to use.
+      cmd.push(
+        "--allowedTools",
+        `Bash(curl -s -X POST ${ctx.safirBaseUrl}/tasks:*)`,
+      );
+      cmd.push("--append-system-prompt", backlogBlock);
+    }
+
     if (session.model) {
       cmd.push("--model", session.model);
     }
