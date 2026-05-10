@@ -3,7 +3,7 @@
     "t_quiet_seconds": 30,
     "t_quiet_after_subagent_seconds": 15,
     "t_warm_seconds": 180,
-    "soft_threshold_tokens": 30000,
+    "soft_threshold_tokens": 25000,
     "hard_threshold_tokens": 70000,
     "compact_call_timeout_seconds": 90,
     "max_consecutive_failures_before_force": 3
