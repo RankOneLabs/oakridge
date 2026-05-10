@@ -66,6 +66,8 @@ const dataDir = values.dataDir ?? join(kbblRoot, "data");
 const pwaDistDir = join(moduleDir, "pwa", "dist");
 const sessionsDir = join(dataDir, "sessions");
 await mkdir(sessionsDir, { recursive: true });
+const handoffsDir = join(dataDir, "handoffs");
+await mkdir(handoffsDir, { recursive: true });
 
 // === config ===
 // Load before binding the port so a malformed config.json fails fast, with

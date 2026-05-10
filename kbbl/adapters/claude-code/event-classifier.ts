@@ -45,6 +45,25 @@ export async function classifyCcEvent(
     if (!usage) return;
     const model = typeof evt.model === "string" ? evt.model : null;
     await session.observeTurnEnd({ usage, model });
+
+    // Forward to compactor for soft/hard threshold scheduling.
+    // session_tokens = input + cache_read + cache_creation. Output is
+    // excluded because it'll be input on the next turn.
+    // observeAssistantTurn is a no-op unless stop_reason === "end_turn"
+    // (Compactor enforces). was_subagent_synthesis is hard-coded to
+    // false in v0; subagent detection is punted.
+    const stopReason =
+      typeof evt.stop_reason === "string" ? evt.stop_reason : "";
+    if (session.compactor) {
+      session.compactor.observeAssistantTurn({
+        stop_reason: stopReason,
+        session_tokens:
+          usage.input_tokens +
+          (usage.cache_read_input_tokens ?? 0) +
+          (usage.cache_creation_input_tokens ?? 0),
+        was_subagent_synthesis: false,
+      });
+    }
     return;
   }
 }

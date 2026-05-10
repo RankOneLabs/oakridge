@@ -2,6 +2,8 @@ import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
+import type { Compactor } from "./compactor";
+
 export interface EnvelopeEvent {
   id: number;
   type: string;
@@ -95,7 +97,7 @@ export interface SessionOpts {
   nonPersistedEventTypes?: ReadonlySet<string>;
 }
 
-export type SessionStatus = "starting" | "live" | "ended";
+export type SessionStatus = "starting" | "live" | "compacting" | "ended";
 
 export type SessionEndReason = "user_closed" | "subprocess_exited" | "compacted";
 
@@ -217,6 +219,8 @@ export class Session {
   private _runId: string | undefined;
   private _phaseId: string | undefined;
   private _endReason: SessionEndReason | undefined;
+  private _compactor: Compactor | null = null;
+  private _compactInFlight = false;
 
   private readonly callbacks: SessionCallbacks;
   private readonly classifyEvent?: (
@@ -422,6 +426,27 @@ export class Session {
   attachSafirContext(runId: string, phaseId: string | undefined): void {
     this._runId = runId;
     this._phaseId = phaseId;
+  }
+
+  get compactor(): Compactor | null {
+    return this._compactor;
+  }
+
+  attachCompactor(c: Compactor): void {
+    if (this._compactor !== null) {
+      throw new Error(
+        `kbbl: attachCompactor called twice on session ${this.oakridgeSid}`,
+      );
+    }
+    this._compactor = c;
+  }
+
+  get compactInFlight(): boolean {
+    return this._compactInFlight;
+  }
+
+  setCompactInFlight(v: boolean): void {
+    this._compactInFlight = v;
   }
 
   markEndReason(reason: SessionEndReason): void {
@@ -705,6 +730,17 @@ export class Session {
       }
       resolvedCount++;
     }
+    if (this._compactor) {
+      try {
+        this._compactor.observeSessionEnded();
+      } catch (err) {
+        console.error(
+          `kbbl: compactor.observeSessionEnded threw: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
     // Flip status BEFORE draining so any emit() racing with finalize sees
     // the ended flag and short-circuits instead of queueing new writes
     // onto a writer we're about to close.
@@ -757,10 +793,28 @@ export class Session {
         }`,
       );
     }
+    if (this._compactor) {
+      try {
+        this._compactor.dispose();
+      } catch (err) {
+        console.error(
+          `kbbl: compactor.dispose threw: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
   }
 
   async writeInput(text: string): Promise<void> {
-    if (!this.proc || this._status !== "live") {
+    // Accept "compacting" alongside "live" so runCompact can deliver the
+    // /compact prompt after flipping status. The PWA's input path is
+    // hidden for compacting sessions, so this only opens the door for
+    // the manager's runCompact flow.
+    if (
+      !this.proc ||
+      (this._status !== "live" && this._status !== "compacting")
+    ) {
       throw new SessionNotReadyError();
     }
     const stdin = this.proc.stdin as import("bun").FileSink;
@@ -775,6 +829,21 @@ export class Session {
     };
     this.inputQueue = this.inputQueue.then(task, task);
     await this.inputQueue;
+    // Skip when compactInFlight: writeInput from runCompact's own
+    // COMPACT_PROMPT injection should NOT cancel the schedule that is
+    // about to consume the result. runCompact sets compactInFlight before
+    // calling writeInput.
+    if (!this._compactInFlight && this._compactor) {
+      try {
+        this._compactor.observeUserMessage();
+      } catch (err) {
+        console.error(
+          `kbbl: compactor.observeUserMessage threw: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
   }
 
   registerApproval(requestId: string, pending: PendingApproval): void {
@@ -800,6 +869,17 @@ export class Session {
           e instanceof Error ? e.message : String(e)
         }`,
       );
+    }
+    if (this._compactor) {
+      try {
+        this._compactor.observePendingApprovalChange(this.pendingApprovals.size);
+      } catch (err) {
+        console.error(
+          `kbbl: compactor.observePendingApprovalChange threw: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
     }
   }
 

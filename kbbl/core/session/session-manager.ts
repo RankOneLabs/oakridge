@@ -1,4 +1,4 @@
-import { readdir, unlink } from "node:fs/promises";
+import { mkdir, readdir, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { KbblConfig } from "../config";
@@ -18,6 +18,10 @@ import {
   type SessionStatus,
   type SpawnCmd,
 } from "./session";
+import { Compactor, type CompactReason } from "./compactor";
+import { COMPACT_PROMPT } from "./compact-prompt";
+import { parseHandoffMarkdown } from "./handoff-doc";
+import { submitCompactionHandoff } from "./compact-handoff-submit";
 import {
   WorktreeCreateError,
   createWorktree,
@@ -97,6 +101,14 @@ export interface CreateSessionOpts {
   taskId?: number;
   runId?: string;
   parentPhaseId?: string;
+  /**
+   * Optional first message to send to the session via stdin after the
+   * subprocess spawns. Used by runCompact to seed the successor session
+   * with the handoff doc's raw_markdown so CC reads it as the operator's
+   * opening prompt. Plain user input — same path as the PWA's
+   * /:sid/messages route.
+   */
+  initialMessage?: string;
 }
 
 /**
@@ -133,6 +145,7 @@ export type InboxDelta =
   | { type: "session_created"; session: SessionSnapshot }
   | { type: "session_ended"; sid: string }
   | { type: "session_removed"; sid: string }
+  | { type: "session_compacted"; sid: string; successor_sid: string }
   | { type: "status_changed"; sid: string; status: SessionStatus }
   | { type: "pending_count_changed"; sid: string; count: number }
   | { type: "last_activity_changed"; sid: string; ts: string }
@@ -384,12 +397,49 @@ export class SessionManager {
     if (opts.taskId !== undefined || opts.runId !== undefined) {
       await this.openSafirContext(session, opts);
     }
+    // Compactor: schedules /compact firings based on session-token
+    // pressure. Constructed per-session so config thresholds can be
+    // per-session in the future (Phase 4 profile overrides). onFire
+    // invokes runCompact via the manager.
+    const compactor = new Compactor(this.opts.config.compact, {
+      onScheduled: (fireAt, reason, sessionTokens) => {
+        // void: callbacks are sync (typed `void`) but emit is async.
+        // Fire-and-forget keeps the JSONL record best-effort.
+        void session.emit("compact_scheduled", {
+          fire_at: fireAt.toISOString(),
+          reason,
+          session_tokens: sessionTokens,
+        });
+      },
+      onCancelled: (reason) => {
+        void session.emit("compact_cancelled", { reason });
+      },
+      onFire: async (reason) => {
+        await this.runCompact(session.oakridgeSid, reason);
+      },
+    });
+    session.attachCompactor(compactor);
     // Broadcast session_created with the starting-state snapshot before we
     // await spawn(). That way /inbox subscribers see the new row appear
     // immediately and then receive status/pending/activity deltas as the
     // subprocess comes up.
     this.broadcastDelta({ type: "session_created", session: session.snapshot() });
     await session.spawn(this.opts.buildSpawnCmd(session));
+    if (opts.initialMessage !== undefined && session.status === "live") {
+      // The status check guards against a spawn that failed and finalize'd
+      // synchronously — in that case writeInput would throw
+      // SessionNotReadyError. Skipping the input keeps create()'s contract
+      // (returns a Session, possibly already-ended) intact.
+      try {
+        await session.writeInput(opts.initialMessage);
+      } catch (err) {
+        console.error(
+          `kbbl: writeInput(initialMessage) failed for ${session.oakridgeSid}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
     return session;
   }
 
@@ -938,6 +988,188 @@ export class SessionManager {
     return Math.max(0, ...exits);
   }
 
+  /**
+   * Run /compact on a live session: prompt CC for a handoff doc, parse +
+   * persist + submit-to-safir, spawn a successor session seeded with the
+   * handoff markdown, then mark the old session compacted. Invoked by
+   * Compactor.onFire (auto) or by the operator via a future API route
+   * (manual). Failure modes per cached-crusader-plan.md §1.4:
+   *
+   *  - timeout awaiting CC's compact response → compact_failed{phase:timeout}
+   *  - parse error → defaults; successor still gets raw_markdown
+   *  - successor spawn throws → compact_succeeded_but_resume_failed; old
+   *    session stays live
+   *
+   * On any failure, the old session's status is reverted from
+   * "compacting" back to "live" before returning. compactor.recordFailure
+   * advances the consecutive-failure counter; recordSuccess resets it.
+   */
+  async runCompact(sid: string, reason: CompactReason): Promise<void> {
+    const oldSession = this.sessions.get(sid);
+    if (!oldSession || oldSession.status !== "live") return;
+
+    const compactor = oldSession.compactor;
+    if (!compactor) {
+      console.error(
+        `kbbl: runCompact called on session ${sid} with no compactor attached`,
+      );
+      return;
+    }
+
+    // Transition status BEFORE the prompt write so subscribers see
+    // "compacting" before the COMPACT_PROMPT line lands in JSONL.
+    // setStatus is private on Session; bracket access is the seam.
+    // A cleaner refactor would expose a public markCompactingStarted
+    // method, but bracket access keeps the diff narrow.
+    (oldSession as unknown as { setStatus(s: SessionStatus): void }).setStatus(
+      "compacting",
+    );
+
+    await oldSession.emit("compact_fired", {
+      reason,
+      session_tokens: 0,
+    });
+
+    const compactTimeoutMs =
+      this.opts.config.compact.compact_call_timeout_seconds * 1000;
+
+    const md = await this.awaitCompactResult(oldSession, compactTimeoutMs);
+    if (md === null) {
+      await oldSession.emit("compact_failed", { phase: "timeout" });
+      (oldSession as unknown as {
+        setStatus(s: SessionStatus): void;
+      }).setStatus("live");
+      compactor.recordFailure();
+      return;
+    }
+
+    const handoff = parseHandoffMarkdown(md, {
+      from_session_id: oldSession.oakridgeSid,
+      produced_at: new Date().toISOString(),
+      task_id: oldSession.taskId,
+      run_id: oldSession.runId,
+    });
+
+    // Persist the raw markdown to disk so the PWA (Phase 1.8 follow-up
+    // PR) can render it later. Directory is created at server startup;
+    // first-compaction recursive mkdir is belt-and-suspenders.
+    const handoffsDir = join(this.opts.sessionsDir, "..", "handoffs");
+    const handoffPath = join(handoffsDir, `${oldSession.oakridgeSid}.md`);
+    try {
+      await mkdir(handoffsDir, { recursive: true });
+      await writeFile(handoffPath, handoff.raw_markdown, "utf8");
+    } catch (err) {
+      console.error(
+        `kbbl: failed to persist handoff for ${oldSession.oakridgeSid}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+
+    if (oldSession.phaseId) {
+      try {
+        await submitCompactionHandoff(
+          {
+            safirClient: this.opts.safirClient,
+            safirQueue: this.opts.safirQueue,
+          },
+          oldSession.phaseId,
+          handoff,
+        );
+      } catch (err) {
+        await oldSession.emit("compact_failed", {
+          phase: "handoff_submit",
+          error: err instanceof Error ? err.message : String(err),
+        });
+        (oldSession as unknown as {
+          setStatus(s: SessionStatus): void;
+        }).setStatus("live");
+        compactor.recordFailure();
+        return;
+      }
+    }
+
+    // emit compact_completed before spawning the successor so a successor
+    // spawn failure leaves a clear "completed-then-failed" trail in the
+    // old session's JSONL.
+    await oldSession.emit("compact_completed", {
+      handoff_doc: handoff,
+      successor_sid: null,
+    });
+
+    let successor: Session;
+    try {
+      successor = await this.create({
+        workdir: oldSession.workdir,
+        parentCcSid: oldSession.currentCcSid ?? undefined,
+        parentOakridgeSid: oldSession.oakridgeSid,
+        taskId: oldSession.taskId,
+        runId: oldSession.runId,
+        parentPhaseId: oldSession.phaseId,
+        initialMessage: handoff.raw_markdown,
+        model: oldSession.model ?? null,
+      });
+    } catch (err) {
+      await oldSession.emit("compact_succeeded_but_resume_failed", {
+        handoff_doc: handoff,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      (oldSession as unknown as {
+        setStatus(s: SessionStatus): void;
+      }).setStatus("live");
+      compactor.recordFailure();
+      return;
+    }
+
+    // Mark + abort. afterSessionEnded closes the phase with
+    // is_terminal: false because reason === "compacted".
+    oldSession.markEndReason("compacted");
+    void oldSession.abort();
+
+    this.broadcastDelta({
+      type: "session_compacted",
+      sid: oldSession.oakridgeSid,
+      successor_sid: successor.oakridgeSid,
+    });
+
+    compactor.recordSuccess();
+  }
+
+  /**
+   * Race the next session.emit("result", ...) against the timeout. On
+   * resolve, returns the markdown extracted from CC's result content.
+   * On timeout, returns null. The `compactInFlight` flag is set for the
+   * duration so writeInput(COMPACT_PROMPT) doesn't trigger
+   * observeUserMessage and cancel the schedule.
+   */
+  private async awaitCompactResult(
+    session: Session,
+    timeoutMs: number,
+  ): Promise<string | null> {
+    session.setCompactInFlight(true);
+    let unsubscribe: (() => void) | null = null;
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    try {
+      const got = new Promise<string | null>((resolve) => {
+        unsubscribe = session.subscribe((evt) => {
+          if (evt.type !== "result") return;
+          const md = extractCompactMarkdown(evt.payload);
+          if (md === null) return;
+          resolve(md);
+        });
+      });
+      await session.writeInput(COMPACT_PROMPT);
+      const timed = new Promise<null>((resolve) => {
+        timeoutHandle = setTimeout(() => resolve(null), timeoutMs);
+      });
+      return await Promise.race([got, timed]);
+    } finally {
+      if (unsubscribe) (unsubscribe as () => void)();
+      if (timeoutHandle !== null) clearTimeout(timeoutHandle);
+      session.setCompactInFlight(false);
+    }
+  }
+
   // === inbox ===
 
   subscribeInbox(cb: InboxSubscriber): () => void {
@@ -1041,6 +1273,34 @@ export class RemoveFailedError extends Error {
     this.jsonlPath = jsonlPath;
     this.cause = cause;
   }
+}
+
+/**
+ * Extract concatenated markdown from a CC `result` event's content
+ * blocks. Returns the joined text of all `type: "text"` blocks, or null
+ * if the payload doesn't have a content array (e.g. the result was a
+ * tool call rather than an end_turn). Caller's one-shot subscriber
+ * re-resolves on a different result event in that case.
+ */
+function extractCompactMarkdown(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const stopReason = (payload as { stop_reason?: unknown }).stop_reason;
+  if (stopReason !== "end_turn") return null;
+  const content = (payload as { content?: unknown }).content;
+  if (!Array.isArray(content)) return null;
+  const parts: string[] = [];
+  for (const block of content) {
+    if (
+      block &&
+      typeof block === "object" &&
+      (block as { type?: unknown }).type === "text" &&
+      typeof (block as { text?: unknown }).text === "string"
+    ) {
+      parts.push((block as { text: string }).text);
+    }
+  }
+  if (parts.length === 0) return null;
+  return parts.join("\n\n");
 }
 
 /**
