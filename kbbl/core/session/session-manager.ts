@@ -108,14 +108,6 @@ export interface CreateSessionOpts {
   taskId?: number;
   runId?: string;
   parentPhaseId?: string;
-  /**
-   * Optional first message to send to the session via stdin after the
-   * subprocess spawns. Used by runCompact to seed the successor session
-   * with the handoff doc's raw_markdown so CC reads it as the operator's
-   * opening prompt. Plain user input — same path as the PWA's
-   * /:sid/messages route.
-   */
-  initialMessage?: string;
 }
 
 /**
@@ -432,21 +424,6 @@ export class SessionManager {
     // subprocess comes up.
     this.broadcastDelta({ type: "session_created", session: session.snapshot() });
     await session.spawn(this.opts.buildSpawnCmd(session));
-    if (opts.initialMessage !== undefined && session.status === "live") {
-      // The status check guards against a spawn that failed and finalize'd
-      // synchronously — in that case writeInput would throw
-      // SessionNotReadyError. Skipping the input keeps create()'s contract
-      // (returns a Session, possibly already-ended) intact.
-      try {
-        await session.writeInput(opts.initialMessage);
-      } catch (err) {
-        console.error(
-          `kbbl: writeInput(initialMessage) failed for ${session.oakridgeSid}: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-      }
-    }
     return session;
   }
 
@@ -1109,7 +1086,6 @@ export class SessionManager {
           taskId: oldSession.taskId,
           runId: oldSession.runId,
           parentPhaseId: oldSession.phaseId,
-          initialMessage: handoff.raw_markdown,
           model: oldSession.model ?? null,
         });
       } catch (err) {
@@ -1124,15 +1100,42 @@ export class SessionManager {
         return;
       }
 
+      // Deliver the handoff to the successor as a hard requirement of
+      // compaction. If delivery fails (successor died on spawn, write
+      // races a finalize, etc.), end the half-broken successor and
+      // treat the whole compaction as a resume failure — the operator
+      // gets a clear signal instead of a successor session that exists
+      // but never received its context.
+      try {
+        await successor.writeInput(handoff.raw_markdown, { internal: true });
+      } catch (err) {
+        await successor.abort().catch(() => {
+          // best-effort; the successor's own finalize will clean it up
+        });
+        await oldSession.emit("compact_completed", {
+          handoff_doc: handoff,
+          successor_sid: null,
+        });
+        await oldSession.emit("compact_succeeded_but_resume_failed", {
+          handoff_doc: handoff,
+          error: `handoff delivery failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        });
+        return;
+      }
+
       await oldSession.emit("compact_completed", {
         handoff_doc: handoff,
         successor_sid: successor.oakridgeSid,
       });
 
       // Mark + abort. afterSessionEnded closes the phase with
-      // is_terminal: false because reason === "compacted".
+      // is_terminal: false because reason === "compacted". Awaited so
+      // recordSuccess only fires after the subprocess teardown
+      // resolves — a rejected abort can't slip past us into success.
       oldSession.markEndReason("compacted");
-      void oldSession.abort();
+      await oldSession.abort();
 
       this.broadcastDelta({
         type: "session_compacted",
@@ -1168,27 +1171,35 @@ export class SessionManager {
   /**
    * Race the next session.emit("result", ...) against the timeout. On
    * resolve, returns the markdown extracted from CC's result content.
-   * On timeout, returns null. The `compactInFlight` flag is set for the
-   * duration so writeInput(COMPACT_PROMPT) doesn't trigger
-   * observeUserMessage and cancel the schedule.
+   * On timeout, returns null.
+   *
+   * Correlation: emit a "compact_prompt_sent" marker and capture its
+   * monotonic event id. The subscriber only resolves on result events
+   * with id > marker.id, so a stale `result` event already in the
+   * emit queue from before subscription can't be misread as the
+   * compaction handoff response. The marker also serves as a
+   * breadcrumb in JSONL replay.
    */
   private async awaitCompactResult(
     session: Session,
     timeoutMs: number,
   ): Promise<string | null> {
-    session.setCompactInFlight(true);
     let unsubscribe: (() => void) | null = null;
     let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    let markerId = -1;
     try {
       const got = new Promise<string | null>((resolve) => {
         unsubscribe = session.subscribe((evt) => {
+          if (evt.id <= markerId) return;
           if (evt.type !== "result") return;
           const md = extractCompactMarkdown(evt.payload);
           if (md === null) return;
           resolve(md);
         });
       });
-      await session.writeInput(COMPACT_PROMPT);
+      const marker = await session.emit("compact_prompt_sent", {});
+      markerId = marker.id;
+      await session.writeInput(COMPACT_PROMPT, { internal: true });
       const timed = new Promise<null>((resolve) => {
         timeoutHandle = setTimeout(() => resolve(null), timeoutMs);
       });
@@ -1196,7 +1207,6 @@ export class SessionManager {
     } finally {
       if (unsubscribe) (unsubscribe as () => void)();
       if (timeoutHandle !== null) clearTimeout(timeoutHandle);
-      session.setCompactInFlight(false);
     }
   }
 

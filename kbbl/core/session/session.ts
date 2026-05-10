@@ -220,7 +220,6 @@ export class Session {
   private _phaseId: string | undefined;
   private _endReason: SessionEndReason | undefined;
   private _compactor: Compactor | null = null;
-  private _compactInFlight = false;
 
   private readonly callbacks: SessionCallbacks;
   private readonly classifyEvent?: (
@@ -439,14 +438,6 @@ export class Session {
       );
     }
     this._compactor = c;
-  }
-
-  get compactInFlight(): boolean {
-    return this._compactInFlight;
-  }
-
-  setCompactInFlight(v: boolean): void {
-    this._compactInFlight = v;
   }
 
   markEndReason(reason: SessionEndReason): void {
@@ -823,16 +814,23 @@ export class Session {
     }
   }
 
-  async writeInput(text: string): Promise<void> {
-    // Accept "compacting" only when the manager has set _compactInFlight
-    // — that flag is the gate that proves the writer is runCompact's own
-    // COMPACT_PROMPT injection, not an external client racing the
-    // /compact exchange via HTTP /input.
-    const compactingAndAuthorized =
-      this._status === "compacting" && this._compactInFlight;
+  async writeInput(
+    text: string,
+    opts: { internal?: boolean } = {},
+  ): Promise<void> {
+    // External writes (HTTP /:sid/input) require status === "live".
+    // Internal writes (runCompact's COMPACT_PROMPT, successor handoff
+    // delivery) are also allowed in "compacting" — that's the only state
+    // where they need to slip through, and the parameter (rather than a
+    // shared session-level flag) makes the gate per-call so an external
+    // POST during compaction can't piggy-back on runCompact's
+    // authorization.
+    const isInternal = opts.internal === true;
+    const allowedDuringCompacting =
+      this._status === "compacting" && isInternal;
     if (
       !this.proc ||
-      (this._status !== "live" && !compactingAndAuthorized)
+      (this._status !== "live" && !allowedDuringCompacting)
     ) {
       throw new SessionNotReadyError();
     }
@@ -848,11 +846,11 @@ export class Session {
     };
     this.inputQueue = this.inputQueue.then(task, task);
     await this.inputQueue;
-    // Skip when compactInFlight: writeInput from runCompact's own
-    // COMPACT_PROMPT injection should NOT cancel the schedule that is
-    // about to consume the result. runCompact sets compactInFlight before
-    // calling writeInput.
-    if (!this._compactInFlight && this._compactor) {
+    // Internal writes don't represent a fresh user message — they
+    // shouldn't cancel a scheduled compaction by feeding
+    // observeUserMessage. The Compactor's "user activity" signal is
+    // for organic operator typing, not manager-driven injections.
+    if (!isInternal && this._compactor) {
       try {
         this._compactor.observeUserMessage();
       } catch (err) {
