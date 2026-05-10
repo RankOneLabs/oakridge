@@ -301,13 +301,12 @@ describe("loadArchivedSnapshot round-trips worktree fields", () => {
       ts: baseTs,
       payload: { code: 0, reason: "clean" },
     };
-    Bun.write(
+    await Bun.write(
       join(sessionsDir, `${sid}.jsonl`),
       [sessionStarted, compactCompleted, subprocessExited]
         .map((e) => JSON.stringify(e))
         .join("\n") + "\n",
     );
-    await new Promise((r) => setTimeout(r, 10));
 
     const mgr = makeManager(buildConfig(false));
     const archived = await mgr.listArchivedSnapshots();

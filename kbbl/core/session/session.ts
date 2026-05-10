@@ -183,7 +183,9 @@ export interface SessionSnapshot {
    */
   model: string | null;
   /**
-   * Reason this session ended, or null if it's still live/starting/compacting.
+   * Reason this session ended, or null if the reason is unknown (session is
+   * still live/starting/compacting, or ended without an explicit reason being
+   * recorded — e.g. reconstructed from JSONL without a terminal event).
    * "compacted" means runCompact handed off to a successor (paired with
    * `successorSid`); "user_closed" is a deliberate operator close;
    * "subprocess_exited" is a CC subprocess death we did not initiate. The

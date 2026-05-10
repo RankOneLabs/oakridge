@@ -414,11 +414,12 @@ function applyDelta(
     }
     case "session_compacted": {
       const s = next.get(delta.sid);
-      // The server emits this AFTER session_ended (status already flipped
-      // to "ended" by the trailing status_changed). Patch in endReason +
-      // successorSid so CompactedBanner has the data it needs without
-      // waiting for a snapshot refetch. If the predecessor isn't in the
-      // map (rare race during initial /sessions hydration), the next
+      // Ordering: finalize() emits status_changed("ended"), then onEnded
+      // broadcasts session_ended, then abort() resolves and session_compacted
+      // is broadcast. By the time this case runs, status is already "ended".
+      // Patch in endReason + successorSid so CompactedBanner has the data it
+      // needs without waiting for a snapshot refetch. If the predecessor isn't
+      // in the map (rare race during initial /sessions hydration), the next
       // snapshot fetch carries the same fields from disk.
       if (s) {
         next.set(delta.sid, {

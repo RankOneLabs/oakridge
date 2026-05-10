@@ -1504,6 +1504,9 @@ async function loadArchivedSnapshot(
         // earlier compact_completed. A compacted session always exits its
         // subprocess afterwards, and we want endReason to remain "compacted"
         // for that case rather than getting clobbered by the trailing exit.
+        // Note: user_closed sessions (endAll / operator close) are also
+        // archived as "subprocess_exited" because no user_closed event is
+        // written to the JSONL — endReason reconstruction is best-effort.
         if (endReason === null) endReason = "subprocess_exited";
         break;
       }
