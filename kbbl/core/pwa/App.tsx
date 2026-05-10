@@ -177,6 +177,43 @@ function useHashSid(): [string | null, (sid: string | null) => void] {
   return [sid, navigate];
 }
 
+function readHashTaskId(): number | null {
+  const hash = window.location.hash.slice(1);
+  if (!hash) return null;
+  const params = new URLSearchParams(hash);
+  const raw = params.get("task");
+  if (raw === null) return null;
+  if (!/^[1-9][0-9]*$/.test(raw)) return null;
+  const n = Number.parseInt(raw, 10);
+  return Number.isSafeInteger(n) ? n : null;
+}
+
+function writeHashTaskId(taskId: number | null): void {
+  if (taskId === null) {
+    history.replaceState(
+      null,
+      "",
+      window.location.pathname + window.location.search,
+    );
+  } else {
+    window.location.hash = `task=${taskId}`;
+  }
+}
+
+function useHashTaskId(): [number | null, (taskId: number | null) => void] {
+  const [taskId, setTaskId] = useState<number | null>(() => readHashTaskId());
+  useEffect(() => {
+    const onHash = () => setTaskId(readHashTaskId());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+  const navigate = (next: number | null) => {
+    writeHashTaskId(next);
+    setTaskId(next);
+  };
+  return [taskId, navigate];
+}
+
 /**
  * Fetches the server's /config once on mount. Currently exposes the
  * default workdir so the new-session form can prefill it. Returns null
@@ -420,6 +457,7 @@ async function resumeSession(
 
 export function App() {
   const [sid, navigate] = useHashSid();
+  const [taskId, navigateTask] = useHashTaskId();
   const [theme, toggleTheme] = useTheme();
   const { sessions, inMemorySids, inboxStatus, hydrateSession } = useInbox({
     // When the active session is purged from another client / tab, drop
@@ -433,29 +471,42 @@ export function App() {
   });
   const config = useServerConfig();
 
-  if (sid === null) {
+  // Precedence: #sid wins over #task. The hash writers always overwrite
+  // the entire fragment, so both being set simultaneously is unreachable
+  // by normal navigation; this branch is a defensive ordering only.
+  if (sid !== null) {
     return (
-      <SessionListView
-        sessions={sessions}
+      <SessionView
+        sid={sid}
+        snapshot={sessions.get(sid) ?? null}
+        inMemory={inMemorySids.has(sid)}
         inboxStatus={inboxStatus}
         theme={theme}
-        defaultWorkdir={config?.defaultWorkdir ?? ""}
         onToggleTheme={toggleTheme}
-        onSelect={(nextSid) => navigate(nextSid)}
-        onHydrateSession={hydrateSession}
+        onBack={() => navigate(null)}
+        onResume={(parentSid) => resumeSession(parentSid, hydrateSession, navigate)}
+      />
+    );
+  }
+  if (taskId !== null) {
+    return (
+      <TaskView
+        taskId={taskId}
+        theme={theme}
+        onToggleTheme={toggleTheme}
+        onBack={() => navigateTask(null)}
       />
     );
   }
   return (
-    <SessionView
-      sid={sid}
-      snapshot={sessions.get(sid) ?? null}
-      inMemory={inMemorySids.has(sid)}
+    <SessionListView
+      sessions={sessions}
       inboxStatus={inboxStatus}
       theme={theme}
+      defaultWorkdir={config?.defaultWorkdir ?? ""}
       onToggleTheme={toggleTheme}
-      onBack={() => navigate(null)}
-      onResume={(parentSid) => resumeSession(parentSid, hydrateSession, navigate)}
+      onSelect={(nextSid) => navigate(nextSid)}
+      onHydrateSession={hydrateSession}
     />
   );
 }
@@ -2160,6 +2211,200 @@ function isFilteredEvent(
     return resolutions.has(p.request_id);
   }
   return false;
+}
+
+interface SafirTask {
+  id: number;
+  project_id: string;
+  parent_id: number | null;
+  title: string;
+  status: string;
+}
+
+interface SafirHandoff {
+  id: string;
+  phase_id: string | null;
+  run_id: string | null;
+  role: "phase_output" | "run_brief";
+  schema_version: number;
+  goal: string | null;
+  next_action: string | null;
+  raw_markdown: string;
+  produced_at: string;
+}
+
+type TaskFetchState =
+  | { kind: "loading" }
+  | { kind: "ok"; task: SafirTask; handoffs: SafirHandoff[] }
+  | { kind: "not_found" }
+  | { kind: "safir_down" }
+  | { kind: "error"; status: number; message: string };
+
+async function fetchTaskAndHandoffs(taskId: number): Promise<TaskFetchState> {
+  try {
+    const [taskRes, handoffsRes] = await Promise.all([
+      fetch(`/safir/tasks/${taskId}`),
+      fetch(`/safir/tasks/${taskId}/handoffs`),
+    ]);
+    if (taskRes.status === 404) return { kind: "not_found" };
+    if (taskRes.status === 502 || handoffsRes.status === 502) {
+      return { kind: "safir_down" };
+    }
+    if (!taskRes.ok) {
+      return {
+        kind: "error",
+        status: taskRes.status,
+        message: `task fetch failed: HTTP ${taskRes.status}`,
+      };
+    }
+    if (!handoffsRes.ok) {
+      return {
+        kind: "error",
+        status: handoffsRes.status,
+        message: `handoffs fetch failed: HTTP ${handoffsRes.status}`,
+      };
+    }
+    const task = (await taskRes.json()) as SafirTask;
+    const handoffs = (await handoffsRes.json()) as SafirHandoff[];
+    return { kind: "ok", task, handoffs };
+  } catch {
+    // Network failure before kbbl could even respond — treat the same as
+    // safir-down from the operator's perspective.
+    return { kind: "safir_down" };
+  }
+}
+
+function TaskView({
+  taskId,
+  theme,
+  onToggleTheme,
+  onBack,
+}: {
+  taskId: number;
+  theme: Theme;
+  onToggleTheme: () => void;
+  onBack: () => void;
+}) {
+  const [state, setState] = useState<TaskFetchState>({ kind: "loading" });
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+
+  useEffect(() => {
+    let cancelled = false;
+    setState({ kind: "loading" });
+    fetchTaskAndHandoffs(taskId).then((next) => {
+      if (!cancelled) setState(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [taskId]);
+
+  const toggle = (id: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  return (
+    <div className={`task-view theme-${theme}`}>
+      <header className="task-view__header">
+        <button type="button" className="task-view__back" onClick={onBack}>
+          ← inbox
+        </button>
+        <span className="task-view__title">task #{taskId}</span>
+        <button
+          type="button"
+          className="task-view__theme"
+          onClick={onToggleTheme}
+        >
+          {theme === "dark" ? "☼" : "☾"}
+        </button>
+      </header>
+
+      {state.kind === "loading" && (
+        <div className="task-view__status">loading…</div>
+      )}
+      {state.kind === "not_found" && (
+        <div className="task-view__status">
+          task #{taskId} not found in safir
+        </div>
+      )}
+      {state.kind === "safir_down" && (
+        <div className="task-view__status">
+          safir is unreachable — is it running on the configured port?
+        </div>
+      )}
+      {state.kind === "error" && (
+        <div className="task-view__status">{state.message}</div>
+      )}
+      {state.kind === "ok" && (
+        <Fragment>
+          <section className="task-view__meta">
+            <h1>{state.task.title}</h1>
+            <dl>
+              <dt>project</dt>
+              <dd>{state.task.project_id}</dd>
+              <dt>status</dt>
+              <dd>{state.task.status}</dd>
+              {state.task.parent_id !== null && (
+                <Fragment>
+                  <dt>parent task</dt>
+                  <dd>
+                    <a
+                      href={`#task=${state.task.parent_id}`}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        window.location.hash = `task=${state.task.parent_id}`;
+                      }}
+                    >
+                      #{state.task.parent_id}
+                    </a>
+                  </dd>
+                </Fragment>
+              )}
+            </dl>
+          </section>
+          <section className="task-view__handoffs">
+            <h2>handoffs ({state.handoffs.length})</h2>
+            {state.handoffs.length === 0 && (
+              <div className="task-view__status">no handoffs yet</div>
+            )}
+            {state.handoffs.map((h) => {
+              const isOpen = expanded.has(h.id);
+              return (
+                <article
+                  key={h.id}
+                  className={`handoff-card${isOpen ? " handoff-card--open" : ""}`}
+                >
+                  <button
+                    type="button"
+                    className="handoff-card__summary"
+                    onClick={() => toggle(h.id)}
+                  >
+                    <span className="handoff-card__ts">{h.produced_at}</span>
+                    <span className="handoff-card__role">{h.role}</span>
+                    {h.goal && (
+                      <span className="handoff-card__goal">{h.goal}</span>
+                    )}
+                  </button>
+                  {isOpen && (
+                    <div className="handoff-card__body">
+                      <Markdown rehypePlugins={[rehypeSanitize]}>
+                        {h.raw_markdown}
+                      </Markdown>
+                    </div>
+                  )}
+                </article>
+              );
+            })}
+          </section>
+        </Fragment>
+      )}
+    </div>
+  );
 }
 
 function buildListItems(
