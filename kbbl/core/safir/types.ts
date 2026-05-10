@@ -144,5 +144,68 @@ export const Task = z.object({
   parent_id: z.number().nullable(),
   title: z.string(),
   status: z.string(),
+  default_permission_profile_id: z.number().nullable().optional(),
 });
 export type Task = z.infer<typeof Task>;
+
+// Mirror of safir's PermissionRules as of 2026-05-10. See cross-repo
+// schema duplication note in kbbl/core/safir/types.ts file header.
+export const PermissionRules = z.object({
+  auto_approve: z.array(z.object({
+    tool: z.string(),
+    input_match: z.object({
+      command_prefix: z.array(z.string()).optional(),
+      path_glob: z.array(z.string()).optional(),
+      input_regex: z.string().optional(),
+    }).optional(),
+  })).default([]),
+  always_prompt: z.array(z.string()).default([]),
+  deny: z.array(z.string()).default([]),
+  allow_all: z.boolean().optional(),
+  deny_patterns: z.array(z.object({
+    tool: z.string(),
+    input_match: z.object({
+      command_prefix: z.array(z.string()).optional(),
+      input_regex: z.string().optional(),
+    }),
+  })).optional(),
+  budgets: z.object({
+    max_tool_calls: z.number().optional(),
+    max_session_tokens: z.number().optional(),
+    max_wall_clock_minutes: z.number().optional(),
+  }).optional(),
+  compact_overrides: z.object({
+    soft_threshold_tokens: z.number().optional(),
+    hard_threshold_tokens: z.number().optional(),
+    t_quiet_seconds: z.number().optional(),
+    t_warm_seconds: z.number().optional(),
+  }).optional(),
+  model_override: z.string().optional(),
+}).strict();
+export type PermissionRules = z.infer<typeof PermissionRules>;
+
+export const PermissionProfile = z.object({
+  id: z.number(),
+  name: z.string(),
+  description: z.string().nullable(),
+  is_seed: z.boolean(),
+  rules: PermissionRules,
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+export type PermissionProfile = z.infer<typeof PermissionProfile>;
+
+export const CreatePermissionProfile = z.object({
+  name: z.string(),
+  description: z.string().nullable().optional(),
+  is_seed: z.boolean().optional(),
+  rules: PermissionRules,
+});
+export type CreatePermissionProfile = z.infer<typeof CreatePermissionProfile>;
+
+export const UpdatePermissionProfile = z.object({
+  name: z.string().optional(),
+  description: z.string().nullable().optional(),
+  rules: PermissionRules.optional(),
+});
+export type UpdatePermissionProfile = z.infer<typeof UpdatePermissionProfile>;

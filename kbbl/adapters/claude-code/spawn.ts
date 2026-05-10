@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import type { Session, SpawnCmd } from "../../core/session/session";
 import type { SafirClient } from "../../core/safir/client";
+import type { PermissionProfile } from "../../core/safir/types";
 import { buildSafirBacklogPromptBlock } from "./safir-backlog-prompt";
 
 /**
@@ -159,6 +160,25 @@ export function makeBuildSpawnCmd(
       cmd.push("--append-system-prompt", backlogBlock);
     }
 
+    // Profile-driven flag injection (Phase 4). Translatable rules go to CC
+    // flags; complex rules (path_glob, input_regex, deny_patterns) fall
+    // through to the kbbl gate where evaluateRule is the final arbiter.
+    const {
+      allowedTools: profileAllowedTools,
+      disallowedTools: profileDisallowedTools,
+      dangerouslySkipPermissions,
+    } = translateProfileToFlags(session.permissionProfile);
+
+    if (dangerouslySkipPermissions) {
+      cmd.push("--dangerously-skip-permissions");
+    }
+    for (const tool of profileAllowedTools) {
+      cmd.push("--allowedTools", tool);
+    }
+    for (const tool of profileDisallowedTools) {
+      cmd.push("--disallowedTools", tool);
+    }
+
     if (session.model) {
       cmd.push("--model", session.model);
     }
@@ -176,4 +196,171 @@ export function makeBuildSpawnCmd(
       } as Record<string, string>,
     };
   };
+}
+
+/**
+ * Minimal tool-call shape evaluateRule needs. Matches the relevant fields
+ * of HookInput without creating a circular import with hook-route.ts.
+ */
+export interface ToolCallInfo {
+  tool_name: string;
+  tool_input: unknown;
+}
+
+/**
+ * Single source of truth for permission-profile rule evaluation. Used by
+ * both translateProfileToFlags (spawn-time, best-effort) and the hook gate
+ * (runtime, definitive). Returns the most specific matching decision.
+ *
+ * Decision priority (first match wins):
+ *   1. always_prompt → "prompt" (explicit operator override)
+ *   2. deny list / deny_patterns → "deny"
+ *   3. allow_all (after deny) → "auto_approve"
+ *   4. auto_approve rules → "auto_approve" if a rule matches
+ *   5. default → "prompt"
+ */
+export function evaluateRule(
+  profile: PermissionProfile | null,
+  call: ToolCallInfo,
+): "auto_approve" | "deny" | "prompt" {
+  if (!profile) return "prompt";
+  const { rules } = profile;
+
+  if (rules.always_prompt.includes(call.tool_name)) return "prompt";
+
+  if (rules.deny.includes(call.tool_name)) return "deny";
+
+  if (rules.deny_patterns) {
+    for (const dp of rules.deny_patterns) {
+      if (dp.tool !== call.tool_name) continue;
+      if (matchesDenyPattern(call.tool_input, dp.input_match)) return "deny";
+    }
+  }
+
+  if (rules.allow_all) return "auto_approve";
+
+  for (const rule of rules.auto_approve) {
+    if (rule.tool !== call.tool_name) continue;
+    if (matchesInputMatch(call.tool_input, rule.input_match)) return "auto_approve";
+  }
+
+  return "prompt";
+}
+
+function matchesInputMatch(
+  toolInput: unknown,
+  inputMatch:
+    | {
+        command_prefix?: string[];
+        path_glob?: string[];
+        input_regex?: string;
+      }
+    | undefined,
+): boolean {
+  if (!inputMatch) return true;
+
+  const inp =
+    typeof toolInput === "object" && toolInput !== null
+      ? (toolInput as Record<string, unknown>)
+      : {};
+
+  if (inputMatch.command_prefix !== undefined) {
+    const command = typeof inp["command"] === "string" ? inp["command"] : null;
+    if (command === null) return false;
+    return inputMatch.command_prefix.some((p) => command.startsWith(p));
+  }
+
+  if (inputMatch.path_glob !== undefined) {
+    const filePath = typeof inp["file_path"] === "string" ? inp["file_path"] : null;
+    if (filePath === null) return false;
+    return inputMatch.path_glob.some((pattern) => new Bun.Glob(pattern).match(filePath));
+  }
+
+  if (inputMatch.input_regex !== undefined) {
+    try {
+      return new RegExp(inputMatch.input_regex).test(JSON.stringify(toolInput));
+    } catch {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function matchesDenyPattern(
+  toolInput: unknown,
+  inputMatch: { command_prefix?: string[]; input_regex?: string },
+): boolean {
+  const inp =
+    typeof toolInput === "object" && toolInput !== null
+      ? (toolInput as Record<string, unknown>)
+      : {};
+
+  if (inputMatch.command_prefix !== undefined) {
+    const command = typeof inp["command"] === "string" ? inp["command"] : null;
+    if (command === null) return false;
+    return inputMatch.command_prefix.some((p) => command.startsWith(p));
+  }
+
+  if (inputMatch.input_regex !== undefined) {
+    try {
+      return new RegExp(inputMatch.input_regex).test(JSON.stringify(toolInput));
+    } catch {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
+ * Translate a PermissionProfile into CC spawn flags. Only rules that map
+ * cleanly to CC's `--allowedTools` / `--disallowedTools` syntax are emitted
+ * here; `path_glob`, `input_regex`, and `deny_patterns` rules are left to
+ * the kbbl gate (evaluateRule) for definitive enforcement at runtime.
+ */
+export function translateProfileToFlags(profile: PermissionProfile | null): {
+  allowedTools: string[];
+  disallowedTools: string[];
+  dangerouslySkipPermissions: boolean;
+} {
+  if (!profile) {
+    return { allowedTools: [], disallowedTools: [], dangerouslySkipPermissions: false };
+  }
+  const { rules } = profile;
+
+  // allow_all with no always_prompt and no deny_patterns → skip all gate checks
+  if (
+    rules.allow_all &&
+    rules.always_prompt.length === 0 &&
+    (!rules.deny_patterns || rules.deny_patterns.length === 0)
+  ) {
+    return { allowedTools: [], disallowedTools: [], dangerouslySkipPermissions: true };
+  }
+
+  const allowedTools: string[] = [];
+  const disallowedTools: string[] = [];
+
+  for (const tool of rules.deny) {
+    disallowedTools.push(tool);
+  }
+
+  for (const rule of rules.auto_approve) {
+    if (rules.always_prompt.includes(rule.tool)) continue;
+
+    if (!rule.input_match) {
+      allowedTools.push(rule.tool);
+    } else if (
+      rule.input_match.command_prefix &&
+      !rule.input_match.path_glob &&
+      !rule.input_match.input_regex
+    ) {
+      for (const prefix of rule.input_match.command_prefix) {
+        allowedTools.push(`${rule.tool}(${prefix}:*)`);
+      }
+    }
+    // path_glob or input_regex: not translatable, evaluated at gate time
+  }
+
+  return { allowedTools, disallowedTools, dangerouslySkipPermissions: false };
 }

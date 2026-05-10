@@ -8,6 +8,7 @@ import type { KbblConfig } from "../config";
 import type { SessionManager } from "../session/session-manager";
 import { inboxHandler } from "../stream/inbox";
 import { mountHandoffRoutes } from "./handlers/handoff";
+import { mountPermissionRoutes } from "./handlers/permission";
 import { mountPerSidRoutes } from "./handlers/per-sid";
 import { mountSafirProxyRoutes } from "./handlers/safir-proxy";
 import { mountSafirWebhookRoutes } from "./handlers/safir-webhook";
@@ -81,6 +82,12 @@ export function createApp(deps: CreateAppDeps): Hono {
 
   // ---- per-sid routes ----
   mountPerSidRoutes(app, { manager, sessionsDir });
+
+  // ---- per-sid permission routes ----
+  //
+  // POST /:sid/permission/approve-for-task persists an auto-approve rule to
+  // the session's task default profile so future sessions inherit it.
+  mountPermissionRoutes(app, { manager, safirClient });
 
   // ---- per-sid handoff ----
   //
