@@ -188,6 +188,7 @@ const app = createApp({
   defaultWorkdir: workdir,
   sessionsDir,
   pwaDistDir,
+  safirClient,
   getBunServer: () => bunServer,
 });
 

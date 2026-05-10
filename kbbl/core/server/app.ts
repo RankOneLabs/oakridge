@@ -2,9 +2,11 @@ import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 
 import type { AppRuntime } from "../runtime";
+import type { SafirClient } from "../safir/client";
 import type { SessionManager } from "../session/session-manager";
 import { inboxHandler } from "../stream/inbox";
 import { mountPerSidRoutes } from "./handlers/per-sid";
+import { mountSafirProxyRoutes } from "./handlers/safir-proxy";
 import { mountSafirWebhookRoutes } from "./handlers/safir-webhook";
 import { mountSessionsRoutes } from "./handlers/sessions";
 import { mountWorkspaceEventsRoutes } from "./handlers/workspace-events";
@@ -19,6 +21,14 @@ export interface CreateAppDeps {
   sessionsDir: string;
   /** Path to the built PWA dist directory served as static files. */
   pwaDistDir: string;
+  /**
+   * Same client the manager uses; the read-side proxy in
+   * handlers/safir-proxy.ts forwards PWA reads through this so token + base
+   * URL stay in one place. Threaded through deps rather than imported as a
+   * module singleton because tests construct the manager + app with their
+   * own stubbed client.
+   */
+  safirClient: SafirClient;
   /**
    * Returns the Bun server instance for `requestIP` loopback verification
    * inside the runtime's hook handler. Must be a getter (not the value)
@@ -41,6 +51,7 @@ export function createApp(deps: CreateAppDeps): Hono {
     defaultWorkdir,
     sessionsDir,
     pwaDistDir,
+    safirClient,
     getBunServer,
   } = deps;
   const app = new Hono();
@@ -77,6 +88,13 @@ export function createApp(deps: CreateAppDeps): Hono {
   // POST /webhooks/safir is registered before the static `/*` catch-all
   // so the webhook path doesn't get rewritten as a static-file lookup.
   mountSafirWebhookRoutes(app, { manager });
+
+  // ---- safir read proxy ----
+  //
+  // GET /safir/... lets the PWA read safir state without CORS or auth-secret
+  // leakage to the browser. Registered after the webhook routes to keep
+  // safir-related paths grouped, and before /inbox and the static catch-all.
+  mountSafirProxyRoutes(app, { safirClient });
 
   // ---- /inbox (always-on delta stream) ----
   app.get("/inbox", inboxHandler(manager));
