@@ -2,6 +2,8 @@ import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
+import type { Compactor } from "./compactor";
+
 export interface EnvelopeEvent {
   id: number;
   type: string;
@@ -95,7 +97,7 @@ export interface SessionOpts {
   nonPersistedEventTypes?: ReadonlySet<string>;
 }
 
-export type SessionStatus = "starting" | "live" | "ended";
+export type SessionStatus = "starting" | "live" | "compacting" | "ended";
 
 export type SessionEndReason = "user_closed" | "subprocess_exited" | "compacted";
 
@@ -217,6 +219,7 @@ export class Session {
   private _runId: string | undefined;
   private _phaseId: string | undefined;
   private _endReason: SessionEndReason | undefined;
+  private _compactor: Compactor | null = null;
 
   private readonly callbacks: SessionCallbacks;
   private readonly classifyEvent?: (
@@ -424,6 +427,19 @@ export class Session {
     this._phaseId = phaseId;
   }
 
+  get compactor(): Compactor | null {
+    return this._compactor;
+  }
+
+  attachCompactor(c: Compactor): void {
+    if (this._compactor !== null) {
+      throw new Error(
+        `kbbl: attachCompactor called twice on session ${this.oakridgeSid}`,
+      );
+    }
+    this._compactor = c;
+  }
+
   markEndReason(reason: SessionEndReason): void {
     if (this._endReason !== undefined || this._status === "ended") return;
     this._endReason = reason;
@@ -441,6 +457,23 @@ export class Session {
         }`,
       );
     }
+  }
+
+  /**
+   * Manager-driven status transitions for the compaction lifecycle.
+   * Validated to prevent accidental misuse (e.g. resurrecting an ended
+   * session). markCompacting requires "live"; markLive requires
+   * "compacting". No-ops on any other current status — callers (notably
+   * runCompact's failure-revert) tolerate the no-op for safety.
+   */
+  markCompacting(): void {
+    if (this._status !== "live") return;
+    this.setStatus("compacting");
+  }
+
+  markLive(): void {
+    if (this._status !== "compacting") return;
+    this.setStatus("live");
   }
 
   snapshot(): SessionSnapshot {
@@ -705,6 +738,17 @@ export class Session {
       }
       resolvedCount++;
     }
+    if (this._compactor) {
+      try {
+        this._compactor.observeSessionEnded();
+      } catch (err) {
+        console.error(
+          `kbbl: compactor.observeSessionEnded threw: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
     // Flip status BEFORE draining so any emit() racing with finalize sees
     // the ended flag and short-circuits instead of queueing new writes
     // onto a writer we're about to close.
@@ -757,10 +801,37 @@ export class Session {
         }`,
       );
     }
+    if (this._compactor) {
+      try {
+        this._compactor.dispose();
+      } catch (err) {
+        console.error(
+          `kbbl: compactor.dispose threw: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
   }
 
-  async writeInput(text: string): Promise<void> {
-    if (!this.proc || this._status !== "live") {
+  async writeInput(
+    text: string,
+    opts: { internal?: boolean } = {},
+  ): Promise<void> {
+    // External writes (HTTP /:sid/input) require status === "live".
+    // Internal writes (runCompact's COMPACT_PROMPT, successor handoff
+    // delivery) are also allowed in "compacting" — that's the only state
+    // where they need to slip through, and the parameter (rather than a
+    // shared session-level flag) makes the gate per-call so an external
+    // POST during compaction can't piggy-back on runCompact's
+    // authorization.
+    const isInternal = opts.internal === true;
+    const allowedDuringCompacting =
+      this._status === "compacting" && isInternal;
+    if (
+      !this.proc ||
+      (this._status !== "live" && !allowedDuringCompacting)
+    ) {
       throw new SessionNotReadyError();
     }
     const stdin = this.proc.stdin as import("bun").FileSink;
@@ -774,6 +845,24 @@ export class Session {
       await stdin.flush();
     };
     this.inputQueue = this.inputQueue.then(task, task);
+    // Notify the compactor BEFORE awaiting the queue. If a prior write
+    // is still flushing, the compaction timer could fire in the gap
+    // between "we accepted this user message" and "we finished writing
+    // the previous one" — and runCompact would start despite fresh
+    // operator activity having been accepted. Internal writes don't
+    // represent a fresh user message — they shouldn't cancel a
+    // scheduled compaction by feeding observeUserMessage.
+    if (!isInternal && this._compactor) {
+      try {
+        this._compactor.observeUserMessage();
+      } catch (err) {
+        console.error(
+          `kbbl: compactor.observeUserMessage threw: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
     await this.inputQueue;
   }
 
@@ -800,6 +889,17 @@ export class Session {
           e instanceof Error ? e.message : String(e)
         }`,
       );
+    }
+    if (this._compactor) {
+      try {
+        this._compactor.observePendingApprovalChange(this.pendingApprovals.size);
+      } catch (err) {
+        console.error(
+          `kbbl: compactor.observePendingApprovalChange threw: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
     }
   }
 

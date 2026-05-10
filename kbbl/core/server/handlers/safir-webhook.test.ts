@@ -61,6 +61,7 @@ function makeManager(fetchFn: FetchFn): SessionManager {
   const safirQueue = createSafirQueue({ dataDir: tmpRoot });
   return new SessionManager({
     sessionsDir,
+    handoffsDir: join(tmpRoot, "handoffs"),
     worktreesDir,
     buildSpawnCmd: hangingSpawn,
     config: buildConfig(),
