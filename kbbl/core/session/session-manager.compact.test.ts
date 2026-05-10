@@ -379,6 +379,42 @@ describe("runCompact failure modes", () => {
   }, 15000);
 });
 
+describe("requestManualCompact", () => {
+  test("not_found when no session with that sid", async () => {
+    const stub = makeSafirStub();
+    const mgr = makeManager({ fetchFn: stub.fetch, spawn: spawnEcho });
+    const result = mgr.requestManualCompact("00000000-0000-4000-8000-000000000000");
+    expect(result).toBe("not_found");
+    await mgr.endAll();
+  });
+
+  test("not_live when session is not live", async () => {
+    const stub = makeSafirStub();
+    const mgr = makeManager({ fetchFn: stub.fetch, spawn: spawnEcho });
+    const session = await mgr.create({ workdir: tmpRoot, taskId: 42 });
+    const sid = session.oakridgeSid;
+    await mgr.runCompact(sid, { kind: "manual" });
+    await waitForStatus(session, "ended", 5000);
+    const result = mgr.requestManualCompact(sid);
+    expect(result).toBe("not_live");
+    await mgr.endAll();
+    await mgr.drainLifecycle();
+  }, 15000);
+
+  test("ok and fires compaction on live session", async () => {
+    const stub = makeSafirStub();
+    const mgr = makeManager({ fetchFn: stub.fetch, spawn: spawnEcho });
+    const session = await mgr.create({ workdir: tmpRoot, taskId: 42 });
+    const sid = session.oakridgeSid;
+    const result = mgr.requestManualCompact(sid);
+    expect(result).toBe("ok");
+    await waitForStatus(session, "ended", 5000);
+    expect(session.endReason).toBe("compacted");
+    await mgr.endAll();
+    await mgr.drainLifecycle();
+  }, 15000);
+});
+
 describe("runCompact compactor wiring", () => {
   test("initialMessage is sent to successor", async () => {
     const stub = makeSafirStub();

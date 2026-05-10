@@ -115,6 +115,7 @@ type InboxDelta =
   | { type: "session_ended"; sid: string }
   | { type: "session_removed"; sid: string }
   | { type: "session_compacted"; sid: string; successor_sid: string }
+  | { type: "compact_suggested"; sid: string; tokens: number; reason: string }
   | { type: "status_changed"; sid: string; status: SessionStatus }
   | { type: "pending_count_changed"; sid: string; count: number }
   | { type: "last_activity_changed"; sid: string; ts: string }
@@ -218,24 +219,26 @@ function useHashTaskId(): [number | null, (taskId: number | null) => void] {
 }
 
 /**
- * Fetches the server's /config once on mount. Currently exposes the
- * default workdir so the new-session form can prefill it. Returns null
- * until the fetch resolves, so callers can render a "loading" placeholder
- * rather than racing the form into life with an empty default.
+ * Fetches the server's /config once on mount. Returns null until the
+ * fetch resolves so callers can render a "loading" placeholder rather
+ * than racing forms with empty defaults.
  */
-function useServerConfig(): { defaultWorkdir: string } | null {
-  const [config, setConfig] = useState<{ defaultWorkdir: string } | null>(null);
+function useServerConfig(): { defaultWorkdir: string; softThresholdTokens: number } | null {
+  const [config, setConfig] = useState<{ defaultWorkdir: string; softThresholdTokens: number } | null>(null);
   useEffect(() => {
     let cancelled = false;
     fetch("/config")
-      .then((r) => r.json() as Promise<{ defaultWorkdir: string }>)
+      .then((r) => r.json() as Promise<{ defaultWorkdir: string; softThresholdTokens?: number }>)
       .then((data) => {
-        if (!cancelled) setConfig(data);
+        if (!cancelled) setConfig({
+          defaultWorkdir: data.defaultWorkdir,
+          softThresholdTokens: typeof data.softThresholdTokens === "number"
+            ? data.softThresholdTokens
+            : 50000,
+        });
       })
       .catch(() => {
-        // Server may be down or this build is older — leave config null,
-        // the form will show a generic placeholder and the server will
-        // still validate whatever the operator types.
+        // Server may be down or this build is older — leave config null.
       });
     return () => {
       cancelled = true;
@@ -255,6 +258,11 @@ function useTheme(): [Theme, () => void] {
   return [theme, () => setTheme((p) => (p === "dark" ? "light" : "dark"))];
 }
 
+interface CompactSuggestion {
+  sid: string;
+  tokens: number;
+}
+
 interface InboxState {
   sessions: Map<string, SessionSnapshot>;
   /**
@@ -266,6 +274,10 @@ interface InboxState {
    */
   inMemorySids: Set<string>;
   inboxStatus: Status;
+  /** Non-null when the server has emitted a compact_suggested for a session. */
+  compactSuggestion: CompactSuggestion | null;
+  /** Optimistically clear the suggestion (e.g. when the user taps "Compact Now"). */
+  clearCompactSuggestion: () => void;
   /**
    * Fold a snapshot we already have in hand (e.g. the response body of
    * POST /sessions) into the inbox state so the destination view mounts
@@ -284,6 +296,7 @@ function useInbox(opts: { onSessionRemoved?: (sid: string) => void } = {}): Inbo
     () => new Set(),
   );
   const [inboxStatus, setInboxStatus] = useState<Status>("connecting");
+  const [compactSuggestion, setCompactSuggestion] = useState<CompactSuggestion | null>(null);
   // Mirror onSessionRemoved into a ref so the EventSource handler (set up
   // once on mount) reads the latest closure on each delta — otherwise it
   // would call a stale callback that captured the initial render's sid.
@@ -383,6 +396,15 @@ function useInbox(opts: { onSessionRemoved?: (sid: string) => void } = {}): Inbo
       // in the manager map (and stream/events still work against them)
       // until the server process exits. session_removed (purge) is what
       // actually drops the entry.
+      if (delta.type === "compact_suggested") {
+        setCompactSuggestion({ sid: delta.sid, tokens: delta.tokens });
+      }
+      if (delta.type === "status_changed" && delta.status === "compacting") {
+        setCompactSuggestion((prev) => (prev?.sid === delta.sid ? null : prev));
+      }
+      if (delta.type === "session_compacted") {
+        setCompactSuggestion((prev) => (prev?.sid === delta.sid ? null : prev));
+      }
     });
 
     return () => {
@@ -391,7 +413,8 @@ function useInbox(opts: { onSessionRemoved?: (sid: string) => void } = {}): Inbo
     };
   }, []);
 
-  return { sessions, inMemorySids, inboxStatus, hydrateSession };
+  const clearCompactSuggestion = useCallback(() => setCompactSuggestion(null), []);
+  return { sessions, inMemorySids, inboxStatus, compactSuggestion, clearCompactSuggestion, hydrateSession };
 }
 
 function applyDelta(
@@ -480,7 +503,7 @@ export function App() {
   const [sid, navigate] = useHashSid();
   const [taskId, navigateTask] = useHashTaskId();
   const [theme, toggleTheme] = useTheme();
-  const { sessions, inMemorySids, inboxStatus, hydrateSession } = useInbox({
+  const { sessions, inMemorySids, inboxStatus, compactSuggestion, clearCompactSuggestion, hydrateSession } = useInbox({
     // When the active session is purged from another client / tab, drop
     // back to the inbox list so SessionView isn't left rendering a stale
     // transcript with no underlying session record. Comparing inside the
@@ -491,6 +514,15 @@ export function App() {
     },
   });
   const config = useServerConfig();
+  const [softThresholdTokens, setSoftThresholdTokens] = useState<number>(50000);
+  const [thresholdInput, setThresholdInput] = useState<string>("50000");
+
+  useEffect(() => {
+    if (typeof config?.softThresholdTokens === "number") {
+      setSoftThresholdTokens(config.softThresholdTokens);
+      setThresholdInput(String(config.softThresholdTokens));
+    }
+  }, [config?.softThresholdTokens]);
 
   // Precedence: #sid wins over #task. The hash writers always overwrite
   // the entire fragment, so both being set simultaneously is unreachable
@@ -503,6 +535,14 @@ export function App() {
         inMemory={inMemorySids.has(sid)}
         inboxStatus={inboxStatus}
         theme={theme}
+        compactSuggestion={compactSuggestion?.sid === sid ? compactSuggestion : null}
+        onClearCompactSuggestion={clearCompactSuggestion}
+        softThresholdTokens={softThresholdTokens}
+        thresholdInput={thresholdInput}
+        onSoftThresholdChange={(n, input) => {
+          setSoftThresholdTokens(n);
+          setThresholdInput(input);
+        }}
         onToggleTheme={toggleTheme}
         onBack={() => navigate(null)}
         onResume={(parentSid) => resumeSession(parentSid, hydrateSession, navigate)}
@@ -1314,6 +1354,11 @@ function SessionView({
   inMemory,
   inboxStatus,
   theme,
+  compactSuggestion,
+  onClearCompactSuggestion,
+  softThresholdTokens,
+  thresholdInput,
+  onSoftThresholdChange,
   onToggleTheme,
   onBack,
   onResume,
@@ -1323,6 +1368,11 @@ function SessionView({
   inMemory: boolean;
   inboxStatus: Status;
   theme: Theme;
+  compactSuggestion: CompactSuggestion | null;
+  onClearCompactSuggestion: () => void;
+  softThresholdTokens: number;
+  thresholdInput: string;
+  onSoftThresholdChange: (n: number, input: string) => void;
   onToggleTheme: () => void;
   onBack: () => void;
   onResume: (parentSid: string) => Promise<string | null>;
@@ -1583,10 +1633,20 @@ function SessionView({
         yoloMode={yoloMode}
         theme={theme}
         showSystemEvents={showSystemEvents}
+        softThresholdTokens={softThresholdTokens}
+        thresholdInput={thresholdInput}
+        onThresholdChange={onSoftThresholdChange}
         onToggleSystemEvents={() => setShowSystemEvents((p) => !p)}
         onToggleTheme={onToggleTheme}
         onBack={onBack}
       />
+      {compactSuggestion !== null && (
+        <CompactSuggestionBanner
+          sid={sid}
+          tokens={compactSuggestion.tokens}
+          onClear={onClearCompactSuggestion}
+        />
+      )}
       <MetricsStrip events={events} />
       <EventList
         events={events}
@@ -1968,6 +2028,43 @@ function CompactedBanner({
   );
 }
 
+function CompactSuggestionBanner({
+  sid,
+  tokens,
+  onClear,
+}: {
+  sid: string;
+  tokens: number;
+  onClear: () => void;
+}) {
+  return (
+    <div className="compact-suggestion-banner">
+      <span className="compact-suggestion-banner__text">
+        Session is at {tokens.toLocaleString()} tokens — approaching the context limit.
+      </span>
+      <button
+        type="button"
+        className="compact-suggestion-banner__action"
+        onClick={async () => {
+          onClear();
+          await fetch(`/sessions/${encodeURIComponent(sid)}/compact`, {
+            method: "POST",
+          });
+        }}
+      >
+        Compact Now
+      </button>
+      <button
+        type="button"
+        className="compact-suggestion-banner__dismiss"
+        onClick={onClear}
+      >
+        Dismiss
+      </button>
+    </div>
+  );
+}
+
 function CompactingBanner({ ref }: { ref?: Ref<HTMLDivElement> }) {
   return (
     <div className="compacting-banner" ref={ref}>
@@ -2163,6 +2260,9 @@ function SessionTopBar({
   yoloMode,
   theme,
   showSystemEvents,
+  softThresholdTokens,
+  thresholdInput,
+  onThresholdChange,
   onToggleSystemEvents,
   onToggleTheme,
   onBack,
@@ -2176,6 +2276,9 @@ function SessionTopBar({
   yoloMode: boolean;
   theme: Theme;
   showSystemEvents: boolean;
+  softThresholdTokens: number;
+  thresholdInput: string;
+  onThresholdChange: (n: number, input: string) => void;
   onToggleSystemEvents: () => void;
   onToggleTheme: () => void;
   onBack: () => void;
@@ -2304,6 +2407,35 @@ function SessionTopBar({
           );
         })()}
       </span>
+      <label className="threshold-setting" title="Compact suggestion threshold (tokens)">
+        <span className="threshold-setting__label">Compact at</span>
+        <input
+          type="number"
+          className="threshold-setting__input"
+          value={thresholdInput}
+          min={1000}
+          step={1000}
+          onChange={(e) => onThresholdChange(softThresholdTokens, e.target.value)}
+          onBlur={async () => {
+            const n = parseInt(thresholdInput, 10);
+            if (!Number.isFinite(n) || n <= 0) {
+              onThresholdChange(softThresholdTokens, String(softThresholdTokens));
+              return;
+            }
+            const res = await fetch("/config", {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ softThresholdTokens: n }),
+            });
+            if (res.ok) {
+              onThresholdChange(n, String(n));
+            } else {
+              onThresholdChange(softThresholdTokens, String(softThresholdTokens));
+            }
+          }}
+        />
+        <span className="threshold-setting__unit">tok</span>
+      </label>
     </header>
   );
 }

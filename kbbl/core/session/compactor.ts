@@ -34,6 +34,7 @@ export type CancelReason =
   | "session_ended";
 
 export interface CompactorCallbacks {
+  onSuggested: (reason: CompactReason, sessionTokens: number) => void;  // NEW
   onScheduled: (
     fireAt: Date,
     reason: CompactReason,
@@ -98,13 +99,18 @@ export class Compactor {
     }
 
     if (tokens > cfg.soft_threshold_tokens && this.pendingApprovalCount === 0) {
-      const delaySec = input.was_subagent_synthesis
-        ? cfg.t_quiet_after_subagent_seconds
-        : cfg.t_quiet_seconds;
       const reason: CompactReason = input.was_subagent_synthesis
         ? { kind: "subagent_return_window" }
         : { kind: "soft_threshold_window" };
-      this.schedule(reason, delaySec * 1000, tokens);
+      try {
+        this.callbacks.onSuggested(reason, tokens);
+      } catch (err) {
+        console.error(
+          `kbbl: compactor onSuggested callback failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
       return;
     }
   }

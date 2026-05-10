@@ -145,6 +145,7 @@ export type InboxDelta =
   | { type: "session_ended"; sid: string }
   | { type: "session_removed"; sid: string }
   | { type: "session_compacted"; sid: string; successor_sid: string }
+  | { type: "compact_suggested"; sid: string; tokens: number; reason: string }
   | { type: "status_changed"; sid: string; status: SessionStatus }
   | { type: "pending_count_changed"; sid: string; count: number }
   | { type: "last_activity_changed"; sid: string; ts: string }
@@ -401,6 +402,18 @@ export class SessionManager {
     // per-session in the future (Phase 4 profile overrides). onFire
     // invokes runCompact via the manager.
     const compactor = new Compactor(this.opts.config.compact, {
+      onSuggested: (reason, sessionTokens) => {
+        void session.emit("compact_suggested", {
+          reason: reason.kind,
+          session_tokens: sessionTokens,
+        });
+        this.broadcastDelta({
+          type: "compact_suggested",
+          sid: session.oakridgeSid,
+          tokens: sessionTokens,
+          reason: reason.kind,
+        });
+      },
       onScheduled: (fireAt, reason, sessionTokens) => {
         // Callbacks are typed `void` but emit is async. Fire-and-forget
         // is intentional (best-effort JSONL); .catch logs any
@@ -986,6 +999,16 @@ export class SessionManager {
       }),
     );
     return Math.max(0, ...exits);
+  }
+
+  requestManualCompact(sid: string): "ok" | "not_found" | "not_live" {
+    const session = this.sessions.get(sid);
+    if (!session) return "not_found";
+    if (session.status !== "live") return "not_live";
+    const compactor = session.compactor;
+    if (!compactor) return "not_live";
+    void compactor.forceFire({ kind: "manual" });
+    return "ok";
   }
 
   /**

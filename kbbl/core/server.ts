@@ -196,6 +196,8 @@ const app = createApp({
   pwaDistDir,
   safirClient,
   getBunServer: () => bunServer,
+  config,
+  configPath,
 });
 
 // === bind port (fail fast before spawning CC) ===
