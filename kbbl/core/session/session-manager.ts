@@ -490,34 +490,6 @@ export class SessionManager {
           reason: reason.kind,
         });
       },
-      onScheduled: (fireAt, reason, sessionTokens) => {
-        // Callbacks are typed `void` but emit is async. Fire-and-forget
-        // is intentional (best-effort JSONL); .catch logs any
-        // write/flush rejection so it doesn't surface as an unhandled
-        // promise rejection.
-        session
-          .emit("compact_scheduled", {
-            fire_at: fireAt.toISOString(),
-            reason,
-            session_tokens: sessionTokens,
-          })
-          .catch((err) => {
-            console.error(
-              `kbbl: compact_scheduled emit failed for ${session.oakridgeSid}: ${
-                err instanceof Error ? err.message : String(err)
-              }`,
-            );
-          });
-      },
-      onCancelled: (reason) => {
-        session.emit("compact_cancelled", { reason }).catch((err) => {
-          console.error(
-            `kbbl: compact_cancelled emit failed for ${session.oakridgeSid}: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          );
-        });
-      },
       onFire: async (reason, sessionTokens) => {
         await this.runCompact(session.oakridgeSid, reason, sessionTokens);
       },
