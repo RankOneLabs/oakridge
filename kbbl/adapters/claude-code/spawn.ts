@@ -213,11 +213,12 @@ export interface ToolCallInfo {
  * (runtime, definitive). Returns the most specific matching decision.
  *
  * Decision priority (first match wins):
- *   1. deny list / deny_patterns → "deny" (hard deny, wins over always_prompt)
- *   2. always_prompt → "prompt"
- *   3. allow_all (after deny) → "auto_approve"
- *   4. auto_approve rules → "auto_approve" if a rule matches
- *   5. default → "prompt"
+ *   1. deny list → "deny"
+ *   2. deny_patterns → "deny" (hard deny, wins over always_prompt)
+ *   3. always_prompt → "prompt"
+ *   4. allow_all → "auto_approve"
+ *   5. auto_approve rules → "auto_approve" if a rule matches
+ *   6. default → "prompt"
  */
 export function evaluateRule(
   profile: PermissionProfile | null,
@@ -228,14 +229,14 @@ export function evaluateRule(
 
   if (rules.deny.includes(call.tool_name)) return "deny";
 
-  if (rules.always_prompt.includes(call.tool_name)) return "prompt";
-
   if (rules.deny_patterns) {
     for (const dp of rules.deny_patterns) {
       if (dp.tool !== call.tool_name) continue;
       if (matchesDenyPattern(call.tool_input, dp.input_match)) return "deny";
     }
   }
+
+  if (rules.always_prompt.includes(call.tool_name)) return "prompt";
 
   if (rules.allow_all) return "auto_approve";
 
@@ -245,6 +246,14 @@ export function evaluateRule(
   }
 
   return "prompt";
+}
+
+// Shell-operator characters that turn a safe prefix into a chained command.
+const SHELL_OPERATORS = /[;&|><`$]/;
+
+function matchesCommandPrefix(command: string, prefix: string): boolean {
+  if (command !== prefix && !command.startsWith(`${prefix} `)) return false;
+  return !SHELL_OPERATORS.test(command.slice(prefix.length));
 }
 
 function matchesInputMatch(
@@ -267,7 +276,7 @@ function matchesInputMatch(
   if (inputMatch.command_prefix !== undefined) {
     const command = typeof inp["command"] === "string" ? inp["command"] : null;
     if (command === null) return false;
-    if (!inputMatch.command_prefix.some((p) => command.startsWith(p))) return false;
+    if (!inputMatch.command_prefix.some((p) => matchesCommandPrefix(command, p))) return false;
   }
 
   if (inputMatch.path_glob !== undefined) {
@@ -299,7 +308,7 @@ function matchesDenyPattern(
   if (inputMatch.command_prefix !== undefined) {
     const command = typeof inp["command"] === "string" ? inp["command"] : null;
     if (command === null) return false;
-    if (!inputMatch.command_prefix.some((p) => command.startsWith(p))) return false;
+    if (!inputMatch.command_prefix.some((p) => matchesCommandPrefix(command, p))) return false;
   }
 
   if (inputMatch.input_regex !== undefined) {
@@ -351,16 +360,10 @@ export function translateProfileToFlags(profile: PermissionProfile | null): {
 
     if (!rule.input_match) {
       allowedTools.push(rule.tool);
-    } else if (
-      rule.input_match.command_prefix &&
-      !rule.input_match.path_glob &&
-      !rule.input_match.input_regex
-    ) {
-      for (const prefix of rule.input_match.command_prefix) {
-        allowedTools.push(`${rule.tool}(${prefix}:*)`);
-      }
     }
-    // path_glob or input_regex: not translatable, evaluated at gate time
+    // command_prefix, path_glob, input_regex: CC's prefix matching can't
+    // enforce word-boundary or shell-operator checks, so leave these to
+    // evaluateRule() at gate time rather than emitting a too-broad allowlist.
   }
 
   return { allowedTools, disallowedTools, dangerouslySkipPermissions: false };

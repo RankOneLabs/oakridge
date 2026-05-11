@@ -86,15 +86,21 @@ export function mountPermissionRoutes(
       }
 
       if (!existing.is_seed) {
-        // Inline profile exists — append new rule (de-duplicate by tool name)
-        const existingRules = existing.rules.auto_approve.filter(
-          (r) => r.tool !== tool,
-        );
-        const mergedAutoApprove = [...existingRules, newRule];
+        // Inline profile exists — append new rule (de-duplicate by tool name).
+        // Also strip the tool from deny/always_prompt so the approval takes effect.
+        const mergedRules = {
+          ...existing.rules,
+          auto_approve: [
+            ...existing.rules.auto_approve.filter((r) => r.tool !== tool),
+            newRule,
+          ],
+          deny: existing.rules.deny.filter((t) => t !== tool),
+          always_prompt: existing.rules.always_prompt.filter((t) => t !== tool),
+        };
         try {
           updatedProfile = await safirClient.updatePermissionProfile(
             existing.id,
-            { rules: { ...existing.rules, auto_approve: mergedAutoApprove } },
+            { rules: mergedRules },
           );
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -113,6 +119,7 @@ export function mountPermissionRoutes(
           ...seedRules,
           auto_approve: seedRules.auto_approve.filter((r) => r.tool !== tool),
           deny: seedRules.deny.filter((t) => t !== tool),
+          always_prompt: seedRules.always_prompt.filter((t) => t !== tool),
         }
       : { auto_approve: [], always_prompt: [], deny: [] };
     const inlineName = `task-${taskId}-inline`;

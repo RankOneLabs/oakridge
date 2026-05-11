@@ -192,11 +192,9 @@ describe("translateProfileToFlags: read-only-investigation", () => {
     expect(result.allowedTools).toContain("Glob");
   });
 
-  test("translates command_prefix rules to Bash(prefix:*) entries", () => {
+  test("does not emit command_prefix rules as --allowedTools (evaluated at gate time)", () => {
     const result = translateProfileToFlags(readOnlyProfile);
-    expect(result.allowedTools).toContain("Bash(ls:*)");
-    expect(result.allowedTools).toContain("Bash(cat:*)");
-    expect(result.allowedTools.some((t) => t.startsWith("Bash(git status"))).toBe(true);
+    expect(result.allowedTools.some((t) => t.startsWith("Bash("))).toBe(false);
   });
 
   test("adds Write and Edit to disallowedTools", () => {

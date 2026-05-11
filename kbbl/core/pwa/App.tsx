@@ -2547,7 +2547,7 @@ function isFilteredEvent(
   if (e.type === "stream_event") return true;
   if (showSystemEvents) return false;
   if (isLowSignalEvent(e)) return true;
-  if (e.type === "permission_auto_approved") return true;
+  if (e.type === "permission_auto_approved" || e.type === "permission_auto_denied") return true;
   if (e.type === "permission_request") {
     const p = e.payload as PermissionRequestPayload;
     return resolutions.has(p.request_id);

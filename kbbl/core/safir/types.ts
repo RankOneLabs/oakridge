@@ -156,7 +156,7 @@ export const PermissionRules = z.object({
     input_match: z.object({
       command_prefix: z.array(z.string()).optional(),
       path_glob: z.array(z.string()).optional(),
-      input_regex: z.string().optional(),
+      input_regex: z.string().max(500).optional(),
     }).optional(),
   })).default([]),
   always_prompt: z.array(z.string()).default([]),
@@ -166,7 +166,7 @@ export const PermissionRules = z.object({
     tool: z.string(),
     input_match: z.object({
       command_prefix: z.array(z.string()).optional(),
-      input_regex: z.string().optional(),
+      input_regex: z.string().max(500).optional(),
     }),
   })).optional(),
   budgets: z.object({
