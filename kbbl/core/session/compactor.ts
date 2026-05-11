@@ -156,7 +156,8 @@ export class Compactor {
       return;
     }
     // onFire is expected to call recordSuccess / recordFailure.
-    // Belt-and-suspenders: if neither was called, reset to idle.
-    if (this.state === "firing") this.state = "idle";
+    // Belt-and-suspenders: if neither was called, treat a resolved
+    // callback as success so stale failure pressure doesn't persist.
+    if (this.state === "firing") this.recordSuccess();
   }
 }

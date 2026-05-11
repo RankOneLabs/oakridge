@@ -458,21 +458,21 @@ describe("compact_overrides from permission profile", () => {
 
     await waitForStatus(session, "live", 3000);
 
-    let scheduledFired = false;
+    let suggestionSeen = false;
     const unsub = session.subscribe((evt) => {
-      if (evt.type === "compact_suggested") scheduledFired = true;
+      if (evt.type === "compact_suggested") suggestionSeen = true;
     });
 
     // Trigger mock-cc to emit a result event with 100 input_tokens (> override threshold of 50)
     await session.writeInput("trigger compact");
 
     const deadline = Date.now() + 3000;
-    while (!scheduledFired && Date.now() < deadline) {
+    while (!suggestionSeen && Date.now() < deadline) {
       await Bun.sleep(50);
     }
 
     unsub();
-    expect(scheduledFired).toBe(true);
+    expect(suggestionSeen).toBe(true);
 
     await mgr.endAll();
     await mgr.drainLifecycle();
@@ -521,21 +521,21 @@ describe("compact_overrides from permission profile", () => {
       rules: { ...lowThresholdProfile.rules, compact_overrides: { soft_threshold_tokens: 999999 } },
     });
 
-    let scheduledFired = false;
+    let suggestionSeen = false;
     const unsub = session.subscribe((evt) => {
-      if (evt.type === "compact_suggested") scheduledFired = true;
+      if (evt.type === "compact_suggested") suggestionSeen = true;
     });
 
     // The Compactor was built with threshold=50 at creation time; the mutation
     // should not change it. Result with 100 tokens should still suggest compact.
     await session.writeInput("trigger compact");
     const deadline = Date.now() + 3000;
-    while (!scheduledFired && Date.now() < deadline) {
+    while (!suggestionSeen && Date.now() < deadline) {
       await Bun.sleep(50);
     }
 
     unsub();
-    expect(scheduledFired).toBe(true);
+    expect(suggestionSeen).toBe(true);
 
     await mgr.endAll();
     await mgr.drainLifecycle();
