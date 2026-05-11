@@ -1,21 +1,18 @@
-// Compactor — schedules /compact firings based on session-token
-// pressure. Pure state machine + clock; the onFire callback is what
-// actually runs runCompact.
+// Compactor — emits compact suggestions based on session-token pressure
+// and fires /compact when explicitly requested. Pure state machine; the
+// onFire callback is what actually runs runCompact.
 //
 // Wiring: SessionManager constructs one Compactor per Session in
 // create() and calls session.attachCompactor(c). The CC classifier
 // observes terminal `result` events and forwards them via
-// observeAssistantTurn. Session forwards observeUserMessage,
-// observePendingApprovalChange, and observeSessionEnded from its own
-// hooks.
+// observeAssistantTurn.
 //
-// The state machine has three states: idle, scheduled, firing.
-//   idle      — no fire pending; observe* may transition to scheduled.
-//   scheduled — a setTimeout is queued; cancellable by user/approval/
-//               session-end events; fires transitions to firing.
-//   firing    — onFire callback is in flight; observe* events are
-//               recorded but no new schedule is created until
-//               recordSuccess / recordFailure clears.
+// The state machine has two states: idle and firing.
+//   idle    — no fire in flight; observeAssistantTurn calls onSuggested
+//             when thresholds are crossed (no auto-fire).
+//   firing  — onFire callback is in flight; observe* events are
+//             recorded but no suggestion is emitted until
+//             recordSuccess / recordFailure clears.
 
 import type { KbblConfig } from "../config";
 
@@ -25,41 +22,19 @@ export type CompactReason =
   | { kind: "hard_threshold_force" }
   | { kind: "manual" };
 
-export type CancelReason =
-  | "user_message"
-  | "tool_use_start"
-  | "approval_pending"
-  | "session_ended";
-
 export interface CompactorCallbacks {
-  onSuggested: (reason: CompactReason, sessionTokens: number) => void;  // NEW
-  onScheduled: (
-    fireAt: Date,
-    reason: CompactReason,
-    sessionTokens: number,
-  ) => void;
-  onCancelled: (reason: CancelReason) => void;
-  // sessionTokens is the token pressure recorded when the schedule was
-  // created (or 0 for forceFire/manual where there is no recorded
-  // pressure). Threaded through so compact_fired can report the same
-  // tokens that triggered the compaction.
+  onSuggested: (reason: CompactReason, sessionTokens: number) => void;
+  // sessionTokens is 0 for forceFire/manual (no recorded pressure).
+  // Threaded through so compact_fired can report the tokens that
+  // triggered the compaction on the auto path.
   onFire: (reason: CompactReason, sessionTokens: number) => Promise<void>;
-}
-
-interface ScheduledState {
-  reason: CompactReason;
-  fireAt: Date;
-  sessionTokens: number;
-  timer: ReturnType<typeof setTimeout>;
 }
 
 export class Compactor {
   private readonly config: KbblConfig["compact"];
   private readonly callbacks: CompactorCallbacks;
-  private readonly clock: () => Date;
 
-  private state: "idle" | "scheduled" | "firing" = "idle";
-  private scheduled: ScheduledState | null = null;
+  private state: "idle" | "firing" = "idle";
   private consecutiveFailureCount = 0;
   private pendingApprovalCount = 0;
   private disposed = false;
@@ -67,11 +42,9 @@ export class Compactor {
   constructor(
     config: KbblConfig["compact"],
     callbacks: CompactorCallbacks,
-    clock?: () => Date,
   ) {
     this.config = config;
     this.callbacks = callbacks;
-    this.clock = clock ?? (() => new Date());
   }
 
   observeAssistantTurn(input: {
@@ -120,50 +93,34 @@ export class Compactor {
   }
 
   observeUserMessage(): void {
-    if (this.state === "scheduled") this.cancel("user_message");
+    // No-op — no scheduled timers to cancel. Kept on the API surface
+    // so callers don't have to change if scheduling is reintroduced.
   }
 
   observeToolUseStart(): void {
-    if (this.state === "scheduled") this.cancel("tool_use_start");
+    // No-op in v0. Kept on the API surface.
   }
 
   observeToolUseEnd(): void {
-    // No-op in v0 (mirror of observeToolUseStart's punt). Kept on the
-    // API surface so a future signal-forwarding edit doesn't have to
-    // change the class.
+    // No-op in v0. Kept on the API surface.
   }
 
   observeSubagentReturn(): void {
-    // No-op in v0 — subagent detection is punted; the
-    // was_subagent_synthesis flag on observeAssistantTurn is always
-    // false. Kept on the API surface.
+    // No-op in v0 — subagent detection is punted. Kept on the API surface.
   }
 
   observePendingApprovalChange(count: number): void {
     this.pendingApprovalCount = count;
-    if (count > 0 && this.state === "scheduled") {
-      // Don't cancel hard-threshold fires — those are forced regardless
-      // of approval pressure (the compactor's job in that state is to
-      // recover from a session that's already too big).
-      if (this.scheduled?.reason.kind !== "hard_threshold_force") {
-        this.cancel("approval_pending");
-      }
-    }
   }
 
   observeSessionEnded(): void {
-    if (this.state === "scheduled") this.cancel("session_ended");
+    // No-op — no scheduled timers to cancel. Kept on the API surface.
   }
 
   async forceFire(reason: CompactReason): Promise<void> {
     if (this.disposed) return;
     if (this.state === "firing") return;
-    if (this.state === "scheduled") this.clearScheduled();
     await this.fire(reason, 0);
-  }
-
-  getScheduledFireAt(): Date | null {
-    return this.scheduled?.fireAt ?? null;
   }
 
   recordFailure(): void {
@@ -177,58 +134,7 @@ export class Compactor {
   }
 
   dispose(): void {
-    if (this.disposed) return;
     this.disposed = true;
-    if (this.state === "scheduled") this.clearScheduled();
-  }
-
-  private schedule(
-    reason: CompactReason,
-    delayMs: number,
-    sessionTokens: number,
-  ): void {
-    const fireAt = new Date(this.clock().getTime() + delayMs);
-    const timer = setTimeout(() => {
-      void this.fire(reason, sessionTokens);
-    }, delayMs);
-
-    this.scheduled = {
-      reason,
-      fireAt,
-      sessionTokens,
-      timer,
-    };
-    this.state = "scheduled";
-    try {
-      this.callbacks.onScheduled(fireAt, reason, sessionTokens);
-    } catch (err) {
-      console.error(
-        `kbbl: compactor onScheduled callback failed: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-    }
-  }
-
-  private cancel(reason: CancelReason): void {
-    if (this.state !== "scheduled" || this.scheduled === null) return;
-    this.clearScheduled();
-    try {
-      this.callbacks.onCancelled(reason);
-    } catch (err) {
-      console.error(
-        `kbbl: compactor onCancelled callback failed: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-    }
-  }
-
-  private clearScheduled(): void {
-    if (this.scheduled === null) return;
-    clearTimeout(this.scheduled.timer);
-    this.scheduled = null;
-    this.state = "idle";
   }
 
   private async fire(
@@ -236,11 +142,7 @@ export class Compactor {
     sessionTokens: number,
   ): Promise<void> {
     if (this.disposed) return;
-    if (this.state !== "scheduled" && this.state !== "idle") return;
-    // Clear scheduled state BEFORE entering firing so a re-entry
-    // (e.g. forceFire while a soft-window timer is pending) doesn't
-    // double-clear or leak the timer.
-    if (this.scheduled !== null) this.clearScheduled();
+    if (this.state !== "idle") return;
     this.state = "firing";
     try {
       await this.callbacks.onFire(reason, sessionTokens);
@@ -253,11 +155,8 @@ export class Compactor {
       this.recordFailure();
       return;
     }
-    // onFire is expected to call recordSuccess / recordFailure on
-    // SessionManager's side — we don't auto-clear state here.
-    // Belt-and-suspenders: if onFire returned without either having
-    // been called (state still "firing"), force back to idle so the
-    // next observe* can schedule.
+    // onFire is expected to call recordSuccess / recordFailure.
+    // Belt-and-suspenders: if neither was called, reset to idle.
     if (this.state === "firing") this.state = "idle";
   }
 }

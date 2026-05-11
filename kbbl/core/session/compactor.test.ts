@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { KbblConfigSchema, type KbblConfig } from "../config";
-import { Compactor, type CancelReason, type CompactReason } from "./compactor";
+import { Compactor, type CompactReason } from "./compactor";
 
 function buildCompact(): KbblConfig["compact"] {
   return KbblConfigSchema.parse({}).compact;
@@ -9,50 +9,33 @@ function buildCompact(): KbblConfig["compact"] {
 
 interface ObservedCalls {
   suggested: Array<{ reason: CompactReason; sessionTokens: number }>;
-  scheduled: Array<{
-    fireAt: Date;
-    reason: CompactReason;
-    sessionTokens: number;
-  }>;
-  cancelled: CancelReason[];
   fired: Array<{ reason: CompactReason; sessionTokens: number }>;
 }
 
 function makeCompactor(opts?: {
   config?: Partial<KbblConfig["compact"]>;
   onFireImpl?: (reason: CompactReason) => Promise<void>;
-  clock?: () => Date;
 }) {
   const base = buildCompact();
   const config = { ...base, ...opts?.config };
   const calls: ObservedCalls = {
     suggested: [],
-    scheduled: [],
-    cancelled: [],
     fired: [],
   };
-  const c = new Compactor(
-    config,
-    {
-      onSuggested: (reason, sessionTokens) => {
-        calls.suggested.push({ reason, sessionTokens });
-      },
-      onScheduled: (fireAt, reason, sessionTokens) => {
-        calls.scheduled.push({ fireAt, reason, sessionTokens });
-      },
-      onCancelled: (reason) => calls.cancelled.push(reason),
-      onFire: async (reason, sessionTokens) => {
-        calls.fired.push({ reason, sessionTokens });
-        if (opts?.onFireImpl) await opts.onFireImpl(reason);
-      },
+  const c = new Compactor(config, {
+    onSuggested: (reason, sessionTokens) => {
+      calls.suggested.push({ reason, sessionTokens });
     },
-    opts?.clock ?? (() => new Date(0)),
-  );
+    onFire: async (reason, sessionTokens) => {
+      calls.fired.push({ reason, sessionTokens });
+      if (opts?.onFireImpl) await opts.onFireImpl(reason);
+    },
+  });
   return { compactor: c, calls };
 }
 
 describe("Compactor scheduling", () => {
-  test("below soft threshold: no schedule, no suggestion", () => {
+  test("below soft threshold: no suggestion, no fire", () => {
     const { compactor, calls } = makeCompactor();
     compactor.observeAssistantTurn({
       stop_reason: "end_turn",
@@ -60,12 +43,11 @@ describe("Compactor scheduling", () => {
       was_subagent_synthesis: false,
     });
     expect(calls.suggested.length).toBe(0);
-    expect(calls.scheduled.length).toBe(0);
-    expect(compactor.getScheduledFireAt()).toBeNull();
+    expect(calls.fired.length).toBe(0);
     compactor.dispose();
   });
 
-  test("soft threshold crossed: calls onSuggested, not onScheduled, not onFire", () => {
+  test("soft threshold crossed: calls onSuggested, not onFire", () => {
     const { compactor, calls } = makeCompactor();
     compactor.observeAssistantTurn({
       stop_reason: "end_turn",
@@ -75,13 +57,11 @@ describe("Compactor scheduling", () => {
     expect(calls.suggested.length).toBe(1);
     expect(calls.suggested[0]!.reason.kind).toBe("soft_threshold_window");
     expect(calls.suggested[0]!.sessionTokens).toBe(35000);
-    expect(calls.scheduled.length).toBe(0);
     expect(calls.fired.length).toBe(0);
-    expect(compactor.getScheduledFireAt()).toBeNull();
     compactor.dispose();
   });
 
-  test("hard threshold crossed: calls onSuggested, not schedule or fire", () => {
+  test("hard threshold crossed: calls onSuggested, not onFire", () => {
     const { compactor, calls } = makeCompactor();
     compactor.observeAssistantTurn({
       stop_reason: "end_turn",
@@ -91,9 +71,7 @@ describe("Compactor scheduling", () => {
     expect(calls.suggested.length).toBe(1);
     expect(calls.suggested[0]!.reason.kind).toBe("hard_threshold_force");
     expect(calls.suggested[0]!.sessionTokens).toBe(80000);
-    expect(calls.scheduled.length).toBe(0);
     expect(calls.fired.length).toBe(0);
-    expect(compactor.getScheduledFireAt()).toBeNull();
     compactor.dispose();
   });
 
@@ -107,12 +85,11 @@ describe("Compactor scheduling", () => {
     expect(calls.suggested.length).toBe(1);
     expect(calls.suggested[0]!.reason.kind).toBe("subagent_return_window");
     expect(calls.suggested[0]!.sessionTokens).toBe(35000);
-    expect(calls.scheduled.length).toBe(0);
     expect(calls.fired.length).toBe(0);
     compactor.dispose();
   });
 
-  test("pending approval at soft-threshold time: no schedule, no suggestion", () => {
+  test("pending approval at soft-threshold time: no suggestion", () => {
     const { compactor, calls } = makeCompactor();
     compactor.observePendingApprovalChange(1);
     compactor.observeAssistantTurn({
@@ -121,7 +98,6 @@ describe("Compactor scheduling", () => {
       was_subagent_synthesis: false,
     });
     expect(calls.suggested.length).toBe(0);
-    expect(calls.scheduled.length).toBe(0);
     compactor.dispose();
   });
 
@@ -135,13 +111,12 @@ describe("Compactor scheduling", () => {
     });
     expect(calls.suggested.length).toBe(1);
     expect(calls.suggested[0]!.reason.kind).toBe("hard_threshold_force");
-    expect(calls.scheduled.length).toBe(0);
     compactor.dispose();
   });
 });
 
-describe("Compactor cancellation", () => {
-  test("user message after hard-threshold suggestion: no cancel, state stays idle", () => {
+describe("Compactor no-ops", () => {
+  test("user message, session ended, tool events are no-ops (no timers to cancel)", () => {
     const { compactor, calls } = makeCompactor();
     compactor.observeAssistantTurn({
       stop_reason: "end_turn",
@@ -149,35 +124,11 @@ describe("Compactor cancellation", () => {
       was_subagent_synthesis: false,
     });
     compactor.observeUserMessage();
-    expect(calls.cancelled).toEqual([]);
-    expect(calls.suggested.length).toBe(1);
-    expect(compactor.getScheduledFireAt()).toBeNull();
-    compactor.dispose();
-  });
-
-  test("pending approval after hard-threshold suggestion: no cancel", () => {
-    const { compactor, calls } = makeCompactor();
-    compactor.observeAssistantTurn({
-      stop_reason: "end_turn",
-      session_tokens: 80000,
-      was_subagent_synthesis: false,
-    });
-    compactor.observePendingApprovalChange(1);
-    expect(calls.cancelled).toEqual([]);
-    expect(calls.suggested.length).toBe(1);
-    compactor.dispose();
-  });
-
-  test("session ended after hard-threshold suggestion: no cancel", () => {
-    const { compactor, calls } = makeCompactor();
-    compactor.observeAssistantTurn({
-      stop_reason: "end_turn",
-      session_tokens: 80000,
-      was_subagent_synthesis: false,
-    });
+    compactor.observeToolUseStart();
     compactor.observeSessionEnded();
-    expect(calls.cancelled).toEqual([]);
+    // Suggestion already fired; no additional effects from the no-op observers.
     expect(calls.suggested.length).toBe(1);
+    expect(calls.fired.length).toBe(0);
     compactor.dispose();
   });
 });
@@ -196,7 +147,7 @@ describe("Compactor onFire sessionTokens threading", () => {
     compactor.dispose();
   });
 
-  test("forceFire passes 0 since no schedule recorded the pressure", async () => {
+  test("forceFire passes 0 tokens to onFire", async () => {
     const { compactor, calls } = makeCompactor();
     await compactor.forceFire({ kind: "manual" });
     expect(calls.fired.length).toBe(1);
@@ -219,7 +170,6 @@ describe("Compactor force-after-failures", () => {
     });
     expect(calls.suggested.length).toBe(1);
     expect(calls.suggested[0]!.reason.kind).toBe("hard_threshold_force");
-    expect(calls.scheduled.length).toBe(0);
     compactor.dispose();
   });
 
@@ -235,7 +185,7 @@ describe("Compactor force-after-failures", () => {
       session_tokens: 1000,
       was_subagent_synthesis: false,
     });
-    expect(calls.scheduled.length).toBe(0);
+    expect(calls.suggested.length).toBe(0);
     compactor.dispose();
   });
 });
