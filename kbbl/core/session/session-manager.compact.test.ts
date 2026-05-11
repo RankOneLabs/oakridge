@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { KbblConfigSchema, type KbblConfig } from "../config";
 import { createSafirClient, type FetchFn } from "../safir/client";
 import { createSafirQueue } from "../safir/queue";
+import type { PermissionProfile } from "../safir/types";
 import { classifyCcEvent } from "../../adapters/claude-code/event-classifier";
 import { SessionManager } from "./session-manager";
 import type { Session, SpawnCmd } from "./session";
@@ -414,6 +415,131 @@ describe("requestManualCompact", () => {
     await mgr.endAll();
     await mgr.drainLifecycle();
   }, 15000);
+});
+
+describe("compact_overrides from permission profile", () => {
+  test("profile compact_overrides.soft_threshold_tokens overrides global config", async () => {
+    const overrideProfile: PermissionProfile = {
+      id: 99,
+      name: "compact-override-test",
+      description: null,
+      is_seed: false,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+      rules: {
+        auto_approve: [],
+        always_prompt: [],
+        deny: [],
+        compact_overrides: { soft_threshold_tokens: 50 },
+      },
+    };
+
+    const baseStub = makeSafirStub();
+    const fetchWithProfile: FetchFn = async (input, init) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      const path = url.replace(/^https?:\/\/[^/]+/, "");
+      if (path === "/permission-profiles/99") {
+        return Response.json(overrideProfile, { status: 200 });
+      }
+      return baseStub.fetch(input, init);
+    };
+
+    // Global threshold is very high — without the override, no compact would schedule
+    const mgr = makeManager({
+      fetchFn: fetchWithProfile,
+      spawn: spawnEcho,
+      config: { soft_threshold_tokens: 999999, hard_threshold_tokens: 9999999 },
+    });
+
+    const session = await mgr.create({
+      workdir: tmpRoot,
+      permission_profile_id: 99,
+    });
+
+    await waitForStatus(session, "live", 3000);
+
+    let scheduledFired = false;
+    const unsub = session.subscribe((evt) => {
+      if (evt.type === "compact_scheduled") scheduledFired = true;
+    });
+
+    // Trigger mock-cc to emit a result event with 100 input_tokens (> override threshold of 50)
+    await session.writeInput("trigger compact");
+
+    const deadline = Date.now() + 3000;
+    while (!scheduledFired && Date.now() < deadline) {
+      await Bun.sleep(50);
+    }
+
+    unsub();
+    expect(scheduledFired).toBe(true);
+
+    await mgr.endAll();
+    await mgr.drainLifecycle();
+  }, 10000);
+
+  test("profile mutation after create does not change in-flight Compactor threshold", async () => {
+    const lowThresholdProfile: PermissionProfile = {
+      id: 88,
+      name: "low-threshold",
+      description: null,
+      is_seed: false,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+      rules: {
+        auto_approve: [],
+        always_prompt: [],
+        deny: [],
+        compact_overrides: { soft_threshold_tokens: 50 },
+      },
+    };
+
+    const baseStub = makeSafirStub();
+    const fetchWithProfile: FetchFn = async (input, init) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      const path = url.replace(/^https?:\/\/[^/]+/, "");
+      if (path === "/permission-profiles/88") {
+        return Response.json(lowThresholdProfile, { status: 200 });
+      }
+      return baseStub.fetch(input, init);
+    };
+
+    const mgr = makeManager({
+      fetchFn: fetchWithProfile,
+      spawn: spawnEcho,
+      config: { soft_threshold_tokens: 999999, hard_threshold_tokens: 9999999 },
+    });
+
+    const session = await mgr.create({ workdir: tmpRoot, permission_profile_id: 88 });
+    await waitForStatus(session, "live", 3000);
+
+    // Mutate the session profile to a high threshold AFTER creation
+    session.setPermissionProfile({
+      ...lowThresholdProfile,
+      id: 89,
+      name: "high-threshold",
+      rules: { ...lowThresholdProfile.rules, compact_overrides: { soft_threshold_tokens: 999999 } },
+    });
+
+    let scheduledFired = false;
+    const unsub = session.subscribe((evt) => {
+      if (evt.type === "compact_scheduled") scheduledFired = true;
+    });
+
+    // The Compactor was built with threshold=50 at creation time; the mutation
+    // should not change it. Result with 100 tokens should still schedule compact.
+    await session.writeInput("trigger compact");
+    const deadline = Date.now() + 3000;
+    while (!scheduledFired && Date.now() < deadline) {
+      await Bun.sleep(50);
+    }
+
+    unsub();
+    expect(scheduledFired).toBe(true);
+
+    await mgr.endAll();
+    await mgr.drainLifecycle();
+  }, 10000);
 });
 
 describe("runCompact compactor wiring", () => {

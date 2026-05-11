@@ -25,6 +25,11 @@ function stubSafirClient(taskById: Record<number, Task>): SafirClient {
     createPhase: async () => { throw new Error("not stubbed"); },
     updatePhase: async () => { throw new Error("not stubbed"); },
     submitHandoff: async () => { throw new Error("not stubbed"); },
+    listPermissionProfiles: async () => { throw new Error("not stubbed"); },
+    getPermissionProfile: async () => { throw new Error("not stubbed"); },
+    createPermissionProfile: async () => { throw new Error("not stubbed"); },
+    updatePermissionProfile: async () => { throw new Error("not stubbed"); },
+    setTaskDefaultPermissionProfile: async () => { throw new Error("not stubbed"); },
   };
 }
 

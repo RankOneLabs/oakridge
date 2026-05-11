@@ -54,6 +54,11 @@ function makeStubClient(opts: StubOpts): {
       opts.listHandoffsForTask,
     ) as SafirClient["listHandoffsForTask"],
     getHandoff: wrap("getHandoff", opts.getHandoff) as SafirClient["getHandoff"],
+    listPermissionProfiles: notImplemented("listPermissionProfiles") as SafirClient["listPermissionProfiles"],
+    getPermissionProfile: notImplemented("getPermissionProfile") as SafirClient["getPermissionProfile"],
+    createPermissionProfile: notImplemented("createPermissionProfile") as SafirClient["createPermissionProfile"],
+    updatePermissionProfile: notImplemented("updatePermissionProfile") as SafirClient["updatePermissionProfile"],
+    setTaskDefaultPermissionProfile: notImplemented("setTaskDefaultPermissionProfile") as SafirClient["setTaskDefaultPermissionProfile"],
   };
   return { client, calls };
 }

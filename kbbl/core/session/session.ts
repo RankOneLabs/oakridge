@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
 import type { Compactor } from "./compactor";
+import type { PermissionProfile } from "../safir/types";
 
 export interface EnvelopeEvent {
   id: number;
@@ -78,6 +79,7 @@ export interface SessionOpts {
   projectWorkdir?: string | null;
   taskId?: number;
   runId?: string;
+  permissionProfile?: PermissionProfile | null;
   phaseId?: string;
   callbacks?: SessionCallbacks;
   /**
@@ -237,6 +239,7 @@ export class Session {
   private _taskId: number | undefined;
   private _runId: string | undefined;
   private _phaseId: string | undefined;
+  private _permissionProfile: PermissionProfile | null;
   private _endReason: SessionEndReason | undefined;
   private _successorSid: string | null = null;
   private _compactor: Compactor | null = null;
@@ -310,6 +313,7 @@ export class Session {
     this._taskId = opts.taskId;
     this._runId = opts.runId;
     this._phaseId = opts.phaseId;
+    this._permissionProfile = opts.permissionProfile ?? null;
     this.createdAt = new Date().toISOString();
     this.lastActivityTs = this.createdAt;
     this.lastResultTs = this.createdAt;
@@ -442,6 +446,11 @@ export class Session {
   get phaseId(): string | undefined { return this._phaseId; }
   get endReason(): SessionEndReason | undefined { return this._endReason; }
   get successorSid(): string | null { return this._successorSid; }
+  get permissionProfile(): PermissionProfile | null { return this._permissionProfile; }
+
+  setPermissionProfile(profile: PermissionProfile): void {
+    this._permissionProfile = profile;
+  }
 
   attachSafirContext(runId: string, phaseId: string | undefined): void {
     this._runId = runId;

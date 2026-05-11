@@ -2547,7 +2547,7 @@ function isFilteredEvent(
   if (e.type === "stream_event") return true;
   if (showSystemEvents) return false;
   if (isLowSignalEvent(e)) return true;
-  if (e.type === "permission_auto_approved") return true;
+  if (e.type === "permission_auto_approved" || e.type === "permission_auto_denied") return true;
   if (e.type === "permission_request") {
     const p = e.payload as PermissionRequestPayload;
     return resolutions.has(p.request_id);
@@ -3114,6 +3114,9 @@ function EventRow({
     case "permission_auto_approved":
       if (!showSystemEvents) return null;
       return <AutoApprovedNotice event={event} />;
+    case "permission_auto_denied":
+      if (!showSystemEvents) return null;
+      return <AutoDeniedNotice event={event} />;
     case "yolo_mode_changed":
     case "tool_allowlisted":
       return <SystemNotice event={event} compact={!showSystemEvents} />;
@@ -3444,6 +3447,7 @@ function PermissionRow({
   const resolution = resolutions.get(p.request_id);
   const [localPending, setLocalPending] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [approveForTaskPending, setApproveForTaskPending] = useState(false);
 
   if (resolution) {
     // Compact mode: drop the post-resolution notice entirely. The next event
@@ -3512,6 +3516,39 @@ function PermissionRow({
     }
   }
 
+  async function approveForTask() {
+    if (approveForTaskPending || localPending) return;
+    setApproveForTaskPending(true);
+    setLocalError(null);
+    try {
+      const res = await fetch(
+        `/${encodeURIComponent(sid)}/permission/approve-for-task`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ tool: p.tool_name }),
+        },
+      );
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as {
+          error?: unknown;
+        } | null;
+        setLocalError(
+          typeof body?.error === "string"
+            ? body.error
+            : `server returned ${res.status}`,
+        );
+        return;
+      }
+      // Profile persisted — also resolve the current pending request
+      await decide("approve");
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : "request failed");
+    } finally {
+      setApproveForTaskPending(false);
+    }
+  }
+
   const inputPreview = JSON.stringify(p.tool_input, null, 2);
   // If the tool is already on the session allowlist, hide the redundant
   // "always allow" button — server would have auto-approved this request
@@ -3528,7 +3565,7 @@ function PermissionRow({
         <button
           type="button"
           className="btn-deny"
-          disabled={localPending}
+          disabled={localPending || approveForTaskPending}
           onClick={() => void decide("deny")}
         >
           Deny
@@ -3537,7 +3574,7 @@ function PermissionRow({
           <button
             type="button"
             className="btn-always"
-            disabled={localPending}
+            disabled={localPending || approveForTaskPending}
             onClick={() => void decide("approve", "always")}
             title={`Approve and auto-allow all future ${p.tool_name} calls this session`}
           >
@@ -3546,8 +3583,17 @@ function PermissionRow({
         )}
         <button
           type="button"
+          className="btn-approve-task"
+          disabled={localPending || approveForTaskPending}
+          onClick={() => void approveForTask()}
+          title={`Approve and remember for this task (persists across sessions)`}
+        >
+          {approveForTaskPending ? "Saving…" : "Approve for task"}
+        </button>
+        <button
+          type="button"
           className="btn-approve"
-          disabled={localPending}
+          disabled={localPending || approveForTaskPending}
           onClick={() => void decide("approve")}
         >
           Approve
@@ -3563,11 +3609,32 @@ function AutoApprovedNotice({ event }: { event: EnvelopeEvent }) {
     reason?: unknown;
   };
   const tool = typeof p.tool_name === "string" ? p.tool_name : "tool";
-  const reason = p.reason === "yolo" ? "yolo" : "always allow";
+  const reason =
+    p.reason === "yolo"
+      ? "yolo"
+      : typeof p.reason === "string" && p.reason.startsWith("profile:")
+        ? p.reason
+        : "always allow";
   return (
     <div className="row row-system">
       <div className="notice notice-allow">
         auto-approved · {tool} <span className="notice-tag">({reason})</span>
+      </div>
+    </div>
+  );
+}
+
+function AutoDeniedNotice({ event }: { event: EnvelopeEvent }) {
+  const p = (event.payload ?? {}) as {
+    tool_name?: unknown;
+    reason?: unknown;
+  };
+  const tool = typeof p.tool_name === "string" ? p.tool_name : "tool";
+  const reason = typeof p.reason === "string" ? p.reason : "profile";
+  return (
+    <div className="row row-system">
+      <div className="notice notice-deny">
+        auto-denied · {tool} <span className="notice-tag">({reason})</span>
       </div>
     </div>
   );

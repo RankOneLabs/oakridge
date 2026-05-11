@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 
 import type { Decision, Session } from "../../core/session/session";
 import type { SessionManager } from "../../core/session/session-manager";
+import { evaluateRule } from "./spawn";
 
 /**
  * CC PreToolUse hook payload.
@@ -107,6 +108,59 @@ export function hookApprovalHandler(deps: HookHandlerDeps) {
             autoReason === "yolo"
               ? "auto-approved (yolo mode)"
               : `auto-approved (always allow ${hook.tool_name})`,
+        },
+      });
+    }
+
+    // Profile-driven gate evaluation (Phase 4). Runs after yolo/allowlist so
+    // explicit operator overrides always win; before parking so the operator
+    // is only interrupted for calls that truly need a decision.
+    const profileDecision = evaluateRule(session.permissionProfile, hook);
+    if (profileDecision === "auto_approve") {
+      const profileName = session.permissionProfile!.name;
+      try {
+        await session.emit("permission_auto_approved", {
+          tool_name: hook.tool_name,
+          tool_input: hook.tool_input,
+          tool_use_id: hook.tool_use_id,
+          reason: `profile:${profileName}`,
+        });
+      } catch (err) {
+        console.error(
+          `kbbl: failed to log profile auto-approve for ${hook.tool_name}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+      return c.json({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "allow",
+          permissionDecisionReason: `auto-approved (profile:${profileName})`,
+        },
+      });
+    }
+    if (profileDecision === "deny") {
+      const profileName = session.permissionProfile!.name;
+      try {
+        await session.emit("permission_auto_denied", {
+          tool_name: hook.tool_name,
+          tool_input: hook.tool_input,
+          tool_use_id: hook.tool_use_id,
+          reason: `profile:${profileName}`,
+        });
+      } catch (err) {
+        console.error(
+          `kbbl: failed to log profile auto-deny for ${hook.tool_name}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+      return c.json({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "deny",
+          permissionDecisionReason: `auto-denied (profile:${profileName})`,
         },
       });
     }

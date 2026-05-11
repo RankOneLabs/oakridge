@@ -18,6 +18,7 @@ import {
   type SessionStatus,
   type SpawnCmd,
 } from "./session";
+import type { PermissionProfile } from "../safir/types";
 import { Compactor, type CompactReason } from "./compactor";
 import { COMPACT_PROMPT } from "./compact-prompt";
 import { parseHandoffMarkdown } from "./handoff-doc";
@@ -108,6 +109,7 @@ export interface CreateSessionOpts {
   taskId?: number;
   runId?: string;
   parentPhaseId?: string;
+  permission_profile_id?: number;
 }
 
 /**
@@ -220,9 +222,65 @@ export class SessionManager {
    */
   private archivedScanPromise: Promise<void> | null = null;
   private readonly pendingLifecycle = new Set<Promise<void>>();
+  // undefined = not yet fetched or last attempt was a transient error (retry next time);
+  // null = authoritative "not found"; PermissionProfile = cached result.
+  private _scopedWriteProfileCache: PermissionProfile | null | undefined = undefined;
 
   constructor(opts: SessionManagerOpts) {
     this.opts = opts;
+  }
+
+  private async getScopedWriteProfile(): Promise<PermissionProfile | null> {
+    if (this._scopedWriteProfileCache !== undefined) return this._scopedWriteProfileCache;
+    try {
+      const profiles = await this.opts.safirClient.listPermissionProfiles();
+      const found = profiles.find((p) => p.name === "scoped-write" && p.is_seed) ?? null;
+      if (!found) {
+        console.error("kbbl: scoped-write seed profile not found; treating as no-profile for this session");
+      }
+      this._scopedWriteProfileCache = found;
+      return found;
+    } catch (err) {
+      console.error(
+        `kbbl: could not fetch scoped-write fallback profile, treating as no-profile: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return null;
+    }
+  }
+
+  private async resolvePermissionProfile(opts: CreateSessionOpts): Promise<PermissionProfile | null> {
+    if (opts.permission_profile_id !== undefined) {
+      try {
+        return await this.opts.safirClient.getPermissionProfile(opts.permission_profile_id);
+      } catch (err) {
+        console.error(
+          `kbbl: getPermissionProfile(${opts.permission_profile_id}) failed, treating as no-profile: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        return null;
+      }
+    }
+
+    if (opts.taskId !== undefined) {
+      try {
+        const task = await this.opts.safirClient.getTask(opts.taskId);
+        if (task.default_permission_profile_id != null) {
+          return await this.opts.safirClient.getPermissionProfile(task.default_permission_profile_id);
+        }
+      } catch (err) {
+        console.error(
+          `kbbl: resolvePermissionProfile for task ${opts.taskId} failed, falling back to scoped-write: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+      return this.getScopedWriteProfile();
+    }
+
+    return null;
   }
 
   async create(opts: CreateSessionOpts): Promise<Session> {
@@ -300,6 +358,11 @@ export class SessionManager {
     }
     const effectiveWorkdir = worktreePath ?? opts.workdir;
 
+    // Resolve permission profile (Phase 4). Snapshot at creation time;
+    // mutations via approve-for-task update the in-memory session object
+    // without restarting it so gate decisions see the live rules.
+    const resolvedProfile = await this.resolvePermissionProfile(opts);
+
     // Roll back the worktree if Session construction throws (e.g. artifactId
     // length validation). The worktree exists on disk but no Session, no map
     // entry, no broadcast — leaving it would orphan a branch + dir that the
@@ -322,6 +385,7 @@ export class SessionManager {
       worktreeBaseRef,
       projectWorkdir,
       model: opts.model ?? null,
+      permissionProfile: resolvedProfile,
       classifyEvent: this.opts.classifyEvent,
       nonPersistedEventTypes: this.opts.nonPersistedEventTypes,
       callbacks: {
@@ -397,11 +461,15 @@ export class SessionManager {
     if (opts.taskId !== undefined || opts.runId !== undefined) {
       await this.openSafirContext(session, opts);
     }
-    // Compactor: schedules /compact firings based on session-token
-    // pressure. Constructed per-session so config thresholds can be
-    // per-session in the future (Phase 4 profile overrides). onFire
-    // invokes runCompact via the manager.
-    const compactor = new Compactor(this.opts.config.compact, {
+    // Compactor: schedules /compact firings based on session-token pressure.
+    // If the resolved profile has compact_overrides, merge them (override
+    // wins). Snapshotted at session start — post-creation profile mutations
+    // do not affect a running Compactor's thresholds (scheduled timers would
+    // be invalidated mid-stream). Gate decisions read the live profile object.
+    const effectiveCompactConfig = resolvedProfile?.rules.compact_overrides
+      ? { ...this.opts.config.compact, ...resolvedProfile.rules.compact_overrides }
+      : this.opts.config.compact;
+    const compactor = new Compactor(effectiveCompactConfig, {
       onSuggested: (reason, sessionTokens) => {
         session
           .emit("compact_suggested", {
@@ -472,12 +540,21 @@ export class SessionManager {
     const oakridgeSid = session.oakridgeSid;
 
     if (opts.runId === undefined) {
-      const runBody = {
+      const runBody: {
+        executor: "claude_code";
+        status: "running";
+        created_by: string;
+        created_by_session: string;
+        permission_profile_id?: number;
+      } = {
         executor: "claude_code" as const,
         status: "running" as const,
         created_by: "kbbl",
         created_by_session: oakridgeSid,
       };
+      if (session.permissionProfile?.id !== undefined) {
+        runBody.permission_profile_id = session.permissionProfile.id;
+      }
       const created = await safirCall(
         ctx,
         () => this.opts.safirClient.createRun(opts.taskId!, runBody),

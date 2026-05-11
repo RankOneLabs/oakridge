@@ -12,13 +12,16 @@
 //           discriminate transient failures from real bugs.
 
 import type {
+  CreatePermissionProfile,
   CreateRunPhase,
   CreateTaskRun,
   HandoffDocRecord,
+  PermissionProfile,
   RunPhase,
   SubmitHandoff,
   Task,
   TaskRun,
+  UpdatePermissionProfile,
   UpdateRunPhase,
   UpdateTaskRun,
 } from "./types";
@@ -61,6 +64,11 @@ export interface SafirClient {
   listTasks(): Promise<Task[]>;
   listHandoffsForTask(taskId: number): Promise<HandoffDocRecord[]>;
   getHandoff(handoffId: string): Promise<HandoffDocRecord>;
+  listPermissionProfiles(): Promise<PermissionProfile[]>;
+  getPermissionProfile(id: number): Promise<PermissionProfile>;
+  createPermissionProfile(body: CreatePermissionProfile): Promise<PermissionProfile>;
+  updatePermissionProfile(id: number, body: UpdatePermissionProfile): Promise<PermissionProfile>;
+  setTaskDefaultPermissionProfile(taskId: number, profileId: number | null): Promise<Task>;
 }
 
 export interface CreateSafirClientOpts {
@@ -145,5 +153,15 @@ export function createSafirClient(opts: CreateSafirClientOpts): SafirClient {
       request<HandoffDocRecord[]>("GET", `/tasks/${taskId}/handoffs`),
     getHandoff: (handoffId) =>
       request<HandoffDocRecord>("GET", `/handoffs/${handoffId}`),
+    listPermissionProfiles: () =>
+      request<PermissionProfile[]>("GET", "/permission-profiles"),
+    getPermissionProfile: (id) =>
+      request<PermissionProfile>("GET", `/permission-profiles/${id}`),
+    createPermissionProfile: (body) =>
+      request<PermissionProfile>("POST", "/permission-profiles", body),
+    updatePermissionProfile: (id, body) =>
+      request<PermissionProfile>("PATCH", `/permission-profiles/${id}`, body),
+    setTaskDefaultPermissionProfile: (taskId, profileId) =>
+      request<Task>("POST", `/tasks/${taskId}/permission-profile`, { profile_id: profileId }),
   };
 }
