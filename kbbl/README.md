@@ -77,7 +77,7 @@ Stop with `systemctl --user stop kbbl`. Not needed on a dedicated workstation.
 ### Sessions
 
 - `GET /sessions` — list live sessions (add `?include=archived` to fold in on-disk JSONL)
-- `POST /sessions` — create a session; body: `{ workdir?, resume_from?, name?, artifact_id?, model?, task_id?, run_id?, permission_profile_id? }`. With `resume_from`, forks an ended session. `task_id` alone binds the session to a fresh run on that safir task; `task_id` + `run_id` appends a sibling phase to an existing run. `permission_profile_id` overrides the task's default profile for this session only.
+- `POST /sessions` — create a session; body: `{ workdir?, resume_from?, name?, artifact_id?, model?, task_id?, run_id?, permission_profile_id? }`. With `resume_from`, forks an ended session. The three safir-binding fields are independent: `task_id` alone creates a fresh run on that task (plus its first phase); `run_id` alone appends a sibling phase to an existing run (safir resolves the task from the run); `permission_profile_id` resolves the spawn-time permission profile and works on its own as well as alongside the others, overriding whatever the task default would have selected.
 - `DELETE /sessions/:sid` — kill a live session (`?purge=true` also deletes the transcript)
 - `GET /artifacts/:artifactId/sessions` — list sessions tagged with a given workspace-layer artifact id
 

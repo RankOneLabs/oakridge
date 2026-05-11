@@ -192,11 +192,14 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
     // context via --resume <parentCcSid> --fork-session, and ignores any
     // workdir override (the parent's workdir is authoritative).
     //
-    // task_id / run_id bind the session to safir's run/phase spine. Pass
-    // task_id alone to create a fresh run on that task; pass task_id +
-    // run_id to append a sibling phase to an existing run.
-    // permission_profile_id overrides the task's default profile for this
-    // session only.
+    // task_id, run_id, and permission_profile_id are independent:
+    //   - task_id alone → SessionManager creates a fresh run on the task,
+    //     then its first phase, and attaches the session to it.
+    //   - run_id alone → SessionManager appends a new phase to the
+    //     existing run (safir resolves the task from the run).
+    //   - permission_profile_id → resolved at spawn time as the session's
+    //     permission profile, overriding whatever the task default would
+    //     have selected; works with or without task_id / run_id.
     let resumeFrom: string | null = null;
     let bodyWorkdir: string | null = null;
     let bodyName: string | null = null;
