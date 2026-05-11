@@ -3114,6 +3114,9 @@ function EventRow({
     case "permission_auto_approved":
       if (!showSystemEvents) return null;
       return <AutoApprovedNotice event={event} />;
+    case "permission_auto_denied":
+      if (!showSystemEvents) return null;
+      return <AutoDeniedNotice event={event} />;
     case "yolo_mode_changed":
     case "tool_allowlisted":
       return <SystemNotice event={event} compact={!showSystemEvents} />;
@@ -3611,6 +3614,22 @@ function AutoApprovedNotice({ event }: { event: EnvelopeEvent }) {
     <div className="row row-system">
       <div className="notice notice-allow">
         auto-approved · {tool} <span className="notice-tag">({reason})</span>
+      </div>
+    </div>
+  );
+}
+
+function AutoDeniedNotice({ event }: { event: EnvelopeEvent }) {
+  const p = (event.payload ?? {}) as {
+    tool_name?: unknown;
+    reason?: unknown;
+  };
+  const tool = typeof p.tool_name === "string" ? p.tool_name : "tool";
+  const reason = typeof p.reason === "string" ? p.reason : "profile";
+  return (
+    <div className="row row-system">
+      <div className="notice notice-deny">
+        auto-denied · {tool} <span className="notice-tag">({reason})</span>
       </div>
     </div>
   );

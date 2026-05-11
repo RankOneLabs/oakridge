@@ -1,5 +1,6 @@
 import type { Hono } from "hono";
 
+import { SafirHttpError } from "../../safir/client";
 import type { SafirClient } from "../../safir/client";
 import type { PermissionRules } from "../../safir/types";
 import type { SessionManager } from "../../session/session-manager";
@@ -64,6 +65,9 @@ export function mountPermissionRoutes(
     try {
       task = await safirClient.getTask(taskId);
     } catch (err) {
+      if (err instanceof SafirHttpError && err.status === 404) {
+        return c.json({ error: "task not found" }, 404);
+      }
       const msg = err instanceof Error ? err.message : String(err);
       return c.json({ error: `could not fetch task: ${msg}` }, 502);
     }
@@ -71,6 +75,7 @@ export function mountPermissionRoutes(
     let updatedProfile: Awaited<ReturnType<SafirClient["getPermissionProfile"]>>;
 
     const existingProfileId = task.default_permission_profile_id;
+    let seedRules: PermissionRules | undefined;
     if (existingProfileId != null) {
       let existing: Awaited<ReturnType<SafirClient["getPermissionProfile"]>>;
       try {
@@ -99,19 +104,23 @@ export function mountPermissionRoutes(
         return c.json(updatedProfile, 200);
       }
       // Falls through: existing profile is a seed → create new inline profile
+      seedRules = existing.rules;
     }
 
-    // No profile or seed profile: create a new inline profile for this task
+    // No profile or seed profile: create a new inline profile for this task.
+    const baseRules: PermissionRules = seedRules
+      ? {
+          ...seedRules,
+          auto_approve: seedRules.auto_approve.filter((r) => r.tool !== tool),
+          deny: seedRules.deny.filter((t) => t !== tool),
+        }
+      : { auto_approve: [], always_prompt: [], deny: [] };
     const inlineName = `task-${taskId}-inline`;
     try {
       updatedProfile = await safirClient.createPermissionProfile({
         name: inlineName,
         description: `Auto-created for "approve for task" on task #${taskId}`,
-        rules: {
-          auto_approve: [newRule],
-          always_prompt: [],
-          deny: [],
-        },
+        rules: { ...baseRules, auto_approve: [...baseRules.auto_approve, newRule] },
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

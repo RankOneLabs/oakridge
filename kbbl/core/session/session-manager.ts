@@ -222,8 +222,8 @@ export class SessionManager {
    */
   private archivedScanPromise: Promise<void> | null = null;
   private readonly pendingLifecycle = new Set<Promise<void>>();
-  // undefined = not yet fetched; null = fetched, seed deleted/missing;
-  // PermissionProfile = cached from first successful lookup.
+  // undefined = not yet fetched or last attempt was a transient error (retry next time);
+  // null = authoritative "not found"; PermissionProfile = cached result.
   private _scopedWriteProfileCache: PermissionProfile | null | undefined = undefined;
 
   constructor(opts: SessionManagerOpts) {
@@ -234,7 +234,7 @@ export class SessionManager {
     if (this._scopedWriteProfileCache !== undefined) return this._scopedWriteProfileCache;
     try {
       const profiles = await this.opts.safirClient.listPermissionProfiles();
-      const found = profiles.find((p) => p.name === "scoped-write") ?? null;
+      const found = profiles.find((p) => p.name === "scoped-write" && p.is_seed) ?? null;
       if (!found) {
         console.error("kbbl: scoped-write seed profile not found; treating as no-profile for this session");
       }
@@ -246,7 +246,6 @@ export class SessionManager {
           err instanceof Error ? err.message : String(err)
         }`,
       );
-      this._scopedWriteProfileCache = null;
       return null;
     }
   }

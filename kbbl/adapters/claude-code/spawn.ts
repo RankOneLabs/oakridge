@@ -213,8 +213,8 @@ export interface ToolCallInfo {
  * (runtime, definitive). Returns the most specific matching decision.
  *
  * Decision priority (first match wins):
- *   1. always_prompt → "prompt" (explicit operator override)
- *   2. deny list / deny_patterns → "deny"
+ *   1. deny list / deny_patterns → "deny" (hard deny, wins over always_prompt)
+ *   2. always_prompt → "prompt"
  *   3. allow_all (after deny) → "auto_approve"
  *   4. auto_approve rules → "auto_approve" if a rule matches
  *   5. default → "prompt"
@@ -226,9 +226,9 @@ export function evaluateRule(
   if (!profile) return "prompt";
   const { rules } = profile;
 
-  if (rules.always_prompt.includes(call.tool_name)) return "prompt";
-
   if (rules.deny.includes(call.tool_name)) return "deny";
+
+  if (rules.always_prompt.includes(call.tool_name)) return "prompt";
 
   if (rules.deny_patterns) {
     for (const dp of rules.deny_patterns) {
@@ -267,18 +267,18 @@ function matchesInputMatch(
   if (inputMatch.command_prefix !== undefined) {
     const command = typeof inp["command"] === "string" ? inp["command"] : null;
     if (command === null) return false;
-    return inputMatch.command_prefix.some((p) => command.startsWith(p));
+    if (!inputMatch.command_prefix.some((p) => command.startsWith(p))) return false;
   }
 
   if (inputMatch.path_glob !== undefined) {
     const filePath = typeof inp["file_path"] === "string" ? inp["file_path"] : null;
     if (filePath === null) return false;
-    return inputMatch.path_glob.some((pattern) => new Bun.Glob(pattern).match(filePath));
+    if (!inputMatch.path_glob.some((pattern) => new Bun.Glob(pattern).match(filePath))) return false;
   }
 
   if (inputMatch.input_regex !== undefined) {
     try {
-      return new RegExp(inputMatch.input_regex).test(JSON.stringify(toolInput));
+      if (!new RegExp(inputMatch.input_regex).test(JSON.stringify(toolInput))) return false;
     } catch {
       return false;
     }
@@ -299,12 +299,12 @@ function matchesDenyPattern(
   if (inputMatch.command_prefix !== undefined) {
     const command = typeof inp["command"] === "string" ? inp["command"] : null;
     if (command === null) return false;
-    return inputMatch.command_prefix.some((p) => command.startsWith(p));
+    if (!inputMatch.command_prefix.some((p) => command.startsWith(p))) return false;
   }
 
   if (inputMatch.input_regex !== undefined) {
     try {
-      return new RegExp(inputMatch.input_regex).test(JSON.stringify(toolInput));
+      if (!new RegExp(inputMatch.input_regex).test(JSON.stringify(toolInput))) return false;
     } catch {
       return false;
     }
@@ -329,9 +329,10 @@ export function translateProfileToFlags(profile: PermissionProfile | null): {
   }
   const { rules } = profile;
 
-  // allow_all with no always_prompt and no deny_patterns → skip all gate checks
+  // allow_all with no deny rules of any kind → skip all gate checks
   if (
     rules.allow_all &&
+    rules.deny.length === 0 &&
     rules.always_prompt.length === 0 &&
     (!rules.deny_patterns || rules.deny_patterns.length === 0)
   ) {
