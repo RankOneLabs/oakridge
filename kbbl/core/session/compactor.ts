@@ -1,14 +1,13 @@
 // Compactor — schedules /compact firings based on session-token
-// pressure and turn quiescence. Pure state machine + clock; the
-// onFire callback is what actually runs runCompact.
+// pressure. Pure state machine + clock; the onFire callback is what
+// actually runs runCompact.
 //
 // Wiring: SessionManager constructs one Compactor per Session in
 // create() and calls session.attachCompactor(c). The CC classifier
 // observes terminal `result` events and forwards them via
 // observeAssistantTurn. Session forwards observeUserMessage,
 // observePendingApprovalChange, and observeSessionEnded from its own
-// hooks. The clock-based t_warm cancellation is driven by an internal
-// setTimeout the class manages.
+// hooks.
 //
 // The state machine has three states: idle, scheduled, firing.
 //   idle      — no fire pending; observe* may transition to scheduled.
@@ -30,7 +29,6 @@ export type CancelReason =
   | "user_message"
   | "tool_use_start"
   | "approval_pending"
-  | "window_expired"
   | "session_ended";
 
 export interface CompactorCallbacks {
@@ -52,9 +50,7 @@ interface ScheduledState {
   reason: CompactReason;
   fireAt: Date;
   sessionTokens: number;
-  windowStartedAt: Date;
   timer: ReturnType<typeof setTimeout>;
-  warmCapTimer: ReturnType<typeof setTimeout> | null;
 }
 
 export class Compactor {
@@ -183,29 +179,16 @@ export class Compactor {
     delayMs: number,
     sessionTokens: number,
   ): void {
-    const now = this.clock();
-    const fireAt = new Date(now.getTime() + delayMs);
+    const fireAt = new Date(this.clock().getTime() + delayMs);
     const timer = setTimeout(() => {
       void this.fire(reason, sessionTokens);
     }, delayMs);
-
-    let warmCapTimer: ReturnType<typeof setTimeout> | null = null;
-    if (reason.kind !== "hard_threshold_force" && delayMs > 0) {
-      warmCapTimer = setTimeout(
-        () => {
-          if (this.state === "scheduled") this.cancel("window_expired");
-        },
-        this.config.t_warm_seconds * 1000,
-      );
-    }
 
     this.scheduled = {
       reason,
       fireAt,
       sessionTokens,
-      windowStartedAt: now,
       timer,
-      warmCapTimer,
     };
     this.state = "scheduled";
     try {
@@ -236,9 +219,6 @@ export class Compactor {
   private clearScheduled(): void {
     if (this.scheduled === null) return;
     clearTimeout(this.scheduled.timer);
-    if (this.scheduled.warmCapTimer !== null) {
-      clearTimeout(this.scheduled.warmCapTimer);
-    }
     this.scheduled = null;
     this.state = "idle";
   }

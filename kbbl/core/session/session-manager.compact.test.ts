@@ -386,6 +386,7 @@ describe("requestManualCompact", () => {
     const result = mgr.requestManualCompact("00000000-0000-4000-8000-000000000000");
     expect(result).toBe("not_found");
     await mgr.endAll();
+    await mgr.drainLifecycle();
   });
 
   test("not_live when session is not live", async () => {

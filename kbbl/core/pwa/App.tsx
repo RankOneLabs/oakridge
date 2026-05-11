@@ -274,10 +274,10 @@ interface InboxState {
    */
   inMemorySids: Set<string>;
   inboxStatus: Status;
-  /** Non-null when the server has emitted a compact_suggested for a session. */
-  compactSuggestion: CompactSuggestion | null;
-  /** Optimistically clear the suggestion (e.g. when the user taps "Compact Now"). */
-  clearCompactSuggestion: () => void;
+  /** Per-session compact suggestions keyed by sid. */
+  compactSuggestions: Map<string, CompactSuggestion>;
+  /** Optimistically clear the suggestion for a given sid. */
+  clearCompactSuggestion: (sid: string) => void;
   /**
    * Fold a snapshot we already have in hand (e.g. the response body of
    * POST /sessions) into the inbox state so the destination view mounts
@@ -296,7 +296,7 @@ function useInbox(opts: { onSessionRemoved?: (sid: string) => void } = {}): Inbo
     () => new Set(),
   );
   const [inboxStatus, setInboxStatus] = useState<Status>("connecting");
-  const [compactSuggestion, setCompactSuggestion] = useState<CompactSuggestion | null>(null);
+  const [compactSuggestions, setCompactSuggestions] = useState<Map<string, CompactSuggestion>>(() => new Map());
   // Mirror onSessionRemoved into a ref so the EventSource handler (set up
   // once on mount) reads the latest closure on each delta — otherwise it
   // would call a stale callback that captured the initial render's sid.
@@ -397,19 +397,38 @@ function useInbox(opts: { onSessionRemoved?: (sid: string) => void } = {}): Inbo
       // until the server process exits. session_removed (purge) is what
       // actually drops the entry.
       if (delta.type === "compact_suggested") {
-        setCompactSuggestion({ sid: delta.sid, tokens: delta.tokens });
+        setCompactSuggestions((prev) => {
+          const next = new Map(prev);
+          next.set(delta.sid, { sid: delta.sid, tokens: delta.tokens });
+          return next;
+        });
       }
       if (
         delta.type === "status_changed" &&
         (delta.status === "compacting" || delta.status === "ended")
       ) {
-        setCompactSuggestion((prev) => (prev?.sid === delta.sid ? null : prev));
+        setCompactSuggestions((prev) => {
+          if (!prev.has(delta.sid)) return prev;
+          const next = new Map(prev);
+          next.delete(delta.sid);
+          return next;
+        });
       }
       if (delta.type === "session_ended") {
-        setCompactSuggestion((prev) => (prev?.sid === delta.sid ? null : prev));
+        setCompactSuggestions((prev) => {
+          if (!prev.has(delta.sid)) return prev;
+          const next = new Map(prev);
+          next.delete(delta.sid);
+          return next;
+        });
       }
       if (delta.type === "session_compacted") {
-        setCompactSuggestion((prev) => (prev?.sid === delta.sid ? null : prev));
+        setCompactSuggestions((prev) => {
+          if (!prev.has(delta.sid)) return prev;
+          const next = new Map(prev);
+          next.delete(delta.sid);
+          return next;
+        });
       }
     });
 
@@ -419,8 +438,15 @@ function useInbox(opts: { onSessionRemoved?: (sid: string) => void } = {}): Inbo
     };
   }, []);
 
-  const clearCompactSuggestion = useCallback(() => setCompactSuggestion(null), []);
-  return { sessions, inMemorySids, inboxStatus, compactSuggestion, clearCompactSuggestion, hydrateSession };
+  const clearCompactSuggestion = useCallback((sid: string) => {
+    setCompactSuggestions((prev) => {
+      if (!prev.has(sid)) return prev;
+      const next = new Map(prev);
+      next.delete(sid);
+      return next;
+    });
+  }, []);
+  return { sessions, inMemorySids, inboxStatus, compactSuggestions, clearCompactSuggestion, hydrateSession };
 }
 
 function applyDelta(
@@ -509,7 +535,7 @@ export function App() {
   const [sid, navigate] = useHashSid();
   const [taskId, navigateTask] = useHashTaskId();
   const [theme, toggleTheme] = useTheme();
-  const { sessions, inMemorySids, inboxStatus, compactSuggestion, clearCompactSuggestion, hydrateSession } = useInbox({
+  const { sessions, inMemorySids, inboxStatus, compactSuggestions, clearCompactSuggestion, hydrateSession } = useInbox({
     // When the active session is purged from another client / tab, drop
     // back to the inbox list so SessionView isn't left rendering a stale
     // transcript with no underlying session record. Comparing inside the
@@ -541,8 +567,8 @@ export function App() {
         inMemory={inMemorySids.has(sid)}
         inboxStatus={inboxStatus}
         theme={theme}
-        compactSuggestion={compactSuggestion?.sid === sid ? compactSuggestion : null}
-        onClearCompactSuggestion={clearCompactSuggestion}
+        compactSuggestion={compactSuggestions.get(sid) ?? null}
+        onClearCompactSuggestion={() => clearCompactSuggestion(sid)}
         softThresholdTokens={softThresholdTokens}
         thresholdInput={thresholdInput}
         onSoftThresholdChange={(n, input) => {
