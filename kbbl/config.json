@@ -5,9 +5,15 @@
     "compact_call_timeout_seconds": 90,
     "max_consecutive_failures_before_force": 3
   },
-  "retention": { "session_events_full_days": 14 },
+  "retention": {
+    "session_events_full_days": 14
+  },
   "safir": {
     "base_url": "http://localhost:7145",
     "queue_drain_interval_seconds": 30
+  },
+  "sessions": {
+    "worktree_per_session": false,
+    "worktree_dir_name": "worktrees"
   }
 }
