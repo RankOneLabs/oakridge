@@ -18,9 +18,6 @@ import { z } from "zod";
 
 const CompactSchema = z
   .object({
-    t_quiet_seconds: z.number().nonnegative().default(30),
-    t_quiet_after_subagent_seconds: z.number().nonnegative().default(15),
-    t_warm_seconds: z.number().positive().default(180),
     soft_threshold_tokens: z.number().int().positive().default(30000),
     hard_threshold_tokens: z.number().int().positive().default(70000),
     compact_call_timeout_seconds: z.number().positive().default(90),

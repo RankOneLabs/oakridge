@@ -1,8 +1,10 @@
+import { writeFile } from "node:fs/promises";
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 
 import type { AppRuntime } from "../runtime";
 import type { SafirClient } from "../safir/client";
+import type { KbblConfig } from "../config";
 import type { SessionManager } from "../session/session-manager";
 import { inboxHandler } from "../stream/inbox";
 import { mountHandoffRoutes } from "./handlers/handoff";
@@ -39,6 +41,15 @@ export interface CreateAppDeps {
    * this call.
    */
   getBunServer: () => import("bun").Server<unknown> | null;
+  /**
+   * Shared mutable config. PATCH /config mutates config.compact.soft_threshold_tokens
+   * in-place so all compactor instances pick up the new value immediately (they
+   * hold a reference to config.compact and read soft_threshold_tokens on each
+   * observeAssistantTurn call).
+   */
+  config: KbblConfig;
+  /** Absolute path to config.json on disk for PATCH /config to persist changes. */
+  configPath: string;
 }
 
 /**
@@ -57,6 +68,8 @@ export function createApp(deps: CreateAppDeps): Hono {
     pwaDistDir,
     safirClient,
     getBunServer,
+    config,
+    configPath,
   } = deps;
   const app = new Hono();
 
@@ -79,11 +92,54 @@ export function createApp(deps: CreateAppDeps): Hono {
 
   // ---- server config ----
   //
-  // Exposes the operator-configured defaults the PWA needs to render forms
-  // (currently just the default workdir). Kept tiny on purpose: this is not
-  // a place to grow generic settings — anything per-session belongs in the
-  // session snapshot.
-  app.get("/config", (c) => c.json({ defaultWorkdir }));
+  // Exposes the operator-configured defaults the PWA needs to render forms.
+  // PATCH /config allows runtime mutation of soft_threshold_tokens, persisted
+  // back to configPath so the value survives a server restart.
+  app.get("/config", (c) =>
+    c.json({
+      defaultWorkdir,
+      softThresholdTokens: config.compact.soft_threshold_tokens,
+    }),
+  );
+
+  app.patch("/config", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid json" }, 400);
+    }
+    if (typeof body !== "object" || body === null) {
+      return c.json({ error: "body must be an object" }, 400);
+    }
+    const { softThresholdTokens } = body as { softThresholdTokens?: unknown };
+    if (
+      typeof softThresholdTokens !== "number" ||
+      !Number.isInteger(softThresholdTokens) ||
+      softThresholdTokens <= 0
+    ) {
+      return c.json(
+        { error: "softThresholdTokens must be a positive integer" },
+        400,
+      );
+    }
+    if (softThresholdTokens >= config.compact.hard_threshold_tokens) {
+      return c.json(
+        {
+          error: `softThresholdTokens must be < hardThresholdTokens (${config.compact.hard_threshold_tokens})`,
+        },
+        400,
+      );
+    }
+    try {
+      await writeFile(configPath, JSON.stringify({ ...config, compact: { ...config.compact, soft_threshold_tokens: softThresholdTokens } }, null, 2), "utf8");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return c.json({ error: `failed to persist config: ${msg}` }, 500);
+    }
+    config.compact.soft_threshold_tokens = softThresholdTokens;
+    return c.json({ softThresholdTokens });
+  });
 
   // ---- sessions CRUD ----
   mountSessionsRoutes(app, { manager, defaultWorkdir, sessionsDir });

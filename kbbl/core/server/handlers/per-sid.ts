@@ -200,4 +200,13 @@ export function mountPerSidRoutes(app: Hono, deps: PerSidRouteDeps): void {
     if (!session) return c.json({ error: "unknown session" }, 404);
     return approvalForSession(session, c);
   });
+
+  app.post("/:sid/compact", (c) => {
+    const sid = c.req.param("sid");
+    if (!isValidSid(sid)) return c.json({ error: "invalid sid" }, 400);
+    const result = manager.requestManualCompact(sid);
+    if (result === "not_found") return c.json({ error: "session not found" }, 404);
+    if (result === "not_live") return c.json({ error: "session not live" }, 409);
+    return c.json({ ok: true }, 202);
+  });
 }

@@ -8,6 +8,7 @@ function buildCompact(): KbblConfig["compact"] {
 }
 
 interface ObservedCalls {
+  suggested: Array<{ reason: CompactReason; sessionTokens: number }>;
   scheduled: Array<{
     fireAt: Date;
     reason: CompactReason;
@@ -25,6 +26,7 @@ function makeCompactor(opts?: {
   const base = buildCompact();
   const config = { ...base, ...opts?.config };
   const calls: ObservedCalls = {
+    suggested: [],
     scheduled: [],
     cancelled: [],
     fired: [],
@@ -32,6 +34,9 @@ function makeCompactor(opts?: {
   const c = new Compactor(
     config,
     {
+      onSuggested: (reason, sessionTokens) => {
+        calls.suggested.push({ reason, sessionTokens });
+      },
       onScheduled: (fireAt, reason, sessionTokens) => {
         calls.scheduled.push({ fireAt, reason, sessionTokens });
       },
@@ -47,30 +52,32 @@ function makeCompactor(opts?: {
 }
 
 describe("Compactor scheduling", () => {
-  test("below soft threshold: no schedule", () => {
+  test("below soft threshold: no schedule, no suggestion", () => {
     const { compactor, calls } = makeCompactor();
     compactor.observeAssistantTurn({
       stop_reason: "end_turn",
       session_tokens: 1000,
       was_subagent_synthesis: false,
     });
+    expect(calls.suggested.length).toBe(0);
     expect(calls.scheduled.length).toBe(0);
     expect(compactor.getScheduledFireAt()).toBeNull();
     compactor.dispose();
   });
 
-  test("soft threshold crossed: schedules with t_quiet delay", () => {
+  test("soft threshold crossed: calls onSuggested, not onScheduled, not onFire", () => {
     const { compactor, calls } = makeCompactor();
     compactor.observeAssistantTurn({
       stop_reason: "end_turn",
       session_tokens: 35000,
       was_subagent_synthesis: false,
     });
-    expect(calls.scheduled.length).toBe(1);
-    expect(calls.scheduled[0]!.reason.kind).toBe("soft_threshold_window");
-    const delay =
-      calls.scheduled[0]!.fireAt.getTime() - new Date(0).getTime();
-    expect(delay).toBe(30 * 1000);
+    expect(calls.suggested.length).toBe(1);
+    expect(calls.suggested[0]!.reason.kind).toBe("soft_threshold_window");
+    expect(calls.suggested[0]!.sessionTokens).toBe(35000);
+    expect(calls.scheduled.length).toBe(0);
+    expect(calls.fired.length).toBe(0);
+    expect(compactor.getScheduledFireAt()).toBeNull();
     compactor.dispose();
   });
 
@@ -81,6 +88,7 @@ describe("Compactor scheduling", () => {
       session_tokens: 80000,
       was_subagent_synthesis: false,
     });
+    expect(calls.suggested.length).toBe(0);
     expect(calls.scheduled.length).toBe(1);
     expect(calls.scheduled[0]!.reason.kind).toBe("hard_threshold_force");
     const delay =
@@ -89,22 +97,22 @@ describe("Compactor scheduling", () => {
     compactor.dispose();
   });
 
-  test("subagent synthesis uses t_quiet_after_subagent", () => {
+  test("subagent synthesis: calls onSuggested with subagent_return_window reason", () => {
     const { compactor, calls } = makeCompactor();
     compactor.observeAssistantTurn({
       stop_reason: "end_turn",
       session_tokens: 35000,
       was_subagent_synthesis: true,
     });
-    expect(calls.scheduled.length).toBe(1);
-    expect(calls.scheduled[0]!.reason.kind).toBe("subagent_return_window");
-    const delay =
-      calls.scheduled[0]!.fireAt.getTime() - new Date(0).getTime();
-    expect(delay).toBe(15 * 1000);
+    expect(calls.suggested.length).toBe(1);
+    expect(calls.suggested[0]!.reason.kind).toBe("subagent_return_window");
+    expect(calls.suggested[0]!.sessionTokens).toBe(35000);
+    expect(calls.scheduled.length).toBe(0);
+    expect(calls.fired.length).toBe(0);
     compactor.dispose();
   });
 
-  test("pending approval at soft-threshold time: no schedule", () => {
+  test("pending approval at soft-threshold time: no schedule, no suggestion", () => {
     const { compactor, calls } = makeCompactor();
     compactor.observePendingApprovalChange(1);
     compactor.observeAssistantTurn({
@@ -112,6 +120,7 @@ describe("Compactor scheduling", () => {
       session_tokens: 35000,
       was_subagent_synthesis: false,
     });
+    expect(calls.suggested.length).toBe(0);
     expect(calls.scheduled.length).toBe(0);
     compactor.dispose();
   });
@@ -131,11 +140,11 @@ describe("Compactor scheduling", () => {
 });
 
 describe("Compactor cancellation", () => {
-  test("user message cancels scheduled fire", () => {
+  test("user message cancels hard-threshold scheduled fire", () => {
     const { compactor, calls } = makeCompactor();
     compactor.observeAssistantTurn({
       stop_reason: "end_turn",
-      session_tokens: 35000,
+      session_tokens: 80000,
       was_subagent_synthesis: false,
     });
     compactor.observeUserMessage();
@@ -144,62 +153,29 @@ describe("Compactor cancellation", () => {
     compactor.dispose();
   });
 
-  test("pending approval cancels soft-window fire (not hard-threshold)", () => {
-    {
-      const { compactor, calls } = makeCompactor();
-      compactor.observeAssistantTurn({
-        stop_reason: "end_turn",
-        session_tokens: 35000,
-        was_subagent_synthesis: false,
-      });
-      compactor.observePendingApprovalChange(1);
-      expect(calls.cancelled).toEqual(["approval_pending"]);
-      compactor.dispose();
-    }
-    {
-      const { compactor, calls } = makeCompactor();
-      compactor.observeAssistantTurn({
-        stop_reason: "end_turn",
-        session_tokens: 80000,
-        was_subagent_synthesis: false,
-      });
-      compactor.observePendingApprovalChange(1);
-      expect(calls.cancelled).toEqual([]);
-      compactor.dispose();
-    }
-  });
-
-  test("session ended cancels scheduled fire", () => {
+  test("pending approval does not cancel hard-threshold schedule", () => {
     const { compactor, calls } = makeCompactor();
     compactor.observeAssistantTurn({
       stop_reason: "end_turn",
-      session_tokens: 35000,
+      session_tokens: 80000,
+      was_subagent_synthesis: false,
+    });
+    compactor.observePendingApprovalChange(1);
+    expect(calls.cancelled).toEqual([]);
+    compactor.dispose();
+  });
+
+  test("session ended cancels hard-threshold scheduled fire", () => {
+    const { compactor, calls } = makeCompactor();
+    compactor.observeAssistantTurn({
+      stop_reason: "end_turn",
+      session_tokens: 80000,
       was_subagent_synthesis: false,
     });
     compactor.observeSessionEnded();
     expect(calls.cancelled).toEqual(["session_ended"]);
     compactor.dispose();
   });
-
-  // slow: 5s real-time. The t_warm cap timer is wall-clock driven via
-  // setTimeout — there's no clean way to verify it fires without
-  // actually waiting. Configure the cap to 5s and the quiet window to
-  // 10s so the cap fires before the scheduled fire would.
-  test("t_warm cap cancels stale schedule", async () => {
-    const { compactor, calls } = makeCompactor({
-      config: { t_warm_seconds: 5, t_quiet_seconds: 10 },
-    });
-    compactor.observeAssistantTurn({
-      stop_reason: "end_turn",
-      session_tokens: 35000,
-      was_subagent_synthesis: false,
-    });
-    expect(calls.scheduled.length).toBe(1);
-    await Bun.sleep(5100);
-    expect(calls.cancelled).toEqual(["window_expired"]);
-    expect(calls.fired.length).toBe(0);
-    compactor.dispose();
-  }, 10000);
 });
 
 describe("Compactor onFire sessionTokens threading", () => {

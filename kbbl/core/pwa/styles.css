@@ -1568,3 +1568,65 @@ body {
     background: var(--bg-input-bar-desktop);
   }
 }
+
+/* === compact suggestion banner (inline above MetricsStrip) === */
+.compact-suggestion-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--amber-bg);
+  color: var(--amber-fg);
+  border-top: 1px solid var(--amber-border);
+  border-bottom: 1px solid var(--amber-border);
+  font-size: 0.85rem;
+}
+.compact-suggestion-banner__text {
+  flex: 1;
+  min-width: 12rem;
+}
+.compact-suggestion-banner__action,
+.compact-suggestion-banner__dismiss {
+  padding: 0.2rem 0.6rem;
+  border-radius: 4px;
+  border: 1px solid var(--amber-border);
+  background: transparent;
+  color: var(--amber-fg);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.compact-suggestion-banner__action {
+  font-weight: 600;
+}
+.compact-suggestion-banner__action:hover,
+.compact-suggestion-banner__dismiss:hover {
+  background: var(--amber-border);
+}
+
+/* === threshold setting input in SessionTopBar === */
+.threshold-setting {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.threshold-setting__label {
+  font-size: 0.75rem;
+}
+.threshold-setting__input {
+  width: 5.5rem;
+  padding: 0.1rem 0.3rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  text-align: right;
+}
+.threshold-setting__unit {
+  font-size: 0.72rem;
+  color: var(--text-faint);
+}
