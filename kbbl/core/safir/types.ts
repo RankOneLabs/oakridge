@@ -177,8 +177,6 @@ export const PermissionRules = z.object({
   compact_overrides: z.object({
     soft_threshold_tokens: z.number().optional(),
     hard_threshold_tokens: z.number().optional(),
-    t_quiet_seconds: z.number().optional(),
-    t_warm_seconds: z.number().optional(),
   }).optional(),
   model_override: z.string().optional(),
 }).strict();

@@ -249,7 +249,8 @@ export function evaluateRule(
 }
 
 // Shell-operator characters that turn a safe prefix into a chained command.
-const SHELL_OPERATORS = /[;&|><`$]/;
+// Includes \n and \r because newline is a command separator in POSIX shells.
+const SHELL_OPERATORS = /[;&|><`$\n\r]/;
 
 function matchesCommandPrefix(command: string, prefix: string): boolean {
   if (command !== prefix && !command.startsWith(`${prefix} `)) return false;
@@ -357,6 +358,7 @@ export function translateProfileToFlags(profile: PermissionProfile | null): {
 
   for (const rule of rules.auto_approve) {
     if (rules.always_prompt.includes(rule.tool)) continue;
+    if (rules.deny.includes(rule.tool)) continue;
 
     if (!rule.input_match) {
       allowedTools.push(rule.tool);

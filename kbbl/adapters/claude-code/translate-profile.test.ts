@@ -103,6 +103,12 @@ describe("evaluateRule: read-only-investigation", () => {
     expect(evaluateRule(readOnlyProfile, { tool_name: "Bash", tool_input: { command: "rm -rf /tmp" } })).toBe("prompt");
   });
 
+  test("rejects shell-chained commands even with a safe prefix", () => {
+    expect(evaluateRule(readOnlyProfile, { tool_name: "Bash", tool_input: { command: "git status && rm -rf /" } })).toBe("prompt");
+    expect(evaluateRule(readOnlyProfile, { tool_name: "Bash", tool_input: { command: "ls; cat /etc/passwd" } })).toBe("prompt");
+    expect(evaluateRule(readOnlyProfile, { tool_name: "Bash", tool_input: { command: "git status\nrm -rf /" } })).toBe("prompt");
+  });
+
   test("denies Write and Edit", () => {
     expect(evaluateRule(readOnlyProfile, { tool_name: "Write", tool_input: {} })).toBe("deny");
     expect(evaluateRule(readOnlyProfile, { tool_name: "Edit", tool_input: {} })).toBe("deny");
