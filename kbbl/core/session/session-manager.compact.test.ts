@@ -460,7 +460,7 @@ describe("compact_overrides from permission profile", () => {
 
     let scheduledFired = false;
     const unsub = session.subscribe((evt) => {
-      if (evt.type === "compact_scheduled") scheduledFired = true;
+      if (evt.type === "compact_suggested") scheduledFired = true;
     });
 
     // Trigger mock-cc to emit a result event with 100 input_tokens (> override threshold of 50)
@@ -523,11 +523,11 @@ describe("compact_overrides from permission profile", () => {
 
     let scheduledFired = false;
     const unsub = session.subscribe((evt) => {
-      if (evt.type === "compact_scheduled") scheduledFired = true;
+      if (evt.type === "compact_suggested") scheduledFired = true;
     });
 
     // The Compactor was built with threshold=50 at creation time; the mutation
-    // should not change it. Result with 100 tokens should still schedule compact.
+    // should not change it. Result with 100 tokens should still suggest compact.
     await session.writeInput("trigger compact");
     const deadline = Date.now() + 3000;
     while (!scheduledFired && Date.now() < deadline) {

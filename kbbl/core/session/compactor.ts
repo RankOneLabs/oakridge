@@ -90,7 +90,15 @@ export class Compactor {
       this.consecutiveFailureCount >=
       cfg.max_consecutive_failures_before_force;
     if (tokens >= cfg.hard_threshold_tokens || force) {
-      this.schedule({ kind: "hard_threshold_force" }, 0, tokens);
+      try {
+        this.callbacks.onSuggested({ kind: "hard_threshold_force" }, tokens);
+      } catch (err) {
+        console.error(
+          `kbbl: compactor onSuggested callback failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
       return;
     }
 
