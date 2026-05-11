@@ -196,7 +196,11 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
     //   - task_id alone → SessionManager creates a fresh run on the task,
     //     then its first phase, and attaches the session to it.
     //   - run_id alone → SessionManager appends a new phase to the
-    //     existing run (safir resolves the task from the run).
+    //     existing run (safir resolves the task from the run server-side).
+    //     Caveat: Session.taskId is NOT back-resolved from run_id, so the
+    //     kbbl session itself is not task-bound — POST /:sid/permission/
+    //     approve-for-task and any other taskId-gated surface will 422.
+    //     Send task_id alongside run_id when you need that.
     //   - permission_profile_id → resolved at spawn time as the session's
     //     permission profile, overriding whatever the task default would
     //     have selected; works with or without task_id / run_id.
@@ -313,9 +317,13 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
           bodyModel = trimmedModel;
         }
         if (parsed.task_id !== undefined) {
+          // isSafeInteger (not isInteger) — matches safir-proxy.ts's
+          // parseTaskId, which is the canonical integer-id check in this
+          // codebase. Past 2^53 ids silently round under isInteger, which
+          // would let a client target the wrong task.
           if (
             typeof parsed.task_id !== "number" ||
-            !Number.isInteger(parsed.task_id) ||
+            !Number.isSafeInteger(parsed.task_id) ||
             parsed.task_id <= 0
           ) {
             return c.json(
@@ -339,9 +347,10 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
           bodyRunId = trimmedRunId;
         }
         if (parsed.permission_profile_id !== undefined) {
+          // isSafeInteger same rationale as task_id above.
           if (
             typeof parsed.permission_profile_id !== "number" ||
-            !Number.isInteger(parsed.permission_profile_id) ||
+            !Number.isSafeInteger(parsed.permission_profile_id) ||
             parsed.permission_profile_id <= 0
           ) {
             return c.json(
