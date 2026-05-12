@@ -1457,8 +1457,33 @@ function SessionView({
     return false;
   }, [events, pendingMessages.length, sessionStatus]);
 
+  // Auto-scroll only when the user is already pinned near the bottom. If the
+  // operator has scrolled up to read earlier output, new messages must not
+  // yank them back down. A locally-sent message (pendingMessages increases)
+  // is treated as an intent to follow along, so re-stick to bottom in that
+  // case.
+  const stickToBottomRef = useRef(true);
+  const prevPendingLenRef = useRef(0);
+  useEffect(() => {
+    const STICK_THRESHOLD = 80;
+    const onScroll = () => {
+      const doc = document.documentElement;
+      const distFromBottom =
+        doc.scrollHeight - window.scrollY - window.innerHeight;
+      stickToBottomRef.current = distFromBottom < STICK_THRESHOLD;
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
   useLayoutEffect(() => {
-    endRef.current?.scrollIntoView({ block: "end" });
+    if (pendingMessages.length > prevPendingLenRef.current) {
+      stickToBottomRef.current = true;
+    }
+    prevPendingLenRef.current = pendingMessages.length;
+    if (stickToBottomRef.current) {
+      endRef.current?.scrollIntoView({ block: "end" });
+    }
   }, [events.length, pendingMessages.length, awaitingResult]);
 
   // Push the rendered top-bar / bottom-bar heights onto .app as CSS vars so
@@ -1496,6 +1521,8 @@ function SessionView({
     setAllowedTools(new Set());
     setPendingMessages([]);
     seenIds.current = new Set();
+    stickToBottomRef.current = true;
+    prevPendingLenRef.current = 0;
   }, [sid]);
 
   // Drop optimistic bubbles when the session is no longer live so a
@@ -2219,7 +2246,12 @@ function MetricsStrip({ events }: { events: EnvelopeEvent[] }) {
             <span className="metric-value">{fmtDuration(last.dur)}</span>
           </span>
         )}
-        {last && last.cost > 0 && (
+        {/* Once any turn this session has reported a non-zero cost, keep
+            both cost chips visible even when an individual turn lands at $0
+            (sub-cent rounding, fallback model, etc.) so the strip layout
+            doesn't flicker turn to turn. Pure $0 sessions (Claude Max only)
+            still hide both. */}
+        {last && m.totalCost > 0 && (
           <span className="metric" title="Last turn cost (Anthropic API billing; $0 on Claude Max)">
             <span className="metric-value">{fmtCost(last.cost)}</span>
           </span>

@@ -134,7 +134,14 @@ body {
   max-width: 800px;
   margin: 0 auto;
   padding: 0 1rem;
-  padding-bottom: env(safe-area-inset-bottom);
+  /* Bottom padding clears the now-fixed .input-bar so the last message,
+     pending bubbles, thinking indicator, and the scroll-end ref all
+     remain visible. --bottom-bar-h is measured + set by SessionView's
+     ResizeObserver and already includes the bar's own safe-area-inset
+     padding, so we don't add the inset again here. When the bar is
+     unmounted (inbox / ended views) the fallback applies the inset
+     directly so iOS home-indicator space is still respected. */
+  padding-bottom: var(--bottom-bar-h, env(safe-area-inset-bottom));
   position: relative;
 }
 
@@ -298,11 +305,13 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  /* CSS vars are pushed in by SessionView's useLayoutEffect after measuring
-     the rendered top-bar / bottom-bar heights — keeps the first/last messages
-     clear of the sticky bars on first paint and on iOS visual-viewport jumps. */
+  /* --top-bar-h is pushed in by SessionView's useLayoutEffect after
+     measuring the rendered top-bar height — keeps the first message
+     clear of the sticky top bar on first paint and on iOS visual-viewport
+     jumps. The fixed input bar at the bottom is cleared via .app's
+     padding-bottom (so pending bubbles / thinking row also clear it). */
   padding-top: var(--top-bar-h, 0.5rem);
-  padding-bottom: var(--bottom-bar-h, 0.5rem);
+  padding-bottom: 0.5rem;
 }
 
 .row {
@@ -1054,13 +1063,21 @@ body {
 }
 
 .input-bar {
-  /* Sticky (not fixed) so the bar follows the body scroll without iOS
-     Safari's address-bar / soft-keyboard fixed-positioning glitches. The
-     bar sits inline at the bottom of .app and pins to the viewport bottom
-     on scroll. */
-  position: sticky;
+  /* Fixed to the viewport bottom so it stays in view regardless of scroll
+     position. The previous `position: sticky` approach pinned only while
+     the bar's natural document position was below the viewport — short
+     transcripts and certain Chrome flex-layout interactions broke it.
+     `interactive-widget=resizes-content` in index.html ensures the bar
+     rides above the soft keyboard on mobile (Chrome / iOS 17+).
+     left:0/right:0 + max-width + margin:auto centers within the same
+     800px gutter as .app so it visually aligns with the content column. */
+  position: fixed;
   bottom: 0;
-  padding: 0.5rem;
+  left: 0;
+  right: 0;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 0.5rem 1rem;
   padding-bottom: calc(env(safe-area-inset-bottom) + 0.5rem);
   background: var(--bg-input-bar);
   border-top: 1px solid var(--border-subtle);
@@ -1364,16 +1381,8 @@ body {
 @media (min-width: 1024px) {
   .app {
     max-width: 1200px;
-    padding-bottom: env(safe-area-inset-bottom);
-  }
-
-  .events {
-    /* The desktop input-bar is `position: static` and the top-bar's sticky
-       behavior plays nicely at this size — neither overlays the message list,
-       so the measured-height padding the mobile layout uses is just dead
-       space here. */
-    padding-top: 0.5rem;
-    padding-bottom: 0.5rem;
+    /* padding-bottom inherits the mobile rule's var(--bottom-bar-h, ...)
+       because .input-bar is position: fixed on desktop too. */
   }
 
   .card {
@@ -1397,11 +1406,11 @@ body {
   }
 
   .input-bar {
-    position: static;
-    margin: 0.75rem 0 1rem;
-    padding: 0.75rem;
-    border: 1px solid var(--border-subtle);
-    border-radius: 10px;
+    /* Match .app's desktop max-width so the pinned bar visually aligns
+       with the content column. The bar stays `position: fixed` (set in
+       the mobile rule) — keeping the input pinned to the viewport bottom
+       so it doesn't scroll off screen on long transcripts. */
+    max-width: 1200px;
     background: var(--bg-input-bar-desktop);
   }
   .input-bar textarea {
