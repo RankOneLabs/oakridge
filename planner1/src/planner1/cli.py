@@ -5,9 +5,10 @@ import argparse
 import asyncio
 import sys
 
+from safir_py import SafirClient, safir_api_token_from_env, safir_base_url_from_env
+
 from .agent import run_planner1
 from .kbbl_client import KbblClient, kbbl_base_url_from_env
-from .safir_client import SafirClient, safir_api_token_from_env, safir_base_url_from_env
 from .staging import StagingBuffer
 
 
