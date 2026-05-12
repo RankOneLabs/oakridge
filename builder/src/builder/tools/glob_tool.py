@@ -44,7 +44,10 @@ class GlobTool(Tool):  # type: ignore[misc]
         except (KeyError, TypeError, ToolError) as e:
             return json.dumps({"error": str(e)})
         try:
-            matches = [p for p in root.glob(pattern) if p.is_file()]
+            matches = [
+                p for p in root.glob(pattern)
+                if p.is_file() and p.resolve().is_relative_to(self._ctx.workdir)
+            ]
         except OSError as e:
             return json.dumps({"error": f"glob failed: {e}"})
         def _safe_mtime(p: Any) -> float:

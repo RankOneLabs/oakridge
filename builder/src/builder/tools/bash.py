@@ -1,6 +1,7 @@
 """BashTool: run a shell command with permission and workdir enforcement."""
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import shlex
@@ -77,9 +78,10 @@ class BashTool(Tool):  # type: ignore[misc]
         if self._is_denied(command):
             return json.dumps({"error": "denied by permission profile"})
         use_shell = bool(_METACHAR_RE.search(command))
-        try:
+
+        def _run() -> subprocess.CompletedProcess[str]:
             if use_shell:
-                completed = subprocess.run(
+                return subprocess.run(
                     command,
                     shell=True,
                     executable="/bin/bash",
@@ -88,15 +90,23 @@ class BashTool(Tool):  # type: ignore[misc]
                     text=True,
                     timeout=timeout,
                 )
-            else:
-                completed = subprocess.run(
-                    shlex.split(command),
-                    shell=False,
-                    cwd=str(self._ctx.workdir),
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout,
-                )
+            try:
+                argv = shlex.split(command)
+            except ValueError as e:
+                raise ValueError(f"invalid command syntax: {e}") from e
+            return subprocess.run(
+                argv,
+                shell=False,
+                cwd=str(self._ctx.workdir),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+
+        try:
+            completed = await asyncio.to_thread(_run)
+        except ValueError as e:
+            return json.dumps({"error": str(e)})
         except subprocess.TimeoutExpired as e:
 
             def _decode(b: bytes | str | None) -> str:

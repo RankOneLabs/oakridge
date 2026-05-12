@@ -58,9 +58,12 @@ class GrepTool(Tool):  # type: ignore[misc]
             output_mode = str(args.get("output_mode", "files_with_matches"))
             case_insensitive = bool(args.get("case_insensitive", False))
             line_numbers = bool(args.get("line_numbers", False))
-            head_limit = int(args.get("head_limit", 250))
+            head_limit = max(1, int(args.get("head_limit", 250)))
         except (KeyError, TypeError, ValueError, ToolError) as e:
             return json.dumps({"error": str(e)})
+        _VALID_MODES = {"files_with_matches", "content", "count"}
+        if output_mode not in _VALID_MODES:
+            return json.dumps({"error": f"output_mode must be one of {sorted(_VALID_MODES)}"})
         cmd = ["rg", "--no-config"]
         if output_mode == "files_with_matches":
             cmd.append("-l")
