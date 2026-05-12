@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { SafirHttpError, type SafirClient } from "../../safir/client";
 import type {
   HandoffDocRecord,
+  PermissionProfile,
   Task,
 } from "../../safir/types";
 import { mountSafirProxyRoutes } from "./safir-proxy";
@@ -18,6 +19,8 @@ interface StubOpts {
   getTask?: (taskId: number) => Promise<Task>;
   listHandoffsForTask?: (taskId: number) => Promise<HandoffDocRecord[]>;
   getHandoff?: (handoffId: string) => Promise<HandoffDocRecord>;
+  listPermissionProfiles?: () => Promise<PermissionProfile[]>;
+  getPermissionProfile?: (id: number) => Promise<PermissionProfile>;
 }
 
 function makeStubClient(opts: StubOpts): {
@@ -54,8 +57,8 @@ function makeStubClient(opts: StubOpts): {
       opts.listHandoffsForTask,
     ) as SafirClient["listHandoffsForTask"],
     getHandoff: wrap("getHandoff", opts.getHandoff) as SafirClient["getHandoff"],
-    listPermissionProfiles: notImplemented("listPermissionProfiles") as SafirClient["listPermissionProfiles"],
-    getPermissionProfile: notImplemented("getPermissionProfile") as SafirClient["getPermissionProfile"],
+    listPermissionProfiles: wrap("listPermissionProfiles", opts.listPermissionProfiles) as SafirClient["listPermissionProfiles"],
+    getPermissionProfile: wrap("getPermissionProfile", opts.getPermissionProfile) as SafirClient["getPermissionProfile"],
     createPermissionProfile: notImplemented("createPermissionProfile") as SafirClient["createPermissionProfile"],
     updatePermissionProfile: notImplemented("updatePermissionProfile") as SafirClient["updatePermissionProfile"],
     setTaskDefaultPermissionProfile: notImplemented("setTaskDefaultPermissionProfile") as SafirClient["setTaskDefaultPermissionProfile"],
@@ -76,6 +79,23 @@ function makeTask(over: Partial<Task> = {}): Task {
     parent_id: null,
     title: "stub task",
     status: "open",
+    ...over,
+  };
+}
+
+function makePermissionProfile(over: Partial<PermissionProfile> = {}): PermissionProfile {
+  return {
+    id: 1,
+    name: "stub profile",
+    description: null,
+    is_seed: false,
+    rules: {
+      auto_approve: [],
+      always_prompt: [],
+      deny: [],
+    },
+    created_at: "2026-05-11T00:00:00.000Z",
+    updated_at: "2026-05-11T00:00:00.000Z",
     ...over,
   };
 }
@@ -271,5 +291,114 @@ describe("safir-proxy GET /safir/handoffs/:handoffId", () => {
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: "handoffId must be a non-empty string" });
     expect(calls.length).toBe(0);
+  });
+});
+
+describe("safir-proxy GET /safir/permission-profiles", () => {
+  test("returns the listPermissionProfiles array", async () => {
+    const profiles = [
+      makePermissionProfile({ id: 1, name: "default" }),
+      makePermissionProfile({ id: 2, name: "strict" }),
+    ];
+    const { client, calls } = makeStubClient({
+      listPermissionProfiles: async () => profiles,
+    });
+    const app = buildApp(client);
+
+    const res = await app.fetch(
+      new Request("http://kbbl.test/safir/permission-profiles"),
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(profiles);
+    expect(calls).toEqual([{ method: "listPermissionProfiles", args: [] }]);
+  });
+
+  test("safir-down 502 when listPermissionProfiles throws SafirHttpError(502)", async () => {
+    const { client } = makeStubClient({
+      listPermissionProfiles: async () => {
+        throw new SafirHttpError(502, "bad gateway");
+      },
+    });
+    const app = buildApp(client);
+
+    const res = await app.fetch(
+      new Request("http://kbbl.test/safir/permission-profiles"),
+    );
+
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({
+      error: "safir HTTP 502",
+      status: 502,
+      body: "bad gateway",
+    });
+  });
+});
+
+describe("safir-proxy GET /safir/permission-profiles/:id", () => {
+  test("returns a single profile", async () => {
+    const profile = makePermissionProfile({ id: 7, name: "custom" });
+    const { client, calls } = makeStubClient({
+      getPermissionProfile: async () => profile,
+    });
+    const app = buildApp(client);
+
+    const res = await app.fetch(
+      new Request("http://kbbl.test/safir/permission-profiles/7"),
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(profile);
+    expect(calls).toEqual([{ method: "getPermissionProfile", args: [7] }]);
+  });
+
+  test("non-numeric id returns 400", async () => {
+    const { client, calls } = makeStubClient({});
+    const app = buildApp(client);
+
+    const res = await app.fetch(
+      new Request("http://kbbl.test/safir/permission-profiles/foo"),
+    );
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/invalid permission profile id/);
+    expect(calls.length).toBe(0);
+  });
+
+  test("SafirHttpError(404) passes status through", async () => {
+    const { client } = makeStubClient({
+      getPermissionProfile: async () => {
+        throw new SafirHttpError(404, { error: "not found" });
+      },
+    });
+    const app = buildApp(client);
+
+    const res = await app.fetch(
+      new Request("http://kbbl.test/safir/permission-profiles/999"),
+    );
+
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({
+      error: "safir HTTP 404",
+      status: 404,
+      body: { error: "not found" },
+    });
+  });
+
+  test("generic Error becomes 502", async () => {
+    const { client } = makeStubClient({
+      getPermissionProfile: async () => {
+        throw new TypeError("fetch failed");
+      },
+    });
+    const app = buildApp(client);
+
+    const res = await app.fetch(
+      new Request("http://kbbl.test/safir/permission-profiles/1"),
+    );
+
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({ error: "safir unreachable" });
   });
 });

@@ -1,4 +1,5 @@
 import { writeFile } from "node:fs/promises";
+import { z } from "zod";
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 
@@ -106,6 +107,7 @@ export function createApp(deps: CreateAppDeps): Hono {
     c.json({
       defaultWorkdir,
       softThresholdTokens: config.compact.soft_threshold_tokens,
+      safirWebUrl: config.safir.web_url,
     }),
   );
 
@@ -119,33 +121,66 @@ export function createApp(deps: CreateAppDeps): Hono {
     if (typeof body !== "object" || body === null) {
       return c.json({ error: "body must be an object" }, 400);
     }
-    const { softThresholdTokens } = body as { softThresholdTokens?: unknown };
-    if (
-      typeof softThresholdTokens !== "number" ||
-      !Number.isInteger(softThresholdTokens) ||
-      softThresholdTokens <= 0
-    ) {
-      return c.json(
-        { error: "softThresholdTokens must be a positive integer" },
-        400,
-      );
+    const b = body as { softThresholdTokens?: unknown; safirWebUrl?: unknown };
+    const hasSoftThreshold = "softThresholdTokens" in b;
+    const hasSafirWebUrl = "safirWebUrl" in b;
+    if (!hasSoftThreshold && !hasSafirWebUrl) {
+      return c.json({ error: "no settable fields in body" }, 400);
     }
-    if (softThresholdTokens >= config.compact.hard_threshold_tokens) {
-      return c.json(
-        {
-          error: `softThresholdTokens must be < hardThresholdTokens (${config.compact.hard_threshold_tokens})`,
-        },
-        400,
-      );
+    if (hasSoftThreshold) {
+      const { softThresholdTokens } = b;
+      if (
+        typeof softThresholdTokens !== "number" ||
+        !Number.isInteger(softThresholdTokens) ||
+        softThresholdTokens <= 0
+      ) {
+        return c.json(
+          { error: "softThresholdTokens must be a positive integer" },
+          400,
+        );
+      }
+      if (softThresholdTokens >= config.compact.hard_threshold_tokens) {
+        return c.json(
+          {
+            error: `softThresholdTokens must be < hardThresholdTokens (${config.compact.hard_threshold_tokens})`,
+          },
+          400,
+        );
+      }
     }
+    if (hasSafirWebUrl) {
+      const { safirWebUrl } = b;
+      if (typeof safirWebUrl !== "string" || !z.url().safeParse(safirWebUrl).success) {
+        return c.json({ error: "safirWebUrl must be a valid URL" }, 400);
+      }
+    }
+    const newSoftThreshold = hasSoftThreshold
+      ? (b.softThresholdTokens as number)
+      : config.compact.soft_threshold_tokens;
+    const newSafirWebUrl = hasSafirWebUrl
+      ? (b.safirWebUrl as string)
+      : config.safir.web_url;
     try {
-      await writeFile(configPath, JSON.stringify({ ...config, compact: { ...config.compact, soft_threshold_tokens: softThresholdTokens } }, null, 2), "utf8");
+      await writeFile(
+        configPath,
+        JSON.stringify({
+          ...config,
+          compact: { ...config.compact, soft_threshold_tokens: newSoftThreshold },
+          safir: { ...config.safir, web_url: newSafirWebUrl },
+        }, null, 2),
+        "utf8",
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return c.json({ error: `failed to persist config: ${msg}` }, 500);
     }
-    config.compact.soft_threshold_tokens = softThresholdTokens;
-    return c.json({ softThresholdTokens });
+    config.compact.soft_threshold_tokens = newSoftThreshold;
+    config.safir.web_url = newSafirWebUrl;
+    return c.json({
+      defaultWorkdir,
+      softThresholdTokens: config.compact.soft_threshold_tokens,
+      safirWebUrl: config.safir.web_url,
+    });
   });
 
   // ---- sessions CRUD ----

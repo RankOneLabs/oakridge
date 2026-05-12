@@ -119,4 +119,27 @@ export function mountSafirProxyRoutes(
       return respondToUpstreamError(c, err);
     }
   });
+
+  app.get("/safir/permission-profiles", async (c) => {
+    try {
+      const profiles = await safirClient.listPermissionProfiles();
+      return c.json(profiles);
+    } catch (err) {
+      return respondToUpstreamError(c, err);
+    }
+  });
+
+  app.get("/safir/permission-profiles/:id", async (c) => {
+    const idParam = c.req.param("id");
+    const id = Number(idParam);
+    if (!Number.isInteger(id) || id <= 0) {
+      return c.json({ error: `invalid permission profile id: '${idParam}'` }, 400);
+    }
+    try {
+      const profile = await safirClient.getPermissionProfile(id);
+      return c.json(profile);
+    } catch (err) {
+      return respondToUpstreamError(c, err);
+    }
+  });
 }
