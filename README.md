@@ -7,7 +7,7 @@ Multi-agent workspace built on jig (separate repo, agent kit) and kbbl (operator
 ```text
 oakridge/
 ├── kbbl/                  # operator surface for CLI coding agents (v0, shipping)
-├── legit-biz-club/        # workspace layer (v1, placeholder)
+├── legit-biz-club/        # workspace layer (v1, complete)
 ├── docs/                  # public-facing documentation (placeholder)
 └── comms/                 # internal architecture memos and specs (gitignored)
 ```
@@ -15,7 +15,7 @@ oakridge/
 ## Sub-packages
 
 - **kbbl** — the operator surface. Drives one or more CLI coding agents (Claude Code today; runtime-agnostic by design) from a tablet- or phone-friendly PWA over Tailscale. Standalone; works without the workspace layer. See `kbbl/README.md`.
-- **legit-biz-club** — the workspace layer (multi-agent collaboration over a shared artifact). v1 build, not implemented yet. Placeholder package.
+- **legit-biz-club** — the workspace layer (multi-agent collaboration over a shared artifact). v1 build complete — all five phases (foundation, incremental coordination, convergence, evals + memory commit, study harness) shipped on `main`. Python library; no CLI. See `legit-biz-club/README.md`.
 
 ## Sibling repos
 
