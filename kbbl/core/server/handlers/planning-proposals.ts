@@ -184,7 +184,8 @@ export function mountPlanningProposalRoutes(
         });
         virtualToReal.set(t.index, created.id);
       } catch (err) {
-        proposalStore.markFailed(id, `createTask failed for index ${t.index}`);
+        const createdIds = [...virtualToReal.values()].join(", ");
+        proposalStore.markFailed(id, `createTask failed for index ${t.index}; safir ids created so far: [${createdIds}]`);
         return respondToUpstreamError(c, err);
       }
     }

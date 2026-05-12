@@ -622,13 +622,20 @@ export function App() {
   });
   const config = useServerConfig();
   const [pendingProposals, setPendingProposals] = useState<PlanningProposal[]>([]);
-  const fetchProposals = useCallback(async () => {
-    try {
-      const res = await fetch("/planning-proposals");
-      if (res.ok) setPendingProposals((await res.json()) as PlanningProposal[]);
-    } catch {}
-  }, []);
-  useEffect(() => { void fetchProposals(); }, [fetchProposals]);
+  const isInbox = sid === null && taskId === null && proposalId === null;
+  useEffect(() => {
+    if (!isInbox) return;
+    const ac = new AbortController();
+    void (async () => {
+      try {
+        const res = await fetch("/planning-proposals", { signal: ac.signal });
+        if (res.ok) setPendingProposals((await res.json()) as PlanningProposal[]);
+      } catch (e) {
+        if (e instanceof Error && e.name === "AbortError") return;
+      }
+    })();
+    return () => ac.abort();
+  }, [isInbox]);
   const [softThresholdTokens, setSoftThresholdTokens] = useState<number>(50000);
   const [thresholdInput, setThresholdInput] = useState<string>("50000");
 
@@ -680,7 +687,10 @@ export function App() {
       <ProposalReviewView
         proposalId={proposalId}
         safirWebUrl={config?.safirWebUrl ?? "http://localhost:3000"}
-        onBack={() => { void fetchProposals(); navigateProposal(null); }}
+        onBack={() => {
+          setPendingProposals((prev) => prev.filter((p) => p.id !== proposalId));
+          navigateProposal(null);
+        }}
       />
     );
   }

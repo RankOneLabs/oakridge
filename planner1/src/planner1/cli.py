@@ -92,7 +92,8 @@ async def _run(args: argparse.Namespace) -> int:
         if args.apply:
             return await _apply_directly(safir, buffer)
 
-        kbbl = KbblClient(base_url=args.kbbl_base_url or kbbl_base_url_from_env())
+        kbbl_base_url = args.kbbl_base_url or kbbl_base_url_from_env()
+        kbbl = KbblClient(base_url=kbbl_base_url)
         payload = buffer.to_payload(summary=summary, model=args.model)
         try:
             result = await kbbl.submit_proposal(payload)
@@ -104,7 +105,7 @@ async def _run(args: argparse.Namespace) -> int:
             print(f"kbbl response missing proposal_id (got: {result!r})", file=sys.stderr)
             return 5
         print(f"proposal_id={pid}")
-        print(f"review at <kbbl-url>/#proposal={pid}")
+        print(f"review at {kbbl_base_url.rstrip('/')}/#proposal={pid}")
         return 0
     finally:
         await safir.aclose()
