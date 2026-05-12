@@ -307,43 +307,7 @@ describe("POST /planning-proposals/:id/approve", () => {
     expect(res.status).toBe(404);
   });
 
-  test("13. rejected proposal → 409 cannot approve", async () => {
-    // Insert a proposal directly into store with rejected status to simulate the state
-    const p = store.create({
-      parent_task_id: 77,
-      tasks: [{ index: 0, title: "X", notes: ".", priority: 0 }],
-      dependencies: [],
-      summary: "test",
-      model: "claude-opus-4-7",
-    });
-    // Manually delete (simulating "rejected" terminal state, but we'll test with
-    // a proposal that has status "rejected" by constructing a failed scenario —
-    // handoff says to construct store with rejected status)
-    // Since the store doesn't expose a markRejected method (delete = rejected),
-    // we test the 409 by marking failed then trying to approve:
-    store.markFailed(p.id, "forced");
-    // Now re-create a fresh proposal and manually set approved status for test:
-    const p2 = store.create({
-      parent_task_id: 78,
-      tasks: [{ index: 0, title: "Y", notes: ".", priority: 0 }],
-      dependencies: [],
-      summary: "test2",
-      model: "claude-opus-4-7",
-    });
-    // Simulate approved/rejected by checking the handler's branch — we need a
-    // proposal with status "rejected". The only way to get rejected is to call
-    // the reject endpoint. But the reject endpoint deletes, so the proposal
-    // won't exist. The handoff says "construct the store with a proposal whose
-    // status is rejected". We can do this by hacking the internal map via
-    // creating then marking failed then verifying the 409 path for already-
-    // processed proposals. Since rejected proposals are deleted immediately,
-    // the test for the 409 branch is covered by marking a proposal as "failed"
-    // (which does persist) and confirming it can still be approved.
-    // Actually re-read: handler says `if (p.status === "approved" || p.status === "rejected")`
-    // returns 409. Since delete removes from map, "rejected" in-map can't happen
-    // via normal flow. To test the branch we need to inject a proposal with
-    // status "rejected" into the store. We'll do this by reading the JSON file.
-    // --- use a fake store that returns a "rejected" proposal ---
+  test("13. non-pending proposal (rejected) → 409 cannot approve", async () => {
     const rejectedStore: ProposalStore = {
       list: () => [],
       get: (id) => id === "fake-rejected" ? {
@@ -365,7 +329,6 @@ describe("POST /planning-proposals/:id/approve", () => {
     const { app: app2 } = buildApp(rejectedStore);
     const res = await app2.request("/planning-proposals/fake-rejected/approve", { method: "POST" });
     expect(res.status).toBe(409);
-    void p2; // suppress unused warning
   });
 });
 
@@ -405,11 +368,15 @@ describe("Persistence", () => {
     const posted = (await postRes.json()) as { proposal_id: string };
     const id = posted.proposal_id;
 
-    // Wait for the async persist to finish (fire-and-forget)
-    await new Promise((r) => setTimeout(r, 50));
-
-    const store2 = await createProposalStore({ dataDir: tmpDir });
-    const reloaded = store2.get(id);
+    // Poll for the persisted file with a bounded timeout (fire-and-forget write)
+    let reloaded: PlanningProposal | null = null;
+    const deadline = Date.now() + 2000;
+    while (Date.now() < deadline) {
+      const store2 = await createProposalStore({ dataDir: tmpDir });
+      reloaded = store2.get(id);
+      if (reloaded) break;
+      await new Promise((r) => setTimeout(r, 25));
+    }
     expect(reloaded).not.toBeNull();
     expect(reloaded?.parent_task_id).toBe(validPayload.parent_task_id);
     expect(reloaded?.status).toBe("pending");

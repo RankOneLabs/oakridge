@@ -621,6 +621,14 @@ export function App() {
     },
   });
   const config = useServerConfig();
+  const [pendingProposals, setPendingProposals] = useState<PlanningProposal[]>([]);
+  const fetchProposals = useCallback(async () => {
+    try {
+      const res = await fetch("/planning-proposals");
+      if (res.ok) setPendingProposals((await res.json()) as PlanningProposal[]);
+    } catch {}
+  }, []);
+  useEffect(() => { void fetchProposals(); }, [fetchProposals]);
   const [softThresholdTokens, setSoftThresholdTokens] = useState<number>(50000);
   const [thresholdInput, setThresholdInput] = useState<string>("50000");
 
@@ -672,7 +680,7 @@ export function App() {
       <ProposalReviewView
         proposalId={proposalId}
         safirWebUrl={config?.safirWebUrl ?? "http://localhost:3000"}
-        onBack={() => navigateProposal(null)}
+        onBack={() => { void fetchProposals(); navigateProposal(null); }}
       />
     );
   }
@@ -685,6 +693,7 @@ export function App() {
       onToggleTheme={toggleTheme}
       onSelect={(nextSid) => navigate(nextSid)}
       onHydrateSession={hydrateSession}
+      pendingProposals={pendingProposals}
     />
   );
 }
@@ -699,6 +708,7 @@ function SessionListView({
   onToggleTheme,
   onSelect,
   onHydrateSession,
+  pendingProposals,
 }: {
   sessions: Map<string, SessionSnapshot>;
   inboxStatus: Status;
@@ -707,6 +717,7 @@ function SessionListView({
   onToggleTheme: () => void;
   onSelect: (sid: string) => void;
   onHydrateSession: (snapshot: SessionSnapshot) => void;
+  pendingProposals: PlanningProposal[];
 }) {
   const [pending, setPending] = useState(false);
   const [pendingError, setPendingError] = useState<string | null>(null);
@@ -723,7 +734,6 @@ function SessionListView({
   const [profileInput, setProfileInput] = useState("");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [profiles, setProfiles] = useState<PermissionProfile[]>([]);
-  const [pendingProposals, setPendingProposals] = useState<PlanningProposal[]>([]);
   const [autostartPending, setAutostartPending] = useState(false);
   const profileLockedRef = useRef(false);
   const sorted = useMemo(() => sortSessions(sessions), [sessions]);
@@ -763,15 +773,6 @@ function SessionListView({
         const data = (await res.json()) as PermissionProfile[];
         if (cancelled) return;
         setProfiles(data);
-      } catch {}
-    })();
-    void (async () => {
-      try {
-        const res = await fetch("/planning-proposals");
-        if (!res.ok || cancelled) return;
-        const data = (await res.json()) as PlanningProposal[];
-        if (cancelled) return;
-        setPendingProposals(data);
       } catch {}
     })();
     return () => { cancelled = true; };

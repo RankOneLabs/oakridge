@@ -61,55 +61,55 @@ async def _run(args: argparse.Namespace) -> int:
         base_url=args.safir_base_url or safir_base_url_from_env(),
         api_token=safir_api_token_from_env(),
     )
+    kbbl: KbblClient | None = None
     try:
-        task = await safir.get_task(args.task_id)
-    except Exception as e:
-        print(f"error fetching task {args.task_id}: {e}", file=sys.stderr)
-        await safir.aclose()
-        return 1
+        try:
+            task = await safir.get_task(args.task_id)
+        except Exception as e:
+            print(f"error fetching task {args.task_id}: {e}", file=sys.stderr)
+            return 1
 
-    notes = task.get("notes") or ""
-    if not notes.strip():
-        print(f"task {args.task_id} has no notes; nothing to decompose", file=sys.stderr)
-        await safir.aclose()
-        return 1
+        notes = task.get("notes") or ""
+        if not notes.strip():
+            print(f"task {args.task_id} has no notes; nothing to decompose", file=sys.stderr)
+            return 1
 
-    try:
-        buffer, summary = await run_planner1(
-            parent_task_id=args.task_id,
-            task_notes=notes,
-            project_id=task["project_id"],
-            model=args.model,
-        )
-    except Exception as e:
-        print(f"planner1 run failed: {e}", file=sys.stderr)
-        await safir.aclose()
-        return 2
+        try:
+            buffer, summary = await run_planner1(
+                parent_task_id=args.task_id,
+                task_notes=notes,
+                project_id=task["project_id"],
+                model=args.model,
+            )
+        except Exception as e:
+            print(f"planner1 run failed: {e}", file=sys.stderr)
+            return 2
 
-    if not buffer.tasks:
-        print("planner1 produced an empty decomposition; not submitting", file=sys.stderr)
-        await safir.aclose()
-        return 3
+        if not buffer.tasks:
+            print("planner1 produced an empty decomposition; not submitting", file=sys.stderr)
+            return 3
 
-    if args.apply:
-        rc = await _apply_directly(safir, buffer)
-        await safir.aclose()
-        return rc
+        if args.apply:
+            return await _apply_directly(safir, buffer)
 
-    await safir.aclose()
-    kbbl = KbblClient(base_url=args.kbbl_base_url or kbbl_base_url_from_env())
-    payload = buffer.to_payload(summary=summary, model=args.model)
-    try:
-        result = await kbbl.submit_proposal(payload)
-    except Exception as e:
-        print(f"kbbl submission failed: {e}", file=sys.stderr)
-        await kbbl.aclose()
-        return 4
-    await kbbl.aclose()
-    pid = result.get("proposal_id") or result.get("id")
-    print(f"proposal_id={pid}")
-    print(f"review at <kbbl-url>/#proposal={pid}")
-    return 0
+        kbbl = KbblClient(base_url=args.kbbl_base_url or kbbl_base_url_from_env())
+        payload = buffer.to_payload(summary=summary, model=args.model)
+        try:
+            result = await kbbl.submit_proposal(payload)
+        except Exception as e:
+            print(f"kbbl submission failed: {e}", file=sys.stderr)
+            return 4
+        pid = result.get("proposal_id") or result.get("id")
+        if not isinstance(pid, str) or not pid.strip():
+            print(f"kbbl response missing proposal_id (got: {result!r})", file=sys.stderr)
+            return 5
+        print(f"proposal_id={pid}")
+        print(f"review at <kbbl-url>/#proposal={pid}")
+        return 0
+    finally:
+        await safir.aclose()
+        if kbbl is not None:
+            await kbbl.aclose()
 
 
 def main() -> None:

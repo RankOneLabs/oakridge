@@ -111,7 +111,7 @@ export async function createProposalStore(
         created_at: input.created_at ?? now().toISOString(),
       };
       map.set(proposal.id, proposal);
-      void persist(proposal);
+      void persist(proposal).catch((e) => console.error("[ProposalStore] persist failed:", e));
       return proposal;
     },
     markFailed(id: string, reason: string): PlanningProposal | null {
@@ -123,12 +123,12 @@ export async function createProposalStore(
         failure_reason: reason,
       };
       map.set(id, updated);
-      void persist(updated);
+      void persist(updated).catch((e) => console.error("[ProposalStore] persist failed:", e));
       return updated;
     },
     delete(id: string): boolean {
       const existed = map.delete(id);
-      if (existed) void remove(id);
+      if (existed) void remove(id).catch((e) => console.error("[ProposalStore] remove failed:", e));
       return existed;
     },
   };

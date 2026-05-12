@@ -28,7 +28,7 @@ dev = [
 ]
 
 [tool.uv.sources]
-jig = { git = "https://github.com/rankonelabs/jig.git" }
+jig = { git = "https://github.com/rankonelabs/jig.git", rev = "8b110b494c665a93a033d7c4d628b6a27db08a4b" }
 
 [tool.ruff]
 target-version = "py312"

@@ -47,9 +47,12 @@ class CreateTaskTool(Tool):  # type: ignore[misc]
         )
 
     async def execute(self, args: dict[str, Any]) -> str:
-        title = str(args["title"])
-        notes = str(args["notes"])
-        priority = int(args.get("priority", 0))
+        try:
+            title = str(args["title"])
+            notes = str(args["notes"])
+            priority = int(args.get("priority", 0))
+        except (KeyError, TypeError, ValueError) as e:
+            return json.dumps({"error": f"invalid arguments: {e}"})
         task = self._buffer.add_task(title=title, notes=notes, priority=priority)
         return json.dumps({"staged_task_index": task.index, "title": task.title})
 
@@ -90,7 +93,7 @@ class AddDependencyTool(Tool):  # type: ignore[misc]
                 task_index=int(args["task_index"]),
                 depends_on_index=int(args["depends_on_index"]),
             )
-        except (CycleError, IndexError) as e:
+        except (CycleError, IndexError, KeyError, TypeError, ValueError) as e:
             return json.dumps({"error": str(e)})
         return json.dumps(
             {"task_index": edge.task_index, "depends_on_index": edge.depends_on_index}

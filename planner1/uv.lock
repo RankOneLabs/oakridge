@@ -188,7 +188,7 @@ wheels = [
 [[package]]
 name = "jig"
 version = "0.1.0"
-source = { git = "https://github.com/rankonelabs/jig.git#8b110b494c665a93a033d7c4d628b6a27db08a4b" }
+source = { git = "https://github.com/rankonelabs/jig.git?rev=8b110b494c665a93a033d7c4d628b6a27db08a4b#8b110b494c665a93a033d7c4d628b6a27db08a4b" }
 dependencies = [
     { name = "aiosqlite" },
     { name = "httpx" },
@@ -486,7 +486,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
-    { name = "jig", extras = ["anthropic"], git = "https://github.com/rankonelabs/jig.git" },
+    { name = "jig", extras = ["anthropic"], git = "https://github.com/rankonelabs/jig.git?rev=8b110b494c665a93a033d7c4d628b6a27db08a4b" },
     { name = "pydantic", specifier = ">=2.0" },
 ]
 

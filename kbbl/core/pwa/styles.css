@@ -1705,7 +1705,7 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   background: var(--accent-blue);
-  color: var(--bg-surface);
+  color: #ffffff;
   border-radius: 4px;
   padding: 0.1rem 0.4rem;
 }
@@ -1799,7 +1799,7 @@ body {
 .proposal-task-priority {
   font-size: 0.75rem;
   background: var(--accent-blue);
-  color: var(--bg-surface);
+  color: #ffffff;
   border-radius: 4px;
   padding: 0.05rem 0.4rem;
 }
@@ -1818,7 +1818,7 @@ body {
 }
 .proposal-action-approve {
   background: var(--accent-blue);
-  color: var(--bg-surface);
+  color: #ffffff;
   border: 1px solid var(--accent-blue);
 }
 .proposal-action-reject {

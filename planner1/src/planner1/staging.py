@@ -44,6 +44,9 @@ class StagingBuffer:
         if depends_on_index < 0 or depends_on_index >= len(self.tasks):
             n = len(self.tasks)
             raise IndexError(f"depends_on_index {depends_on_index} out of range (have {n})")
+        for d in self.dependencies:
+            if d.task_index == task_index and d.depends_on_index == depends_on_index:
+                return d
         edge = StagedDependency(task_index=task_index, depends_on_index=depends_on_index)
         self.dependencies.append(edge)
         try:

@@ -129,7 +129,7 @@ export function mountPlanningProposalRoutes(
       return c.json({ error: "summary and model must be strings" }, 400);
     }
     if (toposort(body.tasks, body.dependencies) === null) {
-      return c.json({ error: "dependencies contain a cycle" }, 400);
+      return c.json({ error: "dependencies are invalid (cycle, self-dependency, or out-of-range index)" }, 400);
     }
     const existing = proposalStore.findPendingForParent(body.parent_task_id);
     if (existing) {
@@ -156,7 +156,7 @@ export function mountPlanningProposalRoutes(
     const id = c.req.param("id");
     const p = proposalStore.get(id);
     if (!p) return c.json({ error: "proposal not found" }, 404);
-    if (p.status === "approved" || p.status === "rejected") {
+    if (p.status !== "pending") {
       return c.json({ error: `proposal is ${p.status}; cannot approve` }, 409);
     }
     const order = toposort(p.tasks, p.dependencies);
@@ -191,7 +191,10 @@ export function mountPlanningProposalRoutes(
     for (const dep of p.dependencies) {
       const realTask = virtualToReal.get(dep.task_index);
       const realDep = virtualToReal.get(dep.depends_on_index);
-      if (realTask == null || realDep == null) continue;
+      if (realTask == null || realDep == null) {
+        proposalStore.markFailed(id, `internal: missing real id for dep ${dep.task_index}->${dep.depends_on_index}`);
+        return c.json({ error: "internal error: proposal task mapping inconsistent" }, 500);
+      }
       try {
         await safirClient.addDependency(realTask, realDep);
       } catch (err) {

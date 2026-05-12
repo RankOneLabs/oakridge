@@ -56,3 +56,23 @@ def test_tool_definition_add_dependency_shape():
     d = AddDependencyTool(StagingBuffer(parent_task_id=1)).definition
     assert d.name == "add_dependency"
     assert d.parameters["required"] == ["task_index", "depends_on_index"]
+
+
+@pytest.mark.asyncio
+async def test_create_task_tool_returns_error_on_missing_key():
+    b = StagingBuffer(parent_task_id=1)
+    out = await CreateTaskTool(b).execute({"title": "foo"})  # missing notes
+    parsed = json.loads(out)
+    assert "error" in parsed
+    assert len(b.tasks) == 0
+
+
+@pytest.mark.asyncio
+async def test_add_dependency_tool_returns_error_on_non_integer_index():
+    b = StagingBuffer(parent_task_id=1)
+    ct = CreateTaskTool(b)
+    await ct.execute({"title": "a", "notes": "."})
+    out = await AddDependencyTool(b).execute({"task_index": "x", "depends_on_index": 0})
+    parsed = json.loads(out)
+    assert "error" in parsed
+    assert len(b.dependencies) == 0
