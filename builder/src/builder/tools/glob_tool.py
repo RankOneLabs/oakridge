@@ -47,7 +47,13 @@ class GlobTool(Tool):  # type: ignore[misc]
             matches = [p for p in root.glob(pattern) if p.is_file()]
         except OSError as e:
             return json.dumps({"error": f"glob failed: {e}"})
-        matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        def _safe_mtime(p: Any) -> float:
+            try:
+                return float(p.stat().st_mtime)
+            except OSError:
+                return float("-inf")
+
+        matches.sort(key=_safe_mtime, reverse=True)
         matches = matches[:_LIMIT]
         rel = [str(p.relative_to(self._ctx.workdir)) for p in matches]
         return "\n".join(rel) or "(no matches)"

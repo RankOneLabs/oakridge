@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 
 import pytest
@@ -50,8 +51,11 @@ async def test_mtime_sorted_descending(tmp_path, tool) -> None:
     c = tmp_path / "c.txt"
     a.write_text("a")
     b.write_text("b")
-    time.sleep(0.02)
     c.write_text("c")
+    now = time.time()
+    os.utime(a, (now - 20, now - 20))
+    os.utime(b, (now - 10, now - 10))
+    os.utime(c, (now, now))
     result = await tool.execute({"pattern": "*.txt"})
     lines = result.splitlines()
     assert lines[0] == "c.txt"

@@ -61,10 +61,14 @@ async def _run(args: argparse.Namespace) -> int:
         print(f"--models error: {e}", file=sys.stderr)
         return 1
 
-    safir = SafirClient(
-        base_url=args.safir_base_url or safir_base_url_from_env(),
-        api_token=safir_api_token_from_env(),
-    )
+    try:
+        safir = SafirClient(
+            base_url=args.safir_base_url or safir_base_url_from_env(),
+            api_token=safir_api_token_from_env(),
+        )
+    except Exception as e:
+        print(f"safir client setup failed: {e}", file=sys.stderr)
+        return 1
     try:
         try:
             result = await run_build_pipeline(

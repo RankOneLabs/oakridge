@@ -96,9 +96,21 @@ def validate_handoff(parsed: dict[str, Any]) -> None:
     decisions = parsed.get("decisions_made")
     if not isinstance(decisions, list) or len(decisions) < 1:
         raise Planner2ValidationError("decisions_made must be a non-empty array")
+    for i, item in enumerate(decisions):
+        if not isinstance(item, dict):
+            raise Planner2ValidationError(f"decisions_made[{i}] must be an object")
+        for key in ("decision", "rationale"):
+            val = item.get(key)
+            if not isinstance(val, str) or not val.strip():
+                raise Planner2ValidationError(
+                    f"decisions_made[{i}].{key!r} must be a non-empty string"
+                )
     files = parsed.get("files_in_scope")
     if not isinstance(files, list) or len(files) < 1:
         raise Planner2ValidationError("files_in_scope must be a non-empty array")
+    for i, fpath in enumerate(files):
+        if not isinstance(fpath, str) or not fpath.strip():
+            raise Planner2ValidationError(f"files_in_scope[{i}] must be a non-empty string")
     open_q = parsed.get("open_questions", [])
     if open_q is None:
         open_q = []
@@ -116,7 +128,8 @@ def validate_handoff(parsed: dict[str, Any]) -> None:
                 f"(a)/(b)/(c) punt with all three labels."
             )
     for k in ("goal", "next_action"):
-        if not parsed.get(k):
+        value = parsed.get(k)
+        if not isinstance(value, str) or not value.strip():
             raise Planner2ValidationError(f"{k!r} must be a non-empty string")
 
 

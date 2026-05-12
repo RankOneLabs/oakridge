@@ -48,6 +48,8 @@ class EditTool(Tool):  # type: ignore[misc]
             content = path.read_text(encoding="utf-8")
         except FileNotFoundError:
             return json.dumps({"error": f"file not found: {args['path']}"})
+        except OSError as e:
+            return json.dumps({"error": f"read failed: {e}"})
         count = content.count(old_string)
         if count == 0:
             return json.dumps({"error": "old_string not found"})

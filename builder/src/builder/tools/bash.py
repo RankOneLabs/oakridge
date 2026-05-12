@@ -54,8 +54,12 @@ class BashTool(Tool):  # type: ignore[misc]
                 if command.startswith(prefix):
                     return True
             regex = match.get("input_regex")
-            if regex and re.search(regex, command):
-                return True
+            if regex:
+                try:
+                    if re.search(regex, command):
+                        return True
+                except re.error:
+                    return True
         return False
 
     async def execute(self, args: dict[str, Any]) -> str:

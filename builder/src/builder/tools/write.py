@@ -40,7 +40,8 @@ class WriteTool(Tool):  # type: ignore[misc]
             return json.dumps({"error": str(e)})
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            n = path.write_text(content, encoding="utf-8")
+            path.write_text(content, encoding="utf-8")
+            n = len(content.encode("utf-8"))
         except OSError as e:
             return json.dumps({"error": f"write failed: {e}"})
         return json.dumps({"path": str(path), "bytes_written": n})

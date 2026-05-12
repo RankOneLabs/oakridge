@@ -83,6 +83,11 @@ class GrepTool(Tool):  # type: ignore[misc]
             )
         except subprocess.TimeoutExpired:
             return json.dumps({"error": "rg timed out"})
+        if completed.returncode > 1:
+            err = (completed.stderr or "").strip() or "rg failed"
+            return json.dumps({"error": err, "exit_code": completed.returncode})
+        if completed.returncode == 1:
+            return "(no matches)"
         out_lines = (completed.stdout or "").splitlines()[:head_limit]
         out = "\n".join(out_lines)
         if len(out) > _TRUNCATE:

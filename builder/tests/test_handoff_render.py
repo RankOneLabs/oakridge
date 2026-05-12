@@ -59,7 +59,7 @@ def test_empty_arrays_produce_empty_sections() -> None:
     md = render_handoff_markdown(parsed)
     # No bullet rows for empty active_subgoals
     lines = md.splitlines()
-    subgoals_idx = next(i for i, l in enumerate(lines) if l == "## Active subgoals")
+    subgoals_idx = next(i for i, ln in enumerate(lines) if ln == "## Active subgoals")
     # Line after blank should not be a bullet
     after = lines[subgoals_idx + 2] if subgoals_idx + 2 < len(lines) else ""
     assert not after.startswith("-")

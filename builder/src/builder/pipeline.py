@@ -96,14 +96,12 @@ async def run_build_pipeline(
     run_id = run["id"]
     run_short_id = run_id[:8]
 
-    phase0 = await safir_client.create_phase(run_id, {"target_model": models[0]})
+    phase0: dict[str, Any] | None = None
     phase1: dict[str, Any] | None = None
-    if not dry_run:
-        phase1 = await safir_client.create_phase(run_id, {"target_model": models[1]})
-
-    permission_rules = await _resolve_permission_rules(safir_client, run)
+    permission_rules: dict[str, Any] = {"allow_all": False, "deny_patterns": []}
 
     async def planner2_step(ctx: dict[str, Any]) -> Planner2Result:
+        assert phase0 is not None
         return await run_planner2(
             brief_markdown=brief,
             parent_spec=parent_spec,
@@ -141,11 +139,16 @@ async def run_build_pipeline(
         return datetime.now(UTC).isoformat()
 
     try:
+        phase0 = await safir_client.create_phase(run_id, {"target_model": models[0]})
+        if not dry_run:
+            phase1 = await safir_client.create_phase(run_id, {"target_model": models[1]})
+        permission_rules = await _resolve_permission_rules(safir_client, run)
         result = await run_pipeline(config, input=child_task_id)
     except Exception:
-        await safir_client.update_phase(
-            phase0["id"], {"is_terminal": True, "ended_at": now(), "end_reason": "failed"}
-        )
+        if phase0 is not None:
+            await safir_client.update_phase(
+                phase0["id"], {"is_terminal": True, "ended_at": now(), "end_reason": "failed"}
+            )
         if phase1 is not None:
             await safir_client.update_phase(
                 phase1["id"],
@@ -153,6 +156,18 @@ async def run_build_pipeline(
             )
         await safir_client.update_run(run_id, {"status": "failed"})
         raise
+    assert phase0 is not None
+
+    if result.short_circuited:
+        await safir_client.update_phase(
+            phase0["id"], {"is_terminal": True, "ended_at": now(), "end_reason": "failed"}
+        )
+        if phase1 is not None:
+            await safir_client.update_phase(
+                phase1["id"], {"is_terminal": True, "ended_at": now(), "end_reason": "failed"}
+            )
+        await safir_client.update_run(run_id, {"status": "failed"})
+        return result
 
     await safir_client.update_phase(
         phase0["id"], {"is_terminal": True, "ended_at": now(), "end_reason": "completed"}
@@ -163,12 +178,6 @@ async def run_build_pipeline(
         return result
 
     assert phase1 is not None
-    if result.short_circuited:
-        await safir_client.update_phase(
-            phase1["id"], {"is_terminal": True, "ended_at": now(), "end_reason": "failed"}
-        )
-        await safir_client.update_run(run_id, {"status": "failed"})
-        return result
 
     debrief_out: BuildAgentOutput = result.step_outputs["build_agent"]
     pr_summary = "\n".join(debrief_out.pr_urls) or "(no PRs produced)"
