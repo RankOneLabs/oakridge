@@ -171,9 +171,9 @@ def _build_context(
 def _extract_json(content: str) -> dict[str, Any]:
     """Pull the first top-level JSON object out of the model's response.
 
-    Models occasionally wrap JSON in ```json fences. Strip those then
-    json.loads. Anything else is a hard parse failure surfacing to the
-    retry loop.
+    Models occasionally wrap JSON in ```json fences or add prose before/after
+    the object. Strip fences first, then scan for the first '{' and use
+    raw_decode so surrounding text doesn't cause a hard failure.
     """
     s = content.strip()
     if s.startswith("```"):
@@ -182,7 +182,17 @@ def _extract_json(content: str) -> dict[str, Any]:
             s = s[: -len("```")].rstrip()
         elif "```" in s:
             s = s.rsplit("```", 1)[0].rstrip()
-    return json.loads(s)  # type: ignore[no-any-return]
+    decoder = json.JSONDecoder()
+    for i, ch in enumerate(s):
+        if ch != "{":
+            continue
+        try:
+            obj, _ = decoder.raw_decode(s[i:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            return obj
+    raise json.JSONDecodeError("no top-level JSON object found", s, 0)
 
 
 async def run_planner2(

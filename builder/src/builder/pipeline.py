@@ -158,8 +158,9 @@ async def run_build_pipeline(
     assert phase0 is not None
 
     if result.short_circuited:
+        phase0_reason = "failed" if result.error_step == "planner2" else "completed"
         await safir_client.update_phase(
-            phase0["id"], {"is_terminal": True, "ended_at": now(), "end_reason": "failed"}
+            phase0["id"], {"is_terminal": True, "ended_at": now(), "end_reason": phase0_reason}
         )
         if phase1 is not None:
             await safir_client.update_phase(

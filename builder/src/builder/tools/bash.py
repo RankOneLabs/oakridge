@@ -42,6 +42,7 @@ class BashTool(Tool):  # type: ignore[misc]
         )
 
     def _is_denied(self, command: str) -> bool:
+        normalized = command.lstrip()
         rules = self._ctx.permission_rules
         if rules.get("allow_all") is True:
             return False
@@ -52,12 +53,12 @@ class BashTool(Tool):  # type: ignore[misc]
             prefixes = match.get("command_prefix") or []
             for prefix in prefixes:
                 bare = prefix.rstrip()
-                if command == bare or command.startswith(bare + " "):
+                if normalized == bare or normalized.startswith(bare + " "):
                     return True
             regex = match.get("input_regex")
             if regex:
                 try:
-                    if re.search(regex, command):
+                    if re.search(regex, normalized):
                         return True
                 except re.error:
                     return True
