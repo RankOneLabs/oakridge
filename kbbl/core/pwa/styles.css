@@ -1672,3 +1672,165 @@ body {
   background: var(--bg-surface);
   text-decoration: underline;
 }
+
+/* === inbox proposal cards === */
+
+.inbox-proposals {
+  list-style: none;
+  margin: 0 0 1rem 0;
+  padding: 0;
+}
+.inbox-proposal-card-li {
+  margin: 0 0 0.5rem 0;
+}
+.inbox-proposal-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: var(--bg-surface);
+  border: 1px solid var(--accent-blue);
+  border-radius: 8px;
+  padding: 0.6rem 0.9rem;
+  color: var(--text-primary);
+  cursor: pointer;
+  font: inherit;
+}
+.inbox-proposal-card:hover {
+  border-color: var(--border-hover);
+}
+.inbox-proposal-card-line {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+.inbox-proposal-card-tag {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: var(--accent-blue);
+  color: #ffffff;
+  border-radius: 4px;
+  padding: 0.1rem 0.4rem;
+}
+.inbox-proposal-card-summary {
+  font-weight: 500;
+}
+.inbox-proposal-card-parent {
+  margin-top: 0.25rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* === proposal review view === */
+
+.proposal-review-view {
+  padding: 1rem;
+  max-width: 50rem;
+  margin: 0 auto;
+}
+.proposal-review-header {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+.proposal-review-back {
+  background: none;
+  border: 1px solid var(--border-muted);
+  border-radius: 6px;
+  color: var(--text-primary);
+  padding: 0.2rem 0.6rem;
+  cursor: pointer;
+  font: inherit;
+}
+.proposal-review-title {
+  font-size: 1.1rem;
+  font-weight: 500;
+  flex: 1 1 auto;
+}
+.proposal-review-open-safir {
+  color: var(--accent-blue);
+  font-size: 0.85rem;
+  text-decoration: none;
+}
+.proposal-review-error {
+  border: 1px solid var(--danger-fg);
+  background: var(--bg-surface);
+  color: var(--danger-fg);
+  padding: 0.6rem 0.9rem;
+  border-radius: 6px;
+  margin-bottom: 1rem;
+}
+.proposal-review-summary pre,
+.proposal-task-notes {
+  white-space: pre-wrap;
+  font-family: inherit;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-muted);
+  border-radius: 6px;
+  padding: 0.6rem 0.9rem;
+}
+.proposal-task-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.proposal-task-card {
+  margin-bottom: 0.75rem;
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  padding: 0.6rem 0.9rem;
+  background: var(--bg-surface);
+}
+.proposal-task-head {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  margin-bottom: 0.5rem;
+}
+.proposal-task-index {
+  color: var(--text-muted);
+  font-family: monospace;
+}
+.proposal-task-title {
+  font-weight: 500;
+  flex: 1 1 auto;
+}
+.proposal-task-priority {
+  font-size: 0.75rem;
+  background: var(--accent-blue);
+  color: #ffffff;
+  border-radius: 4px;
+  padding: 0.05rem 0.4rem;
+}
+.proposal-actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-end;
+  margin-top: 1rem;
+}
+.proposal-action-approve,
+.proposal-action-reject {
+  font: inherit;
+  border-radius: 8px;
+  padding: 0.4rem 1rem;
+  cursor: pointer;
+}
+.proposal-action-approve {
+  background: var(--accent-blue);
+  color: #ffffff;
+  border: 1px solid var(--accent-blue);
+}
+.proposal-action-reject {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border-muted);
+}
+.proposal-action-approve:disabled,
+.proposal-action-reject:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

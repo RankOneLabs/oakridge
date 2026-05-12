@@ -13,6 +13,28 @@ import Markdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import type { Task, PermissionProfile } from "../safir/types";
 
+interface ProposalTask {
+  index: number;
+  title: string;
+  notes: string;
+  priority: number;
+}
+interface ProposalDependency {
+  task_index: number;
+  depends_on_index: number;
+}
+interface PlanningProposal {
+  id: string;
+  parent_task_id: number;
+  tasks: ProposalTask[];
+  dependencies: ProposalDependency[];
+  summary: string;
+  model: string;
+  status: "pending" | "approved" | "rejected" | "failed";
+  failure_reason: string | null;
+  created_at: string;
+}
+
 export interface EnvelopeEvent {
   id: number;
   type: string;
@@ -223,6 +245,38 @@ function useHashTaskId(): [number | null, (taskId: number | null) => void] {
     setTaskId(next);
   };
   return [taskId, navigate];
+}
+
+function readHashProposalId(): string | null {
+  const hash = window.location.hash.slice(1);
+  const params = new URLSearchParams(hash);
+  const raw = params.get("proposal");
+  if (!raw) return null;
+  return raw.trim().length > 0 ? raw : null;
+}
+
+function writeHashProposalId(id: string | null): void {
+  const url = new URL(window.location.href);
+  if (id == null) {
+    url.hash = "";
+  } else {
+    url.hash = `proposal=${encodeURIComponent(id)}`;
+  }
+  history.replaceState(null, "", url.toString());
+}
+
+function useHashProposalId(): [string | null, (id: string | null) => void] {
+  const [id, setId] = useState<string | null>(() => readHashProposalId());
+  useEffect(() => {
+    const onHash = () => setId(readHashProposalId());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+  const navigate = (next: string | null) => {
+    writeHashProposalId(next);
+    setId(next);
+  };
+  return [id, navigate];
 }
 
 /**
@@ -554,6 +608,7 @@ async function resumeSession(
 export function App() {
   const [sid, navigate] = useHashSid();
   const [taskId, navigateTask] = useHashTaskId();
+  const [proposalId, navigateProposal] = useHashProposalId();
   const [theme, toggleTheme] = useTheme();
   const { sessions, inMemorySids, inboxStatus, compactSuggestions, clearCompactSuggestion, hydrateSession } = useInbox({
     // When the active session is purged from another client / tab, drop
@@ -566,6 +621,21 @@ export function App() {
     },
   });
   const config = useServerConfig();
+  const [pendingProposals, setPendingProposals] = useState<PlanningProposal[]>([]);
+  const isInbox = sid === null && taskId === null && proposalId === null;
+  useEffect(() => {
+    if (!isInbox) return;
+    const ac = new AbortController();
+    void (async () => {
+      try {
+        const res = await fetch("/planning-proposals", { signal: ac.signal });
+        if (res.ok) setPendingProposals((await res.json()) as PlanningProposal[]);
+      } catch (e) {
+        if (e instanceof Error && e.name === "AbortError") return;
+      }
+    })();
+    return () => ac.abort();
+  }, [isInbox]);
   const [softThresholdTokens, setSoftThresholdTokens] = useState<number>(50000);
   const [thresholdInput, setThresholdInput] = useState<string>("50000");
 
@@ -612,6 +682,15 @@ export function App() {
       />
     );
   }
+  if (proposalId !== null) {
+    return (
+      <ProposalReviewView
+        proposalId={proposalId}
+        safirWebUrl={config?.safirWebUrl ?? "http://localhost:3000"}
+        onBack={() => navigateProposal(null)}
+      />
+    );
+  }
   return (
     <SessionListView
       sessions={sessions}
@@ -621,6 +700,7 @@ export function App() {
       onToggleTheme={toggleTheme}
       onSelect={(nextSid) => navigate(nextSid)}
       onHydrateSession={hydrateSession}
+      pendingProposals={pendingProposals}
     />
   );
 }
@@ -635,6 +715,7 @@ function SessionListView({
   onToggleTheme,
   onSelect,
   onHydrateSession,
+  pendingProposals,
 }: {
   sessions: Map<string, SessionSnapshot>;
   inboxStatus: Status;
@@ -643,6 +724,7 @@ function SessionListView({
   onToggleTheme: () => void;
   onSelect: (sid: string) => void;
   onHydrateSession: (snapshot: SessionSnapshot) => void;
+  pendingProposals: PlanningProposal[];
 }) {
   const [pending, setPending] = useState(false);
   const [pendingError, setPendingError] = useState<string | null>(null);
@@ -931,6 +1013,35 @@ function SessionListView({
           </div>
         )}
       </div>
+      {pendingProposals.length > 0 && (
+        <ul className="inbox-proposals">
+          {pendingProposals.map((p) => {
+            const parent = tasks.find((t) => t.id === p.parent_task_id);
+            const parentTitle = parent ? parent.title : `task #${p.parent_task_id}`;
+            return (
+              <li key={p.id} className="inbox-proposal-card-li">
+                <button
+                  type="button"
+                  className="inbox-proposal-card"
+                  onClick={() => {
+                    window.location.hash = `proposal=${encodeURIComponent(p.id)}`;
+                  }}
+                >
+                  <div className="inbox-proposal-card-line">
+                    <span className="inbox-proposal-card-tag">planner 1</span>
+                    <span className="inbox-proposal-card-summary">
+                      {p.tasks.length} tasks proposed for task #{p.parent_task_id}
+                    </span>
+                  </div>
+                  <div className="inbox-proposal-card-parent" title={parentTitle}>
+                    {parentTitle}
+                  </div>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
       {sorted.length === 0 ? (
         <div className="session-list-empty">No sessions yet.</div>
       ) : (
@@ -4077,6 +4188,166 @@ function InputBox({
       <span className="input-hint">
         Enter to send · Shift+Enter for newline
       </span>
+    </div>
+  );
+}
+
+// === proposal review ===
+
+function ProposalReviewView({
+  proposalId,
+  safirWebUrl,
+  onBack,
+}: {
+  proposalId: string;
+  safirWebUrl: string;
+  onBack: () => void;
+}) {
+  const [proposal, setProposal] = useState<PlanningProposal | null>(null);
+  const [parentTitle, setParentTitle] = useState<string>("");
+  const [error, setError] = useState<string | null>(null);
+  const [acting, setActing] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`/planning-proposals/${encodeURIComponent(proposalId)}`);
+        if (!res.ok) {
+          if (!cancelled) setError(`failed to load proposal (HTTP ${res.status})`);
+          return;
+        }
+        const data = (await res.json()) as PlanningProposal;
+        if (cancelled) return;
+        setProposal(data);
+        if (data.failure_reason) setError(data.failure_reason);
+        try {
+          const tRes = await fetch(`/safir/tasks/${data.parent_task_id}`);
+          if (tRes.ok && !cancelled) {
+            const t = (await tRes.json()) as { title: string };
+            setParentTitle(t.title ?? "");
+          }
+        } catch {}
+      } catch (e) {
+        if (!cancelled) setError(String(e));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [proposalId]);
+
+  async function act(verb: "approve" | "reject") {
+    setActing(true);
+    setError(null);
+    try {
+      const res = await fetch(
+        `/planning-proposals/${encodeURIComponent(proposalId)}/${verb}`,
+        { method: "POST" },
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        setError(body.error ?? `${verb} failed (HTTP ${res.status})`);
+        setActing(false);
+        try {
+          const refresh = await fetch(`/planning-proposals/${encodeURIComponent(proposalId)}`);
+          if (refresh.ok) setProposal((await refresh.json()) as PlanningProposal);
+        } catch {}
+        return;
+      }
+      onBack();
+    } catch (e) {
+      setError(String(e));
+      setActing(false);
+    }
+  }
+
+  if (!proposal) {
+    return (
+      <div className="proposal-review-view">
+        <header className="proposal-review-header">
+          <button type="button" className="proposal-review-back" onClick={onBack}>← back</button>
+          <span className="proposal-review-title">proposal</span>
+        </header>
+        {error ? <div className="proposal-review-error">{error}</div> : <div>loading…</div>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="proposal-review-view">
+      <header className="proposal-review-header">
+        <button type="button" className="proposal-review-back" onClick={onBack}>← back</button>
+        <span className="proposal-review-title">
+          proposal for task #{proposal.parent_task_id}
+          {parentTitle ? ` — ${parentTitle}` : ""}
+        </span>
+        <a
+          className="proposal-review-open-safir"
+          href={`${safirWebUrl.replace(/\/+$/, "")}/tasks/${proposal.parent_task_id}`}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          open parent in safir ↗
+        </a>
+      </header>
+
+      {error && <div className="proposal-review-error">{error}</div>}
+
+      <section className="proposal-review-summary">
+        <h3>summary</h3>
+        <pre>{proposal.summary}</pre>
+      </section>
+
+      <section className="proposal-review-tasks">
+        <h3>proposed tasks ({proposal.tasks.length})</h3>
+        <ol className="proposal-task-list">
+          {proposal.tasks.map((t) => (
+            <li key={t.index} className="proposal-task-card">
+              <div className="proposal-task-head">
+                <span className="proposal-task-index">#{t.index}</span>
+                <span className="proposal-task-title">{t.title}</span>
+                {t.priority > 0 && (
+                  <span className="proposal-task-priority">p{t.priority}</span>
+                )}
+              </div>
+              <pre className="proposal-task-notes">{t.notes}</pre>
+            </li>
+          ))}
+        </ol>
+      </section>
+
+      <section className="proposal-review-deps">
+        <h3>dependencies ({proposal.dependencies.length})</h3>
+        {proposal.dependencies.length === 0 ? (
+          <div className="proposal-review-deps-empty">all tasks are independent.</div>
+        ) : (
+          <ul>
+            {proposal.dependencies.map((d, i) => (
+              <li key={i}>
+                task #{d.task_index} depends on task #{d.depends_on_index}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <footer className="proposal-actions">
+        <button
+          type="button"
+          className="proposal-action-reject"
+          disabled={acting}
+          onClick={() => void act("reject")}
+        >
+          reject
+        </button>
+        <button
+          type="button"
+          className="proposal-action-approve"
+          disabled={acting}
+          onClick={() => void act("approve")}
+        >
+          approve
+        </button>
+      </footer>
     </div>
   );
 }

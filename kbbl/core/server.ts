@@ -11,6 +11,7 @@ import { SessionManager } from "./session/session-manager";
 import { Session } from "./session/session";
 import { isGitRepo, isPathInside, resolveRepoTopLevel } from "./session/worktree";
 import { createApp } from "./server/app";
+import { createProposalStore } from "./proposals/store";
 import { createClaudeCodeRuntime } from "../adapters/claude-code";
 import { validateWorkdir } from "./server/handlers/sessions";
 
@@ -184,6 +185,12 @@ const manager = new SessionManager({
   safirQueue,
 });
 
+// === proposal store ===
+
+const proposalStore = await createProposalStore({
+  dataDir: join(dataDir, "proposals"),
+});
+
 // === Hono app ===
 
 let bunServer: ReturnType<typeof Bun.serve> | null = null;
@@ -195,6 +202,7 @@ const app = createApp({
   handoffsDir,
   pwaDistDir,
   safirClient,
+  proposalStore,
   getBunServer: () => bunServer,
   config,
   configPath,
