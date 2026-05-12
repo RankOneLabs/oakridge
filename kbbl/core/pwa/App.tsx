@@ -1551,7 +1551,6 @@ function SessionView({
   const [showSystemEvents, setShowSystemEvents] = useState(false);
   const seenIds = useRef<Set<number>>(new Set());
   const pendingIdSeq = useRef(0);
-  const endRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<HTMLDivElement>(null);
   const topBarRef = useRef<HTMLElement>(null);
   const bottomBarRef = useRef<HTMLDivElement>(null);
@@ -1892,7 +1891,6 @@ function SessionView({
         snapshot.endReason !== "compacted" && (
           <EndedBanner ref={bottomBarRef} sid={sid} onResume={onResume} />
         )}
-      <div ref={endRef} aria-hidden="true" />
     </div>
   );
 }
