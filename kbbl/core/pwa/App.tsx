@@ -687,10 +687,7 @@ export function App() {
       <ProposalReviewView
         proposalId={proposalId}
         safirWebUrl={config?.safirWebUrl ?? "http://localhost:3000"}
-        onBack={() => {
-          setPendingProposals((prev) => prev.filter((p) => p.id !== proposalId));
-          navigateProposal(null);
-        }}
+        onBack={() => navigateProposal(null)}
       />
     );
   }
