@@ -137,8 +137,11 @@ body {
   /* Bottom padding clears the now-fixed .input-bar so the last message,
      pending bubbles, thinking indicator, and the scroll-end ref all
      remain visible. --bottom-bar-h is measured + set by SessionView's
-     ResizeObserver. */
-  padding-bottom: calc(env(safe-area-inset-bottom) + var(--bottom-bar-h, 0px));
+     ResizeObserver and already includes the bar's own safe-area-inset
+     padding, so we don't add the inset again here. When the bar is
+     unmounted (inbox / ended views) the fallback applies the inset
+     directly so iOS home-indicator space is still respected. */
+  padding-bottom: var(--bottom-bar-h, env(safe-area-inset-bottom));
   position: relative;
 }
 
@@ -1378,7 +1381,8 @@ body {
 @media (min-width: 1024px) {
   .app {
     max-width: 1200px;
-    padding-bottom: env(safe-area-inset-bottom);
+    /* padding-bottom inherits the mobile rule's var(--bottom-bar-h, ...)
+       because .input-bar is position: fixed on desktop too. */
   }
 
   .card {

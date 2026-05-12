@@ -1521,6 +1521,8 @@ function SessionView({
     setAllowedTools(new Set());
     setPendingMessages([]);
     seenIds.current = new Set();
+    stickToBottomRef.current = true;
+    prevPendingLenRef.current = 0;
   }, [sid]);
 
   // Drop optimistic bubbles when the session is no longer live so a
