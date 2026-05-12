@@ -83,16 +83,15 @@ async def run_build_pipeline(
     parent_spec = await _fetch_parent_spec(safir_client, task)
     dep_handoffs = await _gather_dep_handoffs(safir_client, task)
 
-    run = await safir_client.create_run(
-        child_task_id,
-        {
-            "executor": "jig:planner2+build_agent",
-            "status": "running",
-            "brief": brief,
-            "permission_profile_id": permission_profile_id_override,
-            "created_by": "safir-build",
-        },
-    )
+    run_body: dict[str, Any] = {
+        "executor": "jig:planner2+build_agent",
+        "status": "running",
+        "brief": brief,
+        "created_by": "safir-build",
+    }
+    if permission_profile_id_override is not None:
+        run_body["permission_profile_id"] = permission_profile_id_override
+    run = await safir_client.create_run(child_task_id, run_body)
     run_id = run["id"]
     run_short_id = run_id[:8]
 

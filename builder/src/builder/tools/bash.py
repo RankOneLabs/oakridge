@@ -51,7 +51,8 @@ class BashTool(Tool):  # type: ignore[misc]
             match = pat.get("input_match") or {}
             prefixes = match.get("command_prefix") or []
             for prefix in prefixes:
-                if command.startswith(prefix):
+                bare = prefix.rstrip()
+                if command == bare or command.startswith(bare + " "):
                     return True
             regex = match.get("input_regex")
             if regex:
@@ -68,6 +69,8 @@ class BashTool(Tool):  # type: ignore[misc]
             timeout = int(args.get("timeout_seconds", 300))
         except (KeyError, TypeError, ValueError) as e:
             return json.dumps({"error": f"invalid arguments: {e}"})
+        if not command.strip():
+            return json.dumps({"error": "command must be a non-empty string"})
         if timeout < 1 or timeout > 600:
             return json.dumps({"error": "timeout_seconds must be 1..600"})
         if self._is_denied(command):
@@ -78,6 +81,7 @@ class BashTool(Tool):  # type: ignore[misc]
                 completed = subprocess.run(
                     command,
                     shell=True,
+                    executable="/bin/bash",
                     cwd=str(self._ctx.workdir),
                     capture_output=True,
                     text=True,

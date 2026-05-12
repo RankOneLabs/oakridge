@@ -93,6 +93,27 @@ _PUNT_LABELS = ("decision:", "would-pick:", "deferring-because:")
 def validate_handoff(parsed: dict[str, Any]) -> None:
     if not isinstance(parsed, dict):
         raise Planner2ValidationError(f"output is not a JSON object: {type(parsed)}")
+    title = parsed.get("title")
+    if not isinstance(title, str) or not title.strip():
+        raise Planner2ValidationError("'title' must be a non-empty string")
+    active_subgoals = parsed.get("active_subgoals") or []
+    if not isinstance(active_subgoals, list):
+        raise Planner2ValidationError("active_subgoals must be an array")
+    for i, sg in enumerate(active_subgoals):
+        if not isinstance(sg, str) or not sg.strip():
+            raise Planner2ValidationError(f"active_subgoals[{i}] must be a non-empty string")
+    approaches_rejected = parsed.get("approaches_rejected") or []
+    if not isinstance(approaches_rejected, list):
+        raise Planner2ValidationError("approaches_rejected must be an array")
+    for i, item in enumerate(approaches_rejected):
+        if not isinstance(item, dict):
+            raise Planner2ValidationError(f"approaches_rejected[{i}] must be an object")
+        for key in ("approach", "reason"):
+            val = item.get(key)
+            if not isinstance(val, str) or not val.strip():
+                raise Planner2ValidationError(
+                    f"approaches_rejected[{i}].{key!r} must be a non-empty string"
+                )
     decisions = parsed.get("decisions_made")
     if not isinstance(decisions, list) or len(decisions) < 1:
         raise Planner2ValidationError("decisions_made must be a non-empty array")

@@ -1,12 +1,11 @@
 """Tests for SafirClient using pytest-httpx."""
 from __future__ import annotations
 
-import pytest
 import httpx
+import pytest
 from pytest_httpx import HTTPXMock
 
-from safir_py import SafirClient, safir_api_token_from_env, safir_base_url_from_env
-
+from safir_py import SafirClient
 
 BASE = "http://safir.test"
 
