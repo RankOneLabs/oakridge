@@ -131,8 +131,11 @@ export function mountSafirProxyRoutes(
 
   app.get("/safir/permission-profiles/:id", async (c) => {
     const idParam = c.req.param("id");
-    const id = Number(idParam);
-    if (!Number.isInteger(id) || id <= 0) {
+    if (!/^[1-9][0-9]*$/.test(idParam)) {
+      return c.json({ error: `invalid permission profile id: '${idParam}'` }, 400);
+    }
+    const id = Number.parseInt(idParam, 10);
+    if (!Number.isSafeInteger(id)) {
       return c.json({ error: `invalid permission profile id: '${idParam}'` }, 400);
     }
     try {

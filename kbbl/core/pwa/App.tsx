@@ -80,6 +80,12 @@ function prettyModelLabel(model: string): string {
   return PWA_MODEL_OPTIONS.find((o) => o.value === model)?.label ?? model;
 }
 
+function toPositiveSafeInt(raw: string | null): number | null {
+  if (raw === null || !/^[1-9][0-9]*$/.test(raw)) return null;
+  const n = Number.parseInt(raw, 10);
+  return Number.isSafeInteger(n) ? n : null;
+}
+
 function workdirBasename(p: string): string {
   if (!p) return "";
   // Split on both POSIX and Windows separators so a path coming from a
@@ -701,16 +707,16 @@ function SessionListView({
     const params = new URLSearchParams(window.location.search);
     if (params.size === 0) return;
     const wd = params.get("workdir");
-    const tid = params.get("task_id");
-    const pid = params.get("profile_id");
+    const tid = toPositiveSafeInt(params.get("task_id"));
+    const pid = toPositiveSafeInt(params.get("profile_id"));
     const auto = params.get("autostart") === "true";
     if (wd) {
       setWorkdirInput(wd);
       setWorkdirTouched(true);
     }
-    if (tid) setTaskInput(tid);
-    if (pid) {
-      setProfileInput(pid);
+    if (tid !== null) setTaskInput(String(tid));
+    if (pid !== null) {
+      setProfileInput(String(pid));
       profileLockedRef.current = true;
     }
     if (auto) setAutostartPending(true);
@@ -760,8 +766,10 @@ function SessionListView({
       const nameTrim = nameInput.trim();
       body.name = nameTrim || namePlaceholder;
       if (modelInput !== "") body.model = modelInput;
-      if (taskInput !== "") body.task_id = Number(taskInput);
-      if (profileInput !== "") body.permission_profile_id = Number(profileInput);
+      const parsedTaskId = toPositiveSafeInt(taskInput || null);
+      if (parsedTaskId !== null) body.task_id = parsedTaskId;
+      const parsedProfileId = toPositiveSafeInt(profileInput || null);
+      if (parsedProfileId !== null) body.permission_profile_id = parsedProfileId;
     }
     setPending(true);
     try {
@@ -2817,7 +2825,7 @@ function TaskView({
           className="task-view__open-safir"
           href={`${safirWebUrl}/tasks/${taskId}`}
           target="_blank"
-          rel="noopener"
+          rel="noopener noreferrer"
           aria-label="Open this task in safir"
           title="Open in safir"
         >

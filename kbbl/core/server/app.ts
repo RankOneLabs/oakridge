@@ -153,6 +153,10 @@ export function createApp(deps: CreateAppDeps): Hono {
       if (typeof safirWebUrl !== "string" || !z.url().safeParse(safirWebUrl).success) {
         return c.json({ error: "safirWebUrl must be a valid URL" }, 400);
       }
+      const parsed = new URL(safirWebUrl);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        return c.json({ error: "safirWebUrl must be a valid URL" }, 400);
+      }
     }
     const newSoftThreshold = hasSoftThreshold
       ? (b.softThresholdTokens as number)
