@@ -62,6 +62,8 @@ function makeStubClient(opts: StubOpts): {
     createPermissionProfile: notImplemented("createPermissionProfile") as SafirClient["createPermissionProfile"],
     updatePermissionProfile: notImplemented("updatePermissionProfile") as SafirClient["updatePermissionProfile"],
     setTaskDefaultPermissionProfile: notImplemented("setTaskDefaultPermissionProfile") as SafirClient["setTaskDefaultPermissionProfile"],
+    createTask: notImplemented("createTask") as SafirClient["createTask"],
+    addDependency: notImplemented("addDependency") as SafirClient["addDependency"],
   };
   return { client, calls };
 }

@@ -7,10 +7,12 @@ import type { AppRuntime } from "../runtime";
 import type { SafirClient } from "../safir/client";
 import type { KbblConfig } from "../config";
 import type { SessionManager } from "../session/session-manager";
+import type { ProposalStore } from "../proposals/store";
 import { inboxHandler } from "../stream/inbox";
 import { mountHandoffRoutes } from "./handlers/handoff";
 import { mountPermissionRoutes } from "./handlers/permission";
 import { mountPerSidRoutes } from "./handlers/per-sid";
+import { mountPlanningProposalRoutes } from "./handlers/planning-proposals";
 import { mountSafirProxyRoutes } from "./handlers/safir-proxy";
 import { mountSafirWebhookRoutes } from "./handlers/safir-webhook";
 import { mountSessionsRoutes } from "./handlers/sessions";
@@ -36,6 +38,7 @@ export interface CreateAppDeps {
    * own stubbed client.
    */
   safirClient: SafirClient;
+  proposalStore: ProposalStore;
   /**
    * Returns the Bun server instance for `requestIP` loopback verification
    * inside the runtime's hook handler. Must be a getter (not the value)
@@ -69,6 +72,7 @@ export function createApp(deps: CreateAppDeps): Hono {
     handoffsDir,
     pwaDistDir,
     safirClient,
+    proposalStore,
     getBunServer,
     config,
     configPath,
@@ -209,6 +213,9 @@ export function createApp(deps: CreateAppDeps): Hono {
   // leakage to the browser. Registered after the webhook routes to keep
   // safir-related paths grouped, and before /inbox and the static catch-all.
   mountSafirProxyRoutes(app, { safirClient });
+
+  // ---- planning proposals ----
+  mountPlanningProposalRoutes(app, { proposalStore, safirClient });
 
   // ---- /inbox (always-on delta stream) ----
   app.get("/inbox", inboxHandler(manager));

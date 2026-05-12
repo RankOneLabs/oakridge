@@ -50,6 +50,17 @@ export class SafirHttpError extends Error {
   }
 }
 
+export interface CreateTaskBody {
+  project_id: string;
+  parent_id?: number | null;
+  title: string;
+  notes?: string | null;
+  status?: string;
+  priority?: number;
+  deadline?: string | null;
+  blocked_reason?: string | null;
+}
+
 export interface SafirClient {
   createRun(taskId: number, body: CreateTaskRun): Promise<TaskRun>;
   updateRun(runId: string, body: UpdateTaskRun): Promise<TaskRun>;
@@ -69,6 +80,8 @@ export interface SafirClient {
   createPermissionProfile(body: CreatePermissionProfile): Promise<PermissionProfile>;
   updatePermissionProfile(id: number, body: UpdatePermissionProfile): Promise<PermissionProfile>;
   setTaskDefaultPermissionProfile(taskId: number, profileId: number | null): Promise<Task>;
+  createTask(body: CreateTaskBody): Promise<Task>;
+  addDependency(taskId: number, dependsOn: number): Promise<void>;
 }
 
 export interface CreateSafirClientOpts {
@@ -163,5 +176,14 @@ export function createSafirClient(opts: CreateSafirClientOpts): SafirClient {
       request<PermissionProfile>("PATCH", `/permission-profiles/${id}`, body),
     setTaskDefaultPermissionProfile: (taskId, profileId) =>
       request<Task>("POST", `/tasks/${taskId}/permission-profile`, { profile_id: profileId }),
+    createTask: (body) =>
+      request<Task>("POST", "/tasks", body),
+    addDependency: async (taskId, dependsOn) => {
+      await request<unknown>(
+        "POST",
+        `/tasks/${taskId}/dependencies`,
+        { depends_on: dependsOn },
+      );
+    },
   };
 }
