@@ -2823,7 +2823,7 @@ function TaskView({
         <span className="task-view__title">task #{taskId}</span>
         <a
           className="task-view__open-safir"
-          href={`${safirWebUrl}/tasks/${taskId}`}
+          href={`${safirWebUrl.replace(/\/+$/, "")}/tasks/${taskId}`}
           target="_blank"
           rel="noopener noreferrer"
           aria-label="Open this task in safir"
