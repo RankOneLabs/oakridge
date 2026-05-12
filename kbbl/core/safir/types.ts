@@ -1,4 +1,4 @@
-// Mirror of safir's src/shared/schema.ts as of 2026-05-09. Copied verbatim
+// Mirror of safir's src/shared/schema.ts as of 2026-05-11. Copied verbatim
 // rather than imported so kbbl is buildable without the safir package on
 // disk and so a safir-side schema change can't silently shift wire shapes
 // underneath us — a deliberate divergence becomes a visible test failure
@@ -72,6 +72,7 @@ export const RunPhase = z.object({
   ended_at: z.string().nullable(),
   end_reason: z.string().nullable(),
   is_terminal: z.boolean(),
+  target_model: z.string().nullable().optional(),
 });
 export type RunPhase = z.infer<typeof RunPhase>;
 
@@ -79,6 +80,7 @@ export const CreateRunPhase = z.object({
   oakridge_session_id: z.string().nullable().optional(),
   external_execution_id: z.string().nullable().optional(),
   parent_phase_id: z.string().nullable().optional(),
+  target_model: z.string().nullable().optional(),
 });
 export type CreateRunPhase = z.infer<typeof CreateRunPhase>;
 
@@ -88,8 +90,27 @@ export const UpdateRunPhase = z.object({
   ended_at: z.string().nullable().optional(),
   end_reason: z.string().nullable().optional(),
   is_terminal: z.boolean().optional(),
+  target_model: z.string().nullable().optional(),
 });
 export type UpdateRunPhase = z.infer<typeof UpdateRunPhase>;
+
+export const Debrief = z.object({
+  delivered_summary: z.string(),
+  not_delivered: z.array(z.object({
+    item: z.string(),
+    reason: z.enum(["deferred", "blocked", "out_of_scope", "failed"]),
+    notes: z.string(),
+  })).default([]),
+  deviations: z.array(z.object({
+    instruction: z.string(),
+    actual: z.string(),
+    rationale: z.string(),
+  })).default([]),
+});
+export type Debrief = z.infer<typeof Debrief>;
+
+export const SubmitDebrief = z.object({ debrief: Debrief }).strict();
+export type SubmitDebrief = z.infer<typeof SubmitDebrief>;
 
 export const HandoffParsed = z.object({
   goal: z.string().default(""),
@@ -125,6 +146,7 @@ export const HandoffDocRecord = z.object({
   next_action: z.string().nullable(),
   raw_markdown: z.string(),
   produced_at: z.string(),
+  debrief: Debrief.nullable().optional(),
 });
 export type HandoffDocRecord = z.infer<typeof HandoffDocRecord>;
 
@@ -148,7 +170,7 @@ export const Task = z.object({
 });
 export type Task = z.infer<typeof Task>;
 
-// Mirror of safir's PermissionRules as of 2026-05-10. See cross-repo
+// Mirror of safir's PermissionRules as of 2026-05-11. See cross-repo
 // schema duplication note in kbbl/core/safir/types.ts file header.
 export const PermissionRules = z.object({
   auto_approve: z.array(z.object({
