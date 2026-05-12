@@ -1215,6 +1215,9 @@ body {
   font-size: 0.75rem;
   color: var(--text-muted);
   font-family: "SF Mono", Menlo, monospace;
+  position: sticky;
+  top: var(--top-bar-h, 0);
+  z-index: 9;
 }
 .metrics-summary {
   display: flex;

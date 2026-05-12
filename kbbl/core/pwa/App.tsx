@@ -1611,7 +1611,7 @@ function SessionView({
     }
     prevPendingLenRef.current = pendingMessages.length;
     if (stickToBottomRef.current) {
-      endRef.current?.scrollIntoView({ block: "end" });
+      window.scrollTo({ top: document.documentElement.scrollHeight });
     }
   }, [events.length, pendingMessages.length, awaitingResult]);
 
