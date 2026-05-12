@@ -46,12 +46,11 @@ function respondToUpstreamError(c: Context<any, any, any>, err: unknown) {
 }
 
 /**
- * Validate the `:taskId` URL segment as a positive integer. safir's task
- * IDs are INTEGER PRIMARY KEY; rejecting non-numeric IDs at the kbbl
- * boundary keeps a malformed PWA URL from triggering an upstream 4xx
- * round-trip and surfaces a clear 400 the PWA can branch on.
+ * Validate a URL segment as a positive safe integer. safir IDs are
+ * INTEGER PRIMARY KEY; rejecting non-decimal or unsafe values at the kbbl
+ * boundary keeps malformed URLs from triggering upstream 4xx round-trips.
  */
-function parseTaskId(raw: string): number | null {
+function parsePositiveInt(raw: string): number | null {
   if (!/^[1-9][0-9]*$/.test(raw)) return null;
   const n = Number.parseInt(raw, 10);
   return Number.isSafeInteger(n) ? n : null;
@@ -73,7 +72,7 @@ export function mountSafirProxyRoutes(
   });
 
   app.get("/safir/tasks/:taskId", async (c) => {
-    const taskId = parseTaskId(c.req.param("taskId"));
+    const taskId = parsePositiveInt(c.req.param("taskId"));
     if (taskId === null) {
       return c.json(
         { error: "taskId must be a positive integer" },
@@ -89,7 +88,7 @@ export function mountSafirProxyRoutes(
   });
 
   app.get("/safir/tasks/:taskId/handoffs", async (c) => {
-    const taskId = parseTaskId(c.req.param("taskId"));
+    const taskId = parsePositiveInt(c.req.param("taskId"));
     if (taskId === null) {
       return c.json(
         { error: "taskId must be a positive integer" },
@@ -115,6 +114,29 @@ export function mountSafirProxyRoutes(
     try {
       const handoff = await safirClient.getHandoff(handoffId);
       return c.json(handoff);
+    } catch (err) {
+      return respondToUpstreamError(c, err);
+    }
+  });
+
+  app.get("/safir/permission-profiles", async (c) => {
+    try {
+      const profiles = await safirClient.listPermissionProfiles();
+      return c.json(profiles);
+    } catch (err) {
+      return respondToUpstreamError(c, err);
+    }
+  });
+
+  app.get("/safir/permission-profiles/:id", async (c) => {
+    const idParam = c.req.param("id");
+    const id = parsePositiveInt(idParam);
+    if (id === null) {
+      return c.json({ error: `invalid permission profile id: '${idParam}'` }, 400);
+    }
+    try {
+      const profile = await safirClient.getPermissionProfile(id);
+      return c.json(profile);
     } catch (err) {
       return respondToUpstreamError(c, err);
     }

@@ -46,6 +46,7 @@ const SafirSchema = z
   .object({
     base_url: z.url().default("http://localhost:7145"),
     queue_drain_interval_seconds: z.number().positive().default(30),
+    web_url: z.url().default("http://localhost:3000"),
   })
   .strict();
 

@@ -11,6 +11,7 @@ import {
 } from "react";
 import Markdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
+import type { Task, PermissionProfile } from "../safir/types";
 
 export interface EnvelopeEvent {
   id: number;
@@ -77,6 +78,12 @@ const PWA_MODEL_OPTIONS = [
 
 function prettyModelLabel(model: string): string {
   return PWA_MODEL_OPTIONS.find((o) => o.value === model)?.label ?? model;
+}
+
+function toPositiveSafeInt(raw: string | null): number | null {
+  if (raw === null || !/^[1-9][0-9]*$/.test(raw)) return null;
+  const n = Number.parseInt(raw, 10);
+  return Number.isSafeInteger(n) ? n : null;
 }
 
 function workdirBasename(p: string): string {
@@ -223,26 +230,39 @@ function useHashTaskId(): [number | null, (taskId: number | null) => void] {
  * fetch resolves so callers can render a "loading" placeholder rather
  * than racing forms with empty defaults.
  */
-function useServerConfig(): { defaultWorkdir: string; softThresholdTokens: number } | null {
-  const [config, setConfig] = useState<{ defaultWorkdir: string; softThresholdTokens: number } | null>(null);
+function useServerConfig(): {
+  defaultWorkdir: string;
+  softThresholdTokens: number;
+  safirWebUrl: string;
+} | null {
+  const [config, setConfig] = useState<{
+    defaultWorkdir: string;
+    softThresholdTokens: number;
+    safirWebUrl: string;
+  } | null>(null);
   useEffect(() => {
     let cancelled = false;
     fetch("/config")
-      .then((r) => r.json() as Promise<{ defaultWorkdir: string; softThresholdTokens?: number }>)
+      .then((r) => r.json() as Promise<{
+        defaultWorkdir: string;
+        softThresholdTokens?: number;
+        safirWebUrl?: string;
+      }>)
       .then((data) => {
         if (!cancelled) setConfig({
           defaultWorkdir: data.defaultWorkdir,
           softThresholdTokens: typeof data.softThresholdTokens === "number"
             ? data.softThresholdTokens
             : 50000,
+          safirWebUrl: typeof data.safirWebUrl === "string" && data.safirWebUrl.length > 0
+            ? data.safirWebUrl
+            : "http://localhost:3000",
         });
       })
       .catch(() => {
-        // Server may be down or this build is older — leave config null.
+        // server may be down or this build is older — leave config null
       });
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
   return config;
 }
@@ -586,6 +606,7 @@ export function App() {
       <TaskView
         taskId={taskId}
         theme={theme}
+        safirWebUrl={config?.safirWebUrl ?? "http://localhost:3000"}
         onToggleTheme={toggleTheme}
         onBack={() => navigateTask(null)}
       />
@@ -634,6 +655,12 @@ function SessionListView({
   // Submit uses the current placeholder if name field is empty, so what they
   // see is what they get.
   const [namePlaceholder, setNamePlaceholder] = useState(generateSlug);
+  const [taskInput, setTaskInput] = useState("");
+  const [profileInput, setProfileInput] = useState("");
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [profiles, setProfiles] = useState<PermissionProfile[]>([]);
+  const [autostartPending, setAutostartPending] = useState(false);
+  const profileLockedRef = useRef(false);
   const sorted = useMemo(() => sortSessions(sessions), [sessions]);
 
   // Prefill the workdir input with the server default once /config resolves,
@@ -653,6 +680,64 @@ function SessionListView({
     } catch {}
   }, [modelInput]);
 
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/safir/tasks");
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as Task[];
+        if (cancelled) return;
+        setTasks(data.filter((t) => t.status === "active" || t.status === "backlog"));
+      } catch {}
+    })();
+    void (async () => {
+      try {
+        const res = await fetch("/safir/permission-profiles");
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as PermissionProfile[];
+        if (cancelled) return;
+        setProfiles(data);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.size === 0) return;
+    const wd = params.get("workdir");
+    const tid = toPositiveSafeInt(params.get("task_id"));
+    const pid = toPositiveSafeInt(params.get("profile_id"));
+    const auto = params.get("autostart") === "true";
+    if (wd) {
+      setWorkdirInput(wd);
+      setWorkdirTouched(true);
+    }
+    if (tid !== null) setTaskInput(String(tid));
+    if (pid !== null) {
+      setProfileInput(String(pid));
+      profileLockedRef.current = true;
+    }
+    if (auto) setAutostartPending(true);
+    history.replaceState(null, "", window.location.pathname + window.location.hash);
+  }, []);
+
+  useEffect(() => {
+    if (profileLockedRef.current) return;
+    if (taskInput === "") {
+      setProfileInput("");
+      return;
+    }
+    const task = tasks.find((t) => String(t.id) === taskInput);
+    if (!task) return;
+    setProfileInput(
+      task.default_permission_profile_id != null
+        ? String(task.default_permission_profile_id)
+        : ""
+    );
+  }, [taskInput, tasks]);
+
   // Shared POST /sessions path for both the "+ New session" button and
   // row-level Resume buttons. Resume passes resume_from and ignores
   // workdir (parent's workdir wins server-side); a fresh session requires
@@ -666,6 +751,8 @@ function SessionListView({
       workdir?: string;
       name?: string;
       model?: string;
+      task_id?: number;
+      permission_profile_id?: number;
     } = {};
     if (resumeFrom) {
       body.resume_from = resumeFrom;
@@ -678,9 +765,11 @@ function SessionListView({
       body.workdir = trimmed;
       const nameTrim = nameInput.trim();
       body.name = nameTrim || namePlaceholder;
-      if (modelInput !== "") {
-        body.model = modelInput;
-      }
+      if (modelInput !== "") body.model = modelInput;
+      const parsedTaskId = toPositiveSafeInt(taskInput || null);
+      if (parsedTaskId !== null) body.task_id = parsedTaskId;
+      const parsedProfileId = toPositiveSafeInt(profileInput || null);
+      if (parsedProfileId !== null) body.permission_profile_id = parsedProfileId;
     }
     setPending(true);
     try {
@@ -717,6 +806,14 @@ function SessionListView({
       setPending(false);
     }
   }
+
+  useEffect(() => {
+    if (!autostartPending) return;
+    if (workdirInput.trim() === "") return;
+    setAutostartPending(false);
+    const timer = setTimeout(() => { void startSession(); }, 100);
+    return () => clearTimeout(timer);
+  }, [autostartPending, workdirInput]); // startSession captured at render time is intentional
 
   return (
     <div className="app app-list">
@@ -761,6 +858,38 @@ function SessionListView({
             autoCorrect="off"
             aria-label="Workdir for new session"
           />
+          <select
+            className="new-session-task"
+            value={taskInput}
+            onChange={(e) => setTaskInput(e.target.value)}
+            disabled={pending}
+            aria-label="Bind session to safir task (optional)"
+          >
+            <option value="">no task (free session)</option>
+            {tasks.map((t) => (
+              <option key={t.id} value={String(t.id)}>
+                #{t.id} {t.title}
+              </option>
+            ))}
+          </select>
+          <select
+            className="new-session-profile"
+            value={profileInput}
+            onChange={(e) => {
+              setProfileInput(e.target.value);
+              profileLockedRef.current = true;
+            }}
+            disabled={pending}
+            aria-label="Permission profile (optional)"
+          >
+            <option value="">use built-in default</option>
+            {profiles.map((p) => (
+              <option key={p.id} value={String(p.id)}>
+                {p.name}
+                {p.is_seed ? " (seed)" : ""}
+              </option>
+            ))}
+          </select>
           <select
             className="new-session-model"
             value={modelInput}
@@ -2651,11 +2780,13 @@ async function fetchTaskAndHandoffs(taskId: number): Promise<TaskFetchState> {
 function TaskView({
   taskId,
   theme,
+  safirWebUrl,
   onToggleTheme,
   onBack,
 }: {
   taskId: number;
   theme: Theme;
+  safirWebUrl: string;
   onToggleTheme: () => void;
   onBack: () => void;
 }) {
@@ -2690,6 +2821,16 @@ function TaskView({
           ← inbox
         </button>
         <span className="task-view__title">task #{taskId}</span>
+        <a
+          className="task-view__open-safir"
+          href={`${safirWebUrl.replace(/\/+$/, "")}/tasks/${taskId}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="Open this task in safir"
+          title="Open in safir"
+        >
+          open in safir ↗
+        </a>
         <button
           type="button"
           className="task-view__theme"

@@ -808,6 +808,24 @@ body {
   outline: none;
   border-color: var(--accent-blue);
 }
+.new-session-task,
+.new-session-profile {
+  flex: 0 0 auto;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  color: var(--text-primary);
+  padding: 0 0.7rem;
+  min-height: 44px;
+  font: inherit;
+  font-size: 0.85rem;
+  max-width: 16rem;
+}
+.new-session-task:focus,
+.new-session-profile:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
 
 .btn-new-session {
   background: var(--accent-blue);
@@ -1638,4 +1656,16 @@ body {
 .threshold-setting__unit {
   font-size: 0.72rem;
   color: var(--text-faint);
+}
+
+.task-view__open-safir {
+  color: var(--accent-blue);
+  font-size: 0.85rem;
+  text-decoration: none;
+  padding: 0.2rem 0.5rem;
+  border-radius: 6px;
+}
+.task-view__open-safir:hover {
+  background: var(--bg-surface);
+  text-decoration: underline;
 }
