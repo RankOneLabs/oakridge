@@ -6,9 +6,9 @@ export interface SafirProxyRouteDeps {
   /**
    * Same `SafirClient` instance the manager uses. Constructed once in
    * `core/server.ts` so token + base URL stay in one place. The proxy
-   * only invokes the read methods (`getTask`, `listTasks`,
-   * `listHandoffsForTask`, `getHandoff`); write methods are deliberately
-   * out of scope for the proxy and called only by the lifecycle path.
+   * invokes read methods (`getTask`, `listTasks`, `listHandoffsForTask`,
+   * `getHandoff`) and limited plan-review writes (`updatePlanStatus`,
+   * `reopenPlan`) for the PWA review flow.
    */
   safirClient: SafirClient;
 }

@@ -95,7 +95,7 @@ Create the worktree branch off `main`, then create `safir/src/db/migrations/006_
 
 ## Deviations from plan
 
-**SG9 — CLI removes `--apply` flag, not just `--kbbl-base-url`:** The brief specified removing `--kbbl-base-url` from the CLI. Since `--apply` (direct safir task creation) was made redundant by the plan submission path and there was no longer a staging step to gate on, `--apply` was also removed. The new default behavior is exactly what `--apply` was: post directly to safir.
+**SG9 — CLI removes `--apply` flag, not just `--kbbl-base-url`:** The brief specified removing `--kbbl-base-url` from the CLI. The `--apply` flag (which bypassed the review gate and materialized child tasks directly in Safir) was also removed: with the plan-submission path as the only output, there is no longer an "apply without review" mode. The new default posts a reviewable plan to `/tasks/:id/plans`; operator approval is still required before tasks are materialized.
 
 **SG10 — PWA inbox proposal list removed rather than replaced:** The brief said "change the four fetches so the existing UI keeps working against safir plans during the gap." There is no global `GET /plans?status=pending_approval` endpoint in safir (the spec only includes `GET /tasks/:id/plans`). Rather than add an unplanned global list endpoint, the inbox proposal list was removed entirely. The plan review UI (`ProposalReviewView`) still works: the operator navigates to `#proposal=<plan_id>` after `safir-decompose` prints the plan ID. The four fetch sites were updated: inbox list removed, plan detail → `/safir/plans/:id`, approve/reject → `PATCH /safir/plans/:id/status`.
 

@@ -17,11 +17,13 @@
 import { readdir, readFile, rename } from "node:fs/promises";
 import { join } from "node:path";
 
-const proposalsDir = process.argv[2];
-if (!proposalsDir) {
+const rawDir = process.argv[2];
+if (!rawDir) {
   console.error("usage: bun proposals_to_safir_plans.ts <proposals-dir>");
   process.exit(1);
 }
+
+const proposalsDir = rawDir.replace(/\/+$/, "");
 
 if (proposalsDir.endsWith(".migrated")) {
   console.log("directory already has .migrated suffix — nothing to do");
@@ -67,13 +69,20 @@ const files = (await readdir(proposalsDir)).filter((f) => f.endsWith(".json"));
 console.log(`found ${files.length} proposal files in ${proposalsDir}`);
 
 for (const file of files) {
-  const raw = await readFile(join(proposalsDir, file), "utf8");
+  let raw: string;
+  try {
+    raw = await readFile(join(proposalsDir, file), "utf8");
+  } catch (e) {
+    console.error(`  fail ${file}: read error: ${e}`);
+    failed++;
+    continue;
+  }
   let proposal: OldProposal;
   try {
     proposal = JSON.parse(raw) as OldProposal;
-  } catch {
-    console.error(`  skip ${file}: parse error`);
-    skipped++;
+  } catch (e) {
+    console.error(`  fail ${file}: parse error: ${e}`);
+    failed++;
     continue;
   }
 

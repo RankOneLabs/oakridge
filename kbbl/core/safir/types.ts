@@ -334,6 +334,7 @@ export const BuildBrief = z.object({
   next_action: z.string().nullable(),
   raw_markdown: z.string(),
   produced_at: z.string(),
+  debrief: Debrief.nullable().optional(),
 });
 export type BuildBrief = z.infer<typeof BuildBrief>;
 
