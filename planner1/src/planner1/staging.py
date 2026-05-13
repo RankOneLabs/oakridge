@@ -48,7 +48,10 @@ class StagingBuffer:
                 f"depends_on_cohort_index {depends_on_cohort_index} out of range (have {n})"
             )
         for d in self.dependencies:
-            if d.cohort_index == cohort_index and d.depends_on_cohort_index == depends_on_cohort_index:
+            if (
+                d.cohort_index == cohort_index
+                and d.depends_on_cohort_index == depends_on_cohort_index
+            ):
                 return d
         edge = StagedDependency(
             cohort_index=cohort_index, depends_on_cohort_index=depends_on_cohort_index

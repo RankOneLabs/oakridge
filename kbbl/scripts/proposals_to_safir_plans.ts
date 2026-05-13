@@ -14,7 +14,7 @@
  *   SAFIR_BASE_URL   — defaults to http://localhost:7145
  *   SAFIR_API_TOKEN  — optional bearer token
  */
-import { readdir, readFile, rename } from "node:fs/promises";
+import { access, readdir, readFile, rename } from "node:fs/promises";
 import { join } from "node:path";
 
 const rawDir = process.argv[2];
@@ -27,6 +27,14 @@ const proposalsDir = rawDir.replace(/\/+$/, "");
 
 if (proposalsDir.endsWith(".migrated")) {
   console.log("directory already has .migrated suffix — nothing to do");
+  process.exit(0);
+}
+
+// If source dir is gone but <dir>.migrated exists, a previous run succeeded.
+const migratedDest = `${proposalsDir}.migrated`;
+const alreadyMigrated = await access(migratedDest).then(() => true).catch(() => false);
+if (alreadyMigrated) {
+  console.log(`${migratedDest} already exists — nothing to do`);
   process.exit(0);
 }
 
