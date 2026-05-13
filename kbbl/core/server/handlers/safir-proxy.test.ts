@@ -5,6 +5,7 @@ import { SafirHttpError, type SafirClient } from "../../safir/client";
 import type {
   HandoffDocRecord,
   PermissionProfile,
+  Plan,
   Task,
 } from "../../safir/types";
 import { mountSafirProxyRoutes } from "./safir-proxy";
@@ -21,6 +22,10 @@ interface StubOpts {
   getHandoff?: (handoffId: string) => Promise<HandoffDocRecord>;
   listPermissionProfiles?: () => Promise<PermissionProfile[]>;
   getPermissionProfile?: (id: number) => Promise<PermissionProfile>;
+  listPlansForTask?: (taskId: number) => Promise<Plan[]>;
+  getPlan?: (planId: string) => Promise<Plan>;
+  updatePlanStatus?: (planId: string, body: { status: string; rejection_reason?: string | null }) => Promise<Plan>;
+  reopenPlan?: (planId: string) => Promise<Plan>;
 }
 
 function makeStubClient(opts: StubOpts): {
@@ -64,6 +69,10 @@ function makeStubClient(opts: StubOpts): {
     setTaskDefaultPermissionProfile: notImplemented("setTaskDefaultPermissionProfile") as SafirClient["setTaskDefaultPermissionProfile"],
     createTask: notImplemented("createTask") as SafirClient["createTask"],
     addDependency: notImplemented("addDependency") as SafirClient["addDependency"],
+    listPlansForTask: wrap("listPlansForTask", opts.listPlansForTask) as SafirClient["listPlansForTask"],
+    getPlan: wrap("getPlan", opts.getPlan) as SafirClient["getPlan"],
+    updatePlanStatus: wrap("updatePlanStatus", opts.updatePlanStatus) as SafirClient["updatePlanStatus"],
+    reopenPlan: wrap("reopenPlan", opts.reopenPlan) as SafirClient["reopenPlan"],
   };
   return { client, calls };
 }
@@ -402,5 +411,116 @@ describe("safir-proxy GET /safir/permission-profiles/:id", () => {
 
     expect(res.status).toBe(502);
     expect(await res.json()).toEqual({ error: "safir unreachable" });
+  });
+});
+
+function makePlan(over: Partial<Plan> = {}): Plan {
+  return {
+    id: "plan-1",
+    parent_task_id: 1,
+    summary: "stub plan",
+    model: "claude-opus-4-7",
+    status: "pending_approval",
+    rejection_reason: null,
+    created_at: "2026-05-13T00:00:00.000Z",
+    updated_at: "2026-05-13T00:00:00.000Z",
+    cohorts: [],
+    dependencies: [],
+    ...over,
+  };
+}
+
+describe("safir-proxy GET /safir/tasks/:taskId/plans", () => {
+  test("returns plan list from safirClient.listPlansForTask", async () => {
+    const plan = makePlan({ id: "plan-abc" });
+    const { client, calls } = makeStubClient({
+      listPlansForTask: async () => [plan],
+    });
+    const res = await buildApp(client).fetch(
+      new Request("http://kbbl.test/safir/tasks/42/plans"),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([plan]);
+    expect(calls).toEqual([{ method: "listPlansForTask", args: [42] }]);
+  });
+
+  test("non-numeric taskId → 400", async () => {
+    const { client } = makeStubClient({});
+    const res = await buildApp(client).fetch(
+      new Request("http://kbbl.test/safir/tasks/abc/plans"),
+    );
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("safir-proxy GET /safir/plans/:planId", () => {
+  test("returns plan from safirClient.getPlan", async () => {
+    const plan = makePlan({ id: "plan-xyz" });
+    const { client, calls } = makeStubClient({
+      getPlan: async () => plan,
+    });
+    const res = await buildApp(client).fetch(
+      new Request("http://kbbl.test/safir/plans/plan-xyz"),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(plan);
+    expect(calls).toEqual([{ method: "getPlan", args: ["plan-xyz"] }]);
+  });
+
+  test("SafirHttpError(404) → 404", async () => {
+    const { client } = makeStubClient({
+      getPlan: async () => { throw new SafirHttpError(404, { error: "not found" }); },
+    });
+    const res = await buildApp(client).fetch(
+      new Request("http://kbbl.test/safir/plans/no-such-plan"),
+    );
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("safir-proxy PATCH /safir/plans/:planId/status", () => {
+  test("forwards body to safirClient.updatePlanStatus and returns updated plan", async () => {
+    const updated = makePlan({ status: "approved" });
+    const { client, calls } = makeStubClient({
+      updatePlanStatus: async () => updated,
+    });
+    const res = await buildApp(client).fetch(
+      new Request("http://kbbl.test/safir/plans/plan-1/status", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: "approved" }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(updated);
+    expect(calls[0]?.method).toBe("updatePlanStatus");
+    expect((calls[0]?.args[1] as { status: string }).status).toBe("approved");
+  });
+
+  test("invalid json body → 400", async () => {
+    const { client } = makeStubClient({});
+    const res = await buildApp(client).fetch(
+      new Request("http://kbbl.test/safir/plans/plan-1/status", {
+        method: "PATCH",
+        headers: { "content-type": "text/plain" },
+        body: "not json",
+      }),
+    );
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("safir-proxy POST /safir/plans/:planId/reopen", () => {
+  test("calls safirClient.reopenPlan and returns result", async () => {
+    const reopened = makePlan({ status: "pending_approval" });
+    const { client, calls } = makeStubClient({
+      reopenPlan: async () => reopened,
+    });
+    const res = await buildApp(client).fetch(
+      new Request("http://kbbl.test/safir/plans/plan-1/reopen", { method: "POST" }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(reopened);
+    expect(calls).toEqual([{ method: "reopenPlan", args: ["plan-1"] }]);
   });
 });

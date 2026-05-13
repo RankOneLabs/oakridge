@@ -141,4 +141,65 @@ export function mountSafirProxyRoutes(
       return respondToUpstreamError(c, err);
     }
   });
+
+  app.get("/safir/tasks/:taskId/plans", async (c) => {
+    const taskId = parsePositiveInt(c.req.param("taskId"));
+    if (taskId === null) {
+      return c.json({ error: "taskId must be a positive integer" }, 400);
+    }
+    try {
+      const plans = await safirClient.listPlansForTask(taskId);
+      return c.json(plans);
+    } catch (err) {
+      return respondToUpstreamError(c, err);
+    }
+  });
+
+  app.get("/safir/plans/:planId", async (c) => {
+    const planId = c.req.param("planId").trim();
+    if (planId === "") {
+      return c.json({ error: "planId must be a non-empty string" }, 400);
+    }
+    try {
+      const plan = await safirClient.getPlan(planId);
+      return c.json(plan);
+    } catch (err) {
+      return respondToUpstreamError(c, err);
+    }
+  });
+
+  app.patch("/safir/plans/:planId/status", async (c) => {
+    const planId = c.req.param("planId").trim();
+    if (planId === "") {
+      return c.json({ error: "planId must be a non-empty string" }, 400);
+    }
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid json" }, 400);
+    }
+    try {
+      const plan = await safirClient.updatePlanStatus(
+        planId,
+        body as { status: string; rejection_reason?: string | null },
+      );
+      return c.json(plan);
+    } catch (err) {
+      return respondToUpstreamError(c, err);
+    }
+  });
+
+  app.post("/safir/plans/:planId/reopen", async (c) => {
+    const planId = c.req.param("planId").trim();
+    if (planId === "") {
+      return c.json({ error: "planId must be a non-empty string" }, 400);
+    }
+    try {
+      const plan = await safirClient.reopenPlan(planId);
+      return c.json(plan);
+    } catch (err) {
+      return respondToUpstreamError(c, err);
+    }
+  });
 }

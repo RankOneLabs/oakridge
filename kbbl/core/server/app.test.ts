@@ -8,7 +8,6 @@ import { KbblConfigSchema, type KbblConfig } from "../config";
 import type { AppRuntime } from "../runtime";
 import type { SafirClient } from "../safir/client";
 import type { SessionManager } from "../session/session-manager";
-import type { ProposalStore } from "../proposals/store";
 import { createApp } from "./app";
 
 let tmpRoot: string;
@@ -28,7 +27,6 @@ function buildApp(config: KbblConfig): Hono {
     handoffsDir: tmpRoot,
     pwaDistDir: tmpRoot,
     safirClient: {} as unknown as SafirClient,
-    proposalStore: {} as unknown as ProposalStore,
     getBunServer: () => null,
     config,
     configPath,
