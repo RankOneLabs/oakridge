@@ -62,6 +62,12 @@ export interface CreateTaskBody {
   blocked_reason?: string | null;
 }
 
+export interface AgentResponseBody {
+  status: string;
+  reply_message_id?: string;
+  error?: string;
+}
+
 export interface SafirClient {
   createRun(taskId: number, body: CreateTaskRun): Promise<TaskRun>;
   updateRun(runId: string, body: UpdateTaskRun): Promise<TaskRun>;
@@ -87,6 +93,11 @@ export interface SafirClient {
   getPlan(planId: string): Promise<Plan>;
   updatePlanStatus(planId: string, body: { status: string; rejection_reason?: string | null }): Promise<Plan>;
   reopenPlan(planId: string): Promise<Plan>;
+  // --- review responder surface ---
+  getThread(threadId: string): Promise<Record<string, unknown>>;
+  getAtomMap(targetType: string, targetId: string): Promise<Record<string, string>>;
+  listOpenThreads(targetType: string, targetId: string): Promise<Record<string, unknown>[]>;
+  postAgentResponse(threadId: string, body: AgentResponseBody): Promise<unknown>;
 }
 
 export interface CreateSafirClientOpts {
@@ -198,5 +209,16 @@ export function createSafirClient(opts: CreateSafirClientOpts): SafirClient {
       request<Plan>("PATCH", `/plans/${planId}/status`, body),
     reopenPlan: (planId) =>
       request<Plan>("POST", `/plans/${planId}/reopen`),
+    getThread: (threadId) =>
+      request<Record<string, unknown>>("GET", `/threads/${threadId}`),
+    getAtomMap: (targetType, targetId) =>
+      request<Record<string, string>>("GET", `/atoms/${targetType}/${targetId}`),
+    listOpenThreads: (targetType, targetId) =>
+      request<Record<string, unknown>[]>(
+        "GET",
+        `/artifacts/${targetType}/${targetId}/threads?status=open`,
+      ),
+    postAgentResponse: (threadId, body) =>
+      request<unknown>("POST", `/threads/${threadId}/agent-response`, body),
   };
 }
