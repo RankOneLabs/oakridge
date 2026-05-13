@@ -86,6 +86,10 @@ Land two Python agents in `oakridge/builder/src/builder/` — `plan_review_respo
 ## Next action
 Open `oakridge/builder/src/builder/build_agent.py` and use it as the structural template, then create `review_responder_base.py` with the `ReviewResponderContext` model and the `_call_safir_or_record_conflict` helper — that's subgoal 1 in flight.
 
+## Punted decisions
+
+- **`dependency_briefs_notes` loading for build_brief responder**: `dispatchReviewResponder` (kbbl) currently only loads `parent_task_notes` for `targetType === "plan"` and always passes `dependency_briefs_notes: null`. Loading dependency brief notes for build_brief targets would require additional safir API calls (fetch build_brief → fetch dependency build_briefs → extract notes). Punted to a future cohort; the field is accepted by `ReviewResponderContext` but never populated by the kbbl consumer today.
+
 ## Deviations from plan
 
 None — built exactly as specified.

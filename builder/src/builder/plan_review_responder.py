@@ -305,7 +305,12 @@ class DeleteCohortTool(Tool):  # type: ignore[misc]
 
 class DepMigrationItem(BaseModel):
     from_edge: list[int] = Field(..., min_length=2, max_length=2)
-    to_edges: list[list[int]]
+    to_edges: list[list[int]] = Field(default_factory=list)
+
+    def model_post_init(self, __context: Any) -> None:
+        for te in self.to_edges:
+            if len(te) != 2:
+                raise ValueError(f"each to_edges entry must be [from, to]; got {te}")
 
 
 class SplitCohortTool(Tool):  # type: ignore[misc]
@@ -370,10 +375,12 @@ class SplitCohortTool(Tool):  # type: ignore[misc]
         if len(splits) < 2:
             return json.dumps({"error": "split requires at least 2 new cohorts"})
 
-        # Validate new indices don't already exist.
+        # Validate new indices are unique and don't already exist.
         existing = _cohort_indices(ctx.atom_map)
-        for s in splits:
-            ni = int(s["new_index"])
+        new_indices = [int(s["new_index"]) for s in splits]
+        if len(new_indices) != len(set(new_indices)):
+            return json.dumps({"error": f"duplicate new_index values in splits: {new_indices}"})
+        for ni in new_indices:
             if ni in existing:
                 return json.dumps({"error": f"new_index {ni} already exists in atom map"})
 
@@ -818,13 +825,17 @@ async def run_plan_review_responder(
     try:
         await run_agent(config, _build_input(ctx))
     except Exception as exc:
-        msg = await client.post_thread_message(
-            ctx.thread_id,
-            {"body": "agent failed before posting a reply; consult logs"},
-        )
+        if ctx.reply_message_id is None:
+            msg = await client.post_thread_message(
+                ctx.thread_id,
+                {"body": "agent failed before posting a reply; consult logs"},
+            )
+            reply_id = msg.get("id")
+        else:
+            reply_id = ctx.reply_message_id
         return ResponderResult(
             status="failed",
-            reply_message_id=msg.get("id"),
+            reply_message_id=reply_id,
             conflicts=ctx.conflicts,
             error=str(exc),
         )

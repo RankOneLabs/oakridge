@@ -85,7 +85,24 @@ async def test_get_thread(client: SafirClient, httpx_mock: HTTPXMock) -> None:
 async def test_list_open_threads(client: SafirClient, httpx_mock: HTTPXMock) -> None:
     httpx_mock.add_response(
         url=f"{BASE}/artifacts/plan/plan-1/threads?status=open",
-        json=[{"id": "thread-1"}, {"id": "thread-2"}],
+        json=[
+            {
+                "id": "thread-1",
+                "target_type": "plan",
+                "target_id": "plan-1",
+                "anchor": "cohorts[0]",
+                "status": "open",
+                "created_at": "2026-01-01T00:00:00Z",
+            },
+            {
+                "id": "thread-2",
+                "target_type": "plan",
+                "target_id": "plan-1",
+                "anchor": None,
+                "status": "open",
+                "created_at": "2026-01-02T00:00:00Z",
+            },
+        ],
     )
     result = await client.list_open_threads("plan", "plan-1")
     assert len(result) == 2

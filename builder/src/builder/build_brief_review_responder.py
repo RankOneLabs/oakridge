@@ -46,9 +46,9 @@ The build brief atom map is a flat dict:
 
 When you delete a list element at index K from an N-element list:
   1. Delete anchor[K] (new_value="", prev_value=snapshot[K])
-  2. For each i in K+1..N-1: edit anchor[K+(i-K-1)] ← snapshot[i]
-     meaning: anchor[i-1] gets new_value=snapshot[i], prev_value=snapshot[i-1] (post-prior-shift)
-     BUT use snapshot prev_values: set prev_value=snapshot[i-1] for each shift
+  2. For each i in K+1..N-1: shift anchor[i] → anchor[i-1]
+       anchor[i-1] gets new_value=snapshot[i]
+       prev_value: "" if i-1==K (slot was just deleted), else snapshot[i-1]
   3. Delete the last anchor[N-1] (new_value="", prev_value=snapshot[N-1])
 
 Your reply MUST mention the shift explicitly (e.g. "Note: indices shifted down
@@ -163,7 +163,7 @@ class AppendAtomTool(Tool):  # type: ignore[misc]
                 "properties": {
                     "field": {
                         "type": "string",
-                        "enum": list(_LIST_FIELDS),
+                        "enum": sorted(_LIST_FIELDS),
                         "description": "The list field to append to.",
                     },
                     "value": {
@@ -411,13 +411,17 @@ async def run_build_brief_review_responder(
     try:
         await run_agent(config, _build_input(ctx))
     except Exception as exc:
-        msg = await client.post_thread_message(
-            ctx.thread_id,
-            {"body": "agent failed before posting a reply; consult logs"},
-        )
+        if ctx.reply_message_id is None:
+            msg = await client.post_thread_message(
+                ctx.thread_id,
+                {"body": "agent failed before posting a reply; consult logs"},
+            )
+            reply_id = msg.get("id")
+        else:
+            reply_id = ctx.reply_message_id
         return ResponderResult(
             status="failed",
-            reply_message_id=msg.get("id"),
+            reply_message_id=reply_id,
             conflicts=ctx.conflicts,
             error=str(exc),
         )

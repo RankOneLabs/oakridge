@@ -232,6 +232,18 @@ export function mountSafirWebhookRoutes(
     }
 
     if (RESPONDER_EVENTS.has(event)) {
+      if (!deps.reviewResponder) {
+        console.error(
+          JSON.stringify({
+            kbbl: "safir_webhook_drop",
+            event,
+            delivery_id: deliveryId,
+            reason: "review_responder_deps_missing",
+          }),
+        );
+        dedupe.add(deliveryId);
+        return c.json({ ok: true, dispatched: false });
+      }
       if (deps.reviewResponder) {
         // Fire-and-forget: the responder is slow (LLM calls) and safir only
         // needs a 200 ack that we received the event. The responder reports
