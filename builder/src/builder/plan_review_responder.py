@@ -171,6 +171,11 @@ class EditCohortTool(Tool):  # type: ignore[misc]
         if cohort_index not in _cohort_indices(ctx.atom_map):
             return json.dumps({"error": f"cohort {cohort_index} not found in atom map"})
 
+        _COHORT_FIELDS = {"title", "notes", "priority"}
+        invalid = [f for f in updates if f not in _COHORT_FIELDS]
+        if invalid:
+            return json.dumps({"error": f"unknown cohort field(s): {invalid}; allowed: {sorted(_COHORT_FIELDS)}"})
+
         results = []
         for field, new_value in updates.items():
             anchor = f"cohorts[{cohort_index}].{field}"
@@ -375,6 +380,12 @@ class SplitCohortTool(Tool):  # type: ignore[misc]
         results: list[dict[str, Any]] = []
 
         # 1. Migrate edges per dep_migration: delete from_edge, add to_edges.
+        # NOTE: dep_migration is caller-supplied and is not exhaustiveness-checked here.
+        # Incident edges of the original cohort that are omitted from dep_migration will
+        # remain as dangling deps[from,to] anchors after the cohort atoms are deleted.
+        # Safir does not enforce referential integrity on edge endpoints, so this is a
+        # logical corruption, not a server error. The LLM is responsible for migrating
+        # all incident edges.
         try:
             validated_migrations = [DepMigrationItem.model_validate(m) for m in dep_migration]
         except ValidationError as exc:
@@ -533,6 +544,10 @@ class MergeCohortsTool(Tool):  # type: ignore[misc]
         current_edges = _parse_edge_keys(ctx.atom_map)
 
         # 1. Migrate edges.
+        # NOTE: incident edges of source cohorts that are absent from dep_migration
+        # will survive as dangling deps[from,to] anchors after source cohort atoms are
+        # deleted. Safir does not enforce referential integrity, so the logical corruption
+        # is silent. The LLM is responsible for including all incident edges in dep_migration.
         for item in validated_migrations:
             fe = item.from_edge
             from_anchor = f"deps[{fe[0]},{fe[1]}]"

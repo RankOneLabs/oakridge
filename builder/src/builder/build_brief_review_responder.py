@@ -283,8 +283,10 @@ class DeleteAtomTool(Tool):  # type: ignore[misc]
                 "from": src_anchor,
                 "conflict": shift_edit is None,
             })
-            if shift_edit is not None:
-                ctx.atom_map[dst_anchor] = src_value
+            if shift_edit is None:
+                # Mid-shift conflict — remaining shifts would produce further corruption; abort.
+                return json.dumps({"deleted": anchor, "shifted": i - del_index - 1, "edits": results, "aborted": True})
+            ctx.atom_map[dst_anchor] = src_value
 
         # Step 3: delete the last element (now a duplicate after shifting).
         if n > 1:

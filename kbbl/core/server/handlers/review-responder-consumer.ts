@@ -49,19 +49,15 @@ async function defaultSpawnAgent(
   proc.stdin.write(new TextEncoder().encode(opts.stdinPayload));
   proc.stdin.end();
 
-  const stdout = await new Response(proc.stdout).text();
-  const exitCode = await proc.exited;
-
-  if (exitCode === null) {
-    return {
-      status: "failed",
-      error: `subprocess timed out after ${TIMEOUT_MS}ms`,
-      conflicts: [],
-    };
-  }
+  // Drain stdout and stderr concurrently to avoid pipe-buffer deadlock.
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
 
   // Always attempt to parse stdout first: the runner emits structured JSON
-  // to stdout even on non-zero exit (e.g. context-parse failures).
+  // to stdout even on non-zero exit (e.g. context-parse failures, timeout kill).
   const lastLine = stdout.trim().split("\n").pop() ?? "";
   if (lastLine) {
     try {
@@ -72,7 +68,6 @@ async function defaultSpawnAgent(
   }
 
   if (exitCode !== 0) {
-    const stderr = await new Response(proc.stderr).text();
     return {
       status: "failed",
       error: `subprocess exited ${exitCode}: ${stderr.slice(0, 500)}`,
