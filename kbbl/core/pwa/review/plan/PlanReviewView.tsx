@@ -156,7 +156,7 @@ export function PlanReviewView({ planId, onBack }: Props) {
     if (selectedCohortIndex === cohortIndex) setSelectedCohortIndex(null);
   }
 
-  async function handleSplit(sourceIndex: number, specs: [ResultCohortSpec, ResultCohortSpec], migrations: EdgeMigration[]) {
+  async function handleSplit(sourceIndex: number, specs: [ResultCohortSpec, ResultCohortSpec], _migrations: EdgeMigration[]) {
     const nextIdx = Math.max(...(plan?.cohorts.map((c) => c.cohort_index) ?? [0])) + 1;
     const edits = [
       { anchor: `cohorts[${sourceIndex}].title`, prev_value: null, new_value: specs[0].title },
@@ -172,7 +172,7 @@ export function PlanReviewView({ planId, onBack }: Props) {
     setSplitModal(null);
   }
 
-  async function handleMerge(specs: ResultCohortSpec, migrations: EdgeMigration[]) {
+  async function handleMerge(specs: ResultCohortSpec, _migrations: EdgeMigration[]) {
     const nextIdx = Math.max(...(plan?.cohorts.map((c) => c.cohort_index) ?? [0])) + 1;
     const edits = [
       { anchor: `cohorts[${nextIdx}].title`, prev_value: null, new_value: specs.title },
