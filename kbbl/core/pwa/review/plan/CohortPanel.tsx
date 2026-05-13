@@ -141,8 +141,8 @@ function AtomField({
     setOptimistic(draft);
     setEditing(false);
     const ok = await directEdit.save(anchor, prev, draft);
+    setOptimistic(null);
     if (!ok) {
-      setOptimistic(null);
       setDraft(currentValue);
     }
   }
@@ -184,10 +184,10 @@ function AtomField({
           </button>
         </div>
       ) : (
-        <div className="atom-field-display" onClick={() => { setEditing(true); setDraft(displayed); }}>
+        <button type="button" className="atom-field-display" onClick={() => { setEditing(true); setDraft(displayed); }}>
           <span className="atom-field-value">{displayed}</span>
           <span className="atom-field-edit-hint">edit</span>
-        </div>
+        </button>
       )}
     </div>
   );

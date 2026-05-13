@@ -22,6 +22,8 @@ export function ThreadView({ thread, onPostMessage, onPing, onResolve }: Props) 
     try {
       await onPostMessage(thread.id, draft.trim());
       setDraft("");
+    } catch {
+      // network errors surfaced by parent callback
     } finally {
       setPosting(false);
     }
@@ -29,12 +31,12 @@ export function ThreadView({ thread, onPostMessage, onPing, onResolve }: Props) 
 
   async function handlePing() {
     setPinging(true);
-    try { await onPing(thread.id); } finally { setPinging(false); }
+    try { await onPing(thread.id); } catch { /* parent handles */ } finally { setPinging(false); }
   }
 
   async function handleResolve() {
     setResolving(true);
-    try { await onResolve(thread.id); } finally { setResolving(false); }
+    try { await onResolve(thread.id); } catch { /* parent handles */ } finally { setResolving(false); }
   }
 
   return (

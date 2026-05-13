@@ -12,8 +12,8 @@ export function ApproveModal({ threads, onConfirm, onClose, acting }: Props) {
   const openCount = threads.filter((t) => t.status === "open").length;
 
   return createPortal(
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+    <div className="modal-overlay" onClick={acting ? undefined : onClose}>
+      <div className="modal" role="dialog" aria-modal="true" aria-label="Approve plan" onClick={(e) => e.stopPropagation()}>
         <h2>Approve plan?</h2>
         {openCount > 0 && (
           <p className="modal-warning">

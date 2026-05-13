@@ -232,7 +232,8 @@ function readHashPlanId(): string | null {
   const params = new URLSearchParams(hash);
   const raw = params.get("plan");
   if (!raw) return null;
-  return raw.trim().length > 0 ? raw : null;
+  const id = raw.trim();
+  return id.length > 0 ? id : null;
 }
 
 function writeHashPlanId(id: string | null): void {

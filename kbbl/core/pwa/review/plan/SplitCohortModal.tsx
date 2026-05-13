@@ -91,7 +91,7 @@ function CohortSpecForm({ spec, onChange }: { spec: ResultCohortSpec; onChange: 
       </label>
       <label>
         priority
-        <input type="number" value={spec.priority} onChange={(e) => onChange({ ...spec, priority: Number(e.target.value) })} />
+        <input type="number" value={spec.priority} onChange={(e) => { const n = Number(e.target.value); if (!Number.isNaN(n)) onChange({ ...spec, priority: n }); }} />
       </label>
     </div>
   );

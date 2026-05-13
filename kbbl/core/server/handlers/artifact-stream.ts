@@ -30,6 +30,8 @@ export function mountArtifactStreamRoutes(app: Hono, deps: ArtifactStreamRouteDe
 
     const clientSignal = c.req.raw.signal;
 
+    const MAX_QUEUE = 500;
+
     return streamSSE(c, async (stream) => {
       const queue: Array<{ id: number; event: string; data: Record<string, unknown> }> = [];
       let notify: (() => void) | null = null;
@@ -40,6 +42,7 @@ export function mountArtifactStreamRoutes(app: Hono, deps: ArtifactStreamRouteDe
       clientSignal.addEventListener("abort", onAbort, { once: true });
 
       const unsub = bus.subscribe(targetType, targetId, (evt) => {
+        if (queue.length >= MAX_QUEUE) queue.shift();
         queue.push(evt);
         if (notify) { const n = notify; notify = null; n(); }
       });
@@ -58,6 +61,10 @@ export function mountArtifactStreamRoutes(app: Hono, deps: ArtifactStreamRouteDe
             id: String(evt.id),
           });
         }
+
+        // drain queue entries that arrived during replay to avoid duplicates
+        const lastReplayedId = replayed.length > 0 ? replayed[replayed.length - 1].id : resumeAfter;
+        while (queue.length > 0 && queue[0].id <= lastReplayedId) queue.shift();
 
         while (!clientSignal.aborted) {
           if (queue.length === 0) {

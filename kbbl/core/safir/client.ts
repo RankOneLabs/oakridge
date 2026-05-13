@@ -229,11 +229,11 @@ export function createSafirClient(opts: CreateSafirClientOpts): SafirClient {
     postAgentResponse: (threadId, body) =>
       request<unknown>("POST", `/threads/${threadId}/agent-response`, body),
     listAllThreads: (targetType, targetId) =>
-      request<Record<string, unknown>[]>("GET", `/artifacts/${targetType}/${targetId}/threads`),
+      request<Record<string, unknown>[]>("GET", `/artifacts/${encodeURIComponent(targetType)}/${encodeURIComponent(targetId)}/threads`),
     listAtomHistory: (targetType, targetId) =>
-      request<Record<string, unknown>[]>("GET", `/atoms/${targetType}/${targetId}/history`),
+      request<Record<string, unknown>[]>("GET", `/atoms/${encodeURIComponent(targetType)}/${encodeURIComponent(targetId)}/history`),
     postAtomEdit: (targetType, targetId, body) =>
-      request<Record<string, unknown>>("POST", `/atoms/${targetType}/${targetId}/edits`, body),
+      request<Record<string, unknown>>("POST", `/atoms/${encodeURIComponent(targetType)}/${encodeURIComponent(targetId)}/edits`, body),
     createThread: (body) =>
       request<Record<string, unknown>>("POST", "/threads", body),
     postThreadMessage: (threadId, body) =>

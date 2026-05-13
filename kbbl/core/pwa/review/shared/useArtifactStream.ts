@@ -1,18 +1,25 @@
 import { useState, useEffect, useRef } from "react";
-import type { ArtifactTarget, ArtifactStreamEvent, CommentThread, AtomEditRecord } from "./types";
+import type { ArtifactTarget, CommentThread, AtomEditRecord } from "./types";
+
+/** Wire format emitted by GET /safir-stream SSE. */
+export interface WireEvent {
+  event: string;
+  data: Record<string, unknown>;
+  ts?: string;
+}
 
 export interface ArtifactStreamState {
   atomMap: Record<string, string>;
   threads: CommentThread[];
   status: string | null;
-  lastEvent: ArtifactStreamEvent | null;
+  lastEvent: WireEvent | null;
 }
 
 export function useArtifactStream(target: ArtifactTarget): ArtifactStreamState {
   const [atomMap, setAtomMap] = useState<Record<string, string>>({});
   const [threads, setThreads] = useState<CommentThread[]>([]);
   const [status, setStatus] = useState<string | null>(null);
-  const [lastEvent, setLastEvent] = useState<ArtifactStreamEvent | null>(null);
+  const [lastEvent, setLastEvent] = useState<WireEvent | null>(null);
   const lastEventIdRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -44,9 +51,9 @@ export function useArtifactStream(target: ArtifactTarget): ArtifactStreamState {
         es.addEventListener("message", (e) => {
           if (cancelled) return;
           lastEventIdRef.current = e.lastEventId || null;
-          let parsed: ArtifactStreamEvent;
+          let parsed: WireEvent;
           try {
-            parsed = JSON.parse(e.data as string) as ArtifactStreamEvent;
+            parsed = JSON.parse(e.data as string) as WireEvent;
           } catch { return; }
           setLastEvent(parsed);
           applyEvent(parsed);
@@ -62,29 +69,40 @@ export function useArtifactStream(target: ArtifactTarget): ArtifactStreamState {
       connect();
     }
 
-    function applyEvent(evt: ArtifactStreamEvent) {
-      if (evt.type === "atom_edit") {
-        setAtomMap((prev) => ({ ...prev, [evt.anchor]: evt.new_value }));
-        // refresh threads that reference this edit
-      } else if (evt.type === "thread") {
-        if (evt.event === "created") {
-          // fetch new thread and append
-          void fetch(`/safir/threads/${(evt.data as { thread_id?: string }).thread_id ?? ""}`)
-            .then((r) => r.ok ? r.json() : null)
-            .then((t) => { if (t && !cancelled) setThreads((prev) => [...prev, t as CommentThread]); });
-        } else {
-          const threadId = (evt.data as { thread_id?: string }).thread_id;
-          if (!threadId) return;
-          void fetch(`/safir/threads/${threadId}`)
-            .then((r) => r.ok ? r.json() : null)
-            .then((t) => {
-              if (t && !cancelled) {
-                setThreads((prev) => prev.map((th) => th.id === threadId ? (t as CommentThread) : th));
-              }
-            });
+    function upsertThread(t: CommentThread) {
+      if (!cancelled) {
+        setThreads((prev) => {
+          const idx = prev.findIndex((th) => th.id === t.id);
+          return idx === -1 ? [...prev, t] : prev.map((th) => th.id === t.id ? t : th);
+        });
+      }
+    }
+
+    function applyEvent(evt: WireEvent) {
+      const { event: e, data } = evt;
+      if (e === "atom_edit.applied") {
+        const anchor = typeof data.anchor === "string" ? data.anchor : null;
+        const newValue = typeof data.new_value === "string" ? data.new_value : null;
+        if (anchor !== null && newValue !== null) {
+          setAtomMap((prev) => ({ ...prev, [anchor]: newValue }));
         }
-      } else if (evt.type === "status") {
-        setStatus(evt.status);
+      } else if (
+        e === "comment_thread.created" ||
+        e === "thread.message_added" ||
+        e === "thread.status_changed" ||
+        e === "thread.agent_response_completed" ||
+        e === "thread.agent_response_failed"
+      ) {
+        const threadId = typeof data.thread_id === "string" ? data.thread_id : null;
+        if (!threadId) return;
+        void fetch(`/safir/threads/${threadId}`)
+          .then((r) => r.ok ? r.json() : null)
+          .then((t) => { if (t) upsertThread(t as CommentThread); });
+      } else if (e === "artifact.status_changed") {
+        const s = typeof data.status === "string" ? data.status : null;
+        if (s) setStatus(s);
+      } else if (e === "artifact.reopened") {
+        setStatus("pending_approval");
       }
     }
 

@@ -87,7 +87,8 @@ export function DagEditor({
   const [nodes, setNodes, onNodesChange] = useNodesState(initNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initEdges);
 
-  // Re-layout when cohorts/deps change (structural ops) but preserve drag positions for unchanged nodes
+  // Re-layout only on structural changes (cohorts/deps); preserves dragged positions
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     const { nodes: laidOut, edges: laidOutEdges } = layoutGraph(cohorts, dependencies);
     setNodes(laidOut.map((n) => ({
@@ -99,11 +100,23 @@ export function DagEditor({
       },
     })));
     setEdges(laidOutEdges);
-  }, [cohorts, dependencies, threadCounts, selectedCohortIndex, setNodes, setEdges]);
+  }, [cohorts, dependencies, setNodes, setEdges]);
+
+  // Update node metadata (selection, comment counts) without triggering a re-layout
+  useEffect(() => {
+    setNodes((prev) => prev.map((n) => ({
+      ...n,
+      data: {
+        ...n.data as CohortNodeData,
+        commentCount: threadCounts[`cohorts[${n.id}]`] ?? 0,
+        selected: Number(n.id) === selectedCohortIndex,
+      },
+    })));
+  }, [threadCounts, selectedCohortIndex, setNodes]);
 
   function handleConnect(connection: Connection) {
-    setEdges((eds) => addEdge(connection, eds));
     if (connection.source && connection.target && onConnect) {
+      setEdges((eds) => addEdge(connection, eds));
       onConnect(Number(connection.source), Number(connection.target));
     }
   }
@@ -118,20 +131,14 @@ export function DagEditor({
         onEdgesChange={onEdgesChange}
         onConnect={handleConnect}
         onNodeClick={(_, node) => onSelectCohort(Number(node.id))}
-        onEdgeClick={(_, edge) => {
-          const parts = edge.id.replace("edge:", "").split("->");
-          if (parts.length === 2) onSelectEdge(Number(parts[0]), Number(parts[1]));
-        }}
+        onEdgeClick={(_, edge) => onSelectEdge(Number(edge.source), Number(edge.target))}
         onNodeContextMenu={(e, node) => {
           e.preventDefault();
           if (onNodeContextMenu) onNodeContextMenu(e, Number(node.id));
         }}
         onEdgeContextMenu={(e, edge) => {
           e.preventDefault();
-          const parts = edge.id.replace("edge:", "").split("->");
-          if (parts.length === 2 && onEdgeContextMenu) {
-            onEdgeContextMenu(e, Number(parts[0]), Number(parts[1]));
-          }
+          if (onEdgeContextMenu) onEdgeContextMenu(e, Number(edge.source), Number(edge.target));
         }}
         fitView
       >

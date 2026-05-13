@@ -11,8 +11,8 @@ export function RejectModal({ onConfirm, onClose, acting }: Props) {
   const [reason, setReason] = useState("");
 
   return createPortal(
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+    <div className="modal-overlay" onClick={acting ? undefined : onClose}>
+      <div className="modal" role="dialog" aria-modal="true" aria-label="Reject plan" onClick={(e) => e.stopPropagation()}>
         <h2>Reject plan?</h2>
         <label>
           Rejection reason

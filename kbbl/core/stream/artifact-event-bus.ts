@@ -45,7 +45,9 @@ export class ArtifactEventBus {
     const subs = this.subscribers.get(key);
     if (subs) {
       for (const fn of subs) {
-        fn(evt);
+        try { fn(evt); } catch (err) {
+          console.error(JSON.stringify({ kbbl: "artifact_bus_subscriber_error", error: String(err) }));
+        }
       }
     }
   }

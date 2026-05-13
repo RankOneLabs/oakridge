@@ -104,7 +104,7 @@ export function PlanReviewView({ planId, onBack }: Props) {
 
   // Keep history fresh when SSE delivers atom_edit events
   useEffect(() => {
-    if (stream.lastEvent?.type === "atom_edit") {
+    if (stream.lastEvent?.event === "atom_edit.applied") {
       void fetch(`/safir/atoms/plan/${encodeURIComponent(planId)}/history`)
         .then((r) => r.ok ? r.json() : null)
         .then((h) => { if (h) setAtomHistory(h as AtomEditRecord[]); });
@@ -127,18 +127,22 @@ export function PlanReviewView({ planId, onBack }: Props) {
     selectedCohortIndex !== null
       ? `cohorts[${selectedCohortIndex}]`
       : selectedEdge
-        ? `edge:${selectedEdge.from}->${selectedEdge.to}`
+        ? `deps[${selectedEdge.from}->${selectedEdge.to}]`
         : null;
 
   // --- structural ops ---
 
   async function postEdits(edits: Array<{ anchor: string; prev_value: string | null; new_value: string }>) {
     for (const edit of edits) {
-      await fetch(`/safir/atoms/plan/${encodeURIComponent(planId)}/edits`, {
+      const res = await fetch(`/safir/atoms/plan/${encodeURIComponent(planId)}/edits`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ ...edit, edited_by: "operator" }),
       });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? `edit failed (HTTP ${res.status})`);
+      }
     }
   }
 
@@ -151,9 +155,11 @@ export function PlanReviewView({ planId, onBack }: Props) {
       return;
     }
     if (!confirm(`Delete cohort #${cohortIndex}?`)) return;
-    await postEdits([{ anchor: `cohorts[${cohortIndex}]`, prev_value: null, new_value: "__deleted__" }]);
-    setPlan((prev) => prev ? { ...prev, cohorts: prev.cohorts.filter((c) => c.cohort_index !== cohortIndex) } : prev);
-    if (selectedCohortIndex === cohortIndex) setSelectedCohortIndex(null);
+    try {
+      await postEdits([{ anchor: `cohorts[${cohortIndex}]`, prev_value: null, new_value: "__deleted__" }]);
+      setPlan((prev) => prev ? { ...prev, cohorts: prev.cohorts.filter((c) => c.cohort_index !== cohortIndex) } : prev);
+      if (selectedCohortIndex === cohortIndex) setSelectedCohortIndex(null);
+    } catch (e) { setError(String(e)); }
   }
 
   async function handleSplit(sourceIndex: number, specs: [ResultCohortSpec, ResultCohortSpec], _migrations: EdgeMigration[]) {
@@ -166,9 +172,11 @@ export function PlanReviewView({ planId, onBack }: Props) {
       { anchor: `cohorts[${nextIdx}].notes`, prev_value: null, new_value: specs[1].notes },
       { anchor: `cohorts[${nextIdx}].priority`, prev_value: null, new_value: String(specs[1].priority) },
     ];
-    await postEdits(edits);
-    const newCohort: CohortAtom = { cohort_index: nextIdx, title: specs[1].title, notes: specs[1].notes, priority: specs[1].priority };
-    setPlan((prev) => prev ? { ...prev, cohorts: [...prev.cohorts, newCohort] } : prev);
+    try {
+      await postEdits(edits);
+      const newCohort: CohortAtom = { cohort_index: nextIdx, title: specs[1].title, notes: specs[1].notes, priority: specs[1].priority };
+      setPlan((prev) => prev ? { ...prev, cohorts: [...prev.cohorts, newCohort] } : prev);
+    } catch (e) { setError(String(e)); }
     setSplitModal(null);
   }
 
@@ -180,49 +188,67 @@ export function PlanReviewView({ planId, onBack }: Props) {
       { anchor: `cohorts[${nextIdx}].priority`, prev_value: null, new_value: String(specs.priority) },
       ...multiSelectIndices.map((i) => ({ anchor: `cohorts[${i}]`, prev_value: null, new_value: "__deleted__" })),
     ];
-    await postEdits(edits);
-    const newCohort: CohortAtom = { cohort_index: nextIdx, title: specs.title, notes: specs.notes, priority: specs.priority };
-    setPlan((prev) => prev ? {
-      ...prev,
-      cohorts: [...prev.cohorts.filter((c) => !multiSelectIndices.includes(c.cohort_index)), newCohort],
-    } : prev);
-    setMultiSelectIndices([]);
+    try {
+      await postEdits(edits);
+      const newCohort: CohortAtom = { cohort_index: nextIdx, title: specs.title, notes: specs.notes, priority: specs.priority };
+      setPlan((prev) => prev ? {
+        ...prev,
+        cohorts: [...prev.cohorts.filter((c) => !multiSelectIndices.includes(c.cohort_index)), newCohort],
+      } : prev);
+      setMultiSelectIndices([]);
+    } catch (e) { setError(String(e)); }
     setMergeModal(false);
   }
 
   async function handleAddEdge(from: number, to: number) {
-    await postEdits([{ anchor: `deps[${from}->${to}]`, prev_value: null, new_value: "1" }]);
-    setPlan((prev) => prev ? { ...prev, dependencies: [...prev.dependencies, { from_cohort_index: from, to_cohort_index: to }] } : prev);
+    try {
+      await postEdits([{ anchor: `deps[${from}->${to}]`, prev_value: null, new_value: "1" }]);
+      setPlan((prev) => prev ? { ...prev, dependencies: [...prev.dependencies, { from_cohort_index: from, to_cohort_index: to }] } : prev);
+    } catch (e) { setError(String(e)); }
   }
 
   async function handleDeleteEdge(from: number, to: number) {
-    await postEdits([{ anchor: `deps[${from}->${to}]`, prev_value: "1", new_value: "__deleted__" }]);
-    setPlan((prev) => prev ? {
-      ...prev,
-      dependencies: prev.dependencies.filter((d) => !(d.from_cohort_index === from && d.to_cohort_index === to)),
-    } : prev);
+    try {
+      await postEdits([{ anchor: `deps[${from}->${to}]`, prev_value: "1", new_value: "__deleted__" }]);
+      setPlan((prev) => prev ? {
+        ...prev,
+        dependencies: prev.dependencies.filter((d) => !(d.from_cohort_index === from && d.to_cohort_index === to)),
+      } : prev);
+    } catch (e) { setError(String(e)); }
   }
 
   // --- thread ops ---
 
   const handlePostMessage = useCallback(async (threadId: string, body: string) => {
-    await fetch(`/safir/threads/${threadId}/messages`, {
+    const res = await fetch(`/safir/threads/${threadId}/messages`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ body, author: "operator" }),
     });
+    if (!res.ok) {
+      const errBody = (await res.json().catch(() => ({}))) as { error?: string };
+      setError(errBody.error ?? `post message failed (HTTP ${res.status})`);
+    }
   }, []);
 
   const handlePing = useCallback(async (threadId: string) => {
-    await fetch(`/safir/threads/${threadId}/ping`, { method: "POST" });
+    const res = await fetch(`/safir/threads/${threadId}/ping`, { method: "POST" });
+    if (!res.ok) {
+      const errBody = (await res.json().catch(() => ({}))) as { error?: string };
+      setError(errBody.error ?? `ping failed (HTTP ${res.status})`);
+    }
   }, []);
 
   const handleResolve = useCallback(async (threadId: string) => {
-    await fetch(`/safir/threads/${threadId}/status`, {
+    const res = await fetch(`/safir/threads/${threadId}/status`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ status: "resolved" }),
     });
+    if (!res.ok) {
+      const errBody = (await res.json().catch(() => ({}))) as { error?: string };
+      setError(errBody.error ?? `resolve failed (HTTP ${res.status})`);
+    }
   }, []);
 
   async function handleNewThread(anchor: string | null) {
@@ -281,7 +307,11 @@ export function PlanReviewView({ planId, onBack }: Props) {
     if (!confirm("Reopen this plan? This allows further edits.")) return;
     setActing(true);
     try {
-      await fetch(`/safir/plans/${encodeURIComponent(planId)}/reopen`, { method: "POST" });
+      const res = await fetch(`/safir/plans/${encodeURIComponent(planId)}/reopen`, { method: "POST" });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(body.error ?? `reopen failed (HTTP ${res.status})`);
+      }
     } catch (e) { setError(String(e)); } finally { setActing(false); }
   }
 
