@@ -44,9 +44,8 @@ async function defaultSpawnAgent(
     stderr: "pipe",
   });
 
-  const stdinWriter = proc.stdin.getWriter();
-  await stdinWriter.write(new TextEncoder().encode(opts.stdinPayload));
-  await stdinWriter.close();
+  proc.stdin.write(new TextEncoder().encode(opts.stdinPayload));
+  proc.stdin.end();
 
   const stdout = await new Response(proc.stdout).text();
   const exitCode = await proc.exited;
