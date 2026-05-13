@@ -98,6 +98,14 @@ export interface SafirClient {
   getAtomMap(targetType: string, targetId: string): Promise<Record<string, string>>;
   listOpenThreads(targetType: string, targetId: string): Promise<Record<string, unknown>[]>;
   postAgentResponse(threadId: string, body: AgentResponseBody): Promise<unknown>;
+  // --- cohort 2: plan review surface ---
+  listAllThreads(targetType: string, targetId: string): Promise<Record<string, unknown>[]>;
+  listAtomHistory(targetType: string, targetId: string): Promise<Record<string, unknown>[]>;
+  postAtomEdit(targetType: string, targetId: string, body: Record<string, unknown>): Promise<Record<string, unknown>>;
+  createThread(body: Record<string, unknown>): Promise<Record<string, unknown>>;
+  postThreadMessage(threadId: string, body: { body: string; author: string }): Promise<Record<string, unknown>>;
+  pingThread(threadId: string): Promise<unknown>;
+  updateThreadStatus(threadId: string, body: { status: string }): Promise<Record<string, unknown>>;
 }
 
 export interface CreateSafirClientOpts {
@@ -220,5 +228,19 @@ export function createSafirClient(opts: CreateSafirClientOpts): SafirClient {
       ),
     postAgentResponse: (threadId, body) =>
       request<unknown>("POST", `/threads/${threadId}/agent-response`, body),
+    listAllThreads: (targetType, targetId) =>
+      request<Record<string, unknown>[]>("GET", `/artifacts/${targetType}/${targetId}/threads`),
+    listAtomHistory: (targetType, targetId) =>
+      request<Record<string, unknown>[]>("GET", `/atoms/${targetType}/${targetId}/history`),
+    postAtomEdit: (targetType, targetId, body) =>
+      request<Record<string, unknown>>("POST", `/atoms/${targetType}/${targetId}/edits`, body),
+    createThread: (body) =>
+      request<Record<string, unknown>>("POST", "/threads", body),
+    postThreadMessage: (threadId, body) =>
+      request<Record<string, unknown>>("POST", `/threads/${threadId}/messages`, body),
+    pingThread: (threadId) =>
+      request<unknown>("POST", `/threads/${threadId}/ping`),
+    updateThreadStatus: (threadId, body) =>
+      request<Record<string, unknown>>("PATCH", `/threads/${threadId}/status`, body),
   };
 }

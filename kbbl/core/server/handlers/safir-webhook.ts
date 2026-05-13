@@ -3,6 +3,7 @@ import type { Hono } from "hono";
 import type { SessionManager } from "../../session/session-manager";
 import type { ReviewResponderDispatchDeps } from "./review-responder-consumer";
 import { dispatchReviewResponder } from "./review-responder-consumer";
+import type { ArtifactEventBus } from "../../stream/artifact-event-bus";
 
 /**
  * Wire envelope safir sends on every webhook delivery.
@@ -86,6 +87,11 @@ export interface SafirWebhookRouteDeps {
    * that only cover session-fan-out events.
    */
   reviewResponder?: ReviewResponderDispatchDeps;
+  /**
+   * Artifact event bus for SSE fan-out to PWA plan/build-brief reviewers.
+   * Omit in tests that only cover session-based fan-out.
+   */
+  artifactBus?: ArtifactEventBus;
 }
 
 const moduleDedupe = new DeliveryIdDedupe();
@@ -138,14 +144,31 @@ const KNOWN_EVENTS: ReadonlySet<SafirWebhookEvent> = new Set([
 ]);
 
 /**
- * Routes that dispatch a known event to a matching live session emit a
- * `safir_event` envelope event onto the session's stream. Type is
- * lower-snake-case to match existing kbbl envelope-event naming
- * (session_started, usage_observation, etc.).
+ * Events that fan out to live sessions as `safir_event` envelope events.
+ * Run-scoped events dispatch by run_id; artifact-scoped events dispatch by
+ * (target_type, target_id) via the ArtifactEventBus.
  */
 const DISPATCHABLE_EVENTS: ReadonlySet<SafirWebhookEvent> = new Set([
   "run.completed",
   "run.failed",
+]);
+
+/**
+ * Artifact-scoped events that are broadcast on the ArtifactEventBus so the
+ * PWA plan / build-brief reviewer SSE streams receive them.
+ * Excludes `thread.agent_response_started` — consumed only by the
+ * review-responder subprocess (RESPONDER_EVENTS), not the PWA.
+ */
+const ARTIFACT_BUS_EVENTS: ReadonlySet<SafirWebhookEvent> = new Set([
+  "atom_edit.applied",
+  "comment_thread.created",
+  "thread.message_added",
+  "thread.status_changed",
+  "artifact.status_changed",
+  "artifact.reopened",
+  "plan.created",
+  "thread.agent_response_completed",
+  "thread.agent_response_failed",
 ]);
 
 export function mountSafirWebhookRoutes(
@@ -231,6 +254,36 @@ export function mountSafirWebhookRoutes(
       }
     }
 
+    if (ARTIFACT_BUS_EVENTS.has(event) && deps.artifactBus) {
+      // Extract (target_type, target_id) from the event payload.
+      // Most artifact events carry these directly; plan.created maps plan_id.
+      // agent_response_completed/failed carry only thread_id — skip bus
+      // dispatch for those (thread.message_added carries full context).
+      let targetType: string | null = null;
+      let targetId: string | null = null;
+
+      if (event === "plan.created") {
+        targetType = "plan";
+        targetId = typeof data.plan_id === "string" ? data.plan_id : null;
+      } else if (
+        event === "thread.agent_response_completed" ||
+        event === "thread.agent_response_failed"
+      ) {
+        // Payload has only thread_id — no target context available in-band.
+        // The PWA relies on thread.message_added / thread.status_changed for
+        // the same transitions; skip bus publish here.
+      } else {
+        targetType = typeof data.target_type === "string" ? data.target_type : null;
+        targetId = typeof data.target_id === "string" ? data.target_id : null;
+      }
+
+      if (targetType !== null && targetId !== null) {
+        deps.artifactBus.publish(targetType, targetId, event, data, ts);
+        dedupe.add(deliveryId);
+        return c.json({ ok: true, dispatched: true });
+      }
+    }
+
     if (RESPONDER_EVENTS.has(event)) {
       if (!deps.reviewResponder) {
         console.error(
@@ -279,7 +332,7 @@ export function mountSafirWebhookRoutes(
         reason:
           !KNOWN_EVENTS.has(event)
             ? "event_unknown"
-            : !DISPATCHABLE_EVENTS.has(event)
+            : !DISPATCHABLE_EVENTS.has(event) && !ARTIFACT_BUS_EVENTS.has(event) && !RESPONDER_EVENTS.has(event)
               ? "event_not_dispatched_in_pr_c"
               : typeof data.run_id !== "string"
                 ? "missing_run_id"

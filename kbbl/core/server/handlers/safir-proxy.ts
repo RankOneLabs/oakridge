@@ -202,4 +202,97 @@ export function mountSafirProxyRoutes(
       return respondToUpstreamError(c, err);
     }
   });
+
+  // --- cohort 2: atom + thread proxy routes ---
+
+  app.get("/safir/atoms/:targetType/:targetId", async (c) => {
+    const targetType = c.req.param("targetType").trim();
+    const targetId = c.req.param("targetId").trim();
+    if (!targetType || !targetId) return c.json({ error: "targetType and targetId required" }, 400);
+    try {
+      const map = await safirClient.getAtomMap(targetType, targetId);
+      return c.json(map);
+    } catch (err) { return respondToUpstreamError(c, err); }
+  });
+
+  app.get("/safir/atoms/:targetType/:targetId/history", async (c) => {
+    const targetType = c.req.param("targetType").trim();
+    const targetId = c.req.param("targetId").trim();
+    if (!targetType || !targetId) return c.json({ error: "targetType and targetId required" }, 400);
+    try {
+      const history = await safirClient.listAtomHistory(targetType, targetId);
+      return c.json(history);
+    } catch (err) { return respondToUpstreamError(c, err); }
+  });
+
+  app.post("/safir/atoms/:targetType/:targetId/edits", async (c) => {
+    const targetType = c.req.param("targetType").trim();
+    const targetId = c.req.param("targetId").trim();
+    if (!targetType || !targetId) return c.json({ error: "targetType and targetId required" }, 400);
+    let body: unknown;
+    try { body = await c.req.json(); } catch { return c.json({ error: "invalid json" }, 400); }
+    try {
+      const result = await safirClient.postAtomEdit(targetType, targetId, body as Record<string, unknown>);
+      return c.json(result);
+    } catch (err) { return respondToUpstreamError(c, err); }
+  });
+
+  app.get("/safir/artifacts/:targetType/:targetId/threads", async (c) => {
+    const targetType = c.req.param("targetType").trim();
+    const targetId = c.req.param("targetId").trim();
+    if (!targetType || !targetId) return c.json({ error: "targetType and targetId required" }, 400);
+    try {
+      const threads = await safirClient.listAllThreads(targetType, targetId);
+      return c.json(threads);
+    } catch (err) { return respondToUpstreamError(c, err); }
+  });
+
+  app.get("/safir/threads/:threadId", async (c) => {
+    const threadId = c.req.param("threadId").trim();
+    if (!threadId) return c.json({ error: "threadId required" }, 400);
+    try {
+      const thread = await safirClient.getThread(threadId);
+      return c.json(thread);
+    } catch (err) { return respondToUpstreamError(c, err); }
+  });
+
+  app.post("/safir/threads", async (c) => {
+    let body: unknown;
+    try { body = await c.req.json(); } catch { return c.json({ error: "invalid json" }, 400); }
+    try {
+      const thread = await safirClient.createThread(body as Record<string, unknown>);
+      return c.json(thread, 201);
+    } catch (err) { return respondToUpstreamError(c, err); }
+  });
+
+  app.post("/safir/threads/:threadId/messages", async (c) => {
+    const threadId = c.req.param("threadId").trim();
+    if (!threadId) return c.json({ error: "threadId required" }, 400);
+    let body: unknown;
+    try { body = await c.req.json(); } catch { return c.json({ error: "invalid json" }, 400); }
+    try {
+      const msg = await safirClient.postThreadMessage(threadId, body as { body: string; author: string });
+      return c.json(msg, 201);
+    } catch (err) { return respondToUpstreamError(c, err); }
+  });
+
+  app.post("/safir/threads/:threadId/ping", async (c) => {
+    const threadId = c.req.param("threadId").trim();
+    if (!threadId) return c.json({ error: "threadId required" }, 400);
+    try {
+      const result = await safirClient.pingThread(threadId);
+      return c.json(result ?? { ok: true }, 202);
+    } catch (err) { return respondToUpstreamError(c, err); }
+  });
+
+  app.patch("/safir/threads/:threadId/status", async (c) => {
+    const threadId = c.req.param("threadId").trim();
+    if (!threadId) return c.json({ error: "threadId required" }, 400);
+    let body: unknown;
+    try { body = await c.req.json(); } catch { return c.json({ error: "invalid json" }, 400); }
+    try {
+      const thread = await safirClient.updateThreadStatus(threadId, body as { status: string });
+      return c.json(thread);
+    } catch (err) { return respondToUpstreamError(c, err); }
+  });
 }
