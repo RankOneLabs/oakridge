@@ -68,6 +68,22 @@ def main() -> None:
         print(json.dumps(result.model_dump()), flush=True)
         sys.exit(1)
 
+    if (
+        ctx.target_type != args.target_type
+        or ctx.target_id != args.target_id
+        or ctx.thread_id != args.thread_id
+    ):
+        result = ResponderResult(
+            status="failed",
+            error=(
+                f"context/CLI mismatch: "
+                f"ctx=({ctx.target_type},{ctx.target_id},{ctx.thread_id}) "
+                f"args=({args.target_type},{args.target_id},{args.thread_id})"
+            ),
+        )
+        print(json.dumps(result.model_dump()), flush=True)
+        sys.exit(1)
+
     try:
         result = asyncio.run(_run(args, ctx))
     except Exception:

@@ -63,7 +63,7 @@ export interface CreateTaskBody {
 }
 
 export interface AgentResponseBody {
-  status: string;
+  status: "completed" | "failed";
   reply_message_id?: string;
   error?: string;
 }

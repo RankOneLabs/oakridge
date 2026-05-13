@@ -239,6 +239,9 @@ class DeleteAtomTool(Tool):  # type: ignore[misc]
         del_index = int(m.group(2))
 
         all_keys = _list_keys(ctx.atom_map, field)
+        indices = sorted(int(k[k.index("[") + 1:-1]) for k in all_keys)
+        if indices != list(range(len(indices))):
+            return json.dumps({"error": f"non-contiguous indices for '{field}': {indices}"})
         n = len(all_keys)
         results: list[dict[str, Any]] = []
 
@@ -301,6 +304,13 @@ class DeleteAtomTool(Tool):  # type: ignore[misc]
                 "conflict": del_last_edit is None,
             })
 
+        # Reflect deletion + shift in the working atom_map so subsequent
+        # _next_list_index calls compute correct indices.
+        ctx.atom_map.pop(anchor, None)
+        for i in range(del_index + 1, n):
+            ctx.atom_map[f"{field}[{i - 1}]"] = ctx.atom_map.pop(f"{field}[{i}]", "")
+        ctx.atom_map.pop(f"{field}[{n - 1}]", None)
+
         return json.dumps({
             "deleted": anchor,
             "shifted": n - 1 - del_index,
@@ -331,6 +341,8 @@ class ReplyToThreadTool(Tool):  # type: ignore[misc]
         )
 
     async def execute(self, args: dict[str, Any]) -> str:
+        if self._ctx.reply_message_id is not None:
+            return json.dumps({"error": "reply already posted"})
         body_text = str(args["body"])
         msg = await self._client.post_thread_message(
             self._ctx.thread_id, {"body": body_text}
@@ -398,7 +410,19 @@ async def run_build_brief_review_responder(
         max_tool_calls=80,
         max_llm_calls=100,
     )
-    await run_agent(config, _build_input(ctx))
+    try:
+        await run_agent(config, _build_input(ctx))
+    except Exception as exc:
+        msg = await client.post_thread_message(
+            ctx.thread_id,
+            {"body": "agent failed before posting a reply; consult logs"},
+        )
+        return ResponderResult(
+            status="failed",
+            reply_message_id=msg.get("id"),
+            conflicts=ctx.conflicts,
+            error=str(exc),
+        )
 
     if ctx.reply_message_id is None:
         msg = await client.post_thread_message(

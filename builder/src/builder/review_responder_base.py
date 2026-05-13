@@ -46,7 +46,7 @@ class ConflictRecord(BaseModel):
     anchor: str
     attempted_value: str | None
     current_value: str | None
-    latest_edit_id: str
+    latest_edit_id: str | None
 
 
 class ReviewResponderContext(BaseModel):

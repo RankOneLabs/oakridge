@@ -14,9 +14,9 @@ class SafirAtomEditConflict(Exception):
         self,
         *,
         current_value: str | None,
-        latest_edit_id: str,
-        edited_by: str,
-        created_at: str,
+        latest_edit_id: str | None,
+        edited_by: str | None,
+        created_at: str | None,
     ) -> None:
         super().__init__(
             f"stale_prev_value: current={current_value!r}, latest_edit_id={latest_edit_id}"
@@ -200,9 +200,9 @@ class SafirClient:
             if payload.get("error") == "stale_prev_value":
                 raise SafirAtomEditConflict(
                     current_value=payload.get("current_value"),
-                    latest_edit_id=payload.get("latest_edit_id", ""),
-                    edited_by=payload.get("edited_by", ""),
-                    created_at=payload.get("created_at", ""),
+                    latest_edit_id=payload.get("latest_edit_id"),
+                    edited_by=payload.get("edited_by"),
+                    created_at=payload.get("created_at"),
                 )
         r.raise_for_status()
         return r.json()  # type: ignore[no-any-return]

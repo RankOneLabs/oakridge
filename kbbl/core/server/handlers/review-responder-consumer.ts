@@ -37,11 +37,13 @@ export interface ReviewResponderDispatchDeps {
 async function defaultSpawnAgent(
   opts: SpawnOpts,
 ): Promise<ReviewResponderSubprocessResult> {
+  const TIMEOUT_MS = 5 * 60_000;
   const proc = Bun.spawn({
     cmd: opts.cmd,
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
+    timeout: TIMEOUT_MS,
   });
 
   proc.stdin.write(new TextEncoder().encode(opts.stdinPayload));
@@ -49,6 +51,25 @@ async function defaultSpawnAgent(
 
   const stdout = await new Response(proc.stdout).text();
   const exitCode = await proc.exited;
+
+  if (exitCode === null) {
+    return {
+      status: "failed",
+      error: `subprocess timed out after ${TIMEOUT_MS}ms`,
+      conflicts: [],
+    };
+  }
+
+  // Always attempt to parse stdout first: the runner emits structured JSON
+  // to stdout even on non-zero exit (e.g. context-parse failures).
+  const lastLine = stdout.trim().split("\n").pop() ?? "";
+  if (lastLine) {
+    try {
+      return JSON.parse(lastLine) as ReviewResponderSubprocessResult;
+    } catch {
+      // fall through to stderr-based error below
+    }
+  }
 
   if (exitCode !== 0) {
     const stderr = await new Response(proc.stderr).text();
@@ -59,19 +80,7 @@ async function defaultSpawnAgent(
     };
   }
 
-  const lastLine = stdout.trim().split("\n").pop() ?? "";
-  if (!lastLine) {
-    return { status: "failed", error: "subprocess produced no output", conflicts: [] };
-  }
-  try {
-    return JSON.parse(lastLine) as ReviewResponderSubprocessResult;
-  } catch {
-    return {
-      status: "failed",
-      error: `could not parse subprocess result: ${lastLine.slice(0, 200)}`,
-      conflicts: [],
-    };
-  }
+  return { status: "failed", error: "subprocess produced no output", conflicts: [] };
 }
 
 export async function dispatchReviewResponder(

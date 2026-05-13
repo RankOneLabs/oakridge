@@ -144,12 +144,6 @@ async def test_plan_conflict_no_retry_reply_names_conflict_third_call_lands(
         status_code=200,
     )
     # POST 4: reply message
-    captured_reply: dict[str, str] = {}
-    def capture_reply(request: Any) -> Any:  # noqa: ANN001
-        body = json.loads(request.content)
-        captured_reply["body"] = body.get("body", "")
-        return None
-
     httpx_mock.add_response(
         method="POST",
         url=f"{BASE}/threads/thread-1/messages",

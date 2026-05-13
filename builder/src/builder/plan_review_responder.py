@@ -277,6 +277,8 @@ class DeleteCohortTool(Tool):  # type: ignore[misc]
                 }
                 edit = await _call_safir_or_record_conflict(self._client, ctx, body)
                 results.append({"anchor": anchor, "conflict": edit is None})
+                if edit is not None:
+                    ctx.atom_map.pop(anchor, None)
 
         # Delete cohort attribute atoms.
         for key in list(ctx.atom_map):
@@ -290,6 +292,8 @@ class DeleteCohortTool(Tool):  # type: ignore[misc]
                 }
                 edit = await _call_safir_or_record_conflict(self._client, ctx, body)
                 results.append({"anchor": key, "conflict": edit is None})
+                if edit is not None:
+                    ctx.atom_map.pop(key, None)
 
         return json.dumps({"deleted_cohort_index": cohort_index, "edits": results})
 
@@ -383,12 +387,13 @@ class SplitCohortTool(Tool):  # type: ignore[misc]
             }
             edit = await _call_safir_or_record_conflict(self._client, ctx, body)
             results.append({"anchor": from_anchor, "op": "delete_edge", "conflict": edit is None})
+            if edit is not None:
+                current_edges.discard((fe[0], fe[1]))
+                ctx.atom_map.pop(from_anchor, None)
 
             for te in migration["to_edges"]:
                 new_anchor = f"deps[{te[0]},{te[1]}]"
-                # Cycle check against current set (excluding deleted from_edge)
-                check_set = current_edges - {(fe[0], fe[1])}
-                if _would_create_cycle(check_set, te[0], te[1]):
+                if _would_create_cycle(current_edges, te[0], te[1]):
                     return json.dumps({"error": f"adding edge {te} would create a cycle"})
                 body2 = {
                     "anchor": new_anchor,
@@ -402,6 +407,9 @@ class SplitCohortTool(Tool):  # type: ignore[misc]
                     "op": "add_edge",
                     "conflict": edit2 is None,
                 })
+                if edit2 is not None:
+                    current_edges.add((te[0], te[1]))
+                    ctx.atom_map[new_anchor] = "1"
 
         # 2. Delete original cohort attributes.
         for key in list(ctx.atom_map):
@@ -414,6 +422,8 @@ class SplitCohortTool(Tool):  # type: ignore[misc]
                 }
                 edit = await _call_safir_or_record_conflict(self._client, ctx, body)
                 results.append({"anchor": key, "op": "delete_orig", "conflict": edit is None})
+                if edit is not None:
+                    ctx.atom_map.pop(key, None)
 
         # 3. Add new split cohorts.
         for s in splits:
@@ -523,11 +533,13 @@ class MergeCohortsTool(Tool):  # type: ignore[misc]
             }
             edit = await _call_safir_or_record_conflict(self._client, ctx, body)
             results.append({"anchor": from_anchor, "op": "delete_edge", "conflict": edit is None})
+            if edit is not None:
+                current_edges.discard((fe[0], fe[1]))
+                ctx.atom_map.pop(from_anchor, None)
 
             for te in migration["to_edges"]:
                 new_anchor = f"deps[{te[0]},{te[1]}]"
-                check_set = current_edges - {(fe[0], fe[1])}
-                if _would_create_cycle(check_set, te[0], te[1]):
+                if _would_create_cycle(current_edges, te[0], te[1]):
                     return json.dumps({"error": f"adding edge {te} would create a cycle"})
                 body2 = {
                     "anchor": new_anchor,
@@ -541,6 +553,9 @@ class MergeCohortsTool(Tool):  # type: ignore[misc]
                     "op": "add_edge",
                     "conflict": edit2 is None,
                 })
+                if edit2 is not None:
+                    current_edges.add((te[0], te[1]))
+                    ctx.atom_map[new_anchor] = "1"
 
         # 2. Delete source cohorts.
         for ci in cohort_indices:
@@ -554,6 +569,8 @@ class MergeCohortsTool(Tool):  # type: ignore[misc]
                     }
                     edit = await _call_safir_or_record_conflict(self._client, ctx, body)
                     results.append({"anchor": key, "op": "delete_src", "conflict": edit is None})
+                    if edit is not None:
+                        ctx.atom_map.pop(key, None)
 
         # 3. Add merged cohort.
         for field, value in [
@@ -670,6 +687,7 @@ class DeleteEdgeTool(Tool):  # type: ignore[misc]
         edit = await _call_safir_or_record_conflict(self._client, ctx, body)
         if edit is None:
             return json.dumps({"anchor": anchor, "conflict": True})
+        ctx.atom_map.pop(anchor, None)
         return json.dumps({"anchor": anchor, "edit_id": edit.get("id")})
 
 
@@ -696,6 +714,8 @@ class ReplyToThreadTool(Tool):  # type: ignore[misc]
         )
 
     async def execute(self, args: dict[str, Any]) -> str:
+        if self._ctx.reply_message_id is not None:
+            return json.dumps({"error": "reply already posted"})
         body_text = str(args["body"])
         msg = await self._client.post_thread_message(
             self._ctx.thread_id, {"body": body_text}
@@ -769,7 +789,19 @@ async def run_plan_review_responder(
         max_tool_calls=80,
         max_llm_calls=100,
     )
-    await run_agent(config, _build_input(ctx))
+    try:
+        await run_agent(config, _build_input(ctx))
+    except Exception as exc:
+        msg = await client.post_thread_message(
+            ctx.thread_id,
+            {"body": "agent failed before posting a reply; consult logs"},
+        )
+        return ResponderResult(
+            status="failed",
+            reply_message_id=msg.get("id"),
+            conflicts=ctx.conflicts,
+            error=str(exc),
+        )
 
     if ctx.reply_message_id is None:
         msg = await client.post_thread_message(
