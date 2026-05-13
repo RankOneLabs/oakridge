@@ -12,32 +12,8 @@ import {
 import Markdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import type { Task, PermissionProfile } from "../safir/types";
+import { PlanReviewView } from "./review/plan/PlanReviewView";
 
-interface SafirPlanCohort {
-  plan_id: string;
-  cohort_index: number;
-  title: string;
-  notes: string;
-  priority: number;
-  materialized_task_id: number | null;
-}
-interface SafirCohortDependency {
-  plan_id: string;
-  from_cohort_index: number;
-  to_cohort_index: number;
-}
-interface SafirPlan {
-  id: string;
-  parent_task_id: number;
-  cohorts: SafirPlanCohort[];
-  dependencies: SafirCohortDependency[];
-  summary: string | null;
-  model: string | null;
-  status: "pending_approval" | "approved" | "rejected" | "superseded";
-  rejection_reason: string | null;
-  created_at: string;
-  updated_at: string;
-}
 
 export interface EnvelopeEvent {
   id: number;
@@ -251,33 +227,33 @@ function useHashTaskId(): [number | null, (taskId: number | null) => void] {
   return [taskId, navigate];
 }
 
-function readHashProposalId(): string | null {
+function readHashPlanId(): string | null {
   const hash = window.location.hash.slice(1);
   const params = new URLSearchParams(hash);
-  const raw = params.get("proposal");
+  const raw = params.get("plan");
   if (!raw) return null;
   return raw.trim().length > 0 ? raw : null;
 }
 
-function writeHashProposalId(id: string | null): void {
+function writeHashPlanId(id: string | null): void {
   const url = new URL(window.location.href);
   if (id == null) {
     url.hash = "";
   } else {
-    url.hash = `proposal=${encodeURIComponent(id)}`;
+    url.hash = `plan=${encodeURIComponent(id)}`;
   }
   history.replaceState(null, "", url.toString());
 }
 
-function useHashProposalId(): [string | null, (id: string | null) => void] {
-  const [id, setId] = useState<string | null>(() => readHashProposalId());
+function useHashPlanId(): [string | null, (id: string | null) => void] {
+  const [id, setId] = useState<string | null>(() => readHashPlanId());
   useEffect(() => {
-    const onHash = () => setId(readHashProposalId());
+    const onHash = () => setId(readHashPlanId());
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
   const navigate = (next: string | null) => {
-    writeHashProposalId(next);
+    writeHashPlanId(next);
     setId(next);
   };
   return [id, navigate];
@@ -612,7 +588,7 @@ async function resumeSession(
 export function App() {
   const [sid, navigate] = useHashSid();
   const [taskId, navigateTask] = useHashTaskId();
-  const [proposalId, navigateProposal] = useHashProposalId();
+  const [planId, navigatePlan] = useHashPlanId();
   const [theme, toggleTheme] = useTheme();
   const { sessions, inMemorySids, inboxStatus, compactSuggestions, clearCompactSuggestion, hydrateSession } = useInbox({
     // When the active session is purged from another client / tab, drop
@@ -671,12 +647,11 @@ export function App() {
       />
     );
   }
-  if (proposalId !== null) {
+  if (planId !== null) {
     return (
-      <ProposalReviewView
-        proposalId={proposalId}
-        safirWebUrl={config?.safirWebUrl ?? "http://localhost:3000"}
-        onBack={() => navigateProposal(null)}
+      <PlanReviewView
+        planId={planId}
+        onBack={() => navigatePlan(null)}
       />
     );
   }
@@ -4149,176 +4124,3 @@ function InputBox({
   );
 }
 
-// === plan review ===
-
-function ProposalReviewView({
-  proposalId,
-  safirWebUrl,
-  onBack,
-}: {
-  proposalId: string;
-  safirWebUrl: string;
-  onBack: () => void;
-}) {
-  const [proposal, setProposal] = useState<SafirPlan | null>(null);
-  const [parentTitle, setParentTitle] = useState<string>("");
-  const [error, setError] = useState<string | null>(null);
-  const [acting, setActing] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await fetch(`/safir/plans/${encodeURIComponent(proposalId)}`);
-        if (!res.ok) {
-          if (!cancelled) setError(`failed to load plan (HTTP ${res.status})`);
-          return;
-        }
-        const data = (await res.json()) as SafirPlan;
-        if (cancelled) return;
-        setProposal(data);
-        if (data.rejection_reason) setError(data.rejection_reason);
-        try {
-          const tRes = await fetch(`/safir/tasks/${data.parent_task_id}`);
-          if (tRes.ok && !cancelled) {
-            const t = (await tRes.json()) as { title: string };
-            setParentTitle(t.title ?? "");
-          }
-        } catch {}
-      } catch (e) {
-        if (!cancelled) setError(String(e));
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [proposalId]);
-
-  async function act(verb: "approve" | "reject") {
-    setActing(true);
-    setError(null);
-    try {
-      const body =
-        verb === "approve"
-          ? { status: "approved" }
-          : { status: "rejected", rejection_reason: "operator rejected" };
-      const res = await fetch(
-        `/safir/plans/${encodeURIComponent(proposalId)}/status`,
-        {
-          method: "PATCH",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(body),
-        },
-      );
-      if (!res.ok) {
-        const resBody = await res.json().catch(() => ({})) as { error?: string };
-        setError(resBody.error ?? `${verb} failed (HTTP ${res.status})`);
-        setActing(false);
-        try {
-          const refresh = await fetch(`/safir/plans/${encodeURIComponent(proposalId)}`);
-          if (refresh.ok) setProposal((await refresh.json()) as SafirPlan);
-        } catch {}
-        return;
-      }
-      onBack();
-    } catch (e) {
-      setError(String(e));
-      setActing(false);
-    }
-  }
-
-  if (!proposal) {
-    return (
-      <div className="proposal-review-view">
-        <header className="proposal-review-header">
-          <button type="button" className="proposal-review-back" onClick={onBack}>← back</button>
-          <span className="proposal-review-title">plan</span>
-        </header>
-        {error ? <div className="proposal-review-error">{error}</div> : <div>loading…</div>}
-      </div>
-    );
-  }
-
-  const canAct = proposal.status === "pending_approval";
-
-  return (
-    <div className="proposal-review-view">
-      <header className="proposal-review-header">
-        <button type="button" className="proposal-review-back" onClick={onBack}>← back</button>
-        <span className="proposal-review-title">
-          plan for task #{proposal.parent_task_id}
-          {parentTitle ? ` — ${parentTitle}` : ""}
-        </span>
-        <a
-          className="proposal-review-open-safir"
-          href={`${safirWebUrl.replace(/\/+$/, "")}/tasks/${proposal.parent_task_id}`}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          open parent in safir ↗
-        </a>
-      </header>
-
-      {error && <div className="proposal-review-error">{error}</div>}
-
-      {proposal.summary && (
-        <section className="proposal-review-summary">
-          <h3>summary</h3>
-          <pre>{proposal.summary}</pre>
-        </section>
-      )}
-
-      <section className="proposal-review-tasks">
-        <h3>cohorts ({proposal.cohorts.length})</h3>
-        <ol className="proposal-task-list">
-          {proposal.cohorts.map((c) => (
-            <li key={c.cohort_index} className="proposal-task-card">
-              <div className="proposal-task-head">
-                <span className="proposal-task-index">#{c.cohort_index}</span>
-                <span className="proposal-task-title">{c.title}</span>
-                {c.priority > 0 && (
-                  <span className="proposal-task-priority">p{c.priority}</span>
-                )}
-              </div>
-              <pre className="proposal-task-notes">{c.notes}</pre>
-            </li>
-          ))}
-        </ol>
-      </section>
-
-      <section className="proposal-review-deps">
-        <h3>dependencies ({proposal.dependencies.length})</h3>
-        {proposal.dependencies.length === 0 ? (
-          <div className="proposal-review-deps-empty">all cohorts are independent.</div>
-        ) : (
-          <ul>
-            {proposal.dependencies.map((d, i) => (
-              <li key={i}>
-                cohort #{d.from_cohort_index} → cohort #{d.to_cohort_index}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      {canAct && (
-        <footer className="proposal-actions">
-          <button
-            type="button"
-            className="proposal-action-reject"
-            disabled={acting}
-            onClick={() => void act("reject")}
-          >
-            reject
-          </button>
-          <button
-            type="button"
-            className="proposal-action-approve"
-            disabled={acting}
-            onClick={() => void act("approve")}
-          >
-            approve
-          </button>
-        </footer>
-      )}
-    </div>
-  );
-}
