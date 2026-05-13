@@ -1,4 +1,4 @@
-// Mirror of safir's src/shared/schema.ts as of 2026-05-11. Copied verbatim
+// Mirror of safir's src/shared/schema.ts as of 2026-05-13. Copied verbatim
 // rather than imported so kbbl is buildable without the safir package on
 // disk and so a safir-side schema change can't silently shift wire shapes
 // underneath us — a deliberate divergence becomes a visible test failure
@@ -229,3 +229,191 @@ export const UpdatePermissionProfile = z.object({
   rules: PermissionRules.optional(),
 });
 export type UpdatePermissionProfile = z.infer<typeof UpdatePermissionProfile>;
+
+// --- Artifact review system (added 2026-05-13) ---
+
+export const ArtifactStatus = z.enum([
+  "pending_approval",
+  "approved",
+  "rejected",
+  "superseded",
+]);
+export type ArtifactStatus = z.infer<typeof ArtifactStatus>;
+
+export const PlanCohort = z.object({
+  plan_id: z.string(),
+  cohort_index: z.number().int(),
+  title: z.string(),
+  notes: z.string(),
+  priority: z.number().int(),
+  materialized_task_id: z.number().nullable(),
+});
+export type PlanCohort = z.infer<typeof PlanCohort>;
+
+export const CohortDependency = z.object({
+  plan_id: z.string(),
+  from_cohort_index: z.number().int(),
+  to_cohort_index: z.number().int(),
+});
+export type CohortDependency = z.infer<typeof CohortDependency>;
+
+export const Plan = z.object({
+  id: z.string(),
+  parent_task_id: z.number(),
+  summary: z.string().nullable(),
+  model: z.string().nullable(),
+  status: ArtifactStatus,
+  rejection_reason: z.string().nullable(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  cohorts: z.array(PlanCohort),
+  dependencies: z.array(CohortDependency),
+});
+export type Plan = z.infer<typeof Plan>;
+
+export const AtomEdit = z.object({
+  id: z.string(),
+  target_type: z.enum(["plan", "build_brief"]),
+  target_id: z.string(),
+  anchor: z.string(),
+  prev_value: z.string().nullable(),
+  new_value: z.string(),
+  edited_by: z.string(),
+  thread_id: z.string().nullable(),
+  created_at: z.string(),
+});
+export type AtomEdit = z.infer<typeof AtomEdit>;
+
+export const AtomEditConflict = z.object({
+  error: z.literal("stale_prev_value"),
+  current_value: z.string().nullable(),
+  latest_edit_id: z.string(),
+  edited_by: z.string(),
+  created_at: z.string(),
+});
+export type AtomEditConflict = z.infer<typeof AtomEditConflict>;
+
+export const ThreadMessage = z.object({
+  id: z.string(),
+  thread_id: z.string(),
+  author: z.string(),
+  body: z.string(),
+  related_edit_id: z.string().nullable(),
+  created_at: z.string(),
+});
+export type ThreadMessage = z.infer<typeof ThreadMessage>;
+
+export const CommentThread = z.object({
+  id: z.string(),
+  target_type: z.enum(["plan", "build_brief"]),
+  target_id: z.string(),
+  anchor: z.string().nullable(),
+  status: z.enum(["open", "resolved"]),
+  agent_responding: z.number().int(),
+  resolved_at: z.string().nullable(),
+  created_at: z.string(),
+  messages: z.array(ThreadMessage),
+});
+export type CommentThread = z.infer<typeof CommentThread>;
+
+export const BuildBrief = z.object({
+  id: z.string(),
+  phase_id: z.string().nullable(),
+  run_id: z.string().nullable(),
+  role: z.enum(["phase_output", "run_brief"]),
+  schema_version: z.number(),
+  status: ArtifactStatus,
+  rejection_reason: z.string().nullable(),
+  predecessor_build_brief_id: z.string().nullable(),
+  goal: z.string().nullable(),
+  active_subgoals: z.array(z.string()).nullable(),
+  decisions_made: z.array(z.object({ decision: z.string(), rationale: z.string() })).nullable(),
+  approaches_rejected: z.array(z.object({ approach: z.string(), reason: z.string() })).nullable(),
+  files_in_scope: z.array(z.string()).nullable(),
+  open_questions: z.array(z.string()).nullable(),
+  next_action: z.string().nullable(),
+  raw_markdown: z.string(),
+  produced_at: z.string(),
+});
+export type BuildBrief = z.infer<typeof BuildBrief>;
+
+// Webhook payload shapes for artifact-review events.
+export const PlanCreatedPayload = z.object({
+  plan_id: z.string(),
+  parent_task_id: z.number(),
+});
+export type PlanCreatedPayload = z.infer<typeof PlanCreatedPayload>;
+
+export const BuildBriefSubmittedPayload = z.object({
+  build_brief_id: z.string(),
+  phase_id: z.string(),
+  run_id: z.string().nullable(),
+});
+export type BuildBriefSubmittedPayload = z.infer<typeof BuildBriefSubmittedPayload>;
+
+export const AtomEditAppliedPayload = z.object({
+  edit_id: z.string(),
+  target_type: z.enum(["plan", "build_brief"]),
+  target_id: z.string(),
+  anchor: z.string(),
+  thread_id: z.string().nullable(),
+});
+export type AtomEditAppliedPayload = z.infer<typeof AtomEditAppliedPayload>;
+
+export const ArtifactStatusChangedPayload = z.object({
+  target_type: z.enum(["plan", "build_brief"]),
+  target_id: z.string(),
+  status: ArtifactStatus,
+  rejection_reason: z.string().nullable().optional(),
+});
+export type ArtifactStatusChangedPayload = z.infer<typeof ArtifactStatusChangedPayload>;
+
+export const ArtifactReopenedPayload = z.object({
+  target_type: z.enum(["plan", "build_brief"]),
+  target_id: z.string(),
+});
+export type ArtifactReopenedPayload = z.infer<typeof ArtifactReopenedPayload>;
+
+export const CommentThreadCreatedPayload = z.object({
+  thread_id: z.string(),
+  target_type: z.enum(["plan", "build_brief"]),
+  target_id: z.string(),
+  anchor: z.string().nullable(),
+});
+export type CommentThreadCreatedPayload = z.infer<typeof CommentThreadCreatedPayload>;
+
+export const ThreadMessageAddedPayload = z.object({
+  thread_id: z.string(),
+  message_id: z.string().nullable(),
+  target_type: z.enum(["plan", "build_brief"]),
+  target_id: z.string(),
+});
+export type ThreadMessageAddedPayload = z.infer<typeof ThreadMessageAddedPayload>;
+
+export const ThreadStatusChangedPayload = z.object({
+  thread_id: z.string(),
+  status: z.enum(["open", "resolved"]),
+  target_type: z.enum(["plan", "build_brief"]),
+  target_id: z.string(),
+});
+export type ThreadStatusChangedPayload = z.infer<typeof ThreadStatusChangedPayload>;
+
+export const ThreadAgentResponseStartedPayload = z.object({
+  thread_id: z.string(),
+  target_type: z.enum(["plan", "build_brief"]),
+  target_id: z.string(),
+  anchor: z.string().nullable(),
+});
+export type ThreadAgentResponseStartedPayload = z.infer<typeof ThreadAgentResponseStartedPayload>;
+
+export const ThreadAgentResponseCompletedPayload = z.object({
+  thread_id: z.string(),
+  reply_message_id: z.string().nullable().optional(),
+});
+export type ThreadAgentResponseCompletedPayload = z.infer<typeof ThreadAgentResponseCompletedPayload>;
+
+export const ThreadAgentResponseFailedPayload = z.object({
+  thread_id: z.string(),
+  error: z.string().nullable().optional(),
+});
+export type ThreadAgentResponseFailedPayload = z.infer<typeof ThreadAgentResponseFailedPayload>;
