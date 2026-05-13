@@ -7,6 +7,26 @@ from typing import Any
 import httpx
 
 
+class SafirAtomEditConflict(Exception):
+    """Raised by post_atom_edit when safir returns 409 stale_prev_value."""
+
+    def __init__(
+        self,
+        *,
+        current_value: str | None,
+        latest_edit_id: str,
+        edited_by: str,
+        created_at: str,
+    ) -> None:
+        super().__init__(
+            f"stale_prev_value: current={current_value!r}, latest_edit_id={latest_edit_id}"
+        )
+        self.current_value = current_value
+        self.latest_edit_id = latest_edit_id
+        self.edited_by = edited_by
+        self.created_at = created_at
+
+
 class SafirClient:
     def __init__(
         self,
