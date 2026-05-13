@@ -1,8 +1,7 @@
 """In-memory staging buffer for a single planner 1 run."""
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -11,8 +10,8 @@ class CycleError(ValueError):
 
 
 @dataclass
-class StagedTask:
-    index: int
+class StagedCohort:
+    cohort_index: int
     title: str
     notes: str
     priority: int = 0
@@ -20,34 +19,43 @@ class StagedTask:
 
 @dataclass
 class StagedDependency:
-    task_index: int
-    depends_on_index: int
+    cohort_index: int
+    depends_on_cohort_index: int
 
 
 @dataclass
 class StagingBuffer:
     parent_task_id: int
-    tasks: list[StagedTask] = field(default_factory=list)
+    cohorts: list[StagedCohort] = field(default_factory=list)
     dependencies: list[StagedDependency] = field(default_factory=list)
 
-    def add_task(self, *, title: str, notes: str, priority: int = 0) -> StagedTask:
-        idx = len(self.tasks)
-        task = StagedTask(index=idx, title=title, notes=notes, priority=priority)
-        self.tasks.append(task)
-        return task
+    def add_cohort(self, *, title: str, notes: str, priority: int = 0) -> StagedCohort:
+        idx = len(self.cohorts)
+        cohort = StagedCohort(cohort_index=idx, title=title, notes=notes, priority=priority)
+        self.cohorts.append(cohort)
+        return cohort
 
-    def add_dependency(self, *, task_index: int, depends_on_index: int) -> StagedDependency:
-        if task_index == depends_on_index:
-            raise CycleError(f"task {task_index} cannot depend on itself")
-        if task_index < 0 or task_index >= len(self.tasks):
-            raise IndexError(f"task_index {task_index} out of range (have {len(self.tasks)})")
-        if depends_on_index < 0 or depends_on_index >= len(self.tasks):
-            n = len(self.tasks)
-            raise IndexError(f"depends_on_index {depends_on_index} out of range (have {n})")
+    def add_cohort_dependency(
+        self, *, cohort_index: int, depends_on_cohort_index: int
+    ) -> StagedDependency:
+        if cohort_index == depends_on_cohort_index:
+            raise CycleError(f"cohort {cohort_index} cannot depend on itself")
+        if cohort_index < 0 or cohort_index >= len(self.cohorts):
+            raise IndexError(f"cohort_index {cohort_index} out of range (have {len(self.cohorts)})")
+        if depends_on_cohort_index < 0 or depends_on_cohort_index >= len(self.cohorts):
+            n = len(self.cohorts)
+            raise IndexError(
+                f"depends_on_cohort_index {depends_on_cohort_index} out of range (have {n})"
+            )
         for d in self.dependencies:
-            if d.task_index == task_index and d.depends_on_index == depends_on_index:
+            if (
+                d.cohort_index == cohort_index
+                and d.depends_on_cohort_index == depends_on_cohort_index
+            ):
                 return d
-        edge = StagedDependency(task_index=task_index, depends_on_index=depends_on_index)
+        edge = StagedDependency(
+            cohort_index=cohort_index, depends_on_cohort_index=depends_on_cohort_index
+        )
         self.dependencies.append(edge)
         try:
             self.toposort()
@@ -57,12 +65,12 @@ class StagingBuffer:
         return edge
 
     def toposort(self) -> list[int]:
-        """Kahn's algorithm. Returns task indices in a dependency-respecting order."""
-        in_degree: dict[int, int] = {t.index: 0 for t in self.tasks}
-        adjacency: dict[int, list[int]] = {t.index: [] for t in self.tasks}
+        """Kahn's algorithm. Returns cohort indices in a dependency-respecting order."""
+        in_degree: dict[int, int] = {c.cohort_index: 0 for c in self.cohorts}
+        adjacency: dict[int, list[int]] = {c.cohort_index: [] for c in self.cohorts}
         for dep in self.dependencies:
-            adjacency[dep.depends_on_index].append(dep.task_index)
-            in_degree[dep.task_index] = in_degree.get(dep.task_index, 0) + 1
+            adjacency[dep.depends_on_cohort_index].append(dep.cohort_index)
+            in_degree[dep.cohort_index] = in_degree.get(dep.cohort_index, 0) + 1
         queue = [i for i, d in in_degree.items() if d == 0]
         order: list[int] = []
         while queue:
@@ -72,16 +80,28 @@ class StagingBuffer:
                 in_degree[nxt] -= 1
                 if in_degree[nxt] == 0:
                     queue.append(nxt)
-        if len(order) != len(self.tasks):
+        if len(order) != len(self.cohorts):
             raise CycleError("dependency graph contains a cycle")
         return order
 
     def to_payload(self, *, summary: str, model: str) -> dict[str, Any]:
         return {
-            "parent_task_id": self.parent_task_id,
-            "tasks": [asdict(t) for t in self.tasks],
-            "dependencies": [asdict(d) for d in self.dependencies],
             "summary": summary,
             "model": model,
-            "created_at": datetime.now(UTC).isoformat(),
+            "cohorts": [
+                {
+                    "cohort_index": c.cohort_index,
+                    "title": c.title,
+                    "notes": c.notes,
+                    "priority": c.priority,
+                }
+                for c in self.cohorts
+            ],
+            "dependencies": [
+                {
+                    "cohort_index": d.cohort_index,
+                    "depends_on_cohort_index": d.depends_on_cohort_index,
+                }
+                for d in self.dependencies
+            ],
         }

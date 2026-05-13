@@ -17,6 +17,7 @@ import type {
   CreateTaskRun,
   HandoffDocRecord,
   PermissionProfile,
+  Plan,
   RunPhase,
   SubmitHandoff,
   Task,
@@ -82,6 +83,10 @@ export interface SafirClient {
   setTaskDefaultPermissionProfile(taskId: number, profileId: number | null): Promise<Task>;
   createTask(body: CreateTaskBody): Promise<Task>;
   addDependency(taskId: number, dependsOn: number): Promise<void>;
+  listPlansForTask(taskId: number): Promise<Plan[]>;
+  getPlan(planId: string): Promise<Plan>;
+  updatePlanStatus(planId: string, body: { status: string; rejection_reason?: string | null }): Promise<Plan>;
+  reopenPlan(planId: string): Promise<Plan>;
 }
 
 export interface CreateSafirClientOpts {
@@ -185,5 +190,13 @@ export function createSafirClient(opts: CreateSafirClientOpts): SafirClient {
         { depends_on: dependsOn },
       );
     },
+    listPlansForTask: (taskId) =>
+      request<Plan[]>("GET", `/tasks/${taskId}/plans`),
+    getPlan: (planId) =>
+      request<Plan>("GET", `/plans/${planId}`),
+    updatePlanStatus: (planId, body) =>
+      request<Plan>("PATCH", `/plans/${planId}/status`, body),
+    reopenPlan: (planId) =>
+      request<Plan>("POST", `/plans/${planId}/reopen`),
   };
 }

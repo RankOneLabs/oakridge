@@ -14,7 +14,17 @@ type SafirWebhookEvent =
   | "run.status_changed"
   | "run.completed"
   | "run.failed"
-  | "phase.handoff_submitted";
+  | "build_brief.submitted"
+  | "plan.created"
+  | "atom_edit.applied"
+  | "comment_thread.created"
+  | "thread.message_added"
+  | "thread.status_changed"
+  | "artifact.status_changed"
+  | "artifact.reopened"
+  | "thread.agent_response_started"
+  | "thread.agent_response_completed"
+  | "thread.agent_response_failed";
 
 interface SafirWebhookEnvelope {
   event: SafirWebhookEvent;
@@ -101,7 +111,17 @@ const KNOWN_EVENTS: ReadonlySet<SafirWebhookEvent> = new Set([
   "run.status_changed",
   "run.completed",
   "run.failed",
-  "phase.handoff_submitted",
+  "build_brief.submitted",
+  "plan.created",
+  "atom_edit.applied",
+  "comment_thread.created",
+  "thread.message_added",
+  "thread.status_changed",
+  "artifact.status_changed",
+  "artifact.reopened",
+  "thread.agent_response_started",
+  "thread.agent_response_completed",
+  "thread.agent_response_failed",
 ]);
 
 /**

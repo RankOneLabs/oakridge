@@ -12,12 +12,13 @@ from jig.tools.registry import ToolRegistry
 from jig.tracing.stdout import StdoutTracer
 
 from .staging import StagingBuffer
-from .tools import AddDependencyTool, CreateTaskTool
+from .tools import AddCohortDependencyTool, CreateCohortTool
 
 PLANNER1_SYSTEM_PROMPT = """\
-You are planner 1: you decompose a software-engineering spec into a DAG
-of build-ready briefs. Each brief becomes a child task in safir; each
-edge becomes a row in the dependencies table.
+You are planner 1: you produce a plan of cohorts for a software-engineering
+spec. Each cohort is a parallelizable unit of work that a build agent
+(Sonnet/Haiku tier) can execute. The plan lands in safir for operator
+review before any build work begins.
 
 Make all structural decisions. No optional choices. If any decision
 about the decomposition is not decided it must be explicitly punted to
@@ -25,44 +26,45 @@ later work; silent omission is the failure mode you are guarding
 against. "Punted" means: the unresolved decision is named in your final
 summary message with (a) what the decision is, (b) the option you'd
 pick if forced, (c) why you're deferring instead. Do not silently leave
-work out of the decomposition because you weren't sure where it goes.
+work out of the plan because you weren't sure where it goes.
 
 Inputs:
 - The spec (passed as the agent's initial message; this is the
   tasks.notes of the parent task you're decomposing).
 - The parent task's metadata (id, project_id) appears appended below.
 
-Output: zero or more tool calls to create child tasks and dependencies,
-followed by a final assistant message summarizing the decomposition.
+Output: zero or more tool calls to create cohorts and dependencies,
+followed by a final assistant message summarizing the plan.
 The summary names every explicit punt, in the (a)/(b)/(c) shape above,
 so the operator can review whether each deferral is acceptable.
 
 Tools:
-- create_task(title, notes, priority?) — stage a child task (a brief).
-  Returns the staged_task_index (0-based) for use in add_dependency.
-- add_dependency(task_index, depends_on_index) — declare that
-  task_index cannot start until depends_on_index is done. Indices are
-  0-based, in the order create_task was called. Cycles are rejected.
+- create_cohort(title, notes, priority?) — stage a cohort in the plan.
+  Returns cohort_index (0-based) for use in add_cohort_dependency.
+- add_cohort_dependency(cohort_index, depends_on_cohort_index) — declare
+  that cohort_index cannot start until depends_on_cohort_index is done.
+  Indices are 0-based, in the order create_cohort was called. Cycles
+  are rejected.
 
-Rules for briefs:
-- Each brief is sized so a build agent (Sonnet/Haiku tier) could
-  execute it after a planner 2 pass adds the missing decisions.
-- A brief that requires significant judgment to execute is too big;
+Rules for cohorts:
+- Each cohort is sized so a build agent (Sonnet/Haiku tier) could
+  execute it without significant judgment calls.
+- A cohort that requires significant judgment to execute is too big;
   split it.
-- Each brief states its goal, the surface area it touches, and the
+- Each cohort states its goal, the surface area it touches, and the
   exit criteria that mark it done. Notes field is markdown.
-- Briefs should be independently buildable wherever possible; prefer
+- Cohorts should be independently buildable wherever possible; prefer
   parallelism over sequencing.
 
 Rules for dependencies:
-- Only add a dependency edge when brief B cannot start until brief A
+- Only add a dependency edge when cohort B cannot start until cohort A
   is done in the working tree. Conceptual ordering ("A is more
   fundamental") is not a dependency.
 - Cycles are an error; the tool will reject them.
 
-Operator approval gate: your tool calls land in a staging area before
-applying to safir. The operator reviews the planned set in the kbbl PWA
-and approves or rejects.
+Operator approval gate: your tool calls land in a safir plan for
+operator review. The operator approves or rejects the plan before any
+build agent begins work.
 """
 
 
@@ -119,7 +121,7 @@ async def run_planner1(
 ) -> tuple[StagingBuffer, str]:
     """Run the planner 1 agent. Returns (buffer, agent_summary_text)."""
     buffer = StagingBuffer(parent_task_id=parent_task_id)
-    tools = ToolRegistry([CreateTaskTool(buffer), AddDependencyTool(buffer)])
+    tools = ToolRegistry([CreateCohortTool(buffer), AddCohortDependencyTool(buffer)])
 
     system_prompt = (
         load_system_prompt()
@@ -128,7 +130,7 @@ async def run_planner1(
 
     config: AgentConfig[None] = AgentConfig(
         name="planner1",
-        description="Decomposes a spec into a DAG of build-ready briefs.",
+        description="Produces a plan of cohorts for a software-engineering spec.",
         system_prompt=system_prompt,
         llm=from_model(model),
         feedback=NoOpFeedback(),

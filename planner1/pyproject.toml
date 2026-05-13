@@ -11,7 +11,7 @@ dependencies = [
 ]
 
 [project.scripts]
-safir-plan = "planner1.cli:main"
+safir-decompose = "planner1.cli:main"
 
 [build-system]
 requires = ["hatchling"]

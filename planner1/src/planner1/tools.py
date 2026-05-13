@@ -14,25 +14,24 @@ from jig.core.types import Tool, ToolDefinition
 from .staging import CycleError, StagingBuffer
 
 
-class CreateTaskTool(Tool):  # type: ignore[misc]
+class CreateCohortTool(Tool):  # type: ignore[misc]
     def __init__(self, buffer: StagingBuffer) -> None:
         self._buffer = buffer
 
     @property
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
-            name="create_task",
+            name="create_cohort",
             description=(
-                "Stage a child task (a brief) under the spec's root task. The brief is markdown "
-                "sized so a build agent (Sonnet/Haiku tier) could execute it after a planner-2 "
-                "pass adds the missing decisions. Returns staged_task_index (0-based) for use in "
-                "add_dependency calls."
+                "Stage a cohort under the spec's plan. Each cohort is a parallelizable unit of "
+                "work sized for a build agent. Returns cohort_index (0-based) for use in "
+                "add_cohort_dependency calls."
             ),
             parameters={
                 "type": "object",
                 "required": ["title", "notes"],
                 "properties": {
-                    "title": {"type": "string", "description": "One-line title for the brief."},
+                    "title": {"type": "string", "description": "One-line title for the cohort."},
                     "notes": {
                         "type": "string",
                         "description": "Markdown body. State goal, surface area, exit criteria.",
@@ -53,35 +52,35 @@ class CreateTaskTool(Tool):  # type: ignore[misc]
             priority = int(args.get("priority", 0))
         except (KeyError, TypeError, ValueError) as e:
             return json.dumps({"error": f"invalid arguments: {e}"})
-        task = self._buffer.add_task(title=title, notes=notes, priority=priority)
-        return json.dumps({"staged_task_index": task.index, "title": task.title})
+        cohort = self._buffer.add_cohort(title=title, notes=notes, priority=priority)
+        return json.dumps({"cohort_index": cohort.cohort_index, "title": cohort.title})
 
 
-class AddDependencyTool(Tool):  # type: ignore[misc]
+class AddCohortDependencyTool(Tool):  # type: ignore[misc]
     def __init__(self, buffer: StagingBuffer) -> None:
         self._buffer = buffer
 
     @property
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
-            name="add_dependency",
+            name="add_cohort_dependency",
             description=(
-                "Declare that task_index cannot start until depends_on_index is done. Indices "
-                "are 0-based and refer to the order in which create_task was called. Cycles "
-                "(direct or transitive) are rejected; the tool returns {\"error\": \"...\"} on "
-                "rejection so you can correct and try again."
+                "Declare that cohort_index cannot start until depends_on_cohort_index is done. "
+                "Indices are 0-based and refer to the order in which create_cohort was called. "
+                "Cycles (direct or transitive) are rejected; the tool returns {\"error\": \"...\"} "
+                "on rejection so you can correct and try again."
             ),
             parameters={
                 "type": "object",
-                "required": ["task_index", "depends_on_index"],
+                "required": ["cohort_index", "depends_on_cohort_index"],
                 "properties": {
-                    "task_index": {
+                    "cohort_index": {
                         "type": "integer",
-                        "description": "Index of the staged task that's blocked.",
+                        "description": "Index of the staged cohort that's blocked.",
                     },
-                    "depends_on_index": {
+                    "depends_on_cohort_index": {
                         "type": "integer",
-                        "description": "Index of the staged task that must complete first.",
+                        "description": "Index of the staged cohort that must complete first.",
                     },
                 },
             },
@@ -89,12 +88,15 @@ class AddDependencyTool(Tool):  # type: ignore[misc]
 
     async def execute(self, args: dict[str, Any]) -> str:
         try:
-            edge = self._buffer.add_dependency(
-                task_index=int(args["task_index"]),
-                depends_on_index=int(args["depends_on_index"]),
+            edge = self._buffer.add_cohort_dependency(
+                cohort_index=int(args["cohort_index"]),
+                depends_on_cohort_index=int(args["depends_on_cohort_index"]),
             )
         except (CycleError, IndexError, KeyError, TypeError, ValueError) as e:
             return json.dumps({"error": str(e)})
         return json.dumps(
-            {"task_index": edge.task_index, "depends_on_index": edge.depends_on_index}
+            {
+                "cohort_index": edge.cohort_index,
+                "depends_on_cohort_index": edge.depends_on_cohort_index,
+            }
         )
