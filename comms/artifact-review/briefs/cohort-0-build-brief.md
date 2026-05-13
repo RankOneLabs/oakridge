@@ -101,4 +101,32 @@ Create the worktree branch off `main`, then create `safir/src/db/migrations/006_
 
 **SG10 — `ProposalReviewView` approved/rejected states:** Added a `canAct` guard that hides the approve/reject footer when the plan status is not `pending_approval`, so the UI doesn't offer actions on already-decided plans.
 
-**PRs:** safir PR https://github.com/cirsteve/safir/pull/15 · oakridge PR https://github.com/RankOneLabs/oakridge/pull/66
+**PRs:** safir PR https://github.com/cirsteve/safir/pull/15 (merged) · oakridge PR https://github.com/RankOneLabs/oakridge/pull/66 (merged)
+
+## Post-merge review fixes
+
+Issues caught during bot review and addressed before merge:
+
+**safir — dependency cohort index validation:** `POST /tasks/:id/plans` only ran toposort on deps without first checking that every dep endpoint existed in the cohorts array. Added an explicit 400 guard before calling `toposortCohorts`.
+
+**safir — parent task existence check:** `POST /tasks/:id/plans` didn't verify the parent task existed; a missing task would produce a SQLite FK violation → 500. Added a `getTask` check returning 404.
+
+**safir — build-brief PATCH/reopen response shape:** `PATCH /build-briefs/:id/status` and `POST /build-briefs/:id/reopen` returned `getHandoff()` which omits the `status`/`rejection_reason`/`predecessor_build_brief_id` fields. Extracted a shared `getAugmentedBuildBrief` helper used by all three build-brief write handlers.
+
+**safir — CAS atomicity:** `createAtomEdit` did a SELECT then INSERT without a transaction, allowing a race where two concurrent writes with the same `prev_value` both pass the CAS check. Wrapped in `BEGIN IMMEDIATE` via `db.transaction(...).immediate()`.
+
+**safir — `AtomEditConflictError` empty-string fields:** When no prior edit exists and `prev_value` is non-null, the error was constructed with `""` for `latest_edit_id`, `edited_by`, `created_at`. Changed to `null` and made the error class fields nullable.
+
+**safir — migration 007 timestamp precision:** `created_at` defaults used `strftime('%H:%M:%SZ')` (seconds), but JS `toISOString()` writes milliseconds. Mixed precision breaks `MAX(created_at)` comparisons in CAS and atom-map queries. Changed to `%H:%M:%fZ` (fractional seconds) throughout migration 007.
+
+**safir — UUID tie-breaker in atom ordering:** All `ORDER BY created_at DESC, id DESC` queries used UUID `id` as tie-breaker; UUIDs are random, not ordered by insertion time. Replaced with `rowid DESC` in `createAtomEdit`, `getAtomMap`, and `getAtomHistory`.
+
+**safir — FK validation for `thread_id` and `related_edit_id`:** Both fields were passed directly to the DB without existence checks; an invalid value would produce a SQLite constraint error → 500. Added 404 guards, plus same-artifact checks: `thread_id` must belong to the same `target_type`/`target_id` as the edit; `related_edit_id` must belong to the same artifact as the thread.
+
+**safir — frozen check on `POST /threads`:** Thread creation checked artifact existence but not frozen status, allowing new threads to be opened on approved/rejected/superseded artifacts. Added the same `FROZEN_STATUSES` guard used by the messages and ping handlers.
+
+**kbbl — `SafirClient` stub incomplete:** `spawn.test.ts` stub didn't implement the four new plan methods, causing a TypeScript compile error. Added throwing stubs for `listPlansForTask`, `getPlan`, `updatePlanStatus`, `reopenPlan`.
+
+**kbbl — `proposals_to_safir_plans` idempotency gap:** After a successful run the source dir is renamed to `<dir>.migrated`, so rerunning with the original path hit `readdir` on a missing dir → ENOENT crash instead of a clean no-op. Added an upfront `access(<dir>.migrated)` check.
+
+**planner1 — Ruff line-length violations:** `SafirClient.__init__` and `submit_plan` signatures and one `staging.py` condition exceeded the configured 100-char limit. Wrapped across lines.
