@@ -243,8 +243,7 @@ export function mountSafirWebhookRoutes(
         );
         dedupe.add(deliveryId);
         return c.json({ ok: true, dispatched: false });
-      }
-      if (deps.reviewResponder) {
+      } else {
         // Fire-and-forget: the responder is slow (LLM calls) and safir only
         // needs a 200 ack that we received the event. The responder reports
         // its own completion via POST /threads/:id/agent-response.

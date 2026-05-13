@@ -196,7 +196,10 @@ class SafirClient:
             headers=self._headers(),
         )
         if r.status_code == 409:
-            payload: dict[str, Any] = r.json()
+            try:
+                payload: dict[str, Any] = r.json()
+            except Exception:
+                payload = {}
             if payload.get("error") == "stale_prev_value":
                 raise SafirAtomEditConflict(
                     current_value=payload.get("current_value"),

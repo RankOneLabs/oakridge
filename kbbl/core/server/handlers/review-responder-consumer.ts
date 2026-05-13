@@ -6,7 +6,7 @@
  * ReviewResponderContext as stdin JSON, parses the JSONL result, and reports
  * the outcome back to safir via POST /threads/:id/agent-response.
  *
- * Integrated via SafirWebhookRouteDeps.responderDispatch — safir-webhook.ts
+ * Integrated via SafirWebhookRouteDeps.reviewResponder — safir-webhook.ts
  * calls this function for thread.agent_response_started events.
  */
 
