@@ -1,6 +1,8 @@
 import type { Hono } from "hono";
 
 import type { SessionManager } from "../../session/session-manager";
+import type { ReviewResponderDispatchDeps } from "./review-responder-consumer";
+import { dispatchReviewResponder } from "./review-responder-consumer";
 
 /**
  * Wire envelope safir sends on every webhook delivery.
@@ -65,6 +67,11 @@ class DeliveryIdDedupe {
   }
 }
 
+/** Events that spawn a review-responder subprocess. */
+const RESPONDER_EVENTS: ReadonlySet<SafirWebhookEvent> = new Set([
+  "thread.agent_response_started",
+]);
+
 export interface SafirWebhookRouteDeps {
   manager: SessionManager;
   /**
@@ -73,6 +80,12 @@ export interface SafirWebhookRouteDeps {
    * module-level singleton.
    */
   dedupe?: DeliveryIdDedupe;
+  /**
+   * Dependencies for the review-responder consumer. Required for
+   * thread.agent_response_started events to be dispatched; omit in tests
+   * that only cover session-fan-out events.
+   */
+  reviewResponder?: ReviewResponderDispatchDeps;
 }
 
 const moduleDedupe = new DeliveryIdDedupe();
@@ -217,6 +230,39 @@ export function mountSafirWebhookRoutes(
         }
       }
     }
+
+    if (RESPONDER_EVENTS.has(event)) {
+      if (!deps.reviewResponder) {
+        console.error(
+          JSON.stringify({
+            kbbl: "safir_webhook_drop",
+            event,
+            delivery_id: deliveryId,
+            reason: "review_responder_deps_missing",
+          }),
+        );
+        dedupe.add(deliveryId);
+        return c.json({ ok: true, dispatched: false });
+      } else {
+        // Fire-and-forget: the responder is slow (LLM calls) and safir only
+        // needs a 200 ack that we received the event. The responder reports
+        // its own completion via POST /threads/:id/agent-response.
+        dispatchReviewResponder(data, deps.reviewResponder).catch((err) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(
+            JSON.stringify({
+              kbbl: "review_responder_unhandled_error",
+              event,
+              delivery_id: deliveryId,
+              error: msg,
+            }),
+          );
+        });
+        dedupe.add(deliveryId);
+        return c.json({ ok: true, dispatched: true });
+      }
+    }
+
     // Unknown event type, missing run_id, or no live-session match.
     // Log structured line so the operator can grep for it; still ack 200
     // (a non-2xx would burn safir's per-delivery retry budget without

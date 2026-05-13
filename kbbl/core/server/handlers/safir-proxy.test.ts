@@ -73,6 +73,10 @@ function makeStubClient(opts: StubOpts): {
     getPlan: wrap("getPlan", opts.getPlan) as SafirClient["getPlan"],
     updatePlanStatus: wrap("updatePlanStatus", opts.updatePlanStatus) as SafirClient["updatePlanStatus"],
     reopenPlan: wrap("reopenPlan", opts.reopenPlan) as SafirClient["reopenPlan"],
+    getThread: notImplemented("getThread") as SafirClient["getThread"],
+    getAtomMap: notImplemented("getAtomMap") as SafirClient["getAtomMap"],
+    listOpenThreads: notImplemented("listOpenThreads") as SafirClient["listOpenThreads"],
+    postAgentResponse: notImplemented("postAgentResponse") as SafirClient["postAgentResponse"],
   };
   return { client, calls };
 }
