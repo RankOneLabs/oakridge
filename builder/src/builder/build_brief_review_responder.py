@@ -255,17 +255,16 @@ class DeleteAtomTool(Tool):  # type: ignore[misc]
         }
         edit = await _call_safir_or_record_conflict(self._client, ctx, body)
         results.append({"anchor": anchor, "op": "delete", "conflict": edit is None})
+        if edit is None:
+            # Initial delete conflicted — shifts would cascade-conflict; abort early.
+            return json.dumps({"deleted": anchor, "shifted": 0, "edits": results, "aborted": True})
+        ctx.atom_map.pop(anchor, None)
 
         # Step 2: shift subsequent elements down by one.
         for i in range(del_index + 1, n):
             src_anchor = f"{field}[{i}]"
             dst_anchor = f"{field}[{i - 1}]"
             src_value = ctx.atom_map.get(src_anchor, "")
-            # prev_value for dst: use snapshot value at dst (which is i-1 original or "" after prior delete/shift)
-            # Per spec: "each with the correct prev_value from the snapshot."
-            # For the shift of element i → i-1:
-            #   - if i-1 == del_index: prev_value is "" (just deleted)
-            #   - otherwise: prev_value is snapshot value of dst (i-1)
             if i - 1 == del_index:
                 dst_prev = ""
             else:
@@ -284,6 +283,8 @@ class DeleteAtomTool(Tool):  # type: ignore[misc]
                 "from": src_anchor,
                 "conflict": shift_edit is None,
             })
+            if shift_edit is not None:
+                ctx.atom_map[dst_anchor] = src_value
 
         # Step 3: delete the last element (now a duplicate after shifting).
         if n > 1:
@@ -303,13 +304,8 @@ class DeleteAtomTool(Tool):  # type: ignore[misc]
                 "op": "delete_last",
                 "conflict": del_last_edit is None,
             })
-
-        # Reflect deletion + shift in the working atom_map so subsequent
-        # _next_list_index calls compute correct indices.
-        ctx.atom_map.pop(anchor, None)
-        for i in range(del_index + 1, n):
-            ctx.atom_map[f"{field}[{i - 1}]"] = ctx.atom_map.pop(f"{field}[{i}]", "")
-        ctx.atom_map.pop(f"{field}[{n - 1}]", None)
+            if del_last_edit is not None:
+                ctx.atom_map.pop(last_anchor, None)
 
         return json.dumps({
             "deleted": anchor,

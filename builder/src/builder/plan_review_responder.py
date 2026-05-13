@@ -3,14 +3,14 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, cast
+from typing import Any
 
 from jig.core.runner import AgentConfig, run_agent
 from jig.core.types import Tool, ToolDefinition
 from jig.llm.factory import from_model
 from jig.tools.registry import ToolRegistry
 from jig.tracing.stdout import StdoutTracer
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from safir_py import SafirClient
 
@@ -177,7 +177,7 @@ class EditCohortTool(Tool):  # type: ignore[misc]
             body = {
                 "anchor": anchor,
                 "new_value": new_value,
-                "prev_value": prev_values.get(field),
+                "prev_value": prev_values.get(field) if prev_values.get(field) is not None else ctx.atom_map.get(anchor),
                 "thread_id": ctx.thread_id,
             }
             edit = await _call_safir_or_record_conflict(self._client, ctx, body)
@@ -375,9 +375,14 @@ class SplitCohortTool(Tool):  # type: ignore[misc]
         results: list[dict[str, Any]] = []
 
         # 1. Migrate edges per dep_migration: delete from_edge, add to_edges.
+        try:
+            validated_migrations = [DepMigrationItem.model_validate(m) for m in dep_migration]
+        except ValidationError as exc:
+            return json.dumps({"error": f"invalid dep_migration: {exc.error_count()} validation error(s)"})
+
         current_edges = _parse_edge_keys(ctx.atom_map)
-        for migration in dep_migration:
-            fe = migration["from_edge"]
+        for item in validated_migrations:
+            fe = item.from_edge
             from_anchor = f"deps[{fe[0]},{fe[1]}]"
             body = {
                 "anchor": from_anchor,
@@ -391,7 +396,7 @@ class SplitCohortTool(Tool):  # type: ignore[misc]
                 current_edges.discard((fe[0], fe[1]))
                 ctx.atom_map.pop(from_anchor, None)
 
-            for te in migration["to_edges"]:
+            for te in item.to_edges:
                 new_anchor = f"deps[{te[0]},{te[1]}]"
                 if _would_create_cycle(current_edges, te[0], te[1]):
                     return json.dumps({"error": f"adding edge {te} would create a cycle"})
@@ -519,11 +524,17 @@ class MergeCohortsTool(Tool):  # type: ignore[misc]
             return json.dumps({"error": f"merged new_index {new_index} already exists"})
 
         results: list[dict[str, Any]] = []
+
+        try:
+            validated_migrations = [DepMigrationItem.model_validate(m) for m in dep_migration]
+        except ValidationError as exc:
+            return json.dumps({"error": f"invalid dep_migration: {exc.error_count()} validation error(s)"})
+
         current_edges = _parse_edge_keys(ctx.atom_map)
 
         # 1. Migrate edges.
-        for migration in dep_migration:
-            fe = migration["from_edge"]
+        for item in validated_migrations:
+            fe = item.from_edge
             from_anchor = f"deps[{fe[0]},{fe[1]}]"
             body = {
                 "anchor": from_anchor,
@@ -537,7 +548,7 @@ class MergeCohortsTool(Tool):  # type: ignore[misc]
                 current_edges.discard((fe[0], fe[1]))
                 ctx.atom_map.pop(from_anchor, None)
 
-            for te in migration["to_edges"]:
+            for te in item.to_edges:
                 new_anchor = f"deps[{te[0]},{te[1]}]"
                 if _would_create_cycle(current_edges, te[0], te[1]):
                     return json.dumps({"error": f"adding edge {te} would create a cycle"})
