@@ -83,9 +83,8 @@ export function DagEditor({
   onNodeContextMenu,
   onEdgeContextMenu,
 }: Props) {
-  const { nodes: initNodes, edges: initEdges } = layoutGraph(cohorts, dependencies);
-  const [nodes, setNodes, onNodesChange] = useNodesState(initNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initEdges);
+  const [nodes, setNodes, onNodesChange] = useNodesState([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
 
   // Re-layout only on structural changes (cohorts/deps); preserves dragged positions
   // eslint-disable-next-line react-hooks/exhaustive-deps

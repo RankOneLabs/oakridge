@@ -81,11 +81,10 @@ export function useArtifactStream(target: ArtifactTarget): ArtifactStreamState {
     function applyEvent(evt: WireEvent) {
       const { event: e, data } = evt;
       if (e === "atom_edit.applied") {
-        const anchor = typeof data.anchor === "string" ? data.anchor : null;
-        const newValue = typeof data.new_value === "string" ? data.new_value : null;
-        if (anchor !== null && newValue !== null) {
-          setAtomMap((prev) => ({ ...prev, [anchor]: newValue }));
-        }
+        // webhook payload omits new_value; refetch the full map
+        void fetch(`/safir/atoms/${encodeURIComponent(target.type)}/${encodeURIComponent(target.id)}`)
+          .then((r) => r.ok ? r.json() : null)
+          .then((m) => { if (m && !cancelled) setAtomMap(m as Record<string, string>); });
       } else if (
         e === "comment_thread.created" ||
         e === "thread.message_added" ||
