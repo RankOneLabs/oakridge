@@ -90,6 +90,7 @@ export interface SafirClient {
   createTask(body: CreateTaskBody): Promise<Task>;
   addDependency(taskId: number, dependsOn: number): Promise<void>;
   listPlansForTask(taskId: number): Promise<Plan[]>;
+  listPlans(opts?: { status?: string; parent_task_id?: number }): Promise<Plan[]>;
   getPlan(planId: string): Promise<Plan>;
   updatePlanStatus(planId: string, body: { status: string; rejection_reason?: string | null }): Promise<Plan>;
   reopenPlan(planId: string): Promise<Plan>;
@@ -218,6 +219,13 @@ export function createSafirClient(opts: CreateSafirClientOpts): SafirClient {
     },
     listPlansForTask: (taskId) =>
       request<Plan[]>("GET", `/tasks/${taskId}/plans`),
+    listPlans: (opts) => {
+      const params = new URLSearchParams();
+      if (opts?.status) params.set("status", opts.status);
+      if (opts?.parent_task_id != null) params.set("parent_task_id", String(opts.parent_task_id));
+      const qs = params.toString();
+      return request<Plan[]>("GET", `/plans${qs ? `?${qs}` : ""}`);
+    },
     getPlan: (planId) =>
       request<Plan>("GET", `/plans/${planId}`),
     updatePlanStatus: (planId, body) =>

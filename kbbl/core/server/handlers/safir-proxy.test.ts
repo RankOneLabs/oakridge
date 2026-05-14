@@ -23,6 +23,7 @@ interface StubOpts {
   listPermissionProfiles?: () => Promise<PermissionProfile[]>;
   getPermissionProfile?: (id: number) => Promise<PermissionProfile>;
   listPlansForTask?: (taskId: number) => Promise<Plan[]>;
+  listPlans?: (opts?: { status?: string; parent_task_id?: number }) => Promise<Plan[]>;
   getPlan?: (planId: string) => Promise<Plan>;
   updatePlanStatus?: (planId: string, body: { status: string; rejection_reason?: string | null }) => Promise<Plan>;
   reopenPlan?: (planId: string) => Promise<Plan>;
@@ -70,6 +71,7 @@ function makeStubClient(opts: StubOpts): {
     createTask: notImplemented("createTask") as SafirClient["createTask"],
     addDependency: notImplemented("addDependency") as SafirClient["addDependency"],
     listPlansForTask: wrap("listPlansForTask", opts.listPlansForTask) as SafirClient["listPlansForTask"],
+    listPlans: wrap("listPlans", opts.listPlans) as SafirClient["listPlans"],
     getPlan: wrap("getPlan", opts.getPlan) as SafirClient["getPlan"],
     updatePlanStatus: wrap("updatePlanStatus", opts.updatePlanStatus) as SafirClient["updatePlanStatus"],
     reopenPlan: wrap("reopenPlan", opts.reopenPlan) as SafirClient["reopenPlan"],
@@ -465,6 +467,52 @@ describe("safir-proxy GET /safir/tasks/:taskId/plans", () => {
     const { client } = makeStubClient({});
     const res = await buildApp(client).fetch(
       new Request("http://kbbl.test/safir/tasks/abc/plans"),
+    );
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("safir-proxy GET /safir/plans", () => {
+  test("returns plan list from safirClient.listPlans with no args", async () => {
+    const plan = makePlan({ id: "plan-list-1" });
+    const { client, calls } = makeStubClient({
+      listPlans: async () => [plan],
+    });
+    const res = await buildApp(client).fetch(
+      new Request("http://kbbl.test/safir/plans"),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([plan]);
+    expect(calls).toEqual([{ method: "listPlans", args: [{ status: undefined, parent_task_id: undefined }] }]);
+  });
+
+  test("forwards upstream payload on success with ?status=pending_approval", async () => {
+    const plan = makePlan({ id: "plan-list-2", status: "pending_approval" });
+    const { client } = makeStubClient({
+      listPlans: async () => [plan],
+    });
+    const res = await buildApp(client).fetch(
+      new Request("http://kbbl.test/safir/plans?status=pending_approval"),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body[0].status).toBe("pending_approval");
+  });
+
+  test("propagates upstream errors via respondToUpstreamError", async () => {
+    const { client } = makeStubClient({
+      listPlans: async () => { throw new SafirHttpError(503, "upstream down"); },
+    });
+    const res = await buildApp(client).fetch(
+      new Request("http://kbbl.test/safir/plans"),
+    );
+    expect(res.status).toBe(503);
+  });
+
+  test("invalid parent_task_id → 400", async () => {
+    const { client } = makeStubClient({});
+    const res = await buildApp(client).fetch(
+      new Request("http://kbbl.test/safir/plans?parent_task_id=foo"),
     );
     expect(res.status).toBe(400);
   });

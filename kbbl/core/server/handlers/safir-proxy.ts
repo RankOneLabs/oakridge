@@ -155,6 +155,21 @@ export function mountSafirProxyRoutes(
     }
   });
 
+  app.get("/safir/plans", async (c) => {
+    const status = c.req.query("status");
+    const parentTaskIdRaw = c.req.query("parent_task_id");
+    const parentTaskId = parentTaskIdRaw !== undefined ? parsePositiveInt(parentTaskIdRaw) : undefined;
+    if (parentTaskIdRaw !== undefined && parentTaskId === null) {
+      return c.json({ error: "parent_task_id must be a positive integer" }, 400);
+    }
+    try {
+      const plans = await safirClient.listPlans({ status, parent_task_id: parentTaskId ?? undefined });
+      return c.json(plans);
+    } catch (err) {
+      return respondToUpstreamError(c, err);
+    }
+  });
+
   app.get("/safir/plans/:planId", async (c) => {
     const planId = c.req.param("planId").trim();
     if (planId === "") {
