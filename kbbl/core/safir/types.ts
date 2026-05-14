@@ -409,12 +409,18 @@ export type ThreadAgentResponseStartedPayload = z.infer<typeof ThreadAgentRespon
 
 export const ThreadAgentResponseCompletedPayload = z.object({
   thread_id: z.string(),
+  target_type: z.enum(["plan", "build_brief"]),
+  target_id: z.string(),
+  anchor: z.string().nullable(),
   reply_message_id: z.string().nullable().optional(),
 });
 export type ThreadAgentResponseCompletedPayload = z.infer<typeof ThreadAgentResponseCompletedPayload>;
 
 export const ThreadAgentResponseFailedPayload = z.object({
   thread_id: z.string(),
+  target_type: z.enum(["plan", "build_brief"]),
+  target_id: z.string(),
+  anchor: z.string().nullable(),
   error: z.string().nullable().optional(),
 });
 export type ThreadAgentResponseFailedPayload = z.infer<typeof ThreadAgentResponseFailedPayload>;

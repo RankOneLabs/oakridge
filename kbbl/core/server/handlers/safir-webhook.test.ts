@@ -9,6 +9,7 @@ import { createSafirClient, type FetchFn } from "../../safir/client";
 import { createSafirQueue } from "../../safir/queue";
 import { SessionManager } from "../../session/session-manager";
 import type { Session, SpawnCmd } from "../../session/session";
+import { ArtifactEventBus } from "../../stream/artifact-event-bus";
 import { mountSafirWebhookRoutes } from "./safir-webhook";
 
 let tmpRoot: string;
@@ -408,6 +409,60 @@ describe("safir-webhook receiver", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { ok: boolean; dispatched: boolean };
     expect(body).toEqual({ ok: true, dispatched: false });
+  });
+
+  test("thread.agent_response_completed dispatches to artifactBus with target context", async () => {
+    const stub = makeSafirStub();
+    const mgr = makeManager(stub.fetch);
+
+    const publishCalls: Array<Parameters<ArtifactEventBus["publish"]>> = [];
+    const mockBus = new ArtifactEventBus();
+    const origPublish = mockBus.publish.bind(mockBus);
+    mockBus.publish = (...args: Parameters<ArtifactEventBus["publish"]>) => {
+      publishCalls.push(args);
+      origPublish(...args);
+    };
+
+    const app = new Hono();
+    mountSafirWebhookRoutes(app, { manager: mgr, artifactBus: mockBus });
+
+    const ts = "2026-05-13T12:00:00.000Z";
+    const data = {
+      thread_id: "thread-abc",
+      target_type: "plan",
+      target_id: "plan-xyz",
+      anchor: null,
+      reply_message_id: "msg-1",
+    };
+
+    const res = await app.fetch(
+      new Request("http://kbbl.test/webhooks/safir", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${TEST_TOKEN}`,
+        },
+        body: JSON.stringify(
+          envelope({
+            event: "thread.agent_response_completed",
+            delivery_id: "delivery-arc-1",
+            ts,
+            data,
+          }),
+        ),
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; dispatched: boolean };
+    expect(body).toEqual({ ok: true, dispatched: true });
+    expect(publishCalls).toHaveLength(1);
+    expect(publishCalls[0][0]).toBe("plan");
+    expect(publishCalls[0][1]).toBe("plan-xyz");
+    expect(publishCalls[0][2]).toBe("thread.agent_response_completed");
+    expect(publishCalls[0][3]).toMatchObject({ thread_id: "thread-abc", reply_message_id: "msg-1" });
+
+    await mgr.endAll();
   });
 
   test("malformed JSON and array bodies return 400", async () => {
