@@ -92,6 +92,7 @@ function makeStubClient(opts: StubOpts): {
     updateBuildBriefStatus: notImplemented("updateBuildBriefStatus") as SafirClient["updateBuildBriefStatus"],
     reopenBuildBrief: notImplemented("reopenBuildBrief") as SafirClient["reopenBuildBrief"],
     getProjectRepoPath: notImplemented("getProjectRepoPath") as SafirClient["getProjectRepoPath"],
+    listTaskDependencies: notImplemented("listTaskDependencies") as SafirClient["listTaskDependencies"],
   };
   return { client, calls };
 }
