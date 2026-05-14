@@ -1,8 +1,9 @@
-// Mirror of safir's src/shared/schema.ts as of 2026-05-13. Copied verbatim
+// Mirror of safir's src/shared/schema.ts as of 2026-05-14. Copied verbatim
 // rather than imported so kbbl is buildable without the safir package on
 // disk and so a safir-side schema change can't silently shift wire shapes
 // underneath us — a deliberate divergence becomes a visible test failure
 // in the PR-B in-process integration tests.
+// Append-only enum additions land here; see safir migration 009 for awaiting_review.
 
 import { z } from "zod";
 
@@ -12,6 +13,7 @@ export const RunStatus = z.enum([
   "completed",
   "failed",
   "abandoned",
+  "awaiting_review",
 ]);
 export type RunStatus = z.infer<typeof RunStatus>;
 
