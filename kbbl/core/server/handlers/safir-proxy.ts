@@ -258,7 +258,10 @@ export function mountSafirProxyRoutes(
     if (!targetType || !targetId) return c.json({ error: "targetType/targetId required" }, 400);
     let body: unknown;
     try { body = await c.req.json(); } catch { return c.json({ error: "invalid json" }, 400); }
-    const edits = (body as Record<string, unknown>).edits;
+    if (body === null || typeof body !== "object" || Array.isArray(body)) {
+      return c.json({ error: "json body must be an object" }, 400);
+    }
+    const edits = (body as { edits?: unknown }).edits;
     if (!Array.isArray(edits)) return c.json({ error: "edits must be an array" }, 400);
     try {
       const result = await safirClient.postAtomEditBatch(targetType, targetId, edits as Parameters<SafirClient["postAtomEditBatch"]>[2]);

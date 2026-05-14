@@ -76,7 +76,7 @@ export function useListItemDelete(target: ArtifactTarget): ListItemDeleteResult 
     if (!res.ok) {
       const body = (await res.json().catch(() => ({}))) as { error?: string; conflict_index?: number };
       const detail = body.conflict_index != null
-        ? `conflict at edit ${body.conflict_index} of ${edits.length}; nothing changed`
+        ? `conflict at edit ${body.conflict_index + 1} of ${edits.length}; nothing changed`
         : body.error ?? `HTTP ${res.status}`;
       throw new Error(`atom edit batch failed: ${detail}`);
     }

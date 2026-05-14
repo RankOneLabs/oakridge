@@ -61,6 +61,14 @@ export function mountBuildsRoutes(app: Hono, deps: BuildsRouteDeps): void {
     // (b) on retry: create a fresh run; on first build: assert no phase_index=1 already exists
     let runId: string;
     if (isRetry) {
+      // Abandon the previous run so it doesn't stay in 'running' forever.
+      try {
+        const prevRun = await safirClient.getBuildBriefRun(briefId);
+        if (prevRun.id) await safirClient.abandonRun(prevRun.id as string);
+      } catch {
+        // Best-effort: continue even if the previous run can't be found or abandoned.
+      }
+
       let newRun: { id: string };
       try {
         newRun = await safirClient.createRunFromBuildBrief(briefId, {
