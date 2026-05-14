@@ -102,7 +102,7 @@ async def run_build_agent(
     handoff_raw_markdown: str,
     workdir: Path,
     permission_rules: dict[str, Any],
-    current_task_id: int,
+    current_task_id: int | None,
     run_short_id: str,
     model: str,
 ) -> BuildAgentOutput:
@@ -119,7 +119,7 @@ async def run_build_agent(
     )
     system_prompt = BUILD_AGENT_SYSTEM_PROMPT.format(
         workdir=str(workdir),
-        current_task_id=current_task_id,
+        current_task_id=current_task_id if current_task_id is not None else "(none)",
         run_short_id=run_short_id,
     )
     config: AgentConfig[BuildAgentOutput] = AgentConfig(

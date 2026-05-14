@@ -11,6 +11,7 @@ from safir_py import SafirClient
 
 from .build_agent import BuildAgentOutput, run_build_agent
 from .feedback import NoOpFeedback
+from .handoff_render import render_from_atom_map
 from .planner2 import Planner2Result, run_planner2
 
 _DEFAULT_MODELS = ("claude-opus-4-7", "claude-sonnet-4-6")
@@ -67,6 +68,133 @@ async def _fetch_parent_spec(
         return ""
     parent = await safir.get_task(int(pid))
     return parent.get("notes") or ""
+
+
+class BuildBriefNotApprovedError(Exception):
+    """Raised when the brief status is not 'approved'."""
+
+    def __init__(self, brief_id: str, status: str) -> None:
+        super().__init__(f"Brief {brief_id} is not approved (status={status!r})")
+        self.brief_id = brief_id
+        self.status = status
+
+
+class BuildAlreadyStartedError(Exception):
+    """Raised when phase_index=1 already exists on the run."""
+
+    def __init__(self, run_id: str) -> None:
+        super().__init__(f"Run {run_id} already has a build phase (phase_index=1)")
+        self.run_id = run_id
+
+
+async def run_build_only_pipeline(
+    *,
+    brief_id: str,
+    workdir: Path,
+    safir_client: SafirClient,
+    permission_profile_id_override: int | None = None,
+    dry_run: bool = False,
+) -> PipelineResult:
+    """Run only the build-agent phase from an approved build brief.
+
+    Unlike run_build_pipeline (which runs planner-2 first), this entry point
+    starts from an already-submitted and approved build brief in safir. It
+    skips planner-2 entirely and goes straight to the build agent.
+    """
+    brief = await safir_client.get_build_brief(brief_id)
+    status = brief.get("status", "")
+    if status != "approved":
+        raise BuildBriefNotApprovedError(brief_id, str(status))
+
+    atom_map = await safir_client.get_atom_map("build_brief", brief_id)
+    handoff_raw_markdown = render_from_atom_map(atom_map, brief)
+
+    run_data = await safir_client.get_run_by_brief(brief_id)
+    run_id = run_data["id"]
+    run_short_id = run_id[:8]
+    phases: list[dict[str, Any]] = run_data.get("phases") or []
+    if any(p.get("phase_index") == 1 for p in phases):
+        raise BuildAlreadyStartedError(run_id)
+
+    if permission_profile_id_override is not None:
+        permission_rules: dict[str, Any] = await _resolve_permission_rules(
+            safir_client,
+            {"permission_profile_id": permission_profile_id_override},
+        )
+    else:
+        permission_rules = await _resolve_permission_rules(safir_client, run_data)
+
+    def now() -> str:
+        return datetime.now(UTC).isoformat()
+
+    phase1: dict[str, Any] | None = None
+
+    async def build_agent_step(ctx: dict[str, Any]) -> BuildAgentOutput:
+        assert phase1 is not None
+        return await run_build_agent(
+            handoff_raw_markdown=handoff_raw_markdown,
+            workdir=workdir,
+            permission_rules=permission_rules,
+            current_task_id=None,
+            run_short_id=run_short_id,
+            model="claude-sonnet-4-6",
+        )
+
+    config = PipelineConfig(
+        name="build-only",
+        steps=[Step(name="build_agent", fn=build_agent_step)],
+        tracer=StdoutTracer(color=False),
+        feedback=NoOpFeedback(),
+        is_err=lambda r: isinstance(r, dict) and "error" in r,
+    )
+
+    try:
+        phase1 = await safir_client.create_phase(run_id, {
+            "phase_index": 1,
+            "target_model": "claude-sonnet-4-6",
+        })
+        result = await run_pipeline(config, input=brief_id)
+    except Exception:
+        if phase1 is not None:
+            await safir_client.update_phase(
+                phase1["id"],
+                {"is_terminal": True, "ended_at": now(), "end_reason": "failed"},
+            )
+        await safir_client.update_run(run_id, {"status": "failed"})
+        raise
+
+    assert phase1 is not None
+
+    if result.short_circuited or dry_run:
+        await safir_client.update_phase(
+            phase1["id"],
+            {"is_terminal": True, "ended_at": now(), "end_reason": "failed" if result.short_circuited else "completed"},
+        )
+        await safir_client.update_run(run_id, {"status": "failed" if result.short_circuited else "completed"})
+        return result
+
+    debrief_out: BuildAgentOutput = result.step_outputs["build_agent"]
+    pr_summary = "\n".join(debrief_out.pr_urls) or "(no PRs produced)"
+    await safir_client.update_run(run_id, {"result_summary": pr_summary})
+    await safir_client.patch_handoff_debrief(
+        handoff_id=brief_id,
+        debrief={
+            "delivered_summary": debrief_out.delivered_summary,
+            "not_delivered": [
+                {"item": n.item, "reason": n.reason, "notes": n.notes}
+                for n in debrief_out.not_delivered
+            ],
+            "deviations": [
+                {"instruction": d.instruction, "actual": d.actual, "rationale": d.rationale}
+                for d in debrief_out.deviations
+            ],
+        },
+    )
+    await safir_client.update_phase(
+        phase1["id"], {"is_terminal": True, "ended_at": now(), "end_reason": "completed"}
+    )
+    await safir_client.update_run(run_id, {"status": "completed"})
+    return result
 
 
 async def run_build_pipeline(

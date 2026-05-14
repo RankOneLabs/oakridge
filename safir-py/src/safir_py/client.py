@@ -161,6 +161,20 @@ class SafirClient:
         r.raise_for_status()
         return r.json()  # type: ignore[no-any-return]
 
+    async def get_build_brief(self, brief_id: str) -> dict[str, Any]:
+        r = await self._client.get(
+            f"{self._base_url}/build-briefs/{brief_id}", headers=self._headers()
+        )
+        r.raise_for_status()
+        return r.json()  # type: ignore[no-any-return]
+
+    async def get_run_by_brief(self, brief_id: str) -> dict[str, Any]:
+        r = await self._client.get(
+            f"{self._base_url}/build-briefs/{brief_id}/run", headers=self._headers()
+        )
+        r.raise_for_status()
+        return r.json()  # type: ignore[no-any-return]
+
     async def get_atom_map(self, target_type: str, target_id: str) -> dict[str, Any]:
         r = await self._client.get(
             f"{self._base_url}/atoms/{target_type}/{target_id}",
