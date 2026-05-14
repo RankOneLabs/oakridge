@@ -183,7 +183,7 @@ async def test_auto_approve_flag_passes_auto_approve_true(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_dry_run_unchanged_behavior(tmp_path) -> None:
+async def test_dry_run_unchanged_behavior(tmp_path, capsys) -> None:
     """--dry-run still works and does not trigger next-step message."""
     git_dir = tmp_path / ".git"
     git_dir.mkdir()
@@ -205,6 +205,8 @@ async def test_dry_run_unchanged_behavior(tmp_path) -> None:
     assert code == 0
     _, kwargs = mock_pipeline.call_args
     assert kwargs["dry_run"] is True
+    captured = capsys.readouterr()
+    assert "Brief ready for review:" not in captured.out
 
 
 @pytest.mark.asyncio

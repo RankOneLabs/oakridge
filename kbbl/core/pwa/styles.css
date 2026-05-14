@@ -1885,7 +1885,7 @@ body {
 }
 .pending-plan-btn:hover,
 .pending-brief-btn:hover {
-  background: var(--bg-hover);
+  background: var(--bg-surface);
 }
 .pending-plan-summary,
 .pending-brief-goal {

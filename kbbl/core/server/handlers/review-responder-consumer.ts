@@ -90,9 +90,11 @@ async function loadDependencyBriefsNotes(
     if (taskId === null) return [];
     const deps = await client.listTaskDependencies(taskId);
     if (deps.length === 0) return [];
+    const allHandoffs = await Promise.all(
+      deps.map((dep) => client.listHandoffsForTask(dep.depends_on)),
+    );
     const notes: string[] = [];
-    for (const dep of deps) {
-      const handoffs = await client.listHandoffsForTask(dep.depends_on);
+    for (const handoffs of allHandoffs) {
       const approved = (handoffs as Array<Record<string, unknown>>)
         .filter((h) => h.status === "approved")
         .sort((a, b) =>

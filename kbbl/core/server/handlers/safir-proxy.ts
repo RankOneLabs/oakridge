@@ -258,8 +258,10 @@ export function mountSafirProxyRoutes(
     if (!targetType || !targetId) return c.json({ error: "targetType/targetId required" }, 400);
     let body: unknown;
     try { body = await c.req.json(); } catch { return c.json({ error: "invalid json" }, 400); }
+    const edits = (body as Record<string, unknown>).edits;
+    if (!Array.isArray(edits)) return c.json({ error: "edits must be an array" }, 400);
     try {
-      const result = await safirClient.postAtomEditBatch(targetType, targetId, (body as { edits: Parameters<SafirClient["postAtomEditBatch"]>[2] }).edits);
+      const result = await safirClient.postAtomEditBatch(targetType, targetId, edits as Parameters<SafirClient["postAtomEditBatch"]>[2]);
       return c.json(result, 201);
     } catch (err) { return respondToUpstreamError(c, err); }
   });
@@ -374,10 +376,10 @@ export function mountSafirProxyRoutes(
   app.post("/safir/build-briefs/:id/runs", async (c) => {
     const id = c.req.param("id").trim();
     if (!id) return c.json({ error: "id required" }, 400);
-    let body: unknown = {};
-    try { body = await c.req.json(); } catch {}
+    let body: Record<string, unknown> = {};
+    try { body = await c.req.json() as Record<string, unknown>; } catch { return c.json({ error: "invalid json" }, 400); }
     try {
-      const run = await safirClient.createRunFromBuildBrief(id, body as Record<string, unknown>);
+      const run = await safirClient.createRunFromBuildBrief(id, body);
       return c.json(run, 201);
     } catch (err) { return respondToUpstreamError(c, err); }
   });

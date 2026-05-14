@@ -103,8 +103,8 @@ export function mountBuildsRoutes(app: Hono, deps: BuildsRouteDeps): void {
     // (c) resolve repo_path from the project via brief.task_id
     let repoPath: string | null = null;
     try {
-      const taskId = brief.task_id as number | undefined;
-      if (taskId !== undefined) {
+      const taskId = typeof brief.task_id === "number" ? brief.task_id : null;
+      if (taskId !== null) {
         const task = await safirClient.getTask(taskId);
         const projectId = task.project_id as string;
         const repoPathResult = await safirClient.getProjectRepoPath(projectId);

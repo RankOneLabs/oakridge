@@ -2,7 +2,7 @@
 
 ## Running a build from a safir task
 
-```
+```bash
 safir-build <task_id>
 ```
 
@@ -16,13 +16,13 @@ After approving:
 
 To skip the review gate and run planner-2 + build agent in one go:
 
-```
+```bash
 safir-build <task_id> --auto-approve
 ```
 
 To run planner-2 only without creating a build phase (legacy dry-run):
 
-```
+```bash
 safir-build <task_id> --dry-run
 ```
 

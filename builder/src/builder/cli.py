@@ -90,6 +90,10 @@ async def _run(args: argparse.Namespace) -> int:
         print(f"workdir is not a git repo (no .git): {workdir}", file=sys.stderr)
         return 1
 
+    if args.brief_id is not None and getattr(args, "auto_approve", False):
+        print("error: --from-brief and --auto-approve are mutually exclusive", file=sys.stderr)
+        return 1
+
     try:
         safir = SafirClient(
             base_url=args.safir_base_url or safir_base_url_from_env(),
@@ -97,10 +101,6 @@ async def _run(args: argparse.Namespace) -> int:
         )
     except Exception as e:
         print(f"safir client setup failed: {e}", file=sys.stderr)
-        return 1
-
-    if args.brief_id is not None and getattr(args, "auto_approve", False):
-        print("error: --from-brief and --auto-approve are mutually exclusive", file=sys.stderr)
         return 1
 
     try:
