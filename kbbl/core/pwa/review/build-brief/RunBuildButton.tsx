@@ -26,13 +26,17 @@ export function RunBuildButton({ briefId, run, status }: Props) {
     return <span className="run-build-already-started">Build already started</span>;
   }
 
-  async function handleRunBuild() {
+  async function handleRunBuild(mode: "first" | "retry") {
     setTriggering(true);
     setTriggerError(null);
     try {
       const res = await fetch(
         `/safir-proxy/build-briefs/${encodeURIComponent(briefId)}/build`,
-        { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(mode === "retry" ? { retry: true } : {}),
+        },
       );
       if (!res.ok) {
         const b = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
@@ -65,7 +69,7 @@ export function RunBuildButton({ briefId, run, status }: Props) {
         <button
           type="button"
           className="run-build-btn"
-          onClick={() => void handleRunBuild()}
+          onClick={() => void handleRunBuild("retry")}
           disabled={triggering}
         >
           {triggering ? "triggering…" : "Retry build"}
@@ -82,7 +86,7 @@ export function RunBuildButton({ briefId, run, status }: Props) {
       <button
         type="button"
         className="run-build-btn"
-        onClick={() => void handleRunBuild()}
+        onClick={() => void handleRunBuild("first")}
         disabled={triggering}
       >
         {triggering ? "triggering…" : "Run build"}

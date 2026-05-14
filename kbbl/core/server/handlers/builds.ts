@@ -28,6 +28,10 @@ export function mountBuildsRoutes(app: Hono, deps: BuildsRouteDeps): void {
     const briefId = c.req.param("id").trim();
     if (!briefId) return c.json({ error: "briefId required" }, 400);
 
+    let body: Record<string, unknown> = {};
+    try { body = await c.req.json() as Record<string, unknown>; } catch {}
+    const isRetry = body.retry === true;
+
     // Guard: block concurrent triggers at any await boundary that follows.
     // Placeholder is replaced with full record after spawn succeeds.
     if (activeBuilds.has(briefId)) {
@@ -54,32 +58,52 @@ export function mountBuildsRoutes(app: Hono, deps: BuildsRouteDeps): void {
       return c.json({ error: "not_approved", message: "brief must be approved before triggering a build" }, 409);
     }
 
-    // (b) assert no phase_index=1 already exists
-    let runData: Record<string, unknown>;
-    try {
-      runData = await safirClient.getBuildBriefRun(briefId);
-    } catch (err) {
-      activeBuilds.delete(briefId);
-      if (err instanceof SafirHttpError) {
-        return c.json(
-          { error: `safir HTTP ${err.status}`, status: err.status, body: err.body },
-          err.status as Parameters<typeof c.json>[1],
-        );
+    // (b) on retry: create a fresh run; on first build: assert no phase_index=1 already exists
+    let runId: string;
+    if (isRetry) {
+      let newRun: { id: string };
+      try {
+        newRun = await safirClient.createRunFromBuildBrief(briefId, {
+          executor: "builder:retry",
+          created_by: "kbbl",
+        });
+      } catch (err) {
+        activeBuilds.delete(briefId);
+        if (err instanceof SafirHttpError) {
+          return c.json(
+            { error: `safir HTTP ${err.status}`, status: err.status, body: err.body },
+            err.status as Parameters<typeof c.json>[1],
+          );
+        }
+        return c.json({ error: "safir unreachable" }, 502);
       }
-      return c.json({ error: "safir unreachable" }, 502);
-    }
-    const runId = runData.id as string;
-    const phases = (runData.phases as Array<{ phase_index: number }>) ?? [];
-    if (phases.some((p) => p.phase_index === 1)) {
-      activeBuilds.delete(briefId);
-      return c.json({ error: "already_started", message: "a build phase already exists for this run" }, 409);
+      runId = newRun.id;
+    } else {
+      let runData: Record<string, unknown>;
+      try {
+        runData = await safirClient.getBuildBriefRun(briefId);
+      } catch (err) {
+        activeBuilds.delete(briefId);
+        if (err instanceof SafirHttpError) {
+          return c.json(
+            { error: `safir HTTP ${err.status}`, status: err.status, body: err.body },
+            err.status as Parameters<typeof c.json>[1],
+          );
+        }
+        return c.json({ error: "safir unreachable" }, 502);
+      }
+      runId = runData.id as string;
+      const phases = (runData.phases as Array<{ phase_index: number }>) ?? [];
+      if (phases.some((p) => p.phase_index === 1)) {
+        activeBuilds.delete(briefId);
+        return c.json({ error: "already_started", message: "a build phase already exists for this run" }, 409);
+      }
     }
 
-    // (c) resolve repo_path from the project
-    // Chain: brief.run_id → run.task_id → task.project_id → project.repo_path
+    // (c) resolve repo_path from the project via brief.task_id
     let repoPath: string | null = null;
     try {
-      const taskId = runData.task_id as number | undefined;
+      const taskId = brief.task_id as number | undefined;
       if (taskId !== undefined) {
         const task = await safirClient.getTask(taskId);
         const projectId = task.project_id as string;

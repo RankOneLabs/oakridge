@@ -109,6 +109,7 @@ async def run_build_only_pipeline(
     atom_map = await safir_client.get_atom_map("build_brief", brief_id)
     handoff_raw_markdown = render_from_atom_map(atom_map, brief)
 
+    # handoff_docs.run_id is pinned to the latest run; retry path moves the pointer.
     run_data = await safir_client.get_run_by_brief(brief_id)
     run_id = run_data["id"]
     run_short_id = run_id[:8]

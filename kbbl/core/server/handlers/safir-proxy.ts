@@ -359,6 +359,17 @@ export function mountSafirProxyRoutes(
     } catch (err) { return respondToUpstreamError(c, err); }
   });
 
+  app.post("/safir/build-briefs/:id/runs", async (c) => {
+    const id = c.req.param("id").trim();
+    if (!id) return c.json({ error: "id required" }, 400);
+    let body: unknown = {};
+    try { body = await c.req.json(); } catch {}
+    try {
+      const run = await safirClient.createRunFromBuildBrief(id, body as Record<string, unknown>);
+      return c.json(run, 201);
+    } catch (err) { return respondToUpstreamError(c, err); }
+  });
+
   app.get("/safir/projects/:id/repo-path", async (c) => {
     const id = c.req.param("id").trim();
     if (!id) return c.json({ error: "id required" }, 400);

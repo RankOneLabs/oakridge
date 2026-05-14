@@ -114,6 +114,7 @@ export interface SafirClient {
   getBuildBriefRun(id: string): Promise<Record<string, unknown>>;
   updateBuildBriefStatus(id: string, body: Record<string, unknown>): Promise<Record<string, unknown>>;
   reopenBuildBrief(id: string): Promise<Record<string, unknown>>;
+  createRunFromBuildBrief(briefId: string, body?: { executor?: string; created_by?: string }): Promise<{ id: string }>;
   getProjectRepoPath(projectId: string): Promise<{ repo_path: string | null }>;
 }
 
@@ -270,6 +271,8 @@ export function createSafirClient(opts: CreateSafirClientOpts): SafirClient {
       request<Record<string, unknown>>("PATCH", `/build-briefs/${encodeURIComponent(id)}/status`, body),
     reopenBuildBrief: (id) =>
       request<Record<string, unknown>>("POST", `/build-briefs/${encodeURIComponent(id)}/reopen`),
+    createRunFromBuildBrief: (briefId, body) =>
+      request<{ id: string }>("POST", `/build-briefs/${encodeURIComponent(briefId)}/runs`, body ?? {}),
     getProjectRepoPath: (projectId) =>
       request<{ repo_path: string | null }>("GET", `/projects/${encodeURIComponent(projectId)}/repo-path`),
   };
