@@ -13,6 +13,7 @@ import Markdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import type { Task, PermissionProfile } from "../safir/types";
 import { PlanReviewView } from "./review/plan/PlanReviewView";
+import { BuildBriefReviewView } from "./review/build-brief/BuildBriefReviewView";
 
 
 export interface EnvelopeEvent {
@@ -255,6 +256,39 @@ function useHashPlanId(): [string | null, (id: string | null) => void] {
   }, []);
   const navigate = (next: string | null) => {
     writeHashPlanId(next);
+    setId(next);
+  };
+  return [id, navigate];
+}
+
+function readHashBriefId(): string | null {
+  const hash = window.location.hash.slice(1);
+  const params = new URLSearchParams(hash);
+  const raw = params.get("brief");
+  if (!raw) return null;
+  const id = raw.trim();
+  return id.length > 0 ? id : null;
+}
+
+function writeHashBriefId(id: string | null): void {
+  const url = new URL(window.location.href);
+  if (id == null) {
+    url.hash = "";
+  } else {
+    url.hash = `brief=${encodeURIComponent(id)}`;
+  }
+  history.replaceState(null, "", url.toString());
+}
+
+function useHashBriefId(): [string | null, (id: string | null) => void] {
+  const [id, setId] = useState<string | null>(() => readHashBriefId());
+  useEffect(() => {
+    const onHash = () => setId(readHashBriefId());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+  const navigate = (next: string | null) => {
+    writeHashBriefId(next);
     setId(next);
   };
   return [id, navigate];
@@ -590,6 +624,7 @@ export function App() {
   const [sid, navigate] = useHashSid();
   const [taskId, navigateTask] = useHashTaskId();
   const [planId, navigatePlan] = useHashPlanId();
+  const [briefId, navigateBrief] = useHashBriefId();
   const [theme, toggleTheme] = useTheme();
   const { sessions, inMemorySids, inboxStatus, compactSuggestions, clearCompactSuggestion, hydrateSession } = useInbox({
     // When the active session is purged from another client / tab, drop
@@ -656,6 +691,14 @@ export function App() {
       />
     );
   }
+  if (briefId !== null) {
+    return (
+      <BuildBriefReviewView
+        briefId={briefId}
+        onBack={() => navigateBrief(null)}
+      />
+    );
+  }
   return (
     <SessionListView
       sessions={sessions}
@@ -665,6 +708,7 @@ export function App() {
       onToggleTheme={toggleTheme}
       onSelect={(nextSid) => navigate(nextSid)}
       onHydrateSession={hydrateSession}
+      onSelectBrief={(id) => navigateBrief(id)}
     />
   );
 }
@@ -679,6 +723,7 @@ function SessionListView({
   onToggleTheme,
   onSelect,
   onHydrateSession,
+  onSelectBrief,
 }: {
   sessions: Map<string, SessionSnapshot>;
   inboxStatus: Status;
@@ -687,6 +732,7 @@ function SessionListView({
   onToggleTheme: () => void;
   onSelect: (sid: string) => void;
   onHydrateSession: (snapshot: SessionSnapshot) => void;
+  onSelectBrief: (briefId: string) => void;
 }) {
   const [pending, setPending] = useState(false);
   const [pendingError, setPendingError] = useState<string | null>(null);
@@ -703,6 +749,7 @@ function SessionListView({
   const [profileInput, setProfileInput] = useState("");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [profiles, setProfiles] = useState<PermissionProfile[]>([]);
+  const [pendingBriefs, setPendingBriefs] = useState<Array<{ id: string; goal: string | null; status: string }>>([]);
   const [autostartPending, setAutostartPending] = useState(false);
   const profileLockedRef = useRef(false);
   const sorted = useMemo(() => sortSessions(sessions), [sessions]);
@@ -742,6 +789,15 @@ function SessionListView({
         const data = (await res.json()) as PermissionProfile[];
         if (cancelled) return;
         setProfiles(data);
+      } catch {}
+    })();
+    void (async () => {
+      try {
+        const res = await fetch("/safir/build-briefs?status=pending_approval");
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as Array<{ id: string; goal: string | null; status: string }>;
+        if (cancelled) return;
+        setPendingBriefs(data);
       } catch {}
     })();
     return () => { cancelled = true; };
@@ -975,6 +1031,27 @@ function SessionListView({
           </div>
         )}
       </div>
+      {pendingBriefs.length > 0 && (
+        <div className="pending-briefs">
+          <div className="pending-briefs-header">
+            pending build briefs ({pendingBriefs.length})
+          </div>
+          <ul className="pending-briefs-list">
+            {pendingBriefs.map((b) => (
+              <li key={b.id} className="pending-brief-row">
+                <button
+                  type="button"
+                  className="pending-brief-btn"
+                  onClick={() => onSelectBrief(b.id)}
+                >
+                  <span className="pending-brief-goal">{b.goal ?? "(no goal)"}</span>
+                  <span className="pending-brief-id">{b.id.slice(0, 8)}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {sorted.length === 0 ? (
         <div className="session-list-empty">No sessions yet.</div>
       ) : (

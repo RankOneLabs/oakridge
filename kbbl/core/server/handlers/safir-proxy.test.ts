@@ -84,6 +84,12 @@ function makeStubClient(opts: StubOpts): {
     postThreadMessage: notImplemented("postThreadMessage") as SafirClient["postThreadMessage"],
     pingThread: notImplemented("pingThread") as SafirClient["pingThread"],
     updateThreadStatus: notImplemented("updateThreadStatus") as SafirClient["updateThreadStatus"],
+    listBuildBriefs: notImplemented("listBuildBriefs") as SafirClient["listBuildBriefs"],
+    getBuildBrief: notImplemented("getBuildBrief") as SafirClient["getBuildBrief"],
+    getBuildBriefRun: notImplemented("getBuildBriefRun") as SafirClient["getBuildBriefRun"],
+    updateBuildBriefStatus: notImplemented("updateBuildBriefStatus") as SafirClient["updateBuildBriefStatus"],
+    reopenBuildBrief: notImplemented("reopenBuildBrief") as SafirClient["reopenBuildBrief"],
+    getProjectRepoPath: notImplemented("getProjectRepoPath") as SafirClient["getProjectRepoPath"],
   };
   return { client, calls };
 }
