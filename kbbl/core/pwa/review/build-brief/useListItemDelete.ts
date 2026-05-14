@@ -32,18 +32,23 @@ export function useListItemDelete(target: ArtifactTarget): ListItemDeleteResult 
 
     const len = indices.length > 0 ? Math.max(...indices) + 1 : 0;
 
+    if (index < 0 || index >= len) return;
+
     // Determine sub-keys: e.g. for decisions_made it's [".decision", ".rationale"]
     const subKeys = getSubKeys(field, index, atomMap);
 
-    // Delete the target index atoms (empty string = tombstone per atom-edit API)
-    for (const sub of subKeys) {
-      const anchor = `${field}[${index}]${sub}`;
-      await post(baseUrl, {
-        anchor,
-        prev_value: atomMap[anchor] ?? null,
-        new_value: "",
-        edited_by: "operator",
-      });
+    // Tombstone only when no shift will overwrite this slot; otherwise the shift
+    // uses atomMap[destAnchor] as prev_value, which would mismatch a "" tombstone.
+    if (index >= len - 1) {
+      for (const sub of subKeys) {
+        const anchor = `${field}[${index}]${sub}`;
+        await post(baseUrl, {
+          anchor,
+          prev_value: atomMap[anchor] ?? null,
+          new_value: "",
+          edited_by: "operator",
+        });
+      }
     }
 
     // Shift subsequent indices down, matching sub-keys by name (not position)
