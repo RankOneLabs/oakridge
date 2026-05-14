@@ -155,6 +155,21 @@ export function mountSafirProxyRoutes(
     }
   });
 
+  app.get("/safir/plans", async (c) => {
+    const status = c.req.query("status");
+    const parentTaskIdRaw = c.req.query("parent_task_id");
+    const parentTaskId = parentTaskIdRaw !== undefined ? parsePositiveInt(parentTaskIdRaw) : undefined;
+    if (parentTaskIdRaw !== undefined && parentTaskId === null) {
+      return c.json({ error: "parent_task_id must be a positive integer" }, 400);
+    }
+    try {
+      const plans = await safirClient.listPlans({ status, parent_task_id: parentTaskId ?? undefined });
+      return c.json(plans);
+    } catch (err) {
+      return respondToUpstreamError(c, err);
+    }
+  });
+
   app.get("/safir/plans/:planId", async (c) => {
     const planId = c.req.param("planId").trim();
     if (planId === "") {
@@ -234,6 +249,23 @@ export function mountSafirProxyRoutes(
     try {
       const result = await safirClient.postAtomEdit(targetType, targetId, body as Record<string, unknown>);
       return c.json(result);
+    } catch (err) { return respondToUpstreamError(c, err); }
+  });
+
+  app.post("/safir/atoms/:targetType/:targetId/edits/batch", async (c) => {
+    const targetType = c.req.param("targetType").trim();
+    const targetId = c.req.param("targetId").trim();
+    if (!targetType || !targetId) return c.json({ error: "targetType/targetId required" }, 400);
+    let body: unknown;
+    try { body = await c.req.json(); } catch { return c.json({ error: "invalid json" }, 400); }
+    if (body === null || typeof body !== "object" || Array.isArray(body)) {
+      return c.json({ error: "json body must be an object" }, 400);
+    }
+    const edits = (body as { edits?: unknown }).edits;
+    if (!Array.isArray(edits)) return c.json({ error: "edits must be an array" }, 400);
+    try {
+      const result = await safirClient.postAtomEditBatch(targetType, targetId, edits as Parameters<SafirClient["postAtomEditBatch"]>[2]);
+      return c.json(result, 201);
     } catch (err) { return respondToUpstreamError(c, err); }
   });
 
@@ -341,6 +373,23 @@ export function mountSafirProxyRoutes(
     try {
       const brief = await safirClient.reopenBuildBrief(id);
       return c.json(brief);
+    } catch (err) { return respondToUpstreamError(c, err); }
+  });
+
+  app.post("/safir/build-briefs/:id/runs", async (c) => {
+    const id = c.req.param("id").trim();
+    if (!id) return c.json({ error: "id required" }, 400);
+    let body: Record<string, unknown> = {};
+    try {
+      const parsed = await c.req.json() as unknown;
+      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return c.json({ error: "json body must be an object" }, 400);
+      }
+      body = parsed as Record<string, unknown>;
+    } catch { return c.json({ error: "invalid json" }, 400); }
+    try {
+      const run = await safirClient.createRunFromBuildBrief(id, body);
+      return c.json(run, 201);
     } catch (err) { return respondToUpstreamError(c, err); }
   });
 

@@ -78,6 +78,43 @@ async function defaultSpawnAgent(
   return { status: "failed", error: "subprocess produced no output", conflicts: [] };
 }
 
+async function loadDependencyBriefsNotes(
+  client: SafirClient,
+  targetType: string,
+  targetId: string,
+): Promise<string[] | null> {
+  if (targetType !== "build_brief") return null;
+  try {
+    const brief = await client.getBuildBrief(targetId);
+    const taskId = typeof brief.task_id === "number" ? brief.task_id : null;
+    if (taskId === null) return [];
+    const deps = await client.listTaskDependencies(taskId);
+    if (deps.length === 0) return [];
+    const allHandoffs = await Promise.all(
+      deps.map((dep) => client.listHandoffsForTask(dep.depends_on)),
+    );
+    const notes: string[] = [];
+    for (const handoffs of allHandoffs) {
+      const approved = (handoffs as Array<Record<string, unknown>>)
+        .filter((h) => h.status === "approved")
+        .sort((a, b) =>
+          String(b.produced_at ?? "").localeCompare(String(a.produced_at ?? "")),
+        );
+      const top = approved[0];
+      if (top && typeof top.raw_markdown === "string") {
+        notes.push(top.raw_markdown);
+      }
+    }
+    return notes;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(
+      JSON.stringify({ kbbl: "review_responder_deps_load_error", error: msg }),
+    );
+    return null;
+  }
+}
+
 export async function dispatchReviewResponder(
   data: Record<string, unknown>,
   deps: ReviewResponderDispatchDeps,
@@ -100,11 +137,12 @@ export async function dispatchReviewResponder(
   let agentResponseBody: AgentResponseBody;
 
   try {
-    // Load thread, atom map, and other open threads in parallel.
-    const [thread, atomMap, allOpenThreads] = await Promise.all([
+    // Load thread, atom map, other open threads, and dep context in parallel.
+    const [thread, atomMap, allOpenThreads, dependencyBriefsNotes] = await Promise.all([
       deps.safirClient.getThread(threadId),
       deps.safirClient.getAtomMap(targetType, targetId),
       deps.safirClient.listOpenThreads(targetType, targetId),
+      loadDependencyBriefsNotes(deps.safirClient, targetType, targetId),
     ]);
 
     // Load parent context.
@@ -138,7 +176,7 @@ export async function dispatchReviewResponder(
       atom_map: atomMap,
       other_open_threads: otherOpenThreads,
       parent_task_notes: parentTaskNotes,
-      dependency_briefs_notes: null,
+      dependency_briefs_notes: dependencyBriefsNotes,
     });
 
     const pythonBin = deps.pythonBin ?? "python3";

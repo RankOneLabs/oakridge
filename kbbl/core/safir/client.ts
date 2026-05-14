@@ -90,6 +90,8 @@ export interface SafirClient {
   createTask(body: CreateTaskBody): Promise<Task>;
   addDependency(taskId: number, dependsOn: number): Promise<void>;
   listPlansForTask(taskId: number): Promise<Plan[]>;
+  listPlans(opts?: { status?: string; parent_task_id?: number }): Promise<Plan[]>;
+  listTaskDependencies(taskId: number): Promise<Array<{ depends_on: number }>>;
   getPlan(planId: string): Promise<Plan>;
   updatePlanStatus(planId: string, body: { status: string; rejection_reason?: string | null }): Promise<Plan>;
   reopenPlan(planId: string): Promise<Plan>;
@@ -102,6 +104,11 @@ export interface SafirClient {
   listAllThreads(targetType: string, targetId: string): Promise<Record<string, unknown>[]>;
   listAtomHistory(targetType: string, targetId: string): Promise<Record<string, unknown>[]>;
   postAtomEdit(targetType: string, targetId: string, body: Record<string, unknown>): Promise<Record<string, unknown>>;
+  postAtomEditBatch(
+    targetType: string,
+    targetId: string,
+    edits: Array<{ anchor: string; prev_value: string | null; new_value: string; edited_by: string; thread_id?: string | null }>,
+  ): Promise<Record<string, unknown>[]>;
   createThread(body: Record<string, unknown>): Promise<Record<string, unknown>>;
   postThreadMessage(threadId: string, body: { body: string; author: string }): Promise<Record<string, unknown>>;
   pingThread(threadId: string): Promise<unknown>;
@@ -112,6 +119,7 @@ export interface SafirClient {
   getBuildBriefRun(id: string): Promise<Record<string, unknown>>;
   updateBuildBriefStatus(id: string, body: Record<string, unknown>): Promise<Record<string, unknown>>;
   reopenBuildBrief(id: string): Promise<Record<string, unknown>>;
+  createRunFromBuildBrief(briefId: string, body?: { executor?: string; created_by?: string }): Promise<{ id: string }>;
   getProjectRepoPath(projectId: string): Promise<{ repo_path: string | null }>;
 }
 
@@ -218,6 +226,15 @@ export function createSafirClient(opts: CreateSafirClientOpts): SafirClient {
     },
     listPlansForTask: (taskId) =>
       request<Plan[]>("GET", `/tasks/${taskId}/plans`),
+    listTaskDependencies: (taskId) =>
+      request<Array<{ depends_on: number }>>("GET", `/tasks/${taskId}/dependencies`),
+    listPlans: (opts) => {
+      const params = new URLSearchParams();
+      if (opts?.status) params.set("status", opts.status);
+      if (opts?.parent_task_id != null) params.set("parent_task_id", String(opts.parent_task_id));
+      const qs = params.toString();
+      return request<Plan[]>("GET", `/plans${qs ? `?${qs}` : ""}`);
+    },
     getPlan: (planId) =>
       request<Plan>("GET", `/plans/${planId}`),
     updatePlanStatus: (planId, body) =>
@@ -241,6 +258,8 @@ export function createSafirClient(opts: CreateSafirClientOpts): SafirClient {
       request<Record<string, unknown>[]>("GET", `/atoms/${encodeURIComponent(targetType)}/${encodeURIComponent(targetId)}/history`),
     postAtomEdit: (targetType, targetId, body) =>
       request<Record<string, unknown>>("POST", `/atoms/${encodeURIComponent(targetType)}/${encodeURIComponent(targetId)}/edits`, body),
+    postAtomEditBatch: (targetType, targetId, edits) =>
+      request<Record<string, unknown>[]>("POST", `/atoms/${encodeURIComponent(targetType)}/${encodeURIComponent(targetId)}/edits/batch`, { edits }),
     createThread: (body) =>
       request<Record<string, unknown>>("POST", "/threads", body),
     postThreadMessage: (threadId, body) =>
@@ -259,6 +278,8 @@ export function createSafirClient(opts: CreateSafirClientOpts): SafirClient {
       request<Record<string, unknown>>("PATCH", `/build-briefs/${encodeURIComponent(id)}/status`, body),
     reopenBuildBrief: (id) =>
       request<Record<string, unknown>>("POST", `/build-briefs/${encodeURIComponent(id)}/reopen`),
+    createRunFromBuildBrief: (briefId, body) =>
+      request<{ id: string }>("POST", `/build-briefs/${encodeURIComponent(briefId)}/runs`, body ?? {}),
     getProjectRepoPath: (projectId) =>
       request<{ repo_path: string | null }>("GET", `/projects/${encodeURIComponent(projectId)}/repo-path`),
   };

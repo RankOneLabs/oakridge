@@ -134,7 +134,11 @@ export function BuildBriefReviewView({ briefId, onBack }: Props) {
 
   const handleDeleteListItem = useCallback(
     async (field: string, index: number) => {
-      await listItemDelete.deleteItem(field, index, stream.atomMap);
+      try {
+        await listItemDelete.deleteItem(field, index, stream.atomMap);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "delete failed");
+      }
     },
     [listItemDelete, stream.atomMap],
   );

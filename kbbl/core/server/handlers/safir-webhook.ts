@@ -265,15 +265,10 @@ export function mountSafirWebhookRoutes(
       if (event === "plan.created") {
         targetType = "plan";
         targetId = typeof data.plan_id === "string" ? data.plan_id : null;
-      } else if (
-        event === "thread.agent_response_completed" ||
-        event === "thread.agent_response_failed"
-      ) {
-        // Payload has only thread_id — no target context available in-band.
-        // The PWA relies on thread.message_added / thread.status_changed for
-        // the same transitions; skip bus publish here.
       } else {
-        targetType = typeof data.target_type === "string" ? data.target_type : null;
+        const knownTargetTypes = new Set(["plan", "build_brief"]);
+        const rawType = data.target_type;
+        targetType = typeof rawType === "string" && knownTargetTypes.has(rawType) ? rawType : null;
         targetId = typeof data.target_id === "string" ? data.target_id : null;
       }
 

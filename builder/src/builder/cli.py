@@ -43,7 +43,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--models",
         default=None,
         help=(
-            "Comma-separated 'planner2,build' models (task_id mode only). "
+            "Comma-separated 'planner2,build' models. "
             "Default: claude-opus-4-7,claude-sonnet-4-6."
         ),
     )
@@ -62,7 +62,20 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--dry-run",
         action="store_true",
-        help="No build phase, no PRs (task_id mode: planner-2 only).",
+        help=(
+            "Planner-2 only; produces a brief in pending_approval state. "
+            "The default `safir-build <task_id>` already stops after planner-2 — "
+            "use this flag only if you also want to skip phase-creation for the build step."
+        ),
+    )
+    p.add_argument(
+        "--auto-approve",
+        dest="auto_approve",
+        action="store_true",
+        help=(
+            "Skip the build-brief review gate. Run planner-2 then the build agent "
+            "in one go (equivalent to spec's bypass-review path)."
+        ),
     )
     return p
 
@@ -75,6 +88,13 @@ async def _run(args: argparse.Namespace) -> int:
         return 1
     if not (workdir / ".git").exists():
         print(f"workdir is not a git repo (no .git): {workdir}", file=sys.stderr)
+        return 1
+
+    if args.brief_id is not None and getattr(args, "auto_approve", False):
+        print("error: --from-brief and --auto-approve are mutually exclusive", file=sys.stderr)
+        return 1
+    if args.brief_id is not None and args.dry_run:
+        print("error: --from-brief and --dry-run are mutually exclusive", file=sys.stderr)
         return 1
 
     try:
@@ -121,6 +141,7 @@ async def _run(args: argparse.Namespace) -> int:
                     safir_client=safir,
                     permission_profile_id_override=args.permission_profile_id,
                     dry_run=args.dry_run,
+                    auto_approve=getattr(args, "auto_approve", False),
                 )
             except Exception as e:
                 print(f"build pipeline failed: {e}", file=sys.stderr)
@@ -132,6 +153,22 @@ async def _run(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 3
+
+        # When running in the default review-gate mode (no --auto-approve, no --dry-run,
+        # no --from-brief), planner-2 has produced a pending brief — tell the operator
+        # what to do next.
+        auto_approve = getattr(args, "auto_approve", False)
+        if args.brief_id is None and not auto_approve and not args.dry_run:
+            p2 = result.step_outputs.get("planner2")
+            brief_id = getattr(p2, "handoff_id", None) if p2 is not None else None
+            if brief_id:
+                print(
+                    f"Brief ready for review: {brief_id}. "
+                    f"Next: review in kbbl PWA, approve, then click 'Run build' "
+                    f"OR run safir-build --from-brief {brief_id}."
+                )
+            return 0
+
         print(f"pipeline trace_id={result.trace_id}")
         return 0
     finally:

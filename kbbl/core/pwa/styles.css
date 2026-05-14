@@ -1834,3 +1834,71 @@ body {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* === inbox artifact cards (pending plans + pending build briefs) === */
+
+.pending-plans,
+.pending-briefs {
+  margin: 0.75rem 0;
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.pending-plans-header,
+.pending-briefs-header {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-muted);
+}
+.pending-plans-list,
+.pending-briefs-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.pending-plan-row,
+.pending-brief-row {
+  border-bottom: 1px solid var(--border-muted);
+}
+.pending-plan-row:last-child,
+.pending-brief-row:last-child {
+  border-bottom: none;
+}
+.pending-plan-btn,
+.pending-brief-btn {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: var(--text-primary);
+}
+.pending-plan-btn:hover,
+.pending-brief-btn:hover {
+  background: var(--bg-surface);
+}
+.pending-plan-summary,
+.pending-brief-goal {
+  flex: 1 1 auto;
+  font-size: 0.875rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pending-plan-id,
+.pending-brief-id {
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+  font-family: monospace;
+  color: var(--text-muted);
+}

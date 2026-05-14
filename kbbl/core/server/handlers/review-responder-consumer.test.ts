@@ -10,10 +10,11 @@ import { createSafirQueue } from "../../safir/queue";
 import { SessionManager } from "../../session/session-manager";
 import type { Session, SpawnCmd } from "../../session/session";
 import { mountSafirWebhookRoutes } from "./safir-webhook";
-import type {
-  ReviewResponderSubprocessResult,
-  SpawnAgentFn,
-  SpawnOpts,
+import {
+  dispatchReviewResponder,
+  type ReviewResponderSubprocessResult,
+  type SpawnAgentFn,
+  type SpawnOpts,
 } from "./review-responder-consumer";
 
 const TEST_TOKEN = "test-token-responder";
@@ -319,6 +320,176 @@ describe("review-responder-consumer", () => {
     expect(agentResponseCall).toBeUndefined();
 
     await mgr.endAll();
+  });
+
+  // ---------------------------------------------------------------------------
+  // loadDependencyBriefsNotes cases
+  // ---------------------------------------------------------------------------
+
+  test("build_brief with no deps: dependency_briefs_notes is []", async () => {
+    const stub = makeSafirStub((path, method) => {
+      if (method === "GET" && /^\/build-briefs\/brief-nodeps$/.test(path)) {
+        return Response.json({ id: "brief-nodeps", task_id: 20, status: "approved" });
+      }
+      if (method === "GET" && /^\/tasks\/20\/dependencies$/.test(path)) {
+        return Response.json([]);
+      }
+      // Override thread to point at build_brief
+      if (method === "GET" && /^\/threads\//.test(path)) {
+        return Response.json({ id: "thread-bd", target_type: "build_brief", target_id: "brief-nodeps", anchor: null, status: "open", agent_responding: 1, created_at: "2026-01-01T00:00:00Z", messages: [] });
+      }
+      if (method === "GET" && /^\/atoms\/build_brief\//.test(path)) {
+        return Response.json({});
+      }
+      if (method === "GET" && /\/threads\?/.test(path)) {
+        return Response.json([]);
+      }
+      return null;
+    });
+
+    const safirClient = createSafirClient({ baseUrl: "http://safir.test", fetch: stub.fetch });
+    const spawnCalls: SpawnOpts[] = [];
+    const stubSpawn: SpawnAgentFn = async (opts) => { spawnCalls.push(opts); return { status: "completed", conflicts: [] }; };
+
+    await dispatchReviewResponder(
+      { thread_id: "thread-bd", target_type: "build_brief", target_id: "brief-nodeps", anchor: null },
+      { safirClient, safirBaseUrl: "http://safir.test", spawnAgent: stubSpawn },
+    );
+
+    expect(spawnCalls).toHaveLength(1);
+    const ctx = JSON.parse(spawnCalls[0].stdinPayload) as Record<string, unknown>;
+    expect(ctx.dependency_briefs_notes).toEqual([]);
+  });
+
+  test("build_brief with two deps, both with approved handoffs: notes array length 2 in order", async () => {
+    const stub = makeSafirStub((path, method) => {
+      if (method === "GET" && /^\/build-briefs\/brief-2deps$/.test(path)) {
+        return Response.json({ id: "brief-2deps", task_id: 30, status: "approved" });
+      }
+      if (method === "GET" && /^\/tasks\/30\/dependencies$/.test(path)) {
+        return Response.json([{ depends_on: 31 }, { depends_on: 32 }]);
+      }
+      if (method === "GET" && /^\/tasks\/31\/handoffs$/.test(path)) {
+        return Response.json([
+          { id: "h31", status: "approved", produced_at: "2026-01-02T00:00:00Z", raw_markdown: "notes-dep-31" },
+        ]);
+      }
+      if (method === "GET" && /^\/tasks\/32\/handoffs$/.test(path)) {
+        return Response.json([
+          { id: "h32", status: "approved", produced_at: "2026-01-03T00:00:00Z", raw_markdown: "notes-dep-32" },
+        ]);
+      }
+      if (method === "GET" && /^\/threads\//.test(path)) {
+        return Response.json({ id: "thread-2d", target_type: "build_brief", target_id: "brief-2deps", anchor: null, status: "open", agent_responding: 1, created_at: "2026-01-01T00:00:00Z", messages: [] });
+      }
+      if (method === "GET" && /^\/atoms\/build_brief\//.test(path)) {
+        return Response.json({});
+      }
+      if (method === "GET" && /\/threads\?/.test(path)) {
+        return Response.json([]);
+      }
+      return null;
+    });
+
+    const safirClient = createSafirClient({ baseUrl: "http://safir.test", fetch: stub.fetch });
+    const spawnCalls: SpawnOpts[] = [];
+    const stubSpawn: SpawnAgentFn = async (opts) => { spawnCalls.push(opts); return { status: "completed", conflicts: [] }; };
+
+    await dispatchReviewResponder(
+      { thread_id: "thread-2d", target_type: "build_brief", target_id: "brief-2deps", anchor: null },
+      { safirClient, safirBaseUrl: "http://safir.test", spawnAgent: stubSpawn },
+    );
+
+    expect(spawnCalls).toHaveLength(1);
+    const ctx = JSON.parse(spawnCalls[0].stdinPayload) as Record<string, unknown>;
+    expect(ctx.dependency_briefs_notes).toEqual(["notes-dep-31", "notes-dep-32"]);
+  });
+
+  test("build_brief with deps but no approved handoff: notes is []", async () => {
+    const stub = makeSafirStub((path, method) => {
+      if (method === "GET" && /^\/build-briefs\/brief-noapproved$/.test(path)) {
+        return Response.json({ id: "brief-noapproved", task_id: 40, status: "approved" });
+      }
+      if (method === "GET" && /^\/tasks\/40\/dependencies$/.test(path)) {
+        return Response.json([{ depends_on: 41 }]);
+      }
+      if (method === "GET" && /^\/tasks\/41\/handoffs$/.test(path)) {
+        return Response.json([
+          { id: "h41", status: "pending_approval", produced_at: "2026-01-01T00:00:00Z", raw_markdown: "draft-notes" },
+        ]);
+      }
+      if (method === "GET" && /^\/threads\//.test(path)) {
+        return Response.json({ id: "thread-na", target_type: "build_brief", target_id: "brief-noapproved", anchor: null, status: "open", agent_responding: 1, created_at: "2026-01-01T00:00:00Z", messages: [] });
+      }
+      if (method === "GET" && /^\/atoms\/build_brief\//.test(path)) {
+        return Response.json({});
+      }
+      if (method === "GET" && /\/threads\?/.test(path)) {
+        return Response.json([]);
+      }
+      return null;
+    });
+
+    const safirClient = createSafirClient({ baseUrl: "http://safir.test", fetch: stub.fetch });
+    const spawnCalls: SpawnOpts[] = [];
+    const stubSpawn: SpawnAgentFn = async (opts) => { spawnCalls.push(opts); return { status: "completed", conflicts: [] }; };
+
+    await dispatchReviewResponder(
+      { thread_id: "thread-na", target_type: "build_brief", target_id: "brief-noapproved", anchor: null },
+      { safirClient, safirBaseUrl: "http://safir.test", spawnAgent: stubSpawn },
+    );
+
+    expect(spawnCalls).toHaveLength(1);
+    const ctx = JSON.parse(spawnCalls[0].stdinPayload) as Record<string, unknown>;
+    expect(ctx.dependency_briefs_notes).toEqual([]);
+  });
+
+  test("plan target: dependency_briefs_notes is null", async () => {
+    const stub = makeSafirStub();
+    const safirClient = createSafirClient({ baseUrl: "http://safir.test", fetch: stub.fetch });
+    const spawnCalls: SpawnOpts[] = [];
+    const stubSpawn: SpawnAgentFn = async (opts) => { spawnCalls.push(opts); return { status: "completed", conflicts: [] }; };
+
+    await dispatchReviewResponder(
+      { thread_id: "thread-1", target_type: "plan", target_id: "plan-1", anchor: "cohorts[0]" },
+      { safirClient, safirBaseUrl: "http://safir.test", spawnAgent: stubSpawn },
+    );
+
+    expect(spawnCalls).toHaveLength(1);
+    const ctx = JSON.parse(spawnCalls[0].stdinPayload) as Record<string, unknown>;
+    expect(ctx.dependency_briefs_notes).toBeNull();
+  });
+
+  test("safir error during dep load: dispatch continues with dependency_briefs_notes null", async () => {
+    const stub = makeSafirStub((path, method) => {
+      if (method === "GET" && /^\/build-briefs\/brief-err$/.test(path)) {
+        return Response.json({ error: "server error" }, { status: 500 });
+      }
+      if (method === "GET" && /^\/threads\//.test(path)) {
+        return Response.json({ id: "thread-err", target_type: "build_brief", target_id: "brief-err", anchor: null, status: "open", agent_responding: 1, created_at: "2026-01-01T00:00:00Z", messages: [] });
+      }
+      if (method === "GET" && /^\/atoms\/build_brief\//.test(path)) {
+        return Response.json({});
+      }
+      if (method === "GET" && /\/threads\?/.test(path)) {
+        return Response.json([]);
+      }
+      return null;
+    });
+
+    const safirClient = createSafirClient({ baseUrl: "http://safir.test", fetch: stub.fetch });
+    const spawnCalls: SpawnOpts[] = [];
+    const stubSpawn: SpawnAgentFn = async (opts) => { spawnCalls.push(opts); return { status: "completed", conflicts: [] }; };
+
+    await dispatchReviewResponder(
+      { thread_id: "thread-err", target_type: "build_brief", target_id: "brief-err", anchor: null },
+      { safirClient, safirBaseUrl: "http://safir.test", spawnAgent: stubSpawn },
+    );
+
+    // Dispatch should still succeed despite dep-load error.
+    expect(spawnCalls).toHaveLength(1);
+    const ctx = JSON.parse(spawnCalls[0].stdinPayload) as Record<string, unknown>;
+    expect(ctx.dependency_briefs_notes).toBeNull();
   });
 
   test("existing run.completed fanout still works after consumer addition", async () => {
