@@ -709,6 +709,7 @@ export function App() {
       onSelect={(nextSid) => navigate(nextSid)}
       onHydrateSession={hydrateSession}
       onSelectBrief={(id) => navigateBrief(id)}
+      onSelectPlan={(id) => navigatePlan(id)}
     />
   );
 }
@@ -724,6 +725,7 @@ function SessionListView({
   onSelect,
   onHydrateSession,
   onSelectBrief,
+  onSelectPlan,
 }: {
   sessions: Map<string, SessionSnapshot>;
   inboxStatus: Status;
@@ -733,6 +735,7 @@ function SessionListView({
   onSelect: (sid: string) => void;
   onHydrateSession: (snapshot: SessionSnapshot) => void;
   onSelectBrief: (briefId: string) => void;
+  onSelectPlan: (planId: string) => void;
 }) {
   const [pending, setPending] = useState(false);
   const [pendingError, setPendingError] = useState<string | null>(null);
@@ -749,6 +752,7 @@ function SessionListView({
   const [profileInput, setProfileInput] = useState("");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [profiles, setProfiles] = useState<PermissionProfile[]>([]);
+  const [pendingPlans, setPendingPlans] = useState<Array<{ id: string; summary: string | null; status: string }>>([]);
   const [pendingBriefs, setPendingBriefs] = useState<Array<{ id: string; goal: string | null; status: string }>>([]);
   const [autostartPending, setAutostartPending] = useState(false);
   const profileLockedRef = useRef(false);
@@ -798,6 +802,15 @@ function SessionListView({
         const data = (await res.json()) as Array<{ id: string; goal: string | null; status: string }>;
         if (cancelled) return;
         setPendingBriefs(data);
+      } catch {}
+    })();
+    void (async () => {
+      try {
+        const res = await fetch("/safir/plans?status=pending_approval");
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as Array<{ id: string; summary: string | null; status: string }>;
+        if (cancelled) return;
+        setPendingPlans(data);
       } catch {}
     })();
     return () => { cancelled = true; };
@@ -1031,6 +1044,27 @@ function SessionListView({
           </div>
         )}
       </div>
+      {pendingPlans.length > 0 && (
+        <div className="pending-plans">
+          <div className="pending-plans-header">
+            pending plans ({pendingPlans.length})
+          </div>
+          <ul className="pending-plans-list">
+            {pendingPlans.map((p) => (
+              <li key={p.id} className="pending-plan-row">
+                <button
+                  type="button"
+                  className="pending-plan-btn"
+                  onClick={() => onSelectPlan(p.id)}
+                >
+                  <span className="pending-plan-summary">{p.summary ?? "(no summary)"}</span>
+                  <span className="pending-plan-id">{p.id.slice(0, 8)}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {pendingBriefs.length > 0 && (
         <div className="pending-briefs">
           <div className="pending-briefs-header">
