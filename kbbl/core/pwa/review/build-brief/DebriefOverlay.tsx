@@ -20,7 +20,6 @@ export interface Debrief {
 
 interface Props {
   debrief: Debrief;
-  atomMap: Record<string, string>;
 }
 
 /** Case-insensitive longest-substring match. Returns the anchor that best
@@ -65,33 +64,10 @@ function longestCommonSubstring(a: string, b: string): number {
   return best;
 }
 
-export function DebriefOverlay({ debrief, atomMap }: Props) {
+export function DebriefOverlay({ debrief }: Props) {
   const [expanded, setExpanded] = useState(false);
 
   const { not_delivered, deviations, delivered_summary } = debrief;
-
-  // Build per-anchor annotation maps
-  const deviationsByAnchor: Record<string, DeviationItem[]> = {};
-  const unanchoredDeviations: DeviationItem[] = [];
-  for (const d of deviations) {
-    const anchor = findBestAtomAnchor(d.instruction, atomMap);
-    if (anchor) {
-      deviationsByAnchor[anchor] = [...(deviationsByAnchor[anchor] ?? []), d];
-    } else {
-      unanchoredDeviations.push(d);
-    }
-  }
-
-  const notDeliveredByAnchor: Record<string, NotDeliveredItem[]> = {};
-  const unanchoredNotDelivered: NotDeliveredItem[] = [];
-  for (const nd of not_delivered) {
-    const anchor = findBestAtomAnchor(nd.item, atomMap);
-    if (anchor) {
-      notDeliveredByAnchor[anchor] = [...(notDeliveredByAnchor[anchor] ?? []), nd];
-    } else {
-      unanchoredNotDelivered.push(nd);
-    }
-  }
 
   return (
     <div className="debrief-overlay">

@@ -50,7 +50,7 @@ export function useListItemDelete(target: ArtifactTarget): ListItemDeleteResult 
     for (let i = index + 1; i < len; i++) {
       const destSubKeys = getSubKeys(field, i - 1, atomMap);
       const srcSubKeys = getSubKeys(field, i, atomMap);
-      for (let j = 0; j < srcSubKeys.length; j++) {
+      for (let j = 0; j < Math.min(destSubKeys.length, srcSubKeys.length); j++) {
         const srcAnchor = `${field}[${i}]${srcSubKeys[j]}`;
         const destAnchor = `${field}[${i - 1}]${destSubKeys[j]}`;
         await post(baseUrl, {

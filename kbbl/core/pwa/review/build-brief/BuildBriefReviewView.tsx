@@ -300,7 +300,7 @@ export function BuildBriefReviewView({ briefId, onBack }: Props) {
       </div>
 
       {error && <div className="brief-error brief-error--inline">{error}</div>}
-      {debrief && <DebriefOverlay debrief={debrief} atomMap={stream.atomMap} />}
+      {debrief && <DebriefOverlay debrief={debrief} />}
 
       <div className="brief-review-body">
         <div className="brief-review-main">
