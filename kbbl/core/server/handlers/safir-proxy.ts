@@ -252,6 +252,18 @@ export function mountSafirProxyRoutes(
     } catch (err) { return respondToUpstreamError(c, err); }
   });
 
+  app.post("/safir/atoms/:targetType/:targetId/edits/batch", async (c) => {
+    const targetType = c.req.param("targetType").trim();
+    const targetId = c.req.param("targetId").trim();
+    if (!targetType || !targetId) return c.json({ error: "targetType/targetId required" }, 400);
+    let body: unknown;
+    try { body = await c.req.json(); } catch { return c.json({ error: "invalid json" }, 400); }
+    try {
+      const result = await safirClient.postAtomEditBatch(targetType, targetId, (body as { edits: Parameters<SafirClient["postAtomEditBatch"]>[2] }).edits);
+      return c.json(result, 201);
+    } catch (err) { return respondToUpstreamError(c, err); }
+  });
+
   app.get("/safir/artifacts/:targetType/:targetId/threads", async (c) => {
     const targetType = c.req.param("targetType").trim();
     const targetId = c.req.param("targetId").trim();

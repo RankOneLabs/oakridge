@@ -82,6 +82,7 @@ function makeStubClient(opts: StubOpts): {
     listAllThreads: notImplemented("listAllThreads") as SafirClient["listAllThreads"],
     listAtomHistory: notImplemented("listAtomHistory") as SafirClient["listAtomHistory"],
     postAtomEdit: notImplemented("postAtomEdit") as SafirClient["postAtomEdit"],
+    postAtomEditBatch: notImplemented("postAtomEditBatch") as SafirClient["postAtomEditBatch"],
     createThread: notImplemented("createThread") as SafirClient["createThread"],
     postThreadMessage: notImplemented("postThreadMessage") as SafirClient["postThreadMessage"],
     pingThread: notImplemented("pingThread") as SafirClient["pingThread"],

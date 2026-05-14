@@ -104,6 +104,11 @@ export interface SafirClient {
   listAllThreads(targetType: string, targetId: string): Promise<Record<string, unknown>[]>;
   listAtomHistory(targetType: string, targetId: string): Promise<Record<string, unknown>[]>;
   postAtomEdit(targetType: string, targetId: string, body: Record<string, unknown>): Promise<Record<string, unknown>>;
+  postAtomEditBatch(
+    targetType: string,
+    targetId: string,
+    edits: Array<{ anchor: string; prev_value: string | null; new_value: string; edited_by: string; thread_id?: string | null }>,
+  ): Promise<Record<string, unknown>[]>;
   createThread(body: Record<string, unknown>): Promise<Record<string, unknown>>;
   postThreadMessage(threadId: string, body: { body: string; author: string }): Promise<Record<string, unknown>>;
   pingThread(threadId: string): Promise<unknown>;
@@ -253,6 +258,8 @@ export function createSafirClient(opts: CreateSafirClientOpts): SafirClient {
       request<Record<string, unknown>[]>("GET", `/atoms/${encodeURIComponent(targetType)}/${encodeURIComponent(targetId)}/history`),
     postAtomEdit: (targetType, targetId, body) =>
       request<Record<string, unknown>>("POST", `/atoms/${encodeURIComponent(targetType)}/${encodeURIComponent(targetId)}/edits`, body),
+    postAtomEditBatch: (targetType, targetId, edits) =>
+      request<Record<string, unknown>[]>("POST", `/atoms/${encodeURIComponent(targetType)}/${encodeURIComponent(targetId)}/edits/batch`, { edits }),
     createThread: (body) =>
       request<Record<string, unknown>>("POST", "/threads", body),
     postThreadMessage: (threadId, body) =>
