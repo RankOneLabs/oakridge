@@ -69,7 +69,7 @@ let tmpRepo: string;
 beforeEach(() => {
   // Create a real git repo so worktree creation can succeed in test 2.
   tmpRepo = mkdtempSync(`${tmpdir()}/builds-test-`);
-  execSync("git init && git checkout -b main", { cwd: tmpRepo, stdio: "ignore" });
+  execSync("git init && git checkout -B main", { cwd: tmpRepo, stdio: "ignore" });
   execSync("git config user.email test@example.com", { cwd: tmpRepo, stdio: "ignore" });
   execSync("git config user.name test", { cwd: tmpRepo, stdio: "ignore" });
   execSync("git config commit.gpgsign false", { cwd: tmpRepo, stdio: "ignore" });

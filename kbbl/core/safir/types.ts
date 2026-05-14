@@ -422,5 +422,6 @@ export const ThreadAgentResponseFailedPayload = z.object({
   target_id: z.string(),
   anchor: z.string().nullable(),
   error: z.string().nullable().optional(),
+  reply_message_id: z.string().nullable().optional(),
 });
 export type ThreadAgentResponseFailedPayload = z.infer<typeof ThreadAgentResponseFailedPayload>;

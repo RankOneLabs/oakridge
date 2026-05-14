@@ -34,7 +34,9 @@ export function mountBuildsRoutes(app: Hono, deps: BuildsRouteDeps): void {
       if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
         body = parsed as Record<string, unknown>;
       }
-    } catch {}
+    } catch {
+      return c.json({ error: "invalid json" }, 400);
+    }
     const isRetry = body.retry === true;
 
     // Guard: block concurrent triggers at any await boundary that follows.
@@ -71,7 +73,8 @@ export function mountBuildsRoutes(app: Hono, deps: BuildsRouteDeps): void {
         const prevRun = await safirClient.getBuildBriefRun(briefId);
         if (prevRun.id) await safirClient.abandonRun(prevRun.id as string);
       } catch (err) {
-        // Best-effort: a SafirHttpError (e.g. run already terminal) is expected and silent.
+        // Best-effort: SafirHttpError is expected and silent (e.g. run already terminal, or 404
+        // if the brief has no run yet — both allow the retry to proceed via createRunFromBuildBrief).
         // Unexpected failures (network, 5xx) are logged so they're visible in operator logs.
         if (!(err instanceof SafirHttpError)) {
           console.error(`kbbl: abandonRun for brief ${briefId} failed:`, err);

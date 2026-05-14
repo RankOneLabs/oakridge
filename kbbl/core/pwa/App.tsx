@@ -817,6 +817,32 @@ function SessionListView({
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    const tick = () => {
+      void (async () => {
+        try {
+          const res = await fetch("/safir/build-briefs?status=pending_approval");
+          if (!res.ok || cancelled) return;
+          const data = (await res.json()) as Array<{ id: string; goal: string | null; status: string }>;
+          if (cancelled) return;
+          setPendingBriefs(data);
+        } catch (err) { console.error("fetch pending briefs failed:", err); }
+      })();
+      void (async () => {
+        try {
+          const res = await fetch("/safir/plans?status=pending_approval");
+          if (!res.ok || cancelled) return;
+          const data = (await res.json()) as Array<{ id: string; summary: string | null; status: string }>;
+          if (cancelled) return;
+          setPendingPlans(data);
+        } catch (err) { console.error("fetch pending plans failed:", err); }
+      })();
+    };
+    const id = setInterval(tick, 30_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+
+  useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.size === 0) return;
     const wd = params.get("workdir");

@@ -93,6 +93,9 @@ async def _run(args: argparse.Namespace) -> int:
     if args.brief_id is not None and getattr(args, "auto_approve", False):
         print("error: --from-brief and --auto-approve are mutually exclusive", file=sys.stderr)
         return 1
+    if args.brief_id is not None and args.dry_run:
+        print("error: --from-brief and --dry-run are mutually exclusive", file=sys.stderr)
+        return 1
 
     try:
         safir = SafirClient(
