@@ -35,13 +35,13 @@ export function useListItemDelete(target: ArtifactTarget): ListItemDeleteResult 
     // Determine sub-keys: e.g. for decisions_made it's [".decision", ".rationale"]
     const subKeys = getSubKeys(field, index, atomMap);
 
-    // Delete the target index atoms
+    // Delete the target index atoms (empty string = tombstone per atom-edit API)
     for (const sub of subKeys) {
       const anchor = `${field}[${index}]${sub}`;
       await post(baseUrl, {
         anchor,
         prev_value: atomMap[anchor] ?? null,
-        new_value: null,
+        new_value: "",
         edited_by: "operator",
       });
     }
@@ -68,11 +68,12 @@ export function useListItemDelete(target: ArtifactTarget): ListItemDeleteResult 
       for (const sub of lastSubKeys) {
         const anchor = `${field}[${len - 1}]${sub}`;
         if (index < len - 1) {
-          // Already shifted — delete the last (now redundant) copy
+          // Already shifted — delete the last (now redundant) copy.
+          // prev_value must reference the last slot's current value, not the deleted index.
           await post(baseUrl, {
             anchor,
-            prev_value: atomMap[`${field}[${index}]${sub}`] ?? null,
-            new_value: null,
+            prev_value: atomMap[anchor] ?? null,
+            new_value: "",
             edited_by: "operator",
           });
         }
@@ -98,9 +99,13 @@ function escapeRegex(s: string): string {
 }
 
 async function post(url: string, body: Record<string, unknown>): Promise<void> {
-  await fetch(url, {
+  const res = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`atom edit failed (HTTP ${res.status}): ${text}`);
+  }
 }

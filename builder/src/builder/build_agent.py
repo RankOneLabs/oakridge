@@ -30,14 +30,14 @@ clearly missing.
 You DO NOT make architectural decisions. If something is unclear or
 conflicting, file a safir backlog task by calling Bash with:
 
-  safir add <project_id> "<title>" --notes "<details>" --parent {current_task_id}
+  safir add <project_id> "<title>" --notes "<details>"{parent_flag}
 
 and continue with the most reasonable interpretation. Do not pause.
 
 You operate in the working directory: {workdir}
 
 When done with the work:
-1. Create a branch named exactly: safir-build/{current_task_id}-{run_short_id}
+1. Create a branch named exactly: safir-build/{task_ref}-{run_short_id}
 2. Stage your changes (`git add <specific paths>` — never `git add -A`).
 3. Commit. Push the branch (`git push -u origin <branch>`).
 4. Open a PR with `gh pr create --base main --title "<title>" --body "<body>"`.
@@ -119,7 +119,8 @@ async def run_build_agent(
     )
     system_prompt = BUILD_AGENT_SYSTEM_PROMPT.format(
         workdir=str(workdir),
-        current_task_id=current_task_id if current_task_id is not None else "(none)",
+        parent_flag=f" --parent {current_task_id}" if current_task_id is not None else "",
+        task_ref=str(current_task_id) if current_task_id is not None else "brief",
         run_short_id=run_short_id,
     )
     config: AgentConfig[BuildAgentOutput] = AgentConfig(

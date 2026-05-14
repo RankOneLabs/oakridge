@@ -3,16 +3,16 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { Hono } from "hono";
-import type { SafirClient } from "../../safir/client";
+import { SafirHttpError, type SafirClient } from "../../safir/client";
 import { artifactEventBus } from "../../stream/artifact-event-bus";
 
 const execFileP = promisify(execFile);
+const TAIL_BYTES = 4 * 1024;
 
 interface BuildRecord {
   briefId: string;
   runId: string;
   pid: number;
-  stderrChunks: Buffer[];
 }
 
 const activeBuilds = new Map<string, BuildRecord>();
@@ -28,14 +28,29 @@ export function mountBuildsRoutes(app: Hono, deps: BuildsRouteDeps): void {
     const briefId = c.req.param("id").trim();
     if (!briefId) return c.json({ error: "briefId required" }, 400);
 
+    // Guard: block concurrent triggers at any await boundary that follows.
+    // Placeholder is replaced with full record after spawn succeeds.
+    if (activeBuilds.has(briefId)) {
+      return c.json({ error: "already_running", message: "a build is already in progress for this brief" }, 409);
+    }
+    activeBuilds.set(briefId, { briefId, runId: "", pid: 0 });
+
     // (a) assert brief is approved
     let brief: Record<string, unknown>;
     try {
       brief = await safirClient.getBuildBrief(briefId);
-    } catch {
-      return c.json({ error: "build brief not found" }, 404);
+    } catch (err) {
+      activeBuilds.delete(briefId);
+      if (err instanceof SafirHttpError) {
+        return c.json(
+          { error: `safir HTTP ${err.status}`, status: err.status, body: err.body },
+          err.status as Parameters<typeof c.json>[1],
+        );
+      }
+      return c.json({ error: "safir unreachable" }, 502);
     }
     if (brief.status !== "approved") {
+      activeBuilds.delete(briefId);
       return c.json({ error: "not_approved", message: "brief must be approved before triggering a build" }, 409);
     }
 
@@ -43,12 +58,20 @@ export function mountBuildsRoutes(app: Hono, deps: BuildsRouteDeps): void {
     let runData: Record<string, unknown>;
     try {
       runData = await safirClient.getBuildBriefRun(briefId);
-    } catch {
-      return c.json({ error: "run not found for brief" }, 404);
+    } catch (err) {
+      activeBuilds.delete(briefId);
+      if (err instanceof SafirHttpError) {
+        return c.json(
+          { error: `safir HTTP ${err.status}`, status: err.status, body: err.body },
+          err.status as Parameters<typeof c.json>[1],
+        );
+      }
+      return c.json({ error: "safir unreachable" }, 502);
     }
     const runId = runData.id as string;
     const phases = (runData.phases as Array<{ phase_index: number }>) ?? [];
     if (phases.some((p) => p.phase_index === 1)) {
+      activeBuilds.delete(briefId);
       return c.json({ error: "already_started", message: "a build phase already exists for this run" }, 409);
     }
 
@@ -67,6 +90,7 @@ export function mountBuildsRoutes(app: Hono, deps: BuildsRouteDeps): void {
       // leave repoPath null; will 400 below
     }
     if (!repoPath) {
+      activeBuilds.delete(briefId);
       return c.json(
         {
           error: "repo_path_unset",
@@ -76,14 +100,16 @@ export function mountBuildsRoutes(app: Hono, deps: BuildsRouteDeps): void {
       );
     }
 
-    // (d) create worktree
+    // (d) create worktree — use --detach so we don't try to check out the same
+    // branch twice when the repo already has main checked out.
     const runShortId = runId.slice(0, 8);
     const worktreesDir = join(repoPath, ".kbbl-worktrees");
     const worktreePath = join(worktreesDir, runShortId);
     await mkdir(worktreesDir, { recursive: true });
     try {
-      await execFileP("git", ["-C", repoPath, "worktree", "add", worktreePath, "main"]);
+      await execFileP("git", ["-C", repoPath, "worktree", "add", "--detach", worktreePath, "main"]);
     } catch (err) {
+      activeBuilds.delete(briefId);
       const stderr = err instanceof Error ? err.message : String(err);
       return c.json({ error: "worktree_failed", detail: stderr }, 500);
     }
@@ -97,24 +123,41 @@ export function mountBuildsRoutes(app: Hono, deps: BuildsRouteDeps): void {
       stdio: ["ignore", "inherit", "pipe"],
     });
 
+    // Accumulate a rolling TAIL_BYTES window of stderr to bound memory usage.
     const stderrChunks: Buffer[] = [];
-    child.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+    let stderrBytes = 0;
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderrChunks.push(chunk);
+      stderrBytes += chunk.length;
+      while (stderrBytes > TAIL_BYTES && stderrChunks.length > 1) {
+        const dropped = stderrChunks.shift()!;
+        stderrBytes -= dropped.length;
+      }
+    });
 
     const pid = child.pid ?? 0;
-    activeBuilds.set(briefId, { briefId, runId, pid, stderrChunks });
+    activeBuilds.set(briefId, { briefId, runId, pid });
 
     // Emit build.started immediately
     artifactEventBus.publish("build_brief", briefId, "build.started", { brief_id: briefId, run_id: runId, pid }, new Date().toISOString());
 
+    // Handle spawn failures (e.g. safir-build not in PATH)
+    child.on("error", (spawnErr) => {
+      activeBuilds.delete(briefId);
+      const stderrTail = Buffer.concat(stderrChunks).subarray(-TAIL_BYTES).toString("utf8");
+      artifactEventBus.publish("build_brief", briefId, "build.failed", {
+        brief_id: briefId,
+        run_id: runId,
+        code: -1,
+        stderr_tail: stderrTail,
+        error: spawnErr.message,
+      }, new Date().toISOString());
+    });
+
     // (g) on subprocess exit, emit SSE
     child.on("exit", (code) => {
       activeBuilds.delete(briefId);
-      const stderrBuf = Buffer.concat(stderrChunks);
-      const stderrFull = stderrBuf.toString("utf8");
-      const TAIL_BYTES = 4 * 1024;
-      const stderrTail = stderrBuf.length > TAIL_BYTES
-        ? stderrFull.slice(-TAIL_BYTES)
-        : stderrFull;
+      const stderrTail = Buffer.concat(stderrChunks).subarray(-TAIL_BYTES).toString("utf8");
 
       const ts = new Date().toISOString();
       if (code === 0) {

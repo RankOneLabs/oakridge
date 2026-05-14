@@ -94,11 +94,20 @@ export function BuildBriefRenderer({
     return indices.length > 0 ? Math.max(...indices) + 1 : 0;
   };
 
-  const nSubgoals = listLength("active_subgoals");
-  const nDecisions = listLength("decisions_made");
-  const nRejected = listLength("approaches_rejected");
-  const nFiles = listLength("files_in_scope");
-  const nQuestions = listLength("open_questions");
+  // Bump length by one when editingAnchor refers to a not-yet-persisted new item.
+  const extendedLength = (prefix: string) => {
+    const base = listLength(prefix);
+    if (!editingAnchor || !editingAnchor.startsWith(`${prefix}[`)) return base;
+    const m = editingAnchor.match(/\[(\d+)\]/);
+    if (!m) return base;
+    return Math.max(base, parseInt(m[1], 10) + 1);
+  };
+
+  const nSubgoals = extendedLength("active_subgoals");
+  const nDecisions = extendedLength("decisions_made");
+  const nRejected = extendedLength("approaches_rejected");
+  const nFiles = extendedLength("files_in_scope");
+  const nQuestions = extendedLength("open_questions");
 
   return (
     <div className="brief-renderer">

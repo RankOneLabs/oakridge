@@ -4,12 +4,28 @@ from __future__ import annotations
 from typing import Any
 
 
+def _safe_indices(atom_map: dict[str, str], prefix: str) -> list[int]:
+    """Return the distinct integer indices found in atom_map keys starting with prefix[."""
+    out: list[int] = []
+    bracket = f"{prefix}["
+    for k in atom_map:
+        if k.startswith(bracket):
+            try:
+                idx = int(k[len(bracket):].split("]")[0])
+                if idx >= 0:
+                    out.append(idx)
+            except (ValueError, IndexError):
+                pass
+    return out
+
+
 def render_from_atom_map(atom_map: dict[str, str], canonical: dict[str, Any]) -> str:
     """Build handoff markdown from a live atom_map + canonical handoff_docs row.
 
     The atom_map overrides individual field values; the canonical row provides
     structural information (list lengths) so we can reconstruct list fields even
-    when atom_map entries are partial.
+    when atom_map entries are partial. Empty-string atoms are treated as
+    tombstones (the item was deleted) and omitted from the output.
     """
     def av(anchor: str, fallback: str = "") -> str:
         return atom_map.get(anchor, fallback)
@@ -17,73 +33,87 @@ def render_from_atom_map(atom_map: dict[str, str], canonical: dict[str, Any]) ->
     goal = av("goal", canonical.get("goal") or "")
     next_action = av("next_action", canonical.get("next_action") or "")
 
-    canon_subgoals: list[str] = canonical.get("active_subgoals") or []
-    n_subgoals = max(len(canon_subgoals), max(
-        (int(k[len("active_subgoals["):-1]) + 1)
-        for k in atom_map if k.startswith("active_subgoals[") and k.endswith("]")
-    ) if any(k.startswith("active_subgoals[") for k in atom_map) else 0)
-    active_subgoals = [
-        av(f"active_subgoals[{i}]", canon_subgoals[i] if i < len(canon_subgoals) else "")
-        for i in range(n_subgoals)
-    ]
+    raw_subgoals = canonical.get("active_subgoals")
+    canon_subgoals: list[str] = (raw_subgoals if isinstance(raw_subgoals, list) else []) or []
+    atom_sg_indices = _safe_indices(atom_map, "active_subgoals")
+    n_subgoals = max(
+        len(canon_subgoals),
+        (max(atom_sg_indices) + 1) if atom_sg_indices else 0,
+    )
+    active_subgoals: list[str] = []
+    for i in range(n_subgoals):
+        fallback = canon_subgoals[i] if i < len(canon_subgoals) else ""
+        val = av(f"active_subgoals[{i}]", fallback)
+        if val:
+            active_subgoals.append(val)
 
-    canon_decisions: list[dict[str, str]] = canonical.get("decisions_made") or []
-    n_decisions = max(len(canon_decisions), max(
-        (int(k.split("[")[1].split("]")[0]) + 1)
-        for k in atom_map if k.startswith("decisions_made[")
-    ) if any(k.startswith("decisions_made[") for k in atom_map) else 0)
-    decisions_made = [
-        {
-            "decision": av(
-                f"decisions_made[{i}].decision",
-                canon_decisions[i]["decision"] if i < len(canon_decisions) else "",
-            ),
-            "rationale": av(
-                f"decisions_made[{i}].rationale",
-                canon_decisions[i]["rationale"] if i < len(canon_decisions) else "",
-            ),
-        }
-        for i in range(n_decisions)
-    ]
+    raw_decisions = canonical.get("decisions_made")
+    canon_decisions: list[dict[str, str]] = (
+        raw_decisions if isinstance(raw_decisions, list) else []
+    ) or []
+    atom_dec_indices = _safe_indices(atom_map, "decisions_made")
+    n_decisions = max(
+        len(canon_decisions),
+        (max(atom_dec_indices) + 1) if atom_dec_indices else 0,
+    )
+    decisions_made: list[dict[str, str]] = []
+    for i in range(n_decisions):
+        canon_d: dict[str, Any] = {}
+        if i < len(canon_decisions) and isinstance(canon_decisions[i], dict):
+            canon_d = canon_decisions[i]
+        decision = av(f"decisions_made[{i}].decision", canon_d.get("decision", ""))
+        if not decision:  # tombstoned
+            continue
+        rationale = av(f"decisions_made[{i}].rationale", canon_d.get("rationale", ""))
+        decisions_made.append({"decision": decision, "rationale": rationale})
 
-    canon_rejected: list[dict[str, str]] = canonical.get("approaches_rejected") or []
-    n_rejected = max(len(canon_rejected), max(
-        (int(k.split("[")[1].split("]")[0]) + 1)
-        for k in atom_map if k.startswith("approaches_rejected[")
-    ) if any(k.startswith("approaches_rejected[") for k in atom_map) else 0)
-    approaches_rejected = [
-        {
-            "approach": av(
-                f"approaches_rejected[{i}].approach",
-                canon_rejected[i]["approach"] if i < len(canon_rejected) else "",
-            ),
-            "reason": av(
-                f"approaches_rejected[{i}].reason",
-                canon_rejected[i]["reason"] if i < len(canon_rejected) else "",
-            ),
-        }
-        for i in range(n_rejected)
-    ]
+    raw_rejected = canonical.get("approaches_rejected")
+    canon_rejected: list[dict[str, str]] = (
+        raw_rejected if isinstance(raw_rejected, list) else []
+    ) or []
+    atom_rej_indices = _safe_indices(atom_map, "approaches_rejected")
+    n_rejected = max(
+        len(canon_rejected),
+        (max(atom_rej_indices) + 1) if atom_rej_indices else 0,
+    )
+    approaches_rejected: list[dict[str, str]] = []
+    for i in range(n_rejected):
+        canon_r: dict[str, Any] = {}
+        if i < len(canon_rejected) and isinstance(canon_rejected[i], dict):
+            canon_r = canon_rejected[i]
+        approach = av(f"approaches_rejected[{i}].approach", canon_r.get("approach", ""))
+        if not approach:  # tombstoned
+            continue
+        reason = av(f"approaches_rejected[{i}].reason", canon_r.get("reason", ""))
+        approaches_rejected.append({"approach": approach, "reason": reason})
 
-    canon_files: list[str] = canonical.get("files_in_scope") or []
-    n_files = max(len(canon_files), max(
-        (int(k[len("files_in_scope["):-1]) + 1)
-        for k in atom_map if k.startswith("files_in_scope[") and k.endswith("]")
-    ) if any(k.startswith("files_in_scope[") for k in atom_map) else 0)
-    files_in_scope = [
-        av(f"files_in_scope[{i}]", canon_files[i] if i < len(canon_files) else "")
-        for i in range(n_files)
-    ]
+    raw_files = canonical.get("files_in_scope")
+    canon_files: list[str] = (raw_files if isinstance(raw_files, list) else []) or []
+    atom_file_indices = _safe_indices(atom_map, "files_in_scope")
+    n_files = max(
+        len(canon_files),
+        (max(atom_file_indices) + 1) if atom_file_indices else 0,
+    )
+    files_in_scope: list[str] = []
+    for i in range(n_files):
+        fallback = canon_files[i] if i < len(canon_files) else ""
+        val = av(f"files_in_scope[{i}]", fallback)
+        if val:
+            files_in_scope.append(val)
 
-    canon_oq: list[str] = canonical.get("open_questions") or []
-    n_oq = max(len(canon_oq), max(
-        (int(k[len("open_questions["):-1]) + 1)
-        for k in atom_map if k.startswith("open_questions[") and k.endswith("]")
-    ) if any(k.startswith("open_questions[") for k in atom_map) else 0)
-    open_questions = [
-        av(f"open_questions[{i}]", canon_oq[i] if i < len(canon_oq) else "")
-        for i in range(n_oq)
-    ]
+    raw_oq = canonical.get("open_questions")
+    canon_oq: list[str] = (raw_oq if isinstance(raw_oq, list) else []) or []
+    atom_oq_indices = _safe_indices(atom_map, "open_questions")
+    n_oq = max(
+        len(canon_oq),
+        (max(atom_oq_indices) + 1) if atom_oq_indices else 0,
+    )
+    open_questions: list[str] = []
+    for i in range(n_oq):
+        fallback = canon_oq[i] if i < len(canon_oq) else ""
+        val = av(f"open_questions[{i}]", fallback)
+        if val:
+            open_questions.append(val)
 
     return render_handoff_markdown({
         "title": "Build brief",

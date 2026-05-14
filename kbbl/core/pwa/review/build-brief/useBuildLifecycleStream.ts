@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 export type BuildLifecycleStatus =
   | "idle"
@@ -19,17 +19,26 @@ export function useBuildLifecycleStream(
   const [status, setStatus] = useState<BuildLifecycleStatus>("idle");
   const [stderrTail, setStderrTail] = useState<string | null>(null);
 
+  // Keep a stable ref to the latest onCompleted so the effect closure never
+  // goes stale without needing to re-run the effect.
+  const onCompletedRef = useRef(onCompleted);
+  useEffect(() => { onCompletedRef.current = onCompleted; }, [onCompleted]);
+
   useEffect(() => {
     let cancelled = false;
+    // Track the active EventSource and any pending reconnect timer so cleanup
+    // closes the right connection.
+    const esRef = { current: null as EventSource | null };
+    const timerRef = { current: null as ReturnType<typeof setTimeout> | null };
 
     function connect() {
-      // Reuse the /safir-stream channel — kbbl emits build.* events on the
-      // same per-artifact SSE stream for the build_brief target.
       const url = new URL("/safir-stream", window.location.href);
       url.searchParams.set("target_type", "build_brief");
       url.searchParams.set("target_id", briefId);
 
       const es = new EventSource(url.toString());
+      esRef.current = es;
+
       es.addEventListener("message", (e) => {
         if (cancelled) return;
         let parsed: { event: string; data: Record<string, unknown> };
@@ -45,7 +54,7 @@ export function useBuildLifecycleStream(
         } else if (evt === "build.completed") {
           setStatus("completed");
           setStderrTail(null);
-          if (!cancelled) onCompleted?.();
+          if (!cancelled) onCompletedRef.current?.();
         } else if (evt === "build.failed") {
           setStatus("failed");
           setStderrTail(typeof data.stderr_tail === "string" ? data.stderr_tail : null);
@@ -53,17 +62,22 @@ export function useBuildLifecycleStream(
       });
       es.addEventListener("error", () => {
         es.close();
-        if (!cancelled) setTimeout(connect, 2000);
+        esRef.current = null;
+        if (!cancelled) {
+          timerRef.current = setTimeout(() => {
+            timerRef.current = null;
+            if (!cancelled) connect();
+          }, 2000);
+        }
       });
-
-      return es;
     }
 
-    const es = connect();
+    connect();
 
     return () => {
       cancelled = true;
-      es?.close();
+      if (timerRef.current !== null) clearTimeout(timerRef.current);
+      esRef.current?.close();
     };
   }, [briefId]);
 

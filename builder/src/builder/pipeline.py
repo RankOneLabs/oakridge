@@ -116,6 +116,9 @@ async def run_build_only_pipeline(
     if any(p.get("phase_index") == 1 for p in phases):
         raise BuildAlreadyStartedError(run_id)
 
+    raw_task_id = run_data.get("task_id")
+    current_task_id: int | None = int(raw_task_id) if raw_task_id is not None else None
+
     if permission_profile_id_override is not None:
         permission_rules: dict[str, Any] = await _resolve_permission_rules(
             safir_client,
@@ -135,14 +138,14 @@ async def run_build_only_pipeline(
             handoff_raw_markdown=handoff_raw_markdown,
             workdir=workdir,
             permission_rules=permission_rules,
-            current_task_id=None,
+            current_task_id=current_task_id,
             run_short_id=run_short_id,
             model="claude-sonnet-4-6",
         )
 
     config = PipelineConfig(
         name="build-only",
-        steps=[Step(name="build_agent", fn=build_agent_step)],
+        steps=[] if dry_run else [Step(name="build_agent", fn=build_agent_step)],
         tracer=StdoutTracer(color=False),
         feedback=NoOpFeedback(),
         is_err=lambda r: isinstance(r, dict) and "error" in r,
@@ -166,11 +169,13 @@ async def run_build_only_pipeline(
     assert phase1 is not None
 
     if result.short_circuited or dry_run:
+        end_reason = "failed" if result.short_circuited else "completed"
         await safir_client.update_phase(
             phase1["id"],
-            {"is_terminal": True, "ended_at": now(), "end_reason": "failed" if result.short_circuited else "completed"},
+            {"is_terminal": True, "ended_at": now(), "end_reason": end_reason},
         )
-        await safir_client.update_run(run_id, {"status": "failed" if result.short_circuited else "completed"})
+        run_status = "failed" if result.short_circuited else "completed"
+        await safir_client.update_run(run_id, {"status": run_status})
         return result
 
     debrief_out: BuildAgentOutput = result.step_outputs["build_agent"]

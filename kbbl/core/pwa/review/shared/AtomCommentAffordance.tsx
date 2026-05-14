@@ -4,7 +4,7 @@ interface Props {
   onNewThread: () => void;
 }
 
-export function AtomCommentAffordance({ anchor: _anchor, threadCount, onNewThread }: Props) {
+export function AtomCommentAffordance({ anchor, threadCount, onNewThread }: Props) {
   return (
     <div className="atom-affordance">
       {threadCount > 0 && (
@@ -16,6 +16,7 @@ export function AtomCommentAffordance({ anchor: _anchor, threadCount, onNewThrea
         type="button"
         className="atom-new-thread"
         title="New thread on this atom"
+        aria-label={`Start new thread for ${anchor}`}
         onClick={onNewThread}
       >
         +

@@ -152,21 +152,6 @@ export function DebriefOverlay({ debrief, atomMap }: Props) {
               </ul>
             </div>
           )}
-          {(unanchoredDeviations.length > 0 || unanchoredNotDelivered.length > 0) && (
-            <div className="debrief-detail-section debrief-unanchored">
-              <h4>Unanchored deviations</h4>
-              {unanchoredDeviations.map((d, i) => (
-                <div key={i} className="debrief-badge debrief-badge--deviation">
-                  deviation: {d.instruction} → {d.actual}
-                </div>
-              ))}
-              {unanchoredNotDelivered.map((nd, i) => (
-                <div key={i} className="debrief-badge debrief-badge--not-delivered">
-                  not delivered: {nd.item}
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       )}
     </div>

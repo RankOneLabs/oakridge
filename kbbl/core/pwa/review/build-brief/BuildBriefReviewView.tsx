@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { BuildBriefRenderer } from "./BuildBriefRenderer";
 import { AtomEditor } from "./AtomEditor";
 import { useListItemDelete } from "./useListItemDelete";
@@ -71,6 +72,11 @@ export function BuildBriefReviewView({ briefId, onBack }: Props) {
 
   const status = stream.status ?? brief?.status ?? null;
 
+  // Pipe directEdit CAS/server errors into the shared error banner
+  useEffect(() => {
+    if (directEdit.error) setError(directEdit.error);
+  }, [directEdit.error]);
+
   async function loadBrief() {
     try {
       const [briefRes, histRes, runRes] = await Promise.all([
@@ -109,13 +115,19 @@ export function BuildBriefReviewView({ briefId, onBack }: Props) {
   );
 
   const handleAddListItem = useCallback(
-    async (field: string) => {
-      const prefix = field;
-      const n = Object.keys(stream.atomMap).filter(
-        (k) => k.startsWith(`${prefix}[`) && k.match(/\[\d+\]$/)
-      ).length;
-      const newAnchor = `${prefix}[${n}]`;
-      setEditingAnchor(newAnchor);
+    (field: string) => {
+      // Compute the next index using the same max-index logic as BuildBriefRenderer
+      const indices = Object.keys(stream.atomMap)
+        .filter((k) => k.startsWith(`${field}[`))
+        .map((k) => { const m = k.match(/\[(\d+)\]/); return m ? parseInt(m[1], 10) : -1; })
+        .filter((n) => n >= 0);
+      const n = indices.length > 0 ? Math.max(...indices) + 1 : 0;
+      // Compound fields: set editing anchor on the first sub-field so AtomRow matches
+      const firstSub =
+        field === "decisions_made" ? ".decision"
+        : field === "approaches_rejected" ? ".approach"
+        : "";
+      setEditingAnchor(`${field}[${n}]${firstSub}`);
     },
     [stream.atomMap],
   );
@@ -204,6 +216,7 @@ export function BuildBriefReviewView({ briefId, onBack }: Props) {
         target_type: "build_brief",
         target_id: briefId,
         anchor,
+        initial_message: { author: "operator", body: "Operator opened thread" },
       }),
     });
     if (res.ok) {
@@ -353,7 +366,6 @@ export function BuildBriefReviewView({ briefId, onBack }: Props) {
 }
 
 // Inline modals (reuse plan review patterns)
-import { createPortal } from "react-dom";
 
 function ApproveModal({
   threads,
