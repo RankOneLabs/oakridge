@@ -315,7 +315,7 @@ async def run_build_pipeline(
         return result
 
     if not auto_approve:
-        # Brief is pending_approval; run stays 'running' until the build agent picks it up.
+        await safir_client.update_run(run_id, {"status": "awaiting_review"})
         return result
 
     assert phase1 is not None

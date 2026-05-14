@@ -266,7 +266,9 @@ export function mountSafirWebhookRoutes(
         targetType = "plan";
         targetId = typeof data.plan_id === "string" ? data.plan_id : null;
       } else {
-        targetType = typeof data.target_type === "string" ? data.target_type : null;
+        const knownTargetTypes = new Set(["plan", "build_brief"]);
+        const rawType = data.target_type;
+        targetType = typeof rawType === "string" && knownTargetTypes.has(rawType) ? rawType : null;
         targetId = typeof data.target_id === "string" ? data.target_id : null;
       }
 

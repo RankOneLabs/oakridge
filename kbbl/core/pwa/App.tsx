@@ -802,7 +802,7 @@ function SessionListView({
         const data = (await res.json()) as Array<{ id: string; goal: string | null; status: string }>;
         if (cancelled) return;
         setPendingBriefs(data);
-      } catch {}
+      } catch (err) { console.error("fetch pending briefs failed:", err); }
     })();
     void (async () => {
       try {
@@ -811,7 +811,7 @@ function SessionListView({
         const data = (await res.json()) as Array<{ id: string; summary: string | null; status: string }>;
         if (cancelled) return;
         setPendingPlans(data);
-      } catch {}
+      } catch (err) { console.error("fetch pending plans failed:", err); }
     })();
     return () => { cancelled = true; };
   }, []);

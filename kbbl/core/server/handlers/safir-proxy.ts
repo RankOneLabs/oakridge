@@ -380,7 +380,13 @@ export function mountSafirProxyRoutes(
     const id = c.req.param("id").trim();
     if (!id) return c.json({ error: "id required" }, 400);
     let body: Record<string, unknown> = {};
-    try { body = await c.req.json() as Record<string, unknown>; } catch { return c.json({ error: "invalid json" }, 400); }
+    try {
+      const parsed = await c.req.json() as unknown;
+      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return c.json({ error: "json body must be an object" }, 400);
+      }
+      body = parsed as Record<string, unknown>;
+    } catch { return c.json({ error: "invalid json" }, 400); }
     try {
       const run = await safirClient.createRunFromBuildBrief(id, body);
       return c.json(run, 201);
