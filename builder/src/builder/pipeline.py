@@ -210,6 +210,7 @@ async def run_build_pipeline(
     safir_client: SafirClient,
     permission_profile_id_override: int | None = None,
     dry_run: bool = False,
+    auto_approve: bool = False,
 ) -> PipelineResult:
     task = await safir_client.get_task(child_task_id)
     brief = task.get("notes") or ""
@@ -255,8 +256,10 @@ async def run_build_pipeline(
             model=models[1],
         )
 
+    # planner2-only when dry_run OR when not auto_approve (default: stop for review)
+    planner2_only = dry_run or not auto_approve
     steps: list[Step] = [Step(name="planner2", fn=planner2_step)]
-    if not dry_run:
+    if not planner2_only:
         steps.append(Step(name="build_agent", fn=build_agent_step))
 
     config = PipelineConfig(
@@ -272,7 +275,7 @@ async def run_build_pipeline(
 
     try:
         phase0 = await safir_client.create_phase(run_id, {"target_model": models[0]})
-        if not dry_run:
+        if not planner2_only:
             phase1 = await safir_client.create_phase(run_id, {"target_model": models[1]})
         permission_rules = await _resolve_permission_rules(safir_client, run)
         result = await run_pipeline(config, input=child_task_id)
@@ -308,6 +311,10 @@ async def run_build_pipeline(
 
     if dry_run:
         await safir_client.update_run(run_id, {"status": "completed"})
+        return result
+
+    if not auto_approve:
+        # Brief is pending_approval; run stays 'running' until the build agent picks it up.
         return result
 
     assert phase1 is not None
