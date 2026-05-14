@@ -775,6 +775,27 @@ function SessionListView({
     } catch {}
   }, [modelInput]);
 
+  const fetchPendingArtifacts = (guard: () => boolean) => {
+    void (async () => {
+      try {
+        const res = await fetch("/safir/build-briefs?status=pending_approval");
+        if (!res.ok || guard()) return;
+        const data = (await res.json()) as Array<{ id: string; goal: string | null; status: string }>;
+        if (guard()) return;
+        setPendingBriefs(data);
+      } catch (err) { console.error("fetch pending briefs failed:", err); }
+    })();
+    void (async () => {
+      try {
+        const res = await fetch("/safir/plans?status=pending_approval");
+        if (!res.ok || guard()) return;
+        const data = (await res.json()) as Array<{ id: string; summary: string | null; status: string }>;
+        if (guard()) return;
+        setPendingPlans(data);
+      } catch (err) { console.error("fetch pending plans failed:", err); }
+    })();
+  };
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -795,50 +816,13 @@ function SessionListView({
         setProfiles(data);
       } catch {}
     })();
-    void (async () => {
-      try {
-        const res = await fetch("/safir/build-briefs?status=pending_approval");
-        if (!res.ok || cancelled) return;
-        const data = (await res.json()) as Array<{ id: string; goal: string | null; status: string }>;
-        if (cancelled) return;
-        setPendingBriefs(data);
-      } catch (err) { console.error("fetch pending briefs failed:", err); }
-    })();
-    void (async () => {
-      try {
-        const res = await fetch("/safir/plans?status=pending_approval");
-        if (!res.ok || cancelled) return;
-        const data = (await res.json()) as Array<{ id: string; summary: string | null; status: string }>;
-        if (cancelled) return;
-        setPendingPlans(data);
-      } catch (err) { console.error("fetch pending plans failed:", err); }
-    })();
+    fetchPendingArtifacts(() => cancelled);
     return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
     let cancelled = false;
-    const tick = () => {
-      void (async () => {
-        try {
-          const res = await fetch("/safir/build-briefs?status=pending_approval");
-          if (!res.ok || cancelled) return;
-          const data = (await res.json()) as Array<{ id: string; goal: string | null; status: string }>;
-          if (cancelled) return;
-          setPendingBriefs(data);
-        } catch (err) { console.error("fetch pending briefs failed:", err); }
-      })();
-      void (async () => {
-        try {
-          const res = await fetch("/safir/plans?status=pending_approval");
-          if (!res.ok || cancelled) return;
-          const data = (await res.json()) as Array<{ id: string; summary: string | null; status: string }>;
-          if (cancelled) return;
-          setPendingPlans(data);
-        } catch (err) { console.error("fetch pending plans failed:", err); }
-      })();
-    };
-    const id = setInterval(tick, 30_000);
+    const id = setInterval(() => fetchPendingArtifacts(() => cancelled), 30_000);
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 

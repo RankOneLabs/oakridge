@@ -111,7 +111,7 @@ async function loadDependencyBriefsNotes(
     console.error(
       JSON.stringify({ kbbl: "review_responder_deps_load_error", error: msg }),
     );
-    return [];
+    return null;
   }
 }
 

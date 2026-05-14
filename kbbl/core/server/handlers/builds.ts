@@ -78,6 +78,8 @@ export function mountBuildsRoutes(app: Hono, deps: BuildsRouteDeps): void {
         // Unexpected failures (network, 5xx) are logged so they're visible in operator logs.
         if (!(err instanceof SafirHttpError)) {
           console.error(`kbbl: abandonRun for brief ${briefId} failed:`, err);
+          activeBuilds.delete(briefId);
+          return c.json({ error: "safir unreachable" }, 502);
         }
       }
 
