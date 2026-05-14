@@ -114,3 +114,113 @@ async def test_run_pipeline_raises_returns_2(tmp_path) -> None:
         args = _build_parser().parse_args(["42", "--workdir", str(tmp_path)])
         code = await _run(args)
     assert code == 2
+
+
+def test_parser_auto_approve_flag() -> None:
+    args = _build_parser().parse_args(["42", "--auto-approve"])
+    assert args.auto_approve is True
+    assert args.dry_run is False
+
+
+def test_parser_default_no_auto_approve() -> None:
+    args = _build_parser().parse_args(["42"])
+    assert args.auto_approve is False
+
+
+@pytest.mark.asyncio
+async def test_default_no_flag_passes_auto_approve_false(tmp_path, capsys) -> None:
+    """Default (no --auto-approve) passes auto_approve=False; next-step message printed."""
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+
+    p2_result = MagicMock()
+    p2_result.handoff_id = "brief-123"
+    mock_result = _make_pipeline_result()
+    mock_result.step_outputs = {"planner2": p2_result}
+
+    with (
+        patch("builder.cli.run_build_pipeline", new=AsyncMock(return_value=mock_result)) as mock_pipeline,
+        patch("builder.cli.SafirClient") as mock_sc,
+    ):
+        instance = MagicMock()
+        instance.aclose = AsyncMock()
+        mock_sc.return_value = instance
+
+        args = _build_parser().parse_args(["42", "--workdir", str(tmp_path)])
+        code = await _run(args)
+
+    assert code == 0
+    _, kwargs = mock_pipeline.call_args
+    assert kwargs["auto_approve"] is False
+    assert kwargs["dry_run"] is False
+    captured = capsys.readouterr()
+    assert "Brief ready for review: brief-123" in captured.out
+
+
+@pytest.mark.asyncio
+async def test_auto_approve_flag_passes_auto_approve_true(tmp_path) -> None:
+    """--auto-approve passes auto_approve=True to pipeline."""
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+
+    mock_result = _make_pipeline_result()
+    mock_result.step_outputs = {}
+
+    with (
+        patch("builder.cli.run_build_pipeline", new=AsyncMock(return_value=mock_result)) as mock_pipeline,
+        patch("builder.cli.SafirClient") as mock_sc,
+    ):
+        instance = MagicMock()
+        instance.aclose = AsyncMock()
+        mock_sc.return_value = instance
+
+        args = _build_parser().parse_args(["42", "--workdir", str(tmp_path), "--auto-approve"])
+        code = await _run(args)
+
+    assert code == 0
+    _, kwargs = mock_pipeline.call_args
+    assert kwargs["auto_approve"] is True
+
+
+@pytest.mark.asyncio
+async def test_dry_run_unchanged_behavior(tmp_path) -> None:
+    """--dry-run still works and does not trigger next-step message."""
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+
+    mock_result = _make_pipeline_result()
+    mock_result.step_outputs = {}
+
+    with (
+        patch("builder.cli.run_build_pipeline", new=AsyncMock(return_value=mock_result)) as mock_pipeline,
+        patch("builder.cli.SafirClient") as mock_sc,
+    ):
+        instance = MagicMock()
+        instance.aclose = AsyncMock()
+        mock_sc.return_value = instance
+
+        args = _build_parser().parse_args(["42", "--workdir", str(tmp_path), "--dry-run"])
+        code = await _run(args)
+
+    assert code == 0
+    _, kwargs = mock_pipeline.call_args
+    assert kwargs["dry_run"] is True
+
+
+@pytest.mark.asyncio
+async def test_from_brief_and_auto_approve_is_error(tmp_path) -> None:
+    """--from-brief X --auto-approve exits non-zero with a clear error."""
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+
+    with patch("builder.cli.SafirClient") as mock_sc:
+        instance = MagicMock()
+        instance.aclose = AsyncMock()
+        mock_sc.return_value = instance
+
+        args = _build_parser().parse_args(
+            ["--from-brief", "brief-abc", "--workdir", str(tmp_path), "--auto-approve"]
+        )
+        code = await _run(args)
+
+    assert code == 1
