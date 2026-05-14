@@ -106,6 +106,13 @@ export interface SafirClient {
   postThreadMessage(threadId: string, body: { body: string; author: string }): Promise<Record<string, unknown>>;
   pingThread(threadId: string): Promise<unknown>;
   updateThreadStatus(threadId: string, body: { status: string }): Promise<Record<string, unknown>>;
+  // --- cohort 3: build brief surface ---
+  listBuildBriefs(status?: string): Promise<Record<string, unknown>[]>;
+  getBuildBrief(id: string): Promise<Record<string, unknown>>;
+  getBuildBriefRun(id: string): Promise<Record<string, unknown>>;
+  updateBuildBriefStatus(id: string, body: Record<string, unknown>): Promise<Record<string, unknown>>;
+  reopenBuildBrief(id: string): Promise<Record<string, unknown>>;
+  getProjectRepoPath(projectId: string): Promise<{ repo_path: string | null }>;
 }
 
 export interface CreateSafirClientOpts {
@@ -242,5 +249,17 @@ export function createSafirClient(opts: CreateSafirClientOpts): SafirClient {
       request<unknown>("POST", `/threads/${threadId}/ping`),
     updateThreadStatus: (threadId, body) =>
       request<Record<string, unknown>>("PATCH", `/threads/${threadId}/status`, body),
+    listBuildBriefs: (status) =>
+      request<Record<string, unknown>[]>("GET", `/build-briefs${status ? `?status=${encodeURIComponent(status)}` : ""}`),
+    getBuildBrief: (id) =>
+      request<Record<string, unknown>>("GET", `/build-briefs/${encodeURIComponent(id)}`),
+    getBuildBriefRun: (id) =>
+      request<Record<string, unknown>>("GET", `/build-briefs/${encodeURIComponent(id)}/run`),
+    updateBuildBriefStatus: (id, body) =>
+      request<Record<string, unknown>>("PATCH", `/build-briefs/${encodeURIComponent(id)}/status`, body),
+    reopenBuildBrief: (id) =>
+      request<Record<string, unknown>>("POST", `/build-briefs/${encodeURIComponent(id)}/reopen`),
+    getProjectRepoPath: (projectId) =>
+      request<{ repo_path: string | null }>("GET", `/projects/${encodeURIComponent(projectId)}/repo-path`),
   };
 }

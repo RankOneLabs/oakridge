@@ -295,4 +295,61 @@ export function mountSafirProxyRoutes(
       return c.json(thread);
     } catch (err) { return respondToUpstreamError(c, err); }
   });
+
+  // --- cohort 3: build brief proxy routes ---
+
+  app.get("/safir/build-briefs", async (c) => {
+    const status = c.req.query("status");
+    try {
+      const briefs = await safirClient.listBuildBriefs(status);
+      return c.json(briefs);
+    } catch (err) { return respondToUpstreamError(c, err); }
+  });
+
+  app.get("/safir/build-briefs/:id", async (c) => {
+    const id = c.req.param("id").trim();
+    if (!id) return c.json({ error: "id required" }, 400);
+    try {
+      const brief = await safirClient.getBuildBrief(id);
+      return c.json(brief);
+    } catch (err) { return respondToUpstreamError(c, err); }
+  });
+
+  app.get("/safir/build-briefs/:id/run", async (c) => {
+    const id = c.req.param("id").trim();
+    if (!id) return c.json({ error: "id required" }, 400);
+    try {
+      const run = await safirClient.getBuildBriefRun(id);
+      return c.json(run);
+    } catch (err) { return respondToUpstreamError(c, err); }
+  });
+
+  app.patch("/safir/build-briefs/:id/status", async (c) => {
+    const id = c.req.param("id").trim();
+    if (!id) return c.json({ error: "id required" }, 400);
+    let body: unknown;
+    try { body = await c.req.json(); } catch { return c.json({ error: "invalid json" }, 400); }
+    try {
+      const brief = await safirClient.updateBuildBriefStatus(id, body as Record<string, unknown>);
+      return c.json(brief);
+    } catch (err) { return respondToUpstreamError(c, err); }
+  });
+
+  app.post("/safir/build-briefs/:id/reopen", async (c) => {
+    const id = c.req.param("id").trim();
+    if (!id) return c.json({ error: "id required" }, 400);
+    try {
+      const brief = await safirClient.reopenBuildBrief(id);
+      return c.json(brief);
+    } catch (err) { return respondToUpstreamError(c, err); }
+  });
+
+  app.get("/safir/projects/:id/repo-path", async (c) => {
+    const id = c.req.param("id").trim();
+    if (!id) return c.json({ error: "id required" }, 400);
+    try {
+      const result = await safirClient.getProjectRepoPath(id);
+      return c.json(result);
+    } catch (err) { return respondToUpstreamError(c, err); }
+  });
 }
