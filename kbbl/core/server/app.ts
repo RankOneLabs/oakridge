@@ -16,6 +16,7 @@ import { mountSafirWebhookRoutes } from "./handlers/safir-webhook";
 import { mountSessionsRoutes } from "./handlers/sessions";
 import { mountWorkspaceEventsRoutes } from "./handlers/workspace-events";
 import { mountArtifactStreamRoutes } from "./handlers/artifact-stream";
+import { mountBuildsRoutes } from "./handlers/builds";
 import { artifactEventBus } from "../stream/artifact-event-bus";
 
 export interface CreateAppDeps {
@@ -204,6 +205,12 @@ export function createApp(deps: CreateAppDeps): Hono {
   // POST /webhooks/safir is registered before the static `/*` catch-all
   // so the webhook path doesn't get rewritten as a static-file lookup.
   mountSafirWebhookRoutes(app, { manager, artifactBus: artifactEventBus });
+
+  // ---- build trigger ----
+  //
+  // POST /safir-proxy/build-briefs/:id/build spawns safir-build subprocess
+  // from an approved brief and emits build.* SSE events on the artifact bus.
+  mountBuildsRoutes(app, { safirClient });
 
   // ---- safir read proxy ----
   //
