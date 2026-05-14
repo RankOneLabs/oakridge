@@ -46,13 +46,15 @@ export function useListItemDelete(target: ArtifactTarget): ListItemDeleteResult 
       });
     }
 
-    // Shift subsequent indices down
+    // Shift subsequent indices down, matching sub-keys by name (not position)
     for (let i = index + 1; i < len; i++) {
-      const destSubKeys = getSubKeys(field, i - 1, atomMap);
-      const srcSubKeys = getSubKeys(field, i, atomMap);
-      for (let j = 0; j < Math.min(destSubKeys.length, srcSubKeys.length); j++) {
-        const srcAnchor = `${field}[${i}]${srcSubKeys[j]}`;
-        const destAnchor = `${field}[${i - 1}]${destSubKeys[j]}`;
+      const subKeys = new Set([
+        ...getSubKeys(field, i - 1, atomMap),
+        ...getSubKeys(field, i, atomMap),
+      ]);
+      for (const sub of subKeys) {
+        const srcAnchor = `${field}[${i}]${sub}`;
+        const destAnchor = `${field}[${i - 1}]${sub}`;
         await post(baseUrl, {
           anchor: destAnchor,
           prev_value: atomMap[destAnchor] ?? null,
