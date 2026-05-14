@@ -15,6 +15,10 @@ export default defineConfig({
       "/sessions": { target: backendTarget, changeOrigin: true },
       "/inbox": { target: backendTarget, changeOrigin: true },
       "/config": { target: backendTarget, changeOrigin: true },
+      // Safir proxy + artifact SSE stream.
+      "/safir": { target: backendTarget, changeOrigin: true },
+      "/safir-stream": { target: backendTarget, changeOrigin: true },
+      "/webhooks": { target: backendTarget, changeOrigin: true },
       // Per-sid routes. Keyed by regex so any sid prefix gets proxied.
       // Must start with ^ for vite to treat the key as a RegExp.
       "^/[^/]+/(stream|events|input|approval|yolo)(\\?.*)?$": {

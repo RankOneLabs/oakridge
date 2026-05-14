@@ -15,6 +15,8 @@ import { mountSafirProxyRoutes } from "./handlers/safir-proxy";
 import { mountSafirWebhookRoutes } from "./handlers/safir-webhook";
 import { mountSessionsRoutes } from "./handlers/sessions";
 import { mountWorkspaceEventsRoutes } from "./handlers/workspace-events";
+import { mountArtifactStreamRoutes } from "./handlers/artifact-stream";
+import { artifactEventBus } from "../stream/artifact-event-bus";
 
 export interface CreateAppDeps {
   manager: SessionManager;
@@ -201,7 +203,7 @@ export function createApp(deps: CreateAppDeps): Hono {
   //
   // POST /webhooks/safir is registered before the static `/*` catch-all
   // so the webhook path doesn't get rewritten as a static-file lookup.
-  mountSafirWebhookRoutes(app, { manager });
+  mountSafirWebhookRoutes(app, { manager, artifactBus: artifactEventBus });
 
   // ---- safir read proxy ----
   //
@@ -209,6 +211,12 @@ export function createApp(deps: CreateAppDeps): Hono {
   // leakage to the browser. Registered after the webhook routes to keep
   // safir-related paths grouped, and before /inbox and the static catch-all.
   mountSafirProxyRoutes(app, { safirClient });
+
+  // ---- artifact SSE stream ----
+  //
+  // GET /safir-stream?target_type=&target_id= — plan/build-brief reviewer SSE.
+  // Registered after the safir proxy so /safir/* routes take precedence.
+  mountArtifactStreamRoutes(app, { bus: artifactEventBus });
 
   // ---- /inbox (always-on delta stream) ----
   app.get("/inbox", inboxHandler(manager));

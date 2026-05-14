@@ -77,6 +77,13 @@ function makeStubClient(opts: StubOpts): {
     getAtomMap: notImplemented("getAtomMap") as SafirClient["getAtomMap"],
     listOpenThreads: notImplemented("listOpenThreads") as SafirClient["listOpenThreads"],
     postAgentResponse: notImplemented("postAgentResponse") as SafirClient["postAgentResponse"],
+    listAllThreads: notImplemented("listAllThreads") as SafirClient["listAllThreads"],
+    listAtomHistory: notImplemented("listAtomHistory") as SafirClient["listAtomHistory"],
+    postAtomEdit: notImplemented("postAtomEdit") as SafirClient["postAtomEdit"],
+    createThread: notImplemented("createThread") as SafirClient["createThread"],
+    postThreadMessage: notImplemented("postThreadMessage") as SafirClient["postThreadMessage"],
+    pingThread: notImplemented("pingThread") as SafirClient["pingThread"],
+    updateThreadStatus: notImplemented("updateThreadStatus") as SafirClient["updateThreadStatus"],
   };
   return { client, calls };
 }
