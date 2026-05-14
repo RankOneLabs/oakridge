@@ -127,11 +127,11 @@ export function BuildBriefReviewView({ briefId, onBack }: Props) {
     [listItemDelete, stream.atomMap],
   );
 
-  async function postAction(path: string, body: unknown) {
+  async function postAction(path: string, body: unknown, method = "POST") {
     setActing(true);
     try {
       const res = await fetch(path, {
-        method: "POST",
+        method,
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       });
@@ -153,6 +153,7 @@ export function BuildBriefReviewView({ briefId, onBack }: Props) {
     await postAction(
       `/safir/build-briefs/${encodeURIComponent(briefId)}/status`,
       { status: "approved" },
+      "PATCH",
     );
   }
 
@@ -160,6 +161,7 @@ export function BuildBriefReviewView({ briefId, onBack }: Props) {
     await postAction(
       `/safir/build-briefs/${encodeURIComponent(briefId)}/status`,
       { status: "rejected", rejection_reason: reason },
+      "PATCH",
     );
   }
 
