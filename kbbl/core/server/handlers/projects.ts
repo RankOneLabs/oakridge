@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { z } from "zod";
 import type { Hono } from "hono";
 import type { Database } from "bun:sqlite";
@@ -35,7 +36,8 @@ export function mountProjectsRoutes(app: Hono, deps: ProjectsRouteDeps): void {
       return c.json({ error: msg }, 400);
     }
 
-    const { name, repo_path } = result.data;
+    const { name } = result.data;
+    const repo_path = resolve(result.data.repo_path);
     const id = crypto.randomUUID();
 
     try {
