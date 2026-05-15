@@ -17,6 +17,9 @@ import { mountSpecsRoutes } from "./handlers/specs";
 import { mountPlansRoutes } from "./handlers/plans";
 import { mountCohortsRoutes } from "./handlers/cohorts";
 import { mountBriefsRoutes } from "./handlers/briefs";
+import { mountReviewFreezeRoutes } from "./handlers/review-freeze";
+import { mountReviewAtomsRoutes } from "./handlers/review-atoms";
+import { mountReviewThreadsRoutes } from "./handlers/review-threads";
 import { mountSessionsRoutes } from "./handlers/sessions";
 import { mountWorkspaceEventsRoutes } from "./handlers/workspace-events";
 import { mountArtifactStreamRoutes } from "./handlers/artifact-stream";
@@ -214,11 +217,17 @@ export function createApp(deps: CreateAppDeps): Hono {
   mountCohortsRoutes(app, { db });
   mountBriefsRoutes(app, { db });
 
+  // ---- review primitive (cohort 2) ----
+  mountReviewFreezeRoutes(app, { db });
+  mountReviewAtomsRoutes(app, { db });
+  mountReviewThreadsRoutes(app, { db });
+
   // ---- artifact SSE stream ----
   //
-  // GET /safir-stream?target_type=&target_id= — still mounted so any
-  // operator-side consumer that polls it gets a clean empty stream rather
-  // than a 404. The producer side (safir webhook → bus) is gone.
+  // GET /safir-stream?target_type=&target_id= — review events (cohort 2)
+  // publish into artifactEventBus via the mirror adapter in
+  // kbbl/core/review/events.ts, so this route carries atom edits, thread
+  // activity, and freeze transitions to the PWA.
   mountArtifactStreamRoutes(app, { bus: artifactEventBus });
 
   // ---- /inbox (always-on delta stream) ----
