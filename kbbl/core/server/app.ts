@@ -13,6 +13,10 @@ import { mountHandoffRoutes } from "./handlers/handoff";
 import { mountPermissionRoutes } from "./handlers/permission";
 import { mountPerSidRoutes } from "./handlers/per-sid";
 import { mountProjectsRoutes } from "./handlers/projects";
+import { mountSpecsRoutes } from "./handlers/specs";
+import { mountPlansRoutes } from "./handlers/plans";
+import { mountCohortsRoutes } from "./handlers/cohorts";
+import { mountBriefsRoutes } from "./handlers/briefs";
 import { mountSessionsRoutes } from "./handlers/sessions";
 import { mountWorkspaceEventsRoutes } from "./handlers/workspace-events";
 import { mountArtifactStreamRoutes } from "./handlers/artifact-stream";
@@ -203,6 +207,12 @@ export function createApp(deps: CreateAppDeps): Hono {
 
   // ---- projects CRUD ----
   mountProjectsRoutes(app, { db });
+
+  // ---- task-tracker CRUD (specs, plans, cohorts, briefs) ----
+  mountSpecsRoutes(app, { db });
+  mountPlansRoutes(app, { db });
+  mountCohortsRoutes(app, { db });
+  mountBriefsRoutes(app, { db });
 
   // ---- artifact SSE stream ----
   //
