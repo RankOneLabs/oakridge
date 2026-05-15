@@ -99,27 +99,27 @@ export function updateBriefFields(
   const sets: string[] = [];
   const params: (string | null)[] = [];
 
-  if ("goal" in fields) {
+  if (fields.goal !== undefined) {
     sets.push("goal = ?");
-    params.push(fields.goal!);
+    params.push(fields.goal);
   }
-  if ("files_in_scope" in fields) {
+  if (fields.files_in_scope !== undefined) {
     sets.push("files_in_scope = ?");
     params.push(JSON.stringify(fields.files_in_scope));
   }
-  if ("decisions_made" in fields) {
+  if (fields.decisions_made !== undefined) {
     sets.push("decisions_made = ?");
     params.push(JSON.stringify(fields.decisions_made));
   }
-  if ("approaches_rejected" in fields) {
+  if (fields.approaches_rejected !== undefined) {
     sets.push("approaches_rejected = ?");
     params.push(JSON.stringify(fields.approaches_rejected));
   }
-  if ("next_action" in fields) {
+  if (fields.next_action !== undefined) {
     sets.push("next_action = ?");
-    params.push(fields.next_action!);
+    params.push(fields.next_action);
   }
-  if ("model" in fields) {
+  if (fields.model !== undefined) {
     sets.push("model = ?");
     params.push(fields.model ?? null);
   }

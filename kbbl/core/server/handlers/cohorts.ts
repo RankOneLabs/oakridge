@@ -153,13 +153,17 @@ export function mountCohortsRoutes(app: Hono, deps: CohortsRouteDeps): void {
       return c.json({ error: "from_cohort_id and to_cohort_id must differ" }, 409);
     }
 
-    if (hasCycleAfterInsert(db, from_cohort_id, to_cohort_id)) {
-      return c.json({ error: "cycle" }, 409);
-    }
-
     const id = crypto.randomUUID();
     try {
-      const dep = insertCohortDependency(db, { id, from_cohort_id, to_cohort_id });
+      const dep = db.transaction(() => {
+        if (hasCycleAfterInsert(db, from_cohort_id, to_cohort_id)) {
+          return null;
+        }
+        return insertCohortDependency(db, { id, from_cohort_id, to_cohort_id });
+      })();
+      if (!dep) {
+        return c.json({ error: "cycle" }, 409);
+      }
       return c.json(dep, 201);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
