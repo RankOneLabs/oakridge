@@ -11,7 +11,7 @@ const CreateEditSchema = z.object({
   target_id: z.string().min(1),
   anchor: z.string().nullable().optional(),
   prev_value: z.string().nullable(),
-  new_value: z.string().min(1),
+  new_value: z.string(),
   author: z.string().min(1),
 });
 

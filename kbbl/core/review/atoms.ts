@@ -56,7 +56,7 @@ export function appendEdit(
 export function listEdits(db: Database, target_type: string, target_id: string): AtomEdit[] {
   return db
     .prepare<AtomEdit, [string, string]>(
-      "SELECT * FROM atom_edits WHERE target_type = ? AND target_id = ? ORDER BY created_at ASC",
+      "SELECT * FROM atom_edits WHERE target_type = ? AND target_id = ? ORDER BY created_at ASC, rowid ASC",
     )
     .all(target_type, target_id);
 }
