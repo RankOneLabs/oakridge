@@ -126,7 +126,8 @@ describe("POST /specs", () => {
         body: JSON.stringify({ project_id: PROJECT_ID, title: "Emit test" }),
       });
       const body = (await res.json()) as { id: string };
-      expect(emittedId).toBe(body.id);
+      expect(emittedId).not.toBeNull();
+      expect(emittedId!).toBe(body.id);
     } finally {
       unsub();
     }
