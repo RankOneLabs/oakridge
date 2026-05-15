@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { applyMigrations } from "./migrations";
+import { openTestDb } from "./test-db";
 
 let migrationsDir: string;
 let db: Database;
@@ -88,5 +89,27 @@ describe("applyMigrations", () => {
     const { applied } = applyMigrations(db, migrationsDir);
 
     expect(applied).toEqual(["002_second.sql"]);
+  });
+});
+
+describe("openTestDb schema after all migrations", () => {
+  test("all task-tracker tables exist", () => {
+    const testDb = openTestDb();
+    try {
+      const tables = testDb
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE '\\_%' ESCAPE '\\' ORDER BY name",
+        )
+        .all()
+        .map((r) => r.name);
+
+      expect(tables).toContain("specs");
+      expect(tables).toContain("plans");
+      expect(tables).toContain("cohorts");
+      expect(tables).toContain("cohort_dependencies");
+      expect(tables).toContain("briefs");
+    } finally {
+      testDb.close();
+    }
   });
 });
