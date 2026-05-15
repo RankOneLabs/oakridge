@@ -224,9 +224,10 @@ export function createApp(deps: CreateAppDeps): Hono {
 
   // ---- artifact SSE stream ----
   //
-  // GET /safir-stream?target_type=&target_id= — still mounted so any
-  // operator-side consumer that polls it gets a clean empty stream rather
-  // than a 404. The producer side (safir webhook → bus) is gone.
+  // GET /safir-stream?target_type=&target_id= — review events (cohort 2)
+  // publish into artifactEventBus via the mirror adapter in
+  // kbbl/core/review/events.ts, so this route carries atom edits, thread
+  // activity, and freeze transitions to the PWA.
   mountArtifactStreamRoutes(app, { bus: artifactEventBus });
 
   // ---- /inbox (always-on delta stream) ----

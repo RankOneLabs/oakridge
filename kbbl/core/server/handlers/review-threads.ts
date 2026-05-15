@@ -180,7 +180,13 @@ export function mountReviewThreadsRoutes(app: Hono, deps: ReviewThreadsRouteDeps
       return c.json({ error: msg }, 400);
     }
 
-    const updated = updateThreadStatus(db, id, "resolved");
+    let updated: ReturnType<typeof updateThreadStatus>;
+    try {
+      updated = updateThreadStatus(db, id, "resolved");
+    } catch (err) {
+      console.error("review-threads:resolve failed", err);
+      return c.json({ error: "internal server error" }, 500);
+    }
     if (!updated) {
       return c.json({ error: "thread is already resolved" }, 409);
     }
