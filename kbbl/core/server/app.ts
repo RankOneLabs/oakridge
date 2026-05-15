@@ -2,6 +2,7 @@ import { writeFile } from "node:fs/promises";
 import { z } from "zod";
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
+import type { Database } from "bun:sqlite";
 
 import type { AppRuntime } from "../runtime";
 import type { SafirClient } from "../safir/client";
@@ -11,6 +12,7 @@ import { inboxHandler } from "../stream/inbox";
 import { mountHandoffRoutes } from "./handlers/handoff";
 import { mountPermissionRoutes } from "./handlers/permission";
 import { mountPerSidRoutes } from "./handlers/per-sid";
+import { mountProjectsRoutes } from "./handlers/projects";
 import { mountSessionsRoutes } from "./handlers/sessions";
 import { mountWorkspaceEventsRoutes } from "./handlers/workspace-events";
 import { mountArtifactStreamRoutes } from "./handlers/artifact-stream";
@@ -51,6 +53,8 @@ export interface CreateAppDeps {
   config: KbblConfig;
   /** Absolute path to config.json on disk for PATCH /config to persist changes. */
   configPath: string;
+  /** Open SQLite database instance shared across all DB-backed handlers. */
+  db: Database;
 }
 
 /**
@@ -71,6 +75,7 @@ export function createApp(deps: CreateAppDeps): Hono {
     getBunServer,
     config,
     configPath,
+    db,
   } = deps;
   const app = new Hono();
 
@@ -195,6 +200,9 @@ export function createApp(deps: CreateAppDeps): Hono {
   // lifecycle and coordination events through to inbox subscribers
   // without kbbl interpreting them.
   mountWorkspaceEventsRoutes(app, { manager });
+
+  // ---- projects CRUD ----
+  mountProjectsRoutes(app, { db });
 
   // ---- artifact SSE stream ----
   //

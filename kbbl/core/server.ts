@@ -13,6 +13,8 @@ import { isGitRepo, isPathInside, resolveRepoTopLevel } from "./session/worktree
 import { createApp } from "./server/app";
 import { createClaudeCodeRuntime } from "../adapters/claude-code";
 import { validateWorkdir } from "./server/handlers/sessions";
+import { openDb } from "./db/connection";
+import { applyMigrations } from "./db/migrations";
 
 // === args ===
 
@@ -68,6 +70,11 @@ const sessionsDir = join(dataDir, "sessions");
 await mkdir(sessionsDir, { recursive: true });
 const handoffsDir = join(dataDir, "handoffs");
 await mkdir(handoffsDir, { recursive: true });
+
+// === sqlite db ===
+const dbPath = join(dataDir, "kbbl.db");
+const db = openDb(dbPath);
+applyMigrations(db, join(moduleDir, "db", "migrations"));
 
 // === config ===
 // Load before binding the port so a malformed config.json fails fast, with
@@ -198,6 +205,7 @@ const app = createApp({
   getBunServer: () => bunServer,
   config,
   configPath,
+  db,
 });
 
 // === bind port (fail fast before spawning CC) ===
