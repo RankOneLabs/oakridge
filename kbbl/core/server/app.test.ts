@@ -3,15 +3,18 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
+import type { Database } from "bun:sqlite";
 
 import { KbblConfigSchema, type KbblConfig } from "../config";
 import type { AppRuntime } from "../runtime";
 import type { SafirClient } from "../safir/client";
 import type { SessionManager } from "../session/session-manager";
+import { openTestDb } from "../db/test-db";
 import { createApp } from "./app";
 
 let tmpRoot: string;
 let configPath: string;
+let db: Database;
 
 function buildApp(config: KbblConfig): Hono {
   const runtime: AppRuntime = {
@@ -30,15 +33,19 @@ function buildApp(config: KbblConfig): Hono {
     getBunServer: () => null,
     config,
     configPath,
+    db,
   });
 }
 
 beforeEach(() => {
   tmpRoot = mkdtempSync(join(tmpdir(), "kbbl-app-test-"));
   configPath = join(tmpRoot, "config.json");
+  db = openTestDb();
 });
 
+
 afterEach(() => {
+  db.close();
   rmSync(tmpRoot, { recursive: true, force: true });
 });
 
