@@ -49,8 +49,9 @@ CREATE TABLE briefs (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
+CREATE INDEX specs_project_id ON specs(project_id);
+CREATE INDEX plans_spec_id ON plans(spec_id);
 CREATE INDEX cohorts_plan_id ON cohorts(plan_id);
 CREATE INDEX cohort_dependencies_from_cohort_id ON cohort_dependencies(from_cohort_id);
 CREATE INDEX cohort_dependencies_to_cohort_id ON cohort_dependencies(to_cohort_id);
 CREATE INDEX briefs_cohort_id ON briefs(cohort_id);
-CREATE INDEX plans_spec_id ON plans(spec_id);

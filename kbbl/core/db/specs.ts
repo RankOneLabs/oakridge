@@ -39,11 +39,11 @@ export function updateSpecFields(
   const sets: string[] = [];
   const params: (string | null)[] = [];
 
-  if ("title" in fields) {
+  if (fields.title !== undefined) {
     sets.push("title = ?");
-    params.push(fields.title!);
+    params.push(fields.title);
   }
-  if ("notes" in fields) {
+  if (fields.notes !== undefined) {
     sets.push("notes = ?");
     params.push(fields.notes ?? null);
   }

@@ -36,9 +36,9 @@ export function updatePlanFields(
   id: string,
   fields: { model?: string | null },
 ): Plan | null {
-  if (!("model" in fields)) return getPlan(db, id);
+  if (fields.model === undefined) return getPlan(db, id);
   const sql = "UPDATE plans SET model = ? WHERE id = ? RETURNING *";
   return (
-    (db.prepare<Plan, [string | null, string]>(sql).get(fields.model ?? null, id) as Plan | undefined) ?? null
+    (db.prepare<Plan, [string | null, string]>(sql).get(fields.model, id) as Plan | undefined) ?? null
   );
 }

@@ -266,4 +266,22 @@ describe("POST /cohort-dependencies", () => {
     });
     expect(res.status).toBe(409);
   });
+
+  test("returns 409 when dependency already exists", async () => {
+    mkCohort("ia", 1);
+    mkCohort("ib", 2);
+    await app.request("/cohort-dependencies", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ from_cohort_id: "ia", to_cohort_id: "ib" }),
+    });
+    const res = await app.request("/cohort-dependencies", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ from_cohort_id: "ia", to_cohort_id: "ib" }),
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/already exists/);
+  });
 });

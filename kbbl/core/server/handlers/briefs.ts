@@ -117,13 +117,13 @@ export function mountBriefsRoutes(app: Hono, deps: BriefsRouteDeps): void {
     if (typeof body === "object" && body !== null) {
       if ("status" in body) {
         return c.json(
-          { error: "status not editable via PATCH /:id; use PATCH /:id/status" },
+          { error: "status not editable via PATCH /briefs/:id; use PATCH /briefs/:id/status" },
           400,
         );
       }
       if ("debrief" in body) {
         return c.json(
-          { error: "debrief not editable via PATCH /:id; use PATCH /:id/debrief" },
+          { error: "debrief not editable via PATCH /briefs/:id; use PATCH /briefs/:id/debrief" },
           400,
         );
       }
@@ -133,6 +133,10 @@ export function mountBriefsRoutes(app: Hono, deps: BriefsRouteDeps): void {
     if (!result.success) {
       const msg = result.error.issues[0]?.message ?? "invalid body";
       return c.json({ error: msg }, 400);
+    }
+
+    if (Object.keys(result.data).length === 0) {
+      return c.json({ error: "at least one mutable field is required" }, 400);
     }
 
     const id = c.req.param("id");

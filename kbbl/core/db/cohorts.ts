@@ -40,17 +40,17 @@ export function updateCohortFields(
   const sets: string[] = [];
   const params: (string | number | null)[] = [];
 
-  if ("title" in fields) {
+  if (fields.title !== undefined) {
     sets.push("title = ?");
-    params.push(fields.title!);
+    params.push(fields.title);
   }
-  if ("notes" in fields) {
+  if (fields.notes !== undefined) {
     sets.push("notes = ?");
     params.push(fields.notes ?? null);
   }
-  if ("position" in fields) {
+  if (fields.position !== undefined) {
     sets.push("position = ?");
-    params.push(fields.position!);
+    params.push(fields.position);
   }
   if (sets.length === 0) return getCohort(db, id);
 

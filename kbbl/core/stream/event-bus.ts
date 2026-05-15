@@ -11,14 +11,16 @@ export class EventBus<T> {
     subs.add(fn);
     return () => {
       subs!.delete(fn);
-      if (subs!.size === 0) this.subscribers.delete(event);
+      if (subs!.size === 0 && this.subscribers.get(event) === subs) {
+        this.subscribers.delete(event);
+      }
     };
   }
 
   emit<K extends keyof T>(event: K, payload: T[K]): void {
     const subs = this.subscribers.get(event);
     if (!subs) return;
-    for (const fn of subs) {
+    for (const fn of [...subs]) {
       try {
         fn(payload);
       } catch (err) {
