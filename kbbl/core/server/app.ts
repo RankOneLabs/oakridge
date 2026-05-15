@@ -17,6 +17,9 @@ import { mountSpecsRoutes } from "./handlers/specs";
 import { mountPlansRoutes } from "./handlers/plans";
 import { mountCohortsRoutes } from "./handlers/cohorts";
 import { mountBriefsRoutes } from "./handlers/briefs";
+import { mountReviewFreezeRoutes } from "./handlers/review-freeze";
+import { mountReviewAtomsRoutes } from "./handlers/review-atoms";
+import { mountReviewThreadsRoutes } from "./handlers/review-threads";
 import { mountSessionsRoutes } from "./handlers/sessions";
 import { mountWorkspaceEventsRoutes } from "./handlers/workspace-events";
 import { mountArtifactStreamRoutes } from "./handlers/artifact-stream";
@@ -213,6 +216,11 @@ export function createApp(deps: CreateAppDeps): Hono {
   mountPlansRoutes(app, { db });
   mountCohortsRoutes(app, { db });
   mountBriefsRoutes(app, { db });
+
+  // ---- review primitive (cohort 2) ----
+  mountReviewFreezeRoutes(app, { db });
+  mountReviewAtomsRoutes(app, { db });
+  mountReviewThreadsRoutes(app, { db });
 
   // ---- artifact SSE stream ----
   //
