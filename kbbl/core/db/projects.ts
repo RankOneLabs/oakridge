@@ -23,5 +23,5 @@ export function getProject(db: Database, id: string): Project | null {
 }
 
 export function listProjects(db: Database): Project[] {
-  return db.prepare<Project, []>("SELECT * FROM projects ORDER BY created_at").all();
+  return db.prepare<Project, []>("SELECT * FROM projects ORDER BY created_at, id").all();
 }

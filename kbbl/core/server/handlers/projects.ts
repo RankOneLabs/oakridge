@@ -46,7 +46,8 @@ export function mountProjectsRoutes(app: Hono, deps: ProjectsRouteDeps): void {
       if (msg.includes("UNIQUE constraint failed")) {
         return c.json({ error: "repo_path already exists" }, 409);
       }
-      return c.json({ error: msg }, 500);
+      console.error("projects:create failed", err);
+      return c.json({ error: "internal server error" }, 500);
     }
   });
 
