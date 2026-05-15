@@ -63,6 +63,19 @@ export function mountReviewThreadsRoutes(app: Hono, deps: ReviewThreadsRouteDeps
       return c.json({ error: anchorValidation }, 400);
     }
 
+    if (entry.exists !== undefined) {
+      let exists: boolean;
+      try {
+        exists = await entry.exists(target_id);
+      } catch (err) {
+        console.error("review-threads: exists callback failed", err);
+        return c.json({ error: "registry exists callback failed" }, 500);
+      }
+      if (!exists) {
+        return c.json({ error: "not found" }, 404);
+      }
+    }
+
     if (isFrozen(db, target_type, target_id)) {
       return c.json({ error: "artifact is frozen" }, 409);
     }
@@ -155,13 +168,9 @@ export function mountReviewThreadsRoutes(app: Hono, deps: ReviewThreadsRouteDeps
       return c.json({ error: msg }, 400);
     }
 
-    if (thread.status === "resolved") {
-      return c.json({ error: "thread is already resolved" }, 409);
-    }
-
     const updated = updateThreadStatus(db, id, "resolved");
     if (!updated) {
-      return c.json({ error: "not found" }, 404);
+      return c.json({ error: "thread is already resolved" }, 409);
     }
 
     reviewEvents.emit("thread.resolved", {

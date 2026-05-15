@@ -48,7 +48,7 @@ export function listThreadsByArtifact(
 ): CommentThread[] {
   return db
     .prepare<CommentThread, [string, string]>(
-      "SELECT * FROM comment_threads WHERE target_type = ? AND target_id = ? ORDER BY created_at ASC",
+      "SELECT * FROM comment_threads WHERE target_type = ? AND target_id = ? ORDER BY created_at ASC, rowid ASC",
     )
     .all(target_type, target_id);
 }
@@ -67,7 +67,7 @@ export function insertMessage(
 export function listMessagesByThread(db: Database, thread_id: string): ThreadMessage[] {
   return db
     .prepare<ThreadMessage, [string]>(
-      "SELECT * FROM thread_messages WHERE thread_id = ? ORDER BY created_at ASC",
+      "SELECT * FROM thread_messages WHERE thread_id = ? ORDER BY created_at ASC, rowid ASC",
     )
     .all(thread_id);
 }
@@ -80,7 +80,7 @@ export function updateThreadStatus(
   return (
     db
       .prepare<CommentThread, [string, string]>(
-        "UPDATE comment_threads SET status = ? WHERE id = ? RETURNING *",
+        "UPDATE comment_threads SET status = ? WHERE id = ? AND status = 'open' RETURNING *",
       )
       .get(status, id) ?? null
   );

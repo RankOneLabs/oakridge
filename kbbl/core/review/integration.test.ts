@@ -66,6 +66,7 @@ describe("review primitive — full happy path", () => {
     track("artifact.reopened");
     track("thread.ping_received");
 
+    try {
     // --- edit 1: first edit (prev_value must be null) ---
     const e1Res = await post("/atoms/edits", {
       target_type: "test",
@@ -241,8 +242,9 @@ describe("review primitive — full happy path", () => {
     expect(pingEvent.thread_id).toBe(threadId);
     expect(pingEvent.anchor).toBe("section.intro");
 
-    // cleanup subscriptions
-    for (const unsub of unsubs) unsub();
+    } finally {
+      for (const unsub of unsubs) unsub();
+    }
   });
 
   test("GET /atoms/edits returns edit log ordered by created_at ASC", async () => {

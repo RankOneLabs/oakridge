@@ -21,13 +21,13 @@ export function getLiveValue(
   if (anchor === null) {
     row = db
       .prepare<{ new_value: string }, [string, string]>(
-        "SELECT new_value FROM atom_edits WHERE target_type = ? AND target_id = ? AND anchor IS NULL ORDER BY created_at DESC LIMIT 1",
+        "SELECT new_value FROM atom_edits WHERE target_type = ? AND target_id = ? AND anchor IS NULL ORDER BY created_at DESC, rowid DESC LIMIT 1",
       )
       .get(target_type, target_id);
   } else {
     row = db
       .prepare<{ new_value: string }, [string, string, string]>(
-        "SELECT new_value FROM atom_edits WHERE target_type = ? AND target_id = ? AND anchor = ? ORDER BY created_at DESC LIMIT 1",
+        "SELECT new_value FROM atom_edits WHERE target_type = ? AND target_id = ? AND anchor = ? ORDER BY created_at DESC, rowid DESC LIMIT 1",
       )
       .get(target_type, target_id, anchor);
   }
