@@ -72,15 +72,21 @@ export function mountReviewAtomsRoutes(app: Hono, deps: ReviewAtomsRouteDeps): v
     }
 
     const id = crypto.randomUUID();
-    const edit = appendEdit(db, {
-      id,
-      target_type,
-      target_id,
-      anchor: anchor ?? null,
-      prior_value: prev_value,
-      new_value,
-      author,
-    });
+    let edit: Awaited<ReturnType<typeof appendEdit>>;
+    try {
+      edit = appendEdit(db, {
+        id,
+        target_type,
+        target_id,
+        anchor: anchor ?? null,
+        prior_value: prev_value,
+        new_value,
+        author,
+      });
+    } catch (err) {
+      console.error("review-atoms:create failed", err);
+      return c.json({ error: "internal server error" }, 500);
+    }
 
     reviewEvents.emit("atom_edit.applied", {
       id: edit.id,

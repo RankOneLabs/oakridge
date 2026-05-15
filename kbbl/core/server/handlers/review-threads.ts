@@ -81,7 +81,13 @@ export function mountReviewThreadsRoutes(app: Hono, deps: ReviewThreadsRouteDeps
     }
 
     const id = crypto.randomUUID();
-    const thread = insertThread(db, { id, target_type, target_id, anchor: anchor ?? null, author: author ?? null });
+    let thread: Awaited<ReturnType<typeof insertThread>>;
+    try {
+      thread = insertThread(db, { id, target_type, target_id, anchor: anchor ?? null, author: author ?? null });
+    } catch (err) {
+      console.error("review-threads:create failed", err);
+      return c.json({ error: "internal server error" }, 500);
+    }
 
     reviewEvents.emit("thread.created", {
       id: thread.id,
@@ -125,7 +131,13 @@ export function mountReviewThreadsRoutes(app: Hono, deps: ReviewThreadsRouteDeps
 
     const { body: msgBody, author } = result.data;
     const id = crypto.randomUUID();
-    const message = insertMessage(db, { id, thread_id, author, body: msgBody });
+    let message: Awaited<ReturnType<typeof insertMessage>>;
+    try {
+      message = insertMessage(db, { id, thread_id, author, body: msgBody });
+    } catch (err) {
+      console.error("review-threads:message failed", err);
+      return c.json({ error: "internal server error" }, 500);
+    }
 
     reviewEvents.emit("thread.message_added", {
       id: message.id,
