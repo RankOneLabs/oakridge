@@ -11,12 +11,9 @@ import { inboxHandler } from "../stream/inbox";
 import { mountHandoffRoutes } from "./handlers/handoff";
 import { mountPermissionRoutes } from "./handlers/permission";
 import { mountPerSidRoutes } from "./handlers/per-sid";
-import { mountSafirProxyRoutes } from "./handlers/safir-proxy";
-import { mountSafirWebhookRoutes } from "./handlers/safir-webhook";
 import { mountSessionsRoutes } from "./handlers/sessions";
 import { mountWorkspaceEventsRoutes } from "./handlers/workspace-events";
 import { mountArtifactStreamRoutes } from "./handlers/artifact-stream";
-import { mountBuildsRoutes } from "./handlers/builds";
 import { artifactEventBus } from "../stream/artifact-event-bus";
 
 export interface CreateAppDeps {
@@ -32,11 +29,10 @@ export interface CreateAppDeps {
   /** Path to the built PWA dist directory served as static files. */
   pwaDistDir: string;
   /**
-   * Same client the manager uses; the read-side proxy in
-   * handlers/safir-proxy.ts forwards PWA reads through this so token + base
-   * URL stay in one place. Threaded through deps rather than imported as a
-   * module singleton because tests construct the manager + app with their
-   * own stubbed client.
+   * Same client the manager uses; threaded through deps so the permission
+   * route (and any future safir-coupled handler) can share token + base URL
+   * with the manager. Tests construct the manager + app with their own
+   * stubbed client.
    */
   safirClient: SafirClient;
   /**
@@ -200,29 +196,11 @@ export function createApp(deps: CreateAppDeps): Hono {
   // without kbbl interpreting them.
   mountWorkspaceEventsRoutes(app, { manager });
 
-  // ---- safir webhook receiver ----
-  //
-  // POST /webhooks/safir is registered before the static `/*` catch-all
-  // so the webhook path doesn't get rewritten as a static-file lookup.
-  mountSafirWebhookRoutes(app, { manager, artifactBus: artifactEventBus });
-
-  // ---- build trigger ----
-  //
-  // POST /safir-proxy/build-briefs/:id/build spawns safir-build subprocess
-  // from an approved brief and emits build.* SSE events on the artifact bus.
-  mountBuildsRoutes(app, { safirClient });
-
-  // ---- safir read proxy ----
-  //
-  // GET /safir/... lets the PWA read safir state without CORS or auth-secret
-  // leakage to the browser. Registered after the webhook routes to keep
-  // safir-related paths grouped, and before /inbox and the static catch-all.
-  mountSafirProxyRoutes(app, { safirClient });
-
   // ---- artifact SSE stream ----
   //
-  // GET /safir-stream?target_type=&target_id= — plan/build-brief reviewer SSE.
-  // Registered after the safir proxy so /safir/* routes take precedence.
+  // GET /safir-stream?target_type=&target_id= — still mounted so any
+  // operator-side consumer that polls it gets a clean empty stream rather
+  // than a 404. The producer side (safir webhook → bus) is gone.
   mountArtifactStreamRoutes(app, { bus: artifactEventBus });
 
   // ---- /inbox (always-on delta stream) ----

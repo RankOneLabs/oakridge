@@ -12,8 +12,6 @@ import {
 import Markdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import type { Task, PermissionProfile } from "../safir/types";
-import { PlanReviewView } from "./review/plan/PlanReviewView";
-import { BuildBriefReviewView } from "./review/build-brief/BuildBriefReviewView";
 
 
 export interface EnvelopeEvent {
@@ -226,72 +224,6 @@ function useHashTaskId(): [number | null, (taskId: number | null) => void] {
     setTaskId(next);
   };
   return [taskId, navigate];
-}
-
-function readHashPlanId(): string | null {
-  const hash = window.location.hash.slice(1);
-  const params = new URLSearchParams(hash);
-  const raw = params.get("plan");
-  if (!raw) return null;
-  const id = raw.trim();
-  return id.length > 0 ? id : null;
-}
-
-function writeHashPlanId(id: string | null): void {
-  const url = new URL(window.location.href);
-  if (id == null) {
-    url.hash = "";
-  } else {
-    url.hash = `plan=${encodeURIComponent(id)}`;
-  }
-  history.replaceState(null, "", url.toString());
-}
-
-function useHashPlanId(): [string | null, (id: string | null) => void] {
-  const [id, setId] = useState<string | null>(() => readHashPlanId());
-  useEffect(() => {
-    const onHash = () => setId(readHashPlanId());
-    window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
-  }, []);
-  const navigate = (next: string | null) => {
-    writeHashPlanId(next);
-    setId(next);
-  };
-  return [id, navigate];
-}
-
-function readHashBriefId(): string | null {
-  const hash = window.location.hash.slice(1);
-  const params = new URLSearchParams(hash);
-  const raw = params.get("brief");
-  if (!raw) return null;
-  const id = raw.trim();
-  return id.length > 0 ? id : null;
-}
-
-function writeHashBriefId(id: string | null): void {
-  const url = new URL(window.location.href);
-  if (id == null) {
-    url.hash = "";
-  } else {
-    url.hash = `brief=${encodeURIComponent(id)}`;
-  }
-  history.replaceState(null, "", url.toString());
-}
-
-function useHashBriefId(): [string | null, (id: string | null) => void] {
-  const [id, setId] = useState<string | null>(() => readHashBriefId());
-  useEffect(() => {
-    const onHash = () => setId(readHashBriefId());
-    window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
-  }, []);
-  const navigate = (next: string | null) => {
-    writeHashBriefId(next);
-    setId(next);
-  };
-  return [id, navigate];
 }
 
 /**
@@ -623,8 +555,6 @@ async function resumeSession(
 export function App() {
   const [sid, navigate] = useHashSid();
   const [taskId, navigateTask] = useHashTaskId();
-  const [planId, navigatePlan] = useHashPlanId();
-  const [briefId, navigateBrief] = useHashBriefId();
   const [theme, toggleTheme] = useTheme();
   const { sessions, inMemorySids, inboxStatus, compactSuggestions, clearCompactSuggestion, hydrateSession } = useInbox({
     // When the active session is purged from another client / tab, drop
@@ -683,22 +613,6 @@ export function App() {
       />
     );
   }
-  if (planId !== null) {
-    return (
-      <PlanReviewView
-        planId={planId}
-        onBack={() => navigatePlan(null)}
-      />
-    );
-  }
-  if (briefId !== null) {
-    return (
-      <BuildBriefReviewView
-        briefId={briefId}
-        onBack={() => navigateBrief(null)}
-      />
-    );
-  }
   return (
     <SessionListView
       sessions={sessions}
@@ -708,8 +622,6 @@ export function App() {
       onToggleTheme={toggleTheme}
       onSelect={(nextSid) => navigate(nextSid)}
       onHydrateSession={hydrateSession}
-      onSelectBrief={(id) => navigateBrief(id)}
-      onSelectPlan={(id) => navigatePlan(id)}
     />
   );
 }
@@ -724,8 +636,6 @@ function SessionListView({
   onToggleTheme,
   onSelect,
   onHydrateSession,
-  onSelectBrief,
-  onSelectPlan,
 }: {
   sessions: Map<string, SessionSnapshot>;
   inboxStatus: Status;
@@ -734,8 +644,6 @@ function SessionListView({
   onToggleTheme: () => void;
   onSelect: (sid: string) => void;
   onHydrateSession: (snapshot: SessionSnapshot) => void;
-  onSelectBrief: (briefId: string) => void;
-  onSelectPlan: (planId: string) => void;
 }) {
   const [pending, setPending] = useState(false);
   const [pendingError, setPendingError] = useState<string | null>(null);
@@ -752,8 +660,6 @@ function SessionListView({
   const [profileInput, setProfileInput] = useState("");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [profiles, setProfiles] = useState<PermissionProfile[]>([]);
-  const [pendingPlans, setPendingPlans] = useState<Array<{ id: string; summary: string | null; status: string }>>([]);
-  const [pendingBriefs, setPendingBriefs] = useState<Array<{ id: string; goal: string | null; status: string }>>([]);
   const [autostartPending, setAutostartPending] = useState(false);
   const profileLockedRef = useRef(false);
   const sorted = useMemo(() => sortSessions(sessions), [sessions]);
@@ -775,27 +681,6 @@ function SessionListView({
     } catch {}
   }, [modelInput]);
 
-  const fetchPendingArtifacts = (guard: () => boolean) => {
-    void (async () => {
-      try {
-        const res = await fetch("/safir/build-briefs?status=pending_approval");
-        if (!res.ok || guard()) return;
-        const data = (await res.json()) as Array<{ id: string; goal: string | null; status: string }>;
-        if (guard()) return;
-        setPendingBriefs(data);
-      } catch (err) { console.error("fetch pending briefs failed:", err); }
-    })();
-    void (async () => {
-      try {
-        const res = await fetch("/safir/plans?status=pending_approval");
-        if (!res.ok || guard()) return;
-        const data = (await res.json()) as Array<{ id: string; summary: string | null; status: string }>;
-        if (guard()) return;
-        setPendingPlans(data);
-      } catch (err) { console.error("fetch pending plans failed:", err); }
-    })();
-  };
-
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -816,14 +701,7 @@ function SessionListView({
         setProfiles(data);
       } catch {}
     })();
-    fetchPendingArtifacts(() => cancelled);
     return () => { cancelled = true; };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    const id = setInterval(() => fetchPendingArtifacts(() => cancelled), 30_000);
-    return () => { cancelled = true; clearInterval(id); };
   }, []);
 
   useEffect(() => {
@@ -1054,48 +932,6 @@ function SessionListView({
           </div>
         )}
       </div>
-      {pendingPlans.length > 0 && (
-        <div className="pending-plans">
-          <div className="pending-plans-header">
-            pending plans ({pendingPlans.length})
-          </div>
-          <ul className="pending-plans-list">
-            {pendingPlans.map((p) => (
-              <li key={p.id} className="pending-plan-row">
-                <button
-                  type="button"
-                  className="pending-plan-btn"
-                  onClick={() => onSelectPlan(p.id)}
-                >
-                  <span className="pending-plan-summary">{p.summary ?? "(no summary)"}</span>
-                  <span className="pending-plan-id">{p.id.slice(0, 8)}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {pendingBriefs.length > 0 && (
-        <div className="pending-briefs">
-          <div className="pending-briefs-header">
-            pending build briefs ({pendingBriefs.length})
-          </div>
-          <ul className="pending-briefs-list">
-            {pendingBriefs.map((b) => (
-              <li key={b.id} className="pending-brief-row">
-                <button
-                  type="button"
-                  className="pending-brief-btn"
-                  onClick={() => onSelectBrief(b.id)}
-                >
-                  <span className="pending-brief-goal">{b.goal ?? "(no goal)"}</span>
-                  <span className="pending-brief-id">{b.id.slice(0, 8)}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
       {sorted.length === 0 ? (
         <div className="session-list-empty">No sessions yet.</div>
       ) : (
