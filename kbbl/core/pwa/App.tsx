@@ -12,6 +12,8 @@ import {
 import Markdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import type { Task, PermissionProfile } from "../safir/types";
+import { PlanReviewView } from "./review/plan/PlanReviewView";
+import { BriefReviewView } from "./review/brief/BriefReviewView";
 
 
 export interface EnvelopeEvent {
@@ -130,7 +132,7 @@ type InboxDelta =
   | { type: "yolo_changed"; sid: string; yoloMode: boolean };
 
 type Status = "connecting" | "connected" | "disconnected";
-type Theme = "dark" | "light";
+export type Theme = "dark" | "light";
 type ResolutionMap = Map<string, "allow" | "deny">;
 
 const THEME_STORAGE_KEY = "oakridge.theme";
@@ -224,6 +226,31 @@ function useHashTaskId(): [number | null, (taskId: number | null) => void] {
     setTaskId(next);
   };
   return [taskId, navigate];
+}
+
+function readHashRoute(): { view: "plan" | "brief"; id: string } | null {
+  const hash = window.location.hash.slice(1);
+  if (hash.startsWith("plan/")) {
+    const id = hash.slice(5);
+    if (id) return { view: "plan", id };
+  }
+  if (hash.startsWith("brief/")) {
+    const id = hash.slice(6);
+    if (id) return { view: "brief", id };
+  }
+  return null;
+}
+
+function useHashRoute(): { view: "plan" | "brief"; id: string } | null {
+  const [route, setRoute] = useState<{ view: "plan" | "brief"; id: string } | null>(
+    () => readHashRoute(),
+  );
+  useEffect(() => {
+    const onHash = () => setRoute(readHashRoute());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+  return route;
 }
 
 /**
@@ -553,6 +580,7 @@ async function resumeSession(
 }
 
 export function App() {
+  const route = useHashRoute();
   const [sid, navigate] = useHashSid();
   const [taskId, navigateTask] = useHashTaskId();
   const [theme, toggleTheme] = useTheme();
@@ -576,6 +604,30 @@ export function App() {
       setThresholdInput(String(config.softThresholdTokens));
     }
   }, [config?.softThresholdTokens]);
+
+  // Hash routing precedence: plan/brief views win over session/task views.
+  // These use path-style hashes (#plan/<id>, #brief/<id>) which don't
+  // collide with the query-param style #sid=X and #task=X routes.
+  if (route?.view === "plan") {
+    return (
+      <PlanReviewView
+        id={route.id}
+        theme={theme}
+        onToggleTheme={toggleTheme}
+        onBack={() => { window.location.hash = ""; }}
+      />
+    );
+  }
+  if (route?.view === "brief") {
+    return (
+      <BriefReviewView
+        id={route.id}
+        theme={theme}
+        onToggleTheme={toggleTheme}
+        onBack={() => { window.location.hash = ""; }}
+      />
+    );
+  }
 
   // Precedence: #sid wins over #task. The hash writers always overwrite
   // the entire fragment, so both being set simultaneously is unreachable

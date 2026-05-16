@@ -19,6 +19,14 @@ export default defineConfig({
       "/safir": { target: backendTarget, changeOrigin: true },
       "/safir-stream": { target: backendTarget, changeOrigin: true },
       "/webhooks": { target: backendTarget, changeOrigin: true },
+      // Task-tracker CRUD (plans, cohorts, briefs) + review primitive.
+      "/plans": { target: backendTarget, changeOrigin: true },
+      "/briefs": { target: backendTarget, changeOrigin: true },
+      "/cohorts": { target: backendTarget, changeOrigin: true },
+      "/cohort-dependencies": { target: backendTarget, changeOrigin: true },
+      "/threads": { target: backendTarget, changeOrigin: true },
+      "/atoms": { target: backendTarget, changeOrigin: true },
+      "/review": { target: backendTarget, changeOrigin: true },
       // Per-sid routes. Keyed by regex so any sid prefix gets proxied.
       // Must start with ^ for vite to treat the key as a RegExp.
       "^/[^/]+/(stream|events|input|approval|yolo)(\\?.*)?$": {
