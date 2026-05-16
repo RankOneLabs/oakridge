@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { Hono } from "hono";
 import type { Database } from "bun:sqlite";
-import { freeze, unfreeze } from "../../review/freeze";
+import { freeze, isFrozen, unfreeze } from "../../review/freeze";
 
 const FreezeBodySchema = z.object({
   target_type: z.string().min(1),
@@ -14,6 +14,15 @@ interface ReviewFreezeRouteDeps {
 
 export function mountReviewFreezeRoutes(app: Hono, deps: ReviewFreezeRouteDeps): void {
   const { db } = deps;
+
+  app.get("/review/frozen", (c) => {
+    const target_type = c.req.query("target_type");
+    const target_id = c.req.query("target_id");
+    if (!target_type || !target_id) {
+      return c.json({ error: "target_type and target_id query params required" }, 400);
+    }
+    return c.json({ frozen: isFrozen(db, target_type, target_id) });
+  });
 
   app.post("/review/freeze", async (c) => {
     let body: unknown;
