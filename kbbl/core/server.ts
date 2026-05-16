@@ -15,6 +15,10 @@ import { createClaudeCodeRuntime } from "../adapters/claude-code";
 import { validateWorkdir } from "./server/handlers/sessions";
 import { openDb } from "./db/connection";
 import { applyMigrations } from "./db/migrations";
+import { bootstrap as bootstrapOrchestrator } from "./orchestrator/bootstrap";
+import { reviewRegistry } from "./review/registry";
+import { reviewEvents } from "./review/events";
+import { taskTrackerEvents } from "./db/events";
 
 // === args ===
 
@@ -75,6 +79,7 @@ await mkdir(handoffsDir, { recursive: true });
 const dbPath = join(dataDir, "kbbl.db");
 const db = openDb(dbPath);
 applyMigrations(db, join(moduleDir, "db", "migrations"));
+bootstrapOrchestrator({ db, registry: reviewRegistry, reviewEvents, taskTrackerEvents });
 
 // === config ===
 // Load before binding the port so a malformed config.json fails fast, with

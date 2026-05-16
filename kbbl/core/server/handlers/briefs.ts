@@ -9,6 +9,7 @@ import {
   updateBriefDebrief,
 } from "../../db/briefs";
 import { BriefPayloadSchema } from "../../types/task-tracker";
+import { taskTrackerEvents } from "../../db/events";
 
 const CreateBriefSchema = BriefPayloadSchema.extend({
   cohort_id: z.string().min(1),
@@ -86,6 +87,7 @@ export function mountBriefsRoutes(app: Hono, deps: BriefsRouteDeps): void {
         model: model ?? null,
         predecessor_brief_id: null,
       });
+      taskTrackerEvents.emit("brief.submitted", { brief_id: id, cohort_id });
       return c.json(brief, 201);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
