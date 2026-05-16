@@ -13,6 +13,7 @@ interface BriefRow {
   approaches_rejected: string;
   next_action: string;
   debrief: string | null;
+  pr_url: string | null;
   rejection_reason: string | null;
   created_at: string;
 }
@@ -141,9 +142,15 @@ export function updateBriefFields(
   return row ? parseBriefRow(row) : null;
 }
 
-export function updateBriefDebrief(db: Database, id: string, debrief: string): Brief | null {
+export function updateBriefDebrief(
+  db: Database,
+  id: string,
+  { debrief, pr_url }: { debrief: string; pr_url?: string | null },
+): Brief | null {
   const row = db
-    .prepare<BriefRow, [string, string]>("UPDATE briefs SET debrief = ? WHERE id = ? RETURNING *")
-    .get(debrief, id) as BriefRow | undefined;
+    .prepare<BriefRow, [string, string | null, string]>(
+      "UPDATE briefs SET debrief = ?, pr_url = COALESCE(?, pr_url) WHERE id = ? RETURNING *",
+    )
+    .get(debrief, pr_url ?? null, id) as BriefRow | undefined;
   return row ? parseBriefRow(row) : null;
 }
