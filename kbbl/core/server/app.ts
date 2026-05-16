@@ -15,6 +15,7 @@ import { mountPerSidRoutes } from "./handlers/per-sid";
 import { mountProjectsRoutes } from "./handlers/projects";
 import { mountSpecsRoutes } from "./handlers/specs";
 import { mountPlansRoutes } from "./handlers/plans";
+import { mountPlanStatusRoutes } from "./handlers/plan-status";
 import { mountCohortsRoutes } from "./handlers/cohorts";
 import { mountBriefsRoutes } from "./handlers/briefs";
 import { mountReviewFreezeRoutes } from "./handlers/review-freeze";
@@ -214,6 +215,7 @@ export function createApp(deps: CreateAppDeps): Hono {
   // ---- task-tracker CRUD (specs, plans, cohorts, briefs) ----
   mountSpecsRoutes(app, { db });
   mountPlansRoutes(app, { db });
+  mountPlanStatusRoutes(app, { db });
   mountCohortsRoutes(app, { db });
   mountBriefsRoutes(app, { db });
 
