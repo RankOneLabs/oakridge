@@ -16,6 +16,7 @@ export const PlanSchema = z.object({
   status: z.enum(["pending_approval", "approved", "rejected", "superseded"]),
   predecessor_plan_id: z.string().nullable(),
   model: z.string().nullable(),
+  rejection_reason: z.string().nullable(),
   created_at: z.string(),
 });
 export type Plan = z.infer<typeof PlanSchema>;
@@ -27,6 +28,7 @@ export const CohortSchema = z.object({
   notes: z.string().nullable(),
   position: z.number().int(),
   status: z.enum(["waiting", "planned", "briefing", "brief_review", "building", "done", "blocked"]),
+  pre_block_status: z.string().nullable(),
   created_at: z.string(),
 });
 export type Cohort = z.infer<typeof CohortSchema>;
@@ -57,6 +59,7 @@ export const BriefSchema = z.object({
   approaches_rejected: z.array(z.object({ approach: z.string(), reason: z.string() })),
   next_action: z.string(),
   debrief: z.string().nullable(),
+  rejection_reason: z.string().nullable(),
   created_at: z.string(),
 });
 export type Brief = z.infer<typeof BriefSchema>;
