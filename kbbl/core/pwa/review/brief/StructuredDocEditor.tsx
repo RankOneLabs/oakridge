@@ -197,7 +197,6 @@ export function StructuredDocEditor({
 
       <Section label="Decisions made">
         {brief.decisions_made.map((d, idx) => {
-          const decisionAnchor = `decisions_made[${idx}].decision`;
           const rationaleAnchor = `decisions_made[${idx}].rationale`;
           return (
             <div
@@ -211,12 +210,8 @@ export function StructuredDocEditor({
                 background: "var(--surface-raised, #1e1e1e)",
               }}
             >
-              <AtomField
-                anchor={decisionAnchor}
-                value={liveValueAt(edits, decisionAnchor, d.decision)}
-                label="Decision"
-                {...sharedProps}
-              />
+              <div style={{ fontSize: 11, opacity: 0.6, fontWeight: 500 }}>Decision</div>
+              <div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>{d.decision}</div>
               <AtomField
                 anchor={rationaleAnchor}
                 value={liveValueAt(edits, rationaleAnchor, d.rationale)}
@@ -234,7 +229,6 @@ export function StructuredDocEditor({
 
       <Section label="Approaches rejected">
         {brief.approaches_rejected.map((a, idx) => {
-          const approachAnchor = `approaches_rejected[${idx}].approach`;
           const reasonAnchor = `approaches_rejected[${idx}].reason`;
           return (
             <div
@@ -248,12 +242,8 @@ export function StructuredDocEditor({
                 background: "var(--surface-raised, #1e1e1e)",
               }}
             >
-              <AtomField
-                anchor={approachAnchor}
-                value={liveValueAt(edits, approachAnchor, a.approach)}
-                label="Approach"
-                {...sharedProps}
-              />
+              <div style={{ fontSize: 11, opacity: 0.6, fontWeight: 500 }}>Approach</div>
+              <div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>{a.approach}</div>
               <AtomField
                 anchor={reasonAnchor}
                 value={liveValueAt(edits, reasonAnchor, a.reason)}

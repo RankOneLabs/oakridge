@@ -95,6 +95,7 @@ export function BriefReviewView({ id, onToggleTheme, onBack }: BriefReviewViewPr
 
   const handleOpenThread = useCallback(
     (anchor: string) => {
+      if (frozen) return;
       const existing = threads.find(
         (t) => t.anchor === anchor && t.status === "open",
       );
@@ -117,6 +118,7 @@ export function BriefReviewView({ id, onToggleTheme, onBack }: BriefReviewViewPr
   );
 
   const handleNewThread = useCallback(() => {
+    if (frozen) return;
     void (async () => {
       const res = await fetch("/threads", {
         method: "POST",

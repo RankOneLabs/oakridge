@@ -91,6 +91,7 @@ export function PlanReviewView({ id, onToggleTheme, onBack }: PlanReviewViewProp
 
   const handleOpenThread = useCallback(
     (anchor: string) => {
+      if (frozen) return;
       const existing = threads.find(
         (t) => t.anchor === anchor && t.status === "open",
       );
@@ -98,7 +99,6 @@ export function PlanReviewView({ id, onToggleTheme, onBack }: PlanReviewViewProp
         handleSelectThread(existing.id);
         return;
       }
-      // Create a new thread on this anchor
       void (async () => {
         const res = await fetch("/threads", {
           method: "POST",
@@ -114,6 +114,7 @@ export function PlanReviewView({ id, onToggleTheme, onBack }: PlanReviewViewProp
   );
 
   const handleNewThread = useCallback(() => {
+    if (frozen) return;
     void (async () => {
       const res = await fetch("/threads", {
         method: "POST",
