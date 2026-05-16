@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { Hono } from "hono";
 import type { Database } from "bun:sqlite";
 import { resolve, relative, isAbsolute, sep } from "node:path";
-import { realpathSync } from "node:fs";
+import { realpath } from "node:fs/promises";
 import { insertSpec, getSpec, listSpecsByProject, updateSpecFields } from "../../db/specs";
 import { getProject } from "../../db/projects";
 import { taskTrackerEvents } from "../../db/events";
@@ -70,7 +70,7 @@ export function mountSpecsRoutes(app: Hono, deps: SpecsRouteDeps): void {
       }
       let realRepoRoot: string;
       try {
-        realRepoRoot = realpathSync(project.repo_path);
+        realRepoRoot = await realpath(project.repo_path);
       } catch (err) {
         console.error("specs:create realpath(repo_path) failed", err);
         return c.json({ error: "internal server error" }, 500);
@@ -78,12 +78,14 @@ export function mountSpecsRoutes(app: Hono, deps: SpecsRouteDeps): void {
       const absNotesPath = isAbsolute(notesPath) ? resolve(notesPath) : resolve(realRepoRoot, notesPath);
       let realNotesPath: string;
       try {
-        realNotesPath = realpathSync(absNotesPath);
+        realNotesPath = await realpath(absNotesPath);
       } catch (err) {
-        if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === "ENOENT" || code === "ENOTDIR") {
           return c.json({ error: `notesPath not found: ${notesPath}` }, 400);
         }
-        return c.json({ error: "unable to read notesPath" }, 400);
+        console.error("specs:create realpath(notesPath) failed", err);
+        return c.json({ error: "internal server error" }, 500);
       }
       const rel = relative(realRepoRoot, realNotesPath);
       if (rel === ".." || rel.startsWith(".." + sep) || isAbsolute(rel)) {
@@ -91,8 +93,9 @@ export function mountSpecsRoutes(app: Hono, deps: SpecsRouteDeps): void {
       }
       try {
         resolvedNotes = await Bun.file(realNotesPath).text();
-      } catch {
-        return c.json({ error: "unable to read notesPath" }, 400);
+      } catch (err) {
+        console.error("specs:create read(notesPath) failed", err);
+        return c.json({ error: "unable to read notesPath" }, 500);
       }
     }
 

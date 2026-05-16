@@ -179,6 +179,18 @@ describe("POST /specs", () => {
     expect(body.notes).toBe("# Spec prose\n\nFrom file.");
   });
 
+  test("reads notes from a repo-root-relative notesPath", async () => {
+    writeFileSync(join(repoPath, "spec.md"), "from relative path");
+    const res = await app.request("/specs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ project_id: PROJECT_ID, title: "From relative", notesPath: "spec.md" }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { notes: string | null };
+    expect(body.notes).toBe("from relative path");
+  });
+
   test("returns 400 when notesPath file does not exist", async () => {
     const missing = join(repoPath, "does-not-exist.md");
     const res = await app.request("/specs", {
