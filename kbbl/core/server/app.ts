@@ -19,6 +19,7 @@ import { mountPlanStatusRoutes } from "./handlers/plan-status";
 import { mountPlanReopenRoutes } from "./handlers/plan-reopen";
 import { mountBriefStatusRoutes } from "./handlers/brief-status";
 import { mountCohortsRoutes } from "./handlers/cohorts";
+import { mountCohortStatusRoutes } from "./handlers/cohort-status";
 import { mountBriefsRoutes } from "./handlers/briefs";
 import { mountReviewFreezeRoutes } from "./handlers/review-freeze";
 import { mountReviewAtomsRoutes } from "./handlers/review-atoms";
@@ -220,6 +221,7 @@ export function createApp(deps: CreateAppDeps): Hono {
   mountPlanStatusRoutes(app, { db });
   mountPlanReopenRoutes(app, { db });
   mountCohortsRoutes(app, { db });
+  mountCohortStatusRoutes(app, { db });
   mountBriefsRoutes(app, { db });
   mountBriefStatusRoutes(app, { db });
 
