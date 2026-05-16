@@ -74,14 +74,16 @@ export async function streamForSession(session: Session, c: Context) {
           });
           continue;
         }
-        const evt = pending.shift()!;
-        if (evt.id <= sentUpTo) continue;
-        sentUpTo = evt.id;
-        await stream.writeSSE({
-          event: "message",
-          data: JSON.stringify(evt),
-          id: String(evt.id),
-        });
+        // Drain all buffered events in one write instead of one await per event
+        // so bursts of CC output don't drip to the browser one tick at a time.
+        let chunk = "";
+        while (pending.length > 0) {
+          const evt = pending.shift()!;
+          if (evt.id <= sentUpTo) continue;
+          sentUpTo = evt.id;
+          chunk += `id: ${evt.id}\nevent: message\ndata: ${JSON.stringify(evt)}\n\n`;
+        }
+        if (chunk) await stream.write(chunk);
       }
       // Drain any events that arrived between the last pending.shift() and
       // the abort so clients don't miss the final subprocess_exited frame.
