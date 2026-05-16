@@ -263,6 +263,8 @@ export class Session {
   private emitQueue: Promise<unknown> = Promise.resolve();
   private pendingFlushCount = 0;
   private flushInterval: ReturnType<typeof setInterval> | null = null;
+  // Independent of emitQueue so disk I/O never blocks the stdout pump.
+  private flushQueue: Promise<void> = Promise.resolve();
   private proc: ReturnType<typeof Bun.spawn> | null = null;
   private ccSid: string | null = null;
   private _status: SessionStatus = "starting";
@@ -673,21 +675,21 @@ export class Session {
 
     this.setStatus("live");
 
-    // Batch JSONL flushes every 100ms instead of per-event so the stdout
-    // pump isn't stalled on disk I/O between every CC output line. Flush
-    // tasks are chained onto emitQueue so they never race with pending writes.
+    // Batch JSONL flushes every 100ms. Runs on a separate flushQueue so the
+    // stdout pump's await this.emit() is never stalled waiting on disk I/O.
+    // write() is synchronous so data is already buffered before flush fires;
+    // there is no race between a pending write and an independent flush.
     this.flushInterval = setInterval(() => {
       if (this.pendingFlushCount === 0) return;
       this.pendingFlushCount = 0;
       const sid = this.oakridgeSid;
-      const t = async () => {
+      this.flushQueue = this.flushQueue.then(async () => {
         try {
           await this.jsonlWriter.flush();
         } catch (err) {
           console.error(`kbbl: interval flush failed [${sid}]`, err);
         }
-      };
-      this.emitQueue = this.emitQueue.then(t, t);
+      });
     }, 100);
 
     const activeProc = this.proc;
@@ -850,12 +852,13 @@ export class Session {
     }
     this.pendingApprovals.clear();
     if (resolvedCount > 0 || hadStragglers) this.firePendingCountChanged();
-    // Stop the flush interval and chain one final flush so writes buffered
-    // since the last tick make it to disk before we close the writer.
+    // Stop the flush interval, wait for any in-flight background flush, then
+    // do a final flush so writes buffered since the last tick reach disk.
     if (this.flushInterval !== null) {
       clearInterval(this.flushInterval);
       this.flushInterval = null;
     }
+    await this.flushQueue;
     const finalFlush = async () => { await this.jsonlWriter.flush(); };
     this.emitQueue = this.emitQueue.then(finalFlush, finalFlush);
     // Drain in-flight emit work (write+flush+fanout) before closing the
