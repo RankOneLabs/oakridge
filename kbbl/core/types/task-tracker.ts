@@ -6,6 +6,7 @@ export const SpecSchema = z.object({
   title: z.string(),
   notes: z.string().nullable(),
   status: z.enum(["draft", "plan_review", "planning_done", "done", "archived"]),
+  current_session_ref: z.string().nullable(),
   created_at: z.string(),
 });
 export type Spec = z.infer<typeof SpecSchema>;
@@ -29,6 +30,7 @@ export const CohortSchema = z.object({
   position: z.number().int(),
   status: z.enum(["waiting", "planned", "briefing", "brief_review", "building", "done", "blocked"]),
   pre_block_status: z.enum(["waiting", "planned", "briefing", "brief_review", "building", "done"]).nullable(),
+  current_session_ref: z.string().nullable(),
   created_at: z.string(),
 });
 export type Cohort = z.infer<typeof CohortSchema>;
@@ -59,6 +61,7 @@ export const BriefSchema = z.object({
   approaches_rejected: z.array(z.object({ approach: z.string(), reason: z.string() })),
   next_action: z.string(),
   debrief: z.string().nullable(),
+  pr_url: z.string().nullable(),
   rejection_reason: z.string().nullable(),
   created_at: z.string(),
 });
