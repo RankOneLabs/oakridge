@@ -16,6 +16,10 @@ import { validateWorkdir } from "./server/handlers/sessions";
 import { openDb } from "./db/connection";
 import { applyMigrations } from "./db/migrations";
 import { bootstrap as bootstrapOrchestrator } from "./orchestrator/bootstrap";
+import { createKbblChatBackend } from "./orchestrator/backends/kbbl-chat";
+import { createDispatcher } from "./orchestrator/backends/dispatcher";
+import { wireDispatchHooks } from "./orchestrator/dispatch-hooks";
+import { wireResponderSpawn } from "./orchestrator/responders/spawn";
 import { reviewRegistry } from "./review/registry";
 import { reviewEvents } from "./review/events";
 import { taskTrackerEvents } from "./db/events";
@@ -196,6 +200,14 @@ const manager = new SessionManager({
   safirQueue,
 });
 
+// === Dispatcher + dispatch hooks + responder spawn ===
+
+const kbblChatBackend = createKbblChatBackend({ manager });
+const kbblUrl = `http://${host}:${port}`;
+const dispatcher = createDispatcher({ db, backends: { kbbl_chat: kbblChatBackend }, kbblUrl });
+wireDispatchHooks({ taskTrackerEvents, dispatcher });
+wireResponderSpawn({ reviewEvents, kbblUrl });
+
 // === Hono app ===
 
 let bunServer: ReturnType<typeof Bun.serve> | null = null;
@@ -211,6 +223,7 @@ const app = createApp({
   config,
   configPath,
   db,
+  dispatcher,
 });
 
 // === bind port (fail fast before spawning CC) ===
