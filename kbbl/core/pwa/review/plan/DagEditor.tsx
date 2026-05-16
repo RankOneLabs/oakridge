@@ -133,15 +133,15 @@ export function DagEditor({
   );
 
   const onNodeDragStop = useCallback(
-    (_event: MouseEvent, draggedNode: Node) => {
+    (_event: MouseEvent, _draggedNode: Node) => {
       if (mode !== "edit" || frozen) return;
-      // Sort current nodes by y position, assign sequential positions
+      // Sort all nodes by y position and assign sequential positions to all,
+      // so a reorder never leaves duplicate position values on the server.
       const sortedByY = [...nodes].sort(
         (a, b) => a.position.y - b.position.y,
       );
-      const newPosition = sortedByY.findIndex((n) => n.id === draggedNode.id);
-      if (newPosition >= 0) {
-        void onUpdatePosition(draggedNode.id, newPosition);
+      for (const [idx, node] of sortedByY.entries()) {
+        void onUpdatePosition(node.id, idx);
       }
     },
     [mode, frozen, nodes, onUpdatePosition],
