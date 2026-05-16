@@ -24,11 +24,13 @@ export function wireDispatchHooks({ taskTrackerEvents, dispatcher }: DispatchHoo
 
   const unsubCohortPlanned = taskTrackerEvents.subscribe("cohort.entered_planned", ({ cohort_id }) => {
     void (async () => {
+      // Emit briefing_started before dispatch so the cohort advances to briefing
+      // regardless of dispatch outcome. If dispatch fails the operator sees the
+      // cohort in briefing and can manually re-trigger; leaving it in planned
+      // with no session and no retry path would leave it permanently stuck.
+      taskTrackerEvents.emit("cohort.briefing_started", { cohort_id });
       try {
         await dispatcher.dispatch("planner2", cohort_id);
-        // Emit briefing_started AFTER dispatch returns so cohort transitions
-        // planned → briefing (handled by bootstrap) only once the session is spawned.
-        taskTrackerEvents.emit("cohort.briefing_started", { cohort_id });
       } catch (err) {
         console.error(
           JSON.stringify({ kbbl: "dispatch-hooks", event: "cohort.entered_planned", error: String(err), cohort_id }),

@@ -12,10 +12,9 @@ export function loadPrompt(name: string): string {
 }
 
 export function renderPrompt(template: string, slots: Record<string, string>): string {
-  let result = template;
-  for (const [key, value] of Object.entries(slots)) {
-    result = result.replaceAll(`{{${key}}}`, value);
-  }
+  const result = template.replace(/\{\{([^}]+)\}\}/g, (match, key: string) =>
+    key in slots ? slots[key]! : match,
+  );
   const remaining = /\{\{[^}]+\}\}/.exec(result);
   if (remaining) {
     throw new Error(`unfilled prompt slot: ${remaining[0]}`);

@@ -254,9 +254,8 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
       } else {
         // brief → update parent cohort
         const briefRow = db.prepare<{ cohort_id: string }, [string]>("SELECT cohort_id FROM briefs WHERE id = ?").get(inputId);
-        if (briefRow) {
-          db.prepare("UPDATE cohorts SET current_session_ref = ? WHERE id = ?").run(session_ref, briefRow.cohort_id);
-        }
+        if (!briefRow) throw new Error(`brief not found when persisting session_ref: ${inputId}`);
+        db.prepare("UPDATE cohorts SET current_session_ref = ? WHERE id = ?").run(session_ref, briefRow.cohort_id);
       }
 
       return session_ref;
