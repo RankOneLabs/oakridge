@@ -27,8 +27,8 @@ describe("liveValueAt", () => {
 
   it("returns the most recent edit value for the anchor", () => {
     const edits = [
-      makeEdit("goal", "first", "id-1"),
-      makeEdit("goal", "second", "id-2"),
+      makeEdit("goal", "first", "00000000-0000-0000-0000-000000000001"),
+      makeEdit("goal", "second", "00000000-0000-0000-0000-000000000002"),
     ];
     expect(liveValueAt(edits, "goal", "original")).toBe("second");
   });

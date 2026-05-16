@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, type MouseEvent } from "react";
 import ReactFlow, {
   Background,
   Controls,
@@ -10,7 +10,6 @@ import ReactFlow, {
   type Node,
   type NodeTypes,
   type OnConnect,
-  type OnNodeDrag,
 } from "reactflow";
 import dagre from "dagre";
 import { CohortNode, type CohortNodeData } from "./CohortNode";
@@ -135,8 +134,8 @@ export function DagEditor({
     [mode, frozen, onAddEdge, setEdges],
   );
 
-  const onNodeDragStop: OnNodeDrag = useCallback(
-    (_event, draggedNode) => {
+  const onNodeDragStop = useCallback(
+    (_event: MouseEvent, draggedNode: Node) => {
       if (mode !== "edit") return;
       // Sort current nodes by y position, assign sequential positions
       const sortedByY = [...nodes].sort(
