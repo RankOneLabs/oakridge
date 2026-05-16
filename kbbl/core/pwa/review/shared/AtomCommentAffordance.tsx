@@ -20,6 +20,7 @@ export function AtomCommentAffordance({
   return (
     <button
       type="button"
+      disabled={!!frozen}
       onClick={() => onOpenThread(anchor)}
       title={`${openCount} comment${openCount !== 1 ? "s" : ""} on ${anchor}`}
       style={{

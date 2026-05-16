@@ -20,7 +20,8 @@ const consoleError = console.error.bind(console);
 console.error = (...args: unknown[]) => {
   if (
     typeof args[0] === "string" &&
-    (args[0].includes("ResizeObserver") || args[0].includes("width"))
+    (args[0].includes("ResizeObserver") ||
+      args[0].includes("ReactFlow: The parent container needs a width"))
   ) {
     return;
   }

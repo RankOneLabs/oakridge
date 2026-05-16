@@ -22,6 +22,8 @@ export function useArtifactStream(
   useEffect(() => {
     let cancelled = false;
 
+    setState({ edits: [], threads: [], status: "idle", frozen: false });
+
     const qs = (p: Record<string, string>) =>
       new URLSearchParams(p).toString();
 

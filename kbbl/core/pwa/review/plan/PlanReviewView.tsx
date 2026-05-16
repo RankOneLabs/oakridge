@@ -41,16 +41,20 @@ export function PlanReviewView({ id, onToggleTheme, onBack }: PlanReviewViewProp
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setError(null);
     Promise.all([
-      fetch(`/plans/${encodeURIComponent(id)}`).then(
-        (r) => r.json() as Promise<Plan>,
-      ),
-      fetch(`/cohorts?plan_id=${encodeURIComponent(id)}`).then(
-        (r) => r.json() as Promise<Cohort[]>,
-      ),
-      fetch(`/plans/${encodeURIComponent(id)}/cohort-dependencies`).then(
-        (r) => r.json() as Promise<CohortDependency[]>,
-      ),
+      fetch(`/plans/${encodeURIComponent(id)}`).then((r) => {
+        if (!r.ok) throw new Error(`plans: ${r.status}`);
+        return r.json() as Promise<Plan>;
+      }),
+      fetch(`/cohorts?plan_id=${encodeURIComponent(id)}`).then((r) => {
+        if (!r.ok) throw new Error(`cohorts: ${r.status}`);
+        return r.json() as Promise<Cohort[]>;
+      }),
+      fetch(`/plans/${encodeURIComponent(id)}/cohort-dependencies`).then((r) => {
+        if (!r.ok) throw new Error(`deps: ${r.status}`);
+        return r.json() as Promise<CohortDependency[]>;
+      }),
     ])
       .then(([p, c, d]) => {
         if (cancelled) return;
@@ -171,9 +175,10 @@ export function PlanReviewView({ id, onToggleTheme, onBack }: PlanReviewViewProp
   );
 
   const handleDeleteEdge = useCallback(async (depId: string) => {
-    await fetch(`/cohort-dependencies/${encodeURIComponent(depId)}`, {
+    const res = await fetch(`/cohort-dependencies/${encodeURIComponent(depId)}`, {
       method: "DELETE",
     });
+    if (!res.ok) return;
     setDeps((prev) => prev.filter((d) => d.id !== depId));
   }, []);
 

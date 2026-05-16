@@ -59,8 +59,12 @@ export function BriefReviewView({ id, onToggleTheme, onBack }: BriefReviewViewPr
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setError(null);
     fetch(`/briefs/${encodeURIComponent(id)}`)
-      .then((r) => r.json() as Promise<Brief>)
+      .then((r) => {
+        if (!r.ok) throw new Error(`briefs: ${r.status}`);
+        return r.json() as Promise<Brief>;
+      })
       .then((b) => {
         if (cancelled) return;
         setBrief(b);
@@ -184,6 +188,7 @@ export function BriefReviewView({ id, onToggleTheme, onBack }: BriefReviewViewPr
   }, [id]);
 
   const handleReject = useCallback(async () => {
+    // TODO(cohort-5): replace with a RejectModal like PlanReviewView uses
     const reason = window.prompt("Reason for rejection:");
     if (!reason?.trim()) return;
     setActionPending(true);

@@ -1,8 +1,7 @@
-import { useCallback, useMemo, type MouseEvent } from "react";
+import { useCallback, useEffect, useMemo, type MouseEvent } from "react";
 import ReactFlow, {
   Background,
   Controls,
-  addEdge,
   useEdgesState,
   useNodesState,
   type Connection,
@@ -120,23 +119,22 @@ export function DagEditor({
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
-  // Sync nodes when props change (e.g. after fetch refresh)
-  useMemo(() => setNodes(initialNodes), [initialNodes, setNodes]);
-  useMemo(() => setEdges(initialEdges), [initialEdges, setEdges]);
+  // Sync nodes/edges when props change (e.g. after fetch refresh)
+  useEffect(() => { setNodes(initialNodes); }, [initialNodes, setNodes]);
+  useEffect(() => { setEdges(initialEdges); }, [initialEdges, setEdges]);
 
   const onConnect: OnConnect = useCallback(
     (connection: Connection) => {
       if (mode !== "edit" || frozen) return;
       if (!connection.source || !connection.target) return;
-      setEdges((eds) => addEdge(connection, eds));
       void onAddEdge(connection.source, connection.target);
     },
-    [mode, frozen, onAddEdge, setEdges],
+    [mode, frozen, onAddEdge],
   );
 
   const onNodeDragStop = useCallback(
     (_event: MouseEvent, draggedNode: Node) => {
-      if (mode !== "edit") return;
+      if (mode !== "edit" || frozen) return;
       // Sort current nodes by y position, assign sequential positions
       const sortedByY = [...nodes].sort(
         (a, b) => a.position.y - b.position.y,
@@ -146,7 +144,7 @@ export function DagEditor({
         void onUpdatePosition(draggedNode.id, newPosition);
       }
     },
-    [mode, nodes, onUpdatePosition],
+    [mode, frozen, nodes, onUpdatePosition],
   );
 
   const onEdgesDelete = useCallback(

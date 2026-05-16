@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { liveValueAt } from "./liveness";
 import type { AtomEdit } from "./types";
 
-function makeEdit(anchor: string | null, newValue: string, id = crypto.randomUUID()): AtomEdit {
+function makeEdit(anchor: string | null, newValue: string, id: string = crypto.randomUUID()): AtomEdit {
   return {
     id,
     target_type: "plan",
