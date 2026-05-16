@@ -54,6 +54,12 @@ curl -sX POST "$KBBL/projects" -H 'content-type: application/json' \
 curl -sX POST "$KBBL/specs" -H 'content-type: application/json' \
   -d '{"project_id":"<project_id>","title":"…","notes":"<full spec prose>"}'
 # → { "id":"<spec_id>", "status":"draft", ... }
+
+# Or load the prose from a file (mutually exclusive with `notes`). The path
+# is resolved on the *server* (where kbbl runs) and must sit inside the
+# project's `repo_path` — kbbl rejects anything outside it:
+curl -sX POST "$KBBL/specs" -H 'content-type: application/json' \
+  -d '{"project_id":"<project_id>","title":"…","notesPath":"<repo_path>/spec.md"}'
 ```
 
 The `POST /specs` emits `spec.created`; the dispatch hook spawns a planner-1

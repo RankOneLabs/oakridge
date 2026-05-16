@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import type { Database } from "bun:sqlite";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { openTestDb } from "./test-db";
 import { insertSpec, getSpec, listSpecsByProject, updateSpecFields } from "./specs";
 import { mountSpecsRoutes } from "../server/handlers/specs";
@@ -9,18 +12,21 @@ import { insertProject } from "./projects";
 
 let db: Database;
 let app: Hono;
+let repoPath: string;
 
 const PROJECT_ID = "proj-1";
 
 beforeEach(() => {
   db = openTestDb();
-  insertProject(db, { id: PROJECT_ID, name: "Test Project", repo_path: "/test/project" });
+  repoPath = mkdtempSync(join(tmpdir(), "specs-repo-"));
+  insertProject(db, { id: PROJECT_ID, name: "Test Project", repo_path: repoPath });
   app = new Hono();
   mountSpecsRoutes(app, { db });
 });
 
 afterEach(() => {
   db.close();
+  rmSync(repoPath, { recursive: true, force: true });
 });
 
 describe("specs query helpers", () => {
@@ -158,6 +164,97 @@ describe("POST /specs", () => {
       body: "not json",
     });
     expect(res.status).toBe(400);
+  });
+
+  test("reads notes from notesPath inside the project's repo_path", async () => {
+    const path = join(repoPath, "spec.md");
+    writeFileSync(path, "# Spec prose\n\nFrom file.");
+    const res = await app.request("/specs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ project_id: PROJECT_ID, title: "From path", notesPath: path }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { id: string; notes: string | null };
+    expect(body.notes).toBe("# Spec prose\n\nFrom file.");
+  });
+
+  test("reads notes from a repo-root-relative notesPath", async () => {
+    writeFileSync(join(repoPath, "spec.md"), "from relative path");
+    const res = await app.request("/specs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ project_id: PROJECT_ID, title: "From relative", notesPath: "spec.md" }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { notes: string | null };
+    expect(body.notes).toBe("from relative path");
+  });
+
+  test("returns 400 when notesPath file does not exist", async () => {
+    const missing = join(repoPath, "does-not-exist.md");
+    const res = await app.request("/specs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ project_id: PROJECT_ID, title: "Missing", notesPath: missing }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("notesPath not found");
+  });
+
+  test("returns 400 when notesPath resolves outside repo_path", async () => {
+    const outside = mkdtempSync(join(tmpdir(), "specs-outside-"));
+    try {
+      const path = join(outside, "evil.md");
+      writeFileSync(path, "secret");
+      const res = await app.request("/specs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ project_id: PROJECT_ID, title: "Outside", notesPath: path }),
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toContain("repo_path");
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  test("returns 400 when notesPath is a symlink pointing outside repo_path", async () => {
+    const outside = mkdtempSync(join(tmpdir(), "specs-symlink-target-"));
+    try {
+      const target = join(outside, "evil.md");
+      writeFileSync(target, "secret");
+      const link = join(repoPath, "link.md");
+      symlinkSync(target, link);
+      const res = await app.request("/specs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ project_id: PROJECT_ID, title: "Symlink escape", notesPath: link }),
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toContain("repo_path");
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  test("returns 400 when both notes and notesPath are provided", async () => {
+    const res = await app.request("/specs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        project_id: PROJECT_ID,
+        title: "Both",
+        notes: "inline",
+        notesPath: join(repoPath, "whatever.md"),
+      }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("either notes or notesPath");
   });
 });
 
