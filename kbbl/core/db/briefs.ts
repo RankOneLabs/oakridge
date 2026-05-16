@@ -85,6 +85,15 @@ export function listBriefsByCohort(db: Database, cohort_id: string): Brief[] {
     .map(parseBriefRow);
 }
 
+export function listBriefsByStatus(db: Database, status: Brief["status"]): Brief[] {
+  return db
+    .prepare<BriefRow, [string]>(
+      "SELECT * FROM briefs WHERE status = ? ORDER BY created_at DESC, id",
+    )
+    .all(status)
+    .map(parseBriefRow);
+}
+
 export function updateBriefFields(
   db: Database,
   id: string,

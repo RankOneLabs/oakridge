@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { Hono } from "hono";
 import type { Database } from "bun:sqlite";
-import { insertPlan, getPlan, listPlansBySpec, updatePlanFields } from "../../db/plans";
+import { insertPlan, getPlan, listPlansBySpec, listPlansByStatus, updatePlanFields } from "../../db/plans";
 import type { Plan } from "../../types/task-tracker";
 
 const CreatePlanSchema = z.object({
@@ -22,8 +22,19 @@ export function mountPlansRoutes(app: Hono, deps: PlansRouteDeps): void {
 
   app.get("/plans", (c) => {
     const spec_id = c.req.query("spec_id");
+    const status = c.req.query("status");
+
+    if (status) {
+      const validStatuses = ["pending_approval", "approved", "rejected", "superseded"] as const;
+      type PlanStatus = (typeof validStatuses)[number];
+      if (!validStatuses.includes(status as PlanStatus)) {
+        return c.json({ error: "invalid status value" }, 400);
+      }
+      return c.json(listPlansByStatus(db, status as PlanStatus));
+    }
+
     if (!spec_id) {
-      return c.json({ error: "spec_id query param required" }, 400);
+      return c.json({ error: "spec_id or status query param required" }, 400);
     }
     return c.json(listPlansBySpec(db, spec_id));
   });

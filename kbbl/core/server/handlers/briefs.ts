@@ -5,6 +5,7 @@ import {
   insertBrief,
   getBrief,
   listBriefsByCohort,
+  listBriefsByStatus,
   updateBriefFields,
   updateBriefDebrief,
 } from "../../db/briefs";
@@ -44,8 +45,19 @@ export function mountBriefsRoutes(app: Hono, deps: BriefsRouteDeps): void {
 
   app.get("/briefs", (c) => {
     const cohort_id = c.req.query("cohort_id");
+    const status = c.req.query("status");
+
+    if (status) {
+      const validStatuses = ["pending_approval", "approved", "rejected", "superseded"] as const;
+      type BriefStatus = (typeof validStatuses)[number];
+      if (!validStatuses.includes(status as BriefStatus)) {
+        return c.json({ error: "invalid status value" }, 400);
+      }
+      return c.json(listBriefsByStatus(db, status as BriefStatus));
+    }
+
     if (!cohort_id) {
-      return c.json({ error: "cohort_id query param required" }, 400);
+      return c.json({ error: "cohort_id or status query param required" }, 400);
     }
     return c.json(listBriefsByCohort(db, cohort_id));
   });

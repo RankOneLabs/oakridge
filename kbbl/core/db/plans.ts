@@ -31,6 +31,14 @@ export function listPlansBySpec(db: Database, spec_id: string): Plan[] {
     .all(spec_id);
 }
 
+export function listPlansByStatus(db: Database, status: Plan["status"]): Plan[] {
+  return db
+    .prepare<Plan, [string]>(
+      "SELECT * FROM plans WHERE status = ? ORDER BY created_at DESC, id",
+    )
+    .all(status);
+}
+
 export function updatePlanFields(
   db: Database,
   id: string,

@@ -135,6 +135,21 @@ type Status = "connecting" | "connected" | "disconnected";
 export type Theme = "dark" | "light";
 type ResolutionMap = Map<string, "allow" | "deny">;
 
+interface PendingPlanCard {
+  id: string;
+  spec_id: string;
+  status: string;
+  created_at: string;
+}
+
+interface PendingBriefCard {
+  id: string;
+  cohort_id: string;
+  goal: string;
+  status: string;
+  created_at: string;
+}
+
 const THEME_STORAGE_KEY = "oakridge.theme";
 const NEW_SESSION_MODEL_STORAGE_KEY = "oakridge.newSessionModel";
 
@@ -716,6 +731,35 @@ function SessionListView({
   const profileLockedRef = useRef(false);
   const sorted = useMemo(() => sortSessions(sessions), [sessions]);
 
+  // Pending review items for the operator inbox sections at the top.
+  const [pendingPlans, setPendingPlans] = useState<PendingPlanCard[]>([]);
+  const [pendingBriefs, setPendingBriefs] = useState<PendingBriefCard[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchPending = async () => {
+      try {
+        const [plansRes, briefsRes] = await Promise.all([
+          fetch("/plans?status=pending_approval"),
+          fetch("/briefs?status=pending_approval"),
+        ]);
+        if (cancelled) return;
+        if (plansRes.ok) {
+          const plans = (await plansRes.json()) as PendingPlanCard[];
+          if (!cancelled) setPendingPlans(plans);
+        }
+        if (briefsRes.ok) {
+          const briefs = (await briefsRes.json()) as PendingBriefCard[];
+          if (!cancelled) setPendingBriefs(briefs);
+        }
+      } catch {
+        // network error; sections stay hidden
+      }
+    };
+    void fetchPending();
+    return () => { cancelled = true; };
+  }, []);
+
   // Prefill the workdir input with the server default once /config resolves,
   // but only if the operator hasn't typed anything yet — otherwise a slow
   // /config response would clobber what they were mid-typing. workdirTouched
@@ -984,6 +1028,104 @@ function SessionListView({
           </div>
         )}
       </div>
+      {pendingPlans.length > 0 && (
+        <section style={{ padding: "8px 12px" }}>
+          <div
+            style={{
+              fontSize: 12,
+              fontWeight: 600,
+              opacity: 0.7,
+              marginBottom: 6,
+              textTransform: "uppercase",
+              letterSpacing: "0.04em",
+            }}
+          >
+            Pending plans
+          </div>
+          <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 4 }}>
+            {pendingPlans.map((p) => (
+              <li key={p.id}>
+                <button
+                  type="button"
+                  onClick={() => { window.location.hash = `plan/${p.id}`; }}
+                  style={{
+                    width: "100%",
+                    textAlign: "left",
+                    padding: "6px 10px",
+                    borderRadius: 4,
+                    border: "1px solid var(--border, #444)",
+                    background: "var(--surface-raised, #1e1e1e)",
+                    cursor: "pointer",
+                    fontSize: 13,
+                  }}
+                >
+                  <span style={{ fontWeight: 500 }}>Plan {p.id.slice(0, 8)}</span>
+                  <span
+                    style={{
+                      marginLeft: 8,
+                      fontSize: 11,
+                      opacity: 0.5,
+                    }}
+                  >
+                    {p.created_at.slice(0, 10)}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {pendingBriefs.length > 0 && (
+        <section style={{ padding: "8px 12px" }}>
+          <div
+            style={{
+              fontSize: 12,
+              fontWeight: 600,
+              opacity: 0.7,
+              marginBottom: 6,
+              textTransform: "uppercase",
+              letterSpacing: "0.04em",
+            }}
+          >
+            Pending briefs
+          </div>
+          <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 4 }}>
+            {pendingBriefs.map((b) => (
+              <li key={b.id}>
+                <button
+                  type="button"
+                  onClick={() => { window.location.hash = `brief/${b.id}`; }}
+                  style={{
+                    width: "100%",
+                    textAlign: "left",
+                    padding: "6px 10px",
+                    borderRadius: 4,
+                    border: "1px solid var(--border, #444)",
+                    background: "var(--surface-raised, #1e1e1e)",
+                    cursor: "pointer",
+                    fontSize: 13,
+                  }}
+                >
+                  <span style={{ fontWeight: 500 }}>
+                    {b.goal.length > 60 ? `${b.goal.slice(0, 60)}…` : b.goal}
+                  </span>
+                  <span
+                    style={{
+                      marginLeft: 8,
+                      fontSize: 11,
+                      opacity: 0.5,
+                    }}
+                  >
+                    {b.created_at.slice(0, 10)}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {sorted.length === 0 ? (
         <div className="session-list-empty">No sessions yet.</div>
       ) : (
