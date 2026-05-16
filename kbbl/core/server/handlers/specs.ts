@@ -1,7 +1,9 @@
 import { z } from "zod";
 import type { Hono } from "hono";
 import type { Database } from "bun:sqlite";
+import { resolve, relative, isAbsolute } from "node:path";
 import { insertSpec, getSpec, listSpecsByProject, updateSpecFields } from "../../db/specs";
+import { getProject } from "../../db/projects";
 import { taskTrackerEvents } from "../../db/events";
 
 const CreateSpecSchema = z
@@ -55,11 +57,29 @@ export function mountSpecsRoutes(app: Hono, deps: SpecsRouteDeps): void {
 
     let resolvedNotes: string | null = notes ?? null;
     if (notesPath !== undefined) {
-      const file = Bun.file(notesPath);
-      if (!(await file.exists())) {
-        return c.json({ error: `notesPath not found: ${notesPath}` }, 400);
+      // The kbbl server binds to 0.0.0.0 (tailnet-reachable, unauthenticated),
+      // so any client that can reach the API could otherwise turn notesPath
+      // into an arbitrary local-file read. Constrain reads to the project's
+      // repo_path — operators load specs from files inside the repo anyway.
+      const project = getProject(db, project_id);
+      if (!project) {
+        return c.json({ error: "project not found" }, 404);
       }
-      resolvedNotes = await file.text();
+      const repoRoot = resolve(project.repo_path);
+      const absNotesPath = isAbsolute(notesPath) ? resolve(notesPath) : resolve(repoRoot, notesPath);
+      const rel = relative(repoRoot, absNotesPath);
+      if (rel.startsWith("..") || isAbsolute(rel)) {
+        return c.json({ error: "notesPath must resolve inside the project's repo_path" }, 400);
+      }
+      try {
+        resolvedNotes = await Bun.file(absNotesPath).text();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("ENOENT") || msg.includes("No such file")) {
+          return c.json({ error: `notesPath not found: ${notesPath}` }, 400);
+        }
+        return c.json({ error: "unable to read notesPath" }, 400);
+      }
     }
 
     try {
