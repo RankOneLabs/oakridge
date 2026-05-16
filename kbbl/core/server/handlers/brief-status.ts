@@ -58,22 +58,22 @@ export function mountBriefStatusRoutes(app: Hono, deps: BriefStatusRouteDeps): v
         if (!nextStatus) return "no_transition";
 
         if (requestedStatus === "approved") {
-          db.prepare("UPDATE briefs SET status = ? WHERE id = ?").run(nextStatus, brief_id);
-          freeze(db, "build_brief", brief_id);
           const cohortResult = db.prepare(
             "UPDATE cohorts SET status = 'building' WHERE id = ? AND status = 'brief_review'",
           ).run(brief.cohort_id);
           if (cohortResult.changes === 0) return "cohort_not_in_brief_review";
+          db.prepare("UPDATE briefs SET status = ? WHERE id = ?").run(nextStatus, brief_id);
+          freeze(db, "build_brief", brief_id);
           updated = getBrief(db, brief_id);
           emitApproved = { brief_id, cohort_id: brief.cohort_id };
         } else {
-          db.prepare(
-            "UPDATE briefs SET status = ?, rejection_reason = ? WHERE id = ?",
-          ).run(nextStatus, reason ?? null, brief_id);
           const cohortResult = db.prepare(
             "UPDATE cohorts SET status = 'briefing' WHERE id = ? AND status = 'brief_review'",
           ).run(brief.cohort_id);
           if (cohortResult.changes === 0) return "cohort_not_in_brief_review";
+          db.prepare(
+            "UPDATE briefs SET status = ?, rejection_reason = ? WHERE id = ?",
+          ).run(nextStatus, reason ?? null, brief_id);
           updated = getBrief(db, brief_id);
           emitRejected = { brief_id, cohort_id: brief.cohort_id };
         }
