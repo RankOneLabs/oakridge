@@ -28,7 +28,7 @@ export const CohortSchema = z.object({
   notes: z.string().nullable(),
   position: z.number().int(),
   status: z.enum(["waiting", "planned", "briefing", "brief_review", "building", "done", "blocked"]),
-  pre_block_status: z.string().nullable(),
+  pre_block_status: z.enum(["waiting", "planned", "briefing", "brief_review", "building", "done"]).nullable(),
   created_at: z.string(),
 });
 export type Cohort = z.infer<typeof CohortSchema>;

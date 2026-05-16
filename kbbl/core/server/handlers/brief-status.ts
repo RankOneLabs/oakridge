@@ -38,6 +38,9 @@ export function mountBriefStatusRoutes(app: Hono, deps: BriefStatusRouteDeps): v
     }
 
     const { status: requestedStatus, reason } = result.data;
+    if (requestedStatus === "rejected" && !reason?.trim()) {
+      return c.json({ error: "reason is required when rejecting a brief" }, 400);
+    }
     const brief_id = c.req.param("id");
 
     let updated: Brief | null = null;
@@ -57,18 +60,20 @@ export function mountBriefStatusRoutes(app: Hono, deps: BriefStatusRouteDeps): v
         if (requestedStatus === "approved") {
           db.prepare("UPDATE briefs SET status = ? WHERE id = ?").run(nextStatus, brief_id);
           freeze(db, "build_brief", brief_id);
-          db.prepare(
+          const cohortResult = db.prepare(
             "UPDATE cohorts SET status = 'building' WHERE id = ? AND status = 'brief_review'",
           ).run(brief.cohort_id);
+          if (cohortResult.changes === 0) return "cohort_not_in_brief_review";
           updated = getBrief(db, brief_id);
           emitApproved = { brief_id, cohort_id: brief.cohort_id };
         } else {
           db.prepare(
             "UPDATE briefs SET status = ?, rejection_reason = ? WHERE id = ?",
           ).run(nextStatus, reason ?? null, brief_id);
-          db.prepare(
+          const cohortResult = db.prepare(
             "UPDATE cohorts SET status = 'briefing' WHERE id = ? AND status = 'brief_review'",
           ).run(brief.cohort_id);
+          if (cohortResult.changes === 0) return "cohort_not_in_brief_review";
           updated = getBrief(db, brief_id);
           emitRejected = { brief_id, cohort_id: brief.cohort_id };
         }
@@ -79,6 +84,7 @@ export function mountBriefStatusRoutes(app: Hono, deps: BriefStatusRouteDeps): v
       if (error === "not_found") return c.json({ error: "not found" }, 404);
       if (error === "not_pending") return c.json({ error: "brief is not in pending_approval" }, 409);
       if (error === "no_transition") return c.json({ error: "transition not defined" }, 409);
+      if (error === "cohort_not_in_brief_review") return c.json({ error: "cohort is not in brief_review" }, 409);
     } catch (err) {
       console.error("brief-status:patch failed", err);
       return c.json({ error: "internal server error" }, 500);
@@ -93,7 +99,8 @@ export function mountBriefStatusRoutes(app: Hono, deps: BriefStatusRouteDeps): v
   app.post("/briefs/:id/reopen", async (c) => {
     let body: unknown;
     try {
-      body = await c.req.json();
+      const text = await c.req.text();
+      body = text.trim() === "" ? {} : JSON.parse(text);
     } catch {
       return c.json({ error: "invalid json" }, 400);
     }

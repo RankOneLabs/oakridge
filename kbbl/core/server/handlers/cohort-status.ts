@@ -7,7 +7,6 @@ import type { Cohort } from "../../types/task-tracker";
 
 const PatchCohortStatusSchema = z.object({
   status: z.enum(["blocked", "unblocked", "done"]),
-  reason: z.string().optional(),
 });
 
 interface CohortStatusRouteDeps {
@@ -27,14 +26,18 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
 
     const result = PatchCohortStatusSchema.safeParse(body);
     if (!result.success) {
-      // Any status value not in the enum is an orchestrator-only transition
       const msg = result.error.issues[0]?.message ?? "invalid body";
-      if (
-        typeof body === "object" &&
-        body !== null &&
-        "status" in body &&
-        typeof (body as Record<string, unknown>).status === "string"
-      ) {
+      // A string status that is a real CohortStatus but not operator-settable
+      // is an orchestrator-managed transition (e.g. "planned", "briefing").
+      // A non-string, missing, or unrecognized status is bad input → 400.
+      const FULL_COHORT_STATUSES = new Set([
+        "waiting", "planned", "briefing", "brief_review", "building", "done", "blocked",
+      ]);
+      const statusVal =
+        typeof body === "object" && body !== null && "status" in body
+          ? (body as Record<string, unknown>).status
+          : undefined;
+      if (typeof statusVal === "string" && FULL_COHORT_STATUSES.has(statusVal)) {
         return c.json({ error: "transition is orchestrator-only" }, 422);
       }
       return c.json({ error: msg }, 400);
@@ -53,6 +56,7 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
         if (!cohort) return "not_found";
 
         if (requestedStatus === "blocked") {
+          if (cohort.status === "blocked") return "already_blocked";
           db.prepare(
             "UPDATE cohorts SET status = 'blocked', pre_block_status = ? WHERE id = ?",
           ).run(cohort.status, cohort_id);
@@ -102,6 +106,7 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
       })();
 
       if (error === "not_found") return c.json({ error: "not found" }, 404);
+      if (error === "already_blocked") return c.json({ error: "cohort is already blocked" }, 409);
       if (error === "not_blocked") return c.json({ error: "cohort is not blocked" }, 409);
       if (error === "no_pre_block") return c.json({ error: "no pre_block_status recorded" }, 409);
       if (error === "not_building") return c.json({ error: "done transition only allowed from building" }, 409);

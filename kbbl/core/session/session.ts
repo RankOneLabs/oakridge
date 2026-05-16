@@ -261,6 +261,8 @@ export class Session {
   // out of id sequence — SSE's sentUpTo dedup would permanently drop the
   // one that lost the race.
   private emitQueue: Promise<unknown> = Promise.resolve();
+  private pendingFlushCount = 0;
+  private flushInterval: ReturnType<typeof setInterval> | null = null;
   private proc: ReturnType<typeof Bun.spawn> | null = null;
   private ccSid: string | null = null;
   private _status: SessionStatus = "starting";
@@ -585,7 +587,7 @@ export class Session {
     const task = async () => {
       if (persist) {
         this.jsonlWriter.write(JSON.stringify(evt) + "\n");
-        await this.jsonlWriter.flush();
+        this.pendingFlushCount++;
       }
       for (const cb of this.subscribers) {
         try {
@@ -613,6 +615,16 @@ export class Session {
 
   async readJsonl(): Promise<string> {
     return readJsonlOrEmpty(this.jsonlPath);
+  }
+
+  /** Flush any buffered JSONL writes to disk. Tests that read the transcript
+   *  immediately after emitting events must call this first. */
+  async flushTranscript(): Promise<void> {
+    const t = async () => { await this.jsonlWriter.flush(); };
+    const next = this.emitQueue.then(t, t);
+    this.emitQueue = next;
+    this.pendingFlushCount = 0;
+    await next;
   }
 
   async spawn(cmd: SpawnCmd): Promise<void> {
@@ -660,6 +672,16 @@ export class Session {
     }
 
     this.setStatus("live");
+
+    // Batch JSONL flushes every 100ms instead of per-event so the stdout
+    // pump isn't stalled on disk I/O between every CC output line. Flush
+    // tasks are chained onto emitQueue so they never race with pending writes.
+    this.flushInterval = setInterval(() => {
+      if (this.pendingFlushCount === 0) return;
+      this.pendingFlushCount = 0;
+      const t = async () => { await this.jsonlWriter.flush(); };
+      this.emitQueue = this.emitQueue.then(t, t);
+    }, 100);
 
     const activeProc = this.proc;
     const procStdout = activeProc.stdout as ReadableStream<Uint8Array>;
@@ -821,6 +843,14 @@ export class Session {
     }
     this.pendingApprovals.clear();
     if (resolvedCount > 0 || hadStragglers) this.firePendingCountChanged();
+    // Stop the flush interval and chain one final flush so writes buffered
+    // since the last tick make it to disk before we close the writer.
+    if (this.flushInterval !== null) {
+      clearInterval(this.flushInterval);
+      this.flushInterval = null;
+    }
+    const finalFlush = async () => { await this.jsonlWriter.flush(); };
+    this.emitQueue = this.emitQueue.then(finalFlush, finalFlush);
     // Drain in-flight emit work (write+flush+fanout) before closing the
     // writer — otherwise queued tasks that were accepted before the status
     // flip would hit an ended writer.

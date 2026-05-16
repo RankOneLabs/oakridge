@@ -24,7 +24,7 @@ export const COHORT_TRANSITIONS: Record<CohortStatus, Partial<Record<CohortEvent
   planned:      { briefing_started: "briefing",      block: "blocked" },
   briefing:     { brief_submitted:  "brief_review",  block: "blocked" },
   brief_review: { brief_approved:   "building", brief_rejected: "briefing", block: "blocked" },
-  building:     { pr_merged:        "done",           block: "blocked" },
+  building:     { build_completed:  "done", pr_merged: "done",           block: "blocked" },
   done:         { block: "blocked" },
   blocked:      {},
 };

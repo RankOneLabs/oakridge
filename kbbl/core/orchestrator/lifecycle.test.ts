@@ -18,10 +18,11 @@ import type { TaskTrackerEventMap } from "../db/events";
 
 let db: Database;
 let app: Hono;
+let cleanupBootstrap: () => void;
 
 beforeEach(() => {
   db = openTestDb();
-  bootstrap({ db, registry: reviewRegistry, reviewEvents, taskTrackerEvents });
+  cleanupBootstrap = bootstrap({ db, registry: reviewRegistry, reviewEvents, taskTrackerEvents });
   app = new Hono();
   mountProjectsRoutes(app, { db });
   mountSpecsRoutes(app, { db });
@@ -34,6 +35,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  cleanupBootstrap();
   db.close();
 });
 
@@ -253,8 +255,8 @@ describe("full lifecycle — two-cohort plan with dependency", () => {
     expect(rejected.status).toBe("rejected");
     expect(rejected.rejection_reason).toBe("needs more work");
 
-    // Double-reject: 409
-    const doubleRes = await patch(`/plans/${plan.id}/status`, { status: "rejected" });
+    // Double-reject: 409 (plan is no longer pending_approval)
+    const doubleRes = await patch(`/plans/${plan.id}/status`, { status: "rejected", reason: "still needs work" });
     expect(doubleRes.status).toBe(409);
   });
 });

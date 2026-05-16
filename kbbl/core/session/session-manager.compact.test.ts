@@ -281,6 +281,7 @@ describe("runCompact failure modes", () => {
     const oldPhaseId = session.phaseId!;
 
     await mgr.runCompact(oldSid, { kind: "manual" });
+    await session.flushTranscript();
 
     expect(session.status).toBe("live");
 
@@ -357,6 +358,7 @@ describe("runCompact failure modes", () => {
 
     await mgr.runCompact(oldSid, { kind: "manual" });
     await mgr.drainLifecycle();
+    await session.flushTranscript();
 
     expect(existsSync(join(handoffsDir, `${oldSid}.md`))).toBe(true);
 

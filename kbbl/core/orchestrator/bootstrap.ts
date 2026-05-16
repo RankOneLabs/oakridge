@@ -17,7 +17,7 @@ const PLAN_ANCHOR_RE = /^(cohorts\[\d+\]\.(title|notes)|edge:[^->]+->[^->]+)$/;
 const BRIEF_ANCHOR_RE =
   /^(goal|next_action|decisions_made\[\d+\]\.rationale|approaches_rejected\[\d+\]\.reason|files_in_scope\[\d+\])$/;
 
-export function bootstrap({ db, registry, reviewEvents, taskTrackerEvents }: BootstrapDeps): void {
+export function bootstrap({ db, registry, reviewEvents, taskTrackerEvents }: BootstrapDeps): () => void {
   registry.register("plan", {
     validateAnchor: (anchor) =>
       anchor === null || PLAN_ANCHOR_RE.test(anchor) || `invalid plan anchor: ${anchor}`,
@@ -30,7 +30,7 @@ export function bootstrap({ db, registry, reviewEvents, taskTrackerEvents }: Boo
     exists: (brief_id) => getBrief(db, brief_id) !== null,
   });
 
-  reviewEvents.subscribe("artifact.reopened", ({ target_type, target_id }) => {
+  const unsubReopened = reviewEvents.subscribe("artifact.reopened", ({ target_type, target_id }) => {
     if (target_type === "plan") {
       const plan = getPlan(db, target_id);
       if (!plan) return;
@@ -55,9 +55,14 @@ export function bootstrap({ db, registry, reviewEvents, taskTrackerEvents }: Boo
     }
   });
 
-  taskTrackerEvents.subscribe("brief.submitted", ({ cohort_id }) => {
+  const unsubBriefSubmitted = taskTrackerEvents.subscribe("brief.submitted", ({ cohort_id }) => {
     db.prepare(
       "UPDATE cohorts SET status = 'brief_review' WHERE id = ? AND status = 'briefing'",
     ).run(cohort_id);
   });
+
+  return () => {
+    unsubReopened();
+    unsubBriefSubmitted();
+  };
 }

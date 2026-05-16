@@ -19,7 +19,8 @@ export function mountPlanReopenRoutes(app: Hono, deps: PlanReopenRouteDeps): voi
   app.post("/plans/:id/reopen", async (c) => {
     let body: unknown;
     try {
-      body = await c.req.json();
+      const text = await c.req.text();
+      body = text.trim() === "" ? {} : JSON.parse(text);
     } catch {
       return c.json({ error: "invalid json" }, 400);
     }

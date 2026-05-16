@@ -34,6 +34,9 @@ export function mountPlanStatusRoutes(app: Hono, deps: PlanStatusRouteDeps): voi
     }
 
     const { status: requestedStatus, reason } = result.data;
+    if (requestedStatus === "rejected" && !reason?.trim()) {
+      return c.json({ error: "reason is required when rejecting a plan" }, 400);
+    }
     const plan_id = c.req.param("id");
 
     let updated: Plan | null = null;
