@@ -149,6 +149,13 @@ export function mountBriefStatusRoutes(app: Hono, deps: BriefStatusRouteDeps): v
       return c.json({ error: "internal server error" }, 500);
     }
 
+    if (newBrief) {
+      taskTrackerEvents.emit("brief.submitted", {
+        brief_id: (newBrief as Brief).id,
+        cohort_id: (newBrief as Brief).cohort_id,
+      });
+    }
+
     return c.json(newBrief, 201);
   });
 }

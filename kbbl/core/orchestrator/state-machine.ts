@@ -51,7 +51,7 @@ export const BRIEF_TRANSITIONS: Record<BriefStatus, Partial<Record<BriefEvent, B
 export function applyCohortTransition(
   current: CohortStatus,
   event: CohortEvent,
-  preBlockStatus?: CohortStatus | null,
+  preBlockStatus?: Exclude<CohortStatus, "blocked"> | null,
 ): CohortStatus | { error: string } {
   if (event === "unblock") {
     if (current !== "blocked") {

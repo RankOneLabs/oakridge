@@ -679,7 +679,14 @@ export class Session {
     this.flushInterval = setInterval(() => {
       if (this.pendingFlushCount === 0) return;
       this.pendingFlushCount = 0;
-      const t = async () => { await this.jsonlWriter.flush(); };
+      const sid = this.oakridgeSid;
+      const t = async () => {
+        try {
+          await this.jsonlWriter.flush();
+        } catch (err) {
+          console.error(`kbbl: interval flush failed [${sid}]`, err);
+        }
+      };
       this.emitQueue = this.emitQueue.then(t, t);
     }, 100);
 
