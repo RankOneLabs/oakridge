@@ -8,6 +8,7 @@ import type { AppRuntime } from "../runtime";
 import type { SafirClient } from "../safir/client";
 import type { KbblConfig } from "../config";
 import type { SessionManager } from "../session/session-manager";
+import type { createDispatcher } from "../orchestrator/backends/dispatcher";
 import { inboxHandler } from "../stream/inbox";
 import { mountHandoffRoutes } from "./handlers/handoff";
 import { mountPermissionRoutes } from "./handlers/permission";
@@ -18,6 +19,7 @@ import { mountPlansRoutes } from "./handlers/plans";
 import { mountPlanStatusRoutes } from "./handlers/plan-status";
 import { mountPlanReopenRoutes } from "./handlers/plan-reopen";
 import { mountBriefStatusRoutes } from "./handlers/brief-status";
+import { mountBuildsRoutes } from "./handlers/builds";
 import { mountCohortsRoutes } from "./handlers/cohorts";
 import { mountCohortStatusRoutes } from "./handlers/cohort-status";
 import { mountBriefsRoutes } from "./handlers/briefs";
@@ -66,6 +68,8 @@ export interface CreateAppDeps {
   configPath: string;
   /** Open SQLite database instance shared across all DB-backed handlers. */
   db: Database;
+  /** Dispatcher for stage-based agent dispatch; mounts POST /briefs/:id/build. */
+  dispatcher: ReturnType<typeof createDispatcher>;
 }
 
 /**
@@ -87,6 +91,7 @@ export function createApp(deps: CreateAppDeps): Hono {
     config,
     configPath,
     db,
+    dispatcher,
   } = deps;
   const app = new Hono();
 
@@ -224,6 +229,7 @@ export function createApp(deps: CreateAppDeps): Hono {
   mountCohortStatusRoutes(app, { db });
   mountBriefsRoutes(app, { db });
   mountBriefStatusRoutes(app, { db });
+  mountBuildsRoutes(app, { db, dispatcher, manager });
 
   // ---- review primitive (cohort 2) ----
   mountReviewFreezeRoutes(app, { db });

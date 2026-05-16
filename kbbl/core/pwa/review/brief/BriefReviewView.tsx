@@ -17,27 +17,61 @@ interface BriefReviewViewProps {
 }
 
 function RunBuildButton({ briefId }: { briefId: string }) {
+  const [pending, setPending] = useState(false);
+  const [sessionRef, setSessionRef] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const handleRun = async () => {
+    setPending(true);
+    setErr(null);
+    try {
+      const res = await fetch(`/briefs/${encodeURIComponent(briefId)}/build`, { method: "POST" });
+      if (res.ok) {
+        const data = (await res.json()) as { session_ref: string };
+        setSessionRef(data.session_ref);
+      } else {
+        const body = (await res.json()) as { error?: string };
+        setErr(body.error ?? `${res.status}`);
+      }
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "request failed");
+    } finally {
+      setPending(false);
+    }
+  };
+
+  if (sessionRef) {
+    return (
+      <span style={{ fontSize: 12, opacity: 0.8 }}>
+        Build running — session {sessionRef.slice(0, 8)}
+      </span>
+    );
+  }
+
   return (
-    <button
-      type="button"
-      disabled
-      title="Run build — wired in cohort 5"
-      style={{
-        background: "var(--accent, #4a8fcb)",
-        color: "#fff",
-        border: "none",
-        padding: "4px 12px",
-        borderRadius: 4,
-        opacity: 0.5,
-        cursor: "default",
-      }}
-      onClick={() => {
-        // TODO: wired in cohort 5
-        void briefId;
-      }}
-    >
-      Run build
-    </button>
+    <>
+      <button
+        type="button"
+        disabled={pending}
+        onClick={() => { void handleRun(); }}
+        style={{
+          background: "var(--accent, #4a8fcb)",
+          color: "#fff",
+          border: "none",
+          padding: "4px 12px",
+          borderRadius: 4,
+          cursor: pending ? "default" : "pointer",
+          opacity: pending ? 0.5 : 1,
+        }}
+      >
+        {pending ? "…" : "Run build"}
+      </button>
+      {err && (
+        <span style={{ fontSize: 12, color: "var(--danger, #c55)", marginLeft: 6 }}>
+          {err}
+        </span>
+      )}
+    </>
   );
 }
 
