@@ -5,6 +5,7 @@ export interface TaskTrackerEventMap {
   "plan.approved": { plan_id: string; spec_id: string };
   "plan.rejected": { plan_id: string; spec_id: string };
   "cohort.entered_planned": { cohort_id: string };
+  "cohort.briefing_started": { cohort_id: string };
   "cohort.done": { cohort_id: string };
   "brief.submitted": { brief_id: string; cohort_id: string };
   "brief.approved": { brief_id: string; cohort_id: string };
