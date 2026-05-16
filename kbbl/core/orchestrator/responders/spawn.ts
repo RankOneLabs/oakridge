@@ -23,8 +23,8 @@ export function wireResponderSpawn({ reviewEvents, kbblUrl }: ResponderSpawnDeps
       `--target-id=${evt.target_id}`,
       `--kbbl-url=${kbblUrl}`,
     ], {
-      stdout: "pipe",
-      stderr: "pipe",
+      stdout: "ignore",
+      stderr: "ignore",
     });
   });
 
