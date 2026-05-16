@@ -34,6 +34,7 @@ const PatchBriefSchema = z.object({
 
 const PatchDebriefSchema = z.object({
   debrief: z.string(),
+  pr_url: z.string().optional(),
 });
 
 interface BriefsRouteDeps {
@@ -176,7 +177,7 @@ export function mountBriefsRoutes(app: Hono, deps: BriefsRouteDeps): void {
     }
 
     const id = c.req.param("id");
-    const updated = updateBriefDebrief(db, id, result.data.debrief);
+    const updated = updateBriefDebrief(db, id, result.data);
     if (!updated) {
       return c.json({ error: "not found" }, 404);
     }
