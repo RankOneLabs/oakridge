@@ -1,7 +1,8 @@
 import { z } from "zod";
 import type { Hono } from "hono";
 import type { Database } from "bun:sqlite";
-import { resolve, relative, isAbsolute } from "node:path";
+import { resolve, relative, isAbsolute, sep } from "node:path";
+import { realpathSync } from "node:fs";
 import { insertSpec, getSpec, listSpecsByProject, updateSpecFields } from "../../db/specs";
 import { getProject } from "../../db/projects";
 import { taskTrackerEvents } from "../../db/events";
@@ -57,27 +58,40 @@ export function mountSpecsRoutes(app: Hono, deps: SpecsRouteDeps): void {
 
     let resolvedNotes: string | null = notes ?? null;
     if (notesPath !== undefined) {
-      // The kbbl server binds to 0.0.0.0 (tailnet-reachable, unauthenticated),
-      // so any client that can reach the API could otherwise turn notesPath
-      // into an arbitrary local-file read. Constrain reads to the project's
-      // repo_path — operators load specs from files inside the repo anyway.
+      // kbbl routes are unauthenticated. When the server is bound to a
+      // non-loopback host (e.g. --host=0.0.0.0 for tailnet access), any
+      // reachable client could otherwise turn notesPath into an arbitrary
+      // local-file read. Constrain reads to the project's repo_path — operators
+      // load specs from files in the repo anyway — and resolve symlinks so an
+      // in-repo symlink can't escape.
       const project = getProject(db, project_id);
       if (!project) {
         return c.json({ error: "project not found" }, 404);
       }
-      const repoRoot = resolve(project.repo_path);
-      const absNotesPath = isAbsolute(notesPath) ? resolve(notesPath) : resolve(repoRoot, notesPath);
-      const rel = relative(repoRoot, absNotesPath);
-      if (rel.startsWith("..") || isAbsolute(rel)) {
+      let realRepoRoot: string;
+      try {
+        realRepoRoot = realpathSync(project.repo_path);
+      } catch (err) {
+        console.error("specs:create realpath(repo_path) failed", err);
+        return c.json({ error: "internal server error" }, 500);
+      }
+      const absNotesPath = isAbsolute(notesPath) ? resolve(notesPath) : resolve(realRepoRoot, notesPath);
+      let realNotesPath: string;
+      try {
+        realNotesPath = realpathSync(absNotesPath);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+          return c.json({ error: `notesPath not found: ${notesPath}` }, 400);
+        }
+        return c.json({ error: "unable to read notesPath" }, 400);
+      }
+      const rel = relative(realRepoRoot, realNotesPath);
+      if (rel === ".." || rel.startsWith(".." + sep) || isAbsolute(rel)) {
         return c.json({ error: "notesPath must resolve inside the project's repo_path" }, 400);
       }
       try {
-        resolvedNotes = await Bun.file(absNotesPath).text();
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (msg.includes("ENOENT") || msg.includes("No such file")) {
-          return c.json({ error: `notesPath not found: ${notesPath}` }, 400);
-        }
+        resolvedNotes = await Bun.file(realNotesPath).text();
+      } catch {
         return c.json({ error: "unable to read notesPath" }, 400);
       }
     }

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import type { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openTestDb } from "./test-db";
@@ -200,6 +200,26 @@ describe("POST /specs", () => {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ project_id: PROJECT_ID, title: "Outside", notesPath: path }),
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toContain("repo_path");
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  test("returns 400 when notesPath is a symlink pointing outside repo_path", async () => {
+    const outside = mkdtempSync(join(tmpdir(), "specs-symlink-target-"));
+    try {
+      const target = join(outside, "evil.md");
+      writeFileSync(target, "secret");
+      const link = join(repoPath, "link.md");
+      symlinkSync(target, link);
+      const res = await app.request("/specs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ project_id: PROJECT_ID, title: "Symlink escape", notesPath: link }),
       });
       expect(res.status).toBe(400);
       const body = (await res.json()) as { error: string };
