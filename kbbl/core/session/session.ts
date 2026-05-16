@@ -680,6 +680,7 @@ export class Session {
     // write() is synchronous so data is already buffered before flush fires;
     // there is no race between a pending write and an independent flush.
     this.flushInterval = setInterval(() => {
+      if (this.flushInterval === null || this._status === "ended") return;
       if (this.pendingFlushCount === 0) return;
       this.pendingFlushCount = 0;
       const sid = this.oakridgeSid;
