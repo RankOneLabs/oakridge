@@ -13,6 +13,7 @@ interface BriefRow {
   approaches_rejected: string;
   next_action: string;
   debrief: string | null;
+  rejection_reason: string | null;
   created_at: string;
 }
 
