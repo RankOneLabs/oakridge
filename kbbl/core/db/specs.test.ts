@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import type { Database } from "bun:sqlite";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { openTestDb } from "./test-db";
 import { insertSpec, getSpec, listSpecsByProject, updateSpecFields } from "./specs";
 import { mountSpecsRoutes } from "../server/handlers/specs";
@@ -156,6 +159,51 @@ describe("POST /specs", () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: "not json",
+    });
+    expect(res.status).toBe(400);
+  });
+
+  test("reads notes from notesPath when provided", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "specs-notes-"));
+    try {
+      const path = join(dir, "notes.md");
+      writeFileSync(path, "# Spec prose\n\nFrom file.");
+      const res = await app.request("/specs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ project_id: PROJECT_ID, title: "From path", notesPath: path }),
+      });
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as { id: string; notes: string | null };
+      expect(body.notes).toBe("# Spec prose\n\nFrom file.");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("returns 400 when notesPath file does not exist", async () => {
+    const res = await app.request("/specs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        project_id: PROJECT_ID,
+        title: "Missing",
+        notesPath: "/no/such/file-for-specs-test.md",
+      }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  test("returns 400 when both notes and notesPath are provided", async () => {
+    const res = await app.request("/specs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        project_id: PROJECT_ID,
+        title: "Both",
+        notes: "inline",
+        notesPath: "/tmp/whatever.md",
+      }),
     });
     expect(res.status).toBe(400);
   });

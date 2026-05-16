@@ -54,6 +54,10 @@ curl -sX POST "$KBBL/projects" -H 'content-type: application/json' \
 curl -sX POST "$KBBL/specs" -H 'content-type: application/json' \
   -d '{"project_id":"<project_id>","title":"…","notes":"<full spec prose>"}'
 # → { "id":"<spec_id>", "status":"draft", ... }
+
+# Or load the prose from a file (mutually exclusive with `notes`):
+curl -sX POST "$KBBL/specs" -H 'content-type: application/json' \
+  -d '{"project_id":"<project_id>","title":"…","notesPath":"/abs/path/to/spec.md"}'
 ```
 
 The `POST /specs` emits `spec.created`; the dispatch hook spawns a planner-1

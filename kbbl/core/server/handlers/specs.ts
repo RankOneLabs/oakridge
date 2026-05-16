@@ -4,11 +4,17 @@ import type { Database } from "bun:sqlite";
 import { insertSpec, getSpec, listSpecsByProject, updateSpecFields } from "../../db/specs";
 import { taskTrackerEvents } from "../../db/events";
 
-const CreateSpecSchema = z.object({
-  project_id: z.string().min(1),
-  title: z.string().min(1),
-  notes: z.string().optional(),
-});
+const CreateSpecSchema = z
+  .object({
+    project_id: z.string().min(1),
+    title: z.string().min(1),
+    notes: z.string().optional(),
+    notesPath: z.string().min(1).optional(),
+  })
+  .refine((v) => !(v.notes !== undefined && v.notesPath !== undefined), {
+    message: "provide either notes or notesPath, not both",
+    path: ["notesPath"],
+  });
 
 const PatchSpecSchema = z.object({
   title: z.string().min(1).optional(),
@@ -44,11 +50,20 @@ export function mountSpecsRoutes(app: Hono, deps: SpecsRouteDeps): void {
       return c.json({ error: msg }, 400);
     }
 
-    const { project_id, title, notes } = result.data;
+    const { project_id, title, notes, notesPath } = result.data;
     const id = crypto.randomUUID();
 
+    let resolvedNotes: string | null = notes ?? null;
+    if (notesPath !== undefined) {
+      const file = Bun.file(notesPath);
+      if (!(await file.exists())) {
+        return c.json({ error: `notesPath not found: ${notesPath}` }, 400);
+      }
+      resolvedNotes = await file.text();
+    }
+
     try {
-      const spec = insertSpec(db, { id, project_id, title, notes: notes ?? null });
+      const spec = insertSpec(db, { id, project_id, title, notes: resolvedNotes });
       taskTrackerEvents.emit("spec.created", { spec_id: spec.id });
       return c.json(spec, 201);
     } catch (err) {
