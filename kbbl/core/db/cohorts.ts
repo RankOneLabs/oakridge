@@ -84,6 +84,19 @@ export function listDependenciesByPlan(db: Database, plan_id: string): CohortDep
     .all(plan_id);
 }
 
+export function deleteCohortDependency(
+  db: Database,
+  id: string,
+): CohortDependency | null {
+  return (
+    db
+      .prepare<CohortDependency, [string]>(
+        "DELETE FROM cohort_dependencies WHERE id = ? RETURNING id, from_cohort_id, to_cohort_id",
+      )
+      .get(id) ?? null
+  );
+}
+
 export function listDependenciesByCohort(db: Database, cohort_id: string): CohortDependency[] {
   return db
     .prepare<CohortDependency, [string, string]>(

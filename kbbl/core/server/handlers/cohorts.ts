@@ -8,6 +8,7 @@ import {
   updateCohortFields,
   insertCohortDependency,
   listDependenciesByPlan,
+  deleteCohortDependency,
 } from "../../db/cohorts";
 import { hasCycleAfterInsert } from "../../db/cohort-graph";
 import type { Cohort } from "../../types/task-tracker";
@@ -173,5 +174,14 @@ export function mountCohortsRoutes(app: Hono, deps: CohortsRouteDeps): void {
       console.error("cohort-dependencies:create failed", err);
       return c.json({ error: "internal server error" }, 500);
     }
+  });
+
+  app.delete("/cohort-dependencies/:id", (c) => {
+    const id = c.req.param("id");
+    const deleted = deleteCohortDependency(db, id);
+    if (!deleted) {
+      return c.json({ error: "not found" }, 404);
+    }
+    return c.body(null, 204);
   });
 }
