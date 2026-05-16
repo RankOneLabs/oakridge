@@ -227,19 +227,24 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
       let inputRef: InputRef;
       let workdir: string;
 
-      if (stage.input_artifact_type === "spec") {
-        slots = buildSlotsForSpec(db, inputId, kbblUrl);
-        workdir = resolveWorkdirForSpec(db, inputId);
-        inputRef = { type: "spec", id: inputId, workdir };
-      } else if (stage.input_artifact_type === "cohort") {
-        slots = buildSlotsForCohort(db, inputId, kbblUrl);
-        workdir = resolveWorkdirForCohort(db, inputId);
-        inputRef = { type: "cohort", id: inputId, workdir };
-      } else {
-        // brief
-        slots = buildSlotsForBrief(db, inputId, kbblUrl);
-        workdir = resolveWorkdirForBrief(db, inputId);
-        inputRef = { type: "brief", id: inputId, workdir };
+      switch (stage.input_artifact_type) {
+        case "spec":
+          slots = buildSlotsForSpec(db, inputId, kbblUrl);
+          workdir = resolveWorkdirForSpec(db, inputId);
+          inputRef = { type: "spec", id: inputId, workdir };
+          break;
+        case "cohort":
+          slots = buildSlotsForCohort(db, inputId, kbblUrl);
+          workdir = resolveWorkdirForCohort(db, inputId);
+          inputRef = { type: "cohort", id: inputId, workdir };
+          break;
+        case "brief":
+          slots = buildSlotsForBrief(db, inputId, kbblUrl);
+          workdir = resolveWorkdirForBrief(db, inputId);
+          inputRef = { type: "brief", id: inputId, workdir };
+          break;
+        default:
+          throw new Error(`unsupported input_artifact_type: ${stage.input_artifact_type}`);
       }
 
       const renderedPrompt = renderPrompt(template, slots);
@@ -247,15 +252,23 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
 
       // Persist current_session_ref on the appropriate artifact.
       // build stage: input is brief, but session_ref lives on the parent cohort.
-      if (stage.input_artifact_type === "spec") {
-        db.prepare("UPDATE specs SET current_session_ref = ? WHERE id = ?").run(session_ref, inputId);
-      } else if (stage.input_artifact_type === "cohort") {
-        db.prepare("UPDATE cohorts SET current_session_ref = ? WHERE id = ?").run(session_ref, inputId);
-      } else {
-        // brief → update parent cohort
-        const briefRow = db.prepare<{ cohort_id: string }, [string]>("SELECT cohort_id FROM briefs WHERE id = ?").get(inputId);
-        if (!briefRow) throw new Error(`brief not found when persisting session_ref: ${inputId}`);
-        db.prepare("UPDATE cohorts SET current_session_ref = ? WHERE id = ?").run(session_ref, briefRow.cohort_id);
+      switch (stage.input_artifact_type) {
+        case "spec":
+          db.prepare("UPDATE specs SET current_session_ref = ? WHERE id = ?").run(session_ref, inputId);
+          break;
+        case "cohort":
+          db.prepare("UPDATE cohorts SET current_session_ref = ? WHERE id = ?").run(session_ref, inputId);
+          break;
+        case "brief": {
+          const briefRow = db
+            .prepare<{ cohort_id: string }, [string]>("SELECT cohort_id FROM briefs WHERE id = ?")
+            .get(inputId);
+          if (!briefRow) throw new Error(`brief not found when persisting session_ref: ${inputId}`);
+          db.prepare("UPDATE cohorts SET current_session_ref = ? WHERE id = ?").run(session_ref, briefRow.cohort_id);
+          break;
+        }
+        default:
+          throw new Error(`unsupported input_artifact_type: ${stage.input_artifact_type}`);
       }
 
       return session_ref;

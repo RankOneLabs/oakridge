@@ -7,14 +7,17 @@
  *     --thread-id=<id> \
  *     --target-type=<type> \
  *     --target-id=<id> \
+ *     --anchor=<anchor|""> \
  *     --kbbl-url=<url>
  *
- * Reads the thread's anchor and current messages, posts a generic
- * acknowledgement message, and exits. v1 body is intentionally a
- * stand-in — real responder logic is deferred to cohort 6 dogfooding.
+ * Posts a generic acknowledgement message and exits. v1 body is
+ * intentionally a stand-in — real responder logic is deferred to
+ * cohort 6 dogfooding.
  */
 
 import { parseArgs } from "node:util";
+
+const FETCH_TIMEOUT_MS = 15_000;
 
 const { values } = parseArgs({
   options: {
@@ -22,6 +25,7 @@ const { values } = parseArgs({
     "thread-id": { type: "string" },
     "target-type": { type: "string" },
     "target-id": { type: "string" },
+    anchor: { type: "string" },
     "kbbl-url": { type: "string" },
   },
 });
@@ -30,6 +34,10 @@ const responderId = values.responder ?? "(unknown)";
 const threadId = values["thread-id"];
 const targetType = values["target-type"];
 const targetId = values["target-id"];
+// spawn.ts always passes --anchor (empty string when the ping had a null
+// anchor); normalize both empty string and missing flag to null so the
+// downstream "(no anchor)" path is hit consistently.
+const anchor = values.anchor && values.anchor.length > 0 ? values.anchor : null;
 const kbblUrl = values["kbbl-url"];
 
 if (!threadId || !kbblUrl) {
@@ -38,24 +46,13 @@ if (!threadId || !kbblUrl) {
 }
 
 async function main() {
-  // Fetch the thread to get the anchor.
-  let anchor: string | null = null;
-  try {
-    const res = await fetch(`${kbblUrl}/threads/${encodeURIComponent(threadId!)}`);
-    if (res.ok) {
-      const thread = (await res.json()) as { anchor?: string | null };
-      anchor = thread.anchor ?? null;
-    }
-  } catch {
-    // Non-fatal — post with generic body if thread fetch fails.
-  }
-
   // Fetch the latest atom value for the anchor if available.
   let liveValue = "(see the artifact)";
   if (anchor && targetType && targetId) {
     try {
       const res = await fetch(
-        `${kbblUrl}/atoms?target_type=${encodeURIComponent(targetType)}&target_id=${encodeURIComponent(targetId!)}`,
+        `${kbblUrl}/atoms/edits?target_type=${encodeURIComponent(targetType)}&target_id=${encodeURIComponent(targetId!)}`,
+        { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) },
       );
       if (res.ok) {
         const atoms = (await res.json()) as { anchor: string; new_value: string }[];
@@ -74,6 +71,7 @@ async function main() {
     const res = await fetch(`${kbblUrl}/threads/${encodeURIComponent(threadId!)}/messages`, {
       method: "POST",
       headers: { "content-type": "application/json" },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       body: JSON.stringify({ body, author: responderId }),
     });
     if (!res.ok) {

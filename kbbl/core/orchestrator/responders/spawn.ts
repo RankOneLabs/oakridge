@@ -21,6 +21,7 @@ export function wireResponderSpawn({ reviewEvents, kbblUrl }: ResponderSpawnDeps
       `--thread-id=${evt.thread_id}`,
       `--target-type=${evt.target_type}`,
       `--target-id=${evt.target_id}`,
+      `--anchor=${evt.anchor ?? ""}`,
       `--kbbl-url=${kbblUrl}`,
     ], {
       stdout: "ignore",

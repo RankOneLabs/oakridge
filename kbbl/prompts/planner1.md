@@ -13,14 +13,24 @@ Your job is to read the codebase, decompose the spec into ordered implementation
 Repository: `{{REPO_PATH}}`
 kbbl API base URL: `{{KBBL_URL}}`
 
-The plan for this spec was already created by the system. You must look up its id via the kbbl API before posting cohorts.
+The spec exists; no plan has been created yet. You will create the plan, then attach cohorts and dependencies to it.
 
 ## Your tasks
 
 1. Read the codebase at `{{REPO_PATH}}` thoroughly. Focus on files and modules relevant to the spec.
 2. Surface any discrepancies between the spec notes and the existing code (e.g., missing files, conflicting implementations, or assumptions the spec makes that the code doesn't support). Mention them in cohort notes or as a preamble in your first message.
 3. Decompose the spec into concrete, shippable cohorts. Each cohort should be a self-contained unit of work that can be reviewed and built independently.
-4. Retrieve the plan id: `GET {{KBBL_URL}}/plans?spec_id={{SPEC_ID}}` and use the returned plan's `id`.
+4. Create the plan for this spec, capture its `id`, and use it as `<plan_id>` for the cohort posts below:
+
+   ```http
+   POST {{KBBL_URL}}/plans
+   Content-Type: application/json
+
+   {
+     "spec_id": "{{SPEC_ID}}"
+   }
+   ```
+
 5. POST each cohort in order:
    ```
    POST {{KBBL_URL}}/cohorts

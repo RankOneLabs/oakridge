@@ -34,7 +34,7 @@ const PatchBriefSchema = z.object({
 
 const PatchDebriefSchema = z.object({
   debrief: z.string(),
-  pr_url: z.string().optional(),
+  pr_url: z.string().url().optional(),
 });
 
 interface BriefsRouteDeps {

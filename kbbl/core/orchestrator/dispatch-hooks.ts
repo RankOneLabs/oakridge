@@ -28,7 +28,15 @@ export function wireDispatchHooks({ taskTrackerEvents, dispatcher }: DispatchHoo
       // regardless of dispatch outcome. If dispatch fails the operator sees the
       // cohort in briefing and can manually re-trigger; leaving it in planned
       // with no session and no retry path would leave it permanently stuck.
-      taskTrackerEvents.emit("cohort.briefing_started", { cohort_id });
+      // Guarded because a subscriber throw would otherwise surface as an
+      // unhandled rejection and skip the dispatch call below.
+      try {
+        taskTrackerEvents.emit("cohort.briefing_started", { cohort_id });
+      } catch (err) {
+        console.error(
+          JSON.stringify({ kbbl: "dispatch-hooks", event: "cohort.briefing_started", error: String(err), cohort_id }),
+        );
+      }
       try {
         await dispatcher.dispatch("planner2", cohort_id);
       } catch (err) {

@@ -203,7 +203,12 @@ const manager = new SessionManager({
 // === Dispatcher + dispatch hooks + responder spawn ===
 
 const kbblChatBackend = createKbblChatBackend({ manager });
-const kbblUrl = `http://${host}:${port}`;
+// Internal URL for in-process dispatchers and spawned responders. Always
+// loopback regardless of the operator's bind host: --host=0.0.0.0 (or a raw
+// IPv6 address) is fine as an external listener but would resolve to a
+// non-routable or malformed origin for self-calls. Subprocesses run on the
+// same machine as the server, so 127.0.0.1 is the right target.
+const kbblUrl = `http://127.0.0.1:${port}`;
 const dispatcher = createDispatcher({ db, backends: { kbbl_chat: kbblChatBackend }, kbblUrl });
 wireDispatchHooks({ taskTrackerEvents, dispatcher });
 wireResponderSpawn({ reviewEvents, kbblUrl });
