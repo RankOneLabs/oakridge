@@ -171,7 +171,7 @@ export function SessionTopBar({
           onChange={(e) => onThresholdChange(softThresholdTokens, e.target.value)}
           onBlur={async () => {
             const n = Number(thresholdInput);
-            if (!Number.isInteger(n) || n <= 0) {
+            if (!Number.isInteger(n) || n < 1000) {
               onThresholdChange(softThresholdTokens, String(softThresholdTokens));
               return;
             }
