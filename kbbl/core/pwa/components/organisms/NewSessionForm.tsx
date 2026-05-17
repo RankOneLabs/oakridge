@@ -103,7 +103,10 @@ export function NewSessionForm({
   useEffect(() => {
     if (!autostartPending) return;
     if (workdirInput.trim() === "") return;
-    onAutostartConsumed();
+    // Consume the flag inside the timer, AFTER submit. Flipping
+    // autostartPending=false synchronously here would change this effect's
+    // deps and trigger its cleanup before the timer elapsed, cancelling the
+    // submit.
     const timer = setTimeout(() => {
       onSubmit({
         workdir: workdirInput.trim(),
@@ -112,9 +115,10 @@ export function NewSessionForm({
         taskId: toPositiveSafeInt(taskInput || null),
         profileId: toPositiveSafeInt(profileInput || null),
       });
+      onAutostartConsumed();
     }, 100);
     return () => clearTimeout(timer);
-  }, [autostartPending, workdirInput]); // startSession captured at render time is intentional
+  }, [autostartPending, workdirInput]); // narrow deps intentional — other values captured at render time
 
   return (
     <>
