@@ -1,6 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
+
 import { AddProjectModal } from "./AddProjectModal";
 import { AddSpecModal } from "./AddSpecModal";
+
+import { SidebarProjectRow } from "../components/molecules/SidebarProjectRow";
+import { useSidebarProjects } from "../hooks/useSidebarProjects";
+import { useSidebarStorage } from "../hooks/useSidebarStorage";
+import { indexSessionsByProject } from "../lib/sidebar";
 
 export interface SidebarProject {
   id: string;
@@ -27,149 +33,19 @@ interface SidebarProps {
   onSelectSession: (sid: string) => void;
 }
 
-// Match a session to a project by longest repo_path prefix on workdir.
-// Sessions don't carry a project_id; the workdir/repo_path link is the
-// best we can do without a schema change. Longest-prefix wins so a repo
-// nested under another repo doesn't double-count its sessions.
-//
-// Use a path-segment boundary check so /repo/app2 doesn't match /repo/app —
-// raw startsWith would otherwise mis-attribute sibling directories whose
-// names happen to share a prefix.
-function stripTrailingSep(p: string): string {
-  return p.replace(/[\\/]+$/, "");
-}
-
-function isWorkdirInProject(workdir: string, repoPath: string): boolean {
-  const w = stripTrailingSep(workdir);
-  const r = stripTrailingSep(repoPath);
-  if (w === r) return true;
-  return w.startsWith(`${r}/`) || w.startsWith(`${r}\\`);
-}
-
-export function indexSessionsByProject(
-  sessions: SidebarSession[],
-  projects: SidebarProject[],
-): Map<string, SidebarSession[]> {
-  const byProject = new Map<string, SidebarSession[]>();
-  const sortedProjects = [...projects].sort(
-    (a, b) => b.repo_path.length - a.repo_path.length,
-  );
-  for (const s of sessions) {
-    const match = sortedProjects.find((p) => isWorkdirInProject(s.workdir, p.repo_path));
-    if (!match) continue;
-    const list = byProject.get(match.id) ?? [];
-    list.push(s);
-    byProject.set(match.id, list);
-  }
-  return byProject;
-}
-
-const COLLAPSED_KEY = "oakridge.sidebar.collapsed";
-const EXPANDED_PROJECTS_KEY = "oakridge.sidebar.expandedProjects";
-
-function readCollapsed(): boolean {
-  try {
-    return localStorage.getItem(COLLAPSED_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function readExpandedProjects(): Set<string> {
-  try {
-    const raw = localStorage.getItem(EXPANDED_PROJECTS_KEY);
-    if (!raw) return new Set();
-    const arr = JSON.parse(raw);
-    return Array.isArray(arr) ? new Set(arr.filter((x): x is string => typeof x === "string")) : new Set();
-  } catch {
-    return new Set();
-  }
-}
-
 export function Sidebar({ sessions, onSelectSession }: SidebarProps) {
-  const [collapsed, setCollapsed] = useState<boolean>(readCollapsed);
-  const [expandedProjects, setExpandedProjects] = useState<Set<string>>(readExpandedProjects);
-  const [projects, setProjects] = useState<SidebarProject[]>([]);
-  const [specsByProject, setSpecsByProject] = useState<Map<string, SidebarSpec[]>>(new Map());
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { collapsed, setCollapsed, expandedProjects, setExpandedProjects, toggleProject } =
+    useSidebarStorage();
+  const { projects, specsByProject, loading, error, refreshProjects, refreshSpecs } =
+    useSidebarProjects(expandedProjects);
+
   const [showAddProject, setShowAddProject] = useState(false);
   const [addSpecProject, setAddSpecProject] = useState<SidebarProject | null>(null);
-
-  const fetchProjects = useCallback(async () => {
-    setError(null);
-    try {
-      const res = await fetch("/projects");
-      if (!res.ok) throw new Error(`projects ${res.status}`);
-      const data = (await res.json()) as SidebarProject[];
-      setProjects(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "failed to load projects");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  const fetchSpecsFor = useCallback(async (projectId: string) => {
-    try {
-      const res = await fetch(`/specs?project_id=${encodeURIComponent(projectId)}`);
-      if (!res.ok) return;
-      const data = (await res.json()) as SidebarSpec[];
-      setSpecsByProject((prev) => {
-        const next = new Map(prev);
-        next.set(projectId, data);
-        return next;
-      });
-    } catch {
-      // network error — leave previous state; user can re-expand to retry
-    }
-  }, []);
-
-  useEffect(() => {
-    void fetchProjects();
-  }, [fetchProjects]);
-
-  // Lazily fetch specs for newly-expanded projects only. Re-fetching every
-  // expanded project on every set change would re-hit the API for project A
-  // every time the user toggles project B. AddSpecModal.onCreated calls
-  // fetchSpecsFor(created.id) explicitly to refresh post-create, so this
-  // effect only needs to cover the "just expanded for the first time this
-  // mount" case.
-  const previouslyExpandedRef = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    for (const id of expandedProjects) {
-      if (!previouslyExpandedRef.current.has(id)) {
-        void fetchSpecsFor(id);
-      }
-    }
-    previouslyExpandedRef.current = new Set(expandedProjects);
-  }, [expandedProjects, fetchSpecsFor]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(COLLAPSED_KEY, collapsed ? "1" : "0");
-    } catch {}
-  }, [collapsed]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify([...expandedProjects]));
-    } catch {}
-  }, [expandedProjects]);
 
   const sessionsByProject = useMemo(
     () => indexSessionsByProject(sessions, projects),
     [sessions, projects],
   );
-
-  const toggleProject = (id: string) => {
-    setExpandedProjects((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
 
   if (collapsed) {
     return (
@@ -224,86 +100,18 @@ export function Sidebar({ sessions, onSelectSession }: SidebarProps) {
         ) : projects.length === 0 ? (
           <li className="sidebar-empty">No projects yet.</li>
         ) : (
-          projects.map((p) => {
-            const isOpen = expandedProjects.has(p.id);
-            const projSessions = sessionsByProject.get(p.id) ?? [];
-            const projSpecs = specsByProject.get(p.id) ?? [];
-            return (
-              <li key={p.id} className="sidebar-project">
-                <button
-                  type="button"
-                  className="sidebar-project-row"
-                  onClick={() => toggleProject(p.id)}
-                  title={p.repo_path}
-                  aria-expanded={isOpen}
-                  aria-controls={`sidebar-project-body-${p.id}`}
-                >
-                  <span className="sidebar-chevron">{isOpen ? "▾" : "▸"}</span>
-                  <span className="sidebar-project-name">{p.name}</span>
-                </button>
-                {isOpen && (
-                  <div id={`sidebar-project-body-${p.id}`} className="sidebar-project-body">
-                    <div className="sidebar-section">
-                      <div className="sidebar-section-label">Sessions</div>
-                      {projSessions.length === 0 ? (
-                        <div className="sidebar-section-empty">none</div>
-                      ) : (
-                        <ul className="sidebar-section-list">
-                          {projSessions.map((s) => (
-                            <li key={s.sid}>
-                              <button
-                                type="button"
-                                className="sidebar-leaf"
-                                onClick={() => onSelectSession(s.sid)}
-                                title={`${s.workdir}\n${s.sid}`}
-                              >
-                                <span className={`sidebar-leaf-dot sidebar-leaf-dot-${s.status}`} />
-                                <span className="sidebar-leaf-label">
-                                  {s.name || s.sid.slice(0, 8)}
-                                </span>
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-
-                    <div className="sidebar-section">
-                      <div className="sidebar-section-label">
-                        Plans / Epics
-                        <button
-                          type="button"
-                          className="sidebar-section-add"
-                          onClick={() => setAddSpecProject(p)}
-                          title="Create a plan/epic (spec) for this project"
-                          aria-label="Create plan/epic"
-                        >
-                          +
-                        </button>
-                      </div>
-                      {projSpecs.length === 0 ? (
-                        <div className="sidebar-section-empty">none</div>
-                      ) : (
-                        <ul className="sidebar-section-list">
-                          {projSpecs.map((s) => (
-                            <li key={s.id}>
-                              <div
-                                className="sidebar-leaf sidebar-leaf-static"
-                                title={`${s.title}\nstatus: ${s.status}`}
-                              >
-                                <span className="sidebar-leaf-label">{s.title}</span>
-                                <span className="sidebar-leaf-status">{s.status}</span>
-                              </div>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </li>
-            );
-          })
+          projects.map((p) => (
+            <SidebarProjectRow
+              key={p.id}
+              project={p}
+              isOpen={expandedProjects.has(p.id)}
+              onToggle={toggleProject}
+              sessions={sessionsByProject.get(p.id) ?? []}
+              specs={specsByProject.get(p.id) ?? []}
+              onSelectSession={onSelectSession}
+              onAddSpec={setAddSpecProject}
+            />
+          ))
         )}
       </ul>
 
@@ -312,7 +120,7 @@ export function Sidebar({ sessions, onSelectSession }: SidebarProps) {
           onCancel={() => setShowAddProject(false)}
           onCreated={() => {
             setShowAddProject(false);
-            void fetchProjects();
+            void refreshProjects();
           }}
         />
       )}
@@ -330,7 +138,7 @@ export function Sidebar({ sessions, onSelectSession }: SidebarProps) {
               next.add(created.id);
               return next;
             });
-            void fetchSpecsFor(created.id);
+            void refreshSpecs(created.id);
           }}
         />
       )}
