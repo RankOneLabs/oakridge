@@ -70,21 +70,26 @@ export async function resumeSession(
   hydrate: (snap: SessionSnapshot) => void,
   navigate: (sid: string) => void,
 ): Promise<string | null> {
-  const res = await fetch("/sessions", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ resume_from: parentSid }),
-  });
-  if (!res.ok) {
-    const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
-    return typeof body?.error === "string"
-      ? body.error
-      : `server returned ${res.status}`;
+  try {
+    const res = await fetch("/sessions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ resume_from: parentSid }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
+      return typeof body?.error === "string"
+        ? body.error
+        : `server returned ${res.status}`;
+    }
+    const snap = (await res.json()) as SessionSnapshot;
+    hydrate(snap);
+    navigate(snap.sid);
+    return null;
+  } catch (err) {
+    return err instanceof Error ? err.message : "network error";
   }
-  const snap = (await res.json()) as SessionSnapshot;
-  hydrate(snap);
-  navigate(snap.sid);
-  return null;
 }
 
 export function resumeTitle(usage: ResultUsage | null): string {
