@@ -7,7 +7,7 @@ export interface ArtifactStreamRouteDeps {
 }
 
 /**
- * GET /safir-stream?target_type=:t&target_id=:id
+ * GET /artifact-stream?target_type=:t&target_id=:id
  *
  * SSE stream for artifact-scoped events (atom edits, thread updates, status
  * changes). Replays events missed since Last-Event-Id on reconnect.
@@ -16,7 +16,7 @@ export interface ArtifactStreamRouteDeps {
 export function mountArtifactStreamRoutes(app: Hono, deps: ArtifactStreamRouteDeps): void {
   const { bus } = deps;
 
-  app.get("/safir-stream", (c) => {
+  app.get("/artifact-stream", (c) => {
     const targetType = c.req.query("target_type")?.trim();
     const targetId = c.req.query("target_id")?.trim();
 
@@ -52,6 +52,11 @@ export function mountArtifactStreamRoutes(app: Hono, deps: ArtifactStreamRouteDe
       }, 15000);
 
       try {
+        // Initial flush so EventSource.onopen visibly transitions and the
+        // browser doesn't sit on an empty body for up to 15s waiting for the
+        // first heartbeat when there are no replay events.
+        await stream.write(": ready\n\n");
+
         // replay missed events
         const replayed = bus.replaySince(targetType, targetId, resumeAfter);
         for (const evt of replayed) {

@@ -238,10 +238,10 @@ export function createApp(deps: CreateAppDeps): Hono {
 
   // ---- artifact SSE stream ----
   //
-  // GET /safir-stream?target_type=&target_id= — review events (cohort 2)
-  // publish into artifactEventBus via the mirror adapter in
-  // kbbl/core/review/events.ts, so this route carries atom edits, thread
-  // activity, and freeze transitions to the PWA.
+  // GET /artifact-stream?target_type=&target_id= — review events publish
+  // into artifactEventBus via the mirror adapter in kbbl/core/review/events.ts,
+  // so this route carries atom edits, thread activity, and freeze transitions
+  // to the PWA. (Old name: /safir-stream — kept the bus name internal.)
   mountArtifactStreamRoutes(app, { bus: artifactEventBus });
 
   // ---- /inbox (always-on delta stream) ----

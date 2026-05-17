@@ -53,7 +53,7 @@ export function useArtifactStream(
       });
 
     const es = new EventSource(
-      `/safir-stream?${qs({ target_type, target_id })}`,
+      `/artifact-stream?${qs({ target_type, target_id })}`,
     );
 
     es.onopen = () => {

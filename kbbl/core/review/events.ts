@@ -53,7 +53,7 @@ function nowTs(): string {
   return new Date().toISOString();
 }
 
-// Mirror all review events to artifactEventBus so /safir-stream carries them.
+// Mirror all review events to artifactEventBus so /artifact-stream carries them.
 reviewEvents.subscribe("atom_edit.applied", (p) => {
   artifactEventBus.publish(p.target_type, p.target_id, "atom_edit.applied", p as Record<string, unknown>, nowTs());
 });
