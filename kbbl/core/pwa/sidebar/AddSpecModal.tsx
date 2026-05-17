@@ -58,7 +58,9 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
         justifyContent: "center",
         zIndex: 1000,
       }}
-      onClick={onCancel}
+      onClick={() => {
+        if (!pending) onCancel();
+      }}
     >
       <div
         role="dialog"
@@ -80,46 +82,53 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
         <div id="add-spec-title" style={{ fontWeight: 600, fontSize: 15 }}>
           New plan / epic — <span style={{ opacity: 0.7 }}>{project.name}</span>
         </div>
-        <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
-          <span style={{ opacity: 0.8 }}>Title</span>
-          <input
-            type="text"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="Short one-line summary"
-            spellCheck={false}
-            disabled={pending}
-            autoFocus
-          />
-        </label>
-        <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
-          <span style={{ opacity: 0.8 }}>Notes (optional)</span>
-          <textarea
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            placeholder="Context, constraints, links — anything planner1 should know."
-            rows={10}
-            style={{ fontSize: 13, resize: "vertical", width: "100%", boxSizing: "border-box" }}
-            disabled={pending}
-          />
-        </label>
-        {error && (
-          <div style={{ color: "var(--danger-fg, #e67070)", fontSize: 13 }} role="alert">
-            {error}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void submit();
+          }}
+          style={{ display: "flex", flexDirection: "column", gap: 16 }}
+        >
+          <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
+            <span style={{ opacity: 0.8 }}>Title</span>
+            <input
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Short one-line summary"
+              spellCheck={false}
+              disabled={pending}
+              autoFocus
+            />
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
+            <span style={{ opacity: 0.8 }}>Notes (optional)</span>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Context, constraints, links — anything planner1 should know."
+              rows={10}
+              style={{ fontSize: 13, resize: "vertical", width: "100%", boxSizing: "border-box" }}
+              disabled={pending}
+            />
+          </label>
+          {error && (
+            <div style={{ color: "var(--danger-fg, #e67070)", fontSize: 13 }} role="alert">
+              {error}
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button type="button" onClick={onCancel} disabled={pending}>
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={pending || !title.trim()}
+            >
+              {pending ? "Creating…" : "Create"}
+            </button>
           </div>
-        )}
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-          <button type="button" onClick={onCancel} disabled={pending}>
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={submit}
-            disabled={pending || !title.trim()}
-          >
-            {pending ? "Creating…" : "Create"}
-          </button>
-        </div>
+        </form>
       </div>
     </div>
   );

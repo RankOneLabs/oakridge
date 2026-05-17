@@ -1962,6 +1962,7 @@ body {
   border-radius: 4px;
   color: var(--text-secondary);
   cursor: pointer;
+  font: inherit;
   font-size: 0.85rem;
   line-height: 1;
   padding: 4px 6px;
@@ -1985,6 +1986,7 @@ body {
   border-radius: 4px;
   color: var(--text-secondary);
   cursor: pointer;
+  font: inherit;
   font-size: 0.75rem;
   padding: 4px 8px;
 }
@@ -2027,6 +2029,7 @@ body {
   align-items: center;
   gap: 4px;
   padding: 4px 6px;
+  font: inherit;
   font-size: 0.8rem;
   color: var(--text-primary);
   cursor: pointer;
@@ -2048,6 +2051,10 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  /* min-width:0 is the standard fix for ellipsis inside a flex row — without
+     it the item refuses to shrink below its content's intrinsic width. */
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .sidebar-project-body {
@@ -2081,6 +2088,7 @@ body {
   border-radius: 4px;
   color: var(--text-secondary);
   cursor: pointer;
+  font: inherit;
   font-size: 0.75rem;
   line-height: 1;
   padding: 0 6px;
@@ -2116,11 +2124,11 @@ body {
   gap: 6px;
   width: 100%;
   padding: 3px 8px;
+  font: inherit;
   font-size: 0.75rem;
   color: var(--text-secondary);
   cursor: pointer;
   border-radius: 3px;
-  font-family: inherit;
 }
 .sidebar-leaf:hover {
   background: var(--bg-app);
@@ -2143,6 +2151,9 @@ body {
   border-radius: 50%;
   background: var(--text-muted);
   flex: 0 0 auto;
+}
+.sidebar-leaf-dot-starting {
+  background: var(--status-connecting-fg);
 }
 .sidebar-leaf-dot-live {
   background: var(--accent-blue);

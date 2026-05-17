@@ -55,7 +55,9 @@ export function AddProjectModal({ onCreated, onCancel }: AddProjectModalProps) {
         justifyContent: "center",
         zIndex: 1000,
       }}
-      onClick={onCancel}
+      onClick={() => {
+        if (!pending) onCancel();
+      }}
     >
       <div
         role="dialog"
@@ -77,50 +79,57 @@ export function AddProjectModal({ onCreated, onCancel }: AddProjectModalProps) {
         <div id="add-project-title" style={{ fontWeight: 600, fontSize: 15 }}>
           New project
         </div>
-        <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
-          <span style={{ opacity: 0.8 }}>Name</span>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="my-project"
-            spellCheck={false}
-            autoCapitalize="off"
-            autoCorrect="off"
-            disabled={pending}
-            autoFocus
-          />
-        </label>
-        <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
-          <span style={{ opacity: 0.8 }}>Repo path</span>
-          <input
-            type="text"
-            value={repoPath}
-            onChange={(e) => setRepoPath(e.target.value)}
-            placeholder="/absolute/path/to/repo"
-            spellCheck={false}
-            autoCapitalize="off"
-            autoCorrect="off"
-            disabled={pending}
-          />
-        </label>
-        {error && (
-          <div style={{ color: "var(--danger-fg, #e67070)", fontSize: 13 }} role="alert">
-            {error}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void submit();
+          }}
+          style={{ display: "flex", flexDirection: "column", gap: 16 }}
+        >
+          <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
+            <span style={{ opacity: 0.8 }}>Name</span>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="my-project"
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              disabled={pending}
+              autoFocus
+            />
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
+            <span style={{ opacity: 0.8 }}>Repo path</span>
+            <input
+              type="text"
+              value={repoPath}
+              onChange={(e) => setRepoPath(e.target.value)}
+              placeholder="/absolute/path/to/repo"
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              disabled={pending}
+            />
+          </label>
+          {error && (
+            <div style={{ color: "var(--danger-fg, #e67070)", fontSize: 13 }} role="alert">
+              {error}
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button type="button" onClick={onCancel} disabled={pending}>
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={pending || !name.trim() || !repoPath.trim()}
+            >
+              {pending ? "Creating…" : "Create"}
+            </button>
           </div>
-        )}
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-          <button type="button" onClick={onCancel} disabled={pending}>
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={submit}
-            disabled={pending || !name.trim() || !repoPath.trim()}
-          >
-            {pending ? "Creating…" : "Create"}
-          </button>
-        </div>
+        </form>
       </div>
     </div>
   );

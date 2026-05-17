@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AddProjectModal } from "./AddProjectModal";
 import { AddSpecModal } from "./AddSpecModal";
 
@@ -129,13 +129,20 @@ export function Sidebar({ sessions, onSelectSession }: SidebarProps) {
     void fetchProjects();
   }, [fetchProjects]);
 
-  // Whenever a project is expanded we lazily fetch its specs. Re-fetch on
-  // every expansion (cheap) so creating a new spec via the modal is reflected
-  // the next time the operator toggles open the project.
+  // Lazily fetch specs for newly-expanded projects only. Re-fetching every
+  // expanded project on every set change would re-hit the API for project A
+  // every time the user toggles project B. AddSpecModal.onCreated calls
+  // fetchSpecsFor(created.id) explicitly to refresh post-create, so this
+  // effect only needs to cover the "just expanded for the first time this
+  // mount" case.
+  const previouslyExpandedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     for (const id of expandedProjects) {
-      void fetchSpecsFor(id);
+      if (!previouslyExpandedRef.current.has(id)) {
+        void fetchSpecsFor(id);
+      }
     }
+    previouslyExpandedRef.current = new Set(expandedProjects);
   }, [expandedProjects, fetchSpecsFor]);
 
   useEffect(() => {

@@ -60,3 +60,21 @@ normalization, mixed POSIX/Windows separators, and the `projectWorkdir`
 fallback path used in `App.tsx`.
 
 Originally surfaced by Copilot on PR #83.
+
+## Sidebar shows "none" flicker before specs load
+
+**File:** `kbbl/core/pwa/sidebar/Sidebar.tsx`
+
+When the operator expands a project for the first time, `fetchSpecsFor` is
+fired asynchronously and the Plans/Epics section renders `projSpecs.length
+=== 0 ? "none" : …`. During the ~tens-of-ms between expand and the fetch
+resolving, the section briefly shows "none" even when the project actually
+has specs. Looks like data, isn't.
+
+**Fix when prioritized:** track a per-project in-flight set (e.g.
+`Set<string>` of project IDs currently fetching) and render "loading…"
+instead of "none" while that ID is in flight. Three render branches
+(loading / empty / list) instead of two, plus a small bit of state plumbing
+in `fetchSpecsFor`.
+
+Originally surfaced by Copilot on PR #83.
