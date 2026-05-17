@@ -37,10 +37,6 @@ core/pwa/
     └── shared/            # ThreadView, ThreadSidebar, ModeToggle, useArtifactStream, AtomCommentAffordance
 ```
 
-**Existing code that violates this and needs migration:**
-- `App.tsx` (~4.3k lines) → split into `hooks/` + `views/` + `components/organisms/`. App.tsx becomes a router shell.
-- `sidebar/Sidebar.tsx` (~340 lines) → split row/section subcomponents into `components/molecules/`.
-
 ## Hard rules
 
 1. **App.tsx is the router/shell.** It composes hooks and chooses which `<View>` to render based on hash route. It does NOT define `useInbox`, `SessionListView`, helpers, or any non-trivial subcomponent inline. New top-level features add a new view in `views/`.
