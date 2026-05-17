@@ -63,10 +63,11 @@ export function AddProjectModal({ onCreated, onCancel }: AddProjectModalProps) {
           border: "1px solid var(--border-subtle, #444)",
           borderRadius: 8,
           padding: 24,
-          minWidth: 400,
+          width: "min(400px, 90vw)",
           display: "flex",
           flexDirection: "column",
           gap: 16,
+          boxSizing: "border-box",
         }}
         onClick={(e) => e.stopPropagation()}
       >

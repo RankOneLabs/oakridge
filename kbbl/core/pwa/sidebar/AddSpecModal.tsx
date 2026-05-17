@@ -66,11 +66,11 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
           border: "1px solid var(--border-subtle, #444)",
           borderRadius: 8,
           padding: 24,
-          minWidth: 480,
-          maxWidth: "90vw",
+          width: "min(480px, 90vw)",
           display: "flex",
           flexDirection: "column",
           gap: 16,
+          boxSizing: "border-box",
         }}
         onClick={(e) => e.stopPropagation()}
       >

@@ -31,7 +31,22 @@ interface SidebarProps {
 // Sessions don't carry a project_id; the workdir/repo_path link is the
 // best we can do without a schema change. Longest-prefix wins so a repo
 // nested under another repo doesn't double-count its sessions.
-function indexSessionsByProject(
+//
+// Use a path-segment boundary check so /repo/app2 doesn't match /repo/app —
+// raw startsWith would otherwise mis-attribute sibling directories whose
+// names happen to share a prefix.
+function stripTrailingSep(p: string): string {
+  return p.replace(/[\\/]+$/, "");
+}
+
+function isWorkdirInProject(workdir: string, repoPath: string): boolean {
+  const w = stripTrailingSep(workdir);
+  const r = stripTrailingSep(repoPath);
+  if (w === r) return true;
+  return w.startsWith(`${r}/`) || w.startsWith(`${r}\\`);
+}
+
+export function indexSessionsByProject(
   sessions: SidebarSession[],
   projects: SidebarProject[],
 ): Map<string, SidebarSession[]> {
@@ -40,7 +55,7 @@ function indexSessionsByProject(
     (a, b) => b.repo_path.length - a.repo_path.length,
   );
   for (const s of sessions) {
-    const match = sortedProjects.find((p) => s.workdir.startsWith(p.repo_path));
+    const match = sortedProjects.find((p) => isWorkdirInProject(s.workdir, p.repo_path));
     if (!match) continue;
     const list = byProject.get(match.id) ?? [];
     list.push(s);

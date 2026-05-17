@@ -2148,7 +2148,7 @@ body {
   background: var(--accent-blue);
 }
 .sidebar-leaf-dot-compacting {
-  background: #d4a000;
+  background: var(--amber-fg);
 }
 .sidebar-leaf-dot-ended {
   background: var(--text-muted);

@@ -918,7 +918,11 @@ function SessionListView({
       sorted.map((s) => ({
         sid: s.sid,
         name: s.name,
-        workdir: s.workdir,
+        // Worktree-backed sessions live under /tmp/.../worktrees/<branch>;
+        // projectWorkdir holds the canonical repo path that matches the
+        // project.repo_path the sidebar groups by. Fall back to workdir
+        // for pre-Phase-1 sessions that don't carry projectWorkdir.
+        workdir: s.projectWorkdir ?? s.workdir,
         status: s.status,
       })),
     [sorted],
