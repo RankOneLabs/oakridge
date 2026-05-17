@@ -9,6 +9,7 @@ export function useHashTaskId(): [number | null, (taskId: number | null) => void
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
   const navigate = (next: number | null) => {
+    if (next !== null && (!Number.isSafeInteger(next) || next <= 0)) return;
     writeHashTaskId(next);
     setTaskId(next);
   };
