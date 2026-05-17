@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import type { Theme } from "../../App";
+import type { Theme } from "../../types";
 import { useArtifactStream } from "../shared/useArtifactStream";
 import { useDirectEdit } from "../shared/useDirectEdit";
 import { StructuredDocEditor } from "./StructuredDocEditor";
