@@ -16,6 +16,10 @@ import { validateWorkdir } from "./server/handlers/sessions";
 import { openDb } from "./db/connection";
 import { applyMigrations } from "./db/migrations";
 import { bootstrap as bootstrapOrchestrator } from "./orchestrator/bootstrap";
+import { createKbblChatBackend } from "./orchestrator/backends/kbbl-chat";
+import { createDispatcher } from "./orchestrator/backends/dispatcher";
+import { wireDispatchHooks } from "./orchestrator/dispatch-hooks";
+import { wireResponderSpawn } from "./orchestrator/responders/spawn";
 import { reviewRegistry } from "./review/registry";
 import { reviewEvents } from "./review/events";
 import { taskTrackerEvents } from "./db/events";
@@ -196,6 +200,19 @@ const manager = new SessionManager({
   safirQueue,
 });
 
+// === Dispatcher + dispatch hooks + responder spawn ===
+
+const kbblChatBackend = createKbblChatBackend({ manager });
+// Internal URL for in-process dispatchers and spawned responders. Always
+// loopback regardless of the operator's bind host: --host=0.0.0.0 (or a raw
+// IPv6 address) is fine as an external listener but would resolve to a
+// non-routable or malformed origin for self-calls. Subprocesses run on the
+// same machine as the server, so 127.0.0.1 is the right target.
+const kbblUrl = `http://127.0.0.1:${port}`;
+const dispatcher = createDispatcher({ db, backends: { kbbl_chat: kbblChatBackend }, kbblUrl });
+wireDispatchHooks({ taskTrackerEvents, dispatcher });
+wireResponderSpawn({ reviewEvents, kbblUrl });
+
 // === Hono app ===
 
 let bunServer: ReturnType<typeof Bun.serve> | null = null;
@@ -211,6 +228,7 @@ const app = createApp({
   config,
   configPath,
   db,
+  dispatcher,
 });
 
 // === bind port (fail fast before spawning CC) ===

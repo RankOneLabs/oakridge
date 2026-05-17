@@ -9,6 +9,7 @@ import { KbblConfigSchema, type KbblConfig } from "../config";
 import type { AppRuntime } from "../runtime";
 import type { SafirClient } from "../safir/client";
 import type { SessionManager } from "../session/session-manager";
+import type { createDispatcher } from "../orchestrator/backends/dispatcher";
 import { openTestDb } from "../db/test-db";
 import { createApp } from "./app";
 
@@ -22,6 +23,9 @@ function buildApp(config: KbblConfig): Hono {
     mountRoutes: () => {},
     buildSpawnCmd: async () => { throw new Error("not used in config tests"); },
   };
+  const dispatcher: ReturnType<typeof createDispatcher> = {
+    dispatch: async () => { throw new Error("not used in config tests"); },
+  };
   return createApp({
     manager: {} as unknown as SessionManager,
     runtime,
@@ -34,6 +38,7 @@ function buildApp(config: KbblConfig): Hono {
     config,
     configPath,
     db,
+    dispatcher,
   });
 }
 

@@ -101,12 +101,22 @@ describe("briefs query helpers", () => {
 
   test("updateBriefDebrief sets debrief", () => {
     insertBrief(db, { id: "b7", ...MINIMAL_BRIEF });
-    const updated = updateBriefDebrief(db, "b7", "All went well");
+    const updated = updateBriefDebrief(db, "b7", { debrief: "All went well" });
     expect(updated?.debrief).toBe("All went well");
   });
 
+  test("updateBriefDebrief sets pr_url when provided", () => {
+    insertBrief(db, { id: "b8", ...MINIMAL_BRIEF });
+    const updated = updateBriefDebrief(db, "b8", {
+      debrief: "Shipped",
+      pr_url: "https://github.com/org/repo/pull/1",
+    });
+    expect(updated?.debrief).toBe("Shipped");
+    expect(updated?.pr_url).toBe("https://github.com/org/repo/pull/1");
+  });
+
   test("updateBriefDebrief returns null for unknown id", () => {
-    expect(updateBriefDebrief(db, "nope", "debrief")).toBeNull();
+    expect(updateBriefDebrief(db, "nope", { debrief: "debrief" })).toBeNull();
   });
 });
 

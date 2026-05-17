@@ -22,12 +22,14 @@ export function bootstrap({ db, registry, reviewEvents, taskTrackerEvents }: Boo
     validateAnchor: (anchor) =>
       anchor === null || PLAN_ANCHOR_RE.test(anchor) || `invalid plan anchor: ${anchor}`,
     exists: (plan_id) => getPlan(db, plan_id) !== null,
+    responder_id: "plan-review-responder",
   });
 
   registry.register("build_brief", {
     validateAnchor: (anchor) =>
       anchor === null || BRIEF_ANCHOR_RE.test(anchor) || `invalid build_brief anchor: ${anchor}`,
     exists: (brief_id) => getBrief(db, brief_id) !== null,
+    responder_id: "brief-review-responder",
   });
 
   const unsubReopened = reviewEvents.subscribe("artifact.reopened", ({ target_type, target_id }) => {
@@ -61,8 +63,15 @@ export function bootstrap({ db, registry, reviewEvents, taskTrackerEvents }: Boo
     ).run(cohort_id);
   });
 
+  const unsubBriefingStarted = taskTrackerEvents.subscribe("cohort.briefing_started", ({ cohort_id }) => {
+    db.prepare(
+      "UPDATE cohorts SET status = 'briefing' WHERE id = ? AND status = 'planned'",
+    ).run(cohort_id);
+  });
+
   return () => {
     unsubReopened();
     unsubBriefSubmitted();
+    unsubBriefingStarted();
   };
 }
