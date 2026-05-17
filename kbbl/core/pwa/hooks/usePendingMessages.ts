@@ -16,12 +16,20 @@ export interface PendingMessagesState {
 }
 
 export function usePendingMessages(
+  sid: string,
   events: EnvelopeEvent[],
   sessionStatus: SessionStatus | null,
 ): PendingMessagesState {
   const [pendingMessages, setPendingMessages] = useState<PendingMessage[]>([]);
   const pendingIdSeq = useRef(0);
   const lastScannedIdxRef = useRef(0);
+
+  // Navigating between sessions must not carry an in-flight bubble into the
+  // new transcript — the new session's events have nothing to reconcile it
+  // against and it would linger as a permanent "delivered" tag.
+  useEffect(() => {
+    setPendingMessages([]);
+  }, [sid]);
 
   // Drop optimistic bubbles when the session is no longer live so a
   // mid-turn Stop / subprocess crash doesn't leave a permanent

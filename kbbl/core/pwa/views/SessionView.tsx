@@ -66,7 +66,7 @@ export function SessionView({
     addPendingMessage,
     removePendingMessage,
     lastPendingLocalId,
-  } = usePendingMessages(events, sessionStatus);
+  } = usePendingMessages(sid, events, sessionStatus);
 
   // Awaiting a turn result if the session is live AND (we have an optimistic
   // message in flight OR the transcript shows a user-input event more recent
