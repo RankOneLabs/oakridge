@@ -93,8 +93,10 @@ export function mountReviewThreadsRoutes(app: Hono, deps: ReviewThreadsRouteDeps
       id: thread.id,
       target_type,
       target_id,
-      anchor: anchor ?? null,
-      author: author ?? null,
+      anchor: thread.anchor,
+      author: thread.author,
+      status: thread.status,
+      created_at: thread.created_at,
     });
 
     return c.json(thread, 201);

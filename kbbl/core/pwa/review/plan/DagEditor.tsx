@@ -10,6 +10,10 @@ import ReactFlow, {
   type NodeTypes,
   type OnConnect,
 } from "reactflow";
+// ReactFlow v11 ships its layout/transform/pointer-events styles here. Without
+// this import, nodes render as stacked unstyled divs and clicks don't reach
+// the inner <CohortNode>'s onClick handler.
+import "reactflow/dist/style.css";
 import dagre from "dagre";
 import { CohortNode, type CohortNodeData } from "./CohortNode";
 import type { Thread, ReviewMode } from "../shared/types";

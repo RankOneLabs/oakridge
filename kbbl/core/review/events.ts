@@ -7,8 +7,10 @@ export interface ReviewEventMap {
     target_type: string;
     target_id: string;
     anchor: string | null;
+    prior_value: string | null;
     new_value: string;
     author: string;
+    created_at: string;
   };
   "thread.created": {
     id: string;
@@ -16,6 +18,8 @@ export interface ReviewEventMap {
     target_id: string;
     anchor: string | null;
     author: string | null;
+    status: "open" | "resolved";
+    created_at: string;
   };
   "thread.message_added": {
     id: string;
@@ -53,7 +57,7 @@ function nowTs(): string {
   return new Date().toISOString();
 }
 
-// Mirror all review events to artifactEventBus so /safir-stream carries them.
+// Mirror all review events to artifactEventBus so /artifact-stream carries them.
 reviewEvents.subscribe("atom_edit.applied", (p) => {
   artifactEventBus.publish(p.target_type, p.target_id, "atom_edit.applied", p as Record<string, unknown>, nowTs());
 });

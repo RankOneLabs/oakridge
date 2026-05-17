@@ -1,7 +1,7 @@
 /**
  * In-process pub/sub bus for artifact-scoped SSE events.
- * Keyed by (target_type, target_id). The webhook handler publishes;
- * GET /safir-stream subscribers consume.
+ * Keyed by (target_type, target_id). Review publishers publish;
+ * GET /artifact-stream subscribers consume.
  *
  * Replay buffer: last REPLAY_CAP events per channel are kept so a
  * reconnecting client (honoring Last-Event-Id) doesn't miss events
