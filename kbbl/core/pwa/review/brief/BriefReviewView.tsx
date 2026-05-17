@@ -21,10 +21,10 @@ function RunBuildButton({ briefId, cohortId }: { briefId: string; cohortId: stri
   const [sessionRef, setSessionRef] = useState<string | null>(null);
   // "checking": looking up the cohort's current_session_ref so we don't
   // race the auto-dispatch that brief.approved triggers in dispatch-hooks.
-  // If a session ref already exists, render the "running" state instead
-  // of the button. This closes the realistic window of the TOCTOU race
-  // documented in docs/known_issues.md; the residual ~ms window between
-  // approve-emit and dispatch UPDATE is acknowledged there.
+  // Only treat the ref as a live build when current_session_stage === "build"
+  // — otherwise a stale planner2 ref on the same column would hide the
+  // manual recovery button. The residual ~ms window between approve-emit
+  // and the dispatcher's UPDATE is acknowledged in docs/known_issues.md.
   const [checking, setChecking] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
@@ -32,10 +32,17 @@ function RunBuildButton({ briefId, cohortId }: { briefId: string; cohortId: stri
     let cancelled = false;
     setChecking(true);
     fetch(`/cohorts/${encodeURIComponent(cohortId)}`)
-      .then((r) => (r.ok ? (r.json() as Promise<{ current_session_ref: string | null }>) : null))
+      .then((r) =>
+        r.ok
+          ? (r.json() as Promise<{
+              current_session_ref: string | null;
+              current_session_stage: string | null;
+            }>)
+          : null,
+      )
       .then((cohort) => {
         if (cancelled) return;
-        if (cohort?.current_session_ref) {
+        if (cohort?.current_session_ref && cohort.current_session_stage === "build") {
           setSessionRef(cohort.current_session_ref);
         }
       })

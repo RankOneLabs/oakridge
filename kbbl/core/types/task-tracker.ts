@@ -7,6 +7,7 @@ export const SpecSchema = z.object({
   notes: z.string().nullable(),
   status: z.enum(["draft", "plan_review", "planning_done", "done", "archived"]),
   current_session_ref: z.string().nullable(),
+  current_session_stage: z.string().nullable(),
   created_at: z.string(),
 });
 export type Spec = z.infer<typeof SpecSchema>;
@@ -31,6 +32,7 @@ export const CohortSchema = z.object({
   status: z.enum(["waiting", "planned", "briefing", "brief_review", "building", "done", "blocked"]),
   pre_block_status: z.enum(["waiting", "planned", "briefing", "brief_review", "building", "done"]).nullable(),
   current_session_ref: z.string().nullable(),
+  current_session_stage: z.string().nullable(),
   created_at: z.string(),
 });
 export type Cohort = z.infer<typeof CohortSchema>;

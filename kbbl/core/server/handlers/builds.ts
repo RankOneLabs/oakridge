@@ -24,12 +24,20 @@ export function mountBuildsRoutes(app: Hono, { db, dispatcher, manager }: Builds
       return c.json({ error: "brief must be in approved status to run a build" }, 409);
     }
 
-    // Guard against double-dispatch while a session is still live.
-    interface CohortRefRow { current_session_ref: string | null }
+    // Guard against double-dispatch while a build session is still live.
+    // Only treat current_session_ref as an in-flight build when the stage
+    // matches; a stale planner2 ref on the same column must not block the
+    // manual recovery path.
+    interface CohortRefRow {
+      current_session_ref: string | null;
+      current_session_stage: string | null;
+    }
     const cohort = db
-      .prepare<CohortRefRow, [string]>("SELECT current_session_ref FROM cohorts WHERE id = ?")
+      .prepare<CohortRefRow, [string]>(
+        "SELECT current_session_ref, current_session_stage FROM cohorts WHERE id = ?",
+      )
       .get(brief.cohort_id);
-    if (cohort?.current_session_ref) {
+    if (cohort?.current_session_ref && cohort.current_session_stage === "build") {
       const existingSession = manager.get(cohort.current_session_ref);
       if (existingSession && existingSession.status !== "ended") {
         return c.json({ error: "a build session is already running for this cohort" }, 409);

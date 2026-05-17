@@ -182,8 +182,13 @@ function buildSlotsForCohort(db: Database, cohort_id: string, kbblUrl: string): 
 function buildSlotsForBrief(db: Database, brief_id: string, kbblUrl: string): Record<string, string> {
   const project = getProjectForBrief(db, brief_id);
   if (!project) throw new Error(`project not found for brief ${brief_id}`);
+  const briefRow = db
+    .prepare<{ cohort_id: string }, [string]>("SELECT cohort_id FROM briefs WHERE id = ?")
+    .get(brief_id);
+  if (!briefRow) throw new Error(`brief not found: ${brief_id}`);
   return {
     BRIEF_ID: brief_id,
+    COHORT_ID: briefRow.cohort_id,
     BRIEF_RENDERED: renderBrief(db, brief_id),
     REPO_PATH: project.repo_path,
     KBBL_URL: kbblUrl,
@@ -250,21 +255,30 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
       const renderedPrompt = renderPrompt(template, slots);
       const { session_ref } = await backend.dispatch(stage, inputRef, renderedPrompt);
 
-      // Persist current_session_ref on the appropriate artifact.
+      // Persist current_session_ref + current_session_stage on the appropriate
+      // artifact. The stage name disambiguates planner2 vs build sessions
+      // when the cohort row holds either — without it, the build guard and
+      // UI cannot tell a stale planner2 ref apart from a live build.
       // build stage: input is brief, but session_ref lives on the parent cohort.
       switch (stage.input_artifact_type) {
         case "spec":
-          db.prepare("UPDATE specs SET current_session_ref = ? WHERE id = ?").run(session_ref, inputId);
+          db.prepare(
+            "UPDATE specs SET current_session_ref = ?, current_session_stage = ? WHERE id = ?",
+          ).run(session_ref, stage.name, inputId);
           break;
         case "cohort":
-          db.prepare("UPDATE cohorts SET current_session_ref = ? WHERE id = ?").run(session_ref, inputId);
+          db.prepare(
+            "UPDATE cohorts SET current_session_ref = ?, current_session_stage = ? WHERE id = ?",
+          ).run(session_ref, stage.name, inputId);
           break;
         case "brief": {
           const briefRow = db
             .prepare<{ cohort_id: string }, [string]>("SELECT cohort_id FROM briefs WHERE id = ?")
             .get(inputId);
           if (!briefRow) throw new Error(`brief not found when persisting session_ref: ${inputId}`);
-          db.prepare("UPDATE cohorts SET current_session_ref = ? WHERE id = ?").run(session_ref, briefRow.cohort_id);
+          db.prepare(
+            "UPDATE cohorts SET current_session_ref = ?, current_session_stage = ? WHERE id = ?",
+          ).run(session_ref, stage.name, briefRow.cohort_id);
           break;
         }
         default:
