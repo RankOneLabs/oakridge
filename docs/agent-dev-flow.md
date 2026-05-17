@@ -44,6 +44,17 @@ PATCH /cohorts/:id/status {status:"done"}
 
 ## 1. Bootstrap a project + spec
 
+Open the PWA inbox and use the **Projects** sidebar on the left:
+
+- **+ Project** in the sidebar header — opens a modal for the project
+  name and an absolute `repo_path`. Creates the project; no dispatch
+  fires yet.
+- Expand the project, then click **+** next to **Plans / Epics** — opens
+  a modal for the spec title and notes (the spec prose). Submitting this
+  is what fires `spec.created` and spawns planner-1.
+
+For scripting or remote setup the same endpoints work directly:
+
 ```bash
 KBBL=http://<host>:8788
 
@@ -62,10 +73,10 @@ curl -sX POST "$KBBL/specs" -H 'content-type: application/json' \
   -d '{"project_id":"<project_id>","title":"…","notesPath":"<repo_path>/spec.md"}'
 ```
 
-The `POST /specs` emits `spec.created`; the dispatch hook spawns a planner-1
-kbbl session against the project's `repo_path`. Watch the session in the kbbl
-PWA inbox. Planner-1 reads the spec, drafts cohorts + dependencies via the
-HTTP API, and exits.
+Either path emits `spec.created`; the dispatch hook spawns a planner-1
+kbbl session against the project's `repo_path`. Watch the session in the
+kbbl PWA inbox. Planner-1 reads the spec, drafts cohorts + dependencies
+via the HTTP API, and exits.
 
 ## 2. Review the plan
 
