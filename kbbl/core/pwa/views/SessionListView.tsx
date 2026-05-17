@@ -50,6 +50,7 @@ export function SessionListView({
   const [profiles, setProfiles] = useState<PermissionProfile[]>([]);
   const [autostartPending, setAutostartPending] = useState(false);
   const profileLockedRef = useRef(false);
+  const startInFlightRef = useRef(false);
   const sorted = useMemo(() => sortSessions(sessions), [sessions]);
 
   // Pending review items for the operator inbox sections at the top.
@@ -162,7 +163,7 @@ export function SessionListView({
   // an explicit workdir from the input box (prefilled with the server
   // default, but the operator has to consciously submit a value).
   async function startSession(resumeFrom?: string) {
-    if (pending) return;
+    if (startInFlightRef.current) return;
     setPendingError(null);
     const body: {
       resume_from?: string;
@@ -189,6 +190,7 @@ export function SessionListView({
       const parsedProfileId = toPositiveSafeInt(profileInput || null);
       if (parsedProfileId !== null) body.permission_profile_id = parsedProfileId;
     }
+    startInFlightRef.current = true;
     setPending(true);
     try {
       const res = await fetch("/sessions", {
@@ -222,6 +224,7 @@ export function SessionListView({
       setPendingError(err instanceof Error ? err.message : "network error");
     } finally {
       setPending(false);
+      startInFlightRef.current = false;
     }
   }
 
