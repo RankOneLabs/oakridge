@@ -58,6 +58,9 @@ export function AddProjectModal({ onCreated, onCancel }: AddProjectModalProps) {
       onClick={onCancel}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="add-project-title"
         style={{
           background: "var(--bg-surface, #1e1e1e)",
           border: "1px solid var(--border-subtle, #444)",
@@ -71,7 +74,9 @@ export function AddProjectModal({ onCreated, onCancel }: AddProjectModalProps) {
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div style={{ fontWeight: 600, fontSize: 15 }}>New project</div>
+        <div id="add-project-title" style={{ fontWeight: 600, fontSize: 15 }}>
+          New project
+        </div>
         <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
           <span style={{ opacity: 0.8 }}>Name</span>
           <input

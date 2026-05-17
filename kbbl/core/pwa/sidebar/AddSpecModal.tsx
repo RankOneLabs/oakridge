@@ -61,6 +61,9 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
       onClick={onCancel}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="add-spec-title"
         style={{
           background: "var(--bg-surface, #1e1e1e)",
           border: "1px solid var(--border-subtle, #444)",
@@ -74,7 +77,7 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div style={{ fontWeight: 600, fontSize: 15 }}>
+        <div id="add-spec-title" style={{ fontWeight: 600, fontSize: 15 }}>
           New plan / epic — <span style={{ opacity: 0.7 }}>{project.name}</span>
         </div>
         <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>

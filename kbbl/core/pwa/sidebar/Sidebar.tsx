@@ -228,12 +228,14 @@ export function Sidebar({ sessions, onSelectSession }: SidebarProps) {
                   className="sidebar-project-row"
                   onClick={() => toggleProject(p.id)}
                   title={p.repo_path}
+                  aria-expanded={isOpen}
+                  aria-controls={`sidebar-project-body-${p.id}`}
                 >
                   <span className="sidebar-chevron">{isOpen ? "▾" : "▸"}</span>
                   <span className="sidebar-project-name">{p.name}</span>
                 </button>
                 {isOpen && (
-                  <div className="sidebar-project-body">
+                  <div id={`sidebar-project-body-${p.id}`} className="sidebar-project-body">
                     <div className="sidebar-section">
                       <div className="sidebar-section-label">Sessions</div>
                       {projSessions.length === 0 ? (
