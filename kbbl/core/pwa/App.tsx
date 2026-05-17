@@ -1,12 +1,12 @@
 import { useState, useEffect } from "react";
 
-import type { SessionSnapshot } from "./types";
 import { useHashRoute } from "./hooks/useHashRoute";
 import { useHashSid } from "./hooks/useHashSid";
 import { useHashTaskId } from "./hooks/useHashTaskId";
 import { useServerConfig } from "./hooks/useServerConfig";
 import { useTheme } from "./hooks/useTheme";
 import { useInbox } from "./hooks/useInbox";
+import { resumeSession } from "./lib/session";
 
 import { PlanReviewView } from "./review/plan/PlanReviewView";
 import { BriefReviewView } from "./review/brief/BriefReviewView";
@@ -14,28 +14,6 @@ import { BriefReviewView } from "./review/brief/BriefReviewView";
 import { SessionListView } from "./views/SessionListView";
 import { SessionView } from "./views/SessionView";
 import { TaskView } from "./views/TaskView";
-
-async function resumeSession(
-  parentSid: string,
-  hydrate: (snap: SessionSnapshot) => void,
-  navigate: (sid: string) => void,
-): Promise<string | null> {
-  const res = await fetch("/sessions", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ resume_from: parentSid }),
-  });
-  if (!res.ok) {
-    const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
-    return typeof body?.error === "string"
-      ? body.error
-      : `server returned ${res.status}`;
-  }
-  const snap = (await res.json()) as SessionSnapshot;
-  hydrate(snap);
-  navigate(snap.sid);
-  return null;
-}
 
 export function App() {
   const route = useHashRoute();
