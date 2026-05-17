@@ -14,6 +14,7 @@ import rehypeSanitize from "rehype-sanitize";
 import type { Task, PermissionProfile } from "../safir/types";
 import { PlanReviewView } from "./review/plan/PlanReviewView";
 import { BriefReviewView } from "./review/brief/BriefReviewView";
+import { Sidebar, type SidebarSession } from "./sidebar/Sidebar";
 
 
 export interface EnvelopeEvent {
@@ -912,8 +913,25 @@ function SessionListView({
     return () => clearTimeout(timer);
   }, [autostartPending, workdirInput]); // startSession captured at render time is intentional
 
+  const sidebarSessions: SidebarSession[] = useMemo(
+    () =>
+      sorted.map((s) => ({
+        sid: s.sid,
+        name: s.name,
+        // Worktree-backed sessions live under /tmp/.../worktrees/<branch>;
+        // projectWorkdir holds the canonical repo path that matches the
+        // project.repo_path the sidebar groups by. Fall back to workdir
+        // for pre-Phase-1 sessions that don't carry projectWorkdir.
+        workdir: s.projectWorkdir ?? s.workdir,
+        status: s.status,
+      })),
+    [sorted],
+  );
+
   return (
-    <div className="app app-list">
+    <div className="app-list-shell">
+      <Sidebar sessions={sidebarSessions} onSelectSession={onSelect} />
+      <div className="app app-list">
       <header className="top-bar">
         <span className={`status status-${inboxStatus}`}>{inboxStatus}</span>
         <span className="event-count">
@@ -1141,6 +1159,7 @@ function SessionListView({
           ))}
         </ul>
       )}
+      </div>
     </div>
   );
 }
