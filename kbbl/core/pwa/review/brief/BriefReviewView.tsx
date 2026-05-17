@@ -16,10 +16,38 @@ interface BriefReviewViewProps {
   onBack: () => void;
 }
 
-function RunBuildButton({ briefId }: { briefId: string }) {
+function RunBuildButton({ briefId, cohortId }: { briefId: string; cohortId: string }) {
   const [pending, setPending] = useState(false);
   const [sessionRef, setSessionRef] = useState<string | null>(null);
+  // "checking": looking up the cohort's current_session_ref so we don't
+  // race the auto-dispatch that brief.approved triggers in dispatch-hooks.
+  // If a session ref already exists, render the "running" state instead
+  // of the button. This closes the realistic window of the TOCTOU race
+  // documented in docs/known_issues.md; the residual ~ms window between
+  // approve-emit and dispatch UPDATE is acknowledged there.
+  const [checking, setChecking] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setChecking(true);
+    fetch(`/cohorts/${encodeURIComponent(cohortId)}`)
+      .then((r) => (r.ok ? (r.json() as Promise<{ current_session_ref: string | null }>) : null))
+      .then((cohort) => {
+        if (cancelled) return;
+        if (cohort?.current_session_ref) {
+          setSessionRef(cohort.current_session_ref);
+        }
+      })
+      .catch(() => {
+        // Non-fatal — fall through to manual button; the route guard still
+        // defends against most double-dispatch.
+      })
+      .finally(() => {
+        if (!cancelled) setChecking(false);
+      });
+    return () => { cancelled = true; };
+  }, [cohortId]);
 
   const handleRun = async () => {
     setPending(true);
@@ -44,6 +72,14 @@ function RunBuildButton({ briefId }: { briefId: string }) {
     return (
       <span style={{ fontSize: 12, opacity: 0.8 }}>
         Build running — session {sessionRef.slice(0, 8)}
+      </span>
+    );
+  }
+
+  if (checking) {
+    return (
+      <span style={{ fontSize: 12, opacity: 0.6 }}>
+        Checking build status…
       </span>
     );
   }
@@ -336,7 +372,7 @@ export function BriefReviewView({ id, onToggleTheme, onBack }: BriefReviewViewPr
             </button>
           </>
         )}
-        {brief.status === "approved" && <RunBuildButton briefId={brief.id} />}
+        {brief.status === "approved" && <RunBuildButton briefId={brief.id} cohortId={brief.cohort_id} />}
       </header>
 
       {/* Main area */}

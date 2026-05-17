@@ -32,7 +32,7 @@ The spec exists; no plan has been created yet. You will create the plan, then at
    ```
 
 5. POST each cohort in order:
-   ```
+   ```http
    POST {{KBBL_URL}}/cohorts
    Content-Type: application/json
 
@@ -44,7 +44,7 @@ The spec exists; no plan has been created yet. You will create the plan, then at
    }
    ```
 6. POST any dependency edges (cohort A must complete before cohort B starts):
-   ```
+   ```http
    POST {{KBBL_URL}}/cohort-dependencies
    Content-Type: application/json
 
