@@ -10,6 +10,9 @@ export function writeHashSid(sid: string | null): void {
     // history.replaceState so hitting Back from a SessionView returns to the
     // prior tab/page rather than chaining through every sid the user viewed.
     history.replaceState(null, "", window.location.pathname + window.location.search);
+    // replaceState doesn't fire hashchange — dispatch manually so sibling
+    // hash hooks (useHashRoute, etc.) re-read the now-empty hash.
+    window.dispatchEvent(new Event("hashchange"));
   } else {
     window.location.hash = `sid=${encodeURIComponent(sid)}`;
   }
@@ -28,14 +31,12 @@ export function readHashTaskId(): number | null {
 
 export function writeHashTaskId(taskId: number | null): void {
   if (taskId === null) {
-    history.replaceState(
-      null,
-      "",
-      window.location.pathname + window.location.search,
-    );
-  } else {
-    window.location.hash = `task=${taskId}`;
+    history.replaceState(null, "", window.location.pathname + window.location.search);
+    window.dispatchEvent(new Event("hashchange"));
+    return;
   }
+  if (!Number.isSafeInteger(taskId) || taskId <= 0) return;
+  window.location.hash = `task=${taskId}`;
 }
 
 export function readHashRoute(): { view: "plan" | "brief"; id: string } | null {

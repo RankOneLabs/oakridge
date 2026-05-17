@@ -2,7 +2,7 @@ export function formatRelative(iso: string): string {
   if (!iso) return "";
   const then = Date.parse(iso);
   if (!Number.isFinite(then)) return "";
-  const deltaSec = Math.max(0, Math.round((Date.now() - then) / 1000));
+  const deltaSec = Math.max(0, Math.floor((Date.now() - then) / 1000));
   if (deltaSec < 5) return "just now";
   if (deltaSec < 60) return `${deltaSec}s ago`;
   // Floor rather than round for the larger unit conversions — a 1m30s-old
@@ -16,7 +16,7 @@ export function formatRelative(iso: string): string {
   return `${days}d ago`;
 }
 
-// Module-scope formatter so the hover tooltip is locale-stable (seconds and
+// Module-scope formatter so the hover tooltip is shape-stable (seconds and
 // time zone always present) and we don't spin up a new Intl instance per
 // timestamp render. Use granular options because ECMA-402 forbids combining
 // dateStyle/timeStyle with timeZoneName.

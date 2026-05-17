@@ -18,11 +18,14 @@ export function useServerConfig(): {
   useEffect(() => {
     let cancelled = false;
     fetch("/config")
-      .then((r) => r.json() as Promise<{
-        defaultWorkdir: string;
-        softThresholdTokens?: number;
-        safirWebUrl?: string;
-      }>)
+      .then((r) => {
+        if (!r.ok) throw new Error(`config: ${r.status}`);
+        return r.json() as Promise<{
+          defaultWorkdir: string;
+          softThresholdTokens?: number;
+          safirWebUrl?: string;
+        }>;
+      })
       .then((data) => {
         if (!cancelled) setConfig({
           defaultWorkdir: data.defaultWorkdir,
