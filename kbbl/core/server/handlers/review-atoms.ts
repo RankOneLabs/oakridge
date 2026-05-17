@@ -92,9 +92,11 @@ export function mountReviewAtomsRoutes(app: Hono, deps: ReviewAtomsRouteDeps): v
       id: edit.id,
       target_type,
       target_id,
-      anchor: anchor ?? null,
-      new_value,
-      author,
+      anchor: edit.anchor,
+      prior_value: edit.prior_value,
+      new_value: edit.new_value,
+      author: edit.author,
+      created_at: edit.created_at,
     });
 
     return c.json(edit, 201);

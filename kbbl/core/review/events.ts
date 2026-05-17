@@ -7,8 +7,10 @@ export interface ReviewEventMap {
     target_type: string;
     target_id: string;
     anchor: string | null;
+    prior_value: string | null;
     new_value: string;
     author: string;
+    created_at: string;
   };
   "thread.created": {
     id: string;
@@ -16,6 +18,8 @@ export interface ReviewEventMap {
     target_id: string;
     anchor: string | null;
     author: string | null;
+    status: "open" | "resolved";
+    created_at: string;
   };
   "thread.message_added": {
     id: string;
