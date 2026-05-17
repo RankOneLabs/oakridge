@@ -9,7 +9,7 @@ import {
 
 export interface SidebarStorage {
   collapsed: boolean;
-  setCollapsed: (v: boolean) => void;
+  setCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
   expandedProjects: Set<string>;
   setExpandedProjects: React.Dispatch<React.SetStateAction<Set<string>>>;
   toggleProject: (id: string) => void;
