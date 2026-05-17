@@ -61,8 +61,8 @@ export function mountArtifactStreamRoutes(app: Hono, deps: ArtifactStreamRouteDe
         const replayed = bus.replaySince(targetType, targetId, resumeAfter);
         for (const evt of replayed) {
           await stream.writeSSE({
-            event: "message",
-            data: JSON.stringify({ event: evt.event, data: evt.data, ts: evt.ts }),
+            event: evt.event,
+            data: JSON.stringify(evt.data),
             id: String(evt.id),
           });
         }
@@ -78,8 +78,8 @@ export function mountArtifactStreamRoutes(app: Hono, deps: ArtifactStreamRouteDe
           }
           const evt = queue.shift()!;
           await stream.writeSSE({
-            event: "message",
-            data: JSON.stringify({ event: evt.event, data: evt.data }),
+            event: evt.event,
+            data: JSON.stringify(evt.data),
             id: String(evt.id),
           });
         }

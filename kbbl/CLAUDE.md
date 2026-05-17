@@ -18,9 +18,9 @@ Bun + Hono backend on `:8788` that serves a React PWA, manages Claude Code sub-s
 
 ## Frontend file organization (Atomic Design)
 
-This is the non-negotiable part. App.tsx grew to 4297 lines because no one wrote it down.
+This is the non-negotiable part. App.tsx grew to ~4.3k lines because no one wrote it down.
 
-```
+```text
 core/pwa/
 ├── App.tsx                # router + top-level state ONLY (target: <300 lines)
 ├── main.tsx               # entry point
@@ -38,8 +38,8 @@ core/pwa/
 ```
 
 **Existing code that violates this and needs migration:**
-- `App.tsx` (4297 lines) → split into `hooks/` + `views/` + `components/organisms/`. App.tsx becomes a router shell.
-- `sidebar/Sidebar.tsx` (339 lines) → split row/section subcomponents into `components/molecules/`.
+- `App.tsx` (~4.3k lines) → split into `hooks/` + `views/` + `components/organisms/`. App.tsx becomes a router shell.
+- `sidebar/Sidebar.tsx` (~340 lines) → split row/section subcomponents into `components/molecules/`.
 
 ## Hard rules
 
@@ -59,7 +59,7 @@ core/pwa/
 
 ## Realtime / SSE conventions
 
-- Every `streamSSE` handler MUST `await stream.write(": ready\n\n")` immediately after subscribe + replay. Without it, the EventSource sits on an empty body for up to 15s (until the heartbeat) and the browser's network indicator stays "loading."
+- Every `streamSSE` handler MUST `await stream.write(": ready\n\n")` early — before any code path that can block waiting for events. Place it right after the subscribe call and before replay / idle waits. Without it, the EventSource sits on an empty body for up to 15s (until the heartbeat) and the browser's network indicator stays "loading."
 - Heartbeat at 15s with `: ping\n\n` is standard. Don't tune per-route.
 - Client-side: SSE lifecycle goes in a `hooks/use<Stream>.ts`. View components consume, they don't `new EventSource` directly. `useArtifactStream` (in `review/shared/`) is the model.
 - Client must close the EventSource in the effect cleanup. A `useRef` over `cancelled` per the React docs pattern is fine.
