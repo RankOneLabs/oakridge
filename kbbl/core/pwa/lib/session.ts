@@ -65,6 +65,33 @@ export function sortSessions(sessions: Map<string, SessionSnapshot>): SessionSna
   });
 }
 
+export async function resumeSession(
+  parentSid: string,
+  hydrate: (snap: SessionSnapshot) => void,
+  navigate: (sid: string) => void,
+): Promise<string | null> {
+  try {
+    const res = await fetch("/sessions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ resume_from: parentSid }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
+      return typeof body?.error === "string"
+        ? body.error
+        : `server returned ${res.status}`;
+    }
+    const snap = (await res.json()) as SessionSnapshot;
+    hydrate(snap);
+    navigate(snap.sid);
+    return null;
+  } catch (err) {
+    return err instanceof Error ? err.message : "network error";
+  }
+}
+
 export function resumeTitle(usage: ResultUsage | null): string {
   if (!usage) {
     return "Start a new session inheriting this one's context.";
