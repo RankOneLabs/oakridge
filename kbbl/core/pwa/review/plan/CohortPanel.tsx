@@ -78,7 +78,7 @@ export function CohortPanel({
         <div className="cohort-detail__status">{cohort.status}</div>
       </div>
 
-      {(cohort.notes || liveNotes) && (
+      {(cohort.notes || liveNotes || mode === "edit") && (
         <div className="cohort-detail__label-value">
           <div className="cohort-detail__label-row">
             <div className="cohort-detail__label">Notes</div>
@@ -89,7 +89,11 @@ export function CohortPanel({
               frozen={frozen || mode === "edit"}
             />
           </div>
-          <div className="cohort-detail__notes">{liveNotes}</div>
+          <div className="cohort-detail__notes">
+            {liveNotes || (
+              <span className="cohort-detail__notes-empty">No notes yet.</span>
+            )}
+          </div>
         </div>
       )}
 
