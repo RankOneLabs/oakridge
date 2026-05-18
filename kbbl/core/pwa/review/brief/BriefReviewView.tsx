@@ -98,7 +98,7 @@ function RunBuildButton({ briefId, cohortId }: { briefId: string; cohortId: stri
         disabled={pending}
         onClick={() => { void handleRun(); }}
         style={{
-          background: "var(--accent, #4a8fcb)",
+          background: "var(--accent-blue)",
           color: "#fff",
           border: "none",
           padding: "4px 12px",
@@ -110,7 +110,7 @@ function RunBuildButton({ briefId, cohortId }: { briefId: string; cohortId: stri
         {pending ? "…" : "Run build"}
       </button>
       {err && (
-        <span style={{ fontSize: 12, color: "var(--danger, #c55)", marginLeft: 6 }}>
+        <span style={{ fontSize: 12, color: "var(--danger-fg)", marginLeft: 6 }}>
           {err}
         </span>
       )}
@@ -305,7 +305,7 @@ export function BriefReviewView({ id, onToggleTheme, onBack }: BriefReviewViewPr
         <button type="button" onClick={onBack} style={{ marginBottom: 16 }}>
           Back
         </button>
-        <div style={{ color: "var(--danger, #c55)" }}>
+        <div style={{ color: "var(--danger-fg)" }}>
           {error ?? "Brief not found"}
         </div>
       </div>
@@ -330,7 +330,7 @@ export function BriefReviewView({ id, onToggleTheme, onBack }: BriefReviewViewPr
           alignItems: "center",
           gap: 12,
           padding: "8px 16px",
-          borderBottom: "1px solid var(--border, #444)",
+          borderBottom: "1px solid var(--border-subtle)",
           flexShrink: 0,
         }}
       >
@@ -352,7 +352,7 @@ export function BriefReviewView({ id, onToggleTheme, onBack }: BriefReviewViewPr
               onClick={handleApprove}
               disabled={actionPending}
               style={{
-                background: "var(--success, #2a7a2a)",
+                background: "var(--success-fg)",
                 color: "#fff",
                 border: "none",
                 padding: "4px 12px",
@@ -367,7 +367,7 @@ export function BriefReviewView({ id, onToggleTheme, onBack }: BriefReviewViewPr
               onClick={handleReject}
               disabled={actionPending}
               style={{
-                background: "var(--danger, #7a2a2a)",
+                background: "var(--danger-fg)",
                 color: "#fff",
                 border: "none",
                 padding: "4px 12px",
@@ -408,8 +408,8 @@ export function BriefReviewView({ id, onToggleTheme, onBack }: BriefReviewViewPr
                 marginTop: 24,
                 padding: "12px 16px",
                 borderRadius: 6,
-                background: "var(--surface-raised, #1e1e1e)",
-                border: "1px solid var(--border, #444)",
+                background: "var(--bg-elevated)",
+                border: "1px solid var(--border-subtle)",
               }}
             >
               <div
@@ -434,14 +434,14 @@ export function BriefReviewView({ id, onToggleTheme, onBack }: BriefReviewViewPr
           <div
             style={{
               minWidth: 280,
-              borderLeft: "1px solid var(--border, #444)",
+              borderLeft: "1px solid var(--border-subtle)",
               overflow: "auto",
             }}
           >
             <div
               style={{
                 padding: "8px 12px",
-                borderBottom: "1px solid var(--border, #444)",
+                borderBottom: "1px solid var(--border-subtle)",
               }}
             >
               <button

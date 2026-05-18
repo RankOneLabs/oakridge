@@ -259,7 +259,7 @@ export function PlanReviewView({ id, onToggleTheme, onBack }: PlanReviewViewProp
         <button type="button" onClick={onBack} style={{ marginBottom: 16 }}>
           Back
         </button>
-        <div style={{ color: "var(--danger, #c55)" }}>
+        <div style={{ color: "var(--danger-fg)" }}>
           {error ?? "Plan not found"}
         </div>
       </div>
@@ -284,7 +284,7 @@ export function PlanReviewView({ id, onToggleTheme, onBack }: PlanReviewViewProp
           alignItems: "center",
           gap: 12,
           padding: "8px 16px",
-          borderBottom: "1px solid var(--border, #444)",
+          borderBottom: "1px solid var(--border-subtle)",
           flexShrink: 0,
         }}
       >
@@ -309,7 +309,7 @@ export function PlanReviewView({ id, onToggleTheme, onBack }: PlanReviewViewProp
               type="button"
               onClick={() => setShowApprove(true)}
               style={{
-                background: "var(--success, #2a7a2a)",
+                background: "var(--success-fg)",
                 color: "#fff",
                 border: "none",
                 padding: "4px 12px",
@@ -323,7 +323,7 @@ export function PlanReviewView({ id, onToggleTheme, onBack }: PlanReviewViewProp
               type="button"
               onClick={() => setShowReject(true)}
               style={{
-                background: "var(--danger, #7a2a2a)",
+                background: "var(--danger-fg)",
                 color: "#fff",
                 border: "none",
                 padding: "4px 12px",
@@ -368,8 +368,8 @@ export function PlanReviewView({ id, onToggleTheme, onBack }: PlanReviewViewProp
           />
         )}
         {selectedThread && (
-          <div style={{ minWidth: 280, borderLeft: "1px solid var(--border, #444)", overflow: "auto" }}>
-            <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--border, #444)", display: "flex", gap: 8 }}>
+          <div style={{ minWidth: 280, borderLeft: "1px solid var(--border-subtle)", overflow: "auto" }}>
+            <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--border-subtle)", display: "flex", gap: 8 }}>
               <button type="button" style={{ fontSize: 12 }} onClick={() => setSelectedThreadId(null)}>
                 Close
               </button>

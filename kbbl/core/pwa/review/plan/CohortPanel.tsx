@@ -30,7 +30,7 @@ export function CohortPanel({
     <div
       style={{
         padding: 16,
-        borderLeft: "1px solid var(--border, #444)",
+        borderLeft: "1px solid var(--border-subtle)",
         minWidth: 240,
         display: "flex",
         flexDirection: "column",
@@ -67,7 +67,7 @@ export function CohortPanel({
             marginTop: 2,
             padding: "2px 6px",
             borderRadius: 3,
-            background: "var(--surface, #333)",
+            background: "var(--bg-surface)",
             display: "inline-block",
           }}
         >

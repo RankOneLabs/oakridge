@@ -28,8 +28,8 @@ export function AtomCommentAffordance({
         padding: "1px 6px",
         borderRadius: 3,
         background:
-          openCount > 0 ? "var(--accent-muted, #1a3a5c)" : "transparent",
-        border: "1px solid var(--border, #444)",
+          openCount > 0 ? "var(--accent-muted)" : "transparent",
+        border: "1px solid var(--border-subtle)",
         cursor: frozen ? "default" : "pointer",
         opacity: frozen ? 0.5 : 1,
         flexShrink: 0,

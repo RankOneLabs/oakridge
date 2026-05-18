@@ -25,9 +25,9 @@ export function CohortNode({ data }: { data: CohortNodeData }) {
       onClick={() => onSelectCohort(cohort.id)}
       style={{
         padding: "8px 10px",
-        border: `1px solid ${isSelected ? "var(--accent, #4a8fcb)" : "var(--border, #444)"}`,
+        border: `1px solid ${isSelected ? "var(--accent-blue)" : "var(--border-subtle)"}`,
         borderRadius: 4,
-        background: "var(--surface-raised, #1e1e1e)",
+        background: "var(--bg-elevated)",
         minWidth: 160,
         cursor: "pointer",
         userSelect: "none",
@@ -36,7 +36,7 @@ export function CohortNode({ data }: { data: CohortNodeData }) {
       <Handle
         type="target"
         position={Position.Top}
-        style={{ background: "var(--border, #555)" }}
+        style={{ background: "var(--border-subtle)" }}
       />
 
       <div
@@ -71,7 +71,7 @@ export function CohortNode({ data }: { data: CohortNodeData }) {
             fontSize: 10,
             padding: "1px 5px",
             borderRadius: 3,
-            background: "var(--surface, #333)",
+            background: "var(--bg-surface)",
             opacity: 0.8,
           }}
         >
@@ -91,7 +91,7 @@ export function CohortNode({ data }: { data: CohortNodeData }) {
       <Handle
         type="source"
         position={Position.Bottom}
-        style={{ background: "var(--border, #555)" }}
+        style={{ background: "var(--border-subtle)" }}
       />
     </div>
   );
