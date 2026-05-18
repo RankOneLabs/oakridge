@@ -1,5 +1,7 @@
 import { useState, useCallback } from "react";
 import { ModeToggle } from "./ModeToggle";
+import { ThreadSidebar } from "./ThreadSidebar";
+import { ThreadView } from "./ThreadView";
 import { ApproveModal } from "../plan/ApproveModal";
 import { RejectModal } from "../plan/RejectModal";
 import type { ReviewShellProps } from "./types";
@@ -21,15 +23,15 @@ export function ReviewShell({
   rejectSubjectLabel: _rejectSubjectLabel,
   artifactId,
   backHref: _backHref,
-  threads: _threads,
-  selectedThreadId: _selectedThreadId,
-  threadMessages: _threadMessages,
-  onSelectThread: _onSelectThread,
-  onCloseThread: _onCloseThread,
-  onNewThread: _onNewThread,
-  onSendMessage: _onSendMessage,
-  onPing: _onPing,
-  onResolve: _onResolve,
+  threads,
+  selectedThreadId,
+  threadMessages,
+  onSelectThread,
+  onCloseThread,
+  onNewThread,
+  onSendMessage,
+  onPing,
+  onResolve,
   children,
 }: ReviewShellProps) {
   const [showApprove, setShowApprove] = useState(false);
@@ -44,6 +46,8 @@ export function ReviewShell({
     await onReject(reason);
     setShowReject(false);
   }, [onReject]);
+
+  const selectedThread = threads.find((t) => t.id === selectedThreadId) ?? null;
 
   return (
     <div className="review-shell">
@@ -86,6 +90,35 @@ export function ReviewShell({
       </header>
       <div className="review-shell__main">
         <div className="review-shell__canvas-slot">{children}</div>
+        {selectedThread && (
+          <div className="review-shell__thread-detail">
+            <div className="review-shell__thread-detail-header">
+              <button
+                type="button"
+                style={{ fontSize: 12 }}
+                onClick={onCloseThread}
+              >
+                Close
+              </button>
+            </div>
+            <ThreadView
+              thread={selectedThread}
+              messages={threadMessages.get(selectedThread.id) ?? []}
+              onSendMessage={(body) => onSendMessage(selectedThread.id, body)}
+              onPing={() => onPing(selectedThread.id)}
+              onResolve={() => onResolve(selectedThread.id)}
+              frozen={frozen}
+            />
+          </div>
+        )}
+        <div className="review-shell__threads">
+          <ThreadSidebar
+            threads={threads}
+            selectedThreadId={selectedThreadId}
+            onSelect={onSelectThread}
+            onNewThread={onNewThread}
+          />
+        </div>
       </div>
       <div className="review-shell__modal-layer">
         {showApprove && (

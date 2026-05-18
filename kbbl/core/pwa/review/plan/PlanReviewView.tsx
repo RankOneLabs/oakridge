@@ -3,8 +3,6 @@ import type { Theme } from "../../types";
 import { useArtifactStream } from "../shared/useArtifactStream";
 import { DagEditor } from "./DagEditor";
 import { CohortPanel } from "./CohortPanel";
-import { ThreadSidebar } from "../shared/ThreadSidebar";
-import { ThreadView } from "../shared/ThreadView";
 import { ReviewShell } from "../shared/ReviewShell";
 import type { ReviewMode, Message } from "../shared/types";
 import type { Plan, Cohort, CohortDependency } from "./types";
@@ -232,7 +230,6 @@ export function PlanReviewView({ id, onToggleTheme, onBack }: PlanReviewViewProp
     [id],
   );
 
-  const selectedThread = threads.find((t) => t.id === selectedThreadId) ?? null;
   const selectedCohort =
     cohorts.find((c) => c.id === selectedCohortId) ?? null;
 
@@ -288,62 +285,34 @@ export function PlanReviewView({ id, onToggleTheme, onBack }: PlanReviewViewProp
       onPing={handlePing}
       onResolve={handleResolve}
     >
-      {/* Main area: DAG + cohort panel + threads remain as children until commit 3 */}
-      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-        {/* DAG canvas */}
-        <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
-          <DagEditor
-            cohorts={cohorts}
-            deps={deps}
-            threads={threads}
-            mode={mode}
-            frozen={frozen}
-            selectedCohortId={selectedCohortId}
-            onSelectCohort={setSelectedCohortId}
-            onOpenThread={handleOpenThread}
-            onAddEdge={handleAddEdge}
-            onDeleteEdge={handleDeleteEdge}
-            onUpdatePosition={handleUpdatePosition}
-          />
-        </div>
-
-        {/* Right panel: cohort details or thread view */}
-        {selectedCohort && !selectedThread && (
-          <CohortPanel
-            cohort={selectedCohort}
-            edits={edits}
-            threads={threads}
-            mode={mode}
-            frozen={frozen}
-            onOpenThread={handleOpenThread}
-          />
-        )}
-        {selectedThread && (
-          <div style={{ minWidth: 280, borderLeft: "1px solid var(--border-subtle)", overflow: "auto" }}>
-            <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--border-subtle)", display: "flex", gap: 8 }}>
-              <button type="button" style={{ fontSize: 12 }} onClick={() => setSelectedThreadId(null)}>
-                Close
-              </button>
-            </div>
-            <ThreadView
-              thread={selectedThread}
-              messages={threadMessages.get(selectedThread.id) ?? []}
-              onSendMessage={(body) => handleSendMessage(selectedThread.id, body)}
-              onPing={() => handlePing(selectedThread.id)}
-              onResolve={() => handleResolve(selectedThread.id)}
-              frozen={frozen}
-            />
-          </div>
-        )}
-
-        {/* Thread sidebar */}
-        <ThreadSidebar
+      {/* DAG canvas */}
+      <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+        <DagEditor
+          cohorts={cohorts}
+          deps={deps}
           threads={threads}
-          selectedThreadId={selectedThreadId}
-          onSelect={handleSelectThread}
-          onNewThread={handleNewThread}
+          mode={mode}
+          frozen={frozen}
+          selectedCohortId={selectedCohortId}
+          onSelectCohort={setSelectedCohortId}
+          onOpenThread={handleOpenThread}
+          onAddEdge={handleAddEdge}
+          onDeleteEdge={handleDeleteEdge}
+          onUpdatePosition={handleUpdatePosition}
         />
       </div>
+
+      {/* Cohort details panel (shown when a cohort is selected but no thread is open) */}
+      {selectedCohort && !selectedThreadId && (
+        <CohortPanel
+          cohort={selectedCohort}
+          edits={edits}
+          threads={threads}
+          mode={mode}
+          frozen={frozen}
+          onOpenThread={handleOpenThread}
+        />
+      )}
     </ReviewShell>
   );
 }
