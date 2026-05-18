@@ -2,8 +2,8 @@ import { useState, useCallback } from "react";
 import { ModeToggle } from "./ModeToggle";
 import { ThreadSidebar } from "./ThreadSidebar";
 import { ThreadView } from "./ThreadView";
-import { ApproveModal } from "../plan/ApproveModal";
-import { RejectModal } from "../plan/RejectModal";
+import { ApproveModal } from "./ApproveModal";
+import { RejectModal } from "./RejectModal";
 import type { ReviewShellProps } from "./types";
 export type { ReviewShellProps, CanvasProps } from "./types";
 
@@ -19,8 +19,8 @@ export function ReviewShell({
   onModeChange,
   onApprove,
   onReject,
-  approveSubjectLabel: _approveSubjectLabel,
-  rejectSubjectLabel: _rejectSubjectLabel,
+  approveSubjectLabel,
+  rejectSubjectLabel,
   artifactId,
   backHref: _backHref,
   threads,
@@ -123,7 +123,8 @@ export function ReviewShell({
       <div className="review-shell__modal-layer">
         {showApprove && (
           <ApproveModal
-            planId={artifactId}
+            artifactId={artifactId}
+            subjectLabel={approveSubjectLabel}
             onConfirm={handleApprove}
             onCancel={() => setShowApprove(false)}
             pending={actionPending}
@@ -131,7 +132,8 @@ export function ReviewShell({
         )}
         {showReject && (
           <RejectModal
-            planId={artifactId}
+            artifactId={artifactId}
+            subjectLabel={rejectSubjectLabel}
             onConfirm={handleReject}
             onCancel={() => setShowReject(false)}
             pending={actionPending}

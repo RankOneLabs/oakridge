@@ -1,16 +1,19 @@
 interface ApproveModalProps {
-  planId: string;
+  artifactId: string;
+  subjectLabel: string;
   onConfirm: () => void;
   onCancel: () => void;
   pending: boolean;
 }
 
 export function ApproveModal({
-  planId,
+  artifactId,
+  subjectLabel,
   onConfirm,
   onCancel,
   pending,
 }: ApproveModalProps) {
+  const subject = subjectLabel.charAt(0).toUpperCase() + subjectLabel.slice(1);
   return (
     <div
       style={{
@@ -37,10 +40,12 @@ export function ApproveModal({
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div style={{ fontWeight: 600, fontSize: 15 }}>Approve plan?</div>
+        <div style={{ fontWeight: 600, fontSize: 15 }}>
+          Approve {subjectLabel}?
+        </div>
         <div style={{ fontSize: 13, opacity: 0.8 }}>
-          Plan <code>{planId.slice(0, 8)}</code> will be approved and frozen.
-          Leaf cohorts will be promoted to planned.
+          {subject} <code>{artifactId.slice(0, 8)}</code> will be approved and
+          frozen.
         </div>
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <button type="button" onClick={onCancel} disabled={pending}>
