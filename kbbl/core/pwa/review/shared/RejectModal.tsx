@@ -60,18 +60,23 @@ export function RejectModal({
           autoFocus
         />
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-          <button type="button" onClick={onCancel} disabled={pending}>
+          <button
+            type="button"
+            className="review-shell__tap-target"
+            onClick={onCancel}
+            disabled={pending}
+          >
             Cancel
           </button>
           <button
             type="button"
+            className="review-shell__tap-target"
             onClick={() => reason.trim() && onConfirm(reason.trim())}
             disabled={pending || !reason.trim()}
             style={{
               background: "var(--danger-fg)",
               color: "#fff",
               border: "none",
-              padding: "6px 14px",
               borderRadius: 4,
               cursor: pending || !reason.trim() ? "default" : "pointer",
             }}

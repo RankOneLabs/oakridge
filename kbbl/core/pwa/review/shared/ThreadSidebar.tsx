@@ -33,7 +33,12 @@ export function ThreadSidebar({
         }}
       >
         <span style={{ fontWeight: 600, fontSize: 13 }}>Threads</span>
-        <button type="button" onClick={onNewThread} style={{ fontSize: 12 }}>
+        <button
+          type="button"
+          className="review-shell__tap-target"
+          onClick={onNewThread}
+          style={{ fontSize: 12 }}
+        >
           + New
         </button>
       </div>
@@ -44,10 +49,10 @@ export function ThreadSidebar({
           <button
             key={t.id}
             type="button"
+            className="review-shell__tap-target"
             onClick={() => onSelect(t.id)}
             style={{
               textAlign: "left",
-              padding: "6px 8px",
               borderRadius: 4,
               background: isSelected
                 ? "var(--accent-muted)"

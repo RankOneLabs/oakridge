@@ -2555,11 +2555,16 @@ body {
   margin-left: 6px;
 }
 
-/* --- tap target minimum (reused by cohort detail thread rows) --- */
-
+/* Apply in JSX to every interactive review-surface element. A missing application produces a visibly small
+   affordance — fails loudly. */
 .review-shell__tap-target {
-  min-width: 44px;
-  min-height: 44px;
+  min-block-size: 44px;
+  min-inline-size: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  box-sizing: border-box;
 }
 
 /* === inbox artifact cards (pending plans + pending build briefs) === */
