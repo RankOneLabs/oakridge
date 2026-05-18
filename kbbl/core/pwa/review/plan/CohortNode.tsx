@@ -24,11 +24,12 @@ export function CohortNode({ data }: { data: CohortNodeData }) {
     <div
       onClick={() => onSelectCohort(cohort.id)}
       style={{
-        padding: "8px 10px",
+        padding: "12px 14px",
         border: `1px solid ${isSelected ? "var(--accent-blue)" : "var(--border-subtle)"}`,
         borderRadius: 4,
         background: "var(--bg-elevated)",
-        minWidth: 160,
+        minWidth: 200,
+        minHeight: 64,
         cursor: "pointer",
         userSelect: "none",
       }}
