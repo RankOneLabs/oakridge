@@ -95,7 +95,6 @@ function AtomField({
         ) : (
           <div
             className={displayClass}
-            onClick={() => mode === "edit" && !frozen && startEdit()}
           >
             {value || <span className="structured-doc__placeholder">—</span>}
           </div>

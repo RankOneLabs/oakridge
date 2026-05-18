@@ -14,6 +14,7 @@ function ThreadListItem({
     <button
       type="button"
       className="cohort-detail__thread-row review-shell__tap-target"
+      aria-label={`Open thread on ${thread.anchor}`}
       onClick={() => onOpen(thread.anchor!)}
     >
       <span className="cohort-detail__thread-anchor">{thread.anchor}</span>
