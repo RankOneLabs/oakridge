@@ -161,7 +161,7 @@ export function DagEditor({
   );
 
   return (
-    <div style={{ flex: 1, height: "100%", minHeight: 400 }}>
+    <div className="dag-editor">
       <ReactFlow
         nodes={nodes}
         edges={edges}

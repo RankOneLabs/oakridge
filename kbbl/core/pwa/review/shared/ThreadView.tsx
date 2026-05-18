@@ -30,70 +30,49 @@ export function ThreadView({
   const isOpen = thread.status === "open";
 
   return (
-    <div
-      style={{ display: "flex", flexDirection: "column", gap: 8, padding: 12 }}
-    >
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
-        <span style={{ fontWeight: 600, fontSize: 13 }}>
+    <div className="thread-view">
+      <div className="thread-view__header">
+        <span className="thread-view__title">
           {thread.anchor ? `@${thread.anchor}` : "General thread"}
         </span>
-        <div style={{ display: "flex", gap: 4 }}>
+        <div className="thread-view__actions">
           {isOpen && !frozen && (
             <>
-              <button type="button" onClick={onPing} style={{ fontSize: 12 }}>
+              <button type="button" onClick={onPing} className="thread-view__action-btn">
                 Ping
               </button>
-              <button
-                type="button"
-                onClick={onResolve}
-                style={{ fontSize: 12 }}
-              >
+              <button type="button" onClick={onResolve} className="thread-view__action-btn">
                 Resolve
               </button>
             </>
           )}
           {!isOpen && (
-            <span style={{ fontSize: 12, opacity: 0.5 }}>Resolved</span>
+            <span className="thread-view__resolved-label">Resolved</span>
           )}
         </div>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <div className="thread-view__messages">
         {messages.map((m) => (
-          <div
-            key={m.id}
-            style={{
-              background: "var(--bg-elevated)",
-              borderRadius: 4,
-              padding: "6px 10px",
-            }}
-          >
-            <div style={{ fontSize: 11, opacity: 0.6 }}>
+          <div key={m.id} className="thread-view__message">
+            <div className="thread-view__message-meta">
               {m.author} · {m.created_at}
             </div>
-            <div style={{ fontSize: 13, marginTop: 2, whiteSpace: "pre-wrap" }}>
-              {m.body}
-            </div>
+            <div className="thread-view__message-body">{m.body}</div>
           </div>
         ))}
         {messages.length === 0 && (
-          <div style={{ fontSize: 12, opacity: 0.5 }}>No messages yet.</div>
+          <div className="thread-view__empty">No messages yet.</div>
         )}
       </div>
 
       {isOpen && !frozen && (
-        <div style={{ display: "flex", gap: 4 }}>
+        <div className="thread-view__compose">
           <textarea
             value={reply}
             onChange={(e) => setReply(e.target.value)}
             placeholder="Reply…"
-            style={{ flex: 1, resize: "vertical", fontSize: 13, minHeight: 60 }}
+            className="thread-view__textarea"
             onKeyDown={(e) => {
               if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleSend();
             }}
@@ -102,7 +81,7 @@ export function ThreadView({
             type="button"
             onClick={handleSend}
             disabled={!reply.trim()}
-            style={{ alignSelf: "flex-end" }}
+            className="thread-view__send-btn"
           >
             Send
           </button>

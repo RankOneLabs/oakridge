@@ -2123,6 +2123,15 @@ body {
   font: inherit;
 }
 
+.cohort-detail__thread-anchor {
+  flex: 1;
+}
+
+.cohort-detail__thread-status {
+  opacity: 0.6;
+  font-size: 11px;
+}
+
 /* --- plan canvas: cohort node --- */
 
 .cohort-node {
@@ -2275,6 +2284,15 @@ body {
   border-color: var(--accent-blue);
 }
 
+.thread-sidebar__row-anchor {
+  font-weight: 500;
+}
+
+.thread-sidebar__row-status {
+  opacity: 0.6;
+  font-size: 11px;
+}
+
 .thread-sidebar__empty {
   font-size: 12px;
   opacity: 0.5;
@@ -2328,6 +2346,33 @@ body {
   white-space: pre-wrap;
 }
 
+.thread-view__resolved-label {
+  font-size: 12px;
+  opacity: 0.5;
+}
+
+.thread-view__empty {
+  font-size: 12px;
+  opacity: 0.5;
+}
+
+.thread-view__action-btn {
+  font-size: 12px;
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  cursor: pointer;
+  padding: 2px 6px;
+  color: inherit;
+  font: inherit;
+}
+
+.thread-view__send-btn {
+  align-self: flex-end;
+  font: inherit;
+  cursor: pointer;
+}
+
 .thread-view__compose {
   display: flex;
   gap: 4px;
@@ -2361,6 +2406,10 @@ body {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.review-modal__panel--wide {
+  min-width: 360px;
 }
 
 .review-modal__title {
@@ -2457,6 +2506,26 @@ body {
 .review-shell__tap-target {
   min-width: 44px;
   min-height: 44px;
+}
+
+/* --- brief + plan canvas wrappers --- */
+
+.brief-canvas-scroll {
+  flex: 1;
+  overflow: auto;
+  padding: 0 16px 24px;
+}
+
+.plan-canvas-slot {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.dag-editor {
+  flex: 1;
+  height: 100%;
+  min-height: 400px;
 }
 
 /* --- structured-doc atom primitive (AtomField internals) --- */

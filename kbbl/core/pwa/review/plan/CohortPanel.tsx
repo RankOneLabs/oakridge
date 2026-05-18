@@ -16,8 +16,8 @@ function ThreadListItem({
       className="cohort-detail__thread-row review-shell__tap-target"
       onClick={() => onOpen(thread.anchor ?? "")}
     >
-      <span>{thread.anchor ?? "general"}</span>
-      <span style={{ opacity: 0.6 }}>{thread.status}</span>
+      <span className="cohort-detail__thread-anchor">{thread.anchor ?? "general"}</span>
+      <span className="cohort-detail__thread-status">{thread.status}</span>
     </button>
   );
 }

@@ -98,7 +98,7 @@ export function ReviewShell({
             <div className="review-shell__thread-detail-header">
               <button
                 type="button"
-                style={{ fontSize: 12 }}
+                className="review-shell__button"
                 onClick={onCloseThread}
               >
                 Close
