@@ -2,16 +2,18 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useViewport } from "./useViewport";
 
+type MqlListener = (e: MediaQueryListEvent) => void;
+
 function makeMatchMedia() {
-  const listeners = new Map<string, Set<(e: MediaQueryListEvent) => void>>();
+  const listeners = new Map<string, Set<MqlListener>>();
   return vi.fn((query: string) => ({
     matches: false,
     media: query,
-    addEventListener: (type: string, cb: any) => {
+    addEventListener: (type: string, cb: MqlListener) => {
       if (!listeners.has(type)) listeners.set(type, new Set());
       listeners.get(type)!.add(cb);
     },
-    removeEventListener: (type: string, cb: any) => {
+    removeEventListener: (type: string, cb: MqlListener) => {
       listeners.get(type)?.delete(cb);
     },
     __listeners: listeners,
@@ -19,11 +21,15 @@ function makeMatchMedia() {
 }
 
 describe("useViewport", () => {
+  let originalInnerWidth: number;
+
   beforeEach(() => {
+    originalInnerWidth = window.innerWidth;
     vi.stubGlobal("matchMedia", makeMatchMedia());
   });
 
   afterEach(() => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: originalInnerWidth });
     vi.unstubAllGlobals();
   });
 

@@ -5,9 +5,8 @@ import type { Cohort } from "./types";
 
 function friendlyAnchorLabel(anchor: string | null | undefined): string {
   if (!anchor) return "(unanchored)";
-  const m = anchor.match(/\.([a-zA-Z_][a-zA-Z0-9_]*)$/);
-  if (!m) return anchor;
-  const tail = m[1];
+  const tail = anchor.includes(".") ? anchor.slice(anchor.lastIndexOf(".") + 1) : anchor;
+  if (!tail) return anchor;
   return tail.charAt(0).toUpperCase() + tail.slice(1);
 }
 

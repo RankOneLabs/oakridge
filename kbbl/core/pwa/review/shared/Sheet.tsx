@@ -16,7 +16,7 @@ export function Sheet({ open, side, onClose, children, ariaLabel }: SheetProps) 
     if (open) {
       previousFocusRef.current = document.activeElement as HTMLElement;
       const first = panelRef.current?.querySelector<HTMLElement>(
-        'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])',
+        'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
       );
       first?.focus();
     } else {
@@ -38,7 +38,7 @@ export function Sheet({ open, side, onClose, children, ariaLabel }: SheetProps) 
     if (e.key !== "Tab") return;
     const focusable = Array.from(
       panelRef.current?.querySelectorAll<HTMLElement>(
-        'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])',
+        'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
       ) ?? [],
     );
     if (focusable.length === 0) return;
