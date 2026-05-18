@@ -46,11 +46,17 @@ export function ThreadView({
         <div style={{ display: "flex", gap: 4 }}>
           {isOpen && !frozen && (
             <>
-              <button type="button" onClick={onPing} style={{ fontSize: 12 }}>
+              <button
+                type="button"
+                className="review-shell__tap-target"
+                onClick={onPing}
+                style={{ fontSize: 12 }}
+              >
                 Ping
               </button>
               <button
                 type="button"
+                className="review-shell__tap-target"
                 onClick={onResolve}
                 style={{ fontSize: 12 }}
               >
@@ -100,6 +106,7 @@ export function ThreadView({
           />
           <button
             type="button"
+            className="review-shell__tap-target"
             onClick={handleSend}
             disabled={!reply.trim()}
             style={{ alignSelf: "flex-end" }}

@@ -81,6 +81,20 @@ function AtomField({
               />
             )}
           </>
+        ) : mode === "edit" && !frozen ? (
+          <button
+            type="button"
+            className="review-shell__tap-target structured-doc__edit-trigger"
+            onClick={startEdit}
+            style={{
+              flex: 1,
+              fontSize: 13,
+              background: "var(--bg-surface)",
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            {value || <span style={{ opacity: 0.4 }}>—</span>}
+          </button>
         ) : (
           <div
             style={{
@@ -88,15 +102,9 @@ function AtomField({
               fontSize: 13,
               padding: "2px 4px",
               borderRadius: 3,
-              cursor: mode === "edit" && !frozen ? "text" : "default",
-              background:
-                mode === "edit" && !frozen
-                  ? "var(--bg-surface)"
-                  : "transparent",
               whiteSpace: "pre-wrap",
               minHeight: 20,
             }}
-            onClick={() => mode === "edit" && !frozen && startEdit()}
           >
             {value || <span style={{ opacity: 0.4 }}>—</span>}
           </div>

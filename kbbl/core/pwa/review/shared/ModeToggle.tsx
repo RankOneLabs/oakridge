@@ -23,10 +23,10 @@ export function ModeToggle({ mode, onChange, disabled }: ModeToggleProps) {
           <button
             key={m}
             type="button"
+            className="review-shell__tap-target"
             onClick={() => !isDisabled && onChange(m)}
             disabled={isDisabled}
             style={{
-              padding: "4px 12px",
               fontSize: 12,
               background: active ? "var(--accent-blue)" : "transparent",
               color: active ? "#fff" : "inherit",

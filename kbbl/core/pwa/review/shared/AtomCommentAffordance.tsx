@@ -20,12 +20,12 @@ export function AtomCommentAffordance({
   return (
     <button
       type="button"
+      className="review-shell__tap-target"
       disabled={!!frozen}
       onClick={() => onOpenThread(anchor)}
       title={`${openCount} comment${openCount !== 1 ? "s" : ""} on ${anchor}`}
       style={{
         fontSize: 11,
-        padding: "1px 6px",
         borderRadius: 3,
         background:
           openCount > 0 ? "var(--accent-muted)" : "transparent",

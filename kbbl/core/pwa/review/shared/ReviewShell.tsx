@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { ModeToggle } from "./ModeToggle";
 import { ThreadSidebar } from "./ThreadSidebar";
 import { ThreadView } from "./ThreadView";
 import { ApproveModal } from "./ApproveModal";
 import { RejectModal } from "./RejectModal";
+import { Sheet } from "./Sheet";
+import { useViewport } from "./useViewport";
 import type { ReviewShellProps } from "./types";
 export type { ReviewShellProps, CanvasProps } from "./types";
 
@@ -36,6 +38,13 @@ export function ReviewShell({
 }: ReviewShellProps) {
   const [showApprove, setShowApprove] = useState(false);
   const [showReject, setShowReject] = useState(false);
+  const [threadsSheetOpen, setThreadsSheetOpen] = useState(false);
+
+  const { isPhone } = useViewport();
+
+  useEffect(() => {
+    if (!isPhone) setThreadsSheetOpen(false);
+  }, [isPhone]);
 
   const handleApprove = async () => {
     await onApprove();
@@ -48,11 +57,31 @@ export function ReviewShell({
   };
 
   const selectedThread = threads.find((t) => t.id === selectedThreadId) ?? null;
+  const openThreadCount = threads.filter((t) => t.status === "open").length;
+
+  const threadSidebar = (
+    <ThreadSidebar
+      threads={threads}
+      selectedThreadId={selectedThreadId}
+      onSelect={(id) => {
+        onSelectThread(id);
+        if (isPhone) setThreadsSheetOpen(false);
+      }}
+      onNewThread={() => {
+        onNewThread();
+        if (isPhone) setThreadsSheetOpen(false);
+      }}
+    />
+  );
 
   return (
     <div className="review-shell">
       <header className="review-shell__header">
-        <button type="button" className="review-shell__button" onClick={onBack}>
+        <button
+          type="button"
+          className="review-shell__button review-shell__tap-target"
+          onClick={onBack}
+        >
           Back
         </button>
         <span className="review-shell__title">
@@ -64,7 +93,15 @@ export function ReviewShell({
         )}
         <button
           type="button"
-          className="review-shell__button"
+          className="review-shell__threads-chip review-shell__tap-target"
+          onClick={() => setThreadsSheetOpen(true)}
+          aria-label="Open threads"
+        >
+          💬{openThreadCount > 0 ? ` ${openThreadCount}` : ""}
+        </button>
+        <button
+          type="button"
+          className="review-shell__button review-shell__tap-target"
           onClick={onToggleTheme}
         >
           Theme
@@ -74,7 +111,7 @@ export function ReviewShell({
           <div className="review-shell__actions">
             <button
               type="button"
-              className="btn-approve"
+              className="btn-approve review-shell__tap-target"
               onClick={() => setShowApprove(true)}
               disabled={actionPending || frozen}
             >
@@ -82,7 +119,7 @@ export function ReviewShell({
             </button>
             <button
               type="button"
-              className="btn-deny"
+              className="btn-deny review-shell__tap-target"
               onClick={() => setShowReject(true)}
               disabled={actionPending || frozen}
             >
@@ -98,6 +135,7 @@ export function ReviewShell({
             <div className="review-shell__thread-detail-header">
               <button
                 type="button"
+                className="review-shell__tap-target"
                 style={{ fontSize: 12 }}
                 onClick={onCloseThread}
               >
@@ -115,14 +153,22 @@ export function ReviewShell({
           </div>
         )}
         <div className="review-shell__threads">
-          <ThreadSidebar
-            threads={threads}
-            selectedThreadId={selectedThreadId}
-            onSelect={onSelectThread}
-            onNewThread={onNewThread}
-          />
+          {threadSidebar}
         </div>
       </div>
+
+      {/* Phone: threads in a right Sheet */}
+      {isPhone && (
+        <Sheet
+          open={threadsSheetOpen}
+          side="right"
+          onClose={() => setThreadsSheetOpen(false)}
+          ariaLabel="Threads"
+        >
+          {threadSidebar}
+        </Sheet>
+      )}
+
       <div className="review-shell__modal-layer">
         {showApprove && (
           <ApproveModal
