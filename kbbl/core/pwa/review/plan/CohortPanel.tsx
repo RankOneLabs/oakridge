@@ -3,6 +3,14 @@ import type { AtomEdit, Thread, ReviewMode } from "../shared/types";
 import { liveValueAt } from "../shared/liveness";
 import type { Cohort } from "./types";
 
+function friendlyAnchorLabel(anchor: string | null | undefined): string {
+  if (!anchor) return "(unanchored)";
+  const m = anchor.match(/\.([a-zA-Z_][a-zA-Z0-9_]*)$/);
+  if (!m) return anchor;
+  const tail = m[1];
+  return tail.charAt(0).toUpperCase() + tail.slice(1);
+}
+
 function ThreadListItem({
   thread,
   onOpen,
@@ -15,9 +23,12 @@ function ThreadListItem({
       type="button"
       className="cohort-detail__thread-row review-shell__tap-target"
       aria-label={`Open thread on ${thread.anchor}`}
+      title={thread.anchor ?? ""}
       onClick={() => onOpen(thread.anchor!)}
     >
-      <span className="cohort-detail__thread-anchor">{thread.anchor}</span>
+      <span className="cohort-detail__thread-anchor">
+        {friendlyAnchorLabel(thread.anchor)}
+      </span>
       <span className="cohort-detail__thread-status">{thread.status}</span>
     </button>
   );
