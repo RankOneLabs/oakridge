@@ -2223,7 +2223,7 @@ body {
   text-align: left;
   border: none;
   color: inherit;
-  font: inherit;
+  font-family: inherit;
 }
 
 /* --- plan canvas: cohort node --- */
@@ -2317,7 +2317,7 @@ body {
   cursor: pointer;
   font-weight: 400;
   text-transform: capitalize;
-  font: inherit;
+  font-family: inherit;
 }
 
 .mode-toggle__segment--active {
@@ -2370,7 +2370,7 @@ body {
   cursor: pointer;
   width: 100%;
   color: inherit;
-  font: inherit;
+  font-family: inherit;
 }
 
 .thread-sidebar__row--selected {
@@ -2567,6 +2567,11 @@ body {
   box-sizing: border-box;
 }
 
+/* tiebreaker: tap-target's display:inline-flex must not resurrect phone-only chip at wider viewports */
+@media (min-width: 768px) {
+  .review-shell__threads-chip { display: none; }
+}
+
 /* === structured doc editor (cohort 2) === */
 
 .structured-doc__edit-trigger {
@@ -2578,6 +2583,8 @@ body {
   padding: 8px 10px;
   width: 100%;
   border-radius: 4px;
+  justify-content: flex-start;
+  align-items: flex-start;
 }
 
 /* === inbox artifact cards (pending plans + pending build briefs) === */

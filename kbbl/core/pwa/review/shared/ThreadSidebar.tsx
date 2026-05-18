@@ -53,6 +53,8 @@ export function ThreadSidebar({
             onClick={() => onSelect(t.id)}
             style={{
               textAlign: "left",
+              flexDirection: "column",
+              alignItems: "flex-start",
               borderRadius: 4,
               background: isSelected
                 ? "var(--accent-muted)"

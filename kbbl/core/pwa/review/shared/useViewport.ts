@@ -29,11 +29,13 @@ export function useViewport(): ViewportState {
       setState(getState());
     }
 
+    window.addEventListener("resize", update);
     phone.addEventListener("change", update);
     tablet.addEventListener("change", update);
     desktop.addEventListener("change", update);
 
     return () => {
+      window.removeEventListener("resize", update);
       phone.removeEventListener("change", update);
       tablet.removeEventListener("change", update);
       desktop.removeEventListener("change", update);
