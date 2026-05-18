@@ -230,6 +230,7 @@ export function PlanReviewView({ id, onToggleTheme, onBack }: PlanReviewViewProp
     [id],
   );
 
+  const selectedThread = threads.find((t) => t.id === selectedThreadId) ?? null;
   const selectedCohort =
     cohorts.find((c) => c.id === selectedCohortId) ?? null;
 
@@ -303,7 +304,7 @@ export function PlanReviewView({ id, onToggleTheme, onBack }: PlanReviewViewProp
       </div>
 
       {/* Cohort details panel (shown when a cohort is selected but no thread is open) */}
-      {selectedCohort && !selectedThreadId && (
+      {selectedCohort && !selectedThread && (
         <CohortPanel
           cohort={selectedCohort}
           edits={edits}
