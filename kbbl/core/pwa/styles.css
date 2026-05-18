@@ -2567,6 +2567,19 @@ body {
   box-sizing: border-box;
 }
 
+/* === structured doc editor (cohort 2) === */
+
+.structured-doc__edit-trigger {
+  text-align: left;
+  background: transparent;
+  border: none;
+  font: inherit;
+  cursor: text;
+  padding: 8px 10px;
+  width: 100%;
+  border-radius: 4px;
+}
+
 /* === inbox artifact cards (pending plans + pending build briefs) === */
 
 .pending-plans,
