@@ -1923,6 +1923,584 @@ body {
   letter-spacing: 0.04em;
 }
 
+/* === Sheet primitive (cohort 2) === */
+
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: none;
+}
+.sheet__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+}
+.sheet__panel {
+  position: absolute;
+  background: var(--bg-app);
+  border: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+.sheet--right .sheet__panel {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(85vw, 360px);
+  border-left: 1px solid var(--border-subtle);
+}
+.sheet--bottom .sheet__panel {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: 85vh;
+  border-top: 1px solid var(--border-subtle);
+  border-radius: 12px 12px 0 0;
+}
+.sheet__handle {
+  width: 36px;
+  height: 4px;
+  background: var(--border-muted);
+  border-radius: 2px;
+  margin: 8px auto;
+  flex-shrink: 0;
+}
+.sheet__close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+
+/* === canvas content class vocabulary (Cohort 3) === */
+
+/* --- brief canvas type ramp --- */
+
+.brief-hero {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--text-primary);
+}
+
+.brief-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.brief-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.brief-decision-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.brief-decision-card__header {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+}
+
+.brief-decision-card__rationale-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.brief-decision-card__rationale-body {
+  font-size: 13px;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+}
+
+.brief-approach-rejected {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.brief-approach-rejected__header {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+}
+
+.brief-approach-rejected__reason-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.brief-approach-rejected__reason-body {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  white-space: pre-wrap;
+}
+
+.brief-next-action {
+  background: var(--accent-muted);
+  border-left: 3px solid var(--accent-blue);
+  padding: 12px 14px;
+  border-radius: 4px;
+  font-size: 14px;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+}
+
+.brief-atom-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.brief-atom-list__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 3px;
+  font-family: "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.brief-empty {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* --- plan canvas: cohort detail panel --- */
+
+.cohort-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px;
+  height: 100%;
+  overflow: auto;
+}
+
+.cohort-detail__title {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--text-primary);
+}
+
+.cohort-detail__label-value {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cohort-detail__label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.cohort-detail__notes {
+  font-size: 13px;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+
+.cohort-detail__status {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: 12px;
+  align-self: flex-start;
+}
+
+.cohort-detail__threads {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cohort-detail__thread-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--bg-elevated);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  color: inherit;
+  font: inherit;
+}
+
+/* --- plan canvas: cohort node --- */
+
+.cohort-node {
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--bg-elevated);
+  min-width: 200px;
+  min-height: 64px;
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cohort-node--selected {
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 0 1px var(--accent-blue);
+}
+
+.cohort-node__title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  flex: 1;
+}
+
+.cohort-node__title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.cohort-node__bottom-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.cohort-node__status {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: var(--bg-surface);
+  color: var(--text-tertiary);
+}
+
+.cohort-node__comments {
+  /* semantic grouping wrapper; affordance carries its own class */
+}
+
+/* --- sweep-residual: atom comment affordance --- */
+
+.atom-comment-affordance {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.atom-comment-affordance--has-threads {
+  background: var(--accent-muted);
+}
+
+.atom-comment-affordance:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* --- sweep-residual: mode toggle --- */
+
+.mode-toggle {
+  display: flex;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+}
+
+.mode-toggle__segment {
+  padding: 4px 12px;
+  font-size: 12px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-weight: 400;
+  text-transform: capitalize;
+  font: inherit;
+}
+
+.mode-toggle__segment--active {
+  background: var(--accent-blue);
+  color: #fff;
+  cursor: default;
+  font-weight: 600;
+}
+
+.mode-toggle__segment:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* --- sweep-residual: thread sidebar --- */
+
+.thread-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  min-width: 180px;
+  border-left: 1px solid var(--border-subtle);
+}
+
+.thread-sidebar__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.thread-sidebar__new {
+  font-size: 12px;
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  cursor: pointer;
+  padding: 2px 6px;
+  color: inherit;
+}
+
+.thread-sidebar__row {
+  text-align: left;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  border: 1px solid transparent;
+  font-size: 12px;
+  cursor: pointer;
+  width: 100%;
+  color: inherit;
+  font: inherit;
+}
+
+.thread-sidebar__row--selected {
+  background: var(--accent-muted);
+  border-color: var(--accent-blue);
+}
+
+.thread-sidebar__empty {
+  font-size: 12px;
+  opacity: 0.5;
+}
+
+/* --- sweep-residual: thread view --- */
+
+.thread-view {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+
+.thread-view__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.thread-view__title {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.thread-view__actions {
+  display: flex;
+  gap: 4px;
+}
+
+.thread-view__messages {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.thread-view__message {
+  background: var(--bg-elevated);
+  border-radius: 4px;
+  padding: 6px 10px;
+}
+
+.thread-view__message-meta {
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+.thread-view__message-body {
+  font-size: 13px;
+  margin-top: 2px;
+  white-space: pre-wrap;
+}
+
+.thread-view__compose {
+  display: flex;
+  gap: 4px;
+}
+
+.thread-view__textarea {
+  flex: 1;
+  resize: vertical;
+  font-size: 13px;
+  min-height: 60px;
+}
+
+/* --- sweep-residual: modals (approve + reject share these) --- */
+
+.review-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.review-modal__panel {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 24px;
+  min-width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.review-modal__title {
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.review-modal__body {
+  font-size: 13px;
+  opacity: 0.8;
+}
+
+.review-modal__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.review-modal__textarea {
+  font-size: 13px;
+  resize: vertical;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* --- sweep-residual: loading + error chrome --- */
+
+.review-load-shell {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.review-error-message {
+  color: var(--danger-fg);
+}
+
+/* --- sweep-residual: brief debrief block --- */
+
+.brief-debrief {
+  margin-top: 24px;
+  padding: 12px 16px;
+  border-radius: 6px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+}
+
+.brief-debrief__label {
+  font-weight: 600;
+  font-size: 13px;
+  opacity: 0.7;
+  margin-bottom: 8px;
+}
+
+.brief-debrief__body {
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
+/* --- sweep-residual: run build button --- */
+
+.run-build-button {
+  background: var(--accent-blue);
+  color: #fff;
+  border: none;
+  padding: 4px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.run-build-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.run-build-button__status {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.run-build-button__pending {
+  opacity: 0.6;
+}
+
+.run-build-button__error {
+  font-size: 12px;
+  color: var(--danger-fg);
+  margin-left: 6px;
+}
+
+/* --- tap target minimum (reused by cohort detail thread rows) --- */
+
+.review-shell__tap-target {
+  min-width: 44px;
+  min-height: 44px;
+}
+
 /* === inbox artifact cards (pending plans + pending build briefs) === */
 
 .pending-plans,
