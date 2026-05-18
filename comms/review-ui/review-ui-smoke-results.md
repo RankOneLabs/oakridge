@@ -19,8 +19,7 @@ view → select → open thread → reply → ping → resolve → edit mode
 
 ## Any deviations
 The build agent runs headless — no browser binary is available to exercise
-the review UI at any viewport. The `vite build` and `vitest run` exits both
-pass cleanly, confirming CSS compilation and all unit/integration assertions,
+the review UI at any viewport. Both `vite build` and `vitest run` exit cleanly, confirming CSS compilation and all unit/integration assertions,
 but the manual 2 × 3 matrix cannot be completed in this environment.
 
 **Action required before merge:** a developer with browser access should run

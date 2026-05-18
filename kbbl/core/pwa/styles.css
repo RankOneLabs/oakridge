@@ -2028,9 +2028,6 @@ body {
 }
 
 .brief-atom-list__item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
   padding: 4px 8px;
   border-radius: 3px;
   font-family: "SF Mono", Menlo, monospace;
@@ -2187,9 +2184,6 @@ body {
   color: var(--text-tertiary);
 }
 
-.cohort-node__comments {
-  /* semantic grouping wrapper; affordance carries its own class */
-}
 
 /* --- sweep-residual: atom comment affordance --- */
 
