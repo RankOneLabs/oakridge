@@ -3,35 +3,37 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { ReviewShell } from "./ReviewShell";
 import type { ReviewShellProps } from "./types";
 
-const baseProps: Omit<ReviewShellProps, "children"> = {
-  onBack: vi.fn(),
-  artifactTypeLabel: "Plan review",
-  statusLabel: "pending_approval",
-  frozen: false,
-  actionPending: false,
-  isPendingApproval: true,
-  onToggleTheme: vi.fn(),
-  mode: "review",
-  onModeChange: vi.fn(),
-  onApprove: vi.fn(),
-  onReject: vi.fn(),
-  rejectSubjectLabel: "plan",
-  approveSubjectLabel: "plan",
-  artifactId: "aaaabbbbccccdddd",
-  threads: [],
-  selectedThreadId: null,
-  threadMessages: new Map(),
-  onSelectThread: vi.fn(),
-  onCloseThread: vi.fn(),
-  onNewThread: vi.fn(),
-  onSendMessage: vi.fn(),
-  onPing: vi.fn(),
-  onResolve: vi.fn(),
-};
+function createBaseProps(): Omit<ReviewShellProps, "children"> {
+  return {
+    onBack: vi.fn(),
+    artifactTypeLabel: "Plan review",
+    statusLabel: "pending_approval",
+    frozen: false,
+    actionPending: false,
+    isPendingApproval: true,
+    onToggleTheme: vi.fn(),
+    mode: "review",
+    onModeChange: vi.fn(),
+    onApprove: vi.fn(),
+    onReject: vi.fn(),
+    rejectSubjectLabel: "plan",
+    approveSubjectLabel: "plan",
+    artifactId: "aaaabbbbccccdddd",
+    threads: [],
+    selectedThreadId: null,
+    threadMessages: new Map(),
+    onSelectThread: vi.fn(),
+    onCloseThread: vi.fn(),
+    onNewThread: vi.fn(),
+    onSendMessage: vi.fn(),
+    onPing: vi.fn(),
+    onResolve: vi.fn(),
+  };
+}
 
 function renderShell(overrides?: Partial<Omit<ReviewShellProps, "children">>) {
   return render(
-    <ReviewShell {...baseProps} {...overrides}>
+    <ReviewShell {...createBaseProps()} {...overrides}>
       <div data-testid="stub-canvas" />
     </ReviewShell>,
   );
@@ -61,14 +63,15 @@ describe("ReviewShell", () => {
   });
 
   it("closes ApproveModal without calling onApprove when cancelled", () => {
-    renderShell();
+    const onApprove = vi.fn();
+    renderShell({ onApprove });
 
     fireEvent.click(screen.getByRole("button", { name: /approve/i }));
     expect(screen.getByText(/Approve plan\?/)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
     expect(screen.queryByText(/Approve plan\?/)).toBeFalsy();
-    expect(baseProps.onApprove).not.toHaveBeenCalled();
+    expect(onApprove).not.toHaveBeenCalled();
   });
 
   it("opens RejectModal when Reject is clicked, calls onReject with reason on confirm", () => {
