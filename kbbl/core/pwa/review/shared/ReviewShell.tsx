@@ -59,6 +59,9 @@ export function ReviewShell({
           {artifactTypeLabel} — {statusLabel}
         </span>
         <span className="review-shell__spacer" />
+        {frozen && (
+          <span className="review-shell__frozen-chip">frozen</span>
+        )}
         <button
           type="button"
           className="review-shell__button"
@@ -73,7 +76,7 @@ export function ReviewShell({
               type="button"
               className="btn-approve"
               onClick={() => setShowApprove(true)}
-              disabled={actionPending}
+              disabled={actionPending || frozen}
             >
               Approve
             </button>
@@ -81,7 +84,7 @@ export function ReviewShell({
               type="button"
               className="btn-deny"
               onClick={() => setShowReject(true)}
-              disabled={actionPending}
+              disabled={actionPending || frozen}
             >
               Reject
             </button>
