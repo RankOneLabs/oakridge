@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { ModeToggle } from "./ModeToggle";
 import { ThreadSidebar } from "./ThreadSidebar";
 import { ThreadView } from "./ThreadView";
@@ -41,6 +41,10 @@ export function ReviewShell({
   const [threadsSheetOpen, setThreadsSheetOpen] = useState(false);
 
   const { isPhone } = useViewport();
+
+  useEffect(() => {
+    if (!isPhone) setThreadsSheetOpen(false);
+  }, [isPhone]);
 
   const handleApprove = async () => {
     await onApprove();
