@@ -30,6 +30,7 @@ describe("useViewport", () => {
 
   afterEach(() => {
     Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: originalInnerWidth });
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 

@@ -23,7 +23,7 @@ function ThreadListItem({
       className="cohort-detail__thread-row review-shell__tap-target"
       aria-label={`Open thread on ${thread.anchor}`}
       title={thread.anchor ?? ""}
-      onClick={() => onOpen(thread.anchor!)}
+      onClick={() => { if (thread.anchor) onOpen(thread.anchor); }}
     >
       <span className="cohort-detail__thread-anchor">
         {friendlyAnchorLabel(thread.anchor)}
