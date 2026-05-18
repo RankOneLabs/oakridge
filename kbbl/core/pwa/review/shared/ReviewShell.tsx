@@ -1,4 +1,7 @@
+import { useState, useCallback } from "react";
 import { ModeToggle } from "./ModeToggle";
+import { ApproveModal } from "../plan/ApproveModal";
+import { RejectModal } from "../plan/RejectModal";
 import type { ReviewShellProps } from "./types";
 export type { ReviewShellProps, CanvasProps } from "./types";
 
@@ -13,10 +16,10 @@ export function ReviewShell({
   mode,
   onModeChange,
   onApprove,
-  onReject: _onReject,
-  rejectSubjectLabel: _rejectSubjectLabel,
+  onReject,
   approveSubjectLabel: _approveSubjectLabel,
-  artifactId: _artifactId,
+  rejectSubjectLabel: _rejectSubjectLabel,
+  artifactId,
   backHref: _backHref,
   threads: _threads,
   selectedThreadId: _selectedThreadId,
@@ -29,6 +32,19 @@ export function ReviewShell({
   onResolve: _onResolve,
   children,
 }: ReviewShellProps) {
+  const [showApprove, setShowApprove] = useState(false);
+  const [showReject, setShowReject] = useState(false);
+
+  const handleApprove = useCallback(async () => {
+    await onApprove();
+    setShowApprove(false);
+  }, [onApprove]);
+
+  const handleReject = useCallback(async (reason: string) => {
+    await onReject(reason);
+    setShowReject(false);
+  }, [onReject]);
+
   return (
     <div className="review-shell">
       <header className="review-shell__header">
@@ -52,7 +68,7 @@ export function ReviewShell({
             <button
               type="button"
               className="btn-approve"
-              onClick={() => void onApprove()}
+              onClick={() => setShowApprove(true)}
               disabled={actionPending}
             >
               Approve
@@ -60,6 +76,7 @@ export function ReviewShell({
             <button
               type="button"
               className="btn-deny"
+              onClick={() => setShowReject(true)}
               disabled={actionPending}
             >
               Reject
@@ -70,7 +87,24 @@ export function ReviewShell({
       <div className="review-shell__main">
         <div className="review-shell__canvas-slot">{children}</div>
       </div>
-      <div className="review-shell__modal-layer" />
+      <div className="review-shell__modal-layer">
+        {showApprove && (
+          <ApproveModal
+            planId={artifactId}
+            onConfirm={handleApprove}
+            onCancel={() => setShowApprove(false)}
+            pending={actionPending}
+          />
+        )}
+        {showReject && (
+          <RejectModal
+            planId={artifactId}
+            onConfirm={handleReject}
+            onCancel={() => setShowReject(false)}
+            pending={actionPending}
+          />
+        )}
+      </div>
     </div>
   );
 }
