@@ -1841,6 +1841,88 @@ body {
   cursor: not-allowed;
 }
 
+/* === review shell chrome === */
+
+.review-shell {
+  height: 100dvh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.review-shell__header {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+.review-shell__title {
+  font-weight: 600;
+  font-size: 14px;
+}
+.review-shell__spacer {
+  flex: 1;
+}
+.review-shell__actions {
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+}
+.review-shell__actions button {
+  border: none;
+  border-radius: 4px;
+  padding: 4px 12px;
+  font: inherit;
+  cursor: pointer;
+}
+.review-shell__actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.review-shell__button {
+  font: inherit;
+  cursor: pointer;
+}
+.review-shell__main {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  overflow: hidden;
+}
+.review-shell__canvas-slot {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+.review-shell__threads {
+  /* reserved for cohort 2 responsive collapse */
+}
+.review-shell__thread-detail {
+  min-width: 280px;
+  border-left: 1px solid var(--border-subtle);
+  overflow: auto;
+}
+.review-shell__thread-detail-header {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  gap: 8px;
+}
+.review-shell__modal-layer {
+  display: contents;
+}
+.review-shell__frozen-chip {
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 /* === inbox artifact cards (pending plans + pending build briefs) === */
 
 .pending-plans,

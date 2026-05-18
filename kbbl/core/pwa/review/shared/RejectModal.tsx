@@ -1,19 +1,22 @@
 import { useState } from "react";
 
 interface RejectModalProps {
-  planId: string;
+  artifactId: string;
+  subjectLabel: string;
   onConfirm: (reason: string) => void;
   onCancel: () => void;
   pending: boolean;
 }
 
 export function RejectModal({
-  planId,
+  artifactId,
+  subjectLabel,
   onConfirm,
   onCancel,
   pending,
 }: RejectModalProps) {
   const [reason, setReason] = useState("");
+  const subject = subjectLabel.charAt(0).toUpperCase() + subjectLabel.slice(1);
 
   return (
     <div
@@ -41,10 +44,12 @@ export function RejectModal({
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div style={{ fontWeight: 600, fontSize: 15 }}>Reject plan?</div>
+        <div style={{ fontWeight: 600, fontSize: 15 }}>
+          Reject {subjectLabel}?
+        </div>
         <div style={{ fontSize: 13, opacity: 0.8 }}>
-          Plan <code>{planId.slice(0, 8)}</code> — provide a reason for the
-          planner.
+          {subject} <code>{artifactId.slice(0, 8)}</code> — provide a reason
+          for the planner.
         </div>
         <textarea
           value={reason}
@@ -68,8 +73,7 @@ export function RejectModal({
               border: "none",
               padding: "6px 14px",
               borderRadius: 4,
-              cursor:
-                pending || !reason.trim() ? "default" : "pointer",
+              cursor: pending || !reason.trim() ? "default" : "pointer",
             }}
           >
             {pending ? "Rejecting…" : "Reject"}

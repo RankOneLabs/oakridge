@@ -3,9 +3,7 @@ import type { Theme } from "../../types";
 import { useArtifactStream } from "../shared/useArtifactStream";
 import { useDirectEdit } from "../shared/useDirectEdit";
 import { StructuredDocEditor } from "./StructuredDocEditor";
-import { ThreadSidebar } from "../shared/ThreadSidebar";
-import { ThreadView } from "../shared/ThreadView";
-import { ModeToggle } from "../shared/ModeToggle";
+import { ReviewShell } from "../shared/ReviewShell";
 import type { ReviewMode, Message } from "../shared/types";
 import type { Brief } from "./types";
 
@@ -266,27 +264,25 @@ export function BriefReviewView({ id, onToggleTheme, onBack }: BriefReviewViewPr
     }
   }, [id]);
 
-  const handleReject = useCallback(async () => {
-    // TODO(cohort-5): replace with a RejectModal like PlanReviewView uses
-    const reason = window.prompt("Reason for rejection:");
-    if (!reason?.trim()) return;
-    setActionPending(true);
-    try {
-      const res = await fetch(`/briefs/${encodeURIComponent(id)}/status`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ status: "rejected", reason: reason.trim() }),
-      });
-      if (res.ok) {
-        const b = (await res.json()) as Brief;
-        setBrief(b);
+  const handleReject = useCallback(
+    async (reason: string) => {
+      setActionPending(true);
+      try {
+        const res = await fetch(`/briefs/${encodeURIComponent(id)}/status`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ status: "rejected", reason }),
+        });
+        if (res.ok) {
+          const b = (await res.json()) as Brief;
+          setBrief(b);
+        }
+      } finally {
+        setActionPending(false);
       }
-    } finally {
-      setActionPending(false);
-    }
-  }, [id]);
-
-  const selectedThread = threads.find((t) => t.id === selectedThreadId) ?? null;
+    },
+    [id],
+  );
 
   if (loading) {
     return (
@@ -315,164 +311,71 @@ export function BriefReviewView({ id, onToggleTheme, onBack }: BriefReviewViewPr
   const isPendingApproval = brief.status === "pending_approval";
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100dvh",
-        overflow: "hidden",
-      }}
+    <ReviewShell
+      onBack={onBack}
+      artifactTypeLabel="Brief review"
+      statusLabel={brief.status}
+      frozen={frozen}
+      actionPending={actionPending}
+      isPendingApproval={isPendingApproval}
+      onToggleTheme={onToggleTheme}
+      mode={mode}
+      onModeChange={setMode}
+      onApprove={handleApprove}
+      onReject={handleReject}
+      rejectSubjectLabel="brief"
+      approveSubjectLabel="brief"
+      artifactId={id}
+      threads={threads}
+      selectedThreadId={selectedThreadId}
+      threadMessages={threadMessages}
+      onSelectThread={handleSelectThread}
+      onCloseThread={() => setSelectedThreadId(null)}
+      onNewThread={handleNewThread}
+      onSendMessage={handleSendMessage}
+      onPing={handlePing}
+      onResolve={handleResolve}
     >
-      {/* Top bar */}
-      <header
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 12,
-          padding: "8px 16px",
-          borderBottom: "1px solid var(--border-subtle)",
-          flexShrink: 0,
-        }}
-      >
-        <button type="button" onClick={onBack}>
-          Back
-        </button>
-        <span style={{ fontWeight: 600, fontSize: 14 }}>
-          Brief review — {brief.status}
-        </span>
-        <span style={{ flex: 1 }} />
-        <button type="button" onClick={onToggleTheme} style={{ fontSize: 12 }}>
-          Theme
-        </button>
-        <ModeToggle mode={mode} onChange={setMode} disabled={frozen} />
-        {isPendingApproval && (
-          <>
-            <button
-              type="button"
-              onClick={handleApprove}
-              disabled={actionPending}
-              style={{
-                background: "var(--success-fg)",
-                color: "#fff",
-                border: "none",
-                padding: "4px 12px",
-                borderRadius: 4,
-                cursor: actionPending ? "default" : "pointer",
-              }}
-            >
-              {actionPending ? "…" : "Approve"}
-            </button>
-            <button
-              type="button"
-              onClick={handleReject}
-              disabled={actionPending}
-              style={{
-                background: "var(--danger-fg)",
-                color: "#fff",
-                border: "none",
-                padding: "4px 12px",
-                borderRadius: 4,
-                cursor: actionPending ? "default" : "pointer",
-              }}
-            >
-              {actionPending ? "…" : "Reject"}
-            </button>
-          </>
+      <div style={{ flex: 1, overflow: "auto", padding: "0 16px 24px" }}>
+        {brief.status === "approved" && (
+          <RunBuildButton briefId={brief.id} cohortId={brief.cohort_id} />
         )}
-        {brief.status === "approved" && <RunBuildButton briefId={brief.id} cohortId={brief.cohort_id} />}
-      </header>
+        <StructuredDocEditor
+          brief={brief}
+          edits={edits}
+          threads={threads}
+          mode={mode}
+          frozen={frozen}
+          onEdit={handleEdit}
+          onOpenThread={handleOpenThread}
+        />
 
-      {/* Main area */}
-      <div
-        style={{
-          display: "flex",
-          flex: 1,
-          overflow: "hidden",
-        }}
-      >
-        {/* Structured doc */}
-        <div style={{ flex: 1, overflow: "auto", padding: "0 16px 24px" }}>
-          <StructuredDocEditor
-            brief={brief}
-            edits={edits}
-            threads={threads}
-            mode={mode}
-            frozen={frozen}
-            onEdit={handleEdit}
-            onOpenThread={handleOpenThread}
-          />
-
-          {brief.debrief && (
-            <div
-              style={{
-                marginTop: 24,
-                padding: "12px 16px",
-                borderRadius: 6,
-                background: "var(--bg-elevated)",
-                border: "1px solid var(--border-subtle)",
-              }}
-            >
-              <div
-                style={{
-                  fontWeight: 600,
-                  fontSize: 13,
-                  opacity: 0.7,
-                  marginBottom: 8,
-                }}
-              >
-                Debrief
-              </div>
-              <div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>
-                {brief.debrief}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Thread detail pane */}
-        {selectedThread && (
+        {brief.debrief && (
           <div
             style={{
-              minWidth: 280,
-              borderLeft: "1px solid var(--border-subtle)",
-              overflow: "auto",
+              marginTop: 24,
+              padding: "12px 16px",
+              borderRadius: 6,
+              background: "var(--bg-elevated)",
+              border: "1px solid var(--border-subtle)",
             }}
           >
             <div
               style={{
-                padding: "8px 12px",
-                borderBottom: "1px solid var(--border-subtle)",
+                fontWeight: 600,
+                fontSize: 13,
+                opacity: 0.7,
+                marginBottom: 8,
               }}
             >
-              <button
-                type="button"
-                style={{ fontSize: 12 }}
-                onClick={() => setSelectedThreadId(null)}
-              >
-                Close
-              </button>
+              Debrief
             </div>
-            <ThreadView
-              thread={selectedThread}
-              messages={threadMessages.get(selectedThread.id) ?? []}
-              onSendMessage={(body) =>
-                handleSendMessage(selectedThread.id, body)
-              }
-              onPing={() => handlePing(selectedThread.id)}
-              onResolve={() => handleResolve(selectedThread.id)}
-              frozen={frozen}
-            />
+            <div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>
+              {brief.debrief}
+            </div>
           </div>
         )}
-
-        {/* Thread sidebar */}
-        <ThreadSidebar
-          threads={threads}
-          selectedThreadId={selectedThreadId}
-          onSelect={handleSelectThread}
-          onNewThread={handleNewThread}
-        />
       </div>
-    </div>
+    </ReviewShell>
   );
 }

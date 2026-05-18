@@ -3,11 +3,7 @@ import type { Theme } from "../../types";
 import { useArtifactStream } from "../shared/useArtifactStream";
 import { DagEditor } from "./DagEditor";
 import { CohortPanel } from "./CohortPanel";
-import { ThreadSidebar } from "../shared/ThreadSidebar";
-import { ThreadView } from "../shared/ThreadView";
-import { ModeToggle } from "../shared/ModeToggle";
-import { ApproveModal } from "./ApproveModal";
-import { RejectModal } from "./RejectModal";
+import { ReviewShell } from "../shared/ReviewShell";
 import type { ReviewMode, Message } from "../shared/types";
 import type { Plan, Cohort, CohortDependency } from "./types";
 
@@ -32,8 +28,6 @@ export function PlanReviewView({ id, onToggleTheme, onBack }: PlanReviewViewProp
     () => new Map(),
   );
 
-  const [showApprove, setShowApprove] = useState(false);
-  const [showReject, setShowReject] = useState(false);
   const [actionPending, setActionPending] = useState(false);
 
   const { edits, threads, frozen } = useArtifactStream("plan", id);
@@ -213,7 +207,6 @@ export function PlanReviewView({ id, onToggleTheme, onBack }: PlanReviewViewProp
       }
     } finally {
       setActionPending(false);
-      setShowApprove(false);
     }
   }, [id]);
 
@@ -232,7 +225,6 @@ export function PlanReviewView({ id, onToggleTheme, onBack }: PlanReviewViewProp
         }
       } finally {
         setActionPending(false);
-        setShowReject(false);
       }
     },
     [id],
@@ -269,147 +261,59 @@ export function PlanReviewView({ id, onToggleTheme, onBack }: PlanReviewViewProp
   const isPendingApproval = plan.status === "pending_approval";
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100dvh",
-        overflow: "hidden",
-      }}
+    <ReviewShell
+      onBack={onBack}
+      artifactTypeLabel="Plan review"
+      statusLabel={plan.status}
+      frozen={frozen}
+      actionPending={actionPending}
+      isPendingApproval={isPendingApproval}
+      onToggleTheme={onToggleTheme}
+      mode={mode}
+      onModeChange={setMode}
+      onApprove={handleApprove}
+      onReject={handleReject}
+      rejectSubjectLabel="plan"
+      approveSubjectLabel="plan"
+      artifactId={id}
+      threads={threads}
+      selectedThreadId={selectedThreadId}
+      threadMessages={threadMessages}
+      onSelectThread={handleSelectThread}
+      onCloseThread={() => setSelectedThreadId(null)}
+      onNewThread={handleNewThread}
+      onSendMessage={handleSendMessage}
+      onPing={handlePing}
+      onResolve={handleResolve}
     >
-      {/* Top bar */}
-      <header
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 12,
-          padding: "8px 16px",
-          borderBottom: "1px solid var(--border-subtle)",
-          flexShrink: 0,
-        }}
-      >
-        <button type="button" onClick={onBack}>
-          Back
-        </button>
-        <span style={{ fontWeight: 600, fontSize: 14 }}>
-          Plan review — {plan.status}
-        </span>
-        <span style={{ flex: 1 }} />
-        <button type="button" onClick={onToggleTheme} style={{ fontSize: 12 }}>
-          Theme
-        </button>
-        <ModeToggle
-          mode={mode}
-          onChange={setMode}
-          disabled={frozen}
-        />
-        {isPendingApproval && (
-          <>
-            <button
-              type="button"
-              onClick={() => setShowApprove(true)}
-              style={{
-                background: "var(--success-fg)",
-                color: "#fff",
-                border: "none",
-                padding: "4px 12px",
-                borderRadius: 4,
-                cursor: "pointer",
-              }}
-            >
-              Approve
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowReject(true)}
-              style={{
-                background: "var(--danger-fg)",
-                color: "#fff",
-                border: "none",
-                padding: "4px 12px",
-                borderRadius: 4,
-                cursor: "pointer",
-              }}
-            >
-              Reject
-            </button>
-          </>
-        )}
-      </header>
-
-      {/* Main area */}
-      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-        {/* DAG canvas */}
-        <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
-          <DagEditor
-            cohorts={cohorts}
-            deps={deps}
-            threads={threads}
-            mode={mode}
-            frozen={frozen}
-            selectedCohortId={selectedCohortId}
-            onSelectCohort={setSelectedCohortId}
-            onOpenThread={handleOpenThread}
-            onAddEdge={handleAddEdge}
-            onDeleteEdge={handleDeleteEdge}
-            onUpdatePosition={handleUpdatePosition}
-          />
-        </div>
-
-        {/* Right panel: cohort details or thread view */}
-        {selectedCohort && !selectedThread && (
-          <CohortPanel
-            cohort={selectedCohort}
-            edits={edits}
-            threads={threads}
-            mode={mode}
-            frozen={frozen}
-            onOpenThread={handleOpenThread}
-          />
-        )}
-        {selectedThread && (
-          <div style={{ minWidth: 280, borderLeft: "1px solid var(--border-subtle)", overflow: "auto" }}>
-            <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--border-subtle)", display: "flex", gap: 8 }}>
-              <button type="button" style={{ fontSize: 12 }} onClick={() => setSelectedThreadId(null)}>
-                Close
-              </button>
-            </div>
-            <ThreadView
-              thread={selectedThread}
-              messages={threadMessages.get(selectedThread.id) ?? []}
-              onSendMessage={(body) => handleSendMessage(selectedThread.id, body)}
-              onPing={() => handlePing(selectedThread.id)}
-              onResolve={() => handleResolve(selectedThread.id)}
-              frozen={frozen}
-            />
-          </div>
-        )}
-
-        {/* Thread sidebar */}
-        <ThreadSidebar
+      {/* DAG canvas */}
+      <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+        <DagEditor
+          cohorts={cohorts}
+          deps={deps}
           threads={threads}
-          selectedThreadId={selectedThreadId}
-          onSelect={handleSelectThread}
-          onNewThread={handleNewThread}
+          mode={mode}
+          frozen={frozen}
+          selectedCohortId={selectedCohortId}
+          onSelectCohort={setSelectedCohortId}
+          onOpenThread={handleOpenThread}
+          onAddEdge={handleAddEdge}
+          onDeleteEdge={handleDeleteEdge}
+          onUpdatePosition={handleUpdatePosition}
         />
       </div>
 
-      {showApprove && (
-        <ApproveModal
-          planId={id}
-          onConfirm={handleApprove}
-          onCancel={() => setShowApprove(false)}
-          pending={actionPending}
+      {/* Cohort details panel (shown when a cohort is selected but no thread is open) */}
+      {selectedCohort && !selectedThread && (
+        <CohortPanel
+          cohort={selectedCohort}
+          edits={edits}
+          threads={threads}
+          mode={mode}
+          frozen={frozen}
+          onOpenThread={handleOpenThread}
         />
       )}
-      {showReject && (
-        <RejectModal
-          planId={id}
-          onConfirm={handleReject}
-          onCancel={() => setShowReject(false)}
-          pending={actionPending}
-        />
-      )}
-    </div>
+    </ReviewShell>
   );
 }
