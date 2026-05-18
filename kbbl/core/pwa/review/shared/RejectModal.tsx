@@ -19,35 +19,13 @@ export function RejectModal({
   const subject = subjectLabel.charAt(0).toUpperCase() + subjectLabel.slice(1);
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.6)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 1000,
-      }}
-      onClick={onCancel}
-    >
+    <div className="review-modal" onClick={onCancel}>
       <div
-        style={{
-          background: "var(--bg-elevated)",
-          border: "1px solid var(--border-subtle)",
-          borderRadius: 8,
-          padding: 24,
-          minWidth: 360,
-          display: "flex",
-          flexDirection: "column",
-          gap: 16,
-        }}
+        className="review-modal__panel review-modal__panel--wide"
         onClick={(e) => e.stopPropagation()}
       >
-        <div style={{ fontWeight: 600, fontSize: 15 }}>
-          Reject {subjectLabel}?
-        </div>
-        <div style={{ fontSize: 13, opacity: 0.8 }}>
+        <div className="review-modal__title">Reject {subjectLabel}?</div>
+        <div className="review-modal__body">
           {subject} <code>{artifactId.slice(0, 8)}</code> — provide a reason
           for the planner.
         </div>
@@ -56,10 +34,10 @@ export function RejectModal({
           onChange={(e) => setReason(e.target.value)}
           placeholder="Reason for rejection…"
           rows={4}
-          style={{ fontSize: 13, resize: "vertical", width: "100%", boxSizing: "border-box" }}
+          className="review-modal__textarea"
           autoFocus
         />
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+        <div className="review-modal__actions">
           <button
             type="button"
             className="review-shell__tap-target"
@@ -70,16 +48,9 @@ export function RejectModal({
           </button>
           <button
             type="button"
-            className="review-shell__tap-target"
+            className="btn-deny review-shell__tap-target"
             onClick={() => reason.trim() && onConfirm(reason.trim())}
             disabled={pending || !reason.trim()}
-            style={{
-              background: "var(--danger-fg)",
-              color: "#fff",
-              border: "none",
-              borderRadius: 4,
-              cursor: pending || !reason.trim() ? "default" : "pointer",
-            }}
           >
             {pending ? "Rejecting…" : "Reject"}
           </button>

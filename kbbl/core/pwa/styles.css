@@ -1960,6 +1960,7 @@ body {
   letter-spacing: 0.04em;
 }
 
+
 /* === plan review cohort-detail pane (cohort 2) === */
 
 .plan-review__cohort-pane {
@@ -2033,6 +2034,7 @@ body {
   top: 8px;
   right: 8px;
 }
+
 
 /* === canvas content class vocabulary (Cohort 3) === */
 
@@ -2166,11 +2168,19 @@ body {
   overflow: auto;
 }
 
+.cohort-detail__title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
 .cohort-detail__title {
   font-size: 20px;
   font-weight: 700;
   line-height: 1.25;
   color: var(--text-primary);
+  margin: 0;
+  flex: 1;
 }
 
 .cohort-detail__label-value {
@@ -2210,6 +2220,12 @@ body {
   gap: 4px;
 }
 
+.cohort-detail__label-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .cohort-detail__thread-row {
   display: flex;
   align-items: center;
@@ -2218,12 +2234,21 @@ body {
   background: var(--bg-elevated);
   border-radius: 4px;
   cursor: pointer;
+  font: inherit;
   font-size: 12px;
   width: 100%;
   text-align: left;
   border: none;
   color: inherit;
-  font-family: inherit;
+}
+
+.cohort-detail__thread-anchor {
+  flex: 1;
+}
+
+.cohort-detail__thread-status {
+  opacity: 0.6;
+  font-size: 11px;
 }
 
 /* --- plan canvas: cohort node --- */
@@ -2310,6 +2335,7 @@ body {
 }
 
 .mode-toggle__segment {
+  font: inherit;
   padding: 4px 12px;
   font-size: 12px;
   background: transparent;
@@ -2317,7 +2343,6 @@ body {
   cursor: pointer;
   font-weight: 400;
   text-transform: capitalize;
-  font-family: inherit;
 }
 
 .mode-toggle__segment--active {
@@ -2350,6 +2375,11 @@ body {
   margin-bottom: 4px;
 }
 
+.thread-sidebar__header > span {
+  font-weight: 600;
+  font-size: 13px;
+}
+
 .thread-sidebar__new {
   font-size: 12px;
   background: transparent;
@@ -2366,16 +2396,25 @@ body {
   border-radius: 4px;
   background: var(--bg-elevated);
   border: 1px solid transparent;
+  font: inherit;
   font-size: 12px;
   cursor: pointer;
   width: 100%;
   color: inherit;
-  font-family: inherit;
 }
 
 .thread-sidebar__row--selected {
   background: var(--accent-muted);
   border-color: var(--accent-blue);
+}
+
+.thread-sidebar__row-anchor {
+  font-weight: 500;
+}
+
+.thread-sidebar__row-status {
+  opacity: 0.6;
+  font-size: 11px;
 }
 
 .thread-sidebar__empty {
@@ -2431,6 +2470,33 @@ body {
   white-space: pre-wrap;
 }
 
+.thread-view__resolved-label {
+  font-size: 12px;
+  opacity: 0.5;
+}
+
+.thread-view__empty {
+  font-size: 12px;
+  opacity: 0.5;
+}
+
+.thread-view__action-btn {
+  font: inherit;
+  font-size: 12px;
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  cursor: pointer;
+  padding: 2px 6px;
+  color: inherit;
+}
+
+.thread-view__send-btn {
+  align-self: flex-end;
+  font: inherit;
+  cursor: pointer;
+}
+
 .thread-view__compose {
   display: flex;
   gap: 4px;
@@ -2464,6 +2530,10 @@ body {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.review-modal__panel--wide {
+  min-width: 360px;
 }
 
 .review-modal__title {
@@ -2572,19 +2642,99 @@ body {
   .review-shell__threads-chip { display: none; }
 }
 
+/* --- brief + plan canvas wrappers --- */
+
+.brief-canvas-scroll {
+  flex: 1;
+  overflow: auto;
+  padding: 0 16px 24px;
+}
+
+.plan-canvas-slot {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.dag-editor {
+  flex: 1;
+  height: 100%;
+  min-height: 400px;
+}
+
+/* --- structured-doc atom primitive (AtomField internals) --- */
+
+.structured-doc {
+  display: flex;
+  flex-direction: column;
+}
+
+.structured-doc__atom {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.structured-doc__atom-label {
+  font-size: 11px;
+  opacity: 0.6;
+  font-weight: 500;
+}
+
+.structured-doc__atom-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.structured-doc__field-display {
+  flex: 1;
+  font-size: 13px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  cursor: default;
+  background: transparent;
+  white-space: pre-wrap;
+  min-height: 20px;
+}
+
+.structured-doc__field-display--editable {
+  cursor: text;
+  background: var(--bg-surface);
+}
+
+.structured-doc__placeholder {
+  opacity: 0.4;
+}
+
+.structured-doc__textarea {
+  flex: 1;
+  font-size: 13px;
+  resize: vertical;
+  min-height: 60px;
+}
+
+.structured-doc__input {
+  flex: 1;
+  font-size: 13px;
+}
+
 /* === structured doc editor (cohort 2) === */
 
 .structured-doc__edit-trigger {
   text-align: left;
-  background: transparent;
+  background: var(--bg-surface);
   border: none;
   font: inherit;
+  font-size: 13px;
   cursor: text;
   padding: 8px 10px;
   width: 100%;
+  flex: 1;
   border-radius: 4px;
   justify-content: flex-start;
   align-items: flex-start;
+  white-space: pre-wrap;
 }
 
 /* === inbox artifact cards (pending plans + pending build briefs) === */

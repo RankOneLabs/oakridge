@@ -23,34 +23,17 @@ export function CohortNode({ data }: { data: CohortNodeData }) {
   return (
     <div
       onClick={() => onSelectCohort(cohort.id)}
-      style={{
-        padding: "12px 14px",
-        border: `1px solid ${isSelected ? "var(--accent-blue)" : "var(--border-subtle)"}`,
-        borderRadius: 4,
-        background: "var(--bg-elevated)",
-        minWidth: 200,
-        minHeight: 64,
-        cursor: "pointer",
-        userSelect: "none",
-      }}
+      className={`cohort-node${isSelected ? " cohort-node--selected" : ""}`}
     >
+      {/* ReactFlow Handle — style prop is the documented escape hatch; className not supported for inner SVG element */}
       <Handle
         type="target"
         position={Position.Top}
         style={{ background: "var(--border-subtle)" }}
       />
 
-      <div
-        style={{
-          display: "flex",
-          alignItems: "flex-start",
-          gap: 4,
-          marginBottom: cohort.notes ? 4 : 0,
-        }}
-      >
-        <span style={{ fontWeight: 600, fontSize: 13, flex: 1 }}>
-          {cohort.title}
-        </span>
+      <div className="cohort-node__title-row">
+        <span className="cohort-node__title">{cohort.title}</span>
         <AtomCommentAffordance
           anchor={titleAnchor}
           threads={threads}
@@ -59,36 +42,21 @@ export function CohortNode({ data }: { data: CohortNodeData }) {
         />
       </div>
 
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 4,
-        }}
-      >
-        <span
-          style={{
-            fontSize: 10,
-            padding: "1px 5px",
-            borderRadius: 3,
-            background: "var(--bg-surface)",
-            opacity: 0.8,
-          }}
-        >
-          {cohort.status}
-        </span>
-
+      <div className="cohort-node__bottom-row">
+        <span className="cohort-node__status">{cohort.status}</span>
         {cohort.notes && (
-          <AtomCommentAffordance
-            anchor={notesAnchor}
-            threads={threads}
-            onOpenThread={onOpenThread}
-            frozen={frozen || mode === "edit"}
-          />
+          <div className="cohort-node__comments">
+            <AtomCommentAffordance
+              anchor={notesAnchor}
+              threads={threads}
+              onOpenThread={onOpenThread}
+              frozen={frozen || mode === "edit"}
+            />
+          </div>
         )}
       </div>
 
+      {/* ReactFlow Handle — style prop is the documented escape hatch; className not supported for inner SVG element */}
       <Handle
         type="source"
         position={Position.Bottom}

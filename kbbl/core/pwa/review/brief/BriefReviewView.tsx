@@ -75,7 +75,7 @@ function RunBuildButton({ briefId, cohortId }: { briefId: string; cohortId: stri
 
   if (sessionRef) {
     return (
-      <span style={{ fontSize: 12, opacity: 0.8 }}>
+      <span className="run-build-button__status">
         Build running — session {sessionRef.slice(0, 8)}
       </span>
     );
@@ -83,7 +83,7 @@ function RunBuildButton({ briefId, cohortId }: { briefId: string; cohortId: stri
 
   if (checking) {
     return (
-      <span style={{ fontSize: 12, opacity: 0.6 }}>
+      <span className="run-build-button__status run-build-button__pending">
         Checking build status…
       </span>
     );
@@ -95,22 +95,12 @@ function RunBuildButton({ briefId, cohortId }: { briefId: string; cohortId: stri
         type="button"
         disabled={pending}
         onClick={() => { void handleRun(); }}
-        style={{
-          background: "var(--accent-blue)",
-          color: "#fff",
-          border: "none",
-          padding: "4px 12px",
-          borderRadius: 4,
-          cursor: pending ? "default" : "pointer",
-          opacity: pending ? 0.5 : 1,
-        }}
+        className="run-build-button"
       >
         {pending ? "…" : "Run build"}
       </button>
       {err && (
-        <span style={{ fontSize: 12, color: "var(--danger-fg)", marginLeft: 6 }}>
-          {err}
-        </span>
+        <span className="run-build-button__error">{err}</span>
       )}
     </>
   );
@@ -286,10 +276,8 @@ export function BriefReviewView({ id, onToggleTheme, onBack }: BriefReviewViewPr
 
   if (loading) {
     return (
-      <div style={{ padding: 24 }}>
-        <button type="button" onClick={onBack} style={{ marginBottom: 16 }}>
-          Back
-        </button>
+      <div className="review-load-shell">
+        <button type="button" onClick={onBack}>Back</button>
         <div>Loading brief…</div>
       </div>
     );
@@ -297,13 +285,9 @@ export function BriefReviewView({ id, onToggleTheme, onBack }: BriefReviewViewPr
 
   if (error || !brief) {
     return (
-      <div style={{ padding: 24 }}>
-        <button type="button" onClick={onBack} style={{ marginBottom: 16 }}>
-          Back
-        </button>
-        <div style={{ color: "var(--danger-fg)" }}>
-          {error ?? "Brief not found"}
-        </div>
+      <div className="review-load-shell">
+        <button type="button" onClick={onBack}>Back</button>
+        <div className="review-error-message">{error ?? "Brief not found"}</div>
       </div>
     );
   }
@@ -336,7 +320,7 @@ export function BriefReviewView({ id, onToggleTheme, onBack }: BriefReviewViewPr
       onPing={handlePing}
       onResolve={handleResolve}
     >
-      <div style={{ flex: 1, overflow: "auto", padding: "0 16px 24px" }}>
+      <div className="brief-canvas-scroll">
         {brief.status === "approved" && (
           <RunBuildButton briefId={brief.id} cohortId={brief.cohort_id} />
         )}
@@ -351,28 +335,9 @@ export function BriefReviewView({ id, onToggleTheme, onBack }: BriefReviewViewPr
         />
 
         {brief.debrief && (
-          <div
-            style={{
-              marginTop: 24,
-              padding: "12px 16px",
-              borderRadius: 6,
-              background: "var(--bg-elevated)",
-              border: "1px solid var(--border-subtle)",
-            }}
-          >
-            <div
-              style={{
-                fontWeight: 600,
-                fontSize: 13,
-                opacity: 0.7,
-                marginBottom: 8,
-              }}
-            >
-              Debrief
-            </div>
-            <div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>
-              {brief.debrief}
-            </div>
+          <div className="brief-debrief">
+            <div className="brief-debrief__label">Debrief</div>
+            <div className="brief-debrief__body">{brief.debrief}</div>
           </div>
         )}
       </div>

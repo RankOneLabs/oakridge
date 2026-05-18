@@ -8,14 +8,7 @@ interface ModeToggleProps {
 
 export function ModeToggle({ mode, onChange, disabled }: ModeToggleProps) {
   return (
-    <div
-      style={{
-        display: "flex",
-        borderRadius: 4,
-        overflow: "hidden",
-        border: "1px solid var(--border-subtle)",
-      }}
-    >
+    <div className="mode-toggle">
       {(["review", "edit"] as ReviewMode[]).map((m) => {
         const active = mode === m;
         const isDisabled = disabled && m === "edit";
@@ -23,19 +16,9 @@ export function ModeToggle({ mode, onChange, disabled }: ModeToggleProps) {
           <button
             key={m}
             type="button"
-            className="review-shell__tap-target"
+            className={`review-shell__tap-target mode-toggle__segment${active ? " mode-toggle__segment--active" : ""}`}
             onClick={() => !isDisabled && onChange(m)}
             disabled={isDisabled}
-            style={{
-              fontSize: 12,
-              background: active ? "var(--accent-blue)" : "transparent",
-              color: active ? "#fff" : "inherit",
-              border: "none",
-              cursor: isDisabled ? "default" : active ? "default" : "pointer",
-              fontWeight: active ? 600 : 400,
-              opacity: isDisabled ? 0.5 : 1,
-              textTransform: "capitalize",
-            }}
           >
             {m}
           </button>

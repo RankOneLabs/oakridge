@@ -1,5 +1,23 @@
 // Polyfills required by ReactFlow in jsdom.
 
+// window.matchMedia is not implemented in jsdom; stub it for useViewport and any
+// other media-query consumers added by cohort-2.
+if (typeof window.matchMedia !== "function") {
+  Object.defineProperty(window, "matchMedia", {
+    writable: true,
+    value: (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }),
+  });
+}
+
 class ResizeObserverMock {
   observe() {}
   unobserve() {}

@@ -240,10 +240,8 @@ export function PlanReviewView({ id, onToggleTheme, onBack }: PlanReviewViewProp
 
   if (loading) {
     return (
-      <div style={{ padding: 24 }}>
-        <button type="button" onClick={onBack} style={{ marginBottom: 16 }}>
-          Back
-        </button>
+      <div className="review-load-shell">
+        <button type="button" onClick={onBack}>Back</button>
         <div>Loading plan…</div>
       </div>
     );
@@ -251,13 +249,9 @@ export function PlanReviewView({ id, onToggleTheme, onBack }: PlanReviewViewProp
 
   if (error || !plan) {
     return (
-      <div style={{ padding: 24 }}>
-        <button type="button" onClick={onBack} style={{ marginBottom: 16 }}>
-          Back
-        </button>
-        <div style={{ color: "var(--danger-fg)" }}>
-          {error ?? "Plan not found"}
-        </div>
+      <div className="review-load-shell">
+        <button type="button" onClick={onBack}>Back</button>
+        <div className="review-error-message">{error ?? "Plan not found"}</div>
       </div>
     );
   }
@@ -302,7 +296,7 @@ export function PlanReviewView({ id, onToggleTheme, onBack }: PlanReviewViewProp
       onResolve={handleResolve}
     >
       {/* DAG canvas */}
-      <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+      <div className="plan-canvas-slot">
         <DagEditor
           cohorts={cohorts}
           deps={deps}
