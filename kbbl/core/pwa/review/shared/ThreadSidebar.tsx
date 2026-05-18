@@ -21,7 +21,7 @@ export function ThreadSidebar({
         gap: 6,
         padding: 8,
         minWidth: 180,
-        borderLeft: "1px solid var(--border, #444)",
+        borderLeft: "1px solid var(--border-subtle)",
       }}
     >
       <div
@@ -50,10 +50,10 @@ export function ThreadSidebar({
               padding: "6px 8px",
               borderRadius: 4,
               background: isSelected
-                ? "var(--accent-muted, #1a3a5c)"
-                : "var(--surface-raised, #2a2a2a)",
+                ? "var(--accent-muted)"
+                : "var(--bg-elevated)",
               border: isSelected
-                ? "1px solid var(--accent, #4a8fcb)"
+                ? "1px solid var(--accent-blue)"
                 : "1px solid transparent",
               fontSize: 12,
               cursor: "pointer",

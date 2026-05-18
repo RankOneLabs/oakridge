@@ -69,7 +69,7 @@ export function ThreadView({
           <div
             key={m.id}
             style={{
-              background: "var(--surface-raised, #2a2a2a)",
+              background: "var(--bg-elevated)",
               borderRadius: 4,
               padding: "6px 10px",
             }}

@@ -30,8 +30,8 @@ export function RejectModal({
     >
       <div
         style={{
-          background: "var(--surface-raised, #1e1e1e)",
-          border: "1px solid var(--border, #444)",
+          background: "var(--bg-elevated)",
+          border: "1px solid var(--border-subtle)",
           borderRadius: 8,
           padding: 24,
           minWidth: 360,
@@ -63,7 +63,7 @@ export function RejectModal({
             onClick={() => reason.trim() && onConfirm(reason.trim())}
             disabled={pending || !reason.trim()}
             style={{
-              background: "var(--danger, #7a2a2a)",
+              background: "var(--danger-fg)",
               color: "#fff",
               border: "none",
               padding: "6px 14px",

@@ -91,7 +91,7 @@ function AtomField({
               cursor: mode === "edit" && !frozen ? "text" : "default",
               background:
                 mode === "edit" && !frozen
-                  ? "var(--surface, #2a2a2a)"
+                  ? "var(--bg-surface)"
                   : "transparent",
               whiteSpace: "pre-wrap",
               minHeight: 20,
@@ -128,7 +128,7 @@ function Section({
         flexDirection: "column",
         gap: 8,
         padding: "12px 0",
-        borderBottom: "1px solid var(--border, #333)",
+        borderBottom: "1px solid var(--border-subtle)",
       }}
     >
       <div style={{ fontWeight: 600, fontSize: 13, opacity: 0.7 }}>
@@ -207,7 +207,7 @@ export function StructuredDocEditor({
                 gap: 4,
                 padding: "6px 8px",
                 borderRadius: 4,
-                background: "var(--surface-raised, #1e1e1e)",
+                background: "var(--bg-elevated)",
               }}
             >
               <div style={{ fontSize: 11, opacity: 0.6, fontWeight: 500 }}>Decision</div>
@@ -239,7 +239,7 @@ export function StructuredDocEditor({
                 gap: 4,
                 padding: "6px 8px",
                 borderRadius: 4,
-                background: "var(--surface-raised, #1e1e1e)",
+                background: "var(--bg-elevated)",
               }}
             >
               <div style={{ fontSize: 11, opacity: 0.6, fontWeight: 500 }}>Approach</div>

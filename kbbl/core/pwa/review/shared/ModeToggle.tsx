@@ -13,7 +13,7 @@ export function ModeToggle({ mode, onChange, disabled }: ModeToggleProps) {
         display: "flex",
         borderRadius: 4,
         overflow: "hidden",
-        border: "1px solid var(--border, #444)",
+        border: "1px solid var(--border-subtle)",
       }}
     >
       {(["review", "edit"] as ReviewMode[]).map((m) => {
@@ -28,7 +28,7 @@ export function ModeToggle({ mode, onChange, disabled }: ModeToggleProps) {
             style={{
               padding: "4px 12px",
               fontSize: 12,
-              background: active ? "var(--accent, #4a8fcb)" : "transparent",
+              background: active ? "var(--accent-blue)" : "transparent",
               color: active ? "#fff" : "inherit",
               border: "none",
               cursor: isDisabled ? "default" : active ? "default" : "pointer",

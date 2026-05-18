@@ -26,8 +26,8 @@ export function ApproveModal({
     >
       <div
         style={{
-          background: "var(--surface-raised, #1e1e1e)",
-          border: "1px solid var(--border, #444)",
+          background: "var(--bg-elevated)",
+          border: "1px solid var(--border-subtle)",
           borderRadius: 8,
           padding: 24,
           minWidth: 320,
@@ -51,7 +51,7 @@ export function ApproveModal({
             onClick={onConfirm}
             disabled={pending}
             style={{
-              background: "var(--success, #2a7a2a)",
+              background: "var(--success-fg)",
               color: "#fff",
               border: "none",
               padding: "6px 14px",
