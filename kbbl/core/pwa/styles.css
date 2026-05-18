@@ -2451,6 +2451,63 @@ body {
   min-height: 44px;
 }
 
+/* --- structured-doc atom primitive (AtomField internals) --- */
+
+.structured-doc {
+  display: flex;
+  flex-direction: column;
+}
+
+.structured-doc__atom {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.structured-doc__atom-label {
+  font-size: 11px;
+  opacity: 0.6;
+  font-weight: 500;
+}
+
+.structured-doc__atom-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.structured-doc__field-display {
+  flex: 1;
+  font-size: 13px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  cursor: default;
+  background: transparent;
+  white-space: pre-wrap;
+  min-height: 20px;
+}
+
+.structured-doc__field-display--editable {
+  cursor: text;
+  background: var(--bg-surface);
+}
+
+.structured-doc__placeholder {
+  opacity: 0.4;
+}
+
+.structured-doc__textarea {
+  flex: 1;
+  font-size: 13px;
+  resize: vertical;
+  min-height: 60px;
+}
+
+.structured-doc__input {
+  flex: 1;
+  font-size: 13px;
+}
+
 /* === inbox artifact cards (pending plans + pending build briefs) === */
 
 .pending-plans,

@@ -15,6 +15,7 @@ interface AtomFieldProps {
   onEdit: (anchor: string, prevValue: string | null, newValue: string) => void;
   onOpenThread: (anchor: string) => void;
   multiline?: boolean;
+  bodyClassName?: string;
 }
 
 function AtomField({
@@ -27,6 +28,7 @@ function AtomField({
   onEdit,
   onOpenThread,
   multiline,
+  bodyClassName,
 }: AtomFieldProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -43,26 +45,27 @@ function AtomField({
     setEditing(false);
   }
 
+  const displayClass = [
+    "structured-doc__field-display",
+    mode === "edit" && !frozen ? "structured-doc__field-display--editable" : "",
+    bodyClassName ?? "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+    <div className="structured-doc__atom">
       {label && (
-        <div style={{ fontSize: 11, opacity: 0.6, fontWeight: 500 }}>
-          {label}
-        </div>
+        <div className="structured-doc__atom-label">{label}</div>
       )}
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 4 }}>
+      <div className="structured-doc__atom-row">
         {editing ? (
           <>
             {multiline ? (
               <textarea
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
-                style={{
-                  flex: 1,
-                  fontSize: 13,
-                  resize: "vertical",
-                  minHeight: 60,
-                }}
+                className="structured-doc__textarea"
                 autoFocus
                 onBlur={commitEdit}
               />
@@ -71,7 +74,7 @@ function AtomField({
                 type="text"
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
-                style={{ flex: 1, fontSize: 13 }}
+                className="structured-doc__input"
                 autoFocus
                 onBlur={commitEdit}
                 onKeyDown={(e) => {
@@ -83,22 +86,10 @@ function AtomField({
           </>
         ) : (
           <div
-            style={{
-              flex: 1,
-              fontSize: 13,
-              padding: "2px 4px",
-              borderRadius: 3,
-              cursor: mode === "edit" && !frozen ? "text" : "default",
-              background:
-                mode === "edit" && !frozen
-                  ? "var(--bg-surface)"
-                  : "transparent",
-              whiteSpace: "pre-wrap",
-              minHeight: 20,
-            }}
+            className={displayClass}
             onClick={() => mode === "edit" && !frozen && startEdit()}
           >
-            {value || <span style={{ opacity: 0.4 }}>—</span>}
+            {value || <span className="structured-doc__placeholder">—</span>}
           </div>
         )}
         {!editing && (
@@ -114,28 +105,87 @@ function AtomField({
   );
 }
 
-function Section({
-  label,
-  children,
+function BriefGoalField(props: Omit<AtomFieldProps, "bodyClassName">) {
+  return (
+    <div className="brief-section">
+      <div className="brief-section-label">Goal</div>
+      <AtomField {...props} bodyClassName="brief-hero" multiline />
+    </div>
+  );
+}
+
+function BriefDecisionCard({
+  item,
+  idx,
+  sharedProps,
 }: {
-  label: string;
-  children: React.ReactNode;
+  item: { decision: string; rationale: string };
+  idx: number;
+  sharedProps: Omit<AtomFieldProps, "anchor" | "value" | "bodyClassName">;
+}) {
+  const rationaleAnchor = `decisions_made[${idx}].rationale`;
+  return (
+    <div className="brief-decision-card">
+      <div className="brief-decision-card__header">{item.decision}</div>
+      <div className="brief-decision-card__rationale-label">Rationale</div>
+      <AtomField
+        anchor={rationaleAnchor}
+        value={liveValueAt(sharedProps.edits, rationaleAnchor, item.rationale)}
+        bodyClassName="brief-decision-card__rationale-body"
+        multiline
+        {...sharedProps}
+      />
+    </div>
+  );
+}
+
+function BriefApproachRejectedCard({
+  item,
+  idx,
+  sharedProps,
+}: {
+  item: { approach: string; reason: string };
+  idx: number;
+  sharedProps: Omit<AtomFieldProps, "anchor" | "value" | "bodyClassName">;
+}) {
+  const reasonAnchor = `approaches_rejected[${idx}].reason`;
+  return (
+    <div className="brief-approach-rejected">
+      <div className="brief-approach-rejected__header">{item.approach}</div>
+      <div className="brief-approach-rejected__reason-label">Reason</div>
+      <AtomField
+        anchor={reasonAnchor}
+        value={liveValueAt(sharedProps.edits, reasonAnchor, item.reason)}
+        bodyClassName="brief-approach-rejected__reason-body"
+        multiline
+        {...sharedProps}
+      />
+    </div>
+  );
+}
+
+function BriefNextActionField(props: Omit<AtomFieldProps, "bodyClassName">) {
+  return (
+    <div className="brief-section">
+      <div className="brief-section-label">Next action</div>
+      <AtomField {...props} bodyClassName="brief-next-action" multiline />
+    </div>
+  );
+}
+
+function BriefAtomListItem({
+  anchor,
+  value,
+  sharedProps,
+}: {
+  anchor: string;
+  value: string;
+  sharedProps: Omit<AtomFieldProps, "anchor" | "value" | "bodyClassName">;
 }) {
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: 8,
-        padding: "12px 0",
-        borderBottom: "1px solid var(--border-subtle)",
-      }}
-    >
-      <div style={{ fontWeight: 600, fontSize: 13, opacity: 0.7 }}>
-        {label}
-      </div>
-      {children}
-    </div>
+    <li className="brief-atom-list__item">
+      <AtomField anchor={anchor} value={value} {...sharedProps} />
+    </li>
   );
 }
 
@@ -168,105 +218,71 @@ export function StructuredDocEditor({
   const liveNextAction = liveValueAt(edits, "next_action", brief.next_action);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column" }}>
-      <Section label="Goal">
-        <AtomField
-          anchor="goal"
-          value={liveGoal}
-          multiline
-          {...sharedProps}
-        />
-      </Section>
+    <div className="structured-doc">
+      <BriefGoalField
+        anchor="goal"
+        value={liveGoal}
+        {...sharedProps}
+      />
 
-      <Section label="Files in scope">
-        {brief.files_in_scope.map((file, idx) => {
-          const anchor = `files_in_scope[${idx}]`;
-          return (
-            <AtomField
-              key={anchor}
-              anchor={anchor}
-              value={liveValueAt(edits, anchor, file)}
-              {...sharedProps}
+      <div className="brief-section">
+        <div className="brief-section-label">Files in scope</div>
+        {brief.files_in_scope.length > 0 ? (
+          <ul className="brief-atom-list">
+            {brief.files_in_scope.map((file, idx) => {
+              const anchor = `files_in_scope[${idx}]`;
+              return (
+                <BriefAtomListItem
+                  key={anchor}
+                  anchor={anchor}
+                  value={liveValueAt(edits, anchor, file)}
+                  sharedProps={sharedProps}
+                />
+              );
+            })}
+          </ul>
+        ) : (
+          <div className="brief-empty">None listed.</div>
+        )}
+      </div>
+
+      <div className="brief-section">
+        <div className="brief-section-label">Decisions made</div>
+        {brief.decisions_made.length > 0 ? (
+          brief.decisions_made.map((d, idx) => (
+            <BriefDecisionCard
+              key={idx}
+              item={d}
+              idx={idx}
+              sharedProps={sharedProps}
             />
-          );
-        })}
-        {brief.files_in_scope.length === 0 && (
-          <div style={{ fontSize: 13, opacity: 0.4 }}>None listed.</div>
+          ))
+        ) : (
+          <div className="brief-empty">None listed.</div>
         )}
-      </Section>
+      </div>
 
-      <Section label="Decisions made">
-        {brief.decisions_made.map((d, idx) => {
-          const rationaleAnchor = `decisions_made[${idx}].rationale`;
-          return (
-            <div
+      <div className="brief-section">
+        <div className="brief-section-label">Approaches rejected</div>
+        {brief.approaches_rejected.length > 0 ? (
+          brief.approaches_rejected.map((a, idx) => (
+            <BriefApproachRejectedCard
               key={idx}
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 4,
-                padding: "6px 8px",
-                borderRadius: 4,
-                background: "var(--bg-elevated)",
-              }}
-            >
-              <div style={{ fontSize: 11, opacity: 0.6, fontWeight: 500 }}>Decision</div>
-              <div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>{d.decision}</div>
-              <AtomField
-                anchor={rationaleAnchor}
-                value={liveValueAt(edits, rationaleAnchor, d.rationale)}
-                label="Rationale"
-                multiline
-                {...sharedProps}
-              />
-            </div>
-          );
-        })}
-        {brief.decisions_made.length === 0 && (
-          <div style={{ fontSize: 13, opacity: 0.4 }}>None listed.</div>
+              item={a}
+              idx={idx}
+              sharedProps={sharedProps}
+            />
+          ))
+        ) : (
+          <div className="brief-empty">None listed.</div>
         )}
-      </Section>
+      </div>
 
-      <Section label="Approaches rejected">
-        {brief.approaches_rejected.map((a, idx) => {
-          const reasonAnchor = `approaches_rejected[${idx}].reason`;
-          return (
-            <div
-              key={idx}
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 4,
-                padding: "6px 8px",
-                borderRadius: 4,
-                background: "var(--bg-elevated)",
-              }}
-            >
-              <div style={{ fontSize: 11, opacity: 0.6, fontWeight: 500 }}>Approach</div>
-              <div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>{a.approach}</div>
-              <AtomField
-                anchor={reasonAnchor}
-                value={liveValueAt(edits, reasonAnchor, a.reason)}
-                label="Reason"
-                multiline
-                {...sharedProps}
-              />
-            </div>
-          );
-        })}
-        {brief.approaches_rejected.length === 0 && (
-          <div style={{ fontSize: 13, opacity: 0.4 }}>None listed.</div>
-        )}
-      </Section>
-
-      <Section label="Next action">
-        <AtomField
-          anchor="next_action"
-          value={liveNextAction}
-          multiline
-          {...sharedProps}
-        />
-      </Section>
+      <BriefNextActionField
+        anchor="next_action"
+        value={liveNextAction}
+        {...sharedProps}
+      />
     </div>
   );
 }
