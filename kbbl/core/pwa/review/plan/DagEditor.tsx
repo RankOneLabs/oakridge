@@ -174,6 +174,10 @@ export function DagEditor({
         nodesDraggable={mode === "edit"}
         nodesConnectable={mode === "edit" && !frozen}
         elementsSelectable={mode === "edit"}
+        panOnDrag={[1, 2]}
+        zoomOnPinch
+        panOnScroll={false}
+        preventScrolling={false}
         fitView
         fitViewOptions={{ padding: 0.2 }}
       >

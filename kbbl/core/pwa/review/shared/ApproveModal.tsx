@@ -26,14 +26,19 @@ export function ApproveModal({
           frozen.
         </div>
         <div className="review-modal__actions">
-          <button type="button" onClick={onCancel} disabled={pending}>
+          <button
+            type="button"
+            className="review-shell__tap-target"
+            onClick={onCancel}
+            disabled={pending}
+          >
             Cancel
           </button>
           <button
             type="button"
+            className="btn-approve review-shell__tap-target"
             onClick={onConfirm}
             disabled={pending}
-            className="btn-approve"
           >
             {pending ? "Approving…" : "Approve"}
           </button>

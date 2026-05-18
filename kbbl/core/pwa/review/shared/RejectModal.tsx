@@ -38,14 +38,19 @@ export function RejectModal({
           autoFocus
         />
         <div className="review-modal__actions">
-          <button type="button" onClick={onCancel} disabled={pending}>
+          <button
+            type="button"
+            className="review-shell__tap-target"
+            onClick={onCancel}
+            disabled={pending}
+          >
             Cancel
           </button>
           <button
             type="button"
+            className="btn-deny review-shell__tap-target"
             onClick={() => reason.trim() && onConfirm(reason.trim())}
             disabled={pending || !reason.trim()}
-            className="btn-deny"
           >
             {pending ? "Rejecting…" : "Reject"}
           </button>

@@ -84,6 +84,14 @@ function AtomField({
               />
             )}
           </>
+        ) : mode === "edit" && !frozen ? (
+          <button
+            type="button"
+            className="review-shell__tap-target structured-doc__edit-trigger"
+            onClick={startEdit}
+          >
+            {value || <span className="structured-doc__placeholder">—</span>}
+          </button>
         ) : (
           <div
             className={displayClass}

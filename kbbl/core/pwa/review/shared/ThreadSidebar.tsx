@@ -17,7 +17,11 @@ export function ThreadSidebar({
     <div className="thread-sidebar">
       <div className="thread-sidebar__header">
         <span>Threads</span>
-        <button type="button" className="thread-sidebar__new" onClick={onNewThread}>
+        <button
+          type="button"
+          className="review-shell__tap-target thread-sidebar__new"
+          onClick={onNewThread}
+        >
           + New
         </button>
       </div>
@@ -28,8 +32,8 @@ export function ThreadSidebar({
           <button
             key={t.id}
             type="button"
+            className={`review-shell__tap-target thread-sidebar__row${isSelected ? " thread-sidebar__row--selected" : ""}`}
             onClick={() => onSelect(t.id)}
-            className={`thread-sidebar__row${isSelected ? " thread-sidebar__row--selected" : ""}`}
           >
             <div className="thread-sidebar__row-anchor">
               {t.anchor ?? "general"}

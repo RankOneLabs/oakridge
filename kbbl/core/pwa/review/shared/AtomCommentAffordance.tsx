@@ -20,10 +20,10 @@ export function AtomCommentAffordance({
   return (
     <button
       type="button"
+      className={`review-shell__tap-target atom-comment-affordance${openCount > 0 ? " atom-comment-affordance--has-threads" : ""}`}
       disabled={!!frozen}
       onClick={() => onOpenThread(anchor)}
       title={`${openCount} comment${openCount !== 1 ? "s" : ""} on ${anchor}`}
-      className={`atom-comment-affordance${openCount > 0 ? " atom-comment-affordance--has-threads" : ""}`}
     >
       {openCount > 0 ? openCount : "+"}
     </button>

@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
 import type { Theme } from "../../types";
 import { useArtifactStream } from "../shared/useArtifactStream";
+import { useViewport } from "../shared/useViewport";
 import { DagEditor } from "./DagEditor";
 import { CohortPanel } from "./CohortPanel";
+import { Sheet } from "../shared/Sheet";
 import { ReviewShell } from "../shared/ReviewShell";
 import type { ReviewMode, Message } from "../shared/types";
 import type { Plan, Cohort, CohortDependency } from "./types";
@@ -31,6 +33,8 @@ export function PlanReviewView({ id, onToggleTheme, onBack }: PlanReviewViewProp
   const [actionPending, setActionPending] = useState(false);
 
   const { edits, threads, frozen } = useArtifactStream("plan", id);
+  const { width } = useViewport();
+  const isWide = width >= 1024;
 
   useEffect(() => {
     let cancelled = false;
@@ -254,6 +258,17 @@ export function PlanReviewView({ id, onToggleTheme, onBack }: PlanReviewViewProp
 
   const isPendingApproval = plan.status === "pending_approval";
 
+  const cohortPanelContent = selectedCohort && !selectedThread ? (
+    <CohortPanel
+      cohort={selectedCohort}
+      edits={edits}
+      threads={threads}
+      mode={mode}
+      frozen={frozen}
+      onOpenThread={handleOpenThread}
+    />
+  ) : null;
+
   return (
     <ReviewShell
       onBack={onBack}
@@ -297,16 +312,30 @@ export function PlanReviewView({ id, onToggleTheme, onBack }: PlanReviewViewProp
         />
       </div>
 
-      {/* Cohort details panel (shown when a cohort is selected but no thread is open) */}
-      {selectedCohort && !selectedThread && (
-        <CohortPanel
-          cohort={selectedCohort}
-          edits={edits}
-          threads={threads}
-          mode={mode}
-          frozen={frozen}
-          onOpenThread={handleOpenThread}
-        />
+      {/* Cohort detail: pinned aside at ≥1024px, bottom Sheet below 1024px */}
+      {isWide ? (
+        cohortPanelContent && (
+          <aside className="plan-review__cohort-pane">
+            <button
+              type="button"
+              className="review-shell__tap-target plan-review__cohort-pane-close"
+              onClick={() => setSelectedCohortId(null)}
+              aria-label="Close cohort details"
+            >
+              ×
+            </button>
+            {cohortPanelContent}
+          </aside>
+        )
+      ) : (
+        <Sheet
+          open={!!selectedCohort && !selectedThread}
+          side="bottom"
+          onClose={() => setSelectedCohortId(null)}
+          ariaLabel="Cohort details"
+        >
+          {cohortPanelContent}
+        </Sheet>
       )}
     </ReviewShell>
   );

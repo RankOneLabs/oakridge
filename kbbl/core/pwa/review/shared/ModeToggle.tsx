@@ -16,9 +16,9 @@ export function ModeToggle({ mode, onChange, disabled }: ModeToggleProps) {
           <button
             key={m}
             type="button"
+            className={`review-shell__tap-target mode-toggle__segment${active ? " mode-toggle__segment--active" : ""}`}
             onClick={() => !isDisabled && onChange(m)}
             disabled={isDisabled}
-            className={`mode-toggle__segment${active ? " mode-toggle__segment--active" : ""}`}
           >
             {m}
           </button>

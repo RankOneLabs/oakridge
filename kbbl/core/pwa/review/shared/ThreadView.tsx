@@ -38,10 +38,18 @@ export function ThreadView({
         <div className="thread-view__actions">
           {isOpen && !frozen && (
             <>
-              <button type="button" onClick={onPing} className="thread-view__action-btn">
+              <button
+                type="button"
+                className="review-shell__tap-target thread-view__action-btn"
+                onClick={onPing}
+              >
                 Ping
               </button>
-              <button type="button" onClick={onResolve} className="thread-view__action-btn">
+              <button
+                type="button"
+                className="review-shell__tap-target thread-view__action-btn"
+                onClick={onResolve}
+              >
                 Resolve
               </button>
             </>
@@ -79,9 +87,9 @@ export function ThreadView({
           />
           <button
             type="button"
+            className="review-shell__tap-target thread-view__send-btn"
             onClick={handleSend}
             disabled={!reply.trim()}
-            className="thread-view__send-btn"
           >
             Send
           </button>

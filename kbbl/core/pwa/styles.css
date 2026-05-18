@@ -1897,7 +1897,44 @@ body {
   overflow: hidden;
 }
 .review-shell__threads {
-  /* reserved for cohort 2 responsive collapse */
+  /* pinned at tablet and desktop; hidden at phone (sheet opens instead) */
+}
+.review-shell__threads-chip {
+  font: inherit;
+  cursor: pointer;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 13px;
+  display: none;
+}
+
+/* phone: threads column hides, chip appears */
+@media (max-width: 767px) {
+  .review-shell__threads {
+    display: none;
+  }
+  .review-shell__threads-chip {
+    display: inline-flex;
+    align-items: center;
+  }
+}
+
+/* tablet: threads pin at narrower width */
+@media (min-width: 768px) and (max-width: 1279px) {
+  .review-shell__threads .thread-sidebar,
+  .review-shell__threads > div {
+    width: 160px;
+    min-width: 160px;
+  }
+}
+
+/* desktop: threads pin at original width */
+@media (min-width: 1280px) {
+  .review-shell__threads-chip {
+    display: none;
+  }
 }
 .review-shell__thread-detail {
   min-width: 280px;
@@ -1922,6 +1959,82 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+
+
+/* === plan review cohort-detail pane (cohort 2) === */
+
+.plan-review__cohort-pane {
+  flex: 0 0 380px;
+  min-width: 380px;
+  max-width: 480px;
+  border-left: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  position: relative;
+}
+.plan-review__cohort-pane-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+  z-index: 1;
+}
+
+/* === Sheet primitive (cohort 2) === */
+
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: none;
+}
+.sheet__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+}
+.sheet__panel {
+  position: absolute;
+  background: var(--bg-app);
+  border: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+.sheet--right .sheet__panel {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(85vw, 360px);
+  border-left: 1px solid var(--border-subtle);
+}
+.sheet--bottom .sheet__panel {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: 85vh;
+  border-top: 1px solid var(--border-subtle);
+  border-radius: 12px 12px 0 0;
+}
+.sheet__handle {
+  width: 36px;
+  height: 4px;
+  background: var(--border-muted);
+  border-radius: 2px;
+  margin: 8px auto;
+  flex-shrink: 0;
+}
+.sheet__close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+
 
 /* === canvas content class vocabulary (Cohort 3) === */
 
@@ -2028,6 +2141,9 @@ body {
 }
 
 .brief-atom-list__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 4px 8px;
   border-radius: 3px;
   font-family: "SF Mono", Menlo, monospace;
@@ -2184,6 +2300,9 @@ body {
   color: var(--text-tertiary);
 }
 
+.cohort-node__comments {
+  /* semantic grouping wrapper; affordance carries its own class */
+}
 
 /* --- sweep-residual: atom comment affordance --- */
 
@@ -2506,11 +2625,21 @@ body {
   margin-left: 6px;
 }
 
-/* --- tap target minimum (reused by cohort detail thread rows) --- */
-
+/* Apply in JSX to every interactive review-surface element. A missing application produces a visibly small
+   affordance — fails loudly. */
 .review-shell__tap-target {
-  min-width: 44px;
-  min-height: 44px;
+  min-block-size: 44px;
+  min-inline-size: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  box-sizing: border-box;
+}
+
+/* tiebreaker: tap-target's display:inline-flex must not resurrect phone-only chip at wider viewports */
+@media (min-width: 768px) {
+  .review-shell__threads-chip { display: none; }
 }
 
 /* --- brief + plan canvas wrappers --- */
@@ -2588,6 +2717,24 @@ body {
 .structured-doc__input {
   flex: 1;
   font-size: 13px;
+}
+
+/* === structured doc editor (cohort 2) === */
+
+.structured-doc__edit-trigger {
+  text-align: left;
+  background: var(--bg-surface);
+  border: none;
+  font: inherit;
+  font-size: 13px;
+  cursor: text;
+  padding: 8px 10px;
+  width: 100%;
+  flex: 1;
+  border-radius: 4px;
+  justify-content: flex-start;
+  align-items: flex-start;
+  white-space: pre-wrap;
 }
 
 /* === inbox artifact cards (pending plans + pending build briefs) === */
