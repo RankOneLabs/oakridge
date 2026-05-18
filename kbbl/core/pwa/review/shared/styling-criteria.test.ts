@@ -26,7 +26,7 @@ describe("styling criteria", () => {
     // Matches var(--<token> where token does NOT start with a dash after the
     // category prefix — e.g. var(--surface) or var(--accent) but not
     // var(--surface-raised) or var(--accent-blue).
-    const BARE_TOKEN = /var\(--(surface[^-]|surface-raised|accent[^-]|border[^-]|danger[^-]|success[^-])/;
+    const BARE_TOKEN = /var\(--(?:surface|accent|border|danger|success)(?!-)\b/;
     const violations: string[] = [];
     for (const file of sourceFiles) {
       const content = fs.readFileSync(file, "utf8");

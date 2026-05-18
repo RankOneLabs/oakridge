@@ -2107,6 +2107,12 @@ body {
   gap: 4px;
 }
 
+.cohort-detail__label-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .cohort-detail__thread-row {
   display: flex;
   align-items: center;
@@ -2115,12 +2121,12 @@ body {
   background: var(--bg-elevated);
   border-radius: 4px;
   cursor: pointer;
+  font: inherit;
   font-size: 12px;
   width: 100%;
   text-align: left;
   border: none;
   color: inherit;
-  font: inherit;
 }
 
 .cohort-detail__thread-anchor {
@@ -2216,6 +2222,7 @@ body {
 }
 
 .mode-toggle__segment {
+  font: inherit;
   padding: 4px 12px;
   font-size: 12px;
   background: transparent;
@@ -2223,7 +2230,6 @@ body {
   cursor: pointer;
   font-weight: 400;
   text-transform: capitalize;
-  font: inherit;
 }
 
 .mode-toggle__segment--active {
@@ -2256,6 +2262,11 @@ body {
   margin-bottom: 4px;
 }
 
+.thread-sidebar__header > span {
+  font-weight: 600;
+  font-size: 13px;
+}
+
 .thread-sidebar__new {
   font-size: 12px;
   background: transparent;
@@ -2272,11 +2283,11 @@ body {
   border-radius: 4px;
   background: var(--bg-elevated);
   border: 1px solid transparent;
+  font: inherit;
   font-size: 12px;
   cursor: pointer;
   width: 100%;
   color: inherit;
-  font: inherit;
 }
 
 .thread-sidebar__row--selected {
@@ -2357,6 +2368,7 @@ body {
 }
 
 .thread-view__action-btn {
+  font: inherit;
   font-size: 12px;
   background: transparent;
   border: 1px solid var(--border-subtle);
@@ -2364,7 +2376,6 @@ body {
   cursor: pointer;
   padding: 2px 6px;
   color: inherit;
-  font: inherit;
 }
 
 .thread-view__send-btn {

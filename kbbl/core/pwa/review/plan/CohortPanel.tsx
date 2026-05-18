@@ -14,9 +14,9 @@ function ThreadListItem({
     <button
       type="button"
       className="cohort-detail__thread-row review-shell__tap-target"
-      onClick={() => onOpen(thread.anchor ?? "")}
+      onClick={() => onOpen(thread.anchor!)}
     >
-      <span className="cohort-detail__thread-anchor">{thread.anchor ?? "general"}</span>
+      <span className="cohort-detail__thread-anchor">{thread.anchor}</span>
       <span className="cohort-detail__thread-status">{thread.status}</span>
     </button>
   );
@@ -68,8 +68,8 @@ export function CohortPanel({
 
       {(cohort.notes || liveNotes) && (
         <div className="cohort-detail__label-value">
-          <div className="cohort-detail__label">
-            Notes
+          <div className="cohort-detail__label-row">
+            <div className="cohort-detail__label">Notes</div>
             <AtomCommentAffordance
               anchor={notesAnchor}
               threads={threads}
