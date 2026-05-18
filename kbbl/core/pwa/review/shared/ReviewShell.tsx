@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState } from "react";
 import { ModeToggle } from "./ModeToggle";
 import { ThreadSidebar } from "./ThreadSidebar";
 import { ThreadView } from "./ThreadView";
@@ -37,15 +37,15 @@ export function ReviewShell({
   const [showApprove, setShowApprove] = useState(false);
   const [showReject, setShowReject] = useState(false);
 
-  const handleApprove = useCallback(async () => {
+  const handleApprove = async () => {
     await onApprove();
     setShowApprove(false);
-  }, [onApprove]);
+  };
 
-  const handleReject = useCallback(async (reason: string) => {
+  const handleReject = async (reason: string) => {
     await onReject(reason);
     setShowReject(false);
-  }, [onReject]);
+  };
 
   const selectedThread = threads.find((t) => t.id === selectedThreadId) ?? null;
 
