@@ -2055,11 +2055,19 @@ body {
   overflow: auto;
 }
 
+.cohort-detail__title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
 .cohort-detail__title {
   font-size: 20px;
   font-weight: 700;
   line-height: 1.25;
   color: var(--text-primary);
+  margin: 0;
+  flex: 1;
 }
 
 .cohort-detail__label-value {
