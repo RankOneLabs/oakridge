@@ -57,4 +57,32 @@ describe("Sheet", () => {
     fireEvent.keyDown(document, { key: "Escape" });
     expect(onClose).not.toHaveBeenCalled();
   });
+
+  it("traps Tab focus inside the panel", () => {
+    render(
+      <Sheet open={true} side="right" onClose={vi.fn()}>
+        <button>A</button>
+        <button>B</button>
+        <button>C</button>
+      </Sheet>,
+    );
+    const a = screen.getByText("A");
+    const b = screen.getByText("B");
+    const c = screen.getByText("C");
+    // Initial focus lands on A (existing behaviour).
+    expect(document.activeElement).toBe(a);
+    // Tab from last (C) wraps to first (A).
+    c.focus();
+    fireEvent.keyDown(c, { key: "Tab" });
+    expect(document.activeElement).toBe(a);
+    // Shift+Tab from first (A) wraps to last (C).
+    a.focus();
+    fireEvent.keyDown(a, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(c);
+    // Tab from middle (B) does not wrap — defer to browser default
+    // (no preventDefault, no focus change in jsdom).
+    b.focus();
+    fireEvent.keyDown(b, { key: "Tab" });
+    expect(document.activeElement).toBe(b);
+  });
 });

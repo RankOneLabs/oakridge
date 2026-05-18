@@ -1,24 +1,5 @@
 # Punted items
 
-## Approve / Reject button contrast (from cohort-0 rename pass)
-
-**Files:** `ApproveModal.tsx`, `RejectModal.tsx`, `PlanReviewView.tsx`, `BriefReviewView.tsx`
-
-**Issue:** The cohort-0 rename table mapped `var(--success, #2a7a2a)` → `var(--success-fg)` and
-`var(--danger, #7a2a2a)` → `var(--danger-fg)`. Those original hex values were dark backgrounds; the
-retarget lands on foreground tokens. In dark mode `--success-fg` is `#7dd890` (light green) and
-`--danger-fg` is `#e67070` (light red) — both fail AA contrast with white text.
-
-**Fix when addressed:** Use `--danger-bg` / `--danger-fg` (background + text) for Reject buttons.
-For Approve, use `--status-connected-bg` / `--status-connected-fg` until a dedicated `--success-bg`
-token is defined. Both pairs are already in both themes.
-
-**Why punted:** Cohort-0 brief required verbatim application of the rename table; introducing
-`--success-bg` or deviating from the table was out of scope. Surface in the cohort that adds
-button/action token infrastructure.
-
----
-
 ## Sheet focus trap (from cohort-2 review)
 
 **Files:** `Sheet.tsx`
@@ -56,3 +37,61 @@ inline-style guidance no longer applies here.
 
 **Why punted:** Editing `CLAUDE.md` is a team convention change — needs explicit user confirmation
 before writing. Surfaced here so it doesn't get lost.
+
+---
+
+## Cohort detail thread list shows raw anchor paths (from cohort-3 PR review)
+
+**Files:** `CohortPanel.tsx`
+
+**Issue:** `ThreadListItem` displays the raw atom anchor string (e.g. `cohorts[0].notes`,
+`cohorts[0].title`) as the visible label in the cohort-detail thread list. This is a developer-facing
+path format, not a user-facing label. The legacy panel never exposed this list.
+
+**Fix when addressed:** Map anchor tails to friendly labels (e.g. `cohorts[N].title` → "Title",
+`cohorts[N].notes` → "Notes", `cohorts[N].<field>` → `<field>` capitalised). Or render the anchor
+only as a `title`/tooltip and show a friendlier primary label.
+
+**Why punted:** Whether the audience for this view is reviewers (need friendly labels) or developers
+(anchor paths are acceptable) is a product/UX call outside the cohort-3 brief scope.
+
+---
+
+## Cohort notes section invisible in edit mode when notes start empty (from cohort-3 PR review)
+
+**Files:** `CohortPanel.tsx`
+
+**Issue:** The Notes section renders only when `cohort.notes || liveNotes` is truthy (line 70).
+A cohort with no notes at all never shows the section in edit mode — there is no affordance to start
+adding notes, and the `AtomCommentAffordance` for the notes anchor is also hidden.
+
+**Fix when addressed:** Change the condition to also show the section in edit mode:
+```tsx
+{(cohort.notes || liveNotes || mode === "edit") && (
+```
+This makes the empty-notes field visible when the canvas is editable, matching the expected
+behaviour for write-enabled review sessions.
+
+**Why punted:** Whether adding notes to a notes-less cohort is a supported edit-mode workflow is a
+product decision. The cohort-3 brief was focused on the className migration, not edit-mode
+completeness. Surface in the cohort that adds edit-mode authoring hardening.
+
+---
+
+## useViewport test coverage (from cohort-2 review)
+
+**Files:** `useViewport.ts`
+
+**Issue:** `useViewport()` drives responsive layout across views but has no unit tests. The hook
+involves non-trivial setup: `window.matchMedia` change listeners, a `window.resize` listener, and
+`useState` initialization from `window.innerWidth`. Testing it requires jsdom matchMedia stubs that
+aren't otherwise needed in this test suite.
+
+**Fix when addressed:** Add `useViewport.test.ts` in `review/shared/`. Stub `window.innerWidth` and
+`window.matchMedia` via `vi.stubGlobal` / `Object.defineProperty`. Assert correct `isPhone /
+isTablet / isDesktop` values for representative widths, and verify listener cleanup on unmount
+(capture `addEventListener` / `removeEventListener` call counts).
+
+**Why punted:** Cohort-2 brief scope was layout behavior, not hook test infrastructure. The jsdom
+matchMedia stub work is a non-trivial setup investment. Surface in the cohort that hardens shared
+hook coverage.

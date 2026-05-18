@@ -16,7 +16,7 @@ export function Sheet({ open, side, onClose, children, ariaLabel }: SheetProps) 
     if (open) {
       previousFocusRef.current = document.activeElement as HTMLElement;
       const first = panelRef.current?.querySelector<HTMLElement>(
-        'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])',
+        'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
       );
       first?.focus();
     } else {
@@ -34,6 +34,30 @@ export function Sheet({ open, side, onClose, children, ariaLabel }: SheetProps) 
     return () => document.removeEventListener("keydown", handleKey);
   }, [open, onClose]);
 
+  function handlePanelKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (e.key !== "Tab") return;
+    const focusable = Array.from(
+      panelRef.current?.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ) ?? [],
+    );
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (focusable.length === 1) {
+      e.preventDefault();
+      first.focus();
+      return;
+    }
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
+
   return (
     <div
       className={`sheet sheet--${side}`}
@@ -47,6 +71,7 @@ export function Sheet({ open, side, onClose, children, ariaLabel }: SheetProps) 
         role="dialog"
         aria-modal="true"
         aria-label={ariaLabel}
+        onKeyDown={handlePanelKeyDown}
       >
         {side === "bottom" && <div className="sheet__handle review-shell__tap-target" />}
         {children}
