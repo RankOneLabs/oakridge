@@ -1960,6 +1960,30 @@ body {
   letter-spacing: 0.04em;
 }
 
+/* === plan review cohort-detail pane (cohort 2) === */
+
+.plan-review__cohort-pane {
+  flex: 0 0 380px;
+  min-width: 380px;
+  max-width: 480px;
+  border-left: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  position: relative;
+}
+.plan-review__cohort-pane-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+  z-index: 1;
+}
+
 /* === Sheet primitive (cohort 2) === */
 
 .sheet {
