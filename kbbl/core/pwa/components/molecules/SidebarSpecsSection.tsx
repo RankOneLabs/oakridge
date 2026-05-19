@@ -45,7 +45,11 @@ export function SidebarSpecsSection({
                       className="sidebar-spec-chevron"
                       onClick={() => onToggleSpec(s.id)}
                       aria-expanded={expanded}
-                      aria-label={expanded ? "Collapse cohorts" : "Expand cohorts"}
+                      aria-label={
+                        expanded
+                          ? `Collapse cohorts for ${s.title}`
+                          : `Expand cohorts for ${s.title}`
+                      }
                     >
                       {expanded ? "▾" : "▸"}
                     </button>

@@ -2661,7 +2661,8 @@ body {
 .cohort-view {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: 100vh; /* fallback for older browsers */
+  height: 100dvh; /* avoids mobile chrome clipping on viewport transitions */
   background: var(--bg-app);
 }
 
@@ -2684,6 +2685,14 @@ body {
   cursor: pointer;
   font: inherit;
   font-size: 13px;
+  /* Touch target parity with .review-shell__tap-target — header controls
+     must meet the 44px minimum even though we're outside ReviewShell. */
+  min-block-size: 44px;
+  min-inline-size: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
 }
 .cohort-view__back:hover,
 .cohort-view__plan-link:hover,

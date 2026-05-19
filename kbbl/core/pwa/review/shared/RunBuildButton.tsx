@@ -12,14 +12,19 @@ export function RunBuildButton({ briefId, cohortId }: RunBuildButtonProps) {
   // race the auto-dispatch that brief.approved triggers in dispatch-hooks.
   // Only treat the ref as a live build when current_session_stage === "build"
   // — otherwise a stale planner2 ref on the same column would hide the
-  // manual recovery button. The residual ~ms window between approve-emit
-  // and the dispatcher's UPDATE is acknowledged in docs/known_issues.md.
+  // manual recovery button. Both the residual approve-emit/UPDATE race AND
+  // the larger "ref stays populated after session end" gap are tracked in
+  // docs/known_issues.md ("Run-build guard reads stale current_session_ref").
   const [checking, setChecking] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setChecking(true);
+    // Reset prior cohort's session ref before the new lookup — without this,
+    // a stale "Build running" sticks across cohort navigation and hides the
+    // recovery button.
+    setSessionRef(null);
     fetch(`/cohorts/${encodeURIComponent(cohortId)}`)
       .then((r) =>
         r.ok

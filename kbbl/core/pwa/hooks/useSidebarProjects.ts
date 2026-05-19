@@ -53,9 +53,24 @@ export function useSidebarProjects(
   }, []);
 
   const refreshCohorts = useCallback(async (planId: string) => {
+    const writeTerminalIfEmpty = () => {
+      // Always write a terminal value so SidebarSpecsSection can stop showing
+      // `loading…`. If we already have data for this plan (e.g. a refresh that
+      // raced a transient error), keep it — only seed an empty array when the
+      // map has no entry yet.
+      setCohortsByPlan((prev) => {
+        if (prev.has(planId)) return prev;
+        const next = new Map(prev);
+        next.set(planId, []);
+        return next;
+      });
+    };
     try {
       const res = await fetch(`/cohorts?plan_id=${encodeURIComponent(planId)}`);
-      if (!res.ok) return;
+      if (!res.ok) {
+        writeTerminalIfEmpty();
+        return;
+      }
       const data = (await res.json()) as SidebarCohort[];
       setCohortsByPlan((prev) => {
         const next = new Map(prev);
@@ -63,7 +78,7 @@ export function useSidebarProjects(
         return next;
       });
     } catch {
-      // ignore — re-expanding the spec retries
+      writeTerminalIfEmpty();
     }
   }, []);
 
@@ -89,12 +104,14 @@ export function useSidebarProjects(
 
   // Lazily fetch cohorts for newly-expanded specs. The spec list may not be
   // loaded yet when the user toggles expansion, so we keep "attempted" specs
-  // out of the dedupe set until we actually fire the fetch — that way we
+  // out of the dedupe map until we actually fire the fetch — that way we
   // retry on the next render once specsByProject populates plan_id.
-  const fetchedCohortsForSpecRef = useRef<Set<string>>(new Set());
+  //
+  // Keyed by (specId → planId) so a plan reopen (which surfaces a new plan_id
+  // on the same spec) invalidates the dedupe and re-fires the fetch.
+  const fetchedCohortsForSpecRef = useRef<Map<string, string>>(new Map());
   useEffect(() => {
     for (const specId of expandedSpecs) {
-      if (fetchedCohortsForSpecRef.current.has(specId)) continue;
       let planId: string | null = null;
       for (const list of specsByProject.values()) {
         const found = list.find((s) => s.id === specId);
@@ -103,13 +120,13 @@ export function useSidebarProjects(
           break;
         }
       }
-      if (planId) {
-        fetchedCohortsForSpecRef.current.add(specId);
-        void refreshCohorts(planId);
-      }
+      if (!planId) continue;
+      if (fetchedCohortsForSpecRef.current.get(specId) === planId) continue;
+      fetchedCohortsForSpecRef.current.set(specId, planId);
+      void refreshCohorts(planId);
     }
     // Drop entries for specs that were collapsed so re-expanding refetches.
-    for (const specId of fetchedCohortsForSpecRef.current) {
+    for (const specId of fetchedCohortsForSpecRef.current.keys()) {
       if (!expandedSpecs.has(specId)) fetchedCohortsForSpecRef.current.delete(specId);
     }
   }, [expandedSpecs, specsByProject, refreshCohorts]);

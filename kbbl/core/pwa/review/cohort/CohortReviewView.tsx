@@ -27,6 +27,10 @@ export function CohortReviewView({ id, onToggleTheme, onBack }: CohortReviewView
     let cancelled = false;
     setLoading(true);
     setError(null);
+    // Clear prior cohort/briefs synchronously so a navigation between cohorts
+    // can never flash the previous cohort's data once loading completes.
+    setCohort(null);
+    setBriefs([]);
     void (async () => {
       try {
         const cohortRes = await fetch(`/cohorts/${encodeURIComponent(id)}`);
@@ -36,10 +40,15 @@ export function CohortReviewView({ id, onToggleTheme, onBack }: CohortReviewView
         setCohort(cohortBody);
 
         const briefsRes = await fetch(`/briefs?cohort_id=${encodeURIComponent(id)}`);
+        if (cancelled) return;
         if (briefsRes.ok) {
           const briefsBody = (await briefsRes.json()) as Brief[];
           if (cancelled) return;
           setBriefs(briefsBody);
+        } else {
+          // Non-OK is a real failure we can't recover from here; surface it so
+          // the "No brief yet." empty state doesn't lie.
+          setError(`briefs: ${briefsRes.status}`);
         }
       } catch (err) {
         if (cancelled) return;
