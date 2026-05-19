@@ -77,14 +77,17 @@ function getProjectForBrief(db: Database, brief_id: string): ProjectRow | null {
 /**
  * Squash a spec title down to something safe for use in a session label —
  * lowercase, alnum+underscore only, length-capped so the full name stays
- * readable in the sidebar.
+ * readable in the sidebar. If the title sanitizes to empty (all-punct
+ * titles like "!!!"), fall back to the caller's artifact id so distinct
+ * artifacts don't collide on a shared literal.
  */
-function sanitizeForName(s: string): string {
+function sanitizeForName(s: string, fallbackId: string): string {
   const out = s
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "");
-  return out.length > 40 ? out.slice(0, 40) : out || "unnamed";
+  if (out.length === 0) return fallbackId.slice(0, 8);
+  return out.length > 40 ? out.slice(0, 40) : out;
 }
 
 function getSpecTitleForCohort(db: Database, cohort_id: string): string | null {
@@ -119,7 +122,7 @@ function buildSessionNameForSpec(db: Database, spec_id: string, stageName: strin
   const row = db
     .prepare<{ title: string }, [string]>("SELECT title FROM specs WHERE id = ?")
     .get(spec_id);
-  const slug = sanitizeForName(row?.title ?? spec_id.slice(0, 8));
+  const slug = sanitizeForName(row?.title ?? "", spec_id);
   return `${stageName}_${slug}`;
 }
 
@@ -128,7 +131,7 @@ function buildSessionNameForCohort(db: Database, cohort_id: string, stageName: s
     .prepare<{ position: number }, [string]>("SELECT position FROM cohorts WHERE id = ?")
     .get(cohort_id);
   const specTitle = getSpecTitleForCohort(db, cohort_id);
-  const slug = sanitizeForName(specTitle ?? cohort_id.slice(0, 8));
+  const slug = sanitizeForName(specTitle ?? "", cohort_id);
   const pos = cohortRow?.position ?? 0;
   return `${stageName}_cohort_${pos}_${slug}`;
 }
@@ -140,7 +143,7 @@ function buildSessionNameForBrief(db: Database, brief_id: string, stageName: str
   // when scanning the list view. Other stages keep their stage name as-is.
   const prefix = stageName === "build" ? "builder" : stageName;
   if (!ctx) return `${prefix}_${brief_id.slice(0, 8)}`;
-  const slug = sanitizeForName(ctx.spec_title);
+  const slug = sanitizeForName(ctx.spec_title, brief_id);
   return `${prefix}_cohort_${ctx.position}_${slug}`;
 }
 
