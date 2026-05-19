@@ -10,6 +10,7 @@ import { resumeSession } from "./lib/session";
 
 import { PlanReviewView } from "./review/plan/PlanReviewView";
 import { BriefReviewView } from "./review/brief/BriefReviewView";
+import { CohortReviewView } from "./review/cohort/CohortReviewView";
 
 import { SessionListView } from "./views/SessionListView";
 import { SessionView } from "./views/SessionView";
@@ -57,6 +58,16 @@ export function App() {
   if (route?.view === "brief") {
     return (
       <BriefReviewView
+        id={route.id}
+        theme={theme}
+        onToggleTheme={toggleTheme}
+        onBack={() => { window.location.hash = ""; }}
+      />
+    );
+  }
+  if (route?.view === "cohort") {
+    return (
+      <CohortReviewView
         id={route.id}
         theme={theme}
         onToggleTheme={toggleTheme}

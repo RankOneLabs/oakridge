@@ -2656,6 +2656,157 @@ body {
   .review-shell__threads-chip { display: none; }
 }
 
+/* --- cohort view (standalone, lighter than ReviewShell) --- */
+
+.cohort-view {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--bg-app);
+}
+
+.cohort-view__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.cohort-view__back,
+.cohort-view__plan-link,
+.cohort-view__theme {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+}
+.cohort-view__back:hover,
+.cohort-view__plan-link:hover,
+.cohort-view__theme:hover {
+  color: var(--text-primary);
+  border-color: var(--border-hover);
+}
+
+.cohort-view__spacer { flex: 1; }
+
+.cohort-view__body {
+  flex: 1;
+  overflow: auto;
+  padding: 24px;
+  max-width: 720px;
+  width: 100%;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.cohort-view__title {
+  margin: 0;
+  font-size: 1.4rem;
+  line-height: 1.3;
+}
+
+.cohort-view__meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.cohort-view__status {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+}
+
+.cohort-view__position {
+  font-size: 0.75rem;
+  opacity: 0.5;
+}
+
+.cohort-view__section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cohort-view__section-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.6;
+}
+
+.cohort-view__notes {
+  white-space: pre-wrap;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  padding: 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+}
+
+.cohort-view__brief {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cohort-view__brief-link {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  text-align: left;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 10px 12px;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+.cohort-view__brief-link:hover {
+  border-color: var(--border-hover);
+}
+
+.cohort-view__brief-status {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: var(--bg-app);
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.cohort-view__brief-goal {
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.cohort-view__brief-empty {
+  font-size: 0.85rem;
+  opacity: 0.5;
+  font-style: italic;
+}
+
+.cohort-view__brief-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 /* --- brief + plan canvas wrappers --- */
 
 .brief-canvas-scroll {
@@ -3101,6 +3252,65 @@ body {
   letter-spacing: 0.03em;
   flex: 0 0 auto;
 }
+
+.sidebar-spec-row {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.sidebar-spec-chevron {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  padding: 0 4px;
+  font-size: 0.7rem;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  border-radius: 3px;
+  flex: 0 0 auto;
+}
+.sidebar-spec-chevron:hover {
+  background: var(--bg-app);
+  color: var(--text-primary);
+}
+
+.sidebar-spec-link {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.sidebar-cohort-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 2px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.sidebar-cohort-row {
+  font-size: 0.72rem;
+}
+
+.sidebar-cohort-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex: 0 0 auto;
+  opacity: 0.7;
+}
+.sidebar-cohort-dot-waiting { background: var(--text-muted); opacity: 0.4; }
+.sidebar-cohort-dot-planned { background: var(--text-muted); opacity: 0.8; }
+.sidebar-cohort-dot-briefing { background: var(--status-connecting-fg); }
+.sidebar-cohort-dot-brief_review { background: var(--amber-fg); }
+.sidebar-cohort-dot-building { background: var(--accent-blue); }
+.sidebar-cohort-dot-done { background: var(--accent-green, #4ade80); opacity: 0.9; }
+.sidebar-cohort-dot-blocked { background: var(--accent-red, #f87171); }
 
 @media (max-width: 640px) {
   .app-sidebar {

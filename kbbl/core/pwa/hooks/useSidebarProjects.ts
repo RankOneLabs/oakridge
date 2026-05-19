@@ -1,19 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { SidebarProject, SidebarSpec } from "../sidebar/Sidebar";
+import type { SidebarCohort, SidebarProject, SidebarSpec } from "../sidebar/Sidebar";
 
 export interface SidebarProjectsState {
   projects: SidebarProject[];
   specsByProject: Map<string, SidebarSpec[]>;
+  cohortsByPlan: Map<string, SidebarCohort[]>;
   loading: boolean;
   error: string | null;
   refreshProjects: () => Promise<void>;
   refreshSpecs: (projectId: string) => Promise<void>;
+  refreshCohorts: (planId: string) => Promise<void>;
 }
 
-export function useSidebarProjects(expandedProjects: Set<string>): SidebarProjectsState {
+export function useSidebarProjects(
+  expandedProjects: Set<string>,
+  expandedSpecs: Set<string>,
+): SidebarProjectsState {
   const [projects, setProjects] = useState<SidebarProject[]>([]);
   const [specsByProject, setSpecsByProject] = useState<Map<string, SidebarSpec[]>>(new Map());
+  const [cohortsByPlan, setCohortsByPlan] = useState<Map<string, SidebarCohort[]>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -46,6 +52,21 @@ export function useSidebarProjects(expandedProjects: Set<string>): SidebarProjec
     }
   }, []);
 
+  const refreshCohorts = useCallback(async (planId: string) => {
+    try {
+      const res = await fetch(`/cohorts?plan_id=${encodeURIComponent(planId)}`);
+      if (!res.ok) return;
+      const data = (await res.json()) as SidebarCohort[];
+      setCohortsByPlan((prev) => {
+        const next = new Map(prev);
+        next.set(planId, data);
+        return next;
+      });
+    } catch {
+      // ignore — re-expanding the spec retries
+    }
+  }, []);
+
   useEffect(() => {
     void refreshProjects();
   }, [refreshProjects]);
@@ -66,5 +87,41 @@ export function useSidebarProjects(expandedProjects: Set<string>): SidebarProjec
     previouslyExpandedRef.current = new Set(expandedProjects);
   }, [expandedProjects, refreshSpecs]);
 
-  return { projects, specsByProject, loading, error, refreshProjects, refreshSpecs };
+  // Lazily fetch cohorts for newly-expanded specs. The spec list may not be
+  // loaded yet when the user toggles expansion, so we keep "attempted" specs
+  // out of the dedupe set until we actually fire the fetch — that way we
+  // retry on the next render once specsByProject populates plan_id.
+  const fetchedCohortsForSpecRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    for (const specId of expandedSpecs) {
+      if (fetchedCohortsForSpecRef.current.has(specId)) continue;
+      let planId: string | null = null;
+      for (const list of specsByProject.values()) {
+        const found = list.find((s) => s.id === specId);
+        if (found?.plan_id) {
+          planId = found.plan_id;
+          break;
+        }
+      }
+      if (planId) {
+        fetchedCohortsForSpecRef.current.add(specId);
+        void refreshCohorts(planId);
+      }
+    }
+    // Drop entries for specs that were collapsed so re-expanding refetches.
+    for (const specId of fetchedCohortsForSpecRef.current) {
+      if (!expandedSpecs.has(specId)) fetchedCohortsForSpecRef.current.delete(specId);
+    }
+  }, [expandedSpecs, specsByProject, refreshCohorts]);
+
+  return {
+    projects,
+    specsByProject,
+    cohortsByPlan,
+    loading,
+    error,
+    refreshProjects,
+    refreshSpecs,
+    refreshCohorts,
+  };
 }

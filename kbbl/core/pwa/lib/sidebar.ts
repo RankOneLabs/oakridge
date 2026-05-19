@@ -39,6 +39,7 @@ export function indexSessionsByProject(
 
 export const COLLAPSED_KEY = "oakridge.sidebar.collapsed";
 export const EXPANDED_PROJECTS_KEY = "oakridge.sidebar.expandedProjects";
+export const EXPANDED_SPECS_KEY = "oakridge.sidebar.expandedSpecs";
 
 export function readCollapsed(): boolean {
   try {
@@ -48,13 +49,23 @@ export function readCollapsed(): boolean {
   }
 }
 
-export function readExpandedProjects(): Set<string> {
+function readStringSet(key: string): Set<string> {
   try {
-    const raw = localStorage.getItem(EXPANDED_PROJECTS_KEY);
+    const raw = localStorage.getItem(key);
     if (!raw) return new Set();
     const arr = JSON.parse(raw);
-    return Array.isArray(arr) ? new Set(arr.filter((x): x is string => typeof x === "string")) : new Set();
+    return Array.isArray(arr)
+      ? new Set(arr.filter((x): x is string => typeof x === "string"))
+      : new Set();
   } catch {
     return new Set();
   }
+}
+
+export function readExpandedProjects(): Set<string> {
+  return readStringSet(EXPANDED_PROJECTS_KEY);
+}
+
+export function readExpandedSpecs(): Set<string> {
+  return readStringSet(EXPANDED_SPECS_KEY);
 }

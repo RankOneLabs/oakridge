@@ -1,4 +1,9 @@
-import type { SidebarProject, SidebarSession, SidebarSpec } from "../../sidebar/Sidebar";
+import type {
+  SidebarCohort,
+  SidebarProject,
+  SidebarSession,
+  SidebarSpec,
+} from "../../sidebar/Sidebar";
 
 import { SidebarSessionsSection } from "./SidebarSessionsSection";
 import { SidebarSpecsSection } from "./SidebarSpecsSection";
@@ -9,6 +14,9 @@ export interface SidebarProjectRowProps {
   onToggle: (id: string) => void;
   sessions: SidebarSession[];
   specs: SidebarSpec[];
+  cohortsByPlan: Map<string, SidebarCohort[]>;
+  expandedSpecs: Set<string>;
+  onToggleSpec: (id: string) => void;
   onSelectSession: (sid: string) => void;
   onAddSpec: (project: SidebarProject) => void;
 }
@@ -19,6 +27,9 @@ export function SidebarProjectRow({
   onToggle,
   sessions,
   specs,
+  cohortsByPlan,
+  expandedSpecs,
+  onToggleSpec,
   onSelectSession,
   onAddSpec,
 }: SidebarProjectRowProps) {
@@ -38,7 +49,13 @@ export function SidebarProjectRow({
       {isOpen && (
         <div id={`sidebar-project-body-${project.id}`} className="sidebar-project-body">
           <SidebarSessionsSection sessions={sessions} onSelect={onSelectSession} />
-          <SidebarSpecsSection specs={specs} onAddSpec={() => onAddSpec(project)} />
+          <SidebarSpecsSection
+            specs={specs}
+            cohortsByPlan={cohortsByPlan}
+            expandedSpecs={expandedSpecs}
+            onToggleSpec={onToggleSpec}
+            onAddSpec={() => onAddSpec(project)}
+          />
         </div>
       )}
     </li>
