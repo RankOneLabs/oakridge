@@ -54,6 +54,11 @@ export function useSidebarProjects(
     }
   }, []);
 
+  // Per-plan AbortController so overlapping fetches (rapid retry, plan reopen
+  // mid-flight, fast collapse/re-expand) can't commit out-of-order. The hook
+  // unmount effect below aborts everything in-flight.
+  const cohortControllersRef = useRef<Map<string, AbortController>>(new Map());
+
   const refreshCohorts = useCallback(async (planId: string) => {
     // Errors are tracked separately from data so the UI can distinguish
     // "fetch failed, retry available" from "this plan really has no cohorts".
@@ -73,8 +78,15 @@ export function useSidebarProjects(
         return next;
       });
     };
+
+    cohortControllersRef.current.get(planId)?.abort();
+    const controller = new AbortController();
+    cohortControllersRef.current.set(planId, controller);
+
     try {
-      const res = await fetch(`/cohorts?plan_id=${encodeURIComponent(planId)}`);
+      const res = await fetch(`/cohorts?plan_id=${encodeURIComponent(planId)}`, {
+        signal: controller.signal,
+      });
       if (!res.ok) {
         recordError(`HTTP ${res.status}`);
         return;
@@ -87,8 +99,26 @@ export function useSidebarProjects(
         return next;
       });
     } catch (err) {
+      // A newer refreshCohorts(planId) call superseded us — leave its result
+      // alone. AbortError is the only signal-side throw; everything else is
+      // a real network/parse failure worth surfacing.
+      if (err instanceof DOMException && err.name === "AbortError") return;
       recordError(err instanceof Error ? err.message : "network error");
+    } finally {
+      // Only clear if we still own the slot — a newer call may have replaced
+      // us in the map already.
+      if (cohortControllersRef.current.get(planId) === controller) {
+        cohortControllersRef.current.delete(planId);
+      }
     }
+  }, []);
+
+  useEffect(() => {
+    const controllers = cohortControllersRef.current;
+    return () => {
+      for (const controller of controllers.values()) controller.abort();
+      controllers.clear();
+    };
   }, []);
 
   useEffect(() => {
