@@ -56,10 +56,12 @@ export function Sidebar({ sessions, onSelectSession }: SidebarProps) {
     projects,
     specsByProject,
     cohortsByPlan,
+    cohortErrorsByPlan,
     loading,
     error,
     refreshProjects,
     refreshSpecs,
+    refreshCohorts,
   } = useSidebarProjects(expandedProjects, expandedSpecs);
 
   const [showAddProject, setShowAddProject] = useState(false);
@@ -165,8 +167,10 @@ export function Sidebar({ sessions, onSelectSession }: SidebarProps) {
               sessions={sessionsByProject.get(p.id) ?? []}
               specs={specsByProject.get(p.id) ?? []}
               cohortsByPlan={cohortsByPlan}
+              cohortErrorsByPlan={cohortErrorsByPlan}
               expandedSpecs={expandedSpecs}
               onToggleSpec={toggleSpec}
+              onRetryCohorts={refreshCohorts}
               onSelectSession={onSelectSession}
               onAddSpec={setAddSpecProject}
             />

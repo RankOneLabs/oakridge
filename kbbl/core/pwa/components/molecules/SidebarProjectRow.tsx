@@ -15,8 +15,10 @@ export interface SidebarProjectRowProps {
   sessions: SidebarSession[];
   specs: SidebarSpec[];
   cohortsByPlan: Map<string, SidebarCohort[]>;
+  cohortErrorsByPlan: Map<string, string>;
   expandedSpecs: Set<string>;
   onToggleSpec: (id: string) => void;
+  onRetryCohorts: (planId: string) => void | Promise<void>;
   onSelectSession: (sid: string) => void;
   onAddSpec: (project: SidebarProject) => void;
 }
@@ -28,8 +30,10 @@ export function SidebarProjectRow({
   sessions,
   specs,
   cohortsByPlan,
+  cohortErrorsByPlan,
   expandedSpecs,
   onToggleSpec,
+  onRetryCohorts,
   onSelectSession,
   onAddSpec,
 }: SidebarProjectRowProps) {
@@ -52,8 +56,10 @@ export function SidebarProjectRow({
           <SidebarSpecsSection
             specs={specs}
             cohortsByPlan={cohortsByPlan}
+            cohortErrorsByPlan={cohortErrorsByPlan}
             expandedSpecs={expandedSpecs}
             onToggleSpec={onToggleSpec}
+            onRetryCohorts={onRetryCohorts}
             onAddSpec={() => onAddSpec(project)}
           />
         </div>

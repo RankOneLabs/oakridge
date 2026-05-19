@@ -3,16 +3,20 @@ import type { SidebarCohort, SidebarSpec } from "../../sidebar/Sidebar";
 export interface SidebarSpecsSectionProps {
   specs: SidebarSpec[];
   cohortsByPlan: Map<string, SidebarCohort[]>;
+  cohortErrorsByPlan: Map<string, string>;
   expandedSpecs: Set<string>;
   onToggleSpec: (id: string) => void;
+  onRetryCohorts: (planId: string) => void | Promise<void>;
   onAddSpec: () => void;
 }
 
 export function SidebarSpecsSection({
   specs,
   cohortsByPlan,
+  cohortErrorsByPlan,
   expandedSpecs,
   onToggleSpec,
+  onRetryCohorts,
   onAddSpec,
 }: SidebarSpecsSectionProps) {
   return (
@@ -74,37 +78,52 @@ export function SidebarSpecsSection({
                     <span className="sidebar-leaf-status">{s.status}</span>
                   </div>
                 )}
-                {s.plan_id && expanded && (
-                  <ul className="sidebar-cohort-list">
-                    {cohorts === undefined ? (
-                      <li className="sidebar-section-empty">loading…</li>
-                    ) : cohorts.length === 0 ? (
-                      <li className="sidebar-section-empty">no cohorts</li>
-                    ) : (
-                      [...cohorts]
-                        .sort((a, b) => a.position - b.position)
-                        .map((c) => (
-                          <li key={c.id}>
-                            <button
-                              type="button"
-                              className="sidebar-leaf sidebar-leaf-button sidebar-cohort-row"
-                              title={`${c.title}\nstatus: ${c.status}`}
-                              onClick={() => {
-                                window.location.hash = `cohort/${c.id}`;
-                              }}
-                            >
-                              <span
-                                className={`sidebar-cohort-dot sidebar-cohort-dot-${c.status}`}
-                                aria-hidden="true"
-                              />
-                              <span className="sidebar-leaf-label">{c.title}</span>
-                              <span className="sidebar-leaf-status">{c.status}</span>
-                            </button>
-                          </li>
-                        ))
-                    )}
-                  </ul>
-                )}
+                {s.plan_id && expanded && (() => {
+                  const planId = s.plan_id;
+                  const fetchError = cohortErrorsByPlan.get(planId);
+                  return (
+                    <ul className="sidebar-cohort-list">
+                      {fetchError ? (
+                        <li>
+                          <button
+                            type="button"
+                            className="sidebar-cohort-error"
+                            title={`Failed to load cohorts: ${fetchError}`}
+                            onClick={() => { void onRetryCohorts(planId); }}
+                          >
+                            failed — click to retry
+                          </button>
+                        </li>
+                      ) : cohorts === undefined ? (
+                        <li className="sidebar-section-empty">loading…</li>
+                      ) : cohorts.length === 0 ? (
+                        <li className="sidebar-section-empty">no cohorts</li>
+                      ) : (
+                        [...cohorts]
+                          .sort((a, b) => a.position - b.position)
+                          .map((c) => (
+                            <li key={c.id}>
+                              <button
+                                type="button"
+                                className="sidebar-leaf sidebar-leaf-button sidebar-cohort-row"
+                                title={`${c.title}\nstatus: ${c.status}`}
+                                onClick={() => {
+                                  window.location.hash = `cohort/${c.id}`;
+                                }}
+                              >
+                                <span
+                                  className={`sidebar-cohort-dot sidebar-cohort-dot-${c.status}`}
+                                  aria-hidden="true"
+                                />
+                                <span className="sidebar-leaf-label">{c.title}</span>
+                                <span className="sidebar-leaf-status">{c.status}</span>
+                              </button>
+                            </li>
+                          ))
+                      )}
+                    </ul>
+                  );
+                })()}
               </li>
             );
           })}

@@ -6,6 +6,7 @@ export interface SidebarProjectsState {
   projects: SidebarProject[];
   specsByProject: Map<string, SidebarSpec[]>;
   cohortsByPlan: Map<string, SidebarCohort[]>;
+  cohortErrorsByPlan: Map<string, string>;
   loading: boolean;
   error: string | null;
   refreshProjects: () => Promise<void>;
@@ -20,6 +21,7 @@ export function useSidebarProjects(
   const [projects, setProjects] = useState<SidebarProject[]>([]);
   const [specsByProject, setSpecsByProject] = useState<Map<string, SidebarSpec[]>>(new Map());
   const [cohortsByPlan, setCohortsByPlan] = useState<Map<string, SidebarCohort[]>>(new Map());
+  const [cohortErrorsByPlan, setCohortErrorsByPlan] = useState<Map<string, string>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -53,32 +55,39 @@ export function useSidebarProjects(
   }, []);
 
   const refreshCohorts = useCallback(async (planId: string) => {
-    const writeTerminalIfEmpty = () => {
-      // Always write a terminal value so SidebarSpecsSection can stop showing
-      // `loading…`. If we already have data for this plan (e.g. a refresh that
-      // raced a transient error), keep it — only seed an empty array when the
-      // map has no entry yet.
-      setCohortsByPlan((prev) => {
-        if (prev.has(planId)) return prev;
+    // Errors are tracked separately from data so the UI can distinguish
+    // "fetch failed, retry available" from "this plan really has no cohorts".
+    // Seeding `[]` on failure conflates the two and suppresses retries.
+    const recordError = (message: string) => {
+      setCohortErrorsByPlan((prev) => {
         const next = new Map(prev);
-        next.set(planId, []);
+        next.set(planId, message);
+        return next;
+      });
+    };
+    const clearError = () => {
+      setCohortErrorsByPlan((prev) => {
+        if (!prev.has(planId)) return prev;
+        const next = new Map(prev);
+        next.delete(planId);
         return next;
       });
     };
     try {
       const res = await fetch(`/cohorts?plan_id=${encodeURIComponent(planId)}`);
       if (!res.ok) {
-        writeTerminalIfEmpty();
+        recordError(`HTTP ${res.status}`);
         return;
       }
       const data = (await res.json()) as SidebarCohort[];
+      clearError();
       setCohortsByPlan((prev) => {
         const next = new Map(prev);
         next.set(planId, data);
         return next;
       });
-    } catch {
-      writeTerminalIfEmpty();
+    } catch (err) {
+      recordError(err instanceof Error ? err.message : "network error");
     }
   }, []);
 
@@ -135,6 +144,7 @@ export function useSidebarProjects(
     projects,
     specsByProject,
     cohortsByPlan,
+    cohortErrorsByPlan,
     loading,
     error,
     refreshProjects,

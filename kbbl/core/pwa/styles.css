@@ -2783,6 +2783,10 @@ body {
   cursor: pointer;
   color: inherit;
   font: inherit;
+  /* Touch target parity with .review-shell__tap-target — a single-line brief
+     goal would otherwise render below the 44px minimum. */
+  min-block-size: 44px;
+  box-sizing: border-box;
 }
 .cohort-view__brief-link:hover {
   border-color: var(--border-hover);
@@ -3302,6 +3306,24 @@ body {
 
 .sidebar-cohort-row {
   font-size: 0.72rem;
+}
+
+.sidebar-cohort-error {
+  background: transparent;
+  border: none;
+  text-align: left;
+  width: 100%;
+  padding: 3px 8px;
+  font: inherit;
+  font-size: 0.7rem;
+  color: var(--danger-fg);
+  cursor: pointer;
+  border-radius: 3px;
+  font-style: italic;
+}
+.sidebar-cohort-error:hover {
+  background: var(--bg-app);
+  text-decoration: underline;
 }
 
 .sidebar-cohort-dot {
