@@ -16,10 +16,12 @@ import { insertProject } from "./projects";
 import { insertSpec } from "./specs";
 import { insertPlan } from "./plans";
 
-// Minimal SessionManager stub — these tests don't exercise session-status
-// resolution, so a fixed `undefined` return is enough.
+// Minimal SessionManager stub. Default `get` returns undefined so the
+// existing tests behave as before; the GET /cohorts/:id session-status
+// tests below override `managerGet` to simulate live/ended sessions.
+let managerGet: (sid: string) => unknown = () => undefined;
 const stubManager = {
-  get: (_sid: string) => undefined,
+  get: (sid: string) => managerGet(sid),
 } as unknown as import("../session/session-manager").SessionManager;
 
 let db: Database;
@@ -36,6 +38,7 @@ beforeEach(() => {
   insertPlan(db, { id: PLAN_ID, spec_id: SPEC_ID });
   app = new Hono();
   mountCohortsRoutes(app, { db, manager: stubManager });
+  managerGet = () => undefined;
 });
 
 afterEach(() => {
@@ -163,6 +166,57 @@ describe("GET /cohorts/:id", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { id: string };
     expect(body.id).toBe("known");
+  });
+
+  test("current_session_status is null when current_session_ref is null", async () => {
+    mkCohort("no-ref", 1);
+    const res = await app.request("/cohorts/no-ref");
+    const body = (await res.json()) as { current_session_status: string | null };
+    expect(body.current_session_status).toBeNull();
+  });
+
+  test("current_session_status reflects manager when ref is live", async () => {
+    mkCohort("with-ref", 1);
+    // Directly UPDATE — there's no public helper for setting session refs
+    // from the test surface; the dispatcher writes them in production.
+    db.prepare(
+      "UPDATE cohorts SET current_session_ref = ?, current_session_stage = ? WHERE id = ?",
+    ).run("sess-live", "build", "with-ref");
+    managerGet = (sid: string) =>
+      sid === "sess-live" ? { status: "live" } : undefined;
+
+    const res = await app.request("/cohorts/with-ref");
+    const body = (await res.json()) as { current_session_status: string | null };
+    expect(body.current_session_status).toBe("live");
+  });
+
+  test("current_session_status reflects ended sessions", async () => {
+    mkCohort("ended-ref", 1);
+    db.prepare(
+      "UPDATE cohorts SET current_session_ref = ?, current_session_stage = ? WHERE id = ?",
+    ).run("sess-ended", "build", "ended-ref");
+    managerGet = (sid: string) =>
+      sid === "sess-ended" ? { status: "ended" } : undefined;
+
+    const res = await app.request("/cohorts/ended-ref");
+    const body = (await res.json()) as { current_session_status: string | null };
+    expect(body.current_session_status).toBe("ended");
+  });
+
+  test("current_session_status is null when manager doesn't know the ref", async () => {
+    // The dispatcher persists `current_session_ref` to the cohort row but the
+    // SessionManager only tracks live in-process sessions. After a server
+    // restart (or manual purge), the ref outlives the manager entry — guard
+    // logic treats this as "not running" so re-dispatch isn't blocked.
+    mkCohort("orphan-ref", 1);
+    db.prepare(
+      "UPDATE cohorts SET current_session_ref = ?, current_session_stage = ? WHERE id = ?",
+    ).run("sess-gone", "build", "orphan-ref");
+    // managerGet stays at default `() => undefined`
+
+    const res = await app.request("/cohorts/orphan-ref");
+    const body = (await res.json()) as { current_session_status: string | null };
+    expect(body.current_session_status).toBeNull();
   });
 });
 
