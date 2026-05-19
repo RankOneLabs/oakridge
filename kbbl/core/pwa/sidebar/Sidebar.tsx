@@ -19,6 +19,7 @@ export interface SidebarSpec {
   project_id: string;
   title: string;
   status: string;
+  plan_id: string | null;
 }
 
 export interface SidebarSession {

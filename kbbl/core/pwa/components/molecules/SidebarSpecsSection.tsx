@@ -26,13 +26,27 @@ export function SidebarSpecsSection({ specs, onAddSpec }: SidebarSpecsSectionPro
         <ul className="sidebar-section-list">
           {specs.map((s) => (
             <li key={s.id}>
-              <div
-                className="sidebar-leaf sidebar-leaf-static"
-                title={`${s.title}\nstatus: ${s.status}`}
-              >
-                <span className="sidebar-leaf-label">{s.title}</span>
-                <span className="sidebar-leaf-status">{s.status}</span>
-              </div>
+              {s.plan_id ? (
+                <button
+                  type="button"
+                  className="sidebar-leaf sidebar-leaf-button"
+                  title={`${s.title}\nstatus: ${s.status}\n→ open plan`}
+                  onClick={() => {
+                    window.location.hash = `plan/${s.plan_id}`;
+                  }}
+                >
+                  <span className="sidebar-leaf-label">{s.title}</span>
+                  <span className="sidebar-leaf-status">{s.status}</span>
+                </button>
+              ) : (
+                <div
+                  className="sidebar-leaf sidebar-leaf-static"
+                  title={`${s.title}\nstatus: ${s.status}`}
+                >
+                  <span className="sidebar-leaf-label">{s.title}</span>
+                  <span className="sidebar-leaf-status">{s.status}</span>
+                </div>
+              )}
             </li>
           ))}
         </ul>

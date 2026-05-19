@@ -1,6 +1,8 @@
 import { Database } from "bun:sqlite";
 import type { Spec } from "../types/task-tracker";
 
+export type SpecWithPlan = Spec & { plan_id: string | null };
+
 export function insertSpec(
   db: Database,
   {
@@ -23,10 +25,22 @@ export function getSpec(db: Database, id: string): Spec | null {
   );
 }
 
-export function listSpecsByProject(db: Database, project_id: string): Spec[] {
+export function listSpecsByProject(db: Database, project_id: string): SpecWithPlan[] {
+  // The correlated subquery surfaces the spec's most recent plan revision —
+  // there can be many (rejected/superseded chain), and the sidebar wants the
+  // one to deep-link to. PlanReviewView handles non-pending statuses, so we
+  // don't filter by status here.
   return db
-    .prepare<Spec, [string]>(
-      "SELECT * FROM specs WHERE project_id = ? ORDER BY created_at, id",
+    .prepare<SpecWithPlan, [string]>(
+      `SELECT s.*, (
+         SELECT p.id FROM plans p
+         WHERE p.spec_id = s.id
+         ORDER BY p.created_at DESC
+         LIMIT 1
+       ) AS plan_id
+       FROM specs s
+       WHERE s.project_id = ?
+       ORDER BY s.created_at, s.id`,
     )
     .all(project_id);
 }

@@ -6,7 +6,11 @@ export function createKbblChatBackend({ manager }: { manager: SessionManager }):
     id: "kbbl_chat",
 
     async dispatch(_stage: StageRow, inputRef: InputRef, renderedPrompt: string): Promise<{ session_ref: string }> {
-      const session = await manager.create({ workdir: inputRef.workdir, model: null });
+      const session = await manager.create({
+        workdir: inputRef.workdir,
+        name: inputRef.sessionName,
+        model: null,
+      });
       await session.writeInput(renderedPrompt);
       return { session_ref: session.oakridgeSid };
     },

@@ -1,6 +1,7 @@
 import { useState, type Ref } from "react";
 
 import type { SessionSnapshot, Status, Theme } from "../../types";
+import { prettyModelLabel } from "../../lib/format";
 import { sessionLabelTitle, workdirBasename } from "../../lib/session";
 
 export function SessionTopBar({
@@ -139,6 +140,11 @@ export function SessionTopBar({
         <span className="session-label-name">
           {snapshot?.name || sid.slice(0, 8)}
         </span>
+        {snapshot?.model && (
+          <span className="session-label-model" title={snapshot.model}>
+            {prettyModelLabel(snapshot.model)}
+          </span>
+        )}
         {snapshot && (() => {
           // projectWorkdir is the operator's original repo when worktrees
           // are on; falls back to workdir for pre-Phase-1 archived
