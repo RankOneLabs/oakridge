@@ -22,6 +22,14 @@ export interface SidebarSpec {
   plan_id: string | null;
 }
 
+export interface SidebarCohort {
+  id: string;
+  plan_id: string;
+  title: string;
+  position: number;
+  status: string;
+}
+
 export interface SidebarSession {
   sid: string;
   name: string;
@@ -35,10 +43,26 @@ interface SidebarProps {
 }
 
 export function Sidebar({ sessions, onSelectSession }: SidebarProps) {
-  const { collapsed, setCollapsed, expandedProjects, setExpandedProjects, toggleProject } =
-    useSidebarStorage();
-  const { projects, specsByProject, loading, error, refreshProjects, refreshSpecs } =
-    useSidebarProjects(expandedProjects);
+  const {
+    collapsed,
+    setCollapsed,
+    expandedProjects,
+    setExpandedProjects,
+    toggleProject,
+    expandedSpecs,
+    toggleSpec,
+  } = useSidebarStorage();
+  const {
+    projects,
+    specsByProject,
+    cohortsByPlan,
+    cohortErrorsByPlan,
+    loading,
+    error,
+    refreshProjects,
+    refreshSpecs,
+    refreshCohorts,
+  } = useSidebarProjects(expandedProjects, expandedSpecs);
 
   const [showAddProject, setShowAddProject] = useState(false);
   const [addSpecProject, setAddSpecProject] = useState<SidebarProject | null>(null);
@@ -142,6 +166,11 @@ export function Sidebar({ sessions, onSelectSession }: SidebarProps) {
               onToggle={toggleProject}
               sessions={sessionsByProject.get(p.id) ?? []}
               specs={specsByProject.get(p.id) ?? []}
+              cohortsByPlan={cohortsByPlan}
+              cohortErrorsByPlan={cohortErrorsByPlan}
+              expandedSpecs={expandedSpecs}
+              onToggleSpec={toggleSpec}
+              onRetryCohorts={refreshCohorts}
               onSelectSession={onSelectSession}
               onAddSpec={setAddSpecProject}
             />

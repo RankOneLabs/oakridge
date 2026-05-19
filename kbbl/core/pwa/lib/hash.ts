@@ -39,7 +39,9 @@ export function writeHashTaskId(taskId: number | null): void {
   window.location.hash = `task=${taskId}`;
 }
 
-export function readHashRoute(): { view: "plan" | "brief"; id: string } | null {
+export function readHashRoute():
+  | { view: "plan" | "brief" | "cohort"; id: string }
+  | null {
   const hash = window.location.hash.slice(1);
   if (hash.startsWith("plan/")) {
     const id = hash.slice(5);
@@ -48,6 +50,10 @@ export function readHashRoute(): { view: "plan" | "brief"; id: string } | null {
   if (hash.startsWith("brief/")) {
     const id = hash.slice(6);
     if (id) return { view: "brief", id };
+  }
+  if (hash.startsWith("cohort/")) {
+    const id = hash.slice(7);
+    if (id) return { view: "cohort", id };
   }
   return null;
 }
