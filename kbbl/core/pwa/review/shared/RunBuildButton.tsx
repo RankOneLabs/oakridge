@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
 
+import type { SessionStatus } from "../../types";
+
 interface RunBuildButtonProps {
   briefId: string;
   cohortId: string;
@@ -34,7 +36,7 @@ export function RunBuildButton({ briefId, cohortId }: RunBuildButtonProps) {
           ? (r.json() as Promise<{
               current_session_ref: string | null;
               current_session_stage: string | null;
-              current_session_status: string | null;
+              current_session_status: SessionStatus | null;
             }>)
           : null,
       )
