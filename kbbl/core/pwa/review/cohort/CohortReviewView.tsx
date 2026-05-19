@@ -15,6 +15,7 @@ interface CohortReviewViewProps {
 interface CohortDetail extends Cohort {
   current_session_ref?: string | null;
   current_session_stage?: string | null;
+  current_session_status?: string | null;
 }
 
 interface LoadedCohort {

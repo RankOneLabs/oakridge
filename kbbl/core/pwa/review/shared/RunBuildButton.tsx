@@ -10,11 +10,14 @@ export function RunBuildButton({ briefId, cohortId }: RunBuildButtonProps) {
   const [sessionRef, setSessionRef] = useState<string | null>(null);
   // "checking": looking up the cohort's current_session_ref so we don't
   // race the auto-dispatch that brief.approved triggers in dispatch-hooks.
-  // Only treat the ref as a live build when current_session_stage === "build"
-  // — otherwise a stale planner2 ref on the same column would hide the
-  // manual recovery button. Both the residual approve-emit/UPDATE race AND
-  // the larger "ref stays populated after session end" gap are tracked in
-  // docs/known_issues.md ("Run-build guard reads stale current_session_ref").
+  // The ref is treated as a live build only when:
+  //   1. current_session_stage === "build" (skip stale planner refs), AND
+  //   2. current_session_status is set and != "ended" (skip refs left
+  //      behind by completed/failed sessions — the dispatcher doesn't
+  //      clear them on session end). Server-side mirror in handlers/builds.ts.
+  // The residual ~ms race between approve-emit and the dispatcher's UPDATE
+  // is acknowledged in docs/known_issues.md — worst case is one extra failed
+  // POST, caught by the route guard.
   const [checking, setChecking] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
@@ -31,12 +34,18 @@ export function RunBuildButton({ briefId, cohortId }: RunBuildButtonProps) {
           ? (r.json() as Promise<{
               current_session_ref: string | null;
               current_session_stage: string | null;
+              current_session_status: string | null;
             }>)
           : null,
       )
       .then((cohort) => {
         if (cancelled) return;
-        if (cohort?.current_session_ref && cohort.current_session_stage === "build") {
+        if (
+          cohort?.current_session_ref &&
+          cohort.current_session_stage === "build" &&
+          cohort.current_session_status &&
+          cohort.current_session_status !== "ended"
+        ) {
           setSessionRef(cohort.current_session_ref);
         }
       })
