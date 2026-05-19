@@ -12,6 +12,7 @@ import {
 } from "../../db/cohorts";
 import { hasCycleAfterInsert } from "../../db/cohort-graph";
 import type { Cohort } from "../../types/task-tracker";
+import type { SessionManager } from "../../session/session-manager";
 
 const CreateCohortSchema = z.object({
   plan_id: z.string().min(1),
@@ -33,10 +34,11 @@ const CreateDependencySchema = z.object({
 
 interface CohortsRouteDeps {
   db: Database;
+  manager: SessionManager;
 }
 
 export function mountCohortsRoutes(app: Hono, deps: CohortsRouteDeps): void {
-  const { db } = deps;
+  const { db, manager } = deps;
 
   app.get("/cohorts", (c) => {
     const plan_id = c.req.query("plan_id");
@@ -82,7 +84,16 @@ export function mountCohortsRoutes(app: Hono, deps: CohortsRouteDeps): void {
     if (!cohort) {
       return c.json({ error: "not found" }, 404);
     }
-    return c.json(cohort);
+    // Resolve current_session_status from the live session manager so
+    // clients can distinguish a still-running session from a stale ref
+    // that the dispatcher never cleared. `null` means the session is no
+    // longer tracked (process restart, manual purge) and should be
+    // treated as ended for guard purposes — mirrors the server-side
+    // build guard in handlers/builds.ts.
+    const current_session_status = cohort.current_session_ref
+      ? (manager.get(cohort.current_session_ref)?.status ?? null)
+      : null;
+    return c.json({ ...cohort, current_session_status });
   });
 
   app.patch("/cohorts/:id", async (c) => {

@@ -225,7 +225,7 @@ export function createApp(deps: CreateAppDeps): Hono {
   mountPlansRoutes(app, { db });
   mountPlanStatusRoutes(app, { db });
   mountPlanReopenRoutes(app, { db });
-  mountCohortsRoutes(app, { db });
+  mountCohortsRoutes(app, { db, manager });
   mountCohortStatusRoutes(app, { db });
   mountBriefsRoutes(app, { db });
   mountBriefStatusRoutes(app, { db });

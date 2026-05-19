@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import type { Theme } from "../../types";
+import type { SessionStatus, Theme } from "../../types";
 import { RunBuildButton } from "../shared/RunBuildButton";
 import type { Cohort } from "../plan/types";
 import type { Brief } from "../brief/types";
@@ -15,6 +15,7 @@ interface CohortReviewViewProps {
 interface CohortDetail extends Cohort {
   current_session_ref?: string | null;
   current_session_stage?: string | null;
+  current_session_status?: SessionStatus | null;
 }
 
 interface LoadedCohort {

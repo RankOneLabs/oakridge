@@ -16,6 +16,12 @@ import { mountBriefsRoutes } from "../server/handlers/briefs";
 import { mountBriefStatusRoutes } from "../server/handlers/brief-status";
 import type { TaskTrackerEventMap } from "../db/events";
 
+// Minimal SessionManager stub — these tests don't exercise session-status
+// resolution, so a fixed `undefined` return is enough.
+const stubManager = {
+  get: (_sid: string) => undefined,
+} as unknown as import("../session/session-manager").SessionManager;
+
 let db: Database;
 let app: Hono;
 let cleanupBootstrap: () => void;
@@ -28,7 +34,7 @@ beforeEach(() => {
   mountSpecsRoutes(app, { db });
   mountPlansRoutes(app, { db });
   mountPlanStatusRoutes(app, { db });
-  mountCohortsRoutes(app, { db });
+  mountCohortsRoutes(app, { db, manager: stubManager });
   mountCohortStatusRoutes(app, { db });
   mountBriefsRoutes(app, { db });
   mountBriefStatusRoutes(app, { db });
