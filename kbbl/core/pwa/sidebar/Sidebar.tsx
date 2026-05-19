@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AddProjectModal } from "./AddProjectModal";
 import { AddSpecModal } from "./AddSpecModal";
@@ -19,6 +19,7 @@ export interface SidebarSpec {
   project_id: string;
   title: string;
   status: string;
+  plan_id: string | null;
 }
 
 export interface SidebarSession {
@@ -46,6 +47,39 @@ export function Sidebar({ sessions, onSelectSession }: SidebarProps) {
     () => indexSessionsByProject(sessions, projects),
     [sessions, projects],
   );
+
+  // Refresh an expanded project's specs when one of its sessions ends.
+  // A planner1 session ending is what flips a draft spec to planning_done
+  // and creates its first plan row; without this nudge the cached SidebarSpec
+  // stays plan_id=null and SidebarSpecsSection keeps rendering the static
+  // (non-clickable) variant until the page reloads.
+  //
+  // TODO(sidebar-stream): this only catches plan creation that coincides with
+  // a local session ending. Plans created by another tab, by an external
+  // process, or by a planner re-dispatch we didn't observe still won't appear
+  // until reload. The real fix is a /project-stream SSE channel (snapshot +
+  // delta on spec/plan writes, modeled on inboxHandler) consumed by a
+  // useProjectStream hook. Tracked separately — ~400-500 LOC, own PR.
+  const prevStatusBySidRef = useRef<Map<string, string>>(new Map());
+  useEffect(() => {
+    const prev = prevStatusBySidRef.current;
+    const projectsToRefresh = new Set<string>();
+    for (const [projectId, projectSessions] of sessionsByProject) {
+      if (!expandedProjects.has(projectId)) continue;
+      for (const s of projectSessions) {
+        const prior = prev.get(s.sid);
+        if (prior !== "ended" && s.status === "ended") {
+          projectsToRefresh.add(projectId);
+        }
+      }
+    }
+    const nextStatuses = new Map<string, string>();
+    for (const s of sessions) nextStatuses.set(s.sid, s.status);
+    prevStatusBySidRef.current = nextStatuses;
+    for (const projectId of projectsToRefresh) {
+      void refreshSpecs(projectId);
+    }
+  }, [sessions, sessionsByProject, expandedProjects, refreshSpecs]);
 
   if (collapsed) {
     return (

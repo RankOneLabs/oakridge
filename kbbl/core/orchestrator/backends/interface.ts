@@ -12,6 +12,13 @@ export interface InputRef {
   id: string;
   /** Absolute path to the project repo; required by KbblChatBackend to set spawn cwd. */
   workdir: string;
+  /**
+   * Human-readable session name derived from the stage + artifact, e.g.
+   * `planner1_writer` or `builder_cohort_0_writer`. Backends pass this to
+   * the underlying session factory so operators can identify dispatched
+   * sessions in the list view without clicking in.
+   */
+  sessionName: string;
 }
 
 export interface ExecutionBackend {

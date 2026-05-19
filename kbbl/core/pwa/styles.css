@@ -278,6 +278,15 @@ body {
   text-overflow: ellipsis;
   max-width: 100%;
 }
+.session-label-model {
+  font-size: 0.7rem;
+  color: var(--text-faint);
+  background: var(--bg-surface);
+  border-radius: 4px;
+  padding: 0 0.35rem;
+  font-family: "SF Mono", Menlo, monospace;
+  flex: 0 0 auto;
+}
 
 .input-hint {
   /* Desktop-only keyboard hint next to the inline input. Hidden by default. */
@@ -3049,6 +3058,10 @@ body {
 .sidebar-leaf-static:hover {
   background: transparent;
   color: var(--text-secondary);
+}
+
+.sidebar-leaf-button {
+  justify-content: space-between;
 }
 
 .sidebar-leaf-dot {

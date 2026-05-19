@@ -72,6 +72,81 @@ function getProjectForBrief(db: Database, brief_id: string): ProjectRow | null {
   );
 }
 
+// ---- Session name builders ----
+
+/**
+ * Squash a spec title down to something safe for use in a session label —
+ * lowercase, alnum+underscore only, length-capped so the full name stays
+ * readable in the sidebar. If the title sanitizes to empty (all-punct
+ * titles like "!!!"), fall back to the caller's artifact id so distinct
+ * artifacts don't collide on a shared literal.
+ */
+function sanitizeForName(s: string, fallbackId: string): string {
+  const out = s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  if (out.length === 0) return fallbackId.slice(0, 8);
+  return out.length > 40 ? out.slice(0, 40) : out;
+}
+
+function getSpecTitleForCohort(db: Database, cohort_id: string): string | null {
+  const row = db
+    .prepare<{ title: string }, [string]>(
+      `SELECT s.title FROM specs s
+         JOIN plans pl ON pl.spec_id = s.id
+         JOIN cohorts c ON c.plan_id = pl.id
+        WHERE c.id = ?`,
+    )
+    .get(cohort_id);
+  return row?.title ?? null;
+}
+
+function getCohortContextForBrief(
+  db: Database,
+  brief_id: string,
+): { position: number; spec_title: string } | null {
+  const row = db
+    .prepare<{ position: number; title: string }, [string]>(
+      `SELECT c.position, s.title FROM specs s
+         JOIN plans pl ON pl.spec_id = s.id
+         JOIN cohorts c ON c.plan_id = pl.id
+         JOIN briefs b ON b.cohort_id = c.id
+        WHERE b.id = ?`,
+    )
+    .get(brief_id);
+  return row ? { position: row.position, spec_title: row.title } : null;
+}
+
+function buildSessionNameForSpec(db: Database, spec_id: string, stageName: string): string {
+  const row = db
+    .prepare<{ title: string }, [string]>("SELECT title FROM specs WHERE id = ?")
+    .get(spec_id);
+  const slug = sanitizeForName(row?.title ?? "", spec_id);
+  return `${stageName}_${slug}`;
+}
+
+function buildSessionNameForCohort(db: Database, cohort_id: string, stageName: string): string {
+  const cohortRow = db
+    .prepare<{ position: number }, [string]>("SELECT position FROM cohorts WHERE id = ?")
+    .get(cohort_id);
+  const specTitle = getSpecTitleForCohort(db, cohort_id);
+  const slug = sanitizeForName(specTitle ?? "", cohort_id);
+  const pos = cohortRow?.position ?? 0;
+  return `${stageName}_cohort_${pos}_${slug}`;
+}
+
+function buildSessionNameForBrief(db: Database, brief_id: string, stageName: string): string {
+  const ctx = getCohortContextForBrief(db, brief_id);
+  // Map stage name "build" → "builder" prefix for the session label, since
+  // operators read "builder_cohort_…" more naturally than "build_cohort_…"
+  // when scanning the list view. Other stages keep their stage name as-is.
+  const prefix = stageName === "build" ? "builder" : stageName;
+  if (!ctx) return `${prefix}_${brief_id.slice(0, 8)}`;
+  const slug = sanitizeForName(ctx.spec_title, brief_id);
+  return `${prefix}_cohort_${ctx.position}_${slug}`;
+}
+
 // ---- Slot builders ----
 
 const BRIEF_FORMAT_GUIDE =
@@ -233,21 +308,27 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
       let workdir: string;
 
       switch (stage.input_artifact_type) {
-        case "spec":
+        case "spec": {
           slots = buildSlotsForSpec(db, inputId, kbblUrl);
           workdir = resolveWorkdirForSpec(db, inputId);
-          inputRef = { type: "spec", id: inputId, workdir };
+          const sessionName = buildSessionNameForSpec(db, inputId, stage.name);
+          inputRef = { type: "spec", id: inputId, workdir, sessionName };
           break;
-        case "cohort":
+        }
+        case "cohort": {
           slots = buildSlotsForCohort(db, inputId, kbblUrl);
           workdir = resolveWorkdirForCohort(db, inputId);
-          inputRef = { type: "cohort", id: inputId, workdir };
+          const sessionName = buildSessionNameForCohort(db, inputId, stage.name);
+          inputRef = { type: "cohort", id: inputId, workdir, sessionName };
           break;
-        case "brief":
+        }
+        case "brief": {
           slots = buildSlotsForBrief(db, inputId, kbblUrl);
           workdir = resolveWorkdirForBrief(db, inputId);
-          inputRef = { type: "brief", id: inputId, workdir };
+          const sessionName = buildSessionNameForBrief(db, inputId, stage.name);
+          inputRef = { type: "brief", id: inputId, workdir, sessionName };
           break;
+        }
         default:
           throw new Error(`unsupported input_artifact_type: ${stage.input_artifact_type}`);
       }
