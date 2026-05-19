@@ -16,6 +16,12 @@ import { insertProject } from "./projects";
 import { insertSpec } from "./specs";
 import { insertPlan } from "./plans";
 
+// Minimal SessionManager stub — these tests don't exercise session-status
+// resolution, so a fixed `undefined` return is enough.
+const stubManager = {
+  get: (_sid: string) => undefined,
+} as unknown as import("../session/session-manager").SessionManager;
+
 let db: Database;
 let app: Hono;
 
@@ -29,7 +35,7 @@ beforeEach(() => {
   insertSpec(db, { id: SPEC_ID, project_id: PROJECT_ID, title: "S" });
   insertPlan(db, { id: PLAN_ID, spec_id: SPEC_ID });
   app = new Hono();
-  mountCohortsRoutes(app, { db });
+  mountCohortsRoutes(app, { db, manager: stubManager });
 });
 
 afterEach(() => {

@@ -140,7 +140,7 @@ beforeEach(() => {
   mountPlansRoutes(app, { db });
   mountPlanStatusRoutes(app, { db });
   mountPlanReopenRoutes(app, { db });
-  mountCohortsRoutes(app, { db });
+  mountCohortsRoutes(app, { db, manager: stubManager });
   mountCohortStatusRoutes(app, { db });
   mountBriefsRoutes(app, { db });
   mountBriefStatusRoutes(app, { db });
