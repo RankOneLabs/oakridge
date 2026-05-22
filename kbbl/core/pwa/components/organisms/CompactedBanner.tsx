@@ -1,6 +1,8 @@
-import { useState, useEffect, type Ref } from "react";
+import { useState, type Ref } from "react";
 import Markdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
+
+import { useSessionHandoff } from "../../hooks/useSessionHandoff";
 
 export function CompactedBanner({
   ref,
@@ -24,40 +26,7 @@ export function CompactedBanner({
   // row lands directly on the rendered handoff (matches plan §1.8 "tap a
   // compacted session row → render handoff").
   const [showHandoff, setShowHandoff] = useState(true);
-  const [handoff, setHandoff] = useState<string | null>(null);
-  const [handoffStatus, setHandoffStatus] = useState<
-    "idle" | "loading" | "ok" | "missing" | "error"
-  >("idle");
-
-  useEffect(() => {
-    if (!showHandoff) return;
-    if (handoffStatus !== "idle") return;
-    let cancelled = false;
-    setHandoffStatus("loading");
-    fetch(`/${encodeURIComponent(sid)}/handoff`)
-      .then(async (r) => {
-        if (cancelled) return;
-        if (r.status === 404) {
-          setHandoffStatus("missing");
-          return;
-        }
-        if (!r.ok) {
-          setHandoffStatus("error");
-          return;
-        }
-        const text = await r.text();
-        if (cancelled) return;
-        setHandoff(text);
-        setHandoffStatus("ok");
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setHandoffStatus("error");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [showHandoff, sid, handoffStatus]);
+  const { handoff, status: handoffStatus } = useSessionHandoff(sid, showHandoff);
 
   return (
     <div className="compacted-banner" ref={ref}>
