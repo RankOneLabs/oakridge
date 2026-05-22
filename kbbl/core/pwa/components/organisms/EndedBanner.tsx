@@ -1,4 +1,6 @@
-import { useState, type Ref } from "react";
+import { type Ref } from "react";
+
+import { useResumeAction } from "../../hooks/useResumeAction";
 
 export function EndedBanner({
   ref,
@@ -9,8 +11,7 @@ export function EndedBanner({
   sid: string;
   onResume: (parentSid: string) => Promise<string | null>;
 }) {
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { trigger, pending, error } = useResumeAction(onResume);
   return (
     <div className="session-ended-banner" ref={ref}>
       <div className="session-ended-text">
@@ -21,16 +22,7 @@ export function EndedBanner({
           type="button"
           className="btn-resume btn-resume-banner"
           disabled={pending}
-          onClick={async () => {
-            if (pending) return;
-            setPending(true);
-            setError(null);
-            const err = await onResume(sid).catch((e) =>
-              e instanceof Error ? e.message : "network error",
-            );
-            if (err) setError(err);
-            setPending(false);
-          }}
+          onClick={() => void trigger(sid)}
         >
           {pending ? "starting…" : "Resume in new session"}
         </button>

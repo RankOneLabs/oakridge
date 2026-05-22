@@ -15,7 +15,7 @@ import { MetricsStrip } from "../components/organisms/MetricsStrip";
 import { EventList } from "../components/organisms/EventList";
 import { InputBox } from "../components/organisms/InputBox";
 import { PendingUserBubble } from "../components/molecules/PendingUserBubble";
-import { EndedBanner } from "../components/molecules/EndedBanner";
+import { EndedBanner } from "../components/organisms/EndedBanner";
 import { CompactedBanner } from "../components/organisms/CompactedBanner";
 import { CompactSuggestionBanner } from "../components/organisms/CompactSuggestionBanner";
 import { CompactingBanner } from "../components/molecules/CompactingBanner";
