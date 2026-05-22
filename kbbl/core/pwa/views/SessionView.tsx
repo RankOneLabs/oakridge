@@ -16,7 +16,7 @@ import { EventList } from "../components/organisms/EventList";
 import { InputBox } from "../components/organisms/InputBox";
 import { PendingUserBubble } from "../components/molecules/PendingUserBubble";
 import { EndedBanner } from "../components/molecules/EndedBanner";
-import { CompactedBanner } from "../components/molecules/CompactedBanner";
+import { CompactedBanner } from "../components/organisms/CompactedBanner";
 import { CompactSuggestionBanner } from "../components/molecules/CompactSuggestionBanner";
 import { CompactingBanner } from "../components/molecules/CompactingBanner";
 import { InFlightAssistantRow } from "../components/molecules/InFlightAssistantRow";
