@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useMutation } from "@tanstack/react-query";
 
 export type PermissionDecision = {
   requestId: string;
@@ -13,15 +14,10 @@ export function usePermissionDecision(sid: string): {
   localError: string | null;
   approveForTaskPending: boolean;
 } {
-  const [localPending, setLocalPending] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
-  const [approveForTaskPending, setApproveForTaskPending] = useState(false);
 
-  async function decide(payload: PermissionDecision) {
-    if (localPending) return;
-    setLocalPending(true);
-    setLocalError(null);
-    try {
+  const decideMutation = useMutation({
+    mutationFn: async (payload: PermissionDecision) => {
       const res = await fetch(`/${encodeURIComponent(sid)}/approval`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -32,63 +28,70 @@ export function usePermissionDecision(sid: string): {
         }),
       });
       if (!res.ok) {
-        // Mirror InputBox: surface the server's JSON `error` field if
-        // present so the operator sees `scope must be...` etc instead of
-        // a bare status code.
+        // Mirror InputBox: surface the server's JSON `error` field so the
+        // operator sees `scope must be...` etc instead of a bare status.
         const body = (await res.json().catch(() => null)) as {
           error?: unknown;
         } | null;
-        setLocalError(
+        throw new Error(
           typeof body?.error === "string"
             ? body.error
             : `server returned ${res.status}`,
         );
       }
-    } catch (err) {
-      setLocalError(err instanceof Error ? err.message : "request failed");
-    } finally {
-      setLocalPending(false);
-    }
-  }
+    },
+  });
 
-  async function approveForTask(toolName: string, requestId: string) {
-    if (approveForTaskPending || localPending) return;
-    setApproveForTaskPending(true);
-    setLocalError(null);
-    try {
+  const approveForTaskMutation = useMutation({
+    mutationFn: async (vars: { toolName: string; requestId: string }) => {
       const res = await fetch(
         `/${encodeURIComponent(sid)}/permission/approve-for-task`,
         {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ tool: toolName }),
+          body: JSON.stringify({ tool: vars.toolName }),
         },
       );
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as {
           error?: unknown;
         } | null;
-        setLocalError(
+        throw new Error(
           typeof body?.error === "string"
             ? body.error
             : `server returned ${res.status}`,
         );
-        return;
       }
+    },
+  });
+
+  async function decide(payload: PermissionDecision) {
+    if (decideMutation.isPending) return;
+    setLocalError(null);
+    try {
+      await decideMutation.mutateAsync(payload);
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : "request failed");
+    }
+  }
+
+  async function approveForTask(toolName: string, requestId: string) {
+    if (approveForTaskMutation.isPending || decideMutation.isPending) return;
+    setLocalError(null);
+    try {
+      await approveForTaskMutation.mutateAsync({ toolName, requestId });
       // Profile persisted — also resolve the current pending request
       await decide({ requestId, decision: "approve" });
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : "request failed");
-    } finally {
-      setApproveForTaskPending(false);
     }
   }
 
   return {
     decide,
     approveForTask,
-    localPending,
+    localPending: decideMutation.isPending,
     localError,
-    approveForTaskPending,
+    approveForTaskPending: approveForTaskMutation.isPending,
   };
 }
