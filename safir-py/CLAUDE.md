@@ -7,16 +7,15 @@ and `builder`.
 
 ## Shape
 
-Thin typed `httpx` client. No CLI. Pydantic models mirror safir's
-on-the-wire schema — keep them in sync with safir's own types as that API
-evolves. This is the only allowed door between oakridge's Python
-sub-packages and safir's HTTP surface; do not hand-roll HTTP clients in
-consumers.
+Thin `httpx` client. No CLI. Responses are returned as `dict[str, Any]`;
+there are no Pydantic models yet (the schema lives in the upstream
+service). Used by `builder` for its task/run/phase/handoff surface, and
+by `planner1` for environment-variable helpers — planner1 still keeps a
+thin local `SafirClient` for its `submit_plan` path.
 
 ## Dependencies
 
 - `httpx`
-- `pydantic`
 
 ## Commands
 
