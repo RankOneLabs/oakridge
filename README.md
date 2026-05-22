@@ -62,7 +62,7 @@ checkout). The `.catagents/standards` symlink in this repo is relative
 
 ```bash
 catagents              # rebuild every <pkg>/{CLAUDE,AGENTS}.md
-catagents --check      # CI: diff against committed outputs (exit 2 on drift)
+catagents --check      # diff against committed outputs (exit 2 on drift; intended for CI)
 ```
 
 Both `.catagents/` sources and the generated `<pkg>/{CLAUDE,AGENTS}.md`

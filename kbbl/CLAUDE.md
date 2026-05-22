@@ -142,7 +142,7 @@ Production mode is what `kbbl-start` runs. The PWA is rebuilt on every
   beyond ~15 entries, revisit.
 - **GraphQL** — REST + SSE handles everything currently.
 
-<!-- import: ../standards/core.md @ 64f13f09c483 -->
+<!-- import: ../standards/core.md @ dc5d023d72ef -->
 ## Two gates before building
 
 **Stop when uncertain.** Before introducing a pattern, dependency, file, or structural
@@ -227,7 +227,7 @@ over terse — `user_count`, not `n`. Booleans read as questions — `is_active`
 `has_permission`, `should_retry`.
 <!-- /import: ../standards/core.md -->
 
-<!-- import: ../standards/typescript.md @ 64f13f09c483 -->
+<!-- import: ../standards/typescript.md @ dc5d023d72ef -->
 ## Strictness
 
 `strict` mode on. No `any` — use `unknown` and narrow. No non-null assertions (`!`)
@@ -269,7 +269,7 @@ The project's configured linter and formatter (ESLint + Prettier, or Biome) clea
 Type-check in CI, not just locally.
 <!-- /import: ../standards/typescript.md -->
 
-<!-- import: ../standards/backend.md @ 64f13f09c483 -->
+<!-- import: ../standards/backend.md @ dc5d023d72ef -->
 ## Contracts first
 
 Define the API or data contract as named types before writing the handler. Derive the
@@ -312,7 +312,7 @@ Pure logic is unit-tested in isolation. IO and integration seams are tested at t
 boundary, against real or faithfully-faked dependencies.
 <!-- /import: ../standards/backend.md -->
 
-<!-- import: ../standards/frontend.md @ 64f13f09c483 -->
+<!-- import: ../standards/frontend.md @ dc5d023d72ef -->
 ## Data model before UI
 
 The domain model exists before any component. Types live in `types/` and mirror the real
@@ -361,7 +361,7 @@ utilities rather than ad-hoc values.
 - Building UI before the data model exists — the expensive one.
 <!-- /import: ../standards/frontend.md -->
 
-<!-- import: ../standards/react.md @ 64f13f09c483 -->
+<!-- import: ../standards/react.md @ dc5d023d72ef -->
 ## Atomic design
 
 Three tiers; the boundary is a hard rule, not a judgment call:
@@ -397,12 +397,6 @@ as a reflex.
 Functional `.tsx` with a typed props `interface`; destructure props in the signature.
 Callback props use the `on*` prefix (`onClose`, `onSelect`). Group three or more related
 props that travel together into a named type.
-
-## Server vs client (Next.js)
-
-Server components by default. `"use client"` only when a component needs state, effects,
-or browser APIs. Never import server-only modules (DB drivers, `node:fs`) into client
-code.
 
 ## Testing
 
