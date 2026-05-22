@@ -142,7 +142,7 @@ Production mode is what `kbbl-start` runs. The PWA is rebuilt on every
   beyond ~15 entries, revisit.
 - **GraphQL** — REST + SSE handles everything currently.
 
-<!-- import: ../standards/core.md @ 05d5f2dd512d -->
+<!-- import: ../standards/core.md @ d1e1747157da -->
 ## Two gates before building
 
 **Stop when uncertain.** Before introducing a pattern, dependency, file, or structural
@@ -227,7 +227,7 @@ over terse — `user_count`, not `n`. Booleans read as questions — `is_active`
 `has_permission`, `should_retry`.
 <!-- /import: ../standards/core.md -->
 
-<!-- import: ../standards/typescript.md @ 05d5f2dd512d -->
+<!-- import: ../standards/typescript.md @ d1e1747157da -->
 ## Strictness
 
 `strict` mode on. No `any` — use `unknown` and narrow. No non-null assertions (`!`)
@@ -269,7 +269,7 @@ The project's configured linter and formatter (ESLint + Prettier, or Biome) clea
 Type-check in CI, not just locally.
 <!-- /import: ../standards/typescript.md -->
 
-<!-- import: ../standards/backend.md @ 05d5f2dd512d -->
+<!-- import: ../standards/backend.md @ d1e1747157da -->
 ## Contracts first
 
 Define the API or data contract as named types before writing the handler. Derive the
@@ -312,7 +312,7 @@ Pure logic is unit-tested in isolation. IO and integration seams are tested at t
 boundary, against real or faithfully-faked dependencies.
 <!-- /import: ../standards/backend.md -->
 
-<!-- import: ../standards/frontend.md @ 05d5f2dd512d -->
+<!-- import: ../standards/frontend.md @ d1e1747157da -->
 ## Data model before UI
 
 The domain model exists before any component. Types live in `types/` and mirror the real
@@ -361,7 +361,7 @@ utilities rather than ad-hoc values.
 - Building UI before the data model exists — the expensive one.
 <!-- /import: ../standards/frontend.md -->
 
-<!-- import: ../standards/react.md @ 05d5f2dd512d -->
+<!-- import: ../standards/react.md @ d1e1747157da -->
 ## Atomic design
 
 Three tiers; the boundary is a hard rule, not a judgment call:
