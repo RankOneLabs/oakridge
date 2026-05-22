@@ -20,7 +20,7 @@ scores), separate from kbbl's session-shaped surface.
 
 ## Component organization
 
-Atomic hierarchy is in the imported react standard. lbc-dashboard-specific
+Atomic hierarchy is in the imported React standard. lbc-dashboard-specific
 paths:
 
 - `pwa/components/atoms/` — `StatusPill`, `EmptyMessage`, `TabButton`

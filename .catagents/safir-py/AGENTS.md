@@ -14,6 +14,7 @@ consumers.
 ## Dependencies
 
 - `httpx`
+- `pydantic`
 
 ## Commands
 

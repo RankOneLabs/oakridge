@@ -6,9 +6,11 @@ Planner-2 + build-agent jig pipeline: brief → handoff → PRs.
 
 - **CLI**: `safir-build` (`src/builder/cli.py`) — installed via the
   `[project.scripts]` table in `pyproject.toml`.
-- **Pipeline shape**: consumes a planner-2 brief, runs a jig-driven
-  build-agent loop (Anthropic backend), and emits handoffs that land
-  as safir runs / PRs.
+- **Pipeline shape**: consumes a planner-2 brief and runs a jig-driven
+  build-agent loop (Anthropic backend) that emits handoffs / PRs. The
+  top-level `run_build_pipeline` defaults to `auto_approve=False`,
+  which stops after planner-2 with run status `awaiting_review`; pass
+  `auto_approve=True` to run through to the build-agent loop.
 
 ## Dependencies
 

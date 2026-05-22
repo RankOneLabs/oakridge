@@ -22,7 +22,7 @@ scores), separate from kbbl's session-shaped surface.
 
 ## Component organization
 
-Atomic hierarchy is in the imported react standard. lbc-dashboard-specific
+Atomic hierarchy is in the imported React standard. lbc-dashboard-specific
 paths:
 
 - `pwa/components/atoms/` — `StatusPill`, `EmptyMessage`, `TabButton`
@@ -78,7 +78,7 @@ bunx tsc --noEmit                            # full-project typecheck (from oakr
 - `LBC_RUN_ROOT` — path to legit-biz-club's run output dir. Defaults to
   the sibling `../legit-biz-club/.run/`.
 
-<!-- import: ../standards/core.md @ dc5d023d72ef -->
+<!-- import: ../standards/core.md @ 05d5f2dd512d -->
 ## Two gates before building
 
 **Stop when uncertain.** Before introducing a pattern, dependency, file, or structural
@@ -163,7 +163,7 @@ over terse — `user_count`, not `n`. Booleans read as questions — `is_active`
 `has_permission`, `should_retry`.
 <!-- /import: ../standards/core.md -->
 
-<!-- import: ../standards/typescript.md @ dc5d023d72ef -->
+<!-- import: ../standards/typescript.md @ 05d5f2dd512d -->
 ## Strictness
 
 `strict` mode on. No `any` — use `unknown` and narrow. No non-null assertions (`!`)
@@ -205,7 +205,7 @@ The project's configured linter and formatter (ESLint + Prettier, or Biome) clea
 Type-check in CI, not just locally.
 <!-- /import: ../standards/typescript.md -->
 
-<!-- import: ../standards/backend.md @ dc5d023d72ef -->
+<!-- import: ../standards/backend.md @ 05d5f2dd512d -->
 ## Contracts first
 
 Define the API or data contract as named types before writing the handler. Derive the
@@ -242,13 +242,13 @@ flow thrown across layers.
 Configuration is a typed, validated object, checked at startup — fail fast on a bad
 config. Secrets come from the environment; never commit them, never log them.
 
-## Testing
+## Backend testing
 
 Pure logic is unit-tested in isolation. IO and integration seams are tested at the
 boundary, against real or faithfully-faked dependencies.
 <!-- /import: ../standards/backend.md -->
 
-<!-- import: ../standards/frontend.md @ dc5d023d72ef -->
+<!-- import: ../standards/frontend.md @ 05d5f2dd512d -->
 ## Data model before UI
 
 The domain model exists before any component. Types live in `types/` and mirror the real
@@ -297,7 +297,7 @@ utilities rather than ad-hoc values.
 - Building UI before the data model exists — the expensive one.
 <!-- /import: ../standards/frontend.md -->
 
-<!-- import: ../standards/react.md @ dc5d023d72ef -->
+<!-- import: ../standards/react.md @ 05d5f2dd512d -->
 ## Atomic design
 
 Three tiers; the boundary is a hard rule, not a judgment call:

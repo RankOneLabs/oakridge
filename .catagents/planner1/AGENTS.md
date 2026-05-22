@@ -1,20 +1,22 @@
 # planner1
 
-Decomposes a safir task's notes into a DAG of build-ready child tasks
+Decomposes a parent task's notes into a DAG of build-ready child tasks
 via jig + an LLM tool-loop (Anthropic backend).
 
 ## Entry point
 
 - **CLI**: `safir-decompose` (`src/planner1/cli.py`) — installed via the
-  `[project.scripts]` table in `pyproject.toml`.
-- **Output**: child tasks landed back into safir via `safir-py`. Builder
-  picks them up downstream.
+  `[project.scripts]` table in `pyproject.toml`. (The `safir-` prefix is
+  legacy naming; the CLI submits a decomposition plan to the parent-task
+  HTTP endpoint.)
+- **Output**: a decomposition plan (cohorts of build-ready child tasks),
+  submitted via `submit_plan` against the parent task's HTTP endpoint.
 
 ## Dependencies
 
 - `jig[anthropic]` — agent kit
-- `safir-py` — sibling HTTP client; do not import safir's HTTP routes
-  directly, always through `safir_py`
+- `safir-py` — sibling HTTP client; planner1 also keeps a thin local
+  `SafirClient` for the `submit_plan` path
 - `httpx`, `pydantic`
 
 ## Commands

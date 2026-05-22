@@ -2,21 +2,23 @@
 
 # planner1
 
-Decomposes a safir task's notes into a DAG of build-ready child tasks
+Decomposes a parent task's notes into a DAG of build-ready child tasks
 via jig + an LLM tool-loop (Anthropic backend).
 
 ## Entry point
 
 - **CLI**: `safir-decompose` (`src/planner1/cli.py`) — installed via the
-  `[project.scripts]` table in `pyproject.toml`.
-- **Output**: child tasks landed back into safir via `safir-py`. Builder
-  picks them up downstream.
+  `[project.scripts]` table in `pyproject.toml`. (The `safir-` prefix is
+  legacy naming; the CLI submits a decomposition plan to the parent-task
+  HTTP endpoint.)
+- **Output**: a decomposition plan (cohorts of build-ready child tasks),
+  submitted via `submit_plan` against the parent task's HTTP endpoint.
 
 ## Dependencies
 
 - `jig[anthropic]` — agent kit
-- `safir-py` — sibling HTTP client; do not import safir's HTTP routes
-  directly, always through `safir_py`
+- `safir-py` — sibling HTTP client; planner1 also keeps a thin local
+  `SafirClient` for the `submit_plan` path
 - `httpx`, `pydantic`
 
 ## Commands
@@ -30,7 +32,7 @@ uv run mypy                      # type-check
 uv run safir-decompose --help    # CLI help
 ```
 
-<!-- import: ../standards/core.md @ dc5d023d72ef -->
+<!-- import: ../standards/core.md @ 05d5f2dd512d -->
 ## Two gates before building
 
 **Stop when uncertain.** Before introducing a pattern, dependency, file, or structural
@@ -115,7 +117,7 @@ over terse — `user_count`, not `n`. Booleans read as questions — `is_active`
 `has_permission`, `should_retry`.
 <!-- /import: ../standards/core.md -->
 
-<!-- import: ../standards/python.md @ dc5d023d72ef -->
+<!-- import: ../standards/python.md @ 05d5f2dd512d -->
 ## Tooling — uv
 
 `uv` for everything: `uv sync`, `uv add`, `uv run`. Never `pip`, `poetry`, or `conda`.
@@ -167,7 +169,7 @@ imports from the project root. No wildcard imports. Prefer importing the symbols
 (`from x import foo`) over importing the module wholesale, unless the module is small and
 referenced pervasively (`import os`, `import typing as t`).
 
-## Naming
+## Python naming
 
 The language-agnostic rules in `core.md` apply. Python-specific: a single leading
 underscore marks a member as private (`_internal_state`). Do not use double-underscore
@@ -175,7 +177,7 @@ name mangling (`__private`) as "more private" — it exists to avoid attribute c
 in inheritance hierarchies, not as an access modifier, and using it that way misleads
 readers about intent.
 
-## Testing
+## Python testing
 
 `pytest` is the runner. Tests are module-level functions, not methods on a class. State
 varies through fixtures — including factory fixtures for objects that need many shapes
@@ -183,7 +185,7 @@ across tests — not `setUp` / `tearDown`. Descriptive test names; one clear ass
 test where practical.
 <!-- /import: ../standards/python.md -->
 
-<!-- import: ../standards/backend.md @ dc5d023d72ef -->
+<!-- import: ../standards/backend.md @ 05d5f2dd512d -->
 ## Contracts first
 
 Define the API or data contract as named types before writing the handler. Derive the
@@ -220,7 +222,7 @@ flow thrown across layers.
 Configuration is a typed, validated object, checked at startup — fail fast on a bad
 config. Secrets come from the environment; never commit them, never log them.
 
-## Testing
+## Backend testing
 
 Pure logic is unit-tested in isolation. IO and integration seams are tested at the
 boundary, against real or faithfully-faked dependencies.

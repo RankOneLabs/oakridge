@@ -31,7 +31,7 @@ bun run typecheck          # typecheck across the repo
 Python sub-packages are independent uv projects — see each package's own
 AGENTS.md for its commands.
 
-<!-- import: ./standards/core.md @ dc5d023d72ef -->
+<!-- import: ./standards/core.md @ 05d5f2dd512d -->
 ## Two gates before building
 
 **Stop when uncertain.** Before introducing a pattern, dependency, file, or structural

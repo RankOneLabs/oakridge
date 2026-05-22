@@ -30,7 +30,7 @@ conflate.
 ## Frontend file organization
 
 App.tsx grew to ~4.3k lines because no one wrote this down. The atomic
-hierarchy is in the imported react standard; kbbl-specific paths:
+hierarchy is in the imported React standard; kbbl-specific paths:
 
 ```text
 core/pwa/
