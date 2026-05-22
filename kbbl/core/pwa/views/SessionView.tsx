@@ -17,7 +17,7 @@ import { InputBox } from "../components/organisms/InputBox";
 import { PendingUserBubble } from "../components/molecules/PendingUserBubble";
 import { EndedBanner } from "../components/molecules/EndedBanner";
 import { CompactedBanner } from "../components/organisms/CompactedBanner";
-import { CompactSuggestionBanner } from "../components/molecules/CompactSuggestionBanner";
+import { CompactSuggestionBanner } from "../components/organisms/CompactSuggestionBanner";
 import { CompactingBanner } from "../components/molecules/CompactingBanner";
 import { InFlightAssistantRow } from "../components/molecules/InFlightAssistantRow";
 import { ThinkingIndicator } from "../components/atoms/ThinkingIndicator";

@@ -1,3 +1,5 @@
+import { useCompactRequest } from "../../hooks/useCompactRequest";
+
 export function CompactSuggestionBanner({
   sid,
   tokens,
@@ -7,6 +9,7 @@ export function CompactSuggestionBanner({
   tokens: number;
   onClear: () => void;
 }) {
+  const { trigger } = useCompactRequest(sid, onClear);
   return (
     <div className="compact-suggestion-banner">
       <span className="compact-suggestion-banner__text">
@@ -15,16 +18,7 @@ export function CompactSuggestionBanner({
       <button
         type="button"
         className="compact-suggestion-banner__action"
-        onClick={async () => {
-          try {
-            const res = await fetch(`/${encodeURIComponent(sid)}/compact`, {
-              method: "POST",
-            });
-            if (res.ok) onClear();
-          } catch {
-            // keep banner visible so operator can retry
-          }
-        }}
+        onClick={() => void trigger()}
       >
         Compact Now
       </button>
