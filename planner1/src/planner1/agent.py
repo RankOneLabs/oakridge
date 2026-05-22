@@ -1,6 +1,7 @@
 """Construct + run the planner 1 agent."""
 from __future__ import annotations
 
+import logging
 import os
 from datetime import datetime
 from typing import Any
@@ -13,6 +14,8 @@ from jig.tracing.stdout import StdoutTracer
 
 from .staging import StagingBuffer
 from .tools import AddCohortDependencyTool, CreateCohortTool
+
+logger = logging.getLogger(__name__)
 
 PLANNER1_SYSTEM_PROMPT = """\
 You are planner 1: you produce a plan of cohorts for a software-engineering
@@ -120,6 +123,12 @@ async def run_planner1(
     model: str = "claude-opus-4-7",
 ) -> tuple[StagingBuffer, str]:
     """Run the planner 1 agent. Returns (buffer, agent_summary_text)."""
+    logger.info(
+        "run_planner1 starting: parent_task_id=%s project_id=%s model=%s",
+        parent_task_id,
+        project_id,
+        model,
+    )
     buffer = StagingBuffer(parent_task_id=parent_task_id)
     tools = ToolRegistry([CreateCohortTool(buffer), AddCohortDependencyTool(buffer)])
 
@@ -141,4 +150,10 @@ async def run_planner1(
     )
     result = await run_agent(config, task_notes)
     summary = result.output or ""
+    logger.info(
+        "run_planner1 complete: parent_task_id=%s cohorts=%s summary_chars=%s",
+        parent_task_id,
+        len(buffer.cohorts),
+        len(summary),
+    )
     return buffer, summary
