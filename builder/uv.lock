@@ -683,10 +683,14 @@ version = "0.1.0"
 source = { directory = "../safir-py" }
 dependencies = [
     { name = "httpx" },
+    { name = "pydantic" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "httpx", specifier = ">=0.27" }]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pydantic", specifier = ">=2" },
+]
 
 [package.metadata.requires-dev]
 dev = [
