@@ -16,35 +16,15 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 
-export interface CellEvent {
-  ts: string;
-  kind: string;
-  payload: Record<string, unknown>;
-}
+import type {
+  CellDetail,
+  CellEvent,
+  CellSummary,
+  CommitSnapshot,
+  EvalScore,
+} from "./contracts";
 
-export interface EvalScore {
-  dimension: string;
-  value: number;
-  source: string;
-}
-
-export interface CellSummary {
-  cell_id: string;
-  run_ts: string;
-  target_name: string;
-  condition_name: string;
-  cell_dir: string;
-  status: "active" | "ended";
-  // Coarse last-activity hint for sorting; comes from events.jsonl mtime.
-  last_activity_ms: number;
-  event_count: number;
-}
-
-export interface CellDetail extends CellSummary {
-  events: CellEvent[];
-  artifact_filename: string | null;
-  commit_count: number;
-}
+export type { CellDetail, CellEvent, CellSummary, CommitSnapshot, EvalScore };
 
 /**
  * Resolve the run-root directory. Defaults to the sibling
@@ -408,12 +388,6 @@ export async function readArtifact(cellId: string): Promise<string | null> {
   } catch {
     return null;
   }
-}
-
-export interface CommitSnapshot {
-  index: number;
-  filename: string;
-  content: string;
 }
 
 export async function readCommits(cellId: string): Promise<CommitSnapshot[]> {

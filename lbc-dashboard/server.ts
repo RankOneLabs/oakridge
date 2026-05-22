@@ -19,6 +19,13 @@ import { open, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
+  ArtifactResponseSchema,
+  CellDetailSchema,
+  CellsResponseSchema,
+  CommitsResponseSchema,
+  EvalResponseSchema,
+} from "./src/contracts";
+import {
   getCellDetail,
   listCells,
   readArtifact,
@@ -31,22 +38,28 @@ import {
 const app = new Hono();
 
 // --- API ---------------------------------------------------------------
+//
+// Each handler runs ``Schema.parse(payload)`` immediately before
+// ``c.json(...)``. The parse is the seam that catches drift between
+// store.ts and contracts.ts — a mismatch becomes a 500 the operator
+// sees during development rather than a silent type-shape change on
+// the wire.
 
 app.get("/api/cells", async (c) => {
   const cells = await listCells();
-  return c.json({ cells });
+  return c.json(CellsResponseSchema.parse({ cells }));
 });
 
 app.get("/api/cells/:cellId", async (c) => {
   const detail = await getCellDetail(c.req.param("cellId"));
   if (detail === null) return c.json({ error: "not found" }, 404);
-  return c.json(detail);
+  return c.json(CellDetailSchema.parse(detail));
 });
 
 app.get("/api/cells/:cellId/artifact", async (c) => {
   const content = await readArtifact(c.req.param("cellId"));
   if (content === null) return c.json({ error: "not found" }, 404);
-  return c.json({ content });
+  return c.json(ArtifactResponseSchema.parse({ content }));
 });
 
 app.get("/api/cells/:cellId/eval", async (c) => {
@@ -60,7 +73,7 @@ app.get("/api/cells/:cellId/eval", async (c) => {
   // folds any empty/all-malformed list back to ``null``, so an empty
   // array never reaches the wire.
   const scores = await readEvalScores(cellId);
-  return c.json({ scores });
+  return c.json(EvalResponseSchema.parse({ scores }));
 });
 
 app.get("/api/cells/:cellId/commits", async (c) => {
@@ -72,7 +85,7 @@ app.get("/api/cells/:cellId/commits", async (c) => {
   const cellDir = await resolveCellDir(cellId);
   if (cellDir === null) return c.json({ error: "not found" }, 404);
   const commits = await readCommits(cellId);
-  return c.json({ commits });
+  return c.json(CommitsResponseSchema.parse({ commits }));
 });
 
 /**

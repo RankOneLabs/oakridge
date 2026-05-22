@@ -1,42 +1,18 @@
 /**
- * Shared types between API responses and components. Mirrors the
- * shapes returned by lbc-dashboard's Hono backend (server.ts +
- * src/store.ts). Keep in sync with the backend; no codegen yet.
+ * Type re-exports for the PWA. The backend's src/contracts.ts is
+ * the single source of truth for wire shapes; this module exists
+ * so PWA components can keep their familiar ``./lib/types`` import
+ * path while the actual definitions live with the schemas.
+ *
+ * ``Tab`` is PWA-only UI state and stays here — it never crosses
+ * the wire, so it doesn't belong with the backend contracts.
  */
-
-export interface CellEvent {
-  ts: string;
-  kind: string;
-  payload: Record<string, unknown>;
-}
-
-export interface CellSummary {
-  cell_id: string;
-  run_ts: string;
-  target_name: string;
-  condition_name: string;
-  cell_dir: string;
-  status: "active" | "ended";
-  last_activity_ms: number;
-  event_count: number;
-}
-
-export interface CellDetail extends CellSummary {
-  events: CellEvent[];
-  artifact_filename: string | null;
-  commit_count: number;
-}
-
-export interface CommitSnapshot {
-  index: number;
-  filename: string;
-  content: string;
-}
-
-export interface EvalScore {
-  dimension: string;
-  value: number;
-  source: string;
-}
+export type {
+  CellDetail,
+  CellEvent,
+  CellSummary,
+  CommitSnapshot,
+  EvalScore,
+} from "../../src/contracts";
 
 export type Tab = "events" | "artifact" | "commits" | "scores";
