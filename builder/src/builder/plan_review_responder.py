@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-import re
+import logging
 from typing import Any
 
 from jig.core.runner import AgentConfig, run_agent
@@ -11,15 +11,22 @@ from jig.llm.factory import from_model
 from jig.tools.registry import ToolRegistry
 from jig.tracing.stdout import StdoutTracer
 from pydantic import BaseModel, Field, ValidationError
-
 from safir_py import SafirClient
 
 from .feedback import NoOpFeedback
+from .lib.atom_map import (
+    cohort_indices,
+    next_cohort_index,
+    parse_edge_keys,
+    would_create_cycle,
+)
 from .review_responder_base import (
-    ReviewResponderContext,
     ResponderResult,
+    ReviewResponderContext,
     _call_safir_or_record_conflict,
 )
+
+logger = logging.getLogger(__name__)
 
 PLAN_REVIEW_RESPONDER_SYSTEM_PROMPT = """\
 You are the plan review responder. You are invoked when an operator pings
@@ -83,52 +90,6 @@ _MODEL = "claude-opus-4-7"
 
 
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _cohort_indices(atom_map: dict[str, str]) -> set[int]:
-    pattern = re.compile(r"^cohorts\[(\d+)\]")
-    return {int(m.group(1)) for k in atom_map if (m := pattern.match(k))}
-
-
-def _next_cohort_index(atom_map: dict[str, str]) -> int:
-    existing = _cohort_indices(atom_map)
-    return (max(existing) + 1) if existing else 0
-
-
-def _parse_edge_keys(atom_map: dict[str, str]) -> set[tuple[int, int]]:
-    pattern = re.compile(r"^deps\[(\d+),(\d+)\]$")
-    edges: set[tuple[int, int]] = set()
-    for k in atom_map:
-        if m := pattern.match(k):
-            edges.add((int(m.group(1)), int(m.group(2))))
-    return edges
-
-
-def _would_create_cycle(
-    existing_edges: set[tuple[int, int]], new_from: int, new_to: int
-) -> bool:
-    if new_from == new_to:
-        return True
-    adj: dict[int, list[int]] = {}
-    for f, t in existing_edges:
-        adj.setdefault(f, []).append(t)
-    # BFS from new_to; cycle if it can reach new_from
-    visited: set[int] = set()
-    stack = [new_to]
-    while stack:
-        node = stack.pop()
-        if node == new_from:
-            return True
-        if node in visited:
-            continue
-        visited.add(node)
-        stack.extend(adj.get(node, []))
-    return False
-
-
-# ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------
 
@@ -168,7 +129,7 @@ class EditCohortTool(Tool):  # type: ignore[misc]
         prev_values: dict[str, str] = args.get("prev_values") or {}
         ctx = self._ctx
 
-        if cohort_index not in _cohort_indices(ctx.atom_map):
+        if cohort_index not in cohort_indices(ctx.atom_map):
             return json.dumps({"error": f"cohort {cohort_index} not found in atom map"})
 
         _COHORT_FIELDS = {"title", "notes", "priority"}
@@ -176,7 +137,7 @@ class EditCohortTool(Tool):  # type: ignore[misc]
         if invalid:
             return json.dumps({"error": f"unknown cohort field(s): {invalid}; allowed: {sorted(_COHORT_FIELDS)}"})
 
-        results = []
+        results: list[dict[str, Any]] = []
         for field, new_value in updates.items():
             anchor = f"cohorts[{cohort_index}].{field}"
             body = {
@@ -187,7 +148,7 @@ class EditCohortTool(Tool):  # type: ignore[misc]
             }
             edit = await _call_safir_or_record_conflict(self._client, ctx, body)
             if edit is not None:
-                results.append({"anchor": anchor, "edit_id": edit.get("id")})
+                results.append({"anchor": anchor, "edit_id": edit.id})
             else:
                 results.append({"anchor": anchor, "conflict": True})
 
@@ -217,13 +178,13 @@ class AddCohortTool(Tool):  # type: ignore[misc]
 
     async def execute(self, args: dict[str, Any]) -> str:
         ctx = self._ctx
-        new_index = _next_cohort_index(ctx.atom_map)
+        new_index = next_cohort_index(ctx.atom_map)
         fields = {
             "title": str(args["title"]),
             "notes": str(args["notes"]),
             "priority": str(args["priority"]),
         }
-        results = []
+        results: list[dict[str, Any]] = []
         for field, value in fields.items():
             anchor = f"cohorts[{new_index}].{field}"
             body = {
@@ -236,7 +197,7 @@ class AddCohortTool(Tool):  # type: ignore[misc]
             if edit is not None:
                 # Update snapshot so subsequent AddCohortTool calls don't collide.
                 ctx.atom_map[anchor] = value
-                results.append({"anchor": anchor, "edit_id": edit.get("id")})
+                results.append({"anchor": anchor, "edit_id": edit.id})
             else:
                 results.append({"anchor": anchor, "conflict": True})
 
@@ -264,17 +225,17 @@ class DeleteCohortTool(Tool):  # type: ignore[misc]
         cohort_index = int(args["cohort_index"])
         ctx = self._ctx
 
-        if cohort_index not in _cohort_indices(ctx.atom_map):
+        if cohort_index not in cohort_indices(ctx.atom_map):
             return json.dumps({"error": f"cohort {cohort_index} not found"})
 
         results = []
 
         # Delete all incident edges first.
-        edges = _parse_edge_keys(ctx.atom_map)
+        edges = parse_edge_keys(ctx.atom_map)
         for f, t in list(edges):
             if f == cohort_index or t == cohort_index:
                 anchor = f"deps[{f},{t}]"
-                body = {
+                body: dict[str, Any] = {
                     "anchor": anchor,
                     "new_value": "",
                     "prev_value": ctx.atom_map.get(anchor, "1"),
@@ -369,14 +330,14 @@ class SplitCohortTool(Tool):  # type: ignore[misc]
         dep_migration: list[dict[str, Any]] = args.get("dep_migration") or []
         ctx = self._ctx
 
-        if cohort_index not in _cohort_indices(ctx.atom_map):
+        if cohort_index not in cohort_indices(ctx.atom_map):
             return json.dumps({"error": f"cohort {cohort_index} not found"})
 
         if len(splits) < 2:
             return json.dumps({"error": "split requires at least 2 new cohorts"})
 
         # Validate new indices are unique and don't already exist.
-        existing = _cohort_indices(ctx.atom_map)
+        existing = cohort_indices(ctx.atom_map)
         new_indices = [int(s["new_index"]) for s in splits]
         if len(new_indices) != len(set(new_indices)):
             return json.dumps({"error": f"duplicate new_index values in splits: {new_indices}"})
@@ -398,11 +359,11 @@ class SplitCohortTool(Tool):  # type: ignore[misc]
         except ValidationError as exc:
             return json.dumps({"error": f"invalid dep_migration: {exc.error_count()} validation error(s)"})
 
-        current_edges = _parse_edge_keys(ctx.atom_map)
+        current_edges = parse_edge_keys(ctx.atom_map)
         for item in validated_migrations:
             fe = item.from_edge
             from_anchor = f"deps[{fe[0]},{fe[1]}]"
-            body = {
+            body: dict[str, Any] = {
                 "anchor": from_anchor,
                 "new_value": "",
                 "prev_value": ctx.atom_map.get(from_anchor, "1"),
@@ -416,21 +377,21 @@ class SplitCohortTool(Tool):  # type: ignore[misc]
 
             for te in item.to_edges:
                 new_anchor = f"deps[{te[0]},{te[1]}]"
-                if _would_create_cycle(current_edges, te[0], te[1]):
+                if would_create_cycle(current_edges, te[0], te[1]):
                     return json.dumps({"error": f"adding edge {te} would create a cycle"})
-                body2 = {
+                body = {
                     "anchor": new_anchor,
                     "new_value": "1",
                     "prev_value": None,
                     "thread_id": ctx.thread_id,
                 }
-                edit2 = await _call_safir_or_record_conflict(self._client, ctx, body2)
+                edit = await _call_safir_or_record_conflict(self._client, ctx, body)
                 results.append({
                     "anchor": new_anchor,
                     "op": "add_edge",
-                    "conflict": edit2 is None,
+                    "conflict": edit is None,
                 })
-                if edit2 is not None:
+                if edit is not None:
                     current_edges.add((te[0], te[1]))
                     ctx.atom_map[new_anchor] = "1"
 
@@ -527,13 +488,13 @@ class MergeCohortsTool(Tool):  # type: ignore[misc]
         )
 
     async def execute(self, args: dict[str, Any]) -> str:
-        cohort_indices: list[int] = [int(i) for i in args["cohort_indices"]]
+        source_indices: list[int] = [int(i) for i in args["cohort_indices"]]
         merged: dict[str, Any] = args["merged"]
         dep_migration: list[dict[str, Any]] = args.get("dep_migration") or []
         ctx = self._ctx
 
-        existing = _cohort_indices(ctx.atom_map)
-        for ci in cohort_indices:
+        existing = cohort_indices(ctx.atom_map)
+        for ci in source_indices:
             if ci not in existing:
                 return json.dumps({"error": f"cohort {ci} not found"})
 
@@ -548,7 +509,7 @@ class MergeCohortsTool(Tool):  # type: ignore[misc]
         except ValidationError as exc:
             return json.dumps({"error": f"invalid dep_migration: {exc.error_count()} validation error(s)"})
 
-        current_edges = _parse_edge_keys(ctx.atom_map)
+        current_edges = parse_edge_keys(ctx.atom_map)
 
         # 1. Migrate edges.
         # NOTE: incident edges of source cohorts that are absent from dep_migration
@@ -558,7 +519,7 @@ class MergeCohortsTool(Tool):  # type: ignore[misc]
         for item in validated_migrations:
             fe = item.from_edge
             from_anchor = f"deps[{fe[0]},{fe[1]}]"
-            body = {
+            body: dict[str, Any] = {
                 "anchor": from_anchor,
                 "new_value": "",
                 "prev_value": ctx.atom_map.get(from_anchor, "1"),
@@ -572,26 +533,26 @@ class MergeCohortsTool(Tool):  # type: ignore[misc]
 
             for te in item.to_edges:
                 new_anchor = f"deps[{te[0]},{te[1]}]"
-                if _would_create_cycle(current_edges, te[0], te[1]):
+                if would_create_cycle(current_edges, te[0], te[1]):
                     return json.dumps({"error": f"adding edge {te} would create a cycle"})
-                body2 = {
+                body = {
                     "anchor": new_anchor,
                     "new_value": "1",
                     "prev_value": None,
                     "thread_id": ctx.thread_id,
                 }
-                edit2 = await _call_safir_or_record_conflict(self._client, ctx, body2)
+                edit = await _call_safir_or_record_conflict(self._client, ctx, body)
                 results.append({
                     "anchor": new_anchor,
                     "op": "add_edge",
-                    "conflict": edit2 is None,
+                    "conflict": edit is None,
                 })
-                if edit2 is not None:
+                if edit is not None:
                     current_edges.add((te[0], te[1]))
                     ctx.atom_map[new_anchor] = "1"
 
         # 2. Delete source cohorts.
-        for ci in cohort_indices:
+        for ci in source_indices:
             for key in list(ctx.atom_map):
                 if key.startswith(f"cohorts[{ci}]."):
                     body = {
@@ -624,7 +585,7 @@ class MergeCohortsTool(Tool):  # type: ignore[misc]
             results.append({"anchor": anchor, "op": "add_merged", "conflict": edit is None})
 
         return json.dumps({
-            "merged_indices": cohort_indices,
+            "merged_indices": source_indices,
             "new_index": new_index,
             "edits": results,
         })
@@ -655,14 +616,14 @@ class AddEdgeTool(Tool):  # type: ignore[misc]
         to_index = int(args["to_index"])
         ctx = self._ctx
 
-        indices = _cohort_indices(ctx.atom_map)
+        indices = cohort_indices(ctx.atom_map)
         if from_index not in indices:
             return json.dumps({"error": f"from cohort {from_index} not found"})
         if to_index not in indices:
             return json.dumps({"error": f"to cohort {to_index} not found"})
 
-        existing_edges = _parse_edge_keys(ctx.atom_map)
-        if _would_create_cycle(existing_edges, from_index, to_index):
+        existing_edges = parse_edge_keys(ctx.atom_map)
+        if would_create_cycle(existing_edges, from_index, to_index):
             return json.dumps({"error": f"adding edge [{from_index},{to_index}] would create a cycle"})
 
         anchor = f"deps[{from_index},{to_index}]"
@@ -679,7 +640,7 @@ class AddEdgeTool(Tool):  # type: ignore[misc]
         if edit is None:
             return json.dumps({"anchor": anchor, "conflict": True})
         ctx.atom_map[anchor] = "1"
-        return json.dumps({"anchor": anchor, "edit_id": edit.get("id")})
+        return json.dumps({"anchor": anchor, "edit_id": edit.id})
 
 
 class DeleteEdgeTool(Tool):  # type: ignore[misc]
@@ -721,7 +682,7 @@ class DeleteEdgeTool(Tool):  # type: ignore[misc]
         if edit is None:
             return json.dumps({"anchor": anchor, "conflict": True})
         ctx.atom_map.pop(anchor, None)
-        return json.dumps({"anchor": anchor, "edit_id": edit.get("id")})
+        return json.dumps({"anchor": anchor, "edit_id": edit.id})
 
 
 class ReplyToThreadTool(Tool):  # type: ignore[misc]
@@ -753,7 +714,12 @@ class ReplyToThreadTool(Tool):  # type: ignore[misc]
         msg = await self._client.post_thread_message(
             self._ctx.thread_id, {"body": body_text}
         )
-        self._ctx.reply_message_id = msg.get("id")
+        self._ctx.reply_message_id = msg.id
+        logger.info(
+            "reply posted thread_id=%s reply_message_id=%s",
+            self._ctx.thread_id,
+            self._ctx.reply_message_id,
+        )
         return json.dumps({"reply_message_id": self._ctx.reply_message_id, "ok": True})
 
 
@@ -822,15 +788,22 @@ async def run_plan_review_responder(
         max_tool_calls=80,
         max_llm_calls=100,
     )
+    # IO edge (c): run_agent is the LLM IO edge. We catch any escape here
+    # so a failure surfaces as a ResponderResult rather than a crash.
     try:
         await run_agent(config, _build_input(ctx))
     except Exception as exc:
+        logger.error(
+            "plan responder agent failed thread_id=%s detail=%s",
+            ctx.thread_id,
+            exc,
+        )
         if ctx.reply_message_id is None:
             msg = await client.post_thread_message(
                 ctx.thread_id,
                 {"body": "agent failed before posting a reply; consult logs"},
             )
-            reply_id = msg.get("id")
+            reply_id = msg.id
         else:
             reply_id = ctx.reply_message_id
         return ResponderResult(
@@ -847,7 +820,7 @@ async def run_plan_review_responder(
         )
         return ResponderResult(
             status="failed",
-            reply_message_id=msg.get("id"),
+            reply_message_id=msg.id,
             conflicts=ctx.conflicts,
             error="agent terminated without calling ReplyToThreadTool",
         )

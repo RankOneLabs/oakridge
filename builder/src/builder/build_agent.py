@@ -1,6 +1,7 @@
 """Build agent step: execute a handoff into PRs + debrief."""
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, cast
 
@@ -20,6 +21,8 @@ from .tools import (
     ReadTool,
     WriteTool,
 )
+
+logger = logging.getLogger(__name__)
 
 BUILD_AGENT_SYSTEM_PROMPT = """\
 You are the build agent. Your input is a handoff doc produced by
@@ -135,9 +138,22 @@ async def run_build_agent(
         max_llm_calls=160,
         output_schema=BuildAgentOutput,
     )
+    logger.info("build_agent starting model=%s run_short_id=%s", model, run_short_id)
     result = await run_agent(config, _build_input(handoff_raw_markdown))
     if result.parsed is None:
+        logger.error(
+            "build_agent missing Debrief model=%s run_short_id=%s",
+            model,
+            run_short_id,
+        )
         raise RuntimeError(
             f"build agent did not produce a Debrief; output: {result.output[:1000]}"
         )
-    return cast(BuildAgentOutput, result.parsed)
+    output = cast(BuildAgentOutput, result.parsed)
+    logger.info(
+        "build_agent finished model=%s run_short_id=%s pr_urls=%d",
+        model,
+        run_short_id,
+        len(output.pr_urls),
+    )
+    return output

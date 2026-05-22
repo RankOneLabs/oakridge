@@ -11,7 +11,6 @@ from builder.lib.atom_map import (
     would_create_cycle,
 )
 
-
 # --- list_keys + next_list_index -----------------------------------------
 
 

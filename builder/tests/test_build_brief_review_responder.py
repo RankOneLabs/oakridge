@@ -5,26 +5,28 @@ import json
 from typing import Any
 
 import pytest
-from pytest_httpx import HTTPXMock
-
 from jig.core.types import LLMClient, LLMResponse, ToolCall, Usage
-
+from pytest_httpx import HTTPXMock
 from safir_py import SafirClient
 
+from builder.build_brief_review_responder import (
+    AppendAtomTool,
+    DeleteAtomTool,
+    EditAtomTool,
+    run_build_brief_review_responder,
+)
+from builder.lib.atom_map import (
+    list_keys as _list_keys,
+)
+from builder.lib.atom_map import (
+    next_list_index as _next_list_index,
+)
 from builder.review_responder_base import (
     ReviewResponderContext,
     ThreadMessage,
     ThreadSnapshot,
 )
-from builder.build_brief_review_responder import (
-    AppendAtomTool,
-    DeleteAtomTool,
-    EditAtomTool,
-    ReplyToThreadTool,
-    _list_keys,
-    _next_list_index,
-    run_build_brief_review_responder,
-)
+from tests.helpers import atom_edit_payload, thread_message_payload
 
 BASE = "http://safir.test"
 
@@ -135,7 +137,7 @@ async def test_edit_atom_tool(httpx_mock: HTTPXMock) -> None:
     httpx_mock.add_response(
         method="POST",
         url=f"{BASE}/atoms/build_brief/brief-1/edits",
-        json={"id": "e1", "anchor": "goal"},
+        json=atom_edit_payload(id='e1', anchor='goal'),
     )
     ctx = _make_ctx()
     client = SafirClient(base_url=BASE)
@@ -164,7 +166,7 @@ async def test_append_atom_tool(httpx_mock: HTTPXMock) -> None:
     httpx_mock.add_response(
         method="POST",
         url=f"{BASE}/atoms/build_brief/brief-1/edits",
-        json={"id": "e2", "anchor": "active_subgoals[0]"},
+        json=atom_edit_payload(id='e2', anchor='active_subgoals[0]'),
     )
     ctx = _make_ctx(atom_map={"goal": "x"})  # no active_subgoals yet
     client = SafirClient(base_url=BASE)
@@ -210,7 +212,7 @@ async def test_delete_atom_tool_shift_sequence(httpx_mock: HTTPXMock) -> None:
         httpx_mock.add_response(
             method="POST",
             url=f"{BASE}/atoms/build_brief/brief-1/edits",
-            json={"id": f"e-{_}", "anchor": "x"},
+            json=atom_edit_payload(id=f"e-{_}", anchor="x"),
         )
 
     snapshot = {
@@ -261,7 +263,7 @@ async def test_delete_atom_tool_single_element(httpx_mock: HTTPXMock) -> None:
     httpx_mock.add_response(
         method="POST",
         url=f"{BASE}/atoms/build_brief/brief-1/edits",
-        json={"id": "e0"},
+        json=atom_edit_payload(id='e0'),
     )
     ctx = _make_ctx(atom_map={"active_subgoals[0]": "Only step"})
     client = SafirClient(base_url=BASE)
@@ -303,12 +305,12 @@ async def test_run_build_brief_responder_edit_and_reply(httpx_mock: HTTPXMock) -
     httpx_mock.add_response(
         method="POST",
         url=f"{BASE}/atoms/build_brief/brief-1/edits",
-        json={"id": "e1"},
+        json=atom_edit_payload(id='e1'),
     )
     httpx_mock.add_response(
         method="POST",
         url=f"{BASE}/threads/thread-1/messages",
-        json={"id": "msg-1"},
+        json=thread_message_payload(id='msg-1'),
     )
 
     fake_llm = FakeLLM([

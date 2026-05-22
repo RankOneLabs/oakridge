@@ -4,14 +4,12 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-
 from safir_py import SafirAtomEditConflict
 
 from builder.review_responder_base import (
     ConflictRecord,
     ReviewResponderContext,
     ThreadMessage,
-    ThreadMetadata,
     ThreadSnapshot,
     _call_safir_or_record_conflict,
     record_conflict,

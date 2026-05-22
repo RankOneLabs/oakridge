@@ -1,11 +1,14 @@
 """Shared models and helpers for plan and build-brief review responders."""
 from __future__ import annotations
 
+import logging
 from typing import Any, Literal, Protocol
 
+import httpx
 from pydantic import BaseModel, Field
+from safir_py import AtomEdit, SafirAtomEditConflict
 
-from safir_py import SafirAtomEditConflict
+logger = logging.getLogger(__name__)
 
 
 class ThreadMessage(BaseModel):
@@ -79,22 +82,31 @@ class AtomEditClient(Protocol):
         target_type: str,
         target_id: str,
         body: dict[str, Any],
-    ) -> dict[str, Any]: ...
+    ) -> AtomEdit: ...
 
 
 def record_conflict(ctx: ReviewResponderContext, conflict: ConflictRecord) -> None:
     ctx.conflicts.append(conflict)
+    logger.warning(
+        "atom_edit CAS conflict thread_id=%s anchor=%s latest_edit_id=%s",
+        ctx.thread_id,
+        conflict.anchor,
+        conflict.latest_edit_id,
+    )
 
 
 async def _call_safir_or_record_conflict(
     client: AtomEditClient,
     ctx: ReviewResponderContext,
     body: dict[str, Any],
-) -> dict[str, Any] | None:
+) -> AtomEdit | None:
     """POST one atom edit to safir.
 
-    On 200 returns the edit record. On 409 stale_prev_value records the
-    conflict in ctx and returns None. Any other exception propagates.
+    IO edge (b): the only place in the responders where safir HTTP errors
+    are converted to in-band conflict records. On 200 returns the typed
+    edit record. On 409 stale_prev_value records the conflict and returns
+    None. On any other httpx error, surfaces a synthetic conflict record
+    so the agent can continue editing and report it rather than dying.
     """
     try:
         return await client.post_atom_edit(ctx.target_type, ctx.target_id, body)
@@ -106,6 +118,23 @@ async def _call_safir_or_record_conflict(
                 attempted_value=body.get("new_value"),
                 current_value=e.current_value,
                 latest_edit_id=e.latest_edit_id,
+            ),
+        )
+        return None
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "atom_edit IO error thread_id=%s anchor=%s status=%d",
+            ctx.thread_id,
+            body.get("anchor", ""),
+            e.response.status_code,
+        )
+        record_conflict(
+            ctx,
+            ConflictRecord(
+                anchor=body.get("anchor", ""),
+                attempted_value=body.get("new_value"),
+                current_value=None,
+                latest_edit_id=None,
             ),
         )
         return None

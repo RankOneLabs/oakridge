@@ -5,27 +5,34 @@ import json
 from typing import Any
 
 import pytest
-from pytest_httpx import HTTPXMock
-
 from jig.core.types import LLMClient, LLMResponse, ToolCall, Usage
-
+from pytest_httpx import HTTPXMock
 from safir_py import SafirClient
 
+from builder.lib.atom_map import (
+    cohort_indices as _cohort_indices,
+)
+from builder.lib.atom_map import (
+    next_cohort_index as _next_cohort_index,
+)
+from builder.lib.atom_map import (
+    parse_edge_keys as _parse_edge_keys,
+)
+from builder.lib.atom_map import (
+    would_create_cycle as _would_create_cycle,
+)
+from builder.plan_review_responder import (
+    AddEdgeTool,
+    EditCohortTool,
+    ReplyToThreadTool,
+    run_plan_review_responder,
+)
 from builder.review_responder_base import (
     ReviewResponderContext,
     ThreadMessage,
     ThreadSnapshot,
 )
-from builder.plan_review_responder import (
-    EditCohortTool,
-    AddEdgeTool,
-    ReplyToThreadTool,
-    run_plan_review_responder,
-    _cohort_indices,
-    _next_cohort_index,
-    _parse_edge_keys,
-    _would_create_cycle,
-)
+from tests.helpers import atom_edit_payload, thread_message_payload
 
 BASE = "http://safir.test"
 
@@ -165,7 +172,7 @@ async def test_edit_cohort_tool_posts_correct_body(httpx_mock: HTTPXMock) -> Non
     httpx_mock.add_response(
         method="POST",
         url=f"{BASE}/atoms/plan/plan-1/edits",
-        json={"id": "edit-1", "anchor": "cohorts[0].title", "new_value": "New Title"},
+        json=atom_edit_payload(id='edit-1', anchor='cohorts[0].title', new_value='New Title'),
     )
     ctx = _make_ctx()
     client = SafirClient(base_url=BASE)
@@ -222,7 +229,7 @@ async def test_reply_to_thread_tool(httpx_mock: HTTPXMock) -> None:
     httpx_mock.add_response(
         method="POST",
         url=f"{BASE}/threads/thread-1/messages",
-        json={"id": "msg-1", "body": "I did the thing."},
+        json=thread_message_payload(id='msg-1', body='I did the thing.'),
     )
     ctx = _make_ctx()
     client = SafirClient(base_url=BASE)
@@ -245,12 +252,12 @@ async def test_run_plan_review_responder_edit_and_reply(httpx_mock: HTTPXMock) -
     httpx_mock.add_response(
         method="POST",
         url=f"{BASE}/atoms/plan/plan-1/edits",
-        json={"id": "edit-1", "anchor": "cohorts[0].title"},
+        json=atom_edit_payload(id='edit-1', anchor='cohorts[0].title'),
     )
     httpx_mock.add_response(
         method="POST",
         url=f"{BASE}/threads/thread-1/messages",
-        json={"id": "msg-1", "body": "Renamed cohort 0."},
+        json=thread_message_payload(id='msg-1', body='Renamed cohort 0.'),
     )
 
     fake_llm = FakeLLM([
@@ -302,7 +309,7 @@ async def test_run_plan_review_responder_no_reply_posts_synthetic(
     httpx_mock.add_response(
         method="POST",
         url=f"{BASE}/threads/thread-1/messages",
-        json={"id": "synth-1", "body": "agent terminated without a reply; consult logs"},
+        json=thread_message_payload(id='synth-1', body='agent terminated without a reply; consult logs'),
     )
 
     fake_llm = FakeLLM([_text_response("Forgot to reply.")])
