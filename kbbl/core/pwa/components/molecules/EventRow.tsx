@@ -6,7 +6,7 @@ import { UnknownRow } from "../atoms/UnknownRow";
 import { SystemNotice } from "./SystemNotice";
 import { UserRow } from "./UserRow";
 import { AssistantRow } from "./AssistantRow";
-import { PermissionRow } from "./PermissionRow";
+import { PermissionRow } from "../organisms/PermissionRow";
 
 export function EventRow({
   event,
