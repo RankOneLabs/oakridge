@@ -4,12 +4,145 @@ from __future__ import annotations
 import json
 
 import httpx
+import pydantic
 import pytest
 from pytest_httpx import HTTPXMock
 
-from safir_py import SafirAtomEditConflict, SafirClient
+from safir_py import (
+    AgentResponseAck,
+    AtomEdit,
+    BuildBrief,
+    Plan,
+    Run,
+    SafirAtomEditConflict,
+    SafirClient,
+    Thread,
+    ThreadMessage,
+)
 
 BASE = "http://safir.test"
+
+
+# ---------------------------------------------------------------------------
+# Payload factories
+# ---------------------------------------------------------------------------
+
+
+def make_plan_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "id": "plan-1",
+        "parent_task_id": 42,
+        "summary": None,
+        "model": None,
+        "status": "pending_approval",
+        "rejection_reason": None,
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z",
+        "cohorts": [],
+        "dependencies": [],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def make_run_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "id": "run-1",
+        "task_id": 42,
+        "executor": "jig",
+        "pipeline_id": None,
+        "pipeline_version": None,
+        "status": "running",
+        "brief": None,
+        "result_summary": None,
+        "permission_profile_id": None,
+        "started_at": "2026-01-01T00:00:00Z",
+        "finished_at": None,
+        "created_by": None,
+        "created_by_session": None,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def make_handoff_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "id": "hoff-1",
+        "phase_id": "ph-1",
+        "run_id": "run-1",
+        "role": "phase_output",
+        "schema_version": 1,
+        "goal": None,
+        "active_subgoals": None,
+        "decisions_made": None,
+        "approaches_rejected": None,
+        "files_in_scope": None,
+        "open_questions": None,
+        "next_action": None,
+        "raw_markdown": "# hi",
+        "produced_at": "2026-01-01T00:00:00Z",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def make_build_brief_payload(**overrides: object) -> dict[str, object]:
+    payload = make_handoff_payload()
+    payload.update(
+        {
+            "task_id": 42,
+            "status": "pending_approval",
+            "rejection_reason": None,
+            "predecessor_build_brief_id": None,
+        }
+    )
+    payload.update(overrides)
+    return payload
+
+
+def make_atom_edit_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "id": "edit-1",
+        "target_type": "plan",
+        "target_id": "plan-1",
+        "anchor": "cohorts[0].title",
+        "prev_value": "Old",
+        "new_value": "Updated",
+        "edited_by": "u1",
+        "thread_id": None,
+        "created_at": "2026-01-01T00:00:00Z",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def make_thread_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "id": "thread-1",
+        "target_type": "plan",
+        "target_id": "plan-1",
+        "anchor": "cohorts[0]",
+        "status": "open",
+        "agent_responding": 1,
+        "resolved_at": None,
+        "created_at": "2026-01-01T00:00:00Z",
+        "messages": [],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def make_thread_message_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "id": "msg-1",
+        "thread_id": "thread-1",
+        "author": "agent",
+        "body": "Done!",
+        "related_edit_id": None,
+        "created_at": "2026-01-01T00:00:00Z",
+    }
+    payload.update(overrides)
+    return payload
 
 
 @pytest.fixture
@@ -26,16 +159,48 @@ def client() -> SafirClient:
 async def test_get_plan(client: SafirClient, httpx_mock: HTTPXMock) -> None:
     httpx_mock.add_response(
         url=f"{BASE}/plans/plan-1",
-        json={"id": "plan-1", "parent_task_id": 42, "status": "pending_approval"},
+        json=make_plan_payload(),
     )
     result = await client.get_plan("plan-1")
-    assert result["id"] == "plan-1"
-    assert result["parent_task_id"] == 42
+    assert isinstance(result, Plan)
+    assert result.id == "plan-1"
+    assert result.parent_task_id == 42
     await client.aclose()
 
 
 # ---------------------------------------------------------------------------
-# get_atom_map
+# get_build_brief / get_run_by_brief
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_build_brief(client: SafirClient, httpx_mock: HTTPXMock) -> None:
+    httpx_mock.add_response(
+        url=f"{BASE}/build-briefs/hoff-1",
+        json=make_build_brief_payload(id="hoff-1"),
+    )
+    result = await client.get_build_brief("hoff-1")
+    assert isinstance(result, BuildBrief)
+    assert result.id == "hoff-1"
+    assert result.task_id == 42
+    assert result.status == "pending_approval"
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_get_run_by_brief(client: SafirClient, httpx_mock: HTTPXMock) -> None:
+    httpx_mock.add_response(
+        url=f"{BASE}/build-briefs/hoff-1/run",
+        json=make_run_payload(),
+    )
+    result = await client.get_run_by_brief("hoff-1")
+    assert isinstance(result, Run)
+    assert result.id == "run-1"
+    await client.aclose()
+
+
+# ---------------------------------------------------------------------------
+# get_atom_map — bare dict pass-through
 # ---------------------------------------------------------------------------
 
 
@@ -52,33 +217,21 @@ async def test_get_atom_map(client: SafirClient, httpx_mock: HTTPXMock) -> None:
 
 
 # ---------------------------------------------------------------------------
-# get_thread
+# get_thread / list_open_threads
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_get_thread(client: SafirClient, httpx_mock: HTTPXMock) -> None:
-    thread = {
-        "id": "thread-1",
-        "target_type": "plan",
-        "target_id": "plan-1",
-        "anchor": "cohorts[0]",
-        "status": "open",
-        "agent_responding": 1,
-        "resolved_at": None,
-        "created_at": "2026-01-01T00:00:00Z",
-        "messages": [],
-    }
-    httpx_mock.add_response(url=f"{BASE}/threads/thread-1", json=thread)
+    httpx_mock.add_response(
+        url=f"{BASE}/threads/thread-1",
+        json=make_thread_payload(),
+    )
     result = await client.get_thread("thread-1")
-    assert result["id"] == "thread-1"
-    assert result["status"] == "open"
+    assert isinstance(result, Thread)
+    assert result.id == "thread-1"
+    assert result.status == "open"
     await client.aclose()
-
-
-# ---------------------------------------------------------------------------
-# list_open_threads
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -86,27 +239,15 @@ async def test_list_open_threads(client: SafirClient, httpx_mock: HTTPXMock) -> 
     httpx_mock.add_response(
         url=f"{BASE}/artifacts/plan/plan-1/threads?status=open",
         json=[
-            {
-                "id": "thread-1",
-                "target_type": "plan",
-                "target_id": "plan-1",
-                "anchor": "cohorts[0]",
-                "status": "open",
-                "created_at": "2026-01-01T00:00:00Z",
-            },
-            {
-                "id": "thread-2",
-                "target_type": "plan",
-                "target_id": "plan-1",
-                "anchor": None,
-                "status": "open",
-                "created_at": "2026-01-02T00:00:00Z",
-            },
+            make_thread_payload(id="thread-1"),
+            make_thread_payload(id="thread-2", anchor=None),
         ],
     )
     result = await client.list_open_threads("plan", "plan-1")
     assert len(result) == 2
-    assert result[0]["id"] == "thread-1"
+    assert all(isinstance(t, Thread) for t in result)
+    assert result[0].id == "thread-1"
+    assert result[1].anchor is None
     await client.aclose()
 
 
@@ -116,17 +257,13 @@ async def test_list_open_threads(client: SafirClient, httpx_mock: HTTPXMock) -> 
 
 
 @pytest.mark.asyncio
-async def test_post_atom_edit_success(client: SafirClient, httpx_mock: HTTPXMock) -> None:
-    edit_record = {
-        "id": "edit-1",
-        "anchor": "cohorts[0].title",
-        "new_value": "Updated",
-        "prev_value": "Old",
-    }
+async def test_post_atom_edit_success(
+    client: SafirClient, httpx_mock: HTTPXMock
+) -> None:
     httpx_mock.add_response(
         method="POST",
         url=f"{BASE}/atoms/plan/plan-1/edits",
-        json=edit_record,
+        json=make_atom_edit_payload(),
         status_code=200,
     )
     result = await client.post_atom_edit(
@@ -134,7 +271,9 @@ async def test_post_atom_edit_success(client: SafirClient, httpx_mock: HTTPXMock
         "plan-1",
         {"anchor": "cohorts[0].title", "new_value": "Updated", "prev_value": "Old"},
     )
-    assert result["id"] == "edit-1"
+    assert isinstance(result, AtomEdit)
+    assert result.id == "edit-1"
+    assert result.new_value == "Updated"
     request = httpx_mock.get_requests()[0]
     body = json.loads(request.content)
     assert body["anchor"] == "cohorts[0].title"
@@ -222,15 +361,19 @@ async def test_post_atom_edit_409_non_stale_raises_http_error(
 
 
 @pytest.mark.asyncio
-async def test_post_thread_message(client: SafirClient, httpx_mock: HTTPXMock) -> None:
-    msg = {"id": "msg-1", "thread_id": "thread-1", "author": "agent", "body": "Done!"}
+async def test_post_thread_message(
+    client: SafirClient, httpx_mock: HTTPXMock
+) -> None:
     httpx_mock.add_response(
         method="POST",
         url=f"{BASE}/threads/thread-1/messages",
-        json=msg,
+        json=make_thread_message_payload(body="Done!"),
+        status_code=201,
     )
     result = await client.post_thread_message("thread-1", {"body": "Done!"})
-    assert result["id"] == "msg-1"
+    assert isinstance(result, ThreadMessage)
+    assert result.id == "msg-1"
+    assert result.body == "Done!"
     request = httpx_mock.get_requests()[0]
     body = json.loads(request.content)
     assert body["body"] == "Done!"
@@ -254,7 +397,8 @@ async def test_post_agent_response_completed(
     result = await client.post_agent_response(
         "thread-1", "completed", reply_message_id="msg-1"
     )
-    assert result["ok"] is True
+    assert isinstance(result, AgentResponseAck)
+    assert result.ok is True
     request = httpx_mock.get_requests()[0]
     body = json.loads(request.content)
     assert body["status"] == "completed"
@@ -280,4 +424,22 @@ async def test_post_agent_response_failed(
     assert body["status"] == "failed"
     assert body["error"] == "subprocess crashed"
     assert "reply_message_id" not in body
+    await client.aclose()
+
+
+# ---------------------------------------------------------------------------
+# Parse-or-raise: review-surface ValidationError at the boundary.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_plan_malformed_payload_raises_validation_error(
+    client: SafirClient, httpx_mock: HTTPXMock
+) -> None:
+    httpx_mock.add_response(
+        url=f"{BASE}/plans/plan-1",
+        json={"id": "plan-1"},
+    )
+    with pytest.raises(pydantic.ValidationError):
+        await client.get_plan("plan-1")
     await client.aclose()

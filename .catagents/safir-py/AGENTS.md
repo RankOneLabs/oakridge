@@ -5,15 +5,19 @@ and `builder`.
 
 ## Shape
 
-Thin `httpx` client. No CLI. Responses are returned as `dict[str, Any]`;
-there are no Pydantic models yet (the schema lives in the upstream
-service). Used by `builder` for its task/run/phase/handoff surface, and
-by `planner1` for environment-variable helpers — planner1 still keeps a
-thin local `SafirClient` for its `submit_plan` path.
+Thin `httpx` client. No CLI. Responses are parsed into Pydantic v2 models
+defined in `src/safir_py/models.py`, which mirror safir's wire shapes 1:1
+(zod schemas in `safir/src/shared/schema.ts` plus the db / route shapes
+that aren't in the shared file). The model module is the public type
+surface — consumers do `from safir_py import Run, Phase, Plan, ...`.
+Models use `extra='ignore'` so a new server field does not break older
+clients. Used by `builder` and `planner1`; `submit_plan` lives here too,
+so planner1 no longer needs a local client.
 
 ## Dependencies
 
 - `httpx`
+- `pydantic` (v2)
 
 ## Commands
 
