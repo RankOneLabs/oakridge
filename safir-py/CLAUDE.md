@@ -27,7 +27,7 @@ uv run ruff format               # format
 uv run mypy                      # type-check
 ```
 
-<!-- import: ../standards/core.md @ 65b286e0ccea -->
+<!-- import: ../standards/core.md @ 64f13f09c483 -->
 ## Two gates before building
 
 **Stop when uncertain.** Before introducing a pattern, dependency, file, or structural
@@ -112,7 +112,7 @@ over terse — `user_count`, not `n`. Booleans read as questions — `is_active`
 `has_permission`, `should_retry`.
 <!-- /import: ../standards/core.md -->
 
-<!-- import: ../standards/python.md @ 65b286e0ccea -->
+<!-- import: ../standards/python.md @ 64f13f09c483 -->
 ## Tooling — uv
 
 `uv` for everything: `uv sync`, `uv add`, `uv run`. Never `pip`, `poetry`, or `conda`.
@@ -180,7 +180,7 @@ across tests — not `setUp` / `tearDown`. Descriptive test names; one clear ass
 test where practical.
 <!-- /import: ../standards/python.md -->
 
-<!-- import: ../standards/backend.md @ 65b286e0ccea -->
+<!-- import: ../standards/backend.md @ 64f13f09c483 -->
 ## Contracts first
 
 Define the API or data contract as named types before writing the handler. Derive the
