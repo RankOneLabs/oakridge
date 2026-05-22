@@ -7,11 +7,65 @@ is passed by jig; the buffer is captured in __init__.
 from __future__ import annotations
 
 import json
+import logging
+from dataclasses import asdict
 from typing import Any
 
 from jig.core.types import Tool, ToolDefinition
 
-from .staging import CycleError, StagingBuffer
+from .errors import PlannerError, ToolArgsInvalidError
+from .result import Err, Ok, Result
+from .staging import StagedDependency, StagingBuffer
+
+logger = logging.getLogger(__name__)
+
+
+def _error_payload(err: PlannerError) -> dict[str, Any]:
+    return {"error": asdict(err)}
+
+
+def _parse_create_cohort_args(
+    args: dict[str, Any],
+) -> Result[tuple[str, str, int], ToolArgsInvalidError]:
+    try:
+        title = str(args["title"])
+        notes = str(args["notes"])
+        priority = int(args.get("priority", 0))
+    except (KeyError, TypeError, ValueError) as e:
+        return Err(
+            ToolArgsInvalidError(
+                op_name="create_cohort",
+                entity_id=None,
+                detail=f"invalid arguments: {e}",
+            )
+        )
+    return Ok((title, notes, priority))
+
+
+def _parse_add_dependency_args(
+    args: dict[str, Any],
+) -> Result[tuple[int, int], ToolArgsInvalidError]:
+    try:
+        cohort_index = int(args["cohort_index"])
+        depends_on_cohort_index = int(args["depends_on_cohort_index"])
+    except (KeyError, TypeError, ValueError) as e:
+        return Err(
+            ToolArgsInvalidError(
+                op_name="add_cohort_dependency",
+                entity_id=None,
+                detail=f"invalid arguments: {e}",
+            )
+        )
+    return Ok((cohort_index, depends_on_cohort_index))
+
+
+def _ok_edge_payload(edge: StagedDependency) -> str:
+    return json.dumps(
+        {
+            "cohort_index": edge.cohort_index,
+            "depends_on_cohort_index": edge.depends_on_cohort_index,
+        }
+    )
 
 
 class CreateCohortTool(Tool):  # type: ignore[misc]
@@ -46,14 +100,22 @@ class CreateCohortTool(Tool):  # type: ignore[misc]
         )
 
     async def execute(self, args: dict[str, Any]) -> str:
-        try:
-            title = str(args["title"])
-            notes = str(args["notes"])
-            priority = int(args.get("priority", 0))
-        except (KeyError, TypeError, ValueError) as e:
-            return json.dumps({"error": f"invalid arguments: {e}"})
-        cohort = self._buffer.add_cohort(title=title, notes=notes, priority=priority)
-        return json.dumps({"cohort_index": cohort.cohort_index, "title": cohort.title})
+        parsed = _parse_create_cohort_args(args)
+        match parsed:
+            case Err(err):
+                logger.warning(
+                    "create_cohort args rejected: parent_task_id=%s detail=%s",
+                    self._buffer.parent_task_id,
+                    err.detail,
+                )
+                return json.dumps(_error_payload(err))
+            case Ok((title, notes, priority)):
+                cohort = self._buffer.add_cohort(
+                    title=title, notes=notes, priority=priority
+                )
+                return json.dumps(
+                    {"cohort_index": cohort.cohort_index, "title": cohort.title}
+                )
 
 
 class AddCohortDependencyTool(Tool):  # type: ignore[misc]
@@ -87,16 +149,22 @@ class AddCohortDependencyTool(Tool):  # type: ignore[misc]
         )
 
     async def execute(self, args: dict[str, Any]) -> str:
-        try:
-            edge = self._buffer.add_cohort_dependency(
-                cohort_index=int(args["cohort_index"]),
-                depends_on_cohort_index=int(args["depends_on_cohort_index"]),
-            )
-        except (CycleError, IndexError, KeyError, TypeError, ValueError) as e:
-            return json.dumps({"error": str(e)})
-        return json.dumps(
-            {
-                "cohort_index": edge.cohort_index,
-                "depends_on_cohort_index": edge.depends_on_cohort_index,
-            }
-        )
+        parsed = _parse_add_dependency_args(args)
+        match parsed:
+            case Err(err):
+                logger.warning(
+                    "add_cohort_dependency args rejected: parent_task_id=%s detail=%s",
+                    self._buffer.parent_task_id,
+                    err.detail,
+                )
+                return json.dumps(_error_payload(err))
+            case Ok((cohort_index, depends_on_cohort_index)):
+                outcome = self._buffer.add_cohort_dependency(
+                    cohort_index=cohort_index,
+                    depends_on_cohort_index=depends_on_cohort_index,
+                )
+                match outcome:
+                    case Err(domain_err):
+                        return json.dumps(_error_payload(domain_err))
+                    case Ok(edge):
+                        return _ok_edge_payload(edge)

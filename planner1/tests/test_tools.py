@@ -37,7 +37,7 @@ async def test_add_cohort_dependency_tool_records_edge():
 
 
 @pytest.mark.asyncio
-async def test_add_cohort_dependency_tool_returns_error_string_on_cycle():
+async def test_add_cohort_dependency_tool_returns_structured_error_on_cycle():
     b = StagingBuffer(parent_task_id=1)
     ct = CreateCohortTool(b)
     await ct.execute({"title": "a", "notes": "."})
@@ -46,6 +46,10 @@ async def test_add_cohort_dependency_tool_returns_error_string_on_cycle():
     )
     parsed = json.loads(out)
     assert "error" in parsed
+    err = parsed["error"]
+    assert err["op_name"] == "add_cohort_dependency"
+    assert err["entity_id"] == 0
+    assert "itself" in err["detail"]
     assert len(b.dependencies) == 0
 
 
@@ -63,16 +67,20 @@ def test_tool_definition_add_cohort_dependency_shape():
 
 
 @pytest.mark.asyncio
-async def test_create_cohort_tool_returns_error_on_missing_key():
+async def test_create_cohort_tool_returns_structured_error_on_missing_key():
     b = StagingBuffer(parent_task_id=1)
     out = await CreateCohortTool(b).execute({"title": "foo"})  # missing notes
     parsed = json.loads(out)
     assert "error" in parsed
+    err = parsed["error"]
+    assert err["op_name"] == "create_cohort"
+    assert err["entity_id"] is None
+    assert "invalid arguments" in err["detail"]
     assert len(b.cohorts) == 0
 
 
 @pytest.mark.asyncio
-async def test_add_cohort_dependency_tool_returns_error_on_non_integer_index():
+async def test_add_cohort_dependency_tool_returns_structured_error_on_non_integer_index():
     b = StagingBuffer(parent_task_id=1)
     ct = CreateCohortTool(b)
     await ct.execute({"title": "a", "notes": "."})
@@ -81,4 +89,8 @@ async def test_add_cohort_dependency_tool_returns_error_on_non_integer_index():
     )
     parsed = json.loads(out)
     assert "error" in parsed
+    err = parsed["error"]
+    assert err["op_name"] == "add_cohort_dependency"
+    assert err["entity_id"] is None
+    assert "invalid arguments" in err["detail"]
     assert len(b.dependencies) == 0
