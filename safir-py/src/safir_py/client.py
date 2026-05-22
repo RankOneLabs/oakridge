@@ -2,9 +2,24 @@
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, NotRequired, TypedDict
 
 import httpx
+
+from .models import (
+    AgentResponseAck,
+    AtomEdit,
+    AtomMap,
+    BuildBrief,
+    Handoff,
+    PermissionProfile,
+    Phase,
+    Plan,
+    Run,
+    Task,
+    Thread,
+    ThreadMessage,
+)
 
 
 class SafirAtomEditConflict(Exception):
@@ -25,6 +40,32 @@ class SafirAtomEditConflict(Exception):
         self.latest_edit_id = latest_edit_id
         self.edited_by = edited_by
         self.created_at = created_at
+
+
+class _SubmitPlanCohort(TypedDict):
+    cohort_index: int
+    title: str
+    notes: str
+    priority: NotRequired[int]
+
+
+class _SubmitPlanDependency(TypedDict):
+    cohort_index: int
+    depends_on_cohort_index: int
+
+
+class SubmitPlanBody(TypedDict):
+    """Request body for `POST /tasks/:id/plans`.
+
+    Mirrors safir's `CreatePlanBody` zod schema. Kept as a TypedDict (not
+    a BaseModel) so callers can construct the payload as a plain dict
+    without an extra model layer.
+    """
+
+    summary: NotRequired[str]
+    model: NotRequired[str]
+    cohorts: list[_SubmitPlanCohort]
+    dependencies: NotRequired[list[_SubmitPlanDependency]]
 
 
 class SafirClient:
@@ -50,19 +91,19 @@ class SafirClient:
 
     # --- planner1 surface (preserved verbatim) ---
 
-    async def get_task(self, task_id: int) -> dict[str, Any]:
+    async def get_task(self, task_id: int) -> Task:
         r = await self._client.get(
             f"{self._base_url}/tasks/{task_id}", headers=self._headers()
         )
         r.raise_for_status()
-        return r.json()  # type: ignore[no-any-return]
+        return Task.model_validate(r.json())
 
-    async def create_task(self, body: dict[str, Any]) -> dict[str, Any]:
+    async def create_task(self, body: dict[str, Any]) -> Task:
         r = await self._client.post(
             f"{self._base_url}/tasks", json=body, headers=self._headers()
         )
         r.raise_for_status()
-        return r.json()  # type: ignore[no-any-return]
+        return Task.model_validate(r.json())
 
     async def add_dependency(self, *, task_id: int, depends_on: int) -> None:
         r = await self._client.post(
@@ -72,48 +113,57 @@ class SafirClient:
         )
         r.raise_for_status()
 
+    async def submit_plan(self, parent_task_id: int, body: SubmitPlanBody) -> Plan:
+        r = await self._client.post(
+            f"{self._base_url}/tasks/{parent_task_id}/plans",
+            json=body,
+            headers=self._headers(),
+        )
+        r.raise_for_status()
+        return Plan.model_validate(r.json())
+
     # --- builder additions ---
 
-    async def get_handoffs_for_task(self, task_id: int) -> list[dict[str, Any]]:
+    async def get_handoffs_for_task(self, task_id: int) -> list[Handoff]:
         r = await self._client.get(
             f"{self._base_url}/tasks/{task_id}/handoffs", headers=self._headers()
         )
         r.raise_for_status()
-        return r.json()  # type: ignore[no-any-return]
+        return [Handoff.model_validate(x) for x in r.json()]
 
-    async def create_run(self, task_id: int, body: dict[str, Any]) -> dict[str, Any]:
+    async def create_run(self, task_id: int, body: dict[str, Any]) -> Run:
         r = await self._client.post(
             f"{self._base_url}/tasks/{task_id}/runs",
             json=body,
             headers=self._headers(),
         )
         r.raise_for_status()
-        return r.json()  # type: ignore[no-any-return]
+        return Run.model_validate(r.json())
 
-    async def update_run(self, run_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    async def update_run(self, run_id: str, body: dict[str, Any]) -> Run:
         r = await self._client.patch(
             f"{self._base_url}/runs/{run_id}", json=body, headers=self._headers()
         )
         r.raise_for_status()
-        return r.json()  # type: ignore[no-any-return]
+        return Run.model_validate(r.json())
 
-    async def create_phase(self, run_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    async def create_phase(self, run_id: str, body: dict[str, Any]) -> Phase:
         r = await self._client.post(
             f"{self._base_url}/runs/{run_id}/phases",
             json=body,
             headers=self._headers(),
         )
         r.raise_for_status()
-        return r.json()  # type: ignore[no-any-return]
+        return Phase.model_validate(r.json())
 
-    async def update_phase(self, phase_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    async def update_phase(self, phase_id: str, body: dict[str, Any]) -> Phase:
         r = await self._client.patch(
             f"{self._base_url}/phases/{phase_id}",
             json=body,
             headers=self._headers(),
         )
         r.raise_for_status()
-        return r.json()  # type: ignore[no-any-return]
+        return Phase.model_validate(r.json())
 
     async def submit_phase_handoff(
         self,
@@ -121,7 +171,7 @@ class SafirClient:
         phase_id: str,
         raw_markdown: str,
         parsed: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+    ) -> Handoff:
         body: dict[str, Any] = {"raw_markdown": raw_markdown}
         if parsed is not None:
             body["parsed"] = parsed
@@ -131,79 +181,80 @@ class SafirClient:
             headers=self._headers(),
         )
         r.raise_for_status()
-        return r.json()  # type: ignore[no-any-return]
+        return Handoff.model_validate(r.json())
 
     async def patch_handoff_debrief(
         self, *, handoff_id: str, debrief: dict[str, Any]
-    ) -> dict[str, Any]:
+    ) -> Handoff:
         r = await self._client.patch(
             f"{self._base_url}/handoffs/{handoff_id}/debrief",
             json={"debrief": debrief},
             headers=self._headers(),
         )
         r.raise_for_status()
-        return r.json()  # type: ignore[no-any-return]
+        return Handoff.model_validate(r.json())
 
-    async def get_permission_profile(self, profile_id: int) -> dict[str, Any]:
+    async def get_permission_profile(self, profile_id: int) -> PermissionProfile:
         r = await self._client.get(
             f"{self._base_url}/permission-profiles/{profile_id}",
             headers=self._headers(),
         )
         r.raise_for_status()
-        return r.json()  # type: ignore[no-any-return]
+        return PermissionProfile.model_validate(r.json())
 
     # --- review responder surface ---
 
-    async def get_plan(self, plan_id: str) -> dict[str, Any]:
+    async def get_plan(self, plan_id: str) -> Plan:
         r = await self._client.get(
             f"{self._base_url}/plans/{plan_id}", headers=self._headers()
         )
         r.raise_for_status()
-        return r.json()  # type: ignore[no-any-return]
+        return Plan.model_validate(r.json())
 
-    async def get_build_brief(self, brief_id: str) -> dict[str, Any]:
+    async def get_build_brief(self, brief_id: str) -> BuildBrief:
         r = await self._client.get(
             f"{self._base_url}/build-briefs/{brief_id}", headers=self._headers()
         )
         r.raise_for_status()
-        return r.json()  # type: ignore[no-any-return]
+        return BuildBrief.model_validate(r.json())
 
-    async def get_run_by_brief(self, brief_id: str) -> dict[str, Any]:
+    async def get_run_by_brief(self, brief_id: str) -> Run:
         r = await self._client.get(
             f"{self._base_url}/build-briefs/{brief_id}/run", headers=self._headers()
         )
         r.raise_for_status()
-        return r.json()  # type: ignore[no-any-return]
+        return Run.model_validate(r.json())
 
-    async def get_atom_map(self, target_type: str, target_id: str) -> dict[str, Any]:
+    async def get_atom_map(self, target_type: str, target_id: str) -> AtomMap:
         r = await self._client.get(
             f"{self._base_url}/atoms/{target_type}/{target_id}",
             headers=self._headers(),
         )
         r.raise_for_status()
-        return r.json()  # type: ignore[no-any-return]
+        payload: AtomMap = r.json()
+        return payload
 
-    async def get_thread(self, thread_id: str) -> dict[str, Any]:
+    async def get_thread(self, thread_id: str) -> Thread:
         r = await self._client.get(
             f"{self._base_url}/threads/{thread_id}", headers=self._headers()
         )
         r.raise_for_status()
-        return r.json()  # type: ignore[no-any-return]
+        return Thread.model_validate(r.json())
 
     async def list_open_threads(
         self, target_type: str, target_id: str
-    ) -> list[dict[str, Any]]:
+    ) -> list[Thread]:
         r = await self._client.get(
             f"{self._base_url}/artifacts/{target_type}/{target_id}/threads",
             params={"status": "open"},
             headers=self._headers(),
         )
         r.raise_for_status()
-        return r.json()  # type: ignore[no-any-return]
+        return [Thread.model_validate(x) for x in r.json()]
 
     async def post_atom_edit(
         self, target_type: str, target_id: str, body: dict[str, Any]
-    ) -> dict[str, Any]:
+    ) -> AtomEdit:
         r = await self._client.post(
             f"{self._base_url}/atoms/{target_type}/{target_id}/edits",
             json=body,
@@ -222,18 +273,18 @@ class SafirClient:
                     created_at=payload.get("created_at"),
                 )
         r.raise_for_status()
-        return r.json()  # type: ignore[no-any-return]
+        return AtomEdit.model_validate(r.json())
 
     async def post_thread_message(
         self, thread_id: str, body: dict[str, Any]
-    ) -> dict[str, Any]:
+    ) -> ThreadMessage:
         r = await self._client.post(
             f"{self._base_url}/threads/{thread_id}/messages",
             json=body,
             headers=self._headers(),
         )
         r.raise_for_status()
-        return r.json()  # type: ignore[no-any-return]
+        return ThreadMessage.model_validate(r.json())
 
     async def post_agent_response(
         self,
@@ -241,7 +292,7 @@ class SafirClient:
         status: str,
         reply_message_id: str | None = None,
         error: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> AgentResponseAck:
         payload: dict[str, Any] = {"status": status}
         if reply_message_id is not None:
             payload["reply_message_id"] = reply_message_id
@@ -253,7 +304,7 @@ class SafirClient:
             headers=self._headers(),
         )
         r.raise_for_status()
-        return r.json()  # type: ignore[no-any-return]
+        return AgentResponseAck.model_validate(r.json())
 
 
 def safir_base_url_from_env() -> str:
