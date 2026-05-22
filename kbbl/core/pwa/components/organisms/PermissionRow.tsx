@@ -73,7 +73,7 @@ export function PermissionRow({
           type="button"
           className="btn-deny"
           disabled={localPending || approveForTaskPending}
-          onClick={() => void decide(p.request_id, "deny")}
+          onClick={() => void decide({ requestId: p.request_id, decision: "deny" })}
         >
           Deny
         </button>
@@ -82,7 +82,7 @@ export function PermissionRow({
             type="button"
             className="btn-always"
             disabled={localPending || approveForTaskPending}
-            onClick={() => void decide(p.request_id, "approve", "always")}
+            onClick={() => void decide({ requestId: p.request_id, decision: "approve", scope: "always" })}
             title={`Approve and auto-allow all future ${p.tool_name} calls this session`}
           >
             Always {p.tool_name}
@@ -101,7 +101,7 @@ export function PermissionRow({
           type="button"
           className="btn-approve"
           disabled={localPending || approveForTaskPending}
-          onClick={() => void decide(p.request_id, "approve")}
+          onClick={() => void decide({ requestId: p.request_id, decision: "approve" })}
         >
           Approve
         </button>

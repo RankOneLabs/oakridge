@@ -1,11 +1,13 @@
 import { useState } from "react";
 
+export type PermissionDecision = {
+  requestId: string;
+  decision: "approve" | "deny";
+  scope?: "once" | "always";
+};
+
 export function usePermissionDecision(sid: string): {
-  decide: (
-    requestId: string,
-    decision: "approve" | "deny",
-    scope?: "once" | "always",
-  ) => Promise<void>;
+  decide: (payload: PermissionDecision) => Promise<void>;
   approveForTask: (toolName: string, requestId: string) => Promise<void>;
   localPending: boolean;
   localError: string | null;
@@ -15,11 +17,7 @@ export function usePermissionDecision(sid: string): {
   const [localError, setLocalError] = useState<string | null>(null);
   const [approveForTaskPending, setApproveForTaskPending] = useState(false);
 
-  async function decide(
-    requestId: string,
-    decision: "approve" | "deny",
-    scope: "once" | "always" = "once",
-  ) {
+  async function decide(payload: PermissionDecision) {
     if (localPending) return;
     setLocalPending(true);
     setLocalError(null);
@@ -28,9 +26,9 @@ export function usePermissionDecision(sid: string): {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          request_id: requestId,
-          decision,
-          scope,
+          request_id: payload.requestId,
+          decision: payload.decision,
+          scope: payload.scope ?? "once",
         }),
       });
       if (!res.ok) {
@@ -78,7 +76,7 @@ export function usePermissionDecision(sid: string): {
         return;
       }
       // Profile persisted — also resolve the current pending request
-      await decide(requestId, "approve");
+      await decide({ requestId, decision: "approve" });
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : "request failed");
     } finally {

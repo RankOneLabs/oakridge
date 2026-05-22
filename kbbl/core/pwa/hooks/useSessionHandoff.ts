@@ -10,10 +10,15 @@ export function useSessionHandoff(
   const [status, setStatus] = useState<HandoffStatus>("idle");
 
   useEffect(() => {
-    if (!enabled) return;
-    if (status !== "idle") return;
+    if (!enabled) {
+      // Reset on disable so the next enable cycle re-fetches.
+      setStatus("idle");
+      setHandoff(null);
+      return;
+    }
     let cancelled = false;
     setStatus("loading");
+    setHandoff(null);
     fetch(`/${encodeURIComponent(sid)}/handoff`)
       .then(async (r) => {
         if (cancelled) return;
@@ -37,7 +42,11 @@ export function useSessionHandoff(
     return () => {
       cancelled = true;
     };
-  }, [enabled, sid, status]);
+    // `status` is intentionally excluded — including it would cause the
+    // effect to re-run after setStatus("loading"), and the previous
+    // cleanup would cancel the in-flight fetch before it resolved,
+    // wedging the hook at "loading" forever.
+  }, [enabled, sid]);
 
   return { handoff, status };
 }
