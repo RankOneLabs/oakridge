@@ -11,7 +11,14 @@
  */
 import { z } from "zod";
 
-export const CellEventSchema = z.object({
+// All wire schemas use ``z.strictObject`` rather than the default
+// ``z.object``: in Zod v4, ``z.object`` strips unknown keys at parse
+// time, which would let a new field added to store.ts pass silently
+// to the wire and reach the PWA. The whole point of the boundary
+// parse in server.ts is to *catch* that drift as a visible 500 —
+// strict mode is what makes that work.
+
+export const CellEventSchema = z.strictObject({
   ts: z.string(),
   kind: z.string(),
   // Payload shapes are kind-dependent and heterogeneous; a
@@ -20,13 +27,13 @@ export const CellEventSchema = z.object({
   payload: z.record(z.string(), z.unknown()),
 });
 
-export const EvalScoreSchema = z.object({
+export const EvalScoreSchema = z.strictObject({
   dimension: z.string(),
   value: z.number(),
   source: z.string(),
 });
 
-export const CellSummarySchema = z.object({
+export const CellSummarySchema = z.strictObject({
   cell_id: z.string(),
   run_ts: z.string(),
   target_name: z.string(),
@@ -37,13 +44,18 @@ export const CellSummarySchema = z.object({
   event_count: z.number(),
 });
 
-export const CellDetailSchema = CellSummarySchema.extend({
+// Spread the summary shape rather than calling ``.extend(...)`` so
+// the resulting schema is unambiguously a fresh strict object — no
+// dependence on whether ``.extend`` preserves strictness across
+// Zod versions.
+export const CellDetailSchema = z.strictObject({
+  ...CellSummarySchema.shape,
   events: z.array(CellEventSchema),
   artifact_filename: z.string().nullable(),
   commit_count: z.number(),
 });
 
-export const CommitSnapshotSchema = z.object({
+export const CommitSnapshotSchema = z.strictObject({
   index: z.number(),
   filename: z.string(),
   content: z.string(),
@@ -51,23 +63,25 @@ export const CommitSnapshotSchema = z.object({
 
 // --- response envelopes -------------------------------------------------
 
-export const CellsResponseSchema = z.object({
+export const CellsResponseSchema = z.strictObject({
   cells: z.array(CellSummarySchema),
 });
 
-export const ArtifactResponseSchema = z.object({
+export const ArtifactResponseSchema = z.strictObject({
   content: z.string(),
 });
 
 // ``scores`` is non-empty ``EvalScore[]`` or ``null``. The writer
 // skips zero-score sidecars and readEvalScores folds any
 // empty/all-malformed list back to ``null``, so an empty array
-// never reaches the wire.
-export const EvalResponseSchema = z.object({
-  scores: z.array(EvalScoreSchema).nullable(),
+// never reaches the wire — ``.nonempty()`` enforces that on the
+// schema so an accidental ``[]`` from a future writer becomes a
+// 500 instead of passing through.
+export const EvalResponseSchema = z.strictObject({
+  scores: z.array(EvalScoreSchema).nonempty().nullable(),
 });
 
-export const CommitsResponseSchema = z.object({
+export const CommitsResponseSchema = z.strictObject({
   commits: z.array(CommitSnapshotSchema),
 });
 
