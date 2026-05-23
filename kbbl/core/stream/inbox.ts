@@ -1,10 +1,13 @@
 import type { Context } from "hono";
 import { streamSSE } from "hono/streaming";
 
-import type {
-  InboxDelta,
-  SessionManager,
-} from "../session/session-manager";
+import type { InboxDelta } from "../session/session-manager";
+import type { SessionSnapshot } from "../session/session";
+
+export interface InboxStreamManager {
+  subscribeInbox(cb: (delta: InboxDelta) => void): () => void;
+  listSnapshots(): SessionSnapshot[];
+}
 
 /**
  * GET /inbox handler — SSE delta stream over the session list.
@@ -15,7 +18,7 @@ import type {
  * between the disconnect and reconnect are not replayed, which is fine
  * because the snapshot carries every field the deltas mutate.
  */
-export function inboxHandler(manager: SessionManager) {
+export function inboxHandler(manager: InboxStreamManager) {
   return (c: Context) => {
     return streamSSE(c, async (stream) => {
       const signal = c.req.raw.signal;
@@ -47,6 +50,10 @@ export function inboxHandler(manager: SessionManager) {
         stream.write(": ping\n\n").catch(() => {});
       }, 15000);
       try {
+        // Initial flush so EventSource.onopen transitions before the
+        // authoritative snapshot or any future setup work.
+        await stream.write(": ready\n\n");
+
         await stream.writeSSE({
           event: "snapshot",
           data: JSON.stringify({ sessions: manager.listSnapshots() }),

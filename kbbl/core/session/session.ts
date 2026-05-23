@@ -5,6 +5,8 @@ import { join } from "node:path";
 import type { Compactor } from "./compactor";
 import type { PermissionProfile } from "../safir/types";
 
+export type SessionId = string & { readonly __brand: "SessionId" };
+
 export interface EnvelopeEvent {
   id: number;
   type: string;
@@ -222,7 +224,7 @@ export async function readJsonlOrEmpty(path: string): Promise<string> {
 }
 
 export class Session {
-  readonly oakridgeSid: string;
+  readonly oakridgeSid: SessionId;
   readonly workdir: string;
   readonly name: string;
   readonly jsonlPath: string;
@@ -291,7 +293,7 @@ export class Session {
   private readonly endedController = new AbortController();
 
   constructor(opts: SessionOpts) {
-    this.oakridgeSid = opts.oakridgeSid;
+    this.oakridgeSid = opts.oakridgeSid as SessionId;
     this.workdir = opts.workdir;
     this.name = opts.name;
     this.jsonlPath = join(opts.sessionsDir, `${opts.oakridgeSid}.jsonl`);
@@ -1132,8 +1134,8 @@ export function extractResultUsage(payload: unknown): ResultUsage | null {
   return result;
 }
 
-export function newSessionId(): string {
-  return randomUUID();
+export function newSessionId(): SessionId {
+  return randomUUID() as SessionId;
 }
 
 async function* readLines(

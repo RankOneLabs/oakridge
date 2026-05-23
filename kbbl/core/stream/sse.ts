@@ -1,8 +1,14 @@
 import type { Context } from "hono";
 import { streamSSE } from "hono/streaming";
 
-import type { EnvelopeEvent } from "../session/session";
-import type { Session } from "../session/session";
+import type { EnvelopeEvent, Session, SessionId } from "../session/session";
+
+export interface SessionStreamSource {
+  oakridgeSid: SessionId;
+  endedSignal: AbortSignal;
+  subscribe(cb: (evt: EnvelopeEvent) => void): () => void;
+  readJsonl(): Promise<string>;
+}
 
 /**
  * SSE stream for a single session. Replays JSONL history then tails new
@@ -12,7 +18,7 @@ import type { Session } from "../session/session";
  * Honors `Last-Event-Id` so a reconnecting client only receives events it
  * hasn't seen.
  */
-export async function streamForSession(session: Session, c: Context) {
+export async function streamForSession(session: SessionStreamSource, c: Context) {
   const clientSignal = c.req.raw.signal;
   const endedSignal = session.endedSignal;
   const lastEventIdHeader = c.req.header("last-event-id");
@@ -47,6 +53,10 @@ export async function streamForSession(session: Session, c: Context) {
     }, 15000);
     let sentUpTo = resumeAfter;
     try {
+      // Initial flush so EventSource.onopen transitions before JSONL replay
+      // or idle waits.
+      await stream.write(": ready\n\n");
+
       const contents = await session.readJsonl();
       for (const line of contents.split("\n")) {
         if (!line.trim()) continue;
