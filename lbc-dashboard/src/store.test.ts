@@ -11,6 +11,10 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type {
+  ConditionName,
+  TargetName,
+} from "../pwa/lib/ids";
 import {
   getCellDetail,
   listCells,
@@ -239,13 +243,13 @@ describe("getCellDetail", () => {
     const cells = await listCells();
     const cell = cells.find((c) => c.target_name === "my__custom_target");
     expect(cell).toBeDefined();
-    expect(cell!.condition_name).toBe("weird:condition_name");
+    expect(cell!.condition_name).toBe("weird:condition_name" as ConditionName);
 
     // The cell_id round-trips back to the same target/condition.
     const detail = await getCellDetail(cell!.cell_id);
     expect(detail).not.toBeNull();
-    expect(detail!.target_name).toBe("my__custom_target");
-    expect(detail!.condition_name).toBe("weird:condition_name");
+    expect(detail!.target_name).toBe("my__custom_target" as TargetName);
+    expect(detail!.condition_name).toBe("weird:condition_name" as ConditionName);
   });
 
   test("rejects path-traversal cell_ids without touching disk", async () => {
