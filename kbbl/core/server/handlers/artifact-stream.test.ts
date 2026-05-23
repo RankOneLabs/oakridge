@@ -109,14 +109,31 @@ describe("GET /artifact-stream", () => {
       "plan",
       "plan-2",
       "atom_edit.applied",
-      { id: "edit-a", target_type: "plan", target_id: "plan-2" },
+      {
+        id: "edit-a",
+        target_type: "plan",
+        target_id: "plan-2",
+        anchor: null,
+        prior_value: null,
+        new_value: "a",
+        author: "tester",
+        created_at: "2026-05-17T00:00:00Z",
+      },
       "2026-05-17T00:00:00Z",
     );
     bus.publish(
       "plan",
       "plan-2",
       "thread.created",
-      { id: "thread-b", target_type: "plan", target_id: "plan-2" },
+      {
+        id: "thread-b",
+        target_type: "plan",
+        target_id: "plan-2",
+        anchor: null,
+        author: null,
+        status: "open",
+        created_at: "2026-05-17T00:00:01Z",
+      },
       "2026-05-17T00:00:01Z",
     );
 
