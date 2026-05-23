@@ -142,6 +142,11 @@ export function computeMetrics(events: EnvelopeEvent[]): SessionMetrics {
     last: null,
   };
   const num = (v: unknown): number => (typeof v === "number" ? v : 0);
+  // CC's result events carry total_cost_usd as a session-cumulative running
+  // total, not a per-turn delta. Summing would triple-count by the fourth
+  // turn. Track the previous event's cumulative value so the "last" chip can
+  // surface a true per-turn delta.
+  let prevCost = 0;
   for (const e of events) {
     if (e.type !== "result") continue;
     const p = e.payload as Record<string, unknown>;
@@ -157,9 +162,10 @@ export function computeMetrics(events: EnvelopeEvent[]): SessionMetrics {
     m.totalOut += outT;
     m.totalCacheRead += cacheRead;
     m.totalCacheCreate += cacheCreate;
-    m.totalCost += cost;
+    m.totalCost = cost;
     m.totalDur += dur;
-    m.last = { inT, outT, cacheRead, cacheCreate, dur, cost };
+    m.last = { inT, outT, cacheRead, cacheCreate, dur, cost: cost - prevCost };
+    prevCost = cost;
   }
   return m;
 }
