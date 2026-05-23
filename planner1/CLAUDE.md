@@ -16,10 +16,11 @@ via jig + an LLM tool-loop (Anthropic backend).
 
 ## Dependencies
 
+- `httpx` — direct exception type used at the CLI IO boundary
 - `jig[anthropic]` — agent kit
-- `safir-py` — sibling HTTP client; planner1 also keeps a thin local
-  `SafirClient` for the `submit_plan` path
-- `httpx`, `pydantic`
+- `safir-py` — sibling HTTP client (submit_plan + all other surface
+  lives there now)
+- `pydantic`
 
 ## Commands
 

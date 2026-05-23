@@ -1,6 +1,6 @@
-import pytest
-
-from planner1.staging import CycleError, StagingBuffer
+from planner1.errors import StagingCycleError, StagingIndexOutOfRangeError
+from planner1.result import Err, Ok
+from planner1.staging import StagedDependency, StagingBuffer
 
 
 def test_empty_buffer_toposort_is_empty():
@@ -16,37 +16,61 @@ def test_add_cohort_assigns_zero_based_index():
     assert c1.cohort_index == 1
 
 
-def test_self_dependency_rejected():
+def test_self_dependency_returns_err_cycle():
     b = StagingBuffer(parent_task_id=1)
     b.add_cohort(title="c0", notes="n0")
-    with pytest.raises(CycleError):
-        b.add_cohort_dependency(cohort_index=0, depends_on_cohort_index=0)
+    result = b.add_cohort_dependency(cohort_index=0, depends_on_cohort_index=0)
+    match result:
+        case Err(StagingCycleError() as err):
+            assert err.op_name == "add_cohort_dependency"
+            assert err.entity_id == 0
+            assert "itself" in err.detail
+        case _:
+            raise AssertionError(f"expected Err(StagingCycleError), got {result!r}")
 
 
-def test_out_of_range_dependency_raises_index_error():
+def test_out_of_range_dependency_returns_err_index():
     b = StagingBuffer(parent_task_id=1)
     b.add_cohort(title="c0", notes="n0")
-    with pytest.raises(IndexError):
-        b.add_cohort_dependency(cohort_index=0, depends_on_cohort_index=5)
+    result = b.add_cohort_dependency(cohort_index=0, depends_on_cohort_index=5)
+    match result:
+        case Err(StagingIndexOutOfRangeError() as err):
+            assert err.op_name == "add_cohort_dependency"
+            assert err.entity_id == 5
+            assert "out of range" in err.detail
+        case _:
+            raise AssertionError(f"expected Err(StagingIndexOutOfRangeError), got {result!r}")
 
 
-def test_simple_dependency_orders_correctly():
+def test_simple_dependency_returns_ok_edge():
     b = StagingBuffer(parent_task_id=1)
     b.add_cohort(title="c0", notes="n0")
     b.add_cohort(title="c1", notes="n1")
-    b.add_cohort_dependency(cohort_index=1, depends_on_cohort_index=0)
+    result = b.add_cohort_dependency(cohort_index=1, depends_on_cohort_index=0)
+    match result:
+        case Ok(StagedDependency(cohort_index=1, depends_on_cohort_index=0)):
+            pass
+        case _:
+            raise AssertionError(f"expected Ok edge 1->0, got {result!r}")
     assert b.toposort() == [0, 1]
 
 
-def test_transitive_cycle_rejected_and_buffer_unchanged():
+def test_transitive_cycle_returns_err_and_buffer_unchanged():
     b = StagingBuffer(parent_task_id=1)
     b.add_cohort(title="c0", notes="n0")
     b.add_cohort(title="c1", notes="n1")
     b.add_cohort(title="c2", notes="n2")
-    b.add_cohort_dependency(cohort_index=1, depends_on_cohort_index=0)
-    b.add_cohort_dependency(cohort_index=2, depends_on_cohort_index=1)
-    with pytest.raises(CycleError):
-        b.add_cohort_dependency(cohort_index=0, depends_on_cohort_index=2)
+    setup_1 = b.add_cohort_dependency(cohort_index=1, depends_on_cohort_index=0)
+    setup_2 = b.add_cohort_dependency(cohort_index=2, depends_on_cohort_index=1)
+    assert isinstance(setup_1, Ok)
+    assert isinstance(setup_2, Ok)
+    result = b.add_cohort_dependency(cohort_index=0, depends_on_cohort_index=2)
+    match result:
+        case Err(StagingCycleError() as err):
+            assert err.entity_id == 0
+            assert "cycle" in err.detail.lower()
+        case _:
+            raise AssertionError(f"expected Err(StagingCycleError), got {result!r}")
     assert len(b.dependencies) == 2
 
 
