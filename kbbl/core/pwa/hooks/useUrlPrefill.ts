@@ -18,8 +18,9 @@ function readInitialUrl(): InitialUrl {
   if (params.size === 0) {
     return { workdir: null, autostart: false, hadParams: false };
   }
+  const workdirParam = params.get("workdir");
   return {
-    workdir: params.get("workdir"),
+    workdir: workdirParam === "" ? null : workdirParam,
     autostart: params.get("autostart") === "true",
     hadParams: true,
   };
