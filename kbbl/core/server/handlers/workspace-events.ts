@@ -2,11 +2,24 @@ import type { Hono } from "hono";
 
 import {
   type SessionManager,
+  type ProjectId,
   type WorkspaceEvent,
 } from "../../session/session-manager";
 
 export interface WorkspaceEventsRouteDeps {
   manager: SessionManager;
+}
+
+interface WorkspaceEventRequestBody {
+  kind?: unknown;
+  projectId?: unknown;
+  ts?: unknown;
+  payload?: unknown;
+}
+
+function parseProjectId(value: unknown): ProjectId | null {
+  const projectId = typeof value === "string" ? value.trim() : "";
+  return projectId === "" ? null : (projectId as ProjectId);
 }
 
 /**
@@ -42,12 +55,7 @@ export function mountWorkspaceEventsRoutes(
     if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
       return c.json({ error: "json body must be an object" }, 400);
     }
-    const parsed = raw as {
-      kind?: unknown;
-      projectId?: unknown;
-      ts?: unknown;
-      payload?: unknown;
-    };
+    const parsed = raw as WorkspaceEventRequestBody;
     // Trim before the empty check so whitespace-only values are rejected
     // too — matches the artifact_id handling in handlers/sessions.ts and
     // keeps subscribers from receiving events they can't meaningfully
@@ -57,9 +65,8 @@ export function mountWorkspaceEventsRoutes(
     if (kind === "") {
       return c.json({ error: "kind must be a non-empty string" }, 400);
     }
-    const projectId =
-      typeof parsed.projectId === "string" ? parsed.projectId.trim() : "";
-    if (projectId === "") {
+    const projectId = parseProjectId(parsed.projectId);
+    if (projectId === null) {
       return c.json({ error: "projectId must be a non-empty string" }, 400);
     }
     // Default the timestamp to receipt time if the emitter omitted it.

@@ -38,6 +38,8 @@ from legit_biz_club.coordination import (
     StringEqualConvergence,
     TerminationPolicy,
     WorkspaceEventEmitter,
+    WorkspaceEventKind,
+    WorkspaceEventPayload,
     compute_version,
     make_proposers,
 )
@@ -107,6 +109,8 @@ __all__ = [
     "StringEqualConvergence",
     "TerminationPolicy",
     "WorkspaceEventEmitter",
+    "WorkspaceEventKind",
+    "WorkspaceEventPayload",
     "check_heterogeneity",
     "compute_version",
     "make_proposers",

@@ -29,7 +29,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -39,6 +38,22 @@ from jig.core.types import TracingLogger
 from legit_biz_club.coordination.disagreement import (
     DisagreementSurface,
     PickResult,
+)
+from legit_biz_club.coordination.events import (
+    ConvergenceStartedPayload,
+    EscalationTriggeredPayload,
+    ProposalOutcomePayload,
+    ProposalPickedPayload,
+    RoundCompletedPayload,
+)
+from legit_biz_club.coordination.events import (
+    WorkspaceEventEmitter as WorkspaceEventEmitter,
+)
+from legit_biz_club.coordination.events import (
+    WorkspaceEventKind as WorkspaceEventKind,
+)
+from legit_biz_club.coordination.events import (
+    WorkspaceEventPayload as WorkspaceEventPayload,
 )
 from legit_biz_club.coordination.mediator import Mediator
 from legit_biz_club.coordination.proposal import (
@@ -53,13 +68,9 @@ from legit_biz_club.core.models import Agent, Project
 logger = logging.getLogger(__name__)
 
 
-WorkspaceEventEmitter = Callable[[str, dict[str, object]], Awaitable[None]]
-"""Same shape as :data:`legit_biz_club.coordination.coordinator.WorkspaceEventEmitter`.
-Coordinator and consensus emit through the same workspace-event channel.
-"""
-
-
-async def _no_op_emitter(_kind: str, _payload: dict[str, object]) -> None:
+async def _no_op_emitter(
+    _kind: WorkspaceEventKind, _payload: WorkspaceEventPayload
+) -> None:
     await asyncio.sleep(0)
 
 
@@ -157,22 +168,22 @@ class ConsensusMechanism(ABC):
         """Run the mechanism's pipeline and return the structured result."""
         await self._safe_emit(
             "convergence_started",
-            {
-                "mechanism": type(self).__name__,
-                "agent_ids": [a.id for a in self.agents],
-            },
+            ConvergenceStartedPayload(
+                mechanism=type(self).__name__,
+                agent_ids=[a.id for a in self.agents],
+            ),
         )
         config = self._build_pipeline()
         pipeline_result = await run_pipeline(config, input=self.project.id)
         result = self._extract_result(pipeline_result.step_outputs)
         await self._safe_emit(
             "proposal_picked",
-            {
-                "agent_id": result.picked.agent_id,
-                "proposal_id": result.picked.id,
-                "rationale": result.rationale,
-                "converged_at_round": result.converged_at_round,
-            },
+            ProposalPickedPayload(
+                agent_id=result.picked.agent_id,
+                proposal_id=result.picked.id,
+                rationale=result.rationale,
+                converged_at_round=result.converged_at_round,
+            ),
         )
         # Mirror the incremental coordinator's per-commit event so an
         # operator surface tracking artifact changes via
@@ -186,12 +197,12 @@ class ConsensusMechanism(ABC):
         if result.apply_outcome.result == ProposalResult.APPLIED:
             await self._safe_emit(
                 "proposal_applied",
-                {
-                    "agent_id": result.picked.agent_id,
-                    "proposal_id": result.picked.id,
-                    "reason": result.apply_outcome.reason,
-                    "new_version": result.apply_outcome.new_version,
-                },
+                ProposalOutcomePayload(
+                    agent_id=result.picked.agent_id,
+                    proposal_id=result.picked.id,
+                    reason=result.apply_outcome.reason,
+                    new_version=result.apply_outcome.new_version,
+                ),
             )
         return result
 
@@ -293,11 +304,11 @@ class ConsensusMechanism(ABC):
             )
             await self._safe_emit(
                 "round_completed",
-                {
-                    "round_index": round_index,
-                    "converged": converged,
-                    "n_proposals": len(proposals),
-                },
+                RoundCompletedPayload(
+                    round_index=round_index,
+                    converged=converged,
+                    n_proposals=len(proposals),
+                ),
             )
             if converged:
                 # Mark ctx so later round steps and the escalate step skip.
@@ -341,10 +352,10 @@ class ConsensusMechanism(ABC):
                 )
             await self._safe_emit(
                 "escalation_triggered",
-                {
-                    "round_index": last_round.round_index,
-                    "n_residual_proposals": len(last_round.proposals),
-                },
+                EscalationTriggeredPayload(
+                    round_index=last_round.round_index,
+                    n_residual_proposals=len(last_round.proposals),
+                ),
             )
             return await self.disagreement_surface.pick(last_round.proposals)
 
@@ -438,7 +449,7 @@ class ConsensusMechanism(ABC):
             )
 
     async def _safe_emit(
-        self, kind: str, payload: dict[str, object]
+        self, kind: WorkspaceEventKind, payload: WorkspaceEventPayload
     ) -> None:
         """Same safe-emit pattern as IncrementalCoordinator: catch and
         log emit failures so a transient kbbl outage can't abort
