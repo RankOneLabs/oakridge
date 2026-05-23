@@ -46,7 +46,7 @@ export function usePendingMessages(
     ]);
     // [hang-debug] Trace bubble lifecycle so the "thinking indicator
     // stuck on" failure can be diagnosed from the browser console.
-    console.log(
+    console.debug(
       `[hang-debug] bubble.add sid=${sid} localId=${localId} bytes=${text.length} head=${JSON.stringify(text.slice(0, 60).replace(/\s+/g, " "))}`,
     );
     return localId;
@@ -54,7 +54,7 @@ export function usePendingMessages(
 
   const removePendingMessage = useCallback((localId: number) => {
     setPendingMessages((prev) => prev.filter((m) => m.localId !== localId));
-    console.log(`[hang-debug] bubble.remove sid=${sid} localId=${localId} reason=explicit`);
+    console.debug(`[hang-debug] bubble.remove sid=${sid} localId=${localId} reason=explicit`);
   }, [sid]);
 
   // Replayed user input echoed by CC (--replay-user-messages) — drop
@@ -90,13 +90,13 @@ export function usePendingMessages(
         );
         if (idx === -1) {
           if (prev.length > 0) {
-            console.log(
+            console.debug(
               `[hang-debug] bubble.reconcile sid=${sid} echo_bytes=${content.length} echo_head=${JSON.stringify(content.slice(0, 60).replace(/\s+/g, " "))} pending=${prev.length} match=none pending_heads=${JSON.stringify(prev.map((m) => m.text.slice(0, 60).replace(/\s+/g, " ")))}`,
             );
           }
           return prev;
         }
-        console.log(
+        console.debug(
           `[hang-debug] bubble.reconcile sid=${sid} localId=${prev[idx].localId} match=ok`,
         );
         const next = prev.slice();

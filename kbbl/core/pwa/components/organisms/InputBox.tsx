@@ -88,14 +88,14 @@ export function InputBox({
     // whether send hung pre-flight, mid-flight, or completed (and the
     // bubble-reconciliation is the stuck step).
     const debugStart = Date.now();
-    console.log(`[hang-debug] send.start sid=${sid} localId=${localId} bytes=${payload.length}`);
+    console.debug(`[hang-debug] send.start sid=${sid} localId=${localId} bytes=${payload.length}`);
     try {
       await sendMutation.mutateAsync(payload);
-      console.log(`[hang-debug] send.ok sid=${sid} localId=${localId} elapsed_ms=${Date.now() - debugStart}`);
+      console.debug(`[hang-debug] send.ok sid=${sid} localId=${localId} elapsed_ms=${Date.now() - debugStart}`);
     } catch (err) {
       const elapsed = Date.now() - debugStart;
       if (err instanceof ServerRejection) {
-        console.log(`[hang-debug] send.reject sid=${sid} localId=${localId} elapsed_ms=${elapsed} msg=${JSON.stringify(err.message)}`);
+        console.debug(`[hang-debug] send.reject sid=${sid} localId=${localId} elapsed_ms=${elapsed} msg=${JSON.stringify(err.message)}`);
         onSendFailed(localId);
         setText(payload);
         setError(err.message);
