@@ -6,7 +6,7 @@ import type { EnvelopeEvent } from "../types";
 function resultEvent(
   id: number,
   payload: {
-    total_cost_usd: number;
+    total_cost_usd?: number;
     duration_ms?: number;
     usage?: {
       input_tokens?: number;
@@ -21,7 +21,7 @@ function resultEvent(
     type: "result",
     ts: "2026-05-23T00:00:00Z",
     payload,
-  } as unknown as EnvelopeEvent;
+  };
 }
 
 describe("computeMetrics", () => {
@@ -46,5 +46,15 @@ describe("computeMetrics", () => {
     const m = computeMetrics([]);
     expect(m.totalCost).toBe(0);
     expect(m.last).toBeNull();
+  });
+
+  it("preserves prior totalCost and emits a 0 turn-delta when total_cost_usd is missing on a later event", () => {
+    const events = [
+      resultEvent(1, { total_cost_usd: 1.2 }),
+      resultEvent(2, {}),
+    ];
+    const m = computeMetrics(events);
+    expect(m.totalCost).toBeCloseTo(1.2, 10);
+    expect(m.last?.cost).toBe(0);
   });
 });

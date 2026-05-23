@@ -145,7 +145,9 @@ export function computeMetrics(events: EnvelopeEvent[]): SessionMetrics {
   // CC's result events carry total_cost_usd as a session-cumulative running
   // total, not a per-turn delta. Summing would triple-count by the fourth
   // turn. Track the previous event's cumulative value so the "last" chip can
-  // surface a true per-turn delta.
+  // surface a true per-turn delta. cumCost is kept nullable so a malformed
+  // result event without a numeric total_cost_usd does not (a) reset
+  // m.totalCost to 0 nor (b) push m.last.cost negative via `0 - prevCost`.
   let prevCost = 0;
   for (const e of events) {
     if (e.type !== "result") continue;
@@ -156,16 +158,21 @@ export function computeMetrics(events: EnvelopeEvent[]): SessionMetrics {
     const cacheRead = num(usage.cache_read_input_tokens);
     const cacheCreate = num(usage.cache_creation_input_tokens);
     const dur = num(p.duration_ms);
-    const cost = num(p.total_cost_usd);
+    const cumCost =
+      typeof p.total_cost_usd === "number" ? p.total_cost_usd : null;
     m.turns++;
     m.totalIn += inT;
     m.totalOut += outT;
     m.totalCacheRead += cacheRead;
     m.totalCacheCreate += cacheCreate;
-    m.totalCost = cost;
     m.totalDur += dur;
-    m.last = { inT, outT, cacheRead, cacheCreate, dur, cost: cost - prevCost };
-    prevCost = cost;
+    if (cumCost !== null) m.totalCost = cumCost;
+    // Treat a non-monotonic cumulative (e.g. provider reset) as a fresh
+    // baseline rather than emitting a negative delta.
+    const turnCost =
+      cumCost === null ? 0 : cumCost >= prevCost ? cumCost - prevCost : cumCost;
+    m.last = { inT, outT, cacheRead, cacheCreate, dur, cost: turnCost };
+    if (cumCost !== null) prevCost = cumCost;
   }
   return m;
 }
