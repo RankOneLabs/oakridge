@@ -1,10 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 
-import type { Session } from "../../session/session";
-import type { SessionManager } from "../../session/session-manager";
-import { inboxHandler } from "../../stream/inbox";
-import { streamForSession } from "../../stream/sse";
+import { inboxHandler, type InboxStreamManager } from "../../stream/inbox";
+import { streamForSession, type SessionStreamSource } from "../../stream/sse";
 
 async function readUntil(
   reader: ReadableStreamDefaultReader<Uint8Array>,
@@ -16,12 +14,13 @@ async function readUntil(
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const remaining = deadline - Date.now();
-    const result = await Promise.race([
-      reader.read(),
-      new Promise<{ done: true; value: undefined }>((r) =>
-        setTimeout(() => r({ done: true, value: undefined }), remaining),
-      ),
-    ]);
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const timeoutResult = new Promise<{ done: true; value: undefined }>((r) => {
+      timeout = setTimeout(() => r({ done: true, value: undefined }), remaining);
+    });
+    const result = await Promise.race([reader.read(), timeoutResult]).finally(() => {
+      if (timeout !== undefined) clearTimeout(timeout);
+    });
     if (result.done) break;
     buf += decoder.decode(result.value, { stream: true });
     if (predicate(buf)) return buf;
@@ -35,7 +34,7 @@ describe("SSE readiness", () => {
     const manager = {
       subscribeInbox: () => () => {},
       listSnapshots: () => [],
-    } as unknown as SessionManager;
+    } satisfies InboxStreamManager;
     const controller = new AbortController();
 
     app.get("/inbox", inboxHandler(manager));
@@ -70,7 +69,7 @@ describe("SSE readiness", () => {
       endedSignal: endedController.signal,
       subscribe: () => () => {},
       readJsonl: () => history,
-    } as unknown as Session;
+    } satisfies SessionStreamSource;
     const controller = new AbortController();
 
     app.get("/sessions/:sid/stream", (c) => streamForSession(session, c));
