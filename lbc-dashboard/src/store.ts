@@ -17,6 +17,11 @@ import { readFile, readdir, stat } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 
 import type {
+  CellId,
+  ConditionName,
+  TargetName,
+} from "../pwa/lib/ids";
+import type {
   CellDetail,
   CellEvent,
   CellSummary,
@@ -52,8 +57,10 @@ export function resolveRunRoot(): string {
  * condition names, so a future operator-supplied name with any
  * delimiter would be a footgun.
  */
-function cellIdFor(runTs: string, target: string, condition: string): string {
-  return [runTs, target, condition].map(encodeURIComponent).join(":");
+function cellIdFor(runTs: string, target: string, condition: string): CellId {
+  return [runTs, target, condition]
+    .map(encodeURIComponent)
+    .join(":") as CellId;
 }
 
 /**
@@ -190,8 +197,11 @@ async function summarize(
   return {
     cell_id: cellIdFor(runTs, target, condition),
     run_ts: runTs,
-    target_name: target,
-    condition_name: condition,
+    // Filesystem directory names cross the brand boundary here: from
+    // this point on the values carry ``TargetName`` / ``ConditionName``
+    // so consumers can't accidentally swap them for unrelated strings.
+    target_name: target as TargetName,
+    condition_name: condition as ConditionName,
     cell_dir: relative(resolveRunRoot(), cellDir),
     status,
     last_activity_ms: mtimeMs,

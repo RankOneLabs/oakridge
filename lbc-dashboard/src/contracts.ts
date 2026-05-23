@@ -11,12 +11,23 @@
  */
 import { z } from "zod";
 
+import type { CellId, ConditionName, TargetName } from "../pwa/lib/ids";
+
 // All wire schemas use ``z.strictObject`` rather than the default
 // ``z.object``: in Zod v4, ``z.object`` strips unknown keys at parse
 // time, which would let a new field added to store.ts pass silently
 // to the wire and reach the PWA. The whole point of the boundary
 // parse in server.ts is to *catch* that drift as a visible 500 —
 // strict mode is what makes that work.
+
+// ``cell_id`` / ``target_name`` / ``condition_name`` carry the brand
+// types defined in pwa/lib/ids.ts (cohort 1's product). We don't use
+// zod's ``.brand<>()`` because that produces a structurally distinct
+// branded type that wouldn't be assignable to/from cohort 1's
+// ``string & { readonly __brand: 'X' }`` pattern — every consumer
+// would have to choose a side. ``.transform`` re-uses cohort 1's
+// brand authoritatively: the runtime value is still a plain string;
+// only the inferred TS type carries the brand.
 
 export const CellEventSchema = z.strictObject({
   ts: z.string(),
@@ -34,10 +45,12 @@ export const EvalScoreSchema = z.strictObject({
 });
 
 export const CellSummarySchema = z.strictObject({
-  cell_id: z.string(),
+  cell_id: z.string().transform((s): CellId => s as CellId),
   run_ts: z.string(),
-  target_name: z.string(),
-  condition_name: z.string(),
+  target_name: z.string().transform((s): TargetName => s as TargetName),
+  condition_name: z
+    .string()
+    .transform((s): ConditionName => s as ConditionName),
   cell_dir: z.string(),
   status: z.enum(["active", "ended"]),
   last_activity_ms: z.number(),
@@ -85,6 +98,14 @@ export const CommitsResponseSchema = z.strictObject({
   commits: z.array(CommitSnapshotSchema),
 });
 
+// --- PWA UI state --------------------------------------------------------
+
+// ``Tab`` doesn't cross the wire, but it's consumed in both App.tsx
+// (state) and CellPanel.tsx (rendering). Putting the enum here keeps
+// the "one shared definition" rule consistent across the codebase
+// rather than carving out an exception for non-wire string unions.
+export const TabSchema = z.enum(["events", "artifact", "commits", "scores"]);
+
 // --- inferred types ------------------------------------------------------
 
 export type CellEvent = z.infer<typeof CellEventSchema>;
@@ -92,3 +113,4 @@ export type EvalScore = z.infer<typeof EvalScoreSchema>;
 export type CellSummary = z.infer<typeof CellSummarySchema>;
 export type CellDetail = z.infer<typeof CellDetailSchema>;
 export type CommitSnapshot = z.infer<typeof CommitSnapshotSchema>;
+export type Tab = z.infer<typeof TabSchema>;
