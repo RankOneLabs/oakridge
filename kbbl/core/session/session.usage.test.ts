@@ -162,3 +162,51 @@ describe("Session.observeTurnEnd", () => {
     expect(fresh[0]!.model).toBe("claude-opus-4-7");
   });
 });
+
+describe("Session.observeRuntimeModel", () => {
+  test("first call sets observedModel and emits one model_observed event", async () => {
+    const events: EnvelopeEvent[] = [];
+    session.subscribe((e) => events.push(e));
+
+    await session.observeRuntimeModel("claude-opus-4-7");
+
+    const observed = events.filter((e) => e.type === "model_observed");
+    expect(observed.length).toBe(1);
+    expect(observed[0]!.payload).toEqual({ model: "claude-opus-4-7" });
+    expect(session.snapshot().observedModel).toBe("claude-opus-4-7");
+  });
+
+  test("idempotent: calling with the same model twice emits once", async () => {
+    const events: EnvelopeEvent[] = [];
+    session.subscribe((e) => events.push(e));
+
+    await session.observeRuntimeModel("claude-opus-4-7");
+    await session.observeRuntimeModel("claude-opus-4-7");
+
+    expect(events.filter((e) => e.type === "model_observed").length).toBe(1);
+    expect(session.snapshot().observedModel).toBe("claude-opus-4-7");
+  });
+
+  test("calling with a different model overwrites observedModel and emits again", async () => {
+    const events: EnvelopeEvent[] = [];
+    session.subscribe((e) => events.push(e));
+
+    await session.observeRuntimeModel("claude-opus-4-7");
+    await session.observeRuntimeModel("claude-haiku-4-5");
+
+    const observed = events.filter((e) => e.type === "model_observed");
+    expect(observed.length).toBe(2);
+    expect(observed[1]!.payload).toEqual({ model: "claude-haiku-4-5" });
+    expect(session.snapshot().observedModel).toBe("claude-haiku-4-5");
+  });
+
+  test("snapshot().observedModel reflects the most recent observation", async () => {
+    expect(session.snapshot().observedModel).toBeNull();
+    await session.observeRuntimeModel("claude-opus-4-7");
+    expect(session.snapshot().observedModel).toBe("claude-opus-4-7");
+    await session.observeRuntimeModel("claude-future-snapshot-20991231");
+    expect(session.snapshot().observedModel).toBe(
+      "claude-future-snapshot-20991231",
+    );
+  });
+});
