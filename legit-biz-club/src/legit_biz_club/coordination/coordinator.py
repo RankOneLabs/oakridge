@@ -18,7 +18,22 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import cast
 
+from legit_biz_club.coordination.events import (
+    IncrementalStartedPayload,
+    IncrementalTerminatedPayload,
+    ProposalOutcomePayload,
+)
+from legit_biz_club.coordination.events import (
+    WorkspaceEventEmitter as WorkspaceEventEmitter,
+)
+from legit_biz_club.coordination.events import (
+    WorkspaceEventKind as WorkspaceEventKind,
+)
+from legit_biz_club.coordination.events import (
+    WorkspaceEventPayload as WorkspaceEventPayload,
+)
 from legit_biz_club.coordination.mediator import Mediator
 from legit_biz_club.coordination.proposal import (
     ProposalOutcome,
@@ -30,17 +45,9 @@ from legit_biz_club.core.models import Agent, Project
 
 logger = logging.getLogger(__name__)
 
-WorkspaceEventEmitter = Callable[[str, dict[str, object]], Awaitable[None]]
-"""Callback for emitting workspace events.
-
-Signature: ``(kind, payload) -> awaitable``. The coordinator supplies
-``kind`` and ``payload``; the project_id is the caller's responsibility
-(typically closed over). Pass a no-op for tests that don't care about
-events.
-"""
-
-
-async def _no_op_emitter(_kind: str, _payload: dict[str, object]) -> None:
+async def _no_op_emitter(
+    _kind: WorkspaceEventKind, _payload: WorkspaceEventPayload
+) -> None:
     """Default emitter that does nothing — keeps the constructor easy."""
     await asyncio.sleep(0)
 
@@ -57,7 +64,7 @@ class IncrementalRunResult:
     """``policy`` or ``all_exhausted``."""
 
 
-_RESULT_TO_EVENT_KIND: dict[ProposalResult, str] = {
+_RESULT_TO_EVENT_KIND: dict[ProposalResult, WorkspaceEventKind] = {
     ProposalResult.APPLIED: "proposal_applied",
     ProposalResult.REJECTED_OCC: "proposal_rejected_occ",
     ProposalResult.REJECTED_VALIDATION: "proposal_rejected_validation",
@@ -126,12 +133,12 @@ class IncrementalCoordinator:
         applied_versions: list[str] = []
         await self._safe_emit(
             "incremental_started",
-            {
-                "agent_ids": [a.id for a in self.agents],
-                "retry_budget": next(
+            IncrementalStartedPayload(
+                agent_ids=[a.id for a in self.agents],
+                retry_budget=next(
                     iter(self.mediator.retry_remaining.values()), 0
                 ),
-            },
+            ),
         )
         terminated_by: str
         while True:
@@ -170,10 +177,10 @@ class IncrementalCoordinator:
                 continue
         await self._safe_emit(
             "incremental_terminated",
-            {
-                "terminated_by": terminated_by,
-                "commit_counts": dict(self.mediator.commit_counts),
-            },
+            IncrementalTerminatedPayload(
+                terminated_by=terminated_by,
+                commit_counts=dict(self.mediator.commit_counts),
+            ),
         )
         return IncrementalRunResult(
             project=self.project,
@@ -218,15 +225,17 @@ class IncrementalCoordinator:
     async def _emit_outcome(self, outcome: ProposalOutcome) -> None:
         await self._safe_emit(
             _RESULT_TO_EVENT_KIND[outcome.result],
-            {
-                "agent_id": outcome.proposal.agent_id,
-                "proposal_id": outcome.proposal.id,
-                "reason": outcome.reason,
-                "new_version": outcome.new_version,
-            },
+            ProposalOutcomePayload(
+                agent_id=outcome.proposal.agent_id,
+                proposal_id=outcome.proposal.id,
+                reason=outcome.reason,
+                new_version=outcome.new_version,
+            ),
         )
 
-    async def _safe_emit(self, kind: str, payload: dict[str, object]) -> None:
+    async def _safe_emit(
+        self, kind: WorkspaceEventKind, payload: WorkspaceEventPayload
+    ) -> None:
         """Emit, but never abort the coordination loop on emit failure.
 
         In production ``self._emit`` is wired to an HTTP call (the kbbl
@@ -238,7 +247,14 @@ class IncrementalCoordinator:
         the rest of the run is not.
         """
         try:
-            await self._emit(kind, payload)
+            emit = cast(
+                Callable[
+                    [WorkspaceEventKind, WorkspaceEventPayload],
+                    Awaitable[None],
+                ],
+                self._emit,
+            )
+            await emit(kind, payload)
         except Exception as e:
             logger.warning(
                 "workspace event emit failed for kind=%s: %s",

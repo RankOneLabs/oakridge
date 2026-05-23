@@ -101,11 +101,13 @@ export interface CreateSessionOpts {
  * record. Reconnect-with-snapshot does not replay workspace events;
  * legit-biz-club is the authoritative source for project state.
  */
+export type ProjectId = string & { readonly __brand: "ProjectId" };
+
 export interface WorkspaceEvent {
   /** Event kind, e.g. "project_created", "convergence_round_started". */
   kind: string;
   /** Opaque project id from legit-biz-club. */
-  projectId: string;
+  projectId: ProjectId;
   /** Wall-clock ISO timestamp; emitter-supplied or defaulted on receipt. */
   ts: string;
   /** Event-specific payload. Treated as opaque by kbbl. */

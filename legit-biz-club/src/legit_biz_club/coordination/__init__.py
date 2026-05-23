@@ -34,12 +34,16 @@ from legit_biz_club.coordination.consensus import (
 from legit_biz_club.coordination.coordinator import (
     IncrementalCoordinator,
     IncrementalRunResult,
-    WorkspaceEventEmitter,
 )
 from legit_biz_club.coordination.disagreement import (
     DisagreementSurface,
     PickResult,
     StableOrderingByAgentId,
+)
+from legit_biz_club.coordination.events import (
+    WorkspaceEventEmitter,
+    WorkspaceEventKind,
+    WorkspaceEventPayload,
 )
 from legit_biz_club.coordination.jig_proposer import (
     JigProposer,
@@ -94,6 +98,8 @@ __all__ = [
     "StringEqualConvergence",
     "TerminationPolicy",
     "WorkspaceEventEmitter",
+    "WorkspaceEventKind",
+    "WorkspaceEventPayload",
     "compute_version",
     "make_proposers",
 ]
