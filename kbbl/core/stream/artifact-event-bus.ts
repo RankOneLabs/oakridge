@@ -10,11 +10,63 @@
 
 const REPLAY_CAP = 50;
 
-export interface ArtifactEvent {
+export interface ArtifactEventPayloadByName {
+  "atom_edit.applied": {
+    id: string;
+    target_type: string;
+    target_id: string;
+    anchor: string | null;
+    prior_value: string | null;
+    new_value: string;
+    author: string;
+    created_at: string;
+  };
+  "thread.created": {
+    id: string;
+    target_type: string;
+    target_id: string;
+    anchor: string | null;
+    author: string | null;
+    status: "open" | "resolved";
+    created_at: string;
+  };
+  "thread.message_added": {
+    id: string;
+    thread_id: string;
+    target_type: string;
+    target_id: string;
+    author: string;
+    body: string;
+  };
+  "thread.resolved": {
+    id: string;
+    target_type: string;
+    target_id: string;
+  };
+  "artifact.frozen": {
+    target_type: string;
+    target_id: string;
+  };
+  "artifact.reopened": {
+    target_type: string;
+    target_id: string;
+  };
+  "thread.ping_received": {
+    thread_id: string;
+    target_type: string;
+    target_id: string;
+    anchor: string | null;
+    responder_id?: string;
+  };
+}
+
+export type ArtifactEventName = keyof ArtifactEventPayloadByName;
+
+export interface ArtifactEvent<E extends ArtifactEventName = ArtifactEventName> {
   /** Monotonically increasing per channel, used as SSE event id. */
   id: number;
-  event: string;
-  data: Record<string, unknown>;
+  event: E;
+  data: ArtifactEventPayloadByName[E];
   ts: string;
 }
 
@@ -29,12 +81,18 @@ export class ArtifactEventBus {
   private readonly subscribers = new Map<string, Set<Subscriber>>();
   private readonly replay = new Map<string, ArtifactEvent[]>();
 
-  publish(targetType: string, targetId: string, event: string, data: Record<string, unknown>, ts: string): void {
+  publish<E extends ArtifactEventName>(
+    targetType: string,
+    targetId: string,
+    event: E,
+    data: ArtifactEventPayloadByName[E],
+    ts: string,
+  ): void {
     const key = channelKey(targetType, targetId);
     const next = (this.counters.get(key) ?? 0) + 1;
     this.counters.set(key, next);
 
-    const evt: ArtifactEvent = { id: next, event, data, ts };
+    const evt: ArtifactEvent<E> = { id: next, event, data, ts };
 
     // maintain replay buffer
     const buf = this.replay.get(key) ?? [];

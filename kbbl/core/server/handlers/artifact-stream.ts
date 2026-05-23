@@ -1,6 +1,6 @@
 import type { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
-import type { ArtifactEventBus } from "../../stream/artifact-event-bus";
+import type { ArtifactEvent, ArtifactEventBus } from "../../stream/artifact-event-bus";
 
 export interface ArtifactStreamRouteDeps {
   bus: ArtifactEventBus;
@@ -33,7 +33,7 @@ export function mountArtifactStreamRoutes(app: Hono, deps: ArtifactStreamRouteDe
     const MAX_QUEUE = 500;
 
     return streamSSE(c, async (stream) => {
-      const queue: Array<{ id: number; event: string; data: Record<string, unknown> }> = [];
+      const queue: ArtifactEvent[] = [];
       let notify: (() => void) | null = null;
 
       const onAbort = () => {
