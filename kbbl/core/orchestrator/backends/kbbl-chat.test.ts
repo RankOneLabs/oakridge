@@ -3,16 +3,18 @@ import { createKbblChatBackend } from "./kbbl-chat";
 import type { InputRef, StageRow } from "./interface";
 import type { SessionManager } from "../../session/session-manager";
 
-interface CreateCall {
+interface FakeCreateOpts {
   workdir: string;
   name: string;
   model: string | null;
 }
 
+type CreateCall = FakeCreateOpts;
+
 function makeFakeManager(): { manager: SessionManager; calls: CreateCall[] } {
   const calls: CreateCall[] = [];
   const manager = {
-    async create(opts: { workdir: string; name: string; model: string | null }) {
+    async create(opts: FakeCreateOpts) {
       calls.push({ workdir: opts.workdir, name: opts.name, model: opts.model });
       return {
         oakridgeSid: `sid-${calls.length}`,
@@ -23,12 +25,25 @@ function makeFakeManager(): { manager: SessionManager; calls: CreateCall[] } {
   return { manager, calls };
 }
 
+// Real artifact types per the stages table — kept accurate so future
+// dispatch logic that branches on artifact type doesn't trip over the
+// fixtures. Unknown stages fall back to a neutral spec→plan default.
+const STAGE_ARTIFACT_TYPES: Record<
+  string,
+  { input: StageRow["input_artifact_type"]; output: StageRow["output_artifact_type"] }
+> = {
+  planner1: { input: "spec", output: "plan" },
+  planner2: { input: "cohort", output: "brief" },
+  build: { input: "brief", output: "pr" },
+};
+
 function stage(name: string): StageRow {
+  const artifacts = STAGE_ARTIFACT_TYPES[name] ?? { input: "spec", output: "plan" };
   return {
     name,
     prompt_template_path: `${name}.md`,
-    input_artifact_type: "spec",
-    output_artifact_type: "plan",
+    input_artifact_type: artifacts.input,
+    output_artifact_type: artifacts.output,
     gate: "none",
     default_backend: "kbbl_chat",
   };
