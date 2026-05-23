@@ -1,4 +1,5 @@
 """Tests for run_build_only_pipeline: retry path uses latest run via handoff_docs.run_id."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -7,7 +8,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from safir_py import BuildBrief, PermissionProfile, Phase, Run
 
+from builder.errors import SafirIOError
 from builder.pipeline import run_build_only_pipeline
+from builder.result import Err
 
 
 def _make_brief(status: str = "approved") -> BuildBrief:
@@ -163,3 +166,47 @@ async def test_original_failed_run_not_used_after_retry(tmp_path: Path) -> None:
         assert old_run_id not in str(call)
     for call in client.update_run.call_args_list:
         assert old_run_id not in str(call)
+
+
+@pytest.mark.asyncio
+async def test_build_only_pipeline_returns_err_when_initial_safir_call_fails(
+    tmp_path: Path,
+) -> None:
+    client = _make_safir_client()
+    client.get_build_brief = AsyncMock(side_effect=RuntimeError("safir down"))
+
+    result = await run_build_only_pipeline(
+        brief_id="brief-1",
+        workdir=tmp_path,
+        safir_client=client,
+    )
+
+    match result:
+        case Err(SafirIOError() as err):
+            assert err.op == "run_build_only_pipeline"
+            assert "safir down" in err.detail
+        case _:
+            raise AssertionError(f"expected Err(SafirIOError), got {result!r}")
+
+
+@pytest.mark.asyncio
+async def test_build_only_pipeline_suppresses_rollback_failures(tmp_path: Path) -> None:
+    client = _make_safir_client(run_id="run-rollback", phases=[])
+    client.update_phase = AsyncMock(side_effect=RuntimeError("phase update down"))
+    client.update_run = AsyncMock(side_effect=RuntimeError("run update down"))
+
+    with patch("builder.pipeline.run_pipeline", new=AsyncMock(side_effect=RuntimeError("boom"))):
+        result = await run_build_only_pipeline(
+            brief_id="brief-1",
+            workdir=tmp_path,
+            safir_client=client,
+        )
+
+    match result:
+        case Err(SafirIOError() as err):
+            assert "boom" in err.detail
+            assert "rollback failed" in err.detail
+            assert "phase update down" in err.detail
+            assert "run update down" in err.detail
+        case _:
+            raise AssertionError(f"expected Err(SafirIOError), got {result!r}")

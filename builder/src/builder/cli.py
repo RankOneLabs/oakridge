@@ -1,4 +1,5 @@
 """safir-build CLI entry."""
+
 from __future__ import annotations
 
 import argparse
@@ -47,8 +48,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--models",
         default=None,
         help=(
-            "Comma-separated 'planner2,build' models. "
-            "Default: claude-opus-4-7,claude-sonnet-4-6."
+            "Comma-separated 'planner2,build' models. Default: claude-opus-4-7,claude-sonnet-4-6."
         ),
     )
     p.add_argument(
@@ -102,6 +102,12 @@ def _validate_workdir(workdir: Path) -> ConfigError | None:
 
 def _validate_mode_flags(args: argparse.Namespace) -> ConfigError | None:
     auto_approve = getattr(args, "auto_approve", False)
+    if auto_approve and args.dry_run:
+        return ConfigError(
+            op="validate_mode_flags",
+            entity_id=None,
+            detail="--auto-approve and --dry-run are mutually exclusive",
+        )
     if args.brief_id is not None and auto_approve:
         return ConfigError(
             op="validate_mode_flags",
@@ -202,7 +208,7 @@ async def _run(args: argparse.Namespace) -> int:
         if args.brief_id is None and not auto_approve and not args.dry_run:
             p2 = pipeline_result.step_outputs.get("planner2")
             brief_id = getattr(p2, "handoff_id", None) if p2 is not None else None
-            if brief_id:
+            if brief_id is not None:
                 print(
                     f"Brief ready for review: {brief_id}. "
                     f"Next: review in kbbl PWA, approve, then click 'Run build' "

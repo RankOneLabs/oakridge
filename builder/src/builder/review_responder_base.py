@@ -1,4 +1,5 @@
 """Shared models and helpers for plan and build-brief review responders."""
+
 from __future__ import annotations
 
 import logging
@@ -121,12 +122,13 @@ async def _call_safir_or_record_conflict(
             ),
         )
         return None
-    except httpx.HTTPStatusError as e:
+    except httpx.HTTPError as e:
+        status = e.response.status_code if isinstance(e, httpx.HTTPStatusError) else None
         logger.error(
-            "atom_edit IO error thread_id=%s anchor=%s status=%d",
+            "atom_edit IO error thread_id=%s anchor=%s status=%s",
             ctx.thread_id,
             body.get("anchor", ""),
-            e.response.status_code,
+            status,
         )
         record_conflict(
             ctx,
