@@ -4,9 +4,6 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { loadConfig, type KbblConfig } from "./config";
-import { createSafirClient } from "./safir/client";
-import { createSafirQueue } from "./safir/queue";
-import { createSafirQueueWorker } from "./safir/queue-worker";
 import { SessionManager } from "./session/session-manager";
 import { Session } from "./session/session";
 import { isGitRepo, isPathInside, resolveRepoTopLevel } from "./session/worktree";
@@ -150,27 +147,6 @@ if (config.sessions.worktree_per_session && (await isGitRepo(workdir))) {
   }
 }
 
-// === safir client + retry queue ===
-// Constructed before the manager so SessionManagerOpts.safirClient/safirQueue
-// are populated. The worker drains queued kbbl→safir writes on a fixed
-// interval; transient failures (5xx, network) fall into the queue via
-// safirCall, 4xx surfaces as a thrown error to the call site (real bug, not
-// a retry candidate). API token is read from process.env at client
-// construction; if unset, the Authorization header is omitted and safir
-// (which doesn't validate auth as of 2026-05-09) accepts the request.
-
-const safirClient = createSafirClient({
-  baseUrl: config.safir.base_url,
-  apiToken: process.env.SAFIR_API_TOKEN,
-});
-const safirQueue = createSafirQueue({ dataDir });
-const safirWorker = createSafirQueueWorker({
-  queue: safirQueue,
-  client: safirClient,
-  intervalSeconds: config.safir.queue_drain_interval_seconds,
-});
-safirWorker.start();
-
 // === runtime adapter ===
 // The Claude Code adapter owns its CLI flags, settings.json, and the
 // PreToolUse gate route. Core consumes it through the AppRuntime contract
@@ -182,8 +158,6 @@ const runtime = await createClaudeCodeRuntime({
   port,
   dataDir,
   gatePath,
-  safirClient,
-  safirBaseUrl: config.safir.base_url.replace(/\/+$/, ""),
 });
 
 // === manager ===
@@ -196,8 +170,6 @@ const manager = new SessionManager({
   classifyEvent: runtime.classifyEvent,
   nonPersistedEventTypes: runtime.nonPersistedEventTypes,
   config,
-  safirClient,
-  safirQueue,
 });
 
 // === Dispatcher + dispatch hooks + responder spawn ===
@@ -223,7 +195,6 @@ const app = createApp({
   sessionsDir,
   handoffsDir,
   pwaDistDir,
-  safirClient,
   getBunServer: () => bunServer,
   config,
   configPath,
@@ -275,11 +246,6 @@ for (const sig of ["SIGINT", "SIGTERM"] as const) {
     void (async () => {
       const worstCode = await manager.endAll();
       await manager.drainLifecycle();
-      // Stop the safir queue worker after sessions have ended so any
-      // teardown enqueues from afterSessionEnded (PR-B) drain into the
-      // JSONL rather than the timer interval. Worker.stop() awaits the
-      // current tick chain.
-      await safirWorker.stop();
       server.stop();
       process.exit(worstCode);
     })();

@@ -1,9 +1,5 @@
 export type Sid = string & { readonly __brand: 'Sid' };
-export type TaskId = number & { readonly __brand: 'TaskId' };
 export type SpecId = string & { readonly __brand: 'SpecId' };
 export type PlanId = string & { readonly __brand: 'PlanId' };
-export type PhaseId = string & { readonly __brand: 'PhaseId' };
-export type RunId = string & { readonly __brand: 'RunId' };
-export type HandoffId = string & { readonly __brand: 'HandoffId' };
 export type BriefId = string & { readonly __brand: 'BriefId' };
 export type ThreadId = string & { readonly __brand: 'ThreadId' };

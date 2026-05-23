@@ -8,10 +8,6 @@
   "retention": {
     "session_events_full_days": 14
   },
-  "safir": {
-    "base_url": "http://localhost:7145",
-    "queue_drain_interval_seconds": 30
-  },
   "sessions": {
     "worktree_per_session": false,
     "worktree_dir_name": "worktrees"

@@ -185,33 +185,16 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
 
   app.post("/sessions", async (c) => {
     // Optional body: { resume_from?: string, workdir?: string, name?: string
-    // (≤80 chars), artifact_id?, model?, task_id?, run_id?,
-    // permission_profile_id? }. No body / missing fields = a fresh session
-    // under the server's --workdir with a server-generated name. resume_from
-    // is an oakridgeSid whose parent CC session should be inherited as
-    // context via --resume <parentCcSid> --fork-session, and ignores any
-    // workdir override (the parent's workdir is authoritative).
-    //
-    // task_id, run_id, and permission_profile_id are independent:
-    //   - task_id alone → SessionManager creates a fresh run on the task,
-    //     then its first phase, and attaches the session to it.
-    //   - run_id alone → SessionManager appends a new phase to the
-    //     existing run (safir resolves the task from the run server-side).
-    //     Caveat: Session.taskId is NOT back-resolved from run_id, so the
-    //     kbbl session itself is not task-bound — POST /:sid/permission/
-    //     approve-for-task and any other taskId-gated surface will 422.
-    //     Send task_id alongside run_id when you need that.
-    //   - permission_profile_id → resolved at spawn time as the session's
-    //     permission profile, overriding whatever the task default would
-    //     have selected; works with or without task_id / run_id.
+    // (≤80 chars), artifact_id?, model? }. No body / missing fields = a fresh
+    // session under the server's --workdir with a server-generated name.
+    // resume_from is an oakridgeSid whose parent CC session should be
+    // inherited as context via --resume <parentCcSid> --fork-session, and
+    // ignores any workdir override (the parent's workdir is authoritative).
     let resumeFrom: string | null = null;
     let bodyWorkdir: string | null = null;
     let bodyName: string | null = null;
     let bodyArtifactId: string | null = null;
     let bodyModel: string | null = null;
-    let bodyTaskId: number | null = null;
-    let bodyRunId: string | null = null;
-    let bodyPermissionProfileId: number | null = null;
     // Read raw text first so we can distinguish "no body" (treat as no
     // options, preserves the old POST /sessions behavior) from "bad body"
     // (400). Using c.req.json() with an inner .catch() would silently
@@ -234,9 +217,6 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
           name?: unknown;
           artifact_id?: unknown;
           model?: unknown;
-          task_id?: unknown;
-          run_id?: unknown;
-          permission_profile_id?: unknown;
         };
         if (parsed.resume_from !== undefined) {
           if (typeof parsed.resume_from !== "string") {
@@ -316,50 +296,6 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
           }
           bodyModel = trimmedModel;
         }
-        if (parsed.task_id !== undefined) {
-          // isSafeInteger (not isInteger) — matches safir-proxy.ts's
-          // parseTaskId, which is the canonical integer-id check in this
-          // codebase. Past 2^53 ids silently round under isInteger, which
-          // would let a client target the wrong task.
-          if (
-            typeof parsed.task_id !== "number" ||
-            !Number.isSafeInteger(parsed.task_id) ||
-            parsed.task_id <= 0
-          ) {
-            return c.json(
-              { error: "task_id must be a positive integer" },
-              400,
-            );
-          }
-          bodyTaskId = parsed.task_id;
-        }
-        if (parsed.run_id !== undefined) {
-          if (typeof parsed.run_id !== "string") {
-            return c.json({ error: "run_id must be a string" }, 400);
-          }
-          const trimmedRunId = parsed.run_id.trim();
-          if (trimmedRunId === "") {
-            return c.json(
-              { error: "run_id must be non-empty when provided" },
-              400,
-            );
-          }
-          bodyRunId = trimmedRunId;
-        }
-        if (parsed.permission_profile_id !== undefined) {
-          // isSafeInteger same rationale as task_id above.
-          if (
-            typeof parsed.permission_profile_id !== "number" ||
-            !Number.isSafeInteger(parsed.permission_profile_id) ||
-            parsed.permission_profile_id <= 0
-          ) {
-            return c.json(
-              { error: "permission_profile_id must be a positive integer" },
-              400,
-            );
-          }
-          bodyPermissionProfileId = parsed.permission_profile_id;
-        }
       }
     } catch {
       return c.json({ error: "invalid json" }, 400);
@@ -385,9 +321,6 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
         name: bodyName ?? undefined,
         artifactId: bodyArtifactId ?? undefined,
         model: bodyModel ?? undefined,
-        taskId: bodyTaskId ?? undefined,
-        runId: bodyRunId ?? undefined,
-        permission_profile_id: bodyPermissionProfileId ?? undefined,
       };
     } else {
       if (!isValidSid(resumeFrom)) {
@@ -466,9 +399,6 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
         parentOakridgeSid: resumeFrom,
         artifactId: bodyArtifactId ?? undefined,
         model: bodyModel ?? parentInfo.parentModel ?? undefined,
-        taskId: bodyTaskId ?? undefined,
-        runId: bodyRunId ?? undefined,
-        permission_profile_id: bodyPermissionProfileId ?? undefined,
       };
     }
 

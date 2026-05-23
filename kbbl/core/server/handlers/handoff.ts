@@ -17,9 +17,7 @@ export interface HandoffRouteDeps {
  * `GET /:sid/handoff` — returns the markdown body of the handoff doc the
  * compaction lifecycle persisted at `kbbl/data/handoffs/<sid>.md`. The
  * PWA's CompactedBanner consumes this when the operator opens a session
- * whose endReason is "compacted" — the project-spine view at
- * `GET /safir/handoffs/:id` exists for cross-task browsing and is
- * deliberately separate.
+ * whose endReason is "compacted".
  *
  * Status mapping:
  *   200 — file present, body is `text/markdown; charset=utf-8`

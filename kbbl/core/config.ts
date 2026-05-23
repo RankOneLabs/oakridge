@@ -9,12 +9,6 @@ import { z } from "zod";
 // "the override isn't doing anything." Top-level schema is .strict() for
 // the same reason. Defaults live on each leaf field, so an absent block
 // or absent field both resolve to the documented default.
-//
-// Phase 0 only stores the parsed config on SessionManager. Consumers
-// (Phase 1 compactor, Phase 3 safir client, Phase 6 retention sweep)
-// pull what they need from there. Per-task overrides land in Phase 4
-// via permission_profiles.rules.compact_overrides; until then the
-// global config here is the only source.
 
 const CompactSchema = z
   .object({
@@ -32,21 +26,6 @@ const CompactSchema = z
 const RetentionSchema = z
   .object({
     session_events_full_days: z.number().int().positive().default(14),
-  })
-  .strict();
-
-// Secret-bearing tokens are intentionally NOT in the schema. The kbbl→safir
-// API bearer (`SAFIR_API_TOKEN`) and the shared webhook secret
-// (`SAFIR_WEBHOOK_TOKEN`, same value on both processes) are read from
-// process.env at the point of use in Phase 2/3, so a checked-in
-// config.json can never carry a real credential. Strict-mode rejection
-// also means an old config with `api_token`/`webhook_token` keys will
-// fail loud at startup, prompting the operator to move them to env.
-const SafirSchema = z
-  .object({
-    base_url: z.url().default("http://localhost:7145"),
-    queue_drain_interval_seconds: z.number().positive().default(30),
-    web_url: z.url().default("http://localhost:3000"),
   })
   .strict();
 
@@ -88,7 +67,6 @@ export const KbblConfigSchema = z
     // for these blocks (output has all defaulted keys present).
     compact: CompactSchema.prefault({}),
     retention: RetentionSchema.prefault({}),
-    safir: SafirSchema.prefault({}),
     sessions: SessionsSchema.prefault({}),
   })
   .strict();

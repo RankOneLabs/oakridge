@@ -18,27 +18,6 @@ export function writeHashSid(sid: string | null): void {
   }
 }
 
-export function readHashTaskId(): number | null {
-  const hash = window.location.hash.slice(1);
-  if (!hash) return null;
-  const params = new URLSearchParams(hash);
-  const raw = params.get("task");
-  if (raw === null) return null;
-  if (!/^[1-9][0-9]*$/.test(raw)) return null;
-  const n = Number.parseInt(raw, 10);
-  return Number.isSafeInteger(n) ? n : null;
-}
-
-export function writeHashTaskId(taskId: number | null): void {
-  if (taskId === null) {
-    history.replaceState(null, "", window.location.pathname + window.location.search);
-    window.dispatchEvent(new Event("hashchange"));
-    return;
-  }
-  if (!Number.isSafeInteger(taskId) || taskId <= 0) return;
-  window.location.hash = `task=${taskId}`;
-}
-
 export function readHashRoute():
   | { view: "plan" | "brief" | "cohort"; id: string }
   | null {

@@ -1,8 +1,7 @@
 // Handoff doc parser + Zod schema. Pure data layer — no side effects, no
-// runtime integration. runCompact (Step 8 of session-manager.ts edit)
-// invokes parseHandoffMarkdown on the markdown extracted from CC's
-// /compact response, then persists raw_markdown to disk and submits the
-// parsed shape to safir.
+// runtime integration. runCompact invokes parseHandoffMarkdown on the
+// markdown extracted from CC's /compact response, then persists
+// raw_markdown to disk.
 //
 // The parser is intentionally permissive: per-section parse failures
 // leave that section at its default; raw_markdown is always preserved.
@@ -15,8 +14,6 @@ import { z } from "zod";
 export const HandoffDocSchema = z
   .object({
     schema_version: z.literal(1),
-    task_id: z.number().nullable(),
-    run_id: z.string().nullable(),
     from_session_id: z.string().nullable(),
     to_session_id: z.string().nullable(),
     produced_at: z.string(),
@@ -40,8 +37,6 @@ export type HandoffDoc = z.infer<typeof HandoffDocSchema>;
 export interface HandoffParseContext {
   from_session_id: string;
   produced_at: string;
-  task_id?: number;
-  run_id?: string;
 }
 
 function splitSections(md: string): Map<string, string> {
@@ -150,8 +145,6 @@ export function parseHandoffMarkdown(
 
   return HandoffDocSchema.parse({
     schema_version: 1,
-    task_id: ctx.task_id ?? null,
-    run_id: ctx.run_id ?? null,
     from_session_id: ctx.from_session_id,
     to_session_id: null,
     produced_at: ctx.produced_at,

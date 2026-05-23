@@ -14,10 +14,6 @@ conventions. This root file sets the universal floor only.
   for legit-biz-club study runs.
 - **legit-biz-club/** — Python. Workspace layer (multi-agent collaboration
   over a shared artifact). Library, no CLI.
-- **builder/** — Python. Planner-2 + build-agent jig pipeline.
-- **planner1/** — Python. Decomposes safir task notes into a DAG of
-  build-ready child tasks.
-- **safir-py/** — Python. HTTP client for safir's task/run/phase/handoff API.
 
 Workspace-level commands:
 

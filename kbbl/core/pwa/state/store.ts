@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-import type { Sid, TaskId } from "../lib/ids";
+import type { Sid } from "../lib/ids";
 import type {
   CompactSuggestion,
   InboxDelta,
@@ -19,7 +19,6 @@ export interface AppState {
   inboxStatus: Status;
   compactSuggestions: Map<Sid, CompactSuggestion>;
   currentSid: Sid | null;
-  currentTaskId: TaskId | null;
   removedSids: Set<Sid>;
 
   hydrateSession: (snapshot: SessionSnapshot) => void;
@@ -28,7 +27,6 @@ export interface AppState {
   applyInboxDelta: (delta: InboxDelta) => void;
   setInboxStatus: (status: Status) => void;
   setCurrentSid: (sid: Sid | null) => void;
-  setCurrentTaskId: (taskId: TaskId | null) => void;
   clearCompactSuggestion: (sid: Sid) => void;
 }
 
@@ -38,7 +36,6 @@ export const useStore = create<AppState>()((set) => ({
   inboxStatus: "connecting",
   compactSuggestions: new Map(),
   currentSid: null,
-  currentTaskId: null,
   removedSids: new Set(),
 
   hydrateSession: (snapshot) =>
@@ -96,7 +93,6 @@ export const useStore = create<AppState>()((set) => ({
 
   setInboxStatus: (inboxStatus) => set({ inboxStatus }),
   setCurrentSid: (currentSid) => set({ currentSid }),
-  setCurrentTaskId: (currentTaskId) => set({ currentTaskId }),
 
   clearCompactSuggestion: (sid) =>
     set((state) => {

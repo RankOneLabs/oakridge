@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
 import type { Compactor } from "./compactor";
-import type { PermissionProfile } from "../safir/types";
 
 export type SessionId = string & { readonly __brand: "SessionId" };
 
@@ -79,10 +78,6 @@ export interface SessionOpts {
   worktreeBranch?: string | null;
   worktreeBaseRef?: string | null;
   projectWorkdir?: string | null;
-  taskId?: number;
-  runId?: string;
-  permissionProfile?: PermissionProfile | null;
-  phaseId?: string;
   callbacks?: SessionCallbacks;
   /**
    * Optional runtime-adapter classifier called for each parsed stdout event
@@ -247,10 +242,6 @@ export class Session {
   readonly projectWorkdir: string | null;
   readonly model: string | null;
 
-  private _taskId: number | undefined;
-  private _runId: string | undefined;
-  private _phaseId: string | undefined;
-  private _permissionProfile: PermissionProfile | null;
   private _endReason: SessionEndReason | undefined;
   private _successorSid: string | null = null;
   private _compactor: Compactor | null = null;
@@ -331,10 +322,6 @@ export class Session {
     this.worktreeBaseRef = opts.worktreeBaseRef ?? null;
     this.projectWorkdir = opts.projectWorkdir ?? null;
     this.model = opts.model ?? null;
-    this._taskId = opts.taskId;
-    this._runId = opts.runId;
-    this._phaseId = opts.phaseId;
-    this._permissionProfile = opts.permissionProfile ?? null;
     this.createdAt = new Date().toISOString();
     this.lastActivityTs = this.createdAt;
     this.lastResultTs = this.createdAt;
@@ -499,21 +486,8 @@ export class Session {
     return this.endedController.signal;
   }
 
-  get taskId(): number | undefined { return this._taskId; }
-  get runId(): string | undefined { return this._runId; }
-  get phaseId(): string | undefined { return this._phaseId; }
   get endReason(): SessionEndReason | undefined { return this._endReason; }
   get successorSid(): string | null { return this._successorSid; }
-  get permissionProfile(): PermissionProfile | null { return this._permissionProfile; }
-
-  setPermissionProfile(profile: PermissionProfile): void {
-    this._permissionProfile = profile;
-  }
-
-  attachSafirContext(runId: string, phaseId: string | undefined): void {
-    this._runId = runId;
-    this._phaseId = phaseId;
-  }
 
   get compactor(): Compactor | null {
     return this._compactor;

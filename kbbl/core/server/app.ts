@@ -1,17 +1,14 @@
 import { writeFile } from "node:fs/promises";
-import { z } from "zod";
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import type { Database } from "bun:sqlite";
 
 import type { AppRuntime } from "../runtime";
-import type { SafirClient } from "../safir/client";
 import type { KbblConfig } from "../config";
 import type { SessionManager } from "../session/session-manager";
 import type { createDispatcher } from "../orchestrator/backends/dispatcher";
 import { inboxHandler } from "../stream/inbox";
 import { mountHandoffRoutes } from "./handlers/handoff";
-import { mountPermissionRoutes } from "./handlers/permission";
 import { mountPerSidRoutes } from "./handlers/per-sid";
 import { mountProjectsRoutes } from "./handlers/projects";
 import { mountSpecsRoutes } from "./handlers/specs";
@@ -43,13 +40,6 @@ export interface CreateAppDeps {
   handoffsDir: string;
   /** Path to the built PWA dist directory served as static files. */
   pwaDistDir: string;
-  /**
-   * Same client the manager uses; threaded through deps so the permission
-   * route (and any future safir-coupled handler) can share token + base URL
-   * with the manager. Tests construct the manager + app with their own
-   * stubbed client.
-   */
-  safirClient: SafirClient;
   /**
    * Returns the Bun server instance for `requestIP` loopback verification
    * inside the runtime's hook handler. Must be a getter (not the value)
@@ -86,7 +76,6 @@ export function createApp(deps: CreateAppDeps): Hono {
     sessionsDir,
     handoffsDir,
     pwaDistDir,
-    safirClient,
     getBunServer,
     config,
     configPath,
@@ -103,12 +92,6 @@ export function createApp(deps: CreateAppDeps): Hono {
 
   // ---- per-sid routes ----
   mountPerSidRoutes(app, { manager, sessionsDir });
-
-  // ---- per-sid permission routes ----
-  //
-  // POST /:sid/permission/approve-for-task persists an auto-approve rule to
-  // the session's task default profile so future sessions inherit it.
-  mountPermissionRoutes(app, { manager, safirClient });
 
   // ---- per-sid handoff ----
   //
@@ -127,7 +110,6 @@ export function createApp(deps: CreateAppDeps): Hono {
     c.json({
       defaultWorkdir,
       softThresholdTokens: config.compact.soft_threshold_tokens,
-      safirWebUrl: config.safir.web_url,
     }),
   );
 
@@ -141,56 +123,35 @@ export function createApp(deps: CreateAppDeps): Hono {
     if (typeof body !== "object" || body === null) {
       return c.json({ error: "body must be an object" }, 400);
     }
-    const b = body as { softThresholdTokens?: unknown; safirWebUrl?: unknown };
-    const hasSoftThreshold = "softThresholdTokens" in b;
-    const hasSafirWebUrl = "safirWebUrl" in b;
-    if (!hasSoftThreshold && !hasSafirWebUrl) {
+    const b = body as { softThresholdTokens?: unknown };
+    if (!("softThresholdTokens" in b)) {
       return c.json({ error: "no settable fields in body" }, 400);
     }
-    if (hasSoftThreshold) {
-      const { softThresholdTokens } = b;
-      if (
-        typeof softThresholdTokens !== "number" ||
-        !Number.isInteger(softThresholdTokens) ||
-        softThresholdTokens <= 0
-      ) {
-        return c.json(
-          { error: "softThresholdTokens must be a positive integer" },
-          400,
-        );
-      }
-      if (softThresholdTokens >= config.compact.hard_threshold_tokens) {
-        return c.json(
-          {
-            error: `softThresholdTokens must be < hardThresholdTokens (${config.compact.hard_threshold_tokens})`,
-          },
-          400,
-        );
-      }
+    const { softThresholdTokens } = b;
+    if (
+      typeof softThresholdTokens !== "number" ||
+      !Number.isInteger(softThresholdTokens) ||
+      softThresholdTokens <= 0
+    ) {
+      return c.json(
+        { error: "softThresholdTokens must be a positive integer" },
+        400,
+      );
     }
-    if (hasSafirWebUrl) {
-      const { safirWebUrl } = b;
-      if (typeof safirWebUrl !== "string" || !z.url().safeParse(safirWebUrl).success) {
-        return c.json({ error: "safirWebUrl must be a valid URL" }, 400);
-      }
-      const parsed = new URL(safirWebUrl);
-      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-        return c.json({ error: "safirWebUrl must be a valid URL" }, 400);
-      }
+    if (softThresholdTokens >= config.compact.hard_threshold_tokens) {
+      return c.json(
+        {
+          error: `softThresholdTokens must be < hardThresholdTokens (${config.compact.hard_threshold_tokens})`,
+        },
+        400,
+      );
     }
-    const newSoftThreshold = hasSoftThreshold
-      ? (b.softThresholdTokens as number)
-      : config.compact.soft_threshold_tokens;
-    const newSafirWebUrl = hasSafirWebUrl
-      ? (b.safirWebUrl as string)
-      : config.safir.web_url;
     try {
       await writeFile(
         configPath,
         JSON.stringify({
           ...config,
-          compact: { ...config.compact, soft_threshold_tokens: newSoftThreshold },
-          safir: { ...config.safir, web_url: newSafirWebUrl },
+          compact: { ...config.compact, soft_threshold_tokens: softThresholdTokens },
         }, null, 2),
         "utf8",
       );
@@ -198,12 +159,10 @@ export function createApp(deps: CreateAppDeps): Hono {
       const msg = err instanceof Error ? err.message : String(err);
       return c.json({ error: `failed to persist config: ${msg}` }, 500);
     }
-    config.compact.soft_threshold_tokens = newSoftThreshold;
-    config.safir.web_url = newSafirWebUrl;
+    config.compact.soft_threshold_tokens = softThresholdTokens;
     return c.json({
       defaultWorkdir,
       softThresholdTokens: config.compact.soft_threshold_tokens,
-      safirWebUrl: config.safir.web_url,
     });
   });
 
@@ -241,7 +200,7 @@ export function createApp(deps: CreateAppDeps): Hono {
   // GET /artifact-stream?target_type=&target_id= — review events publish
   // into artifactEventBus via the mirror adapter in kbbl/core/review/events.ts,
   // so this route carries atom edits, thread activity, and freeze transitions
-  // to the PWA. (Old name: /safir-stream — kept the bus name internal.)
+  // to the PWA.
   mountArtifactStreamRoutes(app, { bus: artifactEventBus });
 
   // ---- /inbox (always-on delta stream) ----

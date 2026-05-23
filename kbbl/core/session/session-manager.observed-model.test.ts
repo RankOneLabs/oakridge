@@ -4,8 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { KbblConfigSchema, type KbblConfig } from "../config";
-import { createSafirClient, type FetchFn } from "../safir/client";
-import { createSafirQueue } from "../safir/queue";
 import { SessionManager } from "./session-manager";
 import type { Session, SpawnCmd, SessionSnapshot } from "./session";
 
@@ -22,22 +20,12 @@ async function noopSpawn(_session: Session): Promise<SpawnCmd> {
 }
 
 function makeManager(config: KbblConfig): SessionManager {
-  const offlineFetch: FetchFn = async () => {
-    throw new TypeError("safir disabled in observed-model tests");
-  };
-  const safirClient = createSafirClient({
-    baseUrl: "http://127.0.0.1:1",
-    fetch: offlineFetch,
-  });
-  const safirQueue = createSafirQueue({ dataDir: tmpRoot });
   return new SessionManager({
     sessionsDir,
     handoffsDir: join(tmpRoot, "handoffs"),
     worktreesDir,
     buildSpawnCmd: noopSpawn,
     config,
-    safirClient,
-    safirQueue,
   });
 }
 

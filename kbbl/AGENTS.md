@@ -79,8 +79,8 @@ core/pwa/
    import that uses it, with a comment explaining why.
 
 6. **No vestigial route names.** When a backend integration is ripped out,
-   rename the routes it touched. The `/safir-stream` → `/artifact-stream`
-   rename in the May 2026 cleanup is the cautionary tale.
+   rename the routes it touched so the URL surface reflects what's actually
+   served.
 
 ## Realtime / SSE conventions
 
@@ -106,10 +106,9 @@ When the UI feels laggy:
    breaking memoization downstream.
 2. **Open DevTools → Performance → record.** 30 seconds of profiling
    beats 30 minutes of guessing.
-3. **Check for dead requests.** `/safir/tasks` and
-   `/safir/permission-profiles` were 404'ing on every SessionListView
-   mount because safir was ripped out but the fetches stayed. Grep for
-   the removed service's routes when ripping things out.
+3. **Check for dead requests.** When ripping out a backend integration,
+   grep for the removed service's routes — leftover fetches show up as
+   404s on every mount and bury real signal.
 
 ## Commands
 

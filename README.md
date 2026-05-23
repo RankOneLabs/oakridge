@@ -17,10 +17,6 @@ oakridge/
 - **kbbl** — the operator surface. Drives one or more CLI coding agents (Claude Code today; runtime-agnostic by design) from a tablet- or phone-friendly PWA over Tailscale. Standalone; works without the workspace layer. See `kbbl/README.md`.
 - **legit-biz-club** — the workspace layer (multi-agent collaboration over a shared artifact). v1 build complete — all five phases (foundation, incremental coordination, convergence, evals + memory commit, study harness) shipped on `main`. Python library; no CLI. See `legit-biz-club/README.md`.
 
-## Sibling repos
-
-- **safir** (`~/codes/personal/safir`) — personal task triage system with a runs / phases / handoffs layer. Optional kbbl dependency: when present and pointed at by `kbbl/config.json`'s `safir.base_url`, kbbl renders a task spine view, stamps task-bound sessions as safir runs, applies task default permission profiles, and consumes safir's webhook deliveries. Without safir, kbbl runs standalone exactly as before.
-
 ## Quick start
 
 For the operator surface (Claude Code sessions over Tailscale):
@@ -30,15 +26,7 @@ bun install
 ./kbbl/scripts/kbbl-start /path/to/your/repo
 ```
 
-Defaults to `127.0.0.1:8788`. See `kbbl/README.md` for tablet/phone exposure, dev mode, compaction config, safir bridge, and security posture.
-
-If you want the safir bridge active, start safir first:
-
-```bash
-cd ~/codes/personal/safir && bun run dev      # :7145
-```
-
-Then start kbbl normally — the bridge is keyed off `kbbl/config.json` (`safir.base_url`, default `http://localhost:7145`).
+Defaults to `127.0.0.1:8788`. See `kbbl/README.md` for tablet/phone exposure, dev mode, compaction config, and security posture.
 
 ## Development
 

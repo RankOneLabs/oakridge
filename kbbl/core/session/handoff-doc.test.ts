@@ -5,8 +5,6 @@ import { parseHandoffMarkdown } from "./handoff-doc";
 const ctx = {
   from_session_id: "old-sid",
   produced_at: "2026-05-09T00:00:00.000Z",
-  task_id: 42,
-  run_id: "run-1",
 };
 
 describe("parseHandoffMarkdown well-formed", () => {
@@ -22,7 +20,7 @@ Land the runCompact integration.
 - one-shot subscriber: avoids leaked promises
 
 ## Approaches rejected
-- imperative createPhase inside runCompact — duplicates openSafirContext
+- imperative inline parse inside runCompact — duplicates shared logic
 
 ## Files & state in scope
 - kbbl/core/session/handoff-doc.ts
@@ -62,8 +60,6 @@ Wire submitCompactionHandoff into runCompact step 7.5.
 
     expect(result.raw_markdown).toBe(md);
 
-    expect(result.task_id).toBe(42);
-    expect(result.run_id).toBe("run-1");
     expect(result.from_session_id).toBe("old-sid");
   });
 

@@ -173,33 +173,6 @@ export interface SystemStatusPayload {
   compact_result?: string;
 }
 
-export interface SafirTask {
-  id: number;
-  project_id: string;
-  parent_id: number | null;
-  title: string;
-  status: string;
-}
-
-export interface SafirHandoff {
-  id: string;
-  phase_id: string | null;
-  run_id: string | null;
-  role: "phase_output" | "run_brief";
-  schema_version: number;
-  goal: string | null;
-  next_action: string | null;
-  raw_markdown: string;
-  produced_at: string;
-}
-
-export type TaskFetchState =
-  | { kind: "loading" }
-  | { kind: "ok"; task: SafirTask; handoffs: SafirHandoff[] }
-  | { kind: "not_found" }
-  | { kind: "safir_down" }
-  | { kind: "error"; status: number; message: string };
-
 export interface ToolUseEntry {
   id: string;
   name: string;

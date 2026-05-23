@@ -7,8 +7,6 @@ import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 
 import { KbblConfigSchema } from "../../config";
-import { createSafirClient, type FetchFn } from "../../safir/client";
-import { createSafirQueue } from "../../safir/queue";
 import { SessionManager } from "../../session/session-manager";
 import type { Session, SpawnCmd } from "../../session/session";
 import { mountSessionsRoutes } from "./sessions";
@@ -22,22 +20,12 @@ async function noopSpawn(_session: Session): Promise<SpawnCmd> {
 }
 
 function makeManager(): SessionManager {
-  const offlineFetch: FetchFn = async () => {
-    throw new TypeError("safir disabled in model tests");
-  };
-  const safirClient = createSafirClient({
-    baseUrl: "http://127.0.0.1:1",
-    fetch: offlineFetch,
-  });
-  const safirQueue = createSafirQueue({ dataDir: tmpRoot });
   return new SessionManager({
     sessionsDir,
     handoffsDir: join(tmpRoot, "handoffs"),
     worktreesDir,
     buildSpawnCmd: noopSpawn,
     config: KbblConfigSchema.parse({}),
-    safirClient,
-    safirQueue,
   });
 }
 

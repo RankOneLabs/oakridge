@@ -14,7 +14,6 @@ import {
   type NewSessionFormValues,
 } from "../components/organisms/NewSessionForm";
 import { usePendingReviews } from "../hooks/usePendingReviews";
-import { useTasksAndProfiles } from "../hooks/useTasksAndProfiles";
 import { useUrlPrefill } from "../hooks/useUrlPrefill";
 
 interface StartSessionBody {
@@ -22,8 +21,6 @@ interface StartSessionBody {
   workdir?: string;
   name?: string;
   model?: string;
-  task_id?: number;
-  permission_profile_id?: number;
 }
 
 export function SessionListView({
@@ -47,14 +44,11 @@ export function SessionListView({
   const [resetSignal, setResetSignal] = useState(0);
 
   const { pendingPlans, pendingBriefs } = usePendingReviews();
-  const { tasks, profiles } = useTasksAndProfiles();
   const prefill = useUrlPrefill();
 
-  const activeTasks = tasks?.ok ? tasks.value : [];
-  const permissionProfiles = profiles?.ok ? profiles.value : [];
   const pendingPlanCards = pendingPlans?.ok ? pendingPlans.value : [];
   const pendingBriefCards = pendingBriefs?.ok ? pendingBriefs.value : [];
-  const dataErrors = [pendingPlans, pendingBriefs, tasks, profiles]
+  const dataErrors = [pendingPlans, pendingBriefs]
     .filter((r): r is { ok: false; error: Error } => r?.ok === false)
     .map((r) => r.error.message);
 
@@ -104,8 +98,6 @@ export function SessionListView({
       body.workdir = trimmed;
       body.name = values.name;
       if (values.model !== "") body.model = values.model;
-      if (values.taskId !== null) body.task_id = values.taskId;
-      if (values.profileId !== null) body.permission_profile_id = values.profileId;
     } else {
       setPendingError("internal: startSession needs values or resumeFrom");
       return;
@@ -162,14 +154,9 @@ export function SessionListView({
       </header>
       <div className="session-list-actions">
         <NewSessionForm
-          tasks={activeTasks}
-          profiles={permissionProfiles}
           defaultWorkdir={defaultWorkdir}
           initialWorkdir={prefill.initialWorkdir}
-          initialTaskId={prefill.initialTaskId}
-          initialProfileId={prefill.initialProfileId}
           workdirTouchedInitial={prefill.workdirTouchedInitial}
-          profileLockedRef={prefill.profileLockedRef}
           pending={startMutation.isPending}
           pendingError={pendingError}
           autostartPending={prefill.autostartPending}

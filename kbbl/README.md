@@ -19,10 +19,6 @@ Each session tracks token usage from runtime events. Two thresholds (`compact.so
 
 Compaction runs the agent's `/compact` prompt, writes a handoff markdown to `data/handoffs/<sid>.md`, and ends the session with `endReason: "compacted"`. The successor session resumes from the handoff doc; the PWA renders a CompactedBanner that fetches the markdown via `GET /:sid/handoff`. The soft threshold is mutable at runtime via `PATCH /config { softThresholdTokens }` so the operator can retune without a server restart.
 
-### Optional safir integration
-
-If the kbbl server is configured against a running safir (`config.safir.base_url`), sessions can be created task-bound. The CC adapter writes the safir `task_id` into the session metadata; the spawned agent inherits its task default permission profile, and the operator can persist new auto-approve rules via the PWA's "Approve for task" action (mutates the task's profile so future runs inherit). The server also exposes a read-only proxy at `/safir/...` and accepts safir webhook deliveries at `POST /webhooks/safir` to surface run lifecycle events in the inbox. Without safir, all of this is dormant — kbbl runs standalone exactly as before.
-
 ## Quick start
 
 ```bash
@@ -77,7 +73,7 @@ Stop with `systemctl --user stop kbbl`. Not needed on a dedicated workstation.
 ### Sessions
 
 - `GET /sessions` — list live sessions (add `?include=archived` to fold in on-disk JSONL)
-- `POST /sessions` — create a session; body: `{ workdir?, resume_from?, name?, artifact_id?, model?, task_id?, run_id?, permission_profile_id? }`. With `resume_from`, forks an ended session. The three safir-binding fields are independent: `task_id` alone creates a fresh run on that task (plus its first phase); `run_id` alone appends a sibling phase to an existing run (safir resolves the task from the run server-side); `permission_profile_id` resolves the spawn-time permission profile and works on its own as well as alongside the others, overriding whatever the task default would have selected. Note: the kbbl `Session` does not back-resolve `task_id` from a bare `run_id` — if you need the session itself to be task-bound for downstream surfaces like `POST /:sid/permission/approve-for-task` (which requires `session.taskId`), send `task_id` alongside `run_id`.
+- `POST /sessions` — create a session; body: `{ workdir?, resume_from?, name?, artifact_id?, model? }`. With `resume_from`, forks an ended session.
 - `DELETE /sessions/:sid` — kill a live session (`?purge=true` also deletes the transcript)
 - `GET /artifacts/:artifactId/sessions` — list sessions tagged with a given workspace-layer artifact id
 
@@ -90,7 +86,6 @@ Stop with `systemctl --user stop kbbl`. Not needed on a dedicated workstation.
 - `POST /:sid/yolo` — toggle the session's auto-approve mode
 - `POST /:sid/compact` — operator-initiated compaction (the soft-threshold banner action)
 - `GET /:sid/handoff` — markdown body of the session's compaction handoff (404 if never compacted)
-- `POST /:sid/permission/approve-for-task` — persist an auto-approve rule onto the session's task default profile in safir
 
 ### Inbox + config
 
@@ -98,11 +93,6 @@ Stop with `systemctl --user stop kbbl`. Not needed on a dedicated workstation.
 - `POST /inbox/workspace-events` — local trusted callers push project / coordination events for SSE re-broadcast
 - `GET /config` — server config snapshot for the PWA (`defaultWorkdir`, `softThresholdTokens`)
 - `PATCH /config` — mutate `softThresholdTokens` at runtime (persisted back to `config.json`)
-
-### Safir bridge (optional)
-
-- `GET /safir/tasks`, `GET /safir/tasks/:taskId`, `GET /safir/tasks/:taskId/handoffs`, `GET /safir/handoffs/:handoffId` — read-only proxy used by the PWA spine view
-- `POST /webhooks/safir` — receives safir's run / phase / handoff webhook deliveries (bearer auth, dedupe by `delivery_id`)
 
 ### Runtime-private
 
@@ -122,16 +112,12 @@ kbbl/
 │   │   │                          # per-session event broadcast, YOLO / always-allow state
 │   │   ├── session-manager.ts     # Map<sid, Session>, /inbox subscriptions, archived snapshots
 │   │   └── compactor.ts           # soft/hard threshold tracking + runCompact lifecycle
-│   ├── safir/                     # SafirClient + types (used by manager and proxy)
 │   ├── server/
 │   │   ├── app.ts                 # Hono app factory; mounts all route groups
 │   │   └── handlers/
 │   │       ├── per-sid.ts         # /:sid/{stream,events,input,yolo,approval,compact}
 │   │       ├── sessions.ts        # GET/POST/DELETE /sessions, /artifacts/:id/sessions
 │   │       ├── handoff.ts         # GET /:sid/handoff (compaction markdown)
-│   │       ├── permission.ts      # POST /:sid/permission/approve-for-task
-│   │       ├── safir-proxy.ts     # GET /safir/* read-only proxy for the PWA
-│   │       ├── safir-webhook.ts   # POST /webhooks/safir delivery receiver
 │   │       └── workspace-events.ts # POST /inbox/workspace-events ingest
 │   ├── stream/
 │   │   ├── sse.ts                 # streamForSession, eventsForSession, parseEventsSince
@@ -146,7 +132,7 @@ kbbl/
 │       └── scripts/gate.sh        # PreToolUse hook script invoked by CC
 ├── scripts/
 │   └── kbbl-start                 # launcher: validates workdir, execs core/server.ts
-├── config.json                    # compact thresholds, retention, safir base URL
+├── config.json                    # compact thresholds, retention
 └── data/
     ├── sessions/                  # one JSONL transcript per session (gitignored)
     └── handoffs/                  # compaction handoff markdowns, one per compacted sid
@@ -162,7 +148,6 @@ The `core/` ↔ `adapters/` boundary is enforced by import direction: only `core
 - **Markdown:** assistant text is rendered with `react-markdown` + `rehype-sanitize`; no `dangerouslySetInnerHTML`, so prompt-injected HTML from web-fetched content can't execute.
 - **Agent user settings (Claude Code adapter):** the server spawns CC with `--setting-sources user` so your user-level skills and slash commands are available inside the spawned subprocess. Tradeoff: user-level allowlists and permission settings in `~/.claude/settings.json` can bypass kbbl's approval gate — if you've globally approved a tool there, the PreToolUse hook won't fire for it. The operator-controlled escape hatches below (YOLO, "Always {tool}") are the intended path for short-circuiting the gate; don't rely on the gate to stop things you've already auto-approved at the user level.
 - **YOLO mode and per-tool always-allow** are operator-controlled escape hatches, scoped to a single session. YOLO mode (top-bar toggle) auto-approves every PreToolUse for the rest of the session — useful for setting an agent loose on a long task without tapping each prompt. The "Always {tool}" button on a permission card adds that tool name to a session-scoped allowlist; matching future calls auto-approve. Both reset on server restart, are emitted as visible events, and turn the gate into "see what happened" rather than "decide each call." Use them deliberately.
-- **Permission profiles (with safir)** are the durable counterpart to per-session allowlists. A task in safir can name a default profile (e.g. `read-only-investigation`, `scoped-write`, `full-trust`); any session bound to that task spawns with the profile applied so the gate auto-approves matching tool calls from the first prompt. The PWA's "Approve for task" button on a permission card upgrades the rule from session-scoped to task-scoped by writing it back to safir — future runs on the same task inherit it. Profile changes are visible in safir (`safir profile <name>`), not hidden state.
 
 ## Known issue: permission_required stream events
 

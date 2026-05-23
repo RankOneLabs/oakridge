@@ -3,13 +3,11 @@ import { useQuery } from "@tanstack/react-query";
 interface ServerConfigResponse {
   defaultWorkdir: string;
   softThresholdTokens?: number;
-  safirWebUrl?: string;
 }
 
 export interface ServerConfig {
   defaultWorkdir: string;
   softThresholdTokens?: number;
-  safirWebUrl?: string;
 }
 
 /**
@@ -35,10 +33,6 @@ export function useServerConfig(): ServerConfig | null {
     softThresholdTokens:
       typeof query.data.softThresholdTokens === "number"
         ? query.data.softThresholdTokens
-        : undefined,
-    safirWebUrl:
-      typeof query.data.safirWebUrl === "string" && query.data.safirWebUrl.length > 0
-        ? query.data.safirWebUrl
         : undefined,
   };
 }
