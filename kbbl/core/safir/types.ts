@@ -295,6 +295,26 @@ export const AtomEditConflict = z.object({
 });
 export type AtomEditConflict = z.infer<typeof AtomEditConflict>;
 
+export interface AtomMap {
+  [anchor: string]: string;
+}
+
+export interface AtomEditRequest {
+  anchor?: string | null;
+  prev_value: string | null;
+  new_value: string;
+  edited_by: string;
+  thread_id?: string | null;
+}
+
+export interface AtomEditBatchRequest {
+  anchor?: string | null;
+  prev_value: string | null;
+  new_value: string;
+  edited_by: string;
+  thread_id?: string | null;
+}
+
 export const ThreadMessage = z.object({
   id: z.string(),
   thread_id: z.string(),
@@ -318,6 +338,26 @@ export const CommentThread = z.object({
 });
 export type CommentThread = z.infer<typeof CommentThread>;
 
+export interface CreateThreadRequest {
+  target_type: "plan" | "build_brief";
+  target_id: string;
+  anchor?: string | null;
+  author?: string | null;
+}
+
+export interface ThreadMessageRequest {
+  body: string;
+  author: string;
+}
+
+export interface UpdateThreadStatusRequest {
+  status: "open" | "resolved";
+}
+
+export interface AgentResponseAck {
+  ok: boolean;
+}
+
 export const BuildBrief = z.object({
   id: z.string(),
   phase_id: z.string().nullable(),
@@ -339,6 +379,25 @@ export const BuildBrief = z.object({
   debrief: Debrief.nullable().optional(),
 });
 export type BuildBrief = z.infer<typeof BuildBrief>;
+
+export interface UpdateBuildBriefStatusRequest {
+  status: Extract<ArtifactStatus, "approved" | "rejected">;
+  reason?: string;
+  rejection_reason?: string | null;
+}
+
+export interface ReopenBuildBriefRequest {
+  model?: string;
+}
+
+export interface CreateBuildBriefRunRequest {
+  executor?: string;
+  created_by?: string;
+}
+
+export interface CreateBuildBriefRunResponse {
+  id: string;
+}
 
 // Webhook payload shapes for artifact-review events.
 export const PlanCreatedPayload = z.object({

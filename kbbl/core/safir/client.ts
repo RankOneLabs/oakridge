@@ -5,26 +5,41 @@
 // in-process integration tests in PR-B verify.
 //
 // Error model:
-//   - 2xx → return parsed JSON, untyped (callers Zod-validate only on
-//           reads that need it; trust safir on writes).
+//   - 2xx → return parsed JSON typed to the Safir contract mirror in
+//           ./types; runtime validation stays at selected route boundaries.
 //   - 4xx/5xx → throw SafirHttpError with the status and parsed body.
 //   - Network / abort → re-throw the native TypeError so safirCall can
 //           discriminate transient failures from real bugs.
 
 import type {
+  AgentResponseAck,
+  AtomEdit,
+  AtomEditBatchRequest,
+  AtomEditRequest,
+  AtomMap,
+  BuildBrief,
+  CommentThread,
+  CreateBuildBriefRunRequest,
+  CreateBuildBriefRunResponse,
   CreatePermissionProfile,
   CreateRunPhase,
   CreateTaskRun,
+  CreateThreadRequest,
   HandoffDocRecord,
   PermissionProfile,
   Plan,
+  ReopenBuildBriefRequest,
   RunPhase,
   SubmitHandoff,
   Task,
   TaskRun,
+  ThreadMessage,
+  ThreadMessageRequest,
+  UpdateBuildBriefStatusRequest,
   UpdatePermissionProfile,
   UpdateRunPhase,
   UpdateTaskRun,
+  UpdateThreadStatusRequest,
 } from "./types";
 
 const DEFAULT_TIMEOUT_MS = 5000;
@@ -96,30 +111,30 @@ export interface SafirClient {
   updatePlanStatus(planId: string, body: { status: string; rejection_reason?: string | null }): Promise<Plan>;
   reopenPlan(planId: string): Promise<Plan>;
   // --- review responder surface ---
-  getThread(threadId: string): Promise<Record<string, unknown>>;
-  getAtomMap(targetType: string, targetId: string): Promise<Record<string, string>>;
-  listOpenThreads(targetType: string, targetId: string): Promise<Record<string, unknown>[]>;
-  postAgentResponse(threadId: string, body: AgentResponseBody): Promise<unknown>;
+  getThread(threadId: string): Promise<CommentThread>;
+  getAtomMap(targetType: string, targetId: string): Promise<AtomMap>;
+  listOpenThreads(targetType: string, targetId: string): Promise<CommentThread[]>;
+  postAgentResponse(threadId: string, body: AgentResponseBody): Promise<AgentResponseAck>;
   // --- cohort 2: plan review surface ---
-  listAllThreads(targetType: string, targetId: string): Promise<Record<string, unknown>[]>;
-  listAtomHistory(targetType: string, targetId: string): Promise<Record<string, unknown>[]>;
-  postAtomEdit(targetType: string, targetId: string, body: Record<string, unknown>): Promise<Record<string, unknown>>;
+  listAllThreads(targetType: string, targetId: string): Promise<CommentThread[]>;
+  listAtomHistory(targetType: string, targetId: string): Promise<AtomEdit[]>;
+  postAtomEdit(targetType: string, targetId: string, body: AtomEditRequest): Promise<AtomEdit>;
   postAtomEditBatch(
     targetType: string,
     targetId: string,
-    edits: Array<{ anchor: string; prev_value: string | null; new_value: string; edited_by: string; thread_id?: string | null }>,
-  ): Promise<Record<string, unknown>[]>;
-  createThread(body: Record<string, unknown>): Promise<Record<string, unknown>>;
-  postThreadMessage(threadId: string, body: { body: string; author: string }): Promise<Record<string, unknown>>;
+    edits: AtomEditBatchRequest[],
+  ): Promise<AtomEdit[]>;
+  createThread(body: CreateThreadRequest): Promise<CommentThread>;
+  postThreadMessage(threadId: string, body: ThreadMessageRequest): Promise<ThreadMessage>;
   pingThread(threadId: string): Promise<unknown>;
-  updateThreadStatus(threadId: string, body: { status: string }): Promise<Record<string, unknown>>;
+  updateThreadStatus(threadId: string, body: UpdateThreadStatusRequest): Promise<CommentThread>;
   // --- cohort 3: build brief surface ---
-  listBuildBriefs(status?: string): Promise<Record<string, unknown>[]>;
-  getBuildBrief(id: string): Promise<Record<string, unknown>>;
-  getBuildBriefRun(id: string): Promise<Record<string, unknown>>;
-  updateBuildBriefStatus(id: string, body: Record<string, unknown>): Promise<Record<string, unknown>>;
-  reopenBuildBrief(id: string): Promise<Record<string, unknown>>;
-  createRunFromBuildBrief(briefId: string, body?: { executor?: string; created_by?: string }): Promise<{ id: string }>;
+  listBuildBriefs(status?: string): Promise<BuildBrief[]>;
+  getBuildBrief(id: string): Promise<BuildBrief>;
+  getBuildBriefRun(id: string): Promise<TaskRun>;
+  updateBuildBriefStatus(id: string, body: UpdateBuildBriefStatusRequest): Promise<BuildBrief>;
+  reopenBuildBrief(id: string, body?: ReopenBuildBriefRequest): Promise<BuildBrief>;
+  createRunFromBuildBrief(briefId: string, body?: CreateBuildBriefRunRequest): Promise<CreateBuildBriefRunResponse>;
   getProjectRepoPath(projectId: string): Promise<{ repo_path: string | null }>;
 }
 
@@ -242,44 +257,44 @@ export function createSafirClient(opts: CreateSafirClientOpts): SafirClient {
     reopenPlan: (planId) =>
       request<Plan>("POST", `/plans/${planId}/reopen`),
     getThread: (threadId) =>
-      request<Record<string, unknown>>("GET", `/threads/${threadId}`),
+      request<CommentThread>("GET", `/threads/${threadId}`),
     getAtomMap: (targetType, targetId) =>
-      request<Record<string, string>>("GET", `/atoms/${targetType}/${targetId}`),
+      request<AtomMap>("GET", `/atoms/${targetType}/${targetId}`),
     listOpenThreads: (targetType, targetId) =>
-      request<Record<string, unknown>[]>(
+      request<CommentThread[]>(
         "GET",
         `/artifacts/${targetType}/${targetId}/threads?status=open`,
       ),
     postAgentResponse: (threadId, body) =>
-      request<unknown>("POST", `/threads/${threadId}/agent-response`, body),
+      request<AgentResponseAck>("POST", `/threads/${threadId}/agent-response`, body),
     listAllThreads: (targetType, targetId) =>
-      request<Record<string, unknown>[]>("GET", `/artifacts/${encodeURIComponent(targetType)}/${encodeURIComponent(targetId)}/threads`),
+      request<CommentThread[]>("GET", `/artifacts/${encodeURIComponent(targetType)}/${encodeURIComponent(targetId)}/threads`),
     listAtomHistory: (targetType, targetId) =>
-      request<Record<string, unknown>[]>("GET", `/atoms/${encodeURIComponent(targetType)}/${encodeURIComponent(targetId)}/history`),
+      request<AtomEdit[]>("GET", `/atoms/${encodeURIComponent(targetType)}/${encodeURIComponent(targetId)}/history`),
     postAtomEdit: (targetType, targetId, body) =>
-      request<Record<string, unknown>>("POST", `/atoms/${encodeURIComponent(targetType)}/${encodeURIComponent(targetId)}/edits`, body),
+      request<AtomEdit>("POST", `/atoms/${encodeURIComponent(targetType)}/${encodeURIComponent(targetId)}/edits`, body),
     postAtomEditBatch: (targetType, targetId, edits) =>
-      request<Record<string, unknown>[]>("POST", `/atoms/${encodeURIComponent(targetType)}/${encodeURIComponent(targetId)}/edits/batch`, { edits }),
+      request<AtomEdit[]>("POST", `/atoms/${encodeURIComponent(targetType)}/${encodeURIComponent(targetId)}/edits/batch`, { edits }),
     createThread: (body) =>
-      request<Record<string, unknown>>("POST", "/threads", body),
+      request<CommentThread>("POST", "/threads", body),
     postThreadMessage: (threadId, body) =>
-      request<Record<string, unknown>>("POST", `/threads/${threadId}/messages`, body),
+      request<ThreadMessage>("POST", `/threads/${threadId}/messages`, body),
     pingThread: (threadId) =>
       request<unknown>("POST", `/threads/${threadId}/ping`),
     updateThreadStatus: (threadId, body) =>
-      request<Record<string, unknown>>("PATCH", `/threads/${threadId}/status`, body),
+      request<CommentThread>("PATCH", `/threads/${threadId}/status`, body),
     listBuildBriefs: (status) =>
-      request<Record<string, unknown>[]>("GET", `/build-briefs${status ? `?status=${encodeURIComponent(status)}` : ""}`),
+      request<BuildBrief[]>("GET", `/build-briefs${status ? `?status=${encodeURIComponent(status)}` : ""}`),
     getBuildBrief: (id) =>
-      request<Record<string, unknown>>("GET", `/build-briefs/${encodeURIComponent(id)}`),
+      request<BuildBrief>("GET", `/build-briefs/${encodeURIComponent(id)}`),
     getBuildBriefRun: (id) =>
-      request<Record<string, unknown>>("GET", `/build-briefs/${encodeURIComponent(id)}/run`),
+      request<TaskRun>("GET", `/build-briefs/${encodeURIComponent(id)}/run`),
     updateBuildBriefStatus: (id, body) =>
-      request<Record<string, unknown>>("PATCH", `/build-briefs/${encodeURIComponent(id)}/status`, body),
-    reopenBuildBrief: (id) =>
-      request<Record<string, unknown>>("POST", `/build-briefs/${encodeURIComponent(id)}/reopen`),
+      request<BuildBrief>("PATCH", `/build-briefs/${encodeURIComponent(id)}/status`, body),
+    reopenBuildBrief: (id, body) =>
+      request<BuildBrief>("POST", `/build-briefs/${encodeURIComponent(id)}/reopen`, body ?? {}),
     createRunFromBuildBrief: (briefId, body) =>
-      request<{ id: string }>("POST", `/build-briefs/${encodeURIComponent(briefId)}/runs`, body ?? {}),
+      request<CreateBuildBriefRunResponse>("POST", `/build-briefs/${encodeURIComponent(briefId)}/runs`, body ?? {}),
     getProjectRepoPath: (projectId) =>
       request<{ repo_path: string | null }>("GET", `/projects/${encodeURIComponent(projectId)}/repo-path`),
   };
