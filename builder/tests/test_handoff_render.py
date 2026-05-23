@@ -65,6 +65,32 @@ def test_empty_arrays_produce_empty_sections() -> None:
     assert not after.startswith("-")
 
 
+def test_render_handoff_markdown_skips_decisions_without_decision_text() -> None:
+    parsed = _minimal()
+    parsed["decisions_made"] = [
+        {"decision": "  ", "rationale": "rationale only"},
+        {"decision": " Keep SQLite ", "rationale": " local state "},
+    ]
+
+    md = render_handoff_markdown(parsed)
+
+    assert "rationale only" not in md
+    assert "| Keep SQLite | local state |" in md
+
+
+def test_render_handoff_markdown_skips_rejections_without_approach_text() -> None:
+    parsed = _minimal()
+    parsed["approaches_rejected"] = [
+        {"approach": "", "reason": "reason only"},
+        {"approach": " Use Redis ", "reason": " extra dependency "},
+    ]
+
+    md = render_handoff_markdown(parsed)
+
+    assert "reason only" not in md
+    assert "- **Use Redis** — extra dependency" in md
+
+
 def test_render_from_atom_map_uses_object_list_decision_atoms() -> None:
     canonical = _minimal()
     atom_map = {

@@ -46,7 +46,7 @@ def _safe_indices(atom_map: dict[str, str], prefix: str) -> list[int]:
 
 
 def _string_value(value: object) -> str:
-    return value if isinstance(value, str) else ""
+    return value.strip() if isinstance(value, str) else ""
 
 
 def _string_list(value: object) -> list[str]:
@@ -64,7 +64,7 @@ def _decisions(value: object) -> list[HandoffDecision]:
             continue
         decision = _string_value(item.get("decision"))
         rationale = _string_value(item.get("rationale"))
-        if decision or rationale:
+        if decision:
             out.append({"decision": decision, "rationale": rationale})
     return out
 
@@ -78,7 +78,7 @@ def _rejected_approaches(value: object) -> list[HandoffRejectedApproach]:
             continue
         approach = _string_value(item.get("approach"))
         reason = _string_value(item.get("reason"))
-        if approach or reason:
+        if approach:
             out.append({"approach": approach, "reason": reason})
     return out
 
@@ -92,7 +92,7 @@ def _decision_atom(value: str) -> HandoffDecision | None:
         return None
     decision = _string_value(parsed.get("decision"))
     rationale = _string_value(parsed.get("rationale"))
-    if not decision and not rationale:
+    if not decision:
         return None
     return {"decision": decision, "rationale": rationale}
 
@@ -106,7 +106,7 @@ def _rejected_approach_atom(value: str) -> HandoffRejectedApproach | None:
         return None
     approach = _string_value(parsed.get("approach"))
     reason = _string_value(parsed.get("reason"))
-    if not approach and not reason:
+    if not approach:
         return None
     return {"approach": approach, "reason": reason}
 
