@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 
+import type { SessionId } from "../../session/session";
 import { inboxHandler, type InboxStreamManager } from "../../stream/inbox";
 import { streamForSession, type SessionStreamSource } from "../../stream/sse";
 
@@ -65,7 +66,7 @@ describe("SSE readiness", () => {
       resolveHistory = resolve;
     });
     const session = {
-      oakridgeSid: "sid-ready",
+      oakridgeSid: "sid-ready" as SessionId,
       endedSignal: endedController.signal,
       subscribe: () => () => {},
       readJsonl: () => history,

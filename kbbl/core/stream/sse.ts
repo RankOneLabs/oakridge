@@ -1,10 +1,10 @@
 import type { Context } from "hono";
 import { streamSSE } from "hono/streaming";
 
-import type { EnvelopeEvent, Session } from "../session/session";
+import type { EnvelopeEvent, Session, SessionId } from "../session/session";
 
 export interface SessionStreamSource {
-  oakridgeSid: string;
+  oakridgeSid: SessionId;
   endedSignal: AbortSignal;
   subscribe(cb: (evt: EnvelopeEvent) => void): () => void;
   readJsonl(): Promise<string>;
