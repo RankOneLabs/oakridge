@@ -4,6 +4,7 @@ import {
   type SessionManager,
   type ProjectId,
   type WorkspaceEvent,
+  type WorkspaceEventPayload,
 } from "../../session/session-manager";
 
 export interface WorkspaceEventsRouteDeps {
@@ -15,6 +16,20 @@ interface WorkspaceEventRequestBody {
   projectId?: unknown;
   ts?: unknown;
   payload?: unknown;
+}
+
+function isWorkspaceEventRequestBody(
+  value: unknown,
+): value is WorkspaceEventRequestBody {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseWorkspaceEventPayload(
+  value: unknown,
+): WorkspaceEventPayload | null {
+  if (value === undefined || value === null) return {};
+  if (typeof value !== "object" || Array.isArray(value)) return null;
+  return value as WorkspaceEventPayload;
 }
 
 function parseProjectId(value: unknown): ProjectId | null {
@@ -52,10 +67,10 @@ export function mountWorkspaceEventsRoutes(
     // Reject non-object bodies explicitly. Property access on arrays /
     // strings / numbers silently yields undefined, which would slip a
     // misshapen body through as a no-op broadcast and mask client bugs.
-    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    if (!isWorkspaceEventRequestBody(raw)) {
       return c.json({ error: "json body must be an object" }, 400);
     }
-    const parsed = raw as WorkspaceEventRequestBody;
+    const parsed = raw;
     // Trim before the empty check so whitespace-only values are rejected
     // too — matches the artifact_id handling in handlers/sessions.ts and
     // keeps subscribers from receiving events they can't meaningfully
@@ -84,19 +99,12 @@ export function mountWorkspaceEventsRoutes(
     // coercion would tell the caller the broadcast succeeded while
     // dropping the event details, masking client bugs and leaving
     // workspace-event consumers without the coordination metadata.
-    let payload: Record<string, unknown>;
-    if (parsed.payload === undefined || parsed.payload === null) {
-      payload = {};
-    } else if (
-      typeof parsed.payload !== "object" ||
-      Array.isArray(parsed.payload)
-    ) {
+    const payload = parseWorkspaceEventPayload(parsed.payload);
+    if (payload === null) {
       return c.json(
         { error: "payload must be an object when provided" },
         400,
       );
-    } else {
-      payload = parsed.payload as Record<string, unknown>;
     }
     const event: WorkspaceEvent = {
       kind,

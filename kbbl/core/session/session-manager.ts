@@ -103,6 +103,7 @@ export interface CreateSessionOpts {
  * legit-biz-club is the authoritative source for project state.
  */
 export type ProjectId = string & { readonly __brand: "ProjectId" };
+export type WorkspaceEventPayload = { readonly [key: string]: unknown };
 
 export interface WorkspaceEvent {
   /** Event kind, e.g. "project_created", "convergence_round_started". */
@@ -112,7 +113,7 @@ export interface WorkspaceEvent {
   /** Wall-clock ISO timestamp; emitter-supplied or defaulted on receipt. */
   ts: string;
   /** Event-specific payload. Treated as opaque by kbbl. */
-  payload: Record<string, unknown>;
+  payload: WorkspaceEventPayload;
 }
 
 /**

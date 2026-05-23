@@ -1,5 +1,6 @@
 import type { EnvelopeEvent } from "../../types";
 import { formatResultText } from "../../lib/events";
+import type { SystemNoticePayload } from "../../lib/events";
 
 export function SystemNotice({
   event,
@@ -8,7 +9,7 @@ export function SystemNotice({
   event: EnvelopeEvent;
   compact: boolean;
 }) {
-  const p = (event.payload as Record<string, unknown>) ?? {};
+  const p = (event.payload as SystemNoticePayload | null) ?? {};
   let text: string;
   switch (event.type) {
     case "session_started":
