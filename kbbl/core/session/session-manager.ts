@@ -1496,6 +1496,13 @@ async function loadArchivedSnapshot(
   let worktreeBaseRef: string | null = null;
   let projectWorkdir: string | null = null;
   let model: string | null = null;
+  // Authoritative source: `model_observed` envelope events (last-wins).
+  // Back-compat fallback: scan system+init payload.model (first-wins) and
+  // assistant payload.message.model (last-wins) so sessions written before
+  // `model_observed` existed still reconstruct from data sitting in the
+  // same JSONL. No isAllowedModel gate — observedModel is runtime truth
+  // and may legitimately be a date-suffixed snapshot id or future version.
+  let observedModel: string | null = null;
   let endReason: SessionEndReason | null = null;
   let successorSid: string | null = null;
   for (const line of contents.split("\n")) {
@@ -1550,6 +1557,36 @@ async function loadArchivedSnapshot(
       case "cc_session_id_observed": {
         if (typeof payload.cc_session_id === "string") {
           ccSid = payload.cc_session_id;
+        }
+        break;
+      }
+      case "model_observed": {
+        if (typeof payload.model === "string") {
+          observedModel = payload.model;
+        }
+        break;
+      }
+      case "system": {
+        // Back-compat: pre-cohort sessions have no `model_observed` events,
+        // but the underlying CC payload still carries the value on init.
+        // First-wins to match the live policy (system+init seeds observedModel
+        // before any assistant message arrives).
+        if (
+          observedModel === null &&
+          (payload as { subtype?: unknown }).subtype === "init"
+        ) {
+          const m = (payload as { model?: unknown }).model;
+          if (typeof m === "string") observedModel = m;
+        }
+        break;
+      }
+      case "assistant": {
+        // Back-compat last-wins: an assistant turn under a different model
+        // (e.g. a subagent) updates observedModel just as the live path does.
+        const message = (payload as { message?: unknown }).message;
+        if (message && typeof message === "object") {
+          const m = (message as { model?: unknown }).model;
+          if (typeof m === "string") observedModel = m;
         }
         break;
       }
@@ -1618,6 +1655,7 @@ async function loadArchivedSnapshot(
     worktreeBaseRef,
     projectWorkdir,
     model,
+    observedModel,
     endReason,
     successorSid,
   };
