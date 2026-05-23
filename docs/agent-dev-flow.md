@@ -1,13 +1,10 @@
 # agent-dev-flow: operator guide
 
-The end-to-end loop now lives entirely inside kbbl. A `kbbl-start` server hosts
+The end-to-end loop lives entirely inside kbbl. A `kbbl-start` server hosts
 the task tracker, the review primitive, the orchestrator state machine, and the
 PWA review surfaces. Dispatched stages (planner-1, planner-2, build) run as
 kbbl agent sessions spawned via the existing `SessionManager` + Claude Code
 adapter; their prompts are templated from `kbbl/prompts/{planner1,planner2,build}.md`.
-
-The previous safir-based `safir-build` / `safir-decompose` CLI flow is
-superseded by this; nothing here calls safir.
 
 ## Prerequisites
 

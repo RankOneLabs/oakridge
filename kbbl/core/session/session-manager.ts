@@ -2,9 +2,6 @@ import { mkdir, readdir, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { KbblConfig } from "../config";
-import type { SafirClient } from "../safir/client";
-import type { SafirQueue } from "../safir/queue";
-import { safirCall } from "../safir/safir-call";
 import {
   MAX_ARTIFACT_ID_LENGTH,
   Session,
@@ -18,11 +15,9 @@ import {
   type SessionStatus,
   type SpawnCmd,
 } from "./session";
-import type { PermissionProfile } from "../safir/types";
 import { Compactor, type CompactReason } from "./compactor";
 import { COMPACT_PROMPT } from "./compact-prompt";
 import { parseHandoffMarkdown } from "./handoff-doc";
-import { submitCompactionHandoff } from "./compact-handoff-submit";
 import {
   WorktreeCreateError,
   createWorktree,
@@ -69,22 +64,11 @@ export interface SessionManagerOpts {
    */
   nonPersistedEventTypes?: ReadonlySet<string>;
   /**
-   * Validated kbbl config (compact thresholds, retention window, safir
-   * endpoint). Loaded once at server startup and threaded through here so
-   * Phase 1+ consumers (compactor, retention sweep, safir client) can
-   * read from a single source of truth. Phase 0 stores it without
-   * consuming it; subsequent phases pull what they need.
+   * Validated kbbl config (compact thresholds, retention window). Loaded
+   * once at server startup and threaded through here so consumers
+   * (compactor, retention sweep) can read from a single source of truth.
    */
   config: KbblConfig;
-  /**
-   * safir HTTP client + persistent retry queue for kbbl→safir lifecycle
-   * writes. Wired in PR-A; first consumed in PR-B (createSession opens a
-   * run/phase, markEnded closes the phase). Always provided by the server
-   * boot path; tests pass stubs or lightweight real implementations
-   * depending on what the test exercises.
-   */
-  safirClient: SafirClient;
-  safirQueue: SafirQueue;
 }
 
 export interface CreateSessionOpts {
@@ -106,10 +90,6 @@ export interface CreateSessionOpts {
    * HTTP route, not here.
    */
   model?: string | null;
-  taskId?: number;
-  runId?: string;
-  parentPhaseId?: string;
-  permission_profile_id?: number;
 }
 
 /**
@@ -222,65 +202,9 @@ export class SessionManager {
    */
   private archivedScanPromise: Promise<void> | null = null;
   private readonly pendingLifecycle = new Set<Promise<void>>();
-  // undefined = not yet fetched or last attempt was a transient error (retry next time);
-  // null = authoritative "not found"; PermissionProfile = cached result.
-  private _scopedWriteProfileCache: PermissionProfile | null | undefined = undefined;
 
   constructor(opts: SessionManagerOpts) {
     this.opts = opts;
-  }
-
-  private async getScopedWriteProfile(): Promise<PermissionProfile | null> {
-    if (this._scopedWriteProfileCache !== undefined) return this._scopedWriteProfileCache;
-    try {
-      const profiles = await this.opts.safirClient.listPermissionProfiles();
-      const found = profiles.find((p) => p.name === "scoped-write" && p.is_seed) ?? null;
-      if (!found) {
-        console.error("kbbl: scoped-write seed profile not found; treating as no-profile for this session");
-      }
-      this._scopedWriteProfileCache = found;
-      return found;
-    } catch (err) {
-      console.error(
-        `kbbl: could not fetch scoped-write fallback profile, treating as no-profile: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-      return null;
-    }
-  }
-
-  private async resolvePermissionProfile(opts: CreateSessionOpts): Promise<PermissionProfile | null> {
-    if (opts.permission_profile_id !== undefined) {
-      try {
-        return await this.opts.safirClient.getPermissionProfile(opts.permission_profile_id);
-      } catch (err) {
-        console.error(
-          `kbbl: getPermissionProfile(${opts.permission_profile_id}) failed, treating as no-profile: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-        return null;
-      }
-    }
-
-    if (opts.taskId !== undefined) {
-      try {
-        const task = await this.opts.safirClient.getTask(opts.taskId);
-        if (task.default_permission_profile_id != null) {
-          return await this.opts.safirClient.getPermissionProfile(task.default_permission_profile_id);
-        }
-      } catch (err) {
-        console.error(
-          `kbbl: resolvePermissionProfile for task ${opts.taskId} failed, falling back to scoped-write: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-      }
-      return this.getScopedWriteProfile();
-    }
-
-    return null;
   }
 
   async create(opts: CreateSessionOpts): Promise<Session> {
@@ -358,11 +282,6 @@ export class SessionManager {
     }
     const effectiveWorkdir = worktreePath ?? opts.workdir;
 
-    // Resolve permission profile (Phase 4). Snapshot at creation time;
-    // mutations via approve-for-task update the in-memory session object
-    // without restarting it so gate decisions see the live rules.
-    const resolvedProfile = await this.resolvePermissionProfile(opts);
-
     // Roll back the worktree if Session construction throws (e.g. artifactId
     // length validation). The worktree exists on disk but no Session, no map
     // entry, no broadcast — leaving it would orphan a branch + dir that the
@@ -385,7 +304,6 @@ export class SessionManager {
       worktreeBaseRef,
       projectWorkdir,
       model: opts.model ?? null,
-      permissionProfile: resolvedProfile,
       classifyEvent: this.opts.classifyEvent,
       nonPersistedEventTypes: this.opts.nonPersistedEventTypes,
       callbacks: {
@@ -399,15 +317,6 @@ export class SessionManager {
           }
           this.clearActivityTimer(s.oakridgeSid);
           this.broadcastDelta({ type: "session_ended", sid: s.oakridgeSid });
-          const p = this.afterSessionEnded(s).catch((err) => {
-            console.error(
-              `kbbl: afterSessionEnded for ${s.oakridgeSid}: ${
-                err instanceof Error ? err.message : String(err)
-              }`,
-            );
-          });
-          this.pendingLifecycle.add(p);
-          void p.finally(() => this.pendingLifecycle.delete(p));
         },
         onStatusChanged: (s, status) => {
           this.broadcastDelta({
@@ -458,18 +367,8 @@ export class SessionManager {
     // read the failure via /:sid/events. Reaping of ended sessions is a
     // future PR; for now they accumulate, bounded by server lifetime.
     this.sessions.set(session.oakridgeSid, session);
-    if (opts.taskId !== undefined || opts.runId !== undefined) {
-      await this.openSafirContext(session, opts);
-    }
     // Compactor: schedules /compact firings based on session-token pressure.
-    // If the resolved profile has compact_overrides, merge them (override
-    // wins). Snapshotted at session start — post-creation profile mutations
-    // do not affect a running Compactor's thresholds (scheduled timers would
-    // be invalidated mid-stream). Gate decisions read the live profile object.
-    const effectiveCompactConfig = resolvedProfile?.rules.compact_overrides
-      ? { ...this.opts.config.compact, ...resolvedProfile.rules.compact_overrides }
-      : this.opts.config.compact;
-    const compactor = new Compactor(effectiveCompactConfig, {
+    const compactor = new Compactor(this.opts.config.compact, {
       onSuggested: (reason, sessionTokens) => {
         session
           .emit("compact_suggested", {
@@ -502,91 +401,6 @@ export class SessionManager {
     this.broadcastDelta({ type: "session_created", session: session.snapshot() });
     await session.spawn(await this.opts.buildSpawnCmd(session));
     return session;
-  }
-
-  private async openSafirContext(
-    session: Session,
-    opts: CreateSessionOpts,
-  ): Promise<void> {
-    const ctx = { queue: this.opts.safirQueue };
-    const oakridgeSid = session.oakridgeSid;
-
-    if (opts.runId === undefined) {
-      const runBody: {
-        executor: "claude_code";
-        status: "running";
-        created_by: string;
-        created_by_session: string;
-        permission_profile_id?: number;
-      } = {
-        executor: "claude_code" as const,
-        status: "running" as const,
-        created_by: "kbbl",
-        created_by_session: oakridgeSid,
-      };
-      if (session.permissionProfile?.id !== undefined) {
-        runBody.permission_profile_id = session.permissionProfile.id;
-      }
-      const created = await safirCall(
-        ctx,
-        () => this.opts.safirClient.createRun(opts.taskId!, runBody),
-        { method: "POST", path: `/tasks/${opts.taskId}/runs`, body: runBody },
-      );
-      if (!created) return;
-
-      const phaseBody = {
-        oakridge_session_id: oakridgeSid,
-        parent_phase_id: opts.parentPhaseId ?? null,
-      };
-      const phase = await safirCall(
-        ctx,
-        () => this.opts.safirClient.createPhase(created.id, phaseBody),
-        { method: "POST", path: `/runs/${created.id}/phases`, body: phaseBody },
-      );
-      session.attachSafirContext(created.id, phase ? phase.id : undefined);
-      return;
-    }
-
-    const phaseBody = {
-      oakridge_session_id: oakridgeSid,
-      parent_phase_id: opts.parentPhaseId ?? null,
-    };
-    const phase = await safirCall(
-      ctx,
-      () => this.opts.safirClient.createPhase(opts.runId!, phaseBody),
-      { method: "POST", path: `/runs/${opts.runId}/phases`, body: phaseBody },
-    );
-    session.attachSafirContext(opts.runId, phase?.id);
-  }
-
-  private async afterSessionEnded(s: Session): Promise<void> {
-    if (!s.phaseId && !s.runId) return;
-    const reason: SessionEndReason = s.endReason ?? "subprocess_exited";
-    const isTerminal = reason !== "compacted";
-    const ctx = { queue: this.opts.safirQueue };
-    const endedAt = new Date().toISOString();
-
-    if (s.phaseId) {
-      const phaseBody = {
-        ended_at: endedAt,
-        end_reason: reason,
-        is_terminal: isTerminal,
-      };
-      await safirCall(
-        ctx,
-        () => this.opts.safirClient.updatePhase(s.phaseId!, phaseBody),
-        { method: "PATCH", path: `/phases/${s.phaseId}`, body: phaseBody },
-      );
-    }
-
-    if (reason === "user_closed" && s.runId) {
-      const runBody = { status: "completed" as const };
-      await safirCall(
-        ctx,
-        () => this.opts.safirClient.updateRun(s.runId!, runBody),
-        { method: "PATCH", path: `/runs/${s.runId}`, body: runBody },
-      );
-    }
   }
 
   async drainLifecycle(): Promise<void> {
@@ -670,27 +484,6 @@ export class SessionManager {
   getByCcSid(ccSid: string): Session | undefined {
     const oakridgeSid = this.ccSidToOakridgeSid.get(ccSid);
     return oakridgeSid ? this.sessions.get(oakridgeSid) : undefined;
-  }
-
-  /**
-   * Return every live session whose `runId` matches. Used by the safir
-   * webhook receiver (`handlers/safir-webhook.ts`) to dispatch incoming
-   * run-scoped events onto every session attached to the run — `create()`
-   * allows multiple sessions to share a runId via `opts.runId` (one phase
-   * each), and a `run.completed` / `run.failed` delivery is meaningful to
-   * all of them. Returns `[]` when no live session matches; the receiver
-   * logs and drops in that case rather than buffering. Scans the full
-   * sessions map and filters to `status === "live"`, so sessions that
-   * have already transitioned to `ended` (or are still in `starting`)
-   * are skipped — a webhook arriving moments after `markEnded` does not
-   * fan out into a closing session.
-   */
-  findAllLiveByRunId(runId: string): Session[] {
-    const out: Session[] = [];
-    for (const s of this.sessions.values()) {
-      if (s.status === "live" && s.runId === runId) out.push(s);
-    }
-    return out;
   }
 
   list(): Session[] {
@@ -1070,8 +863,8 @@ export class SessionManager {
 
   /**
    * Run /compact on a live session: prompt CC for a handoff doc, parse +
-   * persist + submit-to-safir, spawn a successor session seeded with the
-   * handoff markdown, then mark the old session compacted. Invoked by
+   * persist, spawn a successor session seeded with the handoff markdown,
+   * then mark the old session compacted. Invoked by
    * Compactor.onFire (auto) or by the operator via a future API route
    * (manual). Failure modes per cached-crusader-plan.md §1.4:
    *
@@ -1127,8 +920,6 @@ export class SessionManager {
       const handoff = parseHandoffMarkdown(md, {
         from_session_id: oldSession.oakridgeSid,
         produced_at: new Date().toISOString(),
-        task_id: oldSession.taskId,
-        run_id: oldSession.runId,
       });
 
       // Persist the raw markdown to disk so the PWA (Phase 1.8 follow-up
@@ -1149,25 +940,6 @@ export class SessionManager {
         );
       }
 
-      if (oldSession.phaseId) {
-        try {
-          await submitCompactionHandoff(
-            {
-              safirClient: this.opts.safirClient,
-              safirQueue: this.opts.safirQueue,
-            },
-            oldSession.phaseId,
-            handoff,
-          );
-        } catch (err) {
-          await oldSession.emit("compact_failed", {
-            phase: "handoff_submit",
-            error: err instanceof Error ? err.message : String(err),
-          });
-          return;
-        }
-      }
-
       // Spawn the successor BEFORE emitting compact_completed so the
       // event records the actual successor_sid on the success path. On
       // spawn failure, emit compact_completed with successor_sid: null
@@ -1179,9 +951,6 @@ export class SessionManager {
           workdir: oldSession.workdir,
           parentCcSid: oldSession.currentCcSid ?? undefined,
           parentOakridgeSid: oldSession.oakridgeSid,
-          taskId: oldSession.taskId,
-          runId: oldSession.runId,
-          parentPhaseId: oldSession.phaseId,
           model: oldSession.model ?? null,
         });
       } catch (err) {
@@ -1226,10 +995,9 @@ export class SessionManager {
         successor_sid: successor.oakridgeSid,
       });
 
-      // Mark + abort. afterSessionEnded closes the phase with
-      // is_terminal: false because reason === "compacted". Awaited so
-      // recordSuccess only fires after the subprocess teardown
-      // resolves — a rejected abort can't slip past us into success.
+      // Mark + abort. Awaited so recordSuccess only fires after the
+      // subprocess teardown resolves — a rejected abort can't slip past us
+      // into success.
       oldSession.markEndReason("compacted");
       // markCompactedTo BEFORE abort so the snapshot fired by the
       // session_ended delta (broadcast inside abort → finalize → onEnded)

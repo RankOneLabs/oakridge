@@ -1,21 +1,14 @@
-import { useEffect, useRef, useState } from "react";
-
-import { toPositiveSafeInt } from "../lib/session";
+import { useEffect, useState } from "react";
 
 export interface UrlPrefill {
-  initialWorkdir: string;
-  initialTaskId: string;
-  initialProfileId: string;
+  initialWorkdir: string | null;
   workdirTouchedInitial: boolean;
   autostartPending: boolean;
   setAutostartPending: (v: boolean) => void;
-  profileLockedRef: React.MutableRefObject<boolean>;
 }
 
 interface InitialUrl {
-  workdir: string;
-  taskId: string;
-  profileId: string;
+  workdir: string | null;
   autostart: boolean;
   hadParams: boolean;
 }
@@ -23,26 +16,18 @@ interface InitialUrl {
 function readInitialUrl(): InitialUrl {
   const params = new URLSearchParams(window.location.search);
   if (params.size === 0) {
-    return { workdir: "", taskId: "", profileId: "", autostart: false, hadParams: false };
+    return { workdir: null, autostart: false, hadParams: false };
   }
-  const tid = toPositiveSafeInt(params.get("task_id"));
-  const pid = toPositiveSafeInt(params.get("profile_id"));
+  const workdirParam = params.get("workdir");
   return {
-    workdir: params.get("workdir") ?? "",
-    taskId: tid !== null ? String(tid) : "",
-    profileId: pid !== null ? String(pid) : "",
+    workdir: workdirParam === "" ? null : workdirParam,
     autostart: params.get("autostart") === "true",
     hadParams: true,
   };
 }
 
 export function useUrlPrefill(): UrlPrefill {
-  const profileLockedRef = useRef(false);
-  const [initial] = useState<InitialUrl>(() => {
-    const result = readInitialUrl();
-    if (result.profileId) profileLockedRef.current = true;
-    return result;
-  });
+  const [initial] = useState<InitialUrl>(() => readInitialUrl());
   const [autostartPending, setAutostartPending] = useState(initial.autostart);
 
   useEffect(() => {
@@ -52,11 +37,8 @@ export function useUrlPrefill(): UrlPrefill {
 
   return {
     initialWorkdir: initial.workdir,
-    initialTaskId: initial.taskId,
-    initialProfileId: initial.profileId,
-    workdirTouchedInitial: initial.workdir !== "",
+    workdirTouchedInitial: initial.workdir !== null,
     autostartPending,
     setAutostartPending,
-    profileLockedRef,
   };
 }

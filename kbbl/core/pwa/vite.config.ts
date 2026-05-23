@@ -15,10 +15,8 @@ export default defineConfig({
       "/sessions": { target: backendTarget, changeOrigin: true },
       "/inbox": { target: backendTarget, changeOrigin: true },
       "/config": { target: backendTarget, changeOrigin: true },
-      // Safir proxy + artifact SSE stream.
-      "/safir": { target: backendTarget, changeOrigin: true },
+      // Artifact SSE stream.
       "/artifact-stream": { target: backendTarget, changeOrigin: true },
-      "/webhooks": { target: backendTarget, changeOrigin: true },
       // Task-tracker CRUD (plans, cohorts, briefs) + review primitive.
       "/plans": { target: backendTarget, changeOrigin: true },
       "/briefs": { target: backendTarget, changeOrigin: true },

@@ -1676,18 +1676,6 @@ body {
   color: var(--text-faint);
 }
 
-.task-view__open-safir {
-  color: var(--accent-blue);
-  font-size: 0.85rem;
-  text-decoration: none;
-  padding: 0.2rem 0.5rem;
-  border-radius: 6px;
-}
-.task-view__open-safir:hover {
-  background: var(--bg-surface);
-  text-decoration: underline;
-}
-
 /* === inbox proposal cards === */
 
 .inbox-proposals {
@@ -1765,11 +1753,6 @@ body {
   font-size: 1.1rem;
   font-weight: 500;
   flex: 1 1 auto;
-}
-.proposal-review-open-safir {
-  color: var(--accent-blue);
-  font-size: 0.85rem;
-  text-decoration: none;
 }
 .proposal-review-error {
   border: 1px solid var(--danger-fg);

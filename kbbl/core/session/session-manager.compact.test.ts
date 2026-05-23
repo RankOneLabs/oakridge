@@ -10,9 +10,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { KbblConfigSchema, type KbblConfig } from "../config";
-import { createSafirClient, type FetchFn } from "../safir/client";
-import { createSafirQueue } from "../safir/queue";
-import type { PermissionProfile } from "../safir/types";
 import { classifyCcEvent } from "../../adapters/claude-code/event-classifier";
 import { SessionManager } from "./session-manager";
 import type { Session, SpawnCmd } from "./session";
@@ -68,84 +65,10 @@ async function spawnStall(_session: Session): Promise<SpawnCmd> {
   };
 }
 
-interface StubCall {
-  method: string;
-  path: string;
-  body: unknown;
-}
-
-function makeSafirStub(): { fetch: FetchFn; calls: StubCall[] } {
-  const calls: StubCall[] = [];
-  let nextId = 1;
-  const fetchFn: FetchFn = async (input, init) => {
-    const url = typeof input === "string" ? input : (input as Request).url;
-    const path = url.replace(/^https?:\/\/[^/]+/, "");
-    const method = (init?.method ?? "GET").toUpperCase();
-    const bodyText = typeof init?.body === "string" ? init.body : null;
-    const body = bodyText ? (JSON.parse(bodyText) as unknown) : null;
-    calls.push({ method, path, body });
-    const id = `stub-${nextId++}`;
-    if (method === "POST" && /^\/tasks\/\d+\/runs$/.test(path)) {
-      return Response.json(
-        { id, ...(body as object) },
-        { status: 201 },
-      );
-    }
-    if (method === "POST" && /^\/runs\/[^/]+\/phases$/.test(path)) {
-      return Response.json(
-        { id, ...(body as object) },
-        { status: 201 },
-      );
-    }
-    if (method === "POST" && /^\/phases\/[^/]+\/handoff$/.test(path)) {
-      const phaseId = path.split("/")[2];
-      return Response.json(
-        {
-          id: "h-stub",
-          phase_id: phaseId,
-          run_id: "r-stub",
-          role: "phase_output",
-          schema_version: 1,
-          goal: "g",
-          active_subgoals: [],
-          decisions_made: [],
-          approaches_rejected: [],
-          files_in_scope: [],
-          open_questions: [],
-          next_action: null,
-          raw_markdown: "# stub\n",
-          produced_at: "2026-05-09T00:00:00.000Z",
-        },
-        { status: 201 },
-      );
-    }
-    if (method === "PATCH" && /^\/phases\/[^/]+$/.test(path)) {
-      return Response.json(
-        { id: path.split("/")[2], ...(body as object) },
-        { status: 200 },
-      );
-    }
-    if (method === "PATCH" && /^\/runs\/[^/]+$/.test(path)) {
-      return Response.json(
-        { id: path.split("/")[2], ...(body as object) },
-        { status: 200 },
-      );
-    }
-    return Response.json({ error: "stub: unhandled route" }, { status: 404 });
-  };
-  return { fetch: fetchFn, calls };
-}
-
 function makeManager(opts: {
-  fetchFn: FetchFn;
   spawn: (s: Session) => Promise<SpawnCmd>;
   config?: Partial<KbblConfig["compact"]>;
 }): SessionManager {
-  const safirClient = createSafirClient({
-    baseUrl: "http://safir.test",
-    fetch: opts.fetchFn,
-  });
-  const safirQueue = createSafirQueue({ dataDir: tmpRoot });
   return new SessionManager({
     sessionsDir,
     handoffsDir,
@@ -153,8 +76,6 @@ function makeManager(opts: {
     buildSpawnCmd: opts.spawn,
     classifyEvent: classifyCcEvent,
     config: buildConfig(opts.config),
-    safirClient,
-    safirQueue,
   });
 }
 
@@ -195,13 +116,10 @@ afterEach(() => {
 });
 
 describe("runCompact happy path", () => {
-  test("persists handoff, submits to safir, spawns successor", async () => {
-    const stub = makeSafirStub();
-    const mgr = makeManager({ fetchFn: stub.fetch, spawn: spawnEcho });
-    const session = await mgr.create({ workdir: tmpRoot, taskId: 42 });
+  test("persists handoff, spawns successor", async () => {
+    const mgr = makeManager({ spawn: spawnEcho });
+    const session = await mgr.create({ workdir: tmpRoot });
     const oldSid = session.oakridgeSid;
-    const oldRunId = session.runId!;
-    const oldPhaseId = session.phaseId!;
 
     await mgr.runCompact(oldSid, { kind: "manual" });
     await waitForStatus(session, "ended", 5000);
@@ -211,33 +129,10 @@ describe("runCompact happy path", () => {
     const md = readFileSync(join(handoffsDir, `${oldSid}.md`), "utf8");
     expect(md).toContain("Finish the build plan.");
 
-    const handoffCalls = stub.calls.filter(
-      (c) =>
-        c.method === "POST" &&
-        c.path === `/phases/${oldPhaseId}/handoff`,
-    );
-    expect(handoffCalls).toHaveLength(1);
-    const submittedBody = handoffCalls[0]!.body as {
-      raw_markdown: string;
-      parsed: { goal: string };
-    };
-    expect(submittedBody.parsed.goal).toBe("Finish the build plan.");
-
     const successor = mgr
       .list()
       .find((s) => s.parentOakridgeSid === oldSid);
     expect(successor).toBeDefined();
-
-    const successorPhaseCalls = stub.calls.filter(
-      (c) =>
-        c.method === "POST" && c.path === `/runs/${oldRunId}/phases`,
-    );
-    expect(successorPhaseCalls.length).toBeGreaterThanOrEqual(1);
-    const successorPhaseCall =
-      successorPhaseCalls[successorPhaseCalls.length - 1]!;
-    expect(
-      (successorPhaseCall.body as { parent_phase_id?: string }).parent_phase_id,
-    ).toBe(oldPhaseId);
 
     expect(session.endReason).toBe("compacted");
     expect(session.status).toBe("ended");
@@ -249,20 +144,6 @@ describe("runCompact happy path", () => {
     expect(successorSnap.endReason).toBeNull();
     expect(successorSnap.successorSid).toBeNull();
 
-    const oldPhasePatchCalls = stub.calls.filter(
-      (c) => c.method === "PATCH" && c.path === `/phases/${oldPhaseId}`,
-    );
-    expect(oldPhasePatchCalls).toHaveLength(1);
-    expect(oldPhasePatchCalls[0]!.body).toMatchObject({
-      end_reason: "compacted",
-      is_terminal: false,
-    });
-
-    const runPatchCalls = stub.calls.filter(
-      (c) => c.method === "PATCH" && c.path === `/runs/${oldRunId}`,
-    );
-    expect(runPatchCalls).toHaveLength(0);
-
     await mgr.endAll();
     await mgr.drainLifecycle();
   }, 15000);
@@ -270,15 +151,12 @@ describe("runCompact happy path", () => {
 
 describe("runCompact failure modes", () => {
   test("compact timeout: status reverts to live, compact_failed{phase:timeout}", async () => {
-    const stub = makeSafirStub();
     const mgr = makeManager({
-      fetchFn: stub.fetch,
       spawn: spawnStall,
       config: { compact_call_timeout_seconds: 1 },
     });
-    const session = await mgr.create({ workdir: tmpRoot, taskId: 42 });
+    const session = await mgr.create({ workdir: tmpRoot });
     const oldSid = session.oakridgeSid;
-    const oldPhaseId = session.phaseId!;
 
     await mgr.runCompact(oldSid, { kind: "manual" });
     await session.flushTranscript();
@@ -293,21 +171,14 @@ describe("runCompact failure modes", () => {
     const successor = mgr.list().find((s) => s.parentOakridgeSid === oldSid);
     expect(successor).toBeUndefined();
 
-    const handoffCalls = stub.calls.filter(
-      (c) => c.path === `/phases/${oldPhaseId}/handoff`,
-    );
-    expect(handoffCalls).toHaveLength(0);
-
     await mgr.endAll();
     await mgr.drainLifecycle();
   }, 15000);
 
   test("garbage parse: successor still spawns with raw_markdown", async () => {
-    const stub = makeSafirStub();
-    const mgr = makeManager({ fetchFn: stub.fetch, spawn: spawnGarbage });
-    const session = await mgr.create({ workdir: tmpRoot, taskId: 42 });
+    const mgr = makeManager({ spawn: spawnGarbage });
+    const session = await mgr.create({ workdir: tmpRoot });
     const oldSid = session.oakridgeSid;
-    const oldPhaseId = session.phaseId!;
 
     await mgr.runCompact(oldSid, { kind: "manual" });
     await waitForStatus(session, "ended", 5000);
@@ -319,19 +190,6 @@ describe("runCompact failure modes", () => {
     const md = readFileSync(join(handoffsDir, `${oldSid}.md`), "utf8");
     expect(md).toBe("no structure");
 
-    const handoffCalls = stub.calls.filter(
-      (c) =>
-        c.method === "POST" &&
-        c.path === `/phases/${oldPhaseId}/handoff`,
-    );
-    expect(handoffCalls).toHaveLength(1);
-    const body = handoffCalls[0]!.body as {
-      raw_markdown: string;
-      parsed: { goal: string };
-    };
-    expect(body.raw_markdown).toBe("no structure");
-    expect(body.parsed.goal).toBe("");
-
     expect(session.endReason).toBe("compacted");
 
     await mgr.endAll();
@@ -339,7 +197,6 @@ describe("runCompact failure modes", () => {
   }, 15000);
 
   test("successor spawn failure: compact_succeeded_but_resume_failed; old session stays live", async () => {
-    const stub = makeSafirStub();
     let callCount = 0;
     const switchSpawn = async (s: Session): Promise<SpawnCmd> => {
       callCount++;
@@ -351,10 +208,9 @@ describe("runCompact failure modes", () => {
         env: { ...process.env } as Record<string, string>,
       };
     };
-    const mgr = makeManager({ fetchFn: stub.fetch, spawn: switchSpawn });
-    const session = await mgr.create({ workdir: tmpRoot, taskId: 42 });
+    const mgr = makeManager({ spawn: switchSpawn });
+    const session = await mgr.create({ workdir: tmpRoot });
     const oldSid = session.oakridgeSid;
-    const oldPhaseId = session.phaseId!;
 
     await mgr.runCompact(oldSid, { kind: "manual" });
     await mgr.drainLifecycle();
@@ -370,13 +226,6 @@ describe("runCompact failure modes", () => {
 
     expect(session.status).toBe("live");
 
-    const handoffCalls = stub.calls.filter(
-      (c) =>
-        c.method === "POST" &&
-        c.path === `/phases/${oldPhaseId}/handoff`,
-    );
-    expect(handoffCalls).toHaveLength(1);
-
     await mgr.endAll();
     await mgr.drainLifecycle();
   }, 15000);
@@ -384,8 +233,7 @@ describe("runCompact failure modes", () => {
 
 describe("requestManualCompact", () => {
   test("not_found when no session with that sid", async () => {
-    const stub = makeSafirStub();
-    const mgr = makeManager({ fetchFn: stub.fetch, spawn: spawnEcho });
+    const mgr = makeManager({ spawn: spawnEcho });
     const result = mgr.requestManualCompact("00000000-0000-4000-8000-000000000000");
     expect(result).toBe("not_found");
     await mgr.endAll();
@@ -393,9 +241,8 @@ describe("requestManualCompact", () => {
   });
 
   test("not_live when session is not live", async () => {
-    const stub = makeSafirStub();
-    const mgr = makeManager({ fetchFn: stub.fetch, spawn: spawnEcho });
-    const session = await mgr.create({ workdir: tmpRoot, taskId: 42 });
+    const mgr = makeManager({ spawn: spawnEcho });
+    const session = await mgr.create({ workdir: tmpRoot });
     const sid = session.oakridgeSid;
     await mgr.runCompact(sid, { kind: "manual" });
     await waitForStatus(session, "ended", 5000);
@@ -406,9 +253,8 @@ describe("requestManualCompact", () => {
   }, 15000);
 
   test("ok and fires compaction on live session", async () => {
-    const stub = makeSafirStub();
-    const mgr = makeManager({ fetchFn: stub.fetch, spawn: spawnEcho });
-    const session = await mgr.create({ workdir: tmpRoot, taskId: 42 });
+    const mgr = makeManager({ spawn: spawnEcho });
+    const session = await mgr.create({ workdir: tmpRoot });
     const sid = session.oakridgeSid;
     const result = mgr.requestManualCompact(sid);
     expect(result).toBe("ok");
@@ -419,136 +265,10 @@ describe("requestManualCompact", () => {
   }, 15000);
 });
 
-describe("compact_overrides from permission profile", () => {
-  test("profile compact_overrides.soft_threshold_tokens overrides global config", async () => {
-    const overrideProfile: PermissionProfile = {
-      id: 99,
-      name: "compact-override-test",
-      description: null,
-      is_seed: false,
-      created_at: "2026-01-01T00:00:00Z",
-      updated_at: "2026-01-01T00:00:00Z",
-      rules: {
-        auto_approve: [],
-        always_prompt: [],
-        deny: [],
-        compact_overrides: { soft_threshold_tokens: 50 },
-      },
-    };
-
-    const baseStub = makeSafirStub();
-    const fetchWithProfile: FetchFn = async (input, init) => {
-      const url = typeof input === "string" ? input : (input as Request).url;
-      const path = url.replace(/^https?:\/\/[^/]+/, "");
-      if (path === "/permission-profiles/99") {
-        return Response.json(overrideProfile, { status: 200 });
-      }
-      return baseStub.fetch(input, init);
-    };
-
-    // Global threshold is very high — without the override, no compact would schedule
-    const mgr = makeManager({
-      fetchFn: fetchWithProfile,
-      spawn: spawnEcho,
-      config: { soft_threshold_tokens: 999999, hard_threshold_tokens: 9999999 },
-    });
-
-    const session = await mgr.create({
-      workdir: tmpRoot,
-      permission_profile_id: 99,
-    });
-
-    await waitForStatus(session, "live", 3000);
-
-    let suggestionSeen = false;
-    const unsub = session.subscribe((evt) => {
-      if (evt.type === "compact_suggested") suggestionSeen = true;
-    });
-
-    // Trigger mock-cc to emit a result event with 100 input_tokens (> override threshold of 50)
-    await session.writeInput("trigger compact");
-
-    const deadline = Date.now() + 3000;
-    while (!suggestionSeen && Date.now() < deadline) {
-      await Bun.sleep(50);
-    }
-
-    unsub();
-    expect(suggestionSeen).toBe(true);
-
-    await mgr.endAll();
-    await mgr.drainLifecycle();
-  }, 10000);
-
-  test("profile mutation after create does not change in-flight Compactor threshold", async () => {
-    const lowThresholdProfile: PermissionProfile = {
-      id: 88,
-      name: "low-threshold",
-      description: null,
-      is_seed: false,
-      created_at: "2026-01-01T00:00:00Z",
-      updated_at: "2026-01-01T00:00:00Z",
-      rules: {
-        auto_approve: [],
-        always_prompt: [],
-        deny: [],
-        compact_overrides: { soft_threshold_tokens: 50 },
-      },
-    };
-
-    const baseStub = makeSafirStub();
-    const fetchWithProfile: FetchFn = async (input, init) => {
-      const url = typeof input === "string" ? input : (input as Request).url;
-      const path = url.replace(/^https?:\/\/[^/]+/, "");
-      if (path === "/permission-profiles/88") {
-        return Response.json(lowThresholdProfile, { status: 200 });
-      }
-      return baseStub.fetch(input, init);
-    };
-
-    const mgr = makeManager({
-      fetchFn: fetchWithProfile,
-      spawn: spawnEcho,
-      config: { soft_threshold_tokens: 999999, hard_threshold_tokens: 9999999 },
-    });
-
-    const session = await mgr.create({ workdir: tmpRoot, permission_profile_id: 88 });
-    await waitForStatus(session, "live", 3000);
-
-    // Mutate the session profile to a high threshold AFTER creation
-    session.setPermissionProfile({
-      ...lowThresholdProfile,
-      id: 89,
-      name: "high-threshold",
-      rules: { ...lowThresholdProfile.rules, compact_overrides: { soft_threshold_tokens: 999999 } },
-    });
-
-    let suggestionSeen = false;
-    const unsub = session.subscribe((evt) => {
-      if (evt.type === "compact_suggested") suggestionSeen = true;
-    });
-
-    // The Compactor was built with threshold=50 at creation time; the mutation
-    // should not change it. Result with 100 tokens should still suggest compact.
-    await session.writeInput("trigger compact");
-    const deadline = Date.now() + 3000;
-    while (!suggestionSeen && Date.now() < deadline) {
-      await Bun.sleep(50);
-    }
-
-    unsub();
-    expect(suggestionSeen).toBe(true);
-
-    await mgr.endAll();
-    await mgr.drainLifecycle();
-  }, 10000);
-});
-
 describe("runCompact compactor wiring", () => {
   test("initialMessage is sent to successor", async () => {
-    const stub = makeSafirStub();
-    const mgr = makeManager({ fetchFn: stub.fetch, spawn: spawnEcho });
-    const session = await mgr.create({ workdir: tmpRoot, taskId: 42 });
+    const mgr = makeManager({ spawn: spawnEcho });
+    const session = await mgr.create({ workdir: tmpRoot });
     const oldSid = session.oakridgeSid;
 
     await mgr.runCompact(oldSid, { kind: "manual" });
