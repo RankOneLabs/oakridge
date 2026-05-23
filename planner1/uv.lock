@@ -470,6 +470,7 @@ name = "planner1"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "httpx" },
     { name = "jig", extra = ["anthropic"] },
     { name = "pydantic" },
     { name = "safir-py" },
@@ -485,6 +486,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "httpx", specifier = ">=0.27" },
     { name = "jig", extras = ["anthropic"], git = "https://github.com/rankonelabs/jig.git?rev=8b110b494c665a93a033d7c4d628b6a27db08a4b" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "safir-py", directory = "../safir-py" },

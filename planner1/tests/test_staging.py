@@ -60,8 +60,10 @@ def test_transitive_cycle_returns_err_and_buffer_unchanged():
     b.add_cohort(title="c0", notes="n0")
     b.add_cohort(title="c1", notes="n1")
     b.add_cohort(title="c2", notes="n2")
-    b.add_cohort_dependency(cohort_index=1, depends_on_cohort_index=0)
-    b.add_cohort_dependency(cohort_index=2, depends_on_cohort_index=1)
+    setup_1 = b.add_cohort_dependency(cohort_index=1, depends_on_cohort_index=0)
+    setup_2 = b.add_cohort_dependency(cohort_index=2, depends_on_cohort_index=1)
+    assert isinstance(setup_1, Ok)
+    assert isinstance(setup_2, Ok)
     result = b.add_cohort_dependency(cohort_index=0, depends_on_cohort_index=2)
     match result:
         case Err(StagingCycleError() as err):

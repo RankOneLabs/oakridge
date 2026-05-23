@@ -46,7 +46,7 @@ async def _fetch_task(safir: SafirClient, task_id: TaskId) -> Result[Task, Safir
     try:
         task = await safir.get_task(task_id)
     except (httpx.HTTPError, ValidationError) as e:
-        logger.error("get_task failed: task_id=%s detail=%s", task_id, e)
+        logger.exception("get_task failed: task_id=%s", task_id)
         return Err(
             SafirIOError(op_name="get_task", entity_id=task_id, detail=str(e))
         )
@@ -71,7 +71,7 @@ async def _run_planner(
             model=model,
         )
     except Exception as e:
-        logger.error("planner1 run failed: parent_task_id=%s detail=%s", parent_task_id, e)
+        logger.exception("planner1 run failed: parent_task_id=%s", parent_task_id)
         return Err(
             PlannerRunFailedError(
                 op_name="run_planner1",
@@ -94,9 +94,7 @@ async def _submit_plan(
     try:
         plan = await safir.submit_plan(parent_task_id, body)
     except (httpx.HTTPError, ValidationError) as e:
-        logger.error(
-            "submit_plan failed: parent_task_id=%s detail=%s", parent_task_id, e
-        )
+        logger.exception("submit_plan failed: parent_task_id=%s", parent_task_id)
         return Err(
             SafirIOError(
                 op_name="submit_plan", entity_id=parent_task_id, detail=str(e)
