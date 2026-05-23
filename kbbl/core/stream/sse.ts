@@ -47,6 +47,10 @@ export async function streamForSession(session: Session, c: Context) {
     }, 15000);
     let sentUpTo = resumeAfter;
     try {
+      // Initial flush so EventSource.onopen transitions before JSONL replay
+      // or idle waits.
+      await stream.write(": ready\n\n");
+
       const contents = await session.readJsonl();
       for (const line of contents.split("\n")) {
         if (!line.trim()) continue;

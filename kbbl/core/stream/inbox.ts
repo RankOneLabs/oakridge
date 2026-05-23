@@ -47,6 +47,10 @@ export function inboxHandler(manager: SessionManager) {
         stream.write(": ping\n\n").catch(() => {});
       }, 15000);
       try {
+        // Initial flush so EventSource.onopen transitions before the
+        // authoritative snapshot or any future setup work.
+        await stream.write(": ready\n\n");
+
         await stream.writeSSE({
           event: "snapshot",
           data: JSON.stringify({ sessions: manager.listSnapshots() }),
