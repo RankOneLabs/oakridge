@@ -34,7 +34,7 @@ Verification target for the first slice:
 
 ```bash
 cd builder && uv run pytest
-cd builder && uv run mypy
+cd builder && uv run mypy src
 ```
 
 Merge bar:

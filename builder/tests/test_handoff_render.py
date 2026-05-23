@@ -90,3 +90,16 @@ def test_render_from_atom_map_treats_empty_object_list_atoms_as_tombstones() -> 
 
     assert "Use Python" not in md
     assert "Use Redis" not in md
+
+
+def test_render_from_atom_map_ignores_malformed_object_list_atoms() -> None:
+    canonical = _minimal()
+    canonical["approaches_rejected"] = [
+        {"approach": "Use Redis", "reason": "extra dependency"}
+    ]
+    atom_map = {"decisions_made[0]": "{bad json", "approaches_rejected[0]": "}{"}
+
+    md = render_from_atom_map(atom_map, canonical)
+
+    assert "| Use Python | It's fast |" in md
+    assert "- **Use Redis** — extra dependency" in md

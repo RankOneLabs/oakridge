@@ -84,7 +84,10 @@ def _rejected_approaches(value: object) -> list[HandoffRejectedApproach]:
 
 
 def _decision_atom(value: str) -> HandoffDecision | None:
-    parsed = json.loads(value)
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return None
     if not isinstance(parsed, Mapping):
         return None
     decision = _string_value(parsed.get("decision"))
@@ -95,7 +98,10 @@ def _decision_atom(value: str) -> HandoffDecision | None:
 
 
 def _rejected_approach_atom(value: str) -> HandoffRejectedApproach | None:
-    parsed = json.loads(value)
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return None
     if not isinstance(parsed, Mapping):
         return None
     approach = _string_value(parsed.get("approach"))
@@ -162,7 +168,7 @@ def render_from_atom_map(atom_map: dict[str, str], canonical: HandoffMarkdownInp
             decision_from_atom = _decision_atom(atom_decision)
             if decision_from_atom is not None and decision_from_atom["decision"]:
                 decisions_made.append(decision_from_atom)
-            continue
+                continue
         canon_d: HandoffDecision = {"decision": "", "rationale": ""}
         if i < len(canon_decisions):
             canon_d = canon_decisions[i]
@@ -187,7 +193,7 @@ def render_from_atom_map(atom_map: dict[str, str], canonical: HandoffMarkdownInp
             rejected_from_atom = _rejected_approach_atom(atom_rejected)
             if rejected_from_atom is not None and rejected_from_atom["approach"]:
                 approaches_rejected.append(rejected_from_atom)
-            continue
+                continue
         canon_r: HandoffRejectedApproach = {"approach": "", "reason": ""}
         if i < len(canon_rejected):
             canon_r = canon_rejected[i]
