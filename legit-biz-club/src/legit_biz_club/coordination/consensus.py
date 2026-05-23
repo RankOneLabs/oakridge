@@ -29,8 +29,9 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from jig.core.pipeline import PipelineConfig, Step, run_pipeline
 from jig.core.types import TracingLogger
@@ -455,7 +456,14 @@ class ConsensusMechanism(ABC):
         log emit failures so a transient kbbl outage can't abort
         consensus mid-run after a proposal already mediated."""
         try:
-            await self._emit(kind, payload)
+            emit = cast(
+                Callable[
+                    [WorkspaceEventKind, WorkspaceEventPayload],
+                    Awaitable[None],
+                ],
+                self._emit,
+            )
+            await emit(kind, payload)
         except Exception as e:
             logger.warning(
                 "workspace event emit failed for kind=%s: %s", kind, e

@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import cast
 
 from legit_biz_club.coordination.events import (
     IncrementalStartedPayload,
@@ -245,7 +247,14 @@ class IncrementalCoordinator:
         the rest of the run is not.
         """
         try:
-            await self._emit(kind, payload)
+            emit = cast(
+                Callable[
+                    [WorkspaceEventKind, WorkspaceEventPayload],
+                    Awaitable[None],
+                ],
+                self._emit,
+            )
+            await emit(kind, payload)
         except Exception as e:
             logger.warning(
                 "workspace event emit failed for kind=%s: %s",

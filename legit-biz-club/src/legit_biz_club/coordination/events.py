@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Mapping
-from typing import Literal, TypedDict
+from collections.abc import Awaitable
+from typing import Literal, Protocol, TypedDict, overload
 
 WorkspaceEventKind = Literal[
     "incremental_started",
@@ -17,10 +17,6 @@ WorkspaceEventKind = Literal[
     "escalation_triggered",
     "proposal_picked",
 ]
-
-type WorkspaceEventPayload = Mapping[str, object]
-type WorkspaceEventEmitter = Callable[[WorkspaceEventKind, WorkspaceEventPayload], Awaitable[None]]
-
 
 class IncrementalStartedPayload(TypedDict):
     agent_ids: list[str]
@@ -60,3 +56,70 @@ class ProposalPickedPayload(TypedDict):
     proposal_id: str
     rationale: str
     converged_at_round: int | None
+
+type WorkspaceEventPayload = (
+    IncrementalStartedPayload
+    | IncrementalTerminatedPayload
+    | ProposalOutcomePayload
+    | ConvergenceStartedPayload
+    | RoundCompletedPayload
+    | EscalationTriggeredPayload
+    | ProposalPickedPayload
+)
+
+
+class WorkspaceEventEmitter(Protocol):
+    @overload
+    def __call__(
+        self,
+        kind: Literal["incremental_started"],
+        payload: IncrementalStartedPayload,
+    ) -> Awaitable[None]: ...
+
+    @overload
+    def __call__(
+        self,
+        kind: Literal["incremental_terminated"],
+        payload: IncrementalTerminatedPayload,
+    ) -> Awaitable[None]: ...
+
+    @overload
+    def __call__(
+        self,
+        kind: Literal[
+            "proposal_applied",
+            "proposal_rejected_occ",
+            "proposal_rejected_validation",
+            "agent_budget_exhausted",
+        ],
+        payload: ProposalOutcomePayload,
+    ) -> Awaitable[None]: ...
+
+    @overload
+    def __call__(
+        self,
+        kind: Literal["convergence_started"],
+        payload: ConvergenceStartedPayload,
+    ) -> Awaitable[None]: ...
+
+    @overload
+    def __call__(
+        self,
+        kind: Literal["round_completed"],
+        payload: RoundCompletedPayload,
+    ) -> Awaitable[None]: ...
+
+    @overload
+    def __call__(
+        self,
+        kind: Literal["escalation_triggered"],
+        payload: EscalationTriggeredPayload,
+    ) -> Awaitable[None]: ...
+
+    @overload
+    def __call__(
+        self,
+        kind: Literal["proposal_picked"],
+        payload: ProposalPickedPayload,
+    ) -> Awaitable[None]: ...
+
