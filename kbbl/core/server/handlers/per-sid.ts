@@ -37,15 +37,32 @@ async function inputForSession(session: Session, c: Context) {
   if (text.length === 0) {
     return c.json({ error: "text must be non-empty" }, 400);
   }
+  // [hang-debug] Trace POST /:sid/input end-to-end so the "input submit
+  // does nothing / UI stuck on thinking" failure can be diagnosed from
+  // server stderr without reproducing in the act.
+  const debugStart = Date.now();
+  const debugHead = text.slice(0, 60).replace(/\s+/g, " ");
+  console.debug(
+    `[hang-debug] input.recv sid=${session.oakridgeSid} status=${session.status} bytes=${text.length} head=${JSON.stringify(debugHead)}`,
+  );
   try {
     await session.writeInput(text);
   } catch (err) {
     if (err instanceof SessionNotReadyError) {
+      console.debug(
+        `[hang-debug] input.reject sid=${session.oakridgeSid} reason=not_ready elapsed_ms=${Date.now() - debugStart}`,
+      );
       return c.json({ error: "subprocess not ready" }, 503);
     }
     const msg = err instanceof Error ? err.message : String(err);
+    console.debug(
+      `[hang-debug] input.error sid=${session.oakridgeSid} elapsed_ms=${Date.now() - debugStart} err=${JSON.stringify(msg)}`,
+    );
     return c.json({ error: `subprocess write failed: ${msg}` }, 503);
   }
+  console.debug(
+    `[hang-debug] input.ok sid=${session.oakridgeSid} elapsed_ms=${Date.now() - debugStart}`,
+  );
   return c.json({ ok: true });
 }
 

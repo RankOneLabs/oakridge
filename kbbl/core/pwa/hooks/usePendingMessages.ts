@@ -44,12 +44,18 @@ export function usePendingMessages(
       ...prev,
       { localId, text, sentAt: Date.now() },
     ]);
+    // [hang-debug] Trace bubble lifecycle so the "thinking indicator
+    // stuck on" failure can be diagnosed from the browser console.
+    console.debug(
+      `[hang-debug] bubble.add sid=${sid} localId=${localId} bytes=${text.length} head=${JSON.stringify(text.slice(0, 60).replace(/\s+/g, " "))}`,
+    );
     return localId;
-  }, []);
+  }, [sid]);
 
   const removePendingMessage = useCallback((localId: number) => {
     setPendingMessages((prev) => prev.filter((m) => m.localId !== localId));
-  }, []);
+    console.debug(`[hang-debug] bubble.remove sid=${sid} localId=${localId} reason=explicit`);
+  }, [sid]);
 
   // Replayed user input echoed by CC (--replay-user-messages) — drop
   // the matching optimistic bubble so we don't show it twice. For
@@ -82,14 +88,45 @@ export function usePendingMessages(
             (normalizedReconstructed !== null &&
               normalizeWs(m.text) === normalizedReconstructed),
         );
-        if (idx === -1) return prev;
+        if (idx === -1) {
+          if (prev.length > 0) {
+            console.debug(
+              `[hang-debug] bubble.reconcile sid=${sid} echo_bytes=${content.length} echo_head=${JSON.stringify(content.slice(0, 60).replace(/\s+/g, " "))} pending=${prev.length} match=none pending_heads=${JSON.stringify(prev.map((m) => m.text.slice(0, 60).replace(/\s+/g, " ")))}`,
+            );
+          }
+          return prev;
+        }
+        console.debug(
+          `[hang-debug] bubble.reconcile sid=${sid} localId=${prev[idx].localId} match=ok`,
+        );
         const next = prev.slice();
         next.splice(idx, 1);
         return next;
       });
     }
     lastScannedIdxRef.current = events.length;
-  }, [events]);
+  }, [events, sid]);
+
+  // [hang-debug] Every 15s, if a pending bubble has been alive >30s while
+  // the session is live, dump its state. The "stuck on thinking" failure
+  // means at least one bubble lingered far past any reasonable round-trip;
+  // this captures it without changing behavior.
+  useEffect(() => {
+    if (pendingMessages.length === 0) return;
+    if (sessionStatus !== "live") return;
+    const timer = setInterval(() => {
+      const now = Date.now();
+      for (const m of pendingMessages) {
+        const ageMs = now - m.sentAt;
+        if (ageMs > 30_000) {
+          console.warn(
+            `[hang-debug] bubble.stuck sid=${sid} localId=${m.localId} age_ms=${ageMs} head=${JSON.stringify(m.text.slice(0, 60).replace(/\s+/g, " "))}`,
+          );
+        }
+      }
+    }, 15_000);
+    return () => clearInterval(timer);
+  }, [pendingMessages, sessionStatus, sid]);
 
   // Reset the scan cursor when events is wiped (sid change) so we don't
   // skip the freshly-arriving replay batch from the new session.
