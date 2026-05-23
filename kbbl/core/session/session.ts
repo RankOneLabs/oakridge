@@ -353,6 +353,17 @@ export class Session {
   }
 
   /**
+   * Most recent runtime-observed model id, or null until the classifier
+   * has called observeRuntimeModel(). Exposed so the CC classifier can
+   * enforce first-wins seeding on system+init (only call observe… when
+   * this is still null) while letting assistant turns update last-wins.
+   * Read-only by design — mutation happens through observeRuntimeModel.
+   */
+  get currentObservedModel(): string | null {
+    return this.observedModel;
+  }
+
+  /**
    * Runtime-adapter injection point: called by the classifier when it
    * observes the underlying runtime's internal session id (e.g., CC's
    * system/init event carries its session_id). First-write-wins; later

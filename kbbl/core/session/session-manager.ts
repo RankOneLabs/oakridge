@@ -1458,6 +1458,16 @@ function extractCompactMarkdown(payload: unknown): string | null {
  * useful row and a single unreadable jsonl shouldn't fail the whole
  * archived-list response.
  */
+
+// Named payload shapes for the observed-model reconstruction branches.
+// Each lists only the field(s) the corresponding case reads; values come
+// in as `unknown` from JSON.parse so the runtime checks below stay
+// authoritative — the types document intent and keep narrowing local to
+// each case instead of repeating ad-hoc `(payload as {...})` casts.
+type ModelObservedPayload = { model?: unknown };
+type SystemInitPayload = { subtype?: unknown; model?: unknown };
+type AssistantPayload = { message?: unknown };
+
 async function loadArchivedSnapshot(
   sid: string,
   jsonlPath: string,
@@ -1561,8 +1571,9 @@ async function loadArchivedSnapshot(
         break;
       }
       case "model_observed": {
-        if (typeof payload.model === "string") {
-          observedModel = payload.model;
+        const p = payload as ModelObservedPayload;
+        if (typeof p.model === "string") {
+          observedModel = p.model;
         }
         break;
       }
@@ -1571,21 +1582,18 @@ async function loadArchivedSnapshot(
         // but the underlying CC payload still carries the value on init.
         // First-wins to match the live policy (system+init seeds observedModel
         // before any assistant message arrives).
-        if (
-          observedModel === null &&
-          (payload as { subtype?: unknown }).subtype === "init"
-        ) {
-          const m = (payload as { model?: unknown }).model;
-          if (typeof m === "string") observedModel = m;
+        const p = payload as SystemInitPayload;
+        if (observedModel === null && p.subtype === "init") {
+          if (typeof p.model === "string") observedModel = p.model;
         }
         break;
       }
       case "assistant": {
         // Back-compat last-wins: an assistant turn under a different model
         // (e.g. a subagent) updates observedModel just as the live path does.
-        const message = (payload as { message?: unknown }).message;
-        if (message && typeof message === "object") {
-          const m = (message as { model?: unknown }).model;
+        const p = payload as AssistantPayload;
+        if (p.message && typeof p.message === "object") {
+          const m = (p.message as { model?: unknown }).model;
           if (typeof m === "string") observedModel = m;
         }
         break;
