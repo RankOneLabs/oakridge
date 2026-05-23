@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { SidebarProject } from "./Sidebar";
 
 interface AddSpecModalProps {
@@ -7,28 +8,24 @@ interface AddSpecModalProps {
   onCancel: () => void;
 }
 
+interface CreateSpecInput {
+  title: string;
+  notes: string | null;
+}
+
 export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps) {
   const [title, setTitle] = useState("");
   const [notes, setNotes] = useState("");
-  const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
 
-  async function submit() {
-    if (pending) return;
-    const trimmedTitle = title.trim();
-    if (!trimmedTitle) {
-      setError("title is required");
-      return;
-    }
-    setPending(true);
-    setError(null);
-    try {
+  const createMutation = useMutation({
+    mutationFn: async (vars: CreateSpecInput) => {
       const body: { project_id: string; title: string; notes?: string } = {
         project_id: project.id,
-        title: trimmedTitle,
+        title: vars.title,
       };
-      const trimmedNotes = notes.trim();
-      if (trimmedNotes) body.notes = trimmedNotes;
+      if (vars.notes !== null) body.notes = vars.notes;
       const res = await fetch("/specs", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -36,17 +33,41 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
       });
       if (!res.ok) {
         const respBody = (await res.json().catch(() => null)) as { error?: unknown } | null;
-        setError(typeof respBody?.error === "string" ? respBody.error : `server returned ${res.status}`);
-        return;
+        throw new Error(
+          typeof respBody?.error === "string"
+            ? respBody.error
+            : `server returned ${res.status}`,
+        );
       }
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ["specs", { projectId: project.id }],
+      });
+    },
+  });
+
+  async function submit() {
+    if (createMutation.isPending) return;
+    const trimmedTitle = title.trim();
+    if (!trimmedTitle) {
+      setError("title is required");
+      return;
+    }
+    setError(null);
+    try {
+      const trimmedNotes = notes.trim();
+      await createMutation.mutateAsync({
+        title: trimmedTitle,
+        notes: trimmedNotes === "" ? null : trimmedNotes,
+      });
       onCreated();
     } catch (err) {
       setError(err instanceof Error ? err.message : "network error");
-    } finally {
-      setPending(false);
     }
   }
 
+  const pending = createMutation.isPending;
   return (
     <div
       style={{

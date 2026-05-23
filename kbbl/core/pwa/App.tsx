@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 
 import { useHashRoute } from "./hooks/useHashRoute";
 import { useHashSid } from "./hooks/useHashSid";
@@ -7,6 +7,8 @@ import { useServerConfig } from "./hooks/useServerConfig";
 import { useTheme } from "./hooks/useTheme";
 import { useInbox } from "./hooks/useInbox";
 import { resumeSession } from "./lib/session";
+import { useStore } from "./state/store";
+import type { Sid, TaskId } from "./lib/ids";
 
 import { PlanReviewView } from "./review/plan/PlanReviewView";
 import { BriefReviewView } from "./review/brief/BriefReviewView";
@@ -21,16 +23,38 @@ export function App() {
   const [sid, navigate] = useHashSid();
   const [taskId, navigateTask] = useHashTaskId();
   const [theme, toggleTheme] = useTheme();
-  const { sessions, inMemorySids, inboxStatus, compactSuggestions, clearCompactSuggestion, hydrateSession } = useInbox({
-    // When the active session is purged from another client / tab, drop
-    // back to the inbox list so SessionView isn't left rendering a stale
-    // transcript with no underlying session record. Comparing inside the
-    // callback (not via deps) is fine because the ref dance in useInbox
-    // ensures we always see the latest sid closure.
+
+  // SSE subscription: writes inbox snapshot + status + compact-suggestions
+  // into the store. When the active session is purged from another client,
+  // drop back to the inbox list so SessionView isn't left rendering a stale
+  // transcript with no underlying record.
+  useInbox({
     onSessionRemoved: (removedSid) => {
       if (removedSid === sid) navigate(null);
     },
   });
+
+  // Inbox slice selectors — each reads only its own field so unrelated store
+  // mutations don't re-render App.
+  const sessions = useStore((s) => s.sessions);
+  const inMemorySids = useStore((s) => s.inMemorySids);
+  const inboxStatus = useStore((s) => s.inboxStatus);
+  const compactSuggestions = useStore((s) => s.compactSuggestions);
+  const hydrateSession = useStore((s) => s.hydrateSession);
+  const clearCompactSuggestion = useStore((s) => s.clearCompactSuggestion);
+  const setCurrentSid = useStore((s) => s.setCurrentSid);
+  const setCurrentTaskId = useStore((s) => s.setCurrentTaskId);
+
+  // Mirror the URL-derived route ids into the store so other components
+  // (future cohorts) can read currentSid/currentTaskId via slice selectors
+  // without threading them through props.
+  useEffect(() => {
+    setCurrentSid(sid as Sid | null);
+  }, [sid, setCurrentSid]);
+  useEffect(() => {
+    setCurrentTaskId(taskId as TaskId | null);
+  }, [taskId, setCurrentTaskId]);
+
   const config = useServerConfig();
   const [softThresholdTokens, setSoftThresholdTokens] = useState<number>(50000);
   const [thresholdInput, setThresholdInput] = useState<string>("50000");
@@ -42,8 +66,8 @@ export function App() {
     }
   }, [config?.softThresholdTokens]);
 
-  // Hash routing precedence: plan/brief views win over session/task views.
-  // These use path-style hashes (#plan/<id>, #brief/<id>) which don't
+  // Hash routing precedence: plan/brief/cohort views win over session/task
+  // views. These use path-style hashes (#plan/<id>, #brief/<id>) which don't
   // collide with the query-param style #sid=X and #task=X routes.
   if (route?.view === "plan") {
     return (
@@ -83,12 +107,12 @@ export function App() {
     return (
       <SessionView
         sid={sid}
-        snapshot={sessions.get(sid) ?? null}
-        inMemory={inMemorySids.has(sid)}
+        snapshot={sessions.get(sid as Sid) ?? null}
+        inMemory={inMemorySids.has(sid as Sid)}
         inboxStatus={inboxStatus}
         theme={theme}
-        compactSuggestion={compactSuggestions.get(sid) ?? null}
-        onClearCompactSuggestion={() => clearCompactSuggestion(sid)}
+        compactSuggestion={compactSuggestions.get(sid as Sid) ?? null}
+        onClearCompactSuggestion={() => clearCompactSuggestion(sid as Sid)}
         softThresholdTokens={softThresholdTokens}
         thresholdInput={thresholdInput}
         onSoftThresholdChange={(n, input) => {

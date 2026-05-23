@@ -1,4 +1,5 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
+import { useMutation } from "@tanstack/react-query";
 
 import { Sidebar, type SidebarSession } from "../sidebar/Sidebar";
 
@@ -15,6 +16,15 @@ import {
 import { usePendingReviews } from "../hooks/usePendingReviews";
 import { useTasksAndProfiles } from "../hooks/useTasksAndProfiles";
 import { useUrlPrefill } from "../hooks/useUrlPrefill";
+
+interface StartSessionBody {
+  resume_from?: string;
+  workdir?: string;
+  name?: string;
+  model?: string;
+  task_id?: number;
+  permission_profile_id?: number;
+}
 
 export function SessionListView({
   sessions,
@@ -33,16 +43,43 @@ export function SessionListView({
   onSelect: (sid: string) => void;
   onHydrateSession: (snapshot: SessionSnapshot) => void;
 }) {
-  const [pending, setPending] = useState(false);
   const [pendingError, setPendingError] = useState<string | null>(null);
   const [resetSignal, setResetSignal] = useState(0);
-  const startInFlightRef = useRef(false);
 
   const { pendingPlans, pendingBriefs } = usePendingReviews();
   const { tasks, profiles } = useTasksAndProfiles();
   const prefill = useUrlPrefill();
 
+  const activeTasks = tasks?.ok ? tasks.value : [];
+  const permissionProfiles = profiles?.ok ? profiles.value : [];
+  const pendingPlanCards = pendingPlans?.ok ? pendingPlans.value : [];
+  const pendingBriefCards = pendingBriefs?.ok ? pendingBriefs.value : [];
+  const dataErrors = [pendingPlans, pendingBriefs, tasks, profiles]
+    .filter((r): r is { ok: false; error: Error } => r?.ok === false)
+    .map((r) => r.error.message);
+
   const sorted = useMemo(() => sortSessions(sessions), [sessions]);
+
+  const startMutation = useMutation({
+    mutationFn: async (body: StartSessionBody): Promise<SessionSnapshot> => {
+      const res = await fetch("/sessions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const responseBody = (await res.json().catch(() => null)) as {
+          error?: unknown;
+        } | null;
+        throw new Error(
+          typeof responseBody?.error === "string"
+            ? responseBody.error
+            : `server returned ${res.status}`,
+        );
+      }
+      return (await res.json()) as SessionSnapshot;
+    },
+  });
 
   // Shared POST /sessions path for both the "+ New session" form and
   // row-level Resume buttons. Resume passes resume_from and ignores
@@ -53,16 +90,9 @@ export function SessionListView({
     values?: NewSessionFormValues,
     resumeFrom?: string,
   ) {
-    if (startInFlightRef.current) return;
+    if (startMutation.isPending) return;
     setPendingError(null);
-    const body: {
-      resume_from?: string;
-      workdir?: string;
-      name?: string;
-      model?: string;
-      task_id?: number;
-      permission_profile_id?: number;
-    } = {};
+    const body: StartSessionBody = {};
     if (resumeFrom) {
       body.resume_from = resumeFrom;
     } else if (values) {
@@ -80,26 +110,8 @@ export function SessionListView({
       setPendingError("internal: startSession needs values or resumeFrom");
       return;
     }
-    startInFlightRef.current = true;
-    setPending(true);
     try {
-      const res = await fetch("/sessions", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        const responseBody = (await res.json().catch(() => null)) as {
-          error?: unknown;
-        } | null;
-        setPendingError(
-          typeof responseBody?.error === "string"
-            ? responseBody.error
-            : `server returned ${res.status}`,
-        );
-        return;
-      }
-      const snap = (await res.json()) as SessionSnapshot;
+      const snap = await startMutation.mutateAsync(body);
       // Hydrate before navigating so SessionView mounts with the snapshot
       // present and inMemory=true, rather than racing the /inbox
       // session_created delta. Without this the input box is hidden and
@@ -109,9 +121,6 @@ export function SessionListView({
       setResetSignal((n) => n + 1);
     } catch (err) {
       setPendingError(err instanceof Error ? err.message : "network error");
-    } finally {
-      setPending(false);
-      startInFlightRef.current = false;
     }
   }
 
@@ -153,15 +162,15 @@ export function SessionListView({
       </header>
       <div className="session-list-actions">
         <NewSessionForm
-          tasks={tasks}
-          profiles={profiles}
+          tasks={activeTasks}
+          profiles={permissionProfiles}
           defaultWorkdir={defaultWorkdir}
           initialWorkdir={prefill.initialWorkdir}
           initialTaskId={prefill.initialTaskId}
           initialProfileId={prefill.initialProfileId}
           workdirTouchedInitial={prefill.workdirTouchedInitial}
           profileLockedRef={prefill.profileLockedRef}
-          pending={pending}
+          pending={startMutation.isPending}
           pendingError={pendingError}
           autostartPending={prefill.autostartPending}
           onAutostartConsumed={() => prefill.setAutostartPending(false)}
@@ -169,7 +178,15 @@ export function SessionListView({
           onSubmit={(values) => { void startSession(values); }}
         />
       </div>
-      {pendingPlans.length > 0 && (
+      {dataErrors.length > 0 && (
+        <section style={{ padding: "8px 12px" }}>
+          <div className="sidebar-error" role="alert">
+            {dataErrors.join(" · ")}
+          </div>
+        </section>
+      )}
+
+      {pendingPlanCards.length > 0 && (
         <section style={{ padding: "8px 12px" }}>
           <div
             style={{
@@ -184,7 +201,7 @@ export function SessionListView({
             Pending plans
           </div>
           <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 4 }}>
-            {pendingPlans.map((p) => (
+            {pendingPlanCards.map((p) => (
               <li key={p.id}>
                 <button
                   type="button"
@@ -217,7 +234,7 @@ export function SessionListView({
         </section>
       )}
 
-      {pendingBriefs.length > 0 && (
+      {pendingBriefCards.length > 0 && (
         <section style={{ padding: "8px 12px" }}>
           <div
             style={{
@@ -232,7 +249,7 @@ export function SessionListView({
             Pending briefs
           </div>
           <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 4 }}>
-            {pendingBriefs.map((b) => (
+            {pendingBriefCards.map((b) => (
               <li key={b.id}>
                 <button
                   type="button"
@@ -277,7 +294,7 @@ export function SessionListView({
               snapshot={s}
               onOpen={() => onSelect(s.sid)}
               onResume={() => void startSession(undefined, s.sid)}
-              resumeDisabled={pending}
+              resumeDisabled={startMutation.isPending}
             />
           ))}
         </ul>

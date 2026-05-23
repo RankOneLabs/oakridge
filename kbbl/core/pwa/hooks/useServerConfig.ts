@@ -1,46 +1,44 @@
-import { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
+
+interface ServerConfigResponse {
+  defaultWorkdir: string;
+  softThresholdTokens?: number;
+  safirWebUrl?: string;
+}
+
+export interface ServerConfig {
+  defaultWorkdir: string;
+  softThresholdTokens?: number;
+  safirWebUrl?: string;
+}
 
 /**
- * Fetches the server's /config once on mount. Returns null until the
- * fetch resolves so callers can render a "loading" placeholder rather
- * than racing forms with empty defaults.
+ * Fetches the server's /config once. Returns null until the fetch resolves
+ * so callers can render a "loading" placeholder rather than racing forms
+ * with empty defaults. Cached indefinitely — the server's config doesn't
+ * change mid-session, and SessionTopBar's PATCH /config invalidates this
+ * query so the next read reflects the server response.
  */
-export function useServerConfig(): {
-  defaultWorkdir: string;
-  softThresholdTokens: number;
-  safirWebUrl: string;
-} | null {
-  const [config, setConfig] = useState<{
-    defaultWorkdir: string;
-    softThresholdTokens: number;
-    safirWebUrl: string;
-  } | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/config")
-      .then((r) => {
-        if (!r.ok) throw new Error(`config: ${r.status}`);
-        return r.json() as Promise<{
-          defaultWorkdir: string;
-          softThresholdTokens?: number;
-          safirWebUrl?: string;
-        }>;
-      })
-      .then((data) => {
-        if (!cancelled) setConfig({
-          defaultWorkdir: data.defaultWorkdir,
-          softThresholdTokens: typeof data.softThresholdTokens === "number"
-            ? data.softThresholdTokens
-            : 50000,
-          safirWebUrl: typeof data.safirWebUrl === "string" && data.safirWebUrl.length > 0
-            ? data.safirWebUrl
-            : "http://localhost:3000",
-        });
-      })
-      .catch(() => {
-        // server may be down or this build is older — leave config null
-      });
-    return () => { cancelled = true; };
-  }, []);
-  return config;
+export function useServerConfig(): ServerConfig | null {
+  const query = useQuery({
+    queryKey: ["config"],
+    queryFn: async (): Promise<ServerConfigResponse> => {
+      const res = await fetch("/config");
+      if (!res.ok) throw new Error(`config: ${res.status}`);
+      return (await res.json()) as ServerConfigResponse;
+    },
+    staleTime: Infinity,
+  });
+  if (!query.data) return null;
+  return {
+    defaultWorkdir: query.data.defaultWorkdir,
+    softThresholdTokens:
+      typeof query.data.softThresholdTokens === "number"
+        ? query.data.softThresholdTokens
+        : undefined,
+    safirWebUrl:
+      typeof query.data.safirWebUrl === "string" && query.data.safirWebUrl.length > 0
+        ? query.data.safirWebUrl
+        : undefined,
+  };
 }

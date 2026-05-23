@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 interface AddProjectModalProps {
   onCreated: () => void;
@@ -8,11 +9,32 @@ interface AddProjectModalProps {
 export function AddProjectModal({ onCreated, onCancel }: AddProjectModalProps) {
   const [name, setName] = useState("");
   const [repoPath, setRepoPath] = useState("");
-  const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+
+  const createMutation = useMutation({
+    mutationFn: async (vars: { name: string; repoPath: string }) => {
+      const res = await fetch("/projects", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: vars.name, repo_path: vars.repoPath }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
+        throw new Error(
+          typeof body?.error === "string"
+            ? body.error
+            : `server returned ${res.status}`,
+        );
+      }
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["projects"] });
+    },
+  });
 
   async function submit() {
-    if (pending) return;
+    if (createMutation.isPending) return;
     const trimmedName = name.trim();
     const trimmedPath = repoPath.trim();
     if (!trimmedName) {
@@ -23,27 +45,16 @@ export function AddProjectModal({ onCreated, onCancel }: AddProjectModalProps) {
       setError("repo_path must be an absolute path");
       return;
     }
-    setPending(true);
     setError(null);
     try {
-      const res = await fetch("/projects", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: trimmedName, repo_path: trimmedPath }),
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
-        setError(typeof body?.error === "string" ? body.error : `server returned ${res.status}`);
-        return;
-      }
+      await createMutation.mutateAsync({ name: trimmedName, repoPath: trimmedPath });
       onCreated();
     } catch (err) {
       setError(err instanceof Error ? err.message : "network error");
-    } finally {
-      setPending(false);
     }
   }
 
+  const pending = createMutation.isPending;
   return (
     <div
       style={{

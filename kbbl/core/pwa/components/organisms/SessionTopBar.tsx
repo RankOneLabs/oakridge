@@ -1,7 +1,9 @@
 import { useState, type Ref } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import type { SessionSnapshot, Status, Theme } from "../../types";
 import { prettyModelLabel } from "../../lib/format";
+import { responseError } from "../../lib/http";
 import { sessionLabelTitle, workdirBasename } from "../../lib/session";
 
 export function SessionTopBar({
@@ -37,35 +39,56 @@ export function SessionTopBar({
   onToggleTheme: () => void;
   onBack: () => void;
 }) {
-  const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
   const canToggleYolo = snapshot?.status === "live";
-  async function toggleYolo() {
-    if (pending || !canToggleYolo) return;
-    setPending(true);
-    setError(null);
-    try {
+
+  const yoloMutation = useMutation({
+    mutationFn: async (enabled: boolean) => {
       const res = await fetch(`/${encodeURIComponent(sid)}/yolo`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ enabled: !yoloMode }),
+        body: JSON.stringify({ enabled }),
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as {
           error?: unknown;
         } | null;
-        setError(
+        throw new Error(
           typeof body?.error === "string"
             ? body.error
             : `server returned ${res.status}`,
         );
       }
+    },
+  });
+
+  const thresholdMutation = useMutation({
+    mutationFn: async (n: number) => {
+      const res = await fetch("/config", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ softThresholdTokens: n }),
+      });
+      if (!res.ok) throw await responseError(res, "threshold update");
+    },
+    onSuccess: () => {
+      // /config drives useServerConfig; invalidate so the next mount reflects
+      // the new threshold rather than the staleTime=Infinity cached value.
+      void queryClient.invalidateQueries({ queryKey: ["config"] });
+    },
+  });
+
+  async function toggleYolo() {
+    if (yoloMutation.isPending || !canToggleYolo) return;
+    setError(null);
+    try {
+      await yoloMutation.mutateAsync(!yoloMode);
     } catch (err) {
       setError(err instanceof Error ? err.message : "network error");
-    } finally {
-      setPending(false);
     }
   }
+
   // Show stream status when on a live session, inbox status otherwise —
   // stream status on an archived-only view is misleading ("disconnected"
   // just means the one-shot fetch finished).
@@ -112,7 +135,7 @@ export function SessionTopBar({
         type="button"
         className={`yolo-toggle ${yoloMode ? "is-on" : ""}`}
         onClick={() => void toggleYolo()}
-        disabled={pending || !canToggleYolo}
+        disabled={yoloMutation.isPending || !canToggleYolo}
         title={
           !canToggleYolo
             ? "YOLO only toggleable while the session is live"
@@ -182,17 +205,11 @@ export function SessionTopBar({
               return;
             }
             try {
-              const res = await fetch("/config", {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ softThresholdTokens: n }),
-              });
-              if (res.ok) {
-                onThresholdChange(n, String(n));
-              } else {
-                onThresholdChange(softThresholdTokens, String(softThresholdTokens));
-              }
+              await thresholdMutation.mutateAsync(n);
+              onThresholdChange(n, String(n));
             } catch {
+              // Roll back to the previously-accepted value so the operator
+              // doesn't end up looking at a number the server rejected.
               onThresholdChange(softThresholdTokens, String(softThresholdTokens));
             }
           }}

@@ -1,52 +1,35 @@
-import { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 
 export type HandoffStatus = "idle" | "loading" | "ok" | "missing" | "error";
+
+interface HandoffResult {
+  status: "missing" | "ok";
+  body: string | null;
+}
 
 export function useSessionHandoff(
   sid: string,
   enabled: boolean,
 ): { handoff: string | null; status: HandoffStatus } {
-  const [handoff, setHandoff] = useState<string | null>(null);
-  const [status, setStatus] = useState<HandoffStatus>("idle");
+  const query = useQuery({
+    queryKey: ["session", sid, "handoff"],
+    enabled,
+    queryFn: async (): Promise<HandoffResult> => {
+      const res = await fetch(`/${encodeURIComponent(sid)}/handoff`);
+      if (res.status === 404) return { status: "missing", body: null };
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const text = await res.text();
+      return { status: "ok", body: text };
+    },
+    // 404 is a real "no handoff on disk" answer, not a transient failure to
+    // retry. We map it onto status="missing" in the queryFn instead.
+    retry: false,
+  });
 
-  useEffect(() => {
-    if (!enabled) {
-      // Reset on disable so the next enable cycle re-fetches.
-      setStatus("idle");
-      setHandoff(null);
-      return;
-    }
-    let cancelled = false;
-    setStatus("loading");
-    setHandoff(null);
-    fetch(`/${encodeURIComponent(sid)}/handoff`)
-      .then(async (r) => {
-        if (cancelled) return;
-        if (r.status === 404) {
-          setStatus("missing");
-          return;
-        }
-        if (!r.ok) {
-          setStatus("error");
-          return;
-        }
-        const text = await r.text();
-        if (cancelled) return;
-        setHandoff(text);
-        setStatus("ok");
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setStatus("error");
-      });
-    return () => {
-      cancelled = true;
-    };
-    // `status` is intentionally excluded — including it would cause the
-    // effect to re-run after setStatus("loading"), and the previous
-    // cleanup would cancel the in-flight fetch before it resolved,
-    // wedging the hook at "loading" forever.
-  }, [enabled, sid]);
-
-  return { handoff, status };
+  if (!enabled) return { handoff: null, status: "idle" };
+  if (query.isPending) return { handoff: null, status: "loading" };
+  if (query.isError) return { handoff: null, status: "error" };
+  if (query.data?.status === "missing") return { handoff: null, status: "missing" };
+  if (query.data?.status === "ok") return { handoff: query.data.body, status: "ok" };
+  return { handoff: null, status: "idle" };
 }

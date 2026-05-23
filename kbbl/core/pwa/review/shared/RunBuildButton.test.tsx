@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactElement } from "react";
 
 import { RunBuildButton } from "./RunBuildButton";
 
@@ -19,6 +21,20 @@ function mockCohortFetch(body: CohortResponse) {
   );
 }
 
+// Fresh client per render so each test starts with an empty cache and no
+// retry-induced waits. retry=false on both queries and mutations.
+function renderWithClient(ui: ReactElement) {
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+  return render(
+    <QueryClientProvider client={client}>{ui}</QueryClientProvider>,
+  );
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -31,7 +47,7 @@ describe("RunBuildButton", () => {
       current_session_status: null,
     });
 
-    render(<RunBuildButton briefId="brief-1" cohortId="cohort-1" />);
+    renderWithClient(<RunBuildButton briefId="brief-1" cohortId="cohort-1" />);
 
     expect(await screen.findByRole("button", { name: /run build/i })).toBeTruthy();
   });
@@ -46,7 +62,7 @@ describe("RunBuildButton", () => {
       current_session_status: "ended",
     });
 
-    render(<RunBuildButton briefId="brief-1" cohortId="cohort-1" />);
+    renderWithClient(<RunBuildButton briefId="brief-1" cohortId="cohort-1" />);
 
     expect(await screen.findByRole("button", { name: /run build/i })).toBeTruthy();
     expect(screen.queryByText(/build running/i)).toBeNull();
@@ -60,7 +76,7 @@ describe("RunBuildButton", () => {
       current_session_status: null,
     });
 
-    render(<RunBuildButton briefId="brief-1" cohortId="cohort-1" />);
+    renderWithClient(<RunBuildButton briefId="brief-1" cohortId="cohort-1" />);
 
     expect(await screen.findByRole("button", { name: /run build/i })).toBeTruthy();
   });
@@ -72,7 +88,7 @@ describe("RunBuildButton", () => {
       current_session_status: "live",
     });
 
-    render(<RunBuildButton briefId="brief-1" cohortId="cohort-1" />);
+    renderWithClient(<RunBuildButton briefId="brief-1" cohortId="cohort-1" />);
 
     expect(await screen.findByText(/build running — session sess-liv/i)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /run build/i })).toBeNull();
@@ -87,7 +103,7 @@ describe("RunBuildButton", () => {
       current_session_status: "live",
     });
 
-    render(<RunBuildButton briefId="brief-1" cohortId="cohort-1" />);
+    renderWithClient(<RunBuildButton briefId="brief-1" cohortId="cohort-1" />);
 
     expect(await screen.findByRole("button", { name: /run build/i })).toBeTruthy();
   });
@@ -105,7 +121,7 @@ describe("RunBuildButton", () => {
       ),
     );
 
-    render(<RunBuildButton briefId="brief-1" cohortId="cohort-1" />);
+    renderWithClient(<RunBuildButton briefId="brief-1" cohortId="cohort-1" />);
 
     expect(screen.getByText(/checking build status/i)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /run build/i })).toBeNull();

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 
 import type { SessionStatus, Theme } from "../../types";
 import { RunBuildButton } from "../shared/RunBuildButton";
@@ -18,53 +18,32 @@ interface CohortDetail extends Cohort {
   current_session_status?: SessionStatus | null;
 }
 
-interface LoadedCohort {
-  id: string;
-  cohort: CohortDetail;
-  briefs: Brief[];
-}
-
 export function CohortReviewView({ id, onToggleTheme, onBack }: CohortReviewViewProps) {
-  // Single bundle so render can gate strictly on `loaded.id === id`. Holding
-  // cohort/briefs in separate states + a `loadedId` would still allow torn
-  // intermediate renders if React batches the setters differently from what
-  // we expect.
-  const [loaded, setLoaded] = useState<LoadedCohort | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const cohortQuery = useQuery({
+    queryKey: ["cohorts", { id }],
+    queryFn: async (): Promise<CohortDetail> => {
+      const res = await fetch(`/cohorts/${encodeURIComponent(id)}`);
+      if (!res.ok) throw new Error(`cohort: ${res.status}`);
+      return (await res.json()) as CohortDetail;
+    },
+  });
 
-  useEffect(() => {
-    let cancelled = false;
-    setError(null);
-    void (async () => {
-      try {
-        const cohortRes = await fetch(`/cohorts/${encodeURIComponent(id)}`);
-        if (!cohortRes.ok) throw new Error(`cohort: ${cohortRes.status}`);
-        const cohortBody = (await cohortRes.json()) as CohortDetail;
-        if (cancelled) return;
+  const briefsQuery = useQuery({
+    queryKey: ["briefs", { cohortId: id }],
+    queryFn: async (): Promise<Brief[]> => {
+      const res = await fetch(`/briefs?cohort_id=${encodeURIComponent(id)}`);
+      if (!res.ok) throw new Error(`briefs: ${res.status}`);
+      return (await res.json()) as Brief[];
+    },
+  });
 
-        const briefsRes = await fetch(`/briefs?cohort_id=${encodeURIComponent(id)}`);
-        if (cancelled) return;
-        if (!briefsRes.ok) {
-          // Surface the failure rather than letting "No brief yet." lie.
-          setError(`briefs: ${briefsRes.status}`);
-          return;
-        }
-        const briefsBody = (await briefsRes.json()) as Brief[];
-        if (cancelled) return;
-        setLoaded({ id, cohort: cohortBody, briefs: briefsBody });
-      } catch (err) {
-        if (cancelled) return;
-        setError(err instanceof Error ? err.message : "load failed");
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [id]);
-
-  // Render is gated on the loaded id matching the current route id. Anything
-  // else (prior cohort, or no cohort loaded yet) renders the loading shell —
-  // including the one-frame gap between hash change and the useEffect commit
-  // that would otherwise leak the previous cohort's data.
-  const ready = loaded?.id === id ? loaded : null;
+  const error =
+    cohortQuery.error instanceof Error
+      ? cohortQuery.error.message
+      : briefsQuery.error instanceof Error
+        ? briefsQuery.error.message
+        : null;
+  const loading = cohortQuery.isPending || briefsQuery.isPending;
 
   if (error) {
     return (
@@ -75,7 +54,7 @@ export function CohortReviewView({ id, onToggleTheme, onBack }: CohortReviewView
     );
   }
 
-  if (!ready) {
+  if (loading || !cohortQuery.data || !briefsQuery.data) {
     return (
       <div className="review-load-shell">
         <button type="button" onClick={onBack}>Back</button>
@@ -84,7 +63,8 @@ export function CohortReviewView({ id, onToggleTheme, onBack }: CohortReviewView
     );
   }
 
-  const { cohort, briefs } = ready;
+  const cohort = cohortQuery.data;
+  const briefs = briefsQuery.data;
 
   const latestBrief = briefs.length > 0
     ? [...briefs].sort((a, b) => b.created_at.localeCompare(a.created_at))[0]
