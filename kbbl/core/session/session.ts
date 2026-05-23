@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { Compactor } from "./compactor";
 
 export type SessionId = string & { readonly __brand: "SessionId" };
+export type ArtifactId = string & { readonly __brand: "ArtifactId" };
 
 export interface EnvelopeEvent {
   id: number;
@@ -59,7 +60,7 @@ export interface SessionOpts {
    * the id is passed through to snapshots and queryable via
    * SessionManager.listByArtifact() for grouping in the operator UI.
    */
-  artifactId?: string;
+  artifactId?: ArtifactId;
   /**
    * Per-session runtime model id (e.g., "claude-sonnet-4-6"). null means
    * "no --model flag at spawn" — CC will pick its own default. Persisted
@@ -160,7 +161,7 @@ export interface SessionSnapshot {
    * layer (the existing kbbl-direct flow). Surfaces to the PWA so
    * approvals can be rendered with artifact context.
    */
-  artifactId: string | null;
+  artifactId: ArtifactId | null;
   pendingCount: number;
   yoloMode: boolean;
   allowedTools: string[];
@@ -234,7 +235,7 @@ export class Session {
   readonly jsonlPath: string;
   readonly parentCcSid: string | null;
   readonly parentOakridgeSid: string | null;
-  readonly artifactId: string | null;
+  readonly artifactId: ArtifactId | null;
   readonly createdAt: string;
   readonly worktreePath: string | null;
   readonly worktreeBranch: string | null;
@@ -310,13 +311,20 @@ export class Session {
     // though the HTTP route rejects them. JSONL session_started and
     // snapshots will never contain a malformed artifactId regardless
     // of call site.
-    const trimmedArtifactId = opts.artifactId?.trim() || null;
-    if (trimmedArtifactId !== null && trimmedArtifactId.length > MAX_ARTIFACT_ID_LENGTH) {
-      throw new Error(
-        `artifactId must be ≤ ${MAX_ARTIFACT_ID_LENGTH} chars after trimming (got ${trimmedArtifactId.length})`,
-      );
+    let artifactId: ArtifactId | null = null;
+    if (opts.artifactId !== undefined) {
+      const trimmedArtifactId = opts.artifactId.trim();
+      if (trimmedArtifactId === "") {
+        throw new Error("artifactId must be non-empty when provided");
+      }
+      if (trimmedArtifactId.length > MAX_ARTIFACT_ID_LENGTH) {
+        throw new Error(
+          `artifactId must be ≤ ${MAX_ARTIFACT_ID_LENGTH} chars after trimming (got ${trimmedArtifactId.length})`,
+        );
+      }
+      artifactId = trimmedArtifactId as ArtifactId;
     }
-    this.artifactId = trimmedArtifactId;
+    this.artifactId = artifactId;
     this.worktreePath = opts.worktreePath ?? null;
     this.worktreeBranch = opts.worktreeBranch ?? null;
     this.worktreeBaseRef = opts.worktreeBaseRef ?? null;

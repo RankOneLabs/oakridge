@@ -4,6 +4,7 @@ import { stat } from "node:fs/promises";
 
 import {
   MAX_ARTIFACT_ID_LENGTH,
+  type ArtifactId,
   readJsonlOrEmpty,
   type EnvelopeEvent,
 } from "../../session/session";
@@ -193,7 +194,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
     let resumeFrom: string | null = null;
     let bodyWorkdir: string | null = null;
     let bodyName: string | null = null;
-    let bodyArtifactId: string | null = null;
+    let bodyArtifactId: ArtifactId | null = null;
     let bodyModel: string | null = null;
     // Read raw text first so we can distinguish "no body" (treat as no
     // options, preserves the old POST /sessions behavior) from "bad body"
@@ -278,7 +279,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
           }
           // Store the trimmed value so leading/trailing whitespace can't
           // make listByArtifact() lookups brittle.
-          bodyArtifactId = trimmedArtifactId;
+          bodyArtifactId = trimmedArtifactId as ArtifactId;
         }
         if (parsed.model !== undefined) {
           if (typeof parsed.model !== "string") {
@@ -432,7 +433,9 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
         400,
       );
     }
-    const sessions = manager.listByArtifact(trimmed).map((s) => s.snapshot());
+    const sessions = manager
+      .listByArtifact(trimmed as ArtifactId)
+      .map((s) => s.snapshot());
     return c.json({ sessions });
   });
 

@@ -8,6 +8,7 @@ import {
   extractResultUsage,
   newSessionId,
   readJsonlOrEmpty,
+  type ArtifactId,
   type EnvelopeEvent,
   type ResultUsage,
   type SessionEndReason,
@@ -82,7 +83,7 @@ export interface CreateSessionOpts {
    * the workspace layer (legit-biz-club) uses this to track ensembles
    * working on the same artifact. kbbl treats the id as opaque.
    */
-  artifactId?: string;
+  artifactId?: ArtifactId;
   /**
    * Runtime model id; passed through to Session and into the spawn argv
    * by the adapter's buildSpawnCmd. null/omitted → no --model flag,
@@ -518,8 +519,8 @@ export class SessionManager {
    * happens to be null (which "" === null would never do anyway, but
    * the guard makes the intent explicit).
    */
-  listByArtifact(artifactId: string): Session[] {
-    const normalized = artifactId.trim();
+  listByArtifact(artifactId: ArtifactId): Session[] {
+    const normalized = artifactId.trim() as ArtifactId;
     if (!normalized) return [];
     return [...this.sessions.values()].filter(
       (s) => s.artifactId === normalized,
@@ -1263,7 +1264,7 @@ async function loadArchivedSnapshot(
   let ccSid: string | null = null;
   let parentCcSid: string | null = null;
   let parentOakridgeSid: string | null = null;
-  let artifactId: string | null = null;
+  let artifactId: ArtifactId | null = null;
   let lastActivityTs = "";
   const allowedTools = new Set<string>();
   let yoloMode = false;
@@ -1314,7 +1315,7 @@ async function loadArchivedSnapshot(
           // the live path; this is the read-side fallback.
           const trimmed = payload.artifactId.trim();
           if (trimmed && trimmed.length <= MAX_ARTIFACT_ID_LENGTH) {
-            artifactId = trimmed;
+            artifactId = trimmed as ArtifactId;
           }
         }
         if (typeof payload.worktreePath === "string") {

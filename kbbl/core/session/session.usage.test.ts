@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   Session,
   USAGE_OBSERVATION_BUFFER_CAPACITY,
+  type ArtifactId,
   type EnvelopeEvent,
   type UsageObservation,
 } from "./session";
@@ -30,6 +31,22 @@ beforeEach(() => {
 afterEach(async () => {
   await session.abort();
   rmSync(sessionsDir, { recursive: true, force: true });
+});
+
+
+describe("Session artifactId validation", () => {
+  test("rejects explicitly blank artifactId", () => {
+    expect(
+      () =>
+        new Session({
+          oakridgeSid: "blank-artifact",
+          workdir: "/tmp",
+          name: "test",
+          sessionsDir,
+          artifactId: "   " as ArtifactId,
+        }),
+    ).toThrow("artifactId must be non-empty when provided");
+  });
 });
 
 describe("Session.observeTurnEnd", () => {
