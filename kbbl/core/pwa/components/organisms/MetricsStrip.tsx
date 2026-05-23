@@ -30,14 +30,13 @@ export function MetricsStrip({ events }: { events: EnvelopeEvent[] }) {
             <span className="metric-value">{fmtDuration(last.dur)}</span>
           </span>
         )}
-        {/* Once any turn this session has reported a non-zero cost, keep
-            both cost chips visible even when an individual turn lands at $0
-            (sub-cent rounding, fallback model, etc.) so the strip layout
-            doesn't flicker turn to turn. Pure $0 sessions (Claude Max only)
-            still hide both. */}
-        {last && m.totalCost > 0 && (
-          <span className="metric" title="Last turn cost (Anthropic API billing; $0 on Claude Max)">
-            <span className="metric-value">{fmtCost(last.cost)}</span>
+        {/* Cost chips render once any turn has completed. Em-dash signals $0 — typically a Claude Max session. */}
+        {last && (
+          <span
+            className="metric"
+            title="Last turn cost — delta from previous turn (— = no per-token cost reported by Claude Code; typical on Claude Max)"
+          >
+            <span className="metric-value">{last.cost > 0 ? fmtCost(last.cost) : "—"}</span>
           </span>
         )}
         <span className="metric-sep">·</span>
@@ -50,11 +49,12 @@ export function MetricsStrip({ events }: { events: EnvelopeEvent[] }) {
             {m.turns} turn{m.turns === 1 ? "" : "s"}
           </span>
         </span>
-        {m.totalCost > 0 && (
-          <span className="metric" title="Cumulative session cost">
-            <span className="metric-value">{fmtCost(m.totalCost)}</span>
-          </span>
-        )}
+        <span
+          className="metric"
+          title="Session cost — cumulative across all turns (— = no per-token cost reported by Claude Code; typical on Claude Max)"
+        >
+          <span className="metric-value">{m.totalCost > 0 ? fmtCost(m.totalCost) : "—"}</span>
+        </span>
       </summary>
       <div className="metrics-detail">
         {last && (
@@ -71,7 +71,7 @@ export function MetricsStrip({ events }: { events: EnvelopeEvent[] }) {
               <dd>{last.cacheRead.toLocaleString()}</dd>
               <dt>duration</dt>
               <dd>{fmtDuration(last.dur) || "—"}</dd>
-              <dt>cost</dt>
+              <dt>cost (delta)</dt>
               <dd>{last.cost > 0 ? fmtCost(last.cost) : "—"}</dd>
               <dt>billed</dt>
               <dd>{lastBilled.toLocaleString()}</dd>
@@ -91,7 +91,7 @@ export function MetricsStrip({ events }: { events: EnvelopeEvent[] }) {
             <dd>{m.totalCacheRead.toLocaleString()}</dd>
             <dt>duration</dt>
             <dd>{fmtDuration(m.totalDur) || "—"}</dd>
-            <dt>cost</dt>
+            <dt>cost (cumulative)</dt>
             <dd>{m.totalCost > 0 ? fmtCost(m.totalCost) : "—"}</dd>
             <dt>billed</dt>
             <dd>{totalBilled.toLocaleString()}</dd>
