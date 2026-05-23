@@ -1,46 +1,25 @@
 import {
   Fragment,
   useEffect,
+  useMemo,
   useState,
 } from "react";
+import { useQuery } from "@tanstack/react-query";
 import Markdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 
 import type { Theme, SafirTask, SafirHandoff, TaskFetchState } from "../types";
 
-async function fetchTaskAndHandoffs(taskId: number): Promise<TaskFetchState> {
-  try {
-    const [taskRes, handoffsRes] = await Promise.all([
-      fetch(`/safir/tasks/${taskId}`),
-      fetch(`/safir/tasks/${taskId}/handoffs`),
-    ]);
-    if (taskRes.status === 404) return { kind: "not_found" };
-    if (taskRes.status === 502 || handoffsRes.status === 502) {
-      return { kind: "safir_down" };
-    }
-    if (!taskRes.ok) {
-      return {
-        kind: "error",
-        status: taskRes.status,
-        message: `task fetch failed: HTTP ${taskRes.status}`,
-      };
-    }
-    if (!handoffsRes.ok) {
-      return {
-        kind: "error",
-        status: handoffsRes.status,
-        message: `handoffs fetch failed: HTTP ${handoffsRes.status}`,
-      };
-    }
-    const task = (await taskRes.json()) as SafirTask;
-    const handoffs = (await handoffsRes.json()) as SafirHandoff[];
-    return { kind: "ok", task, handoffs };
-  } catch {
-    // Network failure before kbbl could even respond — treat the same as
-    // safir-down from the operator's perspective.
-    return { kind: "safir_down" };
-  }
-}
+type TaskQueryResult =
+  | { kind: "ok"; task: SafirTask }
+  | { kind: "not_found" }
+  | { kind: "safir_down" }
+  | { kind: "error"; status: number; message: string };
+
+type HandoffsQueryResult =
+  | { kind: "ok"; handoffs: SafirHandoff[] }
+  | { kind: "safir_down" }
+  | { kind: "error"; status: number; message: string };
 
 export function TaskView({
   taskId,
@@ -55,20 +34,67 @@ export function TaskView({
   onToggleTheme: () => void;
   onBack: () => void;
 }) {
-  const [state, setState] = useState<TaskFetchState>({ kind: "loading" });
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
 
+  const taskQuery = useQuery({
+    queryKey: ["safir", "tasks", taskId],
+    queryFn: async (): Promise<TaskQueryResult> => {
+      const res = await fetch(`/safir/tasks/${taskId}`);
+      if (res.status === 404) return { kind: "not_found" };
+      if (res.status === 502) return { kind: "safir_down" };
+      if (!res.ok) {
+        return {
+          kind: "error",
+          status: res.status,
+          message: `task fetch failed: HTTP ${res.status}`,
+        };
+      }
+      const task = (await res.json()) as SafirTask;
+      return { kind: "ok", task };
+    },
+    // 404/502 are mapped to specific kinds in the queryFn — retrying would
+    // just delay the user-facing message. Network failures land in onError
+    // and are treated as safir_down below.
+    retry: false,
+  });
+
+  const handoffsQuery = useQuery({
+    queryKey: ["safir", "tasks", taskId, "handoffs"],
+    queryFn: async (): Promise<HandoffsQueryResult> => {
+      const res = await fetch(`/safir/tasks/${taskId}/handoffs`);
+      if (res.status === 502) return { kind: "safir_down" };
+      if (!res.ok) {
+        return {
+          kind: "error",
+          status: res.status,
+          message: `handoffs fetch failed: HTTP ${res.status}`,
+        };
+      }
+      const handoffs = (await res.json()) as SafirHandoff[];
+      return { kind: "ok", handoffs };
+    },
+    retry: false,
+  });
+
+  // Reset expanded set on taskId change so a previous task's expanded
+  // handoff ids don't leak into the new view.
   useEffect(() => {
-    let cancelled = false;
-    setState({ kind: "loading" });
     setExpanded(new Set());
-    fetchTaskAndHandoffs(taskId).then((next) => {
-      if (!cancelled) setState(next);
-    });
-    return () => {
-      cancelled = true;
-    };
   }, [taskId]);
+
+  const state: TaskFetchState = useMemo(() => {
+    if (taskQuery.isPending || handoffsQuery.isPending) return { kind: "loading" };
+    if (taskQuery.isError || handoffsQuery.isError) {
+      // Network drop before kbbl could respond — treat as safir-down from
+      // the operator's perspective (same as the old try/catch fallback).
+      return { kind: "safir_down" };
+    }
+    const t = taskQuery.data;
+    if (t.kind !== "ok") return t;
+    const h = handoffsQuery.data;
+    if (h.kind !== "ok") return h;
+    return { kind: "ok", task: t.task, handoffs: h.handoffs };
+  }, [taskQuery.data, taskQuery.isError, taskQuery.isPending, handoffsQuery.data, handoffsQuery.isError, handoffsQuery.isPending]);
 
   const toggle = (id: string) => {
     setExpanded((prev) => {

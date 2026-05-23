@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
+import { useMutation } from "@tanstack/react-query";
 
 import type { SessionSnapshot } from "../../types";
 import { useRelativeTime } from "../../hooks/useRelativeTime";
@@ -19,7 +20,18 @@ export function SessionRow({
   const relative = useRelativeTime(snapshot.lastActivityTs);
   const canResume = snapshot.status === "ended";
   const [confirmRemove, setConfirmRemove] = useState(false);
-  const [removing, setRemoving] = useState(false);
+
+  // Server broadcasts session_removed; the inbox handler drops the row.
+  // No optimistic UI here — if the request failed silently the row simply
+  // stays put and the operator can retry.
+  const removeMutation = useMutation({
+    mutationFn: async () => {
+      await fetch(`/sessions/${encodeURIComponent(snapshot.sid)}?purge=true`, {
+        method: "DELETE",
+      });
+    },
+  });
+
   // Auto-clear the confirm-pending state after a few seconds so a stray
   // first tap doesn't leave a primed Remove button waiting indefinitely.
   useEffect(() => {
@@ -29,17 +41,10 @@ export function SessionRow({
   }, [confirmRemove]);
 
   async function remove() {
-    if (removing) return;
-    setRemoving(true);
+    if (removeMutation.isPending) return;
     try {
-      await fetch(`/sessions/${encodeURIComponent(snapshot.sid)}?purge=true`, {
-        method: "DELETE",
-      });
-      // Server broadcasts session_removed; the inbox handler drops the row.
-      // No optimistic UI here — if the request failed silently the row
-      // simply stays put and the operator can retry.
+      await removeMutation.mutateAsync();
     } finally {
-      setRemoving(false);
       setConfirmRemove(false);
     }
   }
@@ -103,7 +108,7 @@ export function SessionRow({
       <button
         type="button"
         className={`btn-remove${confirmRemove ? " is-confirming" : ""}`}
-        disabled={removing}
+        disabled={removeMutation.isPending}
         title={
           snapshot.status === "live"
             ? "Aborts the live subprocess and deletes the transcript file."
@@ -118,7 +123,7 @@ export function SessionRow({
           void remove();
         }}
       >
-        {removing
+        {removeMutation.isPending
           ? "removing…"
           : confirmRemove
             ? "tap to confirm"
