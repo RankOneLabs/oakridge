@@ -311,13 +311,20 @@ export class Session {
     // though the HTTP route rejects them. JSONL session_started and
     // snapshots will never contain a malformed artifactId regardless
     // of call site.
-    const trimmedArtifactId = opts.artifactId?.trim() || null;
-    if (trimmedArtifactId !== null && trimmedArtifactId.length > MAX_ARTIFACT_ID_LENGTH) {
-      throw new Error(
-        `artifactId must be ≤ ${MAX_ARTIFACT_ID_LENGTH} chars after trimming (got ${trimmedArtifactId.length})`,
-      );
+    let artifactId: ArtifactId | null = null;
+    if (opts.artifactId !== undefined) {
+      const trimmedArtifactId = opts.artifactId.trim();
+      if (trimmedArtifactId === "") {
+        throw new Error("artifactId must be non-empty when provided");
+      }
+      if (trimmedArtifactId.length > MAX_ARTIFACT_ID_LENGTH) {
+        throw new Error(
+          `artifactId must be ≤ ${MAX_ARTIFACT_ID_LENGTH} chars after trimming (got ${trimmedArtifactId.length})`,
+        );
+      }
+      artifactId = trimmedArtifactId as ArtifactId;
     }
-    this.artifactId = trimmedArtifactId as ArtifactId | null;
+    this.artifactId = artifactId;
     this.worktreePath = opts.worktreePath ?? null;
     this.worktreeBranch = opts.worktreeBranch ?? null;
     this.worktreeBaseRef = opts.worktreeBaseRef ?? null;
