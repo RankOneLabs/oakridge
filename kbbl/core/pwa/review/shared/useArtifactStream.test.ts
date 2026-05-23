@@ -1,5 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { renderHook, act } from "@testing-library/react";
+import { renderHook, act, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { createElement, type ReactNode } from "react";
 import { useArtifactStream } from "./useArtifactStream";
 import type { AtomEdit, Thread } from "./types";
 
@@ -65,6 +67,19 @@ function makeThread(anchor: string | null): Thread {
   };
 }
 
+// Per-test fresh client so caches don't bleed between tests; retry=false so
+// fetch mocks that return non-OK don't trigger background retries.
+function createWrapper() {
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+  return ({ children }: { children: ReactNode }) =>
+    createElement(QueryClientProvider, { client, children });
+}
+
 beforeEach(() => {
   mockES = null;
   // @ts-expect-error replacing global
@@ -90,9 +105,9 @@ describe("useArtifactStream", () => {
       }),
     );
 
-    const { result } = renderHook(() =>
-      useArtifactStream("plan", "plan-1"),
-    );
+    const { result } = renderHook(() => useArtifactStream("plan", "plan-1"), {
+      wrapper: createWrapper(),
+    });
 
     expect(result.current.status).toBe("idle");
     expect(result.current.edits).toEqual(initialEdits);
@@ -120,30 +135,21 @@ describe("useArtifactStream", () => {
       }),
     );
 
-    const { result } = renderHook(() =>
-      useArtifactStream("plan", "plan-1"),
-    );
-
-    // Let promises settle
-    await act(async () => {
-      await Promise.resolve();
+    const { result } = renderHook(() => useArtifactStream("plan", "plan-1"), {
+      wrapper: createWrapper(),
     });
 
-    expect(result.current.edits).toEqual(edits);
+    // useQuery's queryFn runs across multiple microtasks; waitFor polls
+    // until the seed data appears in the combined output.
+    await waitFor(() => {
+      expect(result.current.edits).toEqual(edits);
+    });
     expect(result.current.threads).toEqual(threads);
     expect(result.current.frozen).toBe(true);
   });
 
   it("transitions to connected when SSE opens", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve([]),
-      }),
-    );
-
-    // Also mock /review/frozen
+    // Mock /review/frozen alongside the generic fall-through.
     vi.stubGlobal(
       "fetch",
       vi.fn().mockImplementation((url: string) => {
@@ -154,9 +160,9 @@ describe("useArtifactStream", () => {
       }),
     );
 
-    const { result } = renderHook(() =>
-      useArtifactStream("plan", "plan-1"),
-    );
+    const { result } = renderHook(() => useArtifactStream("plan", "plan-1"), {
+      wrapper: createWrapper(),
+    });
 
     await act(async () => {
       mockES?.onopen?.();
@@ -176,9 +182,9 @@ describe("useArtifactStream", () => {
       }),
     );
 
-    const { result } = renderHook(() =>
-      useArtifactStream("plan", "plan-1"),
-    );
+    const { result } = renderHook(() => useArtifactStream("plan", "plan-1"), {
+      wrapper: createWrapper(),
+    });
 
     await act(async () => {
       await Promise.resolve();
@@ -208,9 +214,9 @@ describe("useArtifactStream", () => {
       }),
     );
 
-    const { result } = renderHook(() =>
-      useArtifactStream("plan", "plan-1"),
-    );
+    const { result } = renderHook(() => useArtifactStream("plan", "plan-1"), {
+      wrapper: createWrapper(),
+    });
 
     await act(async () => {
       await Promise.resolve();
