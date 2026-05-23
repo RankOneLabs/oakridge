@@ -9,8 +9,10 @@ kbbl serializes JSON in camelCase; this module's pydantic config pairs
 Python snake_case attribute names with camelCase JSON aliases via
 ``alias_generator``.
 """
+
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -25,6 +27,33 @@ class _KbblModel(BaseModel):
         populate_by_name=True,
         extra="ignore",
     )
+
+
+class CreateArtifactSessionRequest(BaseModel):
+    """Wire body for ``POST /sessions`` when tagging a session to an artifact."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    workdir: str
+    artifact_id: str
+    name: str | None = None
+
+
+WorkspaceEventPayload = Mapping[str, object]
+
+
+class WorkspaceEventRequest(_KbblModel):
+    """Wire body for ``POST /inbox/workspace-events``."""
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+    )
+
+    kind: str
+    project_id: str
+    payload: WorkspaceEventPayload | None = None
 
 
 SessionStatus = Literal["starting", "live", "ended"]

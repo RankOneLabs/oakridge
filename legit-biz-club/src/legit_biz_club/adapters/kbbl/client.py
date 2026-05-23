@@ -11,13 +11,18 @@ Methods raise on non-2xx responses (httpx default). Trust model:
 Tailscale-network trust, no per-request auth. ``base_url`` defaults to
 kbbl's local default; override for remote / test instances.
 """
+
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Mapping
 
 import httpx
 
-from legit_biz_club.adapters.kbbl.types import SessionSnapshot
+from legit_biz_club.adapters.kbbl.types import (
+    CreateArtifactSessionRequest,
+    SessionSnapshot,
+    WorkspaceEventRequest,
+)
 
 
 class KbblClient:
@@ -55,22 +60,16 @@ class KbblClient:
         response = await self._http.get("/sessions")
         response.raise_for_status()
         body = response.json()
-        return [
-            SessionSnapshot.model_validate(s) for s in body.get("sessions", [])
-        ]
+        return [SessionSnapshot.model_validate(s) for s in body.get("sessions", [])]
 
-    async def list_artifact_sessions(
-        self, artifact_id: str
-    ) -> list[SessionSnapshot]:
+    async def list_artifact_sessions(self, artifact_id: str) -> list[SessionSnapshot]:
         """``GET /artifacts/{artifactId}/sessions`` — sessions tagged with this artifact."""
         if not artifact_id:
             raise ValueError("artifact_id must be non-empty")
         response = await self._http.get(f"/artifacts/{artifact_id}/sessions")
         response.raise_for_status()
         body = response.json()
-        return [
-            SessionSnapshot.model_validate(s) for s in body.get("sessions", [])
-        ]
+        return [SessionSnapshot.model_validate(s) for s in body.get("sessions", [])]
 
     async def create_artifact_session(
         self,
@@ -87,13 +86,15 @@ class KbblClient:
         """
         if not artifact_id:
             raise ValueError("artifact_id must be non-empty")
-        body: dict[str, Any] = {
-            "workdir": workdir,
-            "artifact_id": artifact_id,
-        }
-        if name is not None:
-            body["name"] = name
-        response = await self._http.post("/sessions", json=body)
+        body = CreateArtifactSessionRequest(
+            workdir=workdir,
+            artifact_id=artifact_id,
+            name=name,
+        )
+        response = await self._http.post(
+            "/sessions",
+            json=body.model_dump(exclude_none=True),
+        )
         response.raise_for_status()
         return SessionSnapshot.model_validate(response.json())
 
@@ -102,7 +103,7 @@ class KbblClient:
         *,
         kind: str,
         project_id: str,
-        payload: dict[str, Any] | None = None,
+        payload: Mapping[str, object] | None = None,
     ) -> None:
         """``POST /inbox/workspace-events`` — push a project event to the inbox.
 
@@ -117,12 +118,15 @@ class KbblClient:
             raise ValueError("kind must be non-empty")
         if not project_id:
             raise ValueError("project_id must be non-empty")
-        # Body uses camelCase to match kbbl's TS shape — the route
-        # accepts ``projectId`` and ``payload`` directly.
-        body: dict[str, Any] = {"kind": kind, "projectId": project_id}
-        if payload is not None:
-            body["payload"] = payload
-        response = await self._http.post("/inbox/workspace-events", json=body)
+        body = WorkspaceEventRequest(
+            kind=kind,
+            project_id=project_id,
+            payload=payload,
+        )
+        response = await self._http.post(
+            "/inbox/workspace-events",
+            json=body.model_dump(by_alias=True, exclude_none=True),
+        )
         response.raise_for_status()
 
     async def aclose(self) -> None:
