@@ -4,6 +4,7 @@ import { useMutation } from "@tanstack/react-query";
 import type { SessionSnapshot } from "../../types";
 import { useRelativeTime } from "../../hooks/useRelativeTime";
 import { prettyModelLabel } from "../../lib/format";
+import { responseError } from "../../lib/http";
 import { resumeTitle } from "../../lib/session";
 
 export function SessionRow({
@@ -26,9 +27,10 @@ export function SessionRow({
   // stays put and the operator can retry.
   const removeMutation = useMutation({
     mutationFn: async () => {
-      await fetch(`/sessions/${encodeURIComponent(snapshot.sid)}?purge=true`, {
+      const res = await fetch(`/sessions/${encodeURIComponent(snapshot.sid)}?purge=true`, {
         method: "DELETE",
       });
+      if (!res.ok) throw await responseError(res, "remove session");
     },
   });
 

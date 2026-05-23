@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
+import { responseError } from "../../lib/http";
 import type { AtomEdit, Thread } from "./types";
 
 export interface ArtifactStreamState {
@@ -51,7 +52,7 @@ export function useArtifactStream(
     queryKey: ["review", "frozen", { target_type, target_id }],
     queryFn: async (): Promise<{ frozen: boolean }> => {
       const res = await fetch(`/review/frozen?${qs}`);
-      if (!res.ok) return { frozen: false };
+      if (!res.ok) throw await responseError(res, "review frozen state");
       return (await res.json()) as { frozen: boolean };
     },
   });
@@ -140,7 +141,7 @@ export function useArtifactStream(
     () => mergeThreads(threadsQuery.data ?? [], threadDeltas),
     [threadsQuery.data, threadDeltas],
   );
-  const frozen = frozenOverride ?? frozenQuery.data?.frozen ?? false;
+  const frozen = frozenOverride ?? frozenQuery.data?.frozen ?? true;
 
   return { edits, threads, status, frozen };
 }

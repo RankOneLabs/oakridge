@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import type { SessionSnapshot, Status, Theme } from "../../types";
 import { prettyModelLabel } from "../../lib/format";
+import { responseError } from "../../lib/http";
 import { sessionLabelTitle, workdirBasename } from "../../lib/session";
 
 export function SessionTopBar({
@@ -69,7 +70,7 @@ export function SessionTopBar({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ softThresholdTokens: n }),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw await responseError(res, "threshold update");
     },
     onSuccess: () => {
       // /config drives useServerConfig; invalidate so the next mount reflects

@@ -20,6 +20,7 @@ export interface AppState {
   compactSuggestions: Map<Sid, CompactSuggestion>;
   currentSid: Sid | null;
   currentTaskId: TaskId | null;
+  removedSids: Set<Sid>;
 
   hydrateSession: (snapshot: SessionSnapshot) => void;
   seedSessions: (snapshots: SessionSnapshot[]) => void;
@@ -38,16 +39,24 @@ export const useStore = create<AppState>()((set) => ({
   compactSuggestions: new Map(),
   currentSid: null,
   currentTaskId: null,
+  removedSids: new Set(),
 
   hydrateSession: (snapshot) =>
     set((state) => {
       const sid = snapshot.sid as Sid;
       const sessions = new Map(state.sessions);
       sessions.set(sid, snapshot);
+      const removedSids = state.removedSids.has(sid)
+        ? (() => {
+            const next = new Set(state.removedSids);
+            next.delete(sid);
+            return next;
+          })()
+        : state.removedSids;
       const inMemorySids = state.inMemorySids.has(sid)
         ? state.inMemorySids
         : new Set(state.inMemorySids).add(sid);
-      return { sessions, inMemorySids };
+      return { sessions, inMemorySids, removedSids };
     }),
 
   // Seed from /sessions?include=archived: archived-only entries are folded in
@@ -59,6 +68,7 @@ export const useStore = create<AppState>()((set) => ({
       const inMemorySids = new Set(state.inMemorySids);
       for (const s of snapshots) {
         const sid = s.sid as Sid;
+        if (state.removedSids.has(sid)) continue;
         if (!sessions.has(sid)) sessions.set(sid, s);
         if (s.status !== "ended") inMemorySids.add(sid);
       }
@@ -70,10 +80,15 @@ export const useStore = create<AppState>()((set) => ({
   applySnapshot: (snapshots) =>
     set((state) => {
       const sessions = new Map(state.sessions);
-      for (const s of snapshots) sessions.set(s.sid as Sid, s);
+      const removedSids = new Set(state.removedSids);
+      for (const s of snapshots) {
+        const sid = s.sid as Sid;
+        sessions.set(sid, s);
+        removedSids.delete(sid);
+      }
       const inMemorySids = new Set<Sid>();
       for (const s of snapshots) inMemorySids.add(s.sid as Sid);
-      return { sessions, inMemorySids };
+      return { sessions, inMemorySids, removedSids };
     }),
 
   applyInboxDelta: (delta) =>
@@ -98,10 +113,17 @@ function applyDelta(state: AppState, delta: InboxDelta): Partial<AppState> {
       const sid = delta.session.sid as Sid;
       const sessions = new Map(state.sessions);
       sessions.set(sid, delta.session);
+      const removedSids = state.removedSids.has(sid)
+        ? (() => {
+            const next = new Set(state.removedSids);
+            next.delete(sid);
+            return next;
+          })()
+        : state.removedSids;
       const inMemorySids = state.inMemorySids.has(sid)
         ? state.inMemorySids
         : new Set(state.inMemorySids).add(sid);
-      return { sessions, inMemorySids };
+      return { sessions, inMemorySids, removedSids };
     }
     case "session_ended": {
       const sid = delta.sid as Sid;
@@ -125,7 +147,9 @@ function applyDelta(state: AppState, delta: InboxDelta): Partial<AppState> {
             return next;
           })()
         : state.inMemorySids;
-      return { sessions, inMemorySids, ...mergeCompactClear(state, sid) };
+      const removedSids = new Set(state.removedSids);
+      removedSids.add(sid);
+      return { sessions, inMemorySids, removedSids, ...mergeCompactClear(state, sid) };
     }
     case "session_compacted": {
       const sid = delta.sid as Sid;

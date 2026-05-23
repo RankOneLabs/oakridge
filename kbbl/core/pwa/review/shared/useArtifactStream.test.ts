@@ -112,7 +112,7 @@ describe("useArtifactStream", () => {
     expect(result.current.status).toBe("idle");
     expect(result.current.edits).toEqual(initialEdits);
     expect(result.current.threads).toEqual(initialThreads);
-    expect(result.current.frozen).toBe(false);
+    expect(result.current.frozen).toBe(true);
   });
 
   it("populates edits, threads, and frozen from initial GET responses", async () => {
@@ -143,9 +143,9 @@ describe("useArtifactStream", () => {
     // until the seed data appears in the combined output.
     await waitFor(() => {
       expect(result.current.edits).toEqual(edits);
+      expect(result.current.threads).toEqual(threads);
+      expect(result.current.frozen).toBe(true);
     });
-    expect(result.current.threads).toEqual(threads);
-    expect(result.current.frozen).toBe(true);
   });
 
   it("transitions to connected when SSE opens", async () => {
@@ -218,11 +218,9 @@ describe("useArtifactStream", () => {
       wrapper: createWrapper(),
     });
 
-    await act(async () => {
-      await Promise.resolve();
+    await waitFor(() => {
+      expect(result.current.frozen).toBe(false);
     });
-
-    expect(result.current.frozen).toBe(false);
 
     await act(async () => {
       mockES?.dispatchEvent("artifact.frozen", {

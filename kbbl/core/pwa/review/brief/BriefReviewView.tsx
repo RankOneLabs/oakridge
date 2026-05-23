@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { ensureOk } from "../../lib/http";
 import type { Theme } from "../../types";
 import { useArtifactStream } from "../shared/useArtifactStream";
 import { useDirectEdit } from "../shared/useDirectEdit";
@@ -78,11 +79,12 @@ export function BriefReviewView({ id, onToggleTheme, onBack }: BriefReviewViewPr
 
   const sendMessageMutation = useMutation({
     mutationFn: async (vars: { threadId: string; body: string }) => {
-      await fetch(`/threads/${encodeURIComponent(vars.threadId)}/messages`, {
+      const res = await fetch(`/threads/${encodeURIComponent(vars.threadId)}/messages`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ body: vars.body, author: "operator" }),
       });
+      await ensureOk(res, "send thread message");
     },
     onSuccess: (_, vars) => {
       void queryClient.invalidateQueries({
@@ -93,19 +95,21 @@ export function BriefReviewView({ id, onToggleTheme, onBack }: BriefReviewViewPr
 
   const pingMutation = useMutation({
     mutationFn: async (threadId: string) => {
-      await fetch(`/threads/${encodeURIComponent(threadId)}/ping`, {
+      const res = await fetch(`/threads/${encodeURIComponent(threadId)}/ping`, {
         method: "POST",
       });
+      await ensureOk(res, "ping thread");
     },
   });
 
   const resolveMutation = useMutation({
     mutationFn: async (threadId: string) => {
-      await fetch(`/threads/${encodeURIComponent(threadId)}`, {
+      const res = await fetch(`/threads/${encodeURIComponent(threadId)}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ status: "resolved" }),
       });
+      await ensureOk(res, "resolve thread");
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({
@@ -186,8 +190,8 @@ export function BriefReviewView({ id, onToggleTheme, onBack }: BriefReviewViewPr
   const handleResolve = useCallback(
     (threadId: string) => {
       void (async () => {
-        await resolveMutation.mutateAsync(threadId).catch(() => {});
-        if (selectedThreadId === threadId) setSelectedThreadId(null);
+        const resolved = await resolveMutation.mutateAsync(threadId).catch(() => false);
+        if (resolved !== false && selectedThreadId === threadId) setSelectedThreadId(null);
       })();
     },
     [resolveMutation, selectedThreadId],

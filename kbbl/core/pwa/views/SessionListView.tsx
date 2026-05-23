@@ -50,6 +50,14 @@ export function SessionListView({
   const { tasks, profiles } = useTasksAndProfiles();
   const prefill = useUrlPrefill();
 
+  const activeTasks = tasks?.ok ? tasks.value : [];
+  const permissionProfiles = profiles?.ok ? profiles.value : [];
+  const pendingPlanCards = pendingPlans?.ok ? pendingPlans.value : [];
+  const pendingBriefCards = pendingBriefs?.ok ? pendingBriefs.value : [];
+  const dataErrors = [pendingPlans, pendingBriefs, tasks, profiles]
+    .filter((r): r is { ok: false; error: Error } => r?.ok === false)
+    .map((r) => r.error.message);
+
   const sorted = useMemo(() => sortSessions(sessions), [sessions]);
 
   const startMutation = useMutation({
@@ -154,8 +162,8 @@ export function SessionListView({
       </header>
       <div className="session-list-actions">
         <NewSessionForm
-          tasks={tasks}
-          profiles={profiles}
+          tasks={activeTasks}
+          profiles={permissionProfiles}
           defaultWorkdir={defaultWorkdir}
           initialWorkdir={prefill.initialWorkdir}
           initialTaskId={prefill.initialTaskId}
@@ -170,7 +178,15 @@ export function SessionListView({
           onSubmit={(values) => { void startSession(values); }}
         />
       </div>
-      {pendingPlans.length > 0 && (
+      {dataErrors.length > 0 && (
+        <section style={{ padding: "8px 12px" }}>
+          <div className="sidebar-error" role="alert">
+            {dataErrors.join(" · ")}
+          </div>
+        </section>
+      )}
+
+      {pendingPlanCards.length > 0 && (
         <section style={{ padding: "8px 12px" }}>
           <div
             style={{
@@ -185,7 +201,7 @@ export function SessionListView({
             Pending plans
           </div>
           <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 4 }}>
-            {pendingPlans.map((p) => (
+            {pendingPlanCards.map((p) => (
               <li key={p.id}>
                 <button
                   type="button"
@@ -218,7 +234,7 @@ export function SessionListView({
         </section>
       )}
 
-      {pendingBriefs.length > 0 && (
+      {pendingBriefCards.length > 0 && (
         <section style={{ padding: "8px 12px" }}>
           <div
             style={{
@@ -233,7 +249,7 @@ export function SessionListView({
             Pending briefs
           </div>
           <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 4 }}>
-            {pendingBriefs.map((b) => (
+            {pendingBriefCards.map((b) => (
               <li key={b.id}>
                 <button
                   type="button"

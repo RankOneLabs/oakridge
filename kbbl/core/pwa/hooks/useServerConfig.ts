@@ -8,16 +8,16 @@ interface ServerConfigResponse {
 
 export interface ServerConfig {
   defaultWorkdir: string;
-  softThresholdTokens: number;
-  safirWebUrl: string;
+  softThresholdTokens?: number;
+  safirWebUrl?: string;
 }
 
 /**
  * Fetches the server's /config once. Returns null until the fetch resolves
  * so callers can render a "loading" placeholder rather than racing forms
  * with empty defaults. Cached indefinitely — the server's config doesn't
- * change mid-session, and SessionTopBar's PATCH /config explicitly updates
- * the cache via setQueryData.
+ * change mid-session, and SessionTopBar's PATCH /config invalidates this
+ * query so the next read reflects the server response.
  */
 export function useServerConfig(): ServerConfig | null {
   const query = useQuery({
@@ -35,10 +35,10 @@ export function useServerConfig(): ServerConfig | null {
     softThresholdTokens:
       typeof query.data.softThresholdTokens === "number"
         ? query.data.softThresholdTokens
-        : 50000,
+        : undefined,
     safirWebUrl:
       typeof query.data.safirWebUrl === "string" && query.data.safirWebUrl.length > 0
         ? query.data.safirWebUrl
-        : "http://localhost:3000",
+        : undefined,
   };
 }

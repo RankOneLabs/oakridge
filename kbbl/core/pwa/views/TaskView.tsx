@@ -58,6 +58,8 @@ export function TaskView({
     retry: false,
   });
 
+  const hasTask = taskQuery.data?.kind === "ok";
+
   const handoffsQuery = useQuery({
     queryKey: ["safir", "tasks", taskId, "handoffs"],
     queryFn: async (): Promise<HandoffsQueryResult> => {
@@ -74,6 +76,7 @@ export function TaskView({
       return { kind: "ok", handoffs };
     },
     retry: false,
+    enabled: hasTask,
   });
 
   // Reset expanded set on taskId change so a previous task's expanded
@@ -83,18 +86,23 @@ export function TaskView({
   }, [taskId]);
 
   const state: TaskFetchState = useMemo(() => {
-    if (taskQuery.isPending || handoffsQuery.isPending) return { kind: "loading" };
-    if (taskQuery.isError || handoffsQuery.isError) {
+    if (taskQuery.isPending || (hasTask && handoffsQuery.isPending)) {
+      return { kind: "loading" };
+    }
+    if (taskQuery.isError || (hasTask && handoffsQuery.isError)) {
       // Network drop before kbbl could respond — treat as safir-down from
       // the operator's perspective (same as the old try/catch fallback).
       return { kind: "safir_down" };
     }
     const t = taskQuery.data;
+    if (!t) return { kind: "loading" };
     if (t.kind !== "ok") return t;
-    const h = handoffsQuery.data;
-    if (h.kind !== "ok") return h;
+    const h = handoffsQuery.data as HandoffsQueryResult | undefined;
+    if (!h) return { kind: "loading" };
+    if (h.kind === "safir_down") return { kind: "safir_down" };
+    if (h.kind === "error") return h;
     return { kind: "ok", task: t.task, handoffs: h.handoffs };
-  }, [taskQuery.data, taskQuery.isError, taskQuery.isPending, handoffsQuery.data, handoffsQuery.isError, handoffsQuery.isPending]);
+  }, [hasTask, taskQuery.data, taskQuery.isError, taskQuery.isPending, handoffsQuery.data, handoffsQuery.isError, handoffsQuery.isPending]);
 
   const toggle = (id: string) => {
     setExpanded((prev) => {

@@ -8,6 +8,11 @@ interface AddSpecModalProps {
   onCancel: () => void;
 }
 
+interface CreateSpecInput {
+  title: string;
+  notes: string | null;
+}
+
 export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps) {
   const [title, setTitle] = useState("");
   const [notes, setNotes] = useState("");
@@ -15,12 +20,12 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
   const queryClient = useQueryClient();
 
   const createMutation = useMutation({
-    mutationFn: async (vars: { title: string; notes: string }) => {
+    mutationFn: async (vars: CreateSpecInput) => {
       const body: { project_id: string; title: string; notes?: string } = {
         project_id: project.id,
         title: vars.title,
       };
-      if (vars.notes) body.notes = vars.notes;
+      if (vars.notes !== null) body.notes = vars.notes;
       const res = await fetch("/specs", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -51,9 +56,10 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
     }
     setError(null);
     try {
+      const trimmedNotes = notes.trim();
       await createMutation.mutateAsync({
         title: trimmedTitle,
-        notes: notes.trim(),
+        notes: trimmedNotes === "" ? null : trimmedNotes,
       });
       onCreated();
     } catch (err) {

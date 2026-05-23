@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { SessionStatus } from "../../types";
 
@@ -15,12 +15,18 @@ interface CohortStatusResponse {
 }
 
 export function RunBuildButton({ briefId, cohortId }: RunBuildButtonProps) {
+  const queryClient = useQueryClient();
   const [err, setErr] = useState<string | null>(null);
   // Optimistic — set when the build POST returns successfully, before the
   // next cohort query refresh would otherwise flip the UI to "Build running".
   const [optimisticSessionRef, setOptimisticSessionRef] = useState<string | null>(
     null,
   );
+
+  useEffect(() => {
+    setErr(null);
+    setOptimisticSessionRef(null);
+  }, [briefId, cohortId]);
 
   const checkQuery = useQuery({
     queryKey: ["cohorts", { id: cohortId }],
@@ -46,8 +52,12 @@ export function RunBuildButton({ briefId, cohortId }: RunBuildButtonProps) {
     },
     onSuccess: (data) => {
       setOptimisticSessionRef(data.session_ref);
+      void queryClient.invalidateQueries({
+        queryKey: ["cohorts", { id: cohortId }],
+      });
     },
     onError: (e) => {
+      setOptimisticSessionRef(null);
       setErr(e instanceof Error ? e.message : "request failed");
     },
   });
@@ -70,6 +80,13 @@ export function RunBuildButton({ briefId, cohortId }: RunBuildButtonProps) {
       ? cohort.current_session_ref
       : null;
   const sessionRef = optimisticSessionRef ?? liveRefFromCheck;
+
+  useEffect(() => {
+    if (!optimisticSessionRef || checkQuery.isPending || !checkQuery.data) return;
+    if (liveRefFromCheck === optimisticSessionRef || liveRefFromCheck === null) {
+      setOptimisticSessionRef(null);
+    }
+  }, [checkQuery.data, checkQuery.isPending, liveRefFromCheck, optimisticSessionRef]);
 
   const handleRun = () => {
     setErr(null);

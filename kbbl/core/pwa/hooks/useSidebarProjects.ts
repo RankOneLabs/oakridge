@@ -1,6 +1,7 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { responseError } from "../lib/http";
 import type { SidebarCohort, SidebarProject, SidebarSpec } from "../sidebar/Sidebar";
 
 export interface SidebarProjectsState {
@@ -30,8 +31,7 @@ export function useSidebarProjects(
     },
   });
 
-  // One specs query per expanded project — useQueries handles in-flight
-  // cancellation when the set changes. Cache keys mirror the route shape
+  // One specs query per expanded project. Cache keys mirror the route shape
   // so AddSpecModal's mutation invalidation lands on the right entry.
   const expandedProjectIds = useMemo(
     () => [...expandedProjects],
@@ -42,7 +42,7 @@ export function useSidebarProjects(
       queryKey: ["specs", { projectId }] as const,
       queryFn: async (): Promise<SidebarSpec[]> => {
         const res = await fetch(`/specs?project_id=${encodeURIComponent(projectId)}`);
-        if (!res.ok) return [];
+        if (!res.ok) throw await responseError(res, "specs");
         return (await res.json()) as SidebarSpec[];
       },
     })),
@@ -109,15 +109,17 @@ export function useSidebarProjects(
     return m;
   }, [planIdsToFetch, cohortsQueries]);
 
-  const refreshProjects = async () => {
+  const specsError = specsQueries.find((q) => q.isError)?.error;
+
+  const refreshProjects = useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: ["projects"] });
-  };
-  const refreshSpecs = async (projectId: string) => {
+  }, [queryClient]);
+  const refreshSpecs = useCallback(async (projectId: string) => {
     await queryClient.invalidateQueries({ queryKey: ["specs", { projectId }] });
-  };
-  const refreshCohorts = async (planId: string) => {
+  }, [queryClient]);
+  const refreshCohorts = useCallback(async (planId: string) => {
     await queryClient.invalidateQueries({ queryKey: ["cohorts", { planId }] });
-  };
+  }, [queryClient]);
 
   return {
     projects: projectsQuery.data ?? [],
@@ -130,7 +132,11 @@ export function useSidebarProjects(
         ? projectsQuery.error.message
         : projectsQuery.error
           ? "failed to load projects"
-          : null,
+          : specsError instanceof Error
+            ? specsError.message
+            : specsError
+              ? "failed to load specs"
+              : null,
     refreshProjects,
     refreshSpecs,
     refreshCohorts,
