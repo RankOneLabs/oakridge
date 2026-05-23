@@ -21,6 +21,10 @@ describe("fmtCost", () => {
     expect(fmtCost(1.234)).toBe("$1.23");
   });
 
+  it("routes sub-dollar values that round up to $1 through the 2-decimal branch", () => {
+    expect(fmtCost(0.9996)).toBe("$1.00");
+  });
+
   it("clamps negatives to the zero branch", () => {
     expect(fmtCost(-0.01)).toBe("$0.00");
   });

@@ -36,6 +36,6 @@ export function fmtDuration(ms: number): string {
 export function fmtCost(cost: number): string {
   if (cost <= 0) return "$0.00";
   if (cost < 0.01) return "<$0.01";
-  if (cost < 1) return `$${cost.toFixed(3)}`;
+  if (cost < 0.9995) return `$${cost.toFixed(3)}`;
   return `$${cost.toFixed(2)}`;
 }
