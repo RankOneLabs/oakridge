@@ -1,21 +1,26 @@
 """safir-build CLI entry."""
+
 from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import os
 import sys
 from pathlib import Path
 
 from safir_py import SafirClient, safir_api_token_from_env, safir_base_url_from_env
 
-from .pipeline import (
+from .errors import (
+    BriefNotApprovedError,
     BuildAlreadyStartedError,
-    BuildBriefNotApprovedError,
-    parse_models,
-    run_build_only_pipeline,
-    run_build_pipeline,
+    ConfigError,
+    ModelsArgError,
 )
+from .pipeline import parse_models, run_build_only_pipeline, run_build_pipeline
+from .result import Err, Ok
+
+logger = logging.getLogger(__name__)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -43,8 +48,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--models",
         default=None,
         help=(
-            "Comma-separated 'planner2,build' models. "
-            "Default: claude-opus-4-7,claude-sonnet-4-6."
+            "Comma-separated 'planner2,build' models. Default: claude-opus-4-7,claude-sonnet-4-6."
         ),
     )
     p.add_argument(
@@ -80,23 +84,69 @@ def _build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _validate_workdir(workdir: Path) -> ConfigError | None:
+    if not workdir.is_dir():
+        return ConfigError(
+            op="validate_workdir",
+            entity_id=str(workdir),
+            detail="workdir is not a directory",
+        )
+    if not (workdir / ".git").exists():
+        return ConfigError(
+            op="validate_workdir",
+            entity_id=str(workdir),
+            detail="workdir is not a git repo (no .git)",
+        )
+    return None
+
+
+def _validate_mode_flags(args: argparse.Namespace) -> ConfigError | None:
+    auto_approve = getattr(args, "auto_approve", False)
+    if auto_approve and args.dry_run:
+        return ConfigError(
+            op="validate_mode_flags",
+            entity_id=None,
+            detail="--auto-approve and --dry-run are mutually exclusive",
+        )
+    if args.brief_id is not None and auto_approve:
+        return ConfigError(
+            op="validate_mode_flags",
+            entity_id=None,
+            detail="--from-brief and --auto-approve are mutually exclusive",
+        )
+    if args.brief_id is not None and args.dry_run:
+        return ConfigError(
+            op="validate_mode_flags",
+            entity_id=None,
+            detail="--from-brief and --dry-run are mutually exclusive",
+        )
+    return None
+
+
+def _exit_code_for_err(err: object) -> int:
+    """Map a BuilderError variant to the CLI exit code."""
+    match err:
+        case BriefNotApprovedError():
+            return 4
+        case BuildAlreadyStartedError():
+            return 5
+        case ModelsArgError() | ConfigError():
+            return 1
+        case _:
+            return 2
+
+
 async def _run(args: argparse.Namespace) -> int:
     workdir = Path(args.workdir) if args.workdir else Path(os.getcwd())
     workdir = workdir.resolve()
-    if not workdir.is_dir():
-        print(f"workdir not a directory: {workdir}", file=sys.stderr)
+    if (wd_err := _validate_workdir(workdir)) is not None:
+        print(f"error: {wd_err.detail}: {wd_err.entity_id}", file=sys.stderr)
         return 1
-    if not (workdir / ".git").exists():
-        print(f"workdir is not a git repo (no .git): {workdir}", file=sys.stderr)
-        return 1
-
-    if args.brief_id is not None and getattr(args, "auto_approve", False):
-        print("error: --from-brief and --auto-approve are mutually exclusive", file=sys.stderr)
-        return 1
-    if args.brief_id is not None and args.dry_run:
-        print("error: --from-brief and --dry-run are mutually exclusive", file=sys.stderr)
+    if (mode_err := _validate_mode_flags(args)) is not None:
+        print(f"error: {mode_err.detail}", file=sys.stderr)
         return 1
 
+    # IO edge (a): SafirClient construction + env reads.
     try:
         safir = SafirClient(
             base_url=args.safir_base_url or safir_base_url_from_env(),
@@ -108,50 +158,47 @@ async def _run(args: argparse.Namespace) -> int:
 
     try:
         if args.brief_id is not None:
-            # --from-brief mode: build-only pipeline
-            try:
-                result = await run_build_only_pipeline(
-                    brief_id=args.brief_id,
-                    workdir=workdir,
-                    safir_client=safir,
-                    permission_profile_id_override=args.permission_profile_id,
-                    dry_run=args.dry_run,
-                )
-            except BuildBriefNotApprovedError as e:
-                print(f"error: {e}", file=sys.stderr)
-                return 4
-            except BuildAlreadyStartedError as e:
-                print(f"error: {e}", file=sys.stderr)
-                return 5
-            except Exception as e:
-                print(f"build-only pipeline failed: {e}", file=sys.stderr)
-                return 2
+            logger.info("mode=build-only brief_id=%s", args.brief_id)
+            result = await run_build_only_pipeline(
+                brief_id=args.brief_id,
+                workdir=workdir,
+                safir_client=safir,
+                permission_profile_id_override=args.permission_profile_id,
+                dry_run=args.dry_run,
+            )
         else:
-            # task_id mode: full planner-2 + build pipeline
-            try:
-                models = parse_models(args.models)
-            except ValueError as e:
-                print(f"--models error: {e}", file=sys.stderr)
-                return 1
-            try:
-                result = await run_build_pipeline(
-                    child_task_id=args.task_id,
-                    models=models,
-                    workdir=workdir,
-                    safir_client=safir,
-                    permission_profile_id_override=args.permission_profile_id,
-                    dry_run=args.dry_run,
-                    auto_approve=getattr(args, "auto_approve", False),
-                )
-            except Exception as e:
-                print(f"build pipeline failed: {e}", file=sys.stderr)
-                return 2
+            logger.info("mode=full task_id=%s", args.task_id)
+            match parse_models(args.models):
+                case Ok(value=models):
+                    pass
+                case Err(error=models_err):
+                    print(f"--models error: {models_err.detail}", file=sys.stderr)
+                    return 1
+            result = await run_build_pipeline(
+                child_task_id=args.task_id,
+                models=models,
+                workdir=workdir,
+                safir_client=safir,
+                permission_profile_id_override=args.permission_profile_id,
+                dry_run=args.dry_run,
+                auto_approve=getattr(args, "auto_approve", False),
+            )
 
-        if result.short_circuited:
+        match result:
+            case Err(error=err):
+                exit_code = _exit_code_for_err(err)
+                print(f"error: {err.detail}", file=sys.stderr)
+                logger.info("exit_code=%d err_op=%s", exit_code, err.op)
+                return exit_code
+            case Ok(value=pipeline_result):
+                pass
+
+        if pipeline_result.short_circuited:
             print(
-                f"pipeline short-circuited at step {result.error_step!r}",
+                f"pipeline short-circuited at step {pipeline_result.error_step!r}",
                 file=sys.stderr,
             )
+            logger.info("exit_code=3 short_circuited")
             return 3
 
         # When running in the default review-gate mode (no --auto-approve, no --dry-run,
@@ -159,17 +206,19 @@ async def _run(args: argparse.Namespace) -> int:
         # what to do next.
         auto_approve = getattr(args, "auto_approve", False)
         if args.brief_id is None and not auto_approve and not args.dry_run:
-            p2 = result.step_outputs.get("planner2")
+            p2 = pipeline_result.step_outputs.get("planner2")
             brief_id = getattr(p2, "handoff_id", None) if p2 is not None else None
-            if brief_id:
+            if brief_id is not None:
                 print(
                     f"Brief ready for review: {brief_id}. "
                     f"Next: review in kbbl PWA, approve, then click 'Run build' "
                     f"OR run safir-build --from-brief {brief_id}."
                 )
+            logger.info("exit_code=0 mode=awaiting_review brief_id=%s", brief_id)
             return 0
 
-        print(f"pipeline trace_id={result.trace_id}")
+        print(f"pipeline trace_id={pipeline_result.trace_id}")
+        logger.info("exit_code=0 trace_id=%s", pipeline_result.trace_id)
         return 0
     finally:
         await safir.aclose()

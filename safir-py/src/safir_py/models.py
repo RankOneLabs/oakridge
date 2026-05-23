@@ -25,6 +25,12 @@ class _SafirModel(BaseModel):
 TaskStatus = Literal["backlog", "active", "blocked", "done", "archived"]
 
 
+class TaskDependency(_SafirModel):
+    """Edge in safir's task-dependency graph; `depends_on` is the prerequisite task id."""
+
+    depends_on: int
+
+
 class Task(_SafirModel):
     id: int
     project_id: str
@@ -40,6 +46,7 @@ class Task(_SafirModel):
     created_at: str
     updated_at: str
     completed_at: str | None
+    dependencies: list[TaskDependency] = []
 
 
 # --- Runs / Phases / Handoffs --------------------------------------------
@@ -71,6 +78,7 @@ class Run(_SafirModel):
     finished_at: str | None
     created_by: str | None
     created_by_session: str | None
+    phases: list[Phase] = []
 
 
 class _DecisionMade(_SafirModel):

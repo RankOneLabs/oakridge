@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any
 
@@ -10,15 +11,17 @@ from jig.core.types import Tool, ToolDefinition
 from jig.llm.factory import from_model
 from jig.tools.registry import ToolRegistry
 from jig.tracing.stdout import StdoutTracer
-
 from safir_py import SafirClient
 
 from .feedback import NoOpFeedback
+from .lib.atom_map import LIST_FIELDS, list_keys, next_list_index
 from .review_responder_base import (
-    ReviewResponderContext,
     ResponderResult,
+    ReviewResponderContext,
     _call_safir_or_record_conflict,
 )
+
+logger = logging.getLogger(__name__)
 
 BUILD_BRIEF_REVIEW_RESPONDER_SYSTEM_PROMPT = """\
 You are the build brief review responder. You are invoked when an operator
@@ -71,30 +74,6 @@ Call ReplyToThreadTool exactly once at end of turn. Include:
 
 _MODEL = "claude-opus-4-7"
 
-_LIST_FIELDS = frozenset([
-    "active_subgoals",
-    "decisions_made",
-    "approaches_rejected",
-    "files_in_scope",
-    "open_questions",
-])
-
-
-def _list_keys(atom_map: dict[str, str], field: str) -> list[str]:
-    """Return sorted anchor keys for a list field, e.g. ['decisions_made[0]', ...]."""
-    pattern = re.compile(rf"^{re.escape(field)}\[(\d+)\]$")
-    keys = [(int(m.group(1)), k) for k in atom_map if (m := pattern.match(k))]
-    return [k for _, k in sorted(keys)]
-
-
-def _next_list_index(atom_map: dict[str, str], field: str) -> int:
-    keys = _list_keys(atom_map, field)
-    if not keys:
-        return 0
-    last = keys[-1]
-    m = re.search(r"\[(\d+)\]$", last)
-    return int(m.group(1)) + 1 if m else 0
-
 
 # ---------------------------------------------------------------------------
 # Tools
@@ -139,7 +118,13 @@ class EditAtomTool(Tool):  # type: ignore[misc]
         edit = await _call_safir_or_record_conflict(self._client, self._ctx, body)
         if edit is None:
             return json.dumps({"anchor": anchor, "conflict": True})
-        return json.dumps({"anchor": anchor, "edit_id": edit.get("id")})
+        logger.info(
+            "atom_edit posted thread_id=%s anchor=%s edit_id=%s",
+            self._ctx.thread_id,
+            anchor,
+            edit.id,
+        )
+        return json.dumps({"anchor": anchor, "edit_id": edit.id})
 
 
 class AppendAtomTool(Tool):  # type: ignore[misc]
@@ -163,7 +148,7 @@ class AppendAtomTool(Tool):  # type: ignore[misc]
                 "properties": {
                     "field": {
                         "type": "string",
-                        "enum": sorted(_LIST_FIELDS),
+                        "enum": sorted(LIST_FIELDS),
                         "description": "The list field to append to.",
                     },
                     "value": {
@@ -176,11 +161,11 @@ class AppendAtomTool(Tool):  # type: ignore[misc]
 
     async def execute(self, args: dict[str, Any]) -> str:
         field = str(args["field"])
-        if field not in _LIST_FIELDS:
+        if field not in LIST_FIELDS:
             return json.dumps({"error": f"unknown list field: {field}"})
         value = str(args["value"])
         ctx = self._ctx
-        new_index = _next_list_index(ctx.atom_map, field)
+        new_index = next_list_index(ctx.atom_map, field)
         anchor = f"{field}[{new_index}]"
         body = {
             "anchor": anchor,
@@ -192,7 +177,13 @@ class AppendAtomTool(Tool):  # type: ignore[misc]
         if edit is None:
             return json.dumps({"anchor": anchor, "conflict": True})
         ctx.atom_map[anchor] = value
-        return json.dumps({"anchor": anchor, "new_index": new_index, "edit_id": edit.get("id")})
+        logger.info(
+            "atom_edit appended thread_id=%s anchor=%s edit_id=%s",
+            ctx.thread_id,
+            anchor,
+            edit.id,
+        )
+        return json.dumps({"anchor": anchor, "new_index": new_index, "edit_id": edit.id})
 
 
 class DeleteAtomTool(Tool):  # type: ignore[misc]
@@ -234,11 +225,11 @@ class DeleteAtomTool(Tool):  # type: ignore[misc]
         if not m:
             return json.dumps({"error": f"anchor '{anchor}' is not a list element"})
         field = m.group(1)
-        if field not in _LIST_FIELDS:
+        if field not in LIST_FIELDS:
             return json.dumps({"error": f"'{field}' is not a deletable list field"})
         del_index = int(m.group(2))
 
-        all_keys = _list_keys(ctx.atom_map, field)
+        all_keys = list_keys(ctx.atom_map, field)
         indices = sorted(int(k[k.index("[") + 1:-1]) for k in all_keys)
         if indices != list(range(len(indices))):
             return json.dumps({"error": f"non-contiguous indices for '{field}': {indices}"})
@@ -286,6 +277,12 @@ class DeleteAtomTool(Tool):  # type: ignore[misc]
             if shift_edit is None:
                 # Mid-shift conflict — remaining shifts would produce further corruption; abort.
                 return json.dumps({"deleted": anchor, "shifted": i - del_index - 1, "edits": results, "aborted": True})
+            logger.warning(
+                "index shifted thread_id=%s from=%s to=%s",
+                ctx.thread_id,
+                src_anchor,
+                dst_anchor,
+            )
             ctx.atom_map[dst_anchor] = src_value
 
         # Step 3: delete the last element (now a duplicate after shifting).
@@ -345,7 +342,12 @@ class ReplyToThreadTool(Tool):  # type: ignore[misc]
         msg = await self._client.post_thread_message(
             self._ctx.thread_id, {"body": body_text}
         )
-        self._ctx.reply_message_id = msg.get("id")
+        self._ctx.reply_message_id = msg.id
+        logger.info(
+            "reply posted thread_id=%s reply_message_id=%s",
+            self._ctx.thread_id,
+            self._ctx.reply_message_id,
+        )
         return json.dumps({"reply_message_id": self._ctx.reply_message_id, "ok": True})
 
 
@@ -408,15 +410,22 @@ async def run_build_brief_review_responder(
         max_tool_calls=80,
         max_llm_calls=100,
     )
+    # IO edge (c): run_agent is the LLM IO edge. We catch any escape here
+    # so a failure surfaces as a ResponderResult rather than a crash.
     try:
         await run_agent(config, _build_input(ctx))
     except Exception as exc:
+        logger.error(
+            "build_brief responder agent failed thread_id=%s detail=%s",
+            ctx.thread_id,
+            exc,
+        )
         if ctx.reply_message_id is None:
             msg = await client.post_thread_message(
                 ctx.thread_id,
                 {"body": "agent failed before posting a reply; consult logs"},
             )
-            reply_id = msg.get("id")
+            reply_id = msg.id
         else:
             reply_id = ctx.reply_message_id
         return ResponderResult(
@@ -433,7 +442,7 @@ async def run_build_brief_review_responder(
         )
         return ResponderResult(
             status="failed",
-            reply_message_id=msg.get("id"),
+            reply_message_id=msg.id,
             conflicts=ctx.conflicts,
             error="agent terminated without calling ReplyToThreadTool",
         )

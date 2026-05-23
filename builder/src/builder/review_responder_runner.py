@@ -23,7 +23,7 @@ from safir_py import SafirClient, safir_api_token_from_env
 
 from .build_brief_review_responder import run_build_brief_review_responder
 from .plan_review_responder import run_plan_review_responder
-from .review_responder_base import ReviewResponderContext, ResponderResult
+from .review_responder_base import ResponderResult, ReviewResponderContext
 
 
 def _parse_args() -> argparse.Namespace:

@@ -14,19 +14,18 @@ import json
 from typing import Any
 
 import pytest
-from pytest_httpx import HTTPXMock
-
 from jig.core.types import LLMClient, LLMResponse, ToolCall, Usage
-
+from pytest_httpx import HTTPXMock
 from safir_py import SafirClient
 
+from builder.build_brief_review_responder import run_build_brief_review_responder
+from builder.plan_review_responder import run_plan_review_responder
 from builder.review_responder_base import (
     ReviewResponderContext,
     ThreadMessage,
     ThreadSnapshot,
 )
-from builder.plan_review_responder import run_plan_review_responder
-from builder.build_brief_review_responder import run_build_brief_review_responder
+from tests.helpers import atom_edit_payload, thread_message_payload
 
 BASE = "http://safir.test"
 _USAGE = Usage(input_tokens=100, output_tokens=20, cost=None)
@@ -120,7 +119,7 @@ async def test_plan_conflict_no_retry_reply_names_conflict_third_call_lands(
     httpx_mock.add_response(
         method="POST",
         url=f"{BASE}/atoms/plan/plan-1/edits",
-        json={"id": "e1", "anchor": "cohorts[0].title"},
+        json=atom_edit_payload(id='e1', anchor='cohorts[0].title'),
         status_code=200,
     )
     # POST 2: edit cohorts[0].notes → 409 stale_prev_value
@@ -140,14 +139,14 @@ async def test_plan_conflict_no_retry_reply_names_conflict_third_call_lands(
     httpx_mock.add_response(
         method="POST",
         url=f"{BASE}/atoms/plan/plan-1/edits",
-        json={"id": "e3", "anchor": "cohorts[1].title"},
+        json=atom_edit_payload(id='e3', anchor='cohorts[1].title'),
         status_code=200,
     )
     # POST 4: reply message
     httpx_mock.add_response(
         method="POST",
         url=f"{BASE}/threads/thread-1/messages",
-        json={"id": "msg-reply", "body": "Done."},
+        json=thread_message_payload(id='msg-reply', body='Done.'),
     )
 
     # Fake LLM: 3 tool calls + reply, then final text
@@ -262,7 +261,7 @@ async def test_build_brief_conflict_no_retry_reply_names_conflict_third_call_lan
     httpx_mock.add_response(
         method="POST",
         url=f"{BASE}/atoms/build_brief/brief-1/edits",
-        json={"id": "e1"},
+        json=atom_edit_payload(id='e1'),
         status_code=200,
     )
     httpx_mock.add_response(
@@ -280,13 +279,13 @@ async def test_build_brief_conflict_no_retry_reply_names_conflict_third_call_lan
     httpx_mock.add_response(
         method="POST",
         url=f"{BASE}/atoms/build_brief/brief-1/edits",
-        json={"id": "e3"},
+        json=atom_edit_payload(id='e3'),
         status_code=200,
     )
     httpx_mock.add_response(
         method="POST",
         url=f"{BASE}/threads/thread-2/messages",
-        json={"id": "msg-2"},
+        json=thread_message_payload(id='msg-2'),
     )
 
     fake_llm = FakeLLM([

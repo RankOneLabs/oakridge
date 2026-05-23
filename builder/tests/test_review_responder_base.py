@@ -1,17 +1,17 @@
 """Tests for review_responder_base: models and _call_safir_or_record_conflict."""
+
 from __future__ import annotations
 
 from typing import Any
 
+import httpx
 import pytest
-
 from safir_py import SafirAtomEditConflict
 
 from builder.review_responder_base import (
     ConflictRecord,
     ReviewResponderContext,
     ThreadMessage,
-    ThreadMetadata,
     ThreadSnapshot,
     _call_safir_or_record_conflict,
     record_conflict,
@@ -160,24 +160,25 @@ async def test_call_safir_409_null_current_value() -> None:
 
 
 # ---------------------------------------------------------------------------
-# _call_safir_or_record_conflict — other errors propagate
+# _call_safir_or_record_conflict — transport errors become synthetic conflicts
 # ---------------------------------------------------------------------------
 
 
-class _ErrorStub:
+class _RequestErrorStub:
     async def post_atom_edit(
         self, target_type: str, target_id: str, body: dict[str, Any]
     ) -> dict[str, Any]:
-        raise RuntimeError("network error")
+        raise httpx.RequestError("network error")
 
 
 @pytest.mark.asyncio
-async def test_call_safir_other_error_propagates() -> None:
+async def test_call_safir_request_error_records_conflict_and_returns_none() -> None:
     ctx = _make_ctx()
     body = {"anchor": "cohorts[0].title", "new_value": "X", "prev_value": "old"}
-    with pytest.raises(RuntimeError, match="network error"):
-        await _call_safir_or_record_conflict(_ErrorStub(), ctx, body)
-    assert ctx.conflicts == []
+    result = await _call_safir_or_record_conflict(_RequestErrorStub(), ctx, body)
+    assert result is None
+    assert len(ctx.conflicts) == 1
+    assert ctx.conflicts[0].anchor == "cohorts[0].title"
 
 
 # ---------------------------------------------------------------------------

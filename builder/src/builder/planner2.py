@@ -1,7 +1,7 @@
 """Planner-2: brief + dep handoffs + parent spec -> phase_output handoff."""
 from __future__ import annotations
 
-import json
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -9,7 +9,12 @@ from jig.core.types import Message, Role
 from jig.llm.factory import complete as llm_complete
 from safir_py import SafirClient
 
+from .errors import BuilderError, HandoffShapeError
 from .handoff_render import render_handoff_markdown
+from .lib.handoff_validation import extract_json, validate_handoff
+from .result import Err, Ok, Result
+
+logger = logging.getLogger(__name__)
 
 PLANNER2_SYSTEM_PROMPT = """\
 You are planner 2: you take a brief and the current state of the
@@ -76,82 +81,11 @@ open_questions. Eliminate every implicit choice.
 """
 
 
-class Planner2ValidationError(ValueError):
-    """Raised when planner-2's output fails the shape validator."""
-
-
-@dataclass
+@dataclass(frozen=True, slots=True)
 class Planner2Result:
     parsed: dict[str, Any]
     raw_markdown: str
     handoff_id: str
-
-
-_PUNT_LABELS = ("decision:", "would-pick:", "deferring-because:")
-
-
-def validate_handoff(parsed: dict[str, Any]) -> None:
-    if not isinstance(parsed, dict):
-        raise Planner2ValidationError(f"output is not a JSON object: {type(parsed)}")
-    title = parsed.get("title")
-    if not isinstance(title, str) or not title.strip():
-        raise Planner2ValidationError("'title' must be a non-empty string")
-    active_subgoals = parsed.get("active_subgoals") or []
-    if not isinstance(active_subgoals, list):
-        raise Planner2ValidationError("active_subgoals must be an array")
-    for i, sg in enumerate(active_subgoals):
-        if not isinstance(sg, str) or not sg.strip():
-            raise Planner2ValidationError(f"active_subgoals[{i}] must be a non-empty string")
-    approaches_rejected = parsed.get("approaches_rejected") or []
-    if not isinstance(approaches_rejected, list):
-        raise Planner2ValidationError("approaches_rejected must be an array")
-    for i, item in enumerate(approaches_rejected):
-        if not isinstance(item, dict):
-            raise Planner2ValidationError(f"approaches_rejected[{i}] must be an object")
-        for key in ("approach", "reason"):
-            val = item.get(key)
-            if not isinstance(val, str) or not val.strip():
-                raise Planner2ValidationError(
-                    f"approaches_rejected[{i}].{key!r} must be a non-empty string"
-                )
-    decisions = parsed.get("decisions_made")
-    if not isinstance(decisions, list) or len(decisions) < 1:
-        raise Planner2ValidationError("decisions_made must be a non-empty array")
-    for i, item in enumerate(decisions):
-        if not isinstance(item, dict):
-            raise Planner2ValidationError(f"decisions_made[{i}] must be an object")
-        for key in ("decision", "rationale"):
-            val = item.get(key)
-            if not isinstance(val, str) or not val.strip():
-                raise Planner2ValidationError(
-                    f"decisions_made[{i}].{key!r} must be a non-empty string"
-                )
-    files = parsed.get("files_in_scope")
-    if not isinstance(files, list) or len(files) < 1:
-        raise Planner2ValidationError("files_in_scope must be a non-empty array")
-    for i, fpath in enumerate(files):
-        if not isinstance(fpath, str) or not fpath.strip():
-            raise Planner2ValidationError(f"files_in_scope[{i}] must be a non-empty string")
-    open_q = parsed.get("open_questions", [])
-    if open_q is None:
-        open_q = []
-    if not isinstance(open_q, list):
-        raise Planner2ValidationError("open_questions must be an array")
-    for i, q in enumerate(open_q):
-        if not isinstance(q, str):
-            raise Planner2ValidationError(f"open_questions[{i}] must be a string")
-        low = q.lower()
-        missing = [lbl for lbl in _PUNT_LABELS if lbl not in low]
-        if missing:
-            raise Planner2ValidationError(
-                f"open_questions[{i}] is missing punt label(s) {missing}; "
-                f"either decide the question or restate as an explicit "
-                f"(a)/(b)/(c) punt with all three labels."
-            )
-    for k in ("goal", "next_action"):
-        value = parsed.get(k)
-        if not isinstance(value, str) or not value.strip():
-            raise Planner2ValidationError(f"{k!r} must be a non-empty string")
 
 
 def _build_context(
@@ -168,31 +102,15 @@ def _build_context(
     )
 
 
-def _extract_json(content: str) -> dict[str, Any]:
-    """Pull the first top-level JSON object out of the model's response.
-
-    Models occasionally wrap JSON in ```json fences or add prose before/after
-    the object. Strip fences first, then scan for the first '{' and use
-    raw_decode so surrounding text doesn't cause a hard failure.
-    """
-    s = content.strip()
-    if s.startswith("```"):
-        s = s.split("\n", 1)[1] if "\n" in s else s[3:]
-        if s.endswith("```"):
-            s = s[: -len("```")].rstrip()
-        elif "```" in s:
-            s = s.rsplit("```", 1)[0].rstrip()
-    decoder = json.JSONDecoder()
-    for i, ch in enumerate(s):
-        if ch != "{":
-            continue
-        try:
-            obj, _ = decoder.raw_decode(s[i:])
-        except json.JSONDecodeError:
-            continue
-        if isinstance(obj, dict):
-            return obj
-    raise json.JSONDecodeError("no top-level JSON object found", s, 0)
+def _attempt(
+    response_text: str,
+) -> Result[dict[str, Any], HandoffShapeError]:
+    """Parse + validate a single planner-2 response."""
+    match extract_json(response_text):
+        case Ok(value=parsed):
+            return validate_handoff(parsed)
+        case Err(error=err):
+            return Err(err)
 
 
 async def run_planner2(
@@ -204,7 +122,12 @@ async def run_planner2(
     model: str,
     safir_client: SafirClient,
 ) -> Planner2Result:
-    """Run planner-2 against the brief; submit the handoff to safir."""
+    """Run planner-2 against the brief; submit the handoff to safir.
+
+    Raises on terminal failure (validation failed twice). IO errors from
+    safir propagate. Callers are expected to be inside the pipeline's
+    outer phase-rollback try/except.
+    """
     user_content = _build_context(
         brief_markdown=brief_markdown,
         parent_spec=parent_spec,
@@ -212,31 +135,43 @@ async def run_planner2(
     )
     messages: list[Message] = [Message(role=Role.USER, content=user_content)]
 
-    parsed: dict[str, Any]
-    last_error: str | None = None
+    parsed: dict[str, Any] | None = None
+    last_error: BuilderError | None = None
     for attempt in range(2):  # try once, retry once
         sys_prompt = PLANNER2_SYSTEM_PROMPT
         if attempt == 1 and last_error is not None:
             sys_prompt = (
                 PLANNER2_SYSTEM_PROMPT
-                + f"\n\nPrior attempt failed validation: {last_error}\n"
+                + f"\n\nPrior attempt failed validation: {last_error.detail}\n"
                 + "Fix the issue and re-emit a complete JSON object."
             )
+        logger.info("planner2 attempt=%d model=%s phase_id=%s", attempt, model, phase_id)
         resp = await llm_complete(model=model, messages=messages, system=sys_prompt)
-        try:
-            parsed = _extract_json(resp.content)
-        except json.JSONDecodeError as e:
-            last_error = f"JSON parse failed: {e}"
-            continue
-        try:
-            validate_handoff(parsed)
-        except Planner2ValidationError as e:
-            last_error = str(e)
-            continue
-        break
-    else:
-        raise Planner2ValidationError(
-            f"planner-2 failed validation twice; last error: {last_error}"
+        match _attempt(resp.content):
+            case Ok(value=ok_parsed):
+                parsed = ok_parsed
+                logger.info(
+                    "planner2 attempt=%d validated phase_id=%s", attempt, phase_id
+                )
+                break
+            case Err(error=err):
+                last_error = err
+                logger.warning(
+                    "planner2 attempt=%d validation failed phase_id=%s detail=%s",
+                    attempt,
+                    phase_id,
+                    err.detail,
+                )
+
+    if parsed is None:
+        assert last_error is not None
+        logger.error(
+            "planner2 failed validation twice phase_id=%s detail=%s",
+            phase_id,
+            last_error.detail,
+        )
+        raise RuntimeError(
+            f"planner-2 failed validation twice; last error: {last_error.detail}"
         )
 
     raw_markdown = render_handoff_markdown(parsed)
@@ -253,8 +188,11 @@ async def run_planner2(
             "next_action": parsed.get("next_action", ""),
         },
     )
+    logger.info(
+        "handoff submitted handoff_id=%s phase_id=%s", submitted.id, phase_id
+    )
     return Planner2Result(
         parsed=parsed,
         raw_markdown=raw_markdown,
-        handoff_id=submitted["id"],
+        handoff_id=submitted.id,
     )

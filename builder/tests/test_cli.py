@@ -1,4 +1,5 @@
 """Tests for safir-build CLI argparse and dispatch (stubbed pipeline)."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -6,6 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from builder.cli import _build_parser, _run
+from builder.errors import SafirIOError
+from builder.result import Err, Ok
 
 
 def _make_pipeline_result(short_circuited: bool = False) -> MagicMock:
@@ -14,6 +17,10 @@ def _make_pipeline_result(short_circuited: bool = False) -> MagicMock:
     r.trace_id = "trace-abc"
     r.error_step = "planner2" if short_circuited else None
     return r
+
+
+def _ok(result: MagicMock) -> Ok:
+    return Ok(result)
 
 
 def test_help_exits_zero(capsys) -> None:
@@ -37,11 +44,15 @@ def test_parser_all_flags(tmp_path) -> None:
     args = _build_parser().parse_args(
         [
             "42",
-            "--models", "opus,sonnet",
-            "--workdir", str(tmp_path),
+            "--models",
+            "opus,sonnet",
+            "--workdir",
+            str(tmp_path),
             "--dry-run",
-            "--safir-base-url", "http://safir.test",
-            "--permission-profile-id", "7",
+            "--safir-base-url",
+            "http://safir.test",
+            "--permission-profile-id",
+            "7",
         ]
     )
     assert args.task_id == 42
@@ -58,7 +69,7 @@ async def test_run_dispatches_to_pipeline(tmp_path) -> None:
     mock_result = _make_pipeline_result()
 
     with (
-        patch("builder.cli.run_build_pipeline", new=AsyncMock(return_value=mock_result)),
+        patch("builder.cli.run_build_pipeline", new=AsyncMock(return_value=_ok(mock_result))),
         patch("builder.cli.SafirClient") as mock_sc,
     ):
         instance = MagicMock()
@@ -88,22 +99,34 @@ async def test_run_workdir_without_git_returns_1(tmp_path) -> None:
 async def test_run_bad_models_returns_1(tmp_path) -> None:
     git_dir = tmp_path / ".git"
     git_dir.mkdir()
-    args = _build_parser().parse_args(
-        ["42", "--workdir", str(tmp_path), "--models", "a,b,c"]
-    )
+    args = _build_parser().parse_args(["42", "--workdir", str(tmp_path), "--models", "a,b,c"])
     code = await _run(args)
     assert code == 1
 
 
 @pytest.mark.asyncio
-async def test_run_pipeline_raises_returns_2(tmp_path) -> None:
+async def test_run_auto_approve_and_dry_run_is_error(tmp_path) -> None:
     git_dir = tmp_path / ".git"
     git_dir.mkdir()
 
+    args = _build_parser().parse_args(
+        ["42", "--workdir", str(tmp_path), "--auto-approve", "--dry-run"]
+    )
+    code = await _run(args)
+
+    assert code == 1
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_returns_safir_io_err_returns_2(tmp_path) -> None:
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+
+    err = Err(SafirIOError(op="run_build_pipeline", entity_id="r1", detail="boom"))
     with (
         patch(
             "builder.cli.run_build_pipeline",
-            new=AsyncMock(side_effect=RuntimeError("boom")),
+            new=AsyncMock(return_value=err),
         ),
         patch("builder.cli.SafirClient") as mock_sc,
     ):
@@ -139,7 +162,9 @@ async def test_default_no_flag_passes_auto_approve_false(tmp_path, capsys) -> No
     mock_result.step_outputs = {"planner2": p2_result}
 
     with (
-        patch("builder.cli.run_build_pipeline", new=AsyncMock(return_value=mock_result)) as mock_pipeline,
+        patch(
+            "builder.cli.run_build_pipeline", new=AsyncMock(return_value=_ok(mock_result))
+        ) as mock_pipeline,
         patch("builder.cli.SafirClient") as mock_sc,
     ):
         instance = MagicMock()
@@ -167,7 +192,9 @@ async def test_auto_approve_flag_passes_auto_approve_true(tmp_path) -> None:
     mock_result.step_outputs = {}
 
     with (
-        patch("builder.cli.run_build_pipeline", new=AsyncMock(return_value=mock_result)) as mock_pipeline,
+        patch(
+            "builder.cli.run_build_pipeline", new=AsyncMock(return_value=_ok(mock_result))
+        ) as mock_pipeline,
         patch("builder.cli.SafirClient") as mock_sc,
     ):
         instance = MagicMock()
@@ -192,7 +219,9 @@ async def test_dry_run_unchanged_behavior(tmp_path, capsys) -> None:
     mock_result.step_outputs = {}
 
     with (
-        patch("builder.cli.run_build_pipeline", new=AsyncMock(return_value=mock_result)) as mock_pipeline,
+        patch(
+            "builder.cli.run_build_pipeline", new=AsyncMock(return_value=_ok(mock_result))
+        ) as mock_pipeline,
         patch("builder.cli.SafirClient") as mock_sc,
     ):
         instance = MagicMock()
