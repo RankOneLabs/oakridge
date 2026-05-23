@@ -7,9 +7,9 @@ import type { EvalScore } from "../../lib/types";
 
 function valueColor(v: number): string {
   // Cheap traffic-light gradient: red below 0.5, amber 0.5–0.85, green above.
-  if (v >= 0.85) return "bg-emerald-500";
-  if (v >= 0.5) return "bg-amber-500";
-  return "bg-rose-500";
+  if (v >= 0.85) return "fill-emerald-500";
+  if (v >= 0.5) return "fill-amber-500";
+  return "fill-rose-500";
 }
 
 export function ScoreRow({ score }: { score: EvalScore }) {
@@ -21,13 +21,13 @@ export function ScoreRow({ score }: { score: EvalScore }) {
         <span className="font-mono tabular-nums text-stone-700">
           {score.value.toFixed(3)}
         </span>
-        <div className="relative h-2 w-24 overflow-hidden rounded-full bg-stone-200">
-          <div
-            className={`absolute inset-y-0 left-0 ${valueColor(score.value)}`}
-            style={{ width: `${pct}%` }}
-            aria-hidden
+        <svg className="h-2 w-24 rounded-full bg-stone-200" aria-hidden>
+          <rect
+            className={valueColor(score.value)}
+            width={`${pct}%`}
+            height="100%"
           />
-        </div>
+        </svg>
       </div>
       <span className="text-[11px] uppercase tracking-wide text-stone-500">
         {score.source}
