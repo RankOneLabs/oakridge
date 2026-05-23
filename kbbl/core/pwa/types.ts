@@ -33,6 +33,13 @@ export interface SessionSnapshot {
   worktreeBaseRef: string | null;
   projectWorkdir: string | null;
   model: string | null;
+  /**
+   * Model CC actually resolved at runtime. Seeded by system+init and
+   * updated by each distinct assistant.message.model; null until first
+   * observation. PWA renders `observedModel ?? model` so spawn-time
+   * intent remains the fallback when the runtime hasn't reported yet.
+   */
+  observedModel: string | null;
   endReason: "user_closed" | "subprocess_exited" | "compacted" | null;
   successorSid: string | null;
 }
