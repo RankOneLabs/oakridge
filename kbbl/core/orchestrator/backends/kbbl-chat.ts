@@ -1,15 +1,30 @@
+import type { AllowedModel } from "../../../adapters/claude-code/models";
 import type { SessionManager } from "../../session/session-manager";
 import type { ExecutionBackend, InputRef, StageRow } from "./interface";
+
+// Cost-engineering rule: plan in Opus, build in Sonnet. Resolved per stage
+// so dispatcher-spawned sessions don't fall through to the user-global default.
+type RoutedStage = "planner1" | "planner2" | "build";
+
+const STAGE_MODEL: Record<RoutedStage, AllowedModel> = {
+  planner1: "claude-opus-4-7",
+  planner2: "claude-opus-4-7",
+  build: "claude-sonnet-4-6",
+};
+
+function isRoutedStage(name: string): name is RoutedStage {
+  return name in STAGE_MODEL;
+}
 
 export function createKbblChatBackend({ manager }: { manager: SessionManager }): ExecutionBackend {
   return {
     id: "kbbl_chat",
 
-    async dispatch(_stage: StageRow, inputRef: InputRef, renderedPrompt: string): Promise<{ session_ref: string }> {
+    async dispatch(stage: StageRow, inputRef: InputRef, renderedPrompt: string): Promise<{ session_ref: string }> {
       const session = await manager.create({
         workdir: inputRef.workdir,
         name: inputRef.sessionName,
-        model: null,
+        model: isRoutedStage(stage.name) ? STAGE_MODEL[stage.name] : null,
       });
       await session.writeInput(renderedPrompt);
       return { session_ref: session.oakridgeSid };
