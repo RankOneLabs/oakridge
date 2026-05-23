@@ -1,6 +1,7 @@
 """Render a structured planner-2 result as handoff markdown."""
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from typing import TypedDict
 
@@ -82,6 +83,28 @@ def _rejected_approaches(value: object) -> list[HandoffRejectedApproach]:
     return out
 
 
+def _decision_atom(value: str) -> HandoffDecision | None:
+    parsed = json.loads(value)
+    if not isinstance(parsed, Mapping):
+        return None
+    decision = _string_value(parsed.get("decision"))
+    rationale = _string_value(parsed.get("rationale"))
+    if not decision and not rationale:
+        return None
+    return {"decision": decision, "rationale": rationale}
+
+
+def _rejected_approach_atom(value: str) -> HandoffRejectedApproach | None:
+    parsed = json.loads(value)
+    if not isinstance(parsed, Mapping):
+        return None
+    approach = _string_value(parsed.get("approach"))
+    reason = _string_value(parsed.get("reason"))
+    if not approach and not reason:
+        return None
+    return {"approach": approach, "reason": reason}
+
+
 def _normalize_handoff(parsed: HandoffMarkdownInput) -> HandoffMarkdown:
     return {
         "title": _string_value(parsed.get("title")) or "Handoff",
@@ -132,6 +155,14 @@ def render_from_atom_map(atom_map: dict[str, str], canonical: HandoffMarkdownInp
     )
     decisions_made: list[HandoffDecision] = []
     for i in range(n_decisions):
+        atom_decision = atom_map.get(f"decisions_made[{i}]")
+        if atom_decision is not None:
+            if not atom_decision:
+                continue
+            decision_from_atom = _decision_atom(atom_decision)
+            if decision_from_atom is not None and decision_from_atom["decision"]:
+                decisions_made.append(decision_from_atom)
+            continue
         canon_d: HandoffDecision = {"decision": "", "rationale": ""}
         if i < len(canon_decisions):
             canon_d = canon_decisions[i]
@@ -149,6 +180,14 @@ def render_from_atom_map(atom_map: dict[str, str], canonical: HandoffMarkdownInp
     )
     approaches_rejected: list[HandoffRejectedApproach] = []
     for i in range(n_rejected):
+        atom_rejected = atom_map.get(f"approaches_rejected[{i}]")
+        if atom_rejected is not None:
+            if not atom_rejected:
+                continue
+            rejected_from_atom = _rejected_approach_atom(atom_rejected)
+            if rejected_from_atom is not None and rejected_from_atom["approach"]:
+                approaches_rejected.append(rejected_from_atom)
+            continue
         canon_r: HandoffRejectedApproach = {"approach": "", "reason": ""}
         if i < len(canon_rejected):
             canon_r = canon_rejected[i]
