@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
 
 export interface UrlPrefill {
-  initialWorkdir: string;
+  initialWorkdir: string | null;
   workdirTouchedInitial: boolean;
   autostartPending: boolean;
   setAutostartPending: (v: boolean) => void;
 }
 
 interface InitialUrl {
-  workdir: string;
+  workdir: string | null;
   autostart: boolean;
   hadParams: boolean;
 }
@@ -16,10 +16,10 @@ interface InitialUrl {
 function readInitialUrl(): InitialUrl {
   const params = new URLSearchParams(window.location.search);
   if (params.size === 0) {
-    return { workdir: "", autostart: false, hadParams: false };
+    return { workdir: null, autostart: false, hadParams: false };
   }
   return {
-    workdir: params.get("workdir") ?? "",
+    workdir: params.get("workdir"),
     autostart: params.get("autostart") === "true",
     hadParams: true,
   };
@@ -36,7 +36,7 @@ export function useUrlPrefill(): UrlPrefill {
 
   return {
     initialWorkdir: initial.workdir,
-    workdirTouchedInitial: initial.workdir !== "",
+    workdirTouchedInitial: initial.workdir !== null,
     autostartPending,
     setAutostartPending,
   };

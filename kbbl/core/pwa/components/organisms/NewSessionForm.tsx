@@ -15,7 +15,7 @@ export interface NewSessionFormValues {
 
 export interface NewSessionFormProps {
   defaultWorkdir: string;
-  initialWorkdir: string;
+  initialWorkdir: string | null;
   workdirTouchedInitial: boolean;
   pending: boolean;
   pendingError: string | null;
@@ -36,7 +36,7 @@ export function NewSessionForm({
   resetSignal,
   onSubmit,
 }: NewSessionFormProps) {
-  const [workdirInput, setWorkdirInput] = useState(initialWorkdir);
+  const [workdirInput, setWorkdirInput] = useState(initialWorkdir ?? "");
   const [workdirTouched, setWorkdirTouched] = useState(workdirTouchedInitial);
   const [nameInput, setNameInput] = useState("");
   const [modelInput, setModelInput] = useState<string>(readStoredNewSessionModel);

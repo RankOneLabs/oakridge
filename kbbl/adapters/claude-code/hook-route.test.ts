@@ -82,7 +82,7 @@ describe("hookApprovalHandler: yolo auto-approves", () => {
     expect(body.hookSpecificOutput.permissionDecisionReason).toContain("yolo");
 
     const event = emitted.find((e) => e.type === "permission_auto_approved");
-    expect((event!.payload as { reason: string }).reason).toBe("yolo");
+    expect(event).toMatchObject({ payload: { reason: "yolo" } });
   });
 });
 
@@ -110,6 +110,6 @@ describe("hookApprovalHandler: allowlist auto-approves", () => {
     expect(body.hookSpecificOutput.permissionDecision).toBe("allow");
 
     const event = emitted.find((e) => e.type === "permission_auto_approved");
-    expect((event!.payload as { reason: string }).reason).toBe("allowlist");
+    expect(event).toMatchObject({ payload: { reason: "allowlist" } });
   });
 });
