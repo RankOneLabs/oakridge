@@ -33,12 +33,12 @@ kbbl API base URL: `{{KBBL_URL}}`
      "pr_url": "<GitHub PR URL from step 4>"
    }
    ```
-6. Mark the parent cohort done so downstream cohorts can advance:
+6. Signal that the PR is open so the operator can confirm the merge:
    ```
    PATCH {{KBBL_URL}}/cohorts/{{COHORT_ID}}/status
    Content-Type: application/json
 
-   {"status": "done"}
+   {"status": "awaiting_merge", "pr_url": "<GitHub PR URL from step 4>"}
    ```
 
 ## Constraints
@@ -46,4 +46,4 @@ kbbl API base URL: `{{KBBL_URL}}`
 - Only build what the brief specifies. If you find yourself fixing unrelated things, stop and note it in the debrief.
 - A subgoal that is infeasible as written is a deviation — record it in the debrief, pick a sensible path, and continue.
 - Do not skip the debrief PATCH — it is how the operator knows the build completed.
-- Do not skip the cohort status PATCH — it is what releases downstream cohorts waiting on this one.
+- Do not skip the cohort status PATCH — it transfers the cohort to awaiting_merge so the operator can confirm the merge. The operator marks merge after the PR ships; the agent does not mark the cohort done.
