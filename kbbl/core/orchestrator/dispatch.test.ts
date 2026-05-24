@@ -7,7 +7,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Hono } from "hono";
@@ -31,6 +31,10 @@ import { mountBriefsRoutes } from "../server/handlers/briefs";
 import { mountBriefStatusRoutes } from "../server/handlers/brief-status";
 import { mountBuildsRoutes } from "../server/handlers/builds";
 import { mountAssessmentsRoutes } from "../server/handlers/assessments";
+import { KbblConfigSchema } from "../config";
+import { SessionManager } from "../session/session-manager";
+import type { Session, SpawnCmd } from "../session/session";
+import { createKbblChatBackend } from "./backends/kbbl-chat";
 
 // ---- minimal SessionManager stub for builds route ----
 
@@ -583,5 +587,100 @@ describe("full dispatch pipeline with MockBackend", () => {
     // brief is pending_approval, not approved
     const res = await post(app, `/briefs/${brief.id}/build`, {});
     expect(res.status).toBe(409);
+  });
+});
+
+// ---- KbblChatBackend + SessionManager integration ----
+
+async function gitInit(cwd: string): Promise<void> {
+  const cmds: string[][] = [
+    ["git", "-C", cwd, "init", "-q", "-b", "main"],
+    ["git", "-C", cwd, "config", "user.email", "test@example.com"],
+    ["git", "-C", cwd, "config", "user.name", "test"],
+    ["git", "-C", cwd, "config", "commit.gpgsign", "false"],
+    ["git", "-C", cwd, "config", "tag.gpgsign", "false"],
+    ["git", "-C", cwd, "commit", "--allow-empty", "-m", "init"],
+  ];
+  for (const cmd of cmds) {
+    const p = Bun.spawn({ cmd, stdout: "pipe", stderr: "pipe" });
+    const code = await p.exited;
+    if (code !== 0) throw new Error(`${cmd.join(" ")} failed`);
+  }
+}
+
+async function noopSpawn(_session: Session): Promise<SpawnCmd> {
+  // cat reads stdin so the pipe stays open long enough for writeInput to succeed
+  return { cmd: ["cat"], cwd: "/tmp", env: {} };
+}
+
+describe("KbblChatBackend dispatch worktree behavior", () => {
+  let wtTmpRoot: string;
+
+  beforeEach(async () => {
+    wtTmpRoot = mkdtempSync(join(tmpdir(), "kbbl-dispatch-wt-test-"));
+    const p = Bun.spawn({ cmd: ["mkdir", "-p",
+      join(wtTmpRoot, "repo"),
+      join(wtTmpRoot, "sessions"),
+      join(wtTmpRoot, "worktrees"),
+      join(wtTmpRoot, "handoffs"),
+    ]});
+    await p.exited;
+    await gitInit(join(wtTmpRoot, "repo"));
+  });
+
+  afterEach(async () => {
+    rmSync(wtTmpRoot, { recursive: true, force: true });
+  });
+
+  test("build dispatch produces worktreePath !== null; planner1 dispatch produces worktreePath === null (global flag off)", async () => {
+    const config = KbblConfigSchema.parse({ sessions: { worktree_per_session: false } });
+    const manager = new SessionManager({
+      sessionsDir: join(wtTmpRoot, "sessions"),
+      handoffsDir: join(wtTmpRoot, "handoffs"),
+      worktreesDir: join(wtTmpRoot, "worktrees"),
+      buildSpawnCmd: noopSpawn,
+      config,
+    });
+
+    const backend = createKbblChatBackend({ manager });
+
+    const buildStage = {
+      name: "build",
+      prompt_template_path: "build.md",
+      input_artifact_type: "brief" as const,
+      output_artifact_type: "pr" as const,
+      gate: "none" as const,
+      default_backend: "kbbl_chat",
+    };
+    const plannerStage = {
+      name: "planner1",
+      prompt_template_path: "planner1.md",
+      input_artifact_type: "spec" as const,
+      output_artifact_type: "plan" as const,
+      gate: "review_required" as const,
+      default_backend: "kbbl_chat",
+    };
+    const inputRef = {
+      type: "brief" as const,
+      id: "fake-brief-id",
+      workdir: join(wtTmpRoot, "repo"),
+      sessionName: "test-session",
+    };
+
+    // build stage: forceWorktree → worktreePath must be set
+    const buildResult = await backend.dispatch(buildStage, inputRef, "build prompt");
+    const buildSession = manager.get(buildResult.session_ref);
+    expect(buildSession).toBeDefined();
+    expect(buildSession!.worktreePath).not.toBeNull();
+    expect(existsSync(buildSession!.worktreePath!)).toBe(true);
+
+    // planner1 stage: no forceWorktree, global flag off → worktreePath must be null
+    const plannerRef = { ...inputRef, type: "spec" as const };
+    const plannerResult = await backend.dispatch(plannerStage, plannerRef, "planner prompt");
+    const plannerSession = manager.get(plannerResult.session_ref);
+    expect(plannerSession).toBeDefined();
+    expect(plannerSession!.worktreePath).toBeNull();
+
+    await manager.endAll();
   });
 });

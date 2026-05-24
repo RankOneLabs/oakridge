@@ -132,6 +132,13 @@ export interface CreateSessionOpts {
    * HTTP route, not here.
    */
   model?: string | null;
+  /**
+   * Per-call override: force a worktree for this session regardless of the
+   * global config.sessions.worktree_per_session flag. Used by
+   * KbblChatBackend to guarantee build-stage dispatches always run in an
+   * isolated worktree so concurrent builders don't corrupt each other's tree.
+   */
+  forceWorktree?: boolean;
 }
 
 /**
@@ -276,7 +283,7 @@ export class SessionManager {
     // sessions also keeps session_started / SessionSnapshot tight for
     // pre-Phase-1-equivalent payloads.
     let projectWorkdir: string | null = null;
-    const wantsWorktree = this.opts.config.sessions.worktree_per_session;
+    const wantsWorktree = (opts.forceWorktree ?? false) || this.opts.config.sessions.worktree_per_session;
     if (wantsWorktree && (await isGitRepo(opts.workdir))) {
       // On resume, opts.workdir is the parent's workdir — which (Phase 1+)
       // is the parent's worktree path, NOT the operator's original repo.

@@ -123,6 +123,26 @@ describe("SessionManager.create with worktree_per_session: false", () => {
     expect(existsSync(join(worktreesDir, session.oakridgeSid))).toBe(false);
     await mgr.endAll();
   });
+
+  test("forceWorktree: true overrides flag-off and creates a worktree", async () => {
+    const mgr = makeManager(buildConfig(false));
+    const session = await mgr.create({ workdir: repoDir, forceWorktree: true });
+    const expectedPath = join(worktreesDir, session.oakridgeSid);
+    expect(session.workdir).toBe(expectedPath);
+    expect(session.worktreePath).toBe(expectedPath);
+    expect(session.worktreeBranch).toMatch(/^kbbl\//);
+    expect(session.projectWorkdir).toBe(repoDir);
+    expect(existsSync(expectedPath)).toBe(true);
+    await mgr.endAll();
+  });
+
+  test("forceWorktree omitted with flag-off → no worktree (regression guard)", async () => {
+    const mgr = makeManager(buildConfig(false));
+    const session = await mgr.create({ workdir: repoDir });
+    expect(session.worktreePath).toBeNull();
+    expect(existsSync(join(worktreesDir, session.oakridgeSid))).toBe(false);
+    await mgr.endAll();
+  });
 });
 
 describe("SessionManager.create with non-repo workdir + flag on", () => {
@@ -133,6 +153,21 @@ describe("SessionManager.create with non-repo workdir + flag on", () => {
 
     const mgr = makeManager(buildConfig(true));
     const session = await mgr.create({ workdir: plain });
+    expect(session.workdir).toBe(plain);
+    expect(session.worktreePath).toBeNull();
+    expect(session.worktreeBranch).toBeNull();
+    expect(existsSync(join(worktreesDir, session.oakridgeSid))).toBe(false);
+    await mgr.endAll();
+  });
+
+  test("non-repo workdir + forceWorktree: true → falls back gracefully, no error", async () => {
+    const plain = join(tmpRoot, "plain-force");
+    const init = Bun.spawn({ cmd: ["mkdir", "-p", plain] });
+    await init.exited;
+
+    const mgr = makeManager(buildConfig(false));
+    const session = await mgr.create({ workdir: plain, forceWorktree: true });
+    // isGitRepo guard prevents worktree creation even with forceWorktree
     expect(session.workdir).toBe(plain);
     expect(session.worktreePath).toBeNull();
     expect(session.worktreeBranch).toBeNull();
