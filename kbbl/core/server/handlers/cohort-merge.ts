@@ -37,9 +37,10 @@ export type MergeOutcome =
   | { outcome: "not_mergeable"; reason: "conflicts" | "checks_failing" | "unknown" }
   | { outcome: "confirm_closed" };
 
-function applyAndEmit(db: Database, cohort_id: string): void {
+/** Returns true when the transition applied, false when the cohort was no longer awaiting_merge. */
+function applyAndEmit(db: Database, cohort_id: string): boolean {
   const result = db.transaction(() => applyAwaitingMergeToMerged(db, cohort_id))();
-  if (!result.emits) return; // already done — concurrent request beat us, no-op
+  if (!result.emits) return false;
   taskTrackerEvents.emit("cohort.pr_merged", result.emits.pr_merged);
   taskTrackerEvents.emit("cohort.done", result.emits.done);
   for (const p of result.emits.buildReady) {
@@ -48,6 +49,7 @@ function applyAndEmit(db: Database, cohort_id: string): void {
   if (result.emits.planCompleted) {
     taskTrackerEvents.emit("plan.completed", result.emits.planCompleted);
   }
+  return true;
 }
 
 export function mountCohortMergeRoutes(app: Hono, deps: CohortMergeRouteDeps): void {
@@ -55,15 +57,19 @@ export function mountCohortMergeRoutes(app: Hono, deps: CohortMergeRouteDeps): v
 
   app.post("/cohorts/:id/merge", async (c) => {
     let body: { confirm_unresolved?: boolean; confirm_closed?: boolean } = {};
-    try {
-      const raw = await c.req.json();
-      const parsed = MergeBodySchema.safeParse(raw);
+    const rawText = await c.req.text();
+    if (rawText.trim()) {
+      let rawJson: unknown;
+      try {
+        rawJson = JSON.parse(rawText);
+      } catch {
+        return c.json({ error: "invalid json" }, 400);
+      }
+      const parsed = MergeBodySchema.safeParse(rawJson);
       if (!parsed.success) {
         return c.json({ error: parsed.error.issues[0]?.message ?? "invalid body" }, 400);
       }
       body = parsed.data ?? {};
-    } catch {
-      // Empty or non-JSON body → use empty defaults
     }
 
     const cohort_id = c.req.param("id");
@@ -129,7 +135,11 @@ export function mountCohortMergeRoutes(app: Hono, deps: CohortMergeRouteDeps): v
     );
 
     if (prState.kind === "already_merged") {
-      applyAndEmit(db, cohort_id);
+      if (!applyAndEmit(db, cohort_id)) {
+        const cur = getCohort(db, cohort_id);
+        if (cur?.status === "done") return c.json({ outcome: "already_done" } satisfies MergeOutcome);
+        return c.json({ error: "cohort status changed during merge" }, 409);
+      }
       return c.json({
         outcome: "merged",
         via: "already_merged",
@@ -142,7 +152,11 @@ export function mountCohortMergeRoutes(app: Hono, deps: CohortMergeRouteDeps): v
       if (!mergeResult.ok) {
         return c.json({ error: "gh failed", detail: mergeResult.error }, 502);
       }
-      applyAndEmit(db, cohort_id);
+      if (!applyAndEmit(db, cohort_id)) {
+        const cur = getCohort(db, cohort_id);
+        if (cur?.status === "done") return c.json({ outcome: "already_done" } satisfies MergeOutcome);
+        return c.json({ error: "cohort status changed during merge" }, 409);
+      }
       return c.json({ outcome: "merged", via: "merged_now" } satisfies MergeOutcome);
     }
 
@@ -158,7 +172,11 @@ export function mountCohortMergeRoutes(app: Hono, deps: CohortMergeRouteDeps): v
       if (!mergeResult.ok) {
         return c.json({ error: "gh failed", detail: mergeResult.error }, 502);
       }
-      applyAndEmit(db, cohort_id);
+      if (!applyAndEmit(db, cohort_id)) {
+        const cur = getCohort(db, cohort_id);
+        if (cur?.status === "done") return c.json({ outcome: "already_done" } satisfies MergeOutcome);
+        return c.json({ error: "cohort status changed during merge" }, 409);
+      }
       return c.json({ outcome: "merged", via: "merged_now" } satisfies MergeOutcome);
     }
 
@@ -174,7 +192,11 @@ export function mountCohortMergeRoutes(app: Hono, deps: CohortMergeRouteDeps): v
       return c.json({ outcome: "confirm_closed" } satisfies MergeOutcome);
     }
     // Operator confirmed closed PR: mark done WITHOUT calling mergePr
-    applyAndEmit(db, cohort_id);
+    if (!applyAndEmit(db, cohort_id)) {
+      const cur = getCohort(db, cohort_id);
+      if (cur?.status === "done") return c.json({ outcome: "already_done" } satisfies MergeOutcome);
+      return c.json({ error: "cohort status changed during merge" }, 409);
+    }
     return c.json({
       outcome: "merged",
       via: "already_merged",

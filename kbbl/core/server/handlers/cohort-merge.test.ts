@@ -99,6 +99,50 @@ describe("POST /cohorts/:id/merge — error paths", () => {
     expect(body.error).toMatch(/awaiting_merge/);
   });
 
+  test("malformed request JSON body → 400", async () => {
+    setupAwaitingMerge();
+    setupApp(makeFakeGh({ kind: "open_mergeable_clean", url: PR_URL }));
+    const res = await app.request(`/cohorts/${COHORT_ID}/merge`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{bad json",
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toMatch(/invalid json/);
+  });
+
+  test("cohort status changes to blocked mid-flight → 409", async () => {
+    setupAwaitingMerge();
+    setupApp({
+      fetchPrState: async () => {
+        setStatus(COHORT_ID, "blocked");
+        db.prepare("UPDATE cohorts SET pre_block_status = 'awaiting_merge' WHERE id = ?").run(COHORT_ID);
+        return { ok: true, value: { kind: "already_merged" as const, mergedAt: null, url: PR_URL } };
+      },
+      mergePr: async () => ({ ok: true, value: undefined }),
+    });
+    const res = await post(COHORT_ID);
+    expect(res.status).toBe(409);
+    const body = await res.json() as { error: string };
+    expect(body.error).toMatch(/status changed/);
+  });
+
+  test("cohort becomes done mid-flight (concurrent request) → already_done", async () => {
+    setupAwaitingMerge();
+    setupApp({
+      fetchPrState: async () => {
+        setStatus(COHORT_ID, "done");
+        return { ok: true, value: { kind: "already_merged" as const, mergedAt: null, url: PR_URL } };
+      },
+      mergePr: async () => ({ ok: true, value: undefined }),
+    });
+    const res = await post(COHORT_ID);
+    expect(res.status).toBe(200);
+    const body = await res.json() as MergeOutcome;
+    expect(body.outcome).toBe("already_done");
+  });
+
   test("no brief → 409", async () => {
     setStatus(COHORT_ID, "awaiting_merge");
     setupApp(makeFakeGh({ kind: "open_mergeable_clean", url: PR_URL }));
