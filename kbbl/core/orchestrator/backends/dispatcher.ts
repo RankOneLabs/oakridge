@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { ExecutionBackend, InputRef, StageRow } from "./interface";
 import { loadPrompt, renderPrompt } from "./prompt-loader";
+import { listCohortsByPlan, listDependenciesByPlan } from "../../db/cohorts";
 
 interface DispatcherDeps {
   db: Database;
@@ -69,6 +70,20 @@ function getProjectForBrief(db: Database, brief_id: string): ProjectRow | null {
           WHERE b.id = ?`,
       )
       .get(brief_id) ?? null
+  );
+}
+
+function getProjectForPlan(db: Database, plan_id: string): ProjectRow | null {
+  return (
+    db
+      .prepare<ProjectRow, [string]>(
+        `SELECT p.id, p.name, p.repo_path
+           FROM projects p
+           JOIN specs s ON s.project_id = p.id
+           JOIN plans pl ON pl.spec_id = s.id
+          WHERE pl.id = ?`,
+      )
+      .get(plan_id) ?? null
   );
 }
 
@@ -145,6 +160,16 @@ function buildSessionNameForBrief(db: Database, brief_id: string, stageName: str
   if (!ctx) return `${prefix}_${brief_id.slice(0, 8)}`;
   const slug = sanitizeForName(ctx.spec_title, brief_id);
   return `${prefix}_cohort_${ctx.position}_${slug}`;
+}
+
+function buildSessionNameForPlan(db: Database, plan_id: string, stageName: string): string {
+  const row = db
+    .prepare<{ title: string }, [string]>(
+      `SELECT s.title FROM specs s JOIN plans pl ON pl.spec_id = s.id WHERE pl.id = ?`,
+    )
+    .get(plan_id);
+  const slug = sanitizeForName(row?.title ?? "", plan_id);
+  return `${stageName}_${slug}`;
 }
 
 // ---- Slot builders ----
@@ -270,6 +295,79 @@ function buildSlotsForBrief(db: Database, brief_id: string, kbblUrl: string): Re
   };
 }
 
+function buildSlotsForPlan(db: Database, plan_id: string, kbblUrl: string): Record<string, string> {
+  interface PlanSpecRow { spec_id: string; spec_title: string; spec_notes: string | null }
+  const planRow = db
+    .prepare<PlanSpecRow, [string]>(
+      `SELECT pl.spec_id, s.title AS spec_title, s.notes AS spec_notes
+         FROM plans pl
+         JOIN specs s ON s.id = pl.spec_id
+        WHERE pl.id = ?`,
+    )
+    .get(plan_id);
+  if (!planRow) throw new Error(`plan not found: ${plan_id}`);
+
+  const cohorts = listCohortsByPlan(db, plan_id);
+  const deps = listDependenciesByPlan(db, plan_id);
+
+  // Kahn's toposort with position ASC tiebreak
+  const inDegree = new Map<string, number>(cohorts.map((c) => [c.id, 0]));
+  const adjFrom = new Map<string, string[]>(cohorts.map((c) => [c.id, []]));
+  for (const dep of deps) {
+    inDegree.set(dep.to_cohort_id, (inDegree.get(dep.to_cohort_id) ?? 0) + 1);
+    adjFrom.get(dep.from_cohort_id)?.push(dep.to_cohort_id);
+  }
+
+  const topoSort = (a: { position: number; id: string }, b: { position: number; id: string }) =>
+    a.position - b.position || a.id.localeCompare(b.id);
+
+  const queue = cohorts.filter((c) => inDegree.get(c.id) === 0).sort(topoSort);
+  const sorted: typeof cohorts = [];
+  const cohortById = new Map(cohorts.map((c) => [c.id, c]));
+
+  while (queue.length > 0) {
+    queue.sort(topoSort);
+    const curr = queue.shift();
+    if (!curr) break;
+    sorted.push(curr);
+    for (const toId of adjFrom.get(curr.id) ?? []) {
+      const newDeg = (inDegree.get(toId) ?? 0) - 1;
+      inDegree.set(toId, newDeg);
+      if (newDeg === 0) {
+        const next = cohortById.get(toId);
+        if (!next) throw new Error(`dependency references unknown cohort ${toId} in plan ${plan_id}`);
+        queue.push(next);
+      }
+    }
+  }
+
+  if (sorted.length !== cohorts.length) {
+    throw new Error(`dependency cycle detected in plan ${plan_id}`);
+  }
+
+  const cohortLines: string[] = [];
+  for (const c of sorted) {
+    cohortLines.push(`[${c.position}] ${c.title} (id: ${c.id})`);
+    if (c.notes) cohortLines.push(`       notes: ${c.notes}`);
+  }
+
+  const titleById = new Map(cohorts.map((c) => [c.id, c.title]));
+  const depLines =
+    deps.length > 0
+      ? deps.map((d) => `${titleById.get(d.from_cohort_id) ?? d.from_cohort_id} → ${titleById.get(d.to_cohort_id) ?? d.to_cohort_id}`)
+      : ["(none)"];
+
+  return {
+    PLAN_ID: plan_id,
+    PLAN_TITLE: planRow.spec_title,
+    SPEC_NOTES: planRow.spec_notes ?? "(no notes)",
+    COHORTS: cohortLines.join("\n"),
+    PLAN_DEPENDENCIES: depLines.join("\n"),
+    KBBL_URL: kbblUrl,
+    BRIEF_FORMAT_GUIDE: BRIEF_FORMAT_GUIDE,
+  };
+}
+
 // ---- Workdir resolution ----
 
 function resolveWorkdirForSpec(db: Database, spec_id: string): string {
@@ -287,6 +385,12 @@ function resolveWorkdirForCohort(db: Database, cohort_id: string): string {
 function resolveWorkdirForBrief(db: Database, brief_id: string): string {
   const project = getProjectForBrief(db, brief_id);
   if (!project) throw new Error(`project not found for brief ${brief_id}`);
+  return project.repo_path;
+}
+
+function resolveWorkdirForPlan(db: Database, plan_id: string): string {
+  const project = getProjectForPlan(db, plan_id);
+  if (!project) throw new Error(`project not found for plan ${plan_id}`);
   return project.repo_path;
 }
 
@@ -329,6 +433,13 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
           inputRef = { type: "brief", id: inputId, workdir, sessionName };
           break;
         }
+        case "plan": {
+          slots = buildSlotsForPlan(db, inputId, kbblUrl);
+          workdir = resolveWorkdirForPlan(db, inputId);
+          const sessionName = buildSessionNameForPlan(db, inputId, stage.name);
+          inputRef = { type: "plan", id: inputId, workdir, sessionName };
+          break;
+        }
         default:
           throw new Error(`unsupported input_artifact_type: ${stage.input_artifact_type}`);
       }
@@ -362,6 +473,11 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
           ).run(session_ref, stage.name, briefRow.cohort_id);
           break;
         }
+        case "plan":
+          db.prepare(
+            "UPDATE plans SET current_session_ref = ?, current_session_stage = ? WHERE id = ?",
+          ).run(session_ref, stage.name, inputId);
+          break;
         default:
           throw new Error(`unsupported input_artifact_type: ${stage.input_artifact_type}`);
       }

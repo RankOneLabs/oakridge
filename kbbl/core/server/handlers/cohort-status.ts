@@ -5,9 +5,13 @@ import { getCohort } from "../../db/cohorts";
 import { taskTrackerEvents } from "../../db/events";
 import type { Cohort } from "../../types/task-tracker";
 
-const PatchCohortStatusSchema = z.object({
-  status: z.enum(["blocked", "unblocked", "done"]),
-});
+const PatchCohortStatusSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("blocked") }),
+  z.object({ status: z.literal("unblocked") }),
+  z.object({ status: z.literal("done") }),
+  z.object({ status: z.literal("awaiting_merge"), pr_url: z.string().url() }),
+  z.object({ status: z.literal("merged") }),
+]);
 
 interface PatchCohortStatusPayload {
   status: unknown;
@@ -19,6 +23,35 @@ interface CohortStatusRouteDeps {
 
 function hasStatusField(value: unknown): value is PatchCohortStatusPayload {
   return typeof value === "object" && value !== null && "status" in value;
+}
+
+function runDoneFanout(db: Database, cohort_id: string): { cohort_id: string }[] {
+  const downstream = db
+    .prepare<{ to_cohort_id: string }, [string]>(
+      "SELECT to_cohort_id FROM cohort_dependencies WHERE from_cohort_id = ?",
+    )
+    .all(cohort_id);
+
+  const planned: { cohort_id: string }[] = [];
+  for (const { to_cohort_id } of downstream) {
+    const dep = getCohort(db, to_cohort_id);
+    if (!dep || dep.status !== "waiting") continue;
+
+    const unmetDeps = db
+      .prepare<{ cnt: number }, [string]>(
+        `SELECT COUNT(*) AS cnt
+         FROM cohort_dependencies cd
+         JOIN cohorts c ON c.id = cd.from_cohort_id
+         WHERE cd.to_cohort_id = ? AND c.status != 'done'`,
+      )
+      .get(to_cohort_id);
+
+    if (unmetDeps && unmetDeps.cnt === 0) {
+      db.prepare("UPDATE cohorts SET status = 'planned' WHERE id = ?").run(to_cohort_id);
+      planned.push({ cohort_id: to_cohort_id });
+    }
+  }
+  return planned;
 }
 
 export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps): void {
@@ -40,6 +73,7 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
       // A non-string, missing, or unrecognized status is bad input → 400.
       const FULL_COHORT_STATUSES = new Set([
         "waiting", "planned", "briefing", "brief_review", "building", "done", "blocked",
+        "awaiting_merge", "ready_to_build",
       ]);
       const statusVal = hasStatusField(body) ? body.status : undefined;
       if (typeof statusVal === "string" && FULL_COHORT_STATUSES.has(statusVal)) {
@@ -48,11 +82,13 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
       return c.json({ error: msg }, 400);
     }
 
-    const { status: requestedStatus } = result.data;
+    const parsed = result.data;
     const cohort_id = c.req.param("id");
 
     let updated: Cohort | null = null;
     let emitDone: { cohort_id: string } | null = null;
+    let emitPrMerged: { cohort_id: string } | null = null;
+    let emitPrOpened: { cohort_id: string; pr_url: string } | null = null;
     const emitPlanned: { cohort_id: string }[] = [];
 
     try {
@@ -60,51 +96,42 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
         const cohort = getCohort(db, cohort_id);
         if (!cohort) return "not_found";
 
-        if (requestedStatus === "blocked") {
+        if (parsed.status === "blocked") {
           if (cohort.status === "blocked") return "already_blocked";
           db.prepare(
             "UPDATE cohorts SET status = 'blocked', pre_block_status = ? WHERE id = ?",
           ).run(cohort.status, cohort_id);
           updated = getCohort(db, cohort_id);
-        } else if (requestedStatus === "unblocked") {
+        } else if (parsed.status === "unblocked") {
           if (cohort.status !== "blocked") return "not_blocked";
           if (!cohort.pre_block_status) return "no_pre_block";
           db.prepare(
             "UPDATE cohorts SET status = ?, pre_block_status = NULL WHERE id = ?",
           ).run(cohort.pre_block_status, cohort_id);
           updated = getCohort(db, cohort_id);
-        } else {
-          // done
+        } else if (parsed.status === "done") {
           if (cohort.status !== "building") return "not_building";
           db.prepare("UPDATE cohorts SET status = 'done' WHERE id = ?").run(cohort_id);
           updated = getCohort(db, cohort_id);
           emitDone = { cohort_id };
-
-          // Auto-transition waiting dependents whose all prerequisites are now done
-          const downstream = db
-            .prepare<{ to_cohort_id: string }, [string]>(
-              "SELECT to_cohort_id FROM cohort_dependencies WHERE from_cohort_id = ?",
-            )
-            .all(cohort_id);
-
-          for (const { to_cohort_id } of downstream) {
-            const dep = getCohort(db, to_cohort_id);
-            if (!dep || dep.status !== "waiting") continue;
-
-            const unmetDeps = db
-              .prepare<{ cnt: number }, [string]>(
-                `SELECT COUNT(*) AS cnt
-                 FROM cohort_dependencies cd
-                 JOIN cohorts c ON c.id = cd.from_cohort_id
-                 WHERE cd.to_cohort_id = ? AND c.status != 'done'`,
-              )
-              .get(to_cohort_id);
-
-            if (unmetDeps && unmetDeps.cnt === 0) {
-              db.prepare("UPDATE cohorts SET status = 'planned' WHERE id = ?").run(to_cohort_id);
-              emitPlanned.push({ cohort_id: to_cohort_id });
-            }
-          }
+          emitPlanned.push(...runDoneFanout(db, cohort_id));
+        } else if (parsed.status === "awaiting_merge") {
+          if (cohort.status !== "building") return "not_building";
+          db.prepare("UPDATE cohorts SET status = 'awaiting_merge' WHERE id = ?").run(cohort_id);
+          db.prepare(
+            `UPDATE briefs SET pr_url = COALESCE(pr_url, ?)
+             WHERE id = (SELECT id FROM briefs WHERE cohort_id = ? ORDER BY created_at DESC, id DESC LIMIT 1)`,
+          ).run(parsed.pr_url, cohort_id);
+          updated = getCohort(db, cohort_id);
+          emitPrOpened = { cohort_id, pr_url: parsed.pr_url };
+        } else {
+          // merged
+          if (cohort.status !== "awaiting_merge") return "not_awaiting_merge";
+          db.prepare("UPDATE cohorts SET status = 'done' WHERE id = ?").run(cohort_id);
+          updated = getCohort(db, cohort_id);
+          emitDone = { cohort_id };
+          emitPrMerged = { cohort_id };
+          emitPlanned.push(...runDoneFanout(db, cohort_id));
         }
 
         return null;
@@ -115,11 +142,18 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
       if (error === "not_blocked") return c.json({ error: "cohort is not blocked" }, 409);
       if (error === "no_pre_block") return c.json({ error: "no pre_block_status recorded" }, 409);
       if (error === "not_building") return c.json({ error: "done transition only allowed from building" }, 409);
+      if (error === "not_awaiting_merge") return c.json({ error: "merged transition only allowed from awaiting_merge" }, 409);
     } catch (err) {
       console.error("cohort-status:patch failed", err);
       return c.json({ error: "internal server error" }, 500);
     }
 
+    if (emitPrOpened) {
+      taskTrackerEvents.emit("cohort.pr_opened", emitPrOpened);
+    }
+    if (emitPrMerged) {
+      taskTrackerEvents.emit("cohort.pr_merged", emitPrMerged);
+    }
     if (emitDone) {
       taskTrackerEvents.emit("cohort.done", emitDone);
       for (const p of emitPlanned) {
