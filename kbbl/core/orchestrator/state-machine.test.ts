@@ -32,8 +32,32 @@ describe("COHORT_TRANSITIONS table", () => {
     expect(COHORT_TRANSITIONS.building.pr_merged).toBe("done");
   });
 
+  test("waiting -plan_approved→ briefing", () => {
+    expect(COHORT_TRANSITIONS.waiting.plan_approved).toBe("briefing");
+  });
+
+  test("brief_review -brief_approved_deps_met→ building", () => {
+    expect(COHORT_TRANSITIONS.brief_review.brief_approved_deps_met).toBe("building");
+  });
+
+  test("brief_review -brief_approved_deps_pending→ ready_to_build", () => {
+    expect(COHORT_TRANSITIONS.brief_review.brief_approved_deps_pending).toBe("ready_to_build");
+  });
+
+  test("ready_to_build -dependencies_met→ building", () => {
+    expect(COHORT_TRANSITIONS.ready_to_build.dependencies_met).toBe("building");
+  });
+
+  test("building -pr_opened→ awaiting_merge", () => {
+    expect(COHORT_TRANSITIONS.building.pr_opened).toBe("awaiting_merge");
+  });
+
+  test("awaiting_merge -pr_merged→ done", () => {
+    expect(COHORT_TRANSITIONS.awaiting_merge.pr_merged).toBe("done");
+  });
+
   test("every non-blocked status has block→ blocked", () => {
-    const statuses: CohortStatus[] = ["waiting", "planned", "briefing", "brief_review", "building", "done"];
+    const statuses: CohortStatus[] = ["waiting", "planned", "briefing", "brief_review", "building", "ready_to_build", "awaiting_merge", "done"];
     for (const s of statuses) {
       expect(COHORT_TRANSITIONS[s].block).toBe("blocked");
     }
@@ -92,10 +116,16 @@ describe("applyCohortTransition", () => {
     expect(applyCohortTransition("brief_review", "brief_approved")).toBe("building");
     expect(applyCohortTransition("brief_review", "brief_rejected")).toBe("briefing");
     expect(applyCohortTransition("building", "pr_merged")).toBe("done");
+    expect(applyCohortTransition("waiting", "plan_approved")).toBe("briefing");
+    expect(applyCohortTransition("brief_review", "brief_approved_deps_met")).toBe("building");
+    expect(applyCohortTransition("brief_review", "brief_approved_deps_pending")).toBe("ready_to_build");
+    expect(applyCohortTransition("ready_to_build", "dependencies_met")).toBe("building");
+    expect(applyCohortTransition("building", "pr_opened")).toBe("awaiting_merge");
+    expect(applyCohortTransition("awaiting_merge", "pr_merged")).toBe("done");
   });
 
   test("block from any non-blocked state returns blocked", () => {
-    const statuses: CohortStatus[] = ["waiting", "planned", "briefing", "brief_review", "building", "done"];
+    const statuses: CohortStatus[] = ["waiting", "planned", "briefing", "brief_review", "building", "ready_to_build", "awaiting_merge", "done"];
     for (const s of statuses) {
       expect(applyCohortTransition(s, "block")).toBe("blocked");
     }
@@ -105,6 +135,8 @@ describe("applyCohortTransition", () => {
     expect(applyCohortTransition("blocked", "unblock", "briefing")).toBe("briefing");
     expect(applyCohortTransition("blocked", "unblock", "building")).toBe("building");
     expect(applyCohortTransition("blocked", "unblock", "planned")).toBe("planned");
+    expect(applyCohortTransition("blocked", "unblock", "ready_to_build")).toBe("ready_to_build");
+    expect(applyCohortTransition("blocked", "unblock", "awaiting_merge")).toBe("awaiting_merge");
   });
 
   test("unblock from non-blocked returns error", () => {
