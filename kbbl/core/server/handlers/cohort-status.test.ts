@@ -8,7 +8,7 @@ import { insertPlan } from "../../db/plans";
 import { insertCohort, getCohort, insertCohortDependency } from "../../db/cohorts";
 import { insertBrief, getBrief } from "../../db/briefs";
 import { taskTrackerEvents } from "../../db/events";
-import { mountCohortStatusRoutes } from "./cohort-status";
+import { mountCohortStatusRoutes, applyAwaitingMergeToMerged } from "./cohort-status";
 
 const PROJECT_ID = "proj-1";
 const SPEC_ID = "spec-1";
@@ -313,6 +313,19 @@ describe("plan.completed emission", () => {
     } finally {
       unsub();
     }
+  });
+});
+
+describe("applyAwaitingMergeToMerged — shared helper smoke test", () => {
+  test("transitions cohort to done and returns emits matching PATCH merged behavior", () => {
+    setStatus(COHORT_ID, "awaiting_merge");
+    const result = db.transaction(() => applyAwaitingMergeToMerged(db, COHORT_ID))();
+    expect(getCohort(db, COHORT_ID)!.status).toBe("done");
+    expect(result.updated.status).toBe("done");
+    expect(result.emits.done).toEqual({ cohort_id: COHORT_ID });
+    expect(result.emits.pr_merged).toEqual({ cohort_id: COHORT_ID });
+    expect(result.emits.buildReady).toEqual([]);
+    expect(result.emits.planCompleted).toEqual({ plan_id: PLAN_ID });
   });
 });
 
