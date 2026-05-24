@@ -407,31 +407,39 @@ describe("full dispatch pipeline with MockBackend", () => {
 
     // one build call for A only (B and C deferred)
     const callsAfterA = mockBackend.calls.length;
-    expect(mockBackend.calls[callsAfterA - 1]!.stageName).toBe("build");
-    expect(mockBackend.calls[callsAfterA - 1]!.inputId).toBe(bA);
+    const buildCallA = mockBackend.calls[callsAfterA - 1];
+    expect(buildCallA).toBeDefined();
+    expect(buildCallA?.stageName).toBe("build");
+    expect(buildCallA?.inputId).toBe(bA);
 
     // 7. Drive A to done → B's last dep met → B enters building; C still ready_to_build
     const doneA = await patch(app, `/cohorts/${cohortA.id}/status`, { status: "done" });
     expect(doneA.status).toBe(200);
     await flushAsync();
 
-    expect(db.prepare<{ status: string }, [string]>("SELECT status FROM cohorts WHERE id = ?").get(cohortB.id)!.status).toBe("building");
-    expect(db.prepare<{ status: string }, [string]>("SELECT status FROM cohorts WHERE id = ?").get(cohortC.id)!.status).toBe("ready_to_build");
+    expect(db.prepare<{ status: string }, [string]>("SELECT status FROM cohorts WHERE id = ?").get(cohortB.id)?.status).toBe("building");
+    expect(db.prepare<{ status: string }, [string]>("SELECT status FROM cohorts WHERE id = ?").get(cohortC.id)?.status).toBe("ready_to_build");
 
     const callsAfterADone = mockBackend.calls.length;
-    expect(mockBackend.calls[callsAfterADone - 1]!.stageName).toBe("build");
-    expect(mockBackend.calls[callsAfterADone - 1]!.inputId).toBe(bB);
+    expect(callsAfterADone).toBe(callsAfterA + 1);
+    const buildCallB = mockBackend.calls[callsAfterA];
+    expect(buildCallB).toBeDefined();
+    expect(buildCallB?.stageName).toBe("build");
+    expect(buildCallB?.inputId).toBe(bB);
 
     // 8. Drive B to done → C's last dep met → C enters building
     const doneB = await patch(app, `/cohorts/${cohortB.id}/status`, { status: "done" });
     expect(doneB.status).toBe(200);
     await flushAsync();
 
-    expect(db.prepare<{ status: string }, [string]>("SELECT status FROM cohorts WHERE id = ?").get(cohortC.id)!.status).toBe("building");
+    expect(db.prepare<{ status: string }, [string]>("SELECT status FROM cohorts WHERE id = ?").get(cohortC.id)?.status).toBe("building");
 
     const callsAfterBDone = mockBackend.calls.length;
-    expect(mockBackend.calls[callsAfterBDone - 1]!.stageName).toBe("build");
-    expect(mockBackend.calls[callsAfterBDone - 1]!.inputId).toBe(bC);
+    expect(callsAfterBDone).toBe(callsAfterADone + 1);
+    const buildCallC = mockBackend.calls[callsAfterADone];
+    expect(buildCallC).toBeDefined();
+    expect(buildCallC?.stageName).toBe("build");
+    expect(buildCallC?.inputId).toBe(bC);
   });
 
   test("POST /briefs/:id/build returns 404 for unknown brief", async () => {

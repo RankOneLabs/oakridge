@@ -62,13 +62,13 @@ function runDoneFanout(db: Database, cohort_id: string): DoneFanoutResult {
 
     // New flow: ready_to_build → building when last dep resolves
     if (dep.status === "ready_to_build" && unmetDeps && unmetDeps.cnt === 0) {
-      db.prepare("UPDATE cohorts SET status = 'building' WHERE id = ?").run(to_cohort_id);
       const brief = getLatestApprovedBriefByCohort(db, to_cohort_id);
       if (!brief) {
         console.error(
           JSON.stringify({ kbbl: "cohort-status", warn: "ready_to_build cohort has no approved brief", cohort_id: to_cohort_id }),
         );
       } else {
+        db.prepare("UPDATE cohorts SET status = 'building' WHERE id = ?").run(to_cohort_id);
         buildReady.push({ cohort_id: to_cohort_id, brief_id: brief.id });
       }
     }

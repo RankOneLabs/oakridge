@@ -72,8 +72,8 @@ export function mountBriefStatusRoutes(app: Hono, deps: BriefStatusRouteDeps): v
           depsMet = nextCohortStatus === "building";
 
           const cohortResult = db.prepare(
-            `UPDATE cohorts SET status = '${nextCohortStatus}' WHERE id = ? AND status = 'brief_review'`,
-          ).run(brief.cohort_id);
+            "UPDATE cohorts SET status = ? WHERE id = ? AND status = 'brief_review'",
+          ).run(nextCohortStatus, brief.cohort_id);
           if (cohortResult.changes === 0) return "cohort_not_in_brief_review";
           db.prepare("UPDATE briefs SET status = ? WHERE id = ?").run(nextStatus, brief_id);
           freeze(db, "build_brief", brief_id);
@@ -104,9 +104,10 @@ export function mountBriefStatusRoutes(app: Hono, deps: BriefStatusRouteDeps): v
     }
 
     if (emitApproved) {
+      const { cohort_id: approvedCohortId } = emitApproved;
       taskTrackerEvents.emit("brief.approved", emitApproved);
       if (depsMet) {
-        taskTrackerEvents.emit("cohort.build_ready", { cohort_id: emitApproved.cohort_id, brief_id });
+        taskTrackerEvents.emit("cohort.build_ready", { cohort_id: approvedCohortId, brief_id });
       }
     }
     if (emitRejected) taskTrackerEvents.emit("brief.rejected", emitRejected);
