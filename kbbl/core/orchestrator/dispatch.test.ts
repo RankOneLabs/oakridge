@@ -193,22 +193,22 @@ describe("full dispatch pipeline with MockBackend", () => {
     expect(cohortRes.status).toBe(201);
     const cohort = (await cohortRes.json()) as { id: string };
 
-    // 3. Approve plan → cohort.entered_planned → planner2 dispatch + briefing_started
+    // 3. Approve plan → plan.approved → planner2_batch dispatch; all waiting cohorts → briefing
     const approveRes = await patch(app, `/plans/${plan.id}/status`, { status: "approved" });
     expect(approveRes.status).toBe(200);
 
     await flushAsync();
     expect(mockBackend.calls).toHaveLength(2);
-    expect(mockBackend.calls[1]!.stageName).toBe("planner2");
-    expect(mockBackend.calls[1]!.inputId).toBe(cohort.id);
+    expect(mockBackend.calls[1]!.stageName).toBe("planner2_batch");
+    expect(mockBackend.calls[1]!.inputId).toBe(plan.id);
 
-    // cohort.briefing_started should have transitioned cohort to briefing
+    // all waiting cohorts should have transitioned directly to briefing
     const cohortAfterPlanned = db.prepare<{ status: string }, [string]>("SELECT status FROM cohorts WHERE id = ?").get(cohort.id);
     expect(cohortAfterPlanned!.status).toBe("briefing");
 
-    // current_session_ref on cohort updated
-    const cohortRefRow = db.prepare<{ current_session_ref: string | null }, [string]>("SELECT current_session_ref FROM cohorts WHERE id = ?").get(cohort.id);
-    expect(cohortRefRow!.current_session_ref).toBe("mock-2");
+    // current_session_ref written onto plan (planner2_batch stores on plan, not cohort)
+    const planRefRow = db.prepare<{ current_session_ref: string | null }, [string]>("SELECT current_session_ref FROM plans WHERE id = ?").get(plan.id);
+    expect(planRefRow!.current_session_ref).toBe("mock-2");
 
     // 4. Agent posts brief → brief.submitted → cohort: briefing → brief_review
     const briefRes = await post(app, "/briefs", {
@@ -226,7 +226,7 @@ describe("full dispatch pipeline with MockBackend", () => {
     const cohortAfterBrief = db.prepare<{ status: string }, [string]>("SELECT status FROM cohorts WHERE id = ?").get(cohort.id);
     expect(cohortAfterBrief!.status).toBe("brief_review");
 
-    // 5. Approve brief → brief.approved → build dispatch
+    // 5. Approve brief → deps met (no deps) → cohort.build_ready → build dispatch
     const approveBriefRes = await patch(app, `/briefs/${brief.id}/status`, { status: "approved" });
     expect(approveBriefRes.status).toBe(200);
 
@@ -324,6 +324,122 @@ describe("full dispatch pipeline with MockBackend", () => {
     if (!planRow) throw new Error("expected plan row after planner2_batch dispatch");
     expect(planRow.current_session_ref).toBe(sessionRef);
     expect(planRow.current_session_stage).toBe("planner2_batch");
+  });
+
+  test("plan-approved fan-out -> planner2_batch -> dep-aware brief approval -> ready_to_build advancement", async () => {
+    // 1. Create project + spec + plan
+    const projRes = await post(app, "/projects", { name: "fanout-test", repo_path: "/tmp/fanout-repo" });
+    const proj = (await projRes.json()) as { id: string };
+
+    const specRes = await post(app, "/specs", { project_id: proj.id, title: "Fanout Spec", notes: "dep chain" });
+    const spec = (await specRes.json()) as { id: string };
+    await flushAsync(); // planner1 fires — consume
+
+    const planRes = await post(app, "/plans", { spec_id: spec.id });
+    const plan = (await planRes.json()) as { id: string };
+
+    // 2. Create 3 cohorts: A → B → C
+    const cohortARes = await post(app, "/cohorts", { plan_id: plan.id, title: "Cohort A", position: 1 });
+    const cohortA = (await cohortARes.json()) as { id: string };
+    const cohortBRes = await post(app, "/cohorts", { plan_id: plan.id, title: "Cohort B", position: 2 });
+    const cohortB = (await cohortBRes.json()) as { id: string };
+    const cohortCRes = await post(app, "/cohorts", { plan_id: plan.id, title: "Cohort C", position: 3 });
+    const cohortC = (await cohortCRes.json()) as { id: string };
+
+    // 3. Wire deps: A→B, B→C
+    expect((await post(app, "/cohort-dependencies", { from_cohort_id: cohortA.id, to_cohort_id: cohortB.id })).status).toBe(201);
+    expect((await post(app, "/cohort-dependencies", { from_cohort_id: cohortB.id, to_cohort_id: cohortC.id })).status).toBe(201);
+
+    const callsBefore = mockBackend.calls.length;
+
+    // 4. Approve plan → plan.approved → exactly ONE planner2_batch call for the whole plan
+    const approveRes = await patch(app, `/plans/${plan.id}/status`, { status: "approved" });
+    expect(approveRes.status).toBe(200);
+    await flushAsync();
+
+    expect(mockBackend.calls.length).toBe(callsBefore + 1);
+    expect(mockBackend.calls[callsBefore]!.stageName).toBe("planner2_batch");
+
+    // all three cohorts should be briefing
+    for (const id of [cohortA.id, cohortB.id, cohortC.id]) {
+      expect(db.prepare<{ status: string }, [string]>("SELECT status FROM cohorts WHERE id = ?").get(id)!.status).toBe("briefing");
+    }
+
+    // 5. Post briefs for A, B, C — each should enter brief_review
+    const postBrief = async (cohort_id: string) => {
+      const r = await post(app, "/briefs", {
+        cohort_id,
+        goal: "do it",
+        files_in_scope: [],
+        decisions_made: [],
+        approaches_rejected: [],
+        next_action: "start",
+      });
+      expect(r.status).toBe(201);
+      const b = (await r.json()) as { id: string };
+      expect(db.prepare<{ status: string }, [string]>("SELECT status FROM cohorts WHERE id = ?").get(cohort_id)!.status).toBe("brief_review");
+      return b.id;
+    };
+    const bA = await postBrief(cohortA.id);
+    const bB = await postBrief(cohortB.id);
+    const bC = await postBrief(cohortC.id);
+
+    // 6. Approve briefs in order A → B → C.
+    //    bA: A has no deps → building + build dispatch.
+    //    bB: B depends on A (building, not done) → ready_to_build (no build dispatch).
+    //    bC: C depends on B (ready_to_build, not done) → ready_to_build (no build dispatch).
+    const approveA = await patch(app, `/briefs/${bA}/status`, { status: "approved" });
+    expect(approveA.status).toBe(200);
+    await flushAsync();
+    expect(db.prepare<{ status: string }, [string]>("SELECT status FROM cohorts WHERE id = ?").get(cohortA.id)!.status).toBe("building");
+
+    const approveB = await patch(app, `/briefs/${bB}/status`, { status: "approved" });
+    expect(approveB.status).toBe(200);
+    await flushAsync();
+
+    const approveC = await patch(app, `/briefs/${bC}/status`, { status: "approved" });
+    expect(approveC.status).toBe(200);
+    await flushAsync();
+
+    // After all three approved: A building, B and C ready_to_build
+    expect(db.prepare<{ status: string }, [string]>("SELECT status FROM cohorts WHERE id = ?").get(cohortB.id)!.status).toBe("ready_to_build");
+    expect(db.prepare<{ status: string }, [string]>("SELECT status FROM cohorts WHERE id = ?").get(cohortC.id)!.status).toBe("ready_to_build");
+
+    // one build call for A only (B and C deferred)
+    const callsAfterA = mockBackend.calls.length;
+    const buildCallA = mockBackend.calls[callsAfterA - 1];
+    expect(buildCallA).toBeDefined();
+    expect(buildCallA?.stageName).toBe("build");
+    expect(buildCallA?.inputId).toBe(bA);
+
+    // 7. Drive A to done → B's last dep met → B enters building; C still ready_to_build
+    const doneA = await patch(app, `/cohorts/${cohortA.id}/status`, { status: "done" });
+    expect(doneA.status).toBe(200);
+    await flushAsync();
+
+    expect(db.prepare<{ status: string }, [string]>("SELECT status FROM cohorts WHERE id = ?").get(cohortB.id)?.status).toBe("building");
+    expect(db.prepare<{ status: string }, [string]>("SELECT status FROM cohorts WHERE id = ?").get(cohortC.id)?.status).toBe("ready_to_build");
+
+    const callsAfterADone = mockBackend.calls.length;
+    expect(callsAfterADone).toBe(callsAfterA + 1);
+    const buildCallB = mockBackend.calls[callsAfterA];
+    expect(buildCallB).toBeDefined();
+    expect(buildCallB?.stageName).toBe("build");
+    expect(buildCallB?.inputId).toBe(bB);
+
+    // 8. Drive B to done → C's last dep met → C enters building
+    const doneB = await patch(app, `/cohorts/${cohortB.id}/status`, { status: "done" });
+    expect(doneB.status).toBe(200);
+    await flushAsync();
+
+    expect(db.prepare<{ status: string }, [string]>("SELECT status FROM cohorts WHERE id = ?").get(cohortC.id)?.status).toBe("building");
+
+    const callsAfterBDone = mockBackend.calls.length;
+    expect(callsAfterBDone).toBe(callsAfterADone + 1);
+    const buildCallC = mockBackend.calls[callsAfterADone];
+    expect(buildCallC).toBeDefined();
+    expect(buildCallC?.stageName).toBe("build");
+    expect(buildCallC?.inputId).toBe(bC);
   });
 
   test("POST /briefs/:id/build returns 404 for unknown brief", async () => {

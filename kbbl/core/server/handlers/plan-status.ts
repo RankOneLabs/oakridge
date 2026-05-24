@@ -5,7 +5,7 @@ import { getPlan } from "../../db/plans";
 import { freeze } from "../../review/freeze";
 import { taskTrackerEvents } from "../../db/events";
 import { PLAN_TRANSITIONS } from "../../orchestrator/state-machine";
-import type { Plan, Cohort } from "../../types/task-tracker";
+import type { Plan } from "../../types/task-tracker";
 
 const PatchPlanStatusSchema = z.object({
   status: z.enum(["approved", "rejected"]),
@@ -42,7 +42,7 @@ export function mountPlanStatusRoutes(app: Hono, deps: PlanStatusRouteDeps): voi
     let updated: Plan | null = null;
     let emitApproved: { plan_id: string; spec_id: string } | null = null;
     let emitRejected: { plan_id: string; spec_id: string } | null = null;
-    const emitPlanned: { cohort_id: string }[] = [];
+    const emitBriefingStarted: { cohort_id: string }[] = [];
 
     try {
       const error = db.transaction((): string | null => {
@@ -65,21 +65,16 @@ export function mountPlanStatusRoutes(app: Hono, deps: PlanStatusRouteDeps): voi
             "UPDATE specs SET status = 'planning_done' WHERE id = ? AND status = 'plan_review'",
           ).run(plan.spec_id);
 
-          // Promote leaf cohorts (no inbound dependencies) waiting → planned
-          const leafCohorts = db
-            .prepare<Cohort, [string]>(
-              `SELECT c.* FROM cohorts c
-               WHERE c.plan_id = ?
-                 AND c.status = 'waiting'
-                 AND NOT EXISTS (
-                   SELECT 1 FROM cohort_dependencies cd WHERE cd.to_cohort_id = c.id
-                 )`,
+          // Promote all waiting cohorts directly to briefing
+          const waitingCohorts = db
+            .prepare<{ id: string }, [string]>(
+              "SELECT id FROM cohorts WHERE plan_id = ? AND status = 'waiting'",
             )
             .all(plan_id);
 
-          for (const cohort of leafCohorts) {
-            db.prepare("UPDATE cohorts SET status = 'planned' WHERE id = ?").run(cohort.id);
-            emitPlanned.push({ cohort_id: cohort.id });
+          for (const cohort of waitingCohorts) {
+            db.prepare("UPDATE cohorts SET status = 'briefing' WHERE id = ?").run(cohort.id);
+            emitBriefingStarted.push({ cohort_id: cohort.id });
           }
 
           updated = getPlan(db, plan_id);
@@ -103,11 +98,10 @@ export function mountPlanStatusRoutes(app: Hono, deps: PlanStatusRouteDeps): voi
       return c.json({ error: "internal server error" }, 500);
     }
 
-    // Emit events after transaction commits (open question 2b resolution)
     if (emitApproved) {
       taskTrackerEvents.emit("plan.approved", emitApproved);
-      for (const p of emitPlanned) {
-        taskTrackerEvents.emit("cohort.entered_planned", p);
+      for (const p of emitBriefingStarted) {
+        taskTrackerEvents.emit("cohort.briefing_started", p);
       }
     }
     if (emitRejected) {
