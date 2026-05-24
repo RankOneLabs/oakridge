@@ -1,9 +1,9 @@
 import { z } from "zod";
 
-// Mirrors the stages table's name column (see migrations/008_seed_stages.sql)
-// and the CHECK constraint on current_session_stage (009_session_stage.sql).
-// Kept narrow so the build guard and UI can branch on stage with a typed union.
-export const SessionStageSchema = z.enum(["planner1", "planner2", "build"]);
+// Mirrors the stages table's name column (see migrations/008_seed_stages.sql).
+// plans.current_session_stage has no DB CHECK (migration 010 comment); Zod is
+// authoritative. Cohort 2 added planner2_batch; cohort 4 adds planner3.
+export const SessionStageSchema = z.enum(["planner1", "planner2", "planner2_batch", "planner3", "build"]);
 export type SessionStage = z.infer<typeof SessionStageSchema>;
 
 export const SpecSchema = z.object({
@@ -73,6 +73,7 @@ export const BriefSchema = z.object({
   debrief: z.string().nullable(),
   pr_url: z.string().url().nullable(),
   rejection_reason: z.string().nullable(),
+  deviations: z.array(z.object({ from: z.string(), actual: z.string(), downstream_impact: z.string() })).nullable(),
   created_at: z.string(),
 });
 export type Brief = z.infer<typeof BriefSchema>;
