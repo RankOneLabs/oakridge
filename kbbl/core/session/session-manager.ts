@@ -72,6 +72,47 @@ export interface SessionManagerOpts {
   config: KbblConfig;
 }
 
+interface JsonObjectPayload {
+  readonly [key: string]: unknown;
+}
+
+interface ArchivedSessionStartedPayload extends JsonObjectPayload {
+  readonly workdir?: unknown;
+  readonly name?: unknown;
+  readonly parentCcSid?: unknown;
+  readonly parentOakridgeSid?: unknown;
+  readonly artifactId?: unknown;
+  readonly tools?: unknown;
+  readonly yoloMode?: unknown;
+  readonly worktreePath?: unknown;
+  readonly worktreeBranch?: unknown;
+  readonly worktreeBaseRef?: unknown;
+  readonly projectWorkdir?: unknown;
+  readonly model?: unknown;
+}
+
+interface ArchivedCcSessionObservedPayload extends JsonObjectPayload {
+  readonly cc_session_id?: unknown;
+}
+
+function payloadObject(payload: unknown): JsonObjectPayload {
+  return (
+    typeof payload === "object" && payload !== null ? payload : {}
+  ) as JsonObjectPayload;
+}
+
+function archivedSessionStartedPayload(
+  payload: unknown,
+): ArchivedSessionStartedPayload {
+  return payloadObject(payload);
+}
+
+function archivedCcSessionObservedPayload(
+  payload: unknown,
+): ArchivedCcSessionObservedPayload {
+  return payloadObject(payload);
+}
+
 export interface CreateSessionOpts {
   workdir: string;
   name?: string;
@@ -463,7 +504,7 @@ export class SessionManager {
         continue;
       }
       if (evt.type !== "session_started") continue;
-      const payload = (evt.payload ?? {}) as Record<string, unknown>;
+      const payload = archivedSessionStartedPayload(evt.payload);
       const worktreeBranch =
         typeof payload.worktreeBranch === "string"
           ? payload.worktreeBranch
@@ -1296,49 +1337,58 @@ async function loadArchivedSnapshot(
       continue;
     }
     lastActivityTs = evt.ts;
-    const payload = (evt.payload ?? {}) as Record<string, unknown>;
+    const payload = payloadObject(evt.payload);
     switch (evt.type) {
       case "session_started": {
+        const sessionStartedPayload = archivedSessionStartedPayload(payload);
         if (createdAt === null) createdAt = evt.ts;
-        if (typeof payload.workdir === "string") workdir = payload.workdir;
-        if (typeof payload.name === "string") name = payload.name;
-        if (typeof payload.parentCcSid === "string") {
-          parentCcSid = payload.parentCcSid;
+        if (typeof sessionStartedPayload.workdir === "string") {
+          workdir = sessionStartedPayload.workdir;
         }
-        if (typeof payload.parentOakridgeSid === "string") {
-          parentOakridgeSid = payload.parentOakridgeSid;
+        if (typeof sessionStartedPayload.name === "string") {
+          name = sessionStartedPayload.name;
         }
-        if (typeof payload.artifactId === "string") {
+        if (typeof sessionStartedPayload.parentCcSid === "string") {
+          parentCcSid = sessionStartedPayload.parentCcSid;
+        }
+        if (typeof sessionStartedPayload.parentOakridgeSid === "string") {
+          parentOakridgeSid = sessionStartedPayload.parentOakridgeSid;
+        }
+        if (typeof sessionStartedPayload.artifactId === "string") {
           // Mirror POST /sessions validation: trim, ignore empty, and
           // ignore over-cap so malformed/legacy JSONL can't yield
           // artifactId: "" or an unbounded tag in archived snapshots.
           // The Session constructor enforces the same invariants on
           // the live path; this is the read-side fallback.
-          const trimmed = payload.artifactId.trim();
+          const trimmed = sessionStartedPayload.artifactId.trim();
           if (trimmed && trimmed.length <= MAX_ARTIFACT_ID_LENGTH) {
             artifactId = trimmed as ArtifactId;
           }
         }
-        if (typeof payload.worktreePath === "string") {
-          worktreePath = payload.worktreePath;
+        if (typeof sessionStartedPayload.worktreePath === "string") {
+          worktreePath = sessionStartedPayload.worktreePath;
         }
-        if (typeof payload.worktreeBranch === "string") {
-          worktreeBranch = payload.worktreeBranch;
+        if (typeof sessionStartedPayload.worktreeBranch === "string") {
+          worktreeBranch = sessionStartedPayload.worktreeBranch;
         }
-        if (typeof payload.worktreeBaseRef === "string") {
-          worktreeBaseRef = payload.worktreeBaseRef;
+        if (typeof sessionStartedPayload.worktreeBaseRef === "string") {
+          worktreeBaseRef = sessionStartedPayload.worktreeBaseRef;
         }
-        if (typeof payload.projectWorkdir === "string") {
-          projectWorkdir = payload.projectWorkdir;
+        if (typeof sessionStartedPayload.projectWorkdir === "string") {
+          projectWorkdir = sessionStartedPayload.projectWorkdir;
         }
-        if (typeof payload.model === "string" && isAllowedModel(payload.model)) {
-          model = payload.model;
+        if (
+          typeof sessionStartedPayload.model === "string" &&
+          isAllowedModel(sessionStartedPayload.model)
+        ) {
+          model = sessionStartedPayload.model;
         }
         break;
       }
       case "cc_session_id_observed": {
-        if (typeof payload.cc_session_id === "string") {
-          ccSid = payload.cc_session_id;
+        const ccPayload = archivedCcSessionObservedPayload(payload);
+        if (typeof ccPayload.cc_session_id === "string") {
+          ccSid = ccPayload.cc_session_id;
         }
         break;
       }
