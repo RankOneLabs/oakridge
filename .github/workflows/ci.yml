@@ -18,7 +18,7 @@ jobs:
       - run: bun run typecheck
 
   kbbl-tests:
-    name: kbbl tests (bun)
+    name: kbbl backend tests (bun)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
