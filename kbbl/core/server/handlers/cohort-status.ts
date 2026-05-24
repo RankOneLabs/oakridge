@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { Hono } from "hono";
 import type { Database } from "bun:sqlite";
 import { getCohort } from "../../db/cohorts";
+import { getLatestApprovedBriefByCohort } from "../../db/briefs";
 import { taskTrackerEvents } from "../../db/events";
 import type { Cohort } from "../../types/task-tracker";
 
@@ -25,7 +26,12 @@ function hasStatusField(value: unknown): value is PatchCohortStatusPayload {
   return typeof value === "object" && value !== null && "status" in value;
 }
 
-function runDoneFanout(db: Database, cohort_id: string): { cohort_id: string }[] {
+interface DoneFanoutResult {
+  planned: { cohort_id: string }[];
+  buildReady: { cohort_id: string; brief_id: string }[];
+}
+
+function runDoneFanout(db: Database, cohort_id: string): DoneFanoutResult {
   const downstream = db
     .prepare<{ to_cohort_id: string }, [string]>(
       "SELECT to_cohort_id FROM cohort_dependencies WHERE from_cohort_id = ?",
@@ -33,9 +39,11 @@ function runDoneFanout(db: Database, cohort_id: string): { cohort_id: string }[]
     .all(cohort_id);
 
   const planned: { cohort_id: string }[] = [];
+  const buildReady: { cohort_id: string; brief_id: string }[] = [];
+
   for (const { to_cohort_id } of downstream) {
     const dep = getCohort(db, to_cohort_id);
-    if (!dep || dep.status !== "waiting") continue;
+    if (!dep) continue;
 
     const unmetDeps = db
       .prepare<{ cnt: number }, [string]>(
@@ -46,22 +54,32 @@ function runDoneFanout(db: Database, cohort_id: string): { cohort_id: string }[]
       )
       .get(to_cohort_id);
 
-    if (unmetDeps && unmetDeps.cnt === 0) {
+    // Legacy: waiting → planned for old-flow cohorts
+    if (dep.status === "waiting" && unmetDeps && unmetDeps.cnt === 0) {
       db.prepare("UPDATE cohorts SET status = 'planned' WHERE id = ?").run(to_cohort_id);
       planned.push({ cohort_id: to_cohort_id });
     }
+
+    // New flow: ready_to_build → building when last dep resolves
+    if (dep.status === "ready_to_build" && unmetDeps && unmetDeps.cnt === 0) {
+      db.prepare("UPDATE cohorts SET status = 'building' WHERE id = ?").run(to_cohort_id);
+      const brief = getLatestApprovedBriefByCohort(db, to_cohort_id);
+      if (!brief) {
+        console.error(
+          JSON.stringify({ kbbl: "cohort-status", warn: "ready_to_build cohort has no approved brief", cohort_id: to_cohort_id }),
+        );
+      } else {
+        buildReady.push({ cohort_id: to_cohort_id, brief_id: brief.id });
+      }
+    }
   }
-  return planned;
+
+  return { planned, buildReady };
 }
 
-// Statuses the orchestrator manages internally — operator cannot set them directly.
-const ORCHESTRATOR_ONLY_STATUSES = new Set([
-  "waiting", "planned", "briefing", "brief_review", "building", "ready_to_build",
-]);
-
-// Statuses the operator may set. Validation failure means bad payload, not wrong caller.
-const OPERATOR_SETTABLE_STATUSES = new Set([
-  "blocked", "unblocked", "done", "awaiting_merge", "merged",
+const FULL_COHORT_STATUSES = new Set([
+  "waiting", "planned", "briefing", "brief_review", "building", "done", "blocked",
+  "awaiting_merge", "ready_to_build",
 ]);
 
 export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps): void {
@@ -78,16 +96,12 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
     const result = PatchCohortStatusSchema.safeParse(body);
     if (!result.success) {
       const msg = result.error.issues[0]?.message ?? "invalid body";
+      // A string status that is a real CohortStatus but not operator-settable
+      // is an orchestrator-managed transition (e.g. "planned", "briefing").
+      // A non-string, missing, or unrecognized status is bad input → 400.
       const statusVal = hasStatusField(body) ? body.status : undefined;
-      if (typeof statusVal === "string") {
-        // Orchestrator-managed statuses are not operator-settable → wrong caller.
-        if (ORCHESTRATOR_ONLY_STATUSES.has(statusVal)) {
-          return c.json({ error: "transition is orchestrator-only" }, 422);
-        }
-        // Operator-settable status with malformed payload → surface the validation error.
-        if (OPERATOR_SETTABLE_STATUSES.has(statusVal)) {
-          return c.json({ error: msg }, 400);
-        }
+      if (typeof statusVal === "string" && FULL_COHORT_STATUSES.has(statusVal)) {
+        return c.json({ error: "transition is orchestrator-only" }, 422);
       }
       return c.json({ error: msg }, 400);
     }
@@ -100,6 +114,7 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
     let emitPrMerged: { cohort_id: string } | null = null;
     let emitPrOpened: { cohort_id: string; pr_url: string } | null = null;
     const emitPlanned: { cohort_id: string }[] = [];
+    const emitBuildReady: { cohort_id: string; brief_id: string }[] = [];
 
     try {
       const error = db.transaction((): string | null => {
@@ -124,9 +139,11 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
           db.prepare("UPDATE cohorts SET status = 'done' WHERE id = ?").run(cohort_id);
           updated = getCohort(db, cohort_id);
           emitDone = { cohort_id };
-          emitPlanned.push(...runDoneFanout(db, cohort_id));
+          const fanout = runDoneFanout(db, cohort_id);
+          emitPlanned.push(...fanout.planned);
+          emitBuildReady.push(...fanout.buildReady);
         } else if (parsed.status === "awaiting_merge") {
-          if (cohort.status !== "building") return "not_building_for_await";
+          if (cohort.status !== "building") return "not_building_for_merge";
           db.prepare("UPDATE cohorts SET status = 'awaiting_merge' WHERE id = ?").run(cohort_id);
           db.prepare(
             `UPDATE briefs SET pr_url = COALESCE(pr_url, ?)
@@ -134,17 +151,16 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
           ).run(parsed.pr_url, cohort_id);
           updated = getCohort(db, cohort_id);
           emitPrOpened = { cohort_id, pr_url: parsed.pr_url };
-        } else if (parsed.status === "merged") {
+        } else {
+          // merged
           if (cohort.status !== "awaiting_merge") return "not_awaiting_merge";
           db.prepare("UPDATE cohorts SET status = 'done' WHERE id = ?").run(cohort_id);
           updated = getCohort(db, cohort_id);
           emitDone = { cohort_id };
           emitPrMerged = { cohort_id };
-          emitPlanned.push(...runDoneFanout(db, cohort_id));
-        } else {
-          const _exhaustive: never = parsed;
-          void _exhaustive;
-          return "unhandled_status";
+          const fanout = runDoneFanout(db, cohort_id);
+          emitPlanned.push(...fanout.planned);
+          emitBuildReady.push(...fanout.buildReady);
         }
 
         return null;
@@ -155,9 +171,8 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
       if (error === "not_blocked") return c.json({ error: "cohort is not blocked" }, 409);
       if (error === "no_pre_block") return c.json({ error: "no pre_block_status recorded" }, 409);
       if (error === "not_building") return c.json({ error: "done transition only allowed from building" }, 409);
-      if (error === "not_building_for_await") return c.json({ error: "awaiting_merge transition only allowed from building" }, 409);
+      if (error === "not_building_for_merge") return c.json({ error: "awaiting_merge transition only allowed from building" }, 409);
       if (error === "not_awaiting_merge") return c.json({ error: "merged transition only allowed from awaiting_merge" }, 409);
-      if (error === "unhandled_status") return c.json({ error: "internal server error" }, 500);
     } catch (err) {
       console.error("cohort-status:patch failed", err);
       return c.json({ error: "internal server error" }, 500);
@@ -173,6 +188,9 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
       taskTrackerEvents.emit("cohort.done", emitDone);
       for (const p of emitPlanned) {
         taskTrackerEvents.emit("cohort.entered_planned", p);
+      }
+      for (const p of emitBuildReady) {
+        taskTrackerEvents.emit("cohort.build_ready", p);
       }
     }
 

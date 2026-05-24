@@ -66,7 +66,7 @@ function get(path: string) {
 }
 
 describe("full lifecycle — two-cohort plan with dependency", () => {
-  test("POST /projects → /specs → /plans → /cohorts (A,B) → /cohort-dependencies (A→B) → approve plan → A planned B waiting → POST /briefs → A brief_review → approve brief → A building → mark A done → B planned", async () => {
+  test("POST /projects → /specs → /plans → /cohorts (A,B) → /cohort-dependencies (A→B) → approve plan → A+B briefing → POST /briefs for A → A brief_review → approve brief → A building → mark A done", async () => {
     const fired: Partial<Record<keyof TaskTrackerEventMap, unknown[]>> = {};
     const unsubs: (() => void)[] = [];
 
@@ -81,7 +81,7 @@ describe("full lifecycle — two-cohort plan with dependency", () => {
     };
 
     track("plan.approved");
-    track("cohort.entered_planned");
+    track("cohort.briefing_started");
     track("brief.submitted");
     track("brief.approved");
     track("cohort.done");
@@ -133,27 +133,25 @@ describe("full lifecycle — two-cohort plan with dependency", () => {
       const approvedPlan = (await approveRes.json()) as { status: string };
       expect(approvedPlan.status).toBe("approved");
 
-      // A should be planned (leaf), B still waiting (has dep on A)
+      // New flow: all waiting cohorts go directly to briefing on plan approval
       const aAfterApproval = (await (await get(`/cohorts/${cohortA.id}`)).json()) as { status: string };
-      expect(aAfterApproval.status).toBe("planned");
+      expect(aAfterApproval.status).toBe("briefing");
 
       const bAfterApproval = (await (await get(`/cohorts/${cohortB.id}`)).json()) as { status: string };
-      expect(bAfterApproval.status).toBe("waiting");
+      expect(bAfterApproval.status).toBe("briefing");
 
-      // Events: plan.approved + cohort.entered_planned for A only
+      // Events: plan.approved + cohort.briefing_started for both A and B
       expect((fired["plan.approved"] as unknown[]).length).toBe(1);
-      expect((fired["cohort.entered_planned"] as unknown[]).length).toBe(1);
-      expect((fired["cohort.entered_planned"] as Array<{ cohort_id: string }>)[0]!.cohort_id).toBe(cohortA.id);
+      expect((fired["cohort.briefing_started"] as unknown[]).length).toBe(2);
+      const briefingIds = (fired["cohort.briefing_started"] as Array<{ cohort_id: string }>).map((e) => e.cohort_id);
+      expect(briefingIds).toContain(cohortA.id);
+      expect(briefingIds).toContain(cohortB.id);
 
       // spec should be planning_done
       const specAfterApproval = (await (await get(`/specs/${spec.id}`)).json()) as { status: string };
       expect(specAfterApproval.status).toBe("planning_done");
 
-      // --- POST /briefs for A (cohort must be in briefing first; transition planned→briefing is
-      //     orchestrator-driven in a real flow, but for the test we manually advance it) ---
-      // Advance A to briefing via a direct DB update to match the test scenario from the brief
-      db.prepare("UPDATE cohorts SET status = 'briefing' WHERE id = ?").run(cohortA.id);
-
+      // --- POST /briefs for A (cohort A is already in briefing from plan approval) ---
       const briefRes = await post("/briefs", {
         cohort_id: cohortA.id,
         goal: "Build the feature",
@@ -189,17 +187,14 @@ describe("full lifecycle — two-cohort plan with dependency", () => {
       const doneCohort = (await doneRes.json()) as { status: string };
       expect(doneCohort.status).toBe("done");
 
-      // B should now be planned (its only dep, A, is done)
+      // B was already briefing since plan approval; A done doesn't change it
+      // (legacy fan-out only fires for waiting cohorts; new fan-out only fires for ready_to_build)
       const bAfterADone = (await (await get(`/cohorts/${cohortB.id}`)).json()) as { status: string };
-      expect(bAfterADone.status).toBe("planned");
+      expect(bAfterADone.status).toBe("briefing");
 
-      // Events: cohort.done for A, cohort.entered_planned for B
+      // Events: cohort.done for A; cohort.briefing_started count unchanged (2, from plan approval)
       expect((fired["cohort.done"] as unknown[]).length).toBe(1);
-      // Total cohort.entered_planned: 1 (A from plan approval) + 1 (B from A done) = 2
-      expect((fired["cohort.entered_planned"] as unknown[]).length).toBe(2);
-      const plannedIds = (fired["cohort.entered_planned"] as Array<{ cohort_id: string }>).map((e) => e.cohort_id);
-      expect(plannedIds).toContain(cohortA.id);
-      expect(plannedIds).toContain(cohortB.id);
+      expect((fired["cohort.briefing_started"] as unknown[]).length).toBe(2);
     } finally {
       for (const unsub of unsubs) unsub();
     }

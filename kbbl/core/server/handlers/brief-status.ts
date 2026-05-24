@@ -46,6 +46,7 @@ export function mountBriefStatusRoutes(app: Hono, deps: BriefStatusRouteDeps): v
     let updated: Brief | null = null;
     let emitApproved: { brief_id: string; cohort_id: string } | null = null;
     let emitRejected: { brief_id: string; cohort_id: string } | null = null;
+    let depsMet = false;
 
     try {
       const error = db.transaction((): string | null => {
@@ -58,8 +59,20 @@ export function mountBriefStatusRoutes(app: Hono, deps: BriefStatusRouteDeps): v
         if (!nextStatus) return "no_transition";
 
         if (requestedStatus === "approved") {
+          const unmetDeps = db
+            .prepare<{ cnt: number }, [string]>(
+              `SELECT COUNT(*) AS cnt
+               FROM cohort_dependencies cd
+               JOIN cohorts c ON c.id = cd.from_cohort_id
+               WHERE cd.to_cohort_id = ? AND c.status != 'done'`,
+            )
+            .get(brief.cohort_id);
+
+          const nextCohortStatus = unmetDeps && unmetDeps.cnt > 0 ? "ready_to_build" : "building";
+          depsMet = nextCohortStatus === "building";
+
           const cohortResult = db.prepare(
-            "UPDATE cohorts SET status = 'building' WHERE id = ? AND status = 'brief_review'",
+            `UPDATE cohorts SET status = '${nextCohortStatus}' WHERE id = ? AND status = 'brief_review'`,
           ).run(brief.cohort_id);
           if (cohortResult.changes === 0) return "cohort_not_in_brief_review";
           db.prepare("UPDATE briefs SET status = ? WHERE id = ?").run(nextStatus, brief_id);
@@ -90,7 +103,12 @@ export function mountBriefStatusRoutes(app: Hono, deps: BriefStatusRouteDeps): v
       return c.json({ error: "internal server error" }, 500);
     }
 
-    if (emitApproved) taskTrackerEvents.emit("brief.approved", emitApproved);
+    if (emitApproved) {
+      taskTrackerEvents.emit("brief.approved", emitApproved);
+      if (depsMet) {
+        taskTrackerEvents.emit("cohort.build_ready", { cohort_id: emitApproved.cohort_id, brief_id });
+      }
+    }
     if (emitRejected) taskTrackerEvents.emit("brief.rejected", emitRejected);
 
     return c.json(updated);

@@ -193,22 +193,22 @@ describe("full dispatch pipeline with MockBackend", () => {
     expect(cohortRes.status).toBe(201);
     const cohort = (await cohortRes.json()) as { id: string };
 
-    // 3. Approve plan → cohort.entered_planned → planner2 dispatch + briefing_started
+    // 3. Approve plan → plan.approved → planner2_batch dispatch; all waiting cohorts → briefing
     const approveRes = await patch(app, `/plans/${plan.id}/status`, { status: "approved" });
     expect(approveRes.status).toBe(200);
 
     await flushAsync();
     expect(mockBackend.calls).toHaveLength(2);
-    expect(mockBackend.calls[1]!.stageName).toBe("planner2");
-    expect(mockBackend.calls[1]!.inputId).toBe(cohort.id);
+    expect(mockBackend.calls[1]!.stageName).toBe("planner2_batch");
+    expect(mockBackend.calls[1]!.inputId).toBe(plan.id);
 
-    // cohort.briefing_started should have transitioned cohort to briefing
+    // all waiting cohorts should have transitioned directly to briefing
     const cohortAfterPlanned = db.prepare<{ status: string }, [string]>("SELECT status FROM cohorts WHERE id = ?").get(cohort.id);
     expect(cohortAfterPlanned!.status).toBe("briefing");
 
-    // current_session_ref on cohort updated
-    const cohortRefRow = db.prepare<{ current_session_ref: string | null }, [string]>("SELECT current_session_ref FROM cohorts WHERE id = ?").get(cohort.id);
-    expect(cohortRefRow!.current_session_ref).toBe("mock-2");
+    // current_session_ref written onto plan (planner2_batch stores on plan, not cohort)
+    const planRefRow = db.prepare<{ current_session_ref: string | null }, [string]>("SELECT current_session_ref FROM plans WHERE id = ?").get(plan.id);
+    expect(planRefRow!.current_session_ref).toBe("mock-2");
 
     // 4. Agent posts brief → brief.submitted → cohort: briefing → brief_review
     const briefRes = await post(app, "/briefs", {
@@ -226,7 +226,7 @@ describe("full dispatch pipeline with MockBackend", () => {
     const cohortAfterBrief = db.prepare<{ status: string }, [string]>("SELECT status FROM cohorts WHERE id = ?").get(cohort.id);
     expect(cohortAfterBrief!.status).toBe("brief_review");
 
-    // 5. Approve brief → brief.approved → build dispatch
+    // 5. Approve brief → deps met (no deps) → cohort.build_ready → build dispatch
     const approveBriefRes = await patch(app, `/briefs/${brief.id}/status`, { status: "approved" });
     expect(approveBriefRes.status).toBe(200);
 
