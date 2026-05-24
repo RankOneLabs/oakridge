@@ -35,6 +35,15 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run --filter kbbl test:pwa
 
+  lbc-dashboard-tests:
+    name: lbc-dashboard tests (bun)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run --filter lbc-dashboard test
+
   legit-biz-club:
     name: legit-biz-club checks (Python)
     runs-on: ubuntu-latest
