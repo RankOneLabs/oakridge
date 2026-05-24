@@ -23,8 +23,8 @@ export type GhError =
 export type ParsedPrUrl = { owner: string; repo: string; number: number };
 export type ParseError = { kind: "invalid_pr_url"; input: string };
 
-// Accepts optional trailing path or fragment so operators can paste deep-links.
-const PR_URL_RE = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/;
+// PR number must be followed by /, ?, #, or end-of-string to reject pull/99files.
+const PR_URL_RE = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:[/?#]|$)/;
 
 export function parsePrUrl(url: string): Result<ParsedPrUrl, ParseError> {
   const m = PR_URL_RE.exec(url);
@@ -78,7 +78,7 @@ export type ReviewThread = {
 };
 
 export type PrState =
-  | { kind: "already_merged"; mergedAt: string; url: string }
+  | { kind: "already_merged"; mergedAt: string | null; url: string }
   | { kind: "open_mergeable_clean"; url: string }
   | { kind: "open_mergeable_unresolved"; threads: ReviewThread[]; url: string }
   | { kind: "open_not_mergeable"; reason: "conflicts" | "checks_failing" | "unknown"; url: string }
@@ -108,7 +108,7 @@ function toReviewThread(
 
 function classifyPrView(pr: GhPrView): PrState {
   if (pr.merged) {
-    return { kind: "already_merged", mergedAt: pr.mergedAt ?? "", url: pr.url };
+    return { kind: "already_merged", mergedAt: pr.mergedAt, url: pr.url };
   }
   if (pr.state === "CLOSED") {
     return { kind: "closed_unmerged", url: pr.url };
@@ -201,16 +201,27 @@ async function runGh(
   operation: string,
   prUrl: string,
 ): Promise<Result<{ stdout: string }, GhError>> {
-  let proc: ReturnType<typeof Bun.spawn>;
   try {
-    proc = Bun.spawn({
+    // const (not let) so TypeScript retains the pipe-narrowed stdout/stderr types.
+    const proc = Bun.spawn({
       cmd: ["gh", ...args],
       stdout: "pipe",
       stderr: "pipe",
       env: { ...process.env, LC_ALL: "C", LANG: "C" },
     });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    if (exitCode !== 0) {
+      return { ok: false, error: narrowGhStderr({ exitCode, stderr, operation, prUrl }) };
+    }
+    return { ok: true, value: { stdout } };
   } catch (err) {
-    // Bun.spawn throws with code "ENOENT" when the binary is not on PATH
+    // Bun.spawn throws synchronously with code "ENOENT" when the binary is not on PATH.
     const isEnoent =
       err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT";
     if (isEnoent) {
@@ -218,20 +229,6 @@ async function runGh(
     }
     throw err;
   }
-
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
-
-  if (exitCode !== 0) {
-    return {
-      ok: false,
-      error: narrowGhStderr({ exitCode, stderr, operation, prUrl }),
-    };
-  }
-  return { ok: true, value: { stdout } };
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -246,7 +243,13 @@ export async function fetchPrState(prUrl: string): Promise<Result<PrState, GhErr
     prUrl,
   );
   if (!run.ok) return run;
-  return parsePrViewJson(run.value.stdout);
+  const parsed = parsePrViewJson(run.value.stdout);
+  // Patch parser errors with the caller's prUrl/operation so callers always
+  // see a fully-populated GhError regardless of where in the pipeline it failed.
+  if (!parsed.ok) {
+    return { ok: false, error: { ...parsed.error, operation: "fetchPrState", prUrl } };
+  }
+  return parsed;
 }
 
 export async function mergePr(prUrl: string): Promise<Result<void, GhError>> {

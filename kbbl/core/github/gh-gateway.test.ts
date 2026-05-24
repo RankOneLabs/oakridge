@@ -55,6 +55,13 @@ describe("parsePrUrl", () => {
     const r = parsePrUrl("not-a-url");
     expect(r.ok).toBe(false);
   });
+
+  test("number followed by non-separator chars is rejected (e.g. pull/99files)", () => {
+    const r = parsePrUrl("https://github.com/acme/widget/pull/99files");
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error.kind).toBe("invalid_pr_url");
+  });
 });
 
 // ── parsePrViewJson — golden samples per PrState kind ────────────────────────
