@@ -42,14 +42,14 @@ Your assessment must contain:
 
 POST exactly one assessment to the kbbl API and then stop:
 
-```
+```http
 POST {{KBBL_URL}}/assessments
 Content-Type: application/json
 
 {
   "plan_id": "{{PLAN_ID}}",
   "summary": "<your summary>",
-  "deviations_catalog": [<your catalog array>],
+  "deviations_catalog": <your catalog array>,
   "gap_analysis": "<your gap analysis markdown>",
   "fix_plan": "<your fix plan markdown>"
 }

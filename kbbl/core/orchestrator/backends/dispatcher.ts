@@ -409,7 +409,7 @@ function buildSlotsForPlanResults(db: Database, plan_id: string, kbblUrl: string
       )
       .get(cohort.id);
 
-    const lines: string[] = [`### [${cohort.position}] ${cohort.title}`];
+    const lines: string[] = [`### [${cohort.position}] ${cohort.title} (id: ${cohort.id})`];
 
     if (!briefRow) {
       lines.push("*(no approved brief found)*");

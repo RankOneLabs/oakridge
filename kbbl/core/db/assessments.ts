@@ -11,11 +11,17 @@ interface AssessmentRow {
   created_at: string;
 }
 
+export interface DeviationsCatalogEntry {
+  cohort_id: string;
+  cohort_title: string;
+  deviations: Array<{ from: string; actual: string; downstream_impact: string }>;
+}
+
 export interface Assessment {
   id: string;
   plan_id: string;
   summary: string;
-  deviations_catalog: unknown[];
+  deviations_catalog: DeviationsCatalogEntry[];
   gap_analysis: string;
   fix_plan: string;
   model: string | null;
@@ -23,9 +29,13 @@ export interface Assessment {
 }
 
 function parseAssessmentRow(row: AssessmentRow): Assessment {
+  const parsed: unknown = JSON.parse(row.deviations_catalog);
+  if (!Array.isArray(parsed)) {
+    throw new Error(`Invalid deviations_catalog for assessment ${row.id}: expected JSON array`);
+  }
   return {
     ...row,
-    deviations_catalog: JSON.parse(row.deviations_catalog),
+    deviations_catalog: parsed as DeviationsCatalogEntry[],
   };
 }
 
@@ -43,7 +53,7 @@ export function insertAssessment(
     id: string;
     plan_id: string;
     summary: string;
-    deviations_catalog: unknown[];
+    deviations_catalog: DeviationsCatalogEntry[];
     gap_analysis: string;
     fix_plan: string;
     model?: string | null;
