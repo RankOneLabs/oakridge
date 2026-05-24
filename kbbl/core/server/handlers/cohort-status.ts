@@ -27,7 +27,6 @@ function hasStatusField(value: unknown): value is PatchCohortStatusPayload {
 }
 
 interface DoneFanoutResult {
-  planned: { cohort_id: string }[];
   buildReady: { cohort_id: string; brief_id: string }[];
 }
 
@@ -38,7 +37,6 @@ function runDoneFanout(db: Database, cohort_id: string): DoneFanoutResult {
     )
     .all(cohort_id);
 
-  const planned: { cohort_id: string }[] = [];
   const buildReady: { cohort_id: string; brief_id: string }[] = [];
 
   for (const { to_cohort_id } of downstream) {
@@ -54,13 +52,7 @@ function runDoneFanout(db: Database, cohort_id: string): DoneFanoutResult {
       )
       .get(to_cohort_id);
 
-    // Legacy: waiting → planned for old-flow cohorts
-    if (dep.status === "waiting" && unmetDeps && unmetDeps.cnt === 0) {
-      db.prepare("UPDATE cohorts SET status = 'planned' WHERE id = ?").run(to_cohort_id);
-      planned.push({ cohort_id: to_cohort_id });
-    }
-
-    // New flow: ready_to_build → building when last dep resolves
+    // Advance ready_to_build dependents to building when their last dep resolves
     if (dep.status === "ready_to_build" && unmetDeps && unmetDeps.cnt === 0) {
       const brief = getLatestApprovedBriefByCohort(db, to_cohort_id);
       if (!brief) {
@@ -74,7 +66,7 @@ function runDoneFanout(db: Database, cohort_id: string): DoneFanoutResult {
     }
   }
 
-  return { planned, buildReady };
+  return { buildReady };
 }
 
 // Statuses the orchestrator manages internally — operator cannot set them directly.
@@ -123,7 +115,6 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
     let emitPrMerged: { cohort_id: string } | null = null;
     let emitPrOpened: { cohort_id: string; pr_url: string } | null = null;
     let emitPlanCompleted: { plan_id: string } | null = null;
-    const emitPlanned: { cohort_id: string }[] = [];
     const emitBuildReady: { cohort_id: string; brief_id: string }[] = [];
 
     try {
@@ -150,7 +141,6 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
           updated = getCohort(db, cohort_id);
           emitDone = { cohort_id };
           const fanout = runDoneFanout(db, cohort_id);
-          emitPlanned.push(...fanout.planned);
           emitBuildReady.push(...fanout.buildReady);
           const remaining = db
             .prepare<{ cnt: number }, [string]>(
@@ -175,7 +165,6 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
           emitDone = { cohort_id };
           emitPrMerged = { cohort_id };
           const fanout = runDoneFanout(db, cohort_id);
-          emitPlanned.push(...fanout.planned);
           emitBuildReady.push(...fanout.buildReady);
           const remaining = db
             .prepare<{ cnt: number }, [string]>(
@@ -208,9 +197,6 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
     }
     if (emitDone) {
       taskTrackerEvents.emit("cohort.done", emitDone);
-      for (const p of emitPlanned) {
-        taskTrackerEvents.emit("cohort.entered_planned", p);
-      }
       for (const p of emitBuildReady) {
         taskTrackerEvents.emit("cohort.build_ready", p);
       }

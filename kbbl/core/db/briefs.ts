@@ -82,7 +82,7 @@ export function getBrief(db: Database, id: string): Brief | null {
 export function getLatestApprovedBriefByCohort(db: Database, cohort_id: string): Brief | null {
   const row = db
     .prepare<BriefRow, [string]>(
-      "SELECT * FROM briefs WHERE cohort_id = ? AND status = 'approved' ORDER BY created_at DESC LIMIT 1",
+      "SELECT * FROM briefs WHERE cohort_id = ? AND status = 'approved' ORDER BY created_at DESC, id DESC LIMIT 1",
     )
     .get(cohort_id);
   return row ? parseBriefRow(row) : null;
