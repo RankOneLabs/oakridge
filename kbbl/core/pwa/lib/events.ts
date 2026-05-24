@@ -9,6 +9,41 @@ import type {
   SessionMetrics,
 } from "../types";
 
+export interface ResultUsagePayload {
+  input_tokens?: unknown;
+  output_tokens?: unknown;
+  cache_read_input_tokens?: unknown;
+  cache_creation_input_tokens?: unknown;
+}
+
+export interface ResultPayload {
+  duration_ms?: unknown;
+  total_cost_usd?: unknown;
+  usage?: ResultUsagePayload;
+}
+
+interface ToolInputPreviewPayload {
+  command?: unknown;
+  file_path?: unknown;
+  pattern?: unknown;
+  url?: unknown;
+  query?: unknown;
+}
+
+export interface SystemNoticePayload extends ResultPayload {
+  sessionId?: unknown;
+  reason?: unknown;
+  code?: unknown;
+  line?: unknown;
+  enabled?: unknown;
+  tool_name?: unknown;
+  cc_session_id?: unknown;
+}
+
+export function resultPayload(value: unknown): ResultPayload {
+  return value && typeof value === "object" ? (value as ResultPayload) : {};
+}
+
 export function isCompactStartEvent(e: EnvelopeEvent): boolean {
   if (e.type !== "system") return false;
   const p = e.payload as SystemStatusPayload | null;
@@ -151,8 +186,8 @@ export function computeMetrics(events: EnvelopeEvent[]): SessionMetrics {
   let prevCost = 0;
   for (const e of events) {
     if (e.type !== "result") continue;
-    const p = e.payload as Record<string, unknown>;
-    const usage = (p.usage as Record<string, unknown> | undefined) ?? {};
+    const p = resultPayload(e.payload);
+    const usage = p.usage ?? {};
     const inT = num(usage.input_tokens);
     const outT = num(usage.output_tokens);
     const cacheRead = num(usage.cache_read_input_tokens);
@@ -237,9 +272,9 @@ export function summarizeToolNames(names: string[]): string {
 
 export function previewToolInput(name: string, input: unknown): string {
   if (!input || typeof input !== "object") return "";
-  const i = input as Record<string, unknown>;
-  const pick = (k: string): string | null =>
-    typeof i[k] === "string" ? (i[k] as string) : null;
+  const i = input as ToolInputPreviewPayload;
+  const pick = (k: keyof ToolInputPreviewPayload): string | null =>
+    typeof i[k] === "string" ? i[k] : null;
   let raw: string | null = null;
   switch (name) {
     case "Bash":
@@ -301,10 +336,10 @@ export function parseLocalCommandStdout(text: string): string | null {
   return m ? m[1] : null;
 }
 
-export function formatResultText(p: Record<string, unknown>): string {
+export function formatResultText(p: ResultPayload): string {
   const dur = typeof p.duration_ms === "number" ? p.duration_ms : null;
   const cost = typeof p.total_cost_usd === "number" ? p.total_cost_usd : null;
-  const usage = (p.usage as Record<string, unknown> | undefined) ?? {};
+  const usage = p.usage ?? {};
   const inTok = typeof usage.input_tokens === "number" ? usage.input_tokens : 0;
   const outTok =
     typeof usage.output_tokens === "number" ? usage.output_tokens : 0;
