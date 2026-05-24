@@ -301,6 +301,57 @@ describe("PATCH /cohorts/:id/status merged (new)", () => {
   });
 });
 
+describe("plan.completed emission", () => {
+  function flushAsync() {
+    return new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+
+  test("emits plan.completed when the last cohort transitions merged → done", async () => {
+    setStatus(COHORT_ID, "awaiting_merge");
+    const completed: { plan_id: string }[] = [];
+    const unsub = taskTrackerEvents.subscribe("plan.completed", (p) => completed.push(p));
+    try {
+      await patch(COHORT_ID, { status: "merged" });
+      await flushAsync();
+      expect(completed).toHaveLength(1);
+      expect(completed[0]!.plan_id).toBe(PLAN_ID);
+    } finally {
+      unsub();
+    }
+  });
+
+  test("emits plan.completed from legacy direct-done path when last cohort", async () => {
+    setStatus(COHORT_ID, "building");
+    const completed: { plan_id: string }[] = [];
+    const unsub = taskTrackerEvents.subscribe("plan.completed", (p) => completed.push(p));
+    try {
+      await patch(COHORT_ID, { status: "done" });
+      await flushAsync();
+      expect(completed).toHaveLength(1);
+      expect(completed[0]!.plan_id).toBe(PLAN_ID);
+    } finally {
+      unsub();
+    }
+  });
+
+  test("does NOT emit plan.completed when other cohorts in the plan are still building", async () => {
+    const OTHER_ID = "cohort-other";
+    insertCohort(db, { id: OTHER_ID, plan_id: PLAN_ID, title: "Other", position: 2 });
+    setStatus(OTHER_ID, "building");
+    setStatus(COHORT_ID, "awaiting_merge");
+
+    const completed: unknown[] = [];
+    const unsub = taskTrackerEvents.subscribe("plan.completed", (p) => completed.push(p));
+    try {
+      await patch(COHORT_ID, { status: "merged" });
+      await flushAsync();
+      expect(completed).toHaveLength(0);
+    } finally {
+      unsub();
+    }
+  });
+});
+
 describe("merge gate integration: building → awaiting_merge → merged fan-out", () => {
   test("downstream waiting cohort is NOT touched until operator merges", async () => {
     const DEP_ID = "cohort-dep";

@@ -118,6 +118,22 @@ describe("briefs query helpers", () => {
   test("updateBriefDebrief returns null for unknown id", () => {
     expect(updateBriefDebrief(db, "nope", { debrief: "debrief" })).toBeNull();
   });
+
+  test("updateBriefDebrief persists deviations when provided", () => {
+    insertBrief(db, { id: "dv1", ...MINIMAL_BRIEF });
+    const devs = [{ from: "file foo.ts", actual: "file bar.ts", downstream_impact: "none" }];
+    const updated = updateBriefDebrief(db, "dv1", { debrief: "Done", deviations: devs });
+    expect(updated?.deviations).toEqual(devs);
+  });
+
+  test("updateBriefDebrief COALESCE preserves prior deviations when omitted", () => {
+    insertBrief(db, { id: "dv2", ...MINIMAL_BRIEF });
+    const devs = [{ from: "spec decision", actual: "different", downstream_impact: "minor" }];
+    updateBriefDebrief(db, "dv2", { debrief: "First", deviations: devs });
+    // Second PATCH without deviations — COALESCE must preserve prior value
+    const updated = updateBriefDebrief(db, "dv2", { debrief: "Second" });
+    expect(updated?.deviations).toEqual(devs);
+  });
 });
 
 describe("GET /briefs", () => {
@@ -272,5 +288,34 @@ describe("PATCH /briefs/:id/debrief", () => {
       body: JSON.stringify({ debrief: "Works on any status." }),
     });
     expect(res.status).toBe(200);
+  });
+
+  test("PATCH with deviations persists and GET returns them as array", async () => {
+    insertBrief(db, { id: "d4", ...MINIMAL_BRIEF });
+    const devs = [{ from: "foo.ts", actual: "bar.ts", downstream_impact: "none" }];
+    const patchRes = await app.request("/briefs/d4/debrief", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ debrief: "Done.", deviations: devs }),
+    });
+    expect(patchRes.status).toBe(200);
+    const patched = (await patchRes.json()) as Brief;
+    expect(patched.deviations).toEqual(devs);
+
+    const getRes = await app.request("/briefs/d4");
+    expect(getRes.status).toBe(200);
+    const fetched = (await getRes.json()) as Brief;
+    expect(Array.isArray(fetched.deviations)).toBe(true);
+    expect(fetched.deviations).toEqual(devs);
+  });
+
+  test("PATCH with deviations missing required sub-field → 400", async () => {
+    insertBrief(db, { id: "d5", ...MINIMAL_BRIEF });
+    const res = await app.request("/briefs/d5/debrief", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ debrief: "Done.", deviations: [{ from: "x", actual: "" }] }),
+    });
+    expect(res.status).toBe(400);
   });
 });
