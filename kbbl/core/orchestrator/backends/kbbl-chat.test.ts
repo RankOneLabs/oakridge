@@ -34,6 +34,7 @@ const STAGE_ARTIFACT_TYPES: Record<
 > = {
   planner1: { input: "spec", output: "plan" },
   planner2: { input: "cohort", output: "brief" },
+  planner2_batch: { input: "plan", output: "brief" },
   build: { input: "brief", output: "pr" },
 };
 
@@ -68,6 +69,13 @@ describe("KbblChatBackend dispatch routes each stage to its intended model", () 
     const { manager, calls } = makeFakeManager();
     const backend = createKbblChatBackend({ manager });
     await backend.dispatch(stage("planner2"), inputRef, "prompt");
+    expect(calls[0]?.model).toBe("claude-opus-4-7");
+  });
+
+  test("planner2_batch → opus", async () => {
+    const { manager, calls } = makeFakeManager();
+    const backend = createKbblChatBackend({ manager });
+    await backend.dispatch(stage("planner2_batch"), inputRef, "prompt");
     expect(calls[0]?.model).toBe("claude-opus-4-7");
   });
 

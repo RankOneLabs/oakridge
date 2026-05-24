@@ -43,6 +43,7 @@ interface DispatchCall {
   stageName: string;
   inputType: string;
   inputId: string;
+  renderedPrompt: string;
 }
 
 interface MockBackend extends ExecutionBackend {
@@ -54,8 +55,8 @@ function createMockBackend(): MockBackend {
   return {
     id: "kbbl_chat",
     calls,
-    async dispatch(stage: StageRow, inputRef: InputRef, _renderedPrompt: string) {
-      calls.push({ stageName: stage.name, inputType: inputRef.type, inputId: inputRef.id });
+    async dispatch(stage: StageRow, inputRef: InputRef, renderedPrompt: string) {
+      calls.push({ stageName: stage.name, inputType: inputRef.type, inputId: inputRef.id, renderedPrompt });
       return { session_ref: `mock-${calls.length}` };
     },
     async status(_session_ref: string) {
@@ -84,6 +85,11 @@ function setupPromptFixtures() {
   writeFileSync(
     join(promptsDir, "build.md"),
     "build {{BRIEF_ID}} {{BRIEF_RENDERED}} {{REPO_PATH}} {{KBBL_URL}}",
+    "utf8",
+  );
+  writeFileSync(
+    join(promptsDir, "planner2-batch.md"),
+    "planner2_batch {{PLAN_ID}} {{PLAN_TITLE}} {{SPEC_NOTES}} {{COHORTS}} {{PLAN_DEPENDENCIES}} {{KBBL_URL}} {{BRIEF_FORMAT_GUIDE}}",
     "utf8",
   );
   process.env.KBBL_PROMPTS_DIR = promptsDir;
@@ -242,6 +248,81 @@ describe("full dispatch pipeline with MockBackend", () => {
     const debriefed = (await debriefRes.json()) as { debrief: string | null; pr_url: string | null };
     expect(debriefed.debrief).toBe("# Debrief\n\nAll done.");
     expect(debriefed.pr_url).toBe("https://github.com/org/repo/pull/99");
+  });
+
+  test("dispatcher.dispatch('planner2_batch', plan_id) — toposorted prompt, plan persistence", async () => {
+    // 1. Create project + spec + plan
+    const projRes = await post(app, "/projects", { name: "batch-test", repo_path: "/tmp/batch-repo" });
+    const proj = (await projRes.json()) as { id: string };
+
+    const specRes = await post(app, "/specs", { project_id: proj.id, title: "Batch Spec", notes: "batch notes" });
+    const spec = (await specRes.json()) as { id: string };
+    await flushAsync(); // planner1 fires — consume that call
+
+    const planRes = await post(app, "/plans", { spec_id: spec.id });
+    const plan = (await planRes.json()) as { id: string };
+
+    // 2. Create 3 cohorts: A pos 1, B pos 2, C pos 3
+    const cohortARes = await post(app, "/cohorts", { plan_id: plan.id, title: "Cohort A", position: 1 });
+    const cohortA = (await cohortARes.json()) as { id: string };
+
+    const cohortBRes = await post(app, "/cohorts", { plan_id: plan.id, title: "Cohort B", position: 2 });
+    const cohortB = (await cohortBRes.json()) as { id: string };
+
+    const cohortCRes = await post(app, "/cohorts", { plan_id: plan.id, title: "Cohort C", position: 3 });
+    const cohortC = (await cohortCRes.json()) as { id: string };
+
+    // 3. Add dependency edge: A → B (B depends on A)
+    const depRes = await post(app, "/cohort-dependencies", {
+      from_cohort_id: cohortA.id,
+      to_cohort_id: cohortB.id,
+    });
+    expect(depRes.status).toBe(201);
+
+    const callsBefore = mockBackend.calls.length;
+
+    // 4. Dispatch planner2_batch directly (cohort 3 wires plan.approved → this)
+    const dispatcher = createDispatcher({
+      db,
+      backends: { kbbl_chat: mockBackend },
+      kbblUrl: "http://localhost:8788",
+    });
+    const sessionRef = await dispatcher.dispatch("planner2_batch", plan.id);
+
+    // 5. Assert exactly one new MockBackend call
+    expect(mockBackend.calls).toHaveLength(callsBefore + 1);
+    const call = mockBackend.calls[callsBefore]!;
+    expect(call.stageName).toBe("planner2_batch");
+    expect(call.inputType).toBe("plan");
+    expect(call.inputId).toBe(plan.id);
+
+    // 6. Assert cohorts appear in toposorted order in the rendered prompt
+    // Toposort: A (in-degree 0, pos 1) → process A, B in-degree→0 (pos 2), C (in-degree 0, pos 3)
+    // Queue after A: [B pos 2, C pos 3] → B before C → order: A, B, C
+    const prompt = call.renderedPrompt;
+    const posA = prompt.indexOf("Cohort A");
+    const posB = prompt.indexOf("Cohort B");
+    const posC = prompt.indexOf("Cohort C");
+    expect(posA).toBeGreaterThan(-1);
+    expect(posB).toBeGreaterThan(-1);
+    expect(posC).toBeGreaterThan(-1);
+    expect(posA).toBeLessThan(posB);
+    expect(posB).toBeLessThan(posC);
+
+    // 7. Assert dependency edge rendered in prompt
+    expect(prompt).toContain("Cohort A → Cohort B");
+
+    // 8. Assert plans.current_session_ref + current_session_stage persisted
+    const planRow = db
+      .prepare<{ current_session_ref: string | null; current_session_stage: string | null }, [string]>(
+        "SELECT current_session_ref, current_session_stage FROM plans WHERE id = ?",
+      )
+      .get(plan.id);
+    expect(planRow!.current_session_ref).toBe(sessionRef);
+    expect(planRow!.current_session_stage).toBe("planner2_batch");
+
+    // suppress unused-var warning
+    void cohortC;
   });
 
   test("POST /briefs/:id/build returns 404 for unknown brief", async () => {
