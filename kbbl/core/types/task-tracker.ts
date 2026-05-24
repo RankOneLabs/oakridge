@@ -25,6 +25,8 @@ export const PlanSchema = z.object({
   predecessor_plan_id: z.string().nullable(),
   model: z.string().nullable(),
   rejection_reason: z.string().nullable(),
+  current_session_ref: z.string().nullable(),
+  current_session_stage: SessionStageSchema.nullable(),
   created_at: z.string(),
 });
 export type Plan = z.infer<typeof PlanSchema>;
@@ -35,8 +37,8 @@ export const CohortSchema = z.object({
   title: z.string(),
   notes: z.string().nullable(),
   position: z.number().int(),
-  status: z.enum(["waiting", "planned", "briefing", "brief_review", "building", "done", "blocked"]),
-  pre_block_status: z.enum(["waiting", "planned", "briefing", "brief_review", "building", "done"]).nullable(),
+  status: z.enum(["waiting", "planned", "briefing", "brief_review", "building", "ready_to_build", "awaiting_merge", "done", "blocked"]),
+  pre_block_status: z.enum(["waiting", "planned", "briefing", "brief_review", "building", "ready_to_build", "awaiting_merge", "done"]).nullable(),
   current_session_ref: z.string().nullable(),
   current_session_stage: SessionStageSchema.nullable(),
   created_at: z.string(),
