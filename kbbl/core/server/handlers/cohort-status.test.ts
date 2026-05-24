@@ -322,10 +322,18 @@ describe("applyAwaitingMergeToMerged — shared helper smoke test", () => {
     const result = db.transaction(() => applyAwaitingMergeToMerged(db, COHORT_ID))();
     expect(getCohort(db, COHORT_ID)!.status).toBe("done");
     expect(result.updated.status).toBe("done");
-    expect(result.emits.done).toEqual({ cohort_id: COHORT_ID });
-    expect(result.emits.pr_merged).toEqual({ cohort_id: COHORT_ID });
-    expect(result.emits.buildReady).toEqual([]);
-    expect(result.emits.planCompleted).toEqual({ plan_id: PLAN_ID });
+    expect(result.emits).not.toBeNull();
+    expect(result.emits!.done).toEqual({ cohort_id: COHORT_ID });
+    expect(result.emits!.pr_merged).toEqual({ cohort_id: COHORT_ID });
+    expect(result.emits!.buildReady).toEqual([]);
+    expect(result.emits!.planCompleted).toEqual({ plan_id: PLAN_ID });
+  });
+
+  test("returns emits=null when cohort is already done (race no-op)", () => {
+    setStatus(COHORT_ID, "done");
+    const result = db.transaction(() => applyAwaitingMergeToMerged(db, COHORT_ID))();
+    expect(result.updated.status).toBe("done");
+    expect(result.emits).toBeNull();
   });
 });
 

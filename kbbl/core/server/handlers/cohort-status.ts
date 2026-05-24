@@ -71,25 +71,32 @@ function runDoneFanout(db: Database, cohort_id: string): DoneFanoutResult {
 
 export interface ApplyAwaitingMergeResult {
   updated: Cohort;
+  /** null when the cohort was already done — caller must skip event emission. */
   emits: {
     done: { cohort_id: string };
     pr_merged: { cohort_id: string };
     buildReady: { cohort_id: string; brief_id: string }[];
     planCompleted: { plan_id: string } | null;
-  };
+  } | null;
 }
 
 /**
  * Applies the awaiting_merge → merged (done) transition and gathers all
  * events that must be emitted afterward. Caller is responsible for running
  * this inside a db.transaction and for emitting the returned events.
+ * Returns emits=null when the cohort was already done (race no-op).
  */
 export function applyAwaitingMergeToMerged(
   db: Database,
   cohort_id: string,
 ): ApplyAwaitingMergeResult {
-  db.prepare("UPDATE cohorts SET status = 'done' WHERE id = ?").run(cohort_id);
+  const { changes } = db
+    .prepare("UPDATE cohorts SET status = 'done' WHERE id = ? AND status = 'awaiting_merge'")
+    .run(cohort_id);
   const updated = getCohort(db, cohort_id)!;
+  if (changes === 0) {
+    return { updated, emits: null };
+  }
   const fanout = runDoneFanout(db, cohort_id);
   const remaining = db
     .prepare<{ cnt: number }, [string]>(
@@ -201,10 +208,12 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
           if (cohort.status !== "awaiting_merge") return "not_awaiting_merge";
           const result = applyAwaitingMergeToMerged(db, cohort_id);
           updated = result.updated;
-          emitDone = result.emits.done;
-          emitPrMerged = result.emits.pr_merged;
-          emitBuildReady.push(...result.emits.buildReady);
-          if (result.emits.planCompleted) emitPlanCompleted = result.emits.planCompleted;
+          if (result.emits) {
+            emitDone = result.emits.done;
+            emitPrMerged = result.emits.pr_merged;
+            emitBuildReady.push(...result.emits.buildReady);
+            if (result.emits.planCompleted) emitPlanCompleted = result.emits.planCompleted;
+          }
         }
 
         return null;

@@ -39,6 +39,7 @@ export type MergeOutcome =
 
 function applyAndEmit(db: Database, cohort_id: string): void {
   const result = db.transaction(() => applyAwaitingMergeToMerged(db, cohort_id))();
+  if (!result.emits) return; // already done — concurrent request beat us, no-op
   taskTrackerEvents.emit("cohort.pr_merged", result.emits.pr_merged);
   taskTrackerEvents.emit("cohort.done", result.emits.done);
   for (const p of result.emits.buildReady) {
@@ -58,7 +59,7 @@ export function mountCohortMergeRoutes(app: Hono, deps: CohortMergeRouteDeps): v
       const raw = await c.req.json();
       const parsed = MergeBodySchema.safeParse(raw);
       if (!parsed.success) {
-        return c.json({ error: "invalid body" }, 400);
+        return c.json({ error: parsed.error.issues[0]?.message ?? "invalid body" }, 400);
       }
       body = parsed.data ?? {};
     } catch {
