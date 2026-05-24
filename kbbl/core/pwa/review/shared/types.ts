@@ -1,5 +1,13 @@
 import type { ReactNode } from "react";
 
+export type ReviewThread = {
+  id: string;
+  author: string;
+  firstLineSnippet: string;
+  /** Path fragment starting with /pull/<n>#...; prefix with repo base URL to compose the deep-link. */
+  deepLinkPath: string;
+};
+
 export interface AtomEdit {
   id: string;
   target_type: string;
