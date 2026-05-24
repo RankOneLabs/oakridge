@@ -1,27 +1,13 @@
 import { Database } from "bun:sqlite";
+import type { Assessment, DeviationsCatalogEntry } from "../types/task-tracker";
+
+export type { Assessment, DeviationsCatalogEntry };
 
 interface AssessmentRow {
   id: string;
   plan_id: string;
   summary: string;
   deviations_catalog: string;
-  gap_analysis: string;
-  fix_plan: string;
-  model: string | null;
-  created_at: string;
-}
-
-export interface DeviationsCatalogEntry {
-  cohort_id: string;
-  cohort_title: string;
-  deviations: Array<{ from: string; actual: string; downstream_impact: string }>;
-}
-
-export interface Assessment {
-  id: string;
-  plan_id: string;
-  summary: string;
-  deviations_catalog: DeviationsCatalogEntry[];
   gap_analysis: string;
   fix_plan: string;
   model: string | null;

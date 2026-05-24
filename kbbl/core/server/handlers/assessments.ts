@@ -2,18 +2,7 @@ import { z } from "zod";
 import type { Hono } from "hono";
 import type { Database } from "bun:sqlite";
 import { insertAssessment, getAssessment, getAssessmentByPlan } from "../../db/assessments";
-
-const DeviationSchema = z.object({
-  from: z.string().min(1),
-  actual: z.string().min(1),
-  downstream_impact: z.string().min(1),
-});
-
-const DeviationsCatalogEntrySchema = z.object({
-  cohort_id: z.string().min(1),
-  cohort_title: z.string().min(1),
-  deviations: z.array(DeviationSchema),
-});
+import { DeviationsCatalogEntrySchema } from "../../types/task-tracker";
 
 const CreateAssessmentSchema = z.object({
   plan_id: z.string().min(1),

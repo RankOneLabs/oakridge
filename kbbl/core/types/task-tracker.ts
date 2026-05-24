@@ -59,6 +59,12 @@ export const BriefPayloadSchema = z.object({
 });
 export type BriefPayload = z.infer<typeof BriefPayloadSchema>;
 
+export const BriefDeviationSchema = z.object({
+  from: z.string(),
+  actual: z.string(),
+  downstream_impact: z.string(),
+});
+
 export const BriefSchema = z.object({
   id: z.string(),
   cohort_id: z.string(),
@@ -73,7 +79,26 @@ export const BriefSchema = z.object({
   debrief: z.string().nullable(),
   pr_url: z.string().url().nullable(),
   rejection_reason: z.string().nullable(),
-  deviations: z.array(z.object({ from: z.string(), actual: z.string(), downstream_impact: z.string() })).nullable(),
+  deviations: z.array(BriefDeviationSchema).nullable(),
   created_at: z.string(),
 });
 export type Brief = z.infer<typeof BriefSchema>;
+
+export const DeviationsCatalogEntrySchema = z.object({
+  cohort_id: z.string(),
+  cohort_title: z.string(),
+  deviations: z.array(BriefDeviationSchema),
+});
+export type DeviationsCatalogEntry = z.infer<typeof DeviationsCatalogEntrySchema>;
+
+export const AssessmentSchema = z.object({
+  id: z.string(),
+  plan_id: z.string(),
+  summary: z.string(),
+  deviations_catalog: z.array(DeviationsCatalogEntrySchema),
+  gap_analysis: z.string(),
+  fix_plan: z.string(),
+  model: z.string().nullable(),
+  created_at: z.string(),
+});
+export type Assessment = z.infer<typeof AssessmentSchema>;

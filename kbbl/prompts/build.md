@@ -33,7 +33,7 @@ kbbl API base URL: `{{KBBL_URL}}`
      "pr_url": "<GitHub PR URL from step 4>"
    }
    ```
-   If there were material deviations, add a `deviations` array to the body (do not leave a trailing comma after `pr_url`):
+   If there were material deviations, add a `deviations` array after `pr_url` (include a comma after `pr_url` when `deviations` is present; omit both the comma and the field when it is not):
    ```json
    "deviations": [
      { "from": "<what the brief specified>", "actual": "<what was built instead>", "downstream_impact": "<effect on downstream cohorts>" }
