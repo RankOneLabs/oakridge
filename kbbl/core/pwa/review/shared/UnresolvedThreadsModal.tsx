@@ -17,7 +17,7 @@ export function UnresolvedThreadsModal({
 }: UnresolvedThreadsModalProps) {
   // deepLinkPath is /pull/<n>#discussion_r<id> — strip the /pull/<n> suffix
   // from prUrl to get the repo base before appending.
-  const repoBase = prUrl.replace(/\/pull\/\d+$/, "");
+  const repoBase = prUrl.replace(/\/pull\/\d+(?:[/?#].*)?$/, "");
 
   return (
     <div className="review-modal" onClick={onCancel}>
