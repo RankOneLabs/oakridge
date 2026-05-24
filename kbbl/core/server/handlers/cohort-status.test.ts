@@ -86,16 +86,14 @@ describe("PATCH /cohorts/:id/status — validation", () => {
     expect(res.status).toBe(422);
   });
 
-  test("awaiting_merge without pr_url → 422 (recognized status, treated as orchestrator-only path)", async () => {
+  test("awaiting_merge without pr_url → 400 with validation message", async () => {
     const res = await patch(COHORT_ID, { status: "awaiting_merge" });
-    expect(res.status).toBe(422);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toMatch(/orchestrator-only/);
+    expect(res.status).toBe(400);
   });
 
-  test("awaiting_merge with non-URL pr_url → 422 (recognized status, validation fails)", async () => {
+  test("awaiting_merge with non-URL pr_url → 400 with validation message", async () => {
     const res = await patch(COHORT_ID, { status: "awaiting_merge", pr_url: "not-a-url" });
-    expect(res.status).toBe(422);
+    expect(res.status).toBe(400);
   });
 
   test("not found → 404", async () => {
