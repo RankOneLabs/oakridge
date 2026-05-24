@@ -55,4 +55,17 @@ describe("renderPrompt", () => {
   test("treats empty slots as valid substitution targets", () => {
     expect(renderPrompt("prefix {{EMPTY}} suffix", { EMPTY: "" })).toBe("prefix  suffix");
   });
+
+  test("does not treat literal mustache syntax in slot values as unfilled slots", () => {
+    // Regression: a brief's rendered body can contain literal `{{X}}` text
+    // (e.g. the planner agent quoted slot syntax in a decision). That must
+    // not trip the unfilled-slot check, because the template's own slots
+    // were all filled.
+    const template = "Brief:\n{{BODY}}\nURL: {{URL}}";
+    const result = renderPrompt(template, {
+      BODY: "see {{PLAN_ID}} and {{KBBL_URL}}",
+      URL: "http://kbbl",
+    });
+    expect(result).toBe("Brief:\nsee {{PLAN_ID}} and {{KBBL_URL}}\nURL: http://kbbl");
+  });
 });

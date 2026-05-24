@@ -12,12 +12,16 @@ export function loadPrompt(name: string): string {
 }
 
 export function renderPrompt(template: string, slots: Record<string, string>): string {
-  const result = template.replace(/\{\{([^}]+)\}\}/g, (match, key: string) =>
-    Object.hasOwn(slots, key) ? slots[key]! : match,
-  );
-  const remaining = /\{\{[^}]+\}\}/.exec(result);
-  if (remaining) {
-    throw new Error(`unfilled prompt slot: ${remaining[0]}`);
+  // Validate against the template, not the rendered output: user-supplied
+  // content interpolated via slots (e.g. BRIEF_RENDERED) may legitimately
+  // contain literal `{{X}}` text — that must not be mistaken for an
+  // unfilled slot in the template itself.
+  const slotPattern = /\{\{([^}]+)\}\}/g;
+  for (const match of template.matchAll(slotPattern)) {
+    const key = match[1]!;
+    if (!Object.hasOwn(slots, key)) {
+      throw new Error(`unfilled prompt slot: {{${key}}}`);
+    }
   }
-  return result;
+  return template.replace(slotPattern, (_match, key: string) => slots[key]!);
 }
