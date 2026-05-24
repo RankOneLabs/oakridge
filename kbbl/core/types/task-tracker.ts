@@ -1,9 +1,9 @@
 import { z } from "zod";
 
-// Mirrors the stages table's name column (see migrations/008_seed_stages.sql)
-// and the CHECK constraint on current_session_stage (009_session_stage.sql).
-// Kept narrow so the build guard and UI can branch on stage with a typed union.
-export const SessionStageSchema = z.enum(["planner1", "planner2", "build"]);
+// Mirrors the stages table's name column (see migrations/008_seed_stages.sql).
+// plans.current_session_stage has no DB CHECK (migration 010 comment); Zod is
+// authoritative. Cohort 2 added planner2_batch; cohort 4 adds planner3.
+export const SessionStageSchema = z.enum(["planner1", "planner2", "planner2_batch", "planner3", "build"]);
 export type SessionStage = z.infer<typeof SessionStageSchema>;
 
 export const SpecSchema = z.object({
@@ -59,6 +59,12 @@ export const BriefPayloadSchema = z.object({
 });
 export type BriefPayload = z.infer<typeof BriefPayloadSchema>;
 
+export const BriefDeviationSchema = z.object({
+  from: z.string(),
+  actual: z.string(),
+  downstream_impact: z.string(),
+});
+
 export const BriefSchema = z.object({
   id: z.string(),
   cohort_id: z.string(),
@@ -73,6 +79,26 @@ export const BriefSchema = z.object({
   debrief: z.string().nullable(),
   pr_url: z.string().url().nullable(),
   rejection_reason: z.string().nullable(),
+  deviations: z.array(BriefDeviationSchema).nullable(),
   created_at: z.string(),
 });
 export type Brief = z.infer<typeof BriefSchema>;
+
+export const DeviationsCatalogEntrySchema = z.object({
+  cohort_id: z.string(),
+  cohort_title: z.string(),
+  deviations: z.array(BriefDeviationSchema),
+});
+export type DeviationsCatalogEntry = z.infer<typeof DeviationsCatalogEntrySchema>;
+
+export const AssessmentSchema = z.object({
+  id: z.string(),
+  plan_id: z.string(),
+  summary: z.string(),
+  deviations_catalog: z.array(DeviationsCatalogEntrySchema),
+  gap_analysis: z.string(),
+  fix_plan: z.string(),
+  model: z.string().nullable(),
+  created_at: z.string(),
+});
+export type Assessment = z.infer<typeof AssessmentSchema>;

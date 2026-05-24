@@ -15,6 +15,7 @@ interface BriefRow {
   debrief: string | null;
   pr_url: string | null;
   rejection_reason: string | null;
+  deviations: string | null;
   created_at: string;
 }
 
@@ -25,6 +26,7 @@ function parseBriefRow(row: BriefRow): Brief {
     files_in_scope: JSON.parse(row.files_in_scope),
     decisions_made: JSON.parse(row.decisions_made),
     approaches_rejected: JSON.parse(row.approaches_rejected),
+    deviations: row.deviations ? JSON.parse(row.deviations) : null,
   };
 }
 
@@ -80,7 +82,7 @@ export function getBrief(db: Database, id: string): Brief | null {
 export function getLatestApprovedBriefByCohort(db: Database, cohort_id: string): Brief | null {
   const row = db
     .prepare<BriefRow, [string]>(
-      "SELECT * FROM briefs WHERE cohort_id = ? AND status = 'approved' ORDER BY created_at DESC LIMIT 1",
+      "SELECT * FROM briefs WHERE cohort_id = ? AND status = 'approved' ORDER BY created_at DESC, id DESC LIMIT 1",
     )
     .get(cohort_id);
   return row ? parseBriefRow(row) : null;
@@ -154,12 +156,20 @@ export function updateBriefFields(
 export function updateBriefDebrief(
   db: Database,
   id: string,
-  { debrief, pr_url }: { debrief: string; pr_url?: string | null },
+  {
+    debrief,
+    pr_url,
+    deviations,
+  }: {
+    debrief: string;
+    pr_url?: string | null;
+    deviations?: Array<{ from: string; actual: string; downstream_impact: string }> | null;
+  },
 ): Brief | null {
   const row = db
-    .prepare<BriefRow, [string, string | null, string]>(
-      "UPDATE briefs SET debrief = ?, pr_url = COALESCE(?, pr_url) WHERE id = ? RETURNING *",
+    .prepare<BriefRow, [string, string | null, string | null, string]>(
+      "UPDATE briefs SET debrief = ?, pr_url = COALESCE(?, pr_url), deviations = COALESCE(?, deviations) WHERE id = ? RETURNING *",
     )
-    .get(debrief, pr_url ?? null, id) as BriefRow | undefined;
+    .get(debrief, pr_url ?? null, deviations != null ? JSON.stringify(deviations) : null, id) as BriefRow | undefined;
   return row ? parseBriefRow(row) : null;
 }

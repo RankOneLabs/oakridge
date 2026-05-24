@@ -46,9 +46,22 @@ export function wireDispatchHooks({ taskTrackerEvents, dispatcher }: DispatchHoo
     })();
   });
 
+  const unsubPlanCompleted = taskTrackerEvents.subscribe("plan.completed", ({ plan_id }) => {
+    void (async () => {
+      try {
+        await dispatcher.dispatch("planner3", plan_id);
+      } catch (err) {
+        console.error(
+          JSON.stringify({ kbbl: "dispatch-hooks", event: "plan.completed", error: String(err), plan_id }),
+        );
+      }
+    })();
+  });
+
   return () => {
     unsubSpecCreated();
     unsubPlanApproved();
     unsubCohortBuildReady();
+    unsubPlanCompleted();
   };
 }

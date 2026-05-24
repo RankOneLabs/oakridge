@@ -30,6 +30,7 @@ import { mountCohortStatusRoutes } from "../server/handlers/cohort-status";
 import { mountBriefsRoutes } from "../server/handlers/briefs";
 import { mountBriefStatusRoutes } from "../server/handlers/brief-status";
 import { mountBuildsRoutes } from "../server/handlers/builds";
+import { mountAssessmentsRoutes } from "../server/handlers/assessments";
 
 // ---- minimal SessionManager stub for builds route ----
 
@@ -92,6 +93,11 @@ function setupPromptFixtures() {
     "planner2_batch {{PLAN_ID}} {{PLAN_TITLE}} {{SPEC_NOTES}} {{COHORTS}} {{PLAN_DEPENDENCIES}} {{KBBL_URL}} {{BRIEF_FORMAT_GUIDE}}",
     "utf8",
   );
+  writeFileSync(
+    join(promptsDir, "planner3.md"),
+    "planner3 {{PLAN_ID}} {{PLAN_TITLE}} {{SPEC_NOTES}} {{COHORT_RESULTS}} {{KBBL_URL}}",
+    "utf8",
+  );
   process.env.KBBL_PROMPTS_DIR = promptsDir;
 }
 
@@ -151,6 +157,7 @@ beforeEach(() => {
   mountBriefsRoutes(app, { db });
   mountBriefStatusRoutes(app, { db });
   mountBuildsRoutes(app, { db, dispatcher, manager: stubManager });
+  mountAssessmentsRoutes(app, { db });
 });
 
 afterEach(() => {
@@ -445,6 +452,113 @@ describe("full dispatch pipeline with MockBackend", () => {
   test("POST /briefs/:id/build returns 404 for unknown brief", async () => {
     const res = await post(app, "/briefs/nonexistent/build", {});
     expect(res.status).toBe(404);
+  });
+
+  test("plan.completed → planner3 dispatch after all cohorts go through awaiting_merge → merged", async () => {
+    // 1. Create project + spec + plan
+    const projRes = await post(app, "/projects", { name: "planner3-test", repo_path: "/tmp/p3-repo" });
+    const proj = (await projRes.json()) as { id: string };
+
+    const specRes = await post(app, "/specs", { project_id: proj.id, title: "P3 Spec", notes: "assess me" });
+    const spec = (await specRes.json()) as { id: string };
+    await flushAsync(); // planner1 fires — consume
+
+    const planRes = await post(app, "/plans", { spec_id: spec.id });
+    const plan = (await planRes.json()) as { id: string };
+
+    // 2. Create 3 cohorts: A → B → C
+    const cohortARes = await post(app, "/cohorts", { plan_id: plan.id, title: "P3-Cohort-A", position: 1 });
+    const cohortA = (await cohortARes.json()) as { id: string };
+    const cohortBRes = await post(app, "/cohorts", { plan_id: plan.id, title: "P3-Cohort-B", position: 2 });
+    const cohortB = (await cohortBRes.json()) as { id: string };
+    const cohortCRes = await post(app, "/cohorts", { plan_id: plan.id, title: "P3-Cohort-C", position: 3 });
+    const cohortC = (await cohortCRes.json()) as { id: string };
+
+    // 3. Wire deps: A→B, B→C
+    await post(app, "/cohort-dependencies", { from_cohort_id: cohortA.id, to_cohort_id: cohortB.id });
+    await post(app, "/cohort-dependencies", { from_cohort_id: cohortB.id, to_cohort_id: cohortC.id });
+
+    // 4. Approve plan → planner2_batch
+    await patch(app, `/plans/${plan.id}/status`, { status: "approved" });
+    await flushAsync();
+
+    // 5. Post and approve briefs for A, B, C (they're all in briefing status)
+    const postBrief = async (cohort_id: string) => {
+      const r = await post(app, "/briefs", {
+        cohort_id,
+        goal: "do it",
+        files_in_scope: [],
+        decisions_made: [],
+        approaches_rejected: [],
+        next_action: "start",
+      });
+      const b = (await r.json()) as { id: string };
+      await patch(app, `/briefs/${b.id}/status`, { status: "approved" });
+      await flushAsync();
+      return b.id;
+    };
+    const bA = await postBrief(cohortA.id);
+    await postBrief(cohortB.id);
+    await postBrief(cohortC.id);
+
+    // A has no deps → enters building after brief approval; B + C are ready_to_build
+    const callsBeforeMerge = mockBackend.calls.length;
+
+    // 6. Walk A through awaiting_merge → merged → B enters building
+    await patch(app, `/cohorts/${cohortA.id}/status`, { status: "awaiting_merge", pr_url: "https://github.com/org/repo/pull/1" });
+    await flushAsync();
+    // plan.completed must NOT fire yet (B and C not done)
+    const callsAfterAMerge = mockBackend.calls.length;
+    expect(callsAfterAMerge).toBe(callsBeforeMerge); // no new dispatch yet
+
+    await patch(app, `/cohorts/${cohortA.id}/status`, { status: "merged" });
+    await flushAsync();
+    // B should now be building; one new build dispatch for B
+    const callsAfterAMerged = mockBackend.calls.length;
+    expect(callsAfterAMerged).toBe(callsBeforeMerge + 1);
+    expect(mockBackend.calls[callsBeforeMerge]!.stageName).toBe("build");
+
+    // 7. Walk B through awaiting_merge → merged → C enters building
+    await patch(app, `/cohorts/${cohortB.id}/status`, { status: "awaiting_merge", pr_url: "https://github.com/org/repo/pull/2" });
+    await flushAsync();
+    await patch(app, `/cohorts/${cohortB.id}/status`, { status: "merged" });
+    await flushAsync();
+    const callsAfterBMerged = mockBackend.calls.length;
+    expect(callsAfterBMerged).toBe(callsBeforeMerge + 2);
+
+    // 8. Walk C through awaiting_merge → merged → plan.completed → planner3
+    await patch(app, `/cohorts/${cohortC.id}/status`, { status: "awaiting_merge", pr_url: "https://github.com/org/repo/pull/3" });
+    await flushAsync();
+    await patch(app, `/cohorts/${cohortC.id}/status`, { status: "merged" });
+    await flushAsync();
+
+    // Exactly one new call: planner3
+    const callsAfterCMerged = mockBackend.calls.length;
+    expect(callsAfterCMerged).toBe(callsBeforeMerge + 3);
+    const planner3Call = mockBackend.calls[callsBeforeMerge + 2];
+    expect(planner3Call).toBeDefined();
+    expect(planner3Call!.stageName).toBe("planner3");
+    expect(planner3Call!.inputType).toBe("plan");
+    expect(planner3Call!.inputId).toBe(plan.id);
+
+    // plans.current_session_stage === 'planner3' and current_session_ref persisted
+    const planRow = db
+      .prepare<{ current_session_ref: string | null; current_session_stage: string | null }, [string]>(
+        "SELECT current_session_ref, current_session_stage FROM plans WHERE id = ?",
+      )
+      .get(plan.id);
+    expect(planRow!.current_session_stage).toBe("planner3");
+    expect(planRow!.current_session_ref).toBeDefined();
+    expect(planRow!.current_session_ref).not.toBeNull();
+
+    // debrief with deviations on bA — round-trip check
+    const debriefRes = await patch(app, `/briefs/${bA}/debrief`, {
+      debrief: "Built A.",
+      deviations: [{ from: "file.ts", actual: "other.ts", downstream_impact: "minor" }],
+    });
+    expect(debriefRes.status).toBe(200);
+    const debriefed = (await debriefRes.json()) as { deviations: unknown };
+    expect(Array.isArray(debriefed.deviations)).toBe(true);
   });
 
   test("POST /briefs/:id/build returns 409 if brief not approved", async () => {

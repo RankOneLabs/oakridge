@@ -20,6 +20,7 @@ import { mountBuildsRoutes } from "./handlers/builds";
 import { mountCohortsRoutes } from "./handlers/cohorts";
 import { mountCohortStatusRoutes } from "./handlers/cohort-status";
 import { mountBriefsRoutes } from "./handlers/briefs";
+import { mountAssessmentsRoutes } from "./handlers/assessments";
 import { mountReviewFreezeRoutes } from "./handlers/review-freeze";
 import { mountReviewAtomsRoutes } from "./handlers/review-atoms";
 import { mountReviewThreadsRoutes } from "./handlers/review-threads";
@@ -189,6 +190,7 @@ export function createApp(deps: CreateAppDeps): Hono {
   mountBriefsRoutes(app, { db });
   mountBriefStatusRoutes(app, { db });
   mountBuildsRoutes(app, { db, dispatcher, manager });
+  mountAssessmentsRoutes(app, { db });
 
   // ---- review primitive (cohort 2) ----
   mountReviewFreezeRoutes(app, { db });

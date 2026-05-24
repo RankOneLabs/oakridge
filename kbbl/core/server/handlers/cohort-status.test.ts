@@ -160,22 +160,6 @@ describe("PATCH /cohorts/:id/status done (legacy override from building)", () =>
     }
   });
 
-  test("fan-out: waiting dependent with all deps met advances to planned", async () => {
-    const DEP_ID = "cohort-dep";
-    insertCohort(db, { id: DEP_ID, plan_id: PLAN_ID, title: "dep", position: 2 });
-    insertCohortDependency(db, { id: "d1", from_cohort_id: COHORT_ID, to_cohort_id: DEP_ID });
-    setStatus(COHORT_ID, "building");
-
-    const planned: { cohort_id: string }[] = [];
-    const unsub = taskTrackerEvents.subscribe("cohort.entered_planned", (p) => planned.push(p));
-    try {
-      await patch(COHORT_ID, { status: "done" });
-      expect(getCohort(db, DEP_ID)!.status).toBe("planned");
-      expect(planned).toEqual([{ cohort_id: DEP_ID }]);
-    } finally {
-      unsub();
-    }
-  });
 });
 
 describe("PATCH /cohorts/:id/status awaiting_merge (new)", () => {
@@ -236,17 +220,13 @@ describe("PATCH /cohorts/:id/status awaiting_merge (new)", () => {
     setStatus(COHORT_ID, "building");
 
     const doneEvents: unknown[] = [];
-    const plannedEvents: unknown[] = [];
     const unsubDone = taskTrackerEvents.subscribe("cohort.done", (p) => doneEvents.push(p));
-    const unsubPlanned = taskTrackerEvents.subscribe("cohort.entered_planned", (p) => plannedEvents.push(p));
     try {
       await patch(COHORT_ID, { status: "awaiting_merge", pr_url: PR_URL });
       expect(doneEvents).toHaveLength(0);
-      expect(plannedEvents).toHaveLength(0);
       expect(getCohort(db, DEP_ID)!.status).toBe("waiting");
     } finally {
       unsubDone();
-      unsubPlanned();
     }
   });
 });
@@ -283,18 +263,53 @@ describe("PATCH /cohorts/:id/status merged (new)", () => {
     }
   });
 
-  test("fan-out: waiting dependent advances to planned after merged", async () => {
-    const DEP_ID = "cohort-dep";
-    insertCohort(db, { id: DEP_ID, plan_id: PLAN_ID, title: "dep", position: 2 });
-    insertCohortDependency(db, { id: "d1", from_cohort_id: COHORT_ID, to_cohort_id: DEP_ID });
-    setStatus(COHORT_ID, "awaiting_merge");
+});
 
-    const planned: { cohort_id: string }[] = [];
-    const unsub = taskTrackerEvents.subscribe("cohort.entered_planned", (p) => planned.push(p));
+describe("plan.completed emission", () => {
+  function flushAsync() {
+    return new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+
+  test("emits plan.completed when the last cohort transitions merged → done", async () => {
+    setStatus(COHORT_ID, "awaiting_merge");
+    const completed: { plan_id: string }[] = [];
+    const unsub = taskTrackerEvents.subscribe("plan.completed", (p) => completed.push(p));
     try {
       await patch(COHORT_ID, { status: "merged" });
-      expect(getCohort(db, DEP_ID)!.status).toBe("planned");
-      expect(planned).toEqual([{ cohort_id: DEP_ID }]);
+      await flushAsync();
+      expect(completed).toHaveLength(1);
+      expect(completed[0]!.plan_id).toBe(PLAN_ID);
+    } finally {
+      unsub();
+    }
+  });
+
+  test("emits plan.completed from legacy direct-done path when last cohort", async () => {
+    setStatus(COHORT_ID, "building");
+    const completed: { plan_id: string }[] = [];
+    const unsub = taskTrackerEvents.subscribe("plan.completed", (p) => completed.push(p));
+    try {
+      await patch(COHORT_ID, { status: "done" });
+      await flushAsync();
+      expect(completed).toHaveLength(1);
+      expect(completed[0]!.plan_id).toBe(PLAN_ID);
+    } finally {
+      unsub();
+    }
+  });
+
+  test("does NOT emit plan.completed when other cohorts in the plan are still building", async () => {
+    const OTHER_ID = "cohort-other";
+    insertCohort(db, { id: OTHER_ID, plan_id: PLAN_ID, title: "Other", position: 2 });
+    setStatus(OTHER_ID, "building");
+    setStatus(COHORT_ID, "awaiting_merge");
+
+    const completed: unknown[] = [];
+    const unsub = taskTrackerEvents.subscribe("plan.completed", (p) => completed.push(p));
+    try {
+      await patch(COHORT_ID, { status: "merged" });
+      await flushAsync();
+      expect(completed).toHaveLength(0);
     } finally {
       unsub();
     }
@@ -302,7 +317,7 @@ describe("PATCH /cohorts/:id/status merged (new)", () => {
 });
 
 describe("merge gate integration: building → awaiting_merge → merged fan-out", () => {
-  test("downstream waiting cohort is NOT touched until operator merges", async () => {
+  test("downstream waiting cohort stays waiting after merge (fan-out only advances ready_to_build)", async () => {
     const DEP_ID = "cohort-dep";
     insertCohort(db, { id: DEP_ID, plan_id: PLAN_ID, title: "dep", position: 2 });
     insertCohortDependency(db, { id: "d1", from_cohort_id: COHORT_ID, to_cohort_id: DEP_ID });
@@ -313,31 +328,9 @@ describe("merge gate integration: building → awaiting_merge → merged fan-out
     expect(getCohort(db, COHORT_ID)!.status).toBe("awaiting_merge");
     expect(getCohort(db, DEP_ID)!.status).toBe("waiting");
 
-    // Step 2: operator confirms merge — fan-out runs
+    // Step 2: operator confirms merge — waiting cohort is not touched (plan approval handles waiting→briefing)
     await patch(COHORT_ID, { status: "merged" });
     expect(getCohort(db, COHORT_ID)!.status).toBe("done");
-    expect(getCohort(db, DEP_ID)!.status).toBe("planned");
-  });
-
-  test("dependent with two prerequisites only advances when both are done", async () => {
-    const DEP_A = "cohort-a";
-    const DEP_B = "cohort-b";
-    const DOWNSTREAM = "cohort-downstream";
-    insertCohort(db, { id: DEP_A, plan_id: PLAN_ID, title: "A", position: 2 });
-    insertCohort(db, { id: DEP_B, plan_id: PLAN_ID, title: "B", position: 3 });
-    insertCohort(db, { id: DOWNSTREAM, plan_id: PLAN_ID, title: "DS", position: 4 });
-    insertCohortDependency(db, { id: "d1", from_cohort_id: DEP_A, to_cohort_id: DOWNSTREAM });
-    insertCohortDependency(db, { id: "d2", from_cohort_id: DEP_B, to_cohort_id: DOWNSTREAM });
-    setStatus(DEP_A, "awaiting_merge");
-    setStatus(DEP_B, "building");
-
-    // Merge A — downstream still has unmet dep on B
-    await patch(DEP_A, { status: "merged" });
-    expect(getCohort(db, DOWNSTREAM)!.status).toBe("waiting");
-
-    // Merge B — now all deps met
-    setStatus(DEP_B, "awaiting_merge");
-    await patch(DEP_B, { status: "merged" });
-    expect(getCohort(db, DOWNSTREAM)!.status).toBe("planned");
+    expect(getCohort(db, DEP_ID)!.status).toBe("waiting");
   });
 });

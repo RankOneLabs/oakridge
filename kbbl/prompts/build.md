@@ -24,7 +24,7 @@ kbbl API base URL: `{{KBBL_URL}}`
      --body "Implements brief {{BRIEF_ID}}. <summary of what shipped and any deviations.>"
    ```
 5. Write a debrief back to kbbl:
-   ```
+   ```http
    PATCH {{KBBL_URL}}/briefs/{{BRIEF_ID}}/debrief
    Content-Type: application/json
 
@@ -32,6 +32,12 @@ kbbl API base URL: `{{KBBL_URL}}`
      "debrief": "<markdown report: what was built, any deviations from the brief, and the PR link>",
      "pr_url": "<GitHub PR URL from step 4>"
    }
+   ```
+   If there were material deviations, add a `deviations` array after `pr_url` (include a comma after `pr_url` when `deviations` is present; omit both the comma and the field when it is not):
+   ```json
+   "deviations": [
+     { "from": "<what the brief specified>", "actual": "<what was built instead>", "downstream_impact": "<effect on downstream cohorts>" }
+   ]
    ```
 6. Signal that the PR is open so the operator can confirm the merge:
    ```
@@ -47,3 +53,7 @@ kbbl API base URL: `{{KBBL_URL}}`
 - A subgoal that is infeasible as written is a deviation — record it in the debrief, pick a sensible path, and continue.
 - Do not skip the debrief PATCH — it is how the operator knows the build completed.
 - Do not skip the cohort status PATCH — it transfers the cohort to awaiting_merge so the operator can confirm the merge. The operator marks merge after the PR ships; the agent does not mark the cohort done.
+
+## Deviations
+
+A material deviation is any change to: a decisions_made entry, a files_in_scope path, the next_action, or any interface another cohort would consume. Cosmetic differences are not deviations. If in doubt, log it.
