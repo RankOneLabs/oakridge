@@ -2,15 +2,10 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { useToast } from "../../hooks/useToast";
+import { ensureOk } from "../../lib/http";
+import type { ReviewThread } from "./types";
 import { UnresolvedThreadsModal } from "./UnresolvedThreadsModal";
 import { ClosedWithoutMergeModal } from "./ClosedWithoutMergeModal";
-
-type ReviewThread = {
-  id: string;
-  author: string;
-  firstLineSnippet: string;
-  deepLinkPath: string;
-};
 
 type MergeOutcome =
   | { outcome: "already_done" }
@@ -43,7 +38,9 @@ export function MergeCohortButton({ cohortId, prUrl }: MergeCohortButtonProps) {
     } else if (data.outcome === "merged") {
       const message =
         data.via === "already_merged"
-          ? `Already merged at ${data.merged_at} — cohort updated.`
+          ? data.merged_at
+            ? `Already merged at ${data.merged_at} — cohort updated.`
+            : "Already merged — cohort updated."
           : "Merged.";
       pushToast({ kind: "success", message });
       invalidate();
@@ -65,10 +62,7 @@ export function MergeCohortButton({ cohortId, prUrl }: MergeCohortButtonProps) {
         headers: body ? { "Content-Type": "application/json" } : undefined,
         body: body ? JSON.stringify(body) : undefined,
       });
-      if (!res.ok) {
-        const json = (await res.json()) as { error?: string };
-        throw new Error(json.error ?? `${res.status}`);
-      }
+      await ensureOk(res, "merge");
       return (await res.json()) as MergeOutcome;
     },
     onSuccess: handleOutcome,

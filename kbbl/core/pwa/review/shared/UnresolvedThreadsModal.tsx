@@ -1,9 +1,4 @@
-interface ReviewThread {
-  id: string;
-  author: string;
-  firstLineSnippet: string;
-  deepLinkPath: string;
-}
+import type { ReviewThread } from "./types";
 
 interface UnresolvedThreadsModalProps {
   threads: ReviewThread[];
@@ -20,6 +15,10 @@ export function UnresolvedThreadsModal({
   onConfirm,
   onCancel,
 }: UnresolvedThreadsModalProps) {
+  // deepLinkPath is /pull/<n>#discussion_r<id> — strip the /pull/<n> suffix
+  // from prUrl to get the repo base before appending.
+  const repoBase = prUrl.replace(/\/pull\/\d+$/, "");
+
   return (
     <div className="review-modal" onClick={onCancel}>
       <div
@@ -32,12 +31,13 @@ export function UnresolvedThreadsModal({
             <div key={thread.id} className="review-modal__thread-row">
               <span className="review-modal__thread-author">{thread.author}</span>
               <a
-                href={prUrl + thread.deepLinkPath}
+                href={repoBase + thread.deepLinkPath}
                 target="_blank"
-                rel="noopener"
+                rel="noopener noreferrer"
                 className="review-modal__thread-snippet"
+                aria-label={thread.firstLineSnippet || `Thread by ${thread.author}`}
               >
-                {thread.firstLineSnippet}
+                {thread.firstLineSnippet || "Open thread"}
               </a>
             </div>
           ))}

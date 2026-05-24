@@ -108,8 +108,9 @@ export function CohortReviewView({ id, onToggleTheme, onBack }: CohortReviewView
             <a
               href={latestBrief.pr_url}
               target="_blank"
-              rel="noopener"
+              rel="noopener noreferrer"
               className="cohort-view__pr-link"
+              aria-label="Open pull request"
             >
               PR
             </a>
