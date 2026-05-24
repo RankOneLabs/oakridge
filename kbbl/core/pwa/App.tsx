@@ -15,6 +15,7 @@ import { CohortReviewView } from "./review/cohort/CohortReviewView";
 
 import { SessionListView } from "./views/SessionListView";
 import { SessionView } from "./views/SessionView";
+import { ToastViewport } from "./components/organisms/ToastViewport";
 
 export function App() {
   const route = useHashRoute();
@@ -61,8 +62,9 @@ export function App() {
   // Hash routing precedence: plan/brief/cohort views win over session/task
   // views. These use path-style hashes (#plan/<id>, #brief/<id>) which don't
   // collide with the query-param style #sid=X and #task=X routes.
+  let view: React.ReactNode;
   if (route?.view === "plan") {
-    return (
+    view = (
       <PlanReviewView
         id={route.id}
         theme={theme}
@@ -70,9 +72,8 @@ export function App() {
         onBack={() => { window.location.hash = ""; }}
       />
     );
-  }
-  if (route?.view === "brief") {
-    return (
+  } else if (route?.view === "brief") {
+    view = (
       <BriefReviewView
         id={route.id}
         theme={theme}
@@ -80,9 +81,8 @@ export function App() {
         onBack={() => { window.location.hash = ""; }}
       />
     );
-  }
-  if (route?.view === "cohort") {
-    return (
+  } else if (route?.view === "cohort") {
+    view = (
       <CohortReviewView
         id={route.id}
         theme={theme}
@@ -90,10 +90,8 @@ export function App() {
         onBack={() => { window.location.hash = ""; }}
       />
     );
-  }
-
-  if (sid !== null) {
-    return (
+  } else if (sid !== null) {
+    view = (
       <SessionView
         sid={sid}
         snapshot={sessions.get(sid as Sid) ?? null}
@@ -113,16 +111,24 @@ export function App() {
         onResume={(parentSid) => resumeSession(parentSid, hydrateSession, navigate)}
       />
     );
+  } else {
+    view = (
+      <SessionListView
+        sessions={sessions}
+        inboxStatus={inboxStatus}
+        theme={theme}
+        defaultWorkdir={config?.defaultWorkdir ?? ""}
+        onToggleTheme={toggleTheme}
+        onSelect={(nextSid) => navigate(nextSid)}
+        onHydrateSession={hydrateSession}
+      />
+    );
   }
+
   return (
-    <SessionListView
-      sessions={sessions}
-      inboxStatus={inboxStatus}
-      theme={theme}
-      defaultWorkdir={config?.defaultWorkdir ?? ""}
-      onToggleTheme={toggleTheme}
-      onSelect={(nextSid) => navigate(nextSid)}
-      onHydrateSession={hydrateSession}
-    />
+    <>
+      {view}
+      <ToastViewport />
+    </>
   );
 }
