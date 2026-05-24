@@ -122,6 +122,7 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
     let emitDone: { cohort_id: string } | null = null;
     let emitPrMerged: { cohort_id: string } | null = null;
     let emitPrOpened: { cohort_id: string; pr_url: string } | null = null;
+    let emitPlanCompleted: { plan_id: string } | null = null;
     const emitPlanned: { cohort_id: string }[] = [];
     const emitBuildReady: { cohort_id: string; brief_id: string }[] = [];
 
@@ -151,6 +152,12 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
           const fanout = runDoneFanout(db, cohort_id);
           emitPlanned.push(...fanout.planned);
           emitBuildReady.push(...fanout.buildReady);
+          const remaining = db
+            .prepare<{ cnt: number }, [string]>(
+              "SELECT COUNT(*) AS cnt FROM cohorts WHERE plan_id = ? AND status != 'done'",
+            )
+            .get(cohort.plan_id);
+          if (remaining && remaining.cnt === 0) emitPlanCompleted = { plan_id: cohort.plan_id };
         } else if (parsed.status === "awaiting_merge") {
           if (cohort.status !== "building") return "not_building_for_await";
           db.prepare("UPDATE cohorts SET status = 'awaiting_merge' WHERE id = ?").run(cohort_id);
@@ -170,6 +177,12 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
           const fanout = runDoneFanout(db, cohort_id);
           emitPlanned.push(...fanout.planned);
           emitBuildReady.push(...fanout.buildReady);
+          const remaining = db
+            .prepare<{ cnt: number }, [string]>(
+              "SELECT COUNT(*) AS cnt FROM cohorts WHERE plan_id = ? AND status != 'done'",
+            )
+            .get(cohort.plan_id);
+          if (remaining && remaining.cnt === 0) emitPlanCompleted = { plan_id: cohort.plan_id };
         }
 
         return null;
@@ -201,6 +214,10 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
       for (const p of emitBuildReady) {
         taskTrackerEvents.emit("cohort.build_ready", p);
       }
+    }
+
+    if (emitPlanCompleted) {
+      taskTrackerEvents.emit("plan.completed", emitPlanCompleted);
     }
 
     return c.json(updated);
