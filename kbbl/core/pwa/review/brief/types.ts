@@ -9,6 +9,7 @@ export interface Brief {
   decisions_made: { decision: string; rationale: string }[];
   approaches_rejected: { approach: string; reason: string }[];
   next_action: string;
+  pr_url: string | null;
   debrief: string | null;
   rejection_reason: string | null;
   created_at: string;

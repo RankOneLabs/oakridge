@@ -3390,3 +3390,68 @@ body {
   opacity: 1;
 }
 
+/* --- merge cohort button --- */
+
+.merge-cohort-button {
+  background: var(--accent-blue);
+  color: #fff;
+  border: none;
+  padding: 4px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.merge-cohort-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* --- cohort meta PR link --- */
+
+.cohort-view__pr-link {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border-subtle);
+  color: var(--accent-blue);
+  text-decoration: none;
+}
+
+.cohort-view__pr-link:hover {
+  border-color: var(--accent-blue);
+}
+
+/* --- unresolved thread list in modal --- */
+
+.review-modal__thread-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.review-modal__thread-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.review-modal__thread-author {
+  font-weight: 500;
+  flex: 0 0 auto;
+  opacity: 0.8;
+}
+
+.review-modal__thread-snippet {
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+

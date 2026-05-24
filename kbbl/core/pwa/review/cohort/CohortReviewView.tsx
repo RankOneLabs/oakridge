@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import type { SessionStatus, Theme } from "../../types";
 import { RunBuildButton } from "../shared/RunBuildButton";
+import { MergeCohortButton } from "../shared/MergeCohortButton";
 import type { Cohort } from "../plan/types";
 import type { Brief } from "../brief/types";
 
@@ -103,6 +104,16 @@ export function CohortReviewView({ id, onToggleTheme, onBack }: CohortReviewView
             {cohort.status}
           </span>
           <span className="cohort-view__position">#{cohort.position}</span>
+          {cohort.status === "awaiting_merge" && latestBrief?.pr_url && (
+            <a
+              href={latestBrief.pr_url}
+              target="_blank"
+              rel="noopener"
+              className="cohort-view__pr-link"
+            >
+              PR
+            </a>
+          )}
         </div>
 
         {cohort.notes && (
@@ -134,6 +145,11 @@ export function CohortReviewView({ id, onToggleTheme, onBack }: CohortReviewView
               {latestBrief.status === "approved" && (
                 <div className="cohort-view__brief-actions">
                   <RunBuildButton briefId={latestBrief.id} cohortId={cohort.id} />
+                </div>
+              )}
+              {cohort.status === "awaiting_merge" && latestBrief.pr_url && (
+                <div className="cohort-view__brief-actions">
+                  <MergeCohortButton cohortId={cohort.id} prUrl={latestBrief.pr_url} />
                 </div>
               )}
             </div>
