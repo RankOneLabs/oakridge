@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import type { ExecutionBackend, InputRef, StageRow } from "./interface";
 import { loadPrompt, renderPrompt } from "./prompt-loader";
 import { listCohortsByPlan, listDependenciesByPlan } from "../../db/cohorts";
+import type { Cohort, CohortDependency } from "../../types/task-tracker";
 
 interface DispatcherDeps {
   db: Database;
@@ -295,22 +296,7 @@ function buildSlotsForBrief(db: Database, brief_id: string, kbblUrl: string): Re
   };
 }
 
-function buildSlotsForPlan(db: Database, plan_id: string, kbblUrl: string): Record<string, string> {
-  interface PlanSpecRow { spec_id: string; spec_title: string; spec_notes: string | null }
-  const planRow = db
-    .prepare<PlanSpecRow, [string]>(
-      `SELECT pl.spec_id, s.title AS spec_title, s.notes AS spec_notes
-         FROM plans pl
-         JOIN specs s ON s.id = pl.spec_id
-        WHERE pl.id = ?`,
-    )
-    .get(plan_id);
-  if (!planRow) throw new Error(`plan not found: ${plan_id}`);
-
-  const cohorts = listCohortsByPlan(db, plan_id);
-  const deps = listDependenciesByPlan(db, plan_id);
-
-  // Kahn's toposort with position ASC tiebreak
+function toposortCohorts(cohorts: Cohort[], deps: CohortDependency[], plan_id: string): Cohort[] {
   const inDegree = new Map<string, number>(cohorts.map((c) => [c.id, 0]));
   const adjFrom = new Map<string, string[]>(cohorts.map((c) => [c.id, []]));
   for (const dep of deps) {
@@ -322,7 +308,7 @@ function buildSlotsForPlan(db: Database, plan_id: string, kbblUrl: string): Reco
     a.position - b.position || a.id.localeCompare(b.id);
 
   const queue = cohorts.filter((c) => inDegree.get(c.id) === 0).sort(topoSort);
-  const sorted: typeof cohorts = [];
+  const sorted: Cohort[] = [];
   const cohortById = new Map(cohorts.map((c) => [c.id, c]));
 
   while (queue.length > 0) {
@@ -345,6 +331,25 @@ function buildSlotsForPlan(db: Database, plan_id: string, kbblUrl: string): Reco
     throw new Error(`dependency cycle detected in plan ${plan_id}`);
   }
 
+  return sorted;
+}
+
+function buildSlotsForPlan(db: Database, plan_id: string, kbblUrl: string): Record<string, string> {
+  interface PlanSpecRow { spec_id: string; spec_title: string; spec_notes: string | null }
+  const planRow = db
+    .prepare<PlanSpecRow, [string]>(
+      `SELECT pl.spec_id, s.title AS spec_title, s.notes AS spec_notes
+         FROM plans pl
+         JOIN specs s ON s.id = pl.spec_id
+        WHERE pl.id = ?`,
+    )
+    .get(plan_id);
+  if (!planRow) throw new Error(`plan not found: ${plan_id}`);
+
+  const cohorts = listCohortsByPlan(db, plan_id);
+  const deps = listDependenciesByPlan(db, plan_id);
+  const sorted = toposortCohorts(cohorts, deps, plan_id);
+
   const cohortLines: string[] = [];
   for (const c of sorted) {
     cohortLines.push(`[${c.position}] ${c.title} (id: ${c.id})`);
@@ -365,6 +370,95 @@ function buildSlotsForPlan(db: Database, plan_id: string, kbblUrl: string): Reco
     PLAN_DEPENDENCIES: depLines.join("\n"),
     KBBL_URL: kbblUrl,
     BRIEF_FORMAT_GUIDE: BRIEF_FORMAT_GUIDE,
+  };
+}
+
+function buildSlotsForPlanResults(db: Database, plan_id: string, kbblUrl: string): Record<string, string> {
+  interface PlanSpecRow { spec_id: string; spec_title: string; spec_notes: string | null }
+  const planRow = db
+    .prepare<PlanSpecRow, [string]>(
+      `SELECT pl.spec_id, s.title AS spec_title, s.notes AS spec_notes
+         FROM plans pl
+         JOIN specs s ON s.id = pl.spec_id
+        WHERE pl.id = ?`,
+    )
+    .get(plan_id);
+  if (!planRow) throw new Error(`plan not found: ${plan_id}`);
+
+  const cohorts = listCohortsByPlan(db, plan_id);
+  const deps = listDependenciesByPlan(db, plan_id);
+  const sorted = toposortCohorts(cohorts, deps, plan_id);
+
+  interface BriefResultRow {
+    goal: string;
+    decisions_made: string;
+    approaches_rejected: string;
+    debrief: string | null;
+    deviations: string | null;
+    pr_url: string | null;
+  }
+
+  const cohortBlocks: string[] = [];
+  for (const cohort of sorted) {
+    const briefRow = db
+      .prepare<BriefResultRow, [string]>(
+        `SELECT goal, decisions_made, approaches_rejected, debrief, deviations, pr_url
+           FROM briefs
+          WHERE cohort_id = ? AND status = 'approved'
+          ORDER BY created_at DESC, id DESC LIMIT 1`,
+      )
+      .get(cohort.id);
+
+    const lines: string[] = [`### [${cohort.position}] ${cohort.title}`];
+
+    if (!briefRow) {
+      lines.push("*(no approved brief found)*");
+    } else {
+      lines.push(`**Goal:** ${briefRow.goal}\n`);
+
+      const decisions: { decision: string; rationale: string }[] = JSON.parse(briefRow.decisions_made);
+      if (decisions.length > 0) {
+        lines.push("**Decisions made:**");
+        for (const d of decisions) lines.push(`- **${d.decision}**: ${d.rationale}`);
+        lines.push("");
+      }
+
+      const rejected: { approach: string; reason: string }[] = JSON.parse(briefRow.approaches_rejected);
+      if (rejected.length > 0) {
+        lines.push("**Approaches rejected:**");
+        for (const a of rejected) lines.push(`- **${a.approach}**: ${a.reason}`);
+        lines.push("");
+      }
+
+      if (briefRow.debrief) {
+        lines.push("**Debrief:**");
+        lines.push(briefRow.debrief);
+        lines.push("");
+      }
+
+      if (briefRow.deviations) {
+        const deviations: { from: string; actual: string; downstream_impact: string }[] = JSON.parse(briefRow.deviations);
+        if (deviations.length > 0) {
+          lines.push("**Deviations:**");
+          for (const dev of deviations) {
+            lines.push(`- from: ${dev.from} | actual: ${dev.actual} | downstream_impact: ${dev.downstream_impact}`);
+          }
+          lines.push("");
+        }
+      }
+
+      if (briefRow.pr_url) lines.push(`**PR:** ${briefRow.pr_url}`);
+    }
+
+    cohortBlocks.push(lines.join("\n"));
+  }
+
+  return {
+    PLAN_ID: plan_id,
+    PLAN_TITLE: planRow.spec_title,
+    SPEC_NOTES: planRow.spec_notes ?? "(no notes)",
+    COHORT_RESULTS: cohortBlocks.join("\n\n"),
+    KBBL_URL: kbblUrl,
   };
 }
 
@@ -434,7 +528,9 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
           break;
         }
         case "plan": {
-          slots = buildSlotsForPlan(db, inputId, kbblUrl);
+          slots = stage.name === "planner3"
+            ? buildSlotsForPlanResults(db, inputId, kbblUrl)
+            : buildSlotsForPlan(db, inputId, kbblUrl);
           workdir = resolveWorkdirForPlan(db, inputId);
           const sessionName = buildSessionNameForPlan(db, inputId, stage.name);
           inputRef = { type: "plan", id: inputId, workdir, sessionName };
