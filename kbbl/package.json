@@ -10,7 +10,7 @@
     "start": "bun run core/server.ts",
     "build:pwa": "cd core/pwa && vite build",
     "dev:pwa": "cd core/pwa && vite",
-    "test": "bun test core/config.test.ts core/db core/orchestrator core/review core/server core/session adapters/claude-code",
+    "test": "bun test core/config.test.ts core/db core/github core/orchestrator core/review core/server core/session adapters/claude-code",
     "test:pwa": "cd core/pwa && vitest run",
     "test:all": "bun run test && bun run test:pwa"
   },
