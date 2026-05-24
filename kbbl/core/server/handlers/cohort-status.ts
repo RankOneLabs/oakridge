@@ -54,6 +54,16 @@ function runDoneFanout(db: Database, cohort_id: string): { cohort_id: string }[]
   return planned;
 }
 
+// Statuses the orchestrator manages internally — operator cannot set them directly.
+const ORCHESTRATOR_ONLY_STATUSES = new Set([
+  "waiting", "planned", "briefing", "brief_review", "building", "ready_to_build",
+]);
+
+// Statuses the operator may set. Validation failure means bad payload, not wrong caller.
+const OPERATOR_SETTABLE_STATUSES = new Set([
+  "blocked", "unblocked", "done", "awaiting_merge", "merged",
+]);
+
 export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps): void {
   const { db } = deps;
 
@@ -68,16 +78,16 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
     const result = PatchCohortStatusSchema.safeParse(body);
     if (!result.success) {
       const msg = result.error.issues[0]?.message ?? "invalid body";
-      // A string status that is a real CohortStatus but not operator-settable
-      // is an orchestrator-managed transition (e.g. "planned", "briefing").
-      // A non-string, missing, or unrecognized status is bad input → 400.
-      const FULL_COHORT_STATUSES = new Set([
-        "waiting", "planned", "briefing", "brief_review", "building", "done", "blocked",
-        "awaiting_merge", "ready_to_build",
-      ]);
       const statusVal = hasStatusField(body) ? body.status : undefined;
-      if (typeof statusVal === "string" && FULL_COHORT_STATUSES.has(statusVal)) {
-        return c.json({ error: "transition is orchestrator-only" }, 422);
+      if (typeof statusVal === "string") {
+        // Orchestrator-managed statuses are not operator-settable → wrong caller.
+        if (ORCHESTRATOR_ONLY_STATUSES.has(statusVal)) {
+          return c.json({ error: "transition is orchestrator-only" }, 422);
+        }
+        // Operator-settable status with malformed payload → surface the validation error.
+        if (OPERATOR_SETTABLE_STATUSES.has(statusVal)) {
+          return c.json({ error: msg }, 400);
+        }
       }
       return c.json({ error: msg }, 400);
     }
@@ -116,7 +126,7 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
           emitDone = { cohort_id };
           emitPlanned.push(...runDoneFanout(db, cohort_id));
         } else if (parsed.status === "awaiting_merge") {
-          if (cohort.status !== "building") return "not_building";
+          if (cohort.status !== "building") return "not_building_for_await";
           db.prepare("UPDATE cohorts SET status = 'awaiting_merge' WHERE id = ?").run(cohort_id);
           db.prepare(
             `UPDATE briefs SET pr_url = COALESCE(pr_url, ?)
@@ -124,14 +134,17 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
           ).run(parsed.pr_url, cohort_id);
           updated = getCohort(db, cohort_id);
           emitPrOpened = { cohort_id, pr_url: parsed.pr_url };
-        } else {
-          // merged
+        } else if (parsed.status === "merged") {
           if (cohort.status !== "awaiting_merge") return "not_awaiting_merge";
           db.prepare("UPDATE cohorts SET status = 'done' WHERE id = ?").run(cohort_id);
           updated = getCohort(db, cohort_id);
           emitDone = { cohort_id };
           emitPrMerged = { cohort_id };
           emitPlanned.push(...runDoneFanout(db, cohort_id));
+        } else {
+          const _exhaustive: never = parsed;
+          void _exhaustive;
+          return "unhandled_status";
         }
 
         return null;
@@ -142,7 +155,9 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
       if (error === "not_blocked") return c.json({ error: "cohort is not blocked" }, 409);
       if (error === "no_pre_block") return c.json({ error: "no pre_block_status recorded" }, 409);
       if (error === "not_building") return c.json({ error: "done transition only allowed from building" }, 409);
+      if (error === "not_building_for_await") return c.json({ error: "awaiting_merge transition only allowed from building" }, 409);
       if (error === "not_awaiting_merge") return c.json({ error: "merged transition only allowed from awaiting_merge" }, 409);
+      if (error === "unhandled_status") return c.json({ error: "internal server error" }, 500);
     } catch (err) {
       console.error("cohort-status:patch failed", err);
       return c.json({ error: "internal server error" }, 500);
