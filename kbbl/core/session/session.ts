@@ -1148,23 +1148,44 @@ export class SessionNotReadyError extends Error {
   }
 }
 
+interface ResultPayload {
+  usage?: unknown;
+}
+
+interface ResultUsagePayload {
+  input_tokens?: unknown;
+  output_tokens?: unknown;
+  cache_creation_input_tokens?: unknown;
+  cache_read_input_tokens?: unknown;
+}
+
+function resultPayload(value: unknown): ResultPayload | null {
+  if (typeof value !== "object" || value === null) return null;
+  return value;
+}
+
+function resultUsagePayload(value: unknown): ResultUsagePayload | null {
+  if (typeof value !== "object" || value === null) return null;
+  return value;
+}
+
 export function extractResultUsage(payload: unknown): ResultUsage | null {
-  if (typeof payload !== "object" || payload === null) return null;
-  const usage = (payload as { usage?: unknown }).usage;
-  if (typeof usage !== "object" || usage === null) return null;
-  const u = usage as Record<string, unknown>;
-  const input = typeof u.input_tokens === "number" ? u.input_tokens : null;
-  const output = typeof u.output_tokens === "number" ? u.output_tokens : null;
+  const resultPayloadValue = resultPayload(payload);
+  if (!resultPayloadValue) return null;
+  const usage = resultUsagePayload(resultPayloadValue.usage);
+  if (!usage) return null;
+  const input = typeof usage.input_tokens === "number" ? usage.input_tokens : null;
+  const output = typeof usage.output_tokens === "number" ? usage.output_tokens : null;
   if (input === null || output === null) return null;
   const result: ResultUsage = {
     input_tokens: input,
     output_tokens: output,
   };
-  if (typeof u.cache_creation_input_tokens === "number") {
-    result.cache_creation_input_tokens = u.cache_creation_input_tokens;
+  if (typeof usage.cache_creation_input_tokens === "number") {
+    result.cache_creation_input_tokens = usage.cache_creation_input_tokens;
   }
-  if (typeof u.cache_read_input_tokens === "number") {
-    result.cache_read_input_tokens = u.cache_read_input_tokens;
+  if (typeof usage.cache_read_input_tokens === "number") {
+    result.cache_read_input_tokens = usage.cache_read_input_tokens;
   }
   return result;
 }
