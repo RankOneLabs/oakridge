@@ -4,8 +4,6 @@ import { ToastItem } from "../atoms/ToastItem";
 export function ToastViewport() {
   const { toasts, dismissToast } = useToast();
 
-  if (toasts.length === 0) return null;
-
   return (
     <div
       className="toast-viewport"

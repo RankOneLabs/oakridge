@@ -3337,7 +3337,7 @@ body {
 
 .toast-viewport {
   position: fixed;
-  bottom: 1.5rem;
+  bottom: calc(var(--bottom-bar-h, 0px) + 0.75rem);
   right: 1.5rem;
   z-index: 1000;
   display: flex;
