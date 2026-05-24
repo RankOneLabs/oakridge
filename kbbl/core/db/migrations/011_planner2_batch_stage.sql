@@ -6,7 +6,8 @@ CREATE TABLE stages_new (
   gate TEXT NOT NULL CHECK (gate IN ('review_required','none')),
   default_backend TEXT NOT NULL
 );
-INSERT INTO stages_new SELECT * FROM stages;
+INSERT INTO stages_new (name, prompt_template_path, input_artifact_type, output_artifact_type, gate, default_backend)
+  SELECT name, prompt_template_path, input_artifact_type, output_artifact_type, gate, default_backend FROM stages;
 DROP TABLE stages;
 ALTER TABLE stages_new RENAME TO stages;
 INSERT INTO stages (name, prompt_template_path, input_artifact_type, output_artifact_type, gate, default_backend)

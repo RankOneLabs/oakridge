@@ -270,7 +270,7 @@ describe("full dispatch pipeline with MockBackend", () => {
     const cohortB = (await cohortBRes.json()) as { id: string };
 
     const cohortCRes = await post(app, "/cohorts", { plan_id: plan.id, title: "Cohort C", position: 3 });
-    const cohortC = (await cohortCRes.json()) as { id: string };
+    await cohortCRes.json();
 
     // 3. Add dependency edge: A → B (B depends on A)
     const depRes = await post(app, "/cohort-dependencies", {
@@ -291,7 +291,9 @@ describe("full dispatch pipeline with MockBackend", () => {
 
     // 5. Assert exactly one new MockBackend call
     expect(mockBackend.calls).toHaveLength(callsBefore + 1);
-    const call = mockBackend.calls[callsBefore]!;
+    const call = mockBackend.calls[callsBefore];
+    expect(call).toBeDefined();
+    if (!call) throw new Error("expected planner2_batch dispatch call");
     expect(call.stageName).toBe("planner2_batch");
     expect(call.inputType).toBe("plan");
     expect(call.inputId).toBe(plan.id);
@@ -318,11 +320,10 @@ describe("full dispatch pipeline with MockBackend", () => {
         "SELECT current_session_ref, current_session_stage FROM plans WHERE id = ?",
       )
       .get(plan.id);
-    expect(planRow!.current_session_ref).toBe(sessionRef);
-    expect(planRow!.current_session_stage).toBe("planner2_batch");
-
-    // suppress unused-var warning
-    void cohortC;
+    expect(planRow).not.toBeNull();
+    if (!planRow) throw new Error("expected plan row after planner2_batch dispatch");
+    expect(planRow.current_session_ref).toBe(sessionRef);
+    expect(planRow.current_session_stage).toBe("planner2_batch");
   });
 
   test("POST /briefs/:id/build returns 404 for unknown brief", async () => {

@@ -318,18 +318,26 @@ function buildSlotsForPlan(db: Database, plan_id: string, kbblUrl: string): Reco
     adjFrom.get(dep.from_cohort_id)?.push(dep.to_cohort_id);
   }
 
-  const queue = cohorts.filter((c) => inDegree.get(c.id) === 0).sort((a, b) => a.position - b.position);
+  const topoSort = (a: { position: number; id: string }, b: { position: number; id: string }) =>
+    a.position - b.position || a.id.localeCompare(b.id);
+
+  const queue = cohorts.filter((c) => inDegree.get(c.id) === 0).sort(topoSort);
   const sorted: typeof cohorts = [];
   const cohortById = new Map(cohorts.map((c) => [c.id, c]));
 
   while (queue.length > 0) {
-    queue.sort((a, b) => a.position - b.position);
-    const curr = queue.shift()!;
+    queue.sort(topoSort);
+    const curr = queue.shift();
+    if (!curr) break;
     sorted.push(curr);
     for (const toId of adjFrom.get(curr.id) ?? []) {
       const newDeg = (inDegree.get(toId) ?? 0) - 1;
       inDegree.set(toId, newDeg);
-      if (newDeg === 0) queue.push(cohortById.get(toId)!);
+      if (newDeg === 0) {
+        const next = cohortById.get(toId);
+        if (!next) throw new Error(`dependency references unknown cohort ${toId} in plan ${plan_id}`);
+        queue.push(next);
+      }
     }
   }
 
