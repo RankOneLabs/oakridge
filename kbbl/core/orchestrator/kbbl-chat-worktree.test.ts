@@ -29,8 +29,11 @@ async function gitInit(cwd: string): Promise<void> {
   ];
   for (const cmd of cmds) {
     const p = Bun.spawn({ cmd, stdout: "pipe", stderr: "pipe" });
-    const code = await p.exited;
-    if (code !== 0) throw new Error(`${cmd.join(" ")} failed`);
+    const [stderr, code] = await Promise.all([
+      new Response(p.stderr).text(),
+      p.exited,
+    ]);
+    if (code !== 0) throw new Error(`${cmd.join(" ")} failed (exit ${code}): ${stderr}`);
   }
 }
 
@@ -98,16 +101,17 @@ describe("KbblChatBackend dispatch worktree behavior", () => {
     // build stage: forceWorktree → worktreePath must be set
     const buildResult = await backend.dispatch(buildStage, inputRef, "build prompt");
     const buildSession = manager.get(buildResult.session_ref);
-    expect(buildSession).toBeDefined();
-    expect(buildSession!.worktreePath).not.toBeNull();
-    expect(existsSync(buildSession!.worktreePath!)).toBe(true);
+    if (!buildSession) throw new Error("expected build session to exist");
+    expect(buildSession.worktreePath).not.toBeNull();
+    if (!buildSession.worktreePath) throw new Error("expected build worktreePath to be set");
+    expect(existsSync(buildSession.worktreePath)).toBe(true);
 
     // planner1 stage: no forceWorktree, global flag off → worktreePath must be null
     const plannerRef = { ...inputRef, type: "spec" as const };
     const plannerResult = await backend.dispatch(plannerStage, plannerRef, "planner prompt");
     const plannerSession = manager.get(plannerResult.session_ref);
-    expect(plannerSession).toBeDefined();
-    expect(plannerSession!.worktreePath).toBeNull();
+    if (!plannerSession) throw new Error("expected planner session to exist");
+    expect(plannerSession.worktreePath).toBeNull();
 
     await manager.endAll();
   });
