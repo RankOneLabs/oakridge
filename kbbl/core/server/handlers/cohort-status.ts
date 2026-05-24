@@ -9,8 +9,16 @@ const PatchCohortStatusSchema = z.object({
   status: z.enum(["blocked", "unblocked", "done"]),
 });
 
+interface PatchCohortStatusPayload {
+  status: unknown;
+}
+
 interface CohortStatusRouteDeps {
   db: Database;
+}
+
+function hasStatusField(value: unknown): value is PatchCohortStatusPayload {
+  return typeof value === "object" && value !== null && "status" in value;
 }
 
 export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps): void {
@@ -33,10 +41,7 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
       const FULL_COHORT_STATUSES = new Set([
         "waiting", "planned", "briefing", "brief_review", "building", "done", "blocked",
       ]);
-      const statusVal =
-        typeof body === "object" && body !== null && "status" in body
-          ? (body as Record<string, unknown>).status
-          : undefined;
+      const statusVal = hasStatusField(body) ? body.status : undefined;
       if (typeof statusVal === "string" && FULL_COHORT_STATUSES.has(statusVal)) {
         return c.json({ error: "transition is orchestrator-only" }, 422);
       }
