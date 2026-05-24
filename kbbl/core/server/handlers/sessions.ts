@@ -16,6 +16,20 @@ import {
 } from "../../session/session-manager";
 import { isValidSid } from "./per-sid";
 
+interface ParentSessionPayload {
+  readonly [key: string]: unknown;
+  readonly cc_session_id?: unknown;
+  readonly workdir?: unknown;
+  readonly worktreePath?: unknown;
+  readonly model?: unknown;
+}
+
+function parentSessionPayload(payload: unknown): ParentSessionPayload {
+  return (
+    typeof payload === "object" && payload !== null ? payload : {}
+  ) as ParentSessionPayload;
+}
+
 /**
  * Validates a workdir string for POST /sessions and the server startup
  * --workdir check. Returns null if OK or a human-readable error string for
@@ -119,7 +133,7 @@ async function resolveResumeParent(
     } catch {
       continue;
     }
-    const payload = (evt.payload ?? {}) as Record<string, unknown>;
+    const payload = parentSessionPayload(evt.payload);
     if (
       evt.type === "cc_session_id_observed" &&
       typeof payload.cc_session_id === "string"
