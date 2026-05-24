@@ -71,7 +71,7 @@ function runDoneFanout(db: Database, cohort_id: string): DoneFanoutResult {
 
 export interface ApplyAwaitingMergeResult {
   updated: Cohort;
-  /** null when the cohort was already done — caller must skip event emission. */
+  /** null when the cohort was no longer in awaiting_merge status — caller must skip event emission. */
   emits: {
     done: { cohort_id: string };
     pr_merged: { cohort_id: string };
@@ -84,7 +84,8 @@ export interface ApplyAwaitingMergeResult {
  * Applies the awaiting_merge → merged (done) transition and gathers all
  * events that must be emitted afterward. Caller is responsible for running
  * this inside a db.transaction and for emitting the returned events.
- * Returns emits=null when the cohort was already done (race no-op).
+ * Returns emits=null when the cohort was no longer in awaiting_merge status
+ * (transition did not apply; caller must skip event emission).
  */
 export function applyAwaitingMergeToMerged(
   db: Database,
@@ -93,7 +94,8 @@ export function applyAwaitingMergeToMerged(
   const { changes } = db
     .prepare("UPDATE cohorts SET status = 'done' WHERE id = ? AND status = 'awaiting_merge'")
     .run(cohort_id);
-  const updated = getCohort(db, cohort_id)!;
+  const updated = getCohort(db, cohort_id);
+  if (!updated) throw new Error(`cohort ${cohort_id} not found after awaiting_merge transition`);
   if (changes === 0) {
     return { updated, emits: null };
   }

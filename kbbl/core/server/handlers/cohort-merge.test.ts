@@ -99,6 +99,19 @@ describe("POST /cohorts/:id/merge — error paths", () => {
     expect(body.error).toMatch(/awaiting_merge/);
   });
 
+  test("empty body → defaults (no confirm flags, merges cleanly)", async () => {
+    setupAwaitingMerge();
+    setupApp(makeFakeGh({ kind: "open_mergeable_clean", url: PR_URL }));
+    const res = await app.request(`/cohorts/${COHORT_ID}/merge`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "",
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json() as MergeOutcome;
+    expect(body.outcome).toBe("merged");
+  });
+
   test("malformed request JSON body → 400", async () => {
     setupAwaitingMerge();
     setupApp(makeFakeGh({ kind: "open_mergeable_clean", url: PR_URL }));
