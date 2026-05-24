@@ -11,7 +11,11 @@ export type CohortEvent =
   | "build_completed"
   | "pr_merged"
   | "block"
-  | "unblock";
+  | "unblock"
+  | "plan_approved"
+  | "brief_approved_deps_met"
+  | "brief_approved_deps_pending"
+  | "pr_opened";
 
 export type PlanStatus = "pending_approval" | "approved" | "rejected" | "superseded";
 export type PlanEvent = "approve" | "reject" | "supersede";
@@ -20,13 +24,15 @@ export type BriefStatus = "pending_approval" | "approved" | "rejected" | "supers
 export type BriefEvent = "approve" | "reject" | "supersede";
 
 export const COHORT_TRANSITIONS: Record<CohortStatus, Partial<Record<CohortEvent, CohortStatus>>> = {
-  waiting:      { dependencies_met: "planned",       block: "blocked" },
-  planned:      { briefing_started: "briefing",      block: "blocked" },
-  briefing:     { brief_submitted:  "brief_review",  block: "blocked" },
-  brief_review: { brief_approved:   "building", brief_rejected: "briefing", block: "blocked" },
-  building:     { build_completed:  "done", pr_merged: "done",           block: "blocked" },
-  done:         { block: "blocked" },
-  blocked:      {},
+  waiting:       { dependencies_met: "planned", plan_approved: "briefing",                                                            block: "blocked" },
+  planned:       { briefing_started: "briefing",                                                                                      block: "blocked" },
+  briefing:      { brief_submitted: "brief_review",                                                                                   block: "blocked" },
+  brief_review:  { brief_approved: "building", brief_rejected: "briefing", brief_approved_deps_met: "building", brief_approved_deps_pending: "ready_to_build", block: "blocked" },
+  building:      { build_completed: "done", pr_merged: "done", pr_opened: "awaiting_merge",                                          block: "blocked" },
+  ready_to_build: { dependencies_met: "building",                                                                                     block: "blocked" },
+  awaiting_merge: { pr_merged: "done",                                                                                                block: "blocked" },
+  done:          { block: "blocked" },
+  blocked:       {},
 };
 
 export const PLAN_TRANSITIONS: Record<PlanStatus, Partial<Record<PlanEvent, PlanStatus>>> = {
