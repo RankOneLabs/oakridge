@@ -1,7 +1,9 @@
 -- Add current_session_ref and current_session_stage to plans table.
--- Nullable with no default/CHECK; Zod SessionStageSchema enforces the union at
--- the application layer so downstream cohorts can extend the allowed values
--- without a schema rewrite here.
+-- plans.current_session_stage is intentionally left without a DB CHECK; Zod
+-- SessionStageSchema enforces the union at the application layer so cohorts 2
+-- and 4 can extend the allowed stage values without a schema rewrite here.
+-- (cohorts.current_session_stage retains its existing CHECK from migration 009
+-- and is reproduced verbatim in the table rebuild below.)
 ALTER TABLE plans ADD COLUMN current_session_ref TEXT;
 ALTER TABLE plans ADD COLUMN current_session_stage TEXT;
 
