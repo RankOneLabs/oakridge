@@ -17,6 +17,15 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
 
+  kbbl-tests:
+    name: kbbl tests (bun)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run --filter kbbl test
+
   kbbl-pwa-tests:
     name: kbbl PWA tests (vitest)
     runs-on: ubuntu-latest
