@@ -1,4 +1,5 @@
 # oakridge
+<!-- ci-probe: cohort-5 triage -->
 
 Multi-agent workspace built on jig (separate repo, agent kit) and kbbl (operator surface for CLI coding agents). The workspace layer is in design; today, oakridge is a top-level monorepo containing kbbl as its operational sub-package.
 
