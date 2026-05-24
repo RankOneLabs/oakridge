@@ -222,6 +222,27 @@ describe("parsePrViewJson — open_not_mergeable", () => {
     const v = r.value as Extract<PrState, { kind: "open_not_mergeable" }>;
     expect(v.reason).toBe("unknown");
   });
+
+  test("unresolved threads with CONFLICTING → open_not_mergeable(conflicts), not open_mergeable_unresolved", () => {
+    const json = makeGolden({
+      mergeable: "CONFLICTING",
+      mergeStateStatus: "DIRTY",
+      reviewThreads: {
+        nodes: [
+          {
+            id: "PRRT_thread1",
+            isResolved: false,
+            comments: { nodes: [{ author: { login: "reviewer1" }, body: "fix this", databaseId: 1 }] },
+          },
+        ],
+      },
+    });
+    const r = parsePrViewJson(json);
+    if (!r.ok) return;
+    expect(r.value.kind).toBe("open_not_mergeable");
+    const v = r.value as Extract<PrState, { kind: "open_not_mergeable" }>;
+    expect(v.reason).toBe("conflicts");
+  });
 });
 
 describe("parsePrViewJson — closed_unmerged", () => {

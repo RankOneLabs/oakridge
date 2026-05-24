@@ -113,7 +113,18 @@ function classifyPrView(pr: GhPrView): PrState {
   if (pr.state === "CLOSED") {
     return { kind: "closed_unmerged", url: pr.url };
   }
-  // state === "OPEN"
+  // state === "OPEN": check hard mergeability before threads so
+  // open_mergeable_* kinds are only returned when the PR is actually mergeable.
+  if (pr.mergeable !== "MERGEABLE" || pr.mergeStateStatus !== "CLEAN") {
+    let reason: "conflicts" | "checks_failing" | "unknown" = "unknown";
+    if (pr.mergeable === "CONFLICTING" || pr.mergeStateStatus === "DIRTY") {
+      reason = "conflicts";
+    } else if (pr.mergeStateStatus === "BLOCKED" || pr.mergeStateStatus === "UNSTABLE") {
+      reason = "checks_failing";
+    }
+    return { kind: "open_not_mergeable", reason, url: pr.url };
+  }
+  // mergeable === "MERGEABLE" && mergeStateStatus === "CLEAN"
   const prNumber = extractPrNumber(pr.url) ?? 0;
   const unresolved = pr.reviewThreads.nodes
     .filter((t) => !t.isResolved)
@@ -123,17 +134,7 @@ function classifyPrView(pr: GhPrView): PrState {
   if (unresolved.length > 0) {
     return { kind: "open_mergeable_unresolved", threads: unresolved, url: pr.url };
   }
-  if (pr.mergeable === "MERGEABLE" && pr.mergeStateStatus === "CLEAN") {
-    return { kind: "open_mergeable_clean", url: pr.url };
-  }
-
-  let reason: "conflicts" | "checks_failing" | "unknown" = "unknown";
-  if (pr.mergeable === "CONFLICTING" || pr.mergeStateStatus === "DIRTY") {
-    reason = "conflicts";
-  } else if (pr.mergeStateStatus === "BLOCKED" || pr.mergeStateStatus === "UNSTABLE") {
-    reason = "checks_failing";
-  }
-  return { kind: "open_not_mergeable", reason, url: pr.url };
+  return { kind: "open_mergeable_clean", url: pr.url };
 }
 
 // ── Stderr narrowing (exported for unit tests) ────────────────────────────────
@@ -203,8 +204,10 @@ async function runGh(
 ): Promise<Result<{ stdout: string }, GhError>> {
   try {
     // const (not let) so TypeScript retains the pipe-narrowed stdout/stderr types.
+    // stdin: "ignore" prevents gh from hanging on interactive prompts in server context.
     const proc = Bun.spawn({
       cmd: ["gh", ...args],
+      stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
       env: { ...process.env, LC_ALL: "C", LANG: "C" },
@@ -222,12 +225,12 @@ async function runGh(
     return { ok: true, value: { stdout } };
   } catch (err) {
     // Bun.spawn throws synchronously with code "ENOENT" when the binary is not on PATH.
-    const isEnoent =
-      err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT";
-    if (isEnoent) {
+    if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
       return { ok: false, error: { kind: "gh_not_installed", operation, prUrl } };
     }
-    throw err;
+    // Map all other unexpected errors into gh_failed so callers always see a typed Result.
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: { kind: "gh_failed", operation, prUrl, exitCode: -1, stderr: msg } };
   }
 }
 
