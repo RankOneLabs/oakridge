@@ -19,6 +19,8 @@ import { mountBriefStatusRoutes } from "./handlers/brief-status";
 import { mountBuildsRoutes } from "./handlers/builds";
 import { mountCohortsRoutes } from "./handlers/cohorts";
 import { mountCohortStatusRoutes } from "./handlers/cohort-status";
+import { mountCohortMergeRoutes } from "./handlers/cohort-merge";
+import * as ghGateway from "../github/gh-gateway";
 import { mountBriefsRoutes } from "./handlers/briefs";
 import { mountAssessmentsRoutes } from "./handlers/assessments";
 import { mountReviewFreezeRoutes } from "./handlers/review-freeze";
@@ -187,6 +189,7 @@ export function createApp(deps: CreateAppDeps): Hono {
   mountPlanReopenRoutes(app, { db });
   mountCohortsRoutes(app, { db, manager });
   mountCohortStatusRoutes(app, { db });
+  mountCohortMergeRoutes(app, { db, gh: ghGateway });
   mountBriefsRoutes(app, { db });
   mountBriefStatusRoutes(app, { db });
   mountBuildsRoutes(app, { db, dispatcher, manager });

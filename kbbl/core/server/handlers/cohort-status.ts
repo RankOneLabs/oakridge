@@ -69,6 +69,54 @@ function runDoneFanout(db: Database, cohort_id: string): DoneFanoutResult {
   return { buildReady };
 }
 
+export interface ApplyAwaitingMergeResult {
+  updated: Cohort;
+  /** null when the cohort was no longer in awaiting_merge status — caller must skip event emission. */
+  emits: {
+    done: { cohort_id: string };
+    pr_merged: { cohort_id: string };
+    buildReady: { cohort_id: string; brief_id: string }[];
+    planCompleted: { plan_id: string } | null;
+  } | null;
+}
+
+/**
+ * Applies the awaiting_merge → merged (done) transition and gathers all
+ * events that must be emitted afterward. Caller is responsible for running
+ * this inside a db.transaction and for emitting the returned events.
+ * Returns emits=null when the cohort was no longer in awaiting_merge status
+ * (transition did not apply; caller must skip event emission).
+ */
+export function applyAwaitingMergeToMerged(
+  db: Database,
+  cohort_id: string,
+): ApplyAwaitingMergeResult {
+  const { changes } = db
+    .prepare("UPDATE cohorts SET status = 'done' WHERE id = ? AND status = 'awaiting_merge'")
+    .run(cohort_id);
+  const updated = getCohort(db, cohort_id);
+  if (!updated) throw new Error(`cohort ${cohort_id} not found after awaiting_merge transition`);
+  if (changes === 0) {
+    return { updated, emits: null };
+  }
+  const fanout = runDoneFanout(db, cohort_id);
+  const remaining = db
+    .prepare<{ cnt: number }, [string]>(
+      "SELECT COUNT(*) AS cnt FROM cohorts WHERE plan_id = ? AND status != 'done'",
+    )
+    .get(updated.plan_id);
+  const planCompleted = remaining && remaining.cnt === 0 ? { plan_id: updated.plan_id } : null;
+  return {
+    updated,
+    emits: {
+      done: { cohort_id },
+      pr_merged: { cohort_id },
+      buildReady: fanout.buildReady,
+      planCompleted,
+    },
+  };
+}
+
 // Statuses the orchestrator manages internally — operator cannot set them directly.
 const ORCHESTRATOR_ONLY_STATUSES = new Set([
   "waiting", "planned", "briefing", "brief_review", "building", "ready_to_build",
@@ -160,18 +208,14 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
         } else {
           // merged
           if (cohort.status !== "awaiting_merge") return "not_awaiting_merge";
-          db.prepare("UPDATE cohorts SET status = 'done' WHERE id = ?").run(cohort_id);
-          updated = getCohort(db, cohort_id);
-          emitDone = { cohort_id };
-          emitPrMerged = { cohort_id };
-          const fanout = runDoneFanout(db, cohort_id);
-          emitBuildReady.push(...fanout.buildReady);
-          const remaining = db
-            .prepare<{ cnt: number }, [string]>(
-              "SELECT COUNT(*) AS cnt FROM cohorts WHERE plan_id = ? AND status != 'done'",
-            )
-            .get(cohort.plan_id);
-          if (remaining && remaining.cnt === 0) emitPlanCompleted = { plan_id: cohort.plan_id };
+          const result = applyAwaitingMergeToMerged(db, cohort_id);
+          updated = result.updated;
+          if (result.emits) {
+            emitDone = result.emits.done;
+            emitPrMerged = result.emits.pr_merged;
+            emitBuildReady.push(...result.emits.buildReady);
+            if (result.emits.planCompleted) emitPlanCompleted = result.emits.planCompleted;
+          }
         }
 
         return null;
