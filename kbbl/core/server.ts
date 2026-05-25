@@ -226,7 +226,7 @@ const manager = new SessionManager({
 
 // === Dispatcher + dispatch hooks + responder spawn ===
 
-const kbblChatBackend = createKbblChatBackend({ manager });
+const kbblChatBackend = createKbblChatBackend({ manager, config });
 // Internal URL for in-process dispatchers and spawned responders. Always
 // loopback regardless of the operator's bind host: --host=0.0.0.0 (or a raw
 // IPv6 address) is fine as an external listener but would resolve to a

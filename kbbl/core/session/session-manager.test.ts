@@ -15,6 +15,7 @@ import type {
   RuntimeDescriptor,
   RuntimeEvent,
   ResumeRef,
+  RuntimeId,
   RuntimeRegistry,
   RuntimeSnapshotContrib,
   SessionHandle,
@@ -42,15 +43,15 @@ async function noopSpawn(_session: Session): Promise<SpawnCmd> {
   return { cmd: ["true"], cwd: "/tmp", env: {} };
 }
 
-function makeNoopRuntime(): AgentRuntime {
+function makeNoopRuntime(id: RuntimeId = "claude-code"): AgentRuntime {
   const descriptor: RuntimeDescriptor = {
-    id: "claude-code",
-    label: "Claude Code",
+    id,
+    label: id === "claude-code" ? "Claude Code" : "Codex",
     models: [{ value: "claude-sonnet-4-6", label: "sonnet 4.6" }],
     supportsCompaction: true,
   };
   return {
-    id: "claude-code",
+    id,
     descriptor,
     async spawn(_config: RuntimeConfig): Promise<SessionHandle> {
       return { sessionId: "noop-handle" };
@@ -183,5 +184,47 @@ describe("createRuntimeRegistry", () => {
     const runtime = makeNoopRuntime();
     const registry = createRuntimeRegistry([runtime]);
     expect(registry.runtimes.get("claude-code")).toBe(runtime);
+  });
+});
+
+describe("CreateSessionOpts.runtime", () => {
+  test("provided runtime overrides the default", async () => {
+    // Register both claude-code (default) and codex so the override is proven
+    // against a non-default choice, not just a round-trip of the default.
+    const ccRuntime = makeNoopRuntime("claude-code");
+    const codexRuntime = makeNoopRuntime("codex");
+    const registry: RuntimeRegistry = createRuntimeRegistry([ccRuntime, codexRuntime]);
+    const manager = new SessionManager({
+      sessionsDir,
+      handoffsDir: join(tmpRoot, "handoffs"),
+      worktreesDir,
+      registry,
+      config: KbblConfigSchema.parse({
+        sessions: { worktree_per_session: false },
+      }),
+    });
+    const session = await manager.create({ workdir: "/tmp", runtime: "codex" });
+    await session.waitForEnd();
+    expect(session.runtimeId).toBe("codex");
+  });
+
+  test("unknown runtime rejects before session is created", async () => {
+    const runtime = makeNoopRuntime();
+    const registry: RuntimeRegistry = createRuntimeRegistry([runtime]);
+    const manager = new SessionManager({
+      sessionsDir,
+      handoffsDir: join(tmpRoot, "handoffs"),
+      worktreesDir,
+      registry,
+      config: KbblConfigSchema.parse({
+        sessions: { worktree_per_session: false },
+      }),
+    });
+    // "codex" is not registered (only claude-code is in this registry).
+    await expect(
+      manager.create({ workdir: "/tmp", runtime: "codex" }),
+    ).rejects.toThrow(/runtime "codex" is not registered/);
+    // No session should have been added to the manager.
+    expect(manager.list().length).toBe(0);
   });
 });

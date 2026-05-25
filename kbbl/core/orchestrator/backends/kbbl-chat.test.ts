@@ -2,11 +2,14 @@ import { describe, expect, test } from "bun:test";
 import { createKbblChatBackend } from "./kbbl-chat";
 import type { InputRef, StageRow } from "./interface";
 import type { SessionManager } from "../../session/session-manager";
+import { KbblConfigSchema } from "../../config";
+import type { RuntimeId } from "../../runtime";
 
 interface FakeCreateOpts {
   workdir: string;
   name: string;
   model: string | null;
+  runtime?: RuntimeId;
 }
 
 type CreateCall = FakeCreateOpts;
@@ -15,7 +18,7 @@ function makeFakeManager(): { manager: SessionManager; calls: CreateCall[] } {
   const calls: CreateCall[] = [];
   const manager = {
     async create(opts: FakeCreateOpts) {
-      calls.push({ workdir: opts.workdir, name: opts.name, model: opts.model });
+      calls.push({ workdir: opts.workdir, name: opts.name, model: opts.model, runtime: opts.runtime });
       return {
         oakridgeSid: `sid-${calls.length}`,
         async writeInput(_input: string) {},
@@ -91,5 +94,38 @@ describe("KbblChatBackend dispatch routes each stage to its intended model", () 
     const backend = createKbblChatBackend({ manager });
     await backend.dispatch(stage("future-stage"), inputRef, "prompt");
     expect(calls[0]?.model).toBeNull();
+  });
+});
+
+describe("KbblChatBackend dispatch config.runtime.stages overrides", () => {
+  test("stage override takes precedence over STAGE_ROUTING", async () => {
+    const { manager, calls } = makeFakeManager();
+    const config = KbblConfigSchema.parse({
+      runtime: { stages: { build: { runtime: "codex", model: "codex-model-x" } } },
+    });
+    const backend = createKbblChatBackend({ manager, config });
+    await backend.dispatch(stage("build"), inputRef, "prompt");
+    expect(calls[0]?.model).toBe("codex-model-x");
+    expect(calls[0]?.runtime).toBe("codex");
+  });
+
+  test("override applies to an otherwise-unrouted stage", async () => {
+    const { manager, calls } = makeFakeManager();
+    const config = KbblConfigSchema.parse({
+      runtime: { stages: { "future-stage": { runtime: "claude-code", model: "some-model" } } },
+    });
+    const backend = createKbblChatBackend({ manager, config });
+    await backend.dispatch(stage("future-stage"), inputRef, "prompt");
+    expect(calls[0]?.model).toBe("some-model");
+    expect(calls[0]?.runtime).toBe("claude-code");
+  });
+
+  test("absent stages block leaves STAGE_ROUTING defaults intact", async () => {
+    const { manager, calls } = makeFakeManager();
+    const config = KbblConfigSchema.parse({});
+    const backend = createKbblChatBackend({ manager, config });
+    await backend.dispatch(stage("build"), inputRef, "prompt");
+    expect(calls[0]?.model).toBe("claude-sonnet-4-6");
+    expect(calls[0]?.runtime).toBe("claude-code");
   });
 });
