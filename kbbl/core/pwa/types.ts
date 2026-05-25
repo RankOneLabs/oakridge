@@ -141,6 +141,9 @@ export interface InFlightAccum {
   // string and parse opportunistically so the live panel can preview the
   // call (Bash command, file path, etc.) before the turn closes.
   partialToolInputs: Map<number, string>;
+  // Codex delta accumulator: item_id → accumulated text. Parallel to the
+  // CC block map but keyed by item_id (string). Insertion order = render order.
+  codexDeltaItems: Map<string, string>;
   outputTokens: number | null;
   startedAtMs: number | null;
   lastEventIdx: number;
@@ -224,4 +227,28 @@ export interface PermissionRequestPayload {
   tool_name: string;
   tool_input: unknown;
   tool_use_id: string;
+}
+
+export interface RuntimeSessionObservedPayload {
+  runtime_id?: string;
+  runtime_sid?: string;
+}
+
+export interface RuntimeErrorPayload {
+  message?: string;
+}
+
+// Payload emitted by the Codex adapter for streaming assistant text deltas.
+// Mirrors kbbl/adapters/codex/events.ts AssistantDeltaEvent payload shape.
+export interface AssistantDeltaPayload {
+  type: "assistant_delta";
+  threadId: string;
+  turnId: string;
+  itemId: string;
+  delta: string;
+}
+
+export interface InFlightCodexAccum {
+  // item_id → accumulated delta text, in insertion order
+  items: Map<string, string>;
 }

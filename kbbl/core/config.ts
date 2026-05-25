@@ -81,6 +81,7 @@ const CodexRuntimeSchema = z
 
 const RuntimeSchema = z
   .object({
+    default: z.enum(["claude-code", "codex"]).default("claude-code"),
     codex: CodexRuntimeSchema.prefault({}),
   })
   .strict();

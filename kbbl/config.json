@@ -11,5 +11,12 @@
   "sessions": {
     "worktree_per_session": false,
     "worktree_dir_name": "worktrees"
+  },
+  "runtime": {
+    "default": "claude-code",
+    "codex": {
+      "enabled": false,
+      "bin": "codex"
+    }
   }
 }

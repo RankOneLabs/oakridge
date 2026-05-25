@@ -139,7 +139,7 @@ export function InputBox({
             }}
             onBlur={() => setConfirmStop(false)}
             disabled={stopMutation.isPending}
-            title="Kills the CC subprocess. Resume from the ended banner to fork a new session with the same context."
+            title="Stops this agent session. Resume from the ended banner to fork a new session with the same context."
           >
             {stopMutation.isPending ? "stopping…" : confirmStop ? "confirm" : "Stop"}
           </button>
@@ -147,7 +147,7 @@ export function InputBox({
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder="message CC…"
+          placeholder="message agent…"
           aria-label="message input"
           rows={1}
           onKeyDown={(e) => {

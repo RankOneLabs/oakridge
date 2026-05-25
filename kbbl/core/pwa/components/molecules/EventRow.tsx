@@ -25,9 +25,10 @@ export function EventRow({
   showSystemEvents: boolean;
   isLatest: boolean;
 }) {
-  // stream_event deltas are reconstructed by InFlightAssistantRow; never
-  // surface them as a row, even with showSystemEvents on.
+  // stream_event and assistant_delta are reconstructed by InFlightAssistantRow;
+  // never surface them as a row, even with showSystemEvents on.
   if (event.type === "stream_event") return null;
+  if (event.type === "assistant_delta") return null;
   if (!showSystemEvents && isLowSignalEvent(event)) return null;
   switch (event.type) {
     case "user":
@@ -76,6 +77,9 @@ export function EventRow({
     case "rate_limit_event":
     case "result":
     case "cc_session_id_observed":
+    case "runtime_session_observed":
+    case "runtime_error":
+    case "runtime_disconnected":
       return <SystemNotice event={event} compact={!showSystemEvents} />;
     default:
       return <UnknownRow event={event} compact={!showSystemEvents} />;
