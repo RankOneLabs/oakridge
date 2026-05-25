@@ -1138,6 +1138,12 @@ export class Session {
       const handle = this._handle;
       const task = async () => {
         await runtime.send(handle, text);
+        if (!isInternal) {
+          await this.emit("user", {
+            type: "user",
+            message: { role: "user", content: text },
+          });
+        }
       };
       this.inputQueue = this.inputQueue.then(task, task);
       if (!isInternal && this._compactor) {
