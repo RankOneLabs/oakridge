@@ -58,6 +58,21 @@ const SessionsSchema = z
   })
   .strict();
 
+const CodexRuntimeSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    bin: z.string().default("codex"),
+    // empty string means "derive from dataDir" (server.ts fills it in)
+    listen: z.string().default(""),
+  })
+  .strict();
+
+const RuntimeSchema = z
+  .object({
+    codex: CodexRuntimeSchema.prefault({}),
+  })
+  .strict();
+
 export const KbblConfigSchema = z
   .object({
     // .prefault({}) is the input-side default in Zod 4: when the key is
@@ -68,6 +83,7 @@ export const KbblConfigSchema = z
     compact: CompactSchema.prefault({}),
     retention: RetentionSchema.prefault({}),
     sessions: SessionsSchema.prefault({}),
+    runtime: RuntimeSchema.prefault({}),
   })
   .strict();
 
