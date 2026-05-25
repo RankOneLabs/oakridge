@@ -13,9 +13,9 @@
     "worktree_dir_name": "worktrees"
   },
   "runtime": {
-    "default": "codex",
+    "default": "claude-code",
     "codex": {
-      "enabled": true,
+      "enabled": false,
       "bin": "codex",
       "listen": "stdio://"
     }

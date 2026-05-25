@@ -18,30 +18,16 @@ export function newSessionModelKey(runtimeId: string): string {
   return `kbbl.newSession.model.${runtimeId}`;
 }
 
-/**
- * Read the stored model for the given runtime. Falls back to the legacy
- * un-namespaced key so existing stored values are preserved on first access
- * after the migration.
- */
-export function readStoredNewSessionModel(runtimeId: RuntimeId): string {
-  const isValidForRuntime = (value: string) => {
-    if (!PWA_MODEL_OPTIONS.some((o) => o.value === value)) return false;
-    if (runtimeId === "codex") return value === "";
-    return true;
-  };
-  try {
-    const namespacedKey = newSessionModelKey(runtimeId);
-    const namespaced = localStorage.getItem(namespacedKey);
-    if (namespaced !== null && isValidForRuntime(namespaced)) {
-      return namespaced;
-    }
-    // Migration: read legacy key once, migrate to namespaced key.
-    const legacy = localStorage.getItem(NEW_SESSION_MODEL_STORAGE_KEY);
-    if (legacy !== null && isValidForRuntime(legacy)) {
-      try { localStorage.setItem(namespacedKey, legacy); } catch {}
-      return legacy;
-    }
-  } catch {}
+export function isValidNewSessionModelForRuntime(
+  value: string,
+  runtimeId: RuntimeId,
+): boolean {
+  if (!PWA_MODEL_OPTIONS.some((o) => o.value === value)) return false;
+  if (runtimeId === "codex") return value === "";
+  return true;
+}
+
+export function defaultNewSessionModelForRuntime(runtimeId: RuntimeId): string {
   if (runtimeId === "codex") return "";
   // First-mount default: cost-engineering nudge per the design doc —
   // make sonnet the implicit choice so absent-minded "+ New" clicks
@@ -49,12 +35,51 @@ export function readStoredNewSessionModel(runtimeId: RuntimeId): string {
   return "claude-sonnet-4-6";
 }
 
+export function normalizeNewSessionModelForRuntime(
+  value: string,
+  runtimeId: RuntimeId,
+): string {
+  if (isValidNewSessionModelForRuntime(value, runtimeId)) return value;
+  return defaultNewSessionModelForRuntime(runtimeId);
+}
+
+/**
+ * Read the stored model for the given runtime. Falls back to the legacy
+ * un-namespaced key so existing stored values are preserved on first access
+ * after the migration.
+ */
+export function readStoredNewSessionModel(runtimeId: RuntimeId): string {
+  try {
+    const namespacedKey = newSessionModelKey(runtimeId);
+    const namespaced = localStorage.getItem(namespacedKey);
+    if (
+      namespaced !== null &&
+      isValidNewSessionModelForRuntime(namespaced, runtimeId)
+    ) {
+      return namespaced;
+    }
+    // Migration: read legacy key once, migrate to namespaced key.
+    const legacy = localStorage.getItem(NEW_SESSION_MODEL_STORAGE_KEY);
+    if (
+      legacy !== null &&
+      isValidNewSessionModelForRuntime(legacy, runtimeId)
+    ) {
+      try { localStorage.setItem(namespacedKey, legacy); } catch {}
+      return legacy;
+    }
+  } catch {}
+  return defaultNewSessionModelForRuntime(runtimeId);
+}
+
 /**
  * Write the stored model for the given runtime.
  */
 export function writeStoredNewSessionModel(value: string, runtimeId: RuntimeId): void {
   try {
-    localStorage.setItem(newSessionModelKey(runtimeId), value);
+    localStorage.setItem(
+      newSessionModelKey(runtimeId),
+      normalizeNewSessionModelForRuntime(value, runtimeId),
+    );
   } catch {}
 }
 
