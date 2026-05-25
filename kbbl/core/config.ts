@@ -79,10 +79,12 @@ const CodexRuntimeSchema = z
   })
   .strict();
 
-const StageRoutingEntrySchema = z.object({
-  runtime: z.enum(["claude-code", "codex"]),
-  model: z.string(),
-});
+const StageRoutingEntrySchema = z
+  .object({
+    runtime: z.enum(["claude-code", "codex"]),
+    model: z.string(),
+  })
+  .strict();
 
 const RuntimeSchema = z
   .object({

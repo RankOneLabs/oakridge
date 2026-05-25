@@ -289,15 +289,20 @@ export class SessionManager {
     // Reject unknown runtimes before touching disk or the session map so the
     // error is clearly attributable to a misconfigured stage override (e.g.
     // operator set runtime.stages.build = codex but runtime.codex.enabled=false).
+    // On the legacy (no-registry) path opts.runtime is silently ignored so a
+    // session can't be mislabeled with an id that was never used to spawn it.
     if (opts.runtime !== undefined && this.opts.registry) {
       if (!this.opts.registry.runtimes.has(opts.runtime)) {
+        const registered = [...this.opts.registry.runtimes.keys()].join(", ");
         throw new Error(
-          `kbbl: runtime "${opts.runtime}" is not registered — check runtime.${opts.runtime}.enabled in config`,
+          `kbbl: runtime "${opts.runtime}" is not registered — registered: ${registered}`,
         );
       }
     }
     const effectiveRuntimeId: RuntimeId =
-      opts.runtime ?? this.opts.registry?.defaultId ?? "claude-code";
+      (opts.runtime !== undefined && this.opts.registry)
+        ? opts.runtime
+        : this.opts.registry?.defaultId ?? "claude-code";
 
     const oakridgeSid = newSessionId();
     // Server-side fallback so requests without a usable name still produce a
