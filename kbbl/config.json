@@ -16,7 +16,8 @@
     "default": "claude-code",
     "codex": {
       "enabled": false,
-      "bin": "codex"
+      "bin": "codex",
+      "listen": "stdio://"
     }
   }
 }

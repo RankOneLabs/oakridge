@@ -180,6 +180,20 @@ describe("createRuntimeRegistry", () => {
     expect(registry.defaultId).toBe("claude-code");
   });
 
+  test("uses configured defaultId when provided", () => {
+    const ccRuntime = makeNoopRuntime("claude-code");
+    const codexRuntime = makeNoopRuntime("codex");
+    const registry = createRuntimeRegistry([ccRuntime, codexRuntime], "codex");
+    expect(registry.defaultId).toBe("codex");
+  });
+
+  test("rejects configured defaultId when it is not registered", () => {
+    const runtime = makeNoopRuntime("claude-code");
+    expect(() => createRuntimeRegistry([runtime], "codex")).toThrow(
+      /configured default runtime "codex" is not registered/,
+    );
+  });
+
   test("stores runtime by id", () => {
     const runtime = makeNoopRuntime();
     const registry = createRuntimeRegistry([runtime]);

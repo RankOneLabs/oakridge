@@ -189,7 +189,10 @@ export type RuntimeRegistry = {
   defaultId: RuntimeId;
 };
 
-export function createRuntimeRegistry(runtimes: AgentRuntime[]): RuntimeRegistry {
+export function createRuntimeRegistry(
+  runtimes: AgentRuntime[],
+  configuredDefaultId?: RuntimeId,
+): RuntimeRegistry {
   if (runtimes.length === 0) {
     throw new Error("createRuntimeRegistry: runtimes array must not be empty");
   }
@@ -201,7 +204,14 @@ export function createRuntimeRegistry(runtimes: AgentRuntime[]): RuntimeRegistry
     map.set(r.id, r);
   }
   const defaultId: RuntimeId =
-    map.has("claude-code") ? "claude-code" : runtimes[0].id;
+    configuredDefaultId ??
+    (map.has("claude-code") ? "claude-code" : runtimes[0].id);
+  if (!map.has(defaultId)) {
+    const registered = [...map.keys()].join(", ");
+    throw new Error(
+      `createRuntimeRegistry: configured default runtime "${defaultId}" is not registered — registered: ${registered}`,
+    );
+  }
   return { runtimes: map, defaultId };
 }
 

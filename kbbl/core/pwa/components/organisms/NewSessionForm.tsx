@@ -66,7 +66,10 @@ export function NewSessionForm({
   }, [defaultWorkdir, workdirInput, workdirTouched]);
 
   useEffect(() => {
-    writeStoredNewSessionModel(modelInput, runtimeId);
+    const normalized = writeStoredNewSessionModel(modelInput, runtimeId);
+    if (normalized !== modelInput) {
+      setModelInput(normalized);
+    }
   }, [modelInput, runtimeId]);
 
   useEffect(() => {
