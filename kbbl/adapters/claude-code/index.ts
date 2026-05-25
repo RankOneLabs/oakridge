@@ -229,17 +229,19 @@ export async function createClaudeCodeRuntime(
         },
       );
 
-      // Yield items as they arrive.
-      while (true) {
-        await waitForItem();
-        while (queue.length > 0) {
-          yield queue.shift()!;
+      // Yield items as they arrive. try/finally ensures allDone runs even if
+      // the consumer breaks early (e.g. session abort), so procs.delete fires.
+      try {
+        while (true) {
+          await waitForItem();
+          while (queue.length > 0) {
+            yield queue.shift()!;
+          }
+          if (done) break;
         }
-        if (done) break;
+      } finally {
+        await allDone.catch(() => {});
       }
-
-      // Ensure the allDone promise is awaited so the proc cleanup runs.
-      await allDone;
     },
 
     // --- AgentRuntime.send ---

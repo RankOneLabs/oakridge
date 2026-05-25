@@ -1,4 +1,5 @@
 import type { Theme } from "../types";
+import type { RuntimeId } from "../../runtime-interface";
 import { PWA_MODEL_OPTIONS } from "./format";
 
 export const THEME_STORAGE_KEY = "oakridge.theme";
@@ -22,7 +23,7 @@ export function newSessionModelKey(runtimeId: string): string {
  * un-namespaced key so existing stored values are preserved on first access
  * after the migration.
  */
-export function readStoredNewSessionModel(runtimeId = "claude-code"): string {
+export function readStoredNewSessionModel(runtimeId: RuntimeId): string {
   try {
     const namespacedKey = newSessionModelKey(runtimeId);
     const namespaced = localStorage.getItem(namespacedKey);
@@ -45,7 +46,7 @@ export function readStoredNewSessionModel(runtimeId = "claude-code"): string {
 /**
  * Write the stored model for the given runtime.
  */
-export function writeStoredNewSessionModel(value: string, runtimeId = "claude-code"): void {
+export function writeStoredNewSessionModel(value: string, runtimeId: RuntimeId): void {
   try {
     localStorage.setItem(newSessionModelKey(runtimeId), value);
   } catch {}

@@ -1,13 +1,16 @@
 import { useQuery } from "@tanstack/react-query";
+import type { RuntimeId } from "../../runtime-interface";
 
 interface ServerConfigResponse {
   defaultWorkdir: string;
   softThresholdTokens?: number;
+  defaultRuntimeId?: string;
 }
 
 export interface ServerConfig {
   defaultWorkdir: string;
   softThresholdTokens?: number;
+  defaultRuntimeId: RuntimeId;
 }
 
 /**
@@ -28,11 +31,13 @@ export function useServerConfig(): ServerConfig | null {
     staleTime: Infinity,
   });
   if (!query.data) return null;
+  const rawId = query.data.defaultRuntimeId;
   return {
     defaultWorkdir: query.data.defaultWorkdir,
     softThresholdTokens:
       typeof query.data.softThresholdTokens === "number"
         ? query.data.softThresholdTokens
         : undefined,
+    defaultRuntimeId: (rawId === "codex" ? "codex" : "claude-code") as RuntimeId,
   };
 }

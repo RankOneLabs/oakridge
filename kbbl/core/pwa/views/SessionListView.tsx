@@ -6,6 +6,7 @@ import { Sidebar, type SidebarSession } from "../sidebar/Sidebar";
 import type {
   SessionSnapshot, Theme, Status,
 } from "../types";
+import type { RuntimeId } from "../../runtime-interface";
 import { sortSessions } from "../lib/session";
 
 import { SessionRow } from "../components/organisms/SessionRow";
@@ -28,6 +29,7 @@ export function SessionListView({
   inboxStatus,
   theme,
   defaultWorkdir,
+  defaultRuntimeId,
   onToggleTheme,
   onSelect,
   onHydrateSession,
@@ -36,6 +38,7 @@ export function SessionListView({
   inboxStatus: Status;
   theme: Theme;
   defaultWorkdir: string;
+  defaultRuntimeId: RuntimeId;
   onToggleTheme: () => void;
   onSelect: (sid: string) => void;
   onHydrateSession: (snapshot: SessionSnapshot) => void;
@@ -155,6 +158,7 @@ export function SessionListView({
       <div className="session-list-actions">
         <NewSessionForm
           defaultWorkdir={defaultWorkdir}
+          runtimeId={defaultRuntimeId}
           initialWorkdir={prefill.initialWorkdir}
           workdirTouchedInitial={prefill.workdirTouchedInitial}
           pending={startMutation.isPending}

@@ -188,9 +188,8 @@ export interface SessionsRouteDeps {
   sessionsDir: string;
   /**
    * Optional runtime registry for model validation. When present, model
-   * validation uses the default runtime's descriptor.models list instead of
-   * the CC-specific ALLOWED_MODELS. When absent, any non-empty string is
-   * accepted (backward compat).
+   * validation uses the default runtime's descriptor.models list. When absent,
+   * falls back to LEGACY_ALLOWED_MODELS (the CC adapter's static allowlist).
    */
   registry?: RuntimeRegistry;
 }

@@ -377,7 +377,12 @@ export class SessionManager {
       projectWorkdir,
       model: opts.model ?? null,
       classifyEvent: this.opts.classifyEvent,
-      nonPersistedEventTypes: this.opts.nonPersistedEventTypes,
+      // Prefer the registry runtime's nonPersistedEventTypes so a caller that
+      // only wires `registry` (without the legacy opts) still gets the right
+      // high-volume event suppression (e.g. CC stream_event).
+      nonPersistedEventTypes:
+        this.opts.registry?.runtimes.get(this.opts.registry.defaultId)?.nonPersistedEventTypes
+        ?? this.opts.nonPersistedEventTypes,
       callbacks: {
         onRuntimeSessionObserved: (s, runtimeSid) => {
           this.opts.onRuntimeSessionObserved?.(s, runtimeSid);

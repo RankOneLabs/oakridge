@@ -292,7 +292,7 @@ export class Session {
   // Independent of emitQueue so disk I/O never blocks the stdout pump.
   private flushQueue: Promise<void> = Promise.resolve();
   private proc: ReturnType<typeof Bun.spawn> | null = null;
-  private ccSid: string | null = null;
+  private _runtimeSid: string | null = null;
   private _status: SessionStatus = "starting";
   private shutdownSignalReceived = false;
   private lastActivityTs: string;
@@ -368,7 +368,7 @@ export class Session {
   }
 
   get currentCcSid(): string | null {
-    return this.ccSid;
+    return this.runtimeId === "claude-code" ? this._runtimeSid : null;
   }
 
   /**
@@ -405,21 +405,25 @@ export class Session {
    * retry. Same pattern as setYolo / allowlistTool.
    */
   async observeRuntimeSessionId(id: string): Promise<void> {
-    if (this.ccSid !== null) return;
-    // Emit legacy CC event first for existing JSONL readers.
-    await this.emit("cc_session_id_observed", { cc_session_id: id });
-    // Also emit the new neutral event so consumers that want adapter-agnostic
-    // session-id tracking can listen for it without CC-specific knowledge.
+    if (this._runtimeSid !== null) return;
+    // Emit the CC-specific legacy event only for CC sessions so non-CC runtimes
+    // don't produce CC-named events in their transcripts.
+    if (this.runtimeId === "claude-code") {
+      await this.emit("cc_session_id_observed", { cc_session_id: id });
+    }
     await this.emit("runtime_session_observed", { runtime_sid: id, runtime_id: this.runtimeId });
-    this.ccSid = id;
-    try {
-      this.callbacks.onCcSidObserved?.(this, id);
-    } catch (e) {
-      console.error(
-        `kbbl: onCcSidObserved callback failed: ${
-          e instanceof Error ? e.message : String(e)
-        }`,
-      );
+    this._runtimeSid = id;
+    // onCcSidObserved is a CC-specific callback; only fire for CC sessions.
+    if (this.runtimeId === "claude-code") {
+      try {
+        this.callbacks.onCcSidObserved?.(this, id);
+      } catch (e) {
+        console.error(
+          `kbbl: onCcSidObserved callback failed: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      }
     }
     try {
       this.callbacks.onRuntimeSessionObserved?.(this, id);
@@ -610,8 +614,8 @@ export class Session {
       createdAt: this.createdAt,
       lastActivityTs: this.lastActivityTs,
       runtimeId: this.runtimeId,
-      runtimeSid: this.ccSid,
-      ccSid: this.ccSid,
+      runtimeSid: this._runtimeSid,
+      ccSid: this.runtimeId === "claude-code" ? this._runtimeSid : null,
       parentCcSid: this.parentCcSid,
       parentOakridgeSid: this.parentOakridgeSid,
       artifactId: this.artifactId,
@@ -766,6 +770,7 @@ export class Session {
 
     const classifyEvent = runtime.classifyEvent?.bind(runtime);
     let completedResult: unknown = null;
+    let hadRuntimeError = false;
 
     try {
       for await (const event of runtime.events(handle)) {
@@ -795,6 +800,7 @@ export class Session {
           console.error(
             `kbbl: runtime error [${this.oakridgeSid}]: ${event.message}`,
           );
+          hadRuntimeError = true;
           break;
         }
       }
@@ -804,11 +810,13 @@ export class Session {
           err instanceof Error ? err.message : String(err)
         }`,
       );
+      hadRuntimeError = true;
     }
 
-    const exitCode =
-      completedResult &&
-      typeof (completedResult as { code?: unknown }).code === "number"
+    const exitCode = hadRuntimeError
+      ? 1
+      : completedResult &&
+          typeof (completedResult as { code?: unknown }).code === "number"
         ? (completedResult as { code: number }).code
         : 0;
 

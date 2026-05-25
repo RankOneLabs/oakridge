@@ -1,3 +1,5 @@
+import type { RuntimeId } from "../runtime-interface";
+
 export interface EnvelopeEvent {
   id: number;
   type: string;
@@ -22,7 +24,7 @@ export interface SessionSnapshot {
   createdAt: string;
   lastActivityTs: string;
   /** Runtime adapter id for this session (e.g. "claude-code"). */
-  runtimeId: "claude-code" | "codex";
+  runtimeId: RuntimeId;
   /**
    * Runtime-internal session id (e.g. CC's session_id from system/init),
    * null until observed.

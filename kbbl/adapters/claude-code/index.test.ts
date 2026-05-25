@@ -154,30 +154,24 @@ describe("CC adapter resolveResumeRef", () => {
 });
 
 describe("CC adapter reconstructSnapshot", () => {
-  test("extracts runtimeSid from cc_session_id_observed", () => {
-    const rt_sync = {
-      reconstructSnapshot: null as unknown as typeof import("./index").createClaudeCodeRuntime,
-    };
-    // We'll call it after constructing the runtime asynchronously.
-    void (async () => {
-      const rt = await makeRuntime();
-      const events: EnvelopeEvent[] = [
-        {
-          id: 0,
-          type: "session_started",
-          ts: "2026-01-01T00:00:00Z",
-          payload: {},
-        },
-        {
-          id: 1,
-          type: "cc_session_id_observed",
-          ts: "2026-01-01T00:00:01Z",
-          payload: { cc_session_id: "cc-snap-sid" },
-        },
-      ];
-      const contrib = rt.reconstructSnapshot(events);
-      expect(contrib.runtimeSid).toBe("cc-snap-sid");
-    })();
+  test("extracts runtimeSid from cc_session_id_observed", async () => {
+    const rt = await makeRuntime();
+    const events: EnvelopeEvent[] = [
+      {
+        id: 0,
+        type: "session_started",
+        ts: "2026-01-01T00:00:00Z",
+        payload: {},
+      },
+      {
+        id: 1,
+        type: "cc_session_id_observed",
+        ts: "2026-01-01T00:00:01Z",
+        payload: { cc_session_id: "cc-snap-sid" },
+      },
+    ];
+    const contrib = rt.reconstructSnapshot(events);
+    expect(contrib.runtimeSid).toBe("cc-snap-sid");
   });
 
   test("extracts tool_allowlisted entries", async () => {

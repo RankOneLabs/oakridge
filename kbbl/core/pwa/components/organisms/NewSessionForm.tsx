@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import type { RuntimeId } from "../../../runtime-interface";
 import { generateSlug } from "../../lib/session";
 import { PWA_MODEL_OPTIONS } from "../../lib/format";
 import {
@@ -15,6 +16,7 @@ export interface NewSessionFormValues {
 
 export interface NewSessionFormProps {
   defaultWorkdir: string;
+  runtimeId: RuntimeId;
   initialWorkdir: string | null;
   workdirTouchedInitial: boolean;
   pending: boolean;
@@ -27,6 +29,7 @@ export interface NewSessionFormProps {
 
 export function NewSessionForm({
   defaultWorkdir,
+  runtimeId,
   initialWorkdir,
   workdirTouchedInitial,
   pending,
@@ -39,7 +42,7 @@ export function NewSessionForm({
   const [workdirInput, setWorkdirInput] = useState(initialWorkdir ?? "");
   const [workdirTouched, setWorkdirTouched] = useState(workdirTouchedInitial);
   const [nameInput, setNameInput] = useState("");
-  const [modelInput, setModelInput] = useState<string>(readStoredNewSessionModel);
+  const [modelInput, setModelInput] = useState<string>(() => readStoredNewSessionModel(runtimeId));
   // Generated once per mount so the placeholder is stable while the operator
   // is filling out the form (otherwise it would flicker on every re-render).
   // Submit uses the current placeholder if name field is empty, so what they
@@ -58,8 +61,8 @@ export function NewSessionForm({
   }, [defaultWorkdir, workdirInput, workdirTouched]);
 
   useEffect(() => {
-    writeStoredNewSessionModel(modelInput);
-  }, [modelInput]);
+    writeStoredNewSessionModel(modelInput, runtimeId);
+  }, [modelInput, runtimeId]);
 
   useEffect(() => {
     if (resetSignal === 0) return;
