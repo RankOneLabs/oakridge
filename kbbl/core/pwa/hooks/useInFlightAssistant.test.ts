@@ -145,7 +145,7 @@ describe("useInFlightAssistant — CC and Codex paths don't interfere", () => {
       ev(4, "assistant", { message: { content: [{ type: "text", text: "CC text" }] } }),
     ];
     const secondTurn = [...firstTurn, delta(5, "item-a", "Codex text")];
-    const { result, rerender } = renderHook(
+    const { result } = renderHook(
       ({ evts }: { evts: EnvelopeEvent[] }) => useInFlightAssistant(evts, "sid-3"),
       { initialProps: { evts: secondTurn } },
     );
