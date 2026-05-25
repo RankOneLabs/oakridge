@@ -24,19 +24,25 @@ export function newSessionModelKey(runtimeId: string): string {
  * after the migration.
  */
 export function readStoredNewSessionModel(runtimeId: RuntimeId): string {
+  const isValidForRuntime = (value: string) => {
+    if (!PWA_MODEL_OPTIONS.some((o) => o.value === value)) return false;
+    if (runtimeId === "codex") return value === "";
+    return true;
+  };
   try {
     const namespacedKey = newSessionModelKey(runtimeId);
     const namespaced = localStorage.getItem(namespacedKey);
-    if (namespaced !== null && PWA_MODEL_OPTIONS.some((o) => o.value === namespaced)) {
+    if (namespaced !== null && isValidForRuntime(namespaced)) {
       return namespaced;
     }
     // Migration: read legacy key once, migrate to namespaced key.
     const legacy = localStorage.getItem(NEW_SESSION_MODEL_STORAGE_KEY);
-    if (legacy !== null && PWA_MODEL_OPTIONS.some((o) => o.value === legacy)) {
+    if (legacy !== null && isValidForRuntime(legacy)) {
       try { localStorage.setItem(namespacedKey, legacy); } catch {}
       return legacy;
     }
   } catch {}
+  if (runtimeId === "codex") return "";
   // First-mount default: cost-engineering nudge per the design doc —
   // make sonnet the implicit choice so absent-minded "+ New" clicks
   // route to Sonnet pricing.

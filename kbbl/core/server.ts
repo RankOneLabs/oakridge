@@ -189,7 +189,7 @@ if (config.runtime.codex.enabled) {
   }
 }
 
-const registry = createRuntimeRegistry(runtimes);
+const registry = createRuntimeRegistry(runtimes, config.runtime.default);
 
 // The CC adapter owns the ccSid→oakridgeSid map. Expose callback hooks so
 // the manager can delegate getByCcSid lookups without importing CC directly.
