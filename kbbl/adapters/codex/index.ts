@@ -289,15 +289,6 @@ export async function createCodexRuntime(
           runtime_sid: threadId,
         },
       });
-      if (state.resolvedModel !== null) {
-        pushEvent({
-          type: "envelope",
-          payload: {
-            type: "model_observed",
-            model: state.resolvedModel,
-          },
-        });
-      }
 
       // Subscribe to thread notifications
       const unsub = client.subscribeThread(threadId, (notif) => {
@@ -502,14 +493,10 @@ export async function createCodexRuntime(
           p.runtime_id === "codex"
         ) {
           await session.observeRuntimeSessionId(p.runtime_sid);
-        }
-        return;
-      }
-
-      if (evt.type === "model_observed") {
-        const p = rawEvent as { model?: unknown };
-        if (typeof p.model === "string") {
-          await session.observeRuntimeModel(p.model);
+          const state = getState(session.oakridgeSid);
+          if (state?.resolvedModel !== null && state?.resolvedModel !== undefined) {
+            await session.observeRuntimeModel(state.resolvedModel);
+          }
         }
         return;
       }

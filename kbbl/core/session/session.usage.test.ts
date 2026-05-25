@@ -193,6 +193,30 @@ describe("Session.observeRuntimeModel", () => {
     expect(session.snapshot().observedModel).toBe("claude-opus-4-7");
   });
 
+  test("fires onRuntimeModelObserved only when the model changes", async () => {
+    const observed: string[] = [];
+    const s = new Session({
+      oakridgeSid: "model-callback-sid",
+      workdir: "/tmp",
+      name: "test",
+      sessionsDir,
+      callbacks: {
+        onRuntimeModelObserved: (_session, model) => {
+          observed.push(model);
+        },
+      },
+    });
+    try {
+      await s.observeRuntimeModel("claude-opus-4-7");
+      await s.observeRuntimeModel("claude-opus-4-7");
+      await s.observeRuntimeModel("claude-haiku-4-5");
+
+      expect(observed).toEqual(["claude-opus-4-7", "claude-haiku-4-5"]);
+    } finally {
+      await s.abort();
+    }
+  });
+
   test("idempotent: calling with the same model twice emits once", async () => {
     const events: EnvelopeEvent[] = [];
     session.subscribe((e) => events.push(e));

@@ -209,6 +209,17 @@ describe("Session.attachRuntime", () => {
       (userEvent!.payload as { message: { content: string } }).message.content,
     ).toBe("hello codex");
 
+    await session.writeInput("internal handoff", { internal: true });
+
+    expect(sent).toEqual(["hello codex", "internal handoff"]);
+    const internalUserEvents = emitted.filter(
+      (e) =>
+        e.type === "user" &&
+        (e.payload as { message?: { content?: string } }).message?.content ===
+          "internal handoff",
+    );
+    expect(internalUserEvents).toHaveLength(0);
+
     finish();
     await session.waitForEnd();
   });

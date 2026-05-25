@@ -202,6 +202,14 @@ function applyDelta(state: AppState, delta: InboxDelta): Partial<AppState> {
       sessions.set(sid, { ...prev, yoloMode: delta.yoloMode });
       return { sessions };
     }
+    case "observed_model_changed": {
+      const sid = delta.sid as Sid;
+      const prev = state.sessions.get(sid);
+      if (!prev) return {};
+      const sessions = new Map(state.sessions);
+      sessions.set(sid, { ...prev, observedModel: delta.observedModel });
+      return { sessions };
+    }
     case "compact_suggested": {
       const sid = delta.sid as Sid;
       const compactSuggestions = new Map(state.compactSuggestions);
