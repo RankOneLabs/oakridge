@@ -1,4 +1,4 @@
-import type { EnvelopeEvent } from "../../types";
+import type { EnvelopeEvent, RuntimeSessionObservedPayload, RuntimeErrorPayload } from "../../types";
 import { formatResultText } from "../../lib/events";
 import type { SystemNoticePayload } from "../../lib/events";
 
@@ -37,13 +37,13 @@ export function SystemNotice({
       text = `CC session id ${String(p.cc_session_id ?? "").slice(0, 8)}…`;
       break;
     case "runtime_session_observed": {
-      const rp = event.payload as { runtime_id?: unknown; runtime_sid?: unknown } | null ?? {};
-      text = `runtime ${String(rp.runtime_id ?? "?")} session ${String(rp.runtime_sid ?? "").slice(0, 8)}…`;
+      const rp = (event.payload as RuntimeSessionObservedPayload | null) ?? {};
+      text = `runtime ${rp.runtime_id ?? "?"} session ${(rp.runtime_sid ?? "").slice(0, 8)}…`;
       break;
     }
     case "runtime_error": {
-      const rp = event.payload as { message?: unknown } | null ?? {};
-      text = `runtime error: ${String(rp.message ?? "unknown")}`;
+      const rp = (event.payload as RuntimeErrorPayload | null) ?? {};
+      text = `runtime error: ${rp.message ?? "unknown"}`;
       break;
     }
     case "runtime_disconnected":

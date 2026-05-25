@@ -17,12 +17,12 @@ export function AssistantRow({
   isLatest: boolean;
 }) {
   const p = event.payload as CCAssistantPayload;
-  const rawContent = p.message?.content;
-  // Codex assistant events carry content as a plain string; CC uses ContentBlock[].
-  // Normalize to blocks so all rendering paths below stay uniform.
+  // Cast to unknown so TypeScript narrows correctly: CCAssistantPayload types
+  // content as ContentBlock[] but Codex assistant events carry a plain string.
+  const rawContent: unknown = p.message?.content;
   const blocks: ContentBlock[] = typeof rawContent === "string"
     ? [{ type: "text", text: rawContent }]
-    : Array.isArray(rawContent) ? rawContent : [];
+    : Array.isArray(rawContent) ? (rawContent as ContentBlock[]) : [];
   // Pin the timestamp to the last text block in this event so a turn that
   // ends with a tool_use doesn't drop the stamp on the wrong card.
   let lastTextIdx = -1;

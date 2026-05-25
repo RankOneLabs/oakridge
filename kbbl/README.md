@@ -41,7 +41,7 @@ Set `runtime.codex.enabled = true` in `kbbl/config.json` and restart the server:
 }
 ```
 
-`default` stays `claude-code` — new sessions created from the PWA form use CC. To start a Codex session: `POST /sessions { "runtime": "codex", "workdir": "/path/to/repo" }`.
+`default` stays `claude-code` — new sessions always use CC in v0. Runtime selection via the PWA form or `POST /sessions` is a planned follow-up (see `docs/codex-followups.md` §6).
 
 ### Not in v0
 

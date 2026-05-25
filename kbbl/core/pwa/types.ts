@@ -229,6 +229,15 @@ export interface PermissionRequestPayload {
   tool_use_id: string;
 }
 
+export interface RuntimeSessionObservedPayload {
+  runtime_id?: string;
+  runtime_sid?: string;
+}
+
+export interface RuntimeErrorPayload {
+  message?: string;
+}
+
 // Payload emitted by the Codex adapter for streaming assistant text deltas.
 // Mirrors kbbl/adapters/codex/events.ts AssistantDeltaEvent payload shape.
 export interface AssistantDeltaPayload {

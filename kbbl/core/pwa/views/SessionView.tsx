@@ -93,6 +93,7 @@ export function SessionView({
       }
       if (e.type === "assistant") return true;
       if (e.type === "stream_event") return true;
+      if (e.type === "assistant_delta") return true;
     }
     return false;
   }, [events, pendingMessages.length, sessionStatus]);

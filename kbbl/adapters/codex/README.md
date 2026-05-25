@@ -95,4 +95,4 @@ These findings are documented in `comms/codex-probe-findings.md`.
 - **No resume when worktrees are enabled** — When `sessions.worktree_per_session = true`, each session's working directory is a git worktree. Codex resume currently does not restore the worktree, so session state is recoverable at the thread level but the filesystem context may differ.
 - **Token usage** — Extracted from `thread/tokenUsage/updated` notifications using Codex's `last` (per-turn delta) bucket. Does not map 1:1 to CC's `result.usage` shape; cost fields are not populated.
 - **Startup readiness** — Unix-socket mode polls for the socket file via `access()`. WebSocket mode uses a fixed 500ms delay. Both can race on a very slow or loaded machine.
-- **PWA runtime selector** — The new-session form always creates a CC session. Codex sessions must be created via `POST /sessions { "runtime": "codex" }`. A runtime dropdown is a planned follow-up.
+- **PWA runtime selector** — The new-session form always creates a CC session. `POST /sessions` does not currently accept a `runtime` field — runtime selection is a planned follow-up (`docs/codex-followups.md` §6).
