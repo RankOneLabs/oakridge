@@ -154,6 +154,7 @@ describe("Session.attachRuntime", () => {
     const runtime = makeRuntime([{ type: "completed", result: { code: 0 } }]);
     const handle = await runtime.spawn({ workingDirectory: "/tmp" });
     await session.attachRuntime(runtime, handle);
+    await session.waitForEnd();
     expect(session.status).toBe("ended");
   });
 
@@ -186,6 +187,7 @@ describe("Session.attachRuntime", () => {
     const session = makeSession();
     const handle = await runtime.spawn({ workingDirectory: "/tmp" });
     await session.attachRuntime(runtime, handle);
+    await session.waitForEnd();
     expect(classified.length).toBe(1);
     expect((classified[0] as { type: string }).type).toBe("custom_event");
   });

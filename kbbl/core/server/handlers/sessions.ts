@@ -202,11 +202,10 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
   const { manager, defaultWorkdir, sessionsDir, registry } = deps;
 
   /**
-   * Check whether a model value is valid according to the runtime registry.
-   * When a registry is provided, validates against the default runtime's
-   * descriptor.models list. When no registry is provided (legacy/test mode),
-   * falls back to the CC adapter's static ALLOWED_MODELS list so existing
-   * callers and tests without a registry still get model validation.
+   * Check whether a model value is valid. When a registry is provided,
+   * delegates to the default runtime's isAllowedModel() (which accepts full
+   * model ids AND short aliases). Falls back to LEGACY_ALLOWED_MODELS when
+   * no registry is provided or the runtime doesn't implement isAllowedModel.
    */
   function isAllowedModel(value: string): boolean {
     if (!registry) return LEGACY_ALLOWED_MODELS.includes(value);

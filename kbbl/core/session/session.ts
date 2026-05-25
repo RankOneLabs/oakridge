@@ -731,11 +731,16 @@ export class Session {
     if (this._spawnPromise) return this._spawnPromise;
     this._runtime = runtime;
     this._handle = handle;
-    this._spawnPromise = this._runAttached(runtime, handle);
+    // _spawnPromise resolves once wiring is complete (session_started emitted,
+    // status=live). The event loop runs as a background task via exitPromise so
+    // create() / POST /sessions return immediately with a live session rather
+    // than blocking until the runtime terminates. This mirrors spawn()'s
+    // contract: _spawnPromise = wiring done, exitPromise = session lifetime.
+    this._spawnPromise = this._wireAttached(runtime, handle);
     return this._spawnPromise;
   }
 
-  private async _runAttached(runtime: AgentRuntime, handle: SessionHandle): Promise<void> {
+  private async _wireAttached(runtime: AgentRuntime, handle: SessionHandle): Promise<void> {
     await this.emit("session_started", {
       command: [],
       workdir: this.workdir,
@@ -768,6 +773,10 @@ export class Session {
       });
     }, 100);
 
+    this.exitPromise = this._runAttachedLoop(runtime, handle);
+  }
+
+  private async _runAttachedLoop(runtime: AgentRuntime, handle: SessionHandle): Promise<number> {
     const classifyEvent = runtime.classifyEvent?.bind(runtime);
     let completedResult: unknown = null;
     let hadRuntimeError = false;
@@ -828,6 +837,8 @@ export class Session {
     } finally {
       await this.finalize();
     }
+
+    return exitCode;
   }
 
   private async _runSpawn(cmd: SpawnCmd): Promise<void> {
@@ -1272,6 +1283,11 @@ export class Session {
       drained = true;
     }
     if (drained) this.firePendingCountChanged();
+  }
+
+  /** Resolves with the exit code when the session finishes naturally. */
+  waitForEnd(): Promise<number> {
+    return this.exitPromise ?? Promise.resolve(1);
   }
 
   async abort(): Promise<number> {

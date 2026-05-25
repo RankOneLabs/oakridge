@@ -192,7 +192,9 @@ export type RuntimeRegistry = {
 export function createRuntimeRegistry(runtimes: AgentRuntime[]): RuntimeRegistry {
   const map = new Map<RuntimeId, AgentRuntime>();
   for (const r of runtimes) map.set(r.id, r);
-  return { runtimes: map, defaultId: "claude-code" };
+  const defaultId: RuntimeId =
+    map.has("claude-code") ? "claude-code" : (runtimes[0]?.id ?? "claude-code");
+  return { runtimes: map, defaultId };
 }
 
 // === backward-compat alias ===

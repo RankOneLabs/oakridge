@@ -163,8 +163,10 @@ describe("SessionManager.create with registry", () => {
         sessions: { worktree_per_session: false },
       }),
     });
-    // noop runtime completes immediately, so create() should resolve.
+    // create() returns once the session is live; waitForEnd() lets us verify
+    // the noop runtime's event loop ran to completion.
     const session = await manager.create({ workdir: "/tmp" });
+    await session.waitForEnd();
     expect(session.status).toBe("ended");
     expect(session.runtimeId).toBe("claude-code");
   });

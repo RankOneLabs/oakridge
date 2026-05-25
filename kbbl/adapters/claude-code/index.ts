@@ -241,6 +241,13 @@ export async function createClaudeCodeRuntime(
           if (done) break;
         }
       } finally {
+        // allDone resolves when both stdout/stderr pumps drain. On normal
+        // completion/error the proc has already exited so this is immediate.
+        // On early consumer cancellation (break without terminate) this will
+        // hang until the proc exits naturally — intentional: the proc is
+        // still running and we don't own its lifecycle from here. Callers
+        // that want to force-stop the proc should call runtime.terminate()
+        // before breaking the for-await loop.
         await allDone.catch(() => {});
       }
     },
