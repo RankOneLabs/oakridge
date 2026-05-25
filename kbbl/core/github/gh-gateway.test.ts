@@ -71,7 +71,6 @@ const BASE_THREADS_EMPTY = { nodes: [] };
 function makeGolden(overrides: Record<string, unknown>): string {
   return JSON.stringify({
     state: "OPEN",
-    merged: false,
     mergedAt: null,
     mergeable: "MERGEABLE",
     mergeStateStatus: "CLEAN",
@@ -85,7 +84,6 @@ function makeGolden(overrides: Record<string, unknown>): string {
 describe("parsePrViewJson — already_merged", () => {
   const json = makeGolden({
     state: "MERGED",
-    merged: true,
     mergedAt: "2024-06-01T12:00:00Z",
     mergeable: "MERGEABLE",
     mergeStateStatus: "CLEAN",
@@ -246,7 +244,7 @@ describe("parsePrViewJson — open_not_mergeable", () => {
 });
 
 describe("parsePrViewJson — closed_unmerged", () => {
-  const json = makeGolden({ state: "CLOSED", merged: false });
+  const json = makeGolden({ state: "CLOSED" });
 
   test("kind is closed_unmerged", () => {
     const r = parsePrViewJson(json);

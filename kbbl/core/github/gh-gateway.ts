@@ -53,7 +53,6 @@ const GhReviewThreadSchema = z.object({
 
 const GhPrViewSchema = z.object({
   state: z.enum(["OPEN", "CLOSED", "MERGED"]),
-  merged: z.boolean(),
   mergedAt: z.string().nullable(),
   mergeable: z.enum(["MERGEABLE", "CONFLICTING", "UNKNOWN"]),
   // string (not enum) to survive new GitHub status values without schema breakage
@@ -107,7 +106,7 @@ function toReviewThread(
 }
 
 function classifyPrView(pr: GhPrView): PrState {
-  if (pr.merged) {
+  if (pr.state === "MERGED") {
     return { kind: "already_merged", mergedAt: pr.mergedAt, url: pr.url };
   }
   if (pr.state === "CLOSED") {
@@ -237,7 +236,7 @@ async function runGh(
 // ── Public API ────────────────────────────────────────────────────────────────
 
 const PR_VIEW_FIELDS =
-  "state,merged,mergedAt,mergeable,mergeStateStatus,reviewDecision,reviewThreads,url";
+  "state,mergedAt,mergeable,mergeStateStatus,reviewDecision,reviewThreads,url";
 
 export async function fetchPrState(prUrl: string): Promise<Result<PrState, GhError>> {
   const run = await runGh(
