@@ -62,8 +62,20 @@ const CodexRuntimeSchema = z
   .object({
     enabled: z.boolean().default(false),
     bin: z.string().default("codex"),
-    // null/absent means "derive from dataDir" (server.ts fills it in)
-    listen: z.string().nullable().optional(),
+    // null/absent means "derive from dataDir" (server.ts fills it in).
+    // Non-null values must be one of the forms parseListenUrl accepts.
+    listen: z
+      .string()
+      .refine(
+        (s) =>
+          s === "stdio://" ||
+          s.startsWith("unix://") ||
+          s.startsWith("ws://") ||
+          s.startsWith("wss://"),
+        'runtime.codex.listen must be "stdio://", "unix://<path>", "ws://<addr>", or "wss://<addr>"',
+      )
+      .nullable()
+      .optional(),
   })
   .strict();
 
