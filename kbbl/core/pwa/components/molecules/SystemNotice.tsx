@@ -36,6 +36,19 @@ export function SystemNotice({
     case "cc_session_id_observed":
       text = `CC session id ${String(p.cc_session_id ?? "").slice(0, 8)}…`;
       break;
+    case "runtime_session_observed": {
+      const rp = event.payload as { runtime_id?: unknown; runtime_sid?: unknown } | null ?? {};
+      text = `runtime ${String(rp.runtime_id ?? "?")} session ${String(rp.runtime_sid ?? "").slice(0, 8)}…`;
+      break;
+    }
+    case "runtime_error": {
+      const rp = event.payload as { message?: unknown } | null ?? {};
+      text = `runtime error: ${String(rp.message ?? "unknown")}`;
+      break;
+    }
+    case "runtime_disconnected":
+      text = "runtime disconnected";
+      break;
     case "system": {
       const raw = event.payload as { subtype?: string } | null;
       text = `system: ${String(raw?.subtype ?? "event")}`;

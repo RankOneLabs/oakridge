@@ -7,6 +7,7 @@ function emptyAccum(sid: string): InFlightAccum {
   return {
     blocks: new Map(),
     partialToolInputs: new Map(),
+    codexDeltaItems: new Map(),
     outputTokens: null,
     startedAtMs: null,
     lastEventIdx: -1,
@@ -15,10 +16,14 @@ function emptyAccum(sid: string): InFlightAccum {
 }
 
 function snapshotAccum(a: InFlightAccum): InFlightAssistant | null {
-  if (a.blocks.size === 0 && a.outputTokens === null) return null;
+  if (a.blocks.size === 0 && a.codexDeltaItems.size === 0 && a.outputTokens === null) return null;
   const ordered = [...a.blocks.entries()]
     .sort((x, y) => x[0] - y[0])
     .map(([, v]) => v);
+  // Append Codex delta text blocks in insertion order (one block per item_id).
+  for (const [, text] of a.codexDeltaItems) {
+    if (text.length > 0) ordered.push({ type: "text", text });
+  }
   return {
     blocks: ordered,
     outputTokens: a.outputTokens,
@@ -49,15 +54,32 @@ export function useInFlightAssistant(
       if (evt.type === "result" || evt.type === "assistant") {
         if (
           a.blocks.size > 0 ||
+          a.codexDeltaItems.size > 0 ||
           a.outputTokens !== null ||
           a.startedAtMs !== null
         ) {
           a.blocks = new Map();
           a.partialToolInputs = new Map();
+          a.codexDeltaItems = new Map();
           a.outputTokens = null;
           a.startedAtMs = null;
           dirty = true;
         }
+        continue;
+      }
+      // Codex assistant_delta: append delta text to a text block keyed by
+      // item_id. Parallel to the CC stream_event branch — does not translate
+      // Codex deltas into fake CC events; each runtime streams natively.
+      if (evt.type === "assistant_delta") {
+        const p = evt.payload as { itemId?: unknown; delta?: unknown };
+        if (typeof p.itemId !== "string" || typeof p.delta !== "string") continue;
+        if (a.startedAtMs === null) {
+          const ms = parseIsoMs(evt.ts);
+          if (ms !== null) { a.startedAtMs = ms; dirty = true; }
+        }
+        const prev = a.codexDeltaItems.get(p.itemId) ?? "";
+        a.codexDeltaItems.set(p.itemId, prev + p.delta);
+        dirty = true;
         continue;
       }
       if (evt.type !== "stream_event") continue;
@@ -236,7 +258,8 @@ export function turnStartedAtMs(
     if (
       e.type === "user" ||
       e.type === "assistant" ||
-      e.type === "stream_event"
+      e.type === "stream_event" ||
+      e.type === "assistant_delta"
     ) {
       return parseIsoMs(e.ts);
     }

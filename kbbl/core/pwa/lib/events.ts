@@ -89,11 +89,12 @@ export function isFilteredEvent(
   // Mirrors what EventRow returns null for, so batching doesn't accidentally
   // break across an event that wouldn't have rendered anyway.
   if (e.type === "permission_resolved") return true;
-  // Hard-filter stream_event independent of showSystemEvents — the partial-
-  // message deltas are reconstructed by InFlightAssistantRow, never as a row.
-  // Without this, "show system events" would flood the transcript with one
-  // chunk per token during long generations.
+  // Hard-filter streaming delta events independent of showSystemEvents — the
+  // partial-message deltas are reconstructed by InFlightAssistantRow, never as
+  // a row. Without this, "show system events" would flood the transcript with
+  // one chunk per token during long generations.
   if (e.type === "stream_event") return true;
+  if (e.type === "assistant_delta") return true;
   if (showSystemEvents) return false;
   if (isLowSignalEvent(e)) return true;
   if (e.type === "permission_auto_approved" || e.type === "permission_auto_denied") return true;
@@ -121,7 +122,8 @@ export function isLowSignalEvent(event: EnvelopeEvent): boolean {
       // shows the work happening via assistant/tool events.
       return true;
     case "stream_event":
-      // Partial-message deltas from --include-partial-messages. The
+    case "assistant_delta":
+      // Partial-message deltas (CC: stream_event, Codex: assistant_delta). The
       // InFlightAssistantRow renders the reconstructed message; the raw
       // per-chunk events would just be transcript noise.
       return true;
