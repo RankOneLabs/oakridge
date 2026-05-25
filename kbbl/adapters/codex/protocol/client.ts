@@ -144,8 +144,9 @@ export class CodexAppServerClient {
         }
 
         if (handler) {
-          handler(req).catch((e) => {
+          handler(req).catch(async (e) => {
             console.error("CodexAppServerClient: server-request handler error:", e);
+            await this.sendServerResponse(reqId, { decision: "cancel" }).catch(() => {});
           });
         } else {
           // No handler — send cancel response so codex doesn't hang

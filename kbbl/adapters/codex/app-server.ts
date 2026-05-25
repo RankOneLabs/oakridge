@@ -104,6 +104,7 @@ export async function startCodexAppServer(
   const parsed = parseListenUrl(opts.listenUrl);
 
   let proc: ReturnType<typeof Bun.spawn> | null = null;
+  let stdioTransport: ReturnType<typeof createStdioTransport> | null = null;
 
   // Spawn the process
   async function spawnProcess(): Promise<void> {
@@ -120,11 +121,12 @@ export async function startCodexAppServer(
   let client: CodexAppServerClient;
 
   if (parsed.kind === "stdio") {
-    // For stdio, we spawn and connect in one step
+    // Stdio: transport owns the process; capture ref so stop() can kill it
     const transport = createStdioTransport({
       bin,
       args: ["app-server", "--listen", "stdio://"],
     });
+    stdioTransport = transport;
     client = new CodexAppServerClient(transport);
   } else if (parsed.kind === "unix") {
     const socketPath = parsed.path;
@@ -166,11 +168,19 @@ export async function startCodexAppServer(
     client = new CodexAppServerClient(transport);
   }
 
-  // Send initialize
-  await client.initialize({
-    clientInfo: { name: "kbbl", title: "kbbl Codex Adapter", version: "0.0.1" },
-    capabilities: { experimentalApi: true, requestAttestation: false },
-  });
+  // Send initialize (with startup timeout)
+  await Promise.race([
+    client.initialize({
+      clientInfo: { name: "kbbl", title: "kbbl Codex Adapter", version: "0.0.1" },
+      capabilities: { experimentalApi: true, requestAttestation: false },
+    }),
+    new Promise<never>((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`CodexAppServer: initialize timed out after ${startupTimeoutMs}ms`)),
+        startupTimeoutMs,
+      ),
+    ),
+  ]);
 
   // Fetch model list (best-effort — non-fatal)
   let models: CodexModel[] = [];
@@ -182,6 +192,9 @@ export async function startCodexAppServer(
   }
 
   async function stop(): Promise<void> {
+    if (stdioTransport) {
+      try { await stdioTransport.close(); } catch { /* already dead */ }
+    }
     if (proc) {
       try {
         proc.kill();

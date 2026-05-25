@@ -90,9 +90,9 @@ describe("normalizeTurnCompleted", () => {
     expect(evt.payload.subtype).toBe("interrupted");
   });
 
-  test("maps failed status → success subtype (not interrupted)", () => {
+  test("maps failed status → error subtype", () => {
     const evt = normalizeTurnCompleted(makeTurn("failed"));
-    expect(evt.payload.subtype).toBe("success");
+    expect(evt.payload.subtype).toBe("error");
   });
 
   test("includes threadId in payload", () => {

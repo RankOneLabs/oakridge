@@ -174,6 +174,7 @@ if (config.runtime.codex.enabled) {
     const codexRuntime = await createCodexRuntime({
       bin: codexBin,
       listenUrl: codexListen,
+      sessionsDir,
     });
     runtimes.push(codexRuntime);
     console.error(

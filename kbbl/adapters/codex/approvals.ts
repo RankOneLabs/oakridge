@@ -5,9 +5,13 @@ import type {
   CommandExecutionRequestApprovalParams,
 } from "./protocol/generated/types";
 
+export type NormalizedApprovalInput =
+  | { type: "ApplyPatch"; changes: unknown[]; reason: string | null }
+  | { type: "Exec"; command: string; cwd: string; commandActions: unknown[] };
+
 export interface NormalizedApproval {
   toolName: string;
-  toolInput: Record<string, unknown>;
+  toolInput: NormalizedApprovalInput;
   /** Map a kbbl allow/deny decision back to a Codex decision object. */
   codexDecision: (decision: "allow" | "deny") => { decision: string };
 }
@@ -18,6 +22,7 @@ export function normalizeFileChangeApproval(
   return {
     toolName: "ApplyPatch",
     toolInput: {
+      type: "ApplyPatch",
       changes: (params as unknown as { changes?: unknown[] }).changes ?? [],
       reason: params.reason,
     },
@@ -31,6 +36,7 @@ export function normalizeCommandExecutionApproval(
   return {
     toolName: "Exec",
     toolInput: {
+      type: "Exec",
       command: params.command,
       cwd: params.cwd,
       commandActions: params.commandActions,
@@ -56,6 +62,6 @@ export function normalizeApprovalByMethod(
       params as CommandExecutionRequestApprovalParams,
     );
   }
-  // Unknown / legacy method — no-op
+  // Unknown / legacy method — cancel response sent by caller
   return null;
 }

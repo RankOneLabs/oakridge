@@ -19,8 +19,10 @@ import { startCodexAppServer, type CodexAppServerOpts } from "./app-server";
 import type { CodexModel } from "./models";
 import {
   normalizeNotification,
+  extractTurnUsage,
   CODEX_NON_PERSISTED_EVENT_TYPES,
 } from "./events";
+import type { ResultUsage } from "../../core/session/session";
 import { normalizeApprovalByMethod } from "./approvals";
 import { resolveCodexResumeRef } from "./resume";
 
@@ -31,6 +33,8 @@ interface CodexSessionState {
   activeTurnId: string | null;
   /** kbbl request id → resolver fn (called when operator decides) */
   approvalResolvers: Map<string, (d: "allow" | "deny") => void>;
+  /** Last-received per-turn token usage; consumed by classifyEvent on result */
+  lastTokenUsage: { inputTokens: number; outputTokens: number; cachedInputTokens: number } | null;
 }
 
 // === Descriptor-only factory (for conformance tests without a live server) ===
@@ -128,7 +132,10 @@ function reconstructSnapshot(
 
 // === Full runtime factory ===
 
-export interface CreateCodexRuntimeOpts extends CodexAppServerOpts {}
+export interface CreateCodexRuntimeOpts extends CodexAppServerOpts {
+  /** Path to the sessions directory — required for resume to work. */
+  sessionsDir?: string;
+}
 
 /**
  * Start the Codex app-server and return a fully wired AgentRuntime.
@@ -139,6 +146,7 @@ export async function createCodexRuntime(
   opts: CreateCodexRuntimeOpts,
 ): Promise<AgentRuntime> {
   const { client, models, stop } = await startCodexAppServer(opts);
+  const { sessionsDir } = opts;
 
   const descriptor: RuntimeDescriptor = {
     id: "codex",
@@ -148,8 +156,6 @@ export async function createCodexRuntime(
   };
 
   const sessions = new Map<string, CodexSessionState>();
-  /** oakridgeSid → sessionId lookup used by classifyEvent */
-  const sidToOakridgeSid = new Map<string, string>();
 
   function getState(oakridgeSid: string): CodexSessionState | undefined {
     return sessions.get(oakridgeSid);
@@ -167,23 +173,38 @@ export async function createCodexRuntime(
         randomUUID();
       const cwd = config.workingDirectory;
       const model = config.runtimeSpecific?.model as string | undefined;
-      const resumeRef = config.runtimeSpecific?.resumeRef as
-        | { threadId: string }
-        | undefined;
+      const parentOakridgeSid =
+        config.runtimeSpecific?.parentOakridgeSid as string | undefined;
 
       let threadId: string;
 
-      if (resumeRef?.threadId) {
-        // Resume: fork off the parent thread
-        // Probe finding #3: use fork response thread.id directly, no thread/started wait
-        const forkResult = await client.threadFork({
-          threadId: resumeRef.threadId,
-          cwd,
-          sandbox: "workspace-write",
-          approvalPolicy: "untrusted",
-          runtimeWorkspaceRoots: [cwd],
-        });
-        threadId = forkResult.thread.id;
+      // Attempt resume if a parent session oakridgeSid is provided
+      if (parentOakridgeSid && sessionsDir) {
+        const ref = await resolveCodexResumeRef(sessionsDir, parentOakridgeSid);
+        if (ref.kind === "ok") {
+          // Resume: fork off the parent thread
+          // Probe finding #3: use fork response thread.id directly, no thread/started wait
+          const forkResult = await client.threadFork({
+            threadId: ref.runtimeSid,
+            cwd,
+            sandbox: "workspace-write",
+            approvalPolicy: "untrusted",
+            runtimeWorkspaceRoots: [cwd],
+          });
+          threadId = forkResult.thread.id;
+        } else {
+          // Resume ref unavailable — fall through to new thread
+          const startResult = await client.threadStart({
+            experimentalRawEvents: false,
+            persistExtendedHistory: false,
+            cwd,
+            sandbox: "workspace-write",
+            approvalPolicy: "untrusted",
+            model,
+            runtimeWorkspaceRoots: [cwd],
+          });
+          threadId = startResult.thread.id;
+        }
       } else {
         // New session
         const startResult = await client.threadStart({
@@ -202,9 +223,9 @@ export async function createCodexRuntime(
         threadId,
         activeTurnId: null,
         approvalResolvers: new Map(),
+        lastTokenUsage: null,
       };
       sessions.set(oakridgeSid, state);
-      sidToOakridgeSid.set(oakridgeSid, oakridgeSid);
 
       return { sessionId: oakridgeSid };
     },
@@ -224,7 +245,6 @@ export async function createCodexRuntime(
         );
       }
       sessions.delete(handle.sessionId);
-      sidToOakridgeSid.delete(handle.sessionId);
     },
 
     // --- events ---
@@ -249,6 +269,16 @@ export async function createCodexRuntime(
         return new Promise<void>((r) => { queueResolve = r; });
       }
 
+      // Emit runtime_session_observed so threadId is written to JSONL (enables resume)
+      pushEvent({
+        type: "envelope",
+        payload: {
+          type: "runtime_session_observed",
+          runtime_id: "codex",
+          runtime_sid: threadId,
+        },
+      });
+
       // Subscribe to thread notifications
       const unsub = client.subscribeThread(threadId, (notif) => {
         // Track active turn id
@@ -263,15 +293,17 @@ export async function createCodexRuntime(
           state.activeTurnId = null;
         }
 
+        // Capture per-turn token usage for classifyEvent → observeTurnEnd
+        if (notif.method === "thread/tokenUsage/updated") {
+          const p = notif.params as Parameters<typeof extractTurnUsage>[0];
+          state.lastTokenUsage = extractTurnUsage(p);
+        }
+
         // Normalize to kbbl event
         const evt = normalizeNotification(notif.method, notif.params);
         if (evt) {
           pushEvent({ type: "envelope", payload: evt.payload });
         }
-
-        // Signal done on turn/completed → result already pushed above
-        // We let the consumer decide when to stop — done is set below
-        // after thread/unsubscribe or transport close.
       });
 
       // Set server-request handler for approval requests
@@ -305,9 +337,7 @@ export async function createCodexRuntime(
           },
         });
 
-        // Block this server-request handler until the operator decides.
-        // The handler is awaited by the client read loop which will not
-        // process new messages for this thread until this resolves.
+        // Block until the operator (or auto-approve) resolves the decision.
         const decision = await decisionPromise;
         await client.sendServerResponse(req.id, normalized.codexDecision(decision));
       });
@@ -438,19 +468,20 @@ export async function createCodexRuntime(
         return;
       }
 
-      if (evt.type === "thread/tokenUsage/updated" || evt.type === "usage_observation") {
-        // Token usage is surfaced via usage_observation events from session.observeTurnEnd
-        // Nothing to do here — usage_observation is already emitted by observeTurnEnd
+      if (evt.type === "usage_observation") {
         return;
       }
 
-      // For turn completion events, call observeTurnEnd to record usage
       if (evt.type === "result") {
-        const p = rawEvent as { turn?: { status?: string }; tokenUsage?: unknown };
-        if (p.turn) {
-          // We don't have token data inline on result events; it arrives
-          // via thread/tokenUsage/updated in a separate envelope event.
-          // The usage observation is handled by the tokenUsage event handler below.
+        const state = getState(session.oakridgeSid);
+        if (state?.lastTokenUsage) {
+          const usage: ResultUsage = {
+            input_tokens: state.lastTokenUsage.inputTokens,
+            output_tokens: state.lastTokenUsage.outputTokens,
+            cache_read_input_tokens: state.lastTokenUsage.cachedInputTokens,
+          };
+          state.lastTokenUsage = null;
+          await session.observeTurnEnd({ usage, model: null });
         }
         return;
       }

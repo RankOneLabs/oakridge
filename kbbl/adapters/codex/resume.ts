@@ -56,7 +56,7 @@ export async function resolveCodexResumeRef(
         ? (evt.payload as Record<string, unknown>)
         : {};
 
-    if (evt.type === "runtime_session_observed") {
+    if (evt.type === "runtime_session_observed" && payload.runtime_id === "codex") {
       // Generic field: runtime_sid
       if (typeof payload.runtime_sid === "string") {
         threadId = payload.runtime_sid;

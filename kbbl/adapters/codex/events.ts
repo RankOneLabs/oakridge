@@ -1,23 +1,52 @@
 // Event normalization: maps Codex app-server notifications → kbbl envelope events.
-// Each function returns { type: string; payload: Record<string, unknown> } or null (skip).
+// Each function returns a typed KbblEvent or null (skip).
 
 import type {
   ItemAgentMessageDeltaParams,
   TurnCompletedParams,
   ThreadTokenUsageUpdatedParams,
+  CodexTurn,
 } from "./protocol/generated/types";
 
-export interface KbblEvent {
-  type: string;
-  payload: Record<string, unknown>;
-}
+export type AssistantDeltaEvent = {
+  type: "assistant_delta";
+  payload: {
+    type: "assistant_delta";
+    threadId: string;
+    turnId: string;
+    itemId: string;
+    delta: string;
+  };
+};
+
+export type AssistantEvent = {
+  type: "assistant";
+  payload: {
+    type: "assistant";
+    threadId: string;
+    turnId: string;
+    message: { role: "assistant"; content: string };
+  };
+};
+
+export type ResultEvent = {
+  type: "result";
+  payload: {
+    type: "result";
+    threadId: string;
+    turn: CodexTurn;
+    subtype: "interrupted" | "error" | "success";
+  };
+};
+
+export type KbblEvent = AssistantDeltaEvent | AssistantEvent | ResultEvent;
 
 /**
  * Map item/agentMessage/delta → assistant_delta (non-persisted streaming token).
  */
 export function normalizeAgentMessageDelta(
   params: ItemAgentMessageDeltaParams,
-): KbblEvent {
+): AssistantDeltaEvent {
   return {
     type: "assistant_delta",
     payload: {
@@ -32,13 +61,15 @@ export function normalizeAgentMessageDelta(
 
 /**
  * Map item/completed for agentMessage items → assistant event.
- * Returns null if item is not an agentMessage or has no text.
+ * Returns null if item is not an agentMessage.
+ * Returns an event with empty content if item has no text — omitting empty
+ * items would hide them from logging/debugging and providers may differ.
  */
 export function normalizeAgentMessageCompleted(
   item: unknown,
   threadId: string,
   turnId: string,
-): KbblEvent | null {
+): AssistantEvent | null {
   if (
     typeof item !== "object" ||
     item === null ||
@@ -64,14 +95,17 @@ export function normalizeAgentMessageCompleted(
 /**
  * Map turn/completed → result event.
  */
-export function normalizeTurnCompleted(params: TurnCompletedParams): KbblEvent {
+export function normalizeTurnCompleted(params: TurnCompletedParams): ResultEvent {
+  const status = params.turn.status;
+  const subtype =
+    status === "interrupted" ? "interrupted" : status === "failed" ? "error" : "success";
   return {
     type: "result",
     payload: {
       type: "result",
       threadId: params.threadId,
       turn: params.turn,
-      subtype: params.turn.status === "interrupted" ? "interrupted" : "success",
+      subtype,
     },
   };
 }

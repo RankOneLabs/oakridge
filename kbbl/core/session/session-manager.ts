@@ -489,6 +489,7 @@ export class SessionManager {
         runtimeSpecific: {
           model: session.model,
           parentCcSid: session.parentCcSid,
+          parentOakridgeSid: session.parentOakridgeSid,
           oakridgeSid: session.oakridgeSid,
         },
       });

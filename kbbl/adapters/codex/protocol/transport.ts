@@ -37,6 +37,17 @@ export function createStdioTransport(opts: StdioTransportOpts): CodexTransport {
     }
   });
 
+  // Drain stderr so the pipe buffer never fills and blocks the subprocess
+  (async () => {
+    try {
+      const reader = (proc.stderr as ReadableStream<Uint8Array>).getReader();
+      while (true) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+    } catch { /* ignore */ }
+  })();
+
   async function writeLine(line: string): Promise<void> {
     if (_closed) throw new Error("transport closed");
     const sink = proc.stdin as import("bun").FileSink;
