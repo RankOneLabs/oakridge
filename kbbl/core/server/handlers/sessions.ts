@@ -14,8 +14,18 @@ import {
   type CreateSessionOpts,
 } from "../../session/session-manager";
 import type { RuntimeRegistry } from "../../runtime";
-import { isAllowedModel as isCcAllowedModel } from "../../../adapters/claude-code/models";
 import { isValidSid } from "./per-sid";
+
+// Fallback allowlist used when no RuntimeRegistry is wired (legacy / test mode).
+// Mirrors the CC adapter's ALLOWED_MODELS; kept here so core has no adapter import.
+const LEGACY_ALLOWED_MODELS: readonly string[] = [
+  "claude-opus-4-7",
+  "claude-sonnet-4-6",
+  "claude-haiku-4-5-20251001",
+  "opus",
+  "sonnet",
+  "haiku",
+];
 
 interface ParentSessionPayload {
   readonly [key: string]: unknown;
@@ -148,7 +158,7 @@ async function resolveResumeParent(
       if (typeof payload.worktreePath === "string") {
         parentWorktreePath = payload.worktreePath;
       }
-      if (typeof payload.model === "string" && isCcAllowedModel(payload.model)) {
+      if (typeof payload.model === "string" && LEGACY_ALLOWED_MODELS.includes(payload.model)) {
         parentModel = payload.model;
       }
     }
@@ -200,9 +210,9 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
    * callers and tests without a registry still get model validation.
    */
   function isAllowedModel(value: string): boolean {
-    if (!registry) return isCcAllowedModel(value);
+    if (!registry) return LEGACY_ALLOWED_MODELS.includes(value);
     const defaultRuntime = registry.runtimes.get(registry.defaultId);
-    if (!defaultRuntime) return isCcAllowedModel(value);
+    if (!defaultRuntime) return LEGACY_ALLOWED_MODELS.includes(value);
     return defaultRuntime.descriptor.models.some((m) => m.value === value);
   }
 
@@ -395,7 +405,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
             parentInfo = { kind: "no_cc_sid" };
           } else if (ref.kind === "no_workdir") {
             parentInfo = { kind: "no_workdir" };
-          } else {
+          } else if (ref.kind === "ok") {
             parentInfo = {
               kind: "ok",
               parentCcSid: ref.runtimeSid,
@@ -403,6 +413,8 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
               parentWorktreePath: ref.parentWorktreePath,
               parentModel: ref.model,
             };
+          } else {
+            parentInfo = { kind: "unknown" };
           }
         } else {
           parentInfo = await resolveResumeParent(manager, sessionsDir, resumeFrom);

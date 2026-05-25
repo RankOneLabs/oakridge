@@ -25,7 +25,7 @@ import {
   isGitRepo,
   removeWorktree,
 } from "./worktree";
-import type { AgentRuntime, RuntimeId, RuntimeRegistry } from "../runtime";
+import type { RuntimeId, RuntimeRegistry } from "../runtime";
 
 export interface SessionManagerOpts {
   sessionsDir: string;
@@ -127,10 +127,6 @@ interface ArchivedSessionStartedPayload extends JsonObjectPayload {
   readonly model?: unknown;
 }
 
-interface ArchivedCcSessionObservedPayload extends JsonObjectPayload {
-  readonly cc_session_id?: unknown;
-}
-
 function payloadObject(payload: unknown): JsonObjectPayload {
   return (
     typeof payload === "object" && payload !== null ? payload : {}
@@ -140,12 +136,6 @@ function payloadObject(payload: unknown): JsonObjectPayload {
 function archivedSessionStartedPayload(
   payload: unknown,
 ): ArchivedSessionStartedPayload {
-  return payloadObject(payload);
-}
-
-function archivedCcSessionObservedPayload(
-  payload: unknown,
-): ArchivedCcSessionObservedPayload {
   return payloadObject(payload);
 }
 
@@ -715,7 +705,7 @@ export class SessionManager {
       const sid = name.slice(0, -".jsonl".length);
       if (this.sessions.has(sid)) continue;
       const jsonlPath = join(this.opts.sessionsDir, name);
-      const snap = await loadArchivedSnapshot(sid, jsonlPath);
+      const snap = await loadArchivedSnapshot(sid, jsonlPath, this.opts.registry);
       if (snap) cache.set(sid, snap);
     }
     this.archivedSnapshotCache = cache;
@@ -928,7 +918,7 @@ export class SessionManager {
       };
     }
     const jsonlPath = join(this.opts.sessionsDir, `${oakridgeSid}.jsonl`);
-    const snap = await loadArchivedSnapshot(oakridgeSid, jsonlPath);
+    const snap = await loadArchivedSnapshot(oakridgeSid, jsonlPath, this.opts.registry);
     if (
       !snap ||
       snap.worktreePath === null ||
@@ -1349,6 +1339,7 @@ type AssistantPayload = { message?: unknown };
 async function loadArchivedSnapshot(
   sid: string,
   jsonlPath: string,
+  registry?: RuntimeRegistry,
 ): Promise<SessionSnapshot | null> {
   let contents: string;
   try {
@@ -1394,6 +1385,7 @@ async function loadArchivedSnapshot(
   let observedModel: string | null = null;
   let endReason: SessionEndReason | null = null;
   let successorSid: string | null = null;
+  const events: EnvelopeEvent[] = [];
   for (const line of contents.split("\n")) {
     if (!line.trim()) continue;
     let evt: EnvelopeEvent;
@@ -1402,6 +1394,7 @@ async function loadArchivedSnapshot(
     } catch {
       continue;
     }
+    events.push(evt);
     lastActivityTs = evt.ts;
     const payload = payloadObject(evt.payload);
     switch (evt.type) {
@@ -1457,13 +1450,6 @@ async function loadArchivedSnapshot(
         // the allowlist at write time.
         if (typeof sessionStartedPayload.model === "string") {
           model = sessionStartedPayload.model;
-        }
-        break;
-      }
-      case "cc_session_id_observed": {
-        const ccPayload = archivedCcSessionObservedPayload(payload);
-        if (typeof ccPayload.cc_session_id === "string") {
-          ccSid = ccPayload.cc_session_id;
         }
         break;
       }
@@ -1532,6 +1518,21 @@ async function loadArchivedSnapshot(
         if (endReason === null) endReason = "subprocess_exited";
         break;
       }
+    }
+  }
+  // When a registry is available, delegate runtime-specific field reconstruction
+  // to the adapter. Its reconstructSnapshot() is authoritative for runtimeSid
+  // (including cc_session_id_observed on old JSONL) and other runtime fields.
+  if (registry) {
+    const runtime = registry.runtimes.get(runtimeId);
+    if (runtime) {
+      const contrib = runtime.reconstructSnapshot(events);
+      if (contrib.runtimeSid !== null) ccSid = contrib.runtimeSid;
+      yoloMode = contrib.yoloMode;
+      allowedTools.clear();
+      for (const t of contrib.allowedTools) allowedTools.add(t);
+      if (contrib.lastResultUsage) lastResultUsage = contrib.lastResultUsage;
+      if (contrib.observedModel !== null) observedModel = contrib.observedModel;
     }
   }
   if (!createdAt) return null;

@@ -1,4 +1,3 @@
-import type { AllowedModel } from "../../../adapters/claude-code/models";
 import type { SessionManager } from "../../session/session-manager";
 import type { ExecutionBackend, InputRef, StageRow } from "./interface";
 
@@ -6,7 +5,7 @@ import type { ExecutionBackend, InputRef, StageRow } from "./interface";
 // so dispatcher-spawned sessions don't fall through to the user-global default.
 type RoutedStage = "planner1" | "planner2" | "planner2_batch" | "planner3" | "build";
 
-const STAGE_MODEL: Record<RoutedStage, AllowedModel> = {
+const STAGE_MODEL: Record<RoutedStage, string> = {
   planner1: "claude-opus-4-7",
   planner2: "claude-opus-4-7",
   planner2_batch: "claude-opus-4-7",

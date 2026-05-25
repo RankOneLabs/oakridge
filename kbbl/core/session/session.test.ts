@@ -9,7 +9,6 @@ import { join } from "node:path";
 import {
   Session,
   type SessionCallbacks,
-  type SessionHandle,
   type SessionOpts,
 } from "./session";
 import type {
@@ -19,6 +18,7 @@ import type {
   ResumeRef,
   RuntimeConfig,
   RuntimeSnapshotContrib,
+  SessionHandle,
 } from "../runtime";
 import type { EnvelopeEvent } from "./session";
 
@@ -178,7 +178,7 @@ describe("Session.attachRuntime", () => {
       { type: "envelope", payload: { type: "custom_event", data: 42 } },
       { type: "completed", result: { code: 0 } },
     ]);
-    (runtime as { classifyEvent: (e: unknown) => Promise<void> }).classifyEvent =
+    (runtime as unknown as { classifyEvent: (e: unknown) => Promise<void> }).classifyEvent =
       async (rawEvent: unknown) => {
         classified.push(rawEvent);
       };
@@ -190,25 +190,16 @@ describe("Session.attachRuntime", () => {
     expect((classified[0] as { type: string }).type).toBe("custom_event");
   });
 
-  test("terminate is called on abort after attachRuntime", async () => {
-    let terminated = false;
-    // Make a runtime that completes quickly but records the terminate call.
-    const runtime: AgentRuntime = {
-      ...makeRuntime([{ type: "completed", result: { code: 0 } }]),
-      async terminate(_handle: SessionHandle): Promise<void> {
-        terminated = true;
-      },
-    };
+  test("abort on already-ended attachRuntime session does not throw", async () => {
+    // abort() returns early when session is already ended — no terminate call.
+    const runtime: AgentRuntime = makeRuntime([
+      { type: "completed", result: { code: 0 } },
+    ]);
 
     const session = makeSession();
     const handle = await runtime.spawn({ workingDirectory: "/tmp" });
-    // Attach and wait for completion, then abort (which calls terminate).
     await session.attachRuntime(runtime, handle);
-    // Call abort on already-ended session — it should call terminate
-    // if _runtime/_handle are set (they are, even after ended).
     await session.abort();
-    // terminated might or might not be set depending on timing of
-    // _runtime/handle clearing, but the abort should not throw.
     expect(session.status).toBe("ended");
   });
 });
