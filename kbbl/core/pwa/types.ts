@@ -21,6 +21,17 @@ export interface SessionSnapshot {
   status: SessionStatus;
   createdAt: string;
   lastActivityTs: string;
+  /** Runtime adapter id for this session (e.g. "claude-code"). */
+  runtimeId: "claude-code" | "codex";
+  /**
+   * Runtime-internal session id (e.g. CC's session_id from system/init),
+   * null until observed.
+   */
+  runtimeSid: string | null;
+  /**
+   * @deprecated Use runtimeSid. Kept for backward compat — equals runtimeSid
+   * for CC sessions.
+   */
   ccSid: string | null;
   parentCcSid: string | null;
   parentOakridgeSid: string | null;
@@ -34,7 +45,7 @@ export interface SessionSnapshot {
   projectWorkdir: string | null;
   model: string | null;
   /**
-   * Model CC actually resolved at runtime. Seeded by system+init and
+   * Model the runtime actually resolved at runtime. Seeded by system+init and
    * updated by each distinct assistant.message.model; null until first
    * observation. PWA renders `observedModel ?? model` so spawn-time
    * intent remains the fallback when the runtime hasn't reported yet.

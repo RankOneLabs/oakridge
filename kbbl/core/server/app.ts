@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import type { Database } from "bun:sqlite";
 
-import type { AppRuntime } from "../runtime";
+import type { AppRuntime, RuntimeRegistry } from "../runtime";
 import type { KbblConfig } from "../config";
 import type { SessionManager } from "../session/session-manager";
 import type { createDispatcher } from "../orchestrator/backends/dispatcher";
@@ -35,6 +35,12 @@ export interface CreateAppDeps {
   manager: SessionManager;
   /** Adapter owns adapter-specific routes (e.g., CC's /hook/approval). */
   runtime: AppRuntime;
+  /**
+   * Runtime registry. When provided, GET /config includes
+   * `defaultRuntimeId` and `runtimes`, and POST /sessions uses the
+   * registry for model validation. Optional for backward compat.
+   */
+  registry?: RuntimeRegistry;
   /** The server's default workdir (from --workdir CLI arg). */
   defaultWorkdir: string;
   /** Path to the on-disk sessions directory. */
@@ -75,6 +81,7 @@ export function createApp(deps: CreateAppDeps): Hono {
   const {
     manager,
     runtime,
+    registry,
     defaultWorkdir,
     sessionsDir,
     handoffsDir,
@@ -109,12 +116,20 @@ export function createApp(deps: CreateAppDeps): Hono {
   // Exposes the operator-configured defaults the PWA needs to render forms.
   // PATCH /config allows runtime mutation of soft_threshold_tokens, persisted
   // back to configPath so the value survives a server restart.
-  app.get("/config", (c) =>
-    c.json({
+  app.get("/config", (c) => {
+    const base = {
       defaultWorkdir,
       softThresholdTokens: config.compact.soft_threshold_tokens,
-    }),
-  );
+    };
+    if (registry) {
+      return c.json({
+        ...base,
+        defaultRuntimeId: registry.defaultId,
+        runtimes: [...registry.runtimes.values()].map((r) => r.descriptor),
+      });
+    }
+    return c.json(base);
+  });
 
   app.patch("/config", async (c) => {
     let body: unknown;
@@ -170,7 +185,7 @@ export function createApp(deps: CreateAppDeps): Hono {
   });
 
   // ---- sessions CRUD ----
-  mountSessionsRoutes(app, { manager, defaultWorkdir, sessionsDir });
+  mountSessionsRoutes(app, { manager, defaultWorkdir, sessionsDir, registry });
 
   // ---- workspace-layer event ingest ----
   //

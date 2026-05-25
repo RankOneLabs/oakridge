@@ -9,6 +9,7 @@ import { Session } from "./session/session";
 import { isGitRepo, isPathInside, resolveRepoTopLevel } from "./session/worktree";
 import { createApp } from "./server/app";
 import { createClaudeCodeRuntime } from "../adapters/claude-code";
+import { createRuntimeRegistry } from "./runtime";
 import { validateWorkdir } from "./server/handlers/sessions";
 import { openDb } from "./db/connection";
 import { applyMigrations } from "./db/migrations";
@@ -160,15 +161,40 @@ const runtime = await createClaudeCodeRuntime({
   gatePath,
 });
 
+// === runtime registry ===
+
+const registry = createRuntimeRegistry([runtime]);
+
+// The CC adapter owns the ccSid→oakridgeSid map. Expose callback hooks so
+// the manager can delegate getByCcSid lookups without importing CC directly.
+type CcRuntimeExtensions = {
+  registerCcSid: (ccSid: string, oakridgeSid: string) => void;
+  unregisterBySid: (session: Session) => void;
+  lookupByCcSid: (ccSid: string) => Session | undefined;
+  trackSession: (s: Session) => void;
+};
+const ccRuntime = runtime as typeof runtime & CcRuntimeExtensions;
+
 // === manager ===
 
 const manager = new SessionManager({
   sessionsDir,
   handoffsDir,
   worktreesDir,
+  // Legacy buildSpawnCmd kept as fallback (not used when registry is set, but
+  // satisfies backward-compat tests and any path that bypasses the registry).
   buildSpawnCmd: runtime.buildSpawnCmd,
   classifyEvent: runtime.classifyEvent,
   nonPersistedEventTypes: runtime.nonPersistedEventTypes,
+  registry,
+  lookupByCcSid: (ccSid) => ccRuntime.lookupByCcSid(ccSid),
+  onRuntimeSessionObserved: (session, runtimeSid) => {
+    ccRuntime.registerCcSid(runtimeSid, session.oakridgeSid);
+    ccRuntime.trackSession(session);
+  },
+  onRuntimeSessionEnded: (session) => {
+    ccRuntime.unregisterBySid(session);
+  },
   config,
 });
 
@@ -191,6 +217,7 @@ let bunServer: ReturnType<typeof Bun.serve> | null = null;
 const app = createApp({
   manager,
   runtime,
+  registry,
   defaultWorkdir: workdir,
   sessionsDir,
   handoffsDir,

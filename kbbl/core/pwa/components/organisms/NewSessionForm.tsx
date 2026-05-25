@@ -3,8 +3,8 @@ import { useEffect, useState } from "react";
 import { generateSlug } from "../../lib/session";
 import { PWA_MODEL_OPTIONS } from "../../lib/format";
 import {
-  NEW_SESSION_MODEL_STORAGE_KEY,
   readStoredNewSessionModel,
+  writeStoredNewSessionModel,
 } from "../../lib/storage";
 
 export interface NewSessionFormValues {
@@ -58,9 +58,7 @@ export function NewSessionForm({
   }, [defaultWorkdir, workdirInput, workdirTouched]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(NEW_SESSION_MODEL_STORAGE_KEY, modelInput);
-    } catch {}
+    writeStoredNewSessionModel(modelInput);
   }, [modelInput]);
 
   useEffect(() => {
