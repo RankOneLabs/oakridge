@@ -23,6 +23,8 @@ function snap(over: Partial<SessionSnapshot>): SessionSnapshot {
     status: over.status ?? "live",
     createdAt: over.createdAt ?? "2026-05-22T00:00:00Z",
     lastActivityTs: over.lastActivityTs ?? "2026-05-22T00:00:00Z",
+    runtimeId: over.runtimeId ?? "claude-code",
+    runtimeSid: over.runtimeSid ?? null,
     ccSid: over.ccSid ?? null,
     parentCcSid: over.parentCcSid ?? null,
     parentOakridgeSid: over.parentOakridgeSid ?? null,

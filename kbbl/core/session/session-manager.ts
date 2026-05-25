@@ -25,7 +25,7 @@ import {
   isGitRepo,
   removeWorktree,
 } from "./worktree";
-import { isAllowedModel } from "../../adapters/claude-code/models";
+import type { RuntimeId, RuntimeRegistry } from "../runtime";
 
 export interface SessionManagerOpts {
   sessionsDir: string;
@@ -49,21 +49,56 @@ export interface SessionManagerOpts {
    * and returns a SpawnCmd ready to hand to Bun.spawn. Resume is expressed
    * via parentCcSid on the Session, not as a separate flag here — the
    * builder inspects session.parentCcSid.
+   *
+   * Legacy option kept for backward compat. New code should use `registry`
+   * and the AgentRuntime.spawn() path instead.
    */
-  buildSpawnCmd: (session: Session) => Promise<SpawnCmd>;
+  buildSpawnCmd?: (session: Session) => Promise<SpawnCmd>;
   /**
    * Optional runtime-adapter classifier wired into each Session's stdout
    * pump. The adapter inspects raw events and updates Session metadata
    * (observeRuntimeSessionId, observeTurnEnd). Adapters with no
    * per-event work omit this.
+   *
+   * Legacy option; when `registry` is provided the runtime's classifyEvent
+   * is used from the AgentRuntime interface directly.
    */
   classifyEvent?: (rawEvent: unknown, session: Session) => Promise<void>;
   /**
    * Optional set of event types Session.emit() will broadcast but skip
    * writing to the JSONL transcript. See AppRuntime.nonPersistedEventTypes
    * for rationale.
+   *
+   * Legacy option; when `registry` is provided, runtime.nonPersistedEventTypes
+   * is used from the AgentRuntime interface directly.
    */
   nonPersistedEventTypes?: ReadonlySet<string>;
+  /**
+   * Runtime registry. When provided, the manager uses
+   * `registry.runtimes.get(runtimeId).spawn()` + `session.attachRuntime()`
+   * instead of the legacy `buildSpawnCmd` + `session.spawn()` path.
+   * The default runtime id is `registry.defaultId`.
+   */
+  registry?: RuntimeRegistry;
+  /**
+   * Optional lookup callback: given a CC session id (from CC's system/init
+   * session_id), return the Session for it. The CC adapter owns the
+   * ccSid→oakridgeSid map and provides this callback. When absent,
+   * getByCcSid() always returns undefined.
+   */
+  lookupByCcSid?: (ccSid: string) => Session | undefined;
+  /**
+   * Called when a session's runtime session id is first observed (i.e. when
+   * the runtime emits its internal session id, e.g. CC's system/init
+   * session_id). The CC adapter uses this to register the mapping in its
+   * internal ccSidToOakridgeSid map.
+   */
+  onRuntimeSessionObserved?: (session: Session, runtimeSid: string) => void;
+  /**
+   * Called when a session ends. Provides a hook for the adapter to clean up
+   * any runtime-session-id mappings it holds.
+   */
+  onRuntimeSessionEnded?: (session: Session) => void;
   /**
    * Validated kbbl config (compact thresholds, retention window). Loaded
    * once at server startup and threaded through here so consumers
@@ -79,6 +114,7 @@ interface JsonObjectPayload {
 interface ArchivedSessionStartedPayload extends JsonObjectPayload {
   readonly workdir?: unknown;
   readonly name?: unknown;
+  readonly runtimeId?: unknown;
   readonly parentCcSid?: unknown;
   readonly parentOakridgeSid?: unknown;
   readonly artifactId?: unknown;
@@ -91,10 +127,6 @@ interface ArchivedSessionStartedPayload extends JsonObjectPayload {
   readonly model?: unknown;
 }
 
-interface ArchivedCcSessionObservedPayload extends JsonObjectPayload {
-  readonly cc_session_id?: unknown;
-}
-
 function payloadObject(payload: unknown): JsonObjectPayload {
   return (
     typeof payload === "object" && payload !== null ? payload : {}
@@ -104,12 +136,6 @@ function payloadObject(payload: unknown): JsonObjectPayload {
 function archivedSessionStartedPayload(
   payload: unknown,
 ): ArchivedSessionStartedPayload {
-  return payloadObject(payload);
-}
-
-function archivedCcSessionObservedPayload(
-  payload: unknown,
-): ArchivedCcSessionObservedPayload {
   return payloadObject(payload);
 }
 
@@ -215,12 +241,6 @@ function parseDepthFromBranch(branch: string): number {
 export class SessionManager {
   private readonly opts: SessionManagerOpts;
   private readonly sessions = new Map<string, Session>();
-  /**
-   * Maps CC's session_id (captured from system/init) back to our
-   * oakridgeSid, so /hook/approval can route incoming hooks — which carry
-   * CC's session_id in the payload, not ours — to the right Session.
-   */
-  private readonly ccSidToOakridgeSid = new Map<string, string>();
 
   private readonly inboxSubscribers = new Set<InboxSubscriber>();
   /**
@@ -348,6 +368,7 @@ export class SessionManager {
       workdir: effectiveWorkdir,
       name,
       sessionsDir: this.opts.sessionsDir,
+      runtimeId: this.opts.registry?.defaultId ?? "claude-code",
       parentCcSid: opts.parentCcSid,
       parentOakridgeSid: opts.parentOakridgeSid,
       artifactId: opts.artifactId,
@@ -357,16 +378,18 @@ export class SessionManager {
       projectWorkdir,
       model: opts.model ?? null,
       classifyEvent: this.opts.classifyEvent,
-      nonPersistedEventTypes: this.opts.nonPersistedEventTypes,
+      // Prefer the registry runtime's nonPersistedEventTypes so a caller that
+      // only wires `registry` (without the legacy opts) still gets the right
+      // high-volume event suppression (e.g. CC stream_event).
+      nonPersistedEventTypes:
+        this.opts.registry?.runtimes.get(this.opts.registry.defaultId)?.nonPersistedEventTypes
+        ?? this.opts.nonPersistedEventTypes,
       callbacks: {
-        onCcSidObserved: (s, ccSid) => {
-          this.ccSidToOakridgeSid.set(ccSid, s.oakridgeSid);
+        onRuntimeSessionObserved: (s, runtimeSid) => {
+          this.opts.onRuntimeSessionObserved?.(s, runtimeSid);
         },
         onEnded: (s) => {
-          const ccSid = s.currentCcSid;
-          if (ccSid && this.ccSidToOakridgeSid.get(ccSid) === s.oakridgeSid) {
-            this.ccSidToOakridgeSid.delete(ccSid);
-          }
+          this.opts.onRuntimeSessionEnded?.(s);
           this.clearActivityTimer(s.oakridgeSid);
           this.broadcastDelta({ type: "session_ended", sid: s.oakridgeSid });
         },
@@ -451,7 +474,33 @@ export class SessionManager {
     // immediately and then receive status/pending/activity deltas as the
     // subprocess comes up.
     this.broadcastDelta({ type: "session_created", session: session.snapshot() });
-    await session.spawn(await this.opts.buildSpawnCmd(session));
+
+    // Spawn: use the registry path (AgentRuntime.spawn + attachRuntime) when
+    // a registry is configured; fall back to the legacy buildSpawnCmd path.
+    const registry = this.opts.registry;
+    if (registry) {
+      const runtimeId: RuntimeId = session.runtimeId;
+      const runtime = registry.runtimes.get(runtimeId);
+      if (!runtime) {
+        throw new Error(`kbbl: no runtime registered for id "${runtimeId}"`);
+      }
+      const handle = await runtime.spawn({
+        workingDirectory: session.workdir,
+        runtimeSpecific: {
+          model: session.model,
+          parentCcSid: session.parentCcSid,
+          oakridgeSid: session.oakridgeSid,
+        },
+      });
+      await session.attachRuntime(runtime, handle);
+    } else if (this.opts.buildSpawnCmd) {
+      await session.spawn(await this.opts.buildSpawnCmd(session));
+    } else {
+      throw new Error(
+        "kbbl: SessionManager requires either opts.registry or opts.buildSpawnCmd",
+      );
+    }
+
     return session;
   }
 
@@ -533,9 +582,14 @@ export class SessionManager {
     return this.sessions.get(oakridgeSid);
   }
 
+  /**
+   * Look up a session by the runtime's internal session id (e.g. CC's
+   * session_id from system/init). Delegates to opts.lookupByCcSid if
+   * provided; the CC adapter owns the ccSid→oakridgeSid map and wires it
+   * via that callback. Returns undefined if no callback is configured.
+   */
   getByCcSid(ccSid: string): Session | undefined {
-    const oakridgeSid = this.ccSidToOakridgeSid.get(ccSid);
-    return oakridgeSid ? this.sessions.get(oakridgeSid) : undefined;
+    return this.opts.lookupByCcSid?.(ccSid);
   }
 
   list(): Session[] {
@@ -657,7 +711,7 @@ export class SessionManager {
       const sid = name.slice(0, -".jsonl".length);
       if (this.sessions.has(sid)) continue;
       const jsonlPath = join(this.opts.sessionsDir, name);
-      const snap = await loadArchivedSnapshot(sid, jsonlPath);
+      const snap = await loadArchivedSnapshot(sid, jsonlPath, this.opts.registry);
       if (snap) cache.set(sid, snap);
     }
     this.archivedSnapshotCache = cache;
@@ -870,7 +924,7 @@ export class SessionManager {
       };
     }
     const jsonlPath = join(this.opts.sessionsDir, `${oakridgeSid}.jsonl`);
-    const snap = await loadArchivedSnapshot(oakridgeSid, jsonlPath);
+    const snap = await loadArchivedSnapshot(oakridgeSid, jsonlPath, this.opts.registry);
     if (
       !snap ||
       snap.worktreePath === null ||
@@ -1291,6 +1345,7 @@ type AssistantPayload = { message?: unknown };
 async function loadArchivedSnapshot(
   sid: string,
   jsonlPath: string,
+  registry?: RuntimeRegistry,
 ): Promise<SessionSnapshot | null> {
   let contents: string;
   try {
@@ -1310,6 +1365,7 @@ async function loadArchivedSnapshot(
   let createdAt: string | null = null;
   let workdir = "";
   let name = "";
+  let runtimeId: RuntimeId = "claude-code";
   let ccSid: string | null = null;
   let parentCcSid: string | null = null;
   let parentOakridgeSid: string | null = null;
@@ -1335,6 +1391,7 @@ async function loadArchivedSnapshot(
   let observedModel: string | null = null;
   let endReason: SessionEndReason | null = null;
   let successorSid: string | null = null;
+  const events: EnvelopeEvent[] = [];
   for (const line of contents.split("\n")) {
     if (!line.trim()) continue;
     let evt: EnvelopeEvent;
@@ -1343,6 +1400,7 @@ async function loadArchivedSnapshot(
     } catch {
       continue;
     }
+    if (registry) events.push(evt);
     lastActivityTs = evt.ts;
     const payload = payloadObject(evt.payload);
     switch (evt.type) {
@@ -1354,6 +1412,12 @@ async function loadArchivedSnapshot(
         }
         if (typeof sessionStartedPayload.name === "string") {
           name = sessionStartedPayload.name;
+        }
+        if (
+          sessionStartedPayload.runtimeId === "claude-code" ||
+          sessionStartedPayload.runtimeId === "codex"
+        ) {
+          runtimeId = sessionStartedPayload.runtimeId;
         }
         if (typeof sessionStartedPayload.parentCcSid === "string") {
           parentCcSid = sessionStartedPayload.parentCcSid;
@@ -1384,18 +1448,14 @@ async function loadArchivedSnapshot(
         if (typeof sessionStartedPayload.projectWorkdir === "string") {
           projectWorkdir = sessionStartedPayload.projectWorkdir;
         }
-        if (
-          typeof sessionStartedPayload.model === "string" &&
-          isAllowedModel(sessionStartedPayload.model)
-        ) {
+        // No allowlist gate: model is stored as-is from session_started.
+        // The allowlist gate lives at the HTTP route (POST /sessions)
+        // and the adapter's spawn-time validation; archived snapshots
+        // must faithfully replay whatever was stored, including future
+        // model ids and date-suffixed snapshot strings that weren't in
+        // the allowlist at write time.
+        if (typeof sessionStartedPayload.model === "string") {
           model = sessionStartedPayload.model;
-        }
-        break;
-      }
-      case "cc_session_id_observed": {
-        const ccPayload = archivedCcSessionObservedPayload(payload);
-        if (typeof ccPayload.cc_session_id === "string") {
-          ccSid = ccPayload.cc_session_id;
         }
         break;
       }
@@ -1466,6 +1526,21 @@ async function loadArchivedSnapshot(
       }
     }
   }
+  // When a registry is available, delegate runtime-specific field reconstruction
+  // to the adapter. Its reconstructSnapshot() is authoritative for runtimeSid
+  // (including cc_session_id_observed on old JSONL) and other runtime fields.
+  if (registry) {
+    const runtime = registry.runtimes.get(runtimeId);
+    if (runtime) {
+      const contrib = runtime.reconstructSnapshot(events);
+      if (contrib.runtimeSid !== null) ccSid = contrib.runtimeSid;
+      yoloMode = contrib.yoloMode;
+      allowedTools.clear();
+      for (const t of contrib.allowedTools) allowedTools.add(t);
+      if (contrib.lastResultUsage) lastResultUsage = contrib.lastResultUsage;
+      if (contrib.observedModel !== null) observedModel = contrib.observedModel;
+    }
+  }
   if (!createdAt) return null;
   return {
     sid,
@@ -1479,7 +1554,9 @@ async function loadArchivedSnapshot(
     status: "ended",
     createdAt,
     lastActivityTs: lastActivityTs || createdAt,
-    ccSid,
+    runtimeId,
+    runtimeSid: ccSid,
+    ccSid: runtimeId === "claude-code" ? ccSid : null,
     parentCcSid,
     parentOakridgeSid,
     artifactId,

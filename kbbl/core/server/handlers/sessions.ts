@@ -8,13 +8,24 @@ import {
   readJsonlOrEmpty,
   type EnvelopeEvent,
 } from "../../session/session";
-import { isAllowedModel } from "../../../adapters/claude-code/models";
 import {
   RemoveFailedError,
   SessionManager,
   type CreateSessionOpts,
 } from "../../session/session-manager";
+import type { RuntimeRegistry } from "../../runtime";
 import { isValidSid } from "./per-sid";
+
+// Fallback allowlist used when no RuntimeRegistry is wired (legacy / test mode).
+// Mirrors the CC adapter's ALLOWED_MODELS; kept here so core has no adapter import.
+const LEGACY_ALLOWED_MODELS: readonly string[] = [
+  "claude-opus-4-7",
+  "claude-sonnet-4-6",
+  "claude-haiku-4-5-20251001",
+  "opus",
+  "sonnet",
+  "haiku",
+];
 
 interface ParentSessionPayload {
   readonly [key: string]: unknown;
@@ -147,7 +158,7 @@ async function resolveResumeParent(
       if (typeof payload.worktreePath === "string") {
         parentWorktreePath = payload.worktreePath;
       }
-      if (typeof payload.model === "string" && isAllowedModel(payload.model)) {
+      if (typeof payload.model === "string" && LEGACY_ALLOWED_MODELS.includes(payload.model)) {
         parentModel = payload.model;
       }
     }
@@ -175,6 +186,12 @@ export interface SessionsRouteDeps {
   defaultWorkdir: string;
   /** Path to the on-disk sessions directory for archived JSONL lookups. */
   sessionsDir: string;
+  /**
+   * Optional runtime registry for model validation. When present, delegates
+   * to the default runtime's isAllowedModel() method. When absent, falls back
+   * to LEGACY_ALLOWED_MODELS (the CC adapter's static allowlist).
+   */
+  registry?: RuntimeRegistry;
 }
 
 /**
@@ -182,7 +199,21 @@ export interface SessionsRouteDeps {
  * on the given Hono app.
  */
 export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
-  const { manager, defaultWorkdir, sessionsDir } = deps;
+  const { manager, defaultWorkdir, sessionsDir, registry } = deps;
+
+  /**
+   * Check whether a model value is valid. When a registry is provided,
+   * delegates to the default runtime's isAllowedModel() (which may accept
+   * full model ids and short aliases beyond what descriptor.models lists).
+   * Falls back to LEGACY_ALLOWED_MODELS when no registry is provided, no
+   * default runtime is found, or the runtime doesn't implement isAllowedModel.
+   */
+  function isAllowedModel(value: string): boolean {
+    if (!registry) return LEGACY_ALLOWED_MODELS.includes(value);
+    const defaultRuntime = registry.runtimes.get(registry.defaultId);
+    if (!defaultRuntime) return LEGACY_ALLOWED_MODELS.includes(value);
+    return defaultRuntime.isAllowedModel?.(value) ?? LEGACY_ALLOWED_MODELS.includes(value);
+  }
 
   app.get("/sessions", async (c) => {
     const inMemory = manager.listSnapshots();
@@ -341,11 +372,60 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       if (!isValidSid(resumeFrom)) {
         return c.json({ error: "invalid resume_from" }, 400);
       }
-      const parentInfo = await resolveResumeParent(
-        manager,
-        sessionsDir,
-        resumeFrom,
-      );
+
+      // Prefer runtime.resolveResumeRef when a registry is available, so
+      // CC-specific JSONL parsing stays in the CC adapter. Fall back to the
+      // core-owned resolver for legacy/no-registry callers.
+      let parentInfo: ResumeParentResult;
+      if (registry) {
+        const defaultRuntime = registry.runtimes.get(registry.defaultId);
+        if (defaultRuntime) {
+          // For live sessions, use the session's own runtime so a non-default
+          // runtime's resolveResumeRef is called (in-memory path only).
+          const liveSession = manager.get(resumeFrom);
+          const resumeRuntime = liveSession
+            ? (registry.runtimes.get(liveSession.runtimeId) ?? defaultRuntime)
+            : defaultRuntime;
+          const ref = await resumeRuntime.resolveResumeRef(sessionsDir, resumeFrom);
+          if (ref.kind === "unknown") {
+            // JSONL unknown — check live session directly.
+            if (liveSession) {
+              const ccSid = liveSession.currentCcSid;
+              if (!ccSid) {
+                parentInfo = { kind: "no_cc_sid" };
+              } else {
+                parentInfo = {
+                  kind: "ok",
+                  parentCcSid: ccSid,
+                  workdir: liveSession.workdir,
+                  parentWorktreePath: liveSession.worktreePath,
+                  parentModel: liveSession.model,
+                };
+              }
+            } else {
+              parentInfo = { kind: "unknown" };
+            }
+          } else if (ref.kind === "no_runtime_sid") {
+            parentInfo = { kind: "no_cc_sid" };
+          } else if (ref.kind === "no_workdir") {
+            parentInfo = { kind: "no_workdir" };
+          } else if (ref.kind === "ok") {
+            parentInfo = {
+              kind: "ok",
+              parentCcSid: ref.runtimeSid,
+              workdir: ref.workdir,
+              parentWorktreePath: ref.parentWorktreePath,
+              parentModel: ref.model,
+            };
+          } else {
+            parentInfo = { kind: "unknown" };
+          }
+        } else {
+          parentInfo = await resolveResumeParent(manager, sessionsDir, resumeFrom);
+        }
+      } else {
+        parentInfo = await resolveResumeParent(manager, sessionsDir, resumeFrom);
+      }
       if (parentInfo.kind === "unknown") {
         return c.json({ error: "unknown resume_from session" }, 404);
       }
