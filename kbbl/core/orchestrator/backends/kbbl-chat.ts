@@ -16,7 +16,7 @@ const STAGE_ROUTING: Record<RoutedStage, { runtime: RuntimeId; model: string }> 
 };
 
 function isRoutedStage(name: string): name is RoutedStage {
-  return name in STAGE_ROUTING;
+  return Object.hasOwn(STAGE_ROUTING, name);
 }
 
 export function createKbblChatBackend({
@@ -31,7 +31,10 @@ export function createKbblChatBackend({
 
     async dispatch(stage: StageRow, inputRef: InputRef, renderedPrompt: string): Promise<{ session_ref: string }> {
       const defaultRouting = isRoutedStage(stage.name) ? STAGE_ROUTING[stage.name] : null;
-      const stageOverride = config?.runtime.stages?.[stage.name];
+      const stageOverride =
+        config?.runtime.stages && Object.hasOwn(config.runtime.stages, stage.name)
+          ? config.runtime.stages[stage.name]
+          : undefined;
       const routing = stageOverride ?? defaultRouting;
 
       const session = await manager.create({
