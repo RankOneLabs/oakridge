@@ -172,6 +172,14 @@ export interface AgentRuntime {
    * stays in the CC adapter rather than leaking into core.
    */
   reconstructSnapshot(events: readonly EnvelopeEvent[]): RuntimeSnapshotContrib;
+
+  /**
+   * Optional: validate a model string for this runtime. When present, used
+   * by POST /sessions to gate the `model` field. If absent, core falls back
+   * to a static LEGACY_ALLOWED_MODELS list. Implement this to accept short
+   * aliases (e.g. "sonnet") in addition to fully-pinned model ids.
+   */
+  isAllowedModel?(model: string): boolean;
 }
 
 // === registry ===

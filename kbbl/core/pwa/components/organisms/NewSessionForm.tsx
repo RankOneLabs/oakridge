@@ -43,6 +43,11 @@ export function NewSessionForm({
   const [workdirTouched, setWorkdirTouched] = useState(workdirTouchedInitial);
   const [nameInput, setNameInput] = useState("");
   const [modelInput, setModelInput] = useState<string>(() => readStoredNewSessionModel(runtimeId));
+
+  useEffect(() => {
+    setModelInput(readStoredNewSessionModel(runtimeId));
+  }, [runtimeId]);
+
   // Generated once per mount so the placeholder is stable while the operator
   // is filling out the form (otherwise it would flicker on every re-render).
   // Submit uses the current placeholder if name field is empty, so what they

@@ -1399,7 +1399,7 @@ async function loadArchivedSnapshot(
     } catch {
       continue;
     }
-    events.push(evt);
+    if (registry) events.push(evt);
     lastActivityTs = evt.ts;
     const payload = payloadObject(evt.payload);
     switch (evt.type) {
@@ -1555,7 +1555,7 @@ async function loadArchivedSnapshot(
     lastActivityTs: lastActivityTs || createdAt,
     runtimeId,
     runtimeSid: ccSid,
-    ccSid,
+    ccSid: runtimeId === "claude-code" ? ccSid : null,
     parentCcSid,
     parentOakridgeSid,
     artifactId,

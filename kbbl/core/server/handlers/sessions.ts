@@ -212,7 +212,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
     if (!registry) return LEGACY_ALLOWED_MODELS.includes(value);
     const defaultRuntime = registry.runtimes.get(registry.defaultId);
     if (!defaultRuntime) return LEGACY_ALLOWED_MODELS.includes(value);
-    return defaultRuntime.descriptor.models.some((m) => m.value === value);
+    return defaultRuntime.isAllowedModel?.(value) ?? LEGACY_ALLOWED_MODELS.includes(value);
   }
 
   app.get("/sessions", async (c) => {
@@ -380,21 +380,26 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       if (registry) {
         const defaultRuntime = registry.runtimes.get(registry.defaultId);
         if (defaultRuntime) {
-          const ref = await defaultRuntime.resolveResumeRef(sessionsDir, resumeFrom);
+          // For live sessions, use the session's own runtime so a non-default
+          // runtime's resolveResumeRef is called (in-memory path only).
+          const liveSession = manager.get(resumeFrom);
+          const resumeRuntime = liveSession
+            ? (registry.runtimes.get(liveSession.runtimeId) ?? defaultRuntime)
+            : defaultRuntime;
+          const ref = await resumeRuntime.resolveResumeRef(sessionsDir, resumeFrom);
           if (ref.kind === "unknown") {
-            // Check live sessions first before declaring unknown.
-            const live = manager.get(resumeFrom);
-            if (live) {
-              const ccSid = live.currentCcSid;
+            // JSONL unknown — check live session directly.
+            if (liveSession) {
+              const ccSid = liveSession.currentCcSid;
               if (!ccSid) {
                 parentInfo = { kind: "no_cc_sid" };
               } else {
                 parentInfo = {
                   kind: "ok",
                   parentCcSid: ccSid,
-                  workdir: live.workdir,
-                  parentWorktreePath: live.worktreePath,
-                  parentModel: live.model,
+                  workdir: liveSession.workdir,
+                  parentWorktreePath: liveSession.worktreePath,
+                  parentModel: liveSession.model,
                 };
               }
             } else {

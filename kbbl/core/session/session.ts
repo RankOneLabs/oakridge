@@ -818,7 +818,7 @@ export class Session {
       : completedResult &&
           typeof (completedResult as { code?: unknown }).code === "number"
         ? (completedResult as { code: number }).code
-        : 0;
+        : 1;
 
     try {
       await this.emit("subprocess_exited", {

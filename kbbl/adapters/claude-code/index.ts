@@ -104,6 +104,7 @@ export async function createClaudeCodeRuntime(
   const runtime: AgentRuntime & AppRuntime = {
     id: "claude-code",
     descriptor: CC_DESCRIPTOR,
+    isAllowedModel: (model: string) => (ALLOWED_MODELS as readonly string[]).includes(model),
 
     // --- AgentRuntime.spawn ---
     async spawn(config: RuntimeConfig): Promise<SessionHandle> {
