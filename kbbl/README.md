@@ -2,7 +2,7 @@
 
 Operator surface for CLI coding agents. Drives one or more agent sessions from a browser — at your desk, on your phone over Tailscale, or any viewport in between. Tablet-first.
 
-The v0 runtime adapter is for Claude Code (`claude --print --input-format stream-json --output-format stream-json`). A second adapter for codex is on the roadmap; the architecture treats the runtime as a plugin behind a typed interface.
+Two runtime adapters ship: **claude-code** (default) and **codex** (opt-in). The architecture treats the runtime as a plugin behind a typed interface, so new adapters can be added without touching core.
 
 ## How it works
 
@@ -18,6 +18,38 @@ Each session tracks token usage from runtime events. Two thresholds (`compact.so
 - **Hard threshold** — the server force-fires compaction itself (banner-or-not), bounded by `compact_call_timeout_seconds` and `max_consecutive_failures_before_force`.
 
 Compaction runs the agent's `/compact` prompt, writes a handoff markdown to `data/handoffs/<sid>.md`, and ends the session with `endReason: "compacted"`. The successor session resumes from the handoff doc; the PWA renders a CompactedBanner that fetches the markdown via `GET /:sid/handoff`. The soft threshold is mutable at runtime via `PATCH /config { softThresholdTokens }` so the operator can retune without a server restart.
+
+## Runtimes
+
+kbbl supports two agent runtimes. Configure via `kbbl/config.json`:
+
+| Runtime | ID | Default | Notes |
+|---|---|---|---|
+| Claude Code | `claude-code` | yes | Drives CC via `--output-format stream-json`. Full feature set: compaction, approval hook, yolo mode. |
+| Codex | `codex` | no | Connects to the `codex` CLI app-server over a unix socket. Approval cards work; compaction not supported in v0. |
+
+### Switching to Codex
+
+Set `runtime.codex.enabled = true` in `kbbl/config.json` and restart the server:
+
+```json
+{
+  "runtime": {
+    "default": "claude-code",
+    "codex": { "enabled": true, "bin": "codex" }
+  }
+}
+```
+
+`default` stays `claude-code` — new sessions created from the PWA form use CC. To start a Codex session: `POST /sessions { "runtime": "codex", "workdir": "/path/to/repo" }`.
+
+### Not in v0
+
+- Cross-runtime resume (a CC session cannot be continued as Codex or vice versa)
+- Codex compaction (`thread/compact/start` evaluation is a follow-up)
+- Runtime selector in the PWA new-session form
+
+See [`adapters/codex/README.md`](adapters/codex/README.md) for full Codex configuration, the approval mapping table, and the complete limitations list.
 
 ## Quick start
 
