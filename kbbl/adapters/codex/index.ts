@@ -33,8 +33,8 @@ interface CodexSessionState {
   activeTurnId: string | null;
   /** kbbl request id → resolver fn (called when operator decides) */
   approvalResolvers: Map<string, (d: "allow" | "deny") => void>;
-  /** Last-received per-turn token usage; consumed by classifyEvent on result */
-  lastTokenUsage: { inputTokens: number; outputTokens: number; cachedInputTokens: number } | null;
+  /** Per-turn token usage keyed by turnId; consumed by classifyEvent on the matching result */
+  lastTokenUsage: { turnId: string; inputTokens: number; outputTokens: number; cachedInputTokens: number } | null;
 }
 
 // === Descriptor-only factory (for conformance tests without a live server) ===
@@ -244,6 +244,11 @@ export async function createCodexRuntime(
           }`,
         );
       }
+      // Drain any pending approval resolvers so their decisionPromises don't hang
+      for (const resolver of state.approvalResolvers.values()) {
+        resolver("deny");
+      }
+      state.approvalResolvers.clear();
       sessions.delete(handle.sessionId);
     },
 
@@ -296,7 +301,7 @@ export async function createCodexRuntime(
         // Capture per-turn token usage for classifyEvent → observeTurnEnd
         if (notif.method === "thread/tokenUsage/updated") {
           const p = notif.params as Parameters<typeof extractTurnUsage>[0];
-          state.lastTokenUsage = extractTurnUsage(p);
+          state.lastTokenUsage = { turnId: p.turnId, ...extractTurnUsage(p) };
         }
 
         // Normalize to kbbl event
@@ -423,6 +428,7 @@ export async function createCodexRuntime(
       if (evt.type === "codex_approval_server_request") {
         const e = rawEvent as {
           kbblRequestId: string;
+          codexId: number | string;
           toolName: string;
           toolInput: Record<string, unknown>;
         };
@@ -440,19 +446,36 @@ export async function createCodexRuntime(
             state.approvalResolvers.delete(e.kbblRequestId);
             resolver("allow");
           }
+          const reason = snap.yoloMode ? "yolo" : "allowlist";
+          await session.emit("permission_auto_approved", {
+            tool_name: e.toolName,
+            tool_input: e.toolInput,
+            tool_use_id: String(e.codexId),
+            reason,
+          }).catch(() => {});
           return;
         }
 
         // Park the approval in the session for operator resolution
         session.registerApproval(e.kbblRequestId, {
           toolName: e.toolName,
-          resolve: (d) => {
+          resolve: async (d) => {
             const resolver = state.approvalResolvers.get(e.kbblRequestId);
             if (resolver) {
               state.approvalResolvers.delete(e.kbblRequestId);
               resolver(d === "allow" ? "allow" : "deny");
             }
+            await session.emit("permission_resolved", {
+              request_id: e.kbblRequestId,
+              decision: d,
+            }).catch(() => {});
           },
+        });
+        await session.emit("permission_request", {
+          request_id: e.kbblRequestId,
+          tool_name: e.toolName,
+          tool_input: e.toolInput,
+          tool_use_id: String(e.codexId),
         });
         return;
       }
@@ -474,7 +497,8 @@ export async function createCodexRuntime(
 
       if (evt.type === "result") {
         const state = getState(session.oakridgeSid);
-        if (state?.lastTokenUsage) {
+        const p = rawEvent as { turn?: { id?: string } };
+        if (state?.lastTokenUsage && state.lastTokenUsage.turnId === p.turn?.id) {
           const usage: ResultUsage = {
             input_tokens: state.lastTokenUsage.inputTokens,
             output_tokens: state.lastTokenUsage.outputTokens,

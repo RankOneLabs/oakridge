@@ -4,7 +4,7 @@ The Codex adapter connects kbbl to OpenAI's [Codex CLI](https://github.com/opena
 
 ## Architecture
 
-```
+```text
 kbbl server
   └─ createCodexRuntime()
         └─ startCodexAppServer()
@@ -70,7 +70,7 @@ Add to `kbbl/config.json`:
 The Codex app-server protocol deviates from strict JSON-RPC 2.0 in several ways that the adapter handles explicitly:
 
 1. **No `jsonrpc:"2.0"` on inbound messages** — the parser does not require this field.
-2. **Only v2 approval methods** — `item/fileChange/requestApproval` and `item/commandExecution/requestApproval`. Legacy methods are ignored (cancel response sent).
+2. **Only v2 approval methods** — `item/fileChange/requestApproval` and `item/commandExecution/requestApproval`. Unknown or legacy methods receive a cancel response and are otherwise ignored.
 3. **`thread/fork` does not emit `thread/started` for the child** — the child thread id is read directly from the fork response.
 4. **`thread/unsubscribe` confirmed** — used for session termination; returns `{status:"unsubscribed"}`.
 
@@ -80,3 +80,4 @@ These findings are documented in `comms/codex-probe-findings.md`.
 
 - `supportsCompaction: false` — Codex has no `/compact` equivalent; the server returns HTTP 409 for compaction requests on Codex sessions.
 - Token usage data is extracted from `thread/tokenUsage/updated` notifications but does not map 1:1 to CC's `result.usage` shape. The `observeTurnEnd` bridge is wired but the token counts use Codex's `last` bucket (per-turn delta).
+- **Startup readiness**: For unix-socket mode, `startCodexAppServer` waits for the socket file to appear (via `access()` polling) before connecting. For WebSocket mode it uses a fixed 500ms delay. Both can theoretically race on a very slow or loaded machine — a retry-connect loop (polling actual connection success until `startupTimeoutMs`) would be more robust but is deferred to a later iteration.

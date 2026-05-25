@@ -168,7 +168,7 @@ const runtimes: import("./runtime").AgentRuntime[] = [runtime];
 if (config.runtime.codex.enabled) {
   const codexBin = config.runtime.codex.bin || "codex";
   const codexListen =
-    config.runtime.codex.listen ||
+    config.runtime.codex.listen ??
     `unix://${join(dataDir, "codex-app-server.sock")}`;
   try {
     const codexRuntime = await createCodexRuntime({

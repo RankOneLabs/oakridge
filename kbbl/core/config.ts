@@ -62,8 +62,8 @@ const CodexRuntimeSchema = z
   .object({
     enabled: z.boolean().default(false),
     bin: z.string().default("codex"),
-    // empty string means "derive from dataDir" (server.ts fills it in)
-    listen: z.string().default(""),
+    // null/absent means "derive from dataDir" (server.ts fills it in)
+    listen: z.string().nullable().optional(),
   })
   .strict();
 

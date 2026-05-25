@@ -168,29 +168,6 @@ export async function startCodexAppServer(
     client = new CodexAppServerClient(transport);
   }
 
-  // Send initialize (with startup timeout)
-  await Promise.race([
-    client.initialize({
-      clientInfo: { name: "kbbl", title: "kbbl Codex Adapter", version: "0.0.1" },
-      capabilities: { experimentalApi: true, requestAttestation: false },
-    }),
-    new Promise<never>((_, reject) =>
-      setTimeout(
-        () => reject(new Error(`CodexAppServer: initialize timed out after ${startupTimeoutMs}ms`)),
-        startupTimeoutMs,
-      ),
-    ),
-  ]);
-
-  // Fetch model list (best-effort — non-fatal)
-  let models: CodexModel[] = [];
-  try {
-    const raw = await client.request<unknown>("model/list", {});
-    models = normalizeModelList(raw);
-  } catch {
-    // Non-fatal: model dropdown will be empty but sessions will still work
-  }
-
   async function stop(): Promise<void> {
     if (stdioTransport) {
       try { await stdioTransport.close(); } catch { /* already dead */ }
@@ -203,6 +180,34 @@ export async function startCodexAppServer(
         // already dead
       }
     }
+  }
+
+  let models: CodexModel[] = [];
+  try {
+    // Send initialize (with startup timeout)
+    await Promise.race([
+      client.initialize({
+        clientInfo: { name: "kbbl", title: "kbbl Codex Adapter", version: "0.0.1" },
+        capabilities: { experimentalApi: true, requestAttestation: false },
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`CodexAppServer: initialize timed out after ${startupTimeoutMs}ms`)),
+          startupTimeoutMs,
+        ),
+      ),
+    ]);
+
+    // Fetch model list (best-effort — non-fatal)
+    try {
+      const raw = await client.request<unknown>("model/list", {});
+      models = normalizeModelList(raw);
+    } catch {
+      // Non-fatal: model dropdown will be empty but sessions will still work
+    }
+  } catch (err) {
+    await stop();
+    throw err;
   }
 
   return { client, models, stop };

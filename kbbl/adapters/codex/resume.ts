@@ -56,12 +56,12 @@ export async function resolveCodexResumeRef(
         ? (evt.payload as Record<string, unknown>)
         : {};
 
-    if (evt.type === "runtime_session_observed" && payload.runtime_id === "codex") {
-      // Generic field: runtime_sid
-      if (typeof payload.runtime_sid === "string") {
+    if (evt.type === "runtime_session_observed") {
+      // Generic field: runtime_sid — only accept from Codex-tagged events
+      if (payload.runtime_id === "codex" && typeof payload.runtime_sid === "string") {
         threadId = payload.runtime_sid;
       }
-      // Codex-specific field: thread_id (legacy from early probe)
+      // Legacy field: thread_id (early probe sessions had no runtime_id tag)
       if (typeof payload.thread_id === "string") {
         threadId = payload.thread_id;
       }
