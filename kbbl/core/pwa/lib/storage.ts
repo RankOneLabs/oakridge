@@ -74,13 +74,15 @@ export function readStoredNewSessionModel(runtimeId: RuntimeId): string {
 /**
  * Write the stored model for the given runtime.
  */
-export function writeStoredNewSessionModel(value: string, runtimeId: RuntimeId): void {
+export function writeStoredNewSessionModel(value: string, runtimeId: RuntimeId): string {
+  const normalized = normalizeNewSessionModelForRuntime(value, runtimeId);
   try {
     localStorage.setItem(
       newSessionModelKey(runtimeId),
-      normalizeNewSessionModelForRuntime(value, runtimeId),
+      normalized,
     );
   } catch {}
+  return normalized;
 }
 
 export function readStoredTheme(): Theme {

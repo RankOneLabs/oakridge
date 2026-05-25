@@ -193,12 +193,12 @@ const registeredRuntimeIds = new Set(runtimes.map((r) => r.id));
 const configuredDefaultRuntime = registeredRuntimeIds.has(config.runtime.default)
   ? config.runtime.default
   : undefined;
+const registry = createRuntimeRegistry(runtimes, configuredDefaultRuntime);
 if (!configuredDefaultRuntime) {
   console.error(
-    `kbbl: configured default runtime "${config.runtime.default}" is unavailable; falling back to an available runtime`,
+    `kbbl: configured default runtime "${config.runtime.default}" is unavailable; using "${registry.defaultId}" instead`,
   );
 }
-const registry = createRuntimeRegistry(runtimes, configuredDefaultRuntime);
 
 // The CC adapter owns the ccSid→oakridgeSid map. Expose callback hooks so
 // the manager can delegate getByCcSid lookups without importing CC directly.

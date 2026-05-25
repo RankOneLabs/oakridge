@@ -22,7 +22,10 @@ class MemoryStorage {
   }
 }
 
-const originalLocalStorage = globalThis.localStorage;
+const originalLocalStorageDescriptor = Object.getOwnPropertyDescriptor(
+  globalThis,
+  "localStorage",
+);
 
 beforeEach(() => {
   Object.defineProperty(globalThis, "localStorage", {
@@ -32,23 +35,26 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  Object.defineProperty(globalThis, "localStorage", {
-    configurable: true,
-    value: originalLocalStorage,
-  });
+  if (originalLocalStorageDescriptor) {
+    Object.defineProperty(globalThis, "localStorage", originalLocalStorageDescriptor);
+    return;
+  }
+  delete (globalThis as { localStorage?: Storage }).localStorage;
 });
 
 describe("new session model storage", () => {
   test("coerces unsupported Codex model writes to runtime default", () => {
-    writeStoredNewSessionModel("claude-sonnet-4-6", "codex");
+    const normalized = writeStoredNewSessionModel("claude-sonnet-4-6", "codex");
 
+    expect(normalized).toBe("");
     expect(localStorage.getItem(newSessionModelKey("codex"))).toBe("");
     expect(readStoredNewSessionModel("codex")).toBe("");
   });
 
   test("preserves supported Claude model writes", () => {
-    writeStoredNewSessionModel("claude-opus-4-7", "claude-code");
+    const normalized = writeStoredNewSessionModel("claude-opus-4-7", "claude-code");
 
+    expect(normalized).toBe("claude-opus-4-7");
     expect(localStorage.getItem(newSessionModelKey("claude-code"))).toBe(
       "claude-opus-4-7",
     );
