@@ -1,3 +1,5 @@
+import type { KbblConfig } from "../../config";
+import type { RuntimeId } from "../../runtime";
 import type { SessionManager } from "../../session/session-manager";
 import type { ExecutionBackend, InputRef, StageRow } from "./interface";
 
@@ -5,27 +7,38 @@ import type { ExecutionBackend, InputRef, StageRow } from "./interface";
 // so dispatcher-spawned sessions don't fall through to the user-global default.
 type RoutedStage = "planner1" | "planner2" | "planner2_batch" | "planner3" | "build";
 
-const STAGE_MODEL: Record<RoutedStage, string> = {
-  planner1: "claude-opus-4-7",
-  planner2: "claude-opus-4-7",
-  planner2_batch: "claude-opus-4-7",
-  planner3: "claude-opus-4-7",
-  build: "claude-sonnet-4-6",
+const STAGE_ROUTING: Record<RoutedStage, { runtime: RuntimeId; model: string }> = {
+  planner1:       { runtime: "claude-code", model: "claude-opus-4-7" },
+  planner2:       { runtime: "claude-code", model: "claude-opus-4-7" },
+  planner2_batch: { runtime: "claude-code", model: "claude-opus-4-7" },
+  planner3:       { runtime: "claude-code", model: "claude-opus-4-7" },
+  build:          { runtime: "claude-code", model: "claude-sonnet-4-6" },
 };
 
 function isRoutedStage(name: string): name is RoutedStage {
-  return name in STAGE_MODEL;
+  return name in STAGE_ROUTING;
 }
 
-export function createKbblChatBackend({ manager }: { manager: SessionManager }): ExecutionBackend {
+export function createKbblChatBackend({
+  manager,
+  config,
+}: {
+  manager: SessionManager;
+  config?: KbblConfig;
+}): ExecutionBackend {
   return {
     id: "kbbl_chat",
 
     async dispatch(stage: StageRow, inputRef: InputRef, renderedPrompt: string): Promise<{ session_ref: string }> {
+      const defaultRouting = isRoutedStage(stage.name) ? STAGE_ROUTING[stage.name] : null;
+      const stageOverride = config?.runtime.stages?.[stage.name];
+      const routing = stageOverride ?? defaultRouting;
+
       const session = await manager.create({
         workdir: inputRef.workdir,
         name: inputRef.sessionName,
-        model: isRoutedStage(stage.name) ? STAGE_MODEL[stage.name] : null,
+        model: routing?.model ?? null,
+        runtime: routing?.runtime,
         forceWorktree: stage.name === "build",
       });
       await session.writeInput(renderedPrompt);

@@ -185,3 +185,42 @@ describe("createRuntimeRegistry", () => {
     expect(registry.runtimes.get("claude-code")).toBe(runtime);
   });
 });
+
+describe("CreateSessionOpts.runtime", () => {
+  test("provided runtime overrides the default", async () => {
+    const runtime = makeNoopRuntime();
+    const registry: RuntimeRegistry = createRuntimeRegistry([runtime]);
+    const manager = new SessionManager({
+      sessionsDir,
+      handoffsDir: join(tmpRoot, "handoffs"),
+      worktreesDir,
+      registry,
+      config: KbblConfigSchema.parse({
+        sessions: { worktree_per_session: false },
+      }),
+    });
+    const session = await manager.create({ workdir: "/tmp", runtime: "claude-code" });
+    await session.waitForEnd();
+    expect(session.runtimeId).toBe("claude-code");
+  });
+
+  test("unknown runtime rejects before session is created", async () => {
+    const runtime = makeNoopRuntime();
+    const registry: RuntimeRegistry = createRuntimeRegistry([runtime]);
+    const manager = new SessionManager({
+      sessionsDir,
+      handoffsDir: join(tmpRoot, "handoffs"),
+      worktreesDir,
+      registry,
+      config: KbblConfigSchema.parse({
+        sessions: { worktree_per_session: false },
+      }),
+    });
+    // "codex" is not registered (only claude-code is in this registry).
+    await expect(
+      manager.create({ workdir: "/tmp", runtime: "codex" }),
+    ).rejects.toThrow(/runtime "codex" is not registered/);
+    // No session should have been added to the manager.
+    expect(manager.list().length).toBe(0);
+  });
+});

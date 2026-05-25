@@ -165,6 +165,12 @@ export interface CreateSessionOpts {
    * isolated worktree so concurrent builders don't corrupt each other's tree.
    */
   forceWorktree?: boolean;
+  /**
+   * Runtime to use for this session. When provided, overrides the registry's
+   * defaultId. Rejected immediately if the id is not registered (e.g. operator
+   * set a stage to codex but runtime.codex.enabled=false).
+   */
+  runtime?: RuntimeId;
 }
 
 /**
@@ -280,6 +286,19 @@ export class SessionManager {
   }
 
   async create(opts: CreateSessionOpts): Promise<Session> {
+    // Reject unknown runtimes before touching disk or the session map so the
+    // error is clearly attributable to a misconfigured stage override (e.g.
+    // operator set runtime.stages.build = codex but runtime.codex.enabled=false).
+    if (opts.runtime !== undefined && this.opts.registry) {
+      if (!this.opts.registry.runtimes.has(opts.runtime)) {
+        throw new Error(
+          `kbbl: runtime "${opts.runtime}" is not registered — check runtime.${opts.runtime}.enabled in config`,
+        );
+      }
+    }
+    const effectiveRuntimeId: RuntimeId =
+      opts.runtime ?? this.opts.registry?.defaultId ?? "claude-code";
+
     const oakridgeSid = newSessionId();
     // Server-side fallback so requests without a usable name still produce a
     // human-readable session name. `name` is optional in practice, and
@@ -368,7 +387,7 @@ export class SessionManager {
       workdir: effectiveWorkdir,
       name,
       sessionsDir: this.opts.sessionsDir,
-      runtimeId: this.opts.registry?.defaultId ?? "claude-code",
+      runtimeId: effectiveRuntimeId,
       parentCcSid: opts.parentCcSid,
       parentOakridgeSid: opts.parentOakridgeSid,
       artifactId: opts.artifactId,
@@ -382,7 +401,7 @@ export class SessionManager {
       // only wires `registry` (without the legacy opts) still gets the right
       // high-volume event suppression (e.g. CC stream_event).
       nonPersistedEventTypes:
-        this.opts.registry?.runtimes.get(this.opts.registry.defaultId)?.nonPersistedEventTypes
+        this.opts.registry?.runtimes.get(effectiveRuntimeId)?.nonPersistedEventTypes
         ?? this.opts.nonPersistedEventTypes,
       callbacks: {
         onRuntimeSessionObserved: (s, runtimeSid) => {
