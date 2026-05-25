@@ -68,8 +68,8 @@ export function isCompactDoneEvent(e: EnvelopeEvent): boolean {
 export function isToolOnlyEvent(e: EnvelopeEvent): boolean {
   if (e.type === "assistant") {
     const p = e.payload as CCAssistantPayload;
-    const blocks = p.message?.content ?? [];
-    if (blocks.length === 0) return false;
+    const blocks = p.message?.content;
+    if (!Array.isArray(blocks) || blocks.length === 0) return false;
     return blocks.every((b) => b.type === "tool_use");
   }
   if (e.type === "user") {
@@ -160,8 +160,11 @@ export function lastMessageEventId(events: EnvelopeEvent[]): number | null {
       }
     } else if (e.type === "assistant") {
       const p = e.payload as CCAssistantPayload;
-      const blocks = p.message?.content ?? [];
-      if (blocks.some((b) => b.type === "text")) return e.id;
+      // Cast to unknown — Codex assistant events carry content as a plain string
+      // at runtime even though CCAssistantPayload types it as ContentBlock[].
+      const content: unknown = p.message?.content;
+      if (typeof content === "string" && content.length > 0) return e.id;
+      if (Array.isArray(content) && (content as { type?: string }[]).some((b) => b.type === "text")) return e.id;
     }
   }
   return null;
