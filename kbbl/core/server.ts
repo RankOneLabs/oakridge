@@ -9,6 +9,7 @@ import { Session } from "./session/session";
 import { isGitRepo, isPathInside, resolveRepoTopLevel } from "./session/worktree";
 import { createApp } from "./server/app";
 import { createClaudeCodeRuntime } from "../adapters/claude-code";
+import { createCodexRuntime } from "../adapters/codex";
 import { createRuntimeRegistry } from "./runtime";
 import { validateWorkdir } from "./server/handlers/sessions";
 import { openDb } from "./db/connection";
@@ -163,7 +164,32 @@ const runtime = await createClaudeCodeRuntime({
 
 // === runtime registry ===
 
-const registry = createRuntimeRegistry([runtime]);
+const runtimes: import("./runtime").AgentRuntime[] = [runtime];
+if (config.runtime.codex.enabled) {
+  const codexBin = config.runtime.codex.bin || "codex";
+  const codexListen =
+    config.runtime.codex.listen ??
+    `unix://${join(dataDir, "codex-app-server.sock")}`;
+  try {
+    const codexRuntime = await createCodexRuntime({
+      bin: codexBin,
+      listenUrl: codexListen,
+      sessionsDir,
+    });
+    runtimes.push(codexRuntime);
+    console.error(
+      `kbbl: Codex runtime started (listen=${codexListen})`,
+    );
+  } catch (err) {
+    console.error(
+      `kbbl: failed to start Codex runtime: ${
+        err instanceof Error ? err.message : String(err)
+      } (continuing without Codex)`,
+    );
+  }
+}
+
+const registry = createRuntimeRegistry(runtimes);
 
 // The CC adapter owns the ccSid→oakridgeSid map. Expose callback hooks so
 // the manager can delegate getByCcSid lookups without importing CC directly.

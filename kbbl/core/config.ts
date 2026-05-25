@@ -58,6 +58,33 @@ const SessionsSchema = z
   })
   .strict();
 
+const CodexRuntimeSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    bin: z.string().default("codex"),
+    // null/absent means "derive from dataDir" (server.ts fills it in).
+    // Non-null values must be one of the forms parseListenUrl accepts.
+    listen: z
+      .string()
+      .refine(
+        (s) =>
+          s === "stdio://" ||
+          s.startsWith("unix://") ||
+          s.startsWith("ws://") ||
+          s.startsWith("wss://"),
+        'runtime.codex.listen must be "stdio://", "unix://<path>", "ws://<addr>", or "wss://<addr>"',
+      )
+      .nullable()
+      .optional(),
+  })
+  .strict();
+
+const RuntimeSchema = z
+  .object({
+    codex: CodexRuntimeSchema.prefault({}),
+  })
+  .strict();
+
 export const KbblConfigSchema = z
   .object({
     // .prefault({}) is the input-side default in Zod 4: when the key is
@@ -68,6 +95,7 @@ export const KbblConfigSchema = z
     compact: CompactSchema.prefault({}),
     retention: RetentionSchema.prefault({}),
     sessions: SessionsSchema.prefault({}),
+    runtime: RuntimeSchema.prefault({}),
   })
   .strict();
 
