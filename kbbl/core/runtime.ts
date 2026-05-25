@@ -190,10 +190,13 @@ export type RuntimeRegistry = {
 };
 
 export function createRuntimeRegistry(runtimes: AgentRuntime[]): RuntimeRegistry {
+  if (runtimes.length === 0) {
+    throw new Error("createRuntimeRegistry: runtimes array must not be empty");
+  }
   const map = new Map<RuntimeId, AgentRuntime>();
   for (const r of runtimes) map.set(r.id, r);
   const defaultId: RuntimeId =
-    map.has("claude-code") ? "claude-code" : (runtimes[0]?.id ?? "claude-code");
+    map.has("claude-code") ? "claude-code" : runtimes[0].id;
   return { runtimes: map, defaultId };
 }
 

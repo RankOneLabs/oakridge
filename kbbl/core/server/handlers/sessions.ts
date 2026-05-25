@@ -187,9 +187,9 @@ export interface SessionsRouteDeps {
   /** Path to the on-disk sessions directory for archived JSONL lookups. */
   sessionsDir: string;
   /**
-   * Optional runtime registry for model validation. When present, model
-   * validation uses the default runtime's descriptor.models list. When absent,
-   * falls back to LEGACY_ALLOWED_MODELS (the CC adapter's static allowlist).
+   * Optional runtime registry for model validation. When present, delegates
+   * to the default runtime's isAllowedModel() method. When absent, falls back
+   * to LEGACY_ALLOWED_MODELS (the CC adapter's static allowlist).
    */
   registry?: RuntimeRegistry;
 }
@@ -203,9 +203,10 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
 
   /**
    * Check whether a model value is valid. When a registry is provided,
-   * delegates to the default runtime's isAllowedModel() (which accepts full
-   * model ids AND short aliases). Falls back to LEGACY_ALLOWED_MODELS when
-   * no registry is provided or the runtime doesn't implement isAllowedModel.
+   * delegates to the default runtime's isAllowedModel() (which may accept
+   * full model ids and short aliases beyond what descriptor.models lists).
+   * Falls back to LEGACY_ALLOWED_MODELS when no registry is provided, no
+   * default runtime is found, or the runtime doesn't implement isAllowedModel.
    */
   function isAllowedModel(value: string): boolean {
     if (!registry) return LEGACY_ALLOWED_MODELS.includes(value);

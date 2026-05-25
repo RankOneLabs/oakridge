@@ -368,6 +368,7 @@ export class SessionManager {
       workdir: effectiveWorkdir,
       name,
       sessionsDir: this.opts.sessionsDir,
+      runtimeId: this.opts.registry?.defaultId ?? "claude-code",
       parentCcSid: opts.parentCcSid,
       parentOakridgeSid: opts.parentOakridgeSid,
       artifactId: opts.artifactId,
