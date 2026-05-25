@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
 import type { Compactor } from "./compactor";
+import type { AgentRuntime, RuntimeId, SessionHandle } from "../runtime";
 
 export type SessionId = string & { readonly __brand: "SessionId" };
 export type ArtifactId = string & { readonly __brand: "ArtifactId" };
@@ -30,7 +31,9 @@ export interface SpawnCmd {
 }
 
 export interface SessionCallbacks {
+  /** @deprecated Use onRuntimeSessionObserved */
   onCcSidObserved?: (session: Session, ccSid: string) => void;
+  onRuntimeSessionObserved?: (session: Session, runtimeSid: string) => void;
   onEnded?: (session: Session) => void;
   onEmit?: (session: Session, evt: EnvelopeEvent) => void;
   onStatusChanged?: (session: Session, status: SessionStatus) => void;
@@ -52,6 +55,12 @@ export interface SessionOpts {
   workdir: string;
   name: string;
   sessionsDir: string;
+  /**
+   * Runtime adapter id for this session. Defaults to "claude-code" when
+   * omitted to preserve backward compatibility with callers that don't yet
+   * pass a runtime.
+   */
+  runtimeId?: RuntimeId;
   parentCcSid?: string;
   parentOakridgeSid?: string;
   /**
@@ -152,6 +161,17 @@ export interface SessionSnapshot {
   status: SessionStatus;
   createdAt: string;
   lastActivityTs: string;
+  /** Runtime adapter id for this session (e.g. "claude-code"). */
+  runtimeId: RuntimeId;
+  /**
+   * Runtime-internal session id (e.g. CC's session_id from system/init),
+   * null until observed. Adapter-neutral name; prefer this over `ccSid`.
+   */
+  runtimeSid: string | null;
+  /**
+   * @deprecated Use runtimeSid. Kept as a derived alias for backward compat;
+   * equals runtimeSid for CC sessions and null for other runtimes.
+   */
   ccSid: string | null;
   parentCcSid: string | null;
   parentOakridgeSid: string | null;
@@ -233,6 +253,7 @@ export class Session {
   readonly workdir: string;
   readonly name: string;
   readonly jsonlPath: string;
+  readonly runtimeId: RuntimeId;
   readonly parentCcSid: string | null;
   readonly parentOakridgeSid: string | null;
   readonly artifactId: ArtifactId | null;
@@ -246,6 +267,8 @@ export class Session {
   private _endReason: SessionEndReason | undefined;
   private _successorSid: string | null = null;
   private _compactor: Compactor | null = null;
+  private _runtime: AgentRuntime | null = null;
+  private _handle: SessionHandle | null = null;
 
   private readonly callbacks: SessionCallbacks;
   private readonly classifyEvent?: (
@@ -304,6 +327,7 @@ export class Session {
     this.workdir = opts.workdir;
     this.name = opts.name;
     this.jsonlPath = join(opts.sessionsDir, `${opts.oakridgeSid}.jsonl`);
+    this.runtimeId = opts.runtimeId ?? "claude-code";
     this.parentCcSid = opts.parentCcSid ?? null;
     this.parentOakridgeSid = opts.parentOakridgeSid ?? null;
     // Normalize at the constructor so direct SessionManager.create()
@@ -382,13 +406,26 @@ export class Session {
    */
   async observeRuntimeSessionId(id: string): Promise<void> {
     if (this.ccSid !== null) return;
+    // Emit legacy CC event first for existing JSONL readers.
     await this.emit("cc_session_id_observed", { cc_session_id: id });
+    // Also emit the new neutral event so consumers that want adapter-agnostic
+    // session-id tracking can listen for it without CC-specific knowledge.
+    await this.emit("runtime_session_observed", { runtime_sid: id, runtime_id: this.runtimeId });
     this.ccSid = id;
     try {
       this.callbacks.onCcSidObserved?.(this, id);
     } catch (e) {
       console.error(
         `kbbl: onCcSidObserved callback failed: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+    try {
+      this.callbacks.onRuntimeSessionObserved?.(this, id);
+    } catch (e) {
+      console.error(
+        `kbbl: onRuntimeSessionObserved callback failed: ${
           e instanceof Error ? e.message : String(e)
         }`,
       );
@@ -572,6 +609,8 @@ export class Session {
       status: this._status,
       createdAt: this.createdAt,
       lastActivityTs: this.lastActivityTs,
+      runtimeId: this.runtimeId,
+      runtimeSid: this.ccSid,
       ccSid: this.ccSid,
       parentCcSid: this.parentCcSid,
       parentOakridgeSid: this.parentOakridgeSid,
@@ -675,12 +714,121 @@ export class Session {
     return this._spawnPromise;
   }
 
+  /**
+   * New orchestration entrypoint: the session manager calls this after
+   * the runtime adapter has spawned its subprocess/process. The session
+   * drives the event loop from `runtime.events(handle)` rather than
+   * directly owning a Bun.spawn proc.
+   *
+   * If `spawn()` was already called on this session (legacy path), this
+   * is a no-op to prevent double-wiring.
+   */
+  async attachRuntime(runtime: AgentRuntime, handle: SessionHandle): Promise<void> {
+    if (this._spawnPromise) return this._spawnPromise;
+    this._runtime = runtime;
+    this._handle = handle;
+    this._spawnPromise = this._runAttached(runtime, handle);
+    return this._spawnPromise;
+  }
+
+  private async _runAttached(runtime: AgentRuntime, handle: SessionHandle): Promise<void> {
+    await this.emit("session_started", {
+      command: [],
+      workdir: this.workdir,
+      name: this.name,
+      sessionId: this.oakridgeSid,
+      runtimeId: this.runtimeId,
+      parentCcSid: this.parentCcSid,
+      parentOakridgeSid: this.parentOakridgeSid,
+      artifactId: this.artifactId,
+      worktreePath: this.worktreePath,
+      worktreeBranch: this.worktreeBranch,
+      worktreeBaseRef: this.worktreeBaseRef,
+      projectWorkdir: this.projectWorkdir,
+      model: this.model,
+    });
+
+    this.setStatus("live");
+
+    this.flushInterval = setInterval(() => {
+      if (this.flushInterval === null || this._status === "ended") return;
+      if (this.pendingFlushCount === 0) return;
+      this.pendingFlushCount = 0;
+      const sid = this.oakridgeSid;
+      this.flushQueue = this.flushQueue.then(async () => {
+        try {
+          await this.jsonlWriter.flush();
+        } catch (err) {
+          console.error(`kbbl: interval flush failed [${sid}]`, err);
+        }
+      });
+    }, 100);
+
+    const classifyEvent = runtime.classifyEvent?.bind(runtime);
+    let completedResult: unknown = null;
+
+    try {
+      for await (const event of runtime.events(handle)) {
+        if (this._status === "ended") break;
+        if (event.type === "envelope") {
+          const raw = event.payload;
+          const type =
+            typeof (raw as { type?: unknown })?.type === "string"
+              ? (raw as { type: string }).type
+              : "unknown";
+          await this.emit(type, raw);
+          if (classifyEvent) {
+            try {
+              await classifyEvent(raw, this);
+            } catch (e) {
+              console.error(
+                `kbbl: runtime classifier failed: ${
+                  e instanceof Error ? e.message : String(e)
+                }`,
+              );
+            }
+          }
+        } else if (event.type === "completed") {
+          completedResult = event.result;
+          break;
+        } else if (event.type === "error") {
+          console.error(
+            `kbbl: runtime error [${this.oakridgeSid}]: ${event.message}`,
+          );
+          break;
+        }
+      }
+    } catch (err) {
+      console.error(
+        `kbbl: event loop error [${this.oakridgeSid}]: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+
+    const exitCode =
+      completedResult &&
+      typeof (completedResult as { code?: unknown }).code === "number"
+        ? (completedResult as { code: number }).code
+        : 0;
+
+    try {
+      await this.emit("subprocess_exited", {
+        code: exitCode,
+        reason: this.shutdownSignalReceived ? "operator signal" : exitCode === 0 ? "clean" : "error",
+      });
+    } finally {
+      await this.finalize();
+    }
+  }
+
   private async _runSpawn(cmd: SpawnCmd): Promise<void> {
     await this.emit("session_started", {
       command: cmd.cmd,
       workdir: this.workdir,
       name: this.name,
       sessionId: this.oakridgeSid,
+      runtimeId: this.runtimeId,
       parentCcSid: this.parentCcSid,
       parentOakridgeSid: this.parentOakridgeSid,
       artifactId: this.artifactId,
@@ -956,13 +1104,39 @@ export class Session {
     const isInternal = opts.internal === true;
     const allowedDuringCompacting =
       this._status === "compacting" && isInternal;
+    // Accept writes when using the attached runtime path too (no proc).
+    const hasWriteTarget = this.proc !== null || (this._runtime !== null && this._handle !== null);
     if (
-      !this.proc ||
+      !hasWriteTarget ||
       (this._status !== "live" && !allowedDuringCompacting)
     ) {
       throw new SessionNotReadyError();
     }
-    const stdin = this.proc.stdin as import("bun").FileSink;
+
+    // Attached-runtime path: delegate to runtime.send().
+    if (this._runtime !== null && this._handle !== null) {
+      const runtime = this._runtime;
+      const handle = this._handle;
+      const task = async () => {
+        await runtime.send(handle, text);
+      };
+      this.inputQueue = this.inputQueue.then(task, task);
+      if (!isInternal && this._compactor) {
+        try {
+          this._compactor.observeUserMessage();
+        } catch (err) {
+          console.error(
+            `kbbl: compactor.observeUserMessage threw: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+      }
+      await this.inputQueue;
+      return;
+    }
+
+    const stdin = this.proc!.stdin as import("bun").FileSink;
     const task = async () => {
       const line =
         JSON.stringify({
@@ -1120,7 +1294,13 @@ export class Session {
       // as an error.
       return 1;
     }
-    if (this.proc) {
+    if (this._runtime && this._handle) {
+      try {
+        await this._runtime.terminate(this._handle);
+      } catch {
+        // runtime may already be done; exitPromise handles finalization
+      }
+    } else if (this.proc) {
       try {
         this.proc.kill();
       } catch {

@@ -8,12 +8,13 @@ import {
   readJsonlOrEmpty,
   type EnvelopeEvent,
 } from "../../session/session";
-import { isAllowedModel } from "../../../adapters/claude-code/models";
 import {
   RemoveFailedError,
   SessionManager,
   type CreateSessionOpts,
 } from "../../session/session-manager";
+import type { RuntimeRegistry } from "../../runtime";
+import { isAllowedModel as isCcAllowedModel } from "../../../adapters/claude-code/models";
 import { isValidSid } from "./per-sid";
 
 interface ParentSessionPayload {
@@ -147,7 +148,7 @@ async function resolveResumeParent(
       if (typeof payload.worktreePath === "string") {
         parentWorktreePath = payload.worktreePath;
       }
-      if (typeof payload.model === "string" && isAllowedModel(payload.model)) {
+      if (typeof payload.model === "string" && isCcAllowedModel(payload.model)) {
         parentModel = payload.model;
       }
     }
@@ -175,6 +176,13 @@ export interface SessionsRouteDeps {
   defaultWorkdir: string;
   /** Path to the on-disk sessions directory for archived JSONL lookups. */
   sessionsDir: string;
+  /**
+   * Optional runtime registry for model validation. When present, model
+   * validation uses the default runtime's descriptor.models list instead of
+   * the CC-specific ALLOWED_MODELS. When absent, any non-empty string is
+   * accepted (backward compat).
+   */
+  registry?: RuntimeRegistry;
 }
 
 /**
@@ -182,7 +190,21 @@ export interface SessionsRouteDeps {
  * on the given Hono app.
  */
 export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
-  const { manager, defaultWorkdir, sessionsDir } = deps;
+  const { manager, defaultWorkdir, sessionsDir, registry } = deps;
+
+  /**
+   * Check whether a model value is valid according to the runtime registry.
+   * When a registry is provided, validates against the default runtime's
+   * descriptor.models list. When no registry is provided (legacy/test mode),
+   * falls back to the CC adapter's static ALLOWED_MODELS list so existing
+   * callers and tests without a registry still get model validation.
+   */
+  function isAllowedModel(value: string): boolean {
+    if (!registry) return isCcAllowedModel(value);
+    const defaultRuntime = registry.runtimes.get(registry.defaultId);
+    if (!defaultRuntime) return isCcAllowedModel(value);
+    return defaultRuntime.descriptor.models.some((m) => m.value === value);
+  }
 
   app.get("/sessions", async (c) => {
     const inMemory = manager.listSnapshots();
@@ -341,11 +363,53 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       if (!isValidSid(resumeFrom)) {
         return c.json({ error: "invalid resume_from" }, 400);
       }
-      const parentInfo = await resolveResumeParent(
-        manager,
-        sessionsDir,
-        resumeFrom,
-      );
+
+      // Prefer runtime.resolveResumeRef when a registry is available, so
+      // CC-specific JSONL parsing stays in the CC adapter. Fall back to the
+      // core-owned resolver for legacy/no-registry callers.
+      let parentInfo: ResumeParentResult;
+      if (registry) {
+        const defaultRuntime = registry.runtimes.get(registry.defaultId);
+        if (defaultRuntime) {
+          const ref = await defaultRuntime.resolveResumeRef(sessionsDir, resumeFrom);
+          if (ref.kind === "unknown") {
+            // Check live sessions first before declaring unknown.
+            const live = manager.get(resumeFrom);
+            if (live) {
+              const ccSid = live.currentCcSid;
+              if (!ccSid) {
+                parentInfo = { kind: "no_cc_sid" };
+              } else {
+                parentInfo = {
+                  kind: "ok",
+                  parentCcSid: ccSid,
+                  workdir: live.workdir,
+                  parentWorktreePath: live.worktreePath,
+                  parentModel: live.model,
+                };
+              }
+            } else {
+              parentInfo = { kind: "unknown" };
+            }
+          } else if (ref.kind === "no_runtime_sid") {
+            parentInfo = { kind: "no_cc_sid" };
+          } else if (ref.kind === "no_workdir") {
+            parentInfo = { kind: "no_workdir" };
+          } else {
+            parentInfo = {
+              kind: "ok",
+              parentCcSid: ref.runtimeSid,
+              workdir: ref.workdir,
+              parentWorktreePath: ref.parentWorktreePath,
+              parentModel: ref.model,
+            };
+          }
+        } else {
+          parentInfo = await resolveResumeParent(manager, sessionsDir, resumeFrom);
+        }
+      } else {
+        parentInfo = await resolveResumeParent(manager, sessionsDir, resumeFrom);
+      }
       if (parentInfo.kind === "unknown") {
         return c.json({ error: "unknown resume_from session" }, 404);
       }
