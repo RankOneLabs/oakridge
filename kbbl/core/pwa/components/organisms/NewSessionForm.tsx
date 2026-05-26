@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 
 import type { RuntimeId } from "../../../runtime-interface";
+import type { RuntimeDescriptor } from "../../types";
 import { generateSlug } from "../../lib/session";
-import { PWA_MODEL_OPTIONS } from "../../lib/format";
 import {
   readStoredNewSessionModel,
   writeStoredNewSessionModel,
@@ -11,12 +11,14 @@ import {
 export interface NewSessionFormValues {
   workdir: string;
   name: string;
+  runtimeId: RuntimeId;
   model: string;
 }
 
 export interface NewSessionFormProps {
   defaultWorkdir: string;
-  runtimeId: RuntimeId;
+  defaultRuntimeId: RuntimeId;
+  runtimes: RuntimeDescriptor[];
   initialWorkdir: string | null;
   workdirTouchedInitial: boolean;
   pending: boolean;
@@ -29,7 +31,8 @@ export interface NewSessionFormProps {
 
 export function NewSessionForm({
   defaultWorkdir,
-  runtimeId,
+  defaultRuntimeId,
+  runtimes,
   initialWorkdir,
   workdirTouchedInitial,
   pending,
@@ -42,11 +45,27 @@ export function NewSessionForm({
   const [workdirInput, setWorkdirInput] = useState(initialWorkdir ?? "");
   const [workdirTouched, setWorkdirTouched] = useState(workdirTouchedInitial);
   const [nameInput, setNameInput] = useState("");
-  const [modelInput, setModelInput] = useState<string>(() => readStoredNewSessionModel(runtimeId));
+  const [runtimeId, setRuntimeId] = useState<RuntimeId>(defaultRuntimeId);
+  const selectedRuntime =
+    runtimes.find((r) => r.id === runtimeId) ??
+    runtimes.find((r) => r.id === defaultRuntimeId) ??
+    runtimes[0];
+  const [modelInput, setModelInput] = useState<string>(() => {
+    const runtime =
+      runtimes.find((r) => r.id === defaultRuntimeId) ??
+      runtimes[0];
+    return runtime ? readStoredNewSessionModel(runtime) : "";
+  });
 
   useEffect(() => {
-    setModelInput(readStoredNewSessionModel(runtimeId));
-  }, [runtimeId]);
+    setRuntimeId(defaultRuntimeId);
+  }, [defaultRuntimeId]);
+
+  useEffect(() => {
+    if (!selectedRuntime) return;
+    setRuntimeId(selectedRuntime.id);
+    setModelInput(readStoredNewSessionModel(selectedRuntime));
+  }, [selectedRuntime?.id]);
 
   // Generated once per mount so the placeholder is stable while the operator
   // is filling out the form (otherwise it would flicker on every re-render).
@@ -66,11 +85,12 @@ export function NewSessionForm({
   }, [defaultWorkdir, workdirInput, workdirTouched]);
 
   useEffect(() => {
-    const normalized = writeStoredNewSessionModel(modelInput, runtimeId);
+    if (!selectedRuntime) return;
+    const normalized = writeStoredNewSessionModel(modelInput, selectedRuntime);
     if (normalized !== modelInput) {
       setModelInput(normalized);
     }
-  }, [modelInput, runtimeId]);
+  }, [modelInput, selectedRuntime]);
 
   useEffect(() => {
     if (resetSignal === 0) return;
@@ -89,6 +109,7 @@ export function NewSessionForm({
       onSubmit({
         workdir: workdirInput.trim(),
         name: nameInput.trim() || namePlaceholder,
+        runtimeId,
         model: modelInput,
       });
       onAutostartConsumed();
@@ -105,6 +126,7 @@ export function NewSessionForm({
           onSubmit({
             workdir: workdirInput.trim(),
             name: nameInput.trim() || namePlaceholder,
+            runtimeId,
             model: modelInput,
           });
         }}
@@ -125,6 +147,21 @@ export function NewSessionForm({
           autoCorrect="off"
           aria-label="Workdir for new session"
         />
+        {runtimes.length > 1 && (
+          <select
+            className="new-session-runtime"
+            value={runtimeId}
+            onChange={(e) => setRuntimeId(e.target.value as RuntimeId)}
+            disabled={pending}
+            aria-label="Runtime for new session"
+          >
+            {runtimes.map((runtime) => (
+              <option key={runtime.id} value={runtime.id}>
+                {runtime.label}
+              </option>
+            ))}
+          </select>
+        )}
         <select
           className="new-session-model"
           value={modelInput}
@@ -132,7 +169,7 @@ export function NewSessionForm({
           disabled={pending}
           aria-label="Model for new session"
         >
-          {PWA_MODEL_OPTIONS.map((opt) => (
+          {[{ value: "", label: "default" }, ...(selectedRuntime?.models ?? [])].map((opt) => (
             <option key={opt.value || "default"} value={opt.value}>
               {opt.label}
             </option>

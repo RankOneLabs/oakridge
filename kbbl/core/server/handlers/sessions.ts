@@ -13,7 +13,7 @@ import {
   SessionManager,
   type CreateSessionOpts,
 } from "../../session/session-manager";
-import type { RuntimeRegistry } from "../../runtime";
+import type { AgentRuntime, RuntimeId, RuntimeRegistry } from "../../runtime";
 import { isValidSid } from "./per-sid";
 
 // Fallback allowlist used when no RuntimeRegistry is wired (legacy / test mode).
@@ -33,6 +33,7 @@ interface ParentSessionPayload {
   readonly workdir?: unknown;
   readonly worktreePath?: unknown;
   readonly model?: unknown;
+  readonly runtimeId?: unknown;
 }
 
 function parentSessionPayload(payload: unknown): ParentSessionPayload {
@@ -95,6 +96,7 @@ type ResumeParentResult =
        */
       parentWorktreePath: string | null;
       parentModel: string | null;
+      parentRuntimeId: RuntimeId;
     };
 
 async function resolveResumeParent(
@@ -112,6 +114,7 @@ async function resolveResumeParent(
       workdir: live.workdir,
       parentWorktreePath: live.worktreePath,
       parentModel: live.model,
+      parentRuntimeId: live.runtimeId,
     };
   }
   const jsonlPath = join(sessionsDir, `${sid}.jsonl`);
@@ -136,6 +139,7 @@ async function resolveResumeParent(
   let parentWorkdir: string | null = null;
   let parentWorktreePath: string | null = null;
   let parentModel: string | null = null;
+  let parentRuntimeId: RuntimeId = "claude-code";
   for (const line of contents.split("\n")) {
     if (!line.trim()) continue;
     let evt: EnvelopeEvent;
@@ -161,6 +165,9 @@ async function resolveResumeParent(
       if (typeof payload.model === "string" && LEGACY_ALLOWED_MODELS.includes(payload.model)) {
         parentModel = payload.model;
       }
+      if (payload.runtimeId === "claude-code" || payload.runtimeId === "codex") {
+        parentRuntimeId = payload.runtimeId;
+      }
     }
     if (parentCcSid && parentWorkdir) break;
   }
@@ -177,7 +184,43 @@ async function resolveResumeParent(
     workdir: parentWorkdir,
     parentWorktreePath,
     parentModel,
+    parentRuntimeId,
   };
+}
+
+function isRuntimeId(value: unknown): value is RuntimeId {
+  return value === "claude-code" || value === "codex";
+}
+
+async function resolveParentRuntimeId(
+  manager: SessionManager,
+  sessionsDir: string,
+  sid: string,
+): Promise<RuntimeId | null> {
+  const live = manager.get(sid);
+  if (live) return live.runtimeId;
+
+  const jsonlPath = join(sessionsDir, `${sid}.jsonl`);
+  let contents: string;
+  try {
+    contents = await readJsonlOrEmpty(jsonlPath);
+  } catch {
+    return null;
+  }
+  if (!contents) return null;
+  for (const line of contents.split("\n")) {
+    if (!line.trim()) continue;
+    let evt: EnvelopeEvent;
+    try {
+      evt = JSON.parse(line) as EnvelopeEvent;
+    } catch {
+      continue;
+    }
+    if (evt.type !== "session_started") continue;
+    const payload = parentSessionPayload(evt.payload);
+    return isRuntimeId(payload.runtimeId) ? payload.runtimeId : "claude-code";
+  }
+  return null;
 }
 
 export interface SessionsRouteDeps {
@@ -201,18 +244,18 @@ export interface SessionsRouteDeps {
 export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
   const { manager, defaultWorkdir, sessionsDir, registry } = deps;
 
-  /**
-   * Check whether a model value is valid. When a registry is provided,
-   * delegates to the default runtime's isAllowedModel() (which may accept
-   * full model ids and short aliases beyond what descriptor.models lists).
-   * Falls back to LEGACY_ALLOWED_MODELS when no registry is provided, no
-   * default runtime is found, or the runtime doesn't implement isAllowedModel.
-   */
-  function isAllowedModel(value: string): boolean {
+  function runtimeForId(runtimeId: RuntimeId): AgentRuntime | null {
+    return registry?.runtimes.get(runtimeId) ?? null;
+  }
+
+  function isAllowedModelForRuntime(
+    runtime: AgentRuntime | null,
+    value: string,
+  ): boolean {
     if (!registry) return LEGACY_ALLOWED_MODELS.includes(value);
-    const defaultRuntime = registry.runtimes.get(registry.defaultId);
-    if (!defaultRuntime) return LEGACY_ALLOWED_MODELS.includes(value);
-    return defaultRuntime.isAllowedModel?.(value) ?? LEGACY_ALLOWED_MODELS.includes(value);
+    if (!runtime) return false;
+    if (runtime.isAllowedModel) return runtime.isAllowedModel(value);
+    return runtime.descriptor.models.some((m) => m.value === value);
   }
 
   app.get("/sessions", async (c) => {
@@ -241,6 +284,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
     let bodyName: string | null = null;
     let bodyArtifactId: ArtifactId | null = null;
     let bodyModel: string | null = null;
+    let bodyRuntime: RuntimeId | null = null;
     // Read raw text first so we can distinguish "no body" (treat as no
     // options, preserves the old POST /sessions behavior) from "bad body"
     // (400). Using c.req.json() with an inner .catch() would silently
@@ -263,7 +307,32 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
           name?: unknown;
           artifact_id?: unknown;
           model?: unknown;
+          runtime?: unknown;
         };
+        if (parsed.runtime !== undefined) {
+          if (typeof parsed.runtime !== "string") {
+            return c.json({ error: "runtime must be a string" }, 400);
+          }
+          if (!isRuntimeId(parsed.runtime)) {
+            return c.json({ error: `unknown runtime: ${parsed.runtime}` }, 400);
+          }
+          if (registry && !registry.runtimes.has(parsed.runtime)) {
+            const registered = [...registry.runtimes.keys()].join(", ");
+            return c.json(
+              {
+                error: `runtime "${parsed.runtime}" is not registered — registered: ${registered}`,
+              },
+              400,
+            );
+          }
+          if (!registry && parsed.runtime !== "claude-code") {
+            return c.json(
+              { error: `runtime "${parsed.runtime}" is not registered — registered: claude-code` },
+              400,
+            );
+          }
+          bodyRuntime = parsed.runtime;
+        }
         if (parsed.resume_from !== undefined) {
           if (typeof parsed.resume_from !== "string") {
             return c.json({ error: "resume_from must be a string" }, 400);
@@ -337,9 +406,6 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
               400,
             );
           }
-          if (!isAllowedModel(trimmedModel)) {
-            return c.json({ error: `unknown model: ${trimmedModel}` }, 400);
-          }
           bodyModel = trimmedModel;
         }
       }
@@ -362,10 +428,23 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       // --workdir handling so the same path doesn't show up as two distinct
       // workdirs across the UI.
       const target = resolve(requestedWorkdir);
+      const selectedRuntimeId = bodyRuntime ?? registry?.defaultId ?? "claude-code";
+      const selectedRuntime = runtimeForId(selectedRuntimeId);
+      if (bodyModel !== null && !isAllowedModelForRuntime(selectedRuntime, bodyModel)) {
+        return c.json(
+          {
+            error: registry
+              ? `unknown model for ${selectedRuntimeId}: ${bodyModel}`
+              : `unknown model: ${bodyModel}`,
+          },
+          400,
+        );
+      }
       spawnOpts = {
         workdir: target,
         name: bodyName ?? undefined,
         artifactId: bodyArtifactId ?? undefined,
+        runtime: bodyRuntime ?? undefined,
         model: bodyModel ?? undefined,
       };
     } else {
@@ -378,28 +457,35 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       // core-owned resolver for legacy/no-registry callers.
       let parentInfo: ResumeParentResult;
       if (registry) {
-        const defaultRuntime = registry.runtimes.get(registry.defaultId);
-        if (defaultRuntime) {
-          // For live sessions, use the session's own runtime so a non-default
-          // runtime's resolveResumeRef is called (in-memory path only).
+        const parentRuntimeId =
+          (await resolveParentRuntimeId(manager, sessionsDir, resumeFrom)) ??
+          registry.defaultId;
+        if (bodyRuntime !== null && bodyRuntime !== parentRuntimeId) {
+          return c.json(
+            {
+              error: `resume_from parent runtime is ${parentRuntimeId}; cross-runtime resume to ${bodyRuntime} is not supported`,
+            },
+            400,
+          );
+        }
+        const resumeRuntime = registry.runtimes.get(parentRuntimeId);
+        if (resumeRuntime) {
           const liveSession = manager.get(resumeFrom);
-          const resumeRuntime = liveSession
-            ? (registry.runtimes.get(liveSession.runtimeId) ?? defaultRuntime)
-            : defaultRuntime;
           const ref = await resumeRuntime.resolveResumeRef(sessionsDir, resumeFrom);
           if (ref.kind === "unknown") {
             // JSONL unknown — check live session directly.
             if (liveSession) {
-              const ccSid = liveSession.currentCcSid;
-              if (!ccSid) {
+              const runtimeSid = liveSession.snapshot().runtimeSid;
+              if (!runtimeSid) {
                 parentInfo = { kind: "no_cc_sid" };
               } else {
                 parentInfo = {
                   kind: "ok",
-                  parentCcSid: ccSid,
+                  parentCcSid: runtimeSid,
                   workdir: liveSession.workdir,
                   parentWorktreePath: liveSession.worktreePath,
                   parentModel: liveSession.model,
+                  parentRuntimeId: liveSession.runtimeId,
                 };
               }
             } else {
@@ -416,6 +502,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
               workdir: ref.workdir,
               parentWorktreePath: ref.parentWorktreePath,
               parentModel: ref.model,
+              parentRuntimeId,
             };
           } else {
             parentInfo = { kind: "unknown" };
@@ -450,6 +537,27 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
           {
             error:
               "resume_from parent transcript is missing the workdir — can't resume safely",
+          },
+          400,
+        );
+      }
+      const selectedRuntimeId = bodyRuntime ?? parentInfo.parentRuntimeId;
+      if (selectedRuntimeId !== parentInfo.parentRuntimeId) {
+        return c.json(
+          {
+            error: `resume_from parent runtime is ${parentInfo.parentRuntimeId}; cross-runtime resume to ${selectedRuntimeId} is not supported`,
+          },
+          400,
+        );
+      }
+      const selectedRuntime = runtimeForId(selectedRuntimeId);
+      const selectedModel = bodyModel ?? parentInfo.parentModel;
+      if (selectedModel !== null && !isAllowedModelForRuntime(selectedRuntime, selectedModel)) {
+        return c.json(
+          {
+            error: registry
+              ? `unknown model for ${selectedRuntimeId}: ${selectedModel}`
+              : `unknown model: ${selectedModel}`,
           },
           400,
         );
@@ -493,7 +601,8 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
         parentCcSid: parentInfo.parentCcSid,
         parentOakridgeSid: resumeFrom,
         artifactId: bodyArtifactId ?? undefined,
-        model: bodyModel ?? parentInfo.parentModel ?? undefined,
+        runtime: selectedRuntimeId,
+        model: selectedModel ?? undefined,
       };
     }
 

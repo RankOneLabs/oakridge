@@ -4,7 +4,7 @@ import { useMutation } from "@tanstack/react-query";
 import { Sidebar, type SidebarSession } from "../sidebar/Sidebar";
 
 import type {
-  SessionSnapshot, Theme, Status,
+  RuntimeDescriptor, SessionSnapshot, Theme, Status,
 } from "../types";
 import type { RuntimeId } from "../../runtime-interface";
 import { sortSessions } from "../lib/session";
@@ -21,6 +21,7 @@ interface StartSessionBody {
   resume_from?: string;
   workdir?: string;
   name?: string;
+  runtime?: RuntimeId;
   model?: string;
 }
 
@@ -30,6 +31,7 @@ export function SessionListView({
   theme,
   defaultWorkdir,
   defaultRuntimeId,
+  runtimes,
   onToggleTheme,
   onSelect,
   onHydrateSession,
@@ -39,6 +41,7 @@ export function SessionListView({
   theme: Theme;
   defaultWorkdir: string;
   defaultRuntimeId: RuntimeId;
+  runtimes: RuntimeDescriptor[];
   onToggleTheme: () => void;
   onSelect: (sid: string) => void;
   onHydrateSession: (snapshot: SessionSnapshot) => void;
@@ -100,6 +103,7 @@ export function SessionListView({
       }
       body.workdir = trimmed;
       body.name = values.name;
+      body.runtime = values.runtimeId;
       if (values.model !== "") body.model = values.model;
     } else {
       setPendingError("internal: startSession needs values or resumeFrom");
@@ -158,7 +162,8 @@ export function SessionListView({
       <div className="session-list-actions">
         <NewSessionForm
           defaultWorkdir={defaultWorkdir}
-          runtimeId={defaultRuntimeId}
+          defaultRuntimeId={defaultRuntimeId}
+          runtimes={runtimes}
           initialWorkdir={prefill.initialWorkdir}
           workdirTouchedInitial={prefill.workdirTouchedInitial}
           pending={startMutation.isPending}

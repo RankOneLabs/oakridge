@@ -73,6 +73,18 @@ export type Status = "connecting" | "connected" | "disconnected";
 export type Theme = "dark" | "light";
 export type ResolutionMap = Map<string, "allow" | "deny">;
 
+export interface RuntimeModelOption {
+  value: string;
+  label: string;
+}
+
+export interface RuntimeDescriptor {
+  id: RuntimeId;
+  label: string;
+  models: RuntimeModelOption[];
+  supportsCompaction: boolean;
+}
+
 export interface PendingPlanCard {
   id: string;
   spec_id: string;
