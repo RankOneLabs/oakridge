@@ -39,7 +39,7 @@ export function SessionListView({
   sessions: Map<string, SessionSnapshot>;
   inboxStatus: Status;
   theme: Theme;
-  defaultWorkdir: string;
+  defaultWorkdir: string | null;
   defaultRuntimeId: RuntimeId;
   runtimes: RuntimeDescriptor[];
   onToggleTheme: () => void;

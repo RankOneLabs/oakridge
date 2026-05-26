@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
@@ -16,7 +16,7 @@ let tmpRoot: string;
 let configPath: string;
 let db: Database;
 
-function buildApp(config: KbblConfig): Hono {
+function buildApp(config: KbblConfig, defaultWorkdir: string | null = "/tmp/test-workdir"): Hono {
   const runtime: AppRuntime = {
     id: "test",
     mountRoutes: () => {},
@@ -28,7 +28,7 @@ function buildApp(config: KbblConfig): Hono {
   return createApp({
     manager: {} as unknown as SessionManager,
     runtime,
-    defaultWorkdir: "/tmp/test-workdir",
+    defaultWorkdir,
     sessionsDir: tmpRoot,
     handoffsDir: tmpRoot,
     pwaDistDir: tmpRoot,
@@ -59,9 +59,19 @@ describe("GET /config", () => {
     const res = await app.request("/config");
 
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { defaultWorkdir: string; softThresholdTokens: number };
+    const body = (await res.json()) as { defaultWorkdir: string | null; softThresholdTokens: number };
     expect(body.defaultWorkdir).toBe("/tmp/test-workdir");
     expect(body.softThresholdTokens).toBe(config.compact.soft_threshold_tokens);
+  });
+
+  test("allows a null defaultWorkdir", async () => {
+    const app = buildApp(KbblConfigSchema.parse({}), null);
+
+    const res = await app.request("/config");
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { defaultWorkdir: string | null };
+    expect(body.defaultWorkdir).toBeNull();
   });
 });
 
@@ -135,5 +145,23 @@ describe("PATCH /config", () => {
       compact: { soft_threshold_tokens: number };
     };
     expect(persisted.compact.soft_threshold_tokens).toBe(12345);
+  });
+});
+
+describe("GET /directories", () => {
+  test("lists child directories for the picker", async () => {
+    mkdirSync(join(tmpRoot, "repo-a"));
+    mkdirSync(join(tmpRoot, "repo-b"));
+    const app = buildApp(KbblConfigSchema.parse({}), null);
+
+    const res = await app.request(`/directories?path=${encodeURIComponent(tmpRoot)}`);
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      path: string;
+      entries: Array<{ name: string; path: string }>;
+    };
+    expect(body.path).toBe(tmpRoot);
+    expect(body.entries.map((entry) => entry.name)).toEqual(["repo-a", "repo-b"]);
   });
 });

@@ -778,6 +778,13 @@ body {
   gap: 0.4rem;
   align-items: stretch;
 }
+.new-session-workdir-row {
+  display: flex;
+  flex: 1 1 100%;
+  min-width: 0;
+  gap: 0.4rem;
+}
+
 .new-session-workdir,
 .new-session-name {
   flex: 1;
@@ -792,7 +799,7 @@ body {
   font-size: 0.9rem;
 }
 .new-session-workdir {
-  flex-basis: 100%;
+  flex-basis: auto;
 }
 .new-session-name {
   flex-basis: 0;
@@ -858,6 +865,161 @@ body {
   white-space: nowrap;
 }
 .btn-new-session:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-directory-picker {
+  flex: 0 0 auto;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  color: var(--text-primary);
+  padding: 0 0.8rem;
+  min-height: 44px;
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-directory-picker:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.directory-picker-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgb(0 0 0 / 0.48);
+}
+
+.directory-picker {
+  width: min(720px, 100%);
+  max-height: min(720px, 86vh);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  box-shadow: 0 24px 80px rgb(0 0 0 / 0.35);
+  overflow: hidden;
+}
+
+.directory-picker-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.8rem 0.9rem;
+  border-bottom: 1px solid var(--border-muted);
+}
+
+.directory-picker-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: "SF Mono", Menlo, monospace;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.directory-picker-close {
+  flex: 0 0 auto;
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.directory-picker-error {
+  margin: 0.75rem 0.9rem 0;
+  color: var(--danger-fg);
+  font-size: 0.85rem;
+}
+
+.directory-picker-list {
+  min-height: 14rem;
+  overflow: auto;
+  padding: 0.5rem;
+}
+
+.directory-picker-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(8rem, 0.45fr) minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.55rem 0.65rem;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+.directory-picker-row:hover {
+  background: var(--bg-surface);
+}
+
+.directory-picker-name,
+.directory-picker-subpath {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.directory-picker-name {
+  font-weight: 600;
+}
+
+.directory-picker-subpath {
+  color: var(--text-fainter);
+  font-family: "SF Mono", Menlo, monospace;
+  font-size: 0.78rem;
+}
+
+.directory-picker-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.75rem 0.9rem;
+  border-top: 1px solid var(--border-muted);
+}
+
+.directory-picker-cancel,
+.directory-picker-select {
+  min-height: 40px;
+  border-radius: 8px;
+  padding: 0 0.85rem;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.directory-picker-cancel {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border-muted);
+}
+
+.directory-picker-select {
+  background: var(--accent-blue);
+  color: #ffffff;
+  border: 0;
+}
+
+.directory-picker-select:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
