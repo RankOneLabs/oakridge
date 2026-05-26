@@ -119,6 +119,7 @@ async function postSessions(app: Hono, body: Record<string, unknown>): Promise<R
 async function writeArchivedParent(opts: {
   sid: string;
   model: string | null;
+  runtimeId?: RuntimeId;
   ccSid?: string;
 }): Promise<void> {
   const ccSid = opts.ccSid ?? `fake-cc-${opts.sid.slice(0, 8)}`;
@@ -135,7 +136,7 @@ async function writeArchivedParent(opts: {
         parentCcSid: null,
         parentOakridgeSid: null,
         artifactId: null,
-        runtimeId: "claude-code",
+        runtimeId: opts.runtimeId ?? "claude-code",
         worktreePath: null,
         worktreeBranch: null,
         worktreeBaseRef: null,
@@ -370,6 +371,28 @@ describe("POST /sessions model validation", () => {
       expect(body.error).toBe(
         "resume_from parent runtime is codex; cross-runtime resume to claude-code is not supported",
       );
+    } finally {
+      await manager.endAll();
+    }
+  });
+
+  test("resume returns 400 when parent runtime is not registered", async () => {
+    const parentSid = randomUUID();
+    await writeArchivedParent({
+      sid: parentSid,
+      runtimeId: "codex",
+      model: null,
+    });
+    const registry = createRuntimeRegistry([
+      makeRuntime("claude-code", ["claude-sonnet-4-6", "claude-opus-4-7"]),
+    ]);
+    const manager = makeRegistryManager(registry);
+    try {
+      const app = makeApp(manager, registry);
+      const res = await postSessions(app, { resume_from: parentSid });
+      expect(res.status).toBe(400);
+      const body = await res.json() as { error: string };
+      expect(body.error).toBe('resume_from parent runtime "codex" is not registered');
     } finally {
       await manager.endAll();
     }

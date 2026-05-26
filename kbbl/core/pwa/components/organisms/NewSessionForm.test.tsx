@@ -1,7 +1,8 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
 import type { RuntimeDescriptor } from "../../types";
+import { newSessionModelKey } from "../../lib/storage";
 import { NewSessionForm, type NewSessionFormValues } from "./NewSessionForm";
 
 class MemoryStorage {
@@ -109,5 +110,22 @@ describe("NewSessionForm runtime model selection", () => {
       runtimeId: "codex",
       model: "gpt-5.1-codex",
     });
+  });
+
+  test("switching runtime preserves stored model preference", async () => {
+    localStorage.setItem(newSessionModelKey("codex"), "gpt-5.1-codex");
+    renderForm(() => {});
+
+    fireEvent.change(screen.getByLabelText("Runtime for new session"), {
+      target: { value: "codex" },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Model for new session")).toHaveProperty(
+        "value",
+        "gpt-5.1-codex",
+      );
+    });
+    expect(localStorage.getItem(newSessionModelKey("codex"))).toBe("gpt-5.1-codex");
   });
 });

@@ -469,8 +469,15 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
           );
         }
         const resumeRuntime = registry.runtimes.get(parentRuntimeId);
-        if (resumeRuntime) {
-          const liveSession = manager.get(resumeFrom);
+        const liveSession = manager.get(resumeFrom);
+        if (!resumeRuntime) {
+          return c.json(
+            {
+              error: `resume_from parent runtime "${parentRuntimeId}" is not registered`,
+            },
+            400,
+          );
+        } else {
           const ref = await resumeRuntime.resolveResumeRef(sessionsDir, resumeFrom);
           if (ref.kind === "unknown") {
             // JSONL unknown — check live session directly.
@@ -507,8 +514,6 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
           } else {
             parentInfo = { kind: "unknown" };
           }
-        } else {
-          parentInfo = await resolveResumeParent(manager, sessionsDir, resumeFrom);
         }
       } else {
         parentInfo = await resolveResumeParent(manager, sessionsDir, resumeFrom);

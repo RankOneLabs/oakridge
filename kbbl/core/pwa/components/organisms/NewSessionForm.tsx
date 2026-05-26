@@ -85,14 +85,6 @@ export function NewSessionForm({
   }, [defaultWorkdir, workdirInput, workdirTouched]);
 
   useEffect(() => {
-    if (!selectedRuntime) return;
-    const normalized = writeStoredNewSessionModel(modelInput, selectedRuntime);
-    if (normalized !== modelInput) {
-      setModelInput(normalized);
-    }
-  }, [modelInput, selectedRuntime]);
-
-  useEffect(() => {
     if (resetSignal === 0) return;
     setNameInput("");
     setNamePlaceholder(generateSlug());
@@ -165,7 +157,14 @@ export function NewSessionForm({
         <select
           className="new-session-model"
           value={modelInput}
-          onChange={(e) => setModelInput(e.target.value)}
+          onChange={(e) => {
+            const nextModel = e.target.value;
+            if (!selectedRuntime) {
+              setModelInput(nextModel);
+              return;
+            }
+            setModelInput(writeStoredNewSessionModel(nextModel, selectedRuntime));
+          }}
           disabled={pending}
           aria-label="Model for new session"
         >
