@@ -1,6 +1,6 @@
 import { readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 
 import type { Hono } from "hono";
 import type { DirectoryListing } from "../../directories";
@@ -16,12 +16,14 @@ function fallbackStartPath(defaultWorkdir: string | null): string {
 }
 
 function isPathInside(child: string, parent: string): boolean {
-  if (child === parent) return true;
-  return child.startsWith(`${parent}/`);
+  const pathFromParent = relative(parent, child);
+  return pathFromParent === "" || (!pathFromParent.startsWith("..") && !isAbsolute(pathFromParent));
 }
 
 async function allowedRoots(defaultWorkdir: string | null): Promise<string[]> {
-  const roots = [homedir(), defaultWorkdir].filter(
+  const home = homedir();
+  const fallbackRoot = home === "" ? "/" : home;
+  const roots = [fallbackRoot, defaultWorkdir].filter(
     (path): path is string => typeof path === "string" && path !== "",
   );
   const resolved = await Promise.all(

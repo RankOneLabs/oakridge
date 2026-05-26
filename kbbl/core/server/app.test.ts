@@ -199,4 +199,13 @@ describe("GET /directories", () => {
       rmSync(outsideRoot, { recursive: true, force: true });
     }
   });
+
+  test("allows paths under a root directory default workdir", async () => {
+    const app = buildApp(KbblConfigSchema.parse({}), "/");
+
+    const res = await app.request(`/directories?path=${encodeURIComponent(tmpRoot)}`);
+
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { path: string }).path).toBe(tmpRoot);
+  });
 });

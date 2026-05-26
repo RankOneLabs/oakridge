@@ -931,8 +931,8 @@ body {
 
 .directory-picker-close {
   flex: 0 0 auto;
-  width: 2rem;
-  height: 2rem;
+  min-width: 44px;
+  min-height: 44px;
   border: 1px solid var(--border-muted);
   border-radius: 8px;
   background: var(--bg-surface);
