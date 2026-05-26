@@ -150,6 +150,7 @@ kbbl/
 │   │   └── handlers/
 │   │       ├── per-sid.ts         # /:sid/{stream,events,input,yolo,approval,compact}
 │   │       ├── sessions.ts        # GET/POST/DELETE /sessions, /artifacts/:id/sessions
+│   │       ├── directories.ts     # GET /directories?path=<absolute-path>
 │   │       ├── handoff.ts         # GET /:sid/handoff (compaction markdown)
 │   │       └── workspace-events.ts # POST /inbox/workspace-events ingest
 │   ├── stream/
@@ -164,7 +165,7 @@ kbbl/
 │       ├── event-classifier.ts    # parses CC stdout for ccSid + result usage
 │       └── scripts/gate.sh        # PreToolUse hook script invoked by CC
 ├── scripts/
-│   └── kbbl-start                 # launcher: validates workdir, execs core/server.ts
+│   └── kbbl-start                 # launcher: validates optional workdir, execs core/server.ts
 ├── config.json                    # compact thresholds, retention
 └── data/
     ├── sessions/                  # one JSONL transcript per session (gitignored)

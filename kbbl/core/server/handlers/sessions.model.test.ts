@@ -96,11 +96,15 @@ function makeRegistryManager(registry: RuntimeRegistry): SessionManager {
   });
 }
 
-function makeApp(manager: SessionManager, registry?: RuntimeRegistry): Hono {
+function makeApp(
+  manager: SessionManager,
+  registry?: RuntimeRegistry,
+  defaultWorkdir: string | null = "/tmp",
+): Hono {
   const app = new Hono();
   mountSessionsRoutes(app, {
     manager,
-    defaultWorkdir: "/tmp",
+    defaultWorkdir,
     sessionsDir,
     registry,
   });
@@ -173,6 +177,16 @@ afterEach(async () => {
 });
 
 describe("POST /sessions model validation", () => {
+  test("rejects fresh session without workdir when no default is configured", async () => {
+    const manager = makeManager();
+    const app = makeApp(manager, undefined, null);
+
+    const res = await postSessions(app, {});
+
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe("workdir is required");
+  });
+
   test("case 1: valid model accepted, snapshot.model matches", async () => {
     const manager = makeManager();
     const app = makeApp(manager);

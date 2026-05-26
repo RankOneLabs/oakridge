@@ -1,15 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-interface DirectoryEntry {
-  name: string;
-  path: string;
-}
-
-interface DirectoryListing {
-  path: string;
-  parent: string | null;
-  entries: DirectoryEntry[];
-}
+import type { DirectoryListing } from "../../../directories";
 
 interface DirectoryPickerProps {
   disabled: boolean;
@@ -33,17 +24,18 @@ export function DirectoryPicker({ disabled, initialPath, onSelect }: DirectoryPi
   const [pendingPath, setPendingPath] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
     let cancelled = false;
     setError(null);
     setIsLoading(true);
-    void fetchDirectoryListing(pendingPath ?? initialPath)
+    void fetchDirectoryListing(pendingPath)
       .then((nextListing) => {
         if (cancelled) return;
         setListing(nextListing);
-        setPendingPath(nextListing.path);
       })
       .catch((err) => {
         if (cancelled) return;
@@ -56,10 +48,66 @@ export function DirectoryPicker({ disabled, initialPath, onSelect }: DirectoryPi
     return () => {
       cancelled = true;
     };
-  }, [initialPath, isOpen, pendingPath]);
+  }, [isOpen, pendingPath]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    previousFocusRef.current = document.activeElement as HTMLElement | null;
+    const first = panelRef.current?.querySelector<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    );
+    first?.focus();
+    return () => {
+      previousFocusRef.current?.focus();
+      previousFocusRef.current = null;
+    };
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [isOpen]);
 
   function openAt(path: string | null) {
     setPendingPath(path);
+  }
+
+  function openPicker() {
+    setListing(null);
+    setPendingPath(initialPath);
+    setIsOpen(true);
+  }
+
+  function handlePanelKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (e.key !== "Tab") return;
+    const focusable = Array.from(
+      panelRef.current?.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ) ?? [],
+    );
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (focusable.length === 1) {
+      e.preventDefault();
+      first.focus();
+      return;
+    }
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+      return;
+    }
+    if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
   }
 
   return (
@@ -68,17 +116,25 @@ export function DirectoryPicker({ disabled, initialPath, onSelect }: DirectoryPi
         type="button"
         className="btn-directory-picker"
         disabled={disabled}
-        onClick={() => setIsOpen(true)}
+        onClick={openPicker}
       >
         Browse
       </button>
       {isOpen && (
-        <div className="directory-picker-layer" role="presentation">
+        <div
+          className="directory-picker-layer"
+          role="presentation"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setIsOpen(false);
+          }}
+        >
           <div
+            ref={panelRef}
             className="directory-picker"
             role="dialog"
             aria-modal="true"
             aria-label="Choose workdir"
+            onKeyDown={handlePanelKeyDown}
           >
             <div className="directory-picker-header">
               <div className="directory-picker-path" title={listing?.path ?? ""}>
@@ -100,7 +156,7 @@ export function DirectoryPicker({ disabled, initialPath, onSelect }: DirectoryPi
               </div>
             )}
             <div className="directory-picker-list">
-              {listing?.parent !== null && listing?.parent !== undefined && (
+              {listing !== null && listing.parent !== null && (
                 <button
                   type="button"
                   className="directory-picker-row"

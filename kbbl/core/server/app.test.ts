@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
@@ -152,7 +152,7 @@ describe("GET /directories", () => {
   test("lists child directories for the picker", async () => {
     mkdirSync(join(tmpRoot, "repo-a"));
     mkdirSync(join(tmpRoot, "repo-b"));
-    const app = buildApp(KbblConfigSchema.parse({}), null);
+    const app = buildApp(KbblConfigSchema.parse({}), tmpRoot);
 
     const res = await app.request(`/directories?path=${encodeURIComponent(tmpRoot)}`);
 
@@ -163,5 +163,40 @@ describe("GET /directories", () => {
     };
     expect(body.path).toBe(tmpRoot);
     expect(body.entries.map((entry) => entry.name)).toEqual(["repo-a", "repo-b"]);
+  });
+
+  test("rejects relative directory paths", async () => {
+    const app = buildApp(KbblConfigSchema.parse({}), tmpRoot);
+
+    const res = await app.request("/directories?path=./relative");
+
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe("path must be absolute");
+  });
+
+  test("rejects non-directory paths", async () => {
+    const filePath = join(tmpRoot, "not-a-dir.txt");
+    writeFileSync(filePath, "not a directory", "utf8");
+    const app = buildApp(KbblConfigSchema.parse({}), tmpRoot);
+
+    const res = await app.request(`/directories?path=${encodeURIComponent(filePath)}`);
+
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe("path is not a directory");
+  });
+
+  test("rejects paths outside allowed roots", async () => {
+    const outsideRoot = mkdtempSync(join(tmpdir(), "kbbl-app-outside-"));
+    const app = buildApp(KbblConfigSchema.parse({}), tmpRoot);
+    try {
+      const res = await app.request(`/directories?path=${encodeURIComponent(outsideRoot)}`);
+
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { error: string }).error).toBe(
+        "path is outside allowed directory roots",
+      );
+    } finally {
+      rmSync(outsideRoot, { recursive: true, force: true });
+    }
   });
 });

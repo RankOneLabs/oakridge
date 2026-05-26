@@ -1,19 +1,9 @@
-import { readdir, stat } from "node:fs/promises";
+import { readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, resolve } from "node:path";
 
 import type { Hono } from "hono";
-
-export interface DirectoryEntry {
-  name: string;
-  path: string;
-}
-
-export interface DirectoryListing {
-  path: string;
-  parent: string | null;
-  entries: DirectoryEntry[];
-}
+import type { DirectoryListing } from "../../directories";
 
 export interface DirectoriesRouteDeps {
   defaultWorkdir: string | null;
@@ -25,12 +15,30 @@ function fallbackStartPath(defaultWorkdir: string | null): string {
   return home === "" ? "/" : home;
 }
 
-async function listDirectories(path: string): Promise<DirectoryListing> {
+function isPathInside(child: string, parent: string): boolean {
+  if (child === parent) return true;
+  return child.startsWith(`${parent}/`);
+}
+
+async function allowedRoots(defaultWorkdir: string | null): Promise<string[]> {
+  const roots = [homedir(), defaultWorkdir].filter(
+    (path): path is string => typeof path === "string" && path !== "",
+  );
+  const resolved = await Promise.all(
+    roots.map(async (root) => realpath(resolve(root)).catch(() => null)),
+  );
+  return [...new Set(resolved.filter((root): root is string => root !== null))];
+}
+
+async function listDirectories(path: string, roots: readonly string[]): Promise<DirectoryListing> {
   if (!isAbsolute(path)) {
     throw new Error("path must be absolute");
   }
 
-  const resolvedPath = resolve(path);
+  const resolvedPath = await realpath(resolve(path));
+  if (!roots.some((root) => isPathInside(resolvedPath, root))) {
+    throw new Error("path is outside allowed directory roots");
+  }
   const pathStat = await stat(resolvedPath);
   if (!pathStat.isDirectory()) {
     throw new Error("path is not a directory");
@@ -45,10 +53,11 @@ async function listDirectories(path: string): Promise<DirectoryListing> {
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
   const parent = dirname(resolvedPath);
+  const allowedParent = roots.some((root) => isPathInside(parent, root)) ? parent : null;
 
   return {
     path: resolvedPath,
-    parent: parent === resolvedPath ? null : parent,
+    parent: parent === resolvedPath ? null : allowedParent,
     entries: directories,
   };
 }
@@ -57,7 +66,7 @@ export function mountDirectoriesRoutes(app: Hono, deps: DirectoriesRouteDeps): v
   app.get("/directories", async (c) => {
     const requestedPath = c.req.query("path") ?? fallbackStartPath(deps.defaultWorkdir);
     try {
-      return c.json(await listDirectories(requestedPath));
+      return c.json(await listDirectories(requestedPath, await allowedRoots(deps.defaultWorkdir)));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return c.json({ error: msg }, 400);

@@ -25,6 +25,18 @@ interface StartSessionBody {
   model?: string;
 }
 
+interface SessionListViewProps {
+  sessions: Map<string, SessionSnapshot>;
+  inboxStatus: Status;
+  theme: Theme;
+  defaultWorkdir: string | null;
+  defaultRuntimeId: RuntimeId;
+  runtimes: RuntimeDescriptor[];
+  onToggleTheme: () => void;
+  onSelect: (sid: string) => void;
+  onHydrateSession: (snapshot: SessionSnapshot) => void;
+}
+
 export function SessionListView({
   sessions,
   inboxStatus,
@@ -35,17 +47,7 @@ export function SessionListView({
   onToggleTheme,
   onSelect,
   onHydrateSession,
-}: {
-  sessions: Map<string, SessionSnapshot>;
-  inboxStatus: Status;
-  theme: Theme;
-  defaultWorkdir: string | null;
-  defaultRuntimeId: RuntimeId;
-  runtimes: RuntimeDescriptor[];
-  onToggleTheme: () => void;
-  onSelect: (sid: string) => void;
-  onHydrateSession: (snapshot: SessionSnapshot) => void;
-}) {
+}: SessionListViewProps) {
   const [pendingError, setPendingError] = useState<string | null>(null);
   const [resetSignal, setResetSignal] = useState(0);
 
