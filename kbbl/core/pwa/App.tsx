@@ -119,6 +119,7 @@ export function App() {
         theme={theme}
         defaultWorkdir={config?.defaultWorkdir ?? ""}
         defaultRuntimeId={config?.defaultRuntimeId ?? "claude-code"}
+        runtimes={config?.runtimes ?? []}
         onToggleTheme={toggleTheme}
         onSelect={(nextSid) => navigate(nextSid)}
         onHydrateSession={hydrateSession}

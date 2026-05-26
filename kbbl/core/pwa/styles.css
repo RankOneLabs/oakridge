@@ -808,6 +808,7 @@ body {
 .new-session-name::placeholder {
   color: var(--text-fainter);
 }
+.new-session-runtime,
 .new-session-model {
   flex: 0 0 auto;
   background: var(--bg-surface);
@@ -819,6 +820,7 @@ body {
   font: inherit;
   font-size: 0.85rem;
 }
+.new-session-runtime:focus,
 .new-session-model:focus {
   outline: none;
   border-color: var(--accent-blue);
@@ -3457,4 +3459,3 @@ body {
   min-width: 0;
   display: block;
 }
-

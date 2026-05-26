@@ -1,6 +1,5 @@
 import type { Theme } from "../types";
-import type { RuntimeId } from "../../runtime-interface";
-import { PWA_MODEL_OPTIONS } from "./format";
+import type { RuntimeDescriptor } from "../types";
 
 export const THEME_STORAGE_KEY = "oakridge.theme";
 /**
@@ -20,27 +19,31 @@ export function newSessionModelKey(runtimeId: string): string {
 
 export function isValidNewSessionModelForRuntime(
   value: string,
-  runtimeId: RuntimeId,
+  runtime: RuntimeDescriptor,
 ): boolean {
-  if (!PWA_MODEL_OPTIONS.some((o) => o.value === value)) return false;
-  if (runtimeId === "codex") return value === "";
-  return true;
+  if (value === "") return true;
+  return runtime.models.some((o) => o.value === value);
 }
 
-export function defaultNewSessionModelForRuntime(runtimeId: RuntimeId): string {
-  if (runtimeId === "codex") return "";
+export function defaultNewSessionModelForRuntime(runtime: RuntimeDescriptor): string {
   // First-mount default: cost-engineering nudge per the design doc —
   // make sonnet the implicit choice so absent-minded "+ New" clicks
   // route to Sonnet pricing.
-  return "claude-sonnet-4-6";
+  if (
+    runtime.id === "claude-code" &&
+    runtime.models.some((o) => o.value === "claude-sonnet-4-6")
+  ) {
+    return "claude-sonnet-4-6";
+  }
+  return "";
 }
 
 export function normalizeNewSessionModelForRuntime(
   value: string,
-  runtimeId: RuntimeId,
+  runtime: RuntimeDescriptor,
 ): string {
-  if (isValidNewSessionModelForRuntime(value, runtimeId)) return value;
-  return defaultNewSessionModelForRuntime(runtimeId);
+  if (isValidNewSessionModelForRuntime(value, runtime)) return value;
+  return defaultNewSessionModelForRuntime(runtime);
 }
 
 /**
@@ -48,13 +51,13 @@ export function normalizeNewSessionModelForRuntime(
  * un-namespaced key so existing stored values are preserved on first access
  * after the migration.
  */
-export function readStoredNewSessionModel(runtimeId: RuntimeId): string {
+export function readStoredNewSessionModel(runtime: RuntimeDescriptor): string {
   try {
-    const namespacedKey = newSessionModelKey(runtimeId);
+    const namespacedKey = newSessionModelKey(runtime.id);
     const namespaced = localStorage.getItem(namespacedKey);
     if (
       namespaced !== null &&
-      isValidNewSessionModelForRuntime(namespaced, runtimeId)
+      isValidNewSessionModelForRuntime(namespaced, runtime)
     ) {
       return namespaced;
     }
@@ -62,23 +65,23 @@ export function readStoredNewSessionModel(runtimeId: RuntimeId): string {
     const legacy = localStorage.getItem(NEW_SESSION_MODEL_STORAGE_KEY);
     if (
       legacy !== null &&
-      isValidNewSessionModelForRuntime(legacy, runtimeId)
+      isValidNewSessionModelForRuntime(legacy, runtime)
     ) {
       try { localStorage.setItem(namespacedKey, legacy); } catch {}
       return legacy;
     }
   } catch {}
-  return defaultNewSessionModelForRuntime(runtimeId);
+  return defaultNewSessionModelForRuntime(runtime);
 }
 
 /**
  * Write the stored model for the given runtime.
  */
-export function writeStoredNewSessionModel(value: string, runtimeId: RuntimeId): string {
-  const normalized = normalizeNewSessionModelForRuntime(value, runtimeId);
+export function writeStoredNewSessionModel(value: string, runtime: RuntimeDescriptor): string {
+  const normalized = normalizeNewSessionModelForRuntime(value, runtime);
   try {
     localStorage.setItem(
-      newSessionModelKey(runtimeId),
+      newSessionModelKey(runtime.id),
       normalized,
     );
   } catch {}
