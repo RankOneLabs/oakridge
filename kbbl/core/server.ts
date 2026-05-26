@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { loadConfig, type KbblConfig } from "./config";
 import { SessionManager } from "./session/session-manager";
-import { Session } from "./session/session";
+import type { Session } from "./session/session";
 import { isGitRepo, isPathInside, resolveRepoTopLevel } from "./session/worktree";
 import { createApp } from "./server/app";
 import { createClaudeCodeRuntime } from "../adapters/claude-code";
@@ -43,21 +43,16 @@ const { values } = parseArgs({
   },
 });
 
-if (!values.workdir) {
-  console.error(
-    "usage: bun run server.ts --workdir=<path> [--port=8788] [--host=<addr>] [--config=<path>]",
-  );
-  process.exit(1);
-}
-
-// Resolve to an absolute path before validation so /config and the initial
-// session both see the same canonical workdir regardless of how the operator
-// invoked kbbl-start (e.g. `--workdir=.` or a relative path from a script).
-const workdir = resolve(values.workdir);
-const startupWorkdirErr = await validateWorkdir(workdir);
-if (startupWorkdirErr) {
-  console.error(`kbbl: invalid --workdir=${values.workdir}: ${startupWorkdirErr}`);
-  process.exit(1);
+// If provided, resolve to an absolute path before validation so /config and
+// new-session defaults see the same canonical workdir regardless of how the
+// operator invoked kbbl-start (e.g. `--workdir=.` or a relative path from a script).
+const workdir = values.workdir ? resolve(values.workdir) : null;
+if (workdir !== null) {
+  const startupWorkdirErr = await validateWorkdir(workdir);
+  if (startupWorkdirErr) {
+    console.error(`kbbl: invalid --workdir=${values.workdir}: ${startupWorkdirErr}`);
+    process.exit(1);
+  }
 }
 const port = Number(values.port);
 if (!Number.isInteger(port) || port <= 0 || port > 65535) {
@@ -118,7 +113,7 @@ await mkdir(worktreesDir, { recursive: true });
 //
 // Only enforced when worktrees are actually enabled; flag-off operators
 // don't need to care.
-if (config.sessions.worktree_per_session && (await isGitRepo(workdir))) {
+if (workdir !== null && config.sessions.worktree_per_session && (await isGitRepo(workdir))) {
   const repoRoot = await resolveRepoTopLevel(workdir);
   if (isPathInside(worktreesDir, repoRoot)) {
     const ignoreCheck = Bun.spawn({
@@ -264,7 +259,7 @@ const app = createApp({
   dispatcher,
 });
 
-// === bind port (fail fast before spawning CC) ===
+// === bind port ===
 
 try {
   bunServer = Bun.serve({
@@ -282,21 +277,8 @@ try {
 const server = bunServer;
 
 console.error(
-  `kbbl listening on http://${server.hostname}:${server.port}, workdir=${workdir}`,
+  `kbbl listening on http://${server.hostname}:${server.port}, defaultWorkdir=${workdir ?? "(none)"}`,
 );
-
-// === auto-create initial session ===
-
-let initialSession: Session;
-try {
-  initialSession = await manager.create({ workdir });
-} catch (err) {
-  const msg = err instanceof Error ? err.message : String(err);
-  console.error(`kbbl: failed to spawn initial ${runtime.id} subprocess: ${msg}`);
-  server.stop();
-  process.exit(1);
-}
-console.error(`kbbl initial session ${initialSession.oakridgeSid}`);
 
 // === signals ===
 

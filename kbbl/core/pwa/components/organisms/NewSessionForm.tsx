@@ -7,6 +7,7 @@ import {
   readStoredNewSessionModel,
   writeStoredNewSessionModel,
 } from "../../lib/storage";
+import { DirectoryPicker } from "./DirectoryPicker";
 
 export interface NewSessionFormValues {
   workdir: string;
@@ -16,7 +17,7 @@ export interface NewSessionFormValues {
 }
 
 export interface NewSessionFormProps {
-  defaultWorkdir: string;
+  defaultWorkdir: string | null;
   defaultRuntimeId: RuntimeId;
   runtimes: RuntimeDescriptor[];
   initialWorkdir: string | null;
@@ -79,7 +80,7 @@ export function NewSessionForm({
   // also prevents re-prefilling after the operator deliberately cleared it.
   useEffect(() => {
     if (workdirTouched) return;
-    if (defaultWorkdir && workdirInput === "") {
+    if (defaultWorkdir !== null && workdirInput === "") {
       setWorkdirInput(defaultWorkdir);
     }
   }, [defaultWorkdir, workdirInput, workdirTouched]);
@@ -123,22 +124,32 @@ export function NewSessionForm({
           });
         }}
       >
-        <input
-          type="text"
-          className="new-session-workdir"
-          placeholder="/absolute/path/to/workdir"
-          value={workdirInput}
-          onChange={(e) => {
-            setWorkdirInput(e.target.value);
-            setWorkdirTouched(true);
-          }}
-          disabled={pending}
-          required
-          spellCheck={false}
-          autoCapitalize="off"
-          autoCorrect="off"
-          aria-label="Workdir for new session"
-        />
+        <div className="new-session-workdir-row">
+          <input
+            type="text"
+            className="new-session-workdir"
+            placeholder="/absolute/path/to/workdir"
+            value={workdirInput}
+            onChange={(e) => {
+              setWorkdirInput(e.target.value);
+              setWorkdirTouched(true);
+            }}
+            disabled={pending}
+            required
+            spellCheck={false}
+            autoCapitalize="off"
+            autoCorrect="off"
+            aria-label="Workdir for new session"
+          />
+          <DirectoryPicker
+            disabled={pending}
+            initialPath={workdirInput.trim() || defaultWorkdir}
+            onSelect={(path) => {
+              setWorkdirInput(path);
+              setWorkdirTouched(true);
+            }}
+          />
+        </div>
         {runtimes.length > 1 && (
           <select
             className="new-session-runtime"

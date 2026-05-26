@@ -4,14 +4,14 @@ import type { RuntimeDescriptor, RuntimeModelOption } from "../types";
 import { PWA_MODEL_OPTIONS } from "../lib/format";
 
 interface ServerConfigResponse {
-  defaultWorkdir: string;
+  defaultWorkdir: string | null;
   softThresholdTokens?: number;
   defaultRuntimeId?: string;
   runtimes?: unknown;
 }
 
 export interface ServerConfig {
-  defaultWorkdir: string;
+  defaultWorkdir: string | null;
   softThresholdTokens?: number;
   defaultRuntimeId: RuntimeId;
   runtimes: RuntimeDescriptor[];

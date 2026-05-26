@@ -27,6 +27,7 @@ import { mountReviewFreezeRoutes } from "./handlers/review-freeze";
 import { mountReviewAtomsRoutes } from "./handlers/review-atoms";
 import { mountReviewThreadsRoutes } from "./handlers/review-threads";
 import { mountSessionsRoutes } from "./handlers/sessions";
+import { mountDirectoriesRoutes } from "./handlers/directories";
 import { mountWorkspaceEventsRoutes } from "./handlers/workspace-events";
 import { mountArtifactStreamRoutes } from "./handlers/artifact-stream";
 import { artifactEventBus } from "../stream/artifact-event-bus";
@@ -41,8 +42,8 @@ export interface CreateAppDeps {
    * registry for model validation. Optional for backward compat.
    */
   registry?: RuntimeRegistry;
-  /** The server's default workdir (from --workdir CLI arg). */
-  defaultWorkdir: string;
+  /** Optional server default workdir (from --workdir CLI arg). */
+  defaultWorkdir: string | null;
   /** Path to the on-disk sessions directory. */
   sessionsDir: string;
   /** Path to the on-disk handoffs directory (`<dataDir>/handoffs`). */
@@ -186,6 +187,9 @@ export function createApp(deps: CreateAppDeps): Hono {
 
   // ---- sessions CRUD ----
   mountSessionsRoutes(app, { manager, defaultWorkdir, sessionsDir, registry });
+
+  // ---- local directory browser ----
+  mountDirectoriesRoutes(app, { defaultWorkdir });
 
   // ---- workspace-layer event ingest ----
   //

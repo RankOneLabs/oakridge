@@ -43,8 +43,8 @@ function parentSessionPayload(payload: unknown): ParentSessionPayload {
 }
 
 /**
- * Validates a workdir string for POST /sessions and the server startup
- * --workdir check. Returns null if OK or a human-readable error string for
+ * Validates a workdir string for POST /sessions and optional server startup
+ * --workdir checks. Returns null if OK or a human-readable error string for
  * the 400 response. We require absolute paths so the spawn cwd is
  * unambiguous regardless of how the operator launched the server, and
  * verify existence + directory-ness so the failure surfaces as a clear 400
@@ -230,8 +230,8 @@ async function resolveParentRuntimeId(
 
 export interface SessionsRouteDeps {
   manager: SessionManager;
-  /** The server's default workdir (from --workdir CLI arg). */
-  defaultWorkdir: string;
+  /** Optional server default workdir (from --workdir CLI arg). */
+  defaultWorkdir: string | null;
   /** Path to the on-disk sessions directory for archived JSONL lookups. */
   sessionsDir: string;
   /**
@@ -283,8 +283,8 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
 
   app.post("/sessions", async (c) => {
     // Optional body: { resume_from?: string, workdir?: string, name?: string
-    // (≤80 chars), artifact_id?, model? }. No body / missing fields = a fresh
-    // session under the server's --workdir with a server-generated name.
+    // (≤80 chars), artifact_id?, model? }. Fresh sessions require either an
+    // explicit workdir or an operator-configured server default.
     // resume_from is an oakridgeSid whose parent CC session should be
     // inherited as context via --resume <parentCcSid> --fork-session, and
     // ignores any workdir override (the parent's workdir is authoritative).
@@ -434,6 +434,9 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       // an absolute path, reintroducing the cwd-dependent behavior the API
       // is meant to forbid.
       const requestedWorkdir = bodyWorkdir ?? defaultWorkdir;
+      if (requestedWorkdir === null) {
+        return c.json({ error: "workdir is required" }, 400);
+      }
       const err = await validateWorkdir(requestedWorkdir);
       if (err) return c.json({ error: err }, 400);
       // Now canonicalize so /repo, /repo/, and /repo/..//repo all collapse

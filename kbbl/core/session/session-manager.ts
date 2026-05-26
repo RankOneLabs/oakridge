@@ -23,7 +23,9 @@ import {
   WorktreeCreateError,
   createWorktree,
   isGitRepo,
+  isPathInside,
   removeWorktree,
+  resolveRepoTopLevel,
 } from "./worktree";
 import type { RuntimeId, RuntimeRegistry } from "../runtime";
 
@@ -286,6 +288,23 @@ export class SessionManager {
     this.opts = opts;
   }
 
+  private async ensureWorktreesDirSafeForRepo(workdir: string): Promise<void> {
+    const repoRoot = await resolveRepoTopLevel(workdir);
+    if (!isPathInside(this.opts.worktreesDir, repoRoot)) return;
+
+    const ignoreCheck = Bun.spawn({
+      cmd: ["git", "-C", repoRoot, "check-ignore", "-q", this.opts.worktreesDir],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const ignoreCode = await ignoreCheck.exited;
+    if (ignoreCode === 0) return;
+
+    throw new Error(
+      `worktreesDir ${this.opts.worktreesDir} is inside the repo at ${repoRoot} but is not gitignored by it`,
+    );
+  }
+
   async create(opts: CreateSessionOpts): Promise<Session> {
     // Reject unknown runtimes before touching disk or the session map so the
     // error is clearly attributable to a misconfigured stage override (e.g.
@@ -330,6 +349,7 @@ export class SessionManager {
     let projectWorkdir: string | null = null;
     const wantsWorktree = (opts.forceWorktree ?? false) || this.opts.config.sessions.worktree_per_session;
     if (wantsWorktree && (await isGitRepo(opts.workdir))) {
+      await this.ensureWorktreesDirSafeForRepo(opts.workdir);
       // On resume, opts.workdir is the parent's workdir — which (Phase 1+)
       // is the parent's worktree path, NOT the operator's original repo.
       // Resolve both depth and the original projectWorkdir from the parent

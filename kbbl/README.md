@@ -56,26 +56,26 @@ See [`adapters/codex/README.md`](adapters/codex/README.md) for full Codex config
 ```bash
 bun install
 bun run build:pwa
-./scripts/kbbl-start /path/to/your/repo
+./scripts/kbbl-start
 ```
 
-Defaults to `127.0.0.1:8788` — open `http://localhost:8788/` in a browser on the same machine. From the session list, click **+ New session** to spawn a session in the workdir of your choice.
+Defaults to `127.0.0.1:8788` — open `http://localhost:8788/` in a browser on the same machine. From the session list, click **+ New session**, choose a directory, and start the session in the workdir of your choice.
 
 For phone/tablet access over Tailscale, bind all interfaces:
 
 ```bash
-./scripts/kbbl-start /path/to/your/repo --host=0.0.0.0
+./scripts/kbbl-start --host=0.0.0.0
 ```
 
 Then open `http://<machine>:8788/` on your phone. Add to Home Screen for a full-screen standalone app. Only do this on networks where every reachable peer is trusted (Tailscale-only, or a LAN you control) — control endpoints are unauthenticated in v0.
 
-The workdir passed to `kbbl-start` is the *default* for new sessions; each session can pick its own workdir from the **+ New session** form.
+You can still pass a workdir to `kbbl-start`; it becomes the default path shown in the **+ New session** form. If omitted, the form starts empty and the directory picker opens at the server user's home directory.
 
 ## Development
 
 ```bash
 # Terminal 1: server with the agent subprocesses
-./scripts/kbbl-start /path/to/your/repo
+./scripts/kbbl-start
 
 # Terminal 2: Vite dev server with HMR (proxies API calls to :8788)
 bun run dev:pwa
@@ -84,7 +84,7 @@ bun run dev:pwa
 
 ## Running
 
-The primary flow is `./scripts/kbbl-start <workdir>` in a terminal — that's the *server*. Adding more sessions happens in the PWA (or via `POST /sessions`); a second `kbbl-start` would just collide on the port.
+The primary flow is `./scripts/kbbl-start` in a terminal — that's the *server*. Adding sessions happens in the PWA (or via `POST /sessions`); a second `kbbl-start` would just collide on the port.
 
 Ctrl-C stops the server; all live agent subprocesses die with it. Ended sessions remain readable via their on-disk JSONL the next time the server starts.
 
@@ -95,7 +95,7 @@ If you want to bound resource use (shared box, or a box hosting other workloads)
 ```bash
 systemd-run --user --scope --unit=kbbl \
   -p MemoryMax=2G -p CPUQuota=200% \
-  ./scripts/kbbl-start /path/to/your/repo
+  ./scripts/kbbl-start
 ```
 
 Stop with `systemctl --user stop kbbl`. Not needed on a dedicated workstation.
@@ -125,6 +125,7 @@ Stop with `systemctl --user stop kbbl`. Not needed on a dedicated workstation.
 - `POST /inbox/workspace-events` — local trusted callers push project / coordination events for SSE re-broadcast
 - `GET /config` — server config snapshot for the PWA (`defaultWorkdir`, `softThresholdTokens`)
 - `PATCH /config` — mutate `softThresholdTokens` at runtime (persisted back to `config.json`)
+- `GET /directories?path=<absolute-path>` — list child directories for the new-session directory picker
 
 ### Runtime-private
 
@@ -149,6 +150,7 @@ kbbl/
 │   │   └── handlers/
 │   │       ├── per-sid.ts         # /:sid/{stream,events,input,yolo,approval,compact}
 │   │       ├── sessions.ts        # GET/POST/DELETE /sessions, /artifacts/:id/sessions
+│   │       ├── directories.ts     # GET /directories?path=<absolute-path>
 │   │       ├── handoff.ts         # GET /:sid/handoff (compaction markdown)
 │   │       └── workspace-events.ts # POST /inbox/workspace-events ingest
 │   ├── stream/
@@ -163,7 +165,7 @@ kbbl/
 │       ├── event-classifier.ts    # parses CC stdout for ccSid + result usage
 │       └── scripts/gate.sh        # PreToolUse hook script invoked by CC
 ├── scripts/
-│   └── kbbl-start                 # launcher: validates workdir, execs core/server.ts
+│   └── kbbl-start                 # launcher: validates optional workdir, execs core/server.ts
 ├── config.json                    # compact thresholds, retention
 └── data/
     ├── sessions/                  # one JSONL transcript per session (gitignored)

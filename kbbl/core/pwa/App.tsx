@@ -117,7 +117,7 @@ export function App() {
         sessions={sessions}
         inboxStatus={inboxStatus}
         theme={theme}
-        defaultWorkdir={config?.defaultWorkdir ?? ""}
+        defaultWorkdir={config?.defaultWorkdir ?? null}
         defaultRuntimeId={config?.defaultRuntimeId ?? "claude-code"}
         runtimes={config?.runtimes ?? []}
         onToggleTheme={toggleTheme}

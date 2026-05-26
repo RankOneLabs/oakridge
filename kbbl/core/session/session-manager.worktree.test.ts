@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -105,6 +105,22 @@ describe("SessionManager.create with worktree_per_session: true", () => {
     expect(snap.worktreeBaseRef).toBe(session.worktreeBaseRef);
     expect(snap.projectWorkdir).toBe(repoDir);
     await mgr.endAll();
+  });
+
+  test("rejects nested worktreesDir when the repo does not ignore it", async () => {
+    const nestedWorktreesDir = join(repoDir, ".kbbl-worktrees");
+    mkdirSync(nestedWorktreesDir, { recursive: true });
+    const mgr = new SessionManager({
+      sessionsDir,
+      handoffsDir: join(tmpRoot, "handoffs"),
+      worktreesDir: nestedWorktreesDir,
+      buildSpawnCmd: noopSpawn,
+      config: buildConfig(true),
+    });
+
+    await expect(mgr.create({ workdir: repoDir })).rejects.toThrow(
+      /worktreesDir .* is inside the repo .* but is not gitignored/,
+    );
   });
 });
 
