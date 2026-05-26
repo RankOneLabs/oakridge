@@ -66,7 +66,8 @@ export type InboxDelta =
   | { type: "status_changed"; sid: string; status: SessionStatus }
   | { type: "pending_count_changed"; sid: string; count: number }
   | { type: "last_activity_changed"; sid: string; ts: string }
-  | { type: "yolo_changed"; sid: string; yoloMode: boolean };
+  | { type: "yolo_changed"; sid: string; yoloMode: boolean }
+  | { type: "observed_model_changed"; sid: string; observedModel: string };
 
 export type Status = "connecting" | "connected" | "disconnected";
 export type Theme = "dark" | "light";

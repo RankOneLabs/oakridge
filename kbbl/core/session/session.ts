@@ -40,6 +40,7 @@ export interface SessionCallbacks {
   onPendingCountChanged?: (session: Session, count: number) => void;
   onLastActivityChanged?: (session: Session, ts: string) => void;
   onYoloChanged?: (session: Session, yoloMode: boolean) => void;
+  onRuntimeModelObserved?: (session: Session, model: string) => void;
 }
 
 export interface SessionOpts {
@@ -460,6 +461,15 @@ export class Session {
     if (model === this.observedModel) return;
     await this.emit("model_observed", { model });
     this.observedModel = model;
+    try {
+      this.callbacks.onRuntimeModelObserved?.(this, model);
+    } catch (e) {
+      console.error(
+        `kbbl: onRuntimeModelObserved callback failed: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
   }
 
   /**
@@ -756,6 +766,8 @@ export class Session {
       projectWorkdir: this.projectWorkdir,
       model: this.model,
     });
+    if (handle.runtimeSid) await this.observeRuntimeSessionId(handle.runtimeSid);
+    if (handle.resolvedModel) await this.observeRuntimeModel(handle.resolvedModel);
 
     this.setStatus("live");
 
@@ -1137,6 +1149,12 @@ export class Session {
       const runtime = this._runtime;
       const handle = this._handle;
       const task = async () => {
+        if (!isInternal && runtime.synthesizeUserInputEvents === true) {
+          await this.emit("user", {
+            type: "user",
+            message: { role: "user", content: text },
+          });
+        }
         await runtime.send(handle, text);
       };
       this.inputQueue = this.inputQueue.then(task, task);

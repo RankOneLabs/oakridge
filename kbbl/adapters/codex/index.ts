@@ -30,6 +30,7 @@ import { resolveCodexResumeRef } from "./resume";
 
 interface CodexSessionState {
   threadId: string;
+  resolvedModel: string | null;
   activeTurnId: string | null;
   /** kbbl request id → resolver fn (called when operator decides) */
   approvalResolvers: Map<string, (d: "allow" | "deny") => void>;
@@ -58,6 +59,7 @@ export function createCodexRuntimeDescriptorOnly(
     id: "codex",
     descriptor,
     nonPersistedEventTypes: CODEX_NON_PERSISTED_EVENT_TYPES,
+    synthesizeUserInputEvents: true,
 
     async spawn(): Promise<SessionHandle> {
       throw new Error("createCodexRuntimeDescriptorOnly: spawn not supported (no client)");
@@ -165,6 +167,7 @@ export async function createCodexRuntime(
     id: "codex",
     descriptor,
     nonPersistedEventTypes: CODEX_NON_PERSISTED_EVENT_TYPES,
+    synthesizeUserInputEvents: true,
 
     // --- spawn ---
     async spawn(config: RuntimeConfig): Promise<SessionHandle> {
@@ -177,6 +180,7 @@ export async function createCodexRuntime(
         config.runtimeSpecific?.parentOakridgeSid as string | undefined;
 
       let threadId: string;
+      let resolvedModel: string | null = null;
 
       // Attempt resume if a parent session oakridgeSid is provided
       if (parentOakridgeSid && sessionsDir) {
@@ -192,6 +196,7 @@ export async function createCodexRuntime(
             runtimeWorkspaceRoots: [cwd],
           });
           threadId = forkResult.thread.id;
+          resolvedModel = typeof forkResult.model === "string" ? forkResult.model : null;
         } else {
           // Resume ref unavailable — fall through to new thread
           const startResult = await client.threadStart({
@@ -204,6 +209,7 @@ export async function createCodexRuntime(
             runtimeWorkspaceRoots: [cwd],
           });
           threadId = startResult.thread.id;
+          resolvedModel = typeof startResult.model === "string" ? startResult.model : null;
         }
       } else {
         // New session
@@ -217,17 +223,19 @@ export async function createCodexRuntime(
           runtimeWorkspaceRoots: [cwd],
         });
         threadId = startResult.thread.id;
+        resolvedModel = typeof startResult.model === "string" ? startResult.model : null;
       }
 
       const state: CodexSessionState = {
         threadId,
+        resolvedModel,
         activeTurnId: null,
         approvalResolvers: new Map(),
         lastTokenUsage: null,
       };
       sessions.set(oakridgeSid, state);
 
-      return { sessionId: oakridgeSid };
+      return { sessionId: oakridgeSid, runtimeSid: threadId, resolvedModel };
     },
 
     // --- terminate ---
@@ -273,16 +281,6 @@ export async function createCodexRuntime(
         if (eventQueue.length > 0) return Promise.resolve();
         return new Promise<void>((r) => { queueResolve = r; });
       }
-
-      // Emit runtime_session_observed so threadId is written to JSONL (enables resume)
-      pushEvent({
-        type: "envelope",
-        payload: {
-          type: "runtime_session_observed",
-          runtime_id: "codex",
-          runtime_sid: threadId,
-        },
-      });
 
       // Subscribe to thread notifications
       const unsub = client.subscribeThread(threadId, (notif) => {

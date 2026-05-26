@@ -216,6 +216,7 @@ export type InboxDelta =
   | { type: "pending_count_changed"; sid: string; count: number }
   | { type: "last_activity_changed"; sid: string; ts: string }
   | { type: "yolo_changed"; sid: string; yoloMode: boolean }
+  | { type: "observed_model_changed"; sid: string; observedModel: string }
   | { type: "workspace_event"; event: WorkspaceEvent };
 
 export interface InboxSnapshot {
@@ -439,6 +440,13 @@ export class SessionManager {
             type: "yolo_changed",
             sid: s.oakridgeSid,
             yoloMode,
+          });
+        },
+        onRuntimeModelObserved: (s, observedModel) => {
+          this.broadcastDelta({
+            type: "observed_model_changed",
+            sid: s.oakridgeSid,
+            observedModel,
           });
         },
       },
