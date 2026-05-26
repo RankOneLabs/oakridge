@@ -143,7 +143,14 @@ export function NewSessionForm({
           <select
             className="new-session-runtime"
             value={runtimeId}
-            onChange={(e) => setRuntimeId(e.target.value as RuntimeId)}
+            onChange={(e) => {
+              const nextRuntimeId = e.target.value as RuntimeId;
+              const nextRuntime = runtimes.find((runtime) => runtime.id === nextRuntimeId);
+              setRuntimeId(nextRuntimeId);
+              if (nextRuntime) {
+                setModelInput(readStoredNewSessionModel(nextRuntime));
+              }
+            }}
             disabled={pending}
             aria-label="Runtime for new session"
           >

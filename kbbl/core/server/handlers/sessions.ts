@@ -82,11 +82,11 @@ export async function validateWorkdir(path: string): Promise<string | null> {
  */
 type ResumeParentResult =
   | { kind: "unknown" }
-  | { kind: "no_cc_sid" }
+  | { kind: "no_runtime_sid" }
   | { kind: "no_workdir" }
   | {
       kind: "ok";
-      parentCcSid: string;
+      parentRuntimeSid: string;
       workdir: string;
       /**
        * Set if the parent had a per-session worktree (Phase 1+); null for
@@ -107,10 +107,10 @@ async function resolveResumeParent(
   const live = manager.get(sid);
   if (live) {
     const ccSid = live.currentCcSid;
-    if (!ccSid) return { kind: "no_cc_sid" };
+    if (!ccSid) return { kind: "no_runtime_sid" };
     return {
       kind: "ok",
-      parentCcSid: ccSid,
+      parentRuntimeSid: ccSid,
       workdir: live.workdir,
       parentWorktreePath: live.worktreePath,
       parentModel: live.model,
@@ -171,7 +171,7 @@ async function resolveResumeParent(
     }
     if (parentCcSid && parentWorkdir) break;
   }
-  if (!parentCcSid) return { kind: "no_cc_sid" };
+  if (!parentCcSid) return { kind: "no_runtime_sid" };
   // Fail rather than guess if the parent transcript is missing the workdir
   // (e.g. truncated very early). Falling back to the current --workdir would
   // silently launch the resumed session in a different repo if the operator
@@ -180,7 +180,7 @@ async function resolveResumeParent(
   if (!parentWorkdir) return { kind: "no_workdir" };
   return {
     kind: "ok",
-    parentCcSid,
+    parentRuntimeSid: parentCcSid,
     workdir: parentWorkdir,
     parentWorktreePath,
     parentModel,
@@ -204,7 +204,12 @@ async function resolveParentRuntimeId(
   let contents: string;
   try {
     contents = await readJsonlOrEmpty(jsonlPath);
-  } catch {
+  } catch (err) {
+    console.error(
+      `kbbl: failed to read parent jsonl ${jsonlPath}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
     return null;
   }
   if (!contents) return null;
@@ -246,6 +251,10 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
 
   function runtimeForId(runtimeId: RuntimeId): AgentRuntime | null {
     return registry?.runtimes.get(runtimeId) ?? null;
+  }
+
+  function registeredRuntimeList(): string {
+    return registry ? [...registry.runtimes.keys()].join(", ") : "claude-code";
   }
 
   function isAllowedModelForRuntime(
@@ -314,13 +323,17 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
             return c.json({ error: "runtime must be a string" }, 400);
           }
           if (!isRuntimeId(parsed.runtime)) {
-            return c.json({ error: `unknown runtime: ${parsed.runtime}` }, 400);
-          }
-          if (registry && !registry.runtimes.has(parsed.runtime)) {
-            const registered = [...registry.runtimes.keys()].join(", ");
             return c.json(
               {
-                error: `runtime "${parsed.runtime}" is not registered — registered: ${registered}`,
+                error: `unknown runtime: ${parsed.runtime} — registered: ${registeredRuntimeList()}`,
+              },
+              400,
+            );
+          }
+          if (registry && !registry.runtimes.has(parsed.runtime)) {
+            return c.json(
+              {
+                error: `runtime "${parsed.runtime}" is not registered — registered: ${registeredRuntimeList()}`,
               },
               400,
             );
@@ -484,11 +497,11 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
             if (liveSession) {
               const runtimeSid = liveSession.snapshot().runtimeSid;
               if (!runtimeSid) {
-                parentInfo = { kind: "no_cc_sid" };
+                parentInfo = { kind: "no_runtime_sid" };
               } else {
                 parentInfo = {
                   kind: "ok",
-                  parentCcSid: runtimeSid,
+                  parentRuntimeSid: runtimeSid,
                   workdir: liveSession.workdir,
                   parentWorktreePath: liveSession.worktreePath,
                   parentModel: liveSession.model,
@@ -499,13 +512,13 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
               parentInfo = { kind: "unknown" };
             }
           } else if (ref.kind === "no_runtime_sid") {
-            parentInfo = { kind: "no_cc_sid" };
+            parentInfo = { kind: "no_runtime_sid" };
           } else if (ref.kind === "no_workdir") {
             parentInfo = { kind: "no_workdir" };
           } else if (ref.kind === "ok") {
             parentInfo = {
               kind: "ok",
-              parentCcSid: ref.runtimeSid,
+              parentRuntimeSid: ref.runtimeSid,
               workdir: ref.workdir,
               parentWorktreePath: ref.parentWorktreePath,
               parentModel: ref.model,
@@ -521,14 +534,14 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       if (parentInfo.kind === "unknown") {
         return c.json({ error: "unknown resume_from session" }, 404);
       }
-      if (parentInfo.kind === "no_cc_sid") {
-        // Parent session never reached CC's system/init — there's nothing
+      if (parentInfo.kind === "no_runtime_sid") {
+        // Parent session never exposed a runtime session id — there's nothing
         // to resume against. Distinct 400 so the PWA can show a specific
         // error rather than "spawn failed".
         return c.json(
           {
             error:
-              "resume_from parent never observed a cc session id — can't resume",
+              "resume_from parent never observed a runtime session id — can't resume",
           },
           400,
         );
@@ -603,7 +616,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
         // transcript assumes.
         workdir: parentWorkdir,
         name: bodyName ?? undefined,
-        parentCcSid: parentInfo.parentCcSid,
+        parentCcSid: parentInfo.parentRuntimeSid,
         parentOakridgeSid: resumeFrom,
         artifactId: bodyArtifactId ?? undefined,
         runtime: selectedRuntimeId,

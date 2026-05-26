@@ -120,6 +120,10 @@ describe("NewSessionForm runtime model selection", () => {
       target: { value: "codex" },
     });
 
+    expect(screen.getByLabelText("Model for new session")).toHaveProperty(
+      "value",
+      "gpt-5.1-codex",
+    );
     await waitFor(() => {
       expect(screen.getByLabelText("Model for new session")).toHaveProperty(
         "value",

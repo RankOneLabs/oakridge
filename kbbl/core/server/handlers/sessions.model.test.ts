@@ -350,7 +350,9 @@ describe("POST /sessions model validation", () => {
       });
       expect(res.status).toBe(400);
       const body = await res.json() as { error: string };
-      expect(body.error).toBe("unknown runtime: future-runtime");
+      const registered = [...registry.runtimes.keys()].join(", ");
+      expect(body.error).toContain("unknown runtime: future-runtime");
+      expect(body.error).toContain(`registered: ${registered}`);
     } finally {
       await manager.endAll();
     }

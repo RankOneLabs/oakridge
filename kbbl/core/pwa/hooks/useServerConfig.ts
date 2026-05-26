@@ -46,7 +46,7 @@ function coerceRuntimeModels(value: unknown): RuntimeModelOption[] {
   });
 }
 
-function coerceRuntimeDescriptors(value: unknown): RuntimeDescriptor[] {
+function coerceRuntimeDescriptors(value: unknown): [RuntimeDescriptor, ...RuntimeDescriptor[]] {
   if (!Array.isArray(value)) return [fallbackClaudeDescriptor()];
   const runtimes = value.flatMap((raw) => {
     if (typeof raw !== "object" || raw === null) return [];
@@ -64,7 +64,9 @@ function coerceRuntimeDescriptors(value: unknown): RuntimeDescriptor[] {
       supportsCompaction: runtime.supportsCompaction === true,
     }];
   });
-  return runtimes.length > 0 ? runtimes : [fallbackClaudeDescriptor()];
+  if (runtimes.length === 0) return [fallbackClaudeDescriptor()];
+  const [first, ...rest] = runtimes;
+  return [first, ...rest];
 }
 
 /**
@@ -96,7 +98,7 @@ export function useServerConfig(): ServerConfig | null {
         : undefined,
     defaultRuntimeId: runtimes.some((r) => r.id === defaultRuntimeId)
       ? defaultRuntimeId
-      : runtimes[0]!.id,
+      : runtimes[0].id,
     runtimes,
   };
 }
