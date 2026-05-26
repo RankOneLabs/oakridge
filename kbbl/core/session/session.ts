@@ -766,6 +766,8 @@ export class Session {
       projectWorkdir: this.projectWorkdir,
       model: this.model,
     });
+    if (handle.runtimeSid) await this.observeRuntimeSessionId(handle.runtimeSid);
+    if (handle.resolvedModel) await this.observeRuntimeModel(handle.resolvedModel);
 
     this.setStatus("live");
 
@@ -1147,7 +1149,7 @@ export class Session {
       const runtime = this._runtime;
       const handle = this._handle;
       const task = async () => {
-        if (!isInternal) {
+        if (!isInternal && runtime.synthesizeUserInputEvents === true) {
           await this.emit("user", {
             type: "user",
             message: { role: "user", content: text },

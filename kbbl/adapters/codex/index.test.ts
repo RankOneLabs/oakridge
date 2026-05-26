@@ -19,6 +19,11 @@ describe("Codex adapter descriptor", () => {
     expect(rt.descriptor.supportsCompaction).toBe(false);
   });
 
+  test("opts into synthetic user input events", () => {
+    const rt = createCodexRuntimeDescriptorOnly();
+    expect(rt.synthesizeUserInputEvents).toBe(true);
+  });
+
   test("label is set", () => {
     const rt = createCodexRuntimeDescriptorOnly();
     expect(typeof rt.descriptor.label).toBe("string");

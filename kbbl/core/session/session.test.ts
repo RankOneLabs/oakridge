@@ -182,6 +182,14 @@ describe("Session.attachRuntime", () => {
     });
     const runtime = {
       ...makeRuntime(),
+      id: "codex",
+      descriptor: {
+        id: "codex",
+        label: "Codex",
+        models: [],
+        supportsCompaction: false,
+      },
+      synthesizeUserInputEvents: true,
       async *events(_handle: SessionHandle): AsyncIterable<RuntimeEvent> {
         await done;
         yield { type: "completed", result: { code: 0 } };
@@ -191,6 +199,7 @@ describe("Session.attachRuntime", () => {
       },
     } satisfies AgentRuntime;
     const session = makeSession({
+      runtimeId: "codex",
       callbacks: {
         onEmit: (_session, evt) => {
           emitted.push({ type: evt.type, payload: evt.payload });
@@ -219,6 +228,42 @@ describe("Session.attachRuntime", () => {
           "internal handoff",
     );
     expect(internalUserEvents).toHaveLength(0);
+
+    finish();
+    await session.waitForEnd();
+  });
+
+  test("writeInput does not synthesize user events unless the runtime opts in", async () => {
+    const sent: string[] = [];
+    const emitted: Array<{ type: string; payload: unknown }> = [];
+    let finish!: () => void;
+    const done = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const runtime = {
+      ...makeRuntime(),
+      async *events(_handle: SessionHandle): AsyncIterable<RuntimeEvent> {
+        await done;
+        yield { type: "completed", result: { code: 0 } };
+      },
+      async send(_handle: SessionHandle, input: string): Promise<void> {
+        sent.push(input);
+      },
+    } satisfies AgentRuntime;
+    const session = makeSession({
+      callbacks: {
+        onEmit: (_session, evt) => {
+          emitted.push({ type: evt.type, payload: evt.payload });
+        },
+      },
+    });
+
+    const handle = await runtime.spawn({ workingDirectory: "/tmp" });
+    await session.attachRuntime(runtime, handle);
+    await session.writeInput("hello claude");
+
+    expect(sent).toEqual(["hello claude"]);
+    expect(emitted.filter((e) => e.type === "user")).toHaveLength(0);
 
     finish();
     await session.waitForEnd();

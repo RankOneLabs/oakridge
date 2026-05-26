@@ -59,6 +59,7 @@ export function createCodexRuntimeDescriptorOnly(
     id: "codex",
     descriptor,
     nonPersistedEventTypes: CODEX_NON_PERSISTED_EVENT_TYPES,
+    synthesizeUserInputEvents: true,
 
     async spawn(): Promise<SessionHandle> {
       throw new Error("createCodexRuntimeDescriptorOnly: spawn not supported (no client)");
@@ -166,6 +167,7 @@ export async function createCodexRuntime(
     id: "codex",
     descriptor,
     nonPersistedEventTypes: CODEX_NON_PERSISTED_EVENT_TYPES,
+    synthesizeUserInputEvents: true,
 
     // --- spawn ---
     async spawn(config: RuntimeConfig): Promise<SessionHandle> {
@@ -233,7 +235,7 @@ export async function createCodexRuntime(
       };
       sessions.set(oakridgeSid, state);
 
-      return { sessionId: oakridgeSid };
+      return { sessionId: oakridgeSid, runtimeSid: threadId, resolvedModel };
     },
 
     // --- terminate ---
@@ -279,16 +281,6 @@ export async function createCodexRuntime(
         if (eventQueue.length > 0) return Promise.resolve();
         return new Promise<void>((r) => { queueResolve = r; });
       }
-
-      // Emit runtime_session_observed so threadId is written to JSONL (enables resume)
-      pushEvent({
-        type: "envelope",
-        payload: {
-          type: "runtime_session_observed",
-          runtime_id: "codex",
-          runtime_sid: threadId,
-        },
-      });
 
       // Subscribe to thread notifications
       const unsub = client.subscribeThread(threadId, (notif) => {
@@ -493,10 +485,6 @@ export async function createCodexRuntime(
           p.runtime_id === "codex"
         ) {
           await session.observeRuntimeSessionId(p.runtime_sid);
-          const state = getState(session.oakridgeSid);
-          if (state?.resolvedModel !== null && state?.resolvedModel !== undefined) {
-            await session.observeRuntimeModel(state.resolvedModel);
-          }
         }
         return;
       }

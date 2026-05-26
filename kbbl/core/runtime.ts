@@ -19,6 +19,10 @@ export interface RuntimeDescriptor {
 export type SessionHandle = {
   /** opaque kbbl-side session id */
   readonly sessionId: string;
+  /** runtime-internal id, when the adapter learns it during spawn */
+  readonly runtimeSid?: string | null;
+  /** model the runtime resolved during spawn, when available */
+  readonly resolvedModel?: string | null;
 };
 
 export type ArchiveRef = string;
@@ -112,6 +116,13 @@ export interface AgentRuntime {
 
   /** Operator sends text/commands back into the session. */
   send(handle: SessionHandle, input: string): Promise<void>;
+
+  /**
+   * True when the runtime does not echo operator input back as `user`
+   * envelope events. Core will synthesize a user transcript row for those
+   * runtimes after accepting external input.
+   */
+  synthesizeUserInputEvents?: boolean;
 
   // --- approval ---
 
