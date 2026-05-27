@@ -78,6 +78,21 @@ describe("PATCH /specs/:id/internal-status", () => {
       const body = (await res.json()) as Spec;
       expect(body.internal_status).toBe("discrepancies");
     });
+
+    test("emits spec.analysis_complete with spec_id", async () => {
+      let emitted: { spec_id: string } | null = null;
+      const unsub = taskTrackerEvents.subscribe("spec.analysis_complete", (payload) => {
+        emitted = payload;
+      });
+
+      try {
+        await patch(`/specs/${SPEC_ID}/internal-status`, { internal_status: "discrepancies" });
+        expect(emitted).not.toBeNull();
+        expect(emitted!.spec_id).toBe(SPEC_ID);
+      } finally {
+        unsub();
+      }
+    });
   });
 
   describe("discrepancies → review", () => {
@@ -126,6 +141,16 @@ describe("PATCH /specs/:id/internal-status", () => {
     beforeEach(async () => {
       await patch(`/specs/${SPEC_ID}/internal-status`, { internal_status: "discrepancies" });
       await patch(`/specs/${SPEC_ID}/internal-status`, { internal_status: "review" });
+    });
+
+    test("409 when spec has no epic", async () => {
+      db.prepare("DELETE FROM epics WHERE id = ?").run(EPIC_ID);
+      const res = await patch(`/specs/${SPEC_ID}/internal-status`, {
+        internal_status: "approved",
+      });
+      expect(res.status).toBe(409);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toMatch(/epic/);
     });
 
     test("200 with approved spec and final_notes snapshot", async () => {

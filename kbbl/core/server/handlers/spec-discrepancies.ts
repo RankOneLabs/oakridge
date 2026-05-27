@@ -100,14 +100,20 @@ export function mountSpecDiscrepanciesRoutes(app: Hono, deps: SpecDiscrepanciesR
 
     let updated: SpecDiscrepancy | null = null;
 
-    const error = db.transaction((): string | null => {
-      const existing = getSpecDiscrepancy(db, id);
-      if (!existing) return "not_found";
-      if (existing.status !== "open") return "not_open";
+    let error: string | null;
+    try {
+      error = db.transaction((): string | null => {
+        const existing = getSpecDiscrepancy(db, id);
+        if (!existing) return "not_found";
+        if (existing.status !== "open") return "not_open";
 
-      updated = updateSpecDiscrepancy(db, id, { resolution, status });
-      return null;
-    })();
+        updated = updateSpecDiscrepancy(db, id, { resolution, status });
+        return null;
+      })();
+    } catch (err) {
+      console.error("spec-discrepancies:patch failed", err);
+      return c.json({ error: "internal server error" }, 500);
+    }
 
     if (error === "not_found") return c.json({ error: "not found" }, 404);
     if (error === "not_open") return c.json({ error: "discrepancy is not open" }, 409);
