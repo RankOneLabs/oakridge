@@ -128,7 +128,7 @@ export function EpicDetailView({ epic_id }: EpicDetailViewProps) {
     drilldown = <BuildDrilldown cohorts={cohorts} />;
   } else if (epic.current_stage === "review") {
     drilldown = (
-      <ReviewDrilldown epic_id={epic_id} assessment_present={assessment_present} />
+      <ReviewDrilldown plan_id={plan?.id ?? null} assessment_present={assessment_present} />
     );
   }
 
@@ -182,7 +182,7 @@ export function EpicDetailView({ epic_id }: EpicDetailViewProps) {
               type="button"
               className="epic-detail__action-btn"
               disabled={archiveMutation.isPending}
-              onClick={() => archiveMutation.mutate("active")}
+              onClick={() => archiveMutation.mutate("pending")}
             >
               Unarchive
             </button>

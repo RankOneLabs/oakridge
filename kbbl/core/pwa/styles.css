@@ -4060,7 +4060,7 @@ body {
 .discrepancy-row__assumption,
 .discrepancy-row__reality {
   max-width: 260px;
-  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .discrepancy-row__chip {
@@ -4271,6 +4271,6 @@ body {
   overflow: auto;
   max-height: 480px;
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: break-word;
   color: var(--text-secondary);
 }

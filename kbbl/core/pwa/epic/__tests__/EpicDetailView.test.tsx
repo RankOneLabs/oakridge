@@ -22,7 +22,7 @@ function makeFixture(current_stage: EpicStage) {
         ? { id: "spec-1", internal_status: "discrepancies" }
         : null,
     plan:
-      current_stage === "plan"
+      current_stage === "plan" || current_stage === "review"
         ? { id: "plan-1", title: "My Plan", status: "approved" }
         : null,
     cohorts: [
@@ -40,7 +40,7 @@ function makeFixture(current_stage: EpicStage) {
 
 function makeFetch(stage: EpicStage) {
   return vi.fn().mockImplementation((url: string) => {
-    if ((url as string).includes("/epics/epic-1/assessment")) {
+    if ((url as string).includes("/plans/plan-1/assessment")) {
       return Promise.resolve({
         ok: true,
         json: () => Promise.resolve({ summary: "looks good" }),
@@ -52,7 +52,7 @@ function makeFetch(stage: EpicStage) {
         json: () => Promise.resolve(makeFixture(stage)),
       });
     }
-    if ((url as string).includes("/discrepancies")) {
+    if ((url as string).includes("/spec-discrepancies")) {
       return Promise.resolve({
         ok: true,
         json: () => Promise.resolve([]),

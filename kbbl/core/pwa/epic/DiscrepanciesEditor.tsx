@@ -65,7 +65,7 @@ function DiscrepancyRow({ row, onResolve, onWaive, isPending }: RowProps) {
           type="button"
           className="discrepancy-row__btn"
           disabled={isPending || trimmed === ""}
-          onClick={() => onResolve(row.id, resolution)}
+          onClick={() => onResolve(row.id, trimmed)}
         >
           Resolve
         </button>
@@ -73,7 +73,7 @@ function DiscrepancyRow({ row, onResolve, onWaive, isPending }: RowProps) {
           type="button"
           className="discrepancy-row__btn"
           disabled={isPending || trimmed === ""}
-          onClick={() => onWaive(row.id, resolution)}
+          onClick={() => onWaive(row.id, trimmed)}
         >
           Waive
         </button>
@@ -88,7 +88,7 @@ export function DiscrepanciesEditor({ spec_id, epic_id }: DiscrepanciesEditorPro
   const discQuery = useQuery({
     queryKey: ["discrepancies", spec_id],
     queryFn: async (): Promise<Discrepancy[]> => {
-      const res = await fetch(`/specs/${encodeURIComponent(spec_id)}/discrepancies`);
+      const res = await fetch(`/spec-discrepancies?spec_id=${encodeURIComponent(spec_id)}`);
       if (!res.ok) throw new Error(`discrepancies: ${res.status}`);
       return (await res.json()) as Discrepancy[];
     },
@@ -123,7 +123,7 @@ export function DiscrepanciesEditor({ spec_id, epic_id }: DiscrepanciesEditorPro
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "review" }),
+          body: JSON.stringify({ internal_status: "review" }),
         },
       );
       if (!res.ok) throw new Error(`move: ${res.status}`);

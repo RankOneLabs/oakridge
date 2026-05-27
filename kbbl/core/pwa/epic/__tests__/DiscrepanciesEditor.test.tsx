@@ -25,7 +25,7 @@ function makeFetch(rows: unknown[]) {
   return vi.fn().mockImplementation((url: unknown, init?: unknown) => {
     if (
       typeof url === "string" &&
-      url.includes("/discrepancies") &&
+      url.includes("/spec-discrepancies") &&
       !(init && (init as RequestInit).method === "PATCH")
     ) {
       return Promise.resolve({
@@ -37,15 +37,21 @@ function makeFetch(rows: unknown[]) {
   });
 }
 
+interface PatchBody {
+  resolution?: string;
+  status?: string;
+  internal_status?: string;
+}
+
 function findPatchCall(
   fetchMock: ReturnType<typeof vi.fn>,
   urlPattern: string,
-): { body: { resolution?: string; status?: string } } | null {
+): { body: PatchBody } | null {
   for (const args of fetchMock.mock.calls as unknown[][]) {
     const url = args[0];
     const init = args[1] as RequestInit | undefined;
     if (typeof url === "string" && url.includes(urlPattern) && init?.method === "PATCH") {
-      return { body: JSON.parse(init.body as string) as { resolution?: string; status?: string } };
+      return { body: JSON.parse(init.body as string) as PatchBody };
     }
   }
   return null;
@@ -78,9 +84,9 @@ describe("DiscrepanciesEditor", () => {
 
     await waitFor(() => {
       const call = findPatchCall(fetchMock, "/spec-discrepancies/disc-1");
-      expect(call).toBeTruthy();
-      expect(call!.body.status).toBe("resolved");
-      expect(call!.body.resolution).toBe("fixed it");
+      if (!call) throw new Error("expected PATCH /spec-discrepancies/disc-1 not found");
+      expect(call.body.status).toBe("resolved");
+      expect(call.body.resolution).toBe("fixed it");
     });
   });
 
@@ -97,9 +103,9 @@ describe("DiscrepanciesEditor", () => {
 
     await waitFor(() => {
       const call = findPatchCall(fetchMock, "/spec-discrepancies/disc-1");
-      expect(call).toBeTruthy();
-      expect(call!.body.status).toBe("waived");
-      expect(call!.body.resolution).toBe("not applicable");
+      if (!call) throw new Error("expected PATCH /spec-discrepancies/disc-1 not found");
+      expect(call.body.status).toBe("waived");
+      expect(call.body.resolution).toBe("not applicable");
     });
   });
 
@@ -124,8 +130,8 @@ describe("DiscrepanciesEditor", () => {
 
     await waitFor(() => {
       const call = findPatchCall(fetchMock, "/specs/spec-1/internal-status");
-      expect(call).toBeTruthy();
-      expect(call!.body.status).toBe("review");
+      if (!call) throw new Error("expected PATCH /specs/spec-1/internal-status not found");
+      expect(call.body.internal_status).toBe("review");
     });
   });
 });
