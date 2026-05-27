@@ -68,6 +68,18 @@ export function SidebarSpecsSection({
                       <span className="sidebar-leaf-label">{s.title}</span>
                       <span className="sidebar-leaf-status">{s.status}</span>
                     </button>
+                    {s.epic_id && (
+                      <button
+                        type="button"
+                        className="sidebar-spec-epic-link"
+                        title={`View epic for ${s.title}`}
+                        onClick={() => {
+                          window.location.hash = `epic/${s.epic_id}`;
+                        }}
+                      >
+                        epic
+                      </button>
+                    )}
                   </div>
                 ) : (
                   <div
@@ -76,6 +88,18 @@ export function SidebarSpecsSection({
                   >
                     <span className="sidebar-leaf-label">{s.title}</span>
                     <span className="sidebar-leaf-status">{s.status}</span>
+                    {s.epic_id && (
+                      <button
+                        type="button"
+                        className="sidebar-spec-epic-link"
+                        title={`View epic for ${s.title}`}
+                        onClick={() => {
+                          window.location.hash = `epic/${s.epic_id}`;
+                        }}
+                      >
+                        epic
+                      </button>
+                    )}
                   </div>
                 )}
                 {s.plan_id && expanded && (() => {
