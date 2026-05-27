@@ -18,7 +18,12 @@ export function writeHashSid(sid: string | null): void {
   }
 }
 
-export type HashRoute = { view: "plan" | "brief" | "cohort" | "repo"; id: string };
+export type HashRoute =
+  | { view: "plan"; id: string }
+  | { view: "brief"; id: string }
+  | { view: "cohort"; id: string }
+  | { view: "repo"; id: string }
+  | { view: "epic"; id: string };
 
 export function readHashRoute(): HashRoute | null {
   const hash = window.location.hash.slice(1);
@@ -37,6 +42,10 @@ export function readHashRoute(): HashRoute | null {
   if (hash.startsWith("repo/")) {
     const id = hash.slice(5);
     if (id) return { view: "repo", id };
+  }
+  if (hash.startsWith("epic/")) {
+    const id = hash.slice(5);
+    if (id) return { view: "epic", id };
   }
   return null;
 }
