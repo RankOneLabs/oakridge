@@ -1,7 +1,7 @@
 /**
  * End-to-end integration test with a MockBackend.
  *
- * Drives the full lifecycle: POST /specs → planner1 dispatch →
+ * Drives the full lifecycle: POST /specs → planner0 dispatch →
  * plan + cohorts → plan approval → planner2 dispatch → brief → brief
  * approval → build dispatch → debrief PATCH.
  */
@@ -73,6 +73,11 @@ let promptsDir: string;
 function setupPromptFixtures() {
   promptsDir = mkdtempSync(join(tmpdir(), "kbbl-dispatch-test-"));
   // Minimal templates — all required slots, no extras.
+  writeFileSync(
+    join(promptsDir, "planner0.md"),
+    "planner0 {{SPEC_ID}} {{SPEC_TITLE}} {{SPEC_NOTES}} {{REPO_PATH}} {{KBBL_URL}}",
+    "utf8",
+  );
   writeFileSync(
     join(promptsDir, "planner1.md"),
     "planner1 {{SPEC_ID}} {{SPEC_TITLE}} {{SPEC_NOTES}} {{REPO_PATH}} {{KBBL_URL}}",
@@ -172,7 +177,7 @@ afterEach(() => {
 });
 
 describe("full dispatch pipeline with MockBackend", () => {
-  test("POST /specs → planner1 dispatch → plan → cohorts → plan approved → planner2 dispatch → brief → brief approved → build dispatch → debrief PATCH", async () => {
+  test("POST /specs → planner0 dispatch → plan → cohorts → plan approved → planner2 dispatch → brief → brief approved → build dispatch → debrief PATCH", async () => {
     // 1. Create project + spec
     const projRes = await post(app, "/projects", { name: "test", repo_path: "/tmp/test-repo" });
     expect(projRes.status).toBe(201);
@@ -182,10 +187,10 @@ describe("full dispatch pipeline with MockBackend", () => {
     expect(specRes.status).toBe(201);
     const spec = (await specRes.json()) as { id: string };
 
-    // spec.created fires → dispatch hook triggers planner1 (async)
+    // spec.created fires → dispatch hook triggers planner0 (async)
     await flushAsync();
     expect(mockBackend.calls).toHaveLength(1);
-    expect(mockBackend.calls[0]!.stageName).toBe("planner1");
+    expect(mockBackend.calls[0]!.stageName).toBe("planner0");
     expect(mockBackend.calls[0]!.inputId).toBe(spec.id);
     // current_session_ref written onto spec
     const specRow = db.prepare<{ current_session_ref: string | null }, [string]>("SELECT current_session_ref FROM specs WHERE id = ?").get(spec.id);
@@ -264,7 +269,7 @@ describe("full dispatch pipeline with MockBackend", () => {
 
     const specRes = await post(app, "/specs", { project_id: proj.id, title: "Batch Spec", notes: "batch notes" });
     const spec = (await specRes.json()) as { id: string };
-    await flushAsync(); // planner1 fires — consume that call
+    await flushAsync(); // planner0 fires — consume that call
 
     const planRes = await post(app, "/plans", { spec_id: spec.id });
     const plan = (await planRes.json()) as { id: string };
@@ -340,7 +345,7 @@ describe("full dispatch pipeline with MockBackend", () => {
 
     const specRes = await post(app, "/specs", { project_id: proj.id, title: "Fanout Spec", notes: "dep chain" });
     const spec = (await specRes.json()) as { id: string };
-    await flushAsync(); // planner1 fires — consume
+    await flushAsync(); // planner0 fires — consume
 
     const planRes = await post(app, "/plans", { spec_id: spec.id });
     const plan = (await planRes.json()) as { id: string };
@@ -461,7 +466,7 @@ describe("full dispatch pipeline with MockBackend", () => {
 
     const specRes = await post(app, "/specs", { project_id: proj.id, title: "P3 Spec", notes: "assess me" });
     const spec = (await specRes.json()) as { id: string };
-    await flushAsync(); // planner1 fires — consume
+    await flushAsync(); // planner0 fires — consume
 
     const planRes = await post(app, "/plans", { spec_id: spec.id });
     const plan = (await planRes.json()) as { id: string };

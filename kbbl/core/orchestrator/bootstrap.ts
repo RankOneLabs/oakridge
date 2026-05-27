@@ -47,7 +47,7 @@ export function bootstrap({ db, registry, reviewEvents, taskTrackerEvents }: Boo
         );
         return;
       }
-      db.prepare("UPDATE specs SET status = 'plan_review' WHERE id = ? AND status = 'planning_done'").run(plan.spec_id);
+      // specs.status was dropped in migration 016; Epic.status + internal_status cover lifecycle.
     } else if (target_type === "build_brief") {
       const brief = getBrief(db, target_id);
       if (!brief) return;

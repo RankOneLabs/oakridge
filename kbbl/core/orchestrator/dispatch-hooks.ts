@@ -13,10 +13,22 @@ export function wireDispatchHooks({ taskTrackerEvents, dispatcher }: DispatchHoo
   const unsubSpecCreated = taskTrackerEvents.subscribe("spec.created", ({ spec_id }) => {
     void (async () => {
       try {
-        await dispatcher.dispatch("planner1", spec_id);
+        await dispatcher.dispatch("planner0", spec_id);
       } catch (err) {
         console.error(
           JSON.stringify({ kbbl: "dispatch-hooks", event: "spec.created", error: String(err), spec_id }),
+        );
+      }
+    })();
+  });
+
+  const unsubSpecApproved = taskTrackerEvents.subscribe("spec.approved", ({ spec_id }) => {
+    void (async () => {
+      try {
+        await dispatcher.dispatch("planner1", spec_id);
+      } catch (err) {
+        console.error(
+          JSON.stringify({ kbbl: "dispatch-hooks", event: "spec.approved", error: String(err), spec_id }),
         );
       }
     })();
@@ -60,6 +72,7 @@ export function wireDispatchHooks({ taskTrackerEvents, dispatcher }: DispatchHoo
 
   return () => {
     unsubSpecCreated();
+    unsubSpecApproved();
     unsubPlanApproved();
     unsubCohortBuildReady();
     unsubPlanCompleted();

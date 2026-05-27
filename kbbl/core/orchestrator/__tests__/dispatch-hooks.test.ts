@@ -1,0 +1,146 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import type { Database } from "bun:sqlite";
+import { openTestDb } from "../../db/test-db";
+import { insertProject } from "../../db/projects";
+import { insertSpec } from "../../db/specs";
+import { insertEpic } from "../../db/epics";
+import { taskTrackerEvents } from "../../db/events";
+import { createDispatcher } from "../backends/dispatcher";
+import { wireDispatchHooks } from "../dispatch-hooks";
+import type { ExecutionBackend, InputRef, StageRow } from "../backends/interface";
+
+interface DispatchCall {
+  stageName: string;
+  inputType: string;
+  inputId: string;
+}
+
+interface MockBackend extends ExecutionBackend {
+  calls: DispatchCall[];
+}
+
+function createMockBackend(): MockBackend {
+  const calls: DispatchCall[] = [];
+  return {
+    id: "kbbl_chat",
+    calls,
+    async dispatch(stage: StageRow, inputRef: InputRef) {
+      calls.push({ stageName: stage.name, inputType: inputRef.type, inputId: inputRef.id });
+      return { session_ref: `mock-${calls.length}` };
+    },
+    async status(_session_ref: string) {
+      return "completed" as const;
+    },
+  };
+}
+
+function flushAsync() {
+  return new Promise<void>((resolve) => setTimeout(resolve, 0));
+}
+
+const PROJECT_ID = "proj-1";
+const SPEC_ID = "spec-1";
+const EPIC_ID = "epic-1";
+
+let db: Database;
+let mockBackend: MockBackend;
+let cleanupHooks: () => void;
+let promptsDir: string;
+const origPromptsDir = process.env.KBBL_PROMPTS_DIR;
+
+beforeEach(() => {
+  promptsDir = mkdtempSync(join(tmpdir(), "kbbl-dispatch-hooks-test-"));
+  writeFileSync(
+    join(promptsDir, "planner0.md"),
+    "planner0 {{SPEC_ID}} {{SPEC_TITLE}} {{SPEC_NOTES}} {{REPO_PATH}} {{KBBL_URL}}",
+    "utf8",
+  );
+  writeFileSync(
+    join(promptsDir, "planner1.md"),
+    "planner1 {{SPEC_ID}} {{SPEC_TITLE}} {{SPEC_NOTES}} {{REPO_PATH}} {{KBBL_URL}}",
+    "utf8",
+  );
+  process.env.KBBL_PROMPTS_DIR = promptsDir;
+
+  db = openTestDb();
+  insertProject(db, { id: PROJECT_ID, name: "P", repo_path: "/tmp/repo" });
+  insertSpec(db, { id: SPEC_ID, project_id: PROJECT_ID, title: "My Spec" });
+  insertEpic(db, {
+    id: EPIC_ID,
+    spec_id: SPEC_ID,
+    project_id: PROJECT_ID,
+    title: "My Spec",
+    status: "active",
+    current_stage: "spec",
+  });
+
+  mockBackend = createMockBackend();
+  const dispatcher = createDispatcher({
+    db,
+    backends: { kbbl_chat: mockBackend },
+    kbblUrl: "http://localhost:8788",
+  });
+  cleanupHooks = wireDispatchHooks({ taskTrackerEvents, dispatcher });
+});
+
+afterEach(() => {
+  cleanupHooks();
+  db.close();
+  if (origPromptsDir === undefined) {
+    delete process.env.KBBL_PROMPTS_DIR;
+  } else {
+    process.env.KBBL_PROMPTS_DIR = origPromptsDir;
+  }
+});
+
+describe("dispatch hooks rewire", () => {
+  test("spec.created fires planner0 (not planner1)", async () => {
+    taskTrackerEvents.emit("spec.created", { spec_id: SPEC_ID });
+    await flushAsync();
+
+    expect(mockBackend.calls).toHaveLength(1);
+    expect(mockBackend.calls[0]!.stageName).toBe("planner0");
+    expect(mockBackend.calls[0]!.inputId).toBe(SPEC_ID);
+    expect(mockBackend.calls[0]!.inputType).toBe("spec");
+  });
+
+  test("spec.created does not fire planner1", async () => {
+    taskTrackerEvents.emit("spec.created", { spec_id: SPEC_ID });
+    await flushAsync();
+
+    const planner1Calls = mockBackend.calls.filter((c) => c.stageName === "planner1");
+    expect(planner1Calls).toHaveLength(0);
+  });
+
+  test("spec.approved fires planner1", async () => {
+    taskTrackerEvents.emit("spec.approved", { spec_id: SPEC_ID, epic_id: EPIC_ID });
+    await flushAsync();
+
+    expect(mockBackend.calls).toHaveLength(1);
+    expect(mockBackend.calls[0]!.stageName).toBe("planner1");
+    expect(mockBackend.calls[0]!.inputId).toBe(SPEC_ID);
+    expect(mockBackend.calls[0]!.inputType).toBe("spec");
+  });
+
+  test("spec.approved does not fire planner0", async () => {
+    taskTrackerEvents.emit("spec.approved", { spec_id: SPEC_ID, epic_id: EPIC_ID });
+    await flushAsync();
+
+    const planner0Calls = mockBackend.calls.filter((c) => c.stageName === "planner0");
+    expect(planner0Calls).toHaveLength(0);
+  });
+
+  test("spec.created and spec.approved each fire their own stage exactly once", async () => {
+    taskTrackerEvents.emit("spec.created", { spec_id: SPEC_ID });
+    await flushAsync();
+    taskTrackerEvents.emit("spec.approved", { spec_id: SPEC_ID, epic_id: EPIC_ID });
+    await flushAsync();
+
+    expect(mockBackend.calls).toHaveLength(2);
+    expect(mockBackend.calls[0]!.stageName).toBe("planner0");
+    expect(mockBackend.calls[1]!.stageName).toBe("planner1");
+  });
+});
