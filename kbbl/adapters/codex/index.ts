@@ -91,6 +91,7 @@ function reconstructSnapshot(
   const allowedTools = new Set<string>();
   let lastResultUsage = null as ReturnType<typeof extractResultUsage>;
   let observedModel: string | null = null;
+  let initialObservedModel: string | null = null;
 
   for (const evt of events) {
     const payload =
@@ -118,7 +119,10 @@ function reconstructSnapshot(
         break;
       }
       case "model_observed":
-        if (typeof payload.model === "string") observedModel = payload.model;
+        if (typeof payload.model === "string") {
+          if (initialObservedModel === null) initialObservedModel = payload.model;
+          observedModel = payload.model;
+        }
         break;
     }
   }
@@ -128,6 +132,7 @@ function reconstructSnapshot(
     yoloMode,
     allowedTools: [...allowedTools],
     lastResultUsage,
+    initialObservedModel,
     observedModel,
   };
 }

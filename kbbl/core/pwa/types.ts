@@ -1,60 +1,20 @@
 import type { RuntimeId } from "../runtime-interface";
+import type {
+  SessionSnapshot,
+  SessionStatus,
+} from "../session/types";
+
+export type {
+  ResultUsage,
+  SessionSnapshot,
+  SessionStatus,
+} from "../session/types";
 
 export interface EnvelopeEvent {
   id: number;
   type: string;
   ts: string;
   payload: unknown;
-}
-
-export type SessionStatus = "starting" | "live" | "compacting" | "ended";
-
-export interface ResultUsage {
-  input_tokens: number;
-  output_tokens: number;
-  cache_creation_input_tokens?: number;
-  cache_read_input_tokens?: number;
-}
-
-export interface SessionSnapshot {
-  sid: string;
-  name: string;
-  workdir: string;
-  status: SessionStatus;
-  createdAt: string;
-  lastActivityTs: string;
-  /** Runtime adapter id for this session (e.g. "claude-code"). */
-  runtimeId: RuntimeId;
-  /**
-   * Runtime-internal session id (e.g. CC's session_id from system/init),
-   * null until observed.
-   */
-  runtimeSid: string | null;
-  /**
-   * @deprecated Use runtimeSid. Kept for backward compat — equals runtimeSid
-   * for CC sessions.
-   */
-  ccSid: string | null;
-  parentCcSid: string | null;
-  parentOakridgeSid: string | null;
-  pendingCount: number;
-  yoloMode: boolean;
-  allowedTools: string[];
-  lastResultUsage: ResultUsage | null;
-  worktreePath: string | null;
-  worktreeBranch: string | null;
-  worktreeBaseRef: string | null;
-  projectWorkdir: string | null;
-  model: string | null;
-  /**
-   * Model the runtime actually resolved at runtime. Seeded by system+init and
-   * updated by each distinct assistant.message.model; null until first
-   * observation. PWA renders `observedModel ?? model` so spawn-time
-   * intent remains the fallback when the runtime hasn't reported yet.
-   */
-  observedModel: string | null;
-  endReason: "user_closed" | "subprocess_exited" | "compacted" | null;
-  successorSid: string | null;
 }
 
 export type InboxDelta =
@@ -67,7 +27,12 @@ export type InboxDelta =
   | { type: "pending_count_changed"; sid: string; count: number }
   | { type: "last_activity_changed"; sid: string; ts: string }
   | { type: "yolo_changed"; sid: string; yoloMode: boolean }
-  | { type: "observed_model_changed"; sid: string; observedModel: string };
+  | {
+      type: "observed_model_changed";
+      sid: string;
+      initialObservedModel: string;
+      observedModel: string;
+    };
 
 export type Status = "connecting" | "connected" | "disconnected";
 export type Theme = "dark" | "light";

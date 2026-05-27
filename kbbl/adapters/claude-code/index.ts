@@ -337,6 +337,7 @@ export async function createClaudeCodeRuntime(
       const allowedTools = new Set<string>();
       let lastResultUsage = null as ReturnType<typeof extractResultUsage>;
       let observedModel: string | null = null;
+      let initialObservedModel: string | null = null;
 
       for (const evt of events) {
         const payload =
@@ -366,17 +367,24 @@ export async function createClaudeCodeRuntime(
             break;
           }
           case "model_observed":
-            if (typeof payload.model === "string") observedModel = payload.model;
+            if (typeof payload.model === "string") {
+              if (initialObservedModel === null) initialObservedModel = payload.model;
+              observedModel = payload.model;
+            }
             break;
           case "system": {
             if (observedModel === null && payload.subtype === "init" && typeof payload.model === "string") {
+              if (initialObservedModel === null) initialObservedModel = payload.model;
               observedModel = payload.model;
             }
             break;
           }
           case "assistant": {
             const msg = payload.message as { model?: unknown } | undefined;
-            if (msg && typeof msg.model === "string") observedModel = msg.model;
+            if (msg && typeof msg.model === "string") {
+              if (initialObservedModel === null) initialObservedModel = msg.model;
+              observedModel = msg.model;
+            }
             break;
           }
         }
@@ -387,6 +395,7 @@ export async function createClaudeCodeRuntime(
         yoloMode,
         allowedTools: [...allowedTools],
         lastResultUsage,
+        initialObservedModel,
         observedModel,
       };
     },

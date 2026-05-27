@@ -78,6 +78,7 @@ function makeRuntime(
         yoloMode: false,
         allowedTools: [],
         lastResultUsage: null,
+        initialObservedModel: null,
         observedModel: null,
       };
     },

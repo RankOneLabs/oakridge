@@ -93,10 +93,11 @@ export function SessionTopBar({
   // stream status on an archived-only view is misleading ("disconnected"
   // just means the one-shot fetch finished).
   const shownStatus = snapshot?.status === "live" ? streamStatus : inboxStatus;
-  // Prefer the runtime-resolved model CC actually executed; fall back to
-  // spawn-time intent so archived pre-cohort-1 sessions (where observedModel
-  // is null) still render the chip.
-  const displayModel = snapshot?.observedModel ?? snapshot?.model;
+  const primaryModel = snapshot?.initialObservedModel ?? snapshot?.model;
+  const primaryModelLabel = snapshot?.initialObservedModel ? "initial" : "requested";
+  const currentModel = snapshot?.observedModel;
+  const shouldShowCurrentModel =
+    Boolean(primaryModel && currentModel) && currentModel !== primaryModel;
   return (
     <header className="top-bar" ref={ref}>
       <button
@@ -167,9 +168,14 @@ export function SessionTopBar({
         <span className="session-label-name">
           {snapshot?.name || sid.slice(0, 8)}
         </span>
-        {displayModel && (
-          <span className="session-label-model" title={displayModel}>
-            {prettyModelLabel(displayModel)}
+        {primaryModel && (
+          <span className="session-label-model" title={`${primaryModelLabel}: ${primaryModel}`}>
+            {primaryModelLabel} {prettyModelLabel(primaryModel)}
+          </span>
+        )}
+        {shouldShowCurrentModel && currentModel && (
+          <span className="session-label-model" title={`current: ${currentModel}`}>
+            current {prettyModelLabel(currentModel)}
           </span>
         )}
         {snapshot && (() => {

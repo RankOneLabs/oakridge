@@ -218,7 +218,12 @@ export type InboxDelta =
   | { type: "pending_count_changed"; sid: string; count: number }
   | { type: "last_activity_changed"; sid: string; ts: string }
   | { type: "yolo_changed"; sid: string; yoloMode: boolean }
-  | { type: "observed_model_changed"; sid: string; observedModel: string }
+  | {
+      type: "observed_model_changed";
+      sid: string;
+      initialObservedModel: string;
+      observedModel: string;
+    }
   | { type: "workspace_event"; event: WorkspaceEvent };
 
 export interface InboxSnapshot {
@@ -466,6 +471,7 @@ export class SessionManager {
           this.broadcastDelta({
             type: "observed_model_changed",
             sid: s.oakridgeSid,
+            initialObservedModel: s.initialObservedModel ?? observedModel,
             observedModel,
           });
         },
@@ -1435,13 +1441,15 @@ async function loadArchivedSnapshot(
   let worktreeBaseRef: string | null = null;
   let projectWorkdir: string | null = null;
   let model: string | null = null;
-  // Authoritative source: `model_observed` envelope events (last-wins).
+  // Authoritative source: `model_observed` envelope events (first-wins for
+  // initialObservedModel, last-wins for observedModel).
   // Back-compat fallback: scan system+init payload.model (first-wins) and
   // assistant payload.message.model (last-wins) so sessions written before
   // `model_observed` existed still reconstruct from data sitting in the
   // same JSONL. No isAllowedModel gate — observedModel is runtime truth
   // and may legitimately be a date-suffixed snapshot id or future version.
   let observedModel: string | null = null;
+  let initialObservedModel: string | null = null;
   let endReason: SessionEndReason | null = null;
   let successorSid: string | null = null;
   const events: EnvelopeEvent[] = [];
@@ -1515,6 +1523,7 @@ async function loadArchivedSnapshot(
       case "model_observed": {
         const p = payload as ModelObservedPayload;
         if (typeof p.model === "string") {
+          if (initialObservedModel === null) initialObservedModel = p.model;
           observedModel = p.model;
         }
         break;
@@ -1526,7 +1535,10 @@ async function loadArchivedSnapshot(
         // before any assistant message arrives).
         const p = payload as SystemInitPayload;
         if (observedModel === null && p.subtype === "init") {
-          if (typeof p.model === "string") observedModel = p.model;
+          if (typeof p.model === "string") {
+            if (initialObservedModel === null) initialObservedModel = p.model;
+            observedModel = p.model;
+          }
         }
         break;
       }
@@ -1536,7 +1548,10 @@ async function loadArchivedSnapshot(
         const p = payload as AssistantPayload;
         if (p.message && typeof p.message === "object") {
           const m = (p.message as { model?: unknown }).model;
-          if (typeof m === "string") observedModel = m;
+          if (typeof m === "string") {
+            if (initialObservedModel === null) initialObservedModel = m;
+            observedModel = m;
+          }
         }
         break;
       }
@@ -1591,6 +1606,9 @@ async function loadArchivedSnapshot(
       allowedTools.clear();
       for (const t of contrib.allowedTools) allowedTools.add(t);
       if (contrib.lastResultUsage) lastResultUsage = contrib.lastResultUsage;
+      if (contrib.initialObservedModel !== null) {
+        initialObservedModel = contrib.initialObservedModel;
+      }
       if (contrib.observedModel !== null) observedModel = contrib.observedModel;
     }
   }
@@ -1622,6 +1640,7 @@ async function loadArchivedSnapshot(
     worktreeBaseRef,
     projectWorkdir,
     model,
+    initialObservedModel,
     observedModel,
     endReason,
     successorSid,

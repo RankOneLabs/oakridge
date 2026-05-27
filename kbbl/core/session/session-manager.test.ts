@@ -76,6 +76,7 @@ function makeNoopRuntime(id: RuntimeId = "claude-code"): AgentRuntime {
         yoloMode: false,
         allowedTools: [],
         lastResultUsage: null,
+        initialObservedModel: null,
         observedModel: null,
       };
     },
