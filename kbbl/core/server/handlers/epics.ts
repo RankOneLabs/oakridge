@@ -173,7 +173,6 @@ export function mountEpicsRoutes(app: Hono, deps: EpicsRouteDeps): void {
         // Ordered cascade: deepest FK dependencies first
         if (cohortIds.length > 0) {
           const ph = cohortIds.map(() => "?").join(",");
-          db.prepare(`DELETE FROM assessments WHERE plan_id IN (SELECT plan_id FROM briefs WHERE cohort_id IN (${ph}))`).run(...cohortIds);
           db.prepare(`DELETE FROM briefs WHERE cohort_id IN (${ph})`).run(...cohortIds);
           db.prepare(`DELETE FROM cohort_dependencies WHERE from_cohort_id IN (${ph}) OR to_cohort_id IN (${ph})`).run(...cohortIds, ...cohortIds);
           db.prepare(`DELETE FROM cohorts WHERE id IN (${ph})`).run(...cohortIds);
