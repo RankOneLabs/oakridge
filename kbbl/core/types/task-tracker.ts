@@ -14,7 +14,6 @@ export const SpecSchema = z.object({
   project_id: z.string(),
   title: z.string(),
   notes: z.string().nullable(),
-  status: z.enum(["draft", "plan_review", "planning_done", "done", "archived"]),
   current_session_ref: z.string().nullable(),
   current_session_stage: SessionStageSchema.nullable(),
   submitted_notes: z.string().nullable(),
