@@ -22,11 +22,7 @@ import { mountSpecsRoutes } from "../specs";
 import { mountPlanStatusRoutes } from "../plan-status";
 import { mountAssessmentsRoutes } from "../assessments";
 import { mountEpicsRoutes } from "../epics";
-import type { Epic } from "../../../types/task-tracker";
-
 const PROJECT_ID = "proj-1";
-
-const stubManager = { get: (_sid: string) => undefined } as unknown as import("../../../session/session-manager").SessionManager;
 
 let db: Database;
 let app: Hono;
@@ -134,7 +130,7 @@ describe("Epic lifecycle: full stage walk", () => {
 
   test("pending → active on first stage event (implicit bump)", async () => {
     const specRes = await post("/specs", { project_id: PROJECT_ID, title: "T" });
-    const { id: spec_id, epic_id } = (await specRes.json()) as { id: string; epic_id: string };
+    const { epic_id } = (await specRes.json()) as { id: string; epic_id: string };
 
     let epic = getEpic(db, epic_id)!;
     expect(epic.status).toBe("pending");
