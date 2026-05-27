@@ -2,6 +2,13 @@ import { mkdir, readdir, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { KbblConfig } from "../config";
+
+export class NonGitWorkdirError extends Error {
+  constructor(workdir: string) {
+    super(`kbbl: workdir ${workdir} is not a git repo — sessions require a worktree-capable workdir`);
+    this.name = "NonGitWorkdirError";
+  }
+}
 import {
   MAX_ARTIFACT_ID_LENGTH,
   Session,
@@ -336,9 +343,7 @@ export class SessionManager {
     // guarantee branch isolation, and the previous silent fallback let
     // sessions write directly into the operator's toplevel.
     if (!(await isGitRepo(opts.workdir))) {
-      throw new Error(
-        `kbbl: workdir ${opts.workdir} is not a git repo — sessions require a worktree-capable workdir`,
-      );
+      throw new NonGitWorkdirError(opts.workdir);
     }
     await this.ensureWorktreesDirSafeForRepo(opts.workdir);
     // On resume, opts.workdir is the parent's worktree path, NOT the

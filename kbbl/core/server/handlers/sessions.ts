@@ -9,6 +9,7 @@ import {
   type EnvelopeEvent,
 } from "../../session/session";
 import {
+  NonGitWorkdirError,
   RemoveFailedError,
   SessionManager,
   type CreateSessionOpts,
@@ -631,6 +632,9 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       const session = await manager.create(spawnOpts);
       return c.json(session.snapshot());
     } catch (err) {
+      if (err instanceof NonGitWorkdirError) {
+        return c.json({ error: err.message }, 400);
+      }
       const msg = err instanceof Error ? err.message : String(err);
       return c.json({ error: `spawn failed: ${msg}` }, 500);
     }
