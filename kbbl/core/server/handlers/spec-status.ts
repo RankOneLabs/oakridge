@@ -3,6 +3,7 @@ import type { Hono } from "hono";
 import type { Database } from "bun:sqlite";
 import { getSpec } from "../../db/specs";
 import { getEpicBySpec } from "../../db/epics";
+import { isFrozen } from "../../db/epic-freeze";
 import { countOpenDiscrepancies } from "../../db/spec-discrepancies";
 import { taskTrackerEvents } from "../../db/events";
 import type { Spec } from "../../types/task-tracker";
@@ -41,6 +42,11 @@ export function mountSpecStatusRoutes(app: Hono, deps: SpecStatusRouteDeps): voi
 
     const { internal_status: requestedStatus } = result.data;
     const spec_id = c.req.param("id");
+
+    const epic = getEpicBySpec(db, spec_id);
+    if (epic && isFrozen(db, epic.id)) {
+      return c.json({ error: "epic is archived" }, 409);
+    }
 
     let updated: Spec | null = null;
     let emitAnalysisComplete: { spec_id: string } | null = null;

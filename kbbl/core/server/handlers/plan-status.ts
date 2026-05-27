@@ -5,8 +5,8 @@ import { getPlan } from "../../db/plans";
 import { freeze } from "../../review/freeze";
 import { taskTrackerEvents } from "../../db/events";
 import { PLAN_TRANSITIONS } from "../../orchestrator/state-machine";
-import { getEpicBySpec } from "../../db/epics";
-import { advanceEpicByEvent } from "../../db/epics";
+import { getEpicBySpec, advanceEpicByEvent } from "../../db/epics";
+import { isFrozen } from "../../db/epic-freeze";
 import type { Plan } from "../../types/task-tracker";
 
 const PatchPlanStatusSchema = z.object({
@@ -40,6 +40,16 @@ export function mountPlanStatusRoutes(app: Hono, deps: PlanStatusRouteDeps): voi
       return c.json({ error: "reason is required when rejecting a plan" }, 400);
     }
     const plan_id = c.req.param("id");
+
+    const planForFreeze = db
+      .prepare<{ spec_id: string }, [string]>("SELECT spec_id FROM plans WHERE id = ?")
+      .get(plan_id);
+    if (planForFreeze) {
+      const epic = getEpicBySpec(db, planForFreeze.spec_id);
+      if (epic && isFrozen(db, epic.id)) {
+        return c.json({ error: "epic is archived" }, 409);
+      }
+    }
 
     let updated: Plan | null = null;
     let emitApproved: { plan_id: string; spec_id: string } | null = null;

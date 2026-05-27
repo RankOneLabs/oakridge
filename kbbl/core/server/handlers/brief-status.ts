@@ -5,6 +5,8 @@ import { getBrief, insertBrief } from "../../db/briefs";
 import { freeze, unfreeze } from "../../review/freeze";
 import { taskTrackerEvents } from "../../db/events";
 import { BRIEF_TRANSITIONS } from "../../orchestrator/state-machine";
+import { getEpicBySpec } from "../../db/epics";
+import { isFrozen } from "../../db/epic-freeze";
 import type { Brief } from "../../types/task-tracker";
 
 const PatchBriefStatusSchema = z.object({
@@ -42,6 +44,21 @@ export function mountBriefStatusRoutes(app: Hono, deps: BriefStatusRouteDeps): v
       return c.json({ error: "reason is required when rejecting a brief" }, 400);
     }
     const brief_id = c.req.param("id");
+
+    const briefForFreeze = getBrief(db, brief_id);
+    if (briefForFreeze) {
+      const epicRow = db
+        .prepare<{ spec_id: string }, [string]>(
+          "SELECT p.spec_id FROM cohorts c JOIN plans p ON p.id = c.plan_id WHERE c.id = ?",
+        )
+        .get(briefForFreeze.cohort_id);
+      if (epicRow) {
+        const epic = getEpicBySpec(db, epicRow.spec_id);
+        if (epic && isFrozen(db, epic.id)) {
+          return c.json({ error: "epic is archived" }, 409);
+        }
+      }
+    }
 
     let updated: Brief | null = null;
     let emitApproved: { brief_id: string; cohort_id: string } | null = null;

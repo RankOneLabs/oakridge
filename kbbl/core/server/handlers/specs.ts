@@ -4,7 +4,8 @@ import type { Database } from "bun:sqlite";
 import { resolve, relative, isAbsolute, sep } from "node:path";
 import { realpath } from "node:fs/promises";
 import { insertSpec, getSpec, listSpecsByProject, updateSpecFields } from "../../db/specs";
-import { insertEpic } from "../../db/epics";
+import { insertEpic, getEpicBySpec } from "../../db/epics";
+import { isFrozen } from "../../db/epic-freeze";
 import { getProject } from "../../db/projects";
 import { taskTrackerEvents } from "../../db/events";
 
@@ -154,6 +155,12 @@ export function mountSpecsRoutes(app: Hono, deps: SpecsRouteDeps): void {
     }
 
     const id = c.req.param("id");
+
+    const epic = getEpicBySpec(db, id);
+    if (epic && isFrozen(db, epic.id)) {
+      return c.json({ error: "epic is archived" }, 409);
+    }
+
     const updated = updateSpecFields(db, id, result.data);
     if (!updated) {
       return c.json({ error: "not found" }, 404);

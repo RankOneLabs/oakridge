@@ -2,8 +2,8 @@ import { z } from "zod";
 import type { Hono } from "hono";
 import type { Database } from "bun:sqlite";
 import { insertAssessment, getAssessment, getAssessmentByPlan } from "../../db/assessments";
-import { getEpicBySpec } from "../../db/epics";
-import { advanceEpicByEvent } from "../../db/epics";
+import { getEpicBySpec, advanceEpicByEvent } from "../../db/epics";
+import { isFrozen } from "../../db/epic-freeze";
 import { DeviationsCatalogEntrySchema } from "../../types/task-tracker";
 
 const CreateAssessmentSchema = z.object({
@@ -37,6 +37,17 @@ export function mountAssessmentsRoutes(app: Hono, deps: AssessmentsRouteDeps): v
     }
 
     const { plan_id, summary, deviations_catalog, gap_analysis, fix_plan, model } = result.data;
+
+    const planForAssessment = db
+      .prepare<{ spec_id: string }, [string]>("SELECT spec_id FROM plans WHERE id = ?")
+      .get(plan_id);
+    if (planForAssessment) {
+      const epic = getEpicBySpec(db, planForAssessment.spec_id);
+      if (epic && isFrozen(db, epic.id)) {
+        return c.json({ error: "epic is archived" }, 409);
+      }
+    }
+
     const id = crypto.randomUUID();
 
     try {
