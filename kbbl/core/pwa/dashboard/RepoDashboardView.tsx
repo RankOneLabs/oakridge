@@ -164,7 +164,15 @@ export function RepoDashboardView({ project_id, onBack }: RepoDashboardViewProps
                   </td>
                   <td>{formatRelative(epic.created_at)}</td>
                   <td>
-                    <a href={`#epic/${epic.id}`}>View</a>
+                    <a
+                      href={`#epic/${epic.id}`}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        window.location.hash = `epic/${epic.id}`;
+                      }}
+                    >
+                      View
+                    </a>
                   </td>
                 </tr>
               ))}
