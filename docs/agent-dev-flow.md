@@ -2,9 +2,11 @@
 
 The end-to-end loop lives entirely inside kbbl. A `kbbl-start` server hosts
 the task tracker, the review primitive, the orchestrator state machine, and the
-PWA review surfaces. Dispatched stages (planner-1, planner-2, build) run as
-kbbl agent sessions spawned via the existing `SessionManager` + Claude Code
-adapter; their prompts are templated from `kbbl/prompts/{planner1,planner2,build}.md`.
+PWA review surfaces. Work is organized as **Epics** — each Epic carries one spec
+through four stages (Spec → Plan → Build → Review). Dispatched stages
+(planner-0, planner-1, planner-2, build) run as kbbl agent sessions spawned via
+the existing `SessionManager` + Claude Code adapter; their prompts are templated
+from `kbbl/prompts/{planner0,planner1,planner2,build}.md`.
 
 ## Prerequisites
 
@@ -19,25 +21,82 @@ adapter; their prompts are templated from `kbbl/prompts/{planner1,planner2,build
 
 ## The flow
 
+```mermaid
+flowchart LR
+  Spec -->|spec.approved| Plan
+  Plan -->|plan.approved| Build
+  Build -->|plan.completed| Review
+  Review -->|assessment posted| Done([Done])
 ```
-POST /projects        (one-time per repo)
-POST /specs           → spec.created → planner1 session spawns
-                      → planner-1 POSTs /plans, /cohorts, /cohort-dependencies
-review plan in PWA at #plan/<id>
-PATCH /plans/:id/status {status:"approved"}
-                      → plan freezes; leaf cohorts → planned
-                      → cohort.entered_planned → planner2 session per leaf
-                      → planner-2 POSTs /briefs
-review brief in PWA at #brief/<id>
-PATCH /briefs/:id/status {status:"approved"}
-                      → brief freezes; cohort → building
-click "Run build" in PWA  (POST /briefs/:id/build)
-                      → build session spawns
-                      → build agent opens PR + PATCHes /briefs/:id/debrief
-merge PR on GitHub
-PATCH /cohorts/:id/status {status:"done"}
-                      → dependent cohorts → planned, next planner-2 fires
+
+## Spec stage
+
+Creating a spec (via the PWA or `POST /specs`) simultaneously creates an Epic.
+The Epic starts in stage `spec`; `spec.created` fires and dispatches planner-0.
+The spec's `internal_status` advances through four sub-states:
+
+### 1. Analyzing
+
+**`internal_status: analyzing`** — set automatically on creation.
+
+Planner-0 reads the codebase, compares it against the spec notes, and POSTs each
+mismatch as a discrepancy:
+
+```bash
+curl -sX POST "$KBBL/spec-discrepancies" -H 'content-type: application/json' \
+  -d '{"spec_id":"<spec_id>","spec_assumption":"<what spec says>","code_reality":"<what code shows>"}'
 ```
+
+When analysis is complete (zero or more discrepancies posted), planner-0 advances
+the spec and stops:
+
+```bash
+curl -sX PATCH "$KBBL/specs/<spec_id>/internal-status" -H 'content-type: application/json' \
+  -d '{"internal_status":"discrepancies"}'
+```
+
+This emits `spec.analysis_complete`.
+
+### 2. Discrepancies
+
+**`internal_status: discrepancies`** — operator-resolution phase.
+
+Each open discrepancy must be resolved or waived before the spec can advance.
+The DiscrepanciesEditor panel in the Epic detail view (`#epic/<id>`) lists all
+entries. To resolve or waive via the API:
+
+```bash
+curl -sX PATCH "$KBBL/spec-discrepancies/<discrepancy_id>" -H 'content-type: application/json' \
+  -d '{"resolution":"<text>","status":"resolved"}'  # or "waived"
+```
+
+### 3. Review
+
+**`internal_status: review`** — all discrepancies closed, awaiting operator sign-off.
+
+Gated on `countOpen == 0`. The **Move to review** button in the DiscrepanciesEditor
+becomes active when no open discrepancies remain:
+
+```bash
+curl -sX PATCH "$KBBL/specs/<spec_id>/internal-status" -H 'content-type: application/json' \
+  -d '{"internal_status":"review"}'
+# → 409 if any open discrepancies remain
+```
+
+### 4. Approved
+
+**`internal_status: approved`** — spec frozen; planner-1 dispatches.
+
+Operator approves in the DiscrepanciesEditor or via API:
+
+```bash
+curl -sX PATCH "$KBBL/specs/<spec_id>/internal-status" -H 'content-type: application/json' \
+  -d '{"internal_status":"approved"}'
+```
+
+On approval kbbl atomically copies `notes → final_notes` (the frozen spec text
+planner-1 will read), emits `spec.approved`, advances the Epic stage from `spec`
+to `plan`, and dispatches planner-1.
 
 ## 1. Bootstrap a project + spec
 
@@ -48,7 +107,7 @@ Open the PWA inbox and use the **Projects** sidebar on the left:
   fires yet.
 - Expand the project, then click **+** next to **Plans / Epics** — opens
   a modal for the spec title and notes (the spec prose). Submitting this
-  is what fires `spec.created` and spawns planner-1.
+  creates the Epic and fires `spec.created`.
 
 For scripting or remote setup the same endpoints work directly:
 
@@ -61,7 +120,7 @@ curl -sX POST "$KBBL/projects" -H 'content-type: application/json' \
 
 curl -sX POST "$KBBL/specs" -H 'content-type: application/json' \
   -d '{"project_id":"<project_id>","title":"…","notes":"<full spec prose>"}'
-# → { "id":"<spec_id>", "status":"draft", ... }
+# → { "id":"<spec_id>", "epic_id":"<epic_id>", ... }
 
 # Or load the prose from a file (mutually exclusive with `notes`). The path
 # is resolved on the *server* (where kbbl runs) and must sit inside the
@@ -70,10 +129,10 @@ curl -sX POST "$KBBL/specs" -H 'content-type: application/json' \
   -d '{"project_id":"<project_id>","title":"…","notesPath":"<repo_path>/spec.md"}'
 ```
 
-Either path emits `spec.created`; the dispatch hook spawns a planner-1
-kbbl session against the project's `repo_path`. Watch the session in the
-kbbl PWA inbox. Planner-1 reads the spec, drafts cohorts + dependencies
-via the HTTP API, and exits.
+Either path creates the Epic, emits `spec.created`, and dispatches planner-0
+(Spec Analysis Agent) against the project's `repo_path`. Watch the session in
+the kbbl PWA inbox. After the Spec stage completes and the operator approves
+(see **Spec stage** above), planner-1 dispatches and the Plan stage begins.
 
 ## 2. Review the plan
 
@@ -160,5 +219,77 @@ it. The active agent session (if any) is unaffected — stop it manually via
 | Cohort | `PATCH /cohorts/:id/status` |
 | Review | `POST /atoms/edits`, `POST /threads`, `POST /threads/:id/messages`, `POST /threads/:id/ping`, `PATCH /threads/:id`, `GET /review/frozen` |
 | Inbox | `GET /plans?status=pending_approval`, `GET /briefs?status=pending_approval` |
+| Epic | `GET /epics?project_id=`, `GET /epics/:id` |
+| Epic status | `PATCH /epics/:id/status {status:"archived"\|"pending"}` → emits `epic.archived` / `epic.unarchived` |
+| Epic delete | `DELETE /epics/:id` → SQL cascade (see **Epic lifecycle**) |
+| Spec discrepancies | `POST /spec-discrepancies`, `GET /spec-discrepancies?spec_id=`, `PATCH /spec-discrepancies/:id`, `DELETE /spec-discrepancies/:id` |
+| Spec stage | `PATCH /specs/:id/internal-status` → `discrepancies` emits `spec.analysis_complete`; `approved` emits `spec.approved`, freezes `final_notes` |
 
 For full request/response shapes see `kbbl/core/server/handlers/`.
+
+## Epic lifecycle
+
+### Archive
+
+`PATCH /epics/:id/status {status: "archived"}` archives the Epic and emits
+`epic.archived`. To reverse: `PATCH /epics/:id/status {status: "pending"}`
+emits `epic.unarchived`.
+
+**Does**: Freezes mutations on all owned artifacts. While archived, `PATCH` and
+`POST` calls on the Epic's spec, plan, briefs, and discrepancies return
+`409 epic is archived`. Read-only access is unaffected.
+
+**Does NOT**: Auto-kill running sessions. Stop them manually with
+`DELETE /sessions/:sid`.
+
+### Delete
+
+`DELETE /epics/:id` cascades through all owned SQL rows inside one transaction,
+in this order:
+
+1. `briefs`
+2. `cohort_dependencies`
+3. `cohorts`
+4. `assessments`
+5. `plans`
+6. `spec_discrepancies`
+7. `epics`
+8. `specs`
+
+Returns `204 No Content` on success.
+
+**Does NOT** delete JSONL session transcripts in `data/sessions/` — those are
+the audit trail, keyed by session ref outside this entity tree.
+
+## Operator UI
+
+### Repo dashboard
+
+Navigate to `#repo/<project_id>`. Opened from the sidebar's **Open dashboard**
+button on any project row.
+
+Displays a filterable table of Epics for the project. Status filter buttons:
+All / pending / active / complete / archived. Columns: Title, Stage, Status,
+Created, Actions. Each row's **View** link navigates to `#epic/<id>`.
+
+### Epic detail
+
+Navigate to `#epic/<id>`. Opened from the Repo dashboard **View** link or the
+sidebar epic links on each spec row.
+
+- **Header**: Epic title with status and stage chips; **Archive** /
+  **Unarchive** / **Delete** action buttons.
+- **StageStrip**: Four tiles (Spec, Plan, Build, Review) with done / current /
+  upcoming treatment. Each tile shows the sub-status for that stage (e.g.,
+  `analyzing` for Spec, `pending_approval` for Plan, `N of M done` for Build).
+- **Drill-down panel** (changes with `current_stage`):
+  - **Spec** — DiscrepanciesEditor: list discrepancies, resolve or waive each,
+    gate **Move to review** on `countOpen == 0`, then **Approve** to dispatch
+    planner-1.
+  - **Plan** — PlanDrilldown: plan status and link to `#plan/<id>`.
+  - **Build** — BuildDrilldown: cohort table with per-cohort statuses and
+    links to `#cohort/<id>`.
+  - **Review** — ReviewDrilldown: assessment presence indicator.
+
+Archive and Delete act immediately; Delete navigates back to the Repo dashboard
+on success. See **Epic lifecycle** for the semantics of each operation.
