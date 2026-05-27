@@ -16,6 +16,8 @@ export interface TaskTrackerEventMap {
   "brief.submitted": { brief_id: string; cohort_id: string };
   "brief.approved": { brief_id: string; cohort_id: string };
   "brief.rejected": { brief_id: string; cohort_id: string };
+  "epic.archived": { epic_id: string };
+  "epic.unarchived": { epic_id: string };
 }
 
 export const taskTrackerEvents = new EventBus<TaskTrackerEventMap>();

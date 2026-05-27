@@ -23,6 +23,7 @@ import { mountCohortMergeRoutes } from "./handlers/cohort-merge";
 import * as ghGateway from "../github/gh-gateway";
 import { mountBriefsRoutes } from "./handlers/briefs";
 import { mountAssessmentsRoutes } from "./handlers/assessments";
+import { mountEpicsRoutes } from "./handlers/epics";
 import { mountSpecDiscrepanciesRoutes } from "./handlers/spec-discrepancies";
 import { mountSpecStatusRoutes } from "./handlers/spec-status";
 import { mountReviewFreezeRoutes } from "./handlers/review-freeze";
@@ -217,6 +218,7 @@ export function createApp(deps: CreateAppDeps): Hono {
   mountBriefStatusRoutes(app, { db });
   mountBuildsRoutes(app, { db, dispatcher, manager });
   mountAssessmentsRoutes(app, { db });
+  mountEpicsRoutes(app, { db });
 
   // ---- review primitive (cohort 2) ----
   mountReviewFreezeRoutes(app, { db });
