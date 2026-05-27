@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import type { Epic, EpicStatus, EpicStage } from "../types/task-tracker";
+import { applyEpicTransition, type EpicEvent } from "../orchestrator/epic-state-machine";
 
 export type { Epic };
 
@@ -56,6 +57,52 @@ export function listEpicsByProject(
       "SELECT * FROM epics WHERE project_id = ? ORDER BY created_at, id",
     )
     .all(project_id);
+}
+
+const STAGE_EVENTS = new Set<string>([
+  "epic_spec_approved",
+  "epic_plan_approved",
+  "epic_build_done",
+  "epic_review_done",
+]);
+
+/**
+ * Reads the current Epic row, applies the transition, and writes it back.
+ * Implicit rules applied on top of applyEpicTransition:
+ *  - pending → active when any stage event fires (first gate crossing)
+ *  - epic_review_done also completes the lifecycle (active → complete)
+ * Returns null when no Epic with that id exists.
+ */
+export function advanceEpicByEvent(
+  db: Database,
+  epic_id: string,
+  event: EpicEvent,
+): Epic | null {
+  return db.transaction((): Epic | null => {
+    const epic = getEpic(db, epic_id);
+    if (!epic) return null;
+
+    const next = applyEpicTransition(
+      { status: epic.status, current_stage: epic.current_stage },
+      event,
+    );
+
+    let finalStatus = next.status;
+    // pending → active on first stage event
+    if (epic.status === "pending" && STAGE_EVENTS.has(event)) {
+      finalStatus = "active";
+    }
+    // epic_review_done also completes the lifecycle
+    if (event === "epic_review_done" && finalStatus === "active") {
+      finalStatus = "complete";
+    }
+
+    const fields: { status?: EpicStatus; current_stage?: EpicStage } = {};
+    if (finalStatus !== epic.status) fields.status = finalStatus;
+    if (next.current_stage !== epic.current_stage) fields.current_stage = next.current_stage;
+
+    return updateEpicFields(db, epic_id, fields);
+  })();
 }
 
 export function updateEpicFields(

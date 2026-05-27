@@ -2,6 +2,8 @@ import { z } from "zod";
 import type { Hono } from "hono";
 import type { Database } from "bun:sqlite";
 import { insertPlan, getPlan, listPlansBySpec, listPlansByStatus, updatePlanFields } from "../../db/plans";
+import { getEpicBySpec } from "../../db/epics";
+import { isFrozen } from "../../db/epic-freeze";
 import type { Plan } from "../../types/task-tracker";
 
 const CreatePlanSchema = z.object({
@@ -54,6 +56,12 @@ export function mountPlansRoutes(app: Hono, deps: PlansRouteDeps): void {
     }
 
     const { spec_id, model } = result.data;
+
+    const epicForCreate = getEpicBySpec(db, spec_id);
+    if (epicForCreate && isFrozen(db, epicForCreate.id)) {
+      return c.json({ error: "epic is archived" }, 409);
+    }
+
     const id = crypto.randomUUID();
 
     try {
@@ -108,6 +116,15 @@ export function mountPlansRoutes(app: Hono, deps: PlansRouteDeps): void {
     }
 
     const id = c.req.param("id");
+
+    const plan = getPlan(db, id);
+    if (plan) {
+      const epic = getEpicBySpec(db, plan.spec_id);
+      if (epic && isFrozen(db, epic.id)) {
+        return c.json({ error: "epic is archived" }, 409);
+      }
+    }
+
     const updated = updatePlanFields(db, id, result.data);
     if (!updated) {
       return c.json({ error: "not found" }, 404);

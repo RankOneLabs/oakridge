@@ -238,7 +238,7 @@ const kbblChatBackend = createKbblChatBackend({ manager, config });
 // same machine as the server, so 127.0.0.1 is the right target.
 const kbblUrl = `http://127.0.0.1:${port}`;
 const dispatcher = createDispatcher({ db, backends: { kbbl_chat: kbblChatBackend }, kbblUrl });
-wireDispatchHooks({ taskTrackerEvents, dispatcher });
+wireDispatchHooks({ taskTrackerEvents, dispatcher, db });
 wireResponderSpawn({ reviewEvents, kbblUrl });
 
 // === Hono app ===

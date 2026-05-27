@@ -4,6 +4,8 @@ import type { Database } from "bun:sqlite";
 import { resolve, relative, isAbsolute, sep } from "node:path";
 import { realpath } from "node:fs/promises";
 import { insertSpec, getSpec, listSpecsByProject, updateSpecFields } from "../../db/specs";
+import { insertEpic, getEpicBySpec } from "../../db/epics";
+import { isFrozen } from "../../db/epic-freeze";
 import { getProject } from "../../db/projects";
 import { taskTrackerEvents } from "../../db/events";
 
@@ -100,9 +102,21 @@ export function mountSpecsRoutes(app: Hono, deps: SpecsRouteDeps): void {
     }
 
     try {
-      const spec = insertSpec(db, { id, project_id, title, notes: resolvedNotes });
+      const epic_id = crypto.randomUUID();
+      const { spec, epic } = db.transaction(() => {
+        const s = insertSpec(db, { id, project_id, title, notes: resolvedNotes });
+        const e = insertEpic(db, {
+          id: epic_id,
+          spec_id: s.id,
+          project_id,
+          title,
+          status: "pending",
+          current_stage: "spec",
+        });
+        return { spec: s, epic: e };
+      })();
       taskTrackerEvents.emit("spec.created", { spec_id: spec.id });
-      return c.json(spec, 201);
+      return c.json({ ...spec, epic_id: epic.id }, 201);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes("FOREIGN KEY constraint failed")) {
@@ -141,6 +155,12 @@ export function mountSpecsRoutes(app: Hono, deps: SpecsRouteDeps): void {
     }
 
     const id = c.req.param("id");
+
+    const epic = getEpicBySpec(db, id);
+    if (epic && isFrozen(db, epic.id)) {
+      return c.json({ error: "epic is archived" }, 409);
+    }
+
     const updated = updateSpecFields(db, id, result.data);
     if (!updated) {
       return c.json({ error: "not found" }, 404);

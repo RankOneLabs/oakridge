@@ -5,6 +5,8 @@ import { getPlan } from "../../db/plans";
 import { freeze } from "../../review/freeze";
 import { taskTrackerEvents } from "../../db/events";
 import { PLAN_TRANSITIONS } from "../../orchestrator/state-machine";
+import { getEpicBySpec, advanceEpicByEvent } from "../../db/epics";
+import { isFrozen } from "../../db/epic-freeze";
 import type { Plan } from "../../types/task-tracker";
 
 const PatchPlanStatusSchema = z.object({
@@ -39,6 +41,16 @@ export function mountPlanStatusRoutes(app: Hono, deps: PlanStatusRouteDeps): voi
     }
     const plan_id = c.req.param("id");
 
+    const planForFreeze = db
+      .prepare<{ spec_id: string }, [string]>("SELECT spec_id FROM plans WHERE id = ?")
+      .get(plan_id);
+    if (planForFreeze) {
+      const epic = getEpicBySpec(db, planForFreeze.spec_id);
+      if (epic && isFrozen(db, epic.id)) {
+        return c.json({ error: "epic is archived" }, 409);
+      }
+    }
+
     let updated: Plan | null = null;
     let emitApproved: { plan_id: string; spec_id: string } | null = null;
     let emitRejected: { plan_id: string; spec_id: string } | null = null;
@@ -59,6 +71,18 @@ export function mountPlanStatusRoutes(app: Hono, deps: PlanStatusRouteDeps): voi
             "UPDATE plans SET status = ? WHERE id = ? RETURNING *",
           ).get(nextStatus, plan_id);
           freeze(db, "plan", plan_id);
+
+          // Advance Epic stage: plan → build
+          const epic = getEpicBySpec(db, plan.spec_id);
+          if (epic) {
+            try {
+              advanceEpicByEvent(db, epic.id, "epic_plan_approved");
+            } catch (err) {
+              console.error(
+                JSON.stringify({ kbbl: "plan-status", warn: "advanceEpicByEvent failed", error: String(err), plan_id }),
+              );
+            }
+          }
 
           // specs.status dropped in migration 016; Epic.status + internal_status cover lifecycle.
 

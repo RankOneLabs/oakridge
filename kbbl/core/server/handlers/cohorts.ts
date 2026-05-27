@@ -11,6 +11,8 @@ import {
   deleteCohortDependency,
 } from "../../db/cohorts";
 import { hasCycleAfterInsert } from "../../db/cohort-graph";
+import { getEpicBySpec } from "../../db/epics";
+import { isFrozen } from "../../db/epic-freeze";
 import type { Cohort } from "../../types/task-tracker";
 import type { SessionManager } from "../../session/session-manager";
 
@@ -35,6 +37,15 @@ const CreateDependencySchema = z.object({
 interface CohortsRouteDeps {
   db: Database;
   manager: SessionManager;
+}
+
+function getEpicForCohort(db: import("bun:sqlite").Database, cohort_id: string) {
+  const row = db
+    .prepare<{ spec_id: string }, [string]>(
+      "SELECT p.spec_id FROM cohorts c JOIN plans p ON p.id = c.plan_id WHERE c.id = ?",
+    )
+    .get(cohort_id);
+  return row ? getEpicBySpec(db, row.spec_id) : null;
 }
 
 export function mountCohortsRoutes(app: Hono, deps: CohortsRouteDeps): void {
@@ -63,6 +74,17 @@ export function mountCohortsRoutes(app: Hono, deps: CohortsRouteDeps): void {
     }
 
     const { plan_id, title, notes, position } = result.data;
+
+    const planRow = db
+      .prepare<{ spec_id: string }, [string]>("SELECT spec_id FROM plans WHERE id = ?")
+      .get(plan_id);
+    if (planRow) {
+      const epicForCreate = getEpicBySpec(db, planRow.spec_id);
+      if (epicForCreate && isFrozen(db, epicForCreate.id)) {
+        return c.json({ error: "epic is archived" }, 409);
+      }
+    }
+
     const id = crypto.randomUUID();
 
     try {
@@ -122,6 +144,12 @@ export function mountCohortsRoutes(app: Hono, deps: CohortsRouteDeps): void {
     }
 
     const id = c.req.param("id");
+
+    const epicForCohort = getEpicForCohort(db, id);
+    if (epicForCohort && isFrozen(db, epicForCohort.id)) {
+      return c.json({ error: "epic is archived" }, 409);
+    }
+
     const updated = updateCohortFields(db, id, result.data);
     if (!updated) {
       return c.json({ error: "not found" }, 404);
@@ -165,6 +193,11 @@ export function mountCohortsRoutes(app: Hono, deps: CohortsRouteDeps): void {
       return c.json({ error: "from_cohort_id and to_cohort_id must differ" }, 409);
     }
 
+    const epicForDep = getEpicForCohort(db, from_cohort_id);
+    if (epicForDep && isFrozen(db, epicForDep.id)) {
+      return c.json({ error: "epic is archived" }, 409);
+    }
+
     const id = crypto.randomUUID();
     try {
       const dep = db.transaction(() => {
@@ -189,6 +222,19 @@ export function mountCohortsRoutes(app: Hono, deps: CohortsRouteDeps): void {
 
   app.delete("/cohort-dependencies/:id", (c) => {
     const id = c.req.param("id");
+
+    const depRow = db
+      .prepare<{ from_cohort_id: string }, [string]>(
+        "SELECT from_cohort_id FROM cohort_dependencies WHERE id = ?",
+      )
+      .get(id);
+    if (depRow) {
+      const epicForDel = getEpicForCohort(db, depRow.from_cohort_id);
+      if (epicForDel && isFrozen(db, epicForDel.id)) {
+        return c.json({ error: "epic is archived" }, 409);
+      }
+    }
+
     const deleted = deleteCohortDependency(db, id);
     if (!deleted) {
       return c.json({ error: "not found" }, 404);

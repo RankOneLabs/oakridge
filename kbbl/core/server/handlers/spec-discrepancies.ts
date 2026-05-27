@@ -7,6 +7,8 @@ import {
   listSpecDiscrepancies,
   updateSpecDiscrepancy,
 } from "../../db/spec-discrepancies";
+import { getEpicBySpec } from "../../db/epics";
+import { isFrozen } from "../../db/epic-freeze";
 import type { SpecDiscrepancy } from "../../types/task-tracker";
 
 const CreateDiscrepancySchema = z.object({
@@ -42,6 +44,12 @@ export function mountSpecDiscrepanciesRoutes(app: Hono, deps: SpecDiscrepanciesR
     }
 
     const { spec_id, spec_assumption, code_reality } = result.data;
+
+    const epic = getEpicBySpec(db, spec_id);
+    if (epic && isFrozen(db, epic.id)) {
+      return c.json({ error: "epic is archived" }, 409);
+    }
+
     const id = crypto.randomUUID();
 
     try {
@@ -97,6 +105,14 @@ export function mountSpecDiscrepanciesRoutes(app: Hono, deps: SpecDiscrepanciesR
 
     const { resolution, status } = result.data;
     const id = c.req.param("id");
+
+    const existing = getSpecDiscrepancy(db, id);
+    if (existing) {
+      const epic = getEpicBySpec(db, existing.spec_id);
+      if (epic && isFrozen(db, epic.id)) {
+        return c.json({ error: "epic is archived" }, 409);
+      }
+    }
 
     let updated: SpecDiscrepancy | null = null;
 

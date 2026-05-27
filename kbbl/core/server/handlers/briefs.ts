@@ -11,6 +11,8 @@ import {
 } from "../../db/briefs";
 import { BriefPayloadSchema } from "../../types/task-tracker";
 import { taskTrackerEvents } from "../../db/events";
+import { getEpicBySpec } from "../../db/epics";
+import { isFrozen } from "../../db/epic-freeze";
 
 const CreateBriefSchema = BriefPayloadSchema.extend({
   cohort_id: z.string().min(1),
@@ -48,6 +50,15 @@ const PatchDebriefSchema = z.object({
 
 interface BriefsRouteDeps {
   db: Database;
+}
+
+function getEpicForCohort(db: import("bun:sqlite").Database, cohort_id: string) {
+  const row = db
+    .prepare<{ spec_id: string }, [string]>(
+      "SELECT p.spec_id FROM cohorts c JOIN plans p ON p.id = c.plan_id WHERE c.id = ?",
+    )
+    .get(cohort_id);
+  return row ? getEpicBySpec(db, row.spec_id) : null;
 }
 
 export function mountBriefsRoutes(app: Hono, deps: BriefsRouteDeps): void {
@@ -95,6 +106,12 @@ export function mountBriefsRoutes(app: Hono, deps: BriefsRouteDeps): void {
       next_action,
       model,
     } = result.data;
+
+    const epicForBrief = getEpicForCohort(db, cohort_id);
+    if (epicForBrief && isFrozen(db, epicForBrief.id)) {
+      return c.json({ error: "epic is archived" }, 409);
+    }
+
     const id = crypto.randomUUID();
 
     try {
@@ -164,6 +181,15 @@ export function mountBriefsRoutes(app: Hono, deps: BriefsRouteDeps): void {
     }
 
     const id = c.req.param("id");
+
+    const briefForFreeze = getBrief(db, id);
+    if (briefForFreeze) {
+      const epic = getEpicForCohort(db, briefForFreeze.cohort_id);
+      if (epic && isFrozen(db, epic.id)) {
+        return c.json({ error: "epic is archived" }, 409);
+      }
+    }
+
     const updated = updateBriefFields(db, id, result.data);
     if (!updated) {
       return c.json({ error: "not found" }, 404);
@@ -186,6 +212,15 @@ export function mountBriefsRoutes(app: Hono, deps: BriefsRouteDeps): void {
     }
 
     const id = c.req.param("id");
+
+    const briefForDebrief = getBrief(db, id);
+    if (briefForDebrief) {
+      const epic = getEpicForCohort(db, briefForDebrief.cohort_id);
+      if (epic && isFrozen(db, epic.id)) {
+        return c.json({ error: "epic is archived" }, 409);
+      }
+    }
+
     const updated = updateBriefDebrief(db, id, result.data);
     if (!updated) {
       return c.json({ error: "not found" }, 404);

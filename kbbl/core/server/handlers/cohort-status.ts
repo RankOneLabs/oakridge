@@ -4,6 +4,8 @@ import type { Database } from "bun:sqlite";
 import { getCohort } from "../../db/cohorts";
 import { getLatestApprovedBriefByCohort } from "../../db/briefs";
 import { taskTrackerEvents } from "../../db/events";
+import { getEpicBySpec, advanceEpicByEvent } from "../../db/epics";
+import { isFrozen } from "../../db/epic-freeze";
 import type { Cohort } from "../../types/task-tracker";
 
 const PatchCohortStatusSchema = z.discriminatedUnion("status", [
@@ -158,6 +160,18 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
     const parsed = result.data;
     const cohort_id = c.req.param("id");
 
+    const epicForStatus = db
+      .prepare<{ spec_id: string }, [string]>(
+        "SELECT p.spec_id FROM cohorts c JOIN plans p ON p.id = c.plan_id WHERE c.id = ?",
+      )
+      .get(cohort_id);
+    if (epicForStatus) {
+      const epic = getEpicBySpec(db, epicForStatus.spec_id);
+      if (epic && isFrozen(db, epic.id)) {
+        return c.json({ error: "epic is archived" }, 409);
+      }
+    }
+
     let updated: Cohort | null = null;
     let emitDone: { cohort_id: string } | null = null;
     let emitPrMerged: { cohort_id: string } | null = null;
@@ -248,6 +262,24 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
 
     if (emitPlanCompleted) {
       taskTrackerEvents.emit("plan.completed", emitPlanCompleted);
+      const completedPlanId = (emitPlanCompleted as { plan_id: string }).plan_id;
+
+      // Advance Epic stage: build → review on plan completion
+      try {
+        const planRow = db
+          .prepare<{ spec_id: string }, [string]>("SELECT spec_id FROM plans WHERE id = ?")
+          .get(completedPlanId);
+        if (planRow) {
+          const epic = getEpicBySpec(db, planRow.spec_id);
+          if (epic) {
+            advanceEpicByEvent(db, epic.id, "epic_build_done");
+          }
+        }
+      } catch (err) {
+        console.error(
+          JSON.stringify({ kbbl: "cohort-status", warn: "advanceEpicByEvent(epic_build_done) failed", error: String(err) }),
+        );
+      }
     }
 
     return c.json(updated);

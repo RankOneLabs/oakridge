@@ -149,7 +149,7 @@ beforeEach(() => {
     backends: { kbbl_chat: mockBackend },
     kbblUrl: "http://localhost:8788",
   });
-  cleanupHooks = wireDispatchHooks({ taskTrackerEvents, dispatcher });
+  cleanupHooks = wireDispatchHooks({ taskTrackerEvents, dispatcher, db });
 
   app = new Hono();
   mountProjectsRoutes(app, { db });
