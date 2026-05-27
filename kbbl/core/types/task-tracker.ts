@@ -6,6 +6,9 @@ import { z } from "zod";
 export const SessionStageSchema = z.enum(["planner1", "planner2", "planner2_batch", "planner3", "build"]);
 export type SessionStage = z.infer<typeof SessionStageSchema>;
 
+export const SpecInternalStatusSchema = z.enum(["analyzing", "discrepancies", "review", "approved"]);
+export type SpecInternalStatus = z.infer<typeof SpecInternalStatusSchema>;
+
 export const SpecSchema = z.object({
   id: z.string(),
   project_id: z.string(),
@@ -14,6 +17,9 @@ export const SpecSchema = z.object({
   status: z.enum(["draft", "plan_review", "planning_done", "done", "archived"]),
   current_session_ref: z.string().nullable(),
   current_session_stage: SessionStageSchema.nullable(),
+  submitted_notes: z.string().nullable(),
+  final_notes: z.string().nullable(),
+  internal_status: SpecInternalStatusSchema,
   created_at: z.string(),
 });
 export type Spec = z.infer<typeof SpecSchema>;
@@ -102,3 +108,34 @@ export const AssessmentSchema = z.object({
   created_at: z.string(),
 });
 export type Assessment = z.infer<typeof AssessmentSchema>;
+
+export const EpicStatusSchema = z.enum(["active", "complete", "archived"]);
+export type EpicStatus = z.infer<typeof EpicStatusSchema>;
+
+export const EpicStageSchema = z.enum(["spec", "build", "review"]);
+export type EpicStage = z.infer<typeof EpicStageSchema>;
+
+export const EpicSchema = z.object({
+  id: z.string(),
+  spec_id: z.string(),
+  project_id: z.string(),
+  title: z.string(),
+  status: EpicStatusSchema,
+  current_stage: EpicStageSchema,
+  created_at: z.string(),
+});
+export type Epic = z.infer<typeof EpicSchema>;
+
+export const SpecDiscrepancyStatusSchema = z.enum(["open", "resolved", "waived"]);
+export type SpecDiscrepancyStatus = z.infer<typeof SpecDiscrepancyStatusSchema>;
+
+export const SpecDiscrepancySchema = z.object({
+  id: z.string(),
+  spec_id: z.string(),
+  spec_assumption: z.string(),
+  code_reality: z.string(),
+  resolution: z.string().nullable(),
+  status: SpecDiscrepancyStatusSchema,
+  created_at: z.string(),
+});
+export type SpecDiscrepancy = z.infer<typeof SpecDiscrepancySchema>;

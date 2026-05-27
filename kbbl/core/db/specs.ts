@@ -12,11 +12,12 @@ export function insertSpec(
     notes,
   }: { id: string; project_id: string; title: string; notes?: string | null },
 ): Spec {
+  const n = notes ?? null;
   return db
-    .prepare<Spec, [string, string, string, string | null]>(
-      "INSERT INTO specs (id, project_id, title, notes) VALUES (?, ?, ?, ?) RETURNING *",
+    .prepare<Spec, [string, string, string, string | null, string | null]>(
+      "INSERT INTO specs (id, project_id, title, notes, submitted_notes) VALUES (?, ?, ?, ?, ?) RETURNING *",
     )
-    .get(id, project_id, title, notes ?? null)!;
+    .get(id, project_id, title, n, n)!;
 }
 
 export function getSpec(db: Database, id: string): Spec | null {
