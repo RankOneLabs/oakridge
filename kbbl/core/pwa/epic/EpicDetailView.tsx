@@ -27,12 +27,10 @@ interface EpicDetailData {
   } | null;
   plan: {
     id: string;
-    title: string;
     status: PlanStatus;
   } | null;
   cohorts: Array<{
     id: string;
-    brief_id: string | null;
     title: string;
     position: number;
     status: string;

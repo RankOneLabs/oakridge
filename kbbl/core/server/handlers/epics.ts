@@ -47,18 +47,18 @@ export function mountEpicsRoutes(app: Hono, deps: EpicsRouteDeps): void {
       .get(epic.spec_id);
 
     const plan = db
-      .prepare<{ id: string; title: string; status: string } | null, [string]>(
-        "SELECT id, title, status FROM plans WHERE spec_id = ? ORDER BY created_at DESC, id DESC LIMIT 1",
+      .prepare<{ id: string; status: string } | null, [string]>(
+        "SELECT id, status FROM plans WHERE spec_id = ? ORDER BY created_at DESC, id DESC LIMIT 1",
       )
       .get(epic.spec_id) ?? null;
 
     const cohorts = plan
       ? db
           .prepare<
-            { id: string; title: string; status: string; position: number; brief_id: string | null },
+            { id: string; title: string; status: string; position: number },
             [string]
           >(
-            "SELECT id, title, status, position, brief_id FROM cohorts WHERE plan_id = ? ORDER BY position, id",
+            "SELECT id, title, status, position FROM cohorts WHERE plan_id = ? ORDER BY position, id",
           )
           .all(plan.id)
       : [];

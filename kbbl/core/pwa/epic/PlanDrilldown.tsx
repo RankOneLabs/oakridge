@@ -2,7 +2,6 @@ type PlanStatus = "pending_approval" | "approved" | "rejected" | "superseded";
 
 interface Plan {
   id: string;
-  title: string;
   status: PlanStatus;
 }
 
@@ -15,7 +14,6 @@ export function PlanDrilldown({ plan }: PlanDrilldownProps) {
     <div className="plan-drilldown">
       <h2 className="plan-drilldown__heading">Plan</h2>
       <div className="plan-drilldown__row">
-        <span className="plan-drilldown__title">{plan.title}</span>
         <a
           href={`#plan/${plan.id}`}
           className="plan-drilldown__link"

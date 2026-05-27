@@ -23,7 +23,7 @@ function makeFixture(current_stage: EpicStage) {
         : null,
     plan:
       current_stage === "plan" || current_stage === "review"
-        ? { id: "plan-1", title: "My Plan", status: "approved" }
+        ? { id: "plan-1", status: "approved" }
         : null,
     cohorts: [
       {

@@ -1,6 +1,5 @@
 interface Cohort {
   id: string;
-  brief_id: string | null;
   title: string;
   position: number;
   status: string;
@@ -21,7 +20,7 @@ export function BuildDrilldown({ cohorts }: BuildDrilldownProps) {
       ) : (
         <ul className="build-drilldown__list">
           {sorted.map((c) => {
-            const dest = c.brief_id ? `brief/${c.brief_id}` : `cohort/${c.id}`;
+            const dest = `cohort/${c.id}`;
             const href = `#${dest}`;
             return (
               <li key={c.id} className="build-drilldown__item">
