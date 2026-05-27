@@ -12,6 +12,7 @@ export interface SidebarProjectRowProps {
   project: SidebarProject;
   isOpen: boolean;
   onToggle: (id: string) => void;
+  onOpenDashboard: (id: string) => void;
   sessions: SidebarSession[];
   specs: SidebarSpec[];
   cohortsByPlan: Map<string, SidebarCohort[]>;
@@ -27,6 +28,7 @@ export function SidebarProjectRow({
   project,
   isOpen,
   onToggle,
+  onOpenDashboard,
   sessions,
   specs,
   cohortsByPlan,
@@ -39,17 +41,28 @@ export function SidebarProjectRow({
 }: SidebarProjectRowProps) {
   return (
     <li className="sidebar-project">
-      <button
-        type="button"
-        className="sidebar-project-row"
-        onClick={() => onToggle(project.id)}
-        title={project.repo_path}
-        aria-expanded={isOpen}
-        aria-controls={`sidebar-project-body-${project.id}`}
-      >
-        <span className="sidebar-chevron">{isOpen ? "▾" : "▸"}</span>
-        <span className="sidebar-project-name">{project.name}</span>
-      </button>
+      <div className="sidebar-project-row-header">
+        <button
+          type="button"
+          className="sidebar-project-row"
+          onClick={() => onToggle(project.id)}
+          title={project.repo_path}
+          aria-expanded={isOpen}
+          aria-controls={`sidebar-project-body-${project.id}`}
+        >
+          <span className="sidebar-chevron">{isOpen ? "▾" : "▸"}</span>
+          <span className="sidebar-project-name">{project.name}</span>
+        </button>
+        <button
+          type="button"
+          className="sidebar-project-dashboard-btn"
+          onClick={() => onOpenDashboard(project.id)}
+          title={`Open dashboard for ${project.name}`}
+          aria-label={`Open dashboard for ${project.name}`}
+        >
+          ⊞
+        </button>
+      </div>
       {isOpen && (
         <div id={`sidebar-project-body-${project.id}`} className="sidebar-project-body">
           <SidebarSessionsSection sessions={sessions} onSelect={onSelectSession} />

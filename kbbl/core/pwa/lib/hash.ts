@@ -18,9 +18,9 @@ export function writeHashSid(sid: string | null): void {
   }
 }
 
-export function readHashRoute():
-  | { view: "plan" | "brief" | "cohort"; id: string }
-  | null {
+export type HashRoute = { view: "plan" | "brief" | "cohort" | "repo"; id: string };
+
+export function readHashRoute(): HashRoute | null {
   const hash = window.location.hash.slice(1);
   if (hash.startsWith("plan/")) {
     const id = hash.slice(5);
@@ -33,6 +33,10 @@ export function readHashRoute():
   if (hash.startsWith("cohort/")) {
     const id = hash.slice(7);
     if (id) return { view: "cohort", id };
+  }
+  if (hash.startsWith("repo/")) {
+    const id = hash.slice(5);
+    if (id) return { view: "repo", id };
   }
   return null;
 }

@@ -12,6 +12,7 @@ import type { Sid } from "./lib/ids";
 import { PlanReviewView } from "./review/plan/PlanReviewView";
 import { BriefReviewView } from "./review/brief/BriefReviewView";
 import { CohortReviewView } from "./review/cohort/CohortReviewView";
+import { RepoDashboardView } from "./dashboard/RepoDashboardView";
 
 import { SessionListView } from "./views/SessionListView";
 import { SessionView } from "./views/SessionView";
@@ -87,6 +88,13 @@ export function App() {
         id={route.id}
         theme={theme}
         onToggleTheme={toggleTheme}
+        onBack={() => { window.location.hash = ""; }}
+      />
+    );
+  } else if (route?.view === "repo") {
+    view = (
+      <RepoDashboardView
+        project_id={route.id}
         onBack={() => { window.location.hash = ""; }}
       />
     );
