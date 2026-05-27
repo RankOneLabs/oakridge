@@ -58,9 +58,12 @@ const GhPrViewSchema = z.object({
   // string (not enum) to survive new GitHub status values without schema breakage
   mergeStateStatus: z.string(),
   reviewDecision: z.string().nullable(),
-  reviewThreads: z.object({
-    nodes: z.array(GhReviewThreadSchema),
-  }),
+  // reviewThreads was removed from gh's JSON fields in newer gh versions; treat
+  // as optional so the field's absence doesn't break the merge flow.
+  reviewThreads: z
+    .object({ nodes: z.array(GhReviewThreadSchema) })
+    .optional()
+    .default({ nodes: [] }),
   url: z.string(),
 });
 
@@ -236,7 +239,7 @@ async function runGh(
 // ── Public API ────────────────────────────────────────────────────────────────
 
 const PR_VIEW_FIELDS =
-  "state,mergedAt,mergeable,mergeStateStatus,reviewDecision,reviewThreads,url";
+  "state,mergedAt,mergeable,mergeStateStatus,reviewDecision,url";
 
 export async function fetchPrState(prUrl: string): Promise<Result<PrState, GhError>> {
   const run = await runGh(
