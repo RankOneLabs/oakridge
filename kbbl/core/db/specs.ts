@@ -36,11 +36,11 @@ export function listSpecsByProject(db: Database, project_id: string): SpecWithPl
       `SELECT s.*,
          (SELECT p.id FROM plans p
           WHERE p.spec_id = s.id
-          ORDER BY p.created_at DESC
+          ORDER BY p.created_at DESC, p.id DESC
           LIMIT 1) AS plan_id,
          (SELECT e.id FROM epics e
           WHERE e.spec_id = s.id
-          ORDER BY e.created_at DESC
+          ORDER BY e.created_at DESC, e.id DESC
           LIMIT 1) AS epic_id
        FROM specs s
        WHERE s.project_id = ?

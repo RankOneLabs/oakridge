@@ -1,8 +1,10 @@
+type CohortStatus = "waiting" | "planned" | "briefing" | "brief_review" | "building" | "done" | "blocked";
+
 interface Cohort {
   id: string;
   title: string;
   position: number;
-  status: string;
+  status: CohortStatus;
 }
 
 interface BuildDrilldownProps {

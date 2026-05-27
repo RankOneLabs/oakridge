@@ -11,6 +11,7 @@ type EpicStatus = "pending" | "active" | "complete" | "archived";
 type EpicStage = "spec" | "plan" | "build" | "review";
 type SpecInternalStatus = "analyzing" | "discrepancies" | "review" | "approved";
 type PlanStatus = "pending_approval" | "approved" | "rejected" | "superseded";
+type CohortStatus = "waiting" | "planned" | "briefing" | "brief_review" | "building" | "done" | "blocked";
 
 interface EpicDetailData {
   epic: {
@@ -33,7 +34,7 @@ interface EpicDetailData {
     id: string;
     title: string;
     position: number;
-    status: string;
+    status: CohortStatus;
   }>;
   assessment_present: boolean;
 }
@@ -65,6 +66,10 @@ export function EpicDetailView({ epic_id }: EpicDetailViewProps) {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["epic", epic_id] });
+      const projectId = query.data?.epic.project_id;
+      if (projectId) {
+        void queryClient.invalidateQueries({ queryKey: ["epics", projectId] });
+      }
     },
   });
 
@@ -77,6 +82,10 @@ export function EpicDetailView({ epic_id }: EpicDetailViewProps) {
     },
     onSuccess: () => {
       const projectId = query.data?.epic.project_id;
+      if (projectId) {
+        void queryClient.invalidateQueries({ queryKey: ["epics", projectId] });
+        void queryClient.invalidateQueries({ queryKey: ["specs", { projectId }] });
+      }
       window.location.hash = projectId ? `repo/${projectId}` : "";
     },
   });
@@ -94,7 +103,7 @@ export function EpicDetailView({ epic_id }: EpicDetailViewProps) {
   if (query.error instanceof Error) {
     return (
       <div className="epic-detail">
-        <button type="button" onClick={() => { window.location.hash = ""; }}>
+        <button type="button" className="epic-detail__back" onClick={() => { window.location.hash = ""; }}>
           ← Back
         </button>
         <div className="epic-detail__error" role="alert">
@@ -107,7 +116,7 @@ export function EpicDetailView({ epic_id }: EpicDetailViewProps) {
   if (query.isPending || !query.data) {
     return (
       <div className="epic-detail">
-        <button type="button" onClick={() => { window.location.hash = ""; }}>
+        <button type="button" className="epic-detail__back" onClick={() => { window.location.hash = ""; }}>
           ← Back
         </button>
         <div>Loading…</div>
