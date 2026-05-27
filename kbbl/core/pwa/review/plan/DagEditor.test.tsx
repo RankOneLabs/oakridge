@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { DagEditor } from "./DagEditor";
+import { DagEditor, COHORT_NODE_LAYOUT } from "./DagEditor";
 import { CohortNode, type CohortNodeData } from "./CohortNode";
 import type { Cohort, CohortDependency } from "./types";
 
@@ -242,5 +242,49 @@ describe("DagEditor", () => {
     screen.getByTestId("trigger-connect").click();
 
     expect(onAddEdge).not.toHaveBeenCalled();
+  });
+
+  it("renders each .cohort-node with explicit width and height matching COHORT_NODE_LAYOUT", () => {
+    render(
+      <DagEditor
+        {...baseProps}
+        cohorts={cohorts}
+        deps={[dep]}
+        onAddEdge={onAddEdge}
+        onDeleteEdge={onDeleteEdge}
+        onUpdatePosition={onUpdatePosition}
+      />,
+    );
+
+    const nodes = document.querySelectorAll(".cohort-node");
+    expect(nodes.length).toBe(cohorts.length);
+    for (const node of nodes) {
+      const el = node as HTMLElement;
+      expect(el.style.width).toBe(`${COHORT_NODE_LAYOUT.width}px`);
+      expect(el.style.height).toBe(`${COHORT_NODE_LAYOUT.height}px`);
+    }
+  });
+
+  it("cohort with a 200+ char title renders at the same dimensions and exposes full title via title attribute", () => {
+    const longTitle = "A".repeat(205);
+    const longCohort = makeCohort("c3", longTitle, 2);
+
+    render(
+      <DagEditor
+        {...baseProps}
+        cohorts={[longCohort]}
+        deps={[]}
+        onAddEdge={onAddEdge}
+        onDeleteEdge={onDeleteEdge}
+        onUpdatePosition={onUpdatePosition}
+      />,
+    );
+
+    const node = document.querySelector(".cohort-node") as HTMLElement;
+    expect(node.style.width).toBe(`${COHORT_NODE_LAYOUT.width}px`);
+    expect(node.style.height).toBe(`${COHORT_NODE_LAYOUT.height}px`);
+
+    const titleEl = node.querySelector(".cohort-node__title") as HTMLElement;
+    expect(titleEl.getAttribute("title")).toBe(longTitle);
   });
 });
