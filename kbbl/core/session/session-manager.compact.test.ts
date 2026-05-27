@@ -127,6 +127,8 @@ beforeEach(async () => {
   // SessionManager requires a git repo for the spawn cwd; initialize tmpRoot
   // itself so every `workdir: tmpRoot` call satisfies the invariant.
   await gitInit(tmpRoot);
+  // worktreesDir is inside tmpRoot, so gitignore it to pass ensureWorktreesDirSafeForRepo.
+  writeFileSync(join(tmpRoot, ".gitignore"), "worktrees\nsessions\nhandoffs\n");
 });
 
 afterEach(() => {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,6 +26,22 @@ import type { EnvelopeEvent } from "../../session/session";
 let tmpRoot: string;
 let sessionsDir: string;
 let worktreesDir: string;
+let repoDir: string;
+
+async function gitInitRepo(dir: string): Promise<void> {
+  const cmds: string[][] = [
+    ["git", "-C", dir, "init", "-q", "-b", "main"],
+    ["git", "-C", dir, "config", "user.email", "test@example.com"],
+    ["git", "-C", dir, "config", "user.name", "test"],
+    ["git", "-C", dir, "config", "commit.gpgsign", "false"],
+    ["git", "-C", dir, "config", "tag.gpgsign", "false"],
+    ["git", "-C", dir, "commit", "--allow-empty", "-q", "-m", "init"],
+  ];
+  for (const cmd of cmds) {
+    const p = Bun.spawn({ cmd, stdout: "pipe", stderr: "pipe" });
+    await p.exited;
+  }
+}
 
 async function noopSpawn(_session: Session): Promise<SpawnCmd> {
   return { cmd: ["true"], cwd: "/tmp", env: {} };
@@ -100,7 +116,7 @@ function makeRegistryManager(registry: RuntimeRegistry): SessionManager {
 function makeApp(
   manager: SessionManager,
   registry?: RuntimeRegistry,
-  defaultWorkdir: string | null = "/tmp",
+  defaultWorkdir: string | null = null,
 ): Hono {
   const app = new Hono();
   mountSessionsRoutes(app, {
@@ -135,7 +151,7 @@ async function writeArchivedParent(opts: {
       ts: "2025-01-01T00:00:00.000Z",
       payload: {
         command: ["true"],
-        workdir: "/tmp",
+        workdir: repoDir,
         name: "parent",
         sessionId: opts.sid,
         parentCcSid: null,
@@ -169,8 +185,11 @@ beforeEach(async () => {
   tmpRoot = mkdtempSync(join(tmpdir(), "kbbl-model-test-"));
   sessionsDir = join(tmpRoot, "sessions");
   worktreesDir = join(tmpRoot, "worktrees");
+  repoDir = join(tmpRoot, "repo");
   await mkdir(sessionsDir, { recursive: true });
   await mkdir(worktreesDir, { recursive: true });
+  mkdirSync(repoDir, { recursive: true });
+  await gitInitRepo(repoDir);
 });
 
 afterEach(async () => {
@@ -190,8 +209,8 @@ describe("POST /sessions model validation", () => {
 
   test("case 1: valid model accepted, snapshot.model matches", async () => {
     const manager = makeManager();
-    const app = makeApp(manager);
-    const res = await postSessions(app, { model: "claude-sonnet-4-6", workdir: "/tmp" });
+    const app = makeApp(manager, undefined, repoDir);
+    const res = await postSessions(app, { model: "claude-sonnet-4-6", workdir: repoDir });
     expect(res.status).toBe(200);
     const body = await res.json() as { model: string | null };
     expect(body.model).toBe("claude-sonnet-4-6");
@@ -201,8 +220,8 @@ describe("POST /sessions model validation", () => {
   test("case 2: unknown model returns 400 with error", async () => {
     const manager = makeManager();
     try {
-      const app = makeApp(manager);
-      const res = await postSessions(app, { model: "garbage", workdir: "/tmp" });
+      const app = makeApp(manager, undefined, repoDir);
+      const res = await postSessions(app, { model: "garbage", workdir: repoDir });
       expect(res.status).toBe(400);
       const body = await res.json() as { error: string };
       expect(body.error).toBe("unknown model: garbage");
@@ -214,8 +233,8 @@ describe("POST /sessions model validation", () => {
   test("case 3: empty string model returns 400 with error", async () => {
     const manager = makeManager();
     try {
-      const app = makeApp(manager);
-      const res = await postSessions(app, { model: "", workdir: "/tmp" });
+      const app = makeApp(manager, undefined, repoDir);
+      const res = await postSessions(app, { model: "", workdir: repoDir });
       expect(res.status).toBe(400);
       const body = await res.json() as { error: string };
       expect(body.error).toBe("model must be non-empty when provided");
@@ -227,8 +246,8 @@ describe("POST /sessions model validation", () => {
   test("case 4: non-string model returns 400 with error", async () => {
     const manager = makeManager();
     try {
-      const app = makeApp(manager);
-      const res = await postSessions(app, { model: 42, workdir: "/tmp" });
+      const app = makeApp(manager, undefined, repoDir);
+      const res = await postSessions(app, { model: 42, workdir: repoDir });
       expect(res.status).toBe(400);
       const body = await res.json() as { error: string };
       expect(body.error).toBe("model must be a string");
@@ -239,8 +258,8 @@ describe("POST /sessions model validation", () => {
 
   test("case 5: omitted model → snapshot.model is null", async () => {
     const manager = makeManager();
-    const app = makeApp(manager);
-    const res = await postSessions(app, { workdir: "/tmp" });
+    const app = makeApp(manager, undefined, repoDir);
+    const res = await postSessions(app, { workdir: repoDir });
     expect(res.status).toBe(200);
     const body = await res.json() as { model: string | null };
     expect(body.model).toBeNull();
@@ -251,7 +270,7 @@ describe("POST /sessions model validation", () => {
     const parentSid = randomUUID();
     await writeArchivedParent({ sid: parentSid, model: "claude-sonnet-4-6" });
     const manager = makeManager();
-    const app = makeApp(manager);
+    const app = makeApp(manager, undefined, repoDir);
     const res = await postSessions(app, { resume_from: parentSid });
     expect(res.status).toBe(200);
     const body = await res.json() as { model: string | null };
@@ -263,7 +282,7 @@ describe("POST /sessions model validation", () => {
     const parentSid = randomUUID();
     await writeArchivedParent({ sid: parentSid, model: "claude-sonnet-4-6" });
     const manager = makeManager();
-    const app = makeApp(manager);
+    const app = makeApp(manager, undefined, repoDir);
     const res = await postSessions(app, {
       resume_from: parentSid,
       model: "claude-opus-4-7",
@@ -279,7 +298,7 @@ describe("POST /sessions model validation", () => {
     await writeArchivedParent({ sid: parentSid, model: "claude-haiku-4-5-20251001" });
     // Explicitly not adding the parent to any in-memory manager — it only exists on disk.
     const manager = makeManager();
-    const app = makeApp(manager);
+    const app = makeApp(manager, undefined, repoDir);
     const res = await postSessions(app, { resume_from: parentSid });
     expect(res.status).toBe(200);
     const body = await res.json() as { model: string | null };
@@ -290,11 +309,11 @@ describe("POST /sessions model validation", () => {
   test("accepts a Codex model when runtime is Codex", async () => {
     const registry = makeRegistry();
     const manager = makeRegistryManager(registry);
-    const app = makeApp(manager, registry);
+    const app = makeApp(manager, registry, repoDir);
     const res = await postSessions(app, {
       runtime: "codex",
       model: "gpt-5.1-codex",
-      workdir: "/tmp",
+      workdir: repoDir,
     });
     expect(res.status).toBe(200);
     const body = await res.json() as { runtimeId: RuntimeId; model: string | null };
@@ -307,11 +326,11 @@ describe("POST /sessions model validation", () => {
     const registry = makeRegistry();
     const manager = makeRegistryManager(registry);
     try {
-      const app = makeApp(manager, registry);
+      const app = makeApp(manager, registry, repoDir);
       const res = await postSessions(app, {
         runtime: "codex",
         model: "claude-sonnet-4-6",
-        workdir: "/tmp",
+        workdir: repoDir,
       });
       expect(res.status).toBe(400);
       const body = await res.json() as { error: string };
@@ -325,11 +344,11 @@ describe("POST /sessions model validation", () => {
     const registry = makeRegistry();
     const manager = makeRegistryManager(registry);
     try {
-      const app = makeApp(manager, registry);
+      const app = makeApp(manager, registry, repoDir);
       const res = await postSessions(app, {
         runtime: "claude-code",
         model: "gpt-5.1-codex",
-        workdir: "/tmp",
+        workdir: repoDir,
       });
       expect(res.status).toBe(400);
       const body = await res.json() as { error: string };
@@ -342,10 +361,10 @@ describe("POST /sessions model validation", () => {
   test("omitted runtime validates against configured default runtime", async () => {
     const registry = makeRegistry("codex");
     const manager = makeRegistryManager(registry);
-    const app = makeApp(manager, registry);
+    const app = makeApp(manager, registry, repoDir);
     const res = await postSessions(app, {
       model: "gpt-5.1-codex",
-      workdir: "/tmp",
+      workdir: repoDir,
     });
     expect(res.status).toBe(200);
     const body = await res.json() as { runtimeId: RuntimeId; model: string | null };
@@ -358,10 +377,10 @@ describe("POST /sessions model validation", () => {
     const registry = makeRegistry();
     const manager = makeRegistryManager(registry);
     try {
-      const app = makeApp(manager, registry);
+      const app = makeApp(manager, registry, repoDir);
       const res = await postSessions(app, {
         runtime: "future-runtime",
-        workdir: "/tmp",
+        workdir: repoDir,
       });
       expect(res.status).toBe(400);
       const body = await res.json() as { error: string };
@@ -377,8 +396,8 @@ describe("POST /sessions model validation", () => {
     const registry = makeRegistry();
     const manager = makeRegistryManager(registry);
     try {
-      const parent = await manager.create({ workdir: "/tmp", runtime: "codex" });
-      const app = makeApp(manager, registry);
+      const parent = await manager.create({ workdir: repoDir, runtime: "codex" });
+      const app = makeApp(manager, registry, repoDir);
       const res = await postSessions(app, {
         resume_from: parent.oakridgeSid,
         runtime: "claude-code",
@@ -405,7 +424,7 @@ describe("POST /sessions model validation", () => {
     ]);
     const manager = makeRegistryManager(registry);
     try {
-      const app = makeApp(manager, registry);
+      const app = makeApp(manager, registry, repoDir);
       const res = await postSessions(app, { resume_from: parentSid });
       expect(res.status).toBe(400);
       const body = await res.json() as { error: string };
