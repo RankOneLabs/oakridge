@@ -108,10 +108,10 @@ export const AssessmentSchema = z.object({
 });
 export type Assessment = z.infer<typeof AssessmentSchema>;
 
-export const EpicStatusSchema = z.enum(["active", "complete", "archived"]);
+export const EpicStatusSchema = z.enum(["pending", "active", "complete", "archived"]);
 export type EpicStatus = z.infer<typeof EpicStatusSchema>;
 
-export const EpicStageSchema = z.enum(["spec", "build", "review"]);
+export const EpicStageSchema = z.enum(["spec", "plan", "build", "review"]);
 export type EpicStage = z.infer<typeof EpicStageSchema>;
 
 export const EpicSchema = z.object({
