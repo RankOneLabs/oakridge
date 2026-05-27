@@ -9,7 +9,6 @@
     "session_events_full_days": 14
   },
   "sessions": {
-    "worktree_per_session": false,
     "worktree_dir_name": "worktrees"
   },
   "runtime": {

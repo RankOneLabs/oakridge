@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, existsSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -38,10 +38,8 @@ async function initRepo(dir: string): Promise<void> {
   await git(dir, "commit", "--allow-empty", "-m", "init");
 }
 
-function buildConfig(worktreePerSession: boolean): KbblConfig {
-  return KbblConfigSchema.parse({
-    sessions: { worktree_per_session: worktreePerSession },
-  });
+function buildConfig(): KbblConfig {
+  return KbblConfigSchema.parse({});
 }
 
 async function noopSpawn(_session: Session): Promise<SpawnCmd> {
@@ -77,9 +75,9 @@ afterEach(async () => {
   rmSync(tmpRoot, { recursive: true, force: true });
 });
 
-describe("SessionManager.create with worktree_per_session: true", () => {
+describe("SessionManager.create — worktree is mandatory", () => {
   test("creates a worktree at <worktreesDir>/<sid> on branch kbbl/<sid8>", async () => {
-    const mgr = makeManager(buildConfig(true));
+    const mgr = makeManager(buildConfig());
     const session = await mgr.create({ workdir: repoDir });
     const sid8 = session.oakridgeSid.slice(0, 8);
     const expectedPath = join(worktreesDir, session.oakridgeSid);
@@ -97,7 +95,7 @@ describe("SessionManager.create with worktree_per_session: true", () => {
   });
 
   test("snapshot exposes all worktree fields", async () => {
-    const mgr = makeManager(buildConfig(true));
+    const mgr = makeManager(buildConfig());
     const session = await mgr.create({ workdir: repoDir });
     const snap = session.snapshot();
     expect(snap.worktreePath).toBe(session.worktreePath);
@@ -115,90 +113,34 @@ describe("SessionManager.create with worktree_per_session: true", () => {
       handoffsDir: join(tmpRoot, "handoffs"),
       worktreesDir: nestedWorktreesDir,
       buildSpawnCmd: noopSpawn,
-      config: buildConfig(true),
+      config: buildConfig(),
     });
 
     await expect(mgr.create({ workdir: repoDir })).rejects.toThrow(
       /worktreesDir .* is inside the repo .* but is not gitignored/,
     );
   });
-});
 
-describe("SessionManager.create with worktree_per_session: false", () => {
-  test("session.workdir == operator workdir, no worktree on disk", async () => {
-    const mgr = makeManager(buildConfig(false));
-    const session = await mgr.create({ workdir: repoDir });
-    expect(session.workdir).toBe(repoDir);
-    expect(session.worktreePath).toBeNull();
-    expect(session.worktreeBranch).toBeNull();
-    expect(session.worktreeBaseRef).toBeNull();
-    expect(session.projectWorkdir).toBeNull();
-    // worktreesDir is created by the server, not the manager — but we
-    // pre-created it in beforeEach, so the assertion is "no per-session
-    // subdir exists".
-    expect(existsSync(join(worktreesDir, session.oakridgeSid))).toBe(false);
-    await mgr.endAll();
-  });
-
-  test("forceWorktree: true overrides flag-off and creates a worktree", async () => {
-    const mgr = makeManager(buildConfig(false));
-    const session = await mgr.create({ workdir: repoDir, forceWorktree: true });
-    const expectedPath = join(worktreesDir, session.oakridgeSid);
-    expect(session.workdir).toBe(expectedPath);
-    expect(session.worktreePath).toBe(expectedPath);
-    expect(session.worktreeBranch).toMatch(/^kbbl\//);
-    expect(session.projectWorkdir).toBe(repoDir);
-    expect(existsSync(expectedPath)).toBe(true);
-    await mgr.endAll();
-  });
-
-  test("forceWorktree omitted with flag-off → no worktree (regression guard)", async () => {
-    const mgr = makeManager(buildConfig(false));
-    const session = await mgr.create({ workdir: repoDir });
-    expect(session.worktreePath).toBeNull();
-    expect(existsSync(join(worktreesDir, session.oakridgeSid))).toBe(false);
-    await mgr.endAll();
-  });
-});
-
-describe("SessionManager.create with non-repo workdir + flag on", () => {
-  test("falls back to operator workdir, no worktree, no error", async () => {
+  test("rejects spawn when workdir is not a git repo", async () => {
     const plain = join(tmpRoot, "plain");
     const init = Bun.spawn({ cmd: ["mkdir", "-p", plain] });
     await init.exited;
 
-    const mgr = makeManager(buildConfig(true));
-    const session = await mgr.create({ workdir: plain });
-    expect(session.workdir).toBe(plain);
-    expect(session.worktreePath).toBeNull();
-    expect(session.worktreeBranch).toBeNull();
-    expect(existsSync(join(worktreesDir, session.oakridgeSid))).toBe(false);
-    await mgr.endAll();
-  });
-
-  test("non-repo workdir + forceWorktree: true → falls back gracefully, no error", async () => {
-    const plain = join(tmpRoot, "plain-force");
-    const init = Bun.spawn({ cmd: ["mkdir", "-p", plain] });
-    await init.exited;
-
-    const mgr = makeManager(buildConfig(false));
-    const session = await mgr.create({ workdir: plain, forceWorktree: true });
-    // isGitRepo guard prevents worktree creation even with forceWorktree
-    expect(session.workdir).toBe(plain);
-    expect(session.worktreePath).toBeNull();
-    expect(session.worktreeBranch).toBeNull();
-    expect(existsSync(join(worktreesDir, session.oakridgeSid))).toBe(false);
-    await mgr.endAll();
+    const mgr = makeManager(buildConfig());
+    await expect(mgr.create({ workdir: plain })).rejects.toThrow(
+      /is not a git repo/,
+    );
+    expect(readdirSync(worktreesDir)).toHaveLength(0);
   });
 });
 
 describe("Resume worktree depth", () => {
-  // POST /sessions resume passes `workdir = parent.workdir` (which Phase 1+
-  // is the parent's worktree path, not the operator's repo). Mirroring that
-  // here so the tests exercise the production code path — using `repoDir`
-  // would skip the projectWorkdir-inheritance logic entirely.
+  // POST /sessions resume passes `workdir = parent.workdir`, which is the
+  // parent's worktree path, not the operator's repo. Mirroring that here so
+  // the tests exercise the production code path — using `repoDir` would skip
+  // the projectWorkdir-inheritance logic entirely.
   test("first resume off a fresh parent gets -r1 suffix", async () => {
-    const mgr = makeManager(buildConfig(true));
+    const mgr = makeManager(buildConfig());
     const parent = await mgr.create({ workdir: repoDir });
     const parentSid8 = parent.oakridgeSid.slice(0, 8);
     expect(parent.worktreeBranch).toBe(`kbbl/${parentSid8}`);
@@ -217,7 +159,7 @@ describe("Resume worktree depth", () => {
   });
 
   test("resume of a -r1 parent gets -r2 suffix", async () => {
-    const mgr = makeManager(buildConfig(true));
+    const mgr = makeManager(buildConfig());
     const parent = await mgr.create({ workdir: repoDir });
     const child = await mgr.create({
       workdir: parent.workdir,
@@ -264,7 +206,7 @@ describe("loadArchivedSnapshot round-trips worktree fields", () => {
     );
   }
 
-  test("Phase-1 JSONL → snapshot exposes worktreePath/Branch/BaseRef/projectWorkdir", async () => {
+  test("worktree-tagged JSONL → snapshot exposes worktreePath/Branch/BaseRef/projectWorkdir", async () => {
     const sid = "deadbeef-cafe-1234-5678-aaaaaaaaaaaa";
     writeJsonlSession(sid, {
       workdir: "/tmp/wt-root/" + sid,
@@ -278,7 +220,7 @@ describe("loadArchivedSnapshot round-trips worktree fields", () => {
     // anything awaits. Belt-and-suspenders.
     await new Promise((r) => setTimeout(r, 10));
 
-    const mgr = makeManager(buildConfig(false));
+    const mgr = makeManager(buildConfig());
     const archived = await mgr.listArchivedSnapshots();
     const snap = archived.find((s) => s.sid === sid);
     expect(snap).toBeTruthy();
@@ -288,12 +230,12 @@ describe("loadArchivedSnapshot round-trips worktree fields", () => {
     expect(snap!.projectWorkdir).toBe("/home/op/repo");
   });
 
-  test("pre-Phase-1 JSONL (no worktree keys) → snapshot has all four fields null", async () => {
+  test("legacy JSONL (no worktree keys) → snapshot has all four fields null", async () => {
     const sid = "11111111-2222-3333-4444-555555555555";
     writeJsonlSession(sid, {});
     await new Promise((r) => setTimeout(r, 10));
 
-    const mgr = makeManager(buildConfig(false));
+    const mgr = makeManager(buildConfig());
     const archived = await mgr.listArchivedSnapshots();
     const snap = archived.find((s) => s.sid === sid);
     expect(snap).toBeTruthy();
@@ -343,7 +285,7 @@ describe("loadArchivedSnapshot round-trips worktree fields", () => {
         .join("\n") + "\n",
     );
 
-    const mgr = makeManager(buildConfig(false));
+    const mgr = makeManager(buildConfig());
     const archived = await mgr.listArchivedSnapshots();
     const snap = archived.find((s) => s.sid === sid);
     expect(snap).toBeTruthy();
@@ -354,7 +296,7 @@ describe("loadArchivedSnapshot round-trips worktree fields", () => {
 
 describe("SessionManager.remove cleans up worktrees", () => {
   test("DELETE-equivalent removes the worktree directory and branch", async () => {
-    const mgr = makeManager(buildConfig(true));
+    const mgr = makeManager(buildConfig());
     const session = await mgr.create({ workdir: repoDir });
     const wtPath = session.worktreePath!;
     const wtBranch = session.worktreeBranch!;
@@ -365,16 +307,5 @@ describe("SessionManager.remove cleans up worktrees", () => {
     expect(existsSync(wtPath)).toBe(false);
     const branches = await git(repoDir, "branch", "--list", wtBranch);
     expect(branches.trim()).toBe("");
-  });
-
-  test("remove on a pre-Phase-1 session (no worktree) is a no-op for git state", async () => {
-    const mgr = makeManager(buildConfig(false));
-    const session = await mgr.create({ workdir: repoDir });
-    const removed = await mgr.remove(session.oakridgeSid);
-    expect(removed).toBe(true);
-    // Repo's branches untouched (only main from initRepo).
-    const branches = (await git(repoDir, "branch", "--list")).trim();
-    expect(branches).toContain("main");
-    expect(branches).not.toContain("kbbl/");
   });
 });

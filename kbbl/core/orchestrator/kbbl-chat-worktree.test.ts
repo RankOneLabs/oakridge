@@ -1,9 +1,10 @@
 /**
  * Integration tests for KbblChatBackend's worktree dispatch behavior.
  *
- * These tests wire KbblChatBackend against a real SessionManager (noopSpawn)
- * and verify that build-stage dispatches always produce a worktree while
- * planner-stage dispatches do not — independent of the global flag.
+ * Worktree-isolation is mandatory for every dispatched stage — there is no
+ * opt-out. These tests wire KbblChatBackend against a real SessionManager
+ * (noopSpawn) and verify that both build and planner stages produce a
+ * worktree, regardless of stage name.
  *
  * Kept separate from dispatch.test.ts to avoid paying that file's full
  * app/DB/prompt-fixture setup cost for lightweight worktree assertions.
@@ -63,8 +64,8 @@ describe("KbblChatBackend dispatch worktree behavior", () => {
     rmSync(tmpRoot, { recursive: true, force: true });
   });
 
-  test("build dispatch produces worktreePath !== null; planner1 dispatch produces worktreePath === null (global flag off)", async () => {
-    const config = KbblConfigSchema.parse({ sessions: { worktree_per_session: false } });
+  test("both build and planner dispatches produce a worktree", async () => {
+    const config = KbblConfigSchema.parse({});
     const manager = new SessionManager({
       sessionsDir: join(tmpRoot, "sessions"),
       handoffsDir: join(tmpRoot, "handoffs"),
@@ -98,7 +99,7 @@ describe("KbblChatBackend dispatch worktree behavior", () => {
       sessionName: "test-session",
     };
 
-    // build stage: forceWorktree → worktreePath must be set
+    // build stage: worktreePath must be set
     const buildResult = await backend.dispatch(buildStage, inputRef, "build prompt");
     const buildSession = manager.get(buildResult.session_ref);
     if (!buildSession) throw new Error("expected build session to exist");
@@ -106,12 +107,14 @@ describe("KbblChatBackend dispatch worktree behavior", () => {
     if (!buildSession.worktreePath) throw new Error("expected build worktreePath to be set");
     expect(existsSync(buildSession.worktreePath)).toBe(true);
 
-    // planner1 stage: no forceWorktree, global flag off → worktreePath must be null
+    // planner1 stage: worktreePath must ALSO be set — no opt-out
     const plannerRef = { ...inputRef, type: "spec" as const };
     const plannerResult = await backend.dispatch(plannerStage, plannerRef, "planner prompt");
     const plannerSession = manager.get(plannerResult.session_ref);
     if (!plannerSession) throw new Error("expected planner session to exist");
-    expect(plannerSession.worktreePath).toBeNull();
+    expect(plannerSession.worktreePath).not.toBeNull();
+    if (!plannerSession.worktreePath) throw new Error("expected planner worktreePath to be set");
+    expect(existsSync(plannerSession.worktreePath)).toBe(true);
 
     await manager.endAll();
   });

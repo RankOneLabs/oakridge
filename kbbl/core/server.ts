@@ -94,8 +94,6 @@ try {
 }
 
 // === worktrees ===
-// Created unconditionally so the manager doesn't have to branch on the flag
-// for path resolution. With the flag off the dir is empty and harmless.
 const worktreesDir = join(dataDir, config.sessions.worktree_dir_name);
 await mkdir(worktreesDir, { recursive: true });
 
@@ -110,10 +108,7 @@ await mkdir(worktreesDir, { recursive: true });
 // directly: an operator launching kbbl from a subdirectory of a repo would
 // otherwise sneak past the check whenever worktreesDir landed in a sibling
 // of that subdir but still inside the repo root.
-//
-// Only enforced when worktrees are actually enabled; flag-off operators
-// don't need to care.
-if (workdir !== null && config.sessions.worktree_per_session && (await isGitRepo(workdir))) {
+if (workdir !== null && (await isGitRepo(workdir))) {
   const repoRoot = await resolveRepoTopLevel(workdir);
   if (isPathInside(worktreesDir, repoRoot)) {
     const ignoreCheck = Bun.spawn({
