@@ -21,7 +21,9 @@ interface Project {
 
 type StatusFilter = null | EpicStatus;
 
-const FILTERS: { label: string; value: StatusFilter }[] = [
+type StatusFilterOption = { label: string; value: StatusFilter };
+
+const FILTERS: StatusFilterOption[] = [
   { label: "All", value: null },
   { label: "pending", value: "pending" },
   { label: "active", value: "active" },

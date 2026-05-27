@@ -5,13 +5,22 @@ import type { ReactElement } from "react";
 
 import { RepoDashboardView } from "../RepoDashboardView";
 
-const PROJECT_FIXTURE = {
+type ProjectFixture = { id: string; name: string; repo_path: string };
+type EpicFixture = {
+  id: string;
+  title: string;
+  status: string;
+  current_stage: string;
+  created_at: string;
+};
+
+const PROJECT_FIXTURE: ProjectFixture = {
   id: "proj-1",
   name: "My Project",
   repo_path: "/code/my-project",
 };
 
-const EPICS_FIXTURE = [
+const EPICS_FIXTURE: EpicFixture[] = [
   {
     id: "epic-1",
     title: "Epic One",
@@ -46,7 +55,7 @@ const ACTIVE_EPICS_FIXTURE = EPICS_FIXTURE.filter((e) => e.status === "active");
 
 function makeFetchStub(epicsData = EPICS_FIXTURE) {
   return vi.fn().mockImplementation((url: string) => {
-    if ((url as string).includes("/projects/")) {
+    if (url.includes("/projects/")) {
       return Promise.resolve({
         ok: true,
         json: () => Promise.resolve(PROJECT_FIXTURE),
@@ -85,13 +94,13 @@ describe("RepoDashboardView", () => {
 
   it("clicking 'active' filter refetches with status=active and updates rendered set", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
-      if ((url as string).includes("/projects/")) {
+      if (url.includes("/projects/")) {
         return Promise.resolve({
           ok: true,
           json: () => Promise.resolve(PROJECT_FIXTURE),
         });
       }
-      if ((url as string).includes("status=active")) {
+      if (url.includes("status=active")) {
         return Promise.resolve({
           ok: true,
           json: () => Promise.resolve(ACTIVE_EPICS_FIXTURE),
