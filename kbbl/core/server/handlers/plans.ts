@@ -56,6 +56,12 @@ export function mountPlansRoutes(app: Hono, deps: PlansRouteDeps): void {
     }
 
     const { spec_id, model } = result.data;
+
+    const epicForCreate = getEpicBySpec(db, spec_id);
+    if (epicForCreate && isFrozen(db, epicForCreate.id)) {
+      return c.json({ error: "epic is archived" }, 409);
+    }
+
     const id = crypto.randomUUID();
 
     try {

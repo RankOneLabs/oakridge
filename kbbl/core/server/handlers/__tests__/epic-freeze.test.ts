@@ -149,6 +149,12 @@ describe("freeze: 409 'epic is archived' on all mutating routes", () => {
     expect((await res.json() as { error: string }).error).toBe("epic is archived");
   });
 
+  test("POST /plans → 409", async () => {
+    const res = await post("/plans", { spec_id: SPEC_ID });
+    expect(res.status).toBe(409);
+    expect((await res.json() as { error: string }).error).toBe("epic is archived");
+  });
+
   test("PATCH /plans/:id → 409", async () => {
     const res = await patch(`/plans/${PLAN_ID}`, { model: "claude-opus" });
     expect(res.status).toBe(409);
@@ -157,6 +163,12 @@ describe("freeze: 409 'epic is archived' on all mutating routes", () => {
 
   test("PATCH /plans/:id/status → 409", async () => {
     const res = await patch(`/plans/${PLAN_ID}/status`, { status: "rejected", reason: "bad" });
+    expect(res.status).toBe(409);
+    expect((await res.json() as { error: string }).error).toBe("epic is archived");
+  });
+
+  test("POST /cohorts → 409", async () => {
+    const res = await post("/cohorts", { plan_id: PLAN_ID, title: "New", position: 99 });
     expect(res.status).toBe(409);
     expect((await res.json() as { error: string }).error).toBe("epic is archived");
   });

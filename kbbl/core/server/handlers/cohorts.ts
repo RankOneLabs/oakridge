@@ -74,6 +74,17 @@ export function mountCohortsRoutes(app: Hono, deps: CohortsRouteDeps): void {
     }
 
     const { plan_id, title, notes, position } = result.data;
+
+    const planRow = db
+      .prepare<{ spec_id: string }, [string]>("SELECT spec_id FROM plans WHERE id = ?")
+      .get(plan_id);
+    if (planRow) {
+      const epicForCreate = getEpicBySpec(db, planRow.spec_id);
+      if (epicForCreate && isFrozen(db, epicForCreate.id)) {
+        return c.json({ error: "epic is archived" }, 409);
+      }
+    }
+
     const id = crypto.randomUUID();
 
     try {
