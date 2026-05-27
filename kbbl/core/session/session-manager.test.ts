@@ -39,7 +39,8 @@ async function gitInitRepo(dir: string): Promise<void> {
   ];
   for (const cmd of cmds) {
     const p = Bun.spawn({ cmd, stdout: "pipe", stderr: "pipe" });
-    await p.exited;
+    const [stderr, code] = await Promise.all([new Response(p.stderr).text(), p.exited]);
+    if (code !== 0) throw new Error(`${cmd.join(" ")} failed (exit ${code}): ${stderr}`);
   }
 }
 

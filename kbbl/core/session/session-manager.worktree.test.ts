@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, existsSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -130,7 +130,7 @@ describe("SessionManager.create — worktree is mandatory", () => {
     await expect(mgr.create({ workdir: plain })).rejects.toThrow(
       /is not a git repo/,
     );
-    expect(existsSync(join(worktreesDir, "any-sid"))).toBe(false);
+    expect(readdirSync(worktreesDir)).toHaveLength(0);
   });
 });
 
