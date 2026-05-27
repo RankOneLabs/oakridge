@@ -2,7 +2,7 @@ export interface StageRow {
   name: string;
   prompt_template_path: string;
   input_artifact_type: "spec" | "cohort" | "brief" | "plan";
-  output_artifact_type: "plan" | "brief" | "pr" | "assessment";
+  output_artifact_type: "plan" | "brief" | "pr" | "assessment" | "discrepancies";
   gate: "review_required" | "none";
   default_backend: string;
 }

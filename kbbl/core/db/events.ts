@@ -2,6 +2,8 @@ import { EventBus } from "../stream/event-bus";
 
 export interface TaskTrackerEventMap {
   "spec.created": { spec_id: string };
+  "spec.analysis_complete": { spec_id: string };
+  "spec.approved": { spec_id: string; epic_id: string };
   "plan.approved": { plan_id: string; spec_id: string };
   "plan.rejected": { plan_id: string; spec_id: string };
   "plan.completed": { plan_id: string };

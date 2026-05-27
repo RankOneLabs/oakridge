@@ -36,7 +36,8 @@ describe("specs query helpers", () => {
     expect(spec.project_id).toBe(PROJECT_ID);
     expect(spec.title).toBe("Do the thing");
     expect(spec.notes).toBeNull();
-    expect(spec.status).toBe("draft");
+    // specs.status dropped in migration 016; internal_status is the lifecycle field now
+    expect(spec.internal_status).toBe("analyzing");
     expect(spec.created_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
@@ -115,9 +116,10 @@ describe("POST /specs", () => {
       body: JSON.stringify({ project_id: PROJECT_ID, title: "New spec" }),
     });
     expect(res.status).toBe(201);
-    const body = (await res.json()) as { id: string; status: string };
+    const body = (await res.json()) as { id: string; internal_status: string };
     expect(typeof body.id).toBe("string");
-    expect(body.status).toBe("draft");
+    // specs.status dropped in migration 016; internal_status starts as 'analyzing'
+    expect(body.internal_status).toBe("analyzing");
   });
 
   test("emits spec.created event after insert", async () => {
@@ -287,16 +289,16 @@ describe("PATCH /specs/:id", () => {
     expect(body.title).toBe("New");
   });
 
-  test("returns 400 if body contains status", async () => {
+  test("returns 400 if body contains no mutable fields", async () => {
     insertSpec(db, { id: "p2", project_id: PROJECT_ID, title: "T" });
     const res = await app.request("/specs/p2", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ status: "done" }),
     });
+    // specs.status was dropped; 'status' is not in PatchSpecSchema so it's filtered out,
+    // leaving an empty update that returns 400 "at least one mutable field is required"
     expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toMatch(/status not editable/);
   });
 
   test("returns 404 for unknown id", async () => {

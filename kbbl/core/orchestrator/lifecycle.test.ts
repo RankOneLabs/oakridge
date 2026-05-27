@@ -95,8 +95,9 @@ describe("full lifecycle — two-cohort plan with dependency", () => {
       // --- spec ---
       const specRes = await post("/specs", { project_id: proj.id, title: "My spec" });
       expect(specRes.status).toBe(201);
-      const spec = (await specRes.json()) as { id: string; status: string };
-      expect(spec.status).toBe("draft");
+      const spec = (await specRes.json()) as { id: string; internal_status: string };
+      // specs.status dropped in migration 016; internal_status is 'analyzing' on creation
+      expect(spec.internal_status).toBe("analyzing");
 
       // --- plan ---
       const planRes = await post("/plans", { spec_id: spec.id });
@@ -104,9 +105,8 @@ describe("full lifecycle — two-cohort plan with dependency", () => {
       const plan = (await planRes.json()) as { id: string; status: string };
       expect(plan.status).toBe("pending_approval");
 
-      // spec promoted to plan_review by POST /plans
-      const specAfterPlan = (await (await get(`/specs/${spec.id}`)).json()) as { status: string };
-      expect(specAfterPlan.status).toBe("plan_review");
+      // specs.status was dropped in migration 016; POST /plans no longer writes it
+      // (internal_status remains as-is; Epic.status tracks lifecycle now)
 
       // --- cohort A (no deps) ---
       const cohortARes = await post("/cohorts", { plan_id: plan.id, title: "Cohort A", position: 1 });
@@ -147,9 +147,7 @@ describe("full lifecycle — two-cohort plan with dependency", () => {
       expect(briefingIds).toContain(cohortA.id);
       expect(briefingIds).toContain(cohortB.id);
 
-      // spec should be planning_done
-      const specAfterApproval = (await (await get(`/specs/${spec.id}`)).json()) as { status: string };
-      expect(specAfterApproval.status).toBe("planning_done");
+      // specs.status was dropped in migration 016; plan approval no longer writes it
 
       // --- POST /briefs for A (cohort A is already in briefing from plan approval) ---
       const briefRes = await post("/briefs", {

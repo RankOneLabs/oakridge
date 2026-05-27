@@ -52,9 +52,7 @@ export function mountPlanReopenRoutes(app: Hono, deps: PlanReopenRouteDeps): voi
 
         unfreeze(db, "plan", old_id);
         db.prepare("UPDATE plans SET status = 'superseded' WHERE id = ?").run(old_id);
-        db.prepare(
-          "UPDATE specs SET status = 'plan_review' WHERE id = ?",
-        ).run(oldPlan.spec_id);
+        // specs.status dropped in migration 016; Epic.status + internal_status cover lifecycle.
 
         return null;
       })();

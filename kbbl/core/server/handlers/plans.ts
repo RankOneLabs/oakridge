@@ -59,8 +59,7 @@ export function mountPlansRoutes(app: Hono, deps: PlansRouteDeps): void {
     try {
       const plan = db.transaction((): Plan => {
         const p = insertPlan(db, { id, spec_id, model: model ?? null, predecessor_plan_id: null });
-        // Auto-promote spec to plan_review (open question 2b)
-        db.prepare("UPDATE specs SET status = 'plan_review' WHERE id = ? AND status = 'draft'").run(spec_id);
+        // specs.status dropped in migration 016; Epic.status + internal_status cover lifecycle.
         return p;
       })();
       return c.json(plan, 201);

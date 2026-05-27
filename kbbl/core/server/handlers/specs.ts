@@ -130,13 +130,6 @@ export function mountSpecsRoutes(app: Hono, deps: SpecsRouteDeps): void {
       return c.json({ error: "invalid json" }, 400);
     }
 
-    if (typeof body === "object" && body !== null && "status" in body) {
-      return c.json(
-        { error: "status not editable via PATCH /specs/:id; use PATCH /specs/:id/status" },
-        400,
-      );
-    }
-
     const result = PatchSpecSchema.safeParse(body);
     if (!result.success) {
       const msg = result.error.issues[0]?.message ?? "invalid body";
