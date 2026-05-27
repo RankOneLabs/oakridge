@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { DagEditor } from "./DagEditor";
+import { CohortNode, type CohortNodeData } from "./CohortNode";
 import type { Cohort, CohortDependency } from "./types";
 
 // ReactFlow needs its CSS side-effects resolved in jsdom.
@@ -20,7 +21,7 @@ vi.mock("reactflow", async (importOriginal) => {
     onEdgesDelete,
     onConnect,
   }: {
-    nodes: { id: string; data: { cohort: Cohort } }[];
+    nodes: { id: string; data: CohortNodeData }[];
     edges: { id: string; source: string; target: string }[];
     onNodeDragStop?: (
       e: MouseEvent,
@@ -39,7 +40,7 @@ vi.mock("reactflow", async (importOriginal) => {
         React.createElement(
           "div",
           { key: n.id, "data-testid": `node-${n.id}`, "data-cohort-title": n.data.cohort.title },
-          n.data.cohort.title,
+          React.createElement(CohortNode, { data: n.data }),
         ),
       ),
       edges.map((e) =>
@@ -199,5 +200,47 @@ describe("DagEditor", () => {
     screen.getByTestId("trigger-drag").click();
 
     expect(onUpdatePosition).toHaveBeenCalledWith("c1", expect.any(Number));
+  });
+
+  it("calls onSelectCohort when a cohort node is clicked in review mode", () => {
+    const onSelectCohort = vi.fn();
+    render(
+      <DagEditor
+        {...baseProps}
+        mode="review"
+        onSelectCohort={onSelectCohort}
+        cohorts={cohorts}
+        deps={[dep]}
+        onAddEdge={onAddEdge}
+        onDeleteEdge={onDeleteEdge}
+        onUpdatePosition={onUpdatePosition}
+      />,
+    );
+
+    const cohortEl = screen.getAllByRole("generic").find(
+      (el) => el.classList.contains("cohort-node"),
+    );
+    expect(cohortEl).toBeTruthy();
+    fireEvent.click(cohortEl!);
+
+    expect(onSelectCohort).toHaveBeenCalledWith("c1");
+  });
+
+  it("does not call onAddEdge when trigger-connect fires in review mode", () => {
+    render(
+      <DagEditor
+        {...baseProps}
+        mode="review"
+        cohorts={cohorts}
+        deps={[dep]}
+        onAddEdge={onAddEdge}
+        onDeleteEdge={onDeleteEdge}
+        onUpdatePosition={onUpdatePosition}
+      />,
+    );
+
+    screen.getByTestId("trigger-connect").click();
+
+    expect(onAddEdge).not.toHaveBeenCalled();
   });
 });

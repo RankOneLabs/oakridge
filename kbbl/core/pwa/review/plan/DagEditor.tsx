@@ -173,7 +173,7 @@ export function DagEditor({
         onEdgesDelete={mode === "edit" && !frozen ? onEdgesDelete : undefined}
         nodesDraggable={mode === "edit"}
         nodesConnectable={mode === "edit" && !frozen}
-        elementsSelectable={mode === "edit"}
+        elementsSelectable
         panOnDrag={[1, 2]}
         zoomOnPinch
         panOnScroll={false}
