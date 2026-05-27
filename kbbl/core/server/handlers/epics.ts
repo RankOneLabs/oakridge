@@ -186,8 +186,9 @@ export function mountEpicsRoutes(app: Hono, deps: EpicsRouteDeps): void {
         }
 
         db.prepare("DELETE FROM spec_discrepancies WHERE spec_id = ?").run(spec_id);
-        db.prepare("DELETE FROM specs WHERE id = ?").run(spec_id);
+        // epics.spec_id → specs.id: delete epic before spec to satisfy FK constraint
         db.prepare("DELETE FROM epics WHERE id = ?").run(id);
+        db.prepare("DELETE FROM specs WHERE id = ?").run(spec_id);
 
         return null;
       })();
