@@ -165,6 +165,20 @@ describe("GET /directories", () => {
     expect(body.entries.map((entry) => entry.name)).toEqual(["repo-a", "repo-b"]);
   });
 
+  test("omits hidden child directories from the picker", async () => {
+    mkdirSync(join(tmpRoot, ".hidden-repo"));
+    mkdirSync(join(tmpRoot, "visible-repo"));
+    const app = buildApp(KbblConfigSchema.parse({}), tmpRoot);
+
+    const res = await app.request(`/directories?path=${encodeURIComponent(tmpRoot)}`);
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      entries: Array<{ name: string; path: string }>;
+    };
+    expect(body.entries.map((entry) => entry.name)).toEqual(["visible-repo"]);
+  });
+
   test("rejects relative directory paths", async () => {
     const app = buildApp(KbblConfigSchema.parse({}), tmpRoot);
 
