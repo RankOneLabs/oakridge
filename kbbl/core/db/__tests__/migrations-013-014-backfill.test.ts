@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 // Seeds the DB with migrations up to 012 (pre-Epic), inserts one spec per
@@ -102,27 +103,16 @@ describe("migration 014 backfill: spec internal_status", () => {
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
 function applyUpTo(db: Database, dir: string, lastFile: string): void {
-  const { applyMigrations: _apply } = require("../migrations");
-  // Re-implement a bounded apply since applyMigrations is idempotent.
-  // We run all migrations, then verify — the seeded data is inserted after
-  // this call returns, so the backfill SQL in 013/014 won't touch it.
-  // Instead we use a two-phase approach: apply up to lastFile, seed, then
-  // apply the remainder.
-  const fs = require("fs") as typeof import("fs");
-  const path = require("path") as typeof import("path");
-
   db.exec(`CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY)`);
 
-  const files = fs
-    .readdirSync(dir)
-    .filter((f: string) => /^\d{3}_[a-z0-9_]+\.sql$/.test(f))
+  const files = readdirSync(dir)
+    .filter((f) => /^\d{3}_[a-z0-9_]+\.sql$/.test(f))
     .sort();
 
   for (const file of files) {
     if (file > lastFile) break;
-    const already = db.prepare("SELECT 1 FROM _migrations WHERE name = ?").get(file);
-    if (already) continue;
-    const sql = fs.readFileSync(path.join(dir, file), "utf8");
+    if (db.prepare("SELECT 1 FROM _migrations WHERE name = ?").get(file)) continue;
+    const sql = readFileSync(join(dir, file), "utf8");
     db.transaction(() => {
       db.exec(sql);
       db.prepare("INSERT INTO _migrations (name) VALUES (?)").run(file);
@@ -131,19 +121,14 @@ function applyUpTo(db: Database, dir: string, lastFile: string): void {
 }
 
 function applyFrom(db: Database, dir: string, fromFile: string): void {
-  const fs = require("fs") as typeof import("fs");
-  const path = require("path") as typeof import("path");
-
-  const files = fs
-    .readdirSync(dir)
-    .filter((f: string) => /^\d{3}_[a-z0-9_]+\.sql$/.test(f))
+  const files = readdirSync(dir)
+    .filter((f) => /^\d{3}_[a-z0-9_]+\.sql$/.test(f))
     .sort();
 
   for (const file of files) {
     if (file < fromFile) continue;
-    const already = db.prepare("SELECT 1 FROM _migrations WHERE name = ?").get(file);
-    if (already) continue;
-    const sql = fs.readFileSync(path.join(dir, file), "utf8");
+    if (db.prepare("SELECT 1 FROM _migrations WHERE name = ?").get(file)) continue;
+    const sql = readFileSync(join(dir, file), "utf8");
     db.transaction(() => {
       db.exec(sql);
       db.prepare("INSERT INTO _migrations (name) VALUES (?)").run(file);
