@@ -140,7 +140,7 @@ export function RepoDashboardView({ project_id, onBack }: RepoDashboardViewProps
                 <th>Stage</th>
                 <th>Status</th>
                 <th>Created</th>
-                <th></th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
