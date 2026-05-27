@@ -164,6 +164,7 @@ export function Sidebar({ sessions, onSelectSession }: SidebarProps) {
               project={p}
               isOpen={expandedProjects.has(p.id)}
               onToggle={toggleProject}
+              onOpenDashboard={(id) => { window.location.hash = `repo/${id}`; }}
               sessions={sessionsByProject.get(p.id) ?? []}
               specs={specsByProject.get(p.id) ?? []}
               cohortsByPlan={cohortsByPlan}
