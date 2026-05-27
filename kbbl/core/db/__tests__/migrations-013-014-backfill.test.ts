@@ -103,7 +103,7 @@ describe("migration 014 backfill: spec internal_status", () => {
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
 function applyUpTo(db: Database, dir: string, lastFile: string): void {
-  db.exec(`CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY)`);
+  db.exec(`CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)`);
 
   const files = readdirSync(dir)
     .filter((f) => /^\d{3}_[a-z0-9_]+\.sql$/.test(f))
@@ -115,7 +115,7 @@ function applyUpTo(db: Database, dir: string, lastFile: string): void {
     const sql = readFileSync(join(dir, file), "utf8");
     db.transaction(() => {
       db.exec(sql);
-      db.prepare("INSERT INTO _migrations (name) VALUES (?)").run(file);
+      db.prepare("INSERT INTO _migrations (name, applied_at) VALUES (?, datetime('now'))").run(file);
     })();
   }
 }
@@ -131,7 +131,7 @@ function applyFrom(db: Database, dir: string, fromFile: string): void {
     const sql = readFileSync(join(dir, file), "utf8");
     db.transaction(() => {
       db.exec(sql);
-      db.prepare("INSERT INTO _migrations (name) VALUES (?)").run(file);
+      db.prepare("INSERT INTO _migrations (name, applied_at) VALUES (?, datetime('now'))").run(file);
     })();
   }
 }

@@ -19,7 +19,7 @@ CREATE INDEX epics_project_id_status ON epics(project_id, status);
 -- planning_done           → active / build
 -- done                    → complete / review
 -- archived                → archived / spec
-INSERT INTO epics (id, spec_id, project_id, title, status, current_stage)
+INSERT INTO epics (id, spec_id, project_id, title, status, current_stage, created_at)
   SELECT
     'epic-backfill-' || s.id,
     s.id,
@@ -34,5 +34,6 @@ INSERT INTO epics (id, spec_id, project_id, title, status, current_stage)
       WHEN 'planning_done' THEN 'build'
       WHEN 'done'          THEN 'review'
       ELSE                      'spec'
-    END
+    END,
+    s.created_at
   FROM specs s;
