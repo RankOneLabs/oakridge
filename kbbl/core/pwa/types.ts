@@ -47,10 +47,12 @@ export interface SessionSnapshot {
   projectWorkdir: string | null;
   model: string | null;
   /**
-   * Model the runtime actually resolved at runtime. Seeded by system+init and
-   * updated by each distinct assistant.message.model; null until first
-   * observation. PWA renders `observedModel ?? model` so spawn-time
-   * intent remains the fallback when the runtime hasn't reported yet.
+   * First model the runtime actually reported for this session.
+   */
+  initialObservedModel: string | null;
+  /**
+   * Current model the runtime is reporting. Seeded by system+init and updated
+   * by each distinct assistant.message.model; null until first observation.
    */
   observedModel: string | null;
   endReason: "user_closed" | "subprocess_exited" | "compacted" | null;
@@ -67,7 +69,12 @@ export type InboxDelta =
   | { type: "pending_count_changed"; sid: string; count: number }
   | { type: "last_activity_changed"; sid: string; ts: string }
   | { type: "yolo_changed"; sid: string; yoloMode: boolean }
-  | { type: "observed_model_changed"; sid: string; observedModel: string };
+  | {
+      type: "observed_model_changed";
+      sid: string;
+      initialObservedModel: string | null;
+      observedModel: string;
+    };
 
 export type Status = "connecting" | "connected" | "disconnected";
 export type Theme = "dark" | "light";

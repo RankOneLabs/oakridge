@@ -207,7 +207,12 @@ function applyDelta(state: AppState, delta: InboxDelta): Partial<AppState> {
       const prev = state.sessions.get(sid);
       if (!prev) return {};
       const sessions = new Map(state.sessions);
-      sessions.set(sid, { ...prev, observedModel: delta.observedModel });
+      sessions.set(sid, {
+        ...prev,
+        initialObservedModel:
+          delta.initialObservedModel ?? prev.initialObservedModel,
+        observedModel: delta.observedModel,
+      });
       return { sessions };
     }
     case "compact_suggested": {

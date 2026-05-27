@@ -85,6 +85,7 @@ export interface RuntimeSnapshotContrib {
   yoloMode: boolean;
   allowedTools: string[];
   lastResultUsage: ResultUsage | null;
+  initialObservedModel: string | null;
   observedModel: string | null;
 }
 

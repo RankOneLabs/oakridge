@@ -21,10 +21,10 @@ export function SessionRow({
   const relative = useRelativeTime(snapshot.lastActivityTs);
   const canResume = snapshot.status === "ended";
   const [confirmRemove, setConfirmRemove] = useState(false);
-  // Prefer the runtime-resolved model CC actually executed; fall back to
-  // spawn-time intent so archived pre-cohort-1 sessions (where observedModel
-  // is null) still render the chip.
-  const displayModel = snapshot.observedModel ?? snapshot.model;
+  const initialModel = snapshot.initialObservedModel ?? snapshot.model;
+  const currentModel = snapshot.observedModel ?? initialModel;
+  const showCurrentModel =
+    Boolean(initialModel && currentModel) && currentModel !== initialModel;
 
   // Server broadcasts session_removed; the inbox handler drops the row.
   // No optimistic UI here — if the request failed silently the row simply
@@ -69,9 +69,14 @@ export function SessionRow({
           <span className="session-row-name" title={snapshot.sid}>
             {snapshot.name || snapshot.sid.slice(0, 8)}
           </span>
-          {displayModel && (
-            <span className="session-row-model" title={displayModel}>
-              {prettyModelLabel(displayModel)}
+          {initialModel && (
+            <span className="session-row-model" title={`initial: ${initialModel}`}>
+              initial {prettyModelLabel(initialModel)}
+            </span>
+          )}
+          {showCurrentModel && currentModel && (
+            <span className="session-row-model" title={`current: ${currentModel}`}>
+              current {prettyModelLabel(currentModel)}
             </span>
           )}
           {snapshot.pendingCount > 0 && (

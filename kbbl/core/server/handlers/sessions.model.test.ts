@@ -73,6 +73,7 @@ function makeRuntime(id: RuntimeId, models: string[]): AgentRuntime {
         yoloMode: false,
         allowedTools: [],
         lastResultUsage: null,
+        initialObservedModel: null,
         observedModel: null,
       };
     },

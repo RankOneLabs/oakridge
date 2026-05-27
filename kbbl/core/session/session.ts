@@ -204,12 +204,17 @@ export interface SessionSnapshot {
    */
   model: string | null;
   /**
-   * Model id CC actually resolved at runtime, seeded by system+init and
+   * First model id the runtime reported for this session. This is normally
+   * the model resolved by system+init, and it stays fixed even if a later
+   * assistant turn or subagent reports another model.
+   */
+  initialObservedModel: string | null;
+  /**
+   * Most recent model id reported by the runtime. Seeded by system+init and
    * overwritten by each distinct assistant message.model. Null when no
    * runtime model has been observed yet (pre-init, or sessions reconstructed
    * from JSONL that predates both `model_observed` events and the events
-   * carrying the value in their raw payload). Cohort 2 renders this with
-   * `observedModel ?? model` so spawn-time intent stays the fallback.
+   * carrying the value in their raw payload).
    */
   observedModel: string | null;
   /**
@@ -300,12 +305,10 @@ export class Session {
   private yoloMode = false;
   private allowedTools = new Set<string>();
   private lastResultUsage: ResultUsage | null = null;
-  // Model id CC actually resolved, captured from system+init.model and
-  // updated by each distinct assistant.message.model. First-wins on init,
-  // last-wins on assistant so a subagent firing under a different model is
-  // visible on the snapshot. Storing the value on the live Session avoids
-  // re-scanning JSONL on every snapshot() call.
+  // Runtime-observed model ids: initial is first-wins for launch truth,
+  // observed is last-wins so current subagent/runtime activity stays visible.
   private observedModel: string | null = null;
+  private initialObservedModel: string | null = null;
   // Wall-clock of the most recent observed turn end. Initialized to
   // createdAt so the first turn's seconds_since_prev_turn is the cold-start
   // gap (user opens session → first reply lands), which is real signal for
@@ -383,6 +386,10 @@ export class Session {
     return this.observedModel;
   }
 
+  get firstObservedModel(): string | null {
+    return this.initialObservedModel;
+  }
+
   /**
    * Runtime-adapter injection point: called by the classifier when it
    * observes the underlying runtime's internal session id (e.g., CC's
@@ -448,7 +455,7 @@ export class Session {
    * common steady-state case (same model across assistant turns) from
    * emitting one envelope event per turn. Emit-before-mutate matches the
    * pattern used by observeRuntimeSessionId/setYolo/allowlistTool — if the
-   * JSONL flush throws, observedModel stays at the prior value and a later
+   * JSONL flush throws, model state stays at the prior value and a later
    * event can retry cleanly.
    *
    * No allowlist gate: observedModel captures runtime truth, not operator
@@ -460,6 +467,9 @@ export class Session {
   async observeRuntimeModel(model: string): Promise<void> {
     if (model === this.observedModel) return;
     await this.emit("model_observed", { model });
+    if (this.initialObservedModel === null) {
+      this.initialObservedModel = model;
+    }
     this.observedModel = model;
     try {
       this.callbacks.onRuntimeModelObserved?.(this, model);
@@ -638,6 +648,7 @@ export class Session {
       worktreeBaseRef: this.worktreeBaseRef,
       projectWorkdir: this.projectWorkdir,
       model: this.model,
+      initialObservedModel: this.initialObservedModel,
       observedModel: this.observedModel,
       endReason: this._endReason ?? null,
       successorSid: this._successorSid,

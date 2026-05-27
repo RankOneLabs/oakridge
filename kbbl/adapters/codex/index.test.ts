@@ -123,6 +123,7 @@ describe("reconstructSnapshot", () => {
     expect(contrib.yoloMode).toBe(false);
     expect(contrib.allowedTools).toEqual([]);
     expect(contrib.lastResultUsage).toBeNull();
+    expect(contrib.initialObservedModel).toBeNull();
     expect(contrib.observedModel).toBeNull();
   });
 
@@ -167,7 +168,7 @@ describe("reconstructSnapshot", () => {
     expect(contrib.runtimeSid).toBe("thread-xyz");
   });
 
-  test("reads model_observed", () => {
+  test("reads model_observed initial and current models", () => {
     const events = [
       {
         id: 0,
@@ -175,9 +176,16 @@ describe("reconstructSnapshot", () => {
         ts: "2026-01-01T00:00:00Z",
         payload: { model: "gpt-5.5" },
       },
+      {
+        id: 1,
+        type: "model_observed",
+        ts: "2026-01-01T00:00:01Z",
+        payload: { model: "o3" },
+      },
     ];
     const contrib = rt.reconstructSnapshot(events);
-    expect(contrib.observedModel).toBe("gpt-5.5");
+    expect(contrib.initialObservedModel).toBe("gpt-5.5");
+    expect(contrib.observedModel).toBe("o3");
   });
 });
 

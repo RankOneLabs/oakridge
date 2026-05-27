@@ -221,7 +221,7 @@ describe("CC adapter reconstructSnapshot", () => {
     expect(contrib.yoloMode).toBe(true);
   });
 
-  test("extracts observedModel from model_observed", async () => {
+  test("extracts initial and current observed models from model_observed", async () => {
     const rt = await makeRuntime();
     const events: EnvelopeEvent[] = [
       {
@@ -236,9 +236,16 @@ describe("CC adapter reconstructSnapshot", () => {
         ts: "2026-01-01T00:00:01Z",
         payload: { model: "claude-sonnet-4-6" },
       },
+      {
+        id: 2,
+        type: "model_observed",
+        ts: "2026-01-01T00:00:02Z",
+        payload: { model: "claude-haiku-4-5-20251001" },
+      },
     ];
     const contrib = rt.reconstructSnapshot(events);
-    expect(contrib.observedModel).toBe("claude-sonnet-4-6");
+    expect(contrib.initialObservedModel).toBe("claude-sonnet-4-6");
+    expect(contrib.observedModel).toBe("claude-haiku-4-5-20251001");
   });
 
   test("empty events → all null/empty", async () => {
@@ -248,6 +255,7 @@ describe("CC adapter reconstructSnapshot", () => {
     expect(contrib.yoloMode).toBe(false);
     expect(contrib.allowedTools).toEqual([]);
     expect(contrib.lastResultUsage).toBeNull();
+    expect(contrib.initialObservedModel).toBeNull();
     expect(contrib.observedModel).toBeNull();
   });
 });

@@ -100,6 +100,7 @@ describe("loadArchivedSnapshot observedModel reconstruction", () => {
 
     const mgr = makeManager(buildConfig());
     const snap = await loadSnapshot(mgr, sid);
+    expect(snap?.initialObservedModel).toBe("claude-opus-4-7");
     expect(snap?.observedModel).toBe("claude-haiku-4-5");
   });
 
@@ -140,6 +141,7 @@ describe("loadArchivedSnapshot observedModel reconstruction", () => {
 
     const mgr = makeManager(buildConfig());
     const snap = await loadSnapshot(mgr, sid);
+    expect(snap?.initialObservedModel).toBe("claude-opus-4-7");
     expect(snap?.observedModel).toBe("claude-haiku-4-5");
   });
 
@@ -157,6 +159,7 @@ describe("loadArchivedSnapshot observedModel reconstruction", () => {
 
     const mgr = makeManager(buildConfig());
     const snap = await loadSnapshot(mgr, sid);
+    expect(snap?.initialObservedModel).toBeNull();
     expect(snap?.observedModel).toBeNull();
   });
 
@@ -174,6 +177,7 @@ describe("loadArchivedSnapshot observedModel reconstruction", () => {
 
     const mgr = makeManager(buildConfig());
     const snap = await loadSnapshot(mgr, sid);
+    expect(snap?.initialObservedModel).toBe("claude-future-snapshot-20991231");
     expect(snap?.observedModel).toBe("claude-future-snapshot-20991231");
   });
 });
