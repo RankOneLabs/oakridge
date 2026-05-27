@@ -4,6 +4,8 @@ import type { Database } from "bun:sqlite";
 import { getCohort } from "../../db/cohorts";
 import { getLatestApprovedBriefByCohort } from "../../db/briefs";
 import { taskTrackerEvents } from "../../db/events";
+import { getEpicBySpec } from "../../db/epics";
+import { advanceEpicByEvent } from "../../db/epics";
 import type { Cohort } from "../../types/task-tracker";
 
 const PatchCohortStatusSchema = z.discriminatedUnion("status", [
@@ -248,6 +250,24 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
 
     if (emitPlanCompleted) {
       taskTrackerEvents.emit("plan.completed", emitPlanCompleted);
+      const completedPlanId = (emitPlanCompleted as { plan_id: string }).plan_id;
+
+      // Advance Epic stage: build → review on plan completion
+      try {
+        const planRow = db
+          .prepare<{ spec_id: string }, [string]>("SELECT spec_id FROM plans WHERE id = ?")
+          .get(completedPlanId);
+        if (planRow) {
+          const epic = getEpicBySpec(db, planRow.spec_id);
+          if (epic) {
+            advanceEpicByEvent(db, epic.id, "epic_build_done");
+          }
+        }
+      } catch (err) {
+        console.error(
+          JSON.stringify({ kbbl: "cohort-status", warn: "advanceEpicByEvent(epic_build_done) failed", error: String(err) }),
+        );
+      }
     }
 
     return c.json(updated);

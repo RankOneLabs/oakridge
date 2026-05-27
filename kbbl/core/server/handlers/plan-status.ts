@@ -5,6 +5,8 @@ import { getPlan } from "../../db/plans";
 import { freeze } from "../../review/freeze";
 import { taskTrackerEvents } from "../../db/events";
 import { PLAN_TRANSITIONS } from "../../orchestrator/state-machine";
+import { getEpicBySpec } from "../../db/epics";
+import { advanceEpicByEvent } from "../../db/epics";
 import type { Plan } from "../../types/task-tracker";
 
 const PatchPlanStatusSchema = z.object({
@@ -59,6 +61,18 @@ export function mountPlanStatusRoutes(app: Hono, deps: PlanStatusRouteDeps): voi
             "UPDATE plans SET status = ? WHERE id = ? RETURNING *",
           ).get(nextStatus, plan_id);
           freeze(db, "plan", plan_id);
+
+          // Advance Epic stage: plan → build
+          const epic = getEpicBySpec(db, plan.spec_id);
+          if (epic) {
+            try {
+              advanceEpicByEvent(db, epic.id, "epic_plan_approved");
+            } catch (err) {
+              console.error(
+                JSON.stringify({ kbbl: "plan-status", warn: "advanceEpicByEvent failed", error: String(err), plan_id }),
+              );
+            }
+          }
 
           // specs.status dropped in migration 016; Epic.status + internal_status cover lifecycle.
 

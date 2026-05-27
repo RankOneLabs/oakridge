@@ -1,15 +1,18 @@
+import type { Database } from "bun:sqlite";
 import type { EventBus } from "../stream/event-bus";
 import type { TaskTrackerEventMap } from "../db/events";
 import type { createDispatcher } from "./backends/dispatcher";
+import { advanceEpicByEvent } from "../db/epics";
 
 type Dispatcher = ReturnType<typeof createDispatcher>;
 
 interface DispatchHookDeps {
   taskTrackerEvents: EventBus<TaskTrackerEventMap>;
   dispatcher: Dispatcher;
+  db: Database;
 }
 
-export function wireDispatchHooks({ taskTrackerEvents, dispatcher }: DispatchHookDeps): () => void {
+export function wireDispatchHooks({ taskTrackerEvents, dispatcher, db }: DispatchHookDeps): () => void {
   const unsubSpecCreated = taskTrackerEvents.subscribe("spec.created", ({ spec_id }) => {
     void (async () => {
       try {
@@ -22,7 +25,16 @@ export function wireDispatchHooks({ taskTrackerEvents, dispatcher }: DispatchHoo
     })();
   });
 
-  const unsubSpecApproved = taskTrackerEvents.subscribe("spec.approved", ({ spec_id }) => {
+  const unsubSpecApproved = taskTrackerEvents.subscribe("spec.approved", ({ spec_id, epic_id }) => {
+    // Advance Epic stage: spec → plan (implicitly activates if still pending)
+    try {
+      advanceEpicByEvent(db, epic_id, "epic_spec_approved");
+    } catch (err) {
+      console.error(
+        JSON.stringify({ kbbl: "dispatch-hooks", event: "spec.approved", error: String(err), spec_id, epic_id }),
+      );
+    }
+
     void (async () => {
       try {
         await dispatcher.dispatch("planner1", spec_id);

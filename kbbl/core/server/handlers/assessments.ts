@@ -2,6 +2,8 @@ import { z } from "zod";
 import type { Hono } from "hono";
 import type { Database } from "bun:sqlite";
 import { insertAssessment, getAssessment, getAssessmentByPlan } from "../../db/assessments";
+import { getEpicBySpec } from "../../db/epics";
+import { advanceEpicByEvent } from "../../db/epics";
 import { DeviationsCatalogEntrySchema } from "../../types/task-tracker";
 
 const CreateAssessmentSchema = z.object({
@@ -47,6 +49,24 @@ export function mountAssessmentsRoutes(app: Hono, deps: AssessmentsRouteDeps): v
         fix_plan,
         model: model ?? null,
       });
+
+      // Advance Epic stage: review → complete (epic_review_done)
+      try {
+        const planRow = db
+          .prepare<{ spec_id: string }, [string]>("SELECT spec_id FROM plans WHERE id = ?")
+          .get(plan_id);
+        if (planRow) {
+          const epic = getEpicBySpec(db, planRow.spec_id);
+          if (epic) {
+            advanceEpicByEvent(db, epic.id, "epic_review_done");
+          }
+        }
+      } catch (err) {
+        console.error(
+          JSON.stringify({ kbbl: "assessments", warn: "advanceEpicByEvent(epic_review_done) failed", error: String(err), plan_id }),
+        );
+      }
+
       return c.json(assessment, 201);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
