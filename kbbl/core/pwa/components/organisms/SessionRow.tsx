@@ -21,10 +21,11 @@ export function SessionRow({
   const relative = useRelativeTime(snapshot.lastActivityTs);
   const canResume = snapshot.status === "ended";
   const [confirmRemove, setConfirmRemove] = useState(false);
-  const initialModel = snapshot.initialObservedModel ?? snapshot.model;
-  const currentModel = snapshot.observedModel ?? initialModel;
-  const showCurrentModel =
-    Boolean(initialModel && currentModel) && currentModel !== initialModel;
+  const primaryModel = snapshot.initialObservedModel ?? snapshot.model;
+  const primaryModelLabel = snapshot.initialObservedModel ? "initial" : "requested";
+  const currentModel = snapshot.observedModel;
+  const shouldShowCurrentModel =
+    Boolean(primaryModel && currentModel) && currentModel !== primaryModel;
 
   // Server broadcasts session_removed; the inbox handler drops the row.
   // No optimistic UI here — if the request failed silently the row simply
@@ -69,12 +70,12 @@ export function SessionRow({
           <span className="session-row-name" title={snapshot.sid}>
             {snapshot.name || snapshot.sid.slice(0, 8)}
           </span>
-          {initialModel && (
-            <span className="session-row-model" title={`initial: ${initialModel}`}>
-              initial {prettyModelLabel(initialModel)}
+          {primaryModel && (
+            <span className="session-row-model" title={`${primaryModelLabel}: ${primaryModel}`}>
+              {primaryModelLabel} {prettyModelLabel(primaryModel)}
             </span>
           )}
-          {showCurrentModel && currentModel && (
+          {shouldShowCurrentModel && currentModel && (
             <span className="session-row-model" title={`current: ${currentModel}`}>
               current {prettyModelLabel(currentModel)}
             </span>

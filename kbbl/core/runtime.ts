@@ -1,7 +1,8 @@
 import type { Hono } from "hono";
 
-import type { Session, EnvelopeEvent, ResultUsage, SpawnCmd } from "./session/session";
+import type { Session, EnvelopeEvent, SpawnCmd } from "./session/session";
 import type { SessionManager } from "./session/session-manager";
+import type { ResultUsage } from "./session/types";
 
 // === runtime identity ===
 

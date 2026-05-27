@@ -93,10 +93,11 @@ export function SessionTopBar({
   // stream status on an archived-only view is misleading ("disconnected"
   // just means the one-shot fetch finished).
   const shownStatus = snapshot?.status === "live" ? streamStatus : inboxStatus;
-  const initialModel = snapshot?.initialObservedModel ?? snapshot?.model;
-  const currentModel = snapshot?.observedModel ?? initialModel;
-  const showCurrentModel =
-    Boolean(initialModel && currentModel) && currentModel !== initialModel;
+  const primaryModel = snapshot?.initialObservedModel ?? snapshot?.model;
+  const primaryModelLabel = snapshot?.initialObservedModel ? "initial" : "requested";
+  const currentModel = snapshot?.observedModel;
+  const shouldShowCurrentModel =
+    Boolean(primaryModel && currentModel) && currentModel !== primaryModel;
   return (
     <header className="top-bar" ref={ref}>
       <button
@@ -167,12 +168,12 @@ export function SessionTopBar({
         <span className="session-label-name">
           {snapshot?.name || sid.slice(0, 8)}
         </span>
-        {initialModel && (
-          <span className="session-label-model" title={`initial: ${initialModel}`}>
-            initial {prettyModelLabel(initialModel)}
+        {primaryModel && (
+          <span className="session-label-model" title={`${primaryModelLabel}: ${primaryModel}`}>
+            {primaryModelLabel} {prettyModelLabel(primaryModel)}
           </span>
         )}
-        {showCurrentModel && currentModel && (
+        {shouldShowCurrentModel && currentModel && (
           <span className="session-label-model" title={`current: ${currentModel}`}>
             current {prettyModelLabel(currentModel)}
           </span>

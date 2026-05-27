@@ -4,9 +4,23 @@ import { join } from "node:path";
 
 import type { Compactor } from "./compactor";
 import type { AgentRuntime, RuntimeId, SessionHandle } from "../runtime";
+import type {
+  ArtifactId,
+  ResultUsage,
+  SessionEndReason,
+  SessionId,
+  SessionSnapshot,
+  SessionStatus,
+} from "./types";
 
-export type SessionId = string & { readonly __brand: "SessionId" };
-export type ArtifactId = string & { readonly __brand: "ArtifactId" };
+export type {
+  ArtifactId,
+  ResultUsage,
+  SessionEndReason,
+  SessionId,
+  SessionSnapshot,
+  SessionStatus,
+} from "./types";
 
 export interface EnvelopeEvent {
   id: number;
@@ -107,10 +121,6 @@ export interface SessionOpts {
   nonPersistedEventTypes?: ReadonlySet<string>;
 }
 
-export type SessionStatus = "starting" | "live" | "compacting" | "ended";
-
-export type SessionEndReason = "user_closed" | "subprocess_exited" | "compacted";
-
 /**
  * Hard cap on `artifactId` length. Enforced at the Session constructor,
  * the POST /sessions handler, the GET /artifacts/:artifactId/sessions
@@ -120,19 +130,6 @@ export type SessionEndReason = "user_closed" | "subprocess_exited" | "compacted"
  * 200 is generous for any reasonable id scheme (UUIDs, slugs, hashes).
  */
 export const MAX_ARTIFACT_ID_LENGTH = 200;
-
-/**
- * Subset of CC's `result`-event usage block. Captured on every `result`
- * emit and snapshotted so the PWA can show a rough token footprint on
- * the Resume button — important on Claude Max where a resume re-ingests
- * parent context and burns against the 5-hour rate-limit window.
- */
-export interface ResultUsage {
-  input_tokens: number;
-  output_tokens: number;
-  cache_creation_input_tokens?: number;
-  cache_read_input_tokens?: number;
-}
 
 /**
  * Per-turn usage observation. Fed into the cache-vs-idle diagnostic — the
@@ -154,89 +151,6 @@ export interface UsageObservation {
 
 /** Bound on per-session in-memory usage history. */
 export const USAGE_OBSERVATION_BUFFER_CAPACITY = 200;
-
-export interface SessionSnapshot {
-  sid: string;
-  name: string;
-  workdir: string;
-  status: SessionStatus;
-  createdAt: string;
-  lastActivityTs: string;
-  /** Runtime adapter id for this session (e.g. "claude-code"). */
-  runtimeId: RuntimeId;
-  /**
-   * Runtime-internal session id (e.g. CC's session_id from system/init),
-   * null until observed. Adapter-neutral name; prefer this over `ccSid`.
-   */
-  runtimeSid: string | null;
-  /**
-   * @deprecated Use runtimeSid. Kept as a derived alias for backward compat;
-   * equals runtimeSid for CC sessions and null for other runtimes.
-   */
-  ccSid: string | null;
-  parentCcSid: string | null;
-  parentOakridgeSid: string | null;
-  /**
-   * Tag from legit-biz-club identifying the artifact this session is
-   * working on. null for ad-hoc sessions created outside the workspace
-   * layer (the existing kbbl-direct flow). Surfaces to the PWA so
-   * approvals can be rendered with artifact context.
-   */
-  artifactId: ArtifactId | null;
-  pendingCount: number;
-  yoloMode: boolean;
-  allowedTools: string[];
-  lastResultUsage: ResultUsage | null;
-  /**
-   * Per-session worktree metadata, all null when worktrees are off (or
-   * the operator workdir isn't a repo, or the session predates Phase 1).
-   * `workdir` above is the spawn cwd (= worktreePath when set);
-   * `projectWorkdir` is the operator's original repo so the PWA can show
-   * "this session is editing <project> on branch <kbbl/sid>".
-   */
-  worktreePath: string | null;
-  worktreeBranch: string | null;
-  worktreeBaseRef: string | null;
-  projectWorkdir: string | null;
-  /**
-   * Runtime model id this session was spawned with, or null for sessions
-   * created before this field existed / spawned with no override.
-   */
-  model: string | null;
-  /**
-   * First model id the runtime reported for this session. This is normally
-   * the model resolved by system+init, and it stays fixed even if a later
-   * assistant turn or subagent reports another model.
-   */
-  initialObservedModel: string | null;
-  /**
-   * Most recent model id reported by the runtime. Seeded by system+init and
-   * overwritten by each distinct assistant message.model. Null when no
-   * runtime model has been observed yet (pre-init, or sessions reconstructed
-   * from JSONL that predates both `model_observed` events and the events
-   * carrying the value in their raw payload).
-   */
-  observedModel: string | null;
-  /**
-   * Reason this session ended, or null if the reason is unknown (session is
-   * still live/starting/compacting, or ended without an explicit reason being
-   * recorded — e.g. reconstructed from JSONL without a terminal event).
-   * "compacted" means runCompact handed off to a successor (paired with
-   * `successorSid`); "user_closed" is a deliberate operator close;
-   * "subprocess_exited" is a CC subprocess death we did not initiate. The
-   * tri-state distinction lets the PWA pick CompactedBanner vs EndedBanner.
-   */
-  endReason: SessionEndReason | null;
-  /**
-   * oakridgeSid of the successor session created by runCompact, or null
-   * if this session was not compacted (or compaction failed before the
-   * successor spawned). Set even when status is still "compacting" the
-   * brief gap between successor.spawn() and oldSession.abort(); the PWA
-   * uses it to render the "→ session NNN" link as soon as the live snapshot
-   * gains it.
-   */
-  successorSid: string | null;
-}
 
 export async function readJsonlOrEmpty(path: string): Promise<string> {
   try {
@@ -308,7 +222,7 @@ export class Session {
   // Runtime-observed model ids: initial is first-wins for launch truth,
   // observed is last-wins so current subagent/runtime activity stays visible.
   private observedModel: string | null = null;
-  private initialObservedModel: string | null = null;
+  private _initialObservedModel: string | null = null;
   // Wall-clock of the most recent observed turn end. Initialized to
   // createdAt so the first turn's seconds_since_prev_turn is the cold-start
   // gap (user opens session → first reply lands), which is real signal for
@@ -386,8 +300,8 @@ export class Session {
     return this.observedModel;
   }
 
-  get firstObservedModel(): string | null {
-    return this.initialObservedModel;
+  get initialObservedModel(): string | null {
+    return this._initialObservedModel;
   }
 
   /**
@@ -467,8 +381,8 @@ export class Session {
   async observeRuntimeModel(model: string): Promise<void> {
     if (model === this.observedModel) return;
     await this.emit("model_observed", { model });
-    if (this.initialObservedModel === null) {
-      this.initialObservedModel = model;
+    if (this._initialObservedModel === null) {
+      this._initialObservedModel = model;
     }
     this.observedModel = model;
     try {
@@ -648,7 +562,7 @@ export class Session {
       worktreeBaseRef: this.worktreeBaseRef,
       projectWorkdir: this.projectWorkdir,
       model: this.model,
-      initialObservedModel: this.initialObservedModel,
+      initialObservedModel: this._initialObservedModel,
       observedModel: this.observedModel,
       endReason: this._endReason ?? null,
       successorSid: this._successorSid,

@@ -221,7 +221,7 @@ export type InboxDelta =
   | {
       type: "observed_model_changed";
       sid: string;
-      initialObservedModel: string | null;
+      initialObservedModel: string;
       observedModel: string;
     }
   | { type: "workspace_event"; event: WorkspaceEvent };
@@ -471,7 +471,7 @@ export class SessionManager {
           this.broadcastDelta({
             type: "observed_model_changed",
             sid: s.oakridgeSid,
-            initialObservedModel: s.firstObservedModel,
+            initialObservedModel: s.initialObservedModel ?? observedModel,
             observedModel,
           });
         },

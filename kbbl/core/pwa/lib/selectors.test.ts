@@ -28,6 +28,7 @@ function snap(over: Partial<SessionSnapshot>): SessionSnapshot {
     ccSid: over.ccSid ?? null,
     parentCcSid: over.parentCcSid ?? null,
     parentOakridgeSid: over.parentOakridgeSid ?? null,
+    artifactId: over.artifactId ?? null,
     pendingCount: over.pendingCount ?? 0,
     yoloMode: over.yoloMode ?? false,
     allowedTools: over.allowedTools ?? [],
