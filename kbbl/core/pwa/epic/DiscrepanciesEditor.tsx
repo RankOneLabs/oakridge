@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { responseError } from "../lib/http";
 
 type DiscrepancyStatus = "open" | "resolved" | "waived";
 
@@ -89,7 +90,7 @@ export function DiscrepanciesEditor({ spec_id, epic_id }: DiscrepanciesEditorPro
     queryKey: ["discrepancies", spec_id],
     queryFn: async (): Promise<Discrepancy[]> => {
       const res = await fetch(`/spec-discrepancies?spec_id=${encodeURIComponent(spec_id)}`);
-      if (!res.ok) throw new Error(`discrepancies: ${res.status}`);
+      if (!res.ok) throw await responseError(res, "discrepancies");
       return (await res.json()) as Discrepancy[];
     },
   });
@@ -109,7 +110,7 @@ export function DiscrepanciesEditor({ spec_id, epic_id }: DiscrepanciesEditorPro
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ resolution, status }),
       });
-      if (!res.ok) throw new Error(`patch: ${res.status}`);
+      if (!res.ok) throw await responseError(res, "patch");
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["discrepancies", spec_id] });
@@ -126,7 +127,7 @@ export function DiscrepanciesEditor({ spec_id, epic_id }: DiscrepanciesEditorPro
           body: JSON.stringify({ internal_status: "review" }),
         },
       );
-      if (!res.ok) throw new Error(`move: ${res.status}`);
+      if (!res.ok) throw await responseError(res, "move");
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["epic", epic_id] });

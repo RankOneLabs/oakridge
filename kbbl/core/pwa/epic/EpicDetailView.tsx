@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { responseError } from "../lib/http";
 
 import { StageStrip } from "./StageStrip";
 import { DiscrepanciesEditor } from "./DiscrepanciesEditor";
@@ -11,7 +12,7 @@ type EpicStatus = "pending" | "active" | "complete" | "archived";
 type EpicStage = "spec" | "plan" | "build" | "review";
 type SpecInternalStatus = "analyzing" | "discrepancies" | "review" | "approved";
 type PlanStatus = "pending_approval" | "approved" | "rejected" | "superseded";
-type CohortStatus = "waiting" | "planned" | "briefing" | "brief_review" | "building" | "done" | "blocked";
+type CohortStatus = "waiting" | "planned" | "briefing" | "brief_review" | "building" | "ready_to_build" | "awaiting_merge" | "done" | "blocked";
 
 interface EpicDetailData {
   epic: {
@@ -50,7 +51,7 @@ export function EpicDetailView({ epic_id }: EpicDetailViewProps) {
     queryKey: ["epic", epic_id],
     queryFn: async (): Promise<EpicDetailData> => {
       const res = await fetch(`/epics/${encodeURIComponent(epic_id)}`);
-      if (!res.ok) throw new Error(`epic: ${res.status}`);
+      if (!res.ok) throw await responseError(res, "epic");
       return (await res.json()) as EpicDetailData;
     },
   });
@@ -62,7 +63,7 @@ export function EpicDetailView({ epic_id }: EpicDetailViewProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: newStatus }),
       });
-      if (!res.ok) throw new Error(`status: ${res.status}`);
+      if (!res.ok) throw await responseError(res, "status");
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["epic", epic_id] });
@@ -78,7 +79,7 @@ export function EpicDetailView({ epic_id }: EpicDetailViewProps) {
       const res = await fetch(`/epics/${encodeURIComponent(epic_id)}`, {
         method: "DELETE",
       });
-      if (!res.ok) throw new Error(`delete: ${res.status}`);
+      if (!res.ok) throw await responseError(res, "delete");
     },
     onSuccess: () => {
       const projectId = query.data?.epic.project_id;
@@ -103,6 +104,7 @@ export function EpicDetailView({ epic_id }: EpicDetailViewProps) {
   if (query.error instanceof Error) {
     return (
       <div className="epic-detail">
+        {/* project_id unknown at this point — fall back to session root */}
         <button type="button" className="epic-detail__back" onClick={() => { window.location.hash = ""; }}>
           ← Back
         </button>
@@ -116,6 +118,7 @@ export function EpicDetailView({ epic_id }: EpicDetailViewProps) {
   if (query.isPending || !query.data) {
     return (
       <div className="epic-detail">
+        {/* project_id unknown at this point — fall back to session root */}
         <button type="button" className="epic-detail__back" onClick={() => { window.location.hash = ""; }}>
           ← Back
         </button>

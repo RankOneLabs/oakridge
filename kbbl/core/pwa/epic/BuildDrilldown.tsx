@@ -1,4 +1,4 @@
-type CohortStatus = "waiting" | "planned" | "briefing" | "brief_review" | "building" | "done" | "blocked";
+type CohortStatus = "waiting" | "planned" | "briefing" | "brief_review" | "building" | "ready_to_build" | "awaiting_merge" | "done" | "blocked";
 
 interface Cohort {
   id: string;

@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { responseError } from "../lib/http";
 
 interface ReviewDrilldownProps {
   plan_id: string | null;
@@ -10,7 +11,7 @@ export function ReviewDrilldown({ plan_id, assessment_present }: ReviewDrilldown
     queryKey: ["assessment", plan_id],
     queryFn: async (): Promise<unknown> => {
       const res = await fetch(`/plans/${encodeURIComponent(plan_id!)}/assessment`);
-      if (!res.ok) throw new Error(`assessment: ${res.status}`);
+      if (!res.ok) throw await responseError(res, "assessment");
       return res.json();
     },
     enabled: assessment_present && plan_id !== null,
