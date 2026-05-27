@@ -3272,8 +3272,14 @@ body {
   opacity: 0;
   transition: opacity 0.1s;
 }
-.sidebar-project:hover .sidebar-project-dashboard-btn {
+.sidebar-project:hover .sidebar-project-dashboard-btn,
+.sidebar-project:focus-within .sidebar-project-dashboard-btn {
   opacity: 1;
+}
+.sidebar-project-dashboard-btn:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 1px;
 }
 .sidebar-project-dashboard-btn:hover {
   background: var(--bg-app);
