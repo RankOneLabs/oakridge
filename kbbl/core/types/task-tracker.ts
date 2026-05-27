@@ -2,8 +2,8 @@ import { z } from "zod";
 
 // Mirrors the stages table's name column (see migrations/008_seed_stages.sql).
 // plans.current_session_stage has no DB CHECK (migration 010 comment); Zod is
-// authoritative. Cohort 2 added planner2_batch; cohort 4 adds planner3.
-export const SessionStageSchema = z.enum(["planner1", "planner2", "planner2_batch", "planner3", "build"]);
+// authoritative. Cohort 2 added planner2_batch; cohort 4 adds planner3; spec-stage adds planner0.
+export const SessionStageSchema = z.enum(["planner0", "planner1", "planner2", "planner2_batch", "planner3", "build"]);
 export type SessionStage = z.infer<typeof SessionStageSchema>;
 
 export const SpecInternalStatusSchema = z.enum(["analyzing", "discrepancies", "review", "approved"]);
