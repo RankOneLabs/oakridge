@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
-import { applyMigrations } from "../migrations";
 
 // Seeds the DB with migrations up to 012 (pre-Epic), inserts one spec per
 // legacy status value, then applies 013+014 and verifies backfill correctness.
