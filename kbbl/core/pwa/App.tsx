@@ -13,6 +13,7 @@ import { PlanReviewView } from "./review/plan/PlanReviewView";
 import { BriefReviewView } from "./review/brief/BriefReviewView";
 import { CohortReviewView } from "./review/cohort/CohortReviewView";
 import { RepoDashboardView } from "./dashboard/RepoDashboardView";
+import { EpicDetailView } from "./epic/EpicDetailView";
 
 import { SessionListView } from "./views/SessionListView";
 import { SessionView } from "./views/SessionView";
@@ -98,6 +99,8 @@ export function App() {
         onBack={() => { window.location.hash = ""; }}
       />
     );
+  } else if (route?.view === "epic") {
+    view = <EpicDetailView epic_id={route.id} />;
   } else if (sid !== null) {
     view = (
       <SessionView

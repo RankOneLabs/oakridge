@@ -20,6 +20,7 @@ export interface SidebarSpec {
   title: string;
   status: string;
   plan_id: string | null;
+  epic_id: string | null;
 }
 
 export interface SidebarCohort {

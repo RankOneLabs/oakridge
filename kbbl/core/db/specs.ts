@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import type { Spec } from "../types/task-tracker";
 
-export type SpecWithPlan = Spec & { plan_id: string | null };
+export type SpecWithPlan = Spec & { plan_id: string | null; epic_id: string | null };
 
 export function insertSpec(
   db: Database,
@@ -33,12 +33,15 @@ export function listSpecsByProject(db: Database, project_id: string): SpecWithPl
   // don't filter by status here.
   return db
     .prepare<SpecWithPlan, [string]>(
-      `SELECT s.*, (
-         SELECT p.id FROM plans p
-         WHERE p.spec_id = s.id
-         ORDER BY p.created_at DESC
-         LIMIT 1
-       ) AS plan_id
+      `SELECT s.*,
+         (SELECT p.id FROM plans p
+          WHERE p.spec_id = s.id
+          ORDER BY p.created_at DESC, p.id DESC
+          LIMIT 1) AS plan_id,
+         (SELECT e.id FROM epics e
+          WHERE e.spec_id = s.id
+          ORDER BY e.created_at DESC, e.id DESC
+          LIMIT 1) AS epic_id
        FROM specs s
        WHERE s.project_id = ?
        ORDER BY s.created_at, s.id`,
