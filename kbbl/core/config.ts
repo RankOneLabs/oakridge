@@ -29,9 +29,10 @@ const RetentionSchema = z
   })
   .strict();
 
-// Per-session git worktree isolation. Default-off in Phase 1 so existing
-// operators see no behavioral change; flipped to true in Phase 3 once
-// soak data is in. See comms/kbbl-session-worktrees-handoff.md.
+// Per-session git worktree isolation is mandatory: every kbbl-spawned
+// session runs in its own checkout + branch so concurrent sessions can't
+// race on a shared cwd or contaminate the operator's toplevel branch.
+// SessionManager rejects spawn when the workdir isn't a git repo.
 //
 // worktree_dir_name is a single dir-name component, NOT a path: it's
 // joined onto dataDir to form `<dataDir>/<worktree_dir_name>`. Empty
@@ -42,7 +43,6 @@ const RetentionSchema = z
 // startup rather than producing surprising filesystem layout.
 const SessionsSchema = z
   .object({
-    worktree_per_session: z.boolean().default(false),
     worktree_dir_name: z
       .string()
       .min(1, "worktree_dir_name cannot be empty")

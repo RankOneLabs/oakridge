@@ -42,7 +42,6 @@ export function createKbblChatBackend({
         name: inputRef.sessionName,
         model: routing?.model ?? null,
         runtime: routing?.runtime,
-        forceWorktree: stage.name === "build",
       });
       await session.writeInput(renderedPrompt);
       return { session_ref: session.oakridgeSid };

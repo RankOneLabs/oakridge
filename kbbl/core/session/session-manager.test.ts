@@ -26,13 +26,32 @@ import type { EnvelopeEvent } from "./session";
 let tmpRoot: string;
 let sessionsDir: string;
 let worktreesDir: string;
+let repoDir: string;
 
-beforeEach(() => {
+async function gitInitRepo(dir: string): Promise<void> {
+  const cmds: string[][] = [
+    ["git", "-C", dir, "init", "-q", "-b", "main"],
+    ["git", "-C", dir, "config", "user.email", "test@example.com"],
+    ["git", "-C", dir, "config", "user.name", "test"],
+    ["git", "-C", dir, "config", "commit.gpgsign", "false"],
+    ["git", "-C", dir, "config", "tag.gpgsign", "false"],
+    ["git", "-C", dir, "commit", "--allow-empty", "-q", "-m", "init"],
+  ];
+  for (const cmd of cmds) {
+    const p = Bun.spawn({ cmd, stdout: "pipe", stderr: "pipe" });
+    await p.exited;
+  }
+}
+
+beforeEach(async () => {
   tmpRoot = mkdtempSync(join(tmpdir(), "kbbl-sm-test-"));
   sessionsDir = join(tmpRoot, "sessions");
   worktreesDir = join(tmpRoot, "worktrees");
+  repoDir = join(tmpRoot, "repo");
   mkdirSync(sessionsDir, { recursive: true });
   mkdirSync(worktreesDir, { recursive: true });
+  mkdirSync(repoDir, { recursive: true });
+  await gitInitRepo(repoDir);
 });
 
 afterEach(() => {
@@ -121,11 +140,9 @@ describe("SessionManager onRuntimeSessionObserved/onRuntimeSessionEnded", () => 
       onRuntimeSessionObserved: (session, runtimeSid) => {
         observed.push([session.oakridgeSid, runtimeSid]);
       },
-      config: KbblConfigSchema.parse({
-        sessions: { worktree_per_session: false },
-      }),
+      config: KbblConfigSchema.parse({}),
     });
-    const session = await manager.create({ workdir: "/tmp" });
+    const session = await manager.create({ workdir: repoDir });
     await session.observeRuntimeSessionId("runtime-sid-abc");
     await manager.endAll();
     expect(observed.some(([, sid]) => sid === "runtime-sid-abc")).toBe(true);
@@ -141,11 +158,9 @@ describe("SessionManager onRuntimeSessionObserved/onRuntimeSessionEnded", () => 
       onRuntimeSessionEnded: (session) => {
         ended.push(session.oakridgeSid);
       },
-      config: KbblConfigSchema.parse({
-        sessions: { worktree_per_session: false },
-      }),
+      config: KbblConfigSchema.parse({}),
     });
-    const session = await manager.create({ workdir: "/tmp" });
+    const session = await manager.create({ workdir: repoDir });
     const sid = session.oakridgeSid;
     await manager.endAll();
     expect(ended.includes(sid)).toBe(true);
@@ -161,13 +176,11 @@ describe("SessionManager.create with registry", () => {
       handoffsDir: join(tmpRoot, "handoffs"),
       worktreesDir,
       registry,
-      config: KbblConfigSchema.parse({
-        sessions: { worktree_per_session: false },
-      }),
+      config: KbblConfigSchema.parse({}),
     });
     // create() returns once the session is live; waitForEnd() lets us verify
     // the noop runtime's event loop ran to completion.
-    const session = await manager.create({ workdir: "/tmp" });
+    const session = await manager.create({ workdir: repoDir });
     await session.waitForEnd();
     expect(session.status).toBe("ended");
     expect(session.runtimeId).toBe("claude-code");
@@ -214,11 +227,9 @@ describe("CreateSessionOpts.runtime", () => {
       handoffsDir: join(tmpRoot, "handoffs"),
       worktreesDir,
       registry,
-      config: KbblConfigSchema.parse({
-        sessions: { worktree_per_session: false },
-      }),
+      config: KbblConfigSchema.parse({}),
     });
-    const session = await manager.create({ workdir: "/tmp", runtime: "codex" });
+    const session = await manager.create({ workdir: repoDir, runtime: "codex" });
     await session.waitForEnd();
     expect(session.runtimeId).toBe("codex");
   });
@@ -231,13 +242,11 @@ describe("CreateSessionOpts.runtime", () => {
       handoffsDir: join(tmpRoot, "handoffs"),
       worktreesDir,
       registry,
-      config: KbblConfigSchema.parse({
-        sessions: { worktree_per_session: false },
-      }),
+      config: KbblConfigSchema.parse({}),
     });
     // "codex" is not registered (only claude-code is in this registry).
     await expect(
-      manager.create({ workdir: "/tmp", runtime: "codex" }),
+      manager.create({ workdir: repoDir, runtime: "codex" }),
     ).rejects.toThrow(/runtime "codex" is not registered/);
     // No session should have been added to the manager.
     expect(manager.list().length).toBe(0);

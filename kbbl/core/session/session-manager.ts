@@ -161,13 +161,6 @@ export interface CreateSessionOpts {
    */
   model?: string | null;
   /**
-   * Per-call override: force a worktree for this session regardless of the
-   * global config.sessions.worktree_per_session flag. Used by
-   * KbblChatBackend to guarantee build-stage dispatches always run in an
-   * isolated worktree so concurrent builders don't corrupt each other's tree.
-   */
-  forceWorktree?: boolean;
-  /**
    * Runtime to use for this session. When provided, overrides the registry's
    * defaultId. Rejected immediately if the id is not registered (e.g. operator
    * set a stage to codex but runtime.codex.enabled=false).
@@ -337,72 +330,64 @@ export class SessionManager {
     const name =
       opts.name && opts.name.trim() ? opts.name.trim() : `session-${oakridgeSid.slice(0, 8)}`;
 
-    // Per-session worktree (Phase 1). On = each session gets its own
-    // checkout + branch off the operator workdir's HEAD; spawn cwd becomes
-    // the worktree path. Off (or non-repo workdir) = pre-Phase-1 behavior,
-    // spawn into the operator workdir directly. The flag exists for
-    // rollout safety; Phase 3 flips the default. See
-    // comms/kbbl-session-worktrees-handoff.md.
-    let worktreePath: string | null = null;
-    let worktreeBranch: string | null = null;
-    let worktreeBaseRef: string | null = null;
-    // projectWorkdir is non-null only when a worktree is created — in the
-    // flag-off / non-repo path, session.workdir IS the operator workdir
-    // and there's nothing to dual-label. Keeping it null for those
-    // sessions also keeps session_started / SessionSnapshot tight for
-    // pre-Phase-1-equivalent payloads.
-    let projectWorkdir: string | null = null;
-    const wantsWorktree = (opts.forceWorktree ?? false) || this.opts.config.sessions.worktree_per_session;
-    if (wantsWorktree && (await isGitRepo(opts.workdir))) {
-      await this.ensureWorktreesDirSafeForRepo(opts.workdir);
-      // On resume, opts.workdir is the parent's workdir — which (Phase 1+)
-      // is the parent's worktree path, NOT the operator's original repo.
-      // Resolve both depth and the original projectWorkdir from the parent
-      // so the new session's metadata points at the original repo (for the
-      // PWA dual-label) instead of mistaking the parent's worktree for
-      // the project root.
-      let resumeDepth = 0;
-      let inheritedProjectWorkdir: string | null = null;
-      if (opts.parentOakridgeSid) {
-        const meta = await this.lookupParentSessionMeta(opts.parentOakridgeSid);
-        if (meta === null) {
-          console.error(
-            `kbbl: resume chain broken at ${opts.parentOakridgeSid} — defaulting depth to 1`,
-          );
-          resumeDepth = 1;
-        } else {
-          resumeDepth = meta.worktreeBranch
-            ? parseDepthFromBranch(meta.worktreeBranch) + 1
-            : 1;
-          inheritedProjectWorkdir = meta.projectWorkdir;
-        }
-      }
-      try {
-        const created = await createWorktree({
-          workdir: opts.workdir,
-          worktreesRoot: this.opts.worktreesDir,
-          oakridgeSid,
-          resumeDepth,
-        });
-        worktreePath = created.worktreePath;
-        worktreeBranch = created.worktreeBranch;
-        worktreeBaseRef = created.worktreeBaseRef;
-        // Fresh session: opts.workdir IS the operator workdir.
-        // Resume of a Phase-1 parent: inherit parent.projectWorkdir.
-        // Resume of a pre-Phase-1 parent: meta.projectWorkdir falls back
-        // to parent.workdir (which IS the original repo for that case),
-        // so this still resolves to the right thing.
-        projectWorkdir = inheritedProjectWorkdir ?? opts.workdir;
-      } catch (err) {
-        if (err instanceof WorktreeCreateError) {
-          throw new Error(
-            `worktree create failed: ${err.message}\n${err.stderr}`,
-          );
-        }
-        throw err;
+    // Per-session worktree is mandatory: every spawn gets its own checkout +
+    // branch off the workdir's HEAD, and spawn cwd is the worktree path.
+    // Non-git workdirs are rejected — without a repo there's no way to
+    // guarantee branch isolation, and the previous silent fallback let
+    // sessions write directly into the operator's toplevel.
+    if (!(await isGitRepo(opts.workdir))) {
+      throw new Error(
+        `kbbl: workdir ${opts.workdir} is not a git repo — sessions require a worktree-capable workdir`,
+      );
+    }
+    await this.ensureWorktreesDirSafeForRepo(opts.workdir);
+    // On resume, opts.workdir is the parent's worktree path, NOT the
+    // operator's original repo. Resolve both depth and the original
+    // projectWorkdir from the parent so the new session's metadata points
+    // at the original repo (for the PWA dual-label) instead of mistaking
+    // the parent's worktree for the project root.
+    let resumeDepth = 0;
+    let inheritedProjectWorkdir: string | null = null;
+    if (opts.parentOakridgeSid) {
+      const meta = await this.lookupParentSessionMeta(opts.parentOakridgeSid);
+      if (meta === null) {
+        console.error(
+          `kbbl: resume chain broken at ${opts.parentOakridgeSid} — defaulting depth to 1`,
+        );
+        resumeDepth = 1;
+      } else {
+        resumeDepth = meta.worktreeBranch
+          ? parseDepthFromBranch(meta.worktreeBranch) + 1
+          : 1;
+        inheritedProjectWorkdir = meta.projectWorkdir;
       }
     }
-    const effectiveWorkdir = worktreePath ?? opts.workdir;
+    let worktreePath: string;
+    let worktreeBranch: string;
+    let worktreeBaseRef: string;
+    try {
+      const created = await createWorktree({
+        workdir: opts.workdir,
+        worktreesRoot: this.opts.worktreesDir,
+        oakridgeSid,
+        resumeDepth,
+      });
+      worktreePath = created.worktreePath;
+      worktreeBranch = created.worktreeBranch;
+      worktreeBaseRef = created.worktreeBaseRef;
+    } catch (err) {
+      if (err instanceof WorktreeCreateError) {
+        throw new Error(
+          `worktree create failed: ${err.message}\n${err.stderr}`,
+        );
+      }
+      throw err;
+    }
+    // Fresh session: opts.workdir IS the operator workdir.
+    // Resume: inherit parent.projectWorkdir (which already points at the
+    // original repo for both Phase-1 and pre-Phase-1 parents).
+    const projectWorkdir = inheritedProjectWorkdir ?? opts.workdir;
+    const effectiveWorkdir = worktreePath;
 
     // Roll back the worktree if Session construction throws (e.g. artifactId
     // length validation). The worktree exists on disk but no Session, no map

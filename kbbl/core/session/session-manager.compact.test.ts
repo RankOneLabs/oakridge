@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,7 +29,6 @@ function buildConfig(
   return {
     ...base,
     compact: { ...base.compact, ...overrides },
-    sessions: { ...base.sessions, worktree_per_session: false },
   };
 }
 
@@ -102,13 +102,31 @@ async function waitForStatus(
   );
 }
 
-beforeEach(() => {
+async function gitInit(dir: string): Promise<void> {
+  const cmds: string[][] = [
+    ["git", "-C", dir, "init", "-q", "-b", "main"],
+    ["git", "-C", dir, "config", "user.email", "test@example.com"],
+    ["git", "-C", dir, "config", "user.name", "test"],
+    ["git", "-C", dir, "config", "commit.gpgsign", "false"],
+    ["git", "-C", dir, "config", "tag.gpgsign", "false"],
+    ["git", "-C", dir, "commit", "--allow-empty", "-q", "-m", "init"],
+  ];
+  for (const cmd of cmds) {
+    const p = Bun.spawn({ cmd, stdout: "pipe", stderr: "pipe" });
+    await p.exited;
+  }
+}
+
+beforeEach(async () => {
   tmpRoot = mkdtempSync(join(tmpdir(), "kbbl-runcompact-test-"));
   sessionsDir = join(tmpRoot, "sessions");
   worktreesDir = join(tmpRoot, "worktrees");
   handoffsDir = join(tmpRoot, "handoffs");
   mkdirSync(sessionsDir, { recursive: true });
   mkdirSync(worktreesDir, { recursive: true });
+  // SessionManager requires a git repo for the spawn cwd; initialize tmpRoot
+  // itself so every `workdir: tmpRoot` call satisfies the invariant.
+  await gitInit(tmpRoot);
 });
 
 afterEach(() => {
