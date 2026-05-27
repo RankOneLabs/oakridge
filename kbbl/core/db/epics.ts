@@ -1,0 +1,82 @@
+import { Database } from "bun:sqlite";
+import type { Epic, EpicStatus, EpicStage } from "../types/task-tracker";
+
+export type { Epic };
+
+export function insertEpic(
+  db: Database,
+  {
+    id,
+    spec_id,
+    project_id,
+    title,
+    status,
+    current_stage,
+  }: {
+    id: string;
+    spec_id: string;
+    project_id: string;
+    title: string;
+    status: EpicStatus;
+    current_stage: EpicStage;
+  },
+): Epic {
+  return db
+    .prepare<Epic, [string, string, string, string, EpicStatus, EpicStage]>(
+      `INSERT INTO epics (id, spec_id, project_id, title, status, current_stage)
+       VALUES (?, ?, ?, ?, ?, ?) RETURNING *`,
+    )
+    .get(id, spec_id, project_id, title, status, current_stage)!;
+}
+
+export function getEpic(db: Database, id: string): Epic | null {
+  return db.prepare<Epic, [string]>("SELECT * FROM epics WHERE id = ?").get(id) ?? null;
+}
+
+export function getEpicBySpec(db: Database, spec_id: string): Epic | null {
+  return (
+    db.prepare<Epic, [string]>("SELECT * FROM epics WHERE spec_id = ?").get(spec_id) ?? null
+  );
+}
+
+export function listEpicsByProject(
+  db: Database,
+  project_id: string,
+  status?: EpicStatus,
+): Epic[] {
+  if (status !== undefined) {
+    return db
+      .prepare<Epic, [string, EpicStatus]>(
+        "SELECT * FROM epics WHERE project_id = ? AND status = ? ORDER BY created_at, id",
+      )
+      .all(project_id, status);
+  }
+  return db
+    .prepare<Epic, [string]>(
+      "SELECT * FROM epics WHERE project_id = ? ORDER BY created_at, id",
+    )
+    .all(project_id);
+}
+
+export function updateEpicFields(
+  db: Database,
+  id: string,
+  fields: { status?: EpicStatus; current_stage?: EpicStage },
+): Epic | null {
+  const sets: string[] = [];
+  const params: (string)[] = [];
+
+  if (fields.status !== undefined) {
+    sets.push("status = ?");
+    params.push(fields.status);
+  }
+  if (fields.current_stage !== undefined) {
+    sets.push("current_stage = ?");
+    params.push(fields.current_stage);
+  }
+  if (sets.length === 0) return getEpic(db, id);
+
+  params.push(id);
+  const sql = `UPDATE epics SET ${sets.join(", ")} WHERE id = ? RETURNING *`;
+  return (db.prepare<Epic, string[]>(sql).get(...params) as Epic | undefined) ?? null;
+}
