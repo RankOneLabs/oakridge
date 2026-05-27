@@ -48,7 +48,7 @@ async function listDirectories(path: string, roots: readonly string[]): Promise<
 
   const entries = await readdir(resolvedPath, { withFileTypes: true });
   const directories = entries
-    .filter((entry) => entry.isDirectory())
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
     .map((entry) => ({
       name: entry.name,
       path: resolve(resolvedPath, entry.name),
