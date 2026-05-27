@@ -23,6 +23,8 @@ import { mountCohortMergeRoutes } from "./handlers/cohort-merge";
 import * as ghGateway from "../github/gh-gateway";
 import { mountBriefsRoutes } from "./handlers/briefs";
 import { mountAssessmentsRoutes } from "./handlers/assessments";
+import { mountSpecDiscrepanciesRoutes } from "./handlers/spec-discrepancies";
+import { mountSpecStatusRoutes } from "./handlers/spec-status";
 import { mountReviewFreezeRoutes } from "./handlers/review-freeze";
 import { mountReviewAtomsRoutes } from "./handlers/review-atoms";
 import { mountReviewThreadsRoutes } from "./handlers/review-threads";
@@ -203,6 +205,8 @@ export function createApp(deps: CreateAppDeps): Hono {
 
   // ---- task-tracker CRUD (specs, plans, cohorts, briefs) ----
   mountSpecsRoutes(app, { db });
+  mountSpecDiscrepanciesRoutes(app, { db });
+  mountSpecStatusRoutes(app, { db });
   mountPlansRoutes(app, { db });
   mountPlanStatusRoutes(app, { db });
   mountPlanReopenRoutes(app, { db });
