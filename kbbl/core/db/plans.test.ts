@@ -117,14 +117,14 @@ describe("POST /plans", () => {
     expect(body.predecessor_plan_id).toBeNull();
   });
 
-  test("auto-promotes spec status to plan_review on plan creation", async () => {
-    await app.request("/plans", {
+  test("creating a plan does not error (specs.status no longer exists)", async () => {
+    // specs.status was dropped in migration 016; plans.ts no longer writes it.
+    const res = await app.request("/plans", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ spec_id: SPEC_ID }),
     });
-    const spec = db.prepare<{ status: string }, [string]>("SELECT status FROM specs WHERE id = ?").get(SPEC_ID);
-    expect(spec?.status).toBe("plan_review");
+    expect(res.status).toBe(201);
   });
 
   test("returns 404 for unknown spec_id", async () => {

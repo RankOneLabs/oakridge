@@ -60,10 +60,7 @@ export function mountPlanStatusRoutes(app: Hono, deps: PlanStatusRouteDeps): voi
           ).get(nextStatus, plan_id);
           freeze(db, "plan", plan_id);
 
-          // Transition spec plan_review → planning_done
-          db.prepare(
-            "UPDATE specs SET status = 'planning_done' WHERE id = ? AND status = 'plan_review'",
-          ).run(plan.spec_id);
+          // specs.status dropped in migration 016; Epic.status + internal_status cover lifecycle.
 
           // Promote all waiting cohorts directly to briefing
           const waitingCohorts = db
