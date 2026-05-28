@@ -180,6 +180,93 @@ describe("createWorktree", () => {
   });
 });
 
+describe("createWorktree — identity and baseRef opts", () => {
+  test("identity omitted: produces kbbl/<sid8> branch and <root>/<sid> dir", async () => {
+    const sid = "aabbccdd11223344";
+    const created = await createWorktree({
+      workdir: repoDir,
+      worktreesRoot,
+      oakridgeSid: sid,
+    });
+    expect(created.worktreeBranch).toBe("kbbl/aabbccdd");
+    expect(created.worktreePath).toBe(join(worktreesRoot, sid));
+  });
+
+  test("identity provided: produces slug branch, nested subdir, and /<sid> leaf", async () => {
+    const sid = "cohort0123456789a";
+    const created = await createWorktree({
+      workdir: repoDir,
+      worktreesRoot,
+      oakridgeSid: sid,
+      identity: { branchName: "epic/myepic/cohort-1-myslug", worktreeSubdir: "myepic" },
+    });
+    expect(created.worktreeBranch).toBe("epic/myepic/cohort-1-myslug");
+    expect(created.worktreePath).toBe(join(worktreesRoot, "myepic", sid));
+    const cur = (await git(created.worktreePath, "branch", "--show-current")).trim();
+    expect(cur).toBe("epic/myepic/cohort-1-myslug");
+  });
+
+  test("baseRef provided: worktreeBaseRef equals git rev-parse <baseRef>, sha differs from HEAD", async () => {
+    // Second commit so HEAD sha differs from the first-commit sha.
+    await git(repoDir, "commit", "--allow-empty", "-m", "second");
+    const firstCommitSha = (await git(repoDir, "rev-parse", "HEAD~1")).trim();
+    const headSha = (await git(repoDir, "rev-parse", "HEAD")).trim();
+    expect(firstCommitSha).not.toBe(headSha);
+
+    const created = await createWorktree({
+      workdir: repoDir,
+      worktreesRoot,
+      oakridgeSid: "basereftest12345",
+      identity: { branchName: "epic/e/cohort-1-s", worktreeSubdir: "e" },
+      baseRef: "HEAD~1",
+    });
+    expect(created.worktreeBaseRef).toBe(firstCommitSha);
+    const wtHead = (await git(created.worktreePath, "rev-parse", "HEAD")).trim();
+    expect(wtHead).toBe(firstCommitSha);
+  });
+
+  test("resumeDepth > 0 with identity: -r<n> appended to slug branch, dir unchanged", async () => {
+    const sid = "resumeid123456789";
+    const created = await createWorktree({
+      workdir: repoDir,
+      worktreesRoot,
+      oakridgeSid: sid,
+      identity: { branchName: "epic/foo/cohort-1-bar", worktreeSubdir: "foo" },
+      resumeDepth: 2,
+    });
+    expect(created.worktreeBranch).toBe("epic/foo/cohort-1-bar-r2");
+    expect(created.worktreePath).toBe(join(worktreesRoot, "foo", sid));
+  });
+
+  test("identity-provided branch pushes to origin without --set-upstream", async () => {
+    // Set up a bare remote and push main so the remote is initialised.
+    const remoteDir = join(tmpRoot, "remote.git");
+    const mkproc = Bun.spawn({ cmd: ["mkdir", "-p", remoteDir] });
+    await mkproc.exited;
+    await git(remoteDir, "init", "--bare", "-b", "main");
+    await git(repoDir, "remote", "add", "origin", remoteDir);
+    await git(repoDir, "push", "origin", "main");
+
+    const created = await createWorktree({
+      workdir: repoDir,
+      worktreesRoot,
+      oakridgeSid: "pushtest0123456789",
+      identity: { branchName: "epic/e/cohort-1-push", worktreeSubdir: "e" },
+    });
+    const pushProc = Bun.spawn({
+      cmd: ["git", "-C", created.worktreePath, "push", "origin", "epic/e/cohort-1-push"],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, , pushCode] = await Promise.all([
+      new Response(pushProc.stdout).text(),
+      new Response(pushProc.stderr).text(),
+      pushProc.exited,
+    ]);
+    expect(pushCode).toBe(0);
+  });
+});
+
 describe("removeWorktree", () => {
   test("removes both the worktree directory and the branch", async () => {
     const created = await createWorktree({
