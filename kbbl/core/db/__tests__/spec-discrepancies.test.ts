@@ -124,8 +124,8 @@ describe("listResolvedDiscrepanciesBySpec", () => {
 
     const results = listResolvedDiscrepanciesBySpec(db, SPEC_ID);
     expect(results).toHaveLength(1);
-    expect(results[0]!.id).toBe("r-resolved");
-    expect(results[0]!.status).toBe("resolved");
+    expect(results[0].id).toBe("r-resolved");
+    expect(results[0].status).toBe("resolved");
   });
 
   test("returns resolved rows in created_at, id order", () => {
@@ -142,8 +142,8 @@ describe("listResolvedDiscrepanciesBySpec", () => {
 
     const results = listResolvedDiscrepanciesBySpec(db, SPEC_ID);
     expect(results).toHaveLength(2);
-    expect(results[0]!.id).toBe("r-earlier");
-    expect(results[1]!.id).toBe("r-later");
+    expect(results[0].id).toBe("r-earlier");
+    expect(results[1].id).toBe("r-later");
   });
 });
 
