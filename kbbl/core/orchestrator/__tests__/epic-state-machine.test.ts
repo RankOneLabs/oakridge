@@ -19,7 +19,7 @@ describe("EPIC_STAGE_TRANSITIONS table", () => {
   test("build -epic_build_done→ assess", () => {
     expect(EPIC_STAGE_TRANSITIONS.build.epic_build_done).toBe("assess");
   });
-  test("review -epic_assess_done→ assess (terminal no-op)", () => {
+  test("assess -epic_assess_done→ assess (terminal no-op)", () => {
     expect(EPIC_STAGE_TRANSITIONS.assess.epic_assess_done).toBe("assess");
   });
 });
@@ -65,12 +65,12 @@ describe("applyEpicTransition — stage events (update current_stage only)", () 
     expect(next).toEqual({ status: "active", current_stage: "build" });
   });
 
-  test("active/build + epic_build_done → active/review", () => {
+  test("active/build + epic_build_done → active/assess", () => {
     const next = applyEpicTransition({ status: "active", current_stage: "build" }, "epic_build_done");
     expect(next).toEqual({ status: "active", current_stage: "assess" });
   });
 
-  test("active/review + epic_assess_done → active/review (terminal no-op)", () => {
+  test("active/assess + epic_assess_done → active/assess (terminal no-op)", () => {
     const next = applyEpicTransition({ status: "active", current_stage: "assess" }, "epic_assess_done");
     expect(next).toEqual({ status: "active", current_stage: "assess" });
   });
