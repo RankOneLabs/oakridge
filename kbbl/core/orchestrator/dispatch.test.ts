@@ -31,6 +31,7 @@ import { mountBriefsRoutes } from "../server/handlers/briefs";
 import { mountBriefStatusRoutes } from "../server/handlers/brief-status";
 import { mountBuildsRoutes } from "../server/handlers/builds";
 import { mountAssessmentsRoutes } from "../server/handlers/assessments";
+import { insertSpecDiscrepancy } from "../db/spec-discrepancies";
 
 // ---- minimal SessionManager stub for builds route ----
 
@@ -564,6 +565,55 @@ describe("full dispatch pipeline with MockBackend", () => {
     expect(debriefRes.status).toBe(200);
     const debriefed = (await debriefRes.json()) as { deviations: unknown };
     expect(Array.isArray(debriefed.deviations)).toBe(true);
+  });
+
+  test("plan_writer prompt renders DISCREPANCY_RESOLUTIONS fallback when no resolved discrepancies", async () => {
+    const projRes = await post(app, "/projects", { name: "dr-fallback", repo_path: "/tmp/dr-fallback" });
+    const proj = (await projRes.json()) as { id: string };
+    const specRes = await post(app, "/specs", { project_id: proj.id, title: "DR Spec", notes: "notes" });
+    const spec = (await specRes.json()) as { id: string };
+    await flushAsync(); // consume spec_analyzer hook
+
+    const dispatcher = createDispatcher({
+      db,
+      backends: { kbbl_chat: mockBackend },
+      kbblUrl: "http://localhost:8788",
+    });
+    await dispatcher.dispatch("plan_writer", spec.id);
+
+    const call = mockBackend.calls[mockBackend.calls.length - 1];
+    expect(call?.stageName).toBe("plan_writer");
+    expect(call?.renderedPrompt).toContain("(none — spec analyzed clean or pre-resolutions spec)");
+  });
+
+  test("plan_writer prompt renders resolved discrepancies as numbered sections", async () => {
+    const projRes = await post(app, "/projects", { name: "dr-nonempty", repo_path: "/tmp/dr-nonempty" });
+    const proj = (await projRes.json()) as { id: string };
+    const specRes = await post(app, "/specs", { project_id: proj.id, title: "DR Spec 2", notes: "notes" });
+    const spec = (await specRes.json()) as { id: string };
+    await flushAsync(); // consume spec_analyzer hook
+
+    insertSpecDiscrepancy(db, {
+      id: "disc-test-1",
+      spec_id: spec.id,
+      spec_assumption: "assumes X exists",
+      code_reality: "X does not exist",
+      resolution: "add X before implementing",
+      status: "resolved",
+    });
+
+    const dispatcher = createDispatcher({
+      db,
+      backends: { kbbl_chat: mockBackend },
+      kbblUrl: "http://localhost:8788",
+    });
+    await dispatcher.dispatch("plan_writer", spec.id);
+
+    const call = mockBackend.calls[mockBackend.calls.length - 1];
+    expect(call?.stageName).toBe("plan_writer");
+    expect(call?.renderedPrompt).toContain("### 1. assumes X exists");
+    expect(call?.renderedPrompt).toContain("**Code reality:** X does not exist");
+    expect(call?.renderedPrompt).toContain("**Resolution:** add X before implementing");
   });
 
   test("POST /briefs/:id/build returns 409 if brief not approved", async () => {
