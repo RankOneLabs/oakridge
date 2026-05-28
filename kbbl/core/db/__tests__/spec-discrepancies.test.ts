@@ -8,6 +8,7 @@ import {
   getSpecDiscrepancy,
   listSpecDiscrepancies,
   countOpenDiscrepancies,
+  listResolvedDiscrepanciesBySpec,
   updateSpecDiscrepancy,
 } from "../spec-discrepancies";
 
@@ -108,6 +109,41 @@ describe("countOpenDiscrepancies", () => {
     insertSpecDiscrepancy(db, { id: "cx", spec_id: "spec-x", spec_assumption: "A", code_reality: "B", status: "open" });
 
     expect(countOpenDiscrepancies(db, SPEC_ID)).toBe(0);
+  });
+});
+
+describe("listResolvedDiscrepanciesBySpec", () => {
+  test("returns empty array when no rows exist for spec", () => {
+    expect(listResolvedDiscrepanciesBySpec(db, "unknown-spec")).toEqual([]);
+  });
+
+  test("returns only resolved rows, excluding open and waived", () => {
+    insertSpecDiscrepancy(db, { id: "r-open", ...MINIMAL, status: "open" });
+    insertSpecDiscrepancy(db, { id: "r-resolved", ...MINIMAL, spec_assumption: "B", code_reality: "B2", status: "resolved" });
+    insertSpecDiscrepancy(db, { id: "r-waived", ...MINIMAL, spec_assumption: "C", code_reality: "C2", status: "waived" });
+
+    const results = listResolvedDiscrepanciesBySpec(db, SPEC_ID);
+    expect(results).toHaveLength(1);
+    expect(results[0]!.id).toBe("r-resolved");
+    expect(results[0]!.status).toBe("resolved");
+  });
+
+  test("returns resolved rows in created_at, id order", () => {
+    db.run(
+      `INSERT INTO spec_discrepancies (id, spec_id, spec_assumption, code_reality, resolution, status, created_at)
+       VALUES ('r-later', ?, 'A', 'B', NULL, 'resolved', '2025-01-02T00:00:00.000Z')`,
+      [SPEC_ID],
+    );
+    db.run(
+      `INSERT INTO spec_discrepancies (id, spec_id, spec_assumption, code_reality, resolution, status, created_at)
+       VALUES ('r-earlier', ?, 'C', 'D', NULL, 'resolved', '2025-01-01T00:00:00.000Z')`,
+      [SPEC_ID],
+    );
+
+    const results = listResolvedDiscrepanciesBySpec(db, SPEC_ID);
+    expect(results).toHaveLength(2);
+    expect(results[0]!.id).toBe("r-earlier");
+    expect(results[1]!.id).toBe("r-later");
   });
 });
 
