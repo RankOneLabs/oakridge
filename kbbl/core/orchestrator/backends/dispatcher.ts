@@ -544,10 +544,7 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
       const { session_ref } = await backend.dispatch(stage, inputRef, renderedPrompt);
 
       // Persist current_session_ref + current_session_stage on the appropriate
-      // artifact. The stage name disambiguates planner2 vs build sessions
-      // when the cohort row holds either — without it, the build guard and
-      // UI cannot tell a stale planner2 ref apart from a live build.
-      // build stage: input is brief, but session_ref lives on the parent cohort.
+      // artifact. build stage: input is brief, but session_ref lives on the parent cohort.
       switch (stage.input_artifact_type) {
         case "spec":
           db.prepare(
