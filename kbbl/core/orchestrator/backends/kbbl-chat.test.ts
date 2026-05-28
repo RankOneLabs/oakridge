@@ -35,6 +35,7 @@ const STAGE_ARTIFACT_TYPES: Record<
   string,
   { input: StageRow["input_artifact_type"]; output: StageRow["output_artifact_type"] }
 > = {
+  planner0: { input: "spec", output: "plan" },
   planner1: { input: "spec", output: "plan" },
   planner2: { input: "cohort", output: "brief" },
   planner2_batch: { input: "plan", output: "brief" },
@@ -61,6 +62,14 @@ const inputRef: InputRef = {
 };
 
 describe("KbblChatBackend dispatch routes each stage to its intended model", () => {
+  test("planner0 → opus", async () => {
+    const { manager, calls } = makeFakeManager();
+    const backend = createKbblChatBackend({ manager });
+    await backend.dispatch(stage("planner0"), inputRef, "prompt");
+    expect(calls[0]?.model).toBe("claude-opus-4-7");
+    expect(calls[0]?.runtime).toBe("claude-code");
+  });
+
   test("planner1 → opus", async () => {
     const { manager, calls } = makeFakeManager();
     const backend = createKbblChatBackend({ manager });
@@ -89,11 +98,13 @@ describe("KbblChatBackend dispatch routes each stage to its intended model", () 
     expect(calls[0]?.model).toBe("claude-sonnet-4-6");
   });
 
-  test("unknown stage → null (falls back to CC default, not silently wrong)", async () => {
+  test("unknown stage without override → throws with actionable message", async () => {
     const { manager, calls } = makeFakeManager();
     const backend = createKbblChatBackend({ manager });
-    await backend.dispatch(stage("future-stage"), inputRef, "prompt");
-    expect(calls[0]?.model).toBeNull();
+    await expect(backend.dispatch(stage("future-stage"), inputRef, "prompt")).rejects.toThrow(
+      'No routing entry for stage "future-stage"'
+    );
+    expect(calls).toHaveLength(0);
   });
 });
 
