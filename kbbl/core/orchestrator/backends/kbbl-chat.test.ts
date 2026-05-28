@@ -35,7 +35,7 @@ const STAGE_ARTIFACT_TYPES: Record<
   string,
   { input: StageRow["input_artifact_type"]; output: StageRow["output_artifact_type"] }
 > = {
-  spec_analyzer: { input: "spec", output: "plan" },
+  spec_analyzer: { input: "spec", output: "discrepancies" },
   plan_writer:   { input: "spec", output: "plan" },
   planner2:      { input: "cohort", output: "brief" },
   brief_writer:  { input: "plan", output: "brief" },
