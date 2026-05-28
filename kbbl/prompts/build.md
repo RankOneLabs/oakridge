@@ -15,12 +15,7 @@ kbbl API base URL: `{{KBBL_URL}}`
 
 ## Your tasks
 
-1. Start on a fresh branch off the latest `main`. Before any other work:
-   ```
-   git fetch origin main
-   git checkout -B <branch-name> origin/main
-   ```
-   Pick a short, descriptive `<branch-name>` derived from the brief goal. Never build on top of an existing feature branch or stale local `main` — every build session begins from the current tip of `origin/main`.
+1. You're already on the cohort's worktree branch off the epic branch. Implement the brief, committing per logical subgoal — every commit must leave tests passing and typecheck clean.
 2. Read the brief carefully. The `next_action` field is your starting point.
 3. Implement the work described in the brief. Follow the decisions exactly — do not relitigate closed decisions.
 4. Make one commit per logical subgoal. Each commit must leave the tree green (tests pass, typecheck clean).
