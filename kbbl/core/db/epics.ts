@@ -63,14 +63,14 @@ const STAGE_EVENTS = new Set<string>([
   "epic_spec_approved",
   "epic_plan_approved",
   "epic_build_done",
-  "epic_review_done",
+  "epic_assess_done",
 ]);
 
 /**
  * Reads the current Epic row, applies the transition, and writes it back.
  * Implicit rules applied on top of applyEpicTransition:
  *  - pending → active when any stage event fires (first gate crossing)
- *  - epic_review_done also completes the lifecycle (active → complete)
+ *  - epic_assess_done also completes the lifecycle (active → complete)
  * Returns null when no Epic with that id exists.
  */
 export function advanceEpicByEvent(
@@ -92,8 +92,8 @@ export function advanceEpicByEvent(
     if (epic.status === "pending" && STAGE_EVENTS.has(event)) {
       finalStatus = "active";
     }
-    // epic_review_done also completes the lifecycle
-    if (event === "epic_review_done" && finalStatus === "active") {
+    // epic_assess_done also completes the lifecycle
+    if (event === "epic_assess_done" && finalStatus === "active") {
       finalStatus = "complete";
     }
 

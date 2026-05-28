@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { formatRelative } from "../lib/time";
 
 type EpicStatus = "pending" | "active" | "complete" | "archived";
-type EpicStage = "spec" | "plan" | "build" | "review";
+type EpicStage = "spec" | "plan" | "build" | "assess";
 
 interface Epic {
   id: string;

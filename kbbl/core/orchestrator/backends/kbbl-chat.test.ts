@@ -37,8 +37,8 @@ const STAGE_ARTIFACT_TYPES: Record<
 > = {
   spec_analyzer: { input: "spec", output: "discrepancies" },
   plan_writer:   { input: "spec", output: "plan" },
-  planner2:      { input: "cohort", output: "brief" },
   brief_writer:  { input: "plan", output: "brief" },
+  assessor:      { input: "plan", output: "assessment" },
   build: { input: "brief", output: "pr" },
 };
 
@@ -82,6 +82,14 @@ describe("KbblChatBackend dispatch routes each stage to its intended model", () 
     const backend = createKbblChatBackend({ manager });
     await backend.dispatch(stage("brief_writer"), inputRef, "prompt");
     expect(calls[0]?.model).toBe("claude-opus-4-7");
+  });
+
+  test("assessor → opus", async () => {
+    const { manager, calls } = makeFakeManager();
+    const backend = createKbblChatBackend({ manager });
+    await backend.dispatch(stage("assessor"), inputRef, "prompt");
+    expect(calls[0]?.model).toBe("claude-opus-4-7");
+    expect(calls[0]?.runtime).toBe("claude-code");
   });
 
   test("build → sonnet (the rule that got bypassed)", async () => {

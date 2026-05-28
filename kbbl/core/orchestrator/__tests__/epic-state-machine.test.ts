@@ -16,11 +16,11 @@ describe("EPIC_STAGE_TRANSITIONS table", () => {
   test("plan -epic_plan_approved→ build", () => {
     expect(EPIC_STAGE_TRANSITIONS.plan.epic_plan_approved).toBe("build");
   });
-  test("build -epic_build_done→ review", () => {
-    expect(EPIC_STAGE_TRANSITIONS.build.epic_build_done).toBe("review");
+  test("build -epic_build_done→ assess", () => {
+    expect(EPIC_STAGE_TRANSITIONS.build.epic_build_done).toBe("assess");
   });
-  test("review -epic_review_done→ review (terminal no-op)", () => {
-    expect(EPIC_STAGE_TRANSITIONS.review.epic_review_done).toBe("review");
+  test("assess -epic_assess_done→ assess (terminal no-op)", () => {
+    expect(EPIC_STAGE_TRANSITIONS.assess.epic_assess_done).toBe("assess");
   });
 });
 
@@ -65,14 +65,14 @@ describe("applyEpicTransition — stage events (update current_stage only)", () 
     expect(next).toEqual({ status: "active", current_stage: "build" });
   });
 
-  test("active/build + epic_build_done → active/review", () => {
+  test("active/build + epic_build_done → active/assess", () => {
     const next = applyEpicTransition({ status: "active", current_stage: "build" }, "epic_build_done");
-    expect(next).toEqual({ status: "active", current_stage: "review" });
+    expect(next).toEqual({ status: "active", current_stage: "assess" });
   });
 
-  test("active/review + epic_review_done → active/review (terminal no-op)", () => {
-    const next = applyEpicTransition({ status: "active", current_stage: "review" }, "epic_review_done");
-    expect(next).toEqual({ status: "active", current_stage: "review" });
+  test("active/assess + epic_assess_done → active/assess (terminal no-op)", () => {
+    const next = applyEpicTransition({ status: "active", current_stage: "assess" }, "epic_assess_done");
+    expect(next).toEqual({ status: "active", current_stage: "assess" });
   });
 });
 
@@ -93,18 +93,18 @@ describe("applyEpicTransition — lifecycle events (update status only)", () => 
   });
 
   test("complete + archive → archived/same stage", () => {
-    const next = applyEpicTransition({ status: "complete", current_stage: "review" }, "archive");
-    expect(next).toEqual({ status: "archived", current_stage: "review" });
+    const next = applyEpicTransition({ status: "complete", current_stage: "assess" }, "archive");
+    expect(next).toEqual({ status: "archived", current_stage: "assess" });
   });
 
   test("archived + unarchive → pending/same stage", () => {
-    const next = applyEpicTransition({ status: "archived", current_stage: "review" }, "unarchive");
-    expect(next).toEqual({ status: "pending", current_stage: "review" });
+    const next = applyEpicTransition({ status: "archived", current_stage: "assess" }, "unarchive");
+    expect(next).toEqual({ status: "pending", current_stage: "assess" });
   });
 
   test("active + complete → complete/same stage", () => {
-    const next = applyEpicTransition({ status: "active", current_stage: "review" }, "complete");
-    expect(next).toEqual({ status: "complete", current_stage: "review" });
+    const next = applyEpicTransition({ status: "active", current_stage: "assess" }, "complete");
+    expect(next).toEqual({ status: "complete", current_stage: "assess" });
   });
 });
 
@@ -116,15 +116,15 @@ describe("applyEpicTransition — InvalidTransitionError on illegal pairs", () =
     [{ status: "active", current_stage: "plan" }, "epic_spec_approved"],
     [{ status: "active", current_stage: "spec" }, "epic_plan_approved"],
     [{ status: "active", current_stage: "spec" }, "epic_build_done"],
-    [{ status: "active", current_stage: "spec" }, "epic_review_done"],
+    [{ status: "active", current_stage: "spec" }, "epic_assess_done"],
     // lifecycle events that don't apply from current status
     [{ status: "active", current_stage: "spec" }, "start"],        // active is not pending
     [{ status: "active", current_stage: "spec" }, "unarchive"],    // not archived
     [{ status: "archived", current_stage: "spec" }, "start"],      // archived can't start
     [{ status: "archived", current_stage: "spec" }, "archive"],    // already archived
     [{ status: "archived", current_stage: "spec" }, "complete"],   // archived can't complete
-    [{ status: "complete", current_stage: "review" }, "complete"], // already complete
-    [{ status: "complete", current_stage: "review" }, "unarchive"],// not archived
+    [{ status: "complete", current_stage: "assess" }, "complete"], // already complete
+    [{ status: "complete", current_stage: "assess" }, "unarchive"],// not archived
     [{ status: "pending", current_stage: "spec" }, "complete"],    // pending can't complete directly
     [{ status: "pending", current_stage: "spec" }, "unarchive"],   // not archived
   ];

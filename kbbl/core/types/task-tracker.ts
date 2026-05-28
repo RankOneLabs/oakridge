@@ -1,10 +1,9 @@
 import { z } from "zod";
 
-// Mirrors the stages table's name column (see migrations/019_rename_planners.sql).
+// Mirrors the stages table's name column (see migrations/020_rename_review_to_assess.sql).
 // plans.current_session_stage has no DB CHECK (migration 010 comment); Zod is
-// authoritative. Surviving stages: spec_analyzer, plan_writer, brief_writer, planner3, build.
-// planner3 is renamed in PR 4 alongside the assess-stage rename.
-export const SessionStageSchema = z.enum(["spec_analyzer", "plan_writer", "brief_writer", "planner3", "build"]);
+// authoritative. Surviving stages: spec_analyzer, plan_writer, brief_writer, assessor, build.
+export const SessionStageSchema = z.enum(["spec_analyzer", "plan_writer", "brief_writer", "assessor", "build"]);
 export type SessionStage = z.infer<typeof SessionStageSchema>;
 
 export const SpecInternalStatusSchema = z.enum(["analyzing", "discrepancies", "review", "approved"]);
@@ -112,7 +111,7 @@ export type Assessment = z.infer<typeof AssessmentSchema>;
 export const EpicStatusSchema = z.enum(["pending", "active", "complete", "archived"]);
 export type EpicStatus = z.infer<typeof EpicStatusSchema>;
 
-export const EpicStageSchema = z.enum(["spec", "plan", "build", "review"]);
+export const EpicStageSchema = z.enum(["spec", "plan", "build", "assess"]);
 export type EpicStage = z.infer<typeof EpicStageSchema>;
 
 export const EpicSchema = z.object({

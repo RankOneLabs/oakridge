@@ -1,8 +1,8 @@
-type EpicStage = "spec" | "plan" | "build" | "review";
+type EpicStage = "spec" | "plan" | "build" | "assess";
 type SpecInternalStatus = "analyzing" | "discrepancies" | "review" | "approved";
 type PlanStatus = "pending_approval" | "approved" | "rejected" | "superseded";
 
-const STAGES: EpicStage[] = ["spec", "plan", "build", "review"];
+const STAGES: EpicStage[] = ["spec", "plan", "build", "assess"];
 
 function stageRelation(
   stage: EpicStage,
@@ -46,7 +46,7 @@ function tileStatusText(
       return plan_status ?? "—";
     case "build":
       return buildStatusText(cohorts);
-    case "review":
+    case "assess":
       return assessment_present ? "done" : "pending";
   }
 }

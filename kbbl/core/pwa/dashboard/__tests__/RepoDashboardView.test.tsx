@@ -39,7 +39,7 @@ const EPICS_FIXTURE: EpicFixture[] = [
     id: "epic-3",
     title: "Epic Three",
     status: "complete",
-    current_stage: "review",
+    current_stage: "assess",
     created_at: "2024-01-03T00:00:00Z",
   },
   {

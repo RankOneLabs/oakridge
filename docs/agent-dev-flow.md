@@ -3,7 +3,7 @@
 The end-to-end loop lives entirely inside kbbl. A `kbbl-start` server hosts
 the task tracker, the review primitive, the orchestrator state machine, and the
 PWA review surfaces. Work is organized as **Epics** — each Epic carries one spec
-through four stages (Spec → Plan → Build → Review). Dispatched stages
+through four stages (Spec → Plan → Build → Assess). Dispatched stages
 (spec_analyzer, plan_writer, brief_writer, build) run as kbbl agent sessions spawned via
 the existing `SessionManager` + Claude Code adapter; their prompts are templated
 from `kbbl/prompts/{spec_analyzer,plan_writer,brief_writer,build}.md`.
@@ -25,8 +25,8 @@ from `kbbl/prompts/{spec_analyzer,plan_writer,brief_writer,build}.md`.
 flowchart LR
   Spec -->|spec.approved| Plan
   Plan -->|plan.approved| Build
-  Build -->|plan.completed| Review
-  Review -->|assessment posted| Done([Done])
+  Build -->|plan.completed| Assess
+  Assess -->|assessment posted| Done([Done])
 ```
 
 ## Spec stage
@@ -280,7 +280,7 @@ sidebar epic links on each spec row.
 
 - **Header**: Epic title with status and stage chips; **Archive** /
   **Unarchive** / **Delete** action buttons.
-- **StageStrip**: Four tiles (Spec, Plan, Build, Review) with done / current /
+- **StageStrip**: Four tiles (Spec, Plan, Build, Assess) with done / current /
   upcoming treatment. Each tile shows the sub-status for that stage (e.g.,
   `analyzing` for Spec, `pending_approval` for Plan, `N of M done` for Build).
 - **Drill-down panel** (changes with `current_stage`):
@@ -290,7 +290,7 @@ sidebar epic links on each spec row.
   - **Plan** — PlanDrilldown: plan status and link to `#plan/<id>`.
   - **Build** — BuildDrilldown: cohort table with per-cohort statuses and
     links to `#cohort/<id>`.
-  - **Review** — ReviewDrilldown: assessment presence indicator.
+  - **Assess** — ReviewDrilldown: assessment presence indicator.
 
 Archive and Delete act immediately; Delete navigates back to the Repo dashboard
 on success. See **Epic lifecycle** for the semantics of each operation.
