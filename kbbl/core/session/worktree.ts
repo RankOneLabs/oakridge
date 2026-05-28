@@ -11,6 +11,11 @@ import { join } from "node:path";
  * branch-name and worktree-path conventions live here.
  */
 
+export interface WorktreeIdentity {
+  branchName: string;
+  worktreeSubdir: string;
+}
+
 export interface WorktreeCreateOpts {
   /** Operator-supplied source repo (the original workdir). */
   workdir: string;
@@ -32,7 +37,7 @@ export interface WorktreeCreateOpts {
    * When omitted, falls through to the default behavior: branch is
    * `kbbl/<sid8>[-r<n>]`, directory is `<worktreesRoot>/<oakridgeSid>`.
    */
-  identity?: { branchName: string; worktreeSubdir: string };
+  identity?: WorktreeIdentity;
   /**
    * When provided, the worktree is branched from this ref (e.g.
    * `origin/epic/foo`), and `worktreeBaseRef` is resolved via
