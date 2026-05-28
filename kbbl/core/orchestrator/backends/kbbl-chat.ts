@@ -5,12 +5,11 @@ import type { ExecutionBackend, InputRef, StageRow } from "./interface";
 
 // Cost-engineering rule: plan in Opus, build in Sonnet. Resolved per stage
 // so dispatcher-spawned sessions don't fall through to the user-global default.
-type RoutedStage = "planner0" | "planner1" | "planner2" | "planner2_batch" | "planner3" | "build";
+type RoutedStage = "planner0" | "planner1" | "planner2_batch" | "planner3" | "build";
 
 const STAGE_ROUTING: Record<RoutedStage, { runtime: RuntimeId; model: string }> = {
   planner0:       { runtime: "claude-code", model: "claude-opus-4-7" },
   planner1:       { runtime: "claude-code", model: "claude-opus-4-7" },
-  planner2:       { runtime: "claude-code", model: "claude-opus-4-7" },
   planner2_batch: { runtime: "claude-code", model: "claude-opus-4-7" },
   planner3:       { runtime: "claude-code", model: "claude-opus-4-7" },
   build:          { runtime: "claude-code", model: "claude-sonnet-4-6" },

@@ -77,13 +77,6 @@ describe("KbblChatBackend dispatch routes each stage to its intended model", () 
     expect(calls[0]?.model).toBe("claude-opus-4-7");
   });
 
-  test("planner2 → opus", async () => {
-    const { manager, calls } = makeFakeManager();
-    const backend = createKbblChatBackend({ manager });
-    await backend.dispatch(stage("planner2"), inputRef, "prompt");
-    expect(calls[0]?.model).toBe("claude-opus-4-7");
-  });
-
   test("planner2_batch → opus", async () => {
     const { manager, calls } = makeFakeManager();
     const backend = createKbblChatBackend({ manager });

@@ -25,9 +25,7 @@ export function mountBuildsRoutes(app: Hono, { db, dispatcher, manager }: Builds
     }
 
     // Guard against double-dispatch while a build session is still live.
-    // Only treat current_session_ref as an in-flight build when the stage
-    // matches; a stale planner2 ref on the same column must not block the
-    // manual recovery path.
+    // Only treat current_session_ref as an in-flight build when the stage matches.
     interface CohortRefRow {
       current_session_ref: string | null;
       current_session_stage: string | null;
