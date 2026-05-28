@@ -146,16 +146,16 @@ Open `#plan/<plan_id>` in the PWA. The DAG editor renders cohorts + edges.
   subprocess spawns, posts a reply, exits.
 - **Approve** — gated on `status=pending_approval`. Posts
   `PATCH /plans/:id/status {status:"approved"}`. This freezes the plan,
-  promotes leaf cohorts from `waiting` to `planned`, and triggers brief_writer
-  dispatches.
+  promotes all waiting cohorts directly to `briefing`, and dispatches brief_writer
+  once for the whole plan.
 - **Reject** — `PATCH /plans/:id/status {status:"rejected", reason:"…"}`.
   Reopen later with `POST /plans/:id/reopen` to create a new
   `pending_approval` plan linked via `predecessor_plan_id`.
 
 ## 3. Review each brief
 
-Each cohort that hits `planned` auto-transitions to `briefing` and spawns a
-brief_writer session. When it POSTs `/briefs`, the cohort moves to `brief_review`
+brief_writer is dispatched once on `plan.approved` with the plan id. It POSTs
+`/briefs` per cohort; each POST moves that cohort from `briefing` to `brief_review`
 and the brief shows up in the PWA inbox.
 
 Open `#brief/<brief_id>`. `StructuredDocEditor` renders the five sections
@@ -191,8 +191,9 @@ curl -sX PATCH "$KBBL/cohorts/<cohort_id>/status" \
   -d '{"status":"done"}'
 ```
 
-The orchestrator re-evaluates downstream cohorts; any whose predecessors are
-all `done` transition `waiting → planned` and fire their brief_writer dispatches.
+The orchestrator re-evaluates downstream cohorts; any that are `ready_to_build`
+with all predecessors now `done` transition to `building` and fire their build
+dispatches.
 
 Webhook-driven `done` is not wired in v1 — `done` is operator-marked.
 

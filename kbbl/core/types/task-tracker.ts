@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-// Mirrors the stages table's name column (see migrations/008_seed_stages.sql).
+// Mirrors the stages table's name column (see migrations/019_rename_planners.sql).
 // plans.current_session_stage has no DB CHECK (migration 010 comment); Zod is
 // authoritative. Surviving stages: spec_analyzer, plan_writer, brief_writer, planner3, build.
 // planner3 is renamed in PR 4 alongside the assess-stage rename.
