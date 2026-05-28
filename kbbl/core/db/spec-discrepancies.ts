@@ -54,6 +54,14 @@ export function countOpenDiscrepancies(db: Database, spec_id: string): number {
   return row?.n ?? 0;
 }
 
+export function listResolvedDiscrepanciesBySpec(db: Database, spec_id: string): SpecDiscrepancy[] {
+  return db
+    .prepare<SpecDiscrepancy, [string]>(
+      "SELECT * FROM spec_discrepancies WHERE spec_id = ? AND status = 'resolved' ORDER BY created_at, id",
+    )
+    .all(spec_id);
+}
+
 export function updateSpecDiscrepancy(
   db: Database,
   id: string,
