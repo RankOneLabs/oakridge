@@ -256,10 +256,8 @@ describe("DagEditor", () => {
       />,
     );
 
-    const nodes = document.querySelectorAll(".cohort-node");
-    expect(nodes.length).toBe(cohorts.length);
-    for (const node of nodes) {
-      const el = node as HTMLElement;
+    for (const cohort of cohorts) {
+      const el = screen.getByLabelText(cohort.title) as HTMLElement;
       expect(el.style.width).toBe(`${COHORT_NODE_LAYOUT.width}px`);
       expect(el.style.height).toBe(`${COHORT_NODE_LAYOUT.height}px`);
     }
@@ -280,11 +278,10 @@ describe("DagEditor", () => {
       />,
     );
 
-    const node = document.querySelector(".cohort-node") as HTMLElement;
+    const node = screen.getByLabelText(longTitle) as HTMLElement;
     expect(node.style.width).toBe(`${COHORT_NODE_LAYOUT.width}px`);
     expect(node.style.height).toBe(`${COHORT_NODE_LAYOUT.height}px`);
 
-    const titleEl = node.querySelector(".cohort-node__title") as HTMLElement;
-    expect(titleEl.getAttribute("title")).toBe(longTitle);
+    expect(screen.getByTitle(longTitle)).toBeTruthy();
   });
 });
