@@ -35,10 +35,10 @@ const STAGE_ARTIFACT_TYPES: Record<
   string,
   { input: StageRow["input_artifact_type"]; output: StageRow["output_artifact_type"] }
 > = {
-  planner0: { input: "spec", output: "plan" },
-  planner1: { input: "spec", output: "plan" },
-  planner2: { input: "cohort", output: "brief" },
-  planner2_batch: { input: "plan", output: "brief" },
+  spec_analyzer: { input: "spec", output: "plan" },
+  plan_writer:   { input: "spec", output: "plan" },
+  planner2:      { input: "cohort", output: "brief" },
+  brief_writer:  { input: "plan", output: "brief" },
   build: { input: "brief", output: "pr" },
 };
 
@@ -62,25 +62,25 @@ const inputRef: InputRef = {
 };
 
 describe("KbblChatBackend dispatch routes each stage to its intended model", () => {
-  test("planner0 → opus", async () => {
+  test("spec_analyzer → opus", async () => {
     const { manager, calls } = makeFakeManager();
     const backend = createKbblChatBackend({ manager });
-    await backend.dispatch(stage("planner0"), inputRef, "prompt");
+    await backend.dispatch(stage("spec_analyzer"), inputRef, "prompt");
     expect(calls[0]?.model).toBe("claude-opus-4-7");
     expect(calls[0]?.runtime).toBe("claude-code");
   });
 
-  test("planner1 → opus", async () => {
+  test("plan_writer → opus", async () => {
     const { manager, calls } = makeFakeManager();
     const backend = createKbblChatBackend({ manager });
-    await backend.dispatch(stage("planner1"), inputRef, "prompt");
+    await backend.dispatch(stage("plan_writer"), inputRef, "prompt");
     expect(calls[0]?.model).toBe("claude-opus-4-7");
   });
 
-  test("planner2_batch → opus", async () => {
+  test("brief_writer → opus", async () => {
     const { manager, calls } = makeFakeManager();
     const backend = createKbblChatBackend({ manager });
-    await backend.dispatch(stage("planner2_batch"), inputRef, "prompt");
+    await backend.dispatch(stage("brief_writer"), inputRef, "prompt");
     expect(calls[0]?.model).toBe("claude-opus-4-7");
   });
 

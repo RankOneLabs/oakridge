@@ -54,13 +54,13 @@ const origPromptsDir = process.env.KBBL_PROMPTS_DIR;
 beforeEach(() => {
   promptsDir = mkdtempSync(join(tmpdir(), "kbbl-dispatch-hooks-test-"));
   writeFileSync(
-    join(promptsDir, "planner0.md"),
-    "planner0 {{SPEC_ID}} {{SPEC_TITLE}} {{SPEC_NOTES}} {{REPO_PATH}} {{KBBL_URL}}",
+    join(promptsDir, "spec_analyzer.md"),
+    "spec_analyzer {{SPEC_ID}} {{SPEC_TITLE}} {{SPEC_NOTES}} {{REPO_PATH}} {{KBBL_URL}}",
     "utf8",
   );
   writeFileSync(
-    join(promptsDir, "planner1.md"),
-    "planner1 {{SPEC_ID}} {{SPEC_TITLE}} {{SPEC_NOTES}} {{REPO_PATH}} {{KBBL_URL}}",
+    join(promptsDir, "plan_writer.md"),
+    "plan_writer {{SPEC_ID}} {{SPEC_TITLE}} {{SPEC_NOTES}} {{REPO_PATH}} {{KBBL_URL}}",
     "utf8",
   );
   process.env.KBBL_PROMPTS_DIR = promptsDir;
@@ -97,40 +97,40 @@ afterEach(() => {
 });
 
 describe("dispatch hooks rewire", () => {
-  test("spec.created fires planner0 (not planner1)", async () => {
+  test("spec.created fires spec_analyzer (not plan_writer)", async () => {
     taskTrackerEvents.emit("spec.created", { spec_id: SPEC_ID });
     await flushAsync();
 
     expect(mockBackend.calls).toHaveLength(1);
-    expect(mockBackend.calls[0]!.stageName).toBe("planner0");
+    expect(mockBackend.calls[0]!.stageName).toBe("spec_analyzer");
     expect(mockBackend.calls[0]!.inputId).toBe(SPEC_ID);
     expect(mockBackend.calls[0]!.inputType).toBe("spec");
   });
 
-  test("spec.created does not fire planner1", async () => {
+  test("spec.created does not fire plan_writer", async () => {
     taskTrackerEvents.emit("spec.created", { spec_id: SPEC_ID });
     await flushAsync();
 
-    const planner1Calls = mockBackend.calls.filter((c) => c.stageName === "planner1");
-    expect(planner1Calls).toHaveLength(0);
+    const planWriterCalls = mockBackend.calls.filter((c) => c.stageName === "plan_writer");
+    expect(planWriterCalls).toHaveLength(0);
   });
 
-  test("spec.approved fires planner1", async () => {
+  test("spec.approved fires plan_writer", async () => {
     taskTrackerEvents.emit("spec.approved", { spec_id: SPEC_ID, epic_id: EPIC_ID });
     await flushAsync();
 
     expect(mockBackend.calls).toHaveLength(1);
-    expect(mockBackend.calls[0]!.stageName).toBe("planner1");
+    expect(mockBackend.calls[0]!.stageName).toBe("plan_writer");
     expect(mockBackend.calls[0]!.inputId).toBe(SPEC_ID);
     expect(mockBackend.calls[0]!.inputType).toBe("spec");
   });
 
-  test("spec.approved does not fire planner0", async () => {
+  test("spec.approved does not fire spec_analyzer", async () => {
     taskTrackerEvents.emit("spec.approved", { spec_id: SPEC_ID, epic_id: EPIC_ID });
     await flushAsync();
 
-    const planner0Calls = mockBackend.calls.filter((c) => c.stageName === "planner0");
-    expect(planner0Calls).toHaveLength(0);
+    const specAnalyzerCalls = mockBackend.calls.filter((c) => c.stageName === "spec_analyzer");
+    expect(specAnalyzerCalls).toHaveLength(0);
   });
 
   test("spec.created and spec.approved each fire their own stage exactly once", async () => {
@@ -140,7 +140,7 @@ describe("dispatch hooks rewire", () => {
     await flushAsync();
 
     expect(mockBackend.calls).toHaveLength(2);
-    expect(mockBackend.calls[0]!.stageName).toBe("planner0");
-    expect(mockBackend.calls[1]!.stageName).toBe("planner1");
+    expect(mockBackend.calls[0]!.stageName).toBe("spec_analyzer");
+    expect(mockBackend.calls[1]!.stageName).toBe("plan_writer");
   });
 });

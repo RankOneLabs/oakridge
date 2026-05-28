@@ -4,9 +4,9 @@ The end-to-end loop lives entirely inside kbbl. A `kbbl-start` server hosts
 the task tracker, the review primitive, the orchestrator state machine, and the
 PWA review surfaces. Work is organized as **Epics** — each Epic carries one spec
 through four stages (Spec → Plan → Build → Review). Dispatched stages
-(planner-0, planner-1, planner-2, build) run as kbbl agent sessions spawned via
+(spec_analyzer, plan_writer, brief_writer, build) run as kbbl agent sessions spawned via
 the existing `SessionManager` + Claude Code adapter; their prompts are templated
-from `kbbl/prompts/{planner0,planner1,planner2,build}.md`.
+from `kbbl/prompts/{spec_analyzer,plan_writer,brief_writer,build}.md`.
 
 ## Prerequisites
 
@@ -32,7 +32,7 @@ flowchart LR
 ## Spec stage
 
 Creating a spec (via the PWA or `POST /specs`) simultaneously creates an Epic.
-The Epic starts in stage `spec`; `spec.created` fires and dispatches planner-0.
+The Epic starts in stage `spec`; `spec.created` fires and dispatches spec_analyzer.
 The spec's `internal_status` advances through four sub-states:
 
 ### 1. Analyzing
@@ -47,7 +47,7 @@ curl -sX POST "$KBBL/spec-discrepancies" -H 'content-type: application/json' \
   -d '{"spec_id":"<spec_id>","spec_assumption":"<what spec says>","code_reality":"<what code shows>"}'
 ```
 
-When analysis is complete (zero or more discrepancies posted), planner-0 advances
+When analysis is complete (zero or more discrepancies posted), spec_analyzer advances
 the spec and stops:
 
 ```bash
@@ -85,7 +85,7 @@ curl -sX PATCH "$KBBL/specs/<spec_id>/internal-status" -H 'content-type: applica
 
 ### 4. Approved
 
-**`internal_status: approved`** — spec frozen; planner-1 dispatches.
+**`internal_status: approved`** — spec frozen; plan_writer dispatches.
 
 Operator approves in the DiscrepanciesEditor or via API:
 
@@ -95,8 +95,8 @@ curl -sX PATCH "$KBBL/specs/<spec_id>/internal-status" -H 'content-type: applica
 ```
 
 On approval kbbl atomically copies `notes → final_notes` (the frozen spec text
-planner-1 will read), emits `spec.approved`, advances the Epic stage from `spec`
-to `plan`, and dispatches planner-1.
+plan_writer will read), emits `spec.approved`, advances the Epic stage from `spec`
+to `plan`, and dispatches plan_writer.
 
 ## 1. Bootstrap a project + spec
 
@@ -129,10 +129,10 @@ curl -sX POST "$KBBL/specs" -H 'content-type: application/json' \
   -d '{"project_id":"<project_id>","title":"…","notesPath":"<repo_path>/spec.md"}'
 ```
 
-Either path creates the Epic, emits `spec.created`, and dispatches planner-0
+Either path creates the Epic, emits `spec.created`, and dispatches spec_analyzer
 (Spec Analysis Agent) against the project's `repo_path`. Watch the session in
 the kbbl PWA inbox. After the Spec stage completes and the operator approves
-(see **Spec stage** above), planner-1 dispatches and the Plan stage begins.
+(see **Spec stage** above), plan_writer dispatches and the Plan stage begins.
 
 ## 2. Review the plan
 
@@ -146,7 +146,7 @@ Open `#plan/<plan_id>` in the PWA. The DAG editor renders cohorts + edges.
   subprocess spawns, posts a reply, exits.
 - **Approve** — gated on `status=pending_approval`. Posts
   `PATCH /plans/:id/status {status:"approved"}`. This freezes the plan,
-  promotes leaf cohorts from `waiting` to `planned`, and triggers planner-2
+  promotes leaf cohorts from `waiting` to `planned`, and triggers brief_writer
   dispatches.
 - **Reject** — `PATCH /plans/:id/status {status:"rejected", reason:"…"}`.
   Reopen later with `POST /plans/:id/reopen` to create a new
@@ -155,7 +155,7 @@ Open `#plan/<plan_id>` in the PWA. The DAG editor renders cohorts + edges.
 ## 3. Review each brief
 
 Each cohort that hits `planned` auto-transitions to `briefing` and spawns a
-planner-2 session. When it POSTs `/briefs`, the cohort moves to `brief_review`
+brief_writer session. When it POSTs `/briefs`, the cohort moves to `brief_review`
 and the brief shows up in the PWA inbox.
 
 Open `#brief/<brief_id>`. `StructuredDocEditor` renders the five sections
@@ -192,7 +192,7 @@ curl -sX PATCH "$KBBL/cohorts/<cohort_id>/status" \
 ```
 
 The orchestrator re-evaluates downstream cohorts; any whose predecessors are
-all `done` transition `waiting → planned` and fire their planner-2 dispatches.
+all `done` transition `waiting → planned` and fire their brief_writer dispatches.
 
 Webhook-driven `done` is not wired in v1 — `done` is operator-marked.
 
@@ -285,7 +285,7 @@ sidebar epic links on each spec row.
 - **Drill-down panel** (changes with `current_stage`):
   - **Spec** — DiscrepanciesEditor: list discrepancies, resolve or waive each,
     gate **Move to review** on `countOpen == 0`, then **Approve** to dispatch
-    planner-1.
+    plan_writer.
   - **Plan** — PlanDrilldown: plan status and link to `#plan/<id>`.
   - **Build** — BuildDrilldown: cohort table with per-cohort statuses and
     links to `#cohort/<id>`.

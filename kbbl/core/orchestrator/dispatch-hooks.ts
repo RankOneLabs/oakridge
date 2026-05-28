@@ -16,7 +16,7 @@ export function wireDispatchHooks({ taskTrackerEvents, dispatcher, db }: Dispatc
   const unsubSpecCreated = taskTrackerEvents.subscribe("spec.created", ({ spec_id }) => {
     void (async () => {
       try {
-        await dispatcher.dispatch("planner0", spec_id);
+        await dispatcher.dispatch("spec_analyzer", spec_id);
       } catch (err) {
         console.error(
           JSON.stringify({ kbbl: "dispatch-hooks", event: "spec.created", error: String(err), spec_id }),
@@ -37,7 +37,7 @@ export function wireDispatchHooks({ taskTrackerEvents, dispatcher, db }: Dispatc
 
     void (async () => {
       try {
-        await dispatcher.dispatch("planner1", spec_id);
+        await dispatcher.dispatch("plan_writer", spec_id);
       } catch (err) {
         console.error(
           JSON.stringify({ kbbl: "dispatch-hooks", event: "spec.approved", error: String(err), spec_id }),
@@ -49,7 +49,7 @@ export function wireDispatchHooks({ taskTrackerEvents, dispatcher, db }: Dispatc
   const unsubPlanApproved = taskTrackerEvents.subscribe("plan.approved", ({ plan_id }) => {
     void (async () => {
       try {
-        await dispatcher.dispatch("planner2_batch", plan_id);
+        await dispatcher.dispatch("brief_writer", plan_id);
       } catch (err) {
         console.error(
           JSON.stringify({ kbbl: "dispatch-hooks", event: "plan.approved", error: String(err), plan_id }),

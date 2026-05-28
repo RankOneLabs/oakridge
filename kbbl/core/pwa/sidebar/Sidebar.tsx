@@ -74,7 +74,7 @@ export function Sidebar({ sessions, onSelectSession }: SidebarProps) {
   );
 
   // Refresh an expanded project's specs when one of its sessions ends.
-  // A planner1 session ending is what flips a draft spec to planning_done
+  // A plan_writer session ending is what flips a draft spec to planning_done
   // and creates its first plan row; without this nudge the cached SidebarSpec
   // stays plan_id=null and SidebarSpecsSection keeps rendering the static
   // (non-clickable) variant until the page reloads.

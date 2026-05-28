@@ -85,8 +85,8 @@ describe("KbblChatBackend dispatch worktree behavior", () => {
       default_backend: "kbbl_chat",
     };
     const plannerStage = {
-      name: "planner1",
-      prompt_template_path: "planner1.md",
+      name: "plan_writer",
+      prompt_template_path: "plan_writer.md",
       input_artifact_type: "spec" as const,
       output_artifact_type: "plan" as const,
       gate: "review_required" as const,
@@ -107,7 +107,7 @@ describe("KbblChatBackend dispatch worktree behavior", () => {
     if (!buildSession.worktreePath) throw new Error("expected build worktreePath to be set");
     expect(existsSync(buildSession.worktreePath)).toBe(true);
 
-    // planner1 stage: worktreePath must ALSO be set — no opt-out
+    // plan_writer stage: worktreePath must ALSO be set — no opt-out
     const plannerRef = { ...inputRef, type: "spec" as const };
     const plannerResult = await backend.dispatch(plannerStage, plannerRef, "planner prompt");
     const plannerSession = manager.get(plannerResult.session_ref);
