@@ -19,8 +19,12 @@ import { CohortNode, type CohortNodeData } from "./CohortNode";
 import type { Thread, ReviewMode } from "../shared/types";
 import type { Cohort, CohortDependency } from "./types";
 
-const NODE_W = 200;
-const NODE_H = 80;
+export const COHORT_NODE_LAYOUT = {
+  width: 240,
+  height: 96,
+  ranksep: 80,
+  nodesep: 40,
+} as const;
 
 const NODE_TYPES: NodeTypes = { cohortNode: CohortNode };
 
@@ -29,7 +33,11 @@ function buildLayout(
   deps: CohortDependency[],
 ): { x: number; y: number; id: string }[] {
   const g = new dagre.graphlib.Graph();
-  g.setGraph({ rankdir: "TB", ranksep: 80, nodesep: 40 });
+  g.setGraph({
+    rankdir: "TB",
+    ranksep: COHORT_NODE_LAYOUT.ranksep,
+    nodesep: COHORT_NODE_LAYOUT.nodesep,
+  });
   g.setDefaultEdgeLabel(() => ({}));
 
   const sorted = [...cohorts].sort(
@@ -37,7 +45,11 @@ function buildLayout(
   );
 
   for (const c of sorted) {
-    g.setNode(c.id, { width: NODE_W, height: NODE_H, label: c.id });
+    g.setNode(c.id, {
+      width: COHORT_NODE_LAYOUT.width,
+      height: COHORT_NODE_LAYOUT.height,
+      label: c.id,
+    });
   }
   for (const d of deps) {
     g.setEdge(d.from_cohort_id, d.to_cohort_id);
@@ -49,8 +61,8 @@ function buildLayout(
     const n = g.node(c.id);
     return {
       id: c.id,
-      x: n ? n.x - NODE_W / 2 : 0,
-      y: n ? n.y - NODE_H / 2 : 0,
+      x: n ? n.x - COHORT_NODE_LAYOUT.width / 2 : 0,
+      y: n ? n.y - COHORT_NODE_LAYOUT.height / 2 : 0,
     };
   });
 }
@@ -100,6 +112,8 @@ export function DagEditor({
             onSelectCohort,
             onOpenThread,
             isSelected: c.id === selectedCohortId,
+            width: COHORT_NODE_LAYOUT.width,
+            height: COHORT_NODE_LAYOUT.height,
           },
         };
       }),
@@ -173,7 +187,7 @@ export function DagEditor({
         onEdgesDelete={mode === "edit" && !frozen ? onEdgesDelete : undefined}
         nodesDraggable={mode === "edit"}
         nodesConnectable={mode === "edit" && !frozen}
-        elementsSelectable={mode === "edit"}
+        elementsSelectable
         panOnDrag={[1, 2]}
         zoomOnPinch
         panOnScroll={false}

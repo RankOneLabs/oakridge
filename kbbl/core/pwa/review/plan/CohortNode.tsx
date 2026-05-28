@@ -11,10 +11,12 @@ export interface CohortNodeData {
   onSelectCohort: (id: string) => void;
   onOpenThread: (anchor: string) => void;
   isSelected: boolean;
+  width: number;
+  height: number;
 }
 
 export function CohortNode({ data }: { data: CohortNodeData }) {
-  const { cohort, threads, mode, frozen, onSelectCohort, onOpenThread, isSelected } =
+  const { cohort, threads, mode, frozen, onSelectCohort, onOpenThread, isSelected, width, height } =
     data;
 
   const titleAnchor = `cohorts[${cohort.position}].title`;
@@ -24,6 +26,8 @@ export function CohortNode({ data }: { data: CohortNodeData }) {
     <div
       onClick={() => onSelectCohort(cohort.id)}
       className={`cohort-node${isSelected ? " cohort-node--selected" : ""}`}
+      style={{ width, height }}
+      aria-label={cohort.title}
     >
       {/* ReactFlow Handle — style prop is the documented escape hatch; className not supported for inner SVG element */}
       <Handle
@@ -33,7 +37,7 @@ export function CohortNode({ data }: { data: CohortNodeData }) {
       />
 
       <div className="cohort-node__title-row">
-        <span className="cohort-node__title">{cohort.title}</span>
+        <span className="cohort-node__title" title={cohort.title}>{cohort.title}</span>
         <AtomCommentAffordance
           anchor={titleAnchor}
           threads={threads}
