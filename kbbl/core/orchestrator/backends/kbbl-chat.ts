@@ -5,9 +5,10 @@ import type { ExecutionBackend, InputRef, StageRow } from "./interface";
 
 // Cost-engineering rule: plan in Opus, build in Sonnet. Resolved per stage
 // so dispatcher-spawned sessions don't fall through to the user-global default.
-type RoutedStage = "planner1" | "planner2" | "planner2_batch" | "planner3" | "build";
+type RoutedStage = "planner0" | "planner1" | "planner2" | "planner2_batch" | "planner3" | "build";
 
 const STAGE_ROUTING: Record<RoutedStage, { runtime: RuntimeId; model: string }> = {
+  planner0:       { runtime: "claude-code", model: "claude-opus-4-7" },
   planner1:       { runtime: "claude-code", model: "claude-opus-4-7" },
   planner2:       { runtime: "claude-code", model: "claude-opus-4-7" },
   planner2_batch: { runtime: "claude-code", model: "claude-opus-4-7" },
@@ -36,12 +37,17 @@ export function createKbblChatBackend({
           ? config.runtime.stages[stage.name]
           : undefined;
       const routing = stageOverride ?? defaultRouting;
+      if (!routing) {
+        throw new Error(
+          `No routing entry for stage "${stage.name}". Add it to STAGE_ROUTING in kbbl-chat.ts.`
+        );
+      }
 
       const session = await manager.create({
         workdir: inputRef.workdir,
         name: inputRef.sessionName,
-        model: routing?.model ?? null,
-        runtime: routing?.runtime,
+        model: routing.model,
+        runtime: routing.runtime,
       });
       await session.writeInput(renderedPrompt);
       return { session_ref: session.oakridgeSid };
