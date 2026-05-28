@@ -99,11 +99,12 @@ describe("KbblChatBackend dispatch routes each stage to its intended model", () 
   });
 
   test("unknown stage without override → throws with actionable message", async () => {
-    const { manager } = makeFakeManager();
+    const { manager, calls } = makeFakeManager();
     const backend = createKbblChatBackend({ manager });
     await expect(backend.dispatch(stage("future-stage"), inputRef, "prompt")).rejects.toThrow(
       'No routing entry for stage "future-stage"'
     );
+    expect(calls).toHaveLength(0);
   });
 });
 

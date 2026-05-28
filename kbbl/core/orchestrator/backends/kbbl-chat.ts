@@ -39,7 +39,7 @@ export function createKbblChatBackend({
       const routing = stageOverride ?? defaultRouting;
       if (!routing) {
         throw new Error(
-          `No routing entry for stage "${stage.name}". Add it to STAGE_ROUTING in kbbl-chat.ts.`
+          `No routing entry for stage "${stage.name}". Add it to STAGE_ROUTING in kbbl-chat.ts or route it via config.runtime.stages.`
         );
       }
 
