@@ -80,7 +80,7 @@ function setupPromptFixtures() {
   );
   writeFileSync(
     join(promptsDir, "plan_writer.md"),
-    "plan_writer {{SPEC_ID}} {{SPEC_TITLE}} {{SPEC_NOTES}} {{REPO_PATH}} {{KBBL_URL}}",
+    "plan_writer {{SPEC_ID}} {{SPEC_TITLE}} {{SPEC_NOTES}} {{DISCREPANCY_RESOLUTIONS}} {{REPO_PATH}} {{KBBL_URL}}",
     "utf8",
   );
   writeFileSync(
