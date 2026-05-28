@@ -31,6 +31,7 @@ import { mountBriefsRoutes } from "../server/handlers/briefs";
 import { mountBriefStatusRoutes } from "../server/handlers/brief-status";
 import { mountBuildsRoutes } from "../server/handlers/builds";
 import { mountAssessmentsRoutes } from "../server/handlers/assessments";
+import { mountSpecStatusRoutes } from "../server/handlers/spec-status";
 import { insertSpecDiscrepancy } from "../db/spec-discrepancies";
 
 // ---- minimal SessionManager stub for builds route ----
@@ -164,6 +165,7 @@ beforeEach(() => {
   mountBriefStatusRoutes(app, { db });
   mountBuildsRoutes(app, { db, dispatcher, manager: stubManager });
   mountAssessmentsRoutes(app, { db });
+  mountSpecStatusRoutes(app, { db });
 });
 
 afterEach(() => {
@@ -614,6 +616,81 @@ describe("full dispatch pipeline with MockBackend", () => {
     expect(call?.renderedPrompt).toContain("### 1. assumes X exists");
     expect(call?.renderedPrompt).toContain("**Code reality:** X does not exist");
     expect(call?.renderedPrompt).toContain("**Resolution:** add X before implementing");
+  });
+
+  test("spec approval → plan_writer prompt renders resolved discrepancy, excludes waived assumption, and reads SPEC_NOTES from final_notes", async () => {
+    // 1. Create project + spec
+    const projRes = await post(app, "/projects", { name: "approval-prompt-test", repo_path: "/tmp/approval-prompt-repo" });
+    const proj = (await projRes.json()) as { id: string };
+
+    const ORIGINAL_NOTES = "SPEC_NOTES_DISTINCTIVE_ORIGINAL_20f3a";
+    const specRes = await post(app, "/specs", { project_id: proj.id, title: "Approval Prompt Spec", notes: ORIGINAL_NOTES });
+    expect(specRes.status).toBe(201);
+    const spec = (await specRes.json()) as { id: string };
+
+    // spec_analyzer fires automatically on spec creation — drain and ignore
+    await flushAsync();
+
+    // 2. Plant two discrepancy rows directly: one resolved (should render), one waived (should be excluded)
+    const RESOLUTION_STRING = "RESOLUTION_DISTINCTIVE_STRING_R_7b9e2";
+    const ASSUMPTION_A = "ASSUMPTION_DISTINCTIVE_STRING_A_3c1d8";
+    const ASSUMPTION_B = "ASSUMPTION_DISTINCTIVE_STRING_B_9f5a1";
+
+    insertSpecDiscrepancy(db, {
+      id: crypto.randomUUID(),
+      spec_id: spec.id,
+      spec_assumption: ASSUMPTION_A,
+      code_reality: "code reality for A",
+      resolution: RESOLUTION_STRING,
+      status: "resolved",
+    });
+
+    insertSpecDiscrepancy(db, {
+      id: crypto.randomUUID(),
+      spec_id: spec.id,
+      spec_assumption: ASSUMPTION_B,
+      code_reality: "code reality for B",
+      resolution: null,
+      status: "waived",
+    });
+
+    // 3. Walk through internal_status transitions: analyzing → discrepancies → review → approved
+    //    Row B is waived (not open), so countOpenDiscrepancies returns 0 → discrepancies→review passes
+    const toDiscrepancies = await patch(app, `/specs/${spec.id}/internal-status`, { internal_status: "discrepancies" });
+    expect(toDiscrepancies.status).toBe(200);
+
+    const toReview = await patch(app, `/specs/${spec.id}/internal-status`, { internal_status: "review" });
+    expect(toReview.status).toBe(200);
+
+    const toApproved = await patch(app, `/specs/${spec.id}/internal-status`, { internal_status: "approved" });
+    expect(toApproved.status).toBe(200);
+    // Approval copies notes → final_notes atomically and emits spec.approved
+    // plan_writer dispatch is enqueued but not yet settled
+
+    // 4. Mutate spec.notes directly before flushAsync — proves SPEC_NOTES is frozen via final_notes
+    db.prepare("UPDATE specs SET notes = ? WHERE id = ?").run("POST_APPROVAL_MUTATION_SHOULD_NOT_APPEAR", spec.id);
+
+    // 5. Drain the async plan_writer dispatch triggered by spec.approved
+    await flushAsync();
+
+    // 6. Find the latest plan_writer call
+    const pwCall = mockBackend.calls.filter((c) => c.stageName === "plan_writer").at(-1);
+    expect(pwCall).toBeDefined();
+    if (!pwCall) throw new Error("expected plan_writer dispatch call after spec approval");
+
+    const prompt = pwCall.renderedPrompt;
+
+    // (a) Resolved discrepancy's resolution string appears in the rendered prompt
+    expect(prompt).toContain(RESOLUTION_STRING);
+
+    // (b) Waived discrepancy's spec_assumption does NOT appear (status filtering excludes non-resolved rows)
+    expect(prompt).not.toContain(ASSUMPTION_B);
+
+    // (c) SPEC_NOTES reflects the original notes (copied into final_notes at approval)
+    expect(prompt).toContain(ORIGINAL_NOTES);
+
+    // (d) Post-approval mutation to spec.notes does NOT appear (final_notes is the frozen source)
+    expect(prompt).not.toContain("POST_APPROVAL_MUTATION_SHOULD_NOT_APPEAR");
   });
 
   test("POST /briefs/:id/build returns 409 if brief not approved", async () => {
