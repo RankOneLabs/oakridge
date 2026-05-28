@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import type { ExecutionBackend, InputRef, StageRow } from "./interface";
 import { loadPrompt, renderPrompt } from "./prompt-loader";
 import { listCohortsByPlan, listDependenciesByPlan } from "../../db/cohorts";
+import { listResolvedDiscrepanciesBySpec } from "../../db/spec-discrepancies";
 import type { Cohort, CohortDependency } from "../../types/task-tracker";
 
 interface DispatcherDeps {
@@ -253,14 +254,32 @@ function renderBrief(db: Database, brief_id: string): string {
 
 function buildSlotsForSpec(db: Database, spec_id: string, kbblUrl: string): Record<string, string> {
   interface SpecRow { id: string; title: string; notes: string | null }
-  const spec = db.prepare<SpecRow, [string]>("SELECT id, title, notes FROM specs WHERE id = ?").get(spec_id);
+  const spec = db.prepare<SpecRow, [string]>("SELECT id, title, COALESCE(final_notes, notes) AS notes FROM specs WHERE id = ?").get(spec_id);
   if (!spec) throw new Error(`spec not found: ${spec_id}`);
   const project = getProjectForSpec(db, spec_id);
   if (!project) throw new Error(`project not found for spec ${spec_id}`);
+
+  const resolutions = listResolvedDiscrepanciesBySpec(db, spec_id);
+  let discrepancyResolutions: string;
+  if (resolutions.length === 0) {
+    discrepancyResolutions = "(none — spec analyzed clean or pre-resolutions spec)";
+  } else {
+    discrepancyResolutions = resolutions
+      .map((r, i) => [
+        `### ${i + 1}. ${r.spec_assumption}`,
+        "",
+        `**Code reality:** ${r.code_reality}`,
+        "",
+        `**Resolution:** ${r.resolution ?? "(no resolution recorded)"}`,
+      ].join("\n"))
+      .join("\n\n");
+  }
+
   return {
     SPEC_ID: spec.id,
     SPEC_TITLE: spec.title,
     SPEC_NOTES: spec.notes ?? "(no notes)",
+    DISCREPANCY_RESOLUTIONS: discrepancyResolutions,
     REPO_PATH: project.repo_path,
     KBBL_URL: kbblUrl,
   };
@@ -338,7 +357,7 @@ function buildSlotsForPlan(db: Database, plan_id: string, kbblUrl: string): Reco
   interface PlanSpecRow { spec_id: string; spec_title: string; spec_notes: string | null }
   const planRow = db
     .prepare<PlanSpecRow, [string]>(
-      `SELECT pl.spec_id, s.title AS spec_title, s.notes AS spec_notes
+      `SELECT pl.spec_id, s.title AS spec_title, COALESCE(s.final_notes, s.notes) AS spec_notes
          FROM plans pl
          JOIN specs s ON s.id = pl.spec_id
         WHERE pl.id = ?`,
@@ -377,7 +396,7 @@ function buildSlotsForPlanResults(db: Database, plan_id: string, kbblUrl: string
   interface PlanSpecRow { spec_id: string; spec_title: string; spec_notes: string | null }
   const planRow = db
     .prepare<PlanSpecRow, [string]>(
-      `SELECT pl.spec_id, s.title AS spec_title, s.notes AS spec_notes
+      `SELECT pl.spec_id, s.title AS spec_title, COALESCE(s.final_notes, s.notes) AS spec_notes
          FROM plans pl
          JOIN specs s ON s.id = pl.spec_id
         WHERE pl.id = ?`,
