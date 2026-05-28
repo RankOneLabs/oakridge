@@ -3,7 +3,7 @@
  * POST /specs → simulated spec.approved → PATCH /plans/:id/status approve
  * → simulate plan.completed → POST /assessments
  *
- * Asserts: epic walks pending→active and current_stage spec→plan→build→review,
+ * Asserts: epic walks pending→active and current_stage spec→plan→build→assess,
  * then reaches complete on assessment POST.
  */
 
@@ -59,7 +59,7 @@ afterEach(() => {
 });
 
 describe("Epic lifecycle: full stage walk", () => {
-  test("spec→plan→build→review→complete via gate crossings", async () => {
+  test("spec→plan→build→assess→complete via gate crossings", async () => {
     // Step 1: POST /specs creates (pending, spec) epic
     const specRes = await post("/specs", {
       project_id: PROJECT_ID,
@@ -94,13 +94,13 @@ describe("Epic lifecycle: full stage walk", () => {
     expect(epic.status).toBe("active");
     expect(epic.current_stage).toBe("build");
 
-    // Step 4: Simulate plan.completed (all cohorts done) → epic_build_done → review stage
+    // Step 4: Simulate plan.completed (all cohorts done) → epic_build_done → assess stage
     advanceEpicByEvent(db, epic_id, "epic_build_done");
     epic = getEpic(db, epic_id)!;
     expect(epic.status).toBe("active");
-    expect(epic.current_stage).toBe("review");
+    expect(epic.current_stage).toBe("assess");
 
-    // Step 5: POST /assessments → epic_review_done → complete
+    // Step 5: POST /assessments → epic_assess_done fires → complete
     const assessRes = await post("/assessments", {
       plan_id,
       summary: "All good.",
@@ -112,7 +112,7 @@ describe("Epic lifecycle: full stage walk", () => {
 
     epic = getEpic(db, epic_id)!;
     expect(epic.status).toBe("complete");
-    expect(epic.current_stage).toBe("review");
+    expect(epic.current_stage).toBe("assess");
   });
 
   test("POST /specs response includes epic_id", async () => {

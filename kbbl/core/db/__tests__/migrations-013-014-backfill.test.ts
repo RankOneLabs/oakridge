@@ -13,7 +13,7 @@ const CASES = [
   { specId: "s-draft",         status: "draft",         epicStatus: "active",   epicStage: "spec",   specInternal: "analyzing" },
   { specId: "s-plan_review",   status: "plan_review",   epicStatus: "active",   epicStage: "spec",   specInternal: "analyzing" },
   { specId: "s-planning_done", status: "planning_done", epicStatus: "active",   epicStage: "build",  specInternal: "approved"  },
-  { specId: "s-done",          status: "done",          epicStatus: "complete", epicStage: "review", specInternal: "approved"  },
+  { specId: "s-done",          status: "done",          epicStatus: "complete", epicStage: "assess", specInternal: "approved"  },
   { specId: "s-archived",      status: "archived",      epicStatus: "archived", epicStage: "spec",   specInternal: "analyzing" },
 ] as const;
 

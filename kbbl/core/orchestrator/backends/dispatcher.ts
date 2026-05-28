@@ -528,7 +528,7 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
           break;
         }
         case "plan": {
-          slots = stage.name === "planner3"
+          slots = stage.name === "assessor"
             ? buildSlotsForPlanResults(db, inputId, kbblUrl)
             : buildSlotsForPlan(db, inputId, kbblUrl);
           workdir = resolveWorkdirForPlan(db, inputId);

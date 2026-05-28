@@ -5,7 +5,7 @@ import type { ReactElement } from "react";
 
 import { EpicDetailView } from "../EpicDetailView";
 
-type EpicStage = "spec" | "plan" | "build" | "review";
+type EpicStage = "spec" | "plan" | "build" | "assess";
 
 function makeFixture(current_stage: EpicStage) {
   return {
@@ -22,7 +22,7 @@ function makeFixture(current_stage: EpicStage) {
         ? { id: "spec-1", internal_status: "discrepancies" }
         : null,
     plan:
-      current_stage === "plan" || current_stage === "review"
+      current_stage === "plan" || current_stage === "assess"
         ? { id: "plan-1", status: "approved" }
         : null,
     cohorts: [
@@ -34,7 +34,7 @@ function makeFixture(current_stage: EpicStage) {
         status: "done",
       },
     ],
-    assessment_present: current_stage === "review",
+    assessment_present: current_stage === "assess",
   };
 }
 
@@ -115,8 +115,8 @@ describe("EpicDetailView", () => {
     expect(currentTile?.textContent).toMatch(/Build/i);
   });
 
-  it("review stage: renders ReviewDrilldown and highlights Review tile", async () => {
-    vi.stubGlobal("fetch", makeFetch("review"));
+  it("assess stage: renders ReviewDrilldown and highlights Assess tile", async () => {
+    vi.stubGlobal("fetch", makeFetch("assess"));
     renderWithClient(<EpicDetailView epic_id="epic-1" />);
 
     expect(await screen.findByRole("heading", { name: "Assessment" })).toBeTruthy();
@@ -125,6 +125,6 @@ describe("EpicDetailView", () => {
     const currentTile = tiles.find(
       (el) => el.getAttribute("aria-current") === "step",
     );
-    expect(currentTile?.textContent).toMatch(/Review/i);
+    expect(currentTile?.textContent).toMatch(/Assess/i);
   });
 });

@@ -78,7 +78,7 @@ describe("listEpicsByProject", () => {
   test("returns all epics for project", () => {
     insertSpec(db, { id: "spec-2", project_id: PROJECT_ID, title: "S2" });
     insertEpic(db, { id: "ea", spec_id: SPEC_ID, project_id: PROJECT_ID, title: "A", status: "active", current_stage: "spec" });
-    insertEpic(db, { id: "eb", spec_id: "spec-2", project_id: PROJECT_ID, title: "B", status: "complete", current_stage: "review" });
+    insertEpic(db, { id: "eb", spec_id: "spec-2", project_id: PROJECT_ID, title: "B", status: "complete", current_stage: "assess" });
 
     const all = listEpicsByProject(db, PROJECT_ID);
     expect(all).toHaveLength(2);
@@ -87,7 +87,7 @@ describe("listEpicsByProject", () => {
   test("filters by status when provided", () => {
     insertSpec(db, { id: "spec-3", project_id: PROJECT_ID, title: "S3" });
     insertEpic(db, { id: "ec", spec_id: SPEC_ID, project_id: PROJECT_ID, title: "C", status: "active", current_stage: "spec" });
-    insertEpic(db, { id: "ed", spec_id: "spec-3", project_id: PROJECT_ID, title: "D", status: "complete", current_stage: "review" });
+    insertEpic(db, { id: "ed", spec_id: "spec-3", project_id: PROJECT_ID, title: "D", status: "complete", current_stage: "assess" });
 
     const active = listEpicsByProject(db, PROJECT_ID, "active");
     expect(active).toHaveLength(1);

@@ -61,7 +61,7 @@ export function mountAssessmentsRoutes(app: Hono, deps: AssessmentsRouteDeps): v
         model: model ?? null,
       });
 
-      // Advance Epic stage: review → complete (epic_review_done)
+      // Advance Epic stage: assess → complete (epic_assess_done)
       try {
         const planRow = db
           .prepare<{ spec_id: string }, [string]>("SELECT spec_id FROM plans WHERE id = ?")
@@ -69,12 +69,12 @@ export function mountAssessmentsRoutes(app: Hono, deps: AssessmentsRouteDeps): v
         if (planRow) {
           const epic = getEpicBySpec(db, planRow.spec_id);
           if (epic) {
-            advanceEpicByEvent(db, epic.id, "epic_review_done");
+            advanceEpicByEvent(db, epic.id, "epic_assess_done");
           }
         }
       } catch (err) {
         console.error(
-          JSON.stringify({ kbbl: "assessments", warn: "advanceEpicByEvent(epic_review_done) failed", error: String(err), plan_id }),
+          JSON.stringify({ kbbl: "assessments", warn: "advanceEpicByEvent(epic_assess_done) failed", error: String(err), plan_id }),
         );
       }
 

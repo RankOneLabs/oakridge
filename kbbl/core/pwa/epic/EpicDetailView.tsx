@@ -9,7 +9,7 @@ import { BuildDrilldown } from "./BuildDrilldown";
 import { ReviewDrilldown } from "./ReviewDrilldown";
 
 type EpicStatus = "pending" | "active" | "complete" | "archived";
-type EpicStage = "spec" | "plan" | "build" | "review";
+type EpicStage = "spec" | "plan" | "build" | "assess";
 type SpecInternalStatus = "analyzing" | "discrepancies" | "review" | "approved";
 type PlanStatus = "pending_approval" | "approved" | "rejected" | "superseded";
 type CohortStatus = "waiting" | "planned" | "briefing" | "brief_review" | "building" | "ready_to_build" | "awaiting_merge" | "done" | "blocked";
@@ -136,7 +136,7 @@ export function EpicDetailView({ epic_id }: EpicDetailViewProps) {
     drilldown = <PlanDrilldown plan={plan} />;
   } else if (epic.current_stage === "build") {
     drilldown = <BuildDrilldown cohorts={cohorts} />;
-  } else if (epic.current_stage === "review") {
+  } else if (epic.current_stage === "assess") {
     drilldown = (
       <ReviewDrilldown plan_id={plan?.id ?? null} assessment_present={assessment_present} />
     );

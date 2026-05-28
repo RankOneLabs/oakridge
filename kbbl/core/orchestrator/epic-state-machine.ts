@@ -7,7 +7,7 @@ export type EpicStageEvent =
   | "epic_spec_approved"
   | "epic_plan_approved"
   | "epic_build_done"
-  | "epic_review_done";
+  | "epic_assess_done";
 
 // Lifecycle events — update only status
 export type EpicLifecycleEvent = "start" | "archive" | "unarchive" | "complete";
@@ -18,14 +18,14 @@ const STAGE_EVENT_NAMES = new Set<string>([
   "epic_spec_approved",
   "epic_plan_approved",
   "epic_build_done",
-  "epic_review_done",
+  "epic_assess_done",
 ]);
 
 export const EPIC_STAGE_TRANSITIONS: Record<EpicStage, Partial<Record<EpicStageEvent, EpicStage>>> = {
   spec:   { epic_spec_approved: "plan" },
   plan:   { epic_plan_approved: "build" },
-  build:  { epic_build_done: "review" },
-  review: { epic_review_done: "review" }, // terminal — stage does not advance
+  build:  { epic_build_done: "assess" },
+  assess: { epic_assess_done: "assess" }, // terminal — stage does not advance
 };
 
 export const EPIC_LIFECYCLE_TRANSITIONS: Record<EpicStatus, Partial<Record<EpicLifecycleEvent, EpicStatus>>> = {

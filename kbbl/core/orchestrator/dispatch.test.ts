@@ -99,8 +99,8 @@ function setupPromptFixtures() {
     "utf8",
   );
   writeFileSync(
-    join(promptsDir, "planner3.md"),
-    "planner3 {{PLAN_ID}} {{PLAN_TITLE}} {{SPEC_NOTES}} {{COHORT_RESULTS}} {{KBBL_URL}}",
+    join(promptsDir, "assessor.md"),
+    "assessor {{PLAN_ID}} {{PLAN_TITLE}} {{SPEC_NOTES}} {{COHORT_RESULTS}} {{KBBL_URL}}",
     "utf8",
   );
   process.env.KBBL_PROMPTS_DIR = promptsDir;
@@ -459,9 +459,9 @@ describe("full dispatch pipeline with MockBackend", () => {
     expect(res.status).toBe(404);
   });
 
-  test("plan.completed → planner3 dispatch after all cohorts go through awaiting_merge → merged", async () => {
+  test("plan.completed → assessor dispatch after all cohorts go through awaiting_merge → merged", async () => {
     // 1. Create project + spec + plan
-    const projRes = await post(app, "/projects", { name: "planner3-test", repo_path: "/tmp/p3-repo" });
+    const projRes = await post(app, "/projects", { name: "assessor-test", repo_path: "/tmp/p3-repo" });
     const proj = (await projRes.json()) as { id: string };
 
     const specRes = await post(app, "/specs", { project_id: proj.id, title: "P3 Spec", notes: "assess me" });
@@ -531,28 +531,28 @@ describe("full dispatch pipeline with MockBackend", () => {
     const callsAfterBMerged = mockBackend.calls.length;
     expect(callsAfterBMerged).toBe(callsBeforeMerge + 2);
 
-    // 8. Walk C through awaiting_merge → merged → plan.completed → planner3
+    // 8. Walk C through awaiting_merge → merged → plan.completed → assessor
     await patch(app, `/cohorts/${cohortC.id}/status`, { status: "awaiting_merge", pr_url: "https://github.com/org/repo/pull/3" });
     await flushAsync();
     await patch(app, `/cohorts/${cohortC.id}/status`, { status: "merged" });
     await flushAsync();
 
-    // Exactly one new call: planner3
+    // Exactly one new call: assessor
     const callsAfterCMerged = mockBackend.calls.length;
     expect(callsAfterCMerged).toBe(callsBeforeMerge + 3);
-    const planner3Call = mockBackend.calls[callsBeforeMerge + 2];
-    expect(planner3Call).toBeDefined();
-    expect(planner3Call!.stageName).toBe("planner3");
-    expect(planner3Call!.inputType).toBe("plan");
-    expect(planner3Call!.inputId).toBe(plan.id);
+    const assessorCall = mockBackend.calls[callsBeforeMerge + 2];
+    expect(assessorCall).toBeDefined();
+    expect(assessorCall!.stageName).toBe("assessor");
+    expect(assessorCall!.inputType).toBe("plan");
+    expect(assessorCall!.inputId).toBe(plan.id);
 
-    // plans.current_session_stage === 'planner3' and current_session_ref persisted
+    // plans.current_session_stage === 'assessor' and current_session_ref persisted
     const planRow = db
       .prepare<{ current_session_ref: string | null; current_session_stage: string | null }, [string]>(
         "SELECT current_session_ref, current_session_stage FROM plans WHERE id = ?",
       )
       .get(plan.id);
-    expect(planRow!.current_session_stage).toBe("planner3");
+    expect(planRow!.current_session_stage).toBe("assessor");
     expect(planRow!.current_session_ref).toBeDefined();
     expect(planRow!.current_session_ref).not.toBeNull();
 

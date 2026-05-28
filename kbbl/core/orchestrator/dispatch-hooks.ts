@@ -73,7 +73,7 @@ export function wireDispatchHooks({ taskTrackerEvents, dispatcher, db }: Dispatc
   const unsubPlanCompleted = taskTrackerEvents.subscribe("plan.completed", ({ plan_id }) => {
     void (async () => {
       try {
-        await dispatcher.dispatch("planner3", plan_id);
+        await dispatcher.dispatch("assessor", plan_id);
       } catch (err) {
         console.error(
           JSON.stringify({ kbbl: "dispatch-hooks", event: "plan.completed", error: String(err), plan_id }),
