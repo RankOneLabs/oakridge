@@ -1,29 +1,22 @@
 -- Rename planner0→spec_analyzer, planner1→plan_writer, planner2_batch→brief_writer.
 -- planner3 is intentionally left; it ships with the assess-stage rename in PR 4.
 -- 1. Update stages rows (name + prompt_template_path).
--- 2. Update current_session_stage references on specs, cohorts, plans.
--- 3. Rebuild specs and cohorts to update CHECK whitelists.
+-- 2. Update plans.current_session_stage (no DB CHECK — safe to UPDATE directly).
+-- 3. Rebuild specs and cohorts: the old CHECK whitelists block direct UPDATEs to
+--    new names, so the rename is done inside the INSERT...SELECT via CASE.
 --    New whitelist: (spec_analyzer, plan_writer, brief_writer, planner3, build).
---    plans.current_session_stage has no DB CHECK (see migration 010) — no rebuild needed.
 -- Mirror pattern from migration 018.
 
 UPDATE stages SET name = 'spec_analyzer', prompt_template_path = 'spec_analyzer.md' WHERE name = 'planner0';
 UPDATE stages SET name = 'plan_writer',   prompt_template_path = 'plan_writer.md'   WHERE name = 'planner1';
 UPDATE stages SET name = 'brief_writer',  prompt_template_path = 'brief_writer.md'  WHERE name = 'planner2_batch';
 
-UPDATE specs   SET current_session_stage = 'spec_analyzer' WHERE current_session_stage = 'planner0';
-UPDATE specs   SET current_session_stage = 'plan_writer'   WHERE current_session_stage = 'planner1';
-UPDATE specs   SET current_session_stage = 'brief_writer'  WHERE current_session_stage = 'planner2_batch';
-
-UPDATE cohorts SET current_session_stage = 'spec_analyzer' WHERE current_session_stage = 'planner0';
-UPDATE cohorts SET current_session_stage = 'plan_writer'   WHERE current_session_stage = 'planner1';
-UPDATE cohorts SET current_session_stage = 'brief_writer'  WHERE current_session_stage = 'planner2_batch';
-
+-- plans has no DB CHECK on current_session_stage (migration 010), so direct UPDATE is safe.
 UPDATE plans   SET current_session_stage = 'spec_analyzer' WHERE current_session_stage = 'planner0';
 UPDATE plans   SET current_session_stage = 'plan_writer'   WHERE current_session_stage = 'planner1';
 UPDATE plans   SET current_session_stage = 'brief_writer'  WHERE current_session_stage = 'planner2_batch';
 
--- Rebuild specs table.
+-- Rebuild specs table (rename done in INSERT...SELECT to avoid violating old CHECK).
 COMMIT;
 PRAGMA foreign_keys = OFF;
 BEGIN;
@@ -43,7 +36,13 @@ CREATE TABLE specs_new (
 );
 INSERT INTO specs_new
   SELECT id, project_id, title, notes, created_at,
-         current_session_ref, current_session_stage,
+         current_session_ref,
+         CASE current_session_stage
+           WHEN 'planner0'      THEN 'spec_analyzer'
+           WHEN 'planner1'      THEN 'plan_writer'
+           WHEN 'planner2_batch' THEN 'brief_writer'
+           ELSE current_session_stage
+         END,
          submitted_notes, final_notes, internal_status
   FROM specs;
 DROP INDEX specs_project_id;
@@ -54,7 +53,7 @@ COMMIT;
 PRAGMA foreign_keys = ON;
 BEGIN;
 
--- Rebuild cohorts table.
+-- Rebuild cohorts table (rename done in INSERT...SELECT to avoid violating old CHECK).
 COMMIT;
 PRAGMA foreign_keys = OFF;
 BEGIN;
@@ -74,7 +73,13 @@ CREATE TABLE cohorts_new (
 );
 INSERT INTO cohorts_new
   SELECT id, plan_id, title, notes, position, status, created_at,
-         pre_block_status, current_session_ref, current_session_stage
+         pre_block_status, current_session_ref,
+         CASE current_session_stage
+           WHEN 'planner0'      THEN 'spec_analyzer'
+           WHEN 'planner1'      THEN 'plan_writer'
+           WHEN 'planner2_batch' THEN 'brief_writer'
+           ELSE current_session_stage
+         END
   FROM cohorts;
 DROP INDEX cohorts_plan_id;
 DROP TABLE cohorts;

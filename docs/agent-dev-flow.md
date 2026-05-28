@@ -39,7 +39,7 @@ The spec's `internal_status` advances through four sub-states:
 
 **`internal_status: analyzing`** — set automatically on creation.
 
-Planner-0 reads the codebase, compares it against the spec notes, and POSTs each
+The spec_analyzer reads the codebase, compares it against the spec notes, and POSTs each
 mismatch as a discrepancy:
 
 ```bash
