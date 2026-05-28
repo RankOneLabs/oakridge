@@ -10,6 +10,7 @@ DELETE FROM stages WHERE name = 'planner2';
 
 UPDATE specs   SET current_session_stage = NULL WHERE current_session_stage = 'planner2';
 UPDATE cohorts SET current_session_stage = NULL WHERE current_session_stage = 'planner2';
+UPDATE plans   SET current_session_stage = NULL WHERE current_session_stage = 'planner2';
 
 -- Rebuild specs table.
 COMMIT;
