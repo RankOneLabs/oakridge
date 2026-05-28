@@ -1,8 +1,8 @@
 /**
  * End-to-end integration test with a MockBackend.
  *
- * Drives the full lifecycle: POST /specs → planner0 dispatch →
- * plan + cohorts → plan approval → planner2 dispatch → brief → brief
+ * Drives the full lifecycle: POST /specs → spec_analyzer dispatch →
+ * plan + cohorts → plan approval → brief_writer dispatch → brief → brief
  * approval → build dispatch → debrief PATCH.
  */
 
@@ -74,13 +74,13 @@ function setupPromptFixtures() {
   promptsDir = mkdtempSync(join(tmpdir(), "kbbl-dispatch-test-"));
   // Minimal templates — all required slots, no extras.
   writeFileSync(
-    join(promptsDir, "planner0.md"),
-    "planner0 {{SPEC_ID}} {{SPEC_TITLE}} {{SPEC_NOTES}} {{REPO_PATH}} {{KBBL_URL}}",
+    join(promptsDir, "spec_analyzer.md"),
+    "spec_analyzer {{SPEC_ID}} {{SPEC_TITLE}} {{SPEC_NOTES}} {{REPO_PATH}} {{KBBL_URL}}",
     "utf8",
   );
   writeFileSync(
-    join(promptsDir, "planner1.md"),
-    "planner1 {{SPEC_ID}} {{SPEC_TITLE}} {{SPEC_NOTES}} {{REPO_PATH}} {{KBBL_URL}}",
+    join(promptsDir, "plan_writer.md"),
+    "plan_writer {{SPEC_ID}} {{SPEC_TITLE}} {{SPEC_NOTES}} {{REPO_PATH}} {{KBBL_URL}}",
     "utf8",
   );
   writeFileSync(
@@ -94,8 +94,8 @@ function setupPromptFixtures() {
     "utf8",
   );
   writeFileSync(
-    join(promptsDir, "planner2-batch.md"),
-    "planner2_batch {{PLAN_ID}} {{PLAN_TITLE}} {{SPEC_NOTES}} {{COHORTS}} {{PLAN_DEPENDENCIES}} {{KBBL_URL}} {{BRIEF_FORMAT_GUIDE}}",
+    join(promptsDir, "brief_writer.md"),
+    "brief_writer {{PLAN_ID}} {{PLAN_TITLE}} {{SPEC_NOTES}} {{COHORTS}} {{PLAN_DEPENDENCIES}} {{KBBL_URL}} {{BRIEF_FORMAT_GUIDE}}",
     "utf8",
   );
   writeFileSync(
@@ -177,7 +177,7 @@ afterEach(() => {
 });
 
 describe("full dispatch pipeline with MockBackend", () => {
-  test("POST /specs → planner0 dispatch → plan → cohorts → plan approved → planner2 dispatch → brief → brief approved → build dispatch → debrief PATCH", async () => {
+  test("POST /specs → spec_analyzer dispatch → plan → cohorts → plan approved → brief_writer dispatch → brief → brief approved → build dispatch → debrief PATCH", async () => {
     // 1. Create project + spec
     const projRes = await post(app, "/projects", { name: "test", repo_path: "/tmp/test-repo" });
     expect(projRes.status).toBe(201);
@@ -187,10 +187,10 @@ describe("full dispatch pipeline with MockBackend", () => {
     expect(specRes.status).toBe(201);
     const spec = (await specRes.json()) as { id: string };
 
-    // spec.created fires → dispatch hook triggers planner0 (async)
+    // spec.created fires → dispatch hook triggers spec_analyzer (async)
     await flushAsync();
     expect(mockBackend.calls).toHaveLength(1);
-    expect(mockBackend.calls[0]!.stageName).toBe("planner0");
+    expect(mockBackend.calls[0]!.stageName).toBe("spec_analyzer");
     expect(mockBackend.calls[0]!.inputId).toBe(spec.id);
     // current_session_ref written onto spec
     const specRow = db.prepare<{ current_session_ref: string | null }, [string]>("SELECT current_session_ref FROM specs WHERE id = ?").get(spec.id);
@@ -205,20 +205,20 @@ describe("full dispatch pipeline with MockBackend", () => {
     expect(cohortRes.status).toBe(201);
     const cohort = (await cohortRes.json()) as { id: string };
 
-    // 3. Approve plan → plan.approved → planner2_batch dispatch; all waiting cohorts → briefing
+    // 3. Approve plan → plan.approved → brief_writer dispatch; all waiting cohorts → briefing
     const approveRes = await patch(app, `/plans/${plan.id}/status`, { status: "approved" });
     expect(approveRes.status).toBe(200);
 
     await flushAsync();
     expect(mockBackend.calls).toHaveLength(2);
-    expect(mockBackend.calls[1]!.stageName).toBe("planner2_batch");
+    expect(mockBackend.calls[1]!.stageName).toBe("brief_writer");
     expect(mockBackend.calls[1]!.inputId).toBe(plan.id);
 
     // all waiting cohorts should have transitioned directly to briefing
     const cohortAfterPlanned = db.prepare<{ status: string }, [string]>("SELECT status FROM cohorts WHERE id = ?").get(cohort.id);
     expect(cohortAfterPlanned!.status).toBe("briefing");
 
-    // current_session_ref written onto plan (planner2_batch stores on plan, not cohort)
+    // current_session_ref written onto plan (brief_writer stores on plan, not cohort)
     const planRefRow = db.prepare<{ current_session_ref: string | null }, [string]>("SELECT current_session_ref FROM plans WHERE id = ?").get(plan.id);
     expect(planRefRow!.current_session_ref).toBe("mock-2");
 
@@ -262,14 +262,14 @@ describe("full dispatch pipeline with MockBackend", () => {
     expect(debriefed.pr_url).toBe("https://github.com/org/repo/pull/99");
   });
 
-  test("dispatcher.dispatch('planner2_batch', plan_id) — toposorted prompt, plan persistence", async () => {
+  test("dispatcher.dispatch('brief_writer', plan_id) — toposorted prompt, plan persistence", async () => {
     // 1. Create project + spec + plan
     const projRes = await post(app, "/projects", { name: "batch-test", repo_path: "/tmp/batch-repo" });
     const proj = (await projRes.json()) as { id: string };
 
     const specRes = await post(app, "/specs", { project_id: proj.id, title: "Batch Spec", notes: "batch notes" });
     const spec = (await specRes.json()) as { id: string };
-    await flushAsync(); // planner0 fires — consume that call
+    await flushAsync(); // spec_analyzer fires — consume that call
 
     const planRes = await post(app, "/plans", { spec_id: spec.id });
     const plan = (await planRes.json()) as { id: string };
@@ -293,20 +293,20 @@ describe("full dispatch pipeline with MockBackend", () => {
 
     const callsBefore = mockBackend.calls.length;
 
-    // 4. Dispatch planner2_batch directly (cohort 3 wires plan.approved → this)
+    // 4. Dispatch brief_writer directly (cohort 3 wires plan.approved → this)
     const dispatcher = createDispatcher({
       db,
       backends: { kbbl_chat: mockBackend },
       kbblUrl: "http://localhost:8788",
     });
-    const sessionRef = await dispatcher.dispatch("planner2_batch", plan.id);
+    const sessionRef = await dispatcher.dispatch("brief_writer", plan.id);
 
     // 5. Assert exactly one new MockBackend call
     expect(mockBackend.calls).toHaveLength(callsBefore + 1);
     const call = mockBackend.calls[callsBefore];
     expect(call).toBeDefined();
-    if (!call) throw new Error("expected planner2_batch dispatch call");
-    expect(call.stageName).toBe("planner2_batch");
+    if (!call) throw new Error("expected brief_writer dispatch call");
+    expect(call.stageName).toBe("brief_writer");
     expect(call.inputType).toBe("plan");
     expect(call.inputId).toBe(plan.id);
 
@@ -333,19 +333,19 @@ describe("full dispatch pipeline with MockBackend", () => {
       )
       .get(plan.id);
     expect(planRow).not.toBeNull();
-    if (!planRow) throw new Error("expected plan row after planner2_batch dispatch");
+    if (!planRow) throw new Error("expected plan row after brief_writer dispatch");
     expect(planRow.current_session_ref).toBe(sessionRef);
-    expect(planRow.current_session_stage).toBe("planner2_batch");
+    expect(planRow.current_session_stage).toBe("brief_writer");
   });
 
-  test("plan-approved fan-out -> planner2_batch -> dep-aware brief approval -> ready_to_build advancement", async () => {
+  test("plan-approved fan-out -> brief_writer -> dep-aware brief approval -> ready_to_build advancement", async () => {
     // 1. Create project + spec + plan
     const projRes = await post(app, "/projects", { name: "fanout-test", repo_path: "/tmp/fanout-repo" });
     const proj = (await projRes.json()) as { id: string };
 
     const specRes = await post(app, "/specs", { project_id: proj.id, title: "Fanout Spec", notes: "dep chain" });
     const spec = (await specRes.json()) as { id: string };
-    await flushAsync(); // planner0 fires — consume
+    await flushAsync(); // spec_analyzer fires — consume
 
     const planRes = await post(app, "/plans", { spec_id: spec.id });
     const plan = (await planRes.json()) as { id: string };
@@ -364,13 +364,13 @@ describe("full dispatch pipeline with MockBackend", () => {
 
     const callsBefore = mockBackend.calls.length;
 
-    // 4. Approve plan → plan.approved → exactly ONE planner2_batch call for the whole plan
+    // 4. Approve plan → plan.approved → exactly ONE brief_writer call for the whole plan
     const approveRes = await patch(app, `/plans/${plan.id}/status`, { status: "approved" });
     expect(approveRes.status).toBe(200);
     await flushAsync();
 
     expect(mockBackend.calls.length).toBe(callsBefore + 1);
-    expect(mockBackend.calls[callsBefore]!.stageName).toBe("planner2_batch");
+    expect(mockBackend.calls[callsBefore]!.stageName).toBe("brief_writer");
 
     // all three cohorts should be briefing
     for (const id of [cohortA.id, cohortB.id, cohortC.id]) {
@@ -466,7 +466,7 @@ describe("full dispatch pipeline with MockBackend", () => {
 
     const specRes = await post(app, "/specs", { project_id: proj.id, title: "P3 Spec", notes: "assess me" });
     const spec = (await specRes.json()) as { id: string };
-    await flushAsync(); // planner0 fires — consume
+    await flushAsync(); // spec_analyzer fires — consume
 
     const planRes = await post(app, "/plans", { spec_id: spec.id });
     const plan = (await planRes.json()) as { id: string };
@@ -483,7 +483,7 @@ describe("full dispatch pipeline with MockBackend", () => {
     await post(app, "/cohort-dependencies", { from_cohort_id: cohortA.id, to_cohort_id: cohortB.id });
     await post(app, "/cohort-dependencies", { from_cohort_id: cohortB.id, to_cohort_id: cohortC.id });
 
-    // 4. Approve plan → planner2_batch
+    // 4. Approve plan → brief_writer
     await patch(app, `/plans/${plan.id}/status`, { status: "approved" });
     await flushAsync();
 

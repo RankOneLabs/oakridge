@@ -127,7 +127,7 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
             <textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder="Context, constraints, links — anything planner1 should know."
+              placeholder="Context, constraints, links — anything plan_writer should know."
               rows={10}
               style={{ fontSize: 13, resize: "vertical", width: "100%", boxSizing: "border-box" }}
               disabled={pending}
