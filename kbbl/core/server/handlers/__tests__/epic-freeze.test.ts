@@ -277,3 +277,51 @@ describe("GET routes not blocked by freeze", () => {
     expect(res.status).toBe(200);
   });
 });
+
+// ─── Stage-aware routing freeze (PATCH /epics/:id/routing) ───────────────────
+
+describe("routing freeze: PATCH /epics/:id/routing 409 when knob is frozen", () => {
+  test("planner knob allowed in spec stage", async () => {
+    const res = await patch(`/epics/${EPIC_ID}/routing`, { planner_runtime: "claude-code" });
+    expect(res.status).toBe(200);
+  });
+
+  test("build knob allowed in spec stage", async () => {
+    const res = await patch(`/epics/${EPIC_ID}/routing`, { build_runtime: "codex" });
+    expect(res.status).toBe(200);
+  });
+
+  test("planner knob frozen once epic advances to plan stage", async () => {
+    db.prepare("UPDATE epics SET current_stage = 'plan' WHERE id = ?").run(EPIC_ID);
+    const res = await patch(`/epics/${EPIC_ID}/routing`, { planner_runtime: "codex" });
+    expect(res.status).toBe(409);
+    expect((await res.json() as { error: string }).error).toMatch(/planner routing is frozen/);
+  });
+
+  test("build knob still allowed in plan stage", async () => {
+    db.prepare("UPDATE epics SET current_stage = 'plan' WHERE id = ?").run(EPIC_ID);
+    const res = await patch(`/epics/${EPIC_ID}/routing`, { build_runtime: "claude-code" });
+    expect(res.status).toBe(200);
+  });
+
+  test("build knob frozen in build stage", async () => {
+    db.prepare("UPDATE epics SET current_stage = 'build' WHERE id = ?").run(EPIC_ID);
+    const res = await patch(`/epics/${EPIC_ID}/routing`, { build_model: "some-model" });
+    expect(res.status).toBe(409);
+    expect((await res.json() as { error: string }).error).toMatch(/build routing is frozen/);
+  });
+
+  test("build knob frozen in assess stage", async () => {
+    db.prepare("UPDATE epics SET current_stage = 'assess' WHERE id = ?").run(EPIC_ID);
+    const res = await patch(`/epics/${EPIC_ID}/routing`, { build_runtime: "codex" });
+    expect(res.status).toBe(409);
+  });
+
+  test("both planner and build frozen when archived", async () => {
+    await archiveEpic();
+    const plannerRes = await patch(`/epics/${EPIC_ID}/routing`, { planner_model: "x" });
+    expect(plannerRes.status).toBe(409);
+    const buildRes = await patch(`/epics/${EPIC_ID}/routing`, { build_model: "x" });
+    expect(buildRes.status).toBe(409);
+  });
+});

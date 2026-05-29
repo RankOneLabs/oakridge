@@ -238,6 +238,106 @@ describe("PATCH /epics/:id/status", () => {
   });
 });
 
+// ─── PATCH /epics/:id/routing ─────────────────────────────────────────────────
+
+describe("PATCH /epics/:id/routing", () => {
+  test("404 for unknown epic", async () => {
+    const res = await patch("/epics/nope/routing", { planner_runtime: "claude-code" });
+    expect(res.status).toBe(404);
+  });
+
+  test("400 on invalid json", async () => {
+    const res = await app.request(`/epics/${EPIC_ID}/routing`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: "{bad",
+    });
+    expect(res.status).toBe(400);
+  });
+
+  test("400 when body has zero routing fields", async () => {
+    const res = await patch(`/epics/${EPIC_ID}/routing`, {});
+    expect(res.status).toBe(400);
+    expect((await res.json() as { error: string }).error).toMatch(/routing field/);
+  });
+
+  test("400 on invalid runtime value", async () => {
+    const res = await patch(`/epics/${EPIC_ID}/routing`, { planner_runtime: "bogus" });
+    expect(res.status).toBe(400);
+  });
+
+  test("200 and returns updated epic with routing fields set", async () => {
+    const res = await patch(`/epics/${EPIC_ID}/routing`, {
+      planner_runtime: "claude-code",
+      planner_model: "claude-opus-4-7",
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Epic;
+    expect(body.planner_runtime).toBe("claude-code");
+    expect(body.planner_model).toBe("claude-opus-4-7");
+    expect(body.build_runtime).toBeNull();
+    expect(body.build_model).toBeNull();
+  });
+
+  test("can set build routing fields while in spec stage", async () => {
+    const res = await patch(`/epics/${EPIC_ID}/routing`, {
+      build_runtime: "codex",
+      build_model: "codex-4",
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Epic;
+    expect(body.build_runtime).toBe("codex");
+    expect(body.build_model).toBe("codex-4");
+  });
+
+  test("409 when planner knob touched and epic is past spec stage", async () => {
+    // Advance epic to plan stage
+    db.prepare("UPDATE epics SET current_stage = 'plan' WHERE id = ?").run(EPIC_ID);
+    const res = await patch(`/epics/${EPIC_ID}/routing`, { planner_runtime: "codex" });
+    expect(res.status).toBe(409);
+    expect((await res.json() as { error: string }).error).toMatch(/planner routing is frozen/);
+  });
+
+  test("409 when build knob touched and epic is in build stage", async () => {
+    db.prepare("UPDATE epics SET current_stage = 'build' WHERE id = ?").run(EPIC_ID);
+    const res = await patch(`/epics/${EPIC_ID}/routing`, { build_runtime: "codex" });
+    expect(res.status).toBe(409);
+    expect((await res.json() as { error: string }).error).toMatch(/build routing is frozen/);
+  });
+
+  test("409 when build knob touched and epic is in assess stage", async () => {
+    db.prepare("UPDATE epics SET current_stage = 'assess' WHERE id = ?").run(EPIC_ID);
+    const res = await patch(`/epics/${EPIC_ID}/routing`, { build_model: "some-model" });
+    expect(res.status).toBe(409);
+    expect((await res.json() as { error: string }).error).toMatch(/build routing is frozen/);
+  });
+
+  test("409 when archived — planner knob", async () => {
+    await patch(`/epics/${EPIC_ID}/status`, { status: "archived" });
+    const res = await patch(`/epics/${EPIC_ID}/routing`, { planner_runtime: "codex" });
+    expect(res.status).toBe(409);
+  });
+
+  test("409 when archived — build knob", async () => {
+    await patch(`/epics/${EPIC_ID}/status`, { status: "archived" });
+    const res = await patch(`/epics/${EPIC_ID}/routing`, { build_runtime: "codex" });
+    expect(res.status).toBe(409);
+  });
+
+  test("whole request rejected when any frozen knob touched (no partial apply)", async () => {
+    db.prepare("UPDATE epics SET current_stage = 'plan' WHERE id = ?").run(EPIC_ID);
+    // planner frozen, build not frozen — should 409, not partial apply build
+    const res = await patch(`/epics/${EPIC_ID}/routing`, {
+      planner_runtime: "codex",
+      build_runtime: "claude-code",
+    });
+    expect(res.status).toBe(409);
+    // build_runtime must NOT have been written
+    const epic = db.prepare("SELECT build_runtime FROM epics WHERE id = ?").get(EPIC_ID) as { build_runtime: string | null };
+    expect(epic.build_runtime).toBeNull();
+  });
+});
+
 // ─── DELETE /epics/:id ────────────────────────────────────────────────────────
 
 describe("DELETE /epics/:id", () => {
