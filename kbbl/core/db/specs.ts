@@ -44,6 +44,12 @@ export function listSpecsByProject(db: Database, project_id: string): SpecWithPl
           LIMIT 1) AS epic_id
        FROM specs s
        WHERE s.project_id = ?
+         AND NOT EXISTS (
+           SELECT 1
+           FROM epics e
+           WHERE e.spec_id = s.id
+             AND e.status = 'archived'
+         )
        ORDER BY s.created_at, s.id`,
     )
     .all(project_id);
