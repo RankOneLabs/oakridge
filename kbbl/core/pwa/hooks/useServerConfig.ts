@@ -3,11 +3,17 @@ import type { RuntimeId } from "../../runtime-interface";
 import type { RuntimeDescriptor, RuntimeModelOption } from "../types";
 import { PWA_MODEL_OPTIONS } from "../lib/format";
 
+interface StageDefault {
+  runtime: RuntimeId;
+  model: string;
+}
+
 interface ServerConfigResponse {
   defaultWorkdir: string | null;
   softThresholdTokens?: number;
   defaultRuntimeId?: string;
   runtimes?: unknown;
+  stageDefaults?: unknown;
 }
 
 export interface ServerConfig {
@@ -15,6 +21,10 @@ export interface ServerConfig {
   softThresholdTokens?: number;
   defaultRuntimeId: RuntimeId;
   runtimes: RuntimeDescriptor[];
+  stageDefaults: {
+    planner: StageDefault;
+    build: StageDefault;
+  };
 }
 
 function isRuntimeId(value: unknown): value is RuntimeId {
@@ -69,6 +79,28 @@ function coerceRuntimeDescriptors(value: unknown): [RuntimeDescriptor, ...Runtim
   return [first, ...rest];
 }
 
+const STAGE_DEFAULTS_FALLBACK = {
+  planner: { runtime: "claude-code" as RuntimeId, model: "claude-opus-4-8" },
+  build: { runtime: "claude-code" as RuntimeId, model: "claude-sonnet-4-6" },
+};
+
+function coerceStageEntry(value: unknown): StageDefault | null {
+  if (typeof value !== "object" || value === null) return null;
+  const entry = value as { runtime?: unknown; model?: unknown };
+  if (!isRuntimeId(entry.runtime)) return null;
+  if (typeof entry.model !== "string" || entry.model === "") return null;
+  return { runtime: entry.runtime, model: entry.model };
+}
+
+function coerceStageDefaults(value: unknown): { planner: StageDefault; build: StageDefault } {
+  if (typeof value !== "object" || value === null) return STAGE_DEFAULTS_FALLBACK;
+  const raw = value as { planner?: unknown; build?: unknown };
+  const planner = coerceStageEntry(raw.planner);
+  const build = coerceStageEntry(raw.build);
+  if (!planner || !build) return STAGE_DEFAULTS_FALLBACK;
+  return { planner, build };
+}
+
 /**
  * Fetches the server's /config once. Returns null until the fetch resolves
  * so callers can render a "loading" placeholder rather than racing forms
@@ -100,5 +132,6 @@ export function useServerConfig(): ServerConfig | null {
       ? defaultRuntimeId
       : runtimes[0].id,
     runtimes,
+    stageDefaults: coerceStageDefaults(query.data.stageDefaults),
   };
 }

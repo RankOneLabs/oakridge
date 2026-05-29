@@ -73,6 +73,41 @@ describe("GET /config", () => {
     const body = (await res.json()) as { defaultWorkdir: string | null };
     expect(body.defaultWorkdir).toBeNull();
   });
+
+  test("returns stageDefaults with STAGE_ROUTING values when no config.runtime.stages override", async () => {
+    const config = KbblConfigSchema.parse({});
+    const app = buildApp(config);
+
+    const res = await app.request("/config");
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      stageDefaults: {
+        planner: { runtime: string; model: string };
+        build: { runtime: string; model: string };
+      };
+    };
+    expect(body.stageDefaults.planner.runtime).toBe("claude-code");
+    expect(body.stageDefaults.planner.model).toBe("claude-opus-4-8");
+    expect(body.stageDefaults.build.runtime).toBe("claude-code");
+    expect(body.stageDefaults.build.model).toBe("claude-sonnet-4-6");
+  });
+
+  test("stageDefaults reflects config.runtime.stages override", async () => {
+    const config = KbblConfigSchema.parse({
+      runtime: { stages: { plan_writer: { runtime: "codex", model: "codex-custom" } } },
+    });
+    const app = buildApp(config);
+
+    const res = await app.request("/config");
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      stageDefaults: { planner: { runtime: string; model: string } };
+    };
+    expect(body.stageDefaults.planner.runtime).toBe("codex");
+    expect(body.stageDefaults.planner.model).toBe("codex-custom");
+  });
 });
 
 describe("PATCH /config", () => {

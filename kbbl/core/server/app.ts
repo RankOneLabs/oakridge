@@ -34,6 +34,7 @@ import { mountDirectoriesRoutes } from "./handlers/directories";
 import { mountWorkspaceEventsRoutes } from "./handlers/workspace-events";
 import { mountArtifactStreamRoutes } from "./handlers/artifact-stream";
 import { artifactEventBus } from "../stream/artifact-event-bus";
+import { resolveStageRouting } from "../orchestrator/backends/kbbl-chat";
 
 export interface CreateAppDeps {
   manager: SessionManager;
@@ -124,6 +125,11 @@ export function createApp(deps: CreateAppDeps): Hono {
     const base = {
       defaultWorkdir,
       softThresholdTokens: config.compact.soft_threshold_tokens,
+      // plan_writer is representative for planner stages — all four share the same STAGE_ROUTING value.
+      stageDefaults: {
+        planner: resolveStageRouting("plan_writer", config),
+        build: resolveStageRouting("build", config),
+      },
     };
     if (registry) {
       return c.json({
