@@ -147,7 +147,7 @@ export function updateEpicRouting(
   const params: (string | null)[] = [];
 
   for (const key of ["planner_runtime", "planner_model", "build_runtime", "build_model"] as RoutingField[]) {
-    if (key in fields) {
+    if (fields[key] !== undefined) {
       sets.push(`${key} = ?`);
       params.push(fields[key] ?? null);
     }

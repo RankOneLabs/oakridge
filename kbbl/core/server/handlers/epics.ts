@@ -203,6 +203,7 @@ export function mountEpicsRoutes(app: Hono, deps: EpicsRouteDeps): void {
     }
 
     const updated = updateEpicRouting(db, id, fields);
+    if (!updated) return c.json({ error: "not found" }, 404);
     return c.json(updated);
   });
 
