@@ -136,6 +136,14 @@ function getBriefIdentityContext(
   return row ?? null;
 }
 
+function resolveEpicBranchForBrief(db: Database, brief_id: string): string {
+  const ctx = getBriefIdentityContext(db, brief_id);
+  if (!ctx) throw new Error(`brief/cohort/spec context not found for brief ${brief_id}`);
+  const epic = getEpicBySpec(db, ctx.spec_id);
+  if (!epic) throw new Error(`epic not found for spec ${ctx.spec_id}`);
+  return `epic/${sanitizeForName(epic.title, epic.id)}`;
+}
+
 async function lsRemoteEpicBranch(epicBranch: string, workdir: string): Promise<string> {
   const proc = Bun.spawn({
     cmd: ["git", "-C", workdir, "ls-remote", "origin", `refs/heads/${epicBranch}`],
@@ -425,7 +433,7 @@ function buildSlotsForCohort(db: Database, cohort_id: string, kbblUrl: string): 
   };
 }
 
-function buildSlotsForBrief(db: Database, brief_id: string, kbblUrl: string): Record<string, string> {
+export function buildSlotsForBrief(db: Database, brief_id: string, kbblUrl: string): Record<string, string> {
   const project = getProjectForBrief(db, brief_id);
   if (!project) throw new Error(`project not found for brief ${brief_id}`);
   const briefRow = db
@@ -438,6 +446,7 @@ function buildSlotsForBrief(db: Database, brief_id: string, kbblUrl: string): Re
     BRIEF_RENDERED: renderBrief(db, brief_id),
     REPO_PATH: project.repo_path,
     KBBL_URL: kbblUrl,
+    EPIC_BRANCH: resolveEpicBranchForBrief(db, brief_id),
   };
 }
 
