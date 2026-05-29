@@ -173,6 +173,13 @@ export interface CreateSessionOpts {
    * set a stage to codex but runtime.codex.enabled=false).
    */
   runtime?: RuntimeId;
+  /**
+   * Optional cohort/epic identity used for worktree + branch naming and
+   * base-ref selection. Set by the dispatcher for cohort-bound sessions;
+   * omitted for non-build stages, ad-hoc sessions, and direct POST /sessions
+   * calls — those fall back to sid-based naming against HEAD.
+   */
+  worktreeIdentity?: { epicSlug: string; cohortSlug: string; epicBranch: string };
 }
 
 /**
@@ -373,11 +380,21 @@ export class SessionManager {
     let worktreeBranch: string;
     let worktreeBaseRef: string;
     try {
+      const { worktreeIdentity } = opts;
       const created = await createWorktree({
         workdir: opts.workdir,
         worktreesRoot: this.opts.worktreesDir,
         oakridgeSid,
         resumeDepth,
+        ...(worktreeIdentity
+          ? {
+              identity: {
+                branchName: `${worktreeIdentity.epicBranch}/${worktreeIdentity.cohortSlug}`,
+                worktreeSubdir: `${worktreeIdentity.epicSlug}/${worktreeIdentity.cohortSlug}`,
+              },
+              baseRef: `origin/${worktreeIdentity.epicBranch}`,
+            }
+          : {}),
       });
       worktreePath = created.worktreePath;
       worktreeBranch = created.worktreeBranch;
