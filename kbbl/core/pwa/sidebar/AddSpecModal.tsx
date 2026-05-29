@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { SidebarProject } from "./Sidebar";
+import { useServerConfig } from "../hooks/useServerConfig";
 
 interface AddSpecModalProps {
   project: SidebarProject;
@@ -11,21 +12,65 @@ interface AddSpecModalProps {
 interface CreateSpecInput {
   title: string;
   notes: string | null;
+  planner_runtime?: string;
+  planner_model?: string;
+  build_runtime?: string;
+  build_model?: string;
+}
+
+function encodeRoutingPair(runtime: string, model: string): string {
+  return `${runtime}::${model}`;
+}
+
+function parseRoutingPair(encoded: string): { runtime: string; model: string } | null {
+  const idx = encoded.indexOf("::");
+  if (idx === -1) return null;
+  return { runtime: encoded.slice(0, idx), model: encoded.slice(idx + 2) };
 }
 
 export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps) {
   const [title, setTitle] = useState("");
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // null = untouched; set once user changes the select away from its initial position
+  const [plannerValue, setPlannerValue] = useState<string | null>(null);
+  const [buildValue, setBuildValue] = useState<string | null>(null);
   const queryClient = useQueryClient();
+  const config = useServerConfig();
+
+  const plannerDefault = config
+    ? encodeRoutingPair(config.stageDefaults.planner.runtime, config.stageDefaults.planner.model)
+    : "";
+  const buildDefault = config
+    ? encodeRoutingPair(config.stageDefaults.build.runtime, config.stageDefaults.build.model)
+    : "";
+
+  const effectivePlannerValue = plannerValue ?? plannerDefault;
+  const effectiveBuildValue = buildValue ?? buildDefault;
 
   const createMutation = useMutation({
     mutationFn: async (vars: CreateSpecInput) => {
-      const body: { project_id: string; title: string; notes?: string } = {
+      const body: {
+        project_id: string;
+        title: string;
+        notes?: string;
+        planner_runtime?: string;
+        planner_model?: string;
+        build_runtime?: string;
+        build_model?: string;
+      } = {
         project_id: project.id,
         title: vars.title,
       };
       if (vars.notes !== null) body.notes = vars.notes;
+      if (vars.planner_runtime !== undefined) {
+        body.planner_runtime = vars.planner_runtime;
+        body.planner_model = vars.planner_model;
+      }
+      if (vars.build_runtime !== undefined) {
+        body.build_runtime = vars.build_runtime;
+        body.build_model = vars.build_model;
+      }
       const res = await fetch("/specs", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -57,10 +102,26 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
     setError(null);
     try {
       const trimmedNotes = notes.trim();
-      await createMutation.mutateAsync({
+      const input: CreateSpecInput = {
         title: trimmedTitle,
         notes: trimmedNotes === "" ? null : trimmedNotes,
-      });
+      };
+      // Include routing pair only when operator actively changed it from the default
+      if (effectivePlannerValue && effectivePlannerValue !== plannerDefault) {
+        const parsed = parseRoutingPair(effectivePlannerValue);
+        if (parsed) {
+          input.planner_runtime = parsed.runtime;
+          input.planner_model = parsed.model;
+        }
+      }
+      if (effectiveBuildValue && effectiveBuildValue !== buildDefault) {
+        const parsed = parseRoutingPair(effectiveBuildValue);
+        if (parsed) {
+          input.build_runtime = parsed.runtime;
+          input.build_model = parsed.model;
+        }
+      }
+      await createMutation.mutateAsync(input);
       onCreated();
     } catch (err) {
       setError(err instanceof Error ? err.message : "network error");
@@ -68,6 +129,8 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
   }
 
   const pending = createMutation.isPending;
+  const configLoaded = config !== null;
+
   return (
     <div
       style={{
@@ -132,6 +195,54 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
               style={{ fontSize: 13, resize: "vertical", width: "100%", boxSizing: "border-box" }}
               disabled={pending}
             />
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
+            <span style={{ opacity: 0.8 }}>Planner model</span>
+            <select
+              aria-label="Planner model"
+              value={effectivePlannerValue}
+              onChange={(e) => setPlannerValue(e.target.value)}
+              disabled={pending || !configLoaded}
+              style={{ fontSize: 13 }}
+            >
+              {!configLoaded && <option value="">loading models…</option>}
+              {config?.runtimes.map((runtime) => (
+                <optgroup key={runtime.id} label={runtime.label}>
+                  {runtime.models.map((model) => (
+                    <option
+                      key={`${runtime.id}::${model.value}`}
+                      value={`${runtime.id}::${model.value}`}
+                    >
+                      {model.label}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
+            <span style={{ opacity: 0.8 }}>Build model</span>
+            <select
+              aria-label="Build model"
+              value={effectiveBuildValue}
+              onChange={(e) => setBuildValue(e.target.value)}
+              disabled={pending || !configLoaded}
+              style={{ fontSize: 13 }}
+            >
+              {!configLoaded && <option value="">loading models…</option>}
+              {config?.runtimes.map((runtime) => (
+                <optgroup key={runtime.id} label={runtime.label}>
+                  {runtime.models.map((model) => (
+                    <option
+                      key={`${runtime.id}::${model.value}`}
+                      value={`${runtime.id}::${model.value}`}
+                    >
+                      {model.label}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
           </label>
           {error && (
             <div style={{ color: "var(--danger-fg, #e67070)", fontSize: 13 }} role="alert">
