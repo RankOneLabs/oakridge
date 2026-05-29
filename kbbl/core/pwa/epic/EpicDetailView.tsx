@@ -135,10 +135,18 @@ export function EpicDetailView({ epic_id }: EpicDetailViewProps) {
 
   const { epic, spec, plan, cohorts, assessment_present } = query.data;
 
-  const plannerRuntime = epic.planner_runtime ?? config?.stageDefaults.planner.runtime ?? '—';
-  const plannerModel = epic.planner_model ?? config?.stageDefaults.planner.model ?? '—';
-  const buildRuntime = epic.build_runtime ?? config?.stageDefaults.build.runtime ?? '—';
-  const buildModel = epic.build_model ?? config?.stageDefaults.build.model ?? '—';
+  // Mirrors dispatcher.ts resolveEpicRoutingOverride: a partial pair (one column NULL)
+  // falls through to the stage default as a unit, not a mixed value.
+  const plannerOverride = (epic.planner_runtime && epic.planner_model)
+    ? { runtime: epic.planner_runtime, model: epic.planner_model }
+    : null;
+  const buildOverride = (epic.build_runtime && epic.build_model)
+    ? { runtime: epic.build_runtime, model: epic.build_model }
+    : null;
+  const plannerRuntime = plannerOverride?.runtime ?? config?.stageDefaults.planner.runtime ?? '—';
+  const plannerModel = plannerOverride?.model ?? config?.stageDefaults.planner.model ?? '—';
+  const buildRuntime = buildOverride?.runtime ?? config?.stageDefaults.build.runtime ?? '—';
+  const buildModel = buildOverride?.model ?? config?.stageDefaults.build.model ?? '—';
 
   let drilldown: ReactNode = null;
   if (epic.current_stage === "spec" && spec) {

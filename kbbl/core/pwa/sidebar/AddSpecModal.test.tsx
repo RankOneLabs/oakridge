@@ -59,7 +59,7 @@ function renderModal(ui: ReactElement) {
   return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
 }
 
-const PROJECT = { id: "proj-1", name: "Test Project" };
+const PROJECT = { id: "proj-1", name: "Test Project", repo_path: "/home/user/test-project" };
 
 afterEach(() => {
   vi.restoreAllMocks();
