@@ -3,20 +3,31 @@ import type { RuntimeId } from "../../runtime";
 import type { SessionManager } from "../../session/session-manager";
 import type { ExecutionBackend, InputRef, StageRow } from "./interface";
 
-// Cost-engineering rule: plan in Opus, build in Sonnet. Resolved per stage
-// so dispatcher-spawned sessions don't fall through to the user-global default.
+// Agent-dev flow routing. The runtime comes from the owning Epic, selected in
+// the create-plan UI. Planner stages use the planner model; build uses the
+// builder model. Config stage overrides cover legacy refs that do not carry an
+// Epic-level runtime selection.
 type RoutedStage = "spec_analyzer" | "plan_writer" | "brief_writer" | "assessor" | "build";
 
-const STAGE_ROUTING: Record<RoutedStage, { runtime: RuntimeId; model: string }> = {
-  spec_analyzer: { runtime: "claude-code", model: "claude-opus-4-8" },
-  plan_writer:   { runtime: "claude-code", model: "claude-opus-4-8" },
-  brief_writer:  { runtime: "claude-code", model: "claude-opus-4-8" },
-  assessor:      { runtime: "claude-code", model: "claude-opus-4-8" },
-  build:         { runtime: "claude-code", model: "claude-sonnet-4-6" },
+const STAGE_ROUTING: Record<RuntimeId, Record<RoutedStage, { runtime: RuntimeId; model: string }>> = {
+  "claude-code": {
+    spec_analyzer: { runtime: "claude-code", model: "claude-opus-4-8" },
+    plan_writer:   { runtime: "claude-code", model: "claude-opus-4-8" },
+    brief_writer:  { runtime: "claude-code", model: "claude-opus-4-8" },
+    assessor:      { runtime: "claude-code", model: "claude-opus-4-8" },
+    build:         { runtime: "claude-code", model: "claude-sonnet-4-6" },
+  },
+  codex: {
+    spec_analyzer: { runtime: "codex", model: "gpt-5.5" },
+    plan_writer:   { runtime: "codex", model: "gpt-5.5" },
+    brief_writer:  { runtime: "codex", model: "gpt-5.5" },
+    assessor:      { runtime: "codex", model: "gpt-5.5" },
+    build:         { runtime: "codex", model: "gpt-5.4-mini" },
+  },
 };
 
 function isRoutedStage(name: string): name is RoutedStage {
-  return Object.hasOwn(STAGE_ROUTING, name);
+  return Object.hasOwn(STAGE_ROUTING["claude-code"], name);
 }
 
 export function createKbblChatBackend({
@@ -30,9 +41,14 @@ export function createKbblChatBackend({
     id: "kbbl_chat",
 
     async dispatch(stage: StageRow, inputRef: InputRef, renderedPrompt: string): Promise<{ session_ref: string }> {
-      const defaultRouting = isRoutedStage(stage.name) ? STAGE_ROUTING[stage.name] : null;
+      const agentRuntime = inputRef.agentRuntime ?? "claude-code";
+      const defaultRouting = isRoutedStage(stage.name)
+        ? STAGE_ROUTING[agentRuntime][stage.name]
+        : null;
       const stageOverride =
-        config?.runtime.stages && Object.hasOwn(config.runtime.stages, stage.name)
+        inputRef.agentRuntime === undefined &&
+        config?.runtime.stages &&
+        Object.hasOwn(config.runtime.stages, stage.name)
           ? config.runtime.stages[stage.name]
           : undefined;
       const routing = stageOverride ?? defaultRouting;

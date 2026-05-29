@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import type { Epic, EpicStatus, EpicStage } from "../types/task-tracker";
+import type { AgentRuntimeChoice, Epic, EpicStatus, EpicStage } from "../types/task-tracker";
 import { applyEpicTransition, type EpicEvent } from "../orchestrator/epic-state-machine";
 
 export type { Epic };
@@ -13,6 +13,7 @@ export function insertEpic(
     title,
     status,
     current_stage,
+    agent_runtime,
   }: {
     id: string;
     spec_id: string;
@@ -20,14 +21,15 @@ export function insertEpic(
     title: string;
     status: EpicStatus;
     current_stage: EpicStage;
+    agent_runtime?: AgentRuntimeChoice;
   },
 ): Epic {
   return db
-    .prepare<Epic, [string, string, string, string, EpicStatus, EpicStage]>(
-      `INSERT INTO epics (id, spec_id, project_id, title, status, current_stage)
-       VALUES (?, ?, ?, ?, ?, ?) RETURNING *`,
+    .prepare<Epic, [string, string, string, string, EpicStatus, EpicStage, AgentRuntimeChoice]>(
+      `INSERT INTO epics (id, spec_id, project_id, title, status, current_stage, agent_runtime)
+       VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *`,
     )
-    .get(id, spec_id, project_id, title, status, current_stage)!;
+    .get(id, spec_id, project_id, title, status, current_stage, agent_runtime ?? "claude-code")!;
 }
 
 export function getEpic(db: Database, id: string): Epic | null {

@@ -114,6 +114,9 @@ export type EpicStatus = z.infer<typeof EpicStatusSchema>;
 export const EpicStageSchema = z.enum(["spec", "plan", "build", "assess"]);
 export type EpicStage = z.infer<typeof EpicStageSchema>;
 
+export const AgentRuntimeChoiceSchema = z.enum(["claude-code", "codex"]);
+export type AgentRuntimeChoice = z.infer<typeof AgentRuntimeChoiceSchema>;
+
 export const EpicSchema = z.object({
   id: z.string(),
   spec_id: z.string(),
@@ -121,6 +124,7 @@ export const EpicSchema = z.object({
   title: z.string(),
   status: EpicStatusSchema,
   current_stage: EpicStageSchema,
+  agent_runtime: AgentRuntimeChoiceSchema,
   created_at: z.string(),
 });
 export type Epic = z.infer<typeof EpicSchema>;

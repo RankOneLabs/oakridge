@@ -9,6 +9,8 @@ import { insertSpec, getSpec, listSpecsByProject, updateSpecFields } from "./spe
 import { mountSpecsRoutes } from "../server/handlers/specs";
 import { taskTrackerEvents } from "./events";
 import { insertProject } from "./projects";
+import { getEpicBySpec } from "./epics";
+import type { AgentRuntime, RuntimeId, RuntimeRegistry } from "../runtime";
 
 let db: Database;
 let app: Hono;
@@ -16,12 +18,27 @@ let repoPath: string;
 
 const PROJECT_ID = "proj-1";
 
+function makeRegistry(runtimeIds: RuntimeId[]): RuntimeRegistry {
+  return {
+    defaultId: runtimeIds[0] ?? "claude-code",
+    runtimes: new Map(
+      runtimeIds.map((id) => [
+        id,
+        {
+          id,
+          descriptor: { id, label: id, models: [], supportsCompaction: id === "claude-code" },
+        } as unknown as AgentRuntime,
+      ]),
+    ),
+  };
+}
+
 beforeEach(() => {
   db = openTestDb();
   repoPath = mkdtempSync(join(tmpdir(), "specs-repo-"));
   insertProject(db, { id: PROJECT_ID, name: "Test Project", repo_path: repoPath });
   app = new Hono();
-  mountSpecsRoutes(app, { db });
+  mountSpecsRoutes(app, { db, registry: makeRegistry(["claude-code", "codex"]) });
 });
 
 afterEach(() => {
@@ -139,6 +156,41 @@ describe("POST /specs", () => {
     } finally {
       unsub();
     }
+  });
+
+  test("stores selected agent runtime on the created epic", async () => {
+    const res = await app.request("/specs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        project_id: PROJECT_ID,
+        title: "Codex flow",
+        agent_runtime: "codex",
+      }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { id: string };
+    expect(getEpicBySpec(db, body.id)?.agent_runtime).toBe("codex");
+  });
+
+  test("rejects unregistered agent runtime before inserting the spec", async () => {
+    const claudeOnlyApp = new Hono();
+    mountSpecsRoutes(claudeOnlyApp, { db, registry: makeRegistry(["claude-code"]) });
+
+    const res = await claudeOnlyApp.request("/specs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        project_id: PROJECT_ID,
+        title: "Codex flow",
+        agent_runtime: "codex",
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('runtime "codex" is not registered');
+    expect(listSpecsByProject(db, PROJECT_ID)).toHaveLength(0);
   });
 
   test("returns 400 for missing title", async () => {
