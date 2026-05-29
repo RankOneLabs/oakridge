@@ -1,12 +1,22 @@
 import { z } from "zod";
 import type { Hono } from "hono";
 import type { Database } from "bun:sqlite";
-import { getEpic, listEpicsByProject, advanceEpicByEvent } from "../../db/epics";
+import { getEpic, listEpicsByProject, advanceEpicByEvent, updateEpicRouting } from "../../db/epics";
+import { isPlannerFrozen, isBuildFrozen } from "../../db/epic-freeze";
 import { taskTrackerEvents } from "../../db/events";
 import type { EpicStatus } from "../../types/task-tracker";
 
 const PatchEpicStatusSchema = z.object({
   status: z.enum(["archived", "pending"]),
+});
+
+const RuntimeIdSchema = z.enum(["claude-code", "codex"]);
+
+const PatchEpicRoutingSchema = z.object({
+  planner_runtime: RuntimeIdSchema.optional(),
+  planner_model: z.string().min(1).optional(),
+  build_runtime: RuntimeIdSchema.optional(),
+  build_model: z.string().min(1).optional(),
 });
 
 interface EpicsRouteDeps {
@@ -141,6 +151,59 @@ export function mountEpicsRoutes(app: Hono, deps: EpicsRouteDeps): void {
     if (emitArchived) taskTrackerEvents.emit("epic.archived", emitArchived);
     if (emitUnarchived) taskTrackerEvents.emit("epic.unarchived", emitUnarchived);
 
+    return c.json(updated);
+  });
+
+  // PATCH /epics/:id/routing — update routing knobs until they freeze.
+  // planner_* knobs freeze when the Epic leaves the Spec stage (spec → plan).
+  // build_* knobs freeze when the Epic enters Build stage (plan → build).
+  // Archived epics reject all routing edits.
+  //
+  // Note: spec_analyzer consumes planner_* at spec.created, so editing
+  // planner_* while still in Spec stage only affects plan_writer and later —
+  // the already-dispatched spec_analyzer run is unaffected.
+  app.patch("/epics/:id/routing", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid json" }, 400);
+    }
+
+    const result = PatchEpicRoutingSchema.safeParse(body);
+    if (!result.success) {
+      const msg = result.error.issues[0]?.message ?? "invalid body";
+      return c.json({ error: msg }, 400);
+    }
+
+    const data = result.data;
+    const routingKeys = ["planner_runtime", "planner_model", "build_runtime", "build_model"] as const;
+    const presentKeys = routingKeys.filter((k) => k in data);
+    if (presentKeys.length === 0) {
+      return c.json({ error: "at least one routing field is required" }, 400);
+    }
+
+    const id = c.req.param("id");
+    const epic = getEpic(db, id);
+    if (!epic) return c.json({ error: "not found" }, 404);
+
+    const touchesPlanner = "planner_runtime" in data || "planner_model" in data;
+    const touchesBuild = "build_runtime" in data || "build_model" in data;
+
+    if (touchesPlanner && isPlannerFrozen(epic)) {
+      return c.json({ error: "planner routing is frozen (epic has left the spec stage)" }, 409);
+    }
+    if (touchesBuild && isBuildFrozen(epic)) {
+      return c.json({ error: "build routing is frozen (epic is in build or assess stage)" }, 409);
+    }
+
+    const fields: Partial<Record<"planner_runtime" | "planner_model" | "build_runtime" | "build_model", string | null>> = {};
+    for (const k of presentKeys) {
+      fields[k] = data[k] ?? null;
+    }
+
+    const updated = updateEpicRouting(db, id, fields);
+    if (!updated) return c.json({ error: "not found" }, 404);
     return c.json(updated);
   });
 

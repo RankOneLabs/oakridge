@@ -9,12 +9,18 @@ import { isFrozen } from "../../db/epic-freeze";
 import { getProject } from "../../db/projects";
 import { taskTrackerEvents } from "../../db/events";
 
+const RuntimeIdSchema = z.enum(["claude-code", "codex"]);
+
 const CreateSpecSchema = z
   .object({
     project_id: z.string().min(1),
     title: z.string().min(1),
     notes: z.string().optional(),
     notesPath: z.string().min(1).optional(),
+    planner_runtime: RuntimeIdSchema.optional(),
+    planner_model: z.string().min(1).optional(),
+    build_runtime: RuntimeIdSchema.optional(),
+    build_model: z.string().min(1).optional(),
   })
   .refine((v) => !(v.notes !== undefined && v.notesPath !== undefined), {
     message: "provide either notes or notesPath, not both",
@@ -55,7 +61,7 @@ export function mountSpecsRoutes(app: Hono, deps: SpecsRouteDeps): void {
       return c.json({ error: msg }, 400);
     }
 
-    const { project_id, title, notes, notesPath } = result.data;
+    const { project_id, title, notes, notesPath, planner_runtime, planner_model, build_runtime, build_model } = result.data;
     const id = crypto.randomUUID();
 
     let resolvedNotes: string | null = notes ?? null;
@@ -112,6 +118,10 @@ export function mountSpecsRoutes(app: Hono, deps: SpecsRouteDeps): void {
           title,
           status: "pending",
           current_stage: "spec",
+          planner_runtime: planner_runtime ?? null,
+          planner_model: planner_model ?? null,
+          build_runtime: build_runtime ?? null,
+          build_model: build_model ?? null,
         });
         return { spec: s, epic: e };
       })();
