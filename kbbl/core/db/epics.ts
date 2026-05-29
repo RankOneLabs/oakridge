@@ -13,6 +13,10 @@ export function insertEpic(
     title,
     status,
     current_stage,
+    planner_runtime = null,
+    planner_model = null,
+    build_runtime = null,
+    build_model = null,
   }: {
     id: string;
     spec_id: string;
@@ -20,14 +24,18 @@ export function insertEpic(
     title: string;
     status: EpicStatus;
     current_stage: EpicStage;
+    planner_runtime?: string | null;
+    planner_model?: string | null;
+    build_runtime?: string | null;
+    build_model?: string | null;
   },
 ): Epic {
   return db
-    .prepare<Epic, [string, string, string, string, EpicStatus, EpicStage]>(
-      `INSERT INTO epics (id, spec_id, project_id, title, status, current_stage)
-       VALUES (?, ?, ?, ?, ?, ?) RETURNING *`,
+    .prepare<Epic, [string, string, string, string, EpicStatus, EpicStage, string | null, string | null, string | null, string | null]>(
+      `INSERT INTO epics (id, spec_id, project_id, title, status, current_stage, planner_runtime, planner_model, build_runtime, build_model)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
     )
-    .get(id, spec_id, project_id, title, status, current_stage)!;
+    .get(id, spec_id, project_id, title, status, current_stage, planner_runtime, planner_model, build_runtime, build_model)!;
 }
 
 export function getEpic(db: Database, id: string): Epic | null {
@@ -126,4 +134,28 @@ export function updateEpicFields(
   params.push(id);
   const sql = `UPDATE epics SET ${sets.join(", ")} WHERE id = ? RETURNING *`;
   return (db.prepare<Epic, string[]>(sql).get(...params) as Epic | undefined) ?? null;
+}
+
+type RoutingField = "planner_runtime" | "planner_model" | "build_runtime" | "build_model";
+
+export function updateEpicRouting(
+  db: Database,
+  id: string,
+  fields: Partial<Record<RoutingField, string | null>>,
+): Epic | null {
+  const sets: string[] = [];
+  const params: (string | null)[] = [];
+
+  for (const key of ["planner_runtime", "planner_model", "build_runtime", "build_model"] as RoutingField[]) {
+    if (key in fields) {
+      sets.push(`${key} = ?`);
+      params.push(fields[key] ?? null);
+    }
+  }
+
+  if (sets.length === 0) return getEpic(db, id);
+
+  params.push(id);
+  const sql = `UPDATE epics SET ${sets.join(", ")} WHERE id = ? RETURNING *`;
+  return (db.prepare<Epic, (string | null)[]>(sql).get(...params) as Epic | undefined) ?? null;
 }

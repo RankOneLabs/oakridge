@@ -3,7 +3,7 @@ import type { Database } from "bun:sqlite";
 import { openTestDb } from "../test-db";
 import { insertProject } from "../projects";
 import { insertSpec } from "../specs";
-import { insertEpic, getEpic, getEpicBySpec, listEpicsByProject, updateEpicFields } from "../epics";
+import { insertEpic, getEpic, getEpicBySpec, listEpicsByProject, updateEpicFields, updateEpicRouting } from "../epics";
 
 const PROJECT_ID = "proj-1";
 const SPEC_ID = "spec-1";
@@ -127,5 +127,100 @@ describe("updateEpicFields", () => {
     const result = updateEpicFields(db, "ew", {});
     expect(result?.id).toBe("ew");
     expect(result?.status).toBe("active");
+  });
+});
+
+describe("migration 021 — routing columns", () => {
+  test("four columns exist on epics table", () => {
+    const cols = db.prepare("PRAGMA table_info(epics)").all() as Array<{ name: string }>;
+    const names = cols.map((c) => c.name);
+    expect(names).toContain("planner_runtime");
+    expect(names).toContain("planner_model");
+    expect(names).toContain("build_runtime");
+    expect(names).toContain("build_model");
+  });
+
+  test("routing columns are NULL for a row inserted without specifying them", () => {
+    insertEpic(db, { id: "em1", spec_id: SPEC_ID, project_id: PROJECT_ID, title: "M", status: "pending", current_stage: "spec" });
+    const row = db
+      .prepare("SELECT planner_runtime, planner_model, build_runtime, build_model FROM epics WHERE id = ?")
+      .get("em1") as Record<string, unknown>;
+    expect(row.planner_runtime).toBeNull();
+    expect(row.planner_model).toBeNull();
+    expect(row.build_runtime).toBeNull();
+    expect(row.build_model).toBeNull();
+  });
+});
+
+describe("insertEpic routing fields", () => {
+  test("round-trips routing fields when provided", () => {
+    insertSpec(db, { id: "spec-r1", project_id: PROJECT_ID, title: "R1" });
+    const e = insertEpic(db, {
+      id: "er1",
+      spec_id: "spec-r1",
+      project_id: PROJECT_ID,
+      title: "R",
+      status: "pending",
+      current_stage: "spec",
+      planner_runtime: "claude-code",
+      planner_model: "claude-opus-4-7",
+      build_runtime: "codex",
+      build_model: "codex-4",
+    });
+    expect(e.planner_runtime).toBe("claude-code");
+    expect(e.planner_model).toBe("claude-opus-4-7");
+    expect(e.build_runtime).toBe("codex");
+    expect(e.build_model).toBe("codex-4");
+  });
+
+  test("routing fields default to null when omitted", () => {
+    const e = insertEpic(db, {
+      id: "er2",
+      spec_id: SPEC_ID,
+      project_id: PROJECT_ID,
+      title: "R2",
+      status: "pending",
+      current_stage: "spec",
+    });
+    expect(e.planner_runtime).toBeNull();
+    expect(e.planner_model).toBeNull();
+    expect(e.build_runtime).toBeNull();
+    expect(e.build_model).toBeNull();
+  });
+});
+
+describe("updateEpicRouting", () => {
+  test("updates only specified routing fields", () => {
+    insertEpic(db, { id: "er3", spec_id: SPEC_ID, project_id: PROJECT_ID, title: "R3", status: "pending", current_stage: "spec" });
+    const updated = updateEpicRouting(db, "er3", { planner_runtime: "claude-code", planner_model: "claude-opus-4-7" });
+    expect(updated?.planner_runtime).toBe("claude-code");
+    expect(updated?.planner_model).toBe("claude-opus-4-7");
+    expect(updated?.build_runtime).toBeNull();
+    expect(updated?.build_model).toBeNull();
+  });
+
+  test("can set a routing field to null (clear it)", () => {
+    insertSpec(db, { id: "spec-r4", project_id: PROJECT_ID, title: "R4" });
+    insertEpic(db, {
+      id: "er4",
+      spec_id: "spec-r4",
+      project_id: PROJECT_ID,
+      title: "R4",
+      status: "pending",
+      current_stage: "spec",
+      planner_runtime: "codex",
+    });
+    const updated = updateEpicRouting(db, "er4", { planner_runtime: null });
+    expect(updated?.planner_runtime).toBeNull();
+  });
+
+  test("returns null for unknown id", () => {
+    expect(updateEpicRouting(db, "nope", { planner_runtime: "codex" })).toBeNull();
+  });
+
+  test("empty fields object returns current row without updating", () => {
+    insertEpic(db, { id: "er5", spec_id: SPEC_ID, project_id: PROJECT_ID, title: "R5", status: "pending", current_stage: "spec" });
+    const result = updateEpicRouting(db, "er5", {});
+    expect(result?.id).toBe("er5");
   });
 });

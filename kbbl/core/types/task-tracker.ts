@@ -121,6 +121,10 @@ export const EpicSchema = z.object({
   title: z.string(),
   status: EpicStatusSchema,
   current_stage: EpicStageSchema,
+  planner_runtime: z.enum(["claude-code", "codex"]).nullable(),
+  planner_model: z.string().nullable(),
+  build_runtime: z.enum(["claude-code", "codex"]).nullable(),
+  build_model: z.string().nullable(),
   created_at: z.string(),
 });
 export type Epic = z.infer<typeof EpicSchema>;
