@@ -1,10 +1,12 @@
 import { describe, test, expect } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
 import { createCodexRuntimeDescriptorOnly } from "./index";
+import { loadCodexApprovalPolicy, parseCodexApprovalPolicy } from "./config";
 import { CODEX_NON_PERSISTED_EVENT_TYPES } from "./events";
 
 describe("Codex adapter descriptor", () => {
@@ -42,6 +44,46 @@ describe("Codex adapter descriptor", () => {
     ]);
     expect(rt.descriptor.models).toHaveLength(1);
     expect(rt.descriptor.models[0].value).toBe("gpt-5.5");
+  });
+});
+
+describe("Codex approval policy config", () => {
+  test("parses top-level approval_policy", () => {
+    expect(
+      parseCodexApprovalPolicy(
+        [
+          '# comment',
+          'approval_policy = "on-request"',
+          '',
+          '[projects."/tmp/repo"]',
+          'approval_policy = "never"',
+        ].join("\n"),
+      ),
+    ).toBe("on-request");
+  });
+
+  test("parses ask_for_approval alias", () => {
+    expect(parseCodexApprovalPolicy('ask_for_approval = "always"')).toBe("always");
+  });
+
+  test("loadCodexApprovalPolicy falls back to untrusted when missing", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "kbbl-codex-test-"));
+    try {
+      expect(loadCodexApprovalPolicy(join(tmpDir, "missing.toml"))).toBe("untrusted");
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test("loadCodexApprovalPolicy reads approval_policy from config.toml", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "kbbl-codex-test-"));
+    try {
+      const path = join(tmpDir, "config.toml");
+      writeFileSync(path, 'approval_policy = "on-request"\n');
+      expect(loadCodexApprovalPolicy(path)).toBe("on-request");
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });
 
