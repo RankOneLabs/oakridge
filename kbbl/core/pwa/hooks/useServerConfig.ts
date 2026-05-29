@@ -79,6 +79,7 @@ function coerceRuntimeDescriptors(value: unknown): [RuntimeDescriptor, ...Runtim
   return [first, ...rest];
 }
 
+// Mirrors STAGE_ROUTING in kbbl-chat.ts — update both together if defaults change.
 const STAGE_DEFAULTS_FALLBACK = {
   planner: { runtime: "claude-code" as RuntimeId, model: "claude-opus-4-8" },
   build: { runtime: "claude-code" as RuntimeId, model: "claude-sonnet-4-6" },
