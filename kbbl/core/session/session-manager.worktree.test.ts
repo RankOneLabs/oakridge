@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { KbblConfigSchema, type KbblConfig } from "../config";
-import { SessionManager } from "./session-manager";
+import { SessionManager, parseDepthFromBranch } from "./session-manager";
 import type { Session, SpawnCmd } from "./session";
 
 let tmpRoot: string;
@@ -307,5 +307,37 @@ describe("SessionManager.remove cleans up worktrees", () => {
     expect(existsSync(wtPath)).toBe(false);
     const branches = await git(repoDir, "branch", "--list", wtBranch);
     expect(branches.trim()).toBe("");
+  });
+});
+
+describe("parseDepthFromBranch", () => {
+  test("kbbl/<sid8> returns 0", () => {
+    expect(parseDepthFromBranch("kbbl/abc12345")).toBe(0);
+  });
+
+  test("kbbl/<sid8>-r3 returns 3", () => {
+    expect(parseDepthFromBranch("kbbl/abc12345-r3")).toBe(3);
+  });
+
+  test("epic/foo/cohort-1-bar returns 0", () => {
+    expect(parseDepthFromBranch("epic/foo/cohort-1-bar")).toBe(0);
+  });
+
+  test("epic/foo/cohort-1-bar-r2 returns 2", () => {
+    expect(parseDepthFromBranch("epic/foo/cohort-1-bar-r2")).toBe(2);
+  });
+
+  test("garbage-branch warns and returns 0", () => {
+    const errors: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => errors.push(String(args[0]));
+    try {
+      const result = parseDepthFromBranch("garbage-branch");
+      expect(result).toBe(0);
+      expect(errors.length).toBeGreaterThan(0);
+      expect(errors[0]).toMatch(/garbage-branch/);
+    } finally {
+      console.error = original;
+    }
   });
 });

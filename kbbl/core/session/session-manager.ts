@@ -235,21 +235,23 @@ type InboxSubscriber = (delta: InboxDelta) => void;
 const LAST_ACTIVITY_THROTTLE_MS = 1000;
 
 /**
- * Parse the depth encoded in a kbbl worktree branch. `kbbl/<sid8>-r<n>`
- * → n; bare `kbbl/<sid8>` → 0. Anything else (an operator-renamed branch,
- * a non-kbbl branch we shouldn't have been handed) → 0 with a logged
- * warning, since assuming any other value would silently produce a wrong
- * depth on the next resume.
+ * Parse the depth encoded in a worktree branch name. Accepts both the legacy
+ * `kbbl/<sid8>[-r<n>]` shape and the cohort `epic/<slug>/cohort-<n>-<slug>[-r<n>]`
+ * shape. Returns the `-r<n>` suffix depth, or 0 for bare branches. Warns and
+ * returns 0 for any branch that matches neither shape — the prefix is
+ * informational and validated elsewhere via worktreeBranch round-tripping.
  */
-function parseDepthFromBranch(branch: string): number {
-  const m = /^kbbl\/[0-9a-f]{8}(?:-r(\d+))?$/.exec(branch);
-  if (!m) {
+export function parseDepthFromBranch(branch: string): number {
+  if (
+    !/^(kbbl\/[0-9a-f]{8}|epic\/[a-z0-9_]+\/cohort-\d+-[a-z0-9_]+)(?:-r\d+)?$/.test(branch)
+  ) {
     console.error(
-      `kbbl: parent branch ${branch} doesn't match kbbl/<sid8>[-r<n>] — depth defaulting to 0`,
+      `kbbl: parent branch ${branch} doesn't match kbbl/<sid8>[-r<n>] or epic/<slug>/cohort-<n>-<slug>[-r<n>] — depth defaulting to 0`,
     );
     return 0;
   }
-  return m[1] ? Number.parseInt(m[1], 10) : 0;
+  const m = /-r(\d+)$/.exec(branch);
+  return m ? Number.parseInt(m[1], 10) : 0;
 }
 
 export class SessionManager {

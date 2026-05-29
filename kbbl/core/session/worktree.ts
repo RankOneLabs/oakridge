@@ -11,6 +11,11 @@ import { join } from "node:path";
  * branch-name and worktree-path conventions live here.
  */
 
+export interface WorktreeIdentity {
+  branchName: string;
+  worktreeSubdir: string;
+}
+
 export interface WorktreeCreateOpts {
   /** Operator-supplied source repo (the original workdir). */
   workdir: string;
@@ -25,6 +30,21 @@ export interface WorktreeCreateOpts {
    * cross-reference JSONL.
    */
   resumeDepth?: number;
+  /**
+   * When provided, overrides the branch name and worktree subdirectory.
+   * Branch: `identity.branchName` (with `-r<n>` appended if `resumeDepth > 0`).
+   * Directory: `<worktreesRoot>/<identity.worktreeSubdir>/<oakridgeSid>`.
+   * When omitted, falls through to the default behavior: branch is
+   * `kbbl/<sid8>[-r<n>]`, directory is `<worktreesRoot>/<oakridgeSid>`.
+   */
+  identity?: WorktreeIdentity;
+  /**
+   * When provided, the worktree is branched from this ref (e.g.
+   * `origin/epic/foo`), and `worktreeBaseRef` is resolved via
+   * `git rev-parse <baseRef>` against `opts.workdir`. When omitted,
+   * falls through to `resolveHead(opts.workdir)`.
+   */
+  baseRef?: string;
 }
 
 export interface WorktreeCreated {
@@ -143,25 +163,62 @@ function branchName(sid8: string, resumeDepth: number): string {
 export async function createWorktree(
   opts: WorktreeCreateOpts,
 ): Promise<WorktreeCreated> {
-  const sid8 = opts.oakridgeSid.slice(0, 8);
-  const branch = branchName(sid8, opts.resumeDepth ?? 0);
-  const worktreePath = join(opts.worktreesRoot, opts.oakridgeSid);
-  const baseRef = await resolveHead(opts.workdir);
+  let branch: string;
+  let worktreePath: string;
 
-  // --no-track: kbbl branches are local-only session ephemera, never pushed
-  // to a remote, so suppressing upstream tracking avoids polluting
-  // `git branch -vv` and prevents an accidental `git push` from kicking a
-  // kbbl/<sid> branch up to origin.
+  if (opts.identity) {
+    const depth = opts.resumeDepth ?? 0;
+    branch = depth > 0 ? `${opts.identity.branchName}-r${depth}` : opts.identity.branchName;
+    worktreePath = join(opts.worktreesRoot, opts.identity.worktreeSubdir, opts.oakridgeSid);
+  } else {
+    const sid8 = opts.oakridgeSid.slice(0, 8);
+    branch = branchName(sid8, opts.resumeDepth ?? 0);
+    worktreePath = join(opts.worktreesRoot, opts.oakridgeSid);
+  }
+
+  // Resolve base ref sha for persisting as worktreeBaseRef. When opts.baseRef is
+  // provided, rev-parse it against workdir (remote-tracking refs are already
+  // fetched there). When omitted, resolveHead gives the sha and doubles as the
+  // git worktree base argument.
+  let worktreeBaseRef: string;
+  let gitBase: string;
+  if (opts.baseRef) {
+    const revProc = Bun.spawn({
+      cmd: ["git", "-C", opts.workdir, "rev-parse", opts.baseRef],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [revOut, revErr, revCode] = await Promise.all([
+      new Response(revProc.stdout).text(),
+      new Response(revProc.stderr).text(),
+      revProc.exited,
+    ]);
+    if (revCode !== 0) {
+      throw new Error(
+        `git rev-parse ${opts.baseRef} failed in ${opts.workdir} (exit ${revCode}): ${revErr.trim()}`,
+      );
+    }
+    worktreeBaseRef = revOut.trim();
+    gitBase = opts.baseRef;
+  } else {
+    worktreeBaseRef = await resolveHead(opts.workdir);
+    gitBase = worktreeBaseRef;
+  }
+
   const args = [
     "-C",
     opts.workdir,
     "worktree",
     "add",
+    // --no-track: all kbbl branches are created from a base ref but never
+    // tracked to it — session ephemera (kbbl/<sid8>) must not leak to origin,
+    // and cohort branches push explicitly with a full refspec so auto-tracking
+    // the base (e.g. origin/main → wrong upstream) would only cause confusion.
     "--no-track",
     "-b",
     branch,
     worktreePath,
-    baseRef,
+    gitBase,
   ];
   const proc = Bun.spawn({
     cmd: ["git", ...args],
@@ -178,7 +235,12 @@ export async function createWorktree(
       stderr.trim(),
     );
   }
-  return { worktreePath, worktreeBranch: branch, worktreeBaseRef: baseRef };
+  // Re-read HEAD from the new worktree rather than relying on the pre-add
+  // rev-parse result. If opts.baseRef moved between rev-parse and worktree add
+  // (concurrent fetch), the pre-add sha would differ from what was actually
+  // checked out. Reading post-add is authoritative for both paths.
+  worktreeBaseRef = await resolveHead(worktreePath);
+  return { worktreePath, worktreeBranch: branch, worktreeBaseRef };
 }
 
 /**
