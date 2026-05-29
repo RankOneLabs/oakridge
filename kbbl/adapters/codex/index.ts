@@ -25,6 +25,7 @@ import {
 import type { ResultUsage } from "../../core/session/session";
 import { normalizeApprovalByMethod } from "./approvals";
 import { resolveCodexResumeRef } from "./resume";
+import { loadCodexApprovalPolicy, type ApprovalPolicy } from "./config";
 
 // === Per-session state ===
 
@@ -142,6 +143,8 @@ function reconstructSnapshot(
 export interface CreateCodexRuntimeOpts extends CodexAppServerOpts {
   /** Path to the sessions directory — required for resume to work. */
   sessionsDir?: string;
+  /** Approval policy to pass to Codex; defaults to ~/.codex/config.toml or untrusted. */
+  approvalPolicy?: ApprovalPolicy;
 }
 
 /**
@@ -152,6 +155,7 @@ export interface CreateCodexRuntimeOpts extends CodexAppServerOpts {
 export async function createCodexRuntime(
   opts: CreateCodexRuntimeOpts,
 ): Promise<AgentRuntime> {
+  const approvalPolicy = opts.approvalPolicy ?? loadCodexApprovalPolicy();
   const { client, models, stop } = await startCodexAppServer(opts);
   const { sessionsDir } = opts;
 
@@ -197,7 +201,7 @@ export async function createCodexRuntime(
             threadId: ref.runtimeSid,
             cwd,
             sandbox: "workspace-write",
-            approvalPolicy: "untrusted",
+            approvalPolicy,
             runtimeWorkspaceRoots: [cwd],
           });
           threadId = forkResult.thread.id;
@@ -209,7 +213,7 @@ export async function createCodexRuntime(
             persistExtendedHistory: false,
             cwd,
             sandbox: "workspace-write",
-            approvalPolicy: "untrusted",
+            approvalPolicy,
             model,
             runtimeWorkspaceRoots: [cwd],
           });
@@ -223,7 +227,7 @@ export async function createCodexRuntime(
           persistExtendedHistory: false,
           cwd,
           sandbox: "workspace-write",
-          approvalPolicy: "untrusted",
+          approvalPolicy,
           model,
           runtimeWorkspaceRoots: [cwd],
         });

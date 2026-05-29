@@ -64,6 +64,8 @@ Enable Codex by setting `runtime.codex.enabled = true` in `kbbl/config.json`:
   - `unix:///path/to/socket` — unix domain socket (default when omitted)
   - `ws://host:port` or `wss://host:port` — WebSocket
 
+kbbl also reads the top-level `approval_policy` from `~/.codex/config.toml` when it launches Codex sessions, or `ask_for_approval` as a compatibility alias. If neither is present, it keeps the current `untrusted` default.
+
 ## Approval mapping
 
 The kbbl PWA shows a single approval card per tool call. Codex sends two approval request methods; the adapter maps them to kbbl `tool_name` values the operator sees:
