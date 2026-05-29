@@ -8,7 +8,7 @@ export interface StageRow {
 }
 
 /** Cohort/epic identity used for slug-based worktree branch naming. */
-export interface WorktreeIdentity {
+export interface EpicIdentity {
   epicSlug: string;
   cohortSlug: string;
   epicBranch: string;
@@ -32,7 +32,7 @@ export interface InputRef {
    * naming and base-ref selection. Non-build stages leave this undefined
    * and continue with sid-based naming.
    */
-  worktreeIdentity?: WorktreeIdentity;
+  worktreeIdentity?: EpicIdentity;
 }
 
 export interface ExecutionBackend {

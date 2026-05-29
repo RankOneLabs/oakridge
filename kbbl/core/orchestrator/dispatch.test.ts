@@ -154,7 +154,7 @@ function patch(app: Hono, path: string, body: unknown) {
   });
 }
 
-/** Drain the microtask queue so synchronous event handlers settle. */
+/** Yield to the event loop so synchronous event handlers can settle. */
 function flushAsync() {
   return new Promise<void>((resolve) => setTimeout(resolve, 0));
 }

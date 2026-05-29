@@ -2,6 +2,7 @@ import { mkdir, readdir, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { KbblConfig } from "../config";
+import type { EpicIdentity } from "../orchestrator/backends/interface";
 
 export class NonGitWorkdirError extends Error {
   constructor(workdir: string) {
@@ -179,7 +180,7 @@ export interface CreateSessionOpts {
    * omitted for non-build stages, ad-hoc sessions, and direct POST /sessions
    * calls — those fall back to sid-based naming against HEAD.
    */
-  worktreeIdentity?: { epicSlug: string; cohortSlug: string; epicBranch: string };
+  worktreeIdentity?: EpicIdentity;
 }
 
 /**
