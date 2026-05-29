@@ -7,6 +7,13 @@ export interface StageRow {
   default_backend: string;
 }
 
+/** Cohort/epic identity used for slug-based worktree branch naming. */
+export interface EpicIdentity {
+  epicSlug: string;
+  cohortSlug: string;
+  epicBranch: string;
+}
+
 export interface InputRef {
   type: "spec" | "cohort" | "brief" | "plan";
   id: string;
@@ -19,6 +26,13 @@ export interface InputRef {
    * sessions in the list view without clicking in.
    */
   sessionName: string;
+  /**
+   * Optional cohort/epic identity for build stages. When set, the backend
+   * forwards it to SessionManager.create for slug-based worktree branch
+   * naming and base-ref selection. Non-build stages leave this undefined
+   * and continue with sid-based naming.
+   */
+  worktreeIdentity?: EpicIdentity;
 }
 
 export interface ExecutionBackend {

@@ -6,8 +6,8 @@
  * approval → build dispatch → debrief PATCH.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Hono } from "hono";
@@ -68,6 +68,34 @@ function createMockBackend(): MockBackend {
   };
 }
 
+// ---- git repo with origin (required for ensureEpicBranchExists in brief dispatch) ----
+
+let gitTmpRoot: string;
+let testRepoPath: string;
+
+async function runCmd(cmd: string[]): Promise<void> {
+  const p = Bun.spawn({ cmd, stdout: "pipe", stderr: "pipe" });
+  const [stderr, code] = await Promise.all([new Response(p.stderr).text(), p.exited]);
+  if (code !== 0) throw new Error(`${cmd.join(" ")} failed (exit ${code}): ${stderr}`);
+}
+
+beforeAll(async () => {
+  gitTmpRoot = mkdtempSync(join(tmpdir(), "kbbl-dispatch-git-"));
+  const originPath = join(gitTmpRoot, "origin");
+  testRepoPath = join(gitTmpRoot, "workdir");
+  await runCmd(["git", "init", "--bare", "-b", "main", originPath]);
+  await runCmd(["git", "clone", originPath, testRepoPath]);
+  await runCmd(["git", "-C", testRepoPath, "config", "user.email", "test@example.com"]);
+  await runCmd(["git", "-C", testRepoPath, "config", "user.name", "test"]);
+  await runCmd(["git", "-C", testRepoPath, "config", "commit.gpgsign", "false"]);
+  await runCmd(["git", "-C", testRepoPath, "commit", "--allow-empty", "-m", "init"]);
+  await runCmd(["git", "-C", testRepoPath, "push", "origin", "main"]);
+});
+
+afterAll(() => {
+  rmSync(gitTmpRoot, { recursive: true, force: true });
+});
+
 // ---- fixture prompt dir ----
 
 let promptsDir: string;
@@ -126,9 +154,22 @@ function patch(app: Hono, path: string, body: unknown) {
   });
 }
 
-/** Yield to the microtask queue so async event handlers (dispatch hooks) can settle. */
+/** Yield to the event loop so synchronous event handlers can settle. */
 function flushAsync() {
   return new Promise<void>((resolve) => setTimeout(resolve, 0));
+}
+
+/**
+ * Poll `condition` until it returns true or `timeoutMs` elapses. Used after
+ * build dispatches that involve real git I/O (ensureEpicBranchExists) so we
+ * wait only as long as needed rather than sleeping a fixed amount.
+ */
+async function waitFor(condition: () => boolean, timeoutMs = 3000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() >= deadline) throw new Error("waitFor timed out");
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+  }
 }
 
 // ---- test suite ----
@@ -182,7 +223,7 @@ afterEach(() => {
 describe("full dispatch pipeline with MockBackend", () => {
   test("POST /specs → spec_analyzer dispatch → plan → cohorts → plan approved → brief_writer dispatch → brief → brief approved → build dispatch → debrief PATCH", async () => {
     // 1. Create project + spec
-    const projRes = await post(app, "/projects", { name: "test", repo_path: "/tmp/test-repo" });
+    const projRes = await post(app, "/projects", { name: "test", repo_path: testRepoPath });
     expect(projRes.status).toBe(201);
     const proj = (await projRes.json()) as { id: string };
 
@@ -245,7 +286,7 @@ describe("full dispatch pipeline with MockBackend", () => {
     const approveBriefRes = await patch(app, `/briefs/${brief.id}/status`, { status: "approved" });
     expect(approveBriefRes.status).toBe(200);
 
-    await flushAsync();
+    await waitFor(() => mockBackend.calls.length >= 3);
     expect(mockBackend.calls).toHaveLength(3);
     expect(mockBackend.calls[2]!.stageName).toBe("build");
     expect(mockBackend.calls[2]!.inputId).toBe(brief.id);
@@ -267,7 +308,7 @@ describe("full dispatch pipeline with MockBackend", () => {
 
   test("dispatcher.dispatch('brief_writer', plan_id) — toposorted prompt, plan persistence", async () => {
     // 1. Create project + spec + plan
-    const projRes = await post(app, "/projects", { name: "batch-test", repo_path: "/tmp/batch-repo" });
+    const projRes = await post(app, "/projects", { name: "batch-test", repo_path: testRepoPath });
     const proj = (await projRes.json()) as { id: string };
 
     const specRes = await post(app, "/specs", { project_id: proj.id, title: "Batch Spec", notes: "batch notes" });
@@ -343,7 +384,7 @@ describe("full dispatch pipeline with MockBackend", () => {
 
   test("plan-approved fan-out -> brief_writer -> dep-aware brief approval -> ready_to_build advancement", async () => {
     // 1. Create project + spec + plan
-    const projRes = await post(app, "/projects", { name: "fanout-test", repo_path: "/tmp/fanout-repo" });
+    const projRes = await post(app, "/projects", { name: "fanout-test", repo_path: testRepoPath });
     const proj = (await projRes.json()) as { id: string };
 
     const specRes = await post(app, "/specs", { project_id: proj.id, title: "Fanout Spec", notes: "dep chain" });
@@ -403,9 +444,10 @@ describe("full dispatch pipeline with MockBackend", () => {
     //    bA: A has no deps → building + build dispatch.
     //    bB: B depends on A (building, not done) → ready_to_build (no build dispatch).
     //    bC: C depends on B (ready_to_build, not done) → ready_to_build (no build dispatch).
+    const preApproveCallCount = mockBackend.calls.length;
     const approveA = await patch(app, `/briefs/${bA}/status`, { status: "approved" });
     expect(approveA.status).toBe(200);
-    await flushAsync();
+    await waitFor(() => mockBackend.calls.length >= preApproveCallCount + 1);
     expect(db.prepare<{ status: string }, [string]>("SELECT status FROM cohorts WHERE id = ?").get(cohortA.id)!.status).toBe("building");
 
     const approveB = await patch(app, `/briefs/${bB}/status`, { status: "approved" });
@@ -430,7 +472,7 @@ describe("full dispatch pipeline with MockBackend", () => {
     // 7. Drive A to done → B's last dep met → B enters building; C still ready_to_build
     const doneA = await patch(app, `/cohorts/${cohortA.id}/status`, { status: "done" });
     expect(doneA.status).toBe(200);
-    await flushAsync();
+    await waitFor(() => mockBackend.calls.length >= callsAfterA + 1);
 
     expect(db.prepare<{ status: string }, [string]>("SELECT status FROM cohorts WHERE id = ?").get(cohortB.id)?.status).toBe("building");
     expect(db.prepare<{ status: string }, [string]>("SELECT status FROM cohorts WHERE id = ?").get(cohortC.id)?.status).toBe("ready_to_build");
@@ -445,7 +487,7 @@ describe("full dispatch pipeline with MockBackend", () => {
     // 8. Drive B to done → C's last dep met → C enters building
     const doneB = await patch(app, `/cohorts/${cohortB.id}/status`, { status: "done" });
     expect(doneB.status).toBe(200);
-    await flushAsync();
+    await waitFor(() => mockBackend.calls.length >= callsAfterADone + 1);
 
     expect(db.prepare<{ status: string }, [string]>("SELECT status FROM cohorts WHERE id = ?").get(cohortC.id)?.status).toBe("building");
 
@@ -464,7 +506,7 @@ describe("full dispatch pipeline with MockBackend", () => {
 
   test("plan.completed → assessor dispatch after all cohorts go through awaiting_merge → merged", async () => {
     // 1. Create project + spec + plan
-    const projRes = await post(app, "/projects", { name: "assessor-test", repo_path: "/tmp/p3-repo" });
+    const projRes = await post(app, "/projects", { name: "assessor-test", repo_path: testRepoPath });
     const proj = (await projRes.json()) as { id: string };
 
     const specRes = await post(app, "/specs", { project_id: proj.id, title: "P3 Spec", notes: "assess me" });
@@ -509,7 +551,9 @@ describe("full dispatch pipeline with MockBackend", () => {
     await postBrief(cohortB.id);
     await postBrief(cohortC.id);
 
-    // A has no deps → enters building after brief approval; B + C are ready_to_build
+    // A has no deps → enters building after brief approval; B + C are ready_to_build.
+    // Wait for A's build dispatch (git I/O) before snapshotting callsBeforeMerge.
+    await waitFor(() => mockBackend.calls.some((c) => c.stageName === "build" && c.inputId === bA));
     const callsBeforeMerge = mockBackend.calls.length;
 
     // 6. Walk A through awaiting_merge → merged → B enters building
@@ -520,7 +564,7 @@ describe("full dispatch pipeline with MockBackend", () => {
     expect(callsAfterAMerge).toBe(callsBeforeMerge); // no new dispatch yet
 
     await patch(app, `/cohorts/${cohortA.id}/status`, { status: "merged" });
-    await flushAsync();
+    await waitFor(() => mockBackend.calls.length >= callsBeforeMerge + 1);
     // B should now be building; one new build dispatch for B
     const callsAfterAMerged = mockBackend.calls.length;
     expect(callsAfterAMerged).toBe(callsBeforeMerge + 1);
@@ -530,7 +574,7 @@ describe("full dispatch pipeline with MockBackend", () => {
     await patch(app, `/cohorts/${cohortB.id}/status`, { status: "awaiting_merge", pr_url: "https://github.com/org/repo/pull/2" });
     await flushAsync();
     await patch(app, `/cohorts/${cohortB.id}/status`, { status: "merged" });
-    await flushAsync();
+    await waitFor(() => mockBackend.calls.length >= callsBeforeMerge + 2);
     const callsAfterBMerged = mockBackend.calls.length;
     expect(callsAfterBMerged).toBe(callsBeforeMerge + 2);
 
@@ -538,7 +582,7 @@ describe("full dispatch pipeline with MockBackend", () => {
     await patch(app, `/cohorts/${cohortC.id}/status`, { status: "awaiting_merge", pr_url: "https://github.com/org/repo/pull/3" });
     await flushAsync();
     await patch(app, `/cohorts/${cohortC.id}/status`, { status: "merged" });
-    await flushAsync();
+    await waitFor(() => mockBackend.calls.length >= callsBeforeMerge + 3);
 
     // Exactly one new call: assessor
     const callsAfterCMerged = mockBackend.calls.length;
@@ -570,7 +614,7 @@ describe("full dispatch pipeline with MockBackend", () => {
   });
 
   test("plan_writer prompt renders DISCREPANCY_RESOLUTIONS fallback when no resolved discrepancies", async () => {
-    const projRes = await post(app, "/projects", { name: "dr-fallback", repo_path: "/tmp/dr-fallback" });
+    const projRes = await post(app, "/projects", { name: "dr-fallback", repo_path: testRepoPath });
     const proj = (await projRes.json()) as { id: string };
     const specRes = await post(app, "/specs", { project_id: proj.id, title: "DR Spec", notes: "notes" });
     const spec = (await specRes.json()) as { id: string };
@@ -589,7 +633,7 @@ describe("full dispatch pipeline with MockBackend", () => {
   });
 
   test("plan_writer prompt renders resolved discrepancies as numbered sections", async () => {
-    const projRes = await post(app, "/projects", { name: "dr-nonempty", repo_path: "/tmp/dr-nonempty" });
+    const projRes = await post(app, "/projects", { name: "dr-nonempty", repo_path: testRepoPath });
     const proj = (await projRes.json()) as { id: string };
     const specRes = await post(app, "/specs", { project_id: proj.id, title: "DR Spec 2", notes: "notes" });
     const spec = (await specRes.json()) as { id: string };
@@ -620,7 +664,7 @@ describe("full dispatch pipeline with MockBackend", () => {
 
   test("spec approval → plan_writer prompt renders resolved discrepancy, excludes waived assumption, and reads SPEC_NOTES from final_notes", async () => {
     // 1. Create project + spec
-    const projRes = await post(app, "/projects", { name: "approval-prompt-test", repo_path: "/tmp/approval-prompt-repo" });
+    const projRes = await post(app, "/projects", { name: "approval-prompt-test", repo_path: testRepoPath });
     const proj = (await projRes.json()) as { id: string };
 
     const ORIGINAL_NOTES = "SPEC_NOTES_DISTINCTIVE_ORIGINAL_20f3a";
@@ -694,7 +738,7 @@ describe("full dispatch pipeline with MockBackend", () => {
   });
 
   test("POST /briefs/:id/build returns 409 if brief not approved", async () => {
-    const projRes = await post(app, "/projects", { name: "p", repo_path: "/tmp/p" });
+    const projRes = await post(app, "/projects", { name: "p", repo_path: testRepoPath });
     const proj = (await projRes.json()) as { id: string };
     const specRes = await post(app, "/specs", { project_id: proj.id, title: "s" });
     const spec = (await specRes.json()) as { id: string };
