@@ -6,6 +6,7 @@ import type { ReactElement } from "react";
 import { EpicDetailView } from "../EpicDetailView";
 
 type EpicStage = "spec" | "plan" | "build" | "assess";
+type FetchHandler = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 function makeFixture(current_stage: EpicStage) {
   return {
@@ -45,7 +46,7 @@ function jsonResponse(body: unknown, init?: ResponseInit) {
   });
 }
 
-function makeFetch(stage: EpicStage): typeof fetch {
+function makeFetch(stage: EpicStage): FetchHandler {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
 
@@ -64,7 +65,7 @@ function makeFetch(stage: EpicStage): typeof fetch {
       return jsonResponse([]);
     }
     return jsonResponse([]);
-  }) as typeof fetch;
+  });
 }
 
 function renderWithClient(ui: ReactElement) {
@@ -137,7 +138,7 @@ describe("EpicDetailView", () => {
   });
 
   it("invalidates sidebar specs after a successful archive", async () => {
-    const fetchMock: typeof fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock: FetchHandler = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
 
       if (url.includes("/epics/epic-1/status")) {
@@ -147,7 +148,7 @@ describe("EpicDetailView", () => {
       }
 
       return makeFetch("spec")(input, init);
-    }) as typeof fetch;
+    });
 
     vi.spyOn(globalThis, "fetch").mockImplementation(fetchMock);
     const { client } = renderWithClient(<EpicDetailView epic_id="epic-1" />);
