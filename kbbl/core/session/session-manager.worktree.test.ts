@@ -310,6 +310,62 @@ describe("SessionManager.remove cleans up worktrees", () => {
   });
 });
 
+describe("SessionManager.create — worktreeIdentity plumbing", () => {
+  let epicWorkdir: string;
+  let epicBaseSha: string;
+
+  beforeEach(async () => {
+    const bareDir = join(tmpRoot, "epic-remote.git");
+    const seedDir = join(tmpRoot, "epic-seed");
+    epicWorkdir = join(tmpRoot, "epic-workdir");
+
+    mkdirSync(bareDir, { recursive: true });
+    mkdirSync(seedDir, { recursive: true });
+
+    await git(bareDir, "init", "--bare", "-q");
+
+    await initRepo(seedDir);
+    await git(seedDir, "remote", "add", "origin", bareDir);
+    await git(seedDir, "push", "origin", "main");
+
+    await git(seedDir, "checkout", "-b", "epic/epic_x");
+    await git(seedDir, "commit", "--allow-empty", "-m", "epic-x seed");
+    await git(seedDir, "push", "origin", "epic/epic_x");
+
+    const cloneProc = Bun.spawn({
+      cmd: ["git", "clone", "-q", bareDir, epicWorkdir],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await cloneProc.exited;
+    await git(epicWorkdir, "config", "user.email", "test@example.com");
+    await git(epicWorkdir, "config", "user.name", "test");
+    await git(epicWorkdir, "config", "commit.gpgsign", "false");
+
+    epicBaseSha = (await git(epicWorkdir, "rev-parse", "origin/epic/epic_x")).trim();
+  });
+
+  test("identity-passing session lands on slug branch, nested path, and base sha", async () => {
+    const mgr = makeManager(buildConfig());
+    const session = await mgr.create({
+      workdir: epicWorkdir,
+      worktreeIdentity: {
+        epicSlug: "epic_x",
+        cohortSlug: "cohort-1-foo",
+        epicBranch: "epic/epic_x",
+      },
+    });
+
+    const sid = session.oakridgeSid;
+
+    expect(session.worktreeBranch).toBe("epic/epic_x/cohort-1-foo");
+    expect(session.worktreePath).toEndWith(`epic_x/cohort-1-foo/${sid}`);
+    expect(session.worktreeBaseRef).toBe(epicBaseSha);
+
+    await mgr.endAll();
+  });
+});
+
 describe("parseDepthFromBranch", () => {
   test("kbbl/<sid8> returns 0", () => {
     expect(parseDepthFromBranch("kbbl/abc12345")).toBe(0);
