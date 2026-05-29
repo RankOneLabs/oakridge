@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { SidebarProject } from "./Sidebar";
+import type { RuntimeId } from "../../runtime-interface";
+import { useServerConfig } from "../hooks/useServerConfig";
 
 interface AddSpecModalProps {
   project: SidebarProject;
@@ -11,19 +13,34 @@ interface AddSpecModalProps {
 interface CreateSpecInput {
   title: string;
   notes: string | null;
+  agentRuntime: RuntimeId;
 }
 
 export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps) {
+  const serverConfig = useServerConfig();
+  const hasCodex = serverConfig?.runtimes.some((runtime) => runtime.id === "codex") ?? false;
+  const hasClaudeCode = serverConfig?.runtimes.some((runtime) => runtime.id === "claude-code") ?? true;
+  const defaultAgentRuntime: RuntimeId = hasCodex && serverConfig?.defaultRuntimeId === "codex"
+    ? "codex"
+    : "claude-code";
   const [title, setTitle] = useState("");
   const [notes, setNotes] = useState("");
+  const [agentRuntime, setAgentRuntime] = useState<RuntimeId>(defaultAgentRuntime);
+  const [agentRuntimeTouched, setAgentRuntimeTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
+  useEffect(() => {
+    if (agentRuntimeTouched) return;
+    setAgentRuntime(defaultAgentRuntime);
+  }, [agentRuntimeTouched, defaultAgentRuntime]);
+
   const createMutation = useMutation({
     mutationFn: async (vars: CreateSpecInput) => {
-      const body: { project_id: string; title: string; notes?: string } = {
+      const body: { project_id: string; title: string; notes?: string; agent_runtime: RuntimeId } = {
         project_id: project.id,
         title: vars.title,
+        agent_runtime: vars.agentRuntime,
       };
       if (vars.notes !== null) body.notes = vars.notes;
       const res = await fetch("/specs", {
@@ -60,6 +77,7 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
       await createMutation.mutateAsync({
         title: trimmedTitle,
         notes: trimmedNotes === "" ? null : trimmedNotes,
+        agentRuntime,
       });
       onCreated();
     } catch (err) {
@@ -121,6 +139,21 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
               disabled={pending}
               autoFocus
             />
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
+            <span style={{ opacity: 0.8 }}>Agent</span>
+            <select
+              value={agentRuntime}
+              onChange={(e) => {
+                setAgentRuntimeTouched(true);
+                setAgentRuntime(e.target.value as RuntimeId);
+              }}
+              disabled={pending}
+              aria-label="Agent"
+            >
+              {hasClaudeCode && <option value="claude-code">Claude Code</option>}
+              {hasCodex && <option value="codex">Codex</option>}
+            </select>
           </label>
           <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
             <span style={{ opacity: 0.8 }}>Notes (optional)</span>

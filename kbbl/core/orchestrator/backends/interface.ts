@@ -1,3 +1,5 @@
+import type { RuntimeId } from "../../runtime";
+
 export interface StageRow {
   name: string;
   prompt_template_path: string;
@@ -34,6 +36,12 @@ export interface InputRef {
    * and continue with sid-based naming.
    */
   worktreeIdentity?: EpicIdentity;
+  /**
+   * Operator-selected agent runtime for the whole agent-dev flow. This is
+   * persisted on the owning Epic and resolved by the dispatcher for every
+   * stage, so routing is per-flow rather than global-config-derived.
+   */
+  agentRuntime?: RuntimeId;
 }
 
 export interface ExecutionBackend {

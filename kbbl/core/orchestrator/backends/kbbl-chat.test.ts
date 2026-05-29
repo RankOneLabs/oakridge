@@ -104,6 +104,30 @@ describe("KbblChatBackend dispatch routes each stage to its intended model", () 
     expect(calls[0]?.model).toBe("claude-sonnet-4-6");
   });
 
+  test("codex flow routes planner stages to gpt-5.5", async () => {
+    const { manager, calls } = makeFakeManager();
+    const backend = createKbblChatBackend({ manager });
+    await backend.dispatch(
+      stage("plan_writer"),
+      { ...inputRef, agentRuntime: "codex" },
+      "prompt",
+    );
+    expect(calls[0]?.model).toBe("gpt-5.5");
+    expect(calls[0]?.runtime).toBe("codex");
+  });
+
+  test("codex flow routes build to gpt-5.4-mini", async () => {
+    const { manager, calls } = makeFakeManager();
+    const backend = createKbblChatBackend({ manager });
+    await backend.dispatch(
+      stage("build"),
+      { ...inputRef, agentRuntime: "codex" },
+      "prompt",
+    );
+    expect(calls[0]?.model).toBe("gpt-5.4-mini");
+    expect(calls[0]?.runtime).toBe("codex");
+  });
+
   test("unknown stage without override → throws with actionable message", async () => {
     const { manager, calls } = makeFakeManager();
     const backend = createKbblChatBackend({ manager });

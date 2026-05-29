@@ -5,6 +5,7 @@ import { listCohortsByPlan, listDependenciesByPlan } from "../../db/cohorts";
 import { listResolvedDiscrepanciesBySpec } from "../../db/spec-discrepancies";
 import { getEpicBySpec } from "../../db/epics";
 import type { Cohort, CohortDependency } from "../../types/task-tracker";
+import type { RuntimeId } from "../../runtime";
 
 interface DispatcherDeps {
   db: Database;
@@ -88,6 +89,50 @@ function getProjectForPlan(db: Database, plan_id: string): ProjectRow | null {
       )
       .get(plan_id) ?? null
   );
+}
+
+function resolveAgentRuntimeForSpec(db: Database, spec_id: string): RuntimeId {
+  const epic = getEpicBySpec(db, spec_id);
+  return epic?.agent_runtime ?? "claude-code";
+}
+
+function resolveAgentRuntimeForPlan(db: Database, plan_id: string): RuntimeId {
+  const row = db
+    .prepare<{ agent_runtime: RuntimeId }, [string]>(
+      `SELECT e.agent_runtime
+         FROM epics e
+         JOIN plans pl ON pl.spec_id = e.spec_id
+        WHERE pl.id = ?`,
+    )
+    .get(plan_id);
+  return row?.agent_runtime ?? "claude-code";
+}
+
+function resolveAgentRuntimeForCohort(db: Database, cohort_id: string): RuntimeId {
+  const row = db
+    .prepare<{ agent_runtime: RuntimeId }, [string]>(
+      `SELECT e.agent_runtime
+         FROM epics e
+         JOIN plans pl ON pl.spec_id = e.spec_id
+         JOIN cohorts c ON c.plan_id = pl.id
+        WHERE c.id = ?`,
+    )
+    .get(cohort_id);
+  return row?.agent_runtime ?? "claude-code";
+}
+
+function resolveAgentRuntimeForBrief(db: Database, brief_id: string): RuntimeId {
+  const row = db
+    .prepare<{ agent_runtime: RuntimeId }, [string]>(
+      `SELECT e.agent_runtime
+         FROM epics e
+         JOIN plans pl ON pl.spec_id = e.spec_id
+         JOIN cohorts c ON c.plan_id = pl.id
+         JOIN briefs b ON b.cohort_id = c.id
+        WHERE b.id = ?`,
+    )
+    .get(brief_id);
+  return row?.agent_runtime ?? "claude-code";
 }
 
 // ---- Session name builders ----
@@ -664,14 +709,26 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
           slots = buildSlotsForSpec(db, inputId, kbblUrl);
           workdir = resolveWorkdirForSpec(db, inputId);
           const sessionName = buildSessionNameForSpec(db, inputId, stage.name);
-          inputRef = { type: "spec", id: inputId, workdir, sessionName };
+          inputRef = {
+            type: "spec",
+            id: inputId,
+            workdir,
+            sessionName,
+            agentRuntime: resolveAgentRuntimeForSpec(db, inputId),
+          };
           break;
         }
         case "cohort": {
           slots = buildSlotsForCohort(db, inputId, kbblUrl);
           workdir = resolveWorkdirForCohort(db, inputId);
           const sessionName = buildSessionNameForCohort(db, inputId, stage.name);
-          inputRef = { type: "cohort", id: inputId, workdir, sessionName };
+          inputRef = {
+            type: "cohort",
+            id: inputId,
+            workdir,
+            sessionName,
+            agentRuntime: resolveAgentRuntimeForCohort(db, inputId),
+          };
           break;
         }
         case "brief": {
@@ -696,6 +753,7 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
             id: inputId,
             workdir,
             sessionName,
+            agentRuntime: resolveAgentRuntimeForBrief(db, inputId),
             worktreeIdentity: { epicSlug, cohortSlug, epicBranch },
           };
           break;
@@ -706,7 +764,13 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
             : buildSlotsForPlan(db, inputId, kbblUrl);
           workdir = resolveWorkdirForPlan(db, inputId);
           const sessionName = buildSessionNameForPlan(db, inputId, stage.name);
-          inputRef = { type: "plan", id: inputId, workdir, sessionName };
+          inputRef = {
+            type: "plan",
+            id: inputId,
+            workdir,
+            sessionName,
+            agentRuntime: resolveAgentRuntimeForPlan(db, inputId),
+          };
           break;
         }
         default:

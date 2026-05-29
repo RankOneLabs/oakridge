@@ -9,6 +9,7 @@ import { insertSpec, getSpec, listSpecsByProject, updateSpecFields } from "./spe
 import { mountSpecsRoutes } from "../server/handlers/specs";
 import { taskTrackerEvents } from "./events";
 import { insertProject } from "./projects";
+import { getEpicBySpec } from "./epics";
 
 let db: Database;
 let app: Hono;
@@ -139,6 +140,21 @@ describe("POST /specs", () => {
     } finally {
       unsub();
     }
+  });
+
+  test("stores selected agent runtime on the created epic", async () => {
+    const res = await app.request("/specs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        project_id: PROJECT_ID,
+        title: "Codex flow",
+        agent_runtime: "codex",
+      }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { id: string };
+    expect(getEpicBySpec(db, body.id)?.agent_runtime).toBe("codex");
   });
 
   test("returns 400 for missing title", async () => {

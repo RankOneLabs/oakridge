@@ -8,6 +8,7 @@ import { insertEpic, getEpicBySpec } from "../../db/epics";
 import { isFrozen } from "../../db/epic-freeze";
 import { getProject } from "../../db/projects";
 import { taskTrackerEvents } from "../../db/events";
+import type { AgentRuntimeChoice } from "../../types/task-tracker";
 
 const CreateSpecSchema = z
   .object({
@@ -15,6 +16,7 @@ const CreateSpecSchema = z
     title: z.string().min(1),
     notes: z.string().optional(),
     notesPath: z.string().min(1).optional(),
+    agent_runtime: z.enum(["claude-code", "codex"]).default("claude-code"),
   })
   .refine((v) => !(v.notes !== undefined && v.notesPath !== undefined), {
     message: "provide either notes or notesPath, not both",
@@ -55,7 +57,7 @@ export function mountSpecsRoutes(app: Hono, deps: SpecsRouteDeps): void {
       return c.json({ error: msg }, 400);
     }
 
-    const { project_id, title, notes, notesPath } = result.data;
+    const { project_id, title, notes, notesPath, agent_runtime } = result.data;
     const id = crypto.randomUUID();
 
     let resolvedNotes: string | null = notes ?? null;
@@ -112,6 +114,7 @@ export function mountSpecsRoutes(app: Hono, deps: SpecsRouteDeps): void {
           title,
           status: "pending",
           current_stage: "spec",
+          agent_runtime: agent_runtime as AgentRuntimeChoice,
         });
         return { spec: s, epic: e };
       })();

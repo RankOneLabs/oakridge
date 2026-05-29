@@ -36,7 +36,22 @@ describe("insertEpic + getEpic", () => {
     expect(e.title).toBe("My Epic");
     expect(e.status).toBe("active");
     expect(e.current_stage).toBe("spec");
+    expect(e.agent_runtime).toBe("claude-code");
     expect(e.created_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  test("stores selected agent runtime", () => {
+    const e = insertEpic(db, {
+      id: "e-codex",
+      spec_id: SPEC_ID,
+      project_id: PROJECT_ID,
+      title: "Codex Epic",
+      status: "active",
+      current_stage: "spec",
+      agent_runtime: "codex",
+    });
+    expect(e.agent_runtime).toBe("codex");
+    expect(getEpic(db, "e-codex")?.agent_runtime).toBe("codex");
   });
 
   test("getEpic returns null for unknown id", () => {
