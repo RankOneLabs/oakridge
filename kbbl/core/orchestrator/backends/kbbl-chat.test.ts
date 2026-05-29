@@ -1,9 +1,15 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { createKbblChatBackend } from "./kbbl-chat";
 import type { InputRef, StageRow } from "./interface";
-import type { SessionManager } from "../../session/session-manager";
+import { SessionManager } from "../../session/session-manager";
+import type { KbblConfig } from "../../config";
 import { KbblConfigSchema } from "../../config";
 import type { RuntimeId } from "../../runtime";
+import type { Session, SpawnCmd } from "../../session/session";
+import { ensureEpicBranchExists } from "./dispatcher";
 
 interface FakeCreateOpts {
   workdir: string;
@@ -139,5 +145,135 @@ describe("KbblChatBackend dispatch config.runtime.stages overrides", () => {
     await backend.dispatch(stage("build"), inputRef, "prompt");
     expect(calls[0]?.model).toBe("claude-sonnet-4-6");
     expect(calls[0]?.runtime).toBe("claude-code");
+  });
+});
+
+// ---- Integration tests: worktreeIdentity flows through KbblChatBackend ----
+
+async function runCmd(cmd: string[]): Promise<void> {
+  const p = Bun.spawn({ cmd, stdout: "pipe", stderr: "pipe" });
+  const [stderr, code] = await Promise.all([new Response(p.stderr).text(), p.exited]);
+  if (code !== 0) throw new Error(`${cmd.join(" ")} failed (exit ${code}): ${stderr}`);
+}
+
+async function getRevParse(workdir: string, ref: string): Promise<string> {
+  const p = Bun.spawn({ cmd: ["git", "-C", workdir, "rev-parse", ref], stdout: "pipe", stderr: "pipe" });
+  const [stdout, code] = await Promise.all([new Response(p.stdout).text(), p.exited]);
+  if (code !== 0) throw new Error(`git rev-parse ${ref} failed`);
+  return stdout.trim();
+}
+
+async function noopSpawn(_session: Session): Promise<SpawnCmd> {
+  return { cmd: ["cat"], cwd: "/tmp", env: {} };
+}
+
+describe("KbblChatBackend worktreeIdentity integration", () => {
+  let tmpRoot: string;
+  let workdir: string;
+  let manager: SessionManager;
+
+  const EPIC_SLUG = "test_epic";
+  const COHORT_SLUG = "cohort-1-test_cohort";
+  const EPIC_BRANCH = `epic/${EPIC_SLUG}`;
+
+  const buildStage: StageRow = {
+    name: "build",
+    prompt_template_path: "build.md",
+    input_artifact_type: "brief",
+    output_artifact_type: "pr",
+    gate: "none",
+    default_backend: "kbbl_chat",
+  };
+
+  beforeEach(async () => {
+    tmpRoot = mkdtempSync(join(tmpdir(), "kbbl-chat-identity-"));
+    const originPath = join(tmpRoot, "origin");
+    workdir = join(tmpRoot, "workdir");
+    const dirs = Bun.spawn({
+      cmd: ["mkdir", "-p", join(tmpRoot, "sessions"), join(tmpRoot, "worktrees"), join(tmpRoot, "handoffs")],
+    });
+    await dirs.exited;
+    await runCmd(["git", "init", "--bare", "-b", "main", originPath]);
+    await runCmd(["git", "clone", originPath, workdir]);
+    await runCmd(["git", "-C", workdir, "config", "user.email", "test@example.com"]);
+    await runCmd(["git", "-C", workdir, "config", "user.name", "test"]);
+    await runCmd(["git", "-C", workdir, "config", "commit.gpgsign", "false"]);
+    await runCmd(["git", "-C", workdir, "commit", "--allow-empty", "-m", "init"]);
+    await runCmd(["git", "-C", workdir, "push", "origin", "main"]);
+
+    const config = KbblConfigSchema.parse({}) as KbblConfig;
+    manager = new SessionManager({
+      sessionsDir: join(tmpRoot, "sessions"),
+      handoffsDir: join(tmpRoot, "handoffs"),
+      worktreesDir: join(tmpRoot, "worktrees"),
+      buildSpawnCmd: noopSpawn,
+      config,
+    });
+  });
+
+  afterEach(async () => {
+    await manager.endAll();
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  test("Test A: pre-seeded epic branch → session lands on slug branch with correct base sha", async () => {
+    // Pre-seed origin/epic/<slug>
+    await runCmd(["git", "-C", workdir, "push", "origin", `main:refs/heads/${EPIC_BRANCH}`]);
+    await runCmd(["git", "-C", workdir, "fetch", "origin", EPIC_BRANCH]);
+
+    const expectedSha = await getRevParse(workdir, `origin/${EPIC_BRANCH}`);
+
+    const ref: InputRef = {
+      type: "brief",
+      id: "fake-brief",
+      workdir,
+      sessionName: "test-session",
+      worktreeIdentity: { epicSlug: EPIC_SLUG, cohortSlug: COHORT_SLUG, epicBranch: EPIC_BRANCH },
+    };
+    const backend = createKbblChatBackend({ manager });
+    const { session_ref } = await backend.dispatch(buildStage, ref, "prompt");
+
+    const session = manager.get(session_ref);
+    if (!session) throw new Error("session not found");
+    expect(session.worktreeBranch).toBe(`${EPIC_BRANCH}/${COHORT_SLUG}`);
+    expect(session.worktreeBaseRef).toBe(expectedSha);
+  });
+
+  test("Test B: absent epic branch → ensureEpicBranchExists seeds it, session lands on slug branch", async () => {
+    // Confirm branch absent before seeding
+    const lsBefore = Bun.spawn({
+      cmd: ["git", "-C", workdir, "ls-remote", "origin", `refs/heads/${EPIC_BRANCH}`],
+      stdout: "pipe", stderr: "pipe",
+    });
+    const [lsOut] = await Promise.all([new Response(lsBefore.stdout).text(), lsBefore.exited]);
+    expect(lsOut.trim()).toBe("");
+
+    // Seed the branch via ensureEpicBranchExists
+    await ensureEpicBranchExists(EPIC_BRANCH, workdir);
+
+    // Confirm seeding worked
+    const lsAfter = Bun.spawn({
+      cmd: ["git", "-C", workdir, "ls-remote", "origin", `refs/heads/${EPIC_BRANCH}`],
+      stdout: "pipe", stderr: "pipe",
+    });
+    const [lsAfterOut] = await Promise.all([new Response(lsAfter.stdout).text(), lsAfter.exited]);
+    expect(lsAfterOut.trim()).not.toBe("");
+
+    // Dispatch with worktreeIdentity — branch is now seeded + local tracking ref updated
+    const expectedSha = await getRevParse(workdir, `origin/${EPIC_BRANCH}`);
+    const ref: InputRef = {
+      type: "brief",
+      id: "fake-brief",
+      workdir,
+      sessionName: "test-session",
+      worktreeIdentity: { epicSlug: EPIC_SLUG, cohortSlug: COHORT_SLUG, epicBranch: EPIC_BRANCH },
+    };
+    const backend = createKbblChatBackend({ manager });
+    const { session_ref } = await backend.dispatch(buildStage, ref, "prompt");
+
+    const session = manager.get(session_ref);
+    if (!session) throw new Error("session not found");
+    expect(session.worktreeBranch).toBe(`${EPIC_BRANCH}/${COHORT_SLUG}`);
+    expect(session.worktreeBaseRef).toBe(expectedSha);
   });
 });
