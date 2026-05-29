@@ -91,12 +91,12 @@ function getProjectForPlan(db: Database, plan_id: string): ProjectRow | null {
   );
 }
 
-function resolveAgentRuntimeForSpec(db: Database, spec_id: string): RuntimeId {
+function resolveAgentRuntimeForSpec(db: Database, spec_id: string): RuntimeId | undefined {
   const epic = getEpicBySpec(db, spec_id);
-  return epic?.agent_runtime ?? "claude-code";
+  return epic?.agent_runtime;
 }
 
-function resolveAgentRuntimeForPlan(db: Database, plan_id: string): RuntimeId {
+function resolveAgentRuntimeForPlan(db: Database, plan_id: string): RuntimeId | undefined {
   const row = db
     .prepare<{ agent_runtime: RuntimeId }, [string]>(
       `SELECT e.agent_runtime
@@ -105,10 +105,10 @@ function resolveAgentRuntimeForPlan(db: Database, plan_id: string): RuntimeId {
         WHERE pl.id = ?`,
     )
     .get(plan_id);
-  return row?.agent_runtime ?? "claude-code";
+  return row?.agent_runtime;
 }
 
-function resolveAgentRuntimeForCohort(db: Database, cohort_id: string): RuntimeId {
+function resolveAgentRuntimeForCohort(db: Database, cohort_id: string): RuntimeId | undefined {
   const row = db
     .prepare<{ agent_runtime: RuntimeId }, [string]>(
       `SELECT e.agent_runtime
@@ -118,10 +118,10 @@ function resolveAgentRuntimeForCohort(db: Database, cohort_id: string): RuntimeI
         WHERE c.id = ?`,
     )
     .get(cohort_id);
-  return row?.agent_runtime ?? "claude-code";
+  return row?.agent_runtime;
 }
 
-function resolveAgentRuntimeForBrief(db: Database, brief_id: string): RuntimeId {
+function resolveAgentRuntimeForBrief(db: Database, brief_id: string): RuntimeId | undefined {
   const row = db
     .prepare<{ agent_runtime: RuntimeId }, [string]>(
       `SELECT e.agent_runtime
@@ -132,7 +132,7 @@ function resolveAgentRuntimeForBrief(db: Database, brief_id: string): RuntimeId 
         WHERE b.id = ?`,
     )
     .get(brief_id);
-  return row?.agent_runtime ?? "claude-code";
+  return row?.agent_runtime;
 }
 
 // ---- Session name builders ----
@@ -709,12 +709,13 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
           slots = buildSlotsForSpec(db, inputId, kbblUrl);
           workdir = resolveWorkdirForSpec(db, inputId);
           const sessionName = buildSessionNameForSpec(db, inputId, stage.name);
+          const agentRuntime = resolveAgentRuntimeForSpec(db, inputId);
           inputRef = {
             type: "spec",
             id: inputId,
             workdir,
             sessionName,
-            agentRuntime: resolveAgentRuntimeForSpec(db, inputId),
+            ...(agentRuntime !== undefined ? { agentRuntime } : {}),
           };
           break;
         }
@@ -722,12 +723,13 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
           slots = buildSlotsForCohort(db, inputId, kbblUrl);
           workdir = resolveWorkdirForCohort(db, inputId);
           const sessionName = buildSessionNameForCohort(db, inputId, stage.name);
+          const agentRuntime = resolveAgentRuntimeForCohort(db, inputId);
           inputRef = {
             type: "cohort",
             id: inputId,
             workdir,
             sessionName,
-            agentRuntime: resolveAgentRuntimeForCohort(db, inputId),
+            ...(agentRuntime !== undefined ? { agentRuntime } : {}),
           };
           break;
         }
@@ -748,12 +750,13 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
 
           await ensureEpicBranchExists(epicBranch, workdir);
 
+          const agentRuntime = resolveAgentRuntimeForBrief(db, inputId);
           inputRef = {
             type: "brief",
             id: inputId,
             workdir,
             sessionName,
-            agentRuntime: resolveAgentRuntimeForBrief(db, inputId),
+            ...(agentRuntime !== undefined ? { agentRuntime } : {}),
             worktreeIdentity: { epicSlug, cohortSlug, epicBranch },
           };
           break;
@@ -764,12 +767,13 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
             : buildSlotsForPlan(db, inputId, kbblUrl);
           workdir = resolveWorkdirForPlan(db, inputId);
           const sessionName = buildSessionNameForPlan(db, inputId, stage.name);
+          const agentRuntime = resolveAgentRuntimeForPlan(db, inputId);
           inputRef = {
             type: "plan",
             id: inputId,
             workdir,
             sessionName,
-            agentRuntime: resolveAgentRuntimeForPlan(db, inputId),
+            ...(agentRuntime !== undefined ? { agentRuntime } : {}),
           };
           break;
         }

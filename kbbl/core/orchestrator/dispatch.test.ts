@@ -32,7 +32,9 @@ import { mountBriefStatusRoutes } from "../server/handlers/brief-status";
 import { mountBuildsRoutes } from "../server/handlers/builds";
 import { mountAssessmentsRoutes } from "../server/handlers/assessments";
 import { mountSpecStatusRoutes } from "../server/handlers/spec-status";
+import { insertSpec } from "../db/specs";
 import { insertSpecDiscrepancy } from "../db/spec-discrepancies";
+import type { RuntimeId } from "../runtime";
 
 // ---- minimal SessionManager stub for builds route ----
 
@@ -46,6 +48,7 @@ interface DispatchCall {
   stageName: string;
   inputType: string;
   inputId: string;
+  agentRuntime?: RuntimeId;
   renderedPrompt: string;
 }
 
@@ -59,7 +62,13 @@ function createMockBackend(): MockBackend {
     id: "kbbl_chat",
     calls,
     async dispatch(stage: StageRow, inputRef: InputRef, renderedPrompt: string) {
-      calls.push({ stageName: stage.name, inputType: inputRef.type, inputId: inputRef.id, renderedPrompt });
+      calls.push({
+        stageName: stage.name,
+        inputType: inputRef.type,
+        inputId: inputRef.id,
+        ...(inputRef.agentRuntime !== undefined ? { agentRuntime: inputRef.agentRuntime } : {}),
+        renderedPrompt,
+      });
       return { session_ref: `mock-${calls.length}` };
     },
     async status(_session_ref: string) {
@@ -632,6 +641,28 @@ describe("full dispatch pipeline with MockBackend", () => {
     expect(call?.renderedPrompt).toContain("(none — spec analyzed clean or pre-resolutions spec)");
   });
 
+  test("legacy spec without epic leaves agent runtime unset for config overrides", async () => {
+    const projRes = await post(app, "/projects", { name: "legacy-spec", repo_path: testRepoPath });
+    const proj = (await projRes.json()) as { id: string };
+    const spec = insertSpec(db, {
+      id: "legacy-spec-no-epic",
+      project_id: proj.id,
+      title: "Legacy spec",
+      notes: "created before epics carried runtime",
+    });
+
+    const dispatcher = createDispatcher({
+      db,
+      backends: { kbbl_chat: mockBackend },
+      kbblUrl: "http://localhost:8788",
+    });
+    await dispatcher.dispatch("plan_writer", spec.id);
+
+    const call = mockBackend.calls[mockBackend.calls.length - 1];
+    expect(call?.stageName).toBe("plan_writer");
+    expect(call?.agentRuntime).toBeUndefined();
+  });
+
   test("plan_writer prompt renders resolved discrepancies as numbered sections", async () => {
     const projRes = await post(app, "/projects", { name: "dr-nonempty", repo_path: testRepoPath });
     const proj = (await projRes.json()) as { id: string };
@@ -761,4 +792,3 @@ describe("full dispatch pipeline with MockBackend", () => {
     expect(res.status).toBe(409);
   });
 });
-
