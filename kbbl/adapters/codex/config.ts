@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import type { ApprovalPolicy } from "./protocol/generated/types";
+export type { ApprovalPolicy } from "./protocol/generated/types";
 
 const DEFAULT_APPROVAL_POLICY: ApprovalPolicy = "untrusted";
 
