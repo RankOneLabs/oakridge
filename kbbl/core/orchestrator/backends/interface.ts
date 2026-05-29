@@ -10,6 +10,7 @@ export interface StageRow {
 /** Cohort/epic identity used for slug-based worktree branch naming. */
 export interface EpicIdentity {
   epicSlug: string;
+  /** Shape: `<position>-<title-slug>`, e.g. `1-my_feature`. Combined with epicSlug to form `cohort/<epicSlug>/<cohortSlug>`. */
   cohortSlug: string;
   epicBranch: string;
 }

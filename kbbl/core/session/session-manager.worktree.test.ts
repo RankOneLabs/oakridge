@@ -351,15 +351,15 @@ describe("SessionManager.create — worktreeIdentity plumbing", () => {
       workdir: epicWorkdir,
       worktreeIdentity: {
         epicSlug: "epic_x",
-        cohortSlug: "cohort-1-foo",
+        cohortSlug: "1-foo",
         epicBranch: "epic/epic_x",
       },
     });
 
     const sid = session.oakridgeSid;
 
-    expect(session.worktreeBranch).toBe("epic/epic_x/cohort-1-foo");
-    expect(session.worktreePath).toEndWith(`epic_x/cohort-1-foo/${sid}`);
+    expect(session.worktreeBranch).toBe("cohort/epic_x/1-foo");
+    expect(session.worktreePath).toEndWith(`epic_x/1-foo/${sid}`);
     expect(session.worktreeBaseRef).toBe(epicBaseSha);
 
     await mgr.endAll();
@@ -375,12 +375,25 @@ describe("parseDepthFromBranch", () => {
     expect(parseDepthFromBranch("kbbl/abc12345-r3")).toBe(3);
   });
 
-  test("epic/foo/cohort-1-bar returns 0", () => {
-    expect(parseDepthFromBranch("epic/foo/cohort-1-bar")).toBe(0);
+  test("cohort/foo/1-bar returns 0", () => {
+    expect(parseDepthFromBranch("cohort/foo/1-bar")).toBe(0);
   });
 
-  test("epic/foo/cohort-1-bar-r2 returns 2", () => {
-    expect(parseDepthFromBranch("epic/foo/cohort-1-bar-r2")).toBe(2);
+  test("cohort/foo/1-bar-r2 returns 2", () => {
+    expect(parseDepthFromBranch("cohort/foo/1-bar-r2")).toBe(2);
+  });
+
+  test("legacy epic/foo/cohort-1-bar no longer matches — warns and returns 0", () => {
+    const errors: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => errors.push(String(args[0]));
+    try {
+      const result = parseDepthFromBranch("epic/foo/cohort-1-bar");
+      expect(result).toBe(0);
+      expect(errors.length).toBeGreaterThan(0);
+    } finally {
+      console.error = original;
+    }
   });
 
   test("garbage-branch warns and returns 0", () => {

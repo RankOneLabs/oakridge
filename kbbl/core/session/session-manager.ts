@@ -244,17 +244,17 @@ const LAST_ACTIVITY_THROTTLE_MS = 1000;
 
 /**
  * Parse the depth encoded in a worktree branch name. Accepts both the legacy
- * `kbbl/<sid8>[-r<n>]` shape and the cohort `epic/<slug>/cohort-<n>-<slug>[-r<n>]`
+ * `kbbl/<sid8>[-r<n>]` shape and the cohort `cohort/<slug>/<n>-<slug>[-r<n>]`
  * shape. Returns the `-r<n>` suffix depth, or 0 for bare branches. Warns and
  * returns 0 for any branch that matches neither shape — the prefix is
  * informational and validated elsewhere via worktreeBranch round-tripping.
  */
 export function parseDepthFromBranch(branch: string): number {
   if (
-    !/^(kbbl\/[0-9a-f]{8}|epic\/[a-z0-9_]+\/cohort-\d+-[a-z0-9_]+)(?:-r\d+)?$/.test(branch)
+    !/^(kbbl\/[0-9a-f]{8}|cohort\/[a-z0-9_]+\/\d+-[a-z0-9_]+)(?:-r\d+)?$/.test(branch)
   ) {
     console.error(
-      `kbbl: parent branch ${branch} doesn't match kbbl/<sid8>[-r<n>] or epic/<slug>/cohort-<n>-<slug>[-r<n>] — depth defaulting to 0`,
+      `kbbl: parent branch ${branch} doesn't match kbbl/<sid8>[-r<n>] or cohort/<slug>/<n>-<slug>[-r<n>] — depth defaulting to 0`,
     );
     return 0;
   }
@@ -390,7 +390,7 @@ export class SessionManager {
         ...(worktreeIdentity
           ? {
               identity: {
-                branchName: `${worktreeIdentity.epicBranch}/${worktreeIdentity.cohortSlug}`,
+                branchName: `cohort/${worktreeIdentity.epicSlug}/${worktreeIdentity.cohortSlug}`,
                 worktreeSubdir: `${worktreeIdentity.epicSlug}/${worktreeIdentity.cohortSlug}`,
               },
               baseRef: `origin/${worktreeIdentity.epicBranch}`,
