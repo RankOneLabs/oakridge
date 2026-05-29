@@ -4,6 +4,7 @@ import { loadPrompt, renderPrompt } from "./prompt-loader";
 import { listCohortsByPlan, listDependenciesByPlan } from "../../db/cohorts";
 import { listResolvedDiscrepanciesBySpec } from "../../db/spec-discrepancies";
 import { getEpicBySpec } from "../../db/epics";
+import type { RuntimeId } from "../../runtime";
 import type { Cohort, CohortDependency, Epic } from "../../types/task-tracker";
 
 interface DispatcherDeps {
@@ -120,10 +121,10 @@ const PLANNER_STAGE_NAMES = new Set([
  * is null, the stage name doesn't match a known knob, or either knob column
  * is NULL (partial knob falls through rather than producing a partial override).
  */
-function resolveEpicRoutingOverride(
+export function resolveEpicRoutingOverride(
   epic: Epic | null,
   stageName: string,
-): { runtime: "claude-code" | "codex"; model: string } | undefined {
+): { runtime: RuntimeId; model: string } | undefined {
   if (!epic) return undefined;
   if (stageName === "build") {
     if (epic.build_runtime && epic.build_model) {

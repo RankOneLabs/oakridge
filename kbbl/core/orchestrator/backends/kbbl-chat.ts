@@ -68,7 +68,7 @@ export function createKbblChatBackend({
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        throw new Error(`stage "${stage.name}": ${msg}`);
+        throw new Error(`stage "${stage.name}": ${msg}`, { cause: err });
       }
       await session.writeInput(renderedPrompt);
       return { session_ref: session.oakridgeSid };

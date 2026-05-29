@@ -95,10 +95,10 @@ function coerceStageEntry(value: unknown): StageDefault | null {
 function coerceStageDefaults(value: unknown): { planner: StageDefault; build: StageDefault } {
   if (typeof value !== "object" || value === null) return STAGE_DEFAULTS_FALLBACK;
   const raw = value as { planner?: unknown; build?: unknown };
-  const planner = coerceStageEntry(raw.planner);
-  const build = coerceStageEntry(raw.build);
-  if (!planner || !build) return STAGE_DEFAULTS_FALLBACK;
-  return { planner, build };
+  return {
+    planner: coerceStageEntry(raw.planner) ?? STAGE_DEFAULTS_FALLBACK.planner,
+    build: coerceStageEntry(raw.build) ?? STAGE_DEFAULTS_FALLBACK.build,
+  };
 }
 
 /**
