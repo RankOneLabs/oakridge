@@ -7,8 +7,8 @@ import { insertEpic } from "../../db/epics";
 import { insertPlan } from "../../db/plans";
 import { insertCohort } from "../../db/cohorts";
 import { insertBrief } from "../../db/briefs";
-import { createDispatcher } from "./dispatcher";
-import type { ExecutionBackend, InputRef, StageRow } from "./interface";
+import { buildSlotsForBrief } from "./dispatcher";
+import { loadPrompt, renderPrompt } from "./prompt-loader";
 
 const PROJECT_ID = "proj-1";
 const SPEC_ID = "spec-1";
@@ -51,47 +51,23 @@ afterEach(() => {
   db.close();
 });
 
-function makeCaptureBackend(): { backend: ExecutionBackend; prompts: string[] } {
-  const prompts: string[] = [];
-  const backend: ExecutionBackend = {
-    id: "kbbl_chat",
-    async dispatch(_stage: StageRow, _inputRef: InputRef, renderedPrompt: string) {
-      prompts.push(renderedPrompt);
-      return { session_ref: "fake-sid" };
-    },
-    async status() {
-      return "completed" as const;
-    },
-  };
-  return { backend, prompts };
-}
-
-describe("dispatcher build prompt — EPIC_BRANCH slot", () => {
-  test("rendered build prompt contains --base epic/<slug>", async () => {
-    const { backend, prompts } = makeCaptureBackend();
-    const dispatcher = createDispatcher({
-      db,
-      backends: { kbbl_chat: backend },
-      kbblUrl: "http://kbbl",
-    });
-
-    await dispatcher.dispatch("build", BRIEF_ID);
-
-    expect(prompts).toHaveLength(1);
-    expect(prompts[0]).toContain(`--base epic/${EPIC_SLUG}`);
+describe("buildSlotsForBrief — EPIC_BRANCH slot", () => {
+  test("EPIC_BRANCH is epic/<slug> from sanitizeForName(epic.title, epic.id)", () => {
+    const slots = buildSlotsForBrief(db, BRIEF_ID, "http://kbbl");
+    expect(slots.EPIC_BRANCH).toBe(`epic/${EPIC_SLUG}`);
   });
 
-  test("EPIC_BRANCH slug matches sanitizeForName(epic.title, epic.id)", async () => {
-    const { backend, prompts } = makeCaptureBackend();
-    const dispatcher = createDispatcher({
-      db,
-      backends: { kbbl_chat: backend },
-      kbblUrl: "http://kbbl",
-    });
+  test("rendered build prompt contains --base epic/<slug>", () => {
+    const slots = buildSlotsForBrief(db, BRIEF_ID, "http://kbbl");
+    const template = loadPrompt("build.md");
+    const rendered = renderPrompt(template, slots);
+    expect(rendered).toContain(`--base epic/${EPIC_SLUG}`);
+  });
 
-    await dispatcher.dispatch("build", BRIEF_ID);
-
-    // Verify the exact slug derived from the fixture epic title
-    expect(prompts[0]).toContain(`--base epic/${EPIC_SLUG} --title`);
+  test("rendered build prompt has --base immediately before --title", () => {
+    const slots = buildSlotsForBrief(db, BRIEF_ID, "http://kbbl");
+    const template = loadPrompt("build.md");
+    const rendered = renderPrompt(template, slots);
+    expect(rendered).toContain(`--base epic/${EPIC_SLUG} --title`);
   });
 });

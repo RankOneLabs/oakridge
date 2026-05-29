@@ -433,7 +433,7 @@ function buildSlotsForCohort(db: Database, cohort_id: string, kbblUrl: string): 
   };
 }
 
-function buildSlotsForBrief(db: Database, brief_id: string, kbblUrl: string): Record<string, string> {
+export function buildSlotsForBrief(db: Database, brief_id: string, kbblUrl: string): Record<string, string> {
   const project = getProjectForBrief(db, brief_id);
   if (!project) throw new Error(`project not found for brief ${brief_id}`);
   const briefRow = db
