@@ -108,6 +108,13 @@ function sanitizeForName(s: string, fallbackId: string): string {
   return out.length > 40 ? out.slice(0, 40) : out;
 }
 
+interface BriefIdentityContext {
+  spec_id: string;
+  cohort_id: string;
+  cohort_position: number;
+  cohort_title: string;
+}
+
 /**
  * Resolve the full cohort/spec context needed for epic identity in the brief
  * dispatch case. Single JOIN query — no multi-step round trips.
@@ -115,10 +122,9 @@ function sanitizeForName(s: string, fallbackId: string): string {
 function getBriefIdentityContext(
   db: Database,
   brief_id: string,
-): { spec_id: string; cohort_id: string; cohort_position: number; cohort_title: string } | null {
-  interface Row { spec_id: string; cohort_id: string; cohort_position: number; cohort_title: string }
+): BriefIdentityContext | null {
   const row = db
-    .prepare<Row, [string]>(
+    .prepare<BriefIdentityContext, [string]>(
       `SELECT s.id AS spec_id, c.id AS cohort_id, c.position AS cohort_position, c.title AS cohort_title
          FROM specs s
          JOIN plans pl ON pl.spec_id = s.id
@@ -130,40 +136,72 @@ function getBriefIdentityContext(
   return row ?? null;
 }
 
-/**
- * Idempotently ensure `epic/<slug>` exists on origin. Checks via
- * `git ls-remote`; if absent, seeds from origin/main via fetch + push,
- * then fetches the new branch locally so subsequent `git rev-parse
- * origin/<epicBranch>` calls succeed inside createWorktree.
- */
-export async function ensureEpicBranchExists(epicBranch: string, workdir: string): Promise<void> {
-  const lsRemote = Bun.spawn({
+async function lsRemoteEpicBranch(epicBranch: string, workdir: string): Promise<string> {
+  const proc = Bun.spawn({
     cmd: ["git", "-C", workdir, "ls-remote", "origin", `refs/heads/${epicBranch}`],
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [lsOut, lsErr, lsCode] = await Promise.all([
-    new Response(lsRemote.stdout).text(),
-    new Response(lsRemote.stderr).text(),
-    lsRemote.exited,
+  const [out, err, code] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
   ]);
-  if (lsCode !== 0) {
+  if (code !== 0) {
     throw new Error(
-      `git ls-remote origin refs/heads/${epicBranch} failed (exit ${lsCode}): ${lsErr.trim()}`,
+      `git ls-remote origin refs/heads/${epicBranch} failed (exit ${code}): ${err.trim()}`,
     );
   }
-  if (lsOut.trim() !== "") return;
+  return out.trim();
+}
 
-  // Branch absent on origin — seed it from origin/main.
-  const fetch = Bun.spawn({
+async function fetchEpicBranchLocally(epicBranch: string, workdir: string): Promise<void> {
+  const proc = Bun.spawn({
+    cmd: ["git", "-C", workdir, "fetch", "origin", epicBranch],
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, err, code] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  if (code !== 0) {
+    throw new Error(
+      `git fetch origin ${epicBranch} failed (exit ${code}): ${err.trim()}`,
+    );
+  }
+}
+
+/**
+ * Idempotently ensure `epic/<slug>` exists on origin and is current in local
+ * remote-tracking refs (so subsequent `git rev-parse origin/<epicBranch>`
+ * inside createWorktree succeeds).
+ *
+ * When the branch already exists on origin, only a local fetch is done.
+ * When absent, it is seeded from origin/main (fetch main → push → fetch back).
+ * A concurrent push failure is re-checked: if the branch now exists the race
+ * resolved benignly and we proceed with a local fetch.
+ */
+export async function ensureEpicBranchExists(epicBranch: string, workdir: string): Promise<void> {
+  const existingOut = await lsRemoteEpicBranch(epicBranch, workdir);
+
+  if (existingOut !== "") {
+    // Branch already on origin — just ensure local tracking ref is current.
+    await fetchEpicBranchLocally(epicBranch, workdir);
+    return;
+  }
+
+  // Branch absent — seed it from origin/main.
+  const fetchMain = Bun.spawn({
     cmd: ["git", "-C", workdir, "fetch", "origin", "main"],
     stdout: "pipe",
     stderr: "pipe",
   });
   const [, fetchErr, fetchCode] = await Promise.all([
-    new Response(fetch.stdout).text(),
-    new Response(fetch.stderr).text(),
-    fetch.exited,
+    new Response(fetchMain.stdout).text(),
+    new Response(fetchMain.stderr).text(),
+    fetchMain.exited,
   ]);
   if (fetchCode !== 0) {
     throw new Error(
@@ -182,27 +220,17 @@ export async function ensureEpicBranchExists(epicBranch: string, workdir: string
     push.exited,
   ]);
   if (pushCode !== 0) {
-    throw new Error(
-      `git push origin origin/main:refs/heads/${epicBranch} failed (exit ${pushCode}): ${pushErr.trim()}`,
-    );
+    // Concurrent push may have raced us. Re-check before throwing.
+    const recheck = await lsRemoteEpicBranch(epicBranch, workdir);
+    if (recheck === "") {
+      throw new Error(
+        `git push origin origin/main:refs/heads/${epicBranch} failed (exit ${pushCode}): ${pushErr.trim()}`,
+      );
+    }
+    // Another writer seeded the branch; fall through to local fetch.
   }
 
-  // Update local remote-tracking ref so createWorktree can git rev-parse origin/<epicBranch>.
-  const fetchEpic = Bun.spawn({
-    cmd: ["git", "-C", workdir, "fetch", "origin", epicBranch],
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [, fetchEpicErr, fetchEpicCode] = await Promise.all([
-    new Response(fetchEpic.stdout).text(),
-    new Response(fetchEpic.stderr).text(),
-    fetchEpic.exited,
-  ]);
-  if (fetchEpicCode !== 0) {
-    throw new Error(
-      `git fetch origin ${epicBranch} failed (exit ${fetchEpicCode}): ${fetchEpicErr.trim()}`,
-    );
-  }
+  await fetchEpicBranchLocally(epicBranch, workdir);
 }
 
 function getSpecTitleForCohort(db: Database, cohort_id: string): string | null {

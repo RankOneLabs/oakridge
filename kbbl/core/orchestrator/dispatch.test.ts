@@ -154,16 +154,22 @@ function patch(app: Hono, path: string, body: unknown) {
   });
 }
 
+/** Drain the microtask queue so synchronous event handlers settle. */
+function flushAsync() {
+  return new Promise<void>((resolve) => setTimeout(resolve, 0));
+}
+
 /**
- * Yield to allow async event handlers (dispatch hooks) to settle. A 150ms
- * ceiling is needed because brief dispatch now calls ensureEpicBranchExists
- * which runs real git I/O against the local bare-repo origin; one microtask
- * tick is insufficient for that. Tests without build dispatches also use this
- * helper, so the overhead is paid uniformly — keeping it small matters.
+ * Poll `condition` until it returns true or `timeoutMs` elapses. Used after
+ * build dispatches that involve real git I/O (ensureEpicBranchExists) so we
+ * wait only as long as needed rather than sleeping a fixed amount.
  */
-async function flushAsync() {
-  await new Promise<void>((resolve) => setTimeout(resolve, 0));
-  await new Promise<void>((resolve) => setTimeout(resolve, 150));
+async function waitFor(condition: () => boolean, timeoutMs = 3000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() >= deadline) throw new Error("waitFor timed out");
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+  }
 }
 
 // ---- test suite ----
@@ -280,7 +286,7 @@ describe("full dispatch pipeline with MockBackend", () => {
     const approveBriefRes = await patch(app, `/briefs/${brief.id}/status`, { status: "approved" });
     expect(approveBriefRes.status).toBe(200);
 
-    await flushAsync();
+    await waitFor(() => mockBackend.calls.length >= 3);
     expect(mockBackend.calls).toHaveLength(3);
     expect(mockBackend.calls[2]!.stageName).toBe("build");
     expect(mockBackend.calls[2]!.inputId).toBe(brief.id);
@@ -438,9 +444,10 @@ describe("full dispatch pipeline with MockBackend", () => {
     //    bA: A has no deps → building + build dispatch.
     //    bB: B depends on A (building, not done) → ready_to_build (no build dispatch).
     //    bC: C depends on B (ready_to_build, not done) → ready_to_build (no build dispatch).
+    const preApproveCallCount = mockBackend.calls.length;
     const approveA = await patch(app, `/briefs/${bA}/status`, { status: "approved" });
     expect(approveA.status).toBe(200);
-    await flushAsync();
+    await waitFor(() => mockBackend.calls.length >= preApproveCallCount + 1);
     expect(db.prepare<{ status: string }, [string]>("SELECT status FROM cohorts WHERE id = ?").get(cohortA.id)!.status).toBe("building");
 
     const approveB = await patch(app, `/briefs/${bB}/status`, { status: "approved" });
@@ -465,7 +472,7 @@ describe("full dispatch pipeline with MockBackend", () => {
     // 7. Drive A to done → B's last dep met → B enters building; C still ready_to_build
     const doneA = await patch(app, `/cohorts/${cohortA.id}/status`, { status: "done" });
     expect(doneA.status).toBe(200);
-    await flushAsync();
+    await waitFor(() => mockBackend.calls.length >= callsAfterA + 1);
 
     expect(db.prepare<{ status: string }, [string]>("SELECT status FROM cohorts WHERE id = ?").get(cohortB.id)?.status).toBe("building");
     expect(db.prepare<{ status: string }, [string]>("SELECT status FROM cohorts WHERE id = ?").get(cohortC.id)?.status).toBe("ready_to_build");
@@ -480,7 +487,7 @@ describe("full dispatch pipeline with MockBackend", () => {
     // 8. Drive B to done → C's last dep met → C enters building
     const doneB = await patch(app, `/cohorts/${cohortB.id}/status`, { status: "done" });
     expect(doneB.status).toBe(200);
-    await flushAsync();
+    await waitFor(() => mockBackend.calls.length >= callsAfterADone + 1);
 
     expect(db.prepare<{ status: string }, [string]>("SELECT status FROM cohorts WHERE id = ?").get(cohortC.id)?.status).toBe("building");
 
@@ -544,7 +551,9 @@ describe("full dispatch pipeline with MockBackend", () => {
     await postBrief(cohortB.id);
     await postBrief(cohortC.id);
 
-    // A has no deps → enters building after brief approval; B + C are ready_to_build
+    // A has no deps → enters building after brief approval; B + C are ready_to_build.
+    // Wait for A's build dispatch (git I/O) before snapshotting callsBeforeMerge.
+    await waitFor(() => mockBackend.calls.some((c) => c.stageName === "build" && c.inputId === bA));
     const callsBeforeMerge = mockBackend.calls.length;
 
     // 6. Walk A through awaiting_merge → merged → B enters building
@@ -555,7 +564,7 @@ describe("full dispatch pipeline with MockBackend", () => {
     expect(callsAfterAMerge).toBe(callsBeforeMerge); // no new dispatch yet
 
     await patch(app, `/cohorts/${cohortA.id}/status`, { status: "merged" });
-    await flushAsync();
+    await waitFor(() => mockBackend.calls.length >= callsBeforeMerge + 1);
     // B should now be building; one new build dispatch for B
     const callsAfterAMerged = mockBackend.calls.length;
     expect(callsAfterAMerged).toBe(callsBeforeMerge + 1);
@@ -565,7 +574,7 @@ describe("full dispatch pipeline with MockBackend", () => {
     await patch(app, `/cohorts/${cohortB.id}/status`, { status: "awaiting_merge", pr_url: "https://github.com/org/repo/pull/2" });
     await flushAsync();
     await patch(app, `/cohorts/${cohortB.id}/status`, { status: "merged" });
-    await flushAsync();
+    await waitFor(() => mockBackend.calls.length >= callsBeforeMerge + 2);
     const callsAfterBMerged = mockBackend.calls.length;
     expect(callsAfterBMerged).toBe(callsBeforeMerge + 2);
 
@@ -573,7 +582,7 @@ describe("full dispatch pipeline with MockBackend", () => {
     await patch(app, `/cohorts/${cohortC.id}/status`, { status: "awaiting_merge", pr_url: "https://github.com/org/repo/pull/3" });
     await flushAsync();
     await patch(app, `/cohorts/${cohortC.id}/status`, { status: "merged" });
-    await flushAsync();
+    await waitFor(() => mockBackend.calls.length >= callsBeforeMerge + 3);
 
     // Exactly one new call: assessor
     const callsAfterCMerged = mockBackend.calls.length;

@@ -9,7 +9,6 @@ import type { KbblConfig } from "../../config";
 import { KbblConfigSchema } from "../../config";
 import type { RuntimeId } from "../../runtime";
 import type { Session, SpawnCmd } from "../../session/session";
-import { ensureEpicBranchExists } from "./dispatcher";
 
 interface FakeCreateOpts {
   workdir: string;
@@ -239,7 +238,7 @@ describe("KbblChatBackend worktreeIdentity integration", () => {
     expect(session.worktreeBaseRef).toBe(expectedSha);
   });
 
-  test("Test B: absent epic branch → ensureEpicBranchExists seeds it, session lands on slug branch", async () => {
+  test("Test B: absent epic branch → seed it with git, session lands on slug branch", async () => {
     // Confirm branch absent before seeding
     const lsBefore = Bun.spawn({
       cmd: ["git", "-C", workdir, "ls-remote", "origin", `refs/heads/${EPIC_BRANCH}`],
@@ -248,8 +247,9 @@ describe("KbblChatBackend worktreeIdentity integration", () => {
     const [lsOut] = await Promise.all([new Response(lsBefore.stdout).text(), lsBefore.exited]);
     expect(lsOut.trim()).toBe("");
 
-    // Seed the branch via ensureEpicBranchExists
-    await ensureEpicBranchExists(EPIC_BRANCH, workdir);
+    // Seed the branch via git (mirror what ensureEpicBranchExists does internally)
+    await runCmd(["git", "-C", workdir, "push", "origin", `main:refs/heads/${EPIC_BRANCH}`]);
+    await runCmd(["git", "-C", workdir, "fetch", "origin", EPIC_BRANCH]);
 
     // Confirm seeding worked
     const lsAfter = Bun.spawn({
