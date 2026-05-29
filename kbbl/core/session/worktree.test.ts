@@ -238,34 +238,27 @@ describe("createWorktree — identity and baseRef opts", () => {
     expect(created.worktreePath).toBe(join(worktreesRoot, "foo", sid));
   });
 
-  test("identity-provided branch: no --no-track means upstream tracking is configured", async () => {
-    // Set up a bare remote so origin/main is a real remote-tracking ref.
+  test("identity-provided branch can be pushed to origin with explicit refspec", async () => {
+    // Set up a bare remote and push main so origin exists.
     const remoteDir = join(tmpRoot, "remote.git");
     const mkproc = Bun.spawn({ cmd: ["mkdir", "-p", remoteDir] });
     await mkproc.exited;
     await git(remoteDir, "init", "--bare", "-b", "main");
     await git(repoDir, "remote", "add", "origin", remoteDir);
     await git(repoDir, "push", "origin", "main");
-    await git(repoDir, "fetch", "origin");
 
-    // Branch from origin/main so git auto-sets upstream tracking (only when
-    // --no-track is absent). With --no-track, git branch -vv would show no
-    // [origin/...] marker and git push (no args) would fail.
     const created = await createWorktree({
       workdir: repoDir,
       worktreesRoot,
       oakridgeSid: "pushtest0123456789",
       identity: { branchName: "epic/e/cohort-1-push", worktreeSubdir: "e" },
-      baseRef: "origin/main",
     });
 
-    // Tracking is set up: git branch -vv shows [origin/main] on this branch.
-    // This only happens when --no-track is absent; with --no-track the line
-    // would have no [...] marker at all.
+    // --no-track is applied on all paths; cohort branches push with an
+    // explicit refspec rather than relying on auto-configured upstream.
     const vv = await git(created.worktreePath, "branch", "-vv");
-    expect(vv).toMatch(/\[origin\/main\]/);
+    expect(vv).not.toMatch(/\[/);
 
-    // Explicit push to origin also succeeds (new branch, so force isn't needed).
     const pushProc = Bun.spawn({
       cmd: ["git", "-C", created.worktreePath, "push", "origin", "epic/e/cohort-1-push"],
       stdout: "pipe",

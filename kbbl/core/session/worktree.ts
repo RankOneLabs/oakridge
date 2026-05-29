@@ -210,11 +210,11 @@ export async function createWorktree(
     opts.workdir,
     "worktree",
     "add",
-    // --no-track: kbbl/<sid8> branches are local-only session ephemera, never
-    // pushed to a remote, so suppressing upstream tracking avoids polluting
-    // `git branch -vv` and prevents an accidental push to origin. Cohort
-    // branches (identity provided) omit this flag so they can push naturally.
-    ...(opts.identity ? [] : ["--no-track"]),
+    // --no-track: all kbbl branches are created from a base ref but never
+    // tracked to it — session ephemera (kbbl/<sid8>) must not leak to origin,
+    // and cohort branches push explicitly with a full refspec so auto-tracking
+    // the base (e.g. origin/main → wrong upstream) would only cause confusion.
+    "--no-track",
     "-b",
     branch,
     worktreePath,
