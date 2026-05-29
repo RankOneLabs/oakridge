@@ -1,3 +1,5 @@
+import type { RuntimeId } from "../../runtime";
+
 export interface StageRow {
   name: string;
   prompt_template_path: string;
@@ -33,6 +35,13 @@ export interface InputRef {
    * and continue with sid-based naming.
    */
   worktreeIdentity?: EpicIdentity;
+  /**
+   * Pre-resolved Epic routing knob from the dispatcher. Set only when both
+   * the runtime and model columns of the relevant Epic knob (planner or build)
+   * are non-null. Takes precedence over config.runtime.stages and STAGE_ROUTING
+   * inside the kbbl_chat backend's resolveStageRouting() call.
+   */
+  routingOverride?: { runtime: RuntimeId; model: string };
 }
 
 export interface ExecutionBackend {

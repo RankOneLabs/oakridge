@@ -4,7 +4,8 @@ import { loadPrompt, renderPrompt } from "./prompt-loader";
 import { listCohortsByPlan, listDependenciesByPlan } from "../../db/cohorts";
 import { listResolvedDiscrepanciesBySpec } from "../../db/spec-discrepancies";
 import { getEpicBySpec } from "../../db/epics";
-import type { Cohort, CohortDependency } from "../../types/task-tracker";
+import type { RuntimeId } from "../../runtime";
+import type { Cohort, CohortDependency, Epic } from "../../types/task-tracker";
 
 interface DispatcherDeps {
   db: Database;
@@ -88,6 +89,53 @@ function getProjectForPlan(db: Database, plan_id: string): ProjectRow | null {
       )
       .get(plan_id) ?? null
   );
+}
+
+// ---- Epic routing helpers ----
+
+function getSpecIdForCohort(db: Database, cohort_id: string): string | null {
+  const row = db
+    .prepare<{ spec_id: string }, [string]>(
+      `SELECT p.spec_id FROM cohorts c JOIN plans p ON p.id = c.plan_id WHERE c.id = ?`,
+    )
+    .get(cohort_id);
+  return row?.spec_id ?? null;
+}
+
+function getSpecIdForPlan(db: Database, plan_id: string): string | null {
+  const row = db
+    .prepare<{ spec_id: string }, [string]>("SELECT spec_id FROM plans WHERE id = ?")
+    .get(plan_id);
+  return row?.spec_id ?? null;
+}
+
+const PLANNER_STAGE_NAMES = new Set([
+  "spec_analyzer",
+  "plan_writer",
+  "brief_writer",
+  "assessor",
+]);
+
+/**
+ * Resolve the Epic routing knob for a stage. Returns undefined when the epic
+ * is null, the stage name doesn't match a known knob, or either knob column
+ * is NULL (partial knob falls through rather than producing a partial override).
+ */
+export function resolveEpicRoutingOverride(
+  epic: Epic | null,
+  stageName: string,
+): { runtime: RuntimeId; model: string } | undefined {
+  if (!epic) return undefined;
+  if (stageName === "build") {
+    if (epic.build_runtime && epic.build_model) {
+      return { runtime: epic.build_runtime, model: epic.build_model };
+    }
+  } else if (PLANNER_STAGE_NAMES.has(stageName)) {
+    if (epic.planner_runtime && epic.planner_model) {
+      return { runtime: epic.planner_runtime, model: epic.planner_model };
+    }
+  }
+  return undefined;
 }
 
 // ---- Session name builders ----
@@ -664,14 +712,19 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
           slots = buildSlotsForSpec(db, inputId, kbblUrl);
           workdir = resolveWorkdirForSpec(db, inputId);
           const sessionName = buildSessionNameForSpec(db, inputId, stage.name);
-          inputRef = { type: "spec", id: inputId, workdir, sessionName };
+          const epicForSpec = getEpicBySpec(db, inputId);
+          const routingOverride = resolveEpicRoutingOverride(epicForSpec, stage.name);
+          inputRef = { type: "spec", id: inputId, workdir, sessionName, routingOverride };
           break;
         }
         case "cohort": {
           slots = buildSlotsForCohort(db, inputId, kbblUrl);
           workdir = resolveWorkdirForCohort(db, inputId);
           const sessionName = buildSessionNameForCohort(db, inputId, stage.name);
-          inputRef = { type: "cohort", id: inputId, workdir, sessionName };
+          const specIdForCohort = getSpecIdForCohort(db, inputId);
+          const epicForCohort = specIdForCohort ? getEpicBySpec(db, specIdForCohort) : null;
+          const routingOverride = resolveEpicRoutingOverride(epicForCohort, stage.name);
+          inputRef = { type: "cohort", id: inputId, workdir, sessionName, routingOverride };
           break;
         }
         case "brief": {
@@ -691,12 +744,14 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
 
           await ensureEpicBranchExists(epicBranch, workdir);
 
+          const routingOverride = resolveEpicRoutingOverride(epic, stage.name);
           inputRef = {
             type: "brief",
             id: inputId,
             workdir,
             sessionName,
             worktreeIdentity: { epicSlug, cohortSlug, epicBranch },
+            routingOverride,
           };
           break;
         }
@@ -706,7 +761,10 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
             : buildSlotsForPlan(db, inputId, kbblUrl);
           workdir = resolveWorkdirForPlan(db, inputId);
           const sessionName = buildSessionNameForPlan(db, inputId, stage.name);
-          inputRef = { type: "plan", id: inputId, workdir, sessionName };
+          const specIdForPlan = getSpecIdForPlan(db, inputId);
+          const epicForPlan = specIdForPlan ? getEpicBySpec(db, specIdForPlan) : null;
+          const routingOverride = resolveEpicRoutingOverride(epicForPlan, stage.name);
+          inputRef = { type: "plan", id: inputId, workdir, sessionName, routingOverride };
           break;
         }
         default:

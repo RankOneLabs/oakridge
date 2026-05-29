@@ -7,7 +7,7 @@ import type { ExecutionBackend, InputRef, StageRow } from "./interface";
 // so dispatcher-spawned sessions don't fall through to the user-global default.
 type RoutedStage = "spec_analyzer" | "plan_writer" | "brief_writer" | "assessor" | "build";
 
-const STAGE_ROUTING: Record<RoutedStage, { runtime: RuntimeId; model: string }> = {
+export const STAGE_ROUTING: Record<RoutedStage, { runtime: RuntimeId; model: string }> = {
   spec_analyzer: { runtime: "claude-code", model: "claude-opus-4-8" },
   plan_writer:   { runtime: "claude-code", model: "claude-opus-4-8" },
   brief_writer:  { runtime: "claude-code", model: "claude-opus-4-8" },
@@ -17,6 +17,26 @@ const STAGE_ROUTING: Record<RoutedStage, { runtime: RuntimeId; model: string }> 
 
 function isRoutedStage(name: string): name is RoutedStage {
   return Object.hasOwn(STAGE_ROUTING, name);
+}
+
+/**
+ * Resolve runtime+model for a stage using most-specific-wins precedence:
+ * override (Epic knob) > config.runtime.stages > STAGE_ROUTING > null.
+ *
+ * Returns null only for stages not covered by any tier — callers treat null
+ * as a hard failure (no routing entry found).
+ */
+export function resolveStageRouting(
+  stageName: string,
+  config: KbblConfig | undefined,
+  override?: { runtime: RuntimeId; model: string },
+): { runtime: RuntimeId; model: string } | null {
+  const configEntry =
+    config?.runtime.stages && Object.hasOwn(config.runtime.stages, stageName)
+      ? config.runtime.stages[stageName]
+      : undefined;
+  const defaultEntry = isRoutedStage(stageName) ? STAGE_ROUTING[stageName] : undefined;
+  return override ?? configEntry ?? defaultEntry ?? null;
 }
 
 export function createKbblChatBackend({
@@ -30,25 +50,26 @@ export function createKbblChatBackend({
     id: "kbbl_chat",
 
     async dispatch(stage: StageRow, inputRef: InputRef, renderedPrompt: string): Promise<{ session_ref: string }> {
-      const defaultRouting = isRoutedStage(stage.name) ? STAGE_ROUTING[stage.name] : null;
-      const stageOverride =
-        config?.runtime.stages && Object.hasOwn(config.runtime.stages, stage.name)
-          ? config.runtime.stages[stage.name]
-          : undefined;
-      const routing = stageOverride ?? defaultRouting;
+      const routing = resolveStageRouting(stage.name, config, inputRef.routingOverride);
       if (!routing) {
         throw new Error(
           `No routing entry for stage "${stage.name}". Add it to STAGE_ROUTING in kbbl-chat.ts or route it via config.runtime.stages.`
         );
       }
 
-      const session = await manager.create({
-        workdir: inputRef.workdir,
-        name: inputRef.sessionName,
-        model: routing.model,
-        runtime: routing.runtime,
-        ...(inputRef.worktreeIdentity ? { worktreeIdentity: inputRef.worktreeIdentity } : {}),
-      });
+      let session;
+      try {
+        session = await manager.create({
+          workdir: inputRef.workdir,
+          name: inputRef.sessionName,
+          model: routing.model,
+          runtime: routing.runtime,
+          ...(inputRef.worktreeIdentity ? { worktreeIdentity: inputRef.worktreeIdentity } : {}),
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new Error(`stage "${stage.name}": ${msg}`, { cause: err });
+      }
       await session.writeInput(renderedPrompt);
       return { session_ref: session.oakridgeSid };
     },

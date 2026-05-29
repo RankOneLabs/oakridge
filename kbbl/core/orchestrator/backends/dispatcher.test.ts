@@ -7,8 +7,9 @@ import { insertEpic } from "../../db/epics";
 import { insertPlan } from "../../db/plans";
 import { insertCohort } from "../../db/cohorts";
 import { insertBrief } from "../../db/briefs";
-import { buildSlotsForBrief } from "./dispatcher";
+import { buildSlotsForBrief, resolveEpicRoutingOverride } from "./dispatcher";
 import { loadPrompt, renderPrompt } from "./prompt-loader";
+import type { Epic } from "../../types/task-tracker";
 
 const PROJECT_ID = "proj-1";
 const SPEC_ID = "spec-1";
@@ -49,6 +50,73 @@ beforeEach(() => {
 
 afterEach(() => {
   db.close();
+});
+
+function makeEpic(overrides: Partial<Epic> = {}): Epic {
+  return {
+    id: "e1",
+    spec_id: "s1",
+    project_id: "p1",
+    title: "T",
+    status: "active",
+    current_stage: "build",
+    planner_runtime: null,
+    planner_model: null,
+    build_runtime: null,
+    build_model: null,
+    created_at: "2026-01-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+describe("resolveEpicRoutingOverride — knob selection and partial fallthrough", () => {
+  test("null epic → undefined", () => {
+    expect(resolveEpicRoutingOverride(null, "build")).toBeUndefined();
+    expect(resolveEpicRoutingOverride(null, "plan_writer")).toBeUndefined();
+  });
+
+  test("build stage with full build knob → build override", () => {
+    const result = resolveEpicRoutingOverride(
+      makeEpic({ build_runtime: "codex", build_model: "codex-custom" }),
+      "build",
+    );
+    expect(result).toEqual({ runtime: "codex", model: "codex-custom" });
+  });
+
+  test("planner stages with full planner knob → planner override", () => {
+    const epic = makeEpic({ planner_runtime: "claude-code", planner_model: "claude-opus-4-9" });
+    for (const stageName of ["spec_analyzer", "plan_writer", "brief_writer", "assessor"]) {
+      expect(resolveEpicRoutingOverride(epic, stageName)).toEqual({
+        runtime: "claude-code",
+        model: "claude-opus-4-9",
+      });
+    }
+  });
+
+  test("build stage ignores planner knob", () => {
+    const epic = makeEpic({ planner_runtime: "codex", planner_model: "p-model", build_runtime: null, build_model: null });
+    expect(resolveEpicRoutingOverride(epic, "build")).toBeUndefined();
+  });
+
+  test("planner stage ignores build knob", () => {
+    const epic = makeEpic({ build_runtime: "codex", build_model: "b-model", planner_runtime: null, planner_model: null });
+    expect(resolveEpicRoutingOverride(epic, "plan_writer")).toBeUndefined();
+  });
+
+  test("partial build knob (runtime set, model null) → undefined (falls through)", () => {
+    const epic = makeEpic({ build_runtime: "codex", build_model: null });
+    expect(resolveEpicRoutingOverride(epic, "build")).toBeUndefined();
+  });
+
+  test("partial planner knob (model set, runtime null) → undefined (falls through)", () => {
+    const epic = makeEpic({ planner_runtime: null, planner_model: "some-model" });
+    expect(resolveEpicRoutingOverride(epic, "plan_writer")).toBeUndefined();
+  });
+
+  test("unknown stage name with full knobs → undefined", () => {
+    const epic = makeEpic({ build_runtime: "codex", build_model: "b", planner_runtime: "claude-code", planner_model: "p" });
+    expect(resolveEpicRoutingOverride(epic, "future-stage")).toBeUndefined();
+  });
 });
 
 describe("buildSlotsForBrief — EPIC_BRANCH slot", () => {
