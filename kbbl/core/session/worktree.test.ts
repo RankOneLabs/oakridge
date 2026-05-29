@@ -198,12 +198,12 @@ describe("createWorktree — identity and baseRef opts", () => {
       workdir: repoDir,
       worktreesRoot,
       oakridgeSid: sid,
-      identity: { branchName: "epic/myepic/cohort-1-myslug", worktreeSubdir: "myepic" },
+      identity: { branchName: "cohort/myepic/1-myslug", worktreeSubdir: "myepic" },
     });
-    expect(created.worktreeBranch).toBe("epic/myepic/cohort-1-myslug");
+    expect(created.worktreeBranch).toBe("cohort/myepic/1-myslug");
     expect(created.worktreePath).toBe(join(worktreesRoot, "myepic", sid));
     const cur = (await git(created.worktreePath, "branch", "--show-current")).trim();
-    expect(cur).toBe("epic/myepic/cohort-1-myslug");
+    expect(cur).toBe("cohort/myepic/1-myslug");
   });
 
   test("baseRef provided: worktreeBaseRef equals git rev-parse <baseRef>, sha differs from HEAD", async () => {
@@ -217,7 +217,7 @@ describe("createWorktree — identity and baseRef opts", () => {
       workdir: repoDir,
       worktreesRoot,
       oakridgeSid: "basereftest12345",
-      identity: { branchName: "epic/e/cohort-1-s", worktreeSubdir: "e" },
+      identity: { branchName: "cohort/e/1-s", worktreeSubdir: "e" },
       baseRef: "HEAD~1",
     });
     expect(created.worktreeBaseRef).toBe(firstCommitSha);
@@ -231,10 +231,10 @@ describe("createWorktree — identity and baseRef opts", () => {
       workdir: repoDir,
       worktreesRoot,
       oakridgeSid: sid,
-      identity: { branchName: "epic/foo/cohort-1-bar", worktreeSubdir: "foo" },
+      identity: { branchName: "cohort/foo/1-bar", worktreeSubdir: "foo" },
       resumeDepth: 2,
     });
-    expect(created.worktreeBranch).toBe("epic/foo/cohort-1-bar-r2");
+    expect(created.worktreeBranch).toBe("cohort/foo/1-bar-r2");
     expect(created.worktreePath).toBe(join(worktreesRoot, "foo", sid));
   });
 
@@ -251,7 +251,7 @@ describe("createWorktree — identity and baseRef opts", () => {
       workdir: repoDir,
       worktreesRoot,
       oakridgeSid: "pushtest0123456789",
-      identity: { branchName: "epic/e/cohort-1-push", worktreeSubdir: "e" },
+      identity: { branchName: "cohort/e/1-push", worktreeSubdir: "e" },
     });
 
     // --no-track is applied on all paths; cohort branches push with an
@@ -260,7 +260,7 @@ describe("createWorktree — identity and baseRef opts", () => {
     expect(vv).not.toMatch(/\[/);
 
     const pushProc = Bun.spawn({
-      cmd: ["git", "-C", created.worktreePath, "push", "origin", "epic/e/cohort-1-push"],
+      cmd: ["git", "-C", created.worktreePath, "push", "origin", "cohort/e/1-push"],
       stdout: "pipe",
       stderr: "pipe",
     });

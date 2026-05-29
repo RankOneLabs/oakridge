@@ -686,7 +686,7 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
           if (!epic) throw new Error(`brief ${inputId}: no epic found for spec ${identityCtx.spec_id}`);
 
           const epicSlug = sanitizeForName(epic.title, epic.id);
-          const cohortSlug = `cohort-${identityCtx.cohort_position}-${sanitizeForName(identityCtx.cohort_title, identityCtx.cohort_id)}`;
+          const cohortSlug = `${identityCtx.cohort_position}-${sanitizeForName(identityCtx.cohort_title, identityCtx.cohort_id)}`;
           const epicBranch = `epic/${epicSlug}`;
 
           await ensureEpicBranchExists(epicBranch, workdir);

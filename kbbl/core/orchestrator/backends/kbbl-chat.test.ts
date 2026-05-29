@@ -172,7 +172,7 @@ describe("KbblChatBackend worktreeIdentity integration", () => {
   let manager: SessionManager;
 
   const EPIC_SLUG = "test_epic";
-  const COHORT_SLUG = "cohort-1-test_cohort";
+  const COHORT_SLUG = "1-test_cohort";
   const EPIC_BRANCH = `epic/${EPIC_SLUG}`;
 
   const buildStage: StageRow = {
@@ -234,7 +234,7 @@ describe("KbblChatBackend worktreeIdentity integration", () => {
 
     const session = manager.get(session_ref);
     if (!session) throw new Error("session not found");
-    expect(session.worktreeBranch).toBe(`${EPIC_BRANCH}/${COHORT_SLUG}`);
+    expect(session.worktreeBranch).toBe(`cohort/${EPIC_SLUG}/${COHORT_SLUG}`);
     expect(session.worktreeBaseRef).toBe(expectedSha);
   });
 
@@ -273,7 +273,7 @@ describe("KbblChatBackend worktreeIdentity integration", () => {
 
     const session = manager.get(session_ref);
     if (!session) throw new Error("session not found");
-    expect(session.worktreeBranch).toBe(`${EPIC_BRANCH}/${COHORT_SLUG}`);
+    expect(session.worktreeBranch).toBe(`cohort/${EPIC_SLUG}/${COHORT_SLUG}`);
     expect(session.worktreeBaseRef).toBe(expectedSha);
   });
 });
