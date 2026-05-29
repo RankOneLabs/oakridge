@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { responseError } from "../lib/http";
+import { useServerConfig } from "../hooks/useServerConfig";
 
 import { StageStrip } from "./StageStrip";
 import { DiscrepanciesEditor } from "./DiscrepanciesEditor";
@@ -22,6 +23,10 @@ interface EpicDetailData {
     status: EpicStatus;
     current_stage: EpicStage;
     created_at: string;
+    planner_runtime: string | null;
+    planner_model: string | null;
+    build_runtime: string | null;
+    build_model: string | null;
   };
   spec: {
     id: string;
@@ -46,6 +51,7 @@ interface EpicDetailViewProps {
 
 export function EpicDetailView({ epic_id }: EpicDetailViewProps) {
   const queryClient = useQueryClient();
+  const config = useServerConfig();
 
   const query = useQuery({
     queryKey: ["epic", epic_id],
@@ -129,6 +135,11 @@ export function EpicDetailView({ epic_id }: EpicDetailViewProps) {
 
   const { epic, spec, plan, cohorts, assessment_present } = query.data;
 
+  const plannerRuntime = epic.planner_runtime ?? config?.stageDefaults.planner.runtime ?? '—';
+  const plannerModel = epic.planner_model ?? config?.stageDefaults.planner.model ?? '—';
+  const buildRuntime = epic.build_runtime ?? config?.stageDefaults.build.runtime ?? '—';
+  const buildModel = epic.build_model ?? config?.stageDefaults.build.model ?? '—';
+
   let drilldown: ReactNode = null;
   if (epic.current_stage === "spec" && spec) {
     drilldown = <DiscrepanciesEditor spec_id={spec.id} epic_id={epic_id} />;
@@ -173,6 +184,12 @@ export function EpicDetailView({ epic_id }: EpicDetailViewProps) {
               className={`epic-detail__chip epic-detail__chip--stage-${epic.current_stage}`}
             >
               {epic.current_stage}
+            </span>
+            <span className="epic-detail__chip epic-detail__chip--routing">
+              planner: {plannerRuntime} / {plannerModel}
+            </span>
+            <span className="epic-detail__chip epic-detail__chip--routing">
+              build: {buildRuntime} / {buildModel}
             </span>
           </div>
         </div>

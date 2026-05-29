@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement } from "react";
 
@@ -7,7 +7,35 @@ import { EpicDetailView } from "../EpicDetailView";
 
 type EpicStage = "spec" | "plan" | "build" | "assess";
 
-function makeFixture(current_stage: EpicStage) {
+const STAGE_DEFAULTS_CONFIG = {
+  defaultWorkdir: "/tmp",
+  defaultRuntimeId: "claude-code",
+  runtimes: [
+    {
+      id: "claude-code",
+      label: "Claude Code",
+      models: [
+        { value: "claude-opus-4-8", label: "Opus 4.8" },
+        { value: "claude-sonnet-4-6", label: "Sonnet 4.6" },
+      ],
+      supportsCompaction: true,
+    },
+  ],
+  stageDefaults: {
+    planner: { runtime: "claude-code", model: "claude-opus-4-8" },
+    build: { runtime: "claude-code", model: "claude-sonnet-4-6" },
+  },
+};
+
+function makeFixture(
+  current_stage: EpicStage,
+  routing?: {
+    planner_runtime?: string | null;
+    planner_model?: string | null;
+    build_runtime?: string | null;
+    build_model?: string | null;
+  },
+) {
   return {
     epic: {
       id: "epic-1",
@@ -16,6 +44,10 @@ function makeFixture(current_stage: EpicStage) {
       status: "active",
       current_stage,
       created_at: "2024-01-01T00:00:00Z",
+      planner_runtime: routing?.planner_runtime ?? null,
+      planner_model: routing?.planner_model ?? null,
+      build_runtime: routing?.build_runtime ?? null,
+      build_model: routing?.build_model ?? null,
     },
     spec:
       current_stage === "spec"
@@ -38,8 +70,17 @@ function makeFixture(current_stage: EpicStage) {
   };
 }
 
-function makeFetch(stage: EpicStage) {
+function makeFetch(
+  stage: EpicStage,
+  routing?: Parameters<typeof makeFixture>[1],
+) {
   return vi.fn().mockImplementation((url: string) => {
+    if (url === "/config") {
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(STAGE_DEFAULTS_CONFIG),
+      });
+    }
     if ((url as string).includes("/plans/plan-1/assessment")) {
       return Promise.resolve({
         ok: true,
@@ -49,7 +90,7 @@ function makeFetch(stage: EpicStage) {
     if ((url as string).includes("/epics/epic-1")) {
       return Promise.resolve({
         ok: true,
-        json: () => Promise.resolve(makeFixture(stage)),
+        json: () => Promise.resolve(makeFixture(stage, routing)),
       });
     }
     if ((url as string).includes("/spec-discrepancies")) {
@@ -126,5 +167,74 @@ describe("EpicDetailView", () => {
       (el) => el.getAttribute("aria-current") === "step",
     );
     expect(currentTile?.textContent).toMatch(/Assess/i);
+  });
+});
+
+describe("EpicDetailView routing chips", () => {
+  it("shows stageDefaults when routing columns are null", async () => {
+    vi.stubGlobal("fetch", makeFetch("build"));
+    renderWithClient(<EpicDetailView epic_id="epic-1" />);
+
+    // Wait for epic to load
+    await screen.findByRole("heading", { name: "Cohorts" });
+
+    await waitFor(() => {
+      const chips = document.querySelectorAll(".epic-detail__chip--routing");
+      expect(chips.length).toBe(2);
+      const texts = Array.from(chips).map((c) => c.textContent ?? "");
+      expect(texts.some((t) => t.includes("planner:") && t.includes("claude-code") && t.includes("claude-opus-4-8"))).toBe(true);
+      expect(texts.some((t) => t.includes("build:") && t.includes("claude-code") && t.includes("claude-sonnet-4-6"))).toBe(true);
+    });
+  });
+
+  it("shows epic routing values when columns are non-null", async () => {
+    vi.stubGlobal(
+      "fetch",
+      makeFetch("build", {
+        planner_runtime: "codex",
+        planner_model: "gpt-5.1-codex",
+        build_runtime: "claude-code",
+        build_model: "claude-opus-4-8",
+      }),
+    );
+    renderWithClient(<EpicDetailView epic_id="epic-1" />);
+
+    await screen.findByRole("heading", { name: "Cohorts" });
+
+    await waitFor(() => {
+      const chips = document.querySelectorAll(".epic-detail__chip--routing");
+      expect(chips.length).toBe(2);
+      const texts = Array.from(chips).map((c) => c.textContent ?? "");
+      expect(texts.some((t) => t.includes("planner:") && t.includes("codex") && t.includes("gpt-5.1-codex"))).toBe(true);
+      expect(texts.some((t) => t.includes("build:") && t.includes("claude-code") && t.includes("claude-opus-4-8"))).toBe(true);
+    });
+  });
+
+  it("falls back to em-dash when column is null and config is not yet loaded", async () => {
+    // Simulate config never resolving by making /config return an error
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => {
+      if (url === "/config") {
+        return Promise.resolve({ ok: false, status: 503, json: () => Promise.resolve({}) });
+      }
+      if ((url as string).includes("/epics/epic-1")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(makeFixture("build")),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+    }));
+    renderWithClient(<EpicDetailView epic_id="epic-1" />);
+
+    await screen.findByRole("heading", { name: "Cohorts" });
+
+    await waitFor(() => {
+      const chips = document.querySelectorAll(".epic-detail__chip--routing");
+      expect(chips.length).toBe(2);
+      const texts = Array.from(chips).map((c) => c.textContent ?? "");
+      // null columns + failed config → em-dash fallback
+      expect(texts.some((t) => t.includes("planner:") && t.includes("—"))).toBe(true);
+      expect(texts.some((t) => t.includes("build:") && t.includes("—"))).toBe(true);
+    });
   });
 });
