@@ -6,8 +6,8 @@
  * approval → build dispatch → debrief PATCH.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Hono } from "hono";
@@ -68,6 +68,34 @@ function createMockBackend(): MockBackend {
   };
 }
 
+// ---- git repo with origin (required for ensureEpicBranchExists in brief dispatch) ----
+
+let gitTmpRoot: string;
+let testRepoPath: string;
+
+async function runCmd(cmd: string[]): Promise<void> {
+  const p = Bun.spawn({ cmd, stdout: "pipe", stderr: "pipe" });
+  const [stderr, code] = await Promise.all([new Response(p.stderr).text(), p.exited]);
+  if (code !== 0) throw new Error(`${cmd.join(" ")} failed (exit ${code}): ${stderr}`);
+}
+
+beforeAll(async () => {
+  gitTmpRoot = mkdtempSync(join(tmpdir(), "kbbl-dispatch-git-"));
+  const originPath = join(gitTmpRoot, "origin");
+  testRepoPath = join(gitTmpRoot, "workdir");
+  await runCmd(["git", "init", "--bare", "-b", "main", originPath]);
+  await runCmd(["git", "clone", originPath, testRepoPath]);
+  await runCmd(["git", "-C", testRepoPath, "config", "user.email", "test@example.com"]);
+  await runCmd(["git", "-C", testRepoPath, "config", "user.name", "test"]);
+  await runCmd(["git", "-C", testRepoPath, "config", "commit.gpgsign", "false"]);
+  await runCmd(["git", "-C", testRepoPath, "commit", "--allow-empty", "-m", "init"]);
+  await runCmd(["git", "-C", testRepoPath, "push", "origin", "main"]);
+});
+
+afterAll(() => {
+  rmSync(gitTmpRoot, { recursive: true, force: true });
+});
+
 // ---- fixture prompt dir ----
 
 let promptsDir: string;
@@ -126,9 +154,16 @@ function patch(app: Hono, path: string, body: unknown) {
   });
 }
 
-/** Yield to the microtask queue so async event handlers (dispatch hooks) can settle. */
-function flushAsync() {
-  return new Promise<void>((resolve) => setTimeout(resolve, 0));
+/**
+ * Yield to allow async event handlers (dispatch hooks) to settle. A 150ms
+ * ceiling is needed because brief dispatch now calls ensureEpicBranchExists
+ * which runs real git I/O against the local bare-repo origin; one microtask
+ * tick is insufficient for that. Tests without build dispatches also use this
+ * helper, so the overhead is paid uniformly — keeping it small matters.
+ */
+async function flushAsync() {
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  await new Promise<void>((resolve) => setTimeout(resolve, 150));
 }
 
 // ---- test suite ----
@@ -182,7 +217,7 @@ afterEach(() => {
 describe("full dispatch pipeline with MockBackend", () => {
   test("POST /specs → spec_analyzer dispatch → plan → cohorts → plan approved → brief_writer dispatch → brief → brief approved → build dispatch → debrief PATCH", async () => {
     // 1. Create project + spec
-    const projRes = await post(app, "/projects", { name: "test", repo_path: "/tmp/test-repo" });
+    const projRes = await post(app, "/projects", { name: "test", repo_path: testRepoPath });
     expect(projRes.status).toBe(201);
     const proj = (await projRes.json()) as { id: string };
 
@@ -267,7 +302,7 @@ describe("full dispatch pipeline with MockBackend", () => {
 
   test("dispatcher.dispatch('brief_writer', plan_id) — toposorted prompt, plan persistence", async () => {
     // 1. Create project + spec + plan
-    const projRes = await post(app, "/projects", { name: "batch-test", repo_path: "/tmp/batch-repo" });
+    const projRes = await post(app, "/projects", { name: "batch-test", repo_path: testRepoPath });
     const proj = (await projRes.json()) as { id: string };
 
     const specRes = await post(app, "/specs", { project_id: proj.id, title: "Batch Spec", notes: "batch notes" });
@@ -343,7 +378,7 @@ describe("full dispatch pipeline with MockBackend", () => {
 
   test("plan-approved fan-out -> brief_writer -> dep-aware brief approval -> ready_to_build advancement", async () => {
     // 1. Create project + spec + plan
-    const projRes = await post(app, "/projects", { name: "fanout-test", repo_path: "/tmp/fanout-repo" });
+    const projRes = await post(app, "/projects", { name: "fanout-test", repo_path: testRepoPath });
     const proj = (await projRes.json()) as { id: string };
 
     const specRes = await post(app, "/specs", { project_id: proj.id, title: "Fanout Spec", notes: "dep chain" });
@@ -464,7 +499,7 @@ describe("full dispatch pipeline with MockBackend", () => {
 
   test("plan.completed → assessor dispatch after all cohorts go through awaiting_merge → merged", async () => {
     // 1. Create project + spec + plan
-    const projRes = await post(app, "/projects", { name: "assessor-test", repo_path: "/tmp/p3-repo" });
+    const projRes = await post(app, "/projects", { name: "assessor-test", repo_path: testRepoPath });
     const proj = (await projRes.json()) as { id: string };
 
     const specRes = await post(app, "/specs", { project_id: proj.id, title: "P3 Spec", notes: "assess me" });
@@ -570,7 +605,7 @@ describe("full dispatch pipeline with MockBackend", () => {
   });
 
   test("plan_writer prompt renders DISCREPANCY_RESOLUTIONS fallback when no resolved discrepancies", async () => {
-    const projRes = await post(app, "/projects", { name: "dr-fallback", repo_path: "/tmp/dr-fallback" });
+    const projRes = await post(app, "/projects", { name: "dr-fallback", repo_path: testRepoPath });
     const proj = (await projRes.json()) as { id: string };
     const specRes = await post(app, "/specs", { project_id: proj.id, title: "DR Spec", notes: "notes" });
     const spec = (await specRes.json()) as { id: string };
@@ -589,7 +624,7 @@ describe("full dispatch pipeline with MockBackend", () => {
   });
 
   test("plan_writer prompt renders resolved discrepancies as numbered sections", async () => {
-    const projRes = await post(app, "/projects", { name: "dr-nonempty", repo_path: "/tmp/dr-nonempty" });
+    const projRes = await post(app, "/projects", { name: "dr-nonempty", repo_path: testRepoPath });
     const proj = (await projRes.json()) as { id: string };
     const specRes = await post(app, "/specs", { project_id: proj.id, title: "DR Spec 2", notes: "notes" });
     const spec = (await specRes.json()) as { id: string };
@@ -620,7 +655,7 @@ describe("full dispatch pipeline with MockBackend", () => {
 
   test("spec approval → plan_writer prompt renders resolved discrepancy, excludes waived assumption, and reads SPEC_NOTES from final_notes", async () => {
     // 1. Create project + spec
-    const projRes = await post(app, "/projects", { name: "approval-prompt-test", repo_path: "/tmp/approval-prompt-repo" });
+    const projRes = await post(app, "/projects", { name: "approval-prompt-test", repo_path: testRepoPath });
     const proj = (await projRes.json()) as { id: string };
 
     const ORIGINAL_NOTES = "SPEC_NOTES_DISTINCTIVE_ORIGINAL_20f3a";
@@ -694,7 +729,7 @@ describe("full dispatch pipeline with MockBackend", () => {
   });
 
   test("POST /briefs/:id/build returns 409 if brief not approved", async () => {
-    const projRes = await post(app, "/projects", { name: "p", repo_path: "/tmp/p" });
+    const projRes = await post(app, "/projects", { name: "p", repo_path: testRepoPath });
     const proj = (await projRes.json()) as { id: string };
     const specRes = await post(app, "/specs", { project_id: proj.id, title: "s" });
     const spec = (await specRes.json()) as { id: string };

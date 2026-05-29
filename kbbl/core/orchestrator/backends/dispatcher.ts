@@ -3,6 +3,7 @@ import type { ExecutionBackend, InputRef, StageRow } from "./interface";
 import { loadPrompt, renderPrompt } from "./prompt-loader";
 import { listCohortsByPlan, listDependenciesByPlan } from "../../db/cohorts";
 import { listResolvedDiscrepanciesBySpec } from "../../db/spec-discrepancies";
+import { getEpicBySpec } from "../../db/epics";
 import type { Cohort, CohortDependency } from "../../types/task-tracker";
 
 interface DispatcherDeps {
@@ -105,6 +106,103 @@ function sanitizeForName(s: string, fallbackId: string): string {
     .replace(/^_+|_+$/g, "");
   if (out.length === 0) return fallbackId.slice(0, 8);
   return out.length > 40 ? out.slice(0, 40) : out;
+}
+
+/**
+ * Resolve the full cohort/spec context needed for epic identity in the brief
+ * dispatch case. Single JOIN query — no multi-step round trips.
+ */
+function getBriefIdentityContext(
+  db: Database,
+  brief_id: string,
+): { spec_id: string; cohort_id: string; cohort_position: number; cohort_title: string } | null {
+  interface Row { spec_id: string; cohort_id: string; cohort_position: number; cohort_title: string }
+  const row = db
+    .prepare<Row, [string]>(
+      `SELECT s.id AS spec_id, c.id AS cohort_id, c.position AS cohort_position, c.title AS cohort_title
+         FROM specs s
+         JOIN plans pl ON pl.spec_id = s.id
+         JOIN cohorts c ON c.plan_id = pl.id
+         JOIN briefs b ON b.cohort_id = c.id
+        WHERE b.id = ?`,
+    )
+    .get(brief_id);
+  return row ?? null;
+}
+
+/**
+ * Idempotently ensure `epic/<slug>` exists on origin. Checks via
+ * `git ls-remote`; if absent, seeds from origin/main via fetch + push,
+ * then fetches the new branch locally so subsequent `git rev-parse
+ * origin/<epicBranch>` calls succeed inside createWorktree.
+ */
+export async function ensureEpicBranchExists(epicBranch: string, workdir: string): Promise<void> {
+  const lsRemote = Bun.spawn({
+    cmd: ["git", "-C", workdir, "ls-remote", "origin", `refs/heads/${epicBranch}`],
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [lsOut, lsErr, lsCode] = await Promise.all([
+    new Response(lsRemote.stdout).text(),
+    new Response(lsRemote.stderr).text(),
+    lsRemote.exited,
+  ]);
+  if (lsCode !== 0) {
+    throw new Error(
+      `git ls-remote origin refs/heads/${epicBranch} failed (exit ${lsCode}): ${lsErr.trim()}`,
+    );
+  }
+  if (lsOut.trim() !== "") return;
+
+  // Branch absent on origin — seed it from origin/main.
+  const fetch = Bun.spawn({
+    cmd: ["git", "-C", workdir, "fetch", "origin", "main"],
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, fetchErr, fetchCode] = await Promise.all([
+    new Response(fetch.stdout).text(),
+    new Response(fetch.stderr).text(),
+    fetch.exited,
+  ]);
+  if (fetchCode !== 0) {
+    throw new Error(
+      `git fetch origin main failed (exit ${fetchCode}): ${fetchErr.trim()}`,
+    );
+  }
+
+  const push = Bun.spawn({
+    cmd: ["git", "-C", workdir, "push", "origin", `origin/main:refs/heads/${epicBranch}`],
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, pushErr, pushCode] = await Promise.all([
+    new Response(push.stdout).text(),
+    new Response(push.stderr).text(),
+    push.exited,
+  ]);
+  if (pushCode !== 0) {
+    throw new Error(
+      `git push origin origin/main:refs/heads/${epicBranch} failed (exit ${pushCode}): ${pushErr.trim()}`,
+    );
+  }
+
+  // Update local remote-tracking ref so createWorktree can git rev-parse origin/<epicBranch>.
+  const fetchEpic = Bun.spawn({
+    cmd: ["git", "-C", workdir, "fetch", "origin", epicBranch],
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, fetchEpicErr, fetchEpicCode] = await Promise.all([
+    new Response(fetchEpic.stdout).text(),
+    new Response(fetchEpic.stderr).text(),
+    fetchEpic.exited,
+  ]);
+  if (fetchEpicCode !== 0) {
+    throw new Error(
+      `git fetch origin ${epicBranch} failed (exit ${fetchEpicCode}): ${fetchEpicErr.trim()}`,
+    );
+  }
 }
 
 function getSpecTitleForCohort(db: Database, cohort_id: string): string | null {
@@ -543,7 +641,26 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
           slots = buildSlotsForBrief(db, inputId, kbblUrl);
           workdir = resolveWorkdirForBrief(db, inputId);
           const sessionName = buildSessionNameForBrief(db, inputId, stage.name);
-          inputRef = { type: "brief", id: inputId, workdir, sessionName };
+
+          const identityCtx = getBriefIdentityContext(db, inputId);
+          if (!identityCtx) throw new Error(`brief ${inputId}: could not resolve cohort/spec chain`);
+
+          const epic = getEpicBySpec(db, identityCtx.spec_id);
+          if (!epic) throw new Error(`brief ${inputId}: no epic found for spec ${identityCtx.spec_id}`);
+
+          const epicSlug = sanitizeForName(epic.title, epic.id);
+          const cohortSlug = `cohort-${identityCtx.cohort_position}-${sanitizeForName(identityCtx.cohort_title, identityCtx.cohort_id)}`;
+          const epicBranch = `epic/${epicSlug}`;
+
+          await ensureEpicBranchExists(epicBranch, workdir);
+
+          inputRef = {
+            type: "brief",
+            id: inputId,
+            workdir,
+            sessionName,
+            worktreeIdentity: { epicSlug, cohortSlug, epicBranch },
+          };
           break;
         }
         case "plan": {
