@@ -9,7 +9,7 @@ import { insertSpec, getSpec, listSpecsByProject, updateSpecFields } from "./spe
 import { mountSpecsRoutes } from "../server/handlers/specs";
 import { taskTrackerEvents } from "./events";
 import { insertProject } from "./projects";
-import { getEpicBySpec } from "./epics";
+import { insertEpic, getEpicBySpec } from "./epics";
 import type { AgentRuntime, RuntimeId, RuntimeRegistry } from "../runtime";
 
 let db: Database;
@@ -72,13 +72,70 @@ describe("specs query helpers", () => {
     expect(getSpec(db, "s3")?.title).toBe("T");
   });
 
-  test("listSpecsByProject returns only matching project specs", () => {
-    insertProject(db, { id: "proj-2", name: "P2", repo_path: "/p2" });
+  test("listSpecsByProject includes specs with non-archived epics", () => {
     insertSpec(db, { id: "sa", project_id: PROJECT_ID, title: "A" });
-    insertSpec(db, { id: "sb", project_id: "proj-2", title: "B" });
+    insertEpic(db, {
+      id: "ea",
+      spec_id: "sa",
+      project_id: PROJECT_ID,
+      title: "Epic A",
+      status: "active",
+      current_stage: "spec",
+    });
+
     const specs = listSpecsByProject(db, PROJECT_ID);
     expect(specs).toHaveLength(1);
-    expect(specs[0].id).toBe("sa");
+    expect(specs[0]?.id).toBe("sa");
+    expect(specs[0]?.epic_id).toBe("ea");
+  });
+
+  test("listSpecsByProject omits specs whose epic is archived", () => {
+    insertSpec(db, { id: "sa", project_id: PROJECT_ID, title: "A" });
+    insertEpic(db, {
+      id: "ea",
+      spec_id: "sa",
+      project_id: PROJECT_ID,
+      title: "Epic A",
+      status: "archived",
+      current_stage: "spec",
+    });
+
+    expect(listSpecsByProject(db, PROJECT_ID)).toEqual([]);
+  });
+
+  test("listSpecsByProject keeps specs without an epic visible", () => {
+    insertSpec(db, { id: "sa", project_id: PROJECT_ID, title: "A" });
+
+    const specs = listSpecsByProject(db, PROJECT_ID);
+    expect(specs).toHaveLength(1);
+    expect(specs[0]?.id).toBe("sa");
+    expect(specs[0]?.epic_id).toBeNull();
+  });
+
+  test("listSpecsByProject still scopes results by project", () => {
+    insertProject(db, { id: "proj-2", name: "P2", repo_path: "/p2" });
+    insertSpec(db, { id: "sa", project_id: PROJECT_ID, title: "A" });
+    insertEpic(db, {
+      id: "ea",
+      spec_id: "sa",
+      project_id: PROJECT_ID,
+      title: "Epic A",
+      status: "active",
+      current_stage: "spec",
+    });
+    insertSpec(db, { id: "sb", project_id: "proj-2", title: "B" });
+    insertEpic(db, {
+      id: "eb",
+      spec_id: "sb",
+      project_id: "proj-2",
+      title: "Epic B",
+      status: "active",
+      current_stage: "spec",
+    });
+
+    const specs = listSpecsByProject(db, PROJECT_ID);
+    expect(specs).toHaveLength(1);
+    expect(specs[0]?.id).toBe("sa");
   });
 
   test("updateSpecFields updates title", () => {
