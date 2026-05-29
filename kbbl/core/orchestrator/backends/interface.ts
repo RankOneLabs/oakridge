@@ -19,6 +19,13 @@ export interface InputRef {
    * sessions in the list view without clicking in.
    */
   sessionName: string;
+  /**
+   * Optional cohort/epic identity for build stages. When set, the backend
+   * forwards it to SessionManager.create for slug-based worktree branch
+   * naming and base-ref selection. Non-build stages leave this undefined
+   * and continue with sid-based naming.
+   */
+  worktreeIdentity?: { epicSlug: string; cohortSlug: string; epicBranch: string };
 }
 
 export interface ExecutionBackend {
