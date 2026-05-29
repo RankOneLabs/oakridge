@@ -8,10 +8,10 @@ import type { ExecutionBackend, InputRef, StageRow } from "./interface";
 type RoutedStage = "spec_analyzer" | "plan_writer" | "brief_writer" | "assessor" | "build";
 
 const STAGE_ROUTING: Record<RoutedStage, { runtime: RuntimeId; model: string }> = {
-  spec_analyzer: { runtime: "claude-code", model: "claude-opus-4-7" },
-  plan_writer:   { runtime: "claude-code", model: "claude-opus-4-7" },
-  brief_writer:  { runtime: "claude-code", model: "claude-opus-4-7" },
-  assessor:      { runtime: "claude-code", model: "claude-opus-4-7" },
+  spec_analyzer: { runtime: "claude-code", model: "claude-opus-4-8" },
+  plan_writer:   { runtime: "claude-code", model: "claude-opus-4-8" },
+  brief_writer:  { runtime: "claude-code", model: "claude-opus-4-8" },
+  assessor:      { runtime: "claude-code", model: "claude-opus-4-8" },
   build:         { runtime: "claude-code", model: "claude-sonnet-4-6" },
 };
 
