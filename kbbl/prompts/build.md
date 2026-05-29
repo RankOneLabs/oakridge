@@ -21,7 +21,7 @@ kbbl API base URL: `{{KBBL_URL}}`
 4. Make one commit per logical subgoal. Each commit must leave the tree green (tests pass, typecheck clean).
 5. Open a pull request when all subgoals are committed:
    ```
-   gh pr create --title "<brief goal, shortened to ≤70 chars>" \
+   gh pr create --base {{EPIC_BRANCH}} --title "<brief goal, shortened to ≤70 chars>" \
      --body "Implements brief {{BRIEF_ID}}. <summary of what shipped and any deviations.>"
    ```
 6. Write a debrief back to kbbl:
