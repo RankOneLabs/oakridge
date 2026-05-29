@@ -10,8 +10,15 @@ const DEFAULT_APPROVAL_POLICY: ApprovalPolicy = "untrusted";
 const APPROVAL_POLICY_LINE =
   /^\s*(approval_policy|ask_for_approval)\s*=\s*"([^"]+)"\s*(?:#.*)?$/;
 
+const APPROVAL_POLICIES = {
+  never: true,
+  untrusted: true,
+  "on-request": true,
+  always: true,
+} satisfies Record<ApprovalPolicy, true>;
+
 function isApprovalPolicy(value: string): value is ApprovalPolicy {
-  return value === "never" || value === "untrusted" || value === "on-request" || value === "always";
+  return Object.prototype.hasOwnProperty.call(APPROVAL_POLICIES, value);
 }
 
 export function parseCodexApprovalPolicy(contents: string): ApprovalPolicy | null {
