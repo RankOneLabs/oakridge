@@ -5,7 +5,8 @@ import type { ExecutionBackend, InputRef, StageRow } from "./interface";
 
 // Agent-dev flow routing. The runtime comes from the owning Epic, selected in
 // the create-plan UI. Planner stages use the planner model; build uses the
-// builder model. Config stage overrides remain an explicit escape hatch.
+// builder model. Config stage overrides cover legacy refs that do not carry an
+// Epic-level runtime selection.
 type RoutedStage = "spec_analyzer" | "plan_writer" | "brief_writer" | "assessor" | "build";
 
 const STAGE_ROUTING: Record<RuntimeId, Record<RoutedStage, { runtime: RuntimeId; model: string }>> = {
@@ -45,7 +46,9 @@ export function createKbblChatBackend({
         ? STAGE_ROUTING[agentRuntime][stage.name]
         : null;
       const stageOverride =
-        config?.runtime.stages && Object.hasOwn(config.runtime.stages, stage.name)
+        inputRef.agentRuntime === undefined &&
+        config?.runtime.stages &&
+        Object.hasOwn(config.runtime.stages, stage.name)
           ? config.runtime.stages[stage.name]
           : undefined;
       const routing = stageOverride ?? defaultRouting;

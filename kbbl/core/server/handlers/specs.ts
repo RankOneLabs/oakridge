@@ -8,7 +8,8 @@ import { insertEpic, getEpicBySpec } from "../../db/epics";
 import { isFrozen } from "../../db/epic-freeze";
 import { getProject } from "../../db/projects";
 import { taskTrackerEvents } from "../../db/events";
-import type { AgentRuntimeChoice } from "../../types/task-tracker";
+import type { RuntimeRegistry } from "../../runtime";
+import { AgentRuntimeChoiceSchema } from "../../types/task-tracker";
 
 const CreateSpecSchema = z
   .object({
@@ -16,7 +17,7 @@ const CreateSpecSchema = z
     title: z.string().min(1),
     notes: z.string().optional(),
     notesPath: z.string().min(1).optional(),
-    agent_runtime: z.enum(["claude-code", "codex"]).default("claude-code"),
+    agent_runtime: AgentRuntimeChoiceSchema.default("claude-code"),
   })
   .refine((v) => !(v.notes !== undefined && v.notesPath !== undefined), {
     message: "provide either notes or notesPath, not both",
@@ -30,10 +31,15 @@ const PatchSpecSchema = z.object({
 
 interface SpecsRouteDeps {
   db: Database;
+  registry?: RuntimeRegistry;
 }
 
 export function mountSpecsRoutes(app: Hono, deps: SpecsRouteDeps): void {
-  const { db } = deps;
+  const { db, registry } = deps;
+
+  function registeredRuntimeList(): string {
+    return registry ? [...registry.runtimes.keys()].join(", ") : "claude-code";
+  }
 
   app.get("/specs", (c) => {
     const project_id = c.req.query("project_id");
@@ -58,6 +64,19 @@ export function mountSpecsRoutes(app: Hono, deps: SpecsRouteDeps): void {
     }
 
     const { project_id, title, notes, notesPath, agent_runtime } = result.data;
+    if (registry && !registry.runtimes.has(agent_runtime)) {
+      return c.json(
+        { error: `runtime "${agent_runtime}" is not registered — registered: ${registeredRuntimeList()}` },
+        400,
+      );
+    }
+    if (!registry && agent_runtime !== "claude-code") {
+      return c.json(
+        { error: `runtime "${agent_runtime}" is not registered — registered: claude-code` },
+        400,
+      );
+    }
+
     const id = crypto.randomUUID();
 
     let resolvedNotes: string | null = notes ?? null;
@@ -114,7 +133,7 @@ export function mountSpecsRoutes(app: Hono, deps: SpecsRouteDeps): void {
           title,
           status: "pending",
           current_stage: "spec",
-          agent_runtime: agent_runtime as AgentRuntimeChoice,
+          agent_runtime,
         });
         return { spec: s, epic: e };
       })();

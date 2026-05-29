@@ -205,7 +205,7 @@ export function createApp(deps: CreateAppDeps): Hono {
   mountProjectsRoutes(app, { db });
 
   // ---- task-tracker CRUD (specs, plans, cohorts, briefs) ----
-  mountSpecsRoutes(app, { db });
+  mountSpecsRoutes(app, { db, registry });
   mountSpecDiscrepanciesRoutes(app, { db });
   mountSpecStatusRoutes(app, { db });
   mountPlansRoutes(app, { db });

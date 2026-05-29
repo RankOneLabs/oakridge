@@ -18,8 +18,8 @@ const PINNED_CODEX_MODELS: CodexModel[] = [
 export function normalizeModelList(raw: unknown): CodexModel[] {
   const dynamicModels = Array.isArray(raw)
     ? raw
-    .filter((m): m is { id: string } => typeof m?.id === "string")
-    .map((m) => ({ value: m.id, label: m.id }))
+      .filter((m): m is { id: string } => typeof m?.id === "string")
+      .map((m) => ({ value: m.id, label: m.id }))
     : [];
   const byValue = new Map<string, CodexModel>();
   for (const model of [...dynamicModels, ...PINNED_CODEX_MODELS]) {

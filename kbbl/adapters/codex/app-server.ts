@@ -182,7 +182,7 @@ export async function startCodexAppServer(
     }
   }
 
-  let models: CodexModel[] = [];
+  let models: CodexModel[] = normalizeModelList(null);
   try {
     // Send initialize (with startup timeout)
     await Promise.race([
@@ -203,7 +203,7 @@ export async function startCodexAppServer(
       const raw = await client.request<unknown>("model/list", {});
       models = normalizeModelList(raw);
     } catch {
-      // Non-fatal: model dropdown will be empty but sessions will still work
+      // Non-fatal: keep pinned Codex models available in the session form.
     }
   } catch (err) {
     await stop();

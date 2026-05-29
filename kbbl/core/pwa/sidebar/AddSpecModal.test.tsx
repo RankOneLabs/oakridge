@@ -80,4 +80,56 @@ describe("AddSpecModal agent runtime selection", () => {
       });
     });
   });
+
+  test("defaults to the first available runtime when configured default is absent", async () => {
+    let postBody: unknown = null;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/config") {
+        return new Response(
+          JSON.stringify({
+            defaultWorkdir: "/tmp/repo",
+            defaultRuntimeId: "claude-code",
+            runtimes: [
+              {
+                id: "codex",
+                label: "Codex",
+                supportsCompaction: false,
+                models: [],
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      if (url === "/specs" && init?.method === "POST") {
+        postBody = JSON.parse(String(init.body));
+        return new Response(JSON.stringify({ id: "spec-1" }), { status: 201 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithClient(
+      <AddSpecModal
+        project={{ id: "project-1", name: "Project", repo_path: "/tmp/repo" }}
+        onCreated={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Agent")).toHaveProperty("value", "codex");
+    });
+    fireEvent.change(screen.getByLabelText("Title"), {
+      target: { value: "Build the thing" },
+    });
+    fireEvent.submit(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => {
+      expect(postBody).toMatchObject({
+        agent_runtime: "codex",
+      });
+    });
+  });
 });

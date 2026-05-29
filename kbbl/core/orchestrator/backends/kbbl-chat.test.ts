@@ -150,6 +150,17 @@ describe("KbblChatBackend dispatch config.runtime.stages overrides", () => {
     expect(calls[0]?.runtime).toBe("codex");
   });
 
+  test("epic runtime selection takes precedence over stage override", async () => {
+    const { manager, calls } = makeFakeManager();
+    const config = KbblConfigSchema.parse({
+      runtime: { stages: { build: { runtime: "claude-code", model: "override-model" } } },
+    });
+    const backend = createKbblChatBackend({ manager, config });
+    await backend.dispatch(stage("build"), { ...inputRef, agentRuntime: "codex" }, "prompt");
+    expect(calls[0]?.model).toBe("gpt-5.4-mini");
+    expect(calls[0]?.runtime).toBe("codex");
+  });
+
   test("override applies to an otherwise-unrouted stage", async () => {
     const { manager, calls } = makeFakeManager();
     const config = KbblConfigSchema.parse({

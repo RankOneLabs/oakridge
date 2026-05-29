@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { SidebarProject } from "./Sidebar";
 import type { RuntimeId } from "../../runtime-interface";
-import { useServerConfig } from "../hooks/useServerConfig";
+import { useServerConfig, type ServerConfig } from "../hooks/useServerConfig";
 
 interface AddSpecModalProps {
   project: SidebarProject;
@@ -16,13 +16,36 @@ interface CreateSpecInput {
   agentRuntime: RuntimeId;
 }
 
+interface AgentRuntimeSelection {
+  runtimeIds: RuntimeId[];
+  hasCodex: boolean;
+  hasClaudeCode: boolean;
+  defaultAgentRuntime: RuntimeId;
+}
+
+function selectAgentRuntimeDefaults(
+  serverConfig: ServerConfig | null,
+): AgentRuntimeSelection {
+  const runtimeIds = serverConfig?.runtimes.map((runtime) => runtime.id) ?? ["claude-code"];
+  const defaultAgentRuntime =
+    serverConfig?.defaultRuntimeId && runtimeIds.includes(serverConfig.defaultRuntimeId)
+      ? serverConfig.defaultRuntimeId
+      : (runtimeIds[0] ?? "claude-code");
+  return {
+    runtimeIds,
+    hasCodex: runtimeIds.includes("codex"),
+    hasClaudeCode: runtimeIds.includes("claude-code"),
+    defaultAgentRuntime,
+  };
+}
+
 export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps) {
   const serverConfig = useServerConfig();
-  const hasCodex = serverConfig?.runtimes.some((runtime) => runtime.id === "codex") ?? false;
-  const hasClaudeCode = serverConfig?.runtimes.some((runtime) => runtime.id === "claude-code") ?? true;
-  const defaultAgentRuntime: RuntimeId = hasCodex && serverConfig?.defaultRuntimeId === "codex"
-    ? "codex"
-    : "claude-code";
+  const { runtimeIds, hasCodex, hasClaudeCode, defaultAgentRuntime } = useMemo(
+    () => selectAgentRuntimeDefaults(serverConfig),
+    [serverConfig],
+  );
+  const runtimeKey = runtimeIds.join("\0");
   const [title, setTitle] = useState("");
   const [notes, setNotes] = useState("");
   const [agentRuntime, setAgentRuntime] = useState<RuntimeId>(defaultAgentRuntime);
@@ -31,9 +54,14 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
   const queryClient = useQueryClient();
 
   useEffect(() => {
+    if (!runtimeIds.includes(agentRuntime)) {
+      setAgentRuntime(defaultAgentRuntime);
+      setAgentRuntimeTouched(false);
+      return;
+    }
     if (agentRuntimeTouched) return;
     setAgentRuntime(defaultAgentRuntime);
-  }, [agentRuntimeTouched, defaultAgentRuntime]);
+  }, [agentRuntime, agentRuntimeTouched, defaultAgentRuntime, runtimeKey]);
 
   const createMutation = useMutation({
     mutationFn: async (vars: CreateSpecInput) => {
