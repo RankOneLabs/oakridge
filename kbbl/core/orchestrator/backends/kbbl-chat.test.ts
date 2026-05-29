@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createKbblChatBackend } from "./kbbl-chat";
+import { createKbblChatBackend, resolveStageRouting } from "./kbbl-chat";
 import type { InputRef, StageRow } from "./interface";
 import { SessionManager } from "../../session/session-manager";
 import type { KbblConfig } from "../../config";
@@ -144,6 +144,55 @@ describe("KbblChatBackend dispatch config.runtime.stages overrides", () => {
     await backend.dispatch(stage("build"), inputRef, "prompt");
     expect(calls[0]?.model).toBe("claude-sonnet-4-6");
     expect(calls[0]?.runtime).toBe("claude-code");
+  });
+});
+
+describe("resolveStageRouting — three-tier precedence", () => {
+  test("override beats config.stages beats STAGE_ROUTING", () => {
+    const config = KbblConfigSchema.parse({
+      runtime: { stages: { build: { runtime: "codex", model: "config-model" } } },
+    });
+    const override = { runtime: "claude-code" as RuntimeId, model: "override-model" };
+    const result = resolveStageRouting("build", config, override);
+    expect(result?.model).toBe("override-model");
+    expect(result?.runtime).toBe("claude-code");
+  });
+
+  test("config.stages beats STAGE_ROUTING when no override", () => {
+    const config = KbblConfigSchema.parse({
+      runtime: { stages: { build: { runtime: "codex", model: "config-model" } } },
+    });
+    const result = resolveStageRouting("build", config);
+    expect(result?.model).toBe("config-model");
+    expect(result?.runtime).toBe("codex");
+  });
+
+  test("STAGE_ROUTING when no override and no config.stages entry", () => {
+    const result = resolveStageRouting("build", undefined);
+    expect(result?.model).toBe("claude-sonnet-4-6");
+    expect(result?.runtime).toBe("claude-code");
+  });
+
+  test("planner stages resolve to opus via STAGE_ROUTING", () => {
+    for (const stageName of ["spec_analyzer", "plan_writer", "brief_writer", "assessor"]) {
+      const result = resolveStageRouting(stageName, undefined);
+      expect(result?.model).toBe("claude-opus-4-8");
+      expect(result?.runtime).toBe("claude-code");
+    }
+  });
+
+  test("returns null for unknown stage with no tier covering it", () => {
+    const result = resolveStageRouting("unknown-stage", undefined);
+    expect(result).toBeNull();
+  });
+
+  test("config.stages covers an otherwise-unrouted stage", () => {
+    const config = KbblConfigSchema.parse({
+      runtime: { stages: { "future-stage": { runtime: "claude-code", model: "some-model" } } },
+    });
+    const result = resolveStageRouting("future-stage", config);
+    expect(result?.model).toBe("some-model");
+    expect(result?.runtime).toBe("claude-code");
   });
 });
 
