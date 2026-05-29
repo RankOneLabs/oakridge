@@ -71,7 +71,7 @@ describe("KbblChatBackend dispatch routes each stage to its intended model", () 
     const { manager, calls } = makeFakeManager();
     const backend = createKbblChatBackend({ manager });
     await backend.dispatch(stage("spec_analyzer"), inputRef, "prompt");
-    expect(calls[0]?.model).toBe("claude-opus-4-7");
+    expect(calls[0]?.model).toBe("claude-opus-4-8");
     expect(calls[0]?.runtime).toBe("claude-code");
   });
 
@@ -79,21 +79,21 @@ describe("KbblChatBackend dispatch routes each stage to its intended model", () 
     const { manager, calls } = makeFakeManager();
     const backend = createKbblChatBackend({ manager });
     await backend.dispatch(stage("plan_writer"), inputRef, "prompt");
-    expect(calls[0]?.model).toBe("claude-opus-4-7");
+    expect(calls[0]?.model).toBe("claude-opus-4-8");
   });
 
   test("brief_writer → opus", async () => {
     const { manager, calls } = makeFakeManager();
     const backend = createKbblChatBackend({ manager });
     await backend.dispatch(stage("brief_writer"), inputRef, "prompt");
-    expect(calls[0]?.model).toBe("claude-opus-4-7");
+    expect(calls[0]?.model).toBe("claude-opus-4-8");
   });
 
   test("assessor → opus", async () => {
     const { manager, calls } = makeFakeManager();
     const backend = createKbblChatBackend({ manager });
     await backend.dispatch(stage("assessor"), inputRef, "prompt");
-    expect(calls[0]?.model).toBe("claude-opus-4-7");
+    expect(calls[0]?.model).toBe("claude-opus-4-8");
     expect(calls[0]?.runtime).toBe("claude-code");
   });
 

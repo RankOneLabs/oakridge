@@ -20,6 +20,7 @@ import { isValidSid } from "./per-sid";
 // Fallback allowlist used when no RuntimeRegistry is wired (legacy / test mode).
 // Mirrors the CC adapter's ALLOWED_MODELS; kept here so core has no adapter import.
 const LEGACY_ALLOWED_MODELS: readonly string[] = [
+  "claude-opus-4-8",
   "claude-opus-4-7",
   "claude-sonnet-4-6",
   "claude-haiku-4-5-20251001",
