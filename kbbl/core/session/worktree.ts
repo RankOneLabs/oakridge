@@ -235,6 +235,11 @@ export async function createWorktree(
       stderr.trim(),
     );
   }
+  // Re-read HEAD from the new worktree rather than relying on the pre-add
+  // rev-parse result. If opts.baseRef moved between rev-parse and worktree add
+  // (concurrent fetch), the pre-add sha would differ from what was actually
+  // checked out. Reading post-add is authoritative for both paths.
+  worktreeBaseRef = await resolveHead(worktreePath);
   return { worktreePath, worktreeBranch: branch, worktreeBaseRef };
 }
 
