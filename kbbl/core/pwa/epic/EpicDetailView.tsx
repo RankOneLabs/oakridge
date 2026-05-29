@@ -70,6 +70,7 @@ export function EpicDetailView({ epic_id }: EpicDetailViewProps) {
       const projectId = query.data?.epic.project_id;
       if (projectId) {
         void queryClient.invalidateQueries({ queryKey: ["epics", projectId] });
+        void queryClient.invalidateQueries({ queryKey: ["specs", { projectId }] });
       }
     },
   });

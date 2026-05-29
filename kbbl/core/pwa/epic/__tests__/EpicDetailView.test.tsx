@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement } from "react";
 
@@ -66,7 +66,10 @@ function renderWithClient(ui: ReactElement) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+  return {
+    client,
+    ...render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>),
+  };
 }
 
 afterEach(() => {
@@ -75,7 +78,7 @@ afterEach(() => {
 
 describe("EpicDetailView", () => {
   it("spec stage: renders DiscrepanciesEditor and highlights Spec tile", async () => {
-    vi.stubGlobal("fetch", makeFetch("spec"));
+    vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch("spec") as never);
     renderWithClient(<EpicDetailView epic_id="epic-1" />);
 
     expect(await screen.findByRole("heading", { name: "Discrepancies" })).toBeTruthy();
@@ -89,7 +92,7 @@ describe("EpicDetailView", () => {
   });
 
   it("plan stage: renders PlanDrilldown and highlights Plan tile", async () => {
-    vi.stubGlobal("fetch", makeFetch("plan"));
+    vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch("plan") as never);
     renderWithClient(<EpicDetailView epic_id="epic-1" />);
 
     expect(await screen.findByRole("heading", { name: "Plan" })).toBeTruthy();
@@ -103,7 +106,7 @@ describe("EpicDetailView", () => {
   });
 
   it("build stage: renders BuildDrilldown and highlights Build tile", async () => {
-    vi.stubGlobal("fetch", makeFetch("build"));
+    vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch("build") as never);
     renderWithClient(<EpicDetailView epic_id="epic-1" />);
 
     expect(await screen.findByRole("heading", { name: "Cohorts" })).toBeTruthy();
@@ -116,7 +119,7 @@ describe("EpicDetailView", () => {
   });
 
   it("assess stage: renders ReviewDrilldown and highlights Assess tile", async () => {
-    vi.stubGlobal("fetch", makeFetch("assess"));
+    vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch("assess") as never);
     renderWithClient(<EpicDetailView epic_id="epic-1" />);
 
     expect(await screen.findByRole("heading", { name: "Assessment" })).toBeTruthy();
@@ -126,5 +129,31 @@ describe("EpicDetailView", () => {
       (el) => el.getAttribute("aria-current") === "step",
     );
     expect(currentTile?.textContent).toMatch(/Assess/i);
+  });
+
+  it("invalidates sidebar specs after a successful archive", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if ((url as string).includes("/epics/epic-1/status")) {
+        expect(init?.method).toBe("PATCH");
+        expect(init?.body).toBe(JSON.stringify({ status: "archived" }));
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+      }
+
+      return makeFetch("spec")(url);
+    });
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(fetchMock as never);
+    const { client } = renderWithClient(<EpicDetailView epic_id="epic-1" />);
+    const invalidateSpy = vi.spyOn(client, "invalidateQueries");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Archive" }));
+
+    await waitFor(() => {
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["epic", "epic-1"] });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["epics", "proj-1"] });
+      expect(invalidateSpy).toHaveBeenCalledWith({
+        queryKey: ["specs", { projectId: "proj-1" }],
+      });
+    });
   });
 });
