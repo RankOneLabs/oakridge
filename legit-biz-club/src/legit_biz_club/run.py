@@ -14,6 +14,7 @@ import argparse
 import asyncio
 import dataclasses
 import json
+import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -102,7 +103,7 @@ def _build_event_tee(jsonl_path: Path) -> WorkspaceEventEmitter:
             "kind": kind,
             "payload": payload,
         }
-        print(f"[workspace_event] {kind} :: {payload}", flush=True)
+        print(f"[workspace_event] {kind} :: {payload}", file=sys.stderr, flush=True)
         with jsonl_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record) + "\n")
 

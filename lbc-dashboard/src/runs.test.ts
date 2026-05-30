@@ -134,6 +134,32 @@ describe("RunRegistry", () => {
     expect(registry.get(runTs)!.status).toBe("failed");
   });
 
+  test("cancel preserves exit_code/stderr_tail once the killed process exits", async () => {
+    const { launcher, resolve } = makeStub(143);
+    const registry = new RunRegistry(launcher);
+    const runTs = "2026-05-29T17-00-00-000000Z";
+
+    registry.launch({
+      runTs,
+      spec: BASE_SPEC,
+      specPath: "/tmp/spec.json",
+      outputDir: "/tmp/output",
+    });
+
+    registry.cancel(runTs);
+    expect(registry.get(runTs)!.status).toBe("failed");
+
+    // The killed subprocess exits; the done handler must still record the
+    // real exit code + stderr tail without clobbering the cancelled status.
+    resolve();
+    await new Promise<void>((r) => setTimeout(r, 0));
+
+    const updated = registry.get(runTs)!;
+    expect(updated.status).toBe("failed");
+    expect(updated.exit_code).toBe(143);
+    expect(updated.stderr_tail).toBe("subprocess failed");
+  });
+
   test("cancel returns false for an unknown runId", () => {
     const { launcher } = makeStub(0);
     const registry = new RunRegistry(launcher);

@@ -69,7 +69,7 @@ uv run python -m legit_biz_club.run --spec <spec.json> --output-dir <dir>
 }
 ```
 
-Valid `target` values: keys of `study.registry.TARGET_FACTORIES`. Valid `condition.kind` values: keys of `study.registry.CONDITION_FACTORIES`. `grade` defaults to `true`. On success the process prints one line to stdout: `RESULT <json>` where the JSON has `artifact_path` and `eval_scores` (list or null). On failure the traceback goes to stderr and the exit code is non-zero. Each cell directory contains:
+Valid `target` values: keys of `study.registry.TARGET_FACTORIES`. Valid `condition.kind` values: keys of `study.registry.CONDITION_FACTORIES`. `grade` defaults to `true`. On success the process prints a line to stdout prefixed with `RESULT ` — `RESULT <json>` where the JSON has `artifact_path` and `eval_scores` (list or null). The run also emits tracer output to stdout, so callers should scan for the `RESULT `-prefixed line rather than assuming stdout is a single line. Workspace-event logs and tracebacks go to stderr; a non-zero exit code signals failure. Each cell directory contains:
 
 - `<artifact_filename>` — the final artifact
 - `commits/v0001.<ext>`, `v0002.<ext>`, ... — per-commit snapshots (one per successful apply, in order; extension matches the artifact's, e.g. `.md` for prose targets, `.py` for single-file CODE)

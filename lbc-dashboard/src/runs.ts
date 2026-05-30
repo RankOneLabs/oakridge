@@ -200,10 +200,16 @@ export class RunRegistry {
 
     void handle.done.then(({ code, stderrTail }) => {
       const current = this.runs.get(runTs);
-      if (current && current.status === "running") {
-        current.status = code === 0 ? "exited" : "failed";
+      if (current) {
+        // Record exit info even if the run was already cancelled — a
+        // cancel kills the process, and its real exit_code / stderr_tail
+        // are still useful for debugging. Only the status transition is
+        // gated on "running" so a cancel's terminal state isn't clobbered.
         current.exit_code = code;
         current.stderr_tail = stderrTail;
+        if (current.status === "running") {
+          current.status = code === 0 ? "exited" : "failed";
+        }
       }
       this.handles.delete(runTs);
     });
