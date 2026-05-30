@@ -101,7 +101,7 @@ describe("Codex approval policy config", () => {
     }
   });
 
-  test("loadCodexApprovalPolicyForWorkdir maps trusted project to never", () => {
+  test("loadCodexApprovalPolicyForWorkdir maps trusted project to on-request", () => {
     const tmpDir = mkdtempSync(join(tmpdir(), "kbbl-codex-test-"));
     try {
       const path = join(tmpDir, "config.toml");
@@ -116,7 +116,7 @@ describe("Codex approval policy config", () => {
           'approval_policy = "on-request"',
         ].join("\n"),
       );
-      expect(loadCodexApprovalPolicyForWorkdir("/repo/subdir", path)).toBe("never");
+      expect(loadCodexApprovalPolicyForWorkdir("/repo/subdir", path)).toBe("on-request");
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
     }
