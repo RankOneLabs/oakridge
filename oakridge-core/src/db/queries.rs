@@ -193,6 +193,15 @@ pub async fn insert_project(pool: &SqlitePool, p: &Project) -> crate::Result<()>
     Ok(())
 }
 
+pub async fn list_projects(pool: &SqlitePool) -> crate::Result<Vec<Project>> {
+    let rows = sqlx::query_as::<_, ProjectRow>(
+        "SELECT id, name, repo_dir, created_at FROM project ORDER BY created_at",
+    )
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter().map(row_to_project).collect()
+}
+
 pub async fn get_project_by_id(pool: &SqlitePool, id: &ProjectId) -> crate::Result<Project> {
     let id_str = id.0.to_string();
     let row = sqlx::query_as!(
@@ -227,6 +236,15 @@ pub async fn insert_workflow_def(pool: &SqlitePool, d: &WorkflowDef) -> crate::R
     .execute(pool)
     .await?;
     Ok(())
+}
+
+pub async fn list_workflow_defs(pool: &SqlitePool) -> crate::Result<Vec<WorkflowDef>> {
+    let rows = sqlx::query_as::<_, WorkflowDefRow>(
+        "SELECT id, name, version, graph, created_at FROM workflow_def ORDER BY created_at",
+    )
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter().map(row_to_workflow_def).collect()
 }
 
 pub async fn get_workflow_def_by_id(
