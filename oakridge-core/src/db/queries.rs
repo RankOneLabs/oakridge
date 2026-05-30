@@ -66,6 +66,7 @@ struct ArtifactRow {
     run_id: String,
     stage_instance_id: String,
     artifact_type: String,
+    output_name: Option<String>,
     label: Option<String>,
     body: String,
     parent_artifact_id: Option<String>,
@@ -164,6 +165,7 @@ fn row_to_artifact(r: ArtifactRow) -> crate::Result<Artifact> {
         run_id: WorkflowRunId(parse_uuid(&r.run_id)?),
         stage_instance_id: StageInstanceId(parse_uuid(&r.stage_instance_id)?),
         artifact_type: r.artifact_type,
+        output_name: r.output_name,
         label: r.label,
         body: serde_json::from_str(&r.body)?,
         parent_artifact_id: r.parent_artifact_id.as_deref().map(parse_uuid).transpose()?.map(ArtifactId),
@@ -485,12 +487,13 @@ pub async fn insert_artifact(pool: &SqlitePool, a: &Artifact) -> crate::Result<(
     let created_at = a.created_at.to_rfc3339();
     sqlx::query!(
         "INSERT INTO artifact \
-         (id, run_id, stage_instance_id, artifact_type, label, body, parent_artifact_id, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+         (id, run_id, stage_instance_id, artifact_type, output_name, label, body, parent_artifact_id, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         id,
         run_id,
         stage_instance_id,
         a.artifact_type,
+        a.output_name,
         a.label,
         body,
         parent_artifact_id,
@@ -505,7 +508,7 @@ pub async fn get_artifact_by_id(pool: &SqlitePool, id: &ArtifactId) -> crate::Re
     let id_str = id.0.to_string();
     let row = sqlx::query_as!(
         ArtifactRow,
-        "SELECT id, run_id, stage_instance_id, artifact_type, label, body, \
+        "SELECT id, run_id, stage_instance_id, artifact_type, output_name, label, body, \
          parent_artifact_id, created_at \
          FROM artifact WHERE id = ?",
         id_str,
@@ -548,7 +551,7 @@ pub async fn list_artifacts_for_run(
     let rows: Vec<ArtifactRow> = if let Some(at) = artifact_type {
         sqlx::query_as!(
             ArtifactRow,
-            "SELECT id, run_id, stage_instance_id, artifact_type, label, body, \
+            "SELECT id, run_id, stage_instance_id, artifact_type, output_name, label, body, \
              parent_artifact_id, created_at \
              FROM artifact WHERE run_id = ? AND artifact_type = ?",
             run_id_str,
@@ -559,7 +562,7 @@ pub async fn list_artifacts_for_run(
     } else {
         sqlx::query_as!(
             ArtifactRow,
-            "SELECT id, run_id, stage_instance_id, artifact_type, label, body, \
+            "SELECT id, run_id, stage_instance_id, artifact_type, output_name, label, body, \
              parent_artifact_id, created_at \
              FROM artifact WHERE run_id = ?",
             run_id_str,
@@ -645,6 +648,7 @@ mod tests {
             run_id,
             stage_instance_id: si_id,
             artifact_type: "text".into(),
+            output_name: Some("out".into()),
             label: Some("output".into()),
             body: json!({"content": "hello"}),
             parent_artifact_id: None,
@@ -772,6 +776,7 @@ mod tests {
             run_id: run.id,
             stage_instance_id: si.id,
             artifact_type: "report".into(),
+            output_name: Some("report_out".into()),
             label: Some("final-report".into()),
             body: json!({"sections": ["intro", "body"]}),
             parent_artifact_id: None,
@@ -862,6 +867,7 @@ mod tests {
             run_id: run.id,
             stage_instance_id: si.id,
             artifact_type: "text".into(),
+            output_name: Some("out".into()),
             label: None,
             body: json!("v1"),
             parent_artifact_id: None,
@@ -958,6 +964,7 @@ mod tests {
         let a1 = Artifact {
             id: ArtifactId(Uuid::new_v4()),
             artifact_type: "text".into(),
+            output_name: Some("out_text".into()),
             body: json!("t"),
             label: None,
             ..test_artifact(run.id, si.id)
@@ -965,6 +972,7 @@ mod tests {
         let a2 = Artifact {
             id: ArtifactId(Uuid::new_v4()),
             artifact_type: "json".into(),
+            output_name: Some("out_json".into()),
             body: json!({}),
             label: None,
             ..test_artifact(run.id, si.id)

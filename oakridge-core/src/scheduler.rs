@@ -83,6 +83,7 @@ impl RunTask {
             }
         }
         self.run_map.lock().await.remove(&self.run_id);
+        self.bus.cleanup_run(self.run_id);
     }
 
     async fn prime_source_stages(&mut self) {
@@ -214,7 +215,9 @@ impl RunTask {
             self.resolved.insert((consumer_key.clone(), slot_name), artifact.clone());
 
             if let Some((si_id, status)) = self.index.get(&consumer_key).cloned() {
-                if matches!(status, StageStatus::Running | StageStatus::Parked) {
+                // Pending stages have a handle but haven't emitted Running yet; treat
+                // them as live so feedback artifacts are not silently dropped.
+                if matches!(status, StageStatus::Pending | StageStatus::Running | StageStatus::Parked) {
                     if let Some(handle) = self.handles.get(&si_id) {
                         let _ = handle.resume(ResumePayload::FeedbackArtifact {
                             artifact: artifact.clone(),
@@ -226,8 +229,7 @@ impl RunTask {
                     }
                     continue;
                 }
-                // consumer exists in index but is not running/parked (pending/done/failed)
-                // don't re-activate
+                // Done/Failed: consumer is in index but terminal — don't re-activate.
                 continue;
             }
 
@@ -332,6 +334,13 @@ impl Coordinator {
         let run = queries::get_workflow_run_by_id(&self.db, &run_id).await?;
         let def = queries::get_workflow_def_by_id(&self.db, &run.workflow_def_id).await?;
 
+        // Transition run to Running before the scheduler begins executing stages.
+        queries::update_workflow_run_status(&self.db, &run_id, RunStatus::Running).await?;
+        self.bus.publish(run_id, SubstrateEvent::RunStatusChanged {
+            run_id,
+            status: RunStatus::Running,
+        });
+
         let (events_tx, events_rx) = mpsc::channel(256);
         let (control_tx, control_rx) = mpsc::channel(64);
 
@@ -352,13 +361,15 @@ impl Coordinator {
             run_map: self.runs.clone(),
         };
 
+        // Acquire the map lock before spawning so self-reaping cannot race ahead
+        // of handle registration.
+        let mut runs = self.runs.lock().await;
         let join = tokio::spawn(async move {
             let mut t = task;
             t.prime_source_stages().await;
             t.run().await;
         });
-
-        self.runs.lock().await.insert(run_id, RunHandle { control_tx, join });
+        runs.insert(run_id, RunHandle { control_tx, join });
         Ok(())
     }
 
@@ -368,11 +379,16 @@ impl Coordinator {
         stage_instance_id: StageInstanceId,
         payload: ResumePayload,
     ) -> anyhow::Result<()> {
-        let runs = self.runs.lock().await;
-        let handle = runs.get(&run_id)
-            .ok_or_else(|| anyhow::anyhow!("run {} not active", run_id.0))?;
-        handle.control_tx
-            .send(ControlMsg::Decision { stage_instance_id, payload })
+        // Clone the sender under the lock, then send after releasing it so a slow
+        // or full control channel cannot block other Coordinator operations.
+        let tx = {
+            let runs = self.runs.lock().await;
+            runs.get(&run_id)
+                .ok_or_else(|| anyhow::anyhow!("run {} not active", run_id.0))?
+                .control_tx
+                .clone()
+        };
+        tx.send(ControlMsg::Decision { stage_instance_id, payload })
             .await
             .map_err(|_| anyhow::anyhow!("control channel closed for run {}", run_id.0))?;
         Ok(())
@@ -400,19 +416,26 @@ impl Coordinator {
                     None => continue,
                 };
 
-                // Walk edges directly: avoids ambiguity when a stage has multiple
-                // outputs with the same artifact_type (finding by name+type is exact).
+                // Resolve the output slot name: use the persisted value when available
+                // (set by the executor since migration 0002); fall back to type-matching
+                // for pre-migration artifacts where output_name is NULL.
+                let output_name: Option<String> = match &artifact.output_name {
+                    Some(name) => Some(name.clone()),
+                    None => producer_node.outputs.iter()
+                        .find(|o| o.artifact_type == artifact.artifact_type)
+                        .map(|o| o.name.clone()),
+                };
+                let output_name = match output_name { Some(n) => n, None => continue };
+
                 for edge in &def.graph.edges {
-                    if edge.from.stage != producer_key { continue; }
-                    let slot_matches = producer_node.outputs.iter()
-                        .any(|o| o.name == edge.from.slot && o.artifact_type == artifact.artifact_type);
-                    if !slot_matches { continue; }
-                    let key = (edge.to.stage.clone(), edge.to.slot.clone());
-                    let should_use = resolved.get(&key)
-                        .map(|e| artifact.created_at > e.created_at)
-                        .unwrap_or(true);
-                    if should_use {
-                        resolved.insert(key, artifact.clone());
+                    if edge.from.stage == producer_key && edge.from.slot == output_name {
+                        let key = (edge.to.stage.clone(), edge.to.slot.clone());
+                        let should_use = resolved.get(&key)
+                            .map(|e| artifact.created_at > e.created_at)
+                            .unwrap_or(true);
+                        if should_use {
+                            resolved.insert(key, artifact.clone());
+                        }
                     }
                 }
             }
@@ -477,12 +500,26 @@ impl Coordinator {
                     Ok(handle) => { task.handles.insert(si.id, handle); }
                     Err(e) => {
                         tracing::error!(stage_key = si.stage_key, "recovery execute failed: {}", e);
+                        if let Some((_, ref mut s)) = task.index.get_mut(&si.stage_key) {
+                            *s = StageStatus::Failed;
+                        }
+                        let _ = queries::update_stage_instance_status(
+                            &self.db, &si.id, StageStatus::Failed, None, None, Some(Utc::now()),
+                        ).await;
+                        let _ = events_tx.send(ExecutorEvent::StatusChanged {
+                            instance_id: si.id,
+                            status: StageStatus::Failed,
+                            parked_reason: None,
+                        }).await;
                     }
                 }
             }
 
+            // Acquire the map lock before spawning so self-reaping cannot race
+            // ahead of handle registration.
+            let mut runs = self.runs.lock().await;
             let join = tokio::spawn(async move { task.run().await });
-            self.runs.lock().await.insert(run_id, RunHandle { control_tx, join });
+            runs.insert(run_id, RunHandle { control_tx, join });
         }
         Ok(())
     }
@@ -677,13 +714,9 @@ mod tests {
         let run = queries::get_workflow_run_by_id(&pool, &run_id).await.unwrap();
         assert_eq!(run.status, RunStatus::Done);
 
-        // Verify backfill has events
-        let (events, gap) = bus.backfill(BackfillScope::Run(&run_id), u64::MAX);
-        assert!(!gap);
-        assert!(events.is_empty()); // nothing after u64::MAX
-        let (events, _) = bus.backfill(BackfillScope::Run(&run_id), 0);
-        // seqs 1+ returned (seq 0 is not > 0, but we've published several events)
-        assert!(!events.is_empty(), "per-run backfill must contain events");
+        // Global ring persists after run cleanup; verify events were published.
+        let (events, _) = bus.backfill(BackfillScope::Global, 0);
+        assert!(!events.is_empty(), "global backfill must contain events from the run");
     }
 
     // ── (b) cycle A->B->A feedback ────────────────────────────────────────────
@@ -910,6 +943,7 @@ mod tests {
             run_id: run.id,
             stage_instance_id: si.id,
             artifact_type: "any".into(),
+            output_name: None,
             label: None,
             body: json!({"seeded": true}),
             parent_artifact_id: None,

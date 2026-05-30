@@ -152,6 +152,9 @@ pub struct Artifact {
     pub run_id: WorkflowRunId,
     pub stage_instance_id: StageInstanceId,
     pub artifact_type: ArtifactTypeId,
+    /// The output slot name on the producing stage. Set by the executor at emit
+    /// time; None only for artifacts created before migration 0002.
+    pub output_name: Option<String>,
     pub label: Option<String>,
     pub body: Value,
     pub parent_artifact_id: Option<ArtifactId>,
@@ -361,6 +364,7 @@ mod tests {
             run_id: WorkflowRunId(test_uuid()),
             stage_instance_id: StageInstanceId(test_uuid()),
             artifact_type: "text".to_string(),
+            output_name: Some("out".to_string()),
             label: Some("output".to_string()),
             body: json!({"content": "hello"}),
             parent_artifact_id: None,

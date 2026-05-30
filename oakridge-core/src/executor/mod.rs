@@ -144,6 +144,7 @@ impl StageContext {
             run_id: self.workflow_run_id,
             stage_instance_id: self.stage_instance_id,
             artifact_type: args.artifact_type,
+            output_name: Some(args.output_name.clone()),
             label: args.label,
             body: args.body,
             parent_artifact_id: args.parent_artifact_id,

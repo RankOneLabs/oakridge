@@ -124,6 +124,15 @@ impl EventBus {
         }
     }
 
+    /// Remove per-run state after a run reaches a terminal state.
+    /// Callers that previously subscribed via `subscribe_run` will receive
+    /// `RecvError::Closed` on their next recv, which is the expected signal.
+    pub fn cleanup_run(&self, run_id: WorkflowRunId) {
+        let mut g = self.inner.lock().unwrap();
+        g.per_run_tx.remove(&run_id);
+        g.per_run_ring.remove(&run_id);
+    }
+
     fn drain_ring(ring: &VecDeque<SeqEvent>, since: u64) -> (Vec<SeqEvent>, bool) {
         if ring.is_empty() {
             return (vec![], false);
