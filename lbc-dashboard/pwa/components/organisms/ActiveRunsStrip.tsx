@@ -12,7 +12,7 @@ export function ActiveRunsStrip() {
 
   if (runs.length === 0) {
     return (
-      <p className="px-4 py-2 text-sm italic text-stone-400">No active runs.</p>
+      <p className="px-4 py-2 text-sm italic text-stone-400">No runs yet.</p>
     );
   }
 
