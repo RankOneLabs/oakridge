@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, run_id, stage_instance_id, artifact_type, label, body, parent_artifact_id, created_at FROM artifact WHERE id = ?",
+  "query": "SELECT id, run_id, stage_instance_id, artifact_type, output_name, label, body, parent_artifact_id, created_at FROM artifact WHERE id = ?",
   "describe": {
     "columns": [
       {
@@ -24,23 +24,28 @@
         "type_info": "Text"
       },
       {
-        "name": "label",
+        "name": "output_name",
         "ordinal": 4,
         "type_info": "Text"
       },
       {
-        "name": "body",
+        "name": "label",
         "ordinal": 5,
         "type_info": "Text"
       },
       {
-        "name": "parent_artifact_id",
+        "name": "body",
         "ordinal": 6,
         "type_info": "Text"
       },
       {
-        "name": "created_at",
+        "name": "parent_artifact_id",
         "ordinal": 7,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 8,
         "type_info": "Text"
       }
     ],
@@ -53,10 +58,11 @@
       false,
       false,
       true,
+      true,
       false,
       true,
       false
     ]
   },
-  "hash": "71c5208435705945f0d1e083254d67d172734cdc055f24de8abcc415554ac13e"
+  "hash": "b01be75f58a48a406e79e14c311490bb0a6df0d0f19fd30d8b03f36e3bb8a969"
 }
