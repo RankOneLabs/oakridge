@@ -559,6 +559,7 @@ export class SessionManager {
           parentCcSid: session.parentCcSid,
           parentOakridgeSid: session.parentOakridgeSid,
           oakridgeSid: session.oakridgeSid,
+          projectWorkdir: session.projectWorkdir,
         },
       });
       await session.attachRuntime(runtime, handle);
