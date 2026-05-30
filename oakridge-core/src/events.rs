@@ -124,6 +124,20 @@ impl EventBus {
         }
     }
 
+    /// Returns the oldest retained sequence number for `scope`, or 0 if the ring is empty.
+    /// Cheaper than `backfill(scope, 0)` when the caller only needs the oldest seq.
+    pub fn oldest_seq(&self, scope: BackfillScope<'_>) -> u64 {
+        let g = self.inner.lock().unwrap();
+        match scope {
+            BackfillScope::Global => g.global_ring.front().map_or(0, |e| e.seq),
+            BackfillScope::Run(run_id) => g
+                .per_run_ring
+                .get(run_id)
+                .and_then(|ring| ring.front())
+                .map_or(0, |e| e.seq),
+        }
+    }
+
     /// Remove per-run state after a run reaches a terminal state.
     /// Callers that previously subscribed via `subscribe_run` will receive
     /// `RecvError::Closed` on their next recv, which is the expected signal.

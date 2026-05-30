@@ -15,20 +15,21 @@
 //!
 //! Normal data events are unnamed (SSE `message` type) so the PWA can use a
 //! single `EventSource.onmessage` handler reading the `kind` field from the JSON
-//! payload.  The SSE `id` field carries the event's monotonic `seq` number so
-//! browsers auto-resume via `Last-Event-ID`; the `?since` query parameter covers
-//! programmatic reconnects.
+//! payload.  The SSE `id` field carries the event's monotonic `seq` number.
+//! Reconnecting clients may pass it back via `?since=<seq>` or via the standard
+//! `Last-Event-ID` request header; the server reads both, preferring `?since`.
 
 use std::convert::Infallible;
 use std::sync::Arc;
 
 use axum::{
     extract::{Path, Query, State},
+    http::HeaderMap,
     response::sse::{Event, KeepAlive, Sse},
     routing::get,
     Router,
 };
-use futures::Stream;
+use futures::{SinkExt, Stream};
 use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::broadcast;
@@ -70,7 +71,9 @@ fn build_sse_stream(
     scope: ScopeKey,
     since: u64,
 ) -> impl Stream<Item = Result<Event, Infallible>> {
-    let (tx, rx) = futures::channel::mpsc::unbounded::<Result<Event, Infallible>>();
+    // Bounded channel (capacity = BROADCAST_CAP) so a slow client applies
+    // backpressure to the pump task rather than accumulating unbounded memory.
+    let (mut tx, rx) = futures::channel::mpsc::channel::<Result<Event, Infallible>>(256);
 
     // Step 1 — subscribe FIRST to close the race between buffer-read and live-attach.
     let live_rx = match scope {
@@ -93,7 +96,7 @@ fn build_sse_stream(
         if gap_flag && since > 0 {
             let oldest = backfill_events.first().map_or(0, |e| e.seq);
             let data = json!({"oldest_seq": oldest}).to_string();
-            if tx.unbounded_send(Ok(Event::default().event("gap").data(data))).is_err() {
+            if tx.send(Ok(Event::default().event("gap").data(data))).await.is_err() {
                 return;
             }
         }
@@ -101,7 +104,7 @@ fn build_sse_stream(
         // Step 4 — yield buffered events and advance the dedup cursor.
         for ev in backfill_events {
             last_seq = ev.seq;
-            if tx.unbounded_send(Ok(to_sse_frame(&ev))).is_err() {
+            if tx.send(Ok(to_sse_frame(&ev))).await.is_err() {
                 return;
             }
         }
@@ -115,14 +118,14 @@ fn build_sse_stream(
                         continue;
                     }
                     last_seq = ev.seq;
-                    if tx.unbounded_send(Ok(to_sse_frame(&ev))).is_err() {
+                    if tx.send(Ok(to_sse_frame(&ev))).await.is_err() {
                         return;
                     }
                 }
                 Err(broadcast::error::RecvError::Lagged(_)) => {
                     let oldest = oldest_retained_seq(&bus, scope);
                     let data = json!({"oldest_seq": oldest}).to_string();
-                    if tx.unbounded_send(Ok(Event::default().event("gap").data(data))).is_err() {
+                    if tx.send(Ok(Event::default().event("gap").data(data))).await.is_err() {
                         return;
                     }
                     // Continue: next recv() picks up from the oldest surviving broadcast message.
@@ -138,15 +141,14 @@ fn build_sse_stream(
 fn to_sse_frame(ev: &SeqEvent) -> Event {
     Event::default()
         .id(ev.seq.to_string())
-        .data(serde_json::to_string(&ev.event).unwrap_or_default())
+        .data(serde_json::to_string(&ev.event).expect("SubstrateEvent is always JSON-serializable"))
 }
 
 fn oldest_retained_seq(bus: &Arc<EventBus>, scope: ScopeKey) -> u64 {
-    let (events, _) = match scope {
-        ScopeKey::Global => bus.backfill(BackfillScope::Global, 0),
-        ScopeKey::Run(run_id) => bus.backfill(BackfillScope::Run(&run_id), 0),
-    };
-    events.first().map_or(0, |e| e.seq)
+    match scope {
+        ScopeKey::Global => bus.oldest_seq(BackfillScope::Global),
+        ScopeKey::Run(run_id) => bus.oldest_seq(BackfillScope::Run(&run_id)),
+    }
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
@@ -154,8 +156,9 @@ fn oldest_retained_seq(bus: &Arc<EventBus>, scope: ScopeKey) -> u64 {
 pub async fn stream_global_events(
     State(state): State<AppState>,
     Query(params): Query<SinceQuery>,
+    headers: HeaderMap,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let since = params.since.unwrap_or(0);
+    let since = resolve_since(params.since, &headers);
     Sse::new(build_sse_stream(state.bus, ScopeKey::Global, since))
         .keep_alive(KeepAlive::default())
 }
@@ -164,14 +167,28 @@ pub async fn stream_run_events(
     State(state): State<AppState>,
     Path(run_id): Path<Uuid>,
     Query(params): Query<SinceQuery>,
+    headers: HeaderMap,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, AppError> {
     let run_id = WorkflowRunId(run_id);
     // 404 if the run id is unknown — avoids an indefinitely empty stream for a typo.
     let _ = crate::db::queries::get_workflow_run_by_id(&state.pool, &run_id).await?;
 
-    let since = params.since.unwrap_or(0);
+    let since = resolve_since(params.since, &headers);
     Ok(Sse::new(build_sse_stream(state.bus, ScopeKey::Run(run_id), since))
         .keep_alive(KeepAlive::default()))
+}
+
+/// Resolve the backfill cursor from `?since` (explicit) or `Last-Event-ID` header
+/// (browser auto-reconnect), defaulting to 0 (stream from the oldest retained event).
+fn resolve_since(query: Option<u64>, headers: &HeaderMap) -> u64 {
+    query
+        .or_else(|| {
+            headers
+                .get("last-event-id")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.parse().ok())
+        })
+        .unwrap_or(0)
 }
 
 // ── Routes ────────────────────────────────────────────────────────────────────
@@ -194,7 +211,7 @@ fn build_seq_stream_for_test(
     scope: ScopeKey,
     since: u64,
 ) -> impl futures::Stream<Item = u64> {
-    let (tx, rx) = futures::channel::mpsc::unbounded::<u64>();
+    let (mut tx, rx) = futures::channel::mpsc::channel::<u64>(256);
 
     let live_rx = match scope {
         ScopeKey::Global => bus.subscribe_global(),
@@ -210,14 +227,14 @@ fn build_seq_stream_for_test(
         let mut last_seq = since;
 
         if gap_flag && since > 0 {
-            if tx.unbounded_send(0).is_err() {
+            if tx.send(0).await.is_err() {
                 return;
             }
         }
 
         for ev in backfill_events {
             last_seq = ev.seq;
-            if tx.unbounded_send(ev.seq).is_err() {
+            if tx.send(ev.seq).await.is_err() {
                 return;
             }
         }
@@ -230,12 +247,12 @@ fn build_seq_stream_for_test(
                         continue;
                     }
                     last_seq = ev.seq;
-                    if tx.unbounded_send(ev.seq).is_err() {
+                    if tx.send(ev.seq).await.is_err() {
                         return;
                     }
                 }
                 Err(broadcast::error::RecvError::Lagged(_)) => {
-                    let _ = tx.unbounded_send(0); // gap
+                    let _ = tx.send(0).await; // gap
                 }
                 Err(broadcast::error::RecvError::Closed) => break,
             }
