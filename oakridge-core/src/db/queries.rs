@@ -301,7 +301,7 @@ pub async fn update_workflow_run_status(
     let id_str = id.0.to_string();
     let status_str = enum_to_str(&status)?;
     let updated_at = Utc::now().to_rfc3339();
-    sqlx::query!(
+    let result = sqlx::query!(
         "UPDATE workflow_run SET status = ?, updated_at = ? WHERE id = ?",
         status_str,
         updated_at,
@@ -309,6 +309,12 @@ pub async fn update_workflow_run_status(
     )
     .execute(pool)
     .await?;
+    if result.rows_affected() == 0 {
+        return Err(crate::Error::NotFound {
+            entity: "workflow_run".into(),
+            id: id_str,
+        });
+    }
     Ok(())
 }
 
@@ -415,7 +421,7 @@ pub async fn update_stage_instance_status(
     let updated_at = Utc::now().to_rfc3339();
     let started_at_str = started_at.map(|t| t.to_rfc3339());
     let ended_at_str = ended_at.map(|t| t.to_rfc3339());
-    sqlx::query!(
+    let result = sqlx::query!(
         "UPDATE stage_instance \
          SET status = ?, parked_reason = ?, started_at = ?, ended_at = ?, updated_at = ? \
          WHERE id = ?",
@@ -428,6 +434,12 @@ pub async fn update_stage_instance_status(
     )
     .execute(pool)
     .await?;
+    if result.rows_affected() == 0 {
+        return Err(crate::Error::NotFound {
+            entity: "stage_instance".into(),
+            id: id_str,
+        });
+    }
     Ok(())
 }
 
@@ -510,8 +522,14 @@ pub async fn get_artifact_chain(
     id: &ArtifactId,
 ) -> crate::Result<Vec<Artifact>> {
     let mut chain = vec![];
+    let mut seen = std::collections::HashSet::new();
     let mut current_id = Some(*id);
     while let Some(aid) = current_id {
+        if !seen.insert(aid) {
+            return Err(crate::Error::Validation(
+                format!("artifact chain contains a cycle at {}", aid.0),
+            ));
+        }
         let artifact = get_artifact_by_id(pool, &aid).await?;
         current_id = artifact.parent_artifact_id;
         chain.push(artifact);
