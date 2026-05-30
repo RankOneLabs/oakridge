@@ -22,10 +22,9 @@ import {
   readEvents,
 } from "./store";
 
-// Path-traversal tests verify rejection at the public boundary —
-// getCellDetail with a crafted cell_id should return null without a file
-// lookup. parseCellId is exported (used in runs.test.ts) but the security
-// contract is enforced at getCellDetail, not at the parser level.
+// Path-traversal rejection is enforced by parseCellId itself (via
+// isSafeSegment) and tested here at the getCellDetail public boundary —
+// a crafted cell_id should return null without a file lookup.
 
 let runRoot: string;
 let originalEnv: string | undefined;

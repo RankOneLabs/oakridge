@@ -33,9 +33,13 @@ const STDERR_TAIL_LIMIT = 8 * 1024;
 
 export const defaultLauncher: Launcher = {
   spawn(args, { cwd, env }) {
+    const filteredEnv: Record<string, string> = {};
+    for (const [k, v] of Object.entries(env)) {
+      if (v !== undefined) filteredEnv[k] = v;
+    }
     const proc = Bun.spawn(args, {
       cwd,
-      env: env as Record<string, string>,
+      env: filteredEnv,
       stderr: "pipe",
     });
 
@@ -59,6 +63,14 @@ export const defaultLauncher: Launcher = {
       } catch {
         // ignore stderr read errors
       } finally {
+        const flush = decoder.decode();
+        if (flush) {
+          chunks.push(flush);
+          size += flush.length;
+          while (size > STDERR_TAIL_LIMIT && chunks.length > 0) {
+            size -= chunks.shift()!.length;
+          }
+        }
         reader.releaseLock();
       }
     })();
@@ -205,7 +217,9 @@ export class RunRegistry {
       handle.kill();
       this.handles.delete(runId);
     }
-    record.status = "failed";
+    if (record.status === "running") {
+      record.status = "failed";
+    }
     return true;
   }
 
