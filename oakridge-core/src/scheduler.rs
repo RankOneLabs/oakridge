@@ -169,7 +169,21 @@ impl RunTask {
         );
         match st.execute(ctx).await {
             Ok(handle) => { self.handles.insert(si_id, handle); }
-            Err(e) => { tracing::error!(stage_key, "execute failed: {}", e); }
+            Err(e) => {
+                tracing::error!(stage_key, "execute failed: {}", e);
+                // Mark Failed so quiescence fires and the run is terminated.
+                if let Some((_, ref mut s)) = self.index.get_mut(stage_key) {
+                    *s = StageStatus::Failed;
+                }
+                let _ = queries::update_stage_instance_status(
+                    &self.db, &si_id, StageStatus::Failed, None, None, Some(Utc::now()),
+                ).await;
+                let _ = self.events_tx.send(ExecutorEvent::StatusChanged {
+                    instance_id: si_id,
+                    status: StageStatus::Failed,
+                    parked_reason: None,
+                }).await;
+            }
         }
     }
 
@@ -381,23 +395,24 @@ impl Coordinator {
                     .map(|si| si.stage_key.clone());
                 let producer_key = match producer_key { Some(k) => k, None => continue };
 
-                let output_name = def.graph.stages.get(&producer_key)
-                    .and_then(|node| {
-                        node.outputs.iter()
-                            .find(|o| o.artifact_type == artifact.artifact_type)
-                            .map(|o| o.name.clone())
-                    });
-                let output_name = match output_name { Some(n) => n, None => continue };
+                let producer_node = match def.graph.stages.get(&producer_key) {
+                    Some(n) => n,
+                    None => continue,
+                };
 
+                // Walk edges directly: avoids ambiguity when a stage has multiple
+                // outputs with the same artifact_type (finding by name+type is exact).
                 for edge in &def.graph.edges {
-                    if edge.from.stage == producer_key && edge.from.slot == output_name {
-                        let key = (edge.to.stage.clone(), edge.to.slot.clone());
-                        let should_use = resolved.get(&key)
-                            .map(|e| artifact.created_at > e.created_at)
-                            .unwrap_or(true);
-                        if should_use {
-                            resolved.insert(key, artifact.clone());
-                        }
+                    if edge.from.stage != producer_key { continue; }
+                    let slot_matches = producer_node.outputs.iter()
+                        .any(|o| o.name == edge.from.slot && o.artifact_type == artifact.artifact_type);
+                    if !slot_matches { continue; }
+                    let key = (edge.to.stage.clone(), edge.to.slot.clone());
+                    let should_use = resolved.get(&key)
+                        .map(|e| artifact.created_at > e.created_at)
+                        .unwrap_or(true);
+                    if should_use {
+                        resolved.insert(key, artifact.clone());
                     }
                 }
             }
@@ -428,8 +443,10 @@ impl Coordinator {
             };
 
             // re-execute non-terminal stage instances; skip Done/Failed
+            // Pending is included: a crash between insert_stage_instance and
+            // execute left the instance with no handle; re-executing gives it one.
             let non_terminal: Vec<StageInstance> = instances.into_iter()
-                .filter(|si| matches!(si.status, StageStatus::Running | StageStatus::Parked))
+                .filter(|si| matches!(si.status, StageStatus::Pending | StageStatus::Running | StageStatus::Parked))
                 .collect();
 
             for si in non_terminal {

@@ -1,5 +1,4 @@
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
@@ -52,81 +51,72 @@ pub enum BackfillScope<'a> {
 
 // ── EventBus ──────────────────────────────────────────────────────────────────
 
-pub struct EventBus {
-    seq: AtomicU64,
+// All mutable state lives behind one lock so seq assignment, broadcast send,
+// and ring-buffer append are serialized together — preventing out-of-order
+// delivery to broadcast consumers.
+struct Inner {
+    // Starts at 1 so that `backfill(since=0)` returns all retained events.
+    seq: u64,
     global_tx: broadcast::Sender<SeqEvent>,
-    global_ring: Mutex<VecDeque<SeqEvent>>,
-    per_run_tx: Mutex<HashMap<WorkflowRunId, broadcast::Sender<SeqEvent>>>,
-    per_run_ring: Mutex<HashMap<WorkflowRunId, VecDeque<SeqEvent>>>,
+    global_ring: VecDeque<SeqEvent>,
+    per_run_tx: HashMap<WorkflowRunId, broadcast::Sender<SeqEvent>>,
+    per_run_ring: HashMap<WorkflowRunId, VecDeque<SeqEvent>>,
+}
+
+pub struct EventBus {
+    inner: Mutex<Inner>,
 }
 
 impl EventBus {
     pub fn new() -> Arc<Self> {
-        let (global_tx, _) = broadcast::channel(BROADCAST_CAP);
-        Arc::new(Self {
-            seq: AtomicU64::new(0),
-            global_tx,
-            global_ring: Mutex::new(VecDeque::new()),
-            per_run_tx: Mutex::new(HashMap::new()),
-            per_run_ring: Mutex::new(HashMap::new()),
-        })
+        Arc::new(Self::default())
     }
 
     pub fn publish(&self, run_id: WorkflowRunId, event: SubstrateEvent) {
-        let seq = self.seq.fetch_add(1, Ordering::Relaxed);
+        let mut g = self.inner.lock().unwrap();
+        let seq = g.seq;
+        g.seq += 1;
         let se = SeqEvent { seq, event };
 
-        let _ = self.global_tx.send(se.clone());
+        let _ = g.global_tx.send(se.clone());
 
-        {
-            let mut ring = self.global_ring.lock().unwrap();
-            if ring.len() >= RING_CAP {
-                ring.pop_front();
-            }
-            ring.push_back(se.clone());
+        if g.global_ring.len() >= RING_CAP {
+            g.global_ring.pop_front();
         }
+        g.global_ring.push_back(se.clone());
 
-        {
-            let mut txs = self.per_run_tx.lock().unwrap();
-            let tx = txs
-                .entry(run_id)
-                .or_insert_with(|| broadcast::channel(BROADCAST_CAP).0);
-            let _ = tx.send(se.clone());
-        }
+        let tx = g.per_run_tx
+            .entry(run_id)
+            .or_insert_with(|| broadcast::channel(BROADCAST_CAP).0);
+        let _ = tx.send(se.clone());
 
-        {
-            let mut rings = self.per_run_ring.lock().unwrap();
-            let ring = rings.entry(run_id).or_insert_with(VecDeque::new);
-            if ring.len() >= RING_CAP {
-                ring.pop_front();
-            }
-            ring.push_back(se);
+        let ring = g.per_run_ring.entry(run_id).or_insert_with(VecDeque::new);
+        if ring.len() >= RING_CAP {
+            ring.pop_front();
         }
+        ring.push_back(se);
     }
 
     pub fn subscribe_run(&self, run_id: WorkflowRunId) -> broadcast::Receiver<SeqEvent> {
-        let mut txs = self.per_run_tx.lock().unwrap();
-        let tx = txs
+        let mut g = self.inner.lock().unwrap();
+        let tx = g.per_run_tx
             .entry(run_id)
             .or_insert_with(|| broadcast::channel(BROADCAST_CAP).0);
         tx.subscribe()
     }
 
     pub fn subscribe_global(&self) -> broadcast::Receiver<SeqEvent> {
-        self.global_tx.subscribe()
+        self.inner.lock().unwrap().global_tx.subscribe()
     }
 
     /// Returns (events_with_seq_gt_since, gap_flag).
     /// gap_flag is true when `since` precedes the oldest retained seq.
     pub fn backfill(&self, scope: BackfillScope<'_>, since: u64) -> (Vec<SeqEvent>, bool) {
+        let g = self.inner.lock().unwrap();
         match scope {
-            BackfillScope::Global => {
-                let ring = self.global_ring.lock().unwrap();
-                Self::drain_ring(&ring, since)
-            }
+            BackfillScope::Global => Self::drain_ring(&g.global_ring, since),
             BackfillScope::Run(run_id) => {
-                let rings = self.per_run_ring.lock().unwrap();
-                match rings.get(run_id) {
+                match g.per_run_ring.get(run_id) {
                     None => (vec![], false),
                     Some(ring) => Self::drain_ring(ring, since),
                 }
@@ -139,10 +129,24 @@ impl EventBus {
             return (vec![], false);
         }
         let oldest_seq = ring.front().unwrap().seq;
-        // gap: caller's cursor is behind the oldest retained event (and ring is non-empty)
         let gap = since < oldest_seq;
         let events: Vec<SeqEvent> = ring.iter().filter(|e| e.seq > since).cloned().collect();
         (events, gap)
+    }
+}
+
+impl Default for EventBus {
+    fn default() -> Self {
+        let (global_tx, _) = broadcast::channel(BROADCAST_CAP);
+        Self {
+            inner: Mutex::new(Inner {
+                seq: 1,
+                global_tx,
+                global_ring: VecDeque::new(),
+                per_run_tx: HashMap::new(),
+                per_run_ring: HashMap::new(),
+            }),
+        }
     }
 }
 
@@ -164,11 +168,13 @@ mod tests {
         let r = run_id();
         bus.publish(r, SubstrateEvent::RunStatusChanged { run_id: r, status: RunStatus::Running });
         bus.publish(r, SubstrateEvent::RunStatusChanged { run_id: r, status: RunStatus::Done });
+        // seqs 1 and 2 — since=u64::MAX returns nothing, since=0 returns both
         let (events, _) = bus.backfill(BackfillScope::Global, u64::MAX);
         assert!(events.is_empty());
         let (events, _) = bus.backfill(BackfillScope::Global, 0);
-        assert_eq!(events.len(), 1);
+        assert_eq!(events.len(), 2);
         assert_eq!(events[0].seq, 1);
+        assert_eq!(events[1].seq, 2);
     }
 
     #[test]
@@ -178,11 +184,13 @@ mod tests {
         for _ in 0..5 {
             bus.publish(r, SubstrateEvent::RunStatusChanged { run_id: r, status: RunStatus::Running });
         }
+        // seqs 1..=5; since=2 returns seqs 3, 4, 5
         let (events, gap) = bus.backfill(BackfillScope::Global, 2);
         assert!(!gap);
-        assert_eq!(events.len(), 2);
+        assert_eq!(events.len(), 3);
         assert_eq!(events[0].seq, 3);
         assert_eq!(events[1].seq, 4);
+        assert_eq!(events[2].seq, 5);
     }
 
     #[test]
@@ -216,8 +224,8 @@ mod tests {
         bus.publish(r2, SubstrateEvent::RunStatusChanged { run_id: r2, status: RunStatus::Done });
         let e1 = rx.recv().await.unwrap();
         let e2 = rx.recv().await.unwrap();
-        assert_eq!(e1.seq, 0);
-        assert_eq!(e2.seq, 1);
+        assert_eq!(e1.seq, 1);
+        assert_eq!(e2.seq, 2);
     }
 
     #[test]
