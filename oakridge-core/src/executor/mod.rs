@@ -129,6 +129,16 @@ impl StageContext {
 
         (type_def.validate)(&args.body)?;
 
+        if let Some(parent_id) = args.parent_artifact_id {
+            let parent = queries::get_artifact_by_id(&self.db, &parent_id).await?;
+            if parent.run_id != self.workflow_run_id {
+                return Err(anyhow::anyhow!(
+                    "parent artifact {} belongs to a different workflow run",
+                    parent_id.0
+                ));
+            }
+        }
+
         let artifact = Artifact {
             id: ArtifactId(Uuid::new_v4()),
             run_id: self.workflow_run_id,
@@ -513,5 +523,79 @@ mod tests {
 
         // No event must have been sent on validation failure.
         assert!(rx.try_recv().is_err(), "no event expected on validation failure");
+    }
+
+    // ── set_status tests ──────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn set_status_running_sets_started_at_and_sends_event() {
+        let pool = make_pool().await;
+        let (run_id, si_id) = setup_run(&pool).await;
+        let registry = make_artifact_registry();
+        let (tx, mut rx) = mpsc::channel(8);
+
+        let ctx = make_ctx(pool.clone(), run_id, si_id, registry, tx);
+        ctx.set_status(StageStatus::Running, None).await.unwrap();
+
+        let si = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+        assert_eq!(si.status, StageStatus::Running);
+        assert!(si.started_at.is_some(), "started_at must be set on Running transition");
+        assert!(si.ended_at.is_none());
+
+        let event = rx.try_recv().expect("expected a StatusChanged event");
+        match event {
+            ExecutorEvent::StatusChanged { instance_id, status, parked_reason } => {
+                assert_eq!(instance_id, si_id);
+                assert_eq!(status, StageStatus::Running);
+                assert!(parked_reason.is_none());
+            }
+            other => panic!("unexpected event: {:?}", other),
+        }
+        assert!(rx.try_recv().is_err(), "expected exactly one event");
+    }
+
+    #[tokio::test]
+    async fn set_status_done_sets_ended_at_and_sends_event() {
+        let pool = make_pool().await;
+        let (run_id, si_id) = setup_run(&pool).await;
+        let registry = make_artifact_registry();
+        let (tx, mut rx) = mpsc::channel(8);
+
+        let ctx = make_ctx(pool.clone(), run_id, si_id, registry, tx);
+        ctx.set_status(StageStatus::Done, None).await.unwrap();
+
+        let si = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+        assert_eq!(si.status, StageStatus::Done);
+        assert!(si.ended_at.is_some(), "ended_at must be set on Done transition");
+
+        let event = rx.try_recv().expect("expected a StatusChanged event");
+        assert!(matches!(event, ExecutorEvent::StatusChanged { status: StageStatus::Done, .. }));
+    }
+
+    #[tokio::test]
+    async fn set_status_parked_persists_reason_and_sends_event() {
+        let pool = make_pool().await;
+        let (run_id, si_id) = setup_run(&pool).await;
+        let registry = make_artifact_registry();
+        let (tx, mut rx) = mpsc::channel(8);
+
+        let ctx = make_ctx(pool.clone(), run_id, si_id, registry, tx);
+        ctx.set_status(StageStatus::Parked, Some("waiting for gate".into()))
+            .await
+            .unwrap();
+
+        let si = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+        assert_eq!(si.status, StageStatus::Parked);
+        assert_eq!(si.parked_reason.as_deref(), Some("waiting for gate"));
+        assert!(si.ended_at.is_none());
+
+        let event = rx.try_recv().expect("expected a StatusChanged event");
+        match event {
+            ExecutorEvent::StatusChanged { status, parked_reason, .. } => {
+                assert_eq!(status, StageStatus::Parked);
+                assert_eq!(parked_reason.as_deref(), Some("waiting for gate"));
+            }
+            other => panic!("unexpected event: {:?}", other),
+        }
     }
 }
