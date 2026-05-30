@@ -349,7 +349,6 @@ export async function createCodexRuntime(
 
       // Subscribe to thread notifications
       const unsub = client.subscribeThread(threadId, (notif) => {
-        if (state.isTerminating) return;
         // Track active turn id
         if (notif.method === "turn/started") {
           const p = notif.params as { turn?: { id?: string } };
@@ -367,6 +366,8 @@ export async function createCodexRuntime(
           const p = notif.params as Parameters<typeof extractTurnUsage>[0];
           state.lastTokenUsage = { turnId: p.turnId, ...extractTurnUsage(p) };
         }
+
+        if (state.isTerminating) return;
 
         // Normalize to kbbl event
         const evt = normalizeNotification(notif.method, notif.params);

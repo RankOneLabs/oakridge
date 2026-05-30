@@ -69,6 +69,18 @@ describe("Codex approval policy config", () => {
     expect(parseCodexApprovalPolicy('ask_for_approval = "always"')).toBe("always");
   });
 
+  test("ignores approval_policy in unknown sections", () => {
+    expect(
+      parseCodexApprovalPolicy(
+        [
+          '[plugins."github@openai-curated"]',
+          'enabled = true',
+          'approval_policy = "on-request"',
+        ].join("\n"),
+      ),
+    ).toBeNull();
+  });
+
   test("loadCodexApprovalPolicy falls back to untrusted when missing", () => {
     const tmpDir = mkdtempSync(join(tmpdir(), "kbbl-codex-test-"));
     try {

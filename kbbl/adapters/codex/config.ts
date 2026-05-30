@@ -38,7 +38,6 @@ interface ProjectPolicy {
 
 interface ParsedApprovalConfig {
   rootPolicy: ApprovalPolicy | null;
-  loosePolicy: ApprovalPolicy | null;
   activeProfile: string | null;
   profilePolicies: Map<string, ApprovalPolicy>;
   projectPolicies: ProjectPolicy[];
@@ -71,7 +70,6 @@ function policyFromTrustLevel(trustLevel: string | null): ApprovalPolicy | null 
 function parseCodexApprovalConfig(contents: string): ParsedApprovalConfig {
   let section: ConfigSection = { kind: "root" };
   let rootPolicy: ApprovalPolicy | null = null;
-  let loosePolicy: ApprovalPolicy | null = null;
   let activeProfile: string | null = null;
   const profilePolicies = new Map<string, ApprovalPolicy>();
   const projectPolicies = new Map<string, ProjectPolicy>();
@@ -106,8 +104,6 @@ function parseCodexApprovalConfig(contents: string): ParsedApprovalConfig {
           }),
           approvalPolicy: policy,
         });
-      } else {
-        loosePolicy = policy;
       }
       continue;
     }
@@ -132,20 +128,22 @@ function parseCodexApprovalConfig(contents: string): ParsedApprovalConfig {
 
   return {
     rootPolicy,
-    loosePolicy,
     activeProfile,
     profilePolicies,
     projectPolicies: [...projectPolicies.values()],
   };
 }
 
-export function parseCodexApprovalPolicy(contents: string): ApprovalPolicy | null {
-  const config = parseCodexApprovalConfig(contents);
+function fallbackApprovalPolicy(config: ParsedApprovalConfig): ApprovalPolicy | null {
   const profilePolicy =
     config.activeProfile === null
       ? null
       : config.profilePolicies.get(config.activeProfile) ?? null;
-  return config.rootPolicy ?? profilePolicy ?? config.loosePolicy;
+  return config.rootPolicy ?? profilePolicy;
+}
+
+export function parseCodexApprovalPolicy(contents: string): ApprovalPolicy | null {
+  return fallbackApprovalPolicy(parseCodexApprovalConfig(contents));
 }
 
 export function loadCodexApprovalPolicy(
@@ -169,10 +167,11 @@ export function loadCodexApprovalPolicyForWorkdir(
     const project = config.projectPolicies
       .filter((p) => isInsideOrEqual(p.path, workdir))
       .sort((a, b) => resolve(b.path).length - resolve(a.path).length)[0];
+    const fallbackPolicy = fallbackApprovalPolicy(config);
     return (
       project?.approvalPolicy ??
       policyFromTrustLevel(project?.trustLevel ?? null) ??
-      parseCodexApprovalPolicy(contents) ??
+      fallbackPolicy ??
       DEFAULT_APPROVAL_POLICY
     );
   } catch {
