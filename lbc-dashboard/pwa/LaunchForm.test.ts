@@ -14,7 +14,7 @@ const base: FormState = {
   extraModels: [],
   conditionKind: "single_agent",
   n: 1,
-  grade: true,
+  should_grade: true,
 };
 
 describe("buildRunSpec", () => {

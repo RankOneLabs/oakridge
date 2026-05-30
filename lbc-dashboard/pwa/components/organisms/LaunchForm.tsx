@@ -31,7 +31,7 @@ export interface FormState {
   extraModels: string[];
   conditionKind: ConditionSpec["kind"];
   n: number;
-  grade: boolean;
+  should_grade: boolean;
 }
 
 type BuildResult =
@@ -50,7 +50,7 @@ export function buildRunSpec(state: FormState): BuildResult {
     target: state.target,
     model_pool: modelPool,
     condition: { kind: state.conditionKind, n: state.n },
-    grade: state.grade,
+    grade: state.should_grade,
   });
   if (result.success) return { ok: true, spec: result.data };
   return {
@@ -67,7 +67,7 @@ function minNFor(kind: ConditionSpec["kind"]): number {
 
 export function LaunchForm() {
   const [, select] = useHashSelection();
-  const { launch, pending, error: launchError } = useLaunch();
+  const { launch, is_pending, error: launchError } = useLaunch();
   const [warning, setWarning] = useState<string | null>(null);
   const [freeText, setFreeText] = useState("");
   const [state, setState] = useState<FormState>({
@@ -76,7 +76,7 @@ export function LaunchForm() {
     extraModels: [],
     conditionKind: "single_agent",
     n: 1,
-    grade: true,
+    should_grade: true,
   });
 
   const result = buildRunSpec(state);
@@ -257,9 +257,9 @@ export function LaunchForm() {
         <label className="flex items-center gap-1.5 text-sm">
           <input
             type="checkbox"
-            checked={state.grade}
+            checked={state.should_grade}
             onChange={(e) =>
-              setState((s) => ({ ...s, grade: e.target.checked }))
+              setState((s) => ({ ...s, should_grade: e.target.checked }))
             }
           />
           Run grader
@@ -275,10 +275,10 @@ export function LaunchForm() {
         {launchError && <p className="text-xs text-red-500">{launchError}</p>}
         <button
           className="rounded bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"
-          disabled={!result.ok || pending}
+          disabled={!result.ok || is_pending}
           onClick={() => void handleLaunch()}
         >
-          {pending ? "Launching…" : "Launch"}
+          {is_pending ? "Launching…" : "Launch"}
         </button>
       </div>
     </div>

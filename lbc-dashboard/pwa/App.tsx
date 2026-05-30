@@ -6,7 +6,7 @@
 import { useEffect, useState } from "react";
 
 import { EmptyMessage } from "./components/atoms/EmptyMessage";
-import { ActiveRunsStrip } from "./components/molecules/ActiveRunsStrip";
+import { ActiveRunsStrip } from "./components/organisms/ActiveRunsStrip";
 import { CellList } from "./components/organisms/CellList";
 import { CellPanel } from "./components/organisms/CellPanel";
 import { LaunchForm } from "./components/organisms/LaunchForm";

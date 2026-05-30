@@ -17,7 +17,7 @@
 import { serveStatic } from "hono/bun";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
-import { mkdir, open, stat, writeFile } from "node:fs/promises";
+import { mkdir, open, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
@@ -189,7 +189,13 @@ export function createApp(deps?: { registry?: RunRegistry }): Hono {
     }
     const parsed = RunSpecSchema.safeParse(body);
     if (!parsed.success) {
-      return c.json({ error: parsed.error.format() }, 400);
+      return c.json(
+        {
+          error: "invalid run spec",
+          details: parsed.error.format(),
+        },
+        400,
+      );
     }
     const spec = parsed.data;
 
@@ -208,13 +214,26 @@ export function createApp(deps?: { registry?: RunRegistry }): Hono {
 
     const run_ts = newRunTs();
     const output_dir = join(resolveRunRoot(), run_ts);
-    await mkdir(output_dir, { recursive: true });
     const specPath = join(output_dir, "run-spec.json");
-    await writeFile(specPath, JSON.stringify(spec));
+    try {
+      await mkdir(output_dir, { recursive: true });
+      await writeFile(specPath, JSON.stringify(spec));
 
-    const record = registry.launch({ runTs: run_ts, spec, specPath, outputDir: output_dir });
+      const record = registry.launch({
+        runTs: run_ts,
+        spec,
+        specPath,
+        outputDir: output_dir,
+      });
 
-    return c.json(LaunchResponseSchema.parse({ run_ts, cell_id: record.cell_id, warning }));
+      return c.json(
+        LaunchResponseSchema.parse({ run_ts, cell_id: record.cell_id, warning }),
+      );
+    } catch (error) {
+      await rm(output_dir, { recursive: true, force: true }).catch(() => {});
+      console.error("[lbc-dashboard] failed to launch run", { run_ts, error });
+      return c.json({ error: "failed to launch run" }, 500);
+    }
   });
 
   app.get("/api/runs", (c) => {

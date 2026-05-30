@@ -4,6 +4,7 @@
  * Cancel button enabled only while status === 'running'.
  */
 import { useRuns } from "../../hooks/useRuns";
+import { conditionName } from "../../lib/types";
 import { RunStatusPill } from "../atoms/RunStatusPill";
 
 export function ActiveRunsStrip() {
@@ -20,10 +21,7 @@ export function ActiveRunsStrip() {
   return (
     <ul className="flex flex-wrap gap-2 px-4 pb-3">
       {sorted.map((run) => {
-        const condLabel =
-          run.condition.kind === "single_agent"
-            ? run.condition.kind
-            : `${run.condition.kind}_n${run.condition.n}`;
+        const condLabel = conditionName(run.condition.kind, run.condition.n);
         return (
           <li
             key={run.runId}

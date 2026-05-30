@@ -110,8 +110,16 @@ export function formatRunTs(d: Date): string {
   return `${year}-${month}-${day}T${hours}-${minutes}-${seconds}-${micros}Z`;
 }
 
+// Guards against two launches in the same millisecond colliding on the
+// run_ts — which server.ts uses as both the registry key and the output
+// directory name, so a collision would overwrite the first run.
+let lastRunMs = 0;
+
 export function newRunTs(): string {
-  return formatRunTs(new Date());
+  const now = Date.now();
+  const nextRunMs = now <= lastRunMs ? lastRunMs + 1 : now;
+  lastRunMs = nextRunMs;
+  return formatRunTs(new Date(nextRunMs));
 }
 
 // ---------------------------------------------------------------------------

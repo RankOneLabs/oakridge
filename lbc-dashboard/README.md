@@ -49,7 +49,7 @@ The run registry is in-memory. A dashboard restart forgets in-flight run status;
 ### Terminal-only flow (unchanged)
 
 ```bash
-cd legit-biz-club && uv run python -m legit_biz_club.run --spec <path>
+cd legit-biz-club && uv run python -m legit_biz_club.run --spec <path-to-run-spec.json> --output-dir <path-to-output-dir>
 ```
 
 ### Dev servers

@@ -9,15 +9,15 @@ import type { LaunchResponse, RunSpec } from "../lib/types";
 
 export function useLaunch(): {
   launch: (spec: RunSpec) => Promise<LaunchResponse | null>;
-  pending: boolean;
+  is_pending: boolean;
   error: string | null;
 } {
-  const [pending, setPending] = useState(false);
+  const [is_pending, setIsPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const launch = useCallback(
     async (spec: RunSpec): Promise<LaunchResponse | null> => {
-      setPending(true);
+      setIsPending(true);
       setError(null);
       try {
         const r = await fetch("/api/runs", {
@@ -42,11 +42,11 @@ export function useLaunch(): {
         setError(e instanceof Error ? e.message : String(e));
         return null;
       } finally {
-        setPending(false);
+        setIsPending(false);
       }
     },
     [],
   );
 
-  return { launch, pending, error };
+  return { launch, is_pending, error };
 }
