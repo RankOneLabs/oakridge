@@ -1074,15 +1074,16 @@ export class Session {
       const runtime = this._runtime;
       const handle = this._handle;
       const task = async () => {
+        await runtime.send(handle, text);
         if (!isInternal && runtime.synthesizeUserInputEvents === true) {
           await this.emit("user", {
             type: "user",
             message: { role: "user", content: text },
           });
         }
-        await runtime.send(handle, text);
       };
       this.inputQueue = this.inputQueue.then(task, task);
+      await this.inputQueue;
       if (!isInternal && this._compactor) {
         try {
           this._compactor.observeUserMessage();
@@ -1094,7 +1095,6 @@ export class Session {
           );
         }
       }
-      await this.inputQueue;
       return;
     }
 

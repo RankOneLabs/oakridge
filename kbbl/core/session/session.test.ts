@@ -234,6 +234,51 @@ describe("Session.attachRuntime", () => {
     await session.waitForEnd();
   });
 
+  test("writeInput does not record a synthetic user event when runtime send fails", async () => {
+    const emitted: Array<{ type: string; payload: unknown }> = [];
+    let finish!: () => void;
+    const done = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const runtime = {
+      ...makeRuntime(),
+      id: "codex",
+      descriptor: {
+        id: "codex",
+        label: "Codex",
+        models: [],
+        supportsCompaction: false,
+      },
+      synthesizeUserInputEvents: true,
+      async *events(_handle: SessionHandle): AsyncIterable<RuntimeEvent> {
+        await done;
+        yield { type: "completed", result: { code: 0 } };
+      },
+      async send(_handle: SessionHandle, _input: string): Promise<void> {
+        throw new Error("API Error: 400 messages.1.content.21");
+      },
+    } satisfies AgentRuntime;
+    const session = makeSession({
+      runtimeId: "codex",
+      callbacks: {
+        onEmit: (_session, evt) => {
+          emitted.push({ type: evt.type, payload: evt.payload });
+        },
+      },
+    });
+
+    const handle = await runtime.spawn({ workingDirectory: "/tmp" });
+    await session.attachRuntime(runtime, handle);
+
+    await expect(session.writeInput("hello codex")).rejects.toThrow(
+      "API Error: 400",
+    );
+    expect(emitted.filter((e) => e.type === "user")).toHaveLength(0);
+
+    finish();
+    await session.waitForEnd();
+  });
+
   test("writeInput does not synthesize user events unless the runtime opts in", async () => {
     const sent: string[] = [];
     const emitted: Array<{ type: string; payload: unknown }> = [];
