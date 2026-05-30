@@ -306,24 +306,26 @@ describe("RunSpecSchema", () => {
 
 describe("conditionName", () => {
   test("single_agent returns 'single_agent' with no suffix", () => {
-    expect(conditionName("single_agent", 1)).toBe("single_agent");
+    expect(conditionName("single_agent", 1)).toBe(
+      "single_agent" as ConditionName,
+    );
   });
 
   test("ensemble_multi_round/n=3 returns 'ensemble_multi_round_n3'", () => {
     expect(conditionName("ensemble_multi_round", 3)).toBe(
-      "ensemble_multi_round_n3",
+      "ensemble_multi_round_n3" as ConditionName,
     );
   });
 
   test("ensemble_single_round/n=4 returns 'ensemble_single_round_n4'", () => {
     expect(conditionName("ensemble_single_round", 4)).toBe(
-      "ensemble_single_round_n4",
+      "ensemble_single_round_n4" as ConditionName,
     );
   });
 
   test("ensemble_incremental/n=2 returns 'ensemble_incremental_n2'", () => {
     expect(conditionName("ensemble_incremental", 2)).toBe(
-      "ensemble_incremental_n2",
+      "ensemble_incremental_n2" as ConditionName,
     );
   });
 });

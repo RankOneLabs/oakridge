@@ -210,7 +210,11 @@ class TestUnknownKeys:
 class TestGradeField:
     def test_grade_defaults_to_true(self) -> None:
         spec = RunSpec.from_dict(
-            {"target": "prose_substrate_thesis", "model_pool": ["m"], "condition": {"kind": "single_agent", "n": 1}}
+            {
+                "target": "prose_substrate_thesis",
+                "model_pool": ["m"],
+                "condition": {"kind": "single_agent", "n": 1},
+            }
         )
         assert spec.grade is True
 

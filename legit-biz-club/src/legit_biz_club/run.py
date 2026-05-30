@@ -63,7 +63,8 @@ class RunSpec:
         kind = condition_raw.get("kind")
         if not isinstance(kind, str) or kind not in registry.CONDITION_FACTORIES:
             raise ValueError(
-                f"condition.kind must be one of {list(registry.CONDITION_FACTORIES)!r}, got {kind!r}"
+                f"condition.kind must be one of "
+                f"{list(registry.CONDITION_FACTORIES)!r}, got {kind!r}"
             )
         n_raw = condition_raw.get("n")
         if not isinstance(n_raw, int) or isinstance(n_raw, bool):
