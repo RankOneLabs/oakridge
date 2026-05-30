@@ -252,6 +252,61 @@ export function createApp(deps?: { registry?: RunRegistry }): Hono {
   return app;
 }
 
+// --- helpers -----------------------------------------------------------
+
+/**
+ * Read appended bytes since the last offset. Carries a UTF-8
+ * leftover string across calls because the tail of one read may not
+ * end at a complete line.
+ *
+ * Treats file-truncation (size shrunk) as a re-create: resets to
+ * offset 0 + empty leftover. Caller should reset its sent-counter
+ * if it cares (the SSE handler doesn't — sentCount keeps moving
+ * forward and the client's Last-Event-Id resume just picks up
+ * wherever).
+ */
+async function readNewLines(
+  path: string,
+  fromBytes: number,
+  leftover: string,
+): Promise<{ newLines: string[]; nextOffset: number; nextLeftover: string }> {
+  let st;
+  try {
+    st = await stat(path);
+  } catch {
+    // File doesn't exist yet — brand new cell. Nothing to read.
+    return { newLines: [], nextOffset: fromBytes, nextLeftover: leftover };
+  }
+  let startOffset = fromBytes;
+  let carry = leftover;
+  if (st.size < startOffset) {
+    // Truncated/replaced. Re-read from the beginning.
+    startOffset = 0;
+    carry = "";
+  }
+  if (st.size === startOffset) {
+    return { newLines: [], nextOffset: startOffset, nextLeftover: carry };
+  }
+  const len = st.size - startOffset;
+  const fh = await open(path, "r");
+  try {
+    const buf = Buffer.alloc(len);
+    await fh.read(buf, 0, len, startOffset);
+    const text = carry + buf.toString("utf-8");
+    const lastNewline = text.lastIndexOf("\n");
+    if (lastNewline === -1) {
+      // No complete line yet; carry everything to the next tick.
+      return { newLines: [], nextOffset: st.size, nextLeftover: text };
+    }
+    const consumed = text.slice(0, lastNewline);
+    const nextLeftover = text.slice(lastNewline + 1);
+    const newLines = consumed.split("\n").filter((l) => l.trim());
+    return { newLines, nextOffset: st.size, nextLeftover };
+  } finally {
+    await fh.close();
+  }
+}
+
 // --- entry -------------------------------------------------------------
 
 function parsePort(raw: string | undefined): number {

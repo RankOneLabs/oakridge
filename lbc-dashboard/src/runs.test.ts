@@ -242,9 +242,11 @@ const PROVIDER_KEYS = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KE
 describe("HTTP /api/runs", () => {
   let testRunRoot: string;
   let savedKeys: Record<string, string | undefined>;
+  let savedRunRoot: string | undefined;
 
   beforeEach(async () => {
     testRunRoot = await mkdtemp(join(tmpdir(), "lbc-test-runs-"));
+    savedRunRoot = process.env.LBC_RUN_ROOT;
     process.env.LBC_RUN_ROOT = testRunRoot;
     savedKeys = {};
     for (const k of PROVIDER_KEYS) {
@@ -260,7 +262,11 @@ describe("HTTP /api/runs", () => {
         process.env[k] = savedKeys[k];
       }
     }
-    delete process.env.LBC_RUN_ROOT;
+    if (savedRunRoot === undefined) {
+      delete process.env.LBC_RUN_ROOT;
+    } else {
+      process.env.LBC_RUN_ROOT = savedRunRoot;
+    }
     await rm(testRunRoot, { recursive: true, force: true });
   });
 
