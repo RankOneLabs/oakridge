@@ -106,6 +106,103 @@ export const CommitsResponseSchema = z.strictObject({
 // rather than carving out an exception for non-wire string unions.
 export const TabSchema = z.enum(["events", "artifact", "commits", "scores"]);
 
+// --- run spec schemas ----------------------------------------------------
+
+export const TARGET_KEYS = [
+  "prose_substrate_thesis",
+  "code_leetcode_longest_substring",
+  "code_leetcode_trapping_rain_water",
+  "code_leetcode_regex_matching",
+  "code_leetcode_median_two_sorted_arrays",
+] as const;
+
+export const CONDITION_KINDS = [
+  "single_agent",
+  "ensemble_single_round",
+  "ensemble_multi_round",
+  "ensemble_incremental",
+] as const;
+
+export const ConditionSpecSchema = z.strictObject({
+  kind: z.enum(CONDITION_KINDS),
+  n: z.number().int().min(1).max(16),
+});
+
+// Cross-field rules mirror run.py's ConditionSpec validation:
+//   single_agent         => n must be 1
+//   ensemble_single_round => n must be >= 2
+//   ensemble_multi_round  => n must be >= 2
+//   ensemble_incremental  => n must be >= 1 (already enforced by min(1))
+export const RunSpecSchema = z
+  .strictObject({
+    target: z.enum(TARGET_KEYS),
+    model_pool: z.array(z.string().min(1)).nonempty(),
+    condition: ConditionSpecSchema,
+    grade: z.boolean().default(true),
+  })
+  .superRefine((val, ctx) => {
+    const { kind, n } = val.condition;
+    if (kind === "single_agent" && n !== 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["condition", "n"],
+        message: "single_agent requires n === 1",
+      });
+    } else if (kind === "ensemble_single_round" && n < 2) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["condition", "n"],
+        message: "ensemble_single_round requires n >= 2",
+      });
+    } else if (kind === "ensemble_multi_round" && n < 2) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["condition", "n"],
+        message: "ensemble_multi_round requires n >= 2",
+      });
+    }
+    // ensemble_incremental: n >= 1 is already enforced by min(1)
+  });
+
+export const RunStatusSchema = z.enum(["running", "exited", "failed"]);
+
+export const RunSummarySchema = z.strictObject({
+  runId: z.string(),
+  run_ts: z.string(),
+  cell_id: z.string().transform((s): CellId => s as CellId),
+  target: z.enum(TARGET_KEYS),
+  condition: ConditionSpecSchema,
+  status: RunStatusSchema,
+  started_ms: z.number(),
+  exit_code: z.number().nullable(),
+  stderr_tail: z.string(),
+});
+
+export const RunsResponseSchema = z.strictObject({
+  runs: z.array(RunSummarySchema),
+});
+
+export const LaunchResponseSchema = z.strictObject({
+  run_ts: z.string(),
+  cell_id: z.string().transform((s): CellId => s as CellId),
+  warning: z.string().optional(),
+});
+
+// --- conditionName helper -------------------------------------------------
+
+// Reproduces cohort 1's canonical_condition_name: the condition segment
+// of the on-disk directory path that run_cell creates. single_agent has
+// no n-suffix; all ensemble kinds carry _n${n}.
+export function conditionName(
+  kind: (typeof CONDITION_KINDS)[number],
+  n: number,
+): ConditionName {
+  if (kind === "single_agent") {
+    return "single_agent" as ConditionName;
+  }
+  return `${kind}_n${n}` as ConditionName;
+}
+
 // --- inferred types ------------------------------------------------------
 
 export type CellEvent = z.infer<typeof CellEventSchema>;
@@ -114,3 +211,9 @@ export type CellSummary = z.infer<typeof CellSummarySchema>;
 export type CellDetail = z.infer<typeof CellDetailSchema>;
 export type CommitSnapshot = z.infer<typeof CommitSnapshotSchema>;
 export type Tab = z.infer<typeof TabSchema>;
+export type ConditionSpec = z.infer<typeof ConditionSpecSchema>;
+export type RunSpec = z.infer<typeof RunSpecSchema>;
+export type RunStatus = z.infer<typeof RunStatusSchema>;
+export type RunSummary = z.infer<typeof RunSummarySchema>;
+export type RunsResponse = z.infer<typeof RunsResponseSchema>;
+export type LaunchResponse = z.infer<typeof LaunchResponseSchema>;
