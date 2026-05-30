@@ -5,7 +5,11 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
 import { createCodexRuntimeDescriptorOnly } from "./index";
-import { loadCodexApprovalPolicy, parseCodexApprovalPolicy } from "./config";
+import {
+  loadCodexApprovalPolicy,
+  loadCodexApprovalPolicyForWorkdir,
+  parseCodexApprovalPolicy,
+} from "./config";
 import { CODEX_NON_PERSISTED_EVENT_TYPES } from "./events";
 
 describe("Codex adapter descriptor", () => {
@@ -65,6 +69,18 @@ describe("Codex approval policy config", () => {
     expect(parseCodexApprovalPolicy('ask_for_approval = "always"')).toBe("always");
   });
 
+  test("ignores approval_policy in unknown sections", () => {
+    expect(
+      parseCodexApprovalPolicy(
+        [
+          '[plugins."github@openai-curated"]',
+          'enabled = true',
+          'approval_policy = "on-request"',
+        ].join("\n"),
+      ),
+    ).toBeNull();
+  });
+
   test("loadCodexApprovalPolicy falls back to untrusted when missing", () => {
     const tmpDir = mkdtempSync(join(tmpdir(), "kbbl-codex-test-"));
     try {
@@ -80,6 +96,65 @@ describe("Codex approval policy config", () => {
       const path = join(tmpDir, "config.toml");
       writeFileSync(path, 'approval_policy = "on-request"\n');
       expect(loadCodexApprovalPolicy(path)).toBe("on-request");
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test("loadCodexApprovalPolicyForWorkdir maps trusted project to never", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "kbbl-codex-test-"));
+    try {
+      const path = join(tmpDir, "config.toml");
+      writeFileSync(
+        path,
+        [
+          '[projects."/repo"]',
+          'trust_level = "trusted"',
+          '',
+          '[plugins."github@openai-curated"]',
+          'enabled = true',
+          'approval_policy = "on-request"',
+        ].join("\n"),
+      );
+      expect(loadCodexApprovalPolicyForWorkdir("/repo/subdir", path)).toBe("never");
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test("loadCodexApprovalPolicyForWorkdir prefers project approval policy", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "kbbl-codex-test-"));
+    try {
+      const path = join(tmpDir, "config.toml");
+      writeFileSync(
+        path,
+        [
+          'approval_policy = "untrusted"',
+          '',
+          '[projects."/repo"]',
+          'approval_policy = "on-request"',
+        ].join("\n"),
+      );
+      expect(loadCodexApprovalPolicyForWorkdir("/repo", path)).toBe("on-request");
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test("loadCodexApprovalPolicyForWorkdir ignores unrelated absolute project paths", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "kbbl-codex-test-"));
+    try {
+      const path = join(tmpDir, "config.toml");
+      writeFileSync(
+        path,
+        [
+          'approval_policy = "on-request"',
+          '',
+          '[projects."/trusted-project"]',
+          'approval_policy = "never"',
+        ].join("\n"),
+      );
+      expect(loadCodexApprovalPolicyForWorkdir("/workdir", path)).toBe("on-request");
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
     }

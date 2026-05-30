@@ -25,7 +25,10 @@ import {
 import type { ResultUsage } from "../../core/session/session";
 import { normalizeApprovalByMethod } from "./approvals";
 import { resolveCodexResumeRef } from "./resume";
-import { loadCodexApprovalPolicy, type ApprovalPolicy } from "./config";
+import {
+  loadCodexApprovalPolicyForWorkdir,
+  type ApprovalPolicy,
+} from "./config";
 
 // === Per-session state ===
 
@@ -37,6 +40,9 @@ interface CodexSessionState {
   approvalResolvers: Map<string, (d: "allow" | "deny") => void>;
   /** Per-turn token usage keyed by turnId; consumed by classifyEvent on the matching result */
   lastTokenUsage: { turnId: string; inputTokens: number; outputTokens: number; cachedInputTokens: number } | null;
+  isTerminating: boolean;
+  idleWaiters: Set<() => void>;
+  stopEvents: (() => void) | null;
 }
 
 // === Descriptor-only factory (for conformance tests without a live server) ===
@@ -155,7 +161,6 @@ export interface CreateCodexRuntimeOpts extends CodexAppServerOpts {
 export async function createCodexRuntime(
   opts: CreateCodexRuntimeOpts,
 ): Promise<AgentRuntime> {
-  const approvalPolicy = opts.approvalPolicy ?? loadCodexApprovalPolicy();
   const { client, models, stop } = await startCodexAppServer(opts);
   const { sessionsDir } = opts;
 
@@ -172,6 +177,32 @@ export async function createCodexRuntime(
     return sessions.get(oakridgeSid);
   }
 
+  function markIdle(state: CodexSessionState): void {
+    state.activeTurnId = null;
+    for (const resolve of state.idleWaiters) resolve();
+    state.idleWaiters.clear();
+  }
+
+  function waitForIdle(state: CodexSessionState, timeoutMs: number): Promise<void> {
+    if (state.activeTurnId === null) return Promise.resolve();
+    return new Promise((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        state.idleWaiters.delete(done);
+        resolve();
+      };
+      const timer = setTimeout(done, timeoutMs);
+      state.idleWaiters.add(done);
+    });
+  }
+
+  async function interruptActiveTurn(state: CodexSessionState): Promise<void> {
+    const turnId = state.activeTurnId;
+    if (turnId === null) return;
+    await client.turnInterrupt({ threadId: state.threadId, turnId });
+    await waitForIdle(state, 5_000);
+  }
+
   const runtime: AgentRuntime = {
     id: "codex",
     descriptor,
@@ -184,9 +215,15 @@ export async function createCodexRuntime(
         (config.runtimeSpecific?.oakridgeSid as string | undefined) ??
         randomUUID();
       const cwd = config.workingDirectory;
+      const policyWorkdir =
+        typeof config.runtimeSpecific?.projectWorkdir === "string"
+          ? config.runtimeSpecific.projectWorkdir
+          : cwd;
       const model = config.runtimeSpecific?.model as string | undefined;
       const parentOakridgeSid =
         config.runtimeSpecific?.parentOakridgeSid as string | undefined;
+      const effectiveApprovalPolicy =
+        opts.approvalPolicy ?? loadCodexApprovalPolicyForWorkdir(policyWorkdir);
 
       let threadId: string;
       let resolvedModel: string | null = null;
@@ -201,7 +238,7 @@ export async function createCodexRuntime(
             threadId: ref.runtimeSid,
             cwd,
             sandbox: "workspace-write",
-            approvalPolicy,
+            approvalPolicy: effectiveApprovalPolicy,
             runtimeWorkspaceRoots: [cwd],
           });
           threadId = forkResult.thread.id;
@@ -213,7 +250,7 @@ export async function createCodexRuntime(
             persistExtendedHistory: false,
             cwd,
             sandbox: "workspace-write",
-            approvalPolicy,
+            approvalPolicy: effectiveApprovalPolicy,
             model,
             runtimeWorkspaceRoots: [cwd],
           });
@@ -227,7 +264,7 @@ export async function createCodexRuntime(
           persistExtendedHistory: false,
           cwd,
           sandbox: "workspace-write",
-          approvalPolicy,
+          approvalPolicy: effectiveApprovalPolicy,
           model,
           runtimeWorkspaceRoots: [cwd],
         });
@@ -241,6 +278,9 @@ export async function createCodexRuntime(
         activeTurnId: null,
         approvalResolvers: new Map(),
         lastTokenUsage: null,
+        isTerminating: false,
+        idleWaiters: new Set(),
+        stopEvents: null,
       };
       sessions.set(oakridgeSid, state);
 
@@ -251,7 +291,15 @@ export async function createCodexRuntime(
     async terminate(handle: SessionHandle): Promise<void> {
       const state = getState(handle.sessionId);
       if (!state) return;
+      state.isTerminating = true;
       try {
+        await interruptActiveTurn(state).catch((err) => {
+          console.error(
+            `kbbl codex: interrupt failed for ${handle.sessionId}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        });
         // Probe finding #4: thread/unsubscribe confirmed; returns {status:"unsubscribed"}
         await client.threadUnsubscribe(state.threadId);
       } catch (err) {
@@ -266,7 +314,12 @@ export async function createCodexRuntime(
         resolver("deny");
       }
       state.approvalResolvers.clear();
-      sessions.delete(handle.sessionId);
+      markIdle(state);
+      if (state.stopEvents) {
+        state.stopEvents();
+      } else if (getState(handle.sessionId) === state) {
+        sessions.delete(handle.sessionId);
+      }
     },
 
     // --- events ---
@@ -288,8 +341,15 @@ export async function createCodexRuntime(
 
       function waitForEvent(): Promise<void> {
         if (eventQueue.length > 0) return Promise.resolve();
+        if (done) return Promise.resolve();
         return new Promise<void>((r) => { queueResolve = r; });
       }
+
+      state.stopEvents = () => {
+        done = true;
+        queueResolve?.();
+        queueResolve = null;
+      };
 
       // Subscribe to thread notifications
       const unsub = client.subscribeThread(threadId, (notif) => {
@@ -302,7 +362,7 @@ export async function createCodexRuntime(
           notif.method === "turn/completed" ||
           notif.method === "turn/interrupted"
         ) {
-          state.activeTurnId = null;
+          markIdle(state);
         }
 
         // Capture per-turn token usage for classifyEvent → observeTurnEnd
@@ -310,6 +370,8 @@ export async function createCodexRuntime(
           const p = notif.params as Parameters<typeof extractTurnUsage>[0];
           state.lastTokenUsage = { turnId: p.turnId, ...extractTurnUsage(p) };
         }
+
+        if (state.isTerminating) return;
 
         // Normalize to kbbl event
         const evt = normalizeNotification(notif.method, notif.params);
@@ -373,6 +435,7 @@ export async function createCodexRuntime(
       try {
         while (true) {
           await waitForEvent();
+          if (done && eventQueue.length === 0) break;
           while (eventQueue.length > 0) {
             const evt = eventQueue.shift()!;
             if (evt.type === "completed") {
@@ -388,6 +451,8 @@ export async function createCodexRuntime(
         unsub();
         closeUnsub();
         client.setServerRequestHandler(threadId, null);
+        state.stopEvents = null;
+        if (getState(handle.sessionId) === state) sessions.delete(handle.sessionId);
       }
 
       yield { type: "completed", result: { code: 0 } };
@@ -398,9 +463,12 @@ export async function createCodexRuntime(
       const state = getState(handle.sessionId);
       if (!state) throw new Error(`kbbl codex: no session for ${handle.sessionId}`);
       if (state.activeTurnId !== null) {
-        throw new Error(
-          `kbbl codex: session ${handle.sessionId} has an active turn — cannot send`,
-        );
+        await interruptActiveTurn(state);
+        if (state.activeTurnId !== null) {
+          throw new Error(
+            `kbbl codex: session ${handle.sessionId} still has an active turn after interrupt`,
+          );
+        }
       }
 
       await client.turnStart({
