@@ -27,7 +27,14 @@ export function useLaunch(): {
         });
         if (!r.ok) {
           const text = await r.text();
-          setError(`Launch failed (${r.status}): ${text}`);
+          let msg = text;
+          try {
+            const json = JSON.parse(text) as { error?: unknown };
+            if (typeof json.error === "string") msg = json.error;
+          } catch {
+            // raw text fallback
+          }
+          setError(`Launch failed (${r.status}): ${msg}`);
           return null;
         }
         return LaunchResponseSchema.parse(await r.json());
