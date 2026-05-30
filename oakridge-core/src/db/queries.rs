@@ -195,7 +195,7 @@ pub async fn insert_project(pool: &SqlitePool, p: &Project) -> crate::Result<()>
 
 pub async fn list_projects(pool: &SqlitePool) -> crate::Result<Vec<Project>> {
     let rows = sqlx::query_as::<_, ProjectRow>(
-        "SELECT id, name, repo_dir, created_at FROM project ORDER BY created_at",
+        "SELECT id, name, repo_dir, created_at FROM project ORDER BY created_at, id",
     )
     .fetch_all(pool)
     .await?;
@@ -240,7 +240,7 @@ pub async fn insert_workflow_def(pool: &SqlitePool, d: &WorkflowDef) -> crate::R
 
 pub async fn list_workflow_defs(pool: &SqlitePool) -> crate::Result<Vec<WorkflowDef>> {
     let rows = sqlx::query_as::<_, WorkflowDefRow>(
-        "SELECT id, name, version, graph, created_at FROM workflow_def ORDER BY created_at",
+        "SELECT id, name, version, graph, created_at FROM workflow_def ORDER BY created_at, id",
     )
     .fetch_all(pool)
     .await?;
