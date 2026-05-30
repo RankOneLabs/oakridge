@@ -57,7 +57,7 @@ export function resolveRunRoot(): string {
  * condition names, so a future operator-supplied name with any
  * delimiter would be a footgun.
  */
-function cellIdFor(runTs: string, target: string, condition: string): CellId {
+export function cellIdFor(runTs: string, target: string, condition: string): CellId {
   return [runTs, target, condition]
     .map(encodeURIComponent)
     .join(":") as CellId;
@@ -73,7 +73,7 @@ function isSafeSegment(s: string): boolean {
   return s.length > 0 && s !== "." && s !== ".." && !s.includes("/") && !s.includes("\\");
 }
 
-function parseCellId(
+export function parseCellId(
   cellId: string,
 ): { runTs: string; target: string; condition: string } | null {
   const parts = cellId.split(":");
