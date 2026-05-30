@@ -16,25 +16,33 @@ export function useRuns(): {
   const [runs, setRuns] = useState<RunSummary[]>([]);
 
   const refresh = useCallback(async () => {
-    const r = await fetch("/api/runs");
-    if (!r.ok) return;
-    const data = RunsResponseSchema.parse(await r.json());
-    setRuns(data.runs);
+    try {
+      const r = await fetch("/api/runs");
+      if (!r.ok) return;
+      const data = RunsResponseSchema.parse(await r.json());
+      setRuns(data.runs);
+    } catch {
+      // Network or parse failure — keep stale state, retry next tick.
+    }
   }, []);
 
   const cancel = useCallback(
     async (runId: string) => {
-      await fetch(`/api/runs/${encodeURIComponent(runId)}`, {
-        method: "DELETE",
-      });
-      await refresh();
+      try {
+        await fetch(`/api/runs/${encodeURIComponent(runId)}`, {
+          method: "DELETE",
+        });
+        await refresh();
+      } catch {
+        // Swallow so `void cancel(...)` callers don't get unhandled rejections.
+      }
     },
     [refresh],
   );
 
   useEffect(() => {
-    refresh();
-    const t = setInterval(refresh, 2000);
+    void refresh();
+    const t = setInterval(() => void refresh(), 2000);
     return () => clearInterval(t);
   }, [refresh]);
 

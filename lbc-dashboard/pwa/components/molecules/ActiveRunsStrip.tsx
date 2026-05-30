@@ -34,6 +34,7 @@ export function ActiveRunsStrip() {
             </span>
             <RunStatusPill status={run.status} />
             <button
+              type="button"
               className="ml-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
               disabled={run.status !== "running"}
               onClick={() => void cancel(run.runId)}

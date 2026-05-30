@@ -184,6 +184,8 @@ export function LaunchForm() {
                   {m}
                 </span>
                 <button
+                  type="button"
+                  aria-label={`Remove model ${m}`}
                   className="text-stone-400 hover:text-red-500"
                   onClick={() => removeExtraModel(m)}
                 >
@@ -200,10 +202,11 @@ export function LaunchForm() {
             value={freeText}
             onChange={(e) => setFreeText(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") addFreeTextModel();
+              if (e.key === "Enter") { e.preventDefault(); addFreeTextModel(); }
             }}
           />
           <button
+            type="button"
             className="rounded bg-stone-100 px-2 py-1 text-xs hover:bg-stone-200"
             onClick={addFreeTextModel}
           >
