@@ -39,6 +39,7 @@ impl IntoResponse for AppError {
                 (StatusCode::CONFLICT, Json(json!({"error": msg}))).into_response()
             }
             AppError::Internal(msg) => {
+                tracing::error!(error = %msg, "unhandled internal error mapped to 500");
                 (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": msg}))).into_response()
             }
         }
@@ -51,11 +52,14 @@ fn map_domain_error(e: &crate::Error) -> (StatusCode, String) {
         crate::Error::RegistryMiss(_) => (StatusCode::NOT_FOUND, e.to_string()),
         crate::Error::Validation(_) => (StatusCode::BAD_REQUEST, e.to_string()),
         crate::Error::Db(sqlx::Error::Database(dbe))
-            if dbe.message().contains("UNIQUE constraint failed") =>
+            if dbe.kind() == sqlx::error::ErrorKind::UniqueViolation =>
         {
             (StatusCode::CONFLICT, e.to_string())
         }
-        _ => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        _ => {
+            tracing::error!(error = %e, "internal domain error mapped to 500");
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        }
     }
 }
 
@@ -199,11 +203,9 @@ pub async fn create_workflow_run(
 
     let merged_context = if let Some(project_id) = body.project_id {
         let project = queries::get_project_by_id(&state.pool, &project_id).await?;
-        let repo_dir_str = project
-            .repo_dir
-            .to_str()
-            .ok_or_else(|| crate::Error::Validation("repo_dir is not valid UTF-8".into()))?
-            .to_string();
+        // repo_dir came in as a String via CreateProject and round-trips through PathBuf,
+        // so to_str() is always Some here.
+        let repo_dir_str = project.repo_dir.to_string_lossy().into_owned();
 
         // Build injected base: {project:{id,name,repo_dir}, workdir:repo_dir}
         let mut merged = serde_json::Map::new();
@@ -326,6 +328,13 @@ pub async fn post_verb_results(
         )));
     }
 
+    // Known race: the parked check above and the deliver_decision call below are not
+    // atomic. A concurrent request (or a cancellation) can advance the stage out of
+    // Parked between the SELECT and the control-channel send. The duplicate caller
+    // will receive 202 even though the decision may be silently dropped or cause a
+    // "run not active" → 500. Making this atomic requires moving the guard into the
+    // Coordinator (cohort 5 scope); for now the window is small and the consequence
+    // is a no-op resume, not data corruption.
     state
         .coordinator
         .deliver_decision(
