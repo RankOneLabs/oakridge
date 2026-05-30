@@ -175,7 +175,9 @@ fn row_to_artifact(r: ArtifactRow) -> crate::Result<Artifact> {
 
 pub async fn insert_project(pool: &SqlitePool, p: &Project) -> crate::Result<()> {
     let id = p.id.0.to_string();
-    let repo_dir = p.repo_dir.to_string_lossy().to_string();
+    let repo_dir = p.repo_dir.to_str().ok_or_else(|| {
+        crate::Error::Validation(format!("repo_dir is not valid UTF-8: {:?}", p.repo_dir))
+    })?.to_string();
     let created_at = p.created_at.to_rfc3339();
     sqlx::query!(
         "INSERT INTO project (id, name, repo_dir, created_at) VALUES (?, ?, ?, ?)",
