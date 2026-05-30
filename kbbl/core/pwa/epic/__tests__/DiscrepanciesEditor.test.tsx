@@ -73,7 +73,9 @@ describe("DiscrepanciesEditor", () => {
     const fetchMock = makeFetch([OPEN_ROW]);
     vi.stubGlobal("fetch", fetchMock);
 
-    renderWithClient(<DiscrepanciesEditor spec_id="spec-1" epic_id="epic-1" />);
+    renderWithClient(
+      <DiscrepanciesEditor spec_id="spec-1" epic_id="epic-1" internal_status="discrepancies" />,
+    );
 
     const input = await screen.findByPlaceholderText("Resolution note…");
     fireEvent.change(input, { target: { value: "fixed it" } });
@@ -94,7 +96,9 @@ describe("DiscrepanciesEditor", () => {
     const fetchMock = makeFetch([OPEN_ROW]);
     vi.stubGlobal("fetch", fetchMock);
 
-    renderWithClient(<DiscrepanciesEditor spec_id="spec-1" epic_id="epic-1" />);
+    renderWithClient(
+      <DiscrepanciesEditor spec_id="spec-1" epic_id="epic-1" internal_status="discrepancies" />,
+    );
 
     const input = await screen.findByPlaceholderText("Resolution note…");
     fireEvent.change(input, { target: { value: "not applicable" } });
@@ -112,7 +116,9 @@ describe("DiscrepanciesEditor", () => {
   it("Move to Review is disabled when an open row remains", async () => {
     vi.stubGlobal("fetch", makeFetch([OPEN_ROW, RESOLVED_ROW]));
 
-    renderWithClient(<DiscrepanciesEditor spec_id="spec-1" epic_id="epic-1" />);
+    renderWithClient(
+      <DiscrepanciesEditor spec_id="spec-1" epic_id="epic-1" internal_status="discrepancies" />,
+    );
 
     const moveBtn = await screen.findByRole("button", { name: "Move to Review" });
     expect((moveBtn as HTMLButtonElement).disabled).toBe(true);
@@ -122,7 +128,9 @@ describe("DiscrepanciesEditor", () => {
     const fetchMock = makeFetch([RESOLVED_ROW]);
     vi.stubGlobal("fetch", fetchMock);
 
-    renderWithClient(<DiscrepanciesEditor spec_id="spec-1" epic_id="epic-1" />);
+    renderWithClient(
+      <DiscrepanciesEditor spec_id="spec-1" epic_id="epic-1" internal_status="discrepancies" />,
+    );
 
     const moveBtn = await screen.findByRole("button", { name: "Move to Review" });
     expect((moveBtn as HTMLButtonElement).disabled).toBe(false);
@@ -132,6 +140,43 @@ describe("DiscrepanciesEditor", () => {
       const call = findPatchCall(fetchMock, "/specs/spec-1/internal-status");
       if (!call) throw new Error("expected PATCH /specs/spec-1/internal-status not found");
       expect(call.body.internal_status).toBe("review");
+    });
+  });
+
+  it("shows Approve (not Move to Review) when internal_status is review", async () => {
+    vi.stubGlobal("fetch", makeFetch([RESOLVED_ROW]));
+
+    renderWithClient(
+      <DiscrepanciesEditor spec_id="spec-1" epic_id="epic-1" internal_status="review" />,
+    );
+
+    expect(
+      await screen.findByRole("button", { name: "Approve & start planning" }),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Move to Review" })).toBeNull();
+  });
+
+  it("Approve requires confirm, then PATCHes internal-status=approved", async () => {
+    const fetchMock = makeFetch([RESOLVED_ROW]);
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithClient(
+      <DiscrepanciesEditor spec_id="spec-1" epic_id="epic-1" internal_status="review" />,
+    );
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Approve & start planning" }),
+    );
+
+    // First click reveals a confirm step; no PATCH yet.
+    expect(findPatchCall(fetchMock, "/specs/spec-1/internal-status")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await waitFor(() => {
+      const call = findPatchCall(fetchMock, "/specs/spec-1/internal-status");
+      if (!call) throw new Error("expected PATCH /specs/spec-1/internal-status not found");
+      expect(call.body.internal_status).toBe("approved");
     });
   });
 });
