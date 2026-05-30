@@ -32,5 +32,6 @@ pub fn router(state: AppState) -> Router {
         .route("/artifacts/:id", get(rest::get_artifact))
         .route("/verb_results", post(rest::post_verb_results))
         .route("/parked", get(rest::list_parked))
+        .merge(sse::sse_routes())
         .with_state(state)
 }

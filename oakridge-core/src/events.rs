@@ -6,7 +6,7 @@ use tokio::sync::broadcast;
 use crate::types::{ArtifactId, ArtifactTypeId, RunStatus, StageInstanceId, StageStatus, WorkflowRunId};
 
 const RING_CAP: usize = 1024;
-const BROADCAST_CAP: usize = 256;
+pub(crate) const BROADCAST_CAP: usize = 256;
 
 // ── Wire payload ──────────────────────────────────────────────────────────────
 
@@ -121,6 +121,20 @@ impl EventBus {
                     Some(ring) => Self::drain_ring(ring, since),
                 }
             }
+        }
+    }
+
+    /// Returns the oldest retained sequence number for `scope`, or 0 if the ring is empty.
+    /// Cheaper than `backfill(scope, 0)` when the caller only needs the oldest seq.
+    pub fn oldest_seq(&self, scope: BackfillScope<'_>) -> u64 {
+        let g = self.inner.lock().unwrap();
+        match scope {
+            BackfillScope::Global => g.global_ring.front().map_or(0, |e| e.seq),
+            BackfillScope::Run(run_id) => g
+                .per_run_ring
+                .get(run_id)
+                .and_then(|ring| ring.front())
+                .map_or(0, |e| e.seq),
         }
     }
 
