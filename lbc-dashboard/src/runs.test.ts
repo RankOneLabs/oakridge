@@ -1,8 +1,13 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type { RunSpec } from "./contracts";
+import { conditionName } from "./contracts";
 import { formatRunTs, RunRegistry, type Launcher } from "./runs";
-import { parseCellId } from "./store";
+import { cellIdFor, parseCellId } from "./store";
+import { createApp } from "../server";
 
 // ---------------------------------------------------------------------------
 // Stub launcher — no Python process spawned
@@ -223,5 +228,170 @@ describe("RunRegistry", () => {
     expect(summary.exit_code).toBeNull();
     expect(summary.stderr_tail).toBe("");
     expect(typeof summary.started_ms).toBe("number");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// HTTP routes /api/runs via createApp({ registry })
+// ---------------------------------------------------------------------------
+
+// Provider key env vars saved/restored around each test so the no-key
+// warning test doesn't leak into neighbors.
+const PROVIDER_KEYS = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY"] as const;
+
+describe("HTTP /api/runs", () => {
+  let testRunRoot: string;
+  let savedKeys: Record<string, string | undefined>;
+
+  beforeEach(async () => {
+    testRunRoot = await mkdtemp(join(tmpdir(), "lbc-test-runs-"));
+    process.env.LBC_RUN_ROOT = testRunRoot;
+    savedKeys = {};
+    for (const k of PROVIDER_KEYS) {
+      savedKeys[k] = process.env[k];
+    }
+  });
+
+  afterEach(async () => {
+    for (const k of PROVIDER_KEYS) {
+      if (savedKeys[k] === undefined) {
+        delete process.env[k];
+      } else {
+        process.env[k] = savedKeys[k];
+      }
+    }
+    delete process.env.LBC_RUN_ROOT;
+    await rm(testRunRoot, { recursive: true, force: true });
+  });
+
+  test("POST valid spec returns 200 with cell_id matching cellIdFor", async () => {
+    const { launcher } = makeStub(0);
+    const registry = new RunRegistry(launcher);
+    const app = createApp({ registry });
+
+    const body: RunSpec = {
+      target: "prose_substrate_thesis",
+      model_pool: ["claude-opus-4-7"],
+      condition: { kind: "single_agent", n: 1 },
+      grade: true,
+    };
+
+    const res = await app.request("/api/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { run_ts: string; cell_id: string };
+    expect(json.run_ts).toBeTruthy();
+    const expected = cellIdFor(
+      json.run_ts,
+      body.target,
+      conditionName(body.condition.kind, body.condition.n),
+    );
+    expect(json.cell_id).toBe(expected);
+  });
+
+  test("POST ensemble_multi_round with n=1 returns 400", async () => {
+    const { launcher } = makeStub(0);
+    const registry = new RunRegistry(launcher);
+    const app = createApp({ registry });
+
+    const res = await app.request("/api/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        target: "prose_substrate_thesis",
+        model_pool: ["claude-opus-4-7"],
+        condition: { kind: "ensemble_multi_round", n: 1 },
+        grade: true,
+      }),
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  test("POST with empty model_pool returns 400", async () => {
+    const { launcher } = makeStub(0);
+    const registry = new RunRegistry(launcher);
+    const app = createApp({ registry });
+
+    const res = await app.request("/api/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        target: "prose_substrate_thesis",
+        model_pool: [],
+        condition: { kind: "single_agent", n: 1 },
+        grade: true,
+      }),
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  test("POST with no provider key returns 200 with warning", async () => {
+    for (const k of PROVIDER_KEYS) delete process.env[k];
+
+    const { launcher } = makeStub(0);
+    const registry = new RunRegistry(launcher);
+    const app = createApp({ registry });
+
+    const res = await app.request("/api/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        target: "prose_substrate_thesis",
+        model_pool: ["claude-opus-4-7"],
+        condition: { kind: "single_agent", n: 1 },
+        grade: true,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { warning?: string };
+    expect(typeof json.warning).toBe("string");
+    expect(json.warning).toContain("ANTHROPIC_API_KEY");
+  });
+
+  test("GET /api/runs reflects running then completed record", async () => {
+    const { launcher, resolve } = makeStub(0);
+    const registry = new RunRegistry(launcher);
+    const app = createApp({ registry });
+
+    // Launch via POST so the record is in the registry
+    await app.request("/api/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(BASE_SPEC),
+    });
+
+    const runningRes = await app.request("/api/runs");
+    expect(runningRes.status).toBe(200);
+    const running = (await runningRes.json()) as { runs: Array<{ status: string }> };
+    expect(running.runs).toHaveLength(1);
+    expect(running.runs[0]!.status).toBe("running");
+
+    resolve();
+    await new Promise<void>((r) => setTimeout(r, 0));
+
+    const doneRes = await app.request("/api/runs");
+    const done = (await doneRes.json()) as { runs: Array<{ status: string }> };
+    expect(done.runs[0]!.status).toBe("exited");
+  });
+
+  test("DELETE unknown runId returns 404", async () => {
+    const { launcher } = makeStub(0);
+    const registry = new RunRegistry(launcher);
+    const app = createApp({ registry });
+
+    const res = await app.request("/api/runs/no-such-run", {
+      method: "DELETE",
+    });
+
+    expect(res.status).toBe(404);
+    const json = (await res.json()) as { error: string };
+    expect(json.error).toBe("unknown run");
   });
 });
