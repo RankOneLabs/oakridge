@@ -1,6 +1,6 @@
 # lbc-dashboard
 
-Localhost dashboard for `legit-biz-club` study runs. Read-only, project-shaped (ensemble + artifact + per-commit history; eval scores are a planned addition). Separate workspace from `kbbl` because lbc's UX is project-shaped while kbbl's is session-shaped — they're different operator surfaces and forcing them into one UI would warp both.
+Localhost dashboard for `legit-biz-club` study runs. Project-shaped (ensemble + artifact + per-commit history; eval scores are a planned addition). Separate workspace from `kbbl` because lbc's UX is project-shaped while kbbl's is session-shaped — they're different operator surfaces and forcing them into one UI would warp both.
 
 The dashboard is the v0 of the lbc operator surface. Future iterations grow into a richer SPA (multi-cell comparison, n-sweep aggregation, eval-score deltas) on the same Bun + Hono + React stack.
 
@@ -40,7 +40,7 @@ lbc-dashboard/
 
 1. Open the dashboard at `http://localhost:8765`.
 2. Use the Launch panel to select a target, condition, and model pool.
-3. Click **Launch** — the dashboard POSTs to `/api/runs`, writes `run-spec.json` to `<run_root>/<run_ts>/`, and spawns `python -m legit_biz_club.run`.
+3. Click **Launch** — the dashboard POSTs to `/api/runs`, writes `run-spec.json` to `<run_root>/<run_ts>/`, and spawns `uv run python -m legit_biz_club.run --spec <run_root>/<run_ts>/run-spec.json --output-dir <run_root>/<run_ts>/`.
 4. The response includes `cell_id`; the PWA navigates directly to the cell's live view.
 5. To cancel: use the **Cancel** button or DELETE `/api/runs/:runId`.
 
