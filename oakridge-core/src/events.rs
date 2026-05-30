@@ -6,7 +6,7 @@ use tokio::sync::broadcast;
 use crate::types::{ArtifactId, ArtifactTypeId, RunStatus, StageInstanceId, StageStatus, WorkflowRunId};
 
 const RING_CAP: usize = 1024;
-const BROADCAST_CAP: usize = 256;
+pub(crate) const BROADCAST_CAP: usize = 256;
 
 // ── Wire payload ──────────────────────────────────────────────────────────────
 

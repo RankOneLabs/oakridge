@@ -20,7 +20,9 @@
 //! `Last-Event-ID` request header; the server reads both, preferring `?since`.
 
 use std::convert::Infallible;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 
 use axum::{
     extract::{Path, Query, State},
@@ -35,7 +37,7 @@ use serde_json::json;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-use crate::events::{BackfillScope, EventBus, SeqEvent};
+use crate::events::{BackfillScope, EventBus, SeqEvent, BROADCAST_CAP};
 use crate::types::WorkflowRunId;
 
 use super::rest::AppError;
@@ -56,6 +58,24 @@ enum ScopeKey {
     Run(WorkflowRunId),
 }
 
+// ── SSE stream wrapper ────────────────────────────────────────────────────────
+
+// Wraps the mpsc Receiver and holds a oneshot Sender whose drop signals the
+// pump task to exit promptly when the client disconnects — even during idle
+// periods where no broadcast events are flowing.
+struct SseStream {
+    inner: futures::channel::mpsc::Receiver<Result<Event, Infallible>>,
+    _cancel: futures::channel::oneshot::Sender<()>,
+}
+
+impl Stream for SseStream {
+    type Item = Result<Event, Infallible>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        Pin::new(&mut self.inner).poll_next(cx)
+    }
+}
+
 // ── Stream builder ────────────────────────────────────────────────────────────
 
 /// Build the SSE stream for `scope` starting from events with seq > `since`.
@@ -71,9 +91,14 @@ fn build_sse_stream(
     scope: ScopeKey,
     since: u64,
 ) -> impl Stream<Item = Result<Event, Infallible>> {
-    // Bounded channel (capacity = BROADCAST_CAP) so a slow client applies
-    // backpressure to the pump task rather than accumulating unbounded memory.
-    let (mut tx, rx) = futures::channel::mpsc::channel::<Result<Event, Infallible>>(256);
+    // Bounded channel: slow clients apply backpressure rather than accumulate memory.
+    // Capacity matches EventBus's broadcast channel so both buffers are consistent.
+    let (mut tx, rx) = futures::channel::mpsc::channel::<Result<Event, Infallible>>(BROADCAST_CAP);
+
+    // Cancel signal: when SseStream is dropped (client disconnects), cancel_tx is
+    // dropped, resolving cancel_rx so the pump task exits even during idle periods
+    // where live_rx.recv() would otherwise block indefinitely.
+    let (cancel_tx, cancel_rx) = futures::channel::oneshot::channel::<()>();
 
     // Step 1 — subscribe FIRST to close the race between buffer-read and live-attach.
     let live_rx = match scope {
@@ -110,32 +135,38 @@ fn build_sse_stream(
         }
 
         // Step 5 — forward live events, skipping any already covered by backfill.
+        // Race against cancel_rx so the task exits promptly on client disconnect
+        // rather than sitting blocked on live_rx.recv() during idle periods.
         let mut live_rx = live_rx;
+        tokio::pin!(cancel_rx);
         loop {
-            match live_rx.recv().await {
-                Ok(ev) => {
-                    if ev.seq <= last_seq {
-                        continue;
+            tokio::select! {
+                result = live_rx.recv() => match result {
+                    Ok(ev) => {
+                        if ev.seq <= last_seq {
+                            continue;
+                        }
+                        last_seq = ev.seq;
+                        if tx.send(Ok(to_sse_frame(&ev))).await.is_err() {
+                            return;
+                        }
                     }
-                    last_seq = ev.seq;
-                    if tx.send(Ok(to_sse_frame(&ev))).await.is_err() {
-                        return;
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        let oldest = oldest_retained_seq(&bus, scope);
+                        let data = json!({"oldest_seq": oldest}).to_string();
+                        if tx.send(Ok(Event::default().event("gap").data(data))).await.is_err() {
+                            return;
+                        }
+                        // Continue: next recv() picks up from the oldest surviving message.
                     }
-                }
-                Err(broadcast::error::RecvError::Lagged(_)) => {
-                    let oldest = oldest_retained_seq(&bus, scope);
-                    let data = json!({"oldest_seq": oldest}).to_string();
-                    if tx.send(Ok(Event::default().event("gap").data(data))).await.is_err() {
-                        return;
-                    }
-                    // Continue: next recv() picks up from the oldest surviving broadcast message.
-                }
-                Err(broadcast::error::RecvError::Closed) => break,
+                    Err(broadcast::error::RecvError::Closed) => break,
+                },
+                _ = &mut cancel_rx => break, // SseStream dropped — client disconnected
             }
         }
     });
 
-    rx
+    SseStream { inner: rx, _cancel: cancel_tx }
 }
 
 fn to_sse_frame(ev: &SeqEvent) -> Event {
@@ -211,7 +242,7 @@ fn build_seq_stream_for_test(
     scope: ScopeKey,
     since: u64,
 ) -> impl futures::Stream<Item = u64> {
-    let (mut tx, rx) = futures::channel::mpsc::channel::<u64>(256);
+    let (mut tx, rx) = futures::channel::mpsc::channel::<u64>(BROADCAST_CAP);
 
     let live_rx = match scope {
         ScopeKey::Global => bus.subscribe_global(),
