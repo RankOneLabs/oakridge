@@ -1,13 +1,15 @@
 /**
- * Top-level orchestrator. Composes the cell list (left rail) +
- * cell panel (right) into a two-pane layout. Hooks own the data
- * fetching; this file owns wiring + tab state.
+ * Top-level orchestrator. Full-width 'New run' section (LaunchForm +
+ * ActiveRunsStrip) sits above the existing two-pane cell viewer so
+ * the form has horizontal room and the viewer is untouched.
  */
 import { useEffect, useState } from "react";
 
 import { EmptyMessage } from "./components/atoms/EmptyMessage";
+import { ActiveRunsStrip } from "./components/molecules/ActiveRunsStrip";
 import { CellList } from "./components/organisms/CellList";
 import { CellPanel } from "./components/organisms/CellPanel";
+import { LaunchForm } from "./components/organisms/LaunchForm";
 import { useCellEvents } from "./hooks/useCellEvents";
 import {
   useArtifact,
@@ -50,23 +52,32 @@ export function App() {
   }, [selectedId, cells, select]);
 
   return (
-    <div className="m-0 flex h-screen font-sans">
-      <CellList cells={cells} selectedId={selectedId} onSelect={select} />
-      <main className="flex flex-1 flex-col overflow-hidden">
-        {selectedId === null ? (
-          <EmptyMessage>Select a cell on the left.</EmptyMessage>
-        ) : (
-          <CellPanel
-            detail={detail}
-            events={events}
-            artifact={artifact}
-            commits={commits}
-            scores={scores}
-            tab={tab}
-            onTab={setTab}
-          />
-        )}
-      </main>
+    <div className="m-0 flex h-screen flex-col font-sans">
+      <section className="w-full shrink-0 border-b border-stone-200 bg-white">
+        <h2 className="px-4 pt-3 text-xs font-semibold uppercase tracking-wide text-stone-400">
+          New run
+        </h2>
+        <LaunchForm />
+        <ActiveRunsStrip />
+      </section>
+      <div className="flex flex-1 overflow-hidden">
+        <CellList cells={cells} selectedId={selectedId} onSelect={select} />
+        <main className="flex flex-1 flex-col overflow-hidden">
+          {selectedId === null ? (
+            <EmptyMessage>Select a cell on the left.</EmptyMessage>
+          ) : (
+            <CellPanel
+              detail={detail}
+              events={events}
+              artifact={artifact}
+              commits={commits}
+              scores={scores}
+              tab={tab}
+              onTab={setTab}
+            />
+          )}
+        </main>
+      </div>
     </div>
   );
 }
