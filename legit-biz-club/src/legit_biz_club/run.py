@@ -74,8 +74,6 @@ class RunSpec:
             raise ValueError(f"single_agent requires n == 1, got {n_raw}")
         if kind in ("ensemble_single_round", "ensemble_multi_round") and n_raw < 2:
             raise ValueError(f"{kind} requires n >= 2, got {n_raw}")
-        if kind == "ensemble_incremental" and n_raw < 1:
-            raise ValueError(f"ensemble_incremental requires n >= 1, got {n_raw}")
         condition = ConditionSpec(kind=kind, n=n_raw)
 
         grade_raw = data.get("grade", True)
