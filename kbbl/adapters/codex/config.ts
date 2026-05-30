@@ -62,7 +62,7 @@ function isInsideOrEqual(parentPath: string, childPath: string): boolean {
 }
 
 function policyFromTrustLevel(trustLevel: string | null): ApprovalPolicy | null {
-  if (trustLevel === "trusted") return "never";
+  if (trustLevel === "trusted") return "on-request";
   if (trustLevel === "untrusted") return "untrusted";
   return null;
 }
