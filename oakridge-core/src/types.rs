@@ -230,28 +230,35 @@ mod tests {
 
     #[test]
     fn newtype_ids_roundtrip() {
+        let expected_str = json!("00000000-0000-0000-0000-000000000001");
+
         let id = WorkflowDefId(test_uuid());
         let v = serde_json::to_value(&id).unwrap();
+        assert_eq!(v, expected_str, "WorkflowDefId must serialize as bare UUID string");
         let back: WorkflowDefId = serde_json::from_value(v).unwrap();
         assert_eq!(id, back);
 
         let id = WorkflowRunId(test_uuid());
         let v = serde_json::to_value(&id).unwrap();
+        assert_eq!(v, expected_str, "WorkflowRunId must serialize as bare UUID string");
         let back: WorkflowRunId = serde_json::from_value(v).unwrap();
         assert_eq!(id, back);
 
         let id = StageInstanceId(test_uuid());
         let v = serde_json::to_value(&id).unwrap();
+        assert_eq!(v, expected_str, "StageInstanceId must serialize as bare UUID string");
         let back: StageInstanceId = serde_json::from_value(v).unwrap();
         assert_eq!(id, back);
 
         let id = ArtifactId(test_uuid());
         let v = serde_json::to_value(&id).unwrap();
+        assert_eq!(v, expected_str, "ArtifactId must serialize as bare UUID string");
         let back: ArtifactId = serde_json::from_value(v).unwrap();
         assert_eq!(id, back);
 
         let id = ProjectId(test_uuid());
         let v = serde_json::to_value(&id).unwrap();
+        assert_eq!(v, expected_str, "ProjectId must serialize as bare UUID string");
         let back: ProjectId = serde_json::from_value(v).unwrap();
         assert_eq!(id, back);
     }
