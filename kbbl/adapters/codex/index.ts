@@ -315,7 +315,11 @@ export async function createCodexRuntime(
       }
       state.approvalResolvers.clear();
       markIdle(state);
-      state.stopEvents?.();
+      if (state.stopEvents) {
+        state.stopEvents();
+      } else if (getState(handle.sessionId) === state) {
+        sessions.delete(handle.sessionId);
+      }
     },
 
     // --- events ---
@@ -447,7 +451,7 @@ export async function createCodexRuntime(
         unsub();
         closeUnsub();
         client.setServerRequestHandler(threadId, null);
-        if (state.stopEvents !== null) state.stopEvents = null;
+        state.stopEvents = null;
         if (getState(handle.sessionId) === state) sessions.delete(handle.sessionId);
       }
 

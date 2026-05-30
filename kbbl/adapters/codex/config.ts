@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 
 import type { ApprovalPolicy } from "./protocol/generated/types";
 export type { ApprovalPolicy } from "./protocol/generated/types";
@@ -58,7 +58,7 @@ function parseSection(line: string): ConfigSection | null {
 
 function isInsideOrEqual(parentPath: string, childPath: string): boolean {
   const rel = relative(resolve(parentPath), resolve(childPath));
-  return rel === "" || (!rel.startsWith("..") && !rel.startsWith("/"));
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
 function policyFromTrustLevel(trustLevel: string | null): ApprovalPolicy | null {

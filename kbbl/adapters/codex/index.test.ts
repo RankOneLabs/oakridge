@@ -140,6 +140,25 @@ describe("Codex approval policy config", () => {
       rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+
+  test("loadCodexApprovalPolicyForWorkdir ignores unrelated absolute project paths", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "kbbl-codex-test-"));
+    try {
+      const path = join(tmpDir, "config.toml");
+      writeFileSync(
+        path,
+        [
+          'approval_policy = "on-request"',
+          '',
+          '[projects."/trusted-project"]',
+          'approval_policy = "never"',
+        ].join("\n"),
+      );
+      expect(loadCodexApprovalPolicyForWorkdir("/workdir", path)).toBe("on-request");
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("resolveResumeRef", () => {
