@@ -22,7 +22,9 @@ import {
   CellSummarySchema,
   CommitSnapshotSchema,
   EvalScoreSchema,
+  RunSpecSchema,
   TabSchema,
+  conditionName,
 } from "./contracts";
 import { listCells } from "./store";
 
@@ -178,6 +180,151 @@ describe("TabSchema", () => {
 
   test("rejects an unknown tab value", () => {
     expect(() => TabSchema.parse("settings")).toThrow();
+  });
+});
+
+// --- RunSpecSchema -------------------------------------------------------
+
+const validRunSpec = {
+  target: "prose_substrate_thesis",
+  model_pool: ["claude-opus-4-7"],
+  condition: { kind: "single_agent", n: 1 },
+  grade: true,
+};
+
+describe("RunSpecSchema", () => {
+  test("accepts single_agent with n=1", () => {
+    const parsed = RunSpecSchema.parse(validRunSpec);
+    expect(parsed.condition.kind).toBe("single_agent");
+    expect(parsed.condition.n).toBe(1);
+  });
+
+  test("accepts ensemble_single_round with n=2", () => {
+    const parsed = RunSpecSchema.parse({
+      ...validRunSpec,
+      condition: { kind: "ensemble_single_round", n: 2 },
+    });
+    expect(parsed.condition.n).toBe(2);
+  });
+
+  test("accepts ensemble_multi_round with n=3", () => {
+    const parsed = RunSpecSchema.parse({
+      ...validRunSpec,
+      condition: { kind: "ensemble_multi_round", n: 3 },
+    });
+    expect(parsed.condition.n).toBe(3);
+  });
+
+  test("accepts ensemble_incremental with n=1", () => {
+    const parsed = RunSpecSchema.parse({
+      ...validRunSpec,
+      condition: { kind: "ensemble_incremental", n: 1 },
+    });
+    expect(parsed.condition.n).toBe(1);
+  });
+
+  test("rejects single_agent with n=2", () => {
+    expect(() =>
+      RunSpecSchema.parse({
+        ...validRunSpec,
+        condition: { kind: "single_agent", n: 2 },
+      }),
+    ).toThrow();
+  });
+
+  test("rejects ensemble_multi_round with n=1", () => {
+    expect(() =>
+      RunSpecSchema.parse({
+        ...validRunSpec,
+        condition: { kind: "ensemble_multi_round", n: 1 },
+      }),
+    ).toThrow();
+  });
+
+  test("rejects ensemble_single_round with n=1", () => {
+    expect(() =>
+      RunSpecSchema.parse({
+        ...validRunSpec,
+        condition: { kind: "ensemble_single_round", n: 1 },
+      }),
+    ).toThrow();
+  });
+
+  test("rejects n=0", () => {
+    expect(() =>
+      RunSpecSchema.parse({
+        ...validRunSpec,
+        condition: { kind: "ensemble_incremental", n: 0 },
+      }),
+    ).toThrow();
+  });
+
+  test("rejects n=17", () => {
+    expect(() =>
+      RunSpecSchema.parse({
+        ...validRunSpec,
+        condition: { kind: "ensemble_incremental", n: 17 },
+      }),
+    ).toThrow();
+  });
+
+  test("rejects empty model_pool", () => {
+    expect(() =>
+      RunSpecSchema.parse({ ...validRunSpec, model_pool: [] }),
+    ).toThrow();
+  });
+
+  test("rejects model_pool with an empty string", () => {
+    expect(() =>
+      RunSpecSchema.parse({ ...validRunSpec, model_pool: [""] }),
+    ).toThrow();
+  });
+
+  test("rejects unknown target", () => {
+    expect(() =>
+      RunSpecSchema.parse({ ...validRunSpec, target: "not_a_target" }),
+    ).toThrow();
+  });
+
+  test("rejects unknown condition kind", () => {
+    expect(() =>
+      RunSpecSchema.parse({
+        ...validRunSpec,
+        condition: { kind: "solo", n: 1 },
+      }),
+    ).toThrow();
+  });
+
+  test("grade defaults to true when omitted", () => {
+    const { grade: _, ...noGrade } = validRunSpec;
+    const parsed = RunSpecSchema.parse(noGrade);
+    expect(parsed.grade).toBe(true);
+  });
+});
+
+// --- conditionName -------------------------------------------------------
+
+describe("conditionName", () => {
+  test("single_agent returns 'single_agent' with no suffix", () => {
+    expect(conditionName("single_agent", 1)).toBe("single_agent");
+  });
+
+  test("ensemble_multi_round/n=3 returns 'ensemble_multi_round_n3'", () => {
+    expect(conditionName("ensemble_multi_round", 3)).toBe(
+      "ensemble_multi_round_n3",
+    );
+  });
+
+  test("ensemble_single_round/n=4 returns 'ensemble_single_round_n4'", () => {
+    expect(conditionName("ensemble_single_round", 4)).toBe(
+      "ensemble_single_round_n4",
+    );
+  });
+
+  test("ensemble_incremental/n=2 returns 'ensemble_incremental_n2'", () => {
+    expect(conditionName("ensemble_incremental", 2)).toBe(
+      "ensemble_incremental_n2",
+    );
   });
 });
 
