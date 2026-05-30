@@ -48,7 +48,28 @@ cd legit-biz-club
 uv run python scripts/run_one_project.py
 ```
 
-The script's config block is hardcoded; edit-and-rerun is the iteration loop in v0. Output lands under `legit-biz-club/.run/<timestamp>/` (gitignored). Each cell directory contains:
+The script's config block is hardcoded; edit-and-rerun is the iteration loop in v0. Output lands under `legit-biz-club/.run/<timestamp>/` (gitignored).
+
+A spec-driven CLI entrypoint is also available for programmatic invocation (e.g. from the kbbl dashboard server):
+
+```bash
+export ANTHROPIC_API_KEY=...
+cd legit-biz-club
+uv run python -m legit_biz_club.run --spec <spec.json> --output-dir <dir>
+```
+
+`spec.json` shape:
+
+```json
+{
+  "target": "prose_substrate_thesis",
+  "model_pool": ["claude-sonnet-4-5", "claude-haiku-4-5"],
+  "condition": { "kind": "ensemble_incremental", "n": 2 },
+  "grade": true
+}
+```
+
+Valid `target` values: keys of `study.registry.TARGET_FACTORIES`. Valid `condition.kind` values: keys of `study.registry.CONDITION_FACTORIES`. `grade` defaults to `true`. On success the process prints one line to stdout: `RESULT <json>` where the JSON has `artifact_path` and `eval_scores` (list or null). On failure the traceback goes to stderr and the exit code is non-zero. Each cell directory contains:
 
 - `<artifact_filename>` — the final artifact
 - `commits/v0001.<ext>`, `v0002.<ext>`, ... — per-commit snapshots (one per successful apply, in order; extension matches the artifact's, e.g. `.md` for prose targets, `.py` for single-file CODE)

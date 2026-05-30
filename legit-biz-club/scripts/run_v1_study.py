@@ -56,54 +56,16 @@ from legit_biz_club import (
     make_sqlite_observation_loader,
 )
 from legit_biz_club.core.models import Project
-from legit_biz_club.study.conditions import (
-    ConditionConfig,
-    ensemble_incremental_only,
-    ensemble_with_multi_round,
-    ensemble_with_single_round,
-    single_agent_baseline,
+from legit_biz_club.study.registry import (
+    CONDITION_FACTORIES as _CONDITION_FACTORIES,
+)
+from legit_biz_club.study.registry import (
+    TARGET_FACTORIES as _TARGET_FACTORIES,
+)
+from legit_biz_club.study.registry import (
+    grader_factory_for,
 )
 from legit_biz_club.study.runner import GraderFactory, run_cell
-from legit_biz_club.study.targets import TargetConfig
-from legit_biz_club.study.v1_graders import (
-    make_leetcode_longest_substring_grader_factory,
-    make_leetcode_median_two_sorted_arrays_grader_factory,
-    make_leetcode_regex_matching_grader_factory,
-    make_leetcode_trapping_rain_water_grader_factory,
-    make_prose_substrate_thesis_grader_factory,
-)
-from legit_biz_club.study.v1_targets import (
-    code_leetcode_longest_substring,
-    code_leetcode_median_two_sorted_arrays,
-    code_leetcode_regex_matching,
-    code_leetcode_trapping_rain_water,
-    prose_substrate_thesis,
-)
-
-# --- CLI mappings ----------------------------------------------------
-
-
-_TARGET_FACTORIES: dict[str, Callable[[], TargetConfig]] = {
-    "prose_substrate_thesis": prose_substrate_thesis,
-    "code_leetcode_longest_substring": code_leetcode_longest_substring,
-    "code_leetcode_trapping_rain_water": code_leetcode_trapping_rain_water,
-    "code_leetcode_regex_matching": code_leetcode_regex_matching,
-    "code_leetcode_median_two_sorted_arrays": (
-        code_leetcode_median_two_sorted_arrays
-    ),
-}
-
-
-# CLI shorthand -> condition factory. Single-agent ignores n; the
-# others take it. Mirrors the table in
-# ``comms/legit-biz-club-v1-study-plan.md`` (Phase 2).
-_CONDITION_FACTORIES: dict[str, Callable[..., ConditionConfig]] = {
-    "single_agent": lambda *, n: single_agent_baseline(),
-    "ensemble_incremental": lambda *, n: ensemble_incremental_only(n=n),
-    "ensemble_single_round": lambda *, n: ensemble_with_single_round(n=n),
-    "ensemble_multi_round": lambda *, n: ensemble_with_multi_round(n=n),
-}
-
 
 # 2-model Anthropic pool — one provider key suffices. Matches
 # run_one_project.py. Override at the call site for cross-provider
@@ -479,33 +441,9 @@ async def main() -> int:
         _build_llm(args.judge_model) if prose_judge_needed else None
     )
     for target in targets:
-        if target.name == "prose_substrate_thesis":
-            grader_factories[target.name] = (
-                make_prose_substrate_thesis_grader_factory(
-                    judge_llm=prose_judge_llm
-                )
-            )
-        elif target.name == "code_leetcode_longest_substring":
-            grader_factories[target.name] = (
-                make_leetcode_longest_substring_grader_factory()
-            )
-        elif target.name == "code_leetcode_trapping_rain_water":
-            grader_factories[target.name] = (
-                make_leetcode_trapping_rain_water_grader_factory()
-            )
-        elif target.name == "code_leetcode_regex_matching":
-            grader_factories[target.name] = (
-                make_leetcode_regex_matching_grader_factory()
-            )
-        elif target.name == "code_leetcode_median_two_sorted_arrays":
-            grader_factories[target.name] = (
-                make_leetcode_median_two_sorted_arrays_grader_factory()
-            )
-        else:
-            # Unreachable — _TARGET_FACTORIES gates target tokens.
-            raise ValueError(
-                f"no grader factory for target {target.name!r}"
-            )
+        grader_factories[target.name] = grader_factory_for(
+            target.name, judge_llm=prose_judge_llm
+        )
 
     print(f"targets:    {[t.name for t in targets]}", flush=True)
     print(f"conditions: {[c.name for c in conditions]}", flush=True)
