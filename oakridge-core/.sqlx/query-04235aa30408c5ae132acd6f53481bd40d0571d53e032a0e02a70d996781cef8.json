@@ -1,0 +1,86 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id, run_id, stage_key, stage_type, status, config, parked_reason, external_ref, started_at, ended_at, created_at, updated_at FROM stage_instance WHERE run_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "run_id",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "stage_key",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "stage_type",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "status",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "config",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "parked_reason",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "external_ref",
+        "ordinal": 7,
+        "type_info": "Text"
+      },
+      {
+        "name": "started_at",
+        "ordinal": 8,
+        "type_info": "Text"
+      },
+      {
+        "name": "ended_at",
+        "ordinal": 9,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 10,
+        "type_info": "Text"
+      },
+      {
+        "name": "updated_at",
+        "ordinal": 11,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "04235aa30408c5ae132acd6f53481bd40d0571d53e032a0e02a70d996781cef8"
+}
