@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { responseError } from "../lib/http";
 
 type DiscrepancyStatus = "open" | "resolved" | "waived";
+type SpecInternalStatus = "analyzing" | "discrepancies" | "review" | "approved";
 
 interface Discrepancy {
   id: string;
@@ -15,6 +16,7 @@ interface Discrepancy {
 interface DiscrepanciesEditorProps {
   spec_id: string;
   epic_id: string;
+  internal_status: SpecInternalStatus;
 }
 
 interface RowProps {
@@ -83,8 +85,13 @@ function DiscrepancyRow({ row, onResolve, onWaive, isPending }: RowProps) {
   );
 }
 
-export function DiscrepanciesEditor({ spec_id, epic_id }: DiscrepanciesEditorProps) {
+export function DiscrepanciesEditor({
+  spec_id,
+  epic_id,
+  internal_status,
+}: DiscrepanciesEditorProps) {
   const queryClient = useQueryClient();
+  const [confirmingApprove, setConfirmingApprove] = useState(false);
 
   const discQuery = useQuery({
     queryKey: ["discrepancies", spec_id],
@@ -117,17 +124,17 @@ export function DiscrepanciesEditor({ spec_id, epic_id }: DiscrepanciesEditorPro
     },
   });
 
-  const moveMutation = useMutation({
-    mutationFn: async () => {
+  const transitionMutation = useMutation({
+    mutationFn: async (targetStatus: "review" | "approved") => {
       const res = await fetch(
         `/specs/${encodeURIComponent(spec_id)}/internal-status`,
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ internal_status: "review" }),
+          body: JSON.stringify({ internal_status: targetStatus }),
         },
       );
-      if (!res.ok) throw await responseError(res, "move");
+      if (!res.ok) throw await responseError(res, "transition");
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["epic", epic_id] });
@@ -150,8 +157,33 @@ export function DiscrepanciesEditor({ spec_id, epic_id }: DiscrepanciesEditorPro
   const countOpen = rows.filter((r) => r.status === "open").length;
   const patchErr =
     patchMutation.error instanceof Error ? patchMutation.error.message : null;
-  const moveErr =
-    moveMutation.error instanceof Error ? moveMutation.error.message : null;
+  const transitionErr =
+    transitionMutation.error instanceof Error
+      ? transitionMutation.error.message
+      : null;
+
+  // The action offered in the footer depends on the spec's current
+  // internal_status. Driving it off status (rather than a fixed
+  // "Move to Review") keeps the button in sync after a transition —
+  // otherwise a second click re-sends the same transition and the
+  // state machine rejects it with a 409. analyzing/approved expose no
+  // action (the editor unmounts once the epic leaves the spec stage).
+  const action =
+    internal_status === "discrepancies"
+      ? {
+          label: "Move to Review",
+          target: "review" as const,
+          disabled: countOpen > 0,
+          confirm: false,
+        }
+      : internal_status === "review"
+        ? {
+            label: "Approve & start planning",
+            target: "approved" as const,
+            disabled: false,
+            confirm: true,
+          }
+        : null;
 
   return (
     <div className="discrepancies-editor">
@@ -191,21 +223,48 @@ export function DiscrepanciesEditor({ spec_id, epic_id }: DiscrepanciesEditorPro
           {patchErr}
         </div>
       )}
-      {moveErr && (
+      {transitionErr && (
         <div className="discrepancies-editor__error" role="alert">
-          {moveErr}
+          {transitionErr}
         </div>
       )}
       <div className="discrepancies-editor__footer">
-        <button
-          type="button"
-          className="discrepancies-editor__move-btn"
-          disabled={countOpen > 0 || moveMutation.isPending}
-          onClick={() => moveMutation.mutate()}
-        >
-          Move to Review
-        </button>
-        {countOpen > 0 && (
+        {action && !(action.confirm && confirmingApprove) && (
+          <button
+            type="button"
+            className="discrepancies-editor__move-btn"
+            disabled={action.disabled || transitionMutation.isPending}
+            onClick={() =>
+              action.confirm
+                ? setConfirmingApprove(true)
+                : transitionMutation.mutate(action.target)
+            }
+          >
+            {action.label}
+          </button>
+        )}
+        {action?.confirm && confirmingApprove && (
+          <span className="discrepancies-editor__confirm">
+            Approve this spec? This dispatches the plan writer.
+            <button
+              type="button"
+              className="discrepancies-editor__move-btn"
+              disabled={transitionMutation.isPending}
+              onClick={() => transitionMutation.mutate(action.target)}
+            >
+              Confirm
+            </button>
+            <button
+              type="button"
+              className="discrepancy-row__btn"
+              disabled={transitionMutation.isPending}
+              onClick={() => setConfirmingApprove(false)}
+            >
+              Cancel
+            </button>
+          </span>
+        )}
+        {internal_status === "discrepancies" && countOpen > 0 && (
           <span className="discrepancies-editor__open-count">
             {countOpen} open discrepanc{countOpen === 1 ? "y" : "ies"} remaining
           </span>

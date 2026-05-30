@@ -132,7 +132,13 @@ export function EpicDetailView({ epic_id }: EpicDetailViewProps) {
 
   let drilldown: ReactNode = null;
   if (epic.current_stage === "spec" && spec) {
-    drilldown = <DiscrepanciesEditor spec_id={spec.id} epic_id={epic_id} />;
+    drilldown = (
+      <DiscrepanciesEditor
+        spec_id={spec.id}
+        epic_id={epic_id}
+        internal_status={spec.internal_status}
+      />
+    );
   } else if (epic.current_stage === "plan" && plan) {
     drilldown = <PlanDrilldown plan={plan} />;
   } else if (epic.current_stage === "build") {
