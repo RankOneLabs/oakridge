@@ -129,7 +129,7 @@ impl StageContext {
 
         (type_def.validate)(&args.body)?;
 
-        if let Some(parent_id) = args.parent_artifact_id {
+        let version = if let Some(parent_id) = args.parent_artifact_id {
             let parent = queries::get_artifact_by_id(&self.db, &parent_id).await?;
             if parent.run_id != self.workflow_run_id {
                 return Err(anyhow::anyhow!(
@@ -137,7 +137,10 @@ impl StageContext {
                     parent_id.0
                 ));
             }
-        }
+            parent.version + 1
+        } else {
+            1
+        };
 
         let artifact = Artifact {
             id: ArtifactId(Uuid::new_v4()),
@@ -147,6 +150,7 @@ impl StageContext {
             output_name: Some(args.output_name.clone()),
             label: args.label,
             body: args.body,
+            version,
             parent_artifact_id: args.parent_artifact_id,
             created_at: Utc::now(),
         };
@@ -191,7 +195,21 @@ impl StageContext {
                 current.started_at
             };
 
-        let ended_at = if is_terminal { Some(now) } else { current.ended_at };
+        // Preserve the original completion time: a repeat terminal transition must
+        // not clobber the ended_at recorded by the first one.
+        let ended_at = if is_terminal {
+            current.ended_at.or(Some(now))
+        } else {
+            current.ended_at
+        };
+
+        // parked_reason is only meaningful for the Parked status; drop it for any
+        // other transition so a stray reason can't pollute the row or the event.
+        let parked_reason = if matches!(status, StageStatus::Parked) {
+            parked_reason
+        } else {
+            None
+        };
 
         queries::update_stage_instance_status(
             &self.db,
@@ -595,6 +613,94 @@ mod tests {
             ExecutorEvent::StatusChanged { status, parked_reason, .. } => {
                 assert_eq!(status, StageStatus::Parked);
                 assert_eq!(parked_reason.as_deref(), Some("waiting for gate"));
+            }
+            other => panic!("unexpected event: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn emit_versions_root_at_1_and_revision_increments() {
+        let pool = make_pool().await;
+        let (run_id, si_id) = setup_run(&pool).await;
+        let registry = make_artifact_registry();
+        let (tx, _rx) = mpsc::channel(8);
+
+        let ctx = make_ctx(pool.clone(), run_id, si_id, registry, tx);
+
+        let root = ctx
+            .emit(EmitArgs {
+                output_name: "out".into(),
+                artifact_type: "any".into(),
+                body: json!({"v": 1}),
+                label: None,
+                parent_artifact_id: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(root.version, 1, "root artifact must be version 1");
+
+        let rev = ctx
+            .emit(EmitArgs {
+                output_name: "out".into(),
+                artifact_type: "any".into(),
+                body: json!({"v": 2}),
+                label: None,
+                parent_artifact_id: Some(root.id),
+            })
+            .await
+            .unwrap();
+        assert_eq!(rev.version, 2, "revision must be parent.version + 1");
+
+        // Persisted, not just in-memory.
+        let fetched = queries::get_artifact_by_id(&pool, &rev.id).await.unwrap();
+        assert_eq!(fetched.version, 2);
+    }
+
+    #[tokio::test]
+    async fn set_status_repeat_terminal_preserves_first_ended_at() {
+        let pool = make_pool().await;
+        let (run_id, si_id) = setup_run(&pool).await;
+        let registry = make_artifact_registry();
+        let (tx, _rx) = mpsc::channel(8);
+
+        let ctx = make_ctx(pool.clone(), run_id, si_id, registry, tx);
+
+        ctx.set_status(StageStatus::Done, None).await.unwrap();
+        let first = queries::get_stage_instance_by_id(&pool, &si_id)
+            .await
+            .unwrap()
+            .ended_at;
+        assert!(first.is_some());
+
+        ctx.set_status(StageStatus::Done, None).await.unwrap();
+        let second = queries::get_stage_instance_by_id(&pool, &si_id)
+            .await
+            .unwrap()
+            .ended_at;
+        assert_eq!(first, second, "repeat terminal must not clobber ended_at");
+    }
+
+    #[tokio::test]
+    async fn set_status_non_parked_drops_parked_reason() {
+        let pool = make_pool().await;
+        let (run_id, si_id) = setup_run(&pool).await;
+        let registry = make_artifact_registry();
+        let (tx, mut rx) = mpsc::channel(8);
+
+        let ctx = make_ctx(pool.clone(), run_id, si_id, registry, tx);
+
+        // A stray reason on a Done transition must be dropped, not persisted/broadcast.
+        ctx.set_status(StageStatus::Done, Some("stray".into()))
+            .await
+            .unwrap();
+
+        let si = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+        assert!(si.parked_reason.is_none(), "parked_reason must be None for non-Parked status");
+
+        let event = rx.try_recv().expect("expected a StatusChanged event");
+        match event {
+            ExecutorEvent::StatusChanged { parked_reason, .. } => {
+                assert!(parked_reason.is_none(), "event parked_reason must be None for non-Parked status");
             }
             other => panic!("unexpected event: {:?}", other),
         }

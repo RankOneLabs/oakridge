@@ -157,6 +157,8 @@ pub struct Artifact {
     pub output_name: Option<String>,
     pub label: Option<String>,
     pub body: Value,
+    /// Revision number: 1 for a root artifact, parent.version + 1 for a revision.
+    pub version: i32,
     pub parent_artifact_id: Option<ArtifactId>,
     pub created_at: DateTime<Utc>,
 }
@@ -367,6 +369,7 @@ mod tests {
             output_name: Some("out".to_string()),
             label: Some("output".to_string()),
             body: json!({"content": "hello"}),
+            version: 1,
             parent_artifact_id: None,
             created_at: now(),
         };
