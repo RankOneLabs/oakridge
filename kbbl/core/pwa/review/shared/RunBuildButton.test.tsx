@@ -6,6 +6,7 @@ import type { ReactElement } from "react";
 import { RunBuildButton } from "./RunBuildButton";
 
 interface CohortResponse {
+  status?: string;
   current_session_ref: string | null;
   current_session_stage: string | null;
   current_session_status: string | null;
@@ -50,6 +51,20 @@ describe("RunBuildButton", () => {
     renderWithClient(<RunBuildButton briefId="brief-1" cohortId="cohort-1" />);
 
     expect(await screen.findByRole("button", { name: /run build/i })).toBeTruthy();
+  });
+
+  it("shows waiting indicator (no button) when deps are unmet (ready_to_build)", async () => {
+    mockCohortFetch({
+      status: "ready_to_build",
+      current_session_ref: null,
+      current_session_stage: null,
+      current_session_status: null,
+    });
+
+    renderWithClient(<RunBuildButton briefId="brief-1" cohortId="cohort-1" />);
+
+    expect(await screen.findByText(/waiting on dependencies/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /run build/i })).toBeNull();
   });
 
   it("shows Run build when the session is ended (stale ref)", async () => {

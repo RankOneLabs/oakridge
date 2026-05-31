@@ -24,6 +24,21 @@ export function mountBuildsRoutes(app: Hono, { db, dispatcher, manager }: Builds
       return c.json({ error: "brief must be in approved status to run a build" }, 409);
     }
 
+    // Refuse to start a build while any predecessor cohort is unbuilt. An
+    // approved brief whose deps aren't done sits in 'ready_to_build'; the
+    // orchestrator auto-dispatches the build only once the last dep resolves.
+    const unmetDeps = db
+      .prepare<{ cnt: number }, [string]>(
+        `SELECT COUNT(*) AS cnt
+         FROM cohort_dependencies cd
+         JOIN cohorts c ON c.id = cd.from_cohort_id
+         WHERE cd.to_cohort_id = ? AND c.status != 'done'`,
+      )
+      .get(brief.cohort_id);
+    if (unmetDeps && unmetDeps.cnt > 0) {
+      return c.json({ error: "cohort has unmet dependencies" }, 409);
+    }
+
     // Guard against double-dispatch while a build session is still live.
     // Only treat current_session_ref as an in-flight build when the stage matches.
     interface CohortRefRow {

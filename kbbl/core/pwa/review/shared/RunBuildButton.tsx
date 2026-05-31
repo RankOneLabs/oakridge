@@ -9,6 +9,7 @@ interface RunBuildButtonProps {
 }
 
 interface CohortStatusResponse {
+  status: string;
   current_session_ref: string | null;
   current_session_stage: string | null;
   current_session_status: SessionStatus | null;
@@ -105,6 +106,16 @@ export function RunBuildButton({ briefId, cohortId }: RunBuildButtonProps) {
     return (
       <span className="run-build-button__status run-build-button__pending">
         Checking build status…
+      </span>
+    );
+  }
+
+  // Deps not yet built — the orchestrator auto-dispatches the build once the
+  // last dependency resolves, so offering a manual run here would only 409.
+  if (cohort?.status === "ready_to_build") {
+    return (
+      <span className="run-build-button__status run-build-button__pending">
+        Waiting on dependencies
       </span>
     );
   }
