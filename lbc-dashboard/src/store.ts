@@ -13,7 +13,7 @@
  * across dashboard restarts and can be used as URL fragments. The
  * Python harness writes everything; the dashboard is purely a reader.
  */
-import { readFile, readdir, stat } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 
 import type {
@@ -27,6 +27,16 @@ import type {
   CellSummary,
   CommitSnapshot,
   EvalScore,
+  GraderConfigDraft,
+  GraderSummary,
+  TaskDraft,
+  TaskSummary,
+} from "./contracts";
+import {
+  GraderConfigDraftSchema,
+  GraderSummarySchema,
+  TaskDraftSchema,
+  TaskSummarySchema,
 } from "./contracts";
 
 export type { CellDetail, CellEvent, CellSummary, CommitSnapshot, EvalScore };
@@ -442,5 +452,288 @@ export async function resolveCellDir(cellId: string): Promise<string | null> {
     return cellDir;
   } catch {
     return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard-local task + grader config stores
+// ---------------------------------------------------------------------------
+
+type ValidationResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; errors: string[] };
+
+const STORE_NAME_RE = /^[a-z][a-z0-9_]*$/;
+
+function ok<T>(value: T): ValidationResult<T> {
+  return { ok: true, value };
+}
+
+function err<T>(errors: string[]): ValidationResult<T> {
+  return { ok: false, errors };
+}
+
+function isStoreName(value: string): boolean {
+  return STORE_NAME_RE.test(value);
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function matchesShape(expected: unknown, actual: unknown): boolean {
+  if (expected === null) {
+    return true;
+  }
+  if (Array.isArray(expected)) {
+    if (!Array.isArray(actual) || actual.length !== expected.length) {
+      return false;
+    }
+    return expected.every((child, index) =>
+      matchesShape(child, actual[index]),
+    );
+  }
+  if (isPlainObject(expected)) {
+    if (!isPlainObject(actual)) return false;
+    const expectedKeys = Object.keys(expected);
+    const actualKeys = Object.keys(actual);
+    if (expectedKeys.length !== actualKeys.length) return false;
+    for (const key of expectedKeys) {
+      if (!(key in actual)) return false;
+      if (!matchesShape(expected[key], actual[key])) return false;
+    }
+    return true;
+  }
+  if (typeof expected === "string") return typeof actual === "string";
+  if (typeof expected === "number") return typeof actual === "number";
+  if (typeof expected === "boolean") return typeof actual === "boolean";
+  return actual === expected;
+}
+
+export function validateTaskDraftJson(raw: unknown): ValidationResult<TaskDraft> {
+  const parsed = TaskDraftSchema.safeParse(raw);
+  if (!parsed.success) {
+    return err(parsed.error.issues.map((issue) => issue.message));
+  }
+  return ok(parsed.data);
+}
+
+export function validateGraderConfigDraftJson(
+  raw: unknown,
+  task: TaskDraft,
+  graderSummaries: readonly GraderSummary[],
+): ValidationResult<GraderConfigDraft> {
+  const parsed = GraderConfigDraftSchema.safeParse(raw);
+  if (!parsed.success) {
+    return err(parsed.error.issues.map((issue) => issue.message));
+  }
+  if (task.grader.kind !== "registered") {
+    return err([
+      `task ${task.name} has no registered grader; grader config is not allowed`,
+    ]);
+  }
+  if (task.grader.key !== parsed.data.grader_key) {
+    return err([
+      `task ${task.name} expects grader ${task.grader.key}, got ${parsed.data.grader_key}`,
+    ]);
+  }
+  for (const grader of graderSummaries) {
+    const parsedGrader = GraderSummarySchema.safeParse(grader);
+    if (!parsedGrader.success) {
+      return err(parsedGrader.error.issues.map((issue) => issue.message));
+    }
+  }
+  const grader = graderSummaries.find((entry) => entry.key === parsed.data.grader_key);
+  if (grader === undefined) {
+    return err([`unknown grader key ${parsed.data.grader_key}`]);
+  }
+  if (!grader.supported_artifact_types.includes(task.artifact_type)) {
+    return err([
+      `grader ${grader.key} does not support ${task.artifact_type} artifacts`,
+    ]);
+  }
+  if (
+    grader.config_schema !== null &&
+    !matchesShape(grader.config_schema, parsed.data.config)
+  ) {
+    return err([
+      `config does not match the registered schema shape for grader ${grader.key}`,
+    ]);
+  }
+  return ok(parsed.data);
+}
+
+function resolveDashboardDataRoot(): string {
+  const fromEnv = process.env.LBC_DASHBOARD_DATA_ROOT;
+  if (fromEnv) return resolve(fromEnv);
+  return resolve(import.meta.dirname, "..", "data");
+}
+
+function resolveTasksDir(): string {
+  return join(resolveDashboardDataRoot(), "tasks");
+}
+
+function resolveGraderConfigsDir(): string {
+  return join(resolveDashboardDataRoot(), "grader-configs");
+}
+
+function taskDraftPath(name: string): string {
+  return join(resolveTasksDir(), `${name}.json`);
+}
+
+function graderConfigDraftPath(name: string): string {
+  return join(resolveGraderConfigsDir(), `${name}.json`);
+}
+
+function validateStoreName(name: string): string | null {
+  const trimmed = name.trim();
+  if (!isStoreName(trimmed)) return null;
+  return trimmed;
+}
+
+async function readJson<T>(
+  path: string,
+  parser: (raw: unknown) => ValidationResult<T>,
+): Promise<T | null> {
+  let raw: string;
+  try {
+    raw = await readFile(path, "utf-8");
+  } catch {
+    return null;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  const validated = parser(parsed);
+  return validated.ok ? validated.value : null;
+}
+
+async function listJsonFiles(dir: string): Promise<string[]> {
+  try {
+    const entries = await readdir(dir, { withFileTypes: true });
+    return entries.filter((entry) => entry.isFile()).map((entry) => entry.name);
+  } catch {
+    return [];
+  }
+}
+
+function taskSummaryForDraft(task: TaskDraft): TaskSummary {
+  return TaskSummarySchema.parse({
+    name: task.name,
+    artifact_type: task.artifact_type,
+    artifact_filename: task.artifact_filename,
+    has_grader: task.grader.kind === "registered",
+    grader_key: task.grader.kind === "registered" ? task.grader.key : null,
+    source: "local",
+  });
+}
+
+export async function listTaskDrafts(): Promise<TaskDraft[]> {
+  const files = await listJsonFiles(resolveTasksDir());
+  const tasks: TaskDraft[] = [];
+  for (const filename of files) {
+    if (!filename.endsWith(".json")) continue;
+    const task = await readJson(join(resolveTasksDir(), filename), validateTaskDraftJson);
+    if (task !== null) tasks.push(task);
+  }
+  tasks.sort((a, b) => a.name.localeCompare(b.name));
+  return tasks;
+}
+
+export async function listTaskSummaries(): Promise<TaskSummary[]> {
+  const drafts = await listTaskDrafts();
+  return drafts.map(taskSummaryForDraft);
+}
+
+export async function getTaskDraft(name: string): Promise<TaskDraft | null> {
+  const validated = validateStoreName(name);
+  if (validated === null) return null;
+  return readJson(taskDraftPath(validated), validateTaskDraftJson);
+}
+
+export async function upsertTaskDraft(task: TaskDraft): Promise<TaskDraft> {
+  const parsed = TaskDraftSchema.parse(task);
+  await mkdir(resolveTasksDir(), { recursive: true });
+  await writeFile(taskDraftPath(parsed.name), JSON.stringify(parsed, null, 2), "utf-8");
+  return parsed;
+}
+
+export async function deleteTaskDraft(name: string): Promise<boolean> {
+  const validated = validateStoreName(name);
+  if (validated === null) return false;
+  const path = taskDraftPath(validated);
+  try {
+    await rm(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function listGraderConfigDrafts(): Promise<GraderConfigDraft[]> {
+  const files = await listJsonFiles(resolveGraderConfigsDir());
+  const configs: GraderConfigDraft[] = [];
+  for (const filename of files) {
+    if (!filename.endsWith(".json")) continue;
+    const config = await readJson(
+      join(resolveGraderConfigsDir(), filename),
+      (raw): ValidationResult<GraderConfigDraft> => {
+        const parsed = GraderConfigDraftSchema.safeParse(raw);
+        if (!parsed.success) {
+          return err(parsed.error.issues.map((issue) => issue.message));
+        }
+        return ok(parsed.data);
+      },
+    );
+    if (config !== null) configs.push(config);
+  }
+  configs.sort((a, b) => a.task_name.localeCompare(b.task_name));
+  return configs;
+}
+
+export async function getGraderConfigDraft(
+  taskName: string,
+): Promise<GraderConfigDraft | null> {
+  const validated = validateStoreName(taskName);
+  if (validated === null) return null;
+  return readJson(
+    graderConfigDraftPath(validated),
+    (raw): ValidationResult<GraderConfigDraft> => {
+      const parsed = GraderConfigDraftSchema.safeParse(raw);
+      if (!parsed.success) {
+        return err(parsed.error.issues.map((issue) => issue.message));
+      }
+      return ok(parsed.data);
+    },
+  );
+}
+
+export async function upsertGraderConfigDraft(
+  config: GraderConfigDraft,
+): Promise<GraderConfigDraft> {
+  const parsed = GraderConfigDraftSchema.parse(config);
+  await mkdir(resolveGraderConfigsDir(), { recursive: true });
+  await writeFile(
+    graderConfigDraftPath(parsed.task_name),
+    JSON.stringify(parsed, null, 2),
+    "utf-8",
+  );
+  return parsed;
+}
+
+export async function deleteGraderConfigDraft(
+  taskName: string,
+): Promise<boolean> {
+  const validated = validateStoreName(taskName);
+  if (validated === null) return false;
+  const path = graderConfigDraftPath(validated);
+  try {
+    await rm(path);
+    return true;
+  } catch {
+    return false;
   }
 }
