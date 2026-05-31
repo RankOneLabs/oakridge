@@ -411,6 +411,12 @@ def _resolve_grader_ref(
 def _resolve_registered_grader(key: str | None, *, task: TaskConfig) -> GraderFactory:
     if key is None:
         raise ValueError("registered grader missing key")
+    task_summary = registry.TASK_CATALOG_BY_NAME.get(task.name)
+    expected_key = task_summary.grader_key if task_summary is not None else None
+    if expected_key is not None and key != expected_key:
+        raise ValueError(
+            f"task {task.name!r} requires registered grader {expected_key!r}, got {key!r}"
+        )
     metadata = registry.grader_metadata_for(key)
     if task.artifact_type not in metadata.supported_artifact_types:
         raise ValueError(

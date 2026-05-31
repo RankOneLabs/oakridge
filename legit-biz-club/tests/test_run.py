@@ -430,23 +430,87 @@ def test_registered_grader_ref_resolves_for_compatible_task() -> None:
 
 
 def test_unknown_grader_ref_is_rejected() -> None:
-    spec = RunSpec.from_dict(
-        {
-            "task": "prose_substrate_thesis",
-            "model_pool": ["claude-sonnet-4-5"],
-            "condition": {"kind": "single_agent", "n": 1},
-            "grader": {"kind": "registered", "key": "not_a_real_grader"},
-        }
-    )
-    task = spec.resolve_task()
-    with pytest.raises(ValueError, match="no grader metadata"):
-        spec.resolve_grader(task)
+    # Use a local task so the lookup reaches registry.grader_metadata_for(...)
+    # instead of failing earlier on the built-in task/grader mismatch guard.
+    # This keeps the test covering the "unknown grader metadata" case.
+    #
+    # The helper only writes the task file; the task name stays local.
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        local_task_dir = Path(d) / "local_tasks"
+        local_task_dir.mkdir()
+        _write_local_task_file(
+            local_task_dir,
+            "custom.json",
+            {
+                "name": "custom_prose",
+                "artifact_type": "prose",
+                "artifact_filename": "draft.md",
+                "seed_content": "seed",
+                "brief": {
+                    "target_spec": "ship a thing",
+                    "success_criteria": ["it ships"],
+                },
+                "model_pool": ["claude-sonnet-4-5"],
+            },
+        )
+        spec = RunSpec.from_dict(
+            {
+                "task": "custom_prose",
+                "model_pool": ["claude-sonnet-4-5"],
+                "condition": {"kind": "single_agent", "n": 1},
+                "grader": {"kind": "registered", "key": "not_a_real_grader"},
+                "local_task_dir": str(local_task_dir),
+            }
+        )
+        task = spec.resolve_task()
+        with pytest.raises(ValueError, match="no grader metadata"):
+            spec.resolve_grader(task)
 
 
 def test_incompatible_grader_ref_is_rejected() -> None:
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        local_task_dir = Path(d) / "local_tasks"
+        local_task_dir.mkdir()
+        _write_local_task_file(
+            local_task_dir,
+            "custom.json",
+            {
+                "name": "custom_prose",
+                "artifact_type": "prose",
+                "artifact_filename": "draft.md",
+                "seed_content": "seed",
+                "brief": {
+                    "target_spec": "ship a thing",
+                    "success_criteria": ["it ships"],
+                },
+                "model_pool": ["claude-sonnet-4-5"],
+            },
+        )
+        spec = RunSpec.from_dict(
+            {
+                "task": "custom_prose",
+                "model_pool": ["claude-sonnet-4-5"],
+                "condition": {"kind": "single_agent", "n": 1},
+                "grader": {
+                    "kind": "registered",
+                    "key": "code_leetcode_longest_substring",
+                },
+                "local_task_dir": str(local_task_dir),
+            }
+        )
+        task = spec.resolve_task()
+        with pytest.raises(ValueError, match="does not support artifact type"):
+            spec.resolve_grader(task)
+
+
+def test_builtin_task_rejects_wrong_registered_grader_key() -> None:
     spec = RunSpec.from_dict(
         {
-            "task": "prose_substrate_thesis",
+            "task": "code_leetcode_regex_matching",
             "model_pool": ["claude-sonnet-4-5"],
             "condition": {"kind": "single_agent", "n": 1},
             "grader": {
@@ -456,7 +520,7 @@ def test_incompatible_grader_ref_is_rejected() -> None:
         }
     )
     task = spec.resolve_task()
-    with pytest.raises(ValueError, match="does not support artifact type"):
+    with pytest.raises(ValueError, match="requires registered grader"):
         spec.resolve_grader(task)
 
 
