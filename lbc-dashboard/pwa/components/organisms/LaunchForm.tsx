@@ -21,6 +21,7 @@ import {
   formatTaskSource,
   minNFor,
   resolveSelectedTask,
+  selectedTaskLoadError,
   type FormState,
 } from "./launchFormModel";
 import { CONDITION_KINDS } from "../../lib/types";
@@ -56,11 +57,11 @@ export function LaunchForm({
   }, [tasks, selectedTaskName]);
 
   const selectedTask = selectedTaskResolution.task;
-  const selectedTaskLoadError =
-    taskError ??
-    (selectedTaskName !== null && selectedTask === null
-      ? selectedTaskResolution.error
-      : null);
+  const selectedTaskLoadErrorValue = selectedTaskLoadError(
+    tasks,
+    selectedTaskName,
+    taskError,
+  );
 
   useEffect(() => {
     if (selectedTaskName === null) {
@@ -101,7 +102,14 @@ export function LaunchForm({
     });
   }, [selectedTask]);
 
-  const result = useMemo(() => buildRunSpec(state), [state]);
+  const result = useMemo(
+    () =>
+      buildRunSpec({
+        ...state,
+        selectedTaskName: selectedTaskName ?? "",
+      }),
+    [state, selectedTaskName],
+  );
 
   function toggleModel(model: string) {
     setState((s) => {
@@ -159,7 +167,11 @@ export function LaunchForm({
   }
 
   async function handleLaunch() {
-    if (selectedTaskLoadError !== null || selectedTask === null || !result.ok) {
+    if (
+      selectedTaskLoadErrorValue !== null ||
+      selectedTask === null ||
+      !result.ok
+    ) {
       return;
     }
     setWarning(null);
@@ -219,9 +231,9 @@ export function LaunchForm({
             </dl>
           )}
         </div>
-        {selectedTaskLoadError !== null && (
+        {selectedTaskLoadErrorValue !== null && (
           <div className="mt-1 flex items-center gap-2 text-xs text-red-500">
-            <span>{selectedTaskLoadError}</span>
+            <span>{selectedTaskLoadErrorValue}</span>
             <button
               type="button"
               className="rounded bg-stone-100 px-2 py-1 text-stone-700 hover:bg-stone-200"
@@ -349,7 +361,7 @@ export function LaunchForm({
 
       {/* Launch */}
       <div className="flex flex-col justify-end gap-1.5">
-        {!result.ok && state.selectedTaskName !== "" && (
+        {!result.ok && selectedTaskName !== null && (
           <p className="text-xs text-red-500">{result.error}</p>
         )}
         {warning !== null && <p className="text-xs text-amber-600">⚠ {warning}</p>}
@@ -359,7 +371,7 @@ export function LaunchForm({
           disabled={
             is_pending ||
             selectedTask === null ||
-            selectedTaskLoadError !== null ||
+            selectedTaskLoadErrorValue !== null ||
             !result.ok ||
             (state.should_grade && !selectedTask.has_grader)
           }

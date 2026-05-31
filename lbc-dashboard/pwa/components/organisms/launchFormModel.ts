@@ -28,6 +28,17 @@ export interface SelectedTaskResolution {
   error: string | null;
 }
 
+export function selectedTaskLoadError(
+  tasks: readonly TaskSummary[],
+  selectedTaskName: string | null,
+  taskError: string | null,
+): string | null {
+  if (taskError !== null) return taskError;
+  if (selectedTaskName === null) return null;
+  if (tasks.length === 0) return null;
+  return resolveSelectedTask(tasks, selectedTaskName).error;
+}
+
 // Known models are ordered by KNOWN_MODELS position; extras are appended
 // in the order they were added.
 export function buildRunSpec(state: FormState): BuildResult {

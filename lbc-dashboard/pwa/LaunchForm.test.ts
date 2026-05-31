@@ -12,6 +12,7 @@ import {
   formatTaskGraderState,
   formatTaskSource,
   resolveSelectedTask,
+  selectedTaskLoadError,
   type FormState,
 } from "./components/organisms/launchFormModel";
 
@@ -177,5 +178,13 @@ describe("buildRunSpec", () => {
     expect(formatTaskSource(LOCAL_UNGRADED_TASK)).toBe("local");
     expect(formatTaskGraderState(BUILTIN_TASK)).toBe("prose_substrate_thesis");
     expect(formatTaskGraderState(LOCAL_UNGRADED_TASK)).toBe("no grader");
+  });
+
+  test("suppresses invalid selection errors until tasks have loaded", () => {
+    expect(selectedTaskLoadError([], "missing_task", null)).toBeNull();
+    expect(selectedTaskLoadError([BUILTIN_TASK], "missing_task", null)).toMatch(
+      /unknown task missing_task/,
+    );
+    expect(selectedTaskLoadError([], null, "boom")).toBe("boom");
   });
 });
