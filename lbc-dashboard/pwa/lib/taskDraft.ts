@@ -83,8 +83,7 @@ export function blankTaskDraftForm(
 export function parseLineList(raw: string): string[] {
   return raw
     .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
+    .filter((line) => line.trim().length > 0);
 }
 
 export function formatLineList(values: string[]): string {

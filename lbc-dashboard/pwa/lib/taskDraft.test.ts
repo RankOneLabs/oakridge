@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   blankTaskDraftForm,
   isBlankTaskDraftForm,
+  parseLineList,
   sanitizeTaskDraftForm,
   taskDraftFormToPayload,
 } from "./taskDraft";
@@ -46,5 +47,12 @@ describe("task draft helpers", () => {
     });
     expect(sanitized.brief.success_criteria).toEqual(["covers the point"]);
     expect(sanitized.brief.constraints).toEqual(["keep it short"]);
+  });
+
+  test("preserves spaces while editing line-list fields", () => {
+    expect(parseLineList("covers the point \n  keep the tone direct")).toEqual([
+      "covers the point ",
+      "  keep the tone direct",
+    ]);
   });
 });
