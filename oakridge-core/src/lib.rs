@@ -6,6 +6,8 @@ pub mod scheduler;
 pub mod events;
 pub mod http;
 
+pub use http::{boot, register_types, Config};
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("database error: {0}")]
