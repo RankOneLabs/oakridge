@@ -162,13 +162,11 @@ describe("HTTP /api/tasks and /api/graders", () => {
       task: string;
       grade: boolean;
       local_task_dir?: string;
-      target?: string;
     };
 
     expect(spec.task).toBe(LOCAL_TASK.name);
     expect(spec.grade).toBe(false);
     expect(spec.local_task_dir).toBe(join(dashboardDataRoot, "tasks"));
-    expect(spec.target).toBeUndefined();
   });
 
   test("POST /api/grader-configs rejects mismatched grader keys", async () => {
@@ -233,10 +231,16 @@ describe("HTTP /api/tasks and /api/graders", () => {
     const spec = JSON.parse(
       await readFile(join(runRoot, run_ts, "run-spec.json"), "utf-8"),
     ) as {
+      task: string;
+      grade: boolean;
       grader?: { kind: string; name?: string };
       local_grader_config_dir?: string;
+      local_task_dir?: string;
     };
 
+    expect(spec.task).toBe(LOCAL_GRADED_TASK.name);
+    expect(spec.grade).toBe(true);
+    expect(spec.local_task_dir).toBe(join(dashboardDataRoot, "tasks"));
     expect(spec.grader).toEqual({
       kind: "local_config",
       name: LOCAL_GRADED_TASK.name,

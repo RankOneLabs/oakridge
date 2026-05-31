@@ -81,7 +81,8 @@ export const TaskNameSchema = z
 // __brand: 'X' }`` pattern — every consumer would have to choose a
 // side. ``.transform`` re-uses the existing brand authoritatively: the
 // runtime value is still a plain string; only the inferred TS type
-// carries the brand.
+// carries the brand. The field names stay historical for cell
+// compatibility, but the dashboard UI talks about tasks.
 
 export const CellEventSchema = z.strictObject({
   ts: z.string(),

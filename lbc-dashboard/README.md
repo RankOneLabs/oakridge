@@ -6,7 +6,7 @@ The dashboard is the v0 of the lbc operator surface. Future iterations grow into
 
 ## What it does
 
-- Discovers cells under `legit-biz-club/.run/<ts>/<target>/<condition>/`
+- Discovers cells under `legit-biz-club/.run/<ts>/<task>/<condition>/`
 - Tails each cell's `events.jsonl` over SSE so the page updates as the harness runs
 - Renders the current artifact (markdown), per-commit snapshots, and the workspace-event timeline
 - Eval scores tab: when `eval_scores.json` is present for the cell, shows per-dimension scores (with a value bar) and the average
@@ -39,7 +39,7 @@ lbc-dashboard/
 ### Launching a run from the UI
 
 1. Open the dashboard at `http://localhost:8765`.
-2. Use the Launch panel to select a target, condition, and model pool.
+2. Use the Launch panel to select a task, condition, and model pool.
 3. Click **Launch** — the dashboard POSTs to `/api/runs`, writes `run-spec.json` to `<run_root>/<run_ts>/`, and spawns `uv run python -m legit_biz_club.run --spec <run_root>/<run_ts>/run-spec.json --output-dir <run_root>/<run_ts>/`.
 4. The response includes `cell_id`; the PWA navigates directly to the cell's live view.
 5. To cancel: use the **Cancel** button or DELETE `/api/runs/:runId`.

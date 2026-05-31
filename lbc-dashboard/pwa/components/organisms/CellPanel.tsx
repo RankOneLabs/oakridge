@@ -1,5 +1,5 @@
 /**
- * Right-hand panel for the selected cell. Header (target ×
+ * Right-hand panel for the selected cell. Header (task ×
  * condition + tab bar) followed by the active tab's view.
  */
 import ReactMarkdown from "react-markdown";

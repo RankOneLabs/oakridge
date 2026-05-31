@@ -256,7 +256,7 @@ describe("getCellDetail", () => {
     expect(cell).toBeDefined();
     expect(cell!.condition_name).toBe("weird:condition_name" as ConditionName);
 
-    // The cell_id round-trips back to the same target/condition.
+    // The cell_id round-trips back to the same task/condition.
     const detail = await getCellDetail(cell!.cell_id);
     expect(detail).not.toBeNull();
     expect(detail!.target_name).toBe("my__custom_target" as TargetName);

@@ -184,6 +184,10 @@ describe("RunRegistry", () => {
       outputDir: "/tmp/output",
     });
 
+    expect(record.cell_id).toBe(
+      cellIdFor(runTs, spec.task, "ensemble_multi_round_n3"),
+    );
+
     const parsed = parseCellId(record.cell_id);
     expect(parsed).not.toBeNull();
     expect(parsed!.runTs).toBe(runTs);
