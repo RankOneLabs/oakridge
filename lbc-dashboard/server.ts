@@ -25,20 +25,38 @@ import {
   CellDetailSchema,
   CellsResponseSchema,
   CommitsResponseSchema,
+  GraderConfigsResponseSchema,
+  GradersResponseSchema,
   EvalResponseSchema,
   LaunchResponseSchema,
   RunSpecSchema,
   RunsResponseSchema,
   RunSummarySchema,
+  TaskDetailSchema,
+  TaskSummarySchema,
+  TasksResponseSchema,
 } from "./src/contracts";
+import type { GraderConfigDraft, TaskDraft } from "./src/contracts";
 import {
+  deleteGraderConfigDraft,
+  deleteTaskDraft,
   getCellDetail,
+  getGraderConfigDraft,
+  getTaskDetail,
   listCells,
+  listAllTaskSummaries,
+  listBuiltinGraderSummaries,
+  listGraderConfigDrafts,
   readArtifact,
   readCommits,
   readEvalScores,
   resolveCellDir,
   resolveRunRoot,
+  resolveDashboardDataRoot,
+  upsertGraderConfigDraft,
+  upsertTaskDraft,
+  validateGraderConfigDraftJson,
+  validateTaskDraftJson,
 } from "./src/store";
 import { RunRegistry, newRunTs, runRegistry } from "./src/runs";
 
@@ -47,6 +65,52 @@ import { RunRegistry, newRunTs, runRegistry } from "./src/runs";
 // All route registration lives inside createApp so tests can inject a
 // stub-launcher registry via createApp({ registry: new RunRegistry(stubLauncher) })
 // and exercise handlers with app.request(...) — no Python process is spawned.
+
+function taskDraftLikeForGraderValidation(task: {
+  name: string;
+  artifact_type: string;
+  artifact_filename: string;
+  brief: TaskDraft["brief"];
+  source: "builtin" | "local";
+  grader_key: string | null;
+  grader?: TaskDraft["grader"];
+}): TaskDraft {
+  if (task.source === "local") {
+    return {
+      name: task.name,
+      artifact_type: task.artifact_type as TaskDraft["artifact_type"],
+      artifact_filename: task.artifact_filename,
+      seed_content: "",
+      brief: task.brief,
+      grader: task.grader ?? { kind: "none" },
+    };
+  }
+  return {
+    name: task.name,
+    artifact_type: task.artifact_type as TaskDraft["artifact_type"],
+    artifact_filename: task.artifact_filename,
+    seed_content: "",
+    brief: task.brief,
+    grader: {
+      kind: "registered",
+      key: task.grader_key ?? "",
+    },
+  };
+}
+
+async function validateGraderConfigForTask(
+  raw: unknown,
+  task: Awaited<ReturnType<typeof getTaskDetail>>,
+): Promise<{ ok: true; value: GraderConfigDraft } | { ok: false; errors: string[] }> {
+  if (task === null) {
+    return { ok: false, errors: ["task not found"] };
+  }
+  return validateGraderConfigDraftJson(
+    raw,
+    taskDraftLikeForGraderValidation(task),
+    listBuiltinGraderSummaries(),
+  );
+}
 
 export function createApp(deps?: { registry?: RunRegistry }): Hono {
   const registry = deps?.registry ?? runRegistry;
@@ -101,6 +165,153 @@ export function createApp(deps?: { registry?: RunRegistry }): Hono {
     if (cellDir === null) return c.json({ error: "not found" }, 404);
     const commits = await readCommits(cellId);
     return c.json(CommitsResponseSchema.parse({ commits }));
+  });
+
+  // --- task catalog -----------------------------------------------------
+
+  app.get("/api/tasks", async (c) => {
+    try {
+      const tasks = await listAllTaskSummaries();
+      return c.json(TasksResponseSchema.parse({ tasks }));
+    } catch (error) {
+      console.error("[lbc-dashboard] failed to list tasks", { error });
+      return c.json({ error: "task collision" }, 409);
+    }
+  });
+
+  app.get("/api/tasks/:name", async (c) => {
+    try {
+      const detail = await getTaskDetail(c.req.param("name"));
+      if (detail === null) return c.json({ error: "not found" }, 404);
+      return c.json(TaskDetailSchema.parse(detail));
+    } catch (error) {
+      console.error("[lbc-dashboard] failed to resolve task detail", { error });
+      return c.json({ error: "task collision" }, 409);
+    }
+  });
+
+  app.post("/api/tasks", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON" }, 400);
+    }
+    const parsed = validateTaskDraftJson(body);
+    if (!parsed.ok) {
+      return c.json(
+        {
+          error: "invalid task",
+          details: parsed.errors,
+        },
+        400,
+      );
+    }
+    try {
+      const existing = await getTaskDetail(parsed.value.name);
+      if (existing?.source === "builtin") {
+        return c.json({ error: "built-in task is read-only" }, 405);
+      }
+      const saved = await upsertTaskDraft(parsed.value);
+      return c.json(
+        TaskDetailSchema.parse({
+          ...saved,
+          has_grader: saved.grader.kind === "registered",
+          grader_key:
+            saved.grader.kind === "registered" ? saved.grader.key : null,
+          source: "local",
+        }),
+      );
+    } catch (error) {
+      console.error("[lbc-dashboard] failed to save task", { error });
+      return c.json({ error: "task collision" }, 409);
+    }
+  });
+
+  app.delete("/api/tasks/:name", async (c) => {
+    try {
+      const existing = await getTaskDetail(c.req.param("name"));
+      if (existing === null) return c.json({ error: "not found" }, 404);
+      if (existing.source === "builtin") {
+        return c.json({ error: "built-in task is read-only" }, 405);
+      }
+      const found = await deleteTaskDraft(existing.name);
+      if (!found) return c.json({ error: "not found" }, 404);
+      return c.json(
+        TaskSummarySchema.parse({
+          name: existing.name,
+          artifact_type: existing.artifact_type,
+          artifact_filename: existing.artifact_filename,
+          has_grader: existing.has_grader,
+          grader_key: existing.grader_key,
+          source: existing.source,
+        }),
+      );
+    } catch (error) {
+      console.error("[lbc-dashboard] failed to delete task", { error });
+      return c.json({ error: "task collision" }, 409);
+    }
+  });
+
+  // --- grader catalog ---------------------------------------------------
+
+  app.get("/api/graders", (c) => {
+    return c.json(
+      GradersResponseSchema.parse({ graders: listBuiltinGraderSummaries() }),
+    );
+  });
+
+  app.get("/api/grader-configs", async (c) => {
+    const grader_configs = await listGraderConfigDrafts();
+    return c.json(
+      GraderConfigsResponseSchema.parse({ grader_configs }),
+    );
+  });
+
+  app.get("/api/grader-configs/:task_name", async (c) => {
+    const graderConfig = await getGraderConfigDraft(c.req.param("task_name"));
+    if (graderConfig === null) return c.json({ error: "not found" }, 404);
+    return c.json(graderConfig);
+  });
+
+  app.post("/api/grader-configs", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON" }, 400);
+    }
+    const taskName =
+      typeof body === "object" && body !== null && "task_name" in body
+        ? String((body as { task_name?: unknown }).task_name)
+        : "";
+    try {
+      const task = await getTaskDetail(taskName);
+      if (task === null) {
+        return c.json({ error: "not found" }, 404);
+      }
+      const validation = await validateGraderConfigForTask(body, task);
+      if (!validation.ok) {
+        return c.json(
+          {
+            error: "invalid grader config",
+            details: validation.errors,
+          },
+          400,
+        );
+      }
+      const saved = await upsertGraderConfigDraft(validation.value);
+      return c.json(saved);
+    } catch (error) {
+      console.error("[lbc-dashboard] failed to save grader config", { error });
+      return c.json({ error: "failed to save grader config" }, 409);
+    }
+  });
+
+  app.delete("/api/grader-configs/:task_name", async (c) => {
+    const found = await deleteGraderConfigDraft(c.req.param("task_name"));
+    if (!found) return c.json({ error: "not found" }, 404);
+    return c.json({ ok: true });
   });
 
   /**
@@ -198,6 +409,78 @@ export function createApp(deps?: { registry?: RunRegistry }): Hono {
       );
     }
     const spec = parsed.data;
+    let task;
+    try {
+      task = await getTaskDetail(spec.task);
+    } catch (error) {
+      console.error("[lbc-dashboard] failed to resolve task for run", {
+        error,
+      });
+      return c.json({ error: "task collision" }, 409);
+    }
+    if (task === null) {
+      return c.json({ error: "unknown task" }, 404);
+    }
+
+    let runSpec: typeof spec & Record<string, unknown> = {
+      ...spec,
+    };
+    if (task.source === "local") {
+      runSpec = {
+        ...runSpec,
+        local_task_dir: join(resolveDashboardDataRoot(), "tasks"),
+      };
+    }
+
+    if (spec.grade) {
+      const localGraderConfig = await getGraderConfigDraft(spec.task);
+      if (localGraderConfig !== null) {
+        const validation = await validateGraderConfigForTask(
+          localGraderConfig,
+          task,
+        );
+        if (!validation.ok) {
+          return c.json(
+            {
+              error: "invalid grader config",
+              details: validation.errors,
+            },
+            400,
+          );
+        }
+        runSpec = {
+          ...runSpec,
+          grader: { kind: "local_config", name: spec.task },
+          local_grader_config_dir: join(
+            resolveDashboardDataRoot(),
+            "grader-configs",
+          ),
+        };
+      } else {
+        const registeredKey =
+          task.source === "local"
+            ? task.grader.kind === "registered"
+              ? task.grader.key
+              : null
+            : task.grader_key;
+        if (registeredKey === null) {
+          return c.json({ error: "task has no grader" }, 400);
+        }
+        const grader = listBuiltinGraderSummaries().find(
+          (entry) => entry.key === registeredKey,
+        );
+        if (grader === undefined) {
+          return c.json({ error: "unknown grader" }, 400);
+        }
+        if (!grader.supported_artifact_types.includes(task.artifact_type)) {
+          return c.json({ error: "grader incompatible with task" }, 400);
+        }
+        runSpec = {
+          ...runSpec,
+          grader: { kind: "registered", key: registeredKey },
+        };
+      }
+    }
 
     // Pre-flight: warn if no provider key is configured. The run still
     // spawns and fails fast, surfacing as 'failed' with a clear stderr
@@ -217,11 +500,11 @@ export function createApp(deps?: { registry?: RunRegistry }): Hono {
     const specPath = join(output_dir, "run-spec.json");
     try {
       await mkdir(output_dir, { recursive: true });
-      await writeFile(specPath, JSON.stringify(spec));
+      await writeFile(specPath, JSON.stringify(runSpec));
 
       const record = registry.launch({
         runTs: run_ts,
-        spec,
+        spec: runSpec,
         specPath,
         outputDir: output_dir,
       });

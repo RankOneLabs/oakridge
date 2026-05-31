@@ -129,7 +129,7 @@ export function newRunTs(): string {
 export interface RunRecord {
   runId: string;
   run_ts: string;
-  spec: RunSpec;
+  spec: RunSpec & Record<string, unknown>;
   cell_id: CellId;
   status: "running" | "exited" | "failed";
   pid: number;
@@ -155,7 +155,7 @@ export class RunRegistry {
     outputDir,
   }: {
     runTs: string;
-    spec: RunSpec;
+    spec: RunSpec & Record<string, unknown>;
     specPath: string;
     outputDir: string;
   }): RunRecord {
