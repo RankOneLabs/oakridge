@@ -2,6 +2,7 @@ import type { Hono } from "hono";
 import type { Database } from "bun:sqlite";
 import type { SessionManager } from "../../session/session-manager";
 import type { createDispatcher } from "../../orchestrator/backends/dispatcher";
+import { countUnmetDependencies } from "../../db/cohorts";
 
 type Dispatcher = ReturnType<typeof createDispatcher>;
 
@@ -22,6 +23,13 @@ export function mountBuildsRoutes(app: Hono, { db, dispatcher, manager }: Builds
     if (!brief) return c.json({ error: "not found" }, 404);
     if (brief.status !== "approved") {
       return c.json({ error: "brief must be in approved status to run a build" }, 409);
+    }
+
+    // Refuse to start a build while any predecessor cohort is unbuilt. An
+    // approved brief whose deps aren't done sits in 'ready_to_build'; the
+    // orchestrator auto-dispatches the build only once the last dep resolves.
+    if (countUnmetDependencies(db, brief.cohort_id) > 0) {
+      return c.json({ error: "cohort has unmet dependencies" }, 409);
     }
 
     // Guard against double-dispatch while a build session is still live.

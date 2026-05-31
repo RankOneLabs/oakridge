@@ -791,4 +791,47 @@ describe("full dispatch pipeline with MockBackend", () => {
     const res = await post(app, `/briefs/${brief.id}/build`, {});
     expect(res.status).toBe(409);
   });
+
+  test("POST /briefs/:id/build returns 409 if cohort has unmet dependencies", async () => {
+    const projRes = await post(app, "/projects", { name: "p", repo_path: testRepoPath });
+    const proj = (await projRes.json()) as { id: string };
+    const specRes = await post(app, "/specs", { project_id: proj.id, title: "s" });
+    const spec = (await specRes.json()) as { id: string };
+    const planRes = await post(app, "/plans", { spec_id: spec.id });
+    const plan = (await planRes.json()) as { id: string };
+
+    const aRes = await post(app, "/cohorts", { plan_id: plan.id, title: "A", position: 1 });
+    const cohortA = (await aRes.json()) as { id: string };
+    const bRes = await post(app, "/cohorts", { plan_id: plan.id, title: "B", position: 2 });
+    const cohortB = (await bRes.json()) as { id: string };
+
+    // B depends on A; A is still 'waiting' (not done).
+    expect(
+      (await post(app, "/cohort-dependencies", { from_cohort_id: cohortA.id, to_cohort_id: cohortB.id })).status,
+    ).toBe(201);
+
+    // Approve B's brief with A unbuilt → B lands in ready_to_build, no auto-dispatch.
+    db.prepare("UPDATE cohorts SET status = 'briefing' WHERE id = ?").run(cohortB.id);
+    const briefRes = await post(app, "/briefs", {
+      cohort_id: cohortB.id,
+      goal: "g",
+      files_in_scope: [],
+      decisions_made: [],
+      approaches_rejected: [],
+      next_action: "n",
+    });
+    const brief = (await briefRes.json()) as { id: string };
+    expect((await patch(app, `/briefs/${brief.id}/status`, { status: "approved" })).status).toBe(200);
+    await flushAsync();
+    expect(
+      db.prepare<{ status: string }, [string]>("SELECT status FROM cohorts WHERE id = ?").get(cohortB.id)!.status,
+    ).toBe("ready_to_build");
+
+    const callsBefore = mockBackend.calls.length;
+    const res = await post(app, `/briefs/${brief.id}/build`, {});
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toMatch(/unmet dependencies/);
+    // No build was dispatched.
+    expect(mockBackend.calls.length).toBe(callsBefore);
+  });
 });

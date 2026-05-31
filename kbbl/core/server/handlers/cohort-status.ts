@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { Hono } from "hono";
 import type { Database } from "bun:sqlite";
-import { getCohort } from "../../db/cohorts";
+import { getCohort, countUnmetDependencies } from "../../db/cohorts";
 import { getLatestApprovedBriefByCohort } from "../../db/briefs";
 import { taskTrackerEvents } from "../../db/events";
 import { getEpicBySpec, advanceEpicByEvent } from "../../db/epics";
@@ -45,17 +45,8 @@ function runDoneFanout(db: Database, cohort_id: string): DoneFanoutResult {
     const dep = getCohort(db, to_cohort_id);
     if (!dep) continue;
 
-    const unmetDeps = db
-      .prepare<{ cnt: number }, [string]>(
-        `SELECT COUNT(*) AS cnt
-         FROM cohort_dependencies cd
-         JOIN cohorts c ON c.id = cd.from_cohort_id
-         WHERE cd.to_cohort_id = ? AND c.status != 'done'`,
-      )
-      .get(to_cohort_id);
-
     // Advance ready_to_build dependents to building when their last dep resolves
-    if (dep.status === "ready_to_build" && unmetDeps && unmetDeps.cnt === 0) {
+    if (dep.status === "ready_to_build" && countUnmetDependencies(db, to_cohort_id) === 0) {
       const brief = getLatestApprovedBriefByCohort(db, to_cohort_id);
       if (!brief) {
         console.error(

@@ -97,6 +97,23 @@ export function deleteCohortDependency(
   );
 }
 
+/**
+ * Count this cohort's predecessor cohorts that are not yet `done`. Zero means
+ * all dependencies are built and the cohort is clear to build. Single source of
+ * truth for the dependency-readiness rule shared by brief approval, the
+ * done/merge fan-out, and the manual build-dispatch guard.
+ */
+export function countUnmetDependencies(db: Database, cohort_id: string): number {
+  return db
+    .prepare<{ cnt: number }, [string]>(
+      `SELECT COUNT(*) AS cnt
+       FROM cohort_dependencies cd
+       JOIN cohorts c ON c.id = cd.from_cohort_id
+       WHERE cd.to_cohort_id = ? AND c.status != 'done'`,
+    )
+    .get(cohort_id)!.cnt;
+}
+
 export function listDependenciesByCohort(db: Database, cohort_id: string): CohortDependency[] {
   return db
     .prepare<CohortDependency, [string, string]>(
