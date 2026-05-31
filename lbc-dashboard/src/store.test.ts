@@ -509,11 +509,31 @@ describe("task + grader config stores", () => {
       graders,
     );
     expect(wrongShape.ok).toBe(false);
+
+    const mismatchedTask = validateGraderConfigDraftJson(
+      {
+        task_name: "code_leetcode_longest_substring",
+        grader_key: "prose_substrate_thesis",
+        config: { judge_model: "claude-sonnet-4-5" },
+      },
+      proseTask,
+      graders,
+    );
+    expect(mismatchedTask.ok).toBe(false);
   });
 
   test("task store write, list, get, and delete round-trip", async () => {
     await upsertTaskDraft(proseTask);
     await upsertTaskDraft(codeTask);
+    await mkdir(join(dashboardDataRoot, "tasks"), { recursive: true });
+    await writeFile(
+      join(dashboardDataRoot, "tasks", "mismatched_task.json"),
+      JSON.stringify({
+        ...proseTask,
+        name: "code_leetcode_trapping_rain_water",
+      }),
+      "utf-8",
+    );
 
     const summaries = await listTaskSummaries();
     expect(summaries.map((task) => task.name)).toEqual([
@@ -529,6 +549,16 @@ describe("task + grader config stores", () => {
     const drafts = await listTaskDrafts();
     expect(drafts).toHaveLength(2);
 
+    await writeFile(
+      join(dashboardDataRoot, "tasks", "prose_substrate_thesis.json"),
+      JSON.stringify({
+        ...proseTask,
+        name: "code_leetcode_trapping_rain_water",
+      }),
+      "utf-8",
+    );
+    expect(await getTaskDraft("prose_substrate_thesis")).toBeNull();
+
     expect(await deleteTaskDraft("prose_substrate_thesis")).toBe(true);
     expect(await getTaskDraft("prose_substrate_thesis")).toBeNull();
   });
@@ -541,6 +571,15 @@ describe("task + grader config stores", () => {
     };
 
     await upsertGraderConfigDraft(config);
+    await mkdir(join(dashboardDataRoot, "grader-configs"), { recursive: true });
+    await writeFile(
+      join(dashboardDataRoot, "grader-configs", "mismatched_task.json"),
+      JSON.stringify({
+        ...config,
+        task_name: "code_leetcode_trapping_rain_water",
+      }),
+      "utf-8",
+    );
 
     const got = await getGraderConfigDraft("prose_substrate_thesis");
     expect(got).not.toBeNull();
@@ -548,6 +587,16 @@ describe("task + grader config stores", () => {
 
     const drafts = await listGraderConfigDrafts();
     expect(drafts).toHaveLength(1);
+
+    await writeFile(
+      join(dashboardDataRoot, "grader-configs", "prose_substrate_thesis.json"),
+      JSON.stringify({
+        ...config,
+        task_name: "code_leetcode_trapping_rain_water",
+      }),
+      "utf-8",
+    );
+    expect(await getGraderConfigDraft("prose_substrate_thesis")).toBeNull();
 
     expect(await deleteGraderConfigDraft("prose_substrate_thesis")).toBe(true);
     expect(await getGraderConfigDraft("prose_substrate_thesis")).toBeNull();

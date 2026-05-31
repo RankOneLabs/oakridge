@@ -532,6 +532,11 @@ export function validateGraderConfigDraftJson(
       `task ${task.name} has no registered grader; grader config is not allowed`,
     ]);
   }
+  if (parsed.data.task_name !== task.name) {
+    return err([
+      `grader config for ${parsed.data.task_name} does not belong to task ${task.name}`,
+    ]);
+  }
   if (task.grader.key !== parsed.data.grader_key) {
     return err([
       `task ${task.name} expects grader ${task.grader.key}, got ${parsed.data.grader_key}`,
@@ -636,8 +641,12 @@ export async function listTaskDrafts(): Promise<TaskDraft[]> {
   const tasks: TaskDraft[] = [];
   for (const filename of files) {
     if (!filename.endsWith(".json")) continue;
-    const task = await readJson(join(resolveTasksDir(), filename), validateTaskDraftJson);
-    if (task !== null) tasks.push(task);
+    const expectedName = filename.slice(0, -5);
+    const task = await readJson(
+      join(resolveTasksDir(), filename),
+      validateTaskDraftJson,
+    );
+    if (task !== null && task.name === expectedName) tasks.push(task);
   }
   tasks.sort((a, b) => a.name.localeCompare(b.name));
   return tasks;
@@ -651,7 +660,8 @@ export async function listTaskSummaries(): Promise<TaskSummary[]> {
 export async function getTaskDraft(name: string): Promise<TaskDraft | null> {
   const validated = validateStoreName(name);
   if (validated === null) return null;
-  return readJson(taskDraftPath(validated), validateTaskDraftJson);
+  const task = await readJson(taskDraftPath(validated), validateTaskDraftJson);
+  return task !== null && task.name === validated ? task : null;
 }
 
 export async function upsertTaskDraft(task: TaskDraft): Promise<TaskDraft> {
@@ -678,6 +688,7 @@ export async function listGraderConfigDrafts(): Promise<GraderConfigDraft[]> {
   const configs: GraderConfigDraft[] = [];
   for (const filename of files) {
     if (!filename.endsWith(".json")) continue;
+    const expectedTaskName = filename.slice(0, -5);
     const config = await readJson(
       join(resolveGraderConfigsDir(), filename),
       (raw): ValidationResult<GraderConfigDraft> => {
@@ -688,7 +699,9 @@ export async function listGraderConfigDrafts(): Promise<GraderConfigDraft[]> {
         return ok(parsed.data);
       },
     );
-    if (config !== null) configs.push(config);
+    if (config !== null && config.task_name === expectedTaskName) {
+      configs.push(config);
+    }
   }
   configs.sort((a, b) => a.task_name.localeCompare(b.task_name));
   return configs;
@@ -699,7 +712,7 @@ export async function getGraderConfigDraft(
 ): Promise<GraderConfigDraft | null> {
   const validated = validateStoreName(taskName);
   if (validated === null) return null;
-  return readJson(
+  const config = await readJson(
     graderConfigDraftPath(validated),
     (raw): ValidationResult<GraderConfigDraft> => {
       const parsed = GraderConfigDraftSchema.safeParse(raw);
@@ -709,6 +722,7 @@ export async function getGraderConfigDraft(
       return ok(parsed.data);
     },
   );
+  return config !== null && config.task_name === validated ? config : null;
 }
 
 export async function upsertGraderConfigDraft(

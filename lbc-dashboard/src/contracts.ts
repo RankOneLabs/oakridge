@@ -61,6 +61,19 @@ function isSnakeCaseName(value: string): boolean {
   return SNAKE_CASE_NAME_RE.test(value);
 }
 
+export const TaskNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .superRefine((value, ctx) => {
+    if (!isSnakeCaseName(value)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "task name must be snake_case and start with a letter",
+      });
+    }
+  });
+
 // ``cell_id`` / ``target_name`` / ``condition_name`` carry the brand
 // types defined in pwa/lib/ids.ts. We don't use zod's ``.brand<>()``
 // because that produces a structurally distinct branded type that
@@ -161,7 +174,7 @@ export const TaskGraderRefSchema = z.discriminatedUnion("kind", [
 
 export const TaskDraftSchema = z
   .strictObject({
-    name: z.string().trim().min(1),
+    name: TaskNameSchema,
     artifact_type: z.enum(ARTIFACT_TYPES),
     artifact_filename: z.string().trim().min(1),
     seed_content: z.string(),
@@ -169,13 +182,6 @@ export const TaskDraftSchema = z
     grader: TaskGraderRefSchema,
   })
   .superRefine((task, ctx) => {
-    if (!isSnakeCaseName(task.name)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["name"],
-        message: "name must be snake_case and start with a letter",
-      });
-    }
     if (!isBareFilename(task.artifact_filename)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -203,7 +209,7 @@ export const TaskDraftSchema = z
   });
 
 export const TaskSummarySchema = z.strictObject({
-  name: z.string().trim().min(1),
+  name: TaskNameSchema,
   artifact_type: z.enum(ARTIFACT_TYPES),
   artifact_filename: z.string().trim().min(1),
   has_grader: z.boolean(),
@@ -221,18 +227,9 @@ export const GraderSummarySchema = z.strictObject({
 
 export const GraderConfigDraftSchema = z
   .strictObject({
-    task_name: z.string().trim().min(1),
+    task_name: TaskNameSchema,
     grader_key: z.string().trim().min(1),
     config: z.record(z.string(), z.unknown()),
-  })
-  .superRefine((draft, ctx) => {
-    if (!isSnakeCaseName(draft.task_name)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["task_name"],
-        message: "task_name must be snake_case and start with a letter",
-      });
-    }
   });
 
 // ---------------------------------------------------------------------------
@@ -251,7 +248,7 @@ export const ConditionSpecSchema = z.strictObject({
 //   ensemble_incremental  => n must be >= 1 (already enforced by min(1))
 export const RunSpecSchema = z
   .strictObject({
-    task: z.string().trim().min(1),
+    task: TaskNameSchema,
     model_pool: z.array(z.string().min(1)).nonempty(),
     condition: ConditionSpecSchema,
     grade: z.boolean().default(true),
@@ -286,7 +283,7 @@ export const RunSummarySchema = z.strictObject({
   runId: z.string(),
   run_ts: z.string(),
   cell_id: z.string().transform((s): CellId => s as CellId),
-  task: z.string().trim().min(1),
+  task: TaskNameSchema,
   condition: ConditionSpecSchema,
   status: RunStatusSchema,
   started_ms: z.number(),

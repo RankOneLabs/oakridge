@@ -479,12 +479,27 @@ describe("RunSpecSchema", () => {
     ).toThrow();
   });
 
-  test("accepts arbitrary task strings", () => {
+  test("accepts safe task names", () => {
     const parsed = RunSpecSchema.parse({
       ...validRunSpec,
       task: "dashboard_local_task",
     });
     expect(parsed.task).toBe("dashboard_local_task");
+  });
+
+  test("rejects unsafe task names", () => {
+    expect(() =>
+      RunSpecSchema.parse({
+        ...validRunSpec,
+        task: "dashboard/local",
+      }),
+    ).toThrow();
+    expect(() =>
+      RunSpecSchema.parse({
+        ...validRunSpec,
+        task: "..",
+      }),
+    ).toThrow();
   });
 
   test("rejects unknown condition kind", () => {
