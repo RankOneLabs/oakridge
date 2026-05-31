@@ -343,10 +343,10 @@ pub async fn post_verb_results(
     // Known race: the parked check above and the deliver_decision call below are not
     // atomic. A concurrent request (or a cancellation) can advance the stage out of
     // Parked between the SELECT and the control-channel send. The duplicate caller
-    // will receive 202 even though the decision may be silently dropped or cause a
-    // "run not active" → 500. Making this atomic requires moving the guard into the
-    // Coordinator (cohort 5 scope); for now the window is small and the consequence
-    // is a no-op resume, not data corruption.
+    // will receive 202 even though the decision may be silently dropped, or a 409 if
+    // the run has since gone inactive. Making this atomic requires moving the guard
+    // into the Coordinator (cohort 5 scope); for now the window is small and the
+    // consequence is a no-op resume, not data corruption.
     state
         .coordinator
         .deliver_decision(
@@ -357,7 +357,9 @@ pub async fn post_verb_results(
                 against_artifact_id: body.against_artifact_id,
             },
         )
-        .await?;
+        .await
+        // run no longer active / control channel closed are stale-state conflicts, not 500s
+        .map_err(|e| AppError::Conflict(e.to_string()))?;
 
     Ok((StatusCode::ACCEPTED, Json(si)))
 }
