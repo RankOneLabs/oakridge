@@ -80,15 +80,26 @@ describe("buildRunSpec", () => {
   });
 
   test("known models appear in KNOWN_MODELS order regardless of check order", () => {
-    // gpt-5 comes after haiku in KNOWN_MODELS; both checked
+    // gpt-5 comes after haiku in KNOWN_MODELS; both checked.
     const r = buildRunSpec({
       ...base,
       checkedModels: new Set(["gpt-5", "claude-haiku-4-5"]),
     });
     expect(r.ok).toBe(true);
     if (r.ok) {
-      // haiku is index 2, gpt-5 is index 3 in KNOWN_MODELS
+      // The helper sorts checked known models by KNOWN_MODELS position.
       expect(r.spec.model_pool).toEqual(["claude-haiku-4-5", "gpt-5"]);
+    }
+  });
+
+  test("includes opus 4.8 as a known model", () => {
+    const r = buildRunSpec({
+      ...base,
+      checkedModels: new Set(["claude-opus-4-8"]),
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.spec.model_pool).toEqual(["claude-opus-4-8"]);
     }
   });
 
