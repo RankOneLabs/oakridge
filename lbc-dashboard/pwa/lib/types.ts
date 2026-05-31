@@ -26,6 +26,7 @@ export type {
   RunSummary,
   RunsResponse,
   LaunchResponse,
+  TasksResponse,
 } from "../../src/contracts";
 
 export {
