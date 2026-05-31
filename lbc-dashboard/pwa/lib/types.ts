@@ -25,6 +25,7 @@ export type {
   RunSummary,
   RunsResponse,
   LaunchResponse,
+  TasksResponse,
 } from "../../src/contracts";
 
 export {
@@ -33,5 +34,6 @@ export {
   RunSpecSchema,
   RunsResponseSchema,
   LaunchResponseSchema,
+  TasksResponseSchema,
   conditionName,
 } from "../../src/contracts";
