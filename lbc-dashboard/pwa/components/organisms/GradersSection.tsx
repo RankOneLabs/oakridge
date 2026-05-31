@@ -140,7 +140,12 @@ export function GradersSection({
   }, [selectedTaskName]);
 
   useEffect(() => {
-    if (activeTaskName === null) return;
+    if (activeTaskName === null) {
+      if (!graderKeyDirtyRef.current) setGraderKey("");
+      if (!configJsonDirtyRef.current) setConfigJson("{}");
+      graderKeySeedSourceRef.current = null;
+      return;
+    }
     const detailGraderKey = taskGraderKey(taskDetail);
     if (detailGraderKey !== null) {
       if (!graderKeyDirtyRef.current) {
@@ -263,6 +268,32 @@ export function GradersSection({
     );
   }
 
+  const taskSelect = (
+    <label className="space-y-1">
+      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-stone-400">
+        Task
+      </div>
+      <select
+        className="w-full rounded-xl border border-stone-300 px-3 py-2 text-sm"
+        value={taskName}
+        onChange={(e) => {
+          setTaskName(e.target.value);
+          graderKeyDirtyRef.current = false;
+          configJsonDirtyRef.current = false;
+          graderKeySeedSourceRef.current = null;
+          onSelectTask(e.target.value === "" ? null : e.target.value);
+        }}
+      >
+        <option value="">pick a task</option>
+        {tasks.map((task) => (
+          <option key={task.name} value={task.name}>
+            {task.name}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+
   return (
     <section className="space-y-6 p-4">
       <div className="flex items-end justify-between gap-4">
@@ -292,7 +323,12 @@ export function GradersSection({
 
         <div className="space-y-6">
           {taskDetail === null ? (
-            <EmptyMessage>Select a task to author or inspect a local grader config.</EmptyMessage>
+            <div className={sectionCardClass("p-5")}>
+              {taskSelect}
+              <p className="mt-3 text-sm text-stone-500">
+                Select a task to author or inspect a local grader config.
+              </p>
+            </div>
           ) : (
             <div className={sectionCardClass("p-5")}>
               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -312,29 +348,7 @@ export function GradersSection({
               </div>
 
               <div className="mt-4 grid gap-4 md:grid-cols-2">
-                <label className="space-y-1">
-                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-stone-400">
-                    Task
-                  </div>
-                  <select
-                    className="w-full rounded-xl border border-stone-300 px-3 py-2 text-sm"
-                    value={taskName}
-                    onChange={(e) => {
-                      setTaskName(e.target.value);
-                      graderKeyDirtyRef.current = false;
-                      configJsonDirtyRef.current = false;
-                      graderKeySeedSourceRef.current = null;
-                      onSelectTask(e.target.value === "" ? null : e.target.value);
-                    }}
-                  >
-                    <option value="">pick a task</option>
-                    {tasks.map((task) => (
-                      <option key={task.name} value={task.name}>
-                        {task.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                {taskSelect}
                 <label className="space-y-1">
                   <div className="text-xs font-semibold uppercase tracking-[0.18em] text-stone-400">
                     Grader key

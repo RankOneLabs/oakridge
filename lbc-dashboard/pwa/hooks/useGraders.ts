@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   GraderConfigsResponseSchema,
@@ -13,24 +13,30 @@ export function useGraders(): {
 } {
   const [graders, setGraders] = useState<GraderSummary[]>([]);
   const [graderConfigs, setGraderConfigs] = useState<GraderConfigDraft[]>([]);
+  const requestSeq = useRef(0);
 
   const refresh = useCallback(async () => {
+    const requestId = ++requestSeq.current;
     try {
-      const [gradersResponse, configsResponse] = await Promise.all([
+      const [gradersResult, configsResult] = await Promise.allSettled([
         fetch("/api/graders"),
         fetch("/api/grader-configs"),
       ]);
-      if (gradersResponse.ok) {
+      if (gradersResult.status === "fulfilled" && gradersResult.value.ok) {
         const gradersData = GradersResponseSchema.parse(
-          await gradersResponse.json(),
+          await gradersResult.value.json(),
         );
-        setGraders(gradersData.graders);
+        if (requestId === requestSeq.current) {
+          setGraders(gradersData.graders);
+        }
       }
-      if (configsResponse.ok) {
+      if (configsResult.status === "fulfilled" && configsResult.value.ok) {
         const configsData = GraderConfigsResponseSchema.parse(
-          await configsResponse.json(),
+          await configsResult.value.json(),
         );
-        setGraderConfigs(configsData.grader_configs);
+        if (requestId === requestSeq.current) {
+          setGraderConfigs(configsData.grader_configs);
+        }
       }
     } catch {
       // Keep the last good catalogs and retry on the next refresh.

@@ -6,8 +6,9 @@
  * (pwa/lib/types.ts re-exports the inferred types).
  *
  * Inbound request bodies mostly don't exist yet, but launch now
- * accepts a task-based run spec. The public schema is task-based;
- * compatibility parsing for older callers lives at the server edge.
+ * accepts a task-based run spec. The public schema is task-based and
+ * strict: there is no legacy ``target``-keyed compatibility shim, so
+ * callers must send ``task``.
  */
 import { z } from "zod";
 

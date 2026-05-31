@@ -275,7 +275,7 @@ def _validate_artifact_filename(
         raise ValueError(
             f"task {task_name!r} artifact_filename {artifact_filename!r} is invalid"
         )
-    if len(PurePath(stripped).parts) != 1:
+    if "/" in stripped or "\\" in stripped or len(PurePath(stripped).parts) != 1:
         raise ValueError(
             f"task {task_name!r} artifact_filename {artifact_filename!r} must be a bare filename"
         )
@@ -343,7 +343,12 @@ def _validate_local_task_catalog(local_task_dir: Path) -> None:
 
 
 def _load_local_task(task_path: Path) -> TaskConfig:
-    raw = json.loads(task_path.read_text(encoding="utf-8"))
+    try:
+        raw = json.loads(task_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"malformed JSON in local task file {task_path}: {exc}"
+        ) from exc
     if not isinstance(raw, dict):
         raise ValueError(f"local task file {task_path} must contain a JSON object")
     name = _validate_snake_case_name(raw.get("name"), field_name="task.name")
@@ -438,7 +443,12 @@ def _resolve_local_grader_config(
         raise ValueError(
             f"no local grader config named {name!r} in {local_grader_config_dir}"
         )
-    raw = json.loads(config_path.read_text(encoding="utf-8"))
+    try:
+        raw = json.loads(config_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"malformed JSON in local grader config {config_path}: {exc}"
+        ) from exc
     if not isinstance(raw, dict):
         raise ValueError(f"local grader config {config_path} must contain a JSON object")
     key = raw.get("key")

@@ -24,6 +24,7 @@ export function useTasks(): {
       if (requestId !== requestSeq.current) return;
       if (!response.ok) {
         const text = await response.text();
+        if (requestId !== requestSeq.current) return;
         setError(`Task load failed (${response.status}): ${text}`);
         return;
       }

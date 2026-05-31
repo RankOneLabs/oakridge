@@ -115,8 +115,11 @@ function TaskDetailPanel({
         <TaskDetailField label="Frame pool">
           <div className="flex flex-wrap gap-2">
             {detail.frame_pool.length > 0 ? (
-              detail.frame_pool.map((frame) => (
-                <Badge key={frame ?? "null"} label={frame ?? "null"} />
+              detail.frame_pool.map((frame, index) => (
+                <Badge
+                  key={`${frame ?? "null"}:${index}`}
+                  label={frame ?? "null"}
+                />
               ))
             ) : (
               <span className="text-stone-500">No frame pool.</span>

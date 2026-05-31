@@ -11,6 +11,7 @@ export function useTaskDetail(taskName: string | null): TaskDetail | null {
       setDetail(null);
       return;
     }
+    setDetail(null);
     const controller = new AbortController();
     const load = async () => {
       try {
