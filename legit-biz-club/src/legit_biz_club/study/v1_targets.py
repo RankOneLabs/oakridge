@@ -23,8 +23,8 @@ Per the design memo's two-domain v1 test:
     O(log(min(m,n))) partition algorithm scores 1.0 on both. First
     target where the brief's complexity claim is actually graded.
 
-Generic :func:`legit_biz_club.study.targets.prose_target` and
-:func:`legit_biz_club.study.targets.code_target` stay as the API
+Generic :func:`legit_biz_club.study.targets.prose_task` and
+:func:`legit_biz_club.study.targets.code_task` stay as the API
 templates with placeholder defaults — useful for harness tests.
 This module supplies the real targets with the real briefs the v1
 study runs against.
@@ -32,11 +32,7 @@ study runs against.
 from __future__ import annotations
 
 from legit_biz_club.core.models import Brief
-from legit_biz_club.study.targets import (
-    TargetConfig,
-    code_target,
-    prose_target,
-)
+from legit_biz_club.study.targets import TaskConfig, code_task, prose_task
 
 # --- prose: substrate-mediated coordination thesis -----------------------
 
@@ -87,7 +83,7 @@ _PROSE_SUBSTRATE_THESIS_TARGET_SPEC = (
 )
 
 
-def prose_substrate_thesis() -> TargetConfig:
+def prose_substrate_thesis() -> TaskConfig:
     """Real prose target for the v1 study: the architecture thesis post.
 
     The brief is deliberately long because it has to crowd out the
@@ -102,7 +98,7 @@ def prose_substrate_thesis() -> TargetConfig:
     caller leak to every subsequent caller. Module-level constants
     are limited to immutable strings.
 
-    Default model_pool inherits from :func:`prose_target` (Anthropic +
+    Default model_pool inherits from :func:`prose_task` (Anthropic +
     OpenAI + Google spread). Override at the call site to pin to one
     provider during cost-conscious smoke runs.
     """
@@ -128,7 +124,7 @@ def prose_substrate_thesis() -> TargetConfig:
             "pseudocode or explicitly-marked illustrative examples",
         ],
     )
-    return prose_target(
+    return prose_task(
         name="prose_substrate_thesis",
         artifact_filename="thesis.md",
         seed_content="",
@@ -171,7 +167,7 @@ _CODE_LEETCODE_LONGEST_SUBSTRING_SEED = (
 )
 
 
-def code_leetcode_longest_substring() -> TargetConfig:
+def code_leetcode_longest_substring() -> TaskConfig:
     """Real code target for the v1 study: leetcode #3.
 
     Sliding-window classic — well-specified, narrow scope, easy to
@@ -203,7 +199,7 @@ def code_leetcode_longest_substring() -> TargetConfig:
             "non-obvious algorithmic choice",
         ],
     )
-    return code_target(
+    return code_task(
         name="code_leetcode_longest_substring",
         artifact_filename="solution.py",
         seed_content=_CODE_LEETCODE_LONGEST_SUBSTRING_SEED,
@@ -295,7 +291,7 @@ _CODE_LEETCODE_REGEX_MATCHING_SEED = (
 )
 
 
-def code_leetcode_regex_matching() -> TargetConfig:
+def code_leetcode_regex_matching() -> TaskConfig:
     """Real code target for the v1 study: leetcode #10 (Hard).
 
     Regular Expression Matching is the discrimination champion among
@@ -331,7 +327,7 @@ def code_leetcode_regex_matching() -> TargetConfig:
             "no third-party imports (typing and functools are fine)",
         ],
     )
-    return code_target(
+    return code_task(
         name="code_leetcode_regex_matching",
         artifact_filename="solution.py",
         seed_content=_CODE_LEETCODE_REGEX_MATCHING_SEED,
@@ -339,7 +335,7 @@ def code_leetcode_regex_matching() -> TargetConfig:
     )
 
 
-def code_leetcode_trapping_rain_water() -> TargetConfig:
+def code_leetcode_trapping_rain_water() -> TaskConfig:
     """Real code target for the v1 study: leetcode #42 (Hard).
 
     Trapping Rain Water is the discrimination-friendly counterpart to
@@ -367,7 +363,7 @@ def code_leetcode_trapping_rain_water() -> TargetConfig:
             "non-obvious algorithmic choice",
         ],
     )
-    return code_target(
+    return code_task(
         name="code_leetcode_trapping_rain_water",
         artifact_filename="solution.py",
         seed_content=_CODE_LEETCODE_TRAPPING_RAIN_WATER_SEED,
@@ -418,7 +414,7 @@ _CODE_LEETCODE_MEDIAN_TWO_SORTED_ARRAYS_SEED = (
 )
 
 
-def code_leetcode_median_two_sorted_arrays() -> TargetConfig:
+def code_leetcode_median_two_sorted_arrays() -> TaskConfig:
     """Real code target for the v1 study: leetcode #4 (Hard).
 
     Median of Two Sorted Arrays is the first v1 target whose brief's
@@ -458,7 +454,7 @@ def code_leetcode_median_two_sorted_arrays() -> TargetConfig:
             "dimension regardless of wall-clock time",
         ],
     )
-    return code_target(
+    return code_task(
         name="code_leetcode_median_two_sorted_arrays",
         artifact_filename="solution.py",
         seed_content=_CODE_LEETCODE_MEDIAN_TWO_SORTED_ARRAYS_SEED,

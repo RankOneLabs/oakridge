@@ -8,7 +8,7 @@ research question, not something pytest can settle.
 from __future__ import annotations
 
 from legit_biz_club import ArtifactType, Brief
-from legit_biz_club.study.targets import TargetConfig
+from legit_biz_club.study.targets import TaskConfig
 from legit_biz_club.study.v1_targets import (
     code_leetcode_longest_substring,
     prose_substrate_thesis,
@@ -17,7 +17,7 @@ from legit_biz_club.study.v1_targets import (
 
 def test_prose_substrate_thesis_builds_a_real_target() -> None:
     target = prose_substrate_thesis()
-    assert isinstance(target, TargetConfig)
+    assert isinstance(target, TaskConfig)
     assert target.name == "prose_substrate_thesis"
     assert target.artifact_type == ArtifactType.PROSE
     assert target.artifact_filename == "thesis.md"
@@ -49,7 +49,7 @@ def test_prose_substrate_thesis_brief_carries_architecture_anchors() -> None:
 
 def test_code_leetcode_longest_substring_builds_a_real_target() -> None:
     target = code_leetcode_longest_substring()
-    assert isinstance(target, TargetConfig)
+    assert isinstance(target, TaskConfig)
     assert target.name == "code_leetcode_longest_substring"
     assert target.artifact_type == ArtifactType.CODE
     assert target.artifact_filename == "solution.py"

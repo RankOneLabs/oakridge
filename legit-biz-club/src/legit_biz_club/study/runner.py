@@ -1,6 +1,6 @@
 """Study runner — drives one cell of the study end-to-end.
 
-Given a :class:`TargetConfig` and a :class:`ConditionConfig`, builds
+Given a :class:`TaskConfig` and a :class:`ConditionConfig`, builds
 the agents, project, mediator, and proposers, then runs a
 :class:`ProjectCoordinator`. Captures the final artifact, the run
 result, and a small bag of project metrics for downstream
@@ -49,7 +49,7 @@ from legit_biz_club.core.models import (
 )
 from legit_biz_club.memory import PeerContextLoader
 from legit_biz_club.study.conditions import ConditionConfig
-from legit_biz_club.study.targets import TargetConfig
+from legit_biz_club.study.targets import TaskConfig
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +97,7 @@ class ProposerFactory(Protocol):
     ) -> Proposer: ...
 
 
-GraderFactory = Callable[["TargetConfig"], Grader]
+GraderFactory = Callable[["TaskConfig"], Grader]
 """Build a :class:`Grader` for one target.
 
 The grader runs against the cell's final artifact at end of project.
@@ -147,7 +147,7 @@ class CellResult:
 
 async def run_cell(
     *,
-    target: TargetConfig,
+    target: TaskConfig,
     condition: ConditionConfig,
     proposer_factory: ProposerFactory,
     output_dir: Path,
@@ -332,7 +332,7 @@ async def run_cell(
 
 async def run_study(
     *,
-    targets: Sequence[TargetConfig],
+    targets: Sequence[TaskConfig],
     conditions: Sequence[ConditionConfig],
     proposer_factory: ProposerFactory,
     output_dir: Path,
@@ -377,7 +377,7 @@ async def run_study(
 
 def _build_agents(
     *,
-    target: TargetConfig,
+    target: TaskConfig,
     n: int,
     agent_data_root: Path,
 ) -> list[Agent]:

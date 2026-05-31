@@ -7,17 +7,23 @@ from __future__ import annotations
 
 import pytest
 
+from legit_biz_club import ArtifactType
 from legit_biz_club.study.registry import (
     CONDITION_FACTORIES,
+    GRADER_CATALOG,
     TARGET_FACTORIES,
+    TASK_CATALOG,
+    TASK_FACTORIES,
     canonical_condition_name,
     grader_factory_for,
+    grader_metadata_for,
+    task_summary_for,
 )
 
-# --- TARGET_FACTORIES ---
+# --- task factories / catalog ---
 
 
-def test_all_five_target_keys_present() -> None:
+def test_all_five_task_keys_present() -> None:
     expected = {
         "prose_substrate_thesis",
         "code_leetcode_longest_substring",
@@ -25,16 +31,38 @@ def test_all_five_target_keys_present() -> None:
         "code_leetcode_regex_matching",
         "code_leetcode_median_two_sorted_arrays",
     }
-    assert set(TARGET_FACTORIES) == expected
+    assert set(TASK_FACTORIES) == expected
+    assert TARGET_FACTORIES is TASK_FACTORIES
 
 
-@pytest.mark.parametrize("key", list(TARGET_FACTORIES))
-def test_factory_returns_target_config_whose_name_equals_key(key: str) -> None:
-    target = TARGET_FACTORIES[key]()
-    assert target.name == key
+@pytest.mark.parametrize("key", list(TASK_FACTORIES))
+def test_factory_returns_task_config_whose_name_equals_key(key: str) -> None:
+    task = TASK_FACTORIES[key]()
+    assert task.name == key
 
 
-# --- CONDITION_FACTORIES ---
+def test_task_catalog_matches_registered_factories() -> None:
+    assert tuple(entry.name for entry in TASK_CATALOG) == tuple(TASK_FACTORIES)
+    for entry in TASK_CATALOG:
+        assert entry.source == "builtin"
+        assert entry.has_grader is True
+        assert entry.grader_key == entry.name
+        assert entry.artifact_type in (ArtifactType.PROSE, ArtifactType.CODE)
+
+
+@pytest.mark.parametrize("key", list(TASK_FACTORIES))
+def test_task_summary_lookup_round_trips(key: str) -> None:
+    summary = task_summary_for(key)
+    assert summary.name == key
+    assert summary == TASK_CATALOG[list(TASK_FACTORIES).index(key)]
+
+
+def test_unknown_task_summary_raises() -> None:
+    with pytest.raises(ValueError):
+        task_summary_for("not_a_real_task")
+
+
+# --- condition factories ---
 
 
 def test_all_four_condition_kinds_present() -> None:
@@ -134,6 +162,39 @@ def test_single_agent_canonical_matches_factory() -> None:
 
 
 # --- grader_factory_for ---
+
+
+def test_all_five_grader_keys_present() -> None:
+    expected = {
+        "prose_substrate_thesis",
+        "code_leetcode_longest_substring",
+        "code_leetcode_trapping_rain_water",
+        "code_leetcode_regex_matching",
+        "code_leetcode_median_two_sorted_arrays",
+    }
+    assert {entry.key for entry in GRADER_CATALOG} == expected
+
+
+def test_grader_catalog_tracks_capabilities() -> None:
+    by_key = {entry.key: entry for entry in GRADER_CATALOG}
+    prose = by_key["prose_substrate_thesis"]
+    assert prose.supported_artifact_types == (ArtifactType.PROSE,)
+    assert "brief-criteria" in prose.capabilities
+
+    median = by_key["code_leetcode_median_two_sorted_arrays"]
+    assert median.supported_artifact_types == (ArtifactType.CODE,)
+    assert "perf" in median.capabilities
+
+
+@pytest.mark.parametrize("key", list(TASK_FACTORIES))
+def test_grader_metadata_lookup_round_trips(key: str) -> None:
+    metadata = grader_metadata_for(key)
+    assert metadata.key == key
+
+
+def test_unknown_grader_metadata_raises() -> None:
+    with pytest.raises(ValueError):
+        grader_metadata_for("not_a_real_grader")
 
 
 @pytest.mark.parametrize(
