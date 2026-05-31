@@ -41,7 +41,7 @@ A run terminates by **quiescence**: when no stage instance is left `pending`,
 
 ```sh
 cargo build
-cargo test          # 57 lib + 2 integration tests
+cargo test          # runs the unit + integration suite
 cargo run           # starts the HTTP server
 ```
 
@@ -118,8 +118,8 @@ let (app, coordinator) = boot(Config::from_env(), |stages: &mut StageTypeRegistr
 - A graph node's `stage_type` / artifact `artifact_type` strings must match registered ids;
   an unknown id fails that stage (and terminates the run) rather than hanging it.
 
-`boot` also runs migrations and crash recovery; `register_types` (the production no-op)
-is the default `register_fn`.
+`boot` also runs migrations and crash recovery. The bundled binary passes
+`register_types`, an exported no-op, as its `register_fn`.
 
 ## Persistence & migrations
 
