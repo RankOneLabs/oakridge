@@ -63,7 +63,14 @@ export function LaunchForm({
       : null);
 
   useEffect(() => {
-    if (selectedTaskName === null) return;
+    if (selectedTaskName === null) {
+      setState((s) =>
+        s.selectedTaskName === ""
+          ? s
+          : { ...s, selectedTaskName: "", should_grade: false },
+      );
+      return;
+    }
     setState((s) => {
       if (s.selectedTaskName === selectedTaskName) return s;
       return { ...s, selectedTaskName };
@@ -140,6 +147,11 @@ export function LaunchForm({
   }
 
   function onTaskChange(taskName: string) {
+    if (taskName === "") {
+      onSelectedTaskNameChange(null);
+      setState((s) => ({ ...s, selectedTaskName: "", should_grade: false }));
+      return;
+    }
     onSelectedTaskNameChange(taskName);
     const task = tasks.find((entry) => entry.name === taskName) ?? null;
     if (task === null) return;
