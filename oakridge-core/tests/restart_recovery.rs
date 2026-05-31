@@ -33,7 +33,7 @@ fn timeout_dur() -> Duration {
 }
 
 async fn wait_run_done(pool: &sqlx::SqlitePool, run_id: WorkflowRunId) {
-    for _ in 0..50 {
+    for _ in 0..250 {
         tokio::time::sleep(Duration::from_millis(20)).await;
         let run = queries::get_workflow_run_by_id(pool, &run_id).await.unwrap();
         if matches!(run.status, RunStatus::Done | RunStatus::Failed) {

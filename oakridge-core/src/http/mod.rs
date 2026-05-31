@@ -37,7 +37,7 @@ impl Config {
             .and_then(|v| v.parse().ok())
             .unwrap_or(8790u16);
         let db_url = std::env::var("OAKRIDGE_CORE_DB")
-            .map(|p| format!("sqlite://{p}"))
+            .map(|p| if p.starts_with("sqlite:") { p } else { format!("sqlite://{p}") })
             .unwrap_or_else(|_| "sqlite://oakridge-core.db".to_string());
         let pwa_dir = std::env::var("OAKRIDGE_CORE_PWA_DIR")
             .map(PathBuf::from)
