@@ -179,6 +179,8 @@ export const TaskDraftSchema = z
     artifact_filename: z.string().trim().min(1),
     seed_content: z.string(),
     brief: TaskBriefSchema,
+    model_pool: z.array(z.string().trim().min(1)).nonempty(),
+    frame_pool: z.array(z.string().trim().min(1).nullable()).default([]),
     grader: TaskGraderRefSchema,
   })
   .superRefine((task, ctx) => {
@@ -221,7 +223,10 @@ export const TaskBuiltinDetailSchema = z.strictObject({
   name: TaskNameSchema,
   artifact_type: z.enum(ARTIFACT_TYPES),
   artifact_filename: z.string().trim().min(1),
+  seed_content: z.string(),
   brief: TaskBriefSchema,
+  model_pool: z.array(z.string().trim().min(1)).nonempty(),
+  frame_pool: z.array(z.string().trim().min(1).nullable()).default([]),
   has_grader: z.boolean(),
   grader_key: z.string().trim().min(1).nullable(),
   source: z.literal("builtin"),
@@ -244,6 +249,8 @@ export const GraderSummarySchema = z.strictObject({
   label: z.string().trim().min(1),
   supported_artifact_types: z.array(z.enum(ARTIFACT_TYPES)).nonempty(),
   capabilities: z.array(z.string().trim().min(1)),
+  source: z.literal("builtin"),
+  config_required: z.boolean(),
   config_schema: z.record(z.string(), z.unknown()).nullable(),
 });
 

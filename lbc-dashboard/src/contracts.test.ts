@@ -28,6 +28,8 @@ import {
   RunSpecSchema,
   TabSchema,
   TaskDraftSchema,
+  TaskBuiltinDetailSchema,
+  TaskLocalDetailSchema,
   TaskGraderRefSchema,
   TaskSummarySchema,
   conditionName,
@@ -229,9 +231,12 @@ describe("TaskDraftSchema", () => {
         success_criteria: ["covers the architecture"],
         constraints: ["keep it short"],
       },
+      model_pool: ["claude-sonnet-4-5"],
+      frame_pool: ["precision", null],
       grader: { kind: "registered", key: "prose_substrate_thesis" },
     });
     expect(parsed.brief.success_criteria).toHaveLength(1);
+    expect(parsed.frame_pool).toEqual(["precision", null]);
   });
 
   test("accepts code tasks with .py filenames", () => {
@@ -245,6 +250,8 @@ describe("TaskDraftSchema", () => {
         success_criteria: ["passes tests"],
         constraints: [],
       },
+      model_pool: ["claude-opus-4-7"],
+      frame_pool: [],
       grader: { kind: "none" },
     });
     expect(parsed.artifact_filename).toBe("solution.py");
@@ -262,6 +269,8 @@ describe("TaskDraftSchema", () => {
           success_criteria: ["y"],
           constraints: [],
         },
+        model_pool: ["claude-opus-4-7"],
+        frame_pool: [],
         grader: { kind: "none" },
       }),
     ).toThrow();
@@ -279,6 +288,8 @@ describe("TaskDraftSchema", () => {
           success_criteria: ["y"],
           constraints: [],
         },
+        model_pool: ["claude-opus-4-7"],
+        frame_pool: [],
         grader: { kind: "none" },
       }),
     ).toThrow();
@@ -296,6 +307,8 @@ describe("TaskDraftSchema", () => {
           success_criteria: ["y"],
           constraints: [],
         },
+        model_pool: ["claude-opus-4-7"],
+        frame_pool: [],
         grader: { kind: "none" },
       }),
     ).toThrow();
@@ -313,6 +326,8 @@ describe("TaskDraftSchema", () => {
           success_criteria: [],
           constraints: [],
         },
+        model_pool: ["claude-sonnet-4-5"],
+        frame_pool: [],
         grader: { kind: "none" },
       }),
     ).toThrow();
@@ -330,6 +345,8 @@ describe("TaskDraftSchema", () => {
           success_criteria: ["y"],
           constraints: [],
         },
+        model_pool: ["claude-sonnet-4-5"],
+        frame_pool: [],
         grader: { kind: "none" },
       }),
     ).toThrow();
@@ -350,6 +367,51 @@ describe("TaskSummarySchema", () => {
   });
 });
 
+describe("TaskBuiltinDetailSchema", () => {
+  test("accepts a builtin task detail", () => {
+    const parsed = TaskBuiltinDetailSchema.parse({
+      name: "prose_substrate_thesis",
+      artifact_type: "prose",
+      artifact_filename: "thesis.md",
+      seed_content: "",
+      brief: {
+        target_spec: "write a thesis",
+        success_criteria: ["covers the architecture"],
+        constraints: ["no marketing"],
+      },
+      model_pool: ["claude-sonnet-4-5"],
+      frame_pool: ["precision"],
+      has_grader: true,
+      grader_key: "prose_substrate_thesis",
+      source: "builtin",
+    });
+    expect(parsed.source).toBe("builtin");
+  });
+});
+
+describe("TaskLocalDetailSchema", () => {
+  test("accepts a local task detail", () => {
+    const parsed = TaskLocalDetailSchema.parse({
+      name: "dashboard_local_note",
+      artifact_type: "prose",
+      artifact_filename: "draft.md",
+      seed_content: "# seed",
+      brief: {
+        target_spec: "write a note",
+        success_criteria: ["covers the point"],
+        constraints: [],
+      },
+      model_pool: ["claude-sonnet-4-5"],
+      frame_pool: [],
+      grader: { kind: "none" },
+      has_grader: false,
+      grader_key: null,
+      source: "local",
+    });
+    expect(parsed.source).toBe("local");
+  });
+});
+
 describe("GraderSummarySchema", () => {
   test("accepts a builtin grader summary", () => {
     const parsed = GraderSummarySchema.parse({
@@ -357,6 +419,8 @@ describe("GraderSummarySchema", () => {
       label: "LeetCode #3 mechanical grader",
       supported_artifact_types: ["code"],
       capabilities: ["pytest", "mypy"],
+      source: "builtin",
+      config_required: false,
       config_schema: null,
     });
     expect(parsed.supported_artifact_types).toEqual(["code"]);

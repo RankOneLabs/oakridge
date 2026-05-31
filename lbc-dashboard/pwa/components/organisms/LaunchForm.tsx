@@ -1,47 +1,40 @@
 /**
  * Operator form for launching a new study run.
  *
- * The task selector is backed by GET /api/tasks and shows the selected
- * task's artifact + grader metadata next to the chooser. The selected
- * task name is controlled by the top-level app so later task-creation
- * flows can hand off directly into Launch with a preselected task.
+ * The task selector is backed by the task catalog supplied by the top-level
+ * dashboard so a task created in the Tasks section can be launched without a
+ * second fetch or manual re-selection.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useLaunch } from "../../hooks/useLaunch";
 import { useHashSelection } from "../../hooks/useHashSelection";
-import { useTasks } from "../../hooks/useTasks";
+import { CONDITION_KINDS } from "../../lib/types";
 import type { TaskSummary } from "../../lib/types";
 import {
   buildRunSpec,
   coerceFormStateForSelectedTask,
-  KNOWN_MODELS,
   createInitialFormState,
   formatTaskGraderState,
   formatTaskSource,
+  KNOWN_MODELS,
   minNFor,
   resolveSelectedTask,
   selectedTaskLoadError,
   type FormState,
 } from "./launchFormModel";
-import { CONDITION_KINDS } from "../../lib/types";
-
-export interface LaunchFormProps {
-  selectedTaskName: string | null;
-  onSelectedTaskNameChange: (taskName: string | null) => void;
-}
-
-function taskOptionLabel(task: TaskSummary): string {
-  return `${task.name} · ${formatTaskSource(task)}`;
-}
 
 export function LaunchForm({
+  tasks,
   selectedTaskName,
-  onSelectedTaskNameChange,
-}: LaunchFormProps) {
+  onSelectTask,
+}: {
+  tasks: TaskSummary[];
+  selectedTaskName: string | null;
+  onSelectTask: (name: string | null) => void;
+}) {
   const [, select] = useHashSelection();
   const { launch, is_pending, error: launchError } = useLaunch();
-  const { tasks, refresh, error: taskError } = useTasks();
   const [warning, setWarning] = useState<string | null>(null);
   const [freeText, setFreeText] = useState("");
   const [state, setState] = useState<FormState>(() =>
@@ -49,74 +42,54 @@ export function LaunchForm({
   );
   const gradeInitialized = useRef(false);
 
-  const selectedTaskResolution = useMemo(() => {
-    if (selectedTaskName === null) {
-      return { task: null, error: null };
-    }
-    return resolveSelectedTask(tasks, selectedTaskName);
+  const selectedTask = useMemo(() => {
+    if (selectedTaskName === null) return null;
+    return resolveSelectedTask(tasks, selectedTaskName).task;
   }, [tasks, selectedTaskName]);
 
-  const selectedTask = selectedTaskResolution.task;
   const selectedTaskLoadErrorValue = selectedTaskLoadError(
     tasks,
     selectedTaskName,
-    taskError,
+    null,
   );
+  const result = useMemo(() => buildRunSpec(state), [state]);
+  const minN = minNFor(state.conditionKind);
+  const gradeDisabled = selectedTask === null || !selectedTask.has_grader;
 
   useEffect(() => {
     if (selectedTaskName === null) {
-      setState((s) =>
-        s.selectedTaskName === ""
-          ? s
-          : { ...s, selectedTaskName: "", should_grade: false },
+      setState((current) =>
+        current.selectedTaskName === ""
+          ? current
+          : { ...current, selectedTaskName: "", should_grade: false },
       );
       return;
     }
-    setState((s) => {
-      if (s.selectedTaskName === selectedTaskName) return s;
-      return { ...s, selectedTaskName };
-    });
+    setState((current) =>
+      current.selectedTaskName === selectedTaskName
+        ? current
+        : { ...current, selectedTaskName },
+    );
   }, [selectedTaskName]);
 
   useEffect(() => {
-    if (tasks.length === 0) return;
-    if (selectedTaskName !== null) return;
-    const firstTask = tasks[0];
-    if (firstTask === undefined) return;
-    onSelectedTaskNameChange(firstTask.name);
-    setState((s) => coerceFormStateForSelectedTask(s, firstTask));
-  }, [tasks, selectedTaskName, onSelectedTaskNameChange]);
-
-  useEffect(() => {
     if (selectedTask === null) return;
-    setState((s) => {
-      const next = coerceFormStateForSelectedTask(s, selectedTask);
+    setState((current) => {
+      const next = coerceFormStateForSelectedTask(current, selectedTask);
       if (!gradeInitialized.current) {
         gradeInitialized.current = true;
-        return {
-          ...next,
-          should_grade: selectedTask.has_grader,
-        };
+        return { ...next, should_grade: selectedTask.has_grader };
       }
       return next;
     });
   }, [selectedTask]);
 
-  const result = useMemo(
-    () =>
-      buildRunSpec({
-        ...state,
-        selectedTaskName: selectedTaskName ?? "",
-      }),
-    [state, selectedTaskName],
-  );
-
   function toggleModel(model: string) {
-    setState((s) => {
-      const next = new Set(s.checkedModels);
+    setState((current) => {
+      const next = new Set(current.checkedModels);
       if (next.has(model)) next.delete(model);
       else next.add(model);
-      return { ...s, checkedModels: next };
+      return { ...current, checkedModels: next };
     });
   }
 
@@ -126,44 +99,55 @@ export function LaunchForm({
       setFreeText("");
       return;
     }
-    setState((s) => ({ ...s, extraModels: [...s.extraModels, trimmed] }));
+    setState((current) => ({
+      ...current,
+      extraModels: [...current.extraModels, trimmed],
+    }));
     setFreeText("");
   }
 
   function removeExtraModel(model: string) {
-    setState((s) => ({
-      ...s,
-      extraModels: s.extraModels.filter((entry) => entry !== model),
+    setState((current) => ({
+      ...current,
+      extraModels: current.extraModels.filter((entry) => entry !== model),
     }));
   }
 
   function setKind(kind: FormState["conditionKind"]) {
-    setState((s) => {
-      let n = s.n;
+    setState((current) => {
+      let n = current.n;
       if (kind === "single_agent") {
         n = 1;
       } else if (n < minNFor(kind)) {
         n = minNFor(kind);
       }
-      return { ...s, conditionKind: kind, n };
+      return { ...current, conditionKind: kind, n };
     });
   }
 
   function setN(raw: number) {
     const min = minNFor(state.conditionKind);
-    setState((s) => ({ ...s, n: Math.max(min, Math.min(16, raw)) }));
+    setState((current) => ({ ...current, n: Math.max(min, Math.min(16, raw)) }));
   }
 
   function onTaskChange(taskName: string) {
     if (taskName === "") {
-      onSelectedTaskNameChange(null);
-      setState((s) => ({ ...s, selectedTaskName: "", should_grade: false }));
+      onSelectTask(null);
+      setState((current) => ({
+        ...current,
+        selectedTaskName: "",
+        should_grade: false,
+      }));
       return;
     }
-    onSelectedTaskNameChange(taskName);
+    onSelectTask(taskName);
     const task = tasks.find((entry) => entry.name === taskName) ?? null;
-    if (task === null) return;
-    setState((s) => coerceFormStateForSelectedTask({ ...s, selectedTaskName: taskName }, task));
+    setState((current) =>
+      coerceFormStateForSelectedTask(
+        { ...current, selectedTaskName: taskName },
+        task,
+      ),
+    );
   }
 
   async function handleLaunch() {
@@ -182,12 +166,8 @@ export function LaunchForm({
     }
   }
 
-  const minN = minNFor(state.conditionKind);
-  const gradeDisabled = selectedTask === null || !selectedTask.has_grader;
-
   return (
     <div className="flex flex-wrap gap-6 px-4 pb-4 pt-2">
-      {/* Task */}
       <div className="flex flex-col gap-1">
         <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">
           Task
@@ -196,21 +176,20 @@ export function LaunchForm({
           className="rounded border border-stone-300 px-2 py-1 text-sm"
           value={selectedTaskName ?? ""}
           onChange={(e) => onTaskChange(e.target.value)}
-          disabled={tasks.length === 0 && taskError !== null}
         >
           <option value="">— pick task —</option>
           {tasks.map((task) => (
             <option key={task.name} value={task.name}>
-              {taskOptionLabel(task)}
+              {task.name}
             </option>
           ))}
         </select>
         <div className="mt-1 rounded border border-stone-200 bg-stone-50 px-2 py-2 text-xs text-stone-600">
           {selectedTask === null ? (
             <p>
-              {taskError !== null
-                ? "Task list could not be loaded."
-                : "Select a task to see details."}
+              {selectedTaskName === null
+                ? "Select a task to see details."
+                : "Task not found in the catalog."}
             </p>
           ) : (
             <dl className="grid grid-cols-[auto,1fr] gap-x-2 gap-y-1">
@@ -234,18 +213,10 @@ export function LaunchForm({
         {selectedTaskLoadErrorValue !== null && (
           <div className="mt-1 flex items-center gap-2 text-xs text-red-500">
             <span>{selectedTaskLoadErrorValue}</span>
-            <button
-              type="button"
-              className="rounded bg-stone-100 px-2 py-1 text-stone-700 hover:bg-stone-200"
-              onClick={() => void refresh()}
-            >
-              Retry
-            </button>
           </div>
         )}
       </div>
 
-      {/* Models */}
       <div className="flex flex-col gap-1">
         <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">
           Models
@@ -304,22 +275,21 @@ export function LaunchForm({
         </div>
       </div>
 
-      {/* Condition */}
       <div className="flex flex-col gap-1">
         <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">
           Condition
         </label>
         <div className="flex flex-col gap-0.5">
           {CONDITION_KINDS.map((kind) => (
-              <label key={kind} className="flex items-center gap-1.5 text-sm">
-                <input
-                  type="radio"
-                  name="conditionKind"
-                  checked={state.conditionKind === kind}
-                  onChange={() => setKind(kind as FormState["conditionKind"])}
-                />
-                {kind}
-              </label>
+            <label key={kind} className="flex items-center gap-1.5 text-sm">
+              <input
+                type="radio"
+                name="conditionKind"
+                checked={state.conditionKind === kind}
+                onChange={() => setKind(kind)}
+              />
+              {kind}
+            </label>
           ))}
         </div>
         <div className="mt-2 flex items-center gap-2">
@@ -338,7 +308,6 @@ export function LaunchForm({
         </div>
       </div>
 
-      {/* Grade */}
       <div className="flex flex-col gap-1">
         <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">
           Grade
@@ -349,7 +318,7 @@ export function LaunchForm({
             checked={state.should_grade}
             disabled={gradeDisabled}
             onChange={(e) =>
-              setState((s) => ({ ...s, should_grade: e.target.checked }))
+              setState((current) => ({ ...current, should_grade: e.target.checked }))
             }
           />
           Run grader
@@ -359,7 +328,6 @@ export function LaunchForm({
         )}
       </div>
 
-      {/* Launch */}
       <div className="flex flex-col justify-end gap-1.5">
         {!result.ok && selectedTaskName !== null && (
           <p className="text-xs text-red-500">{result.error}</p>

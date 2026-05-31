@@ -65,9 +65,7 @@ export function minNFor(kind: ConditionSpec["kind"]): number {
     : 1;
 }
 
-export function createInitialFormState(
-  task: TaskSummary | null,
-): FormState {
+export function createInitialFormState(task: TaskSummary | null): FormState {
   return {
     selectedTaskName: task?.name ?? "",
     checkedModels: new Set(),

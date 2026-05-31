@@ -1,7 +1,6 @@
 /**
- * Unit tests for the buildRunSpec pure helper. The form UI is verified
- * manually via `bun run dev:pwa` — no component-test harness exists in
- * this PWA.
+ * Unit tests for the buildRunSpec pure helper and related launch-form
+ * selectors. The form UI is verified manually via `bun run dev:pwa`.
  */
 import { describe, expect, test } from "bun:test";
 
@@ -106,14 +105,12 @@ describe("buildRunSpec", () => {
   });
 
   test("known models appear in KNOWN_MODELS order regardless of check order", () => {
-    // gpt-5 comes after haiku in KNOWN_MODELS; both checked.
     const r = buildRunSpec({
       ...base,
       checkedModels: new Set(["gpt-5", "claude-haiku-4-5"]),
     });
     expect(r.ok).toBe(true);
     if (r.ok) {
-      // The helper sorts checked known models by KNOWN_MODELS position.
       expect(r.spec.model_pool).toEqual(["claude-haiku-4-5", "gpt-5"]);
     }
   });
@@ -130,7 +127,10 @@ describe("buildRunSpec", () => {
   });
 
   test("accepts arbitrary task names", () => {
-    const r = buildRunSpec({ ...base, selectedTaskName: "dashboard_local_task" });
+    const r = buildRunSpec({
+      ...base,
+      selectedTaskName: "dashboard_local_task",
+    });
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.spec.task).toBe("dashboard_local_task");
@@ -164,7 +164,10 @@ describe("buildRunSpec", () => {
   });
 
   test("resolves selected tasks and reports invalid selections", () => {
-    const resolved = resolveSelectedTask([BUILTIN_TASK, LOCAL_UNGRADED_TASK], "dashboard_local_task");
+    const resolved = resolveSelectedTask(
+      [BUILTIN_TASK, LOCAL_UNGRADED_TASK],
+      "dashboard_local_task",
+    );
     expect(resolved.task?.name).toBe("dashboard_local_task");
     expect(resolved.error).toBeNull();
 
