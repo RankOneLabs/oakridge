@@ -252,6 +252,12 @@ def _write_local_task_dir(tmp_path: Path, name: str, *, artifact_type: str) -> P
     return local_task_dir
 
 
+def _write_local_task_file(
+    local_task_dir: Path, filename: str, task: dict[str, object]
+) -> None:
+    (local_task_dir / filename).write_text(json.dumps(task), encoding="utf-8")
+
+
 def test_task_field_parses_new_run_spec_shape(tmp_path: Path) -> None:
     local_task_dir = _write_local_task_dir(
         tmp_path, "custom_prose", artifact_type="prose"
@@ -300,6 +306,186 @@ def test_grade_true_rejects_local_task_without_grader(tmp_path: Path) -> None:
     task = spec.resolve_task()
     with pytest.raises(ValueError, match="grade=true requires a grader"):
         spec.resolve_grader(task)
+
+
+def test_grade_false_skips_grader_resolution(tmp_path: Path) -> None:
+    local_task_dir = _write_local_task_dir(
+        tmp_path, "custom_prose", artifact_type="prose"
+    )
+    spec = RunSpec.from_dict(
+        {
+            "task": "custom_prose",
+            "model_pool": ["claude-sonnet-4-5"],
+            "condition": {"kind": "single_agent", "n": 1},
+            "grade": False,
+            "local_task_dir": str(local_task_dir),
+        }
+    )
+    task = spec.resolve_task()
+    assert spec.resolve_grader(task) is None
+
+
+def test_local_task_name_collisions_are_rejected(tmp_path: Path) -> None:
+    local_task_dir = tmp_path / "local_tasks"
+    local_task_dir.mkdir()
+    _write_local_task_file(
+        local_task_dir,
+        "builtin.json",
+        {
+            "name": "prose_substrate_thesis",
+            "artifact_type": "prose",
+            "artifact_filename": "draft.md",
+            "seed_content": "seed",
+            "brief": {
+                "target_spec": "ship a thing",
+                "success_criteria": ["it ships"],
+            },
+            "model_pool": ["claude-sonnet-4-5"],
+        },
+    )
+    with pytest.raises(ValueError, match="collides with built-in task names"):
+        RunSpec.from_dict(
+            {
+                "task": "prose_substrate_thesis",
+                "model_pool": ["claude-sonnet-4-5"],
+                "condition": {"kind": "single_agent", "n": 1},
+                "local_task_dir": str(local_task_dir),
+            }
+        )
+
+
+def test_local_task_invalid_name_is_rejected(tmp_path: Path) -> None:
+    local_task_dir = tmp_path / "local_tasks"
+    local_task_dir.mkdir()
+    _write_local_task_file(
+        local_task_dir,
+        "bad.json",
+        {
+            "name": "1bad",
+            "artifact_type": "prose",
+            "artifact_filename": "draft.md",
+            "seed_content": "seed",
+            "brief": {
+                "target_spec": "ship a thing",
+                "success_criteria": ["it ships"],
+            },
+            "model_pool": ["claude-sonnet-4-5"],
+        },
+    )
+    with pytest.raises(ValueError, match="snake_case"):
+        RunSpec.from_dict(
+            {
+                "task": "1bad",
+                "model_pool": ["claude-sonnet-4-5"],
+                "condition": {"kind": "single_agent", "n": 1},
+                "local_task_dir": str(local_task_dir),
+            }
+        )
+
+
+def test_local_task_invalid_artifact_filename_is_rejected(tmp_path: Path) -> None:
+    local_task_dir = tmp_path / "local_tasks"
+    local_task_dir.mkdir()
+    _write_local_task_file(
+        local_task_dir,
+        "bad.json",
+        {
+            "name": "bad_task",
+            "artifact_type": "prose",
+            "artifact_filename": "subdir/draft.md",
+            "seed_content": "seed",
+            "brief": {
+                "target_spec": "ship a thing",
+                "success_criteria": ["it ships"],
+            },
+            "model_pool": ["claude-sonnet-4-5"],
+        },
+    )
+    with pytest.raises(ValueError, match="bare filename"):
+        RunSpec.from_dict(
+            {
+                "task": "bad_task",
+                "model_pool": ["claude-sonnet-4-5"],
+                "condition": {"kind": "single_agent", "n": 1},
+                "local_task_dir": str(local_task_dir),
+            }
+        )
+
+
+def test_registered_grader_ref_resolves_for_compatible_task() -> None:
+    spec = RunSpec.from_dict(
+        {
+            "task": "prose_substrate_thesis",
+            "model_pool": ["claude-sonnet-4-5"],
+            "condition": {"kind": "single_agent", "n": 1},
+            "grader": {
+                "kind": "registered",
+                "key": "prose_substrate_thesis",
+            },
+        }
+    )
+    task = spec.resolve_task()
+    grader = spec.resolve_grader(task)
+    assert callable(grader)
+
+
+def test_unknown_grader_ref_is_rejected() -> None:
+    spec = RunSpec.from_dict(
+        {
+            "task": "prose_substrate_thesis",
+            "model_pool": ["claude-sonnet-4-5"],
+            "condition": {"kind": "single_agent", "n": 1},
+            "grader": {"kind": "registered", "key": "not_a_real_grader"},
+        }
+    )
+    task = spec.resolve_task()
+    with pytest.raises(ValueError, match="no grader metadata"):
+        spec.resolve_grader(task)
+
+
+def test_incompatible_grader_ref_is_rejected() -> None:
+    spec = RunSpec.from_dict(
+        {
+            "task": "prose_substrate_thesis",
+            "model_pool": ["claude-sonnet-4-5"],
+            "condition": {"kind": "single_agent", "n": 1},
+            "grader": {
+                "kind": "registered",
+                "key": "code_leetcode_longest_substring",
+            },
+        }
+    )
+    task = spec.resolve_task()
+    with pytest.raises(ValueError, match="does not support artifact type"):
+        spec.resolve_grader(task)
+
+
+def test_local_grader_config_resolves_registered_grader(
+    tmp_path: Path,
+) -> None:
+    local_grader_config_dir = tmp_path / "grader_configs"
+    local_grader_config_dir.mkdir()
+    (local_grader_config_dir / "prose.json").write_text(
+        json.dumps(
+            {
+                "key": "prose_substrate_thesis",
+                "config": {"ignored": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+    spec = RunSpec.from_dict(
+        {
+            "task": "prose_substrate_thesis",
+            "model_pool": ["claude-sonnet-4-5"],
+            "condition": {"kind": "single_agent", "n": 1},
+            "grader": {"kind": "local_config", "name": "prose"},
+            "local_grader_config_dir": str(local_grader_config_dir),
+        }
+    )
+    task = spec.resolve_task()
+    grader = spec.resolve_grader(task)
+    assert callable(grader)
 
 
 # ---------------------------------------------------------------------------
