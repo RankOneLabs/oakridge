@@ -1,15 +1,40 @@
 /**
- * Unit tests for the buildRunSpec pure helper. The form UI is verified
- * manually via `bun run dev:pwa` — no component-test harness exists in
- * this PWA.
+ * Unit tests for the buildRunSpec pure helper and related launch-form
+ * selectors. The form UI is verified manually via `bun run dev:pwa`.
  */
 import { describe, expect, test } from "bun:test";
 
-import { buildRunSpec } from "./components/organisms/LaunchForm";
-import type { FormState } from "./components/organisms/LaunchForm";
+import {
+  buildRunSpec,
+  coerceFormStateForSelectedTask,
+  createInitialFormState,
+  formatTaskGraderState,
+  formatTaskSource,
+  resolveSelectedTask,
+  selectedTaskLoadError,
+  type FormState,
+} from "./components/organisms/launchFormModel";
+
+const BUILTIN_TASK = {
+  name: "prose_substrate_thesis",
+  artifact_type: "prose" as const,
+  artifact_filename: "thesis.md",
+  has_grader: true,
+  grader_key: "prose_substrate_thesis",
+  source: "builtin" as const,
+};
+
+const LOCAL_UNGRADED_TASK = {
+  name: "dashboard_local_task",
+  artifact_type: "prose" as const,
+  artifact_filename: "draft.md",
+  has_grader: false,
+  grader_key: null,
+  source: "local" as const,
+};
 
 const base: FormState = {
-  target: "prose_substrate_thesis",
+  selectedTaskName: "prose_substrate_thesis",
   checkedModels: new Set(["claude-sonnet-4-5"]),
   extraModels: [],
   conditionKind: "single_agent",
@@ -80,14 +105,12 @@ describe("buildRunSpec", () => {
   });
 
   test("known models appear in KNOWN_MODELS order regardless of check order", () => {
-    // gpt-5 comes after haiku in KNOWN_MODELS; both checked.
     const r = buildRunSpec({
       ...base,
       checkedModels: new Set(["gpt-5", "claude-haiku-4-5"]),
     });
     expect(r.ok).toBe(true);
     if (r.ok) {
-      // The helper sorts checked known models by KNOWN_MODELS position.
       expect(r.spec.model_pool).toEqual(["claude-haiku-4-5", "gpt-5"]);
     }
   });
@@ -103,13 +126,68 @@ describe("buildRunSpec", () => {
     }
   });
 
-  test("rejects invalid target", () => {
-    const r = buildRunSpec({ ...base, target: "not_a_target" });
-    expect(r.ok).toBe(false);
+  test("accepts arbitrary task names", () => {
+    const r = buildRunSpec({
+      ...base,
+      selectedTaskName: "dashboard_local_task",
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.spec.task).toBe("dashboard_local_task");
+    }
   });
 
   test("rejects single_agent with n=2", () => {
     const r = buildRunSpec({ ...base, conditionKind: "single_agent", n: 2 });
     expect(r.ok).toBe(false);
+  });
+
+  test("initializes ungraded tasks with grade off", () => {
+    const state = createInitialFormState(LOCAL_UNGRADED_TASK);
+    expect(state.should_grade).toBe(false);
+  });
+
+  test("forces grade off when switching to an ungraded task", () => {
+    const state = coerceFormStateForSelectedTask(
+      { ...base, should_grade: true },
+      LOCAL_UNGRADED_TASK,
+    );
+    expect(state.should_grade).toBe(false);
+  });
+
+  test("keeps grade on when switching to a graded task", () => {
+    const state = coerceFormStateForSelectedTask(
+      { ...base, should_grade: true },
+      BUILTIN_TASK,
+    );
+    expect(state.should_grade).toBe(true);
+  });
+
+  test("resolves selected tasks and reports invalid selections", () => {
+    const resolved = resolveSelectedTask(
+      [BUILTIN_TASK, LOCAL_UNGRADED_TASK],
+      "dashboard_local_task",
+    );
+    expect(resolved.task?.name).toBe("dashboard_local_task");
+    expect(resolved.error).toBeNull();
+
+    const missing = resolveSelectedTask([BUILTIN_TASK], "missing_task");
+    expect(missing.task).toBeNull();
+    expect(missing.error).toMatch(/unknown task missing_task/);
+  });
+
+  test("formats task source and grader state for the selector detail", () => {
+    expect(formatTaskSource(BUILTIN_TASK)).toBe("built-in");
+    expect(formatTaskSource(LOCAL_UNGRADED_TASK)).toBe("local");
+    expect(formatTaskGraderState(BUILTIN_TASK)).toBe("prose_substrate_thesis");
+    expect(formatTaskGraderState(LOCAL_UNGRADED_TASK)).toBe("no grader");
+  });
+
+  test("suppresses invalid selection errors until tasks have loaded", () => {
+    expect(selectedTaskLoadError([], "missing_task", null)).toBeNull();
+    expect(selectedTaskLoadError([BUILTIN_TASK], "missing_task", null)).toMatch(
+      /unknown task missing_task/,
+    );
+    expect(selectedTaskLoadError([], null, "boom")).toBe("boom");
   });
 });

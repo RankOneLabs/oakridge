@@ -1,15 +1,20 @@
 /**
- * Top-level orchestrator. Full-width 'New run' section (LaunchForm +
- * ActiveRunsStrip) sits above the existing two-pane cell viewer so
- * the form has horizontal room and the viewer is untouched.
+ * Top-level dashboard orchestrator.
+ *
+ * Launch remains the default section. Tasks and Graders are first-class
+ * top-level sections that reuse the same task catalog and task selection
+ * state so a newly created task can be launched immediately.
  */
 import { useEffect, useState } from "react";
 
 import { EmptyMessage } from "./components/atoms/EmptyMessage";
+import { TabButton } from "./components/atoms/TabButton";
 import { ActiveRunsStrip } from "./components/organisms/ActiveRunsStrip";
+import { GradersSection } from "./components/organisms/GradersSection";
+import { LaunchForm } from "./components/organisms/LaunchForm";
+import { TasksSection } from "./components/organisms/TasksSection";
 import { CellList } from "./components/organisms/CellList";
 import { CellPanel } from "./components/organisms/CellPanel";
-import { LaunchForm } from "./components/organisms/LaunchForm";
 import { useCellEvents } from "./hooks/useCellEvents";
 import {
   useArtifact,
@@ -18,11 +23,25 @@ import {
 } from "./hooks/useCellResources";
 import { useCells } from "./hooks/useCells";
 import { useEvalScores } from "./hooks/useEvalScores";
+import { useGraders } from "./hooks/useGraders";
 import { useHashSelection } from "./hooks/useHashSelection";
+import { useTasks } from "./hooks/useTasks";
 import type { Tab } from "./lib/types";
+
+type DashboardSection = "launch" | "tasks" | "graders";
+
+const SECTION_LABELS: Array<{ key: DashboardSection; label: string }> = [
+  { key: "launch", label: "Launch" },
+  { key: "tasks", label: "Tasks" },
+  { key: "graders", label: "Graders" },
+];
 
 export function App() {
   const { cells } = useCells();
+  const { tasks, refresh: refreshTasks } = useTasks();
+  const { graders, graderConfigs, refresh: refreshGraderData } = useGraders();
+  const [section, setSection] = useState<DashboardSection>("launch");
+  const [selectedTaskName, setSelectedTaskName] = useState<string | null>(null);
   const [selectedId, select] = useHashSelection();
   const events = useCellEvents(selectedId);
   // Debounce the artifact / commits / detail re-fetch. Without this,
@@ -44,40 +63,100 @@ export function App() {
   const scores = useEvalScores(selectedId, refreshKey);
   const [tab, setTab] = useState<Tab>("events");
 
-  // Auto-select the first cell on initial load if nothing's hashed.
   useEffect(() => {
+    if (section !== "launch") return;
     if (selectedId === null && cells.length > 0) {
-      select(cells[0].cell_id);
+      select(cells[0]!.cell_id);
     }
-  }, [selectedId, cells, select]);
+  }, [cells, select, section, selectedId]);
+
+  function switchToLaunch(taskName?: string) {
+    if (taskName !== undefined) {
+      setSelectedTaskName(taskName);
+    }
+    setSection("launch");
+  }
 
   return (
-    <div className="m-0 flex h-screen flex-col font-sans">
-      <section className="w-full shrink-0 border-b border-stone-200 bg-white">
-        <h2 className="px-4 pt-3 text-xs font-semibold uppercase tracking-wide text-stone-400">
-          New run
-        </h2>
-        <LaunchForm />
-        <ActiveRunsStrip />
-      </section>
-      <div className="flex flex-1 overflow-hidden">
-        <CellList cells={cells} selectedId={selectedId} onSelect={select} />
-        <main className="flex flex-1 flex-col overflow-hidden">
-          {selectedId === null ? (
-            <EmptyMessage>Select a cell on the left.</EmptyMessage>
-          ) : (
-            <CellPanel
-              detail={detail}
-              events={events}
-              artifact={artifact}
-              commits={commits}
-              scores={scores}
-              tab={tab}
-              onTab={setTab}
+    <div className="flex min-h-screen flex-col bg-stone-100 text-stone-950">
+      <header className="border-b border-stone-200 bg-white/90 px-4 py-4 backdrop-blur">
+        <div className="mx-auto flex max-w-[1600px] flex-wrap items-end justify-between gap-4">
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-[0.28em] text-stone-400">
+              Oakridge dashboard
+            </div>
+            <h1 className="text-2xl font-semibold text-stone-950">
+              Launch, Tasks, and Graders
+            </h1>
+            <p className="text-sm text-stone-500">
+              Inspect the task catalog, manage inert local grader JSON, and launch runs from one surface.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {SECTION_LABELS.map((entry) => (
+              <TabButton
+                key={entry.key}
+                label={entry.label}
+                selected={section === entry.key}
+                onClick={() => setSection(entry.key)}
+              />
+            ))}
+          </div>
+        </div>
+      </header>
+
+      {section === "launch" ? (
+        <section className="flex flex-1 flex-col overflow-hidden">
+          <section className="shrink-0 border-b border-stone-200 bg-white">
+            <h2 className="px-4 pt-3 text-xs font-semibold uppercase tracking-wide text-stone-400">
+              Launch
+            </h2>
+            <LaunchForm
+              tasks={tasks}
+              selectedTaskName={selectedTaskName}
+              onSelectTask={setSelectedTaskName}
             />
-          )}
-        </main>
-      </div>
+            <ActiveRunsStrip />
+          </section>
+          <div className="flex flex-1 overflow-hidden">
+            <CellList cells={cells} selectedId={selectedId} onSelect={select} />
+            <main className="flex flex-1 flex-col overflow-hidden">
+              {selectedId === null ? (
+                <EmptyMessage>Select a cell on the left.</EmptyMessage>
+              ) : (
+                <CellPanel
+                  detail={detail}
+                  events={events}
+                  artifact={artifact}
+                  commits={commits}
+                  scores={scores}
+                  tab={tab}
+                  onTab={setTab}
+                />
+              )}
+            </main>
+          </div>
+        </section>
+      ) : section === "tasks" ? (
+        <TasksSection
+          tasks={tasks}
+          selectedTaskName={selectedTaskName}
+          onSelectTask={setSelectedTaskName}
+          onCreateTask={(taskName) => switchToLaunch(taskName)}
+          onRefreshTasks={refreshTasks}
+          graders={graders}
+          graderConfigs={graderConfigs}
+        />
+      ) : (
+        <GradersSection
+          tasks={tasks}
+          selectedTaskName={selectedTaskName}
+          onSelectTask={setSelectedTaskName}
+          graders={graders}
+          graderConfigs={graderConfigs}
+          onRefreshGraderData={refreshGraderData}
+        />
+      )}
     </div>
   );
 }

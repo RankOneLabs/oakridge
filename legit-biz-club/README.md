@@ -16,7 +16,7 @@ legit-biz-club/
 │       ├── coordination/     # incremental + convergence; mediator, OCC, consensus mechanisms, JigProposer
 │       ├── eval/             # code + prose eval primitives (jig-grader-backed)
 │       ├── memory.py         # operator-driven MemoryCommitter (Python API)
-│       ├── study/            # four-condition study harness — targets, conditions, runner, results
+│       ├── study/            # four-condition study harness — tasks, conditions, runner, results
 │       └── adapters/
 │           └── kbbl/         # Python HTTP client against kbbl's TS server
 └── tests/
@@ -38,7 +38,7 @@ legit-biz-club is a **library** — there is no CLI, no UI, and no config-file d
 Two API levels:
 
 - **One project:** wire `ProjectCoordinator(...)` directly. Use this when you have one artifact, one brief, one ensemble, and no need for the study harness.
-- **Study harness:** call `run_cell(...)` for one (target × condition) pair, or `run_study(...)` for the full grid. Use this when you want the harness's per-cell output layout, fresh-memory-per-run guarantee, and `CellMetrics` capture.
+- **Study harness:** call `run_cell(...)` for one (task × condition) pair, or `run_study(...)` for the full grid. Use this when you want the harness's per-cell output layout, fresh-memory-per-run guarantee, and `CellMetrics` capture.
 
 A worked example is in `scripts/run_one_project.py` — drives a single cell end-to-end against real LLMs:
 
@@ -62,22 +62,22 @@ uv run python -m legit_biz_club.run --spec <spec.json> --output-dir <dir>
 
 ```json
 {
-  "target": "prose_substrate_thesis",
+  "task": "prose_substrate_thesis",
   "model_pool": ["claude-sonnet-4-5", "claude-haiku-4-5"],
   "condition": { "kind": "ensemble_incremental", "n": 2 },
   "grade": true
 }
 ```
 
-Valid `target` values: keys of `study.registry.TARGET_FACTORIES`. Valid `condition.kind` values: keys of `study.registry.CONDITION_FACTORIES`. `grade` defaults to `true`. On success the process prints a line to stdout prefixed with `RESULT ` — `RESULT <json>` where the JSON has `artifact_path` and `eval_scores` (list or null). The run also emits tracer output to stdout, so callers should scan for the `RESULT `-prefixed line rather than assuming stdout is a single line. Workspace-event logs and tracebacks go to stderr; a non-zero exit code signals failure. Each cell directory contains:
+Valid `task` values: keys of `study.registry.TASK_FACTORIES`. Legacy `target` specs still parse at the run-spec boundary for older callers, but new run specs should use `task`. Valid `condition.kind` values: keys of `study.registry.CONDITION_FACTORIES`. `grade` defaults to `true`. On success the process prints a line to stdout prefixed with `RESULT ` — `RESULT <json>` where the JSON has `artifact_path` and `eval_scores` (list or null). The run also emits tracer output to stdout, so callers should scan for the `RESULT `-prefixed line rather than assuming stdout is a single line. Workspace-event logs and tracebacks go to stderr; a non-zero exit code signals failure. Each cell directory contains:
 
 - `<artifact_filename>` — the final artifact
-- `commits/v0001.<ext>`, `v0002.<ext>`, ... — per-commit snapshots (one per successful apply, in order; extension matches the artifact's, e.g. `.md` for prose targets, `.py` for single-file CODE)
+- `commits/v0001.<ext>`, `v0002.<ext>`, ... — per-commit snapshots (one per successful apply, in order; extension matches the artifact's, e.g. `.md` for prose tasks, `.py` for single-file CODE)
 - `events.jsonl` — workspace-event log (one line per event, with timestamp + kind + payload)
 - `eval_scores.json` — present when a `grader_factory` is wired AND returns at least one score. Shape: `{"scores": [{"dimension": "explains the thesis", "value": 0.95, "source": "llm_judge"}, ...]}`. The wrapper envelope leaves room for future grader metadata. Absent file means "no scores were persisted" — either no grader wired, or grader returned zero scores. Consumers shouldn't distinguish those.
 - `agent_memory/` — per-agent SqliteStore files (currently unused by `JigProposer`; placeholder for v1.x)
 
-`commits`, `agent_memory`, `events.jsonl`, and `eval_scores.json` are reserved sidecar names — `run_cell` rejects targets whose `artifact_filename` collides with any of them (case-insensitive, so `Eval_Scores.json` is rejected too on case-sensitive filesystems where it would otherwise sneak past).
+`commits`, `agent_memory`, `events.jsonl`, and `eval_scores.json` are reserved sidecar names — `run_cell` rejects tasks whose `artifact_filename` collides with any of them (case-insensitive, so `Eval_Scores.json` is rejected too on case-sensitive filesystems where it would otherwise sneak past).
 
 ## Architecture
 

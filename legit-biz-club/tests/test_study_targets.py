@@ -1,17 +1,29 @@
 """Tests for study target factories."""
 from __future__ import annotations
 
-from legit_biz_club import ArtifactType, Brief
+from legit_biz_club import (
+    ArtifactType,
+    Brief,
+    TaskConfig,
+    code_task,
+    prose_task,
+)
 from legit_biz_club.study.targets import (
     TargetConfig,
     code_target,
     prose_target,
 )
+from legit_biz_club.study.targets import (
+    code_task as module_code_task,
+)
+from legit_biz_club.study.targets import (
+    prose_task as module_prose_task,
+)
 
 
-def test_prose_target_defaults() -> None:
-    target = prose_target()
-    assert isinstance(target, TargetConfig)
+def test_prose_task_defaults() -> None:
+    target = prose_task()
+    assert isinstance(target, TaskConfig)
     assert target.artifact_type == ArtifactType.PROSE
     assert target.artifact_filename.endswith(".md")
     # Default brief has prose-shaped success criteria.
@@ -25,8 +37,8 @@ def test_prose_target_defaults() -> None:
     assert "synthesis" in target.frame_pool
 
 
-def test_code_target_defaults() -> None:
-    target = code_target()
+def test_code_task_defaults() -> None:
+    target = code_task()
     assert target.artifact_type == ArtifactType.CODE
     assert target.artifact_filename.endswith(".py")
     assert "tests pass" in target.brief.success_criteria
@@ -37,12 +49,12 @@ def test_code_target_defaults() -> None:
     assert "type-safety" in target.frame_pool
 
 
-def test_prose_target_accepts_overrides() -> None:
+def test_prose_task_accepts_overrides() -> None:
     custom_brief = Brief(
         target_spec="custom",
         success_criteria=["custom-criterion"],
     )
-    target = prose_target(
+    target = prose_task(
         name="custom_prose",
         artifact_filename="post.md",
         seed_content="seed paragraph",
@@ -58,12 +70,12 @@ def test_prose_target_accepts_overrides() -> None:
     assert target.frame_pool == ("only-one-frame",)
 
 
-def test_code_target_accepts_overrides() -> None:
+def test_code_task_accepts_overrides() -> None:
     custom_brief = Brief(
         target_spec="implement X",
         success_criteria=["specific-test-passes"],
     )
-    target = code_target(
+    target = code_task(
         name="custom_code",
         artifact_filename="impl.py",
         seed_content="",
@@ -76,10 +88,18 @@ def test_code_target_accepts_overrides() -> None:
 
 
 def test_targets_are_immutable() -> None:
-    """TargetConfig is frozen — runtime mutation would let one cell's
+    """TaskConfig is frozen — runtime mutation would let one cell's
     customizations bleed into another."""
-    target = prose_target()
+    target = prose_task()
     import dataclasses
 
     with __import__("pytest").raises(dataclasses.FrozenInstanceError):
         target.name = "mutated"  # type: ignore[misc]
+
+
+def test_compatibility_aliases_remain_available() -> None:
+    assert TargetConfig is TaskConfig
+    assert prose_target is prose_task
+    assert code_target is code_task
+    assert module_prose_task is prose_task
+    assert module_code_task is code_task

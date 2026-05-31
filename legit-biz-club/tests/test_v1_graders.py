@@ -41,7 +41,7 @@ from legit_biz_club.study.v1_targets import (
 # --- prose grader --------------------------------------------------------
 
 
-class _StubLLM(LLMClient):
+class _StubLLM(LLMClient):  # type: ignore[misc]
     """Returns a canned LLMJudge-shaped JSON response."""
 
     def __init__(self, content: str) -> None:
@@ -58,7 +58,7 @@ class _StubLLM(LLMClient):
 
 
 async def test_prose_grader_factory_wraps_make_brief_judge() -> None:
-    """The factory takes a TargetConfig and returns a Grader. With a
+    """The factory takes a TaskConfig and returns a Grader. With a
     stub LLM that returns a well-formed JSON judgment, grade()
     produces one Score per success-criterion in the brief."""
     target = prose_substrate_thesis()

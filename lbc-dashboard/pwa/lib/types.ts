@@ -12,6 +12,13 @@ export type {
   CommitSnapshot,
   EvalScore,
   Tab,
+  TaskBrief,
+  TaskDraft,
+  TaskGraderRef,
+  TaskDetail,
+  TaskSummary,
+  GraderSummary,
+  GraderConfigDraft,
   // run types
   ConditionSpec,
   RunSpec,
@@ -19,13 +26,19 @@ export type {
   RunSummary,
   RunsResponse,
   LaunchResponse,
+  TasksResponse,
 } from "../../src/contracts";
 
 export {
-  TARGET_KEYS,
+  TASK_NAMES,
   CONDITION_KINDS,
   RunSpecSchema,
   RunsResponseSchema,
   LaunchResponseSchema,
+  TaskDetailSchema,
+  TaskDraftSchema,
+  TasksResponseSchema,
+  GradersResponseSchema,
+  GraderConfigsResponseSchema,
   conditionName,
 } from "../../src/contracts";

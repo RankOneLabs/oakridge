@@ -2,7 +2,7 @@
  * Cell discovery + event tailing.
  *
  * Reads from legit-biz-club's per-cell sidecars on disk:
- *   <run_root>/<run_ts>/<target_name>/<condition_name>/
+ *   <run_root>/<run_ts>/<task_name>/<condition_name>/
  *     ├── <artifact_filename>     final artifact
  *     ├── events.jsonl            workspace event log (one JSON record/line)
  *     ├── commits/v0001.<ext> ... per-commit snapshots
@@ -13,7 +13,7 @@
  * across dashboard restarts and can be used as URL fragments. The
  * Python harness writes everything; the dashboard is purely a reader.
  */
-import { readFile, readdir, stat } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 
 import type {
@@ -27,6 +27,19 @@ import type {
   CellSummary,
   CommitSnapshot,
   EvalScore,
+  GraderConfigDraft,
+  GraderSummary,
+  TaskBuiltinDetail,
+  TaskDetail,
+  TaskDraft,
+  TaskSummary,
+} from "./contracts";
+import {
+  GraderConfigDraftSchema,
+  GraderSummarySchema,
+  TaskDetailSchema,
+  TaskDraftSchema,
+  TaskSummarySchema,
 } from "./contracts";
 
 export type { CellDetail, CellEvent, CellSummary, CommitSnapshot, EvalScore };
@@ -48,12 +61,12 @@ export function resolveRunRoot(): string {
 
 /**
  * Build the cell_id from the path segments. URL-safe and resilient
- * to unusual characters in target/condition names: each segment is
+ * to unusual characters in task/condition names: each segment is
  * encodeURIComponent'd, joined with ``:`` (which encodeURIComponent
  * escapes to ``%3A`` so it can't appear inside an encoded segment).
  *
- * The previous ``__`` delimiter would mis-split a target named e.g.
- * ``my__custom_target``. The harness doesn't validate target/
+ * The previous ``__`` delimiter would mis-split a task named e.g.
+ * ``my__custom_task``. The harness doesn't validate task/
  * condition names, so a future operator-supplied name with any
  * delimiter would be a footgun.
  */
@@ -197,8 +210,8 @@ async function summarize(
   return {
     cell_id: cellIdFor(runTs, target, condition),
     run_ts: runTs,
-    // Filesystem directory names cross the brand boundary here: from
-    // this point on the values carry ``TargetName`` / ``ConditionName``
+    // Filesystem directory names cross the brand boundary here.
+    // From this point on the values carry ``TargetName`` / ``ConditionName``
     // so consumers can't accidentally swap them for unrelated strings.
     target_name: target as TargetName,
     condition_name: condition as ConditionName,
@@ -284,7 +297,7 @@ export async function readEvents(cellDir: string): Promise<CellEvent[]> {
 
 async function detectArtifactFilename(cellDir: string): Promise<string | null> {
   // The artifact lives at <cell_dir>/<artifact_filename>. We don't
-  // know the filename a priori (target-dependent), so scan the dir
+  // know the filename a priori (task-dependent), so scan the dir
   // for the file that isn't a known sidecar.
   //
   // Also skip dotfiles and ``.tmp`` files: the harness's writers use
@@ -442,5 +455,679 @@ export async function resolveCellDir(cellId: string): Promise<string | null> {
     return cellDir;
   } catch {
     return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Built-in task + grader catalog
+// ---------------------------------------------------------------------------
+
+const BUILTIN_TASK_DETAILS: readonly TaskBuiltinDetail[] = [
+  {
+    name: "prose_substrate_thesis",
+    artifact_type: "prose",
+    artifact_filename: "thesis.md",
+    seed_content: "",
+    brief: {
+      target_spec:
+        "Draft a technical blog post explaining oakridge's substrate-mediated coordination architecture to senior software engineers.",
+      success_criteria: [
+        "explains the substrate-mediated coordination thesis clearly",
+        "names the three coordination modes accurately",
+        "includes at least one concrete example",
+        "cites the blackboard ancestor and the Yunkaporta paper",
+        "reads as a technical blog post, not marketing copy",
+      ],
+      constraints: [
+        "no marketing language",
+        "no invented coordination modes",
+        "no fictional code APIs",
+      ],
+    },
+    model_pool: [
+      "claude-sonnet-4-5",
+      "gpt-5-mini",
+      "gemini-2.5-pro",
+      "claude-opus-4-7",
+      "gpt-5",
+      "gemini-2.5-flash",
+      "claude-haiku-4-5",
+    ],
+    frame_pool: [
+      "precision",
+      "skepticism",
+      "synthesis",
+      "user-empathy",
+      "first-principles",
+      "concision",
+      "voice",
+    ],
+    has_grader: true,
+    grader_key: "prose_substrate_thesis",
+    source: "builtin",
+  },
+  {
+    name: "code_leetcode_longest_substring",
+    artifact_type: "code",
+    artifact_filename: "solution.py",
+    seed_content:
+      "def length_of_longest_substring(s: str) -> int:\n" +
+      "    raise NotImplementedError\n",
+    brief: {
+      target_spec:
+        "Implement length_of_longest_substring(s: str) -> int in solution.py.",
+      success_criteria: [
+        "passes the canonical example test cases",
+        "type-checks under strict mypy",
+      ],
+      constraints: [
+        "single file, single function",
+        "no third-party imports",
+      ],
+    },
+    model_pool: [
+      "claude-sonnet-4-5",
+      "gpt-5",
+      "claude-opus-4-7",
+      "gemini-2.5-pro",
+      "gpt-5-mini",
+      "claude-haiku-4-5",
+      "gemini-2.5-flash",
+    ],
+    frame_pool: [
+      "type-safety",
+      "test-coverage",
+      "minimalism",
+      "defensive-programming",
+      "performance",
+      "readability",
+      "explicit-errors",
+    ],
+    has_grader: true,
+    grader_key: "code_leetcode_longest_substring",
+    source: "builtin",
+  },
+  {
+    name: "code_leetcode_trapping_rain_water",
+    artifact_type: "code",
+    artifact_filename: "solution.py",
+    seed_content:
+      "def trap(height: list[int]) -> int:\n" +
+      "    raise NotImplementedError\n",
+    brief: {
+      target_spec:
+        "Implement trap(height: list[int]) -> int in solution.py.",
+      success_criteria: [
+        "passes the canonical example test cases",
+        "type-checks under strict mypy",
+      ],
+      constraints: [
+        "single file, single function",
+        "no third-party imports",
+      ],
+    },
+    model_pool: [
+      "claude-sonnet-4-5",
+      "gpt-5",
+      "claude-opus-4-7",
+      "gemini-2.5-pro",
+      "gpt-5-mini",
+      "claude-haiku-4-5",
+      "gemini-2.5-flash",
+    ],
+    frame_pool: [
+      "type-safety",
+      "test-coverage",
+      "minimalism",
+      "defensive-programming",
+      "performance",
+      "readability",
+      "explicit-errors",
+    ],
+    has_grader: true,
+    grader_key: "code_leetcode_trapping_rain_water",
+    source: "builtin",
+  },
+  {
+    name: "code_leetcode_regex_matching",
+    artifact_type: "code",
+    artifact_filename: "solution.py",
+    seed_content:
+      "def is_match(s: str, p: str) -> bool:\n" +
+      "    raise NotImplementedError\n",
+    brief: {
+      target_spec:
+        "Implement is_match(s: str, p: str) -> bool in solution.py.",
+      success_criteria: [
+        "passes the canonical example test cases",
+        "type-checks under strict mypy",
+      ],
+      constraints: [
+        "single file, single function",
+        "no third-party imports",
+      ],
+    },
+    model_pool: [
+      "claude-sonnet-4-5",
+      "gpt-5",
+      "claude-opus-4-7",
+      "gemini-2.5-pro",
+      "gpt-5-mini",
+      "claude-haiku-4-5",
+      "gemini-2.5-flash",
+    ],
+    frame_pool: [
+      "type-safety",
+      "test-coverage",
+      "minimalism",
+      "defensive-programming",
+      "performance",
+      "readability",
+      "explicit-errors",
+    ],
+    has_grader: true,
+    grader_key: "code_leetcode_regex_matching",
+    source: "builtin",
+  },
+  {
+    name: "code_leetcode_median_two_sorted_arrays",
+    artifact_type: "code",
+    artifact_filename: "solution.py",
+    seed_content:
+      "def find_median_sorted_arrays(\n" +
+      "    nums1: list[int], nums2: list[int]\n" +
+      ") -> float:\n" +
+      "    raise NotImplementedError\n",
+    brief: {
+      target_spec:
+        "Implement find_median_sorted_arrays(nums1: list[int], nums2: list[int]) -> float in solution.py.",
+      success_criteria: [
+        "passes the canonical correctness test cases",
+        "type-checks under strict mypy",
+        "meets the perf budget",
+      ],
+      constraints: [
+        "single file, single function",
+        "no imports needed",
+        "do not sort the input arrays",
+      ],
+    },
+    model_pool: [
+      "claude-sonnet-4-5",
+      "gpt-5",
+      "claude-opus-4-7",
+      "gemini-2.5-pro",
+      "gpt-5-mini",
+      "claude-haiku-4-5",
+      "gemini-2.5-flash",
+    ],
+    frame_pool: [
+      "type-safety",
+      "test-coverage",
+      "minimalism",
+      "defensive-programming",
+      "performance",
+      "readability",
+      "explicit-errors",
+    ],
+    has_grader: true,
+    grader_key: "code_leetcode_median_two_sorted_arrays",
+    source: "builtin",
+  },
+] as const satisfies readonly TaskBuiltinDetail[];
+
+const BUILTIN_TASK_DETAILS_BY_NAME = new Map(
+  BUILTIN_TASK_DETAILS.map((task) => [task.name, task]),
+);
+
+const BUILTIN_TASK_SUMMARIES: readonly TaskSummary[] = BUILTIN_TASK_DETAILS.map(
+  (task) =>
+    TaskSummarySchema.parse({
+      name: task.name,
+      artifact_type: task.artifact_type,
+      artifact_filename: task.artifact_filename,
+      has_grader: task.has_grader,
+      grader_key: task.grader_key,
+      source: task.source,
+    }),
+);
+
+const BUILTIN_TASK_SUMMARIES_BY_NAME = new Map(
+  BUILTIN_TASK_SUMMARIES.map((task) => [task.name, task]),
+);
+
+const BUILTIN_GRADER_SUMMARIES: readonly GraderSummary[] = [
+  {
+    key: "prose_substrate_thesis",
+    label: "Brief judge",
+    supported_artifact_types: ["prose"],
+    capabilities: ["brief-criteria", "llm-judge"],
+    source: "builtin",
+    config_required: false,
+    config_schema: null,
+  },
+  {
+    key: "code_leetcode_longest_substring",
+    label: "LeetCode #3 mechanical grader",
+    supported_artifact_types: ["code"],
+    capabilities: ["pytest", "mypy"],
+    source: "builtin",
+    config_required: false,
+    config_schema: null,
+  },
+  {
+    key: "code_leetcode_trapping_rain_water",
+    label: "LeetCode #42 mechanical grader",
+    supported_artifact_types: ["code"],
+    capabilities: ["pytest", "mypy"],
+    source: "builtin",
+    config_required: false,
+    config_schema: null,
+  },
+  {
+    key: "code_leetcode_regex_matching",
+    label: "LeetCode #10 mechanical grader",
+    supported_artifact_types: ["code"],
+    capabilities: ["pytest", "mypy"],
+    source: "builtin",
+    config_required: false,
+    config_schema: null,
+  },
+  {
+    key: "code_leetcode_median_two_sorted_arrays",
+    label: "LeetCode #4 mechanical grader",
+    supported_artifact_types: ["code"],
+    capabilities: ["pytest", "mypy", "perf"],
+    source: "builtin",
+    config_required: false,
+    config_schema: null,
+  },
+] as const satisfies readonly GraderSummary[];
+
+const BUILTIN_GRADER_SUMMARIES_BY_KEY = new Map(
+  BUILTIN_GRADER_SUMMARIES.map((grader) => [grader.key, grader]),
+);
+
+export function listBuiltinTaskSummaries(): TaskSummary[] {
+  return [...BUILTIN_TASK_SUMMARIES];
+}
+
+export function listBuiltinGraderSummaries(): GraderSummary[] {
+  return [...BUILTIN_GRADER_SUMMARIES];
+}
+
+export function getBuiltinTaskSummary(name: string): TaskSummary | null {
+  return BUILTIN_TASK_SUMMARIES_BY_NAME.get(name) ?? null;
+}
+
+export function getBuiltinTaskDetail(name: string): TaskBuiltinDetail | null {
+  return BUILTIN_TASK_DETAILS_BY_NAME.get(name) ?? null;
+}
+
+export function getBuiltinGraderSummary(name: string): GraderSummary | null {
+  return BUILTIN_GRADER_SUMMARIES_BY_KEY.get(name) ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard-local task + grader config stores
+// ---------------------------------------------------------------------------
+
+type ValidationResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; errors: string[] };
+
+const STORE_NAME_RE = /^[a-z][a-z0-9_]*$/;
+
+function ok<T>(value: T): ValidationResult<T> {
+  return { ok: true, value };
+}
+
+function err<T>(errors: string[]): ValidationResult<T> {
+  return { ok: false, errors };
+}
+
+function isStoreName(value: string): boolean {
+  return STORE_NAME_RE.test(value);
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function matchesShape(expected: unknown, actual: unknown): boolean {
+  if (expected === null) {
+    return true;
+  }
+  if (Array.isArray(expected)) {
+    if (!Array.isArray(actual) || actual.length !== expected.length) {
+      return false;
+    }
+    return expected.every((child, index) =>
+      matchesShape(child, actual[index]),
+    );
+  }
+  if (isPlainObject(expected)) {
+    if (!isPlainObject(actual)) return false;
+    const expectedKeys = Object.keys(expected);
+    const actualKeys = Object.keys(actual);
+    if (expectedKeys.length !== actualKeys.length) return false;
+    for (const key of expectedKeys) {
+      if (!(key in actual)) return false;
+      if (!matchesShape(expected[key], actual[key])) return false;
+    }
+    return true;
+  }
+  if (typeof expected === "string") return typeof actual === "string";
+  if (typeof expected === "number") return typeof actual === "number";
+  if (typeof expected === "boolean") return typeof actual === "boolean";
+  return actual === expected;
+}
+
+export function validateTaskDraftJson(raw: unknown): ValidationResult<TaskDraft> {
+  const parsed = TaskDraftSchema.safeParse(raw);
+  if (!parsed.success) {
+    return err(parsed.error.issues.map((issue) => issue.message));
+  }
+  return ok(parsed.data);
+}
+
+export function validateGraderConfigDraftJson(
+  raw: unknown,
+  task: TaskDraft,
+  graderSummaries: readonly GraderSummary[],
+): ValidationResult<GraderConfigDraft> {
+  const parsed = GraderConfigDraftSchema.safeParse(raw);
+  if (!parsed.success) {
+    return err(parsed.error.issues.map((issue) => issue.message));
+  }
+  if (task.grader.kind !== "registered") {
+    return err([
+      `task ${task.name} has no registered grader; grader config is not allowed`,
+    ]);
+  }
+  if (parsed.data.task_name !== task.name) {
+    return err([
+      `grader config for ${parsed.data.task_name} does not belong to task ${task.name}`,
+    ]);
+  }
+  if (task.grader.key !== parsed.data.grader_key) {
+    return err([
+      `task ${task.name} expects grader ${task.grader.key}, got ${parsed.data.grader_key}`,
+    ]);
+  }
+  const parsedGraderSummaries: GraderSummary[] = [];
+  for (const grader of graderSummaries) {
+    const parsedGrader = GraderSummarySchema.safeParse(grader);
+    if (!parsedGrader.success) {
+      return err(parsedGrader.error.issues.map((issue) => issue.message));
+    }
+    parsedGraderSummaries.push(parsedGrader.data);
+  }
+  const grader = parsedGraderSummaries.find(
+    (entry) => entry.key === parsed.data.grader_key,
+  );
+  if (grader === undefined) {
+    return err([`unknown grader key ${parsed.data.grader_key}`]);
+  }
+  if (!grader.supported_artifact_types.includes(task.artifact_type)) {
+    return err([
+      `grader ${grader.key} does not support ${task.artifact_type} artifacts`,
+    ]);
+  }
+  if (
+    grader.config_schema !== null &&
+    !matchesShape(grader.config_schema, parsed.data.config)
+  ) {
+    return err([
+      `config does not match the registered schema shape for grader ${grader.key}`,
+    ]);
+  }
+  return ok(parsed.data);
+}
+
+export function resolveDashboardDataRoot(): string {
+  const fromEnv = process.env.LBC_DASHBOARD_DATA_ROOT;
+  if (fromEnv) return resolve(fromEnv);
+  return resolve(import.meta.dirname, "..", "data");
+}
+
+function resolveTasksDir(): string {
+  return join(resolveDashboardDataRoot(), "tasks");
+}
+
+function resolveGraderConfigsDir(): string {
+  return join(resolveDashboardDataRoot(), "grader-configs");
+}
+
+function taskDraftPath(name: string): string {
+  return join(resolveTasksDir(), `${name}.json`);
+}
+
+function graderConfigDraftPath(name: string): string {
+  return join(resolveGraderConfigsDir(), `${name}.json`);
+}
+
+function validateStoreName(name: string): string | null {
+  const trimmed = name.trim();
+  if (!isStoreName(trimmed)) return null;
+  return trimmed;
+}
+
+async function readJson<T>(
+  path: string,
+  parser: (raw: unknown) => ValidationResult<T>,
+): Promise<T | null> {
+  let raw: string;
+  try {
+    raw = await readFile(path, "utf-8");
+  } catch {
+    return null;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  const validated = parser(parsed);
+  return validated.ok ? validated.value : null;
+}
+
+async function listJsonFiles(dir: string): Promise<string[]> {
+  try {
+    const entries = await readdir(dir, { withFileTypes: true });
+    return entries.filter((entry) => entry.isFile()).map((entry) => entry.name);
+  } catch {
+    return [];
+  }
+}
+
+function taskSummaryForDraft(task: TaskDraft): TaskSummary {
+  return TaskSummarySchema.parse({
+    name: task.name,
+    artifact_type: task.artifact_type,
+    artifact_filename: task.artifact_filename,
+    has_grader: task.grader.kind === "registered",
+    grader_key: task.grader.kind === "registered" ? task.grader.key : null,
+    source: "local",
+  });
+}
+
+export async function listTaskDrafts(): Promise<TaskDraft[]> {
+  const files = await listJsonFiles(resolveTasksDir());
+  const tasks: TaskDraft[] = [];
+  for (const filename of files) {
+    if (!filename.endsWith(".json")) continue;
+    const expectedName = filename.slice(0, -5);
+    const task = await readJson(
+      join(resolveTasksDir(), filename),
+      validateTaskDraftJson,
+    );
+    if (task !== null && task.name === expectedName) tasks.push(task);
+  }
+  tasks.sort((a, b) => a.name.localeCompare(b.name));
+  return tasks;
+}
+
+export async function listTaskSummaries(): Promise<TaskSummary[]> {
+  const drafts = await listTaskDrafts();
+  return drafts.map(taskSummaryForDraft);
+}
+
+function taskDetailForDraft(task: TaskDraft): TaskDetail {
+  return TaskDetailSchema.parse({
+    ...task,
+    has_grader: task.grader.kind === "registered",
+    grader_key: task.grader.kind === "registered" ? task.grader.key : null,
+    source: "local",
+  });
+}
+
+export async function listAllTaskSummaries(): Promise<TaskSummary[]> {
+  const locals = await listTaskDrafts();
+  for (const task of locals) {
+    if (getBuiltinTaskSummary(task.name) !== null) {
+      throw new Error(
+        `local task ${task.name} collides with built-in task names`,
+      );
+    }
+  }
+  return [
+    ...listBuiltinTaskSummaries(),
+    ...locals.map(taskSummaryForDraft),
+  ].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export async function getTaskDraft(name: string): Promise<TaskDraft | null> {
+  const validated = validateStoreName(name);
+  if (validated === null) return null;
+  const task = await readJson(taskDraftPath(validated), validateTaskDraftJson);
+  return task !== null && task.name === validated ? task : null;
+}
+
+export async function upsertTaskDraft(task: TaskDraft): Promise<TaskDraft> {
+  const parsed = TaskDraftSchema.parse(task);
+  await mkdir(resolveTasksDir(), { recursive: true });
+  await writeFile(taskDraftPath(parsed.name), JSON.stringify(parsed, null, 2), "utf-8");
+  return parsed;
+}
+
+export async function deleteTaskDraft(name: string): Promise<boolean> {
+  const validated = validateStoreName(name);
+  if (validated === null) return false;
+  const path = taskDraftPath(validated);
+  try {
+    await rm(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function getTaskDetail(name: string): Promise<TaskDetail | null> {
+  const validated = validateStoreName(name);
+  if (validated === null) return null;
+  const local = await getTaskDraft(validated);
+  if (local !== null) {
+    if (getBuiltinTaskSummary(validated) !== null) {
+      throw new Error(
+        `local task ${validated} collides with built-in task names`,
+      );
+    }
+    return taskDetailForDraft(local);
+  }
+  const builtin = getBuiltinTaskDetail(validated);
+  return builtin !== null ? TaskDetailSchema.parse(builtin) : null;
+}
+
+export function getTaskSummary(name: string): TaskSummary | null {
+  return getBuiltinTaskSummary(name);
+}
+
+export async function resolveTaskSummary(name: string): Promise<TaskSummary | null> {
+  const validated = validateStoreName(name);
+  if (validated === null) return null;
+  const local = await getTaskDraft(validated);
+  if (local !== null) {
+    if (getBuiltinTaskSummary(validated) !== null) {
+      throw new Error(
+        `local task ${validated} collides with built-in task names`,
+      );
+    }
+    return taskSummaryForDraft(local);
+  }
+  return getBuiltinTaskSummary(validated);
+}
+
+export function resolveTaskDetail(name: string): Promise<TaskDetail | null> {
+  return getTaskDetail(name);
+}
+
+export async function listGraderConfigDrafts(): Promise<GraderConfigDraft[]> {
+  const files = await listJsonFiles(resolveGraderConfigsDir());
+  const configs: GraderConfigDraft[] = [];
+  for (const filename of files) {
+    if (!filename.endsWith(".json")) continue;
+    const expectedTaskName = filename.slice(0, -5);
+    const config = await readJson(
+      join(resolveGraderConfigsDir(), filename),
+      (raw): ValidationResult<GraderConfigDraft> => {
+        const parsed = GraderConfigDraftSchema.safeParse(raw);
+        if (!parsed.success) {
+          return err(parsed.error.issues.map((issue) => issue.message));
+        }
+        return ok(parsed.data);
+      },
+    );
+    if (config !== null && config.task_name === expectedTaskName) {
+      configs.push(config);
+    }
+  }
+  configs.sort((a, b) => a.task_name.localeCompare(b.task_name));
+  return configs;
+}
+
+export async function getGraderConfigDraft(
+  taskName: string,
+): Promise<GraderConfigDraft | null> {
+  const validated = validateStoreName(taskName);
+  if (validated === null) return null;
+  const config = await readJson(
+    graderConfigDraftPath(validated),
+    (raw): ValidationResult<GraderConfigDraft> => {
+      const parsed = GraderConfigDraftSchema.safeParse(raw);
+      if (!parsed.success) {
+        return err(parsed.error.issues.map((issue) => issue.message));
+      }
+      return ok(parsed.data);
+    },
+  );
+  return config !== null && config.task_name === validated ? config : null;
+}
+
+export async function upsertGraderConfigDraft(
+  config: GraderConfigDraft,
+): Promise<GraderConfigDraft> {
+  const parsed = GraderConfigDraftSchema.parse(config);
+  await mkdir(resolveGraderConfigsDir(), { recursive: true });
+  await writeFile(
+    graderConfigDraftPath(parsed.task_name),
+    JSON.stringify(parsed, null, 2),
+    "utf-8",
+  );
+  return parsed;
+}
+
+export async function deleteGraderConfigDraft(
+  taskName: string,
+): Promise<boolean> {
+  const validated = validateStoreName(taskName);
+  if (validated === null) return false;
+  const path = graderConfigDraftPath(validated);
+  try {
+    await rm(path);
+    return true;
+  } catch {
+    return false;
   }
 }

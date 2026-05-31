@@ -1,19 +1,18 @@
-"""Target factories — the prose and code domains for the v1 study.
+"""Task factories for the prose and code domains in the v1 study.
 
-A :class:`TargetConfig` is a lightweight template describing one
-study domain: the brief (target_spec / success_criteria /
-constraints), the seed artifact content, and the model pool the
-runner draws from when constructing the ensemble's agents.
+A :class:`TaskConfig` is a lightweight template describing one study
+domain: the brief (target_spec / success_criteria / constraints), the
+seed artifact content, and the model pool the runner draws from when
+constructing the ensemble's agents.
 
-The runner combines a target with a condition (n + protocol +
-mechanism) to materialize a full :class:`Project`. Targets don't yet
-know the ensemble size — that's the condition's job.
+The runner combines a task with a condition (n + protocol + mechanism)
+to materialize a full :class:`Project`. Tasks don't yet know the
+ensemble size — that's the condition's job.
 
-v1 ships two targets per the design memo:
+v1 ships two tasks per the design memo:
 
-- :func:`prose_target` — drafting a short technical blog post
-  end-to-end.
-- :func:`code_target` — implementing a small but non-trivial feature.
+- :func:`prose_task` — drafting a short technical blog post end-to-end.
+- :func:`code_task` — implementing a small but non-trivial feature.
 
 Both factories accept overrides so the v1 study can specialize the
 brief / seed / model pool per run without forking the templates. The
@@ -29,7 +28,7 @@ from legit_biz_club.core.models import ArtifactType, Brief
 
 
 @dataclass(frozen=True, slots=True)
-class TargetConfig:
+class TaskConfig:
     """One study domain's template.
 
     ``model_pool`` is the rotation the runner picks from when
@@ -93,7 +92,7 @@ _DEFAULT_CODE_FRAMES = (
 )
 
 
-def prose_target(
+def prose_task(
     *,
     name: str = "prose_blog_post",
     artifact_filename: str = "draft.md",
@@ -101,7 +100,7 @@ def prose_target(
     brief: Brief | None = None,
     model_pool: Sequence[str] | None = None,
     frame_pool: Sequence[str | None] | None = None,
-) -> TargetConfig:
+) -> TaskConfig:
     """Prose domain: drafting a technical blog post end-to-end.
 
     Default brief and seed are placeholder; Workstream D supplies the
@@ -109,7 +108,7 @@ def prose_target(
     three frontier providers (Anthropic, OpenAI, Google) so the
     heterogeneity-by-model-identity check passes for n up to 7.
     """
-    return TargetConfig(
+    return TaskConfig(
         name=name,
         artifact_type=ArtifactType.PROSE,
         artifact_filename=artifact_filename,
@@ -138,7 +137,7 @@ def prose_target(
     )
 
 
-def code_target(
+def code_task(
     *,
     name: str = "code_jig_feature",
     artifact_filename: str = "feature.py",
@@ -146,7 +145,7 @@ def code_target(
     brief: Brief | None = None,
     model_pool: Sequence[str] | None = None,
     frame_pool: Sequence[str | None] | None = None,
-) -> TargetConfig:
+) -> TaskConfig:
     """Code domain: implementing a small but non-trivial feature.
 
     v1 supports **single-file CODE artifacts only** — the artifact is
@@ -161,7 +160,7 @@ def code_target(
     real ones. Model pool favors models with strong code-generation
     reputations; frames cover orthogonal code-quality stances.
     """
-    return TargetConfig(
+    return TaskConfig(
         name=name,
         artifact_type=ArtifactType.CODE,
         artifact_filename=artifact_filename,
@@ -189,3 +188,11 @@ def code_target(
             tuple(frame_pool) if frame_pool is not None else _DEFAULT_CODE_FRAMES
         ),
     )
+
+
+# Compatibility aliases for older callers. New code should import the
+# task-named APIs above; these remain only so the existing registry /
+# parsing bridges and older tests keep working while the migration lands.
+TargetConfig = TaskConfig
+prose_target = prose_task
+code_target = code_task

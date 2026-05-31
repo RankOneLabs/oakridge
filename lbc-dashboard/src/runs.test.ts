@@ -34,7 +34,7 @@ function makeStub(exitCode: number): {
 }
 
 const BASE_SPEC: RunSpec = {
-  target: "prose_substrate_thesis",
+  task: "prose_substrate_thesis",
   model_pool: ["claude-opus-4-7"],
   condition: { kind: "single_agent", n: 1 },
   grade: true,
@@ -171,7 +171,7 @@ describe("RunRegistry", () => {
     const registry = new RunRegistry(launcher);
     const runTs = "2026-05-29T17-00-00-000000Z";
     const spec: RunSpec = {
-      target: "prose_substrate_thesis",
+      task: "prose_substrate_thesis",
       model_pool: ["claude-opus-4-7"],
       condition: { kind: "ensemble_multi_round", n: 3 },
       grade: true,
@@ -183,6 +183,10 @@ describe("RunRegistry", () => {
       specPath: "/tmp/spec.json",
       outputDir: "/tmp/output",
     });
+
+    expect(record.cell_id).toBe(
+      cellIdFor(runTs, spec.task, "ensemble_multi_round_n3"),
+    );
 
     const parsed = parseCellId(record.cell_id);
     expect(parsed).not.toBeNull();
@@ -248,7 +252,7 @@ describe("RunRegistry", () => {
     const summary = registry.toSummary(record);
     expect(summary.runId).toBe(runTs);
     expect(summary.run_ts).toBe(runTs);
-    expect(summary.target).toBe(BASE_SPEC.target);
+    expect(summary.task).toBe(BASE_SPEC.task);
     expect(summary.condition).toEqual(BASE_SPEC.condition);
     expect(summary.status).toBe("running");
     expect(summary.exit_code).toBeNull();
@@ -302,7 +306,7 @@ describe("HTTP /api/runs", () => {
     const app = createApp({ registry });
 
     const body: RunSpec = {
-      target: "prose_substrate_thesis",
+      task: "prose_substrate_thesis",
       model_pool: ["claude-opus-4-7"],
       condition: { kind: "single_agent", n: 1 },
       grade: true,
@@ -319,7 +323,7 @@ describe("HTTP /api/runs", () => {
     expect(json.run_ts).toBeTruthy();
     const expected = cellIdFor(
       json.run_ts,
-      body.target,
+      body.task,
       conditionName(body.condition.kind, body.condition.n),
     );
     expect(json.cell_id).toBe(expected);
@@ -334,7 +338,7 @@ describe("HTTP /api/runs", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        target: "prose_substrate_thesis",
+        task: "prose_substrate_thesis",
         model_pool: ["claude-opus-4-7"],
         condition: { kind: "ensemble_multi_round", n: 1 },
         grade: true,
@@ -353,7 +357,7 @@ describe("HTTP /api/runs", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        target: "prose_substrate_thesis",
+        task: "prose_substrate_thesis",
         model_pool: [],
         condition: { kind: "single_agent", n: 1 },
         grade: true,
@@ -374,7 +378,7 @@ describe("HTTP /api/runs", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        target: "prose_substrate_thesis",
+        task: "prose_substrate_thesis",
         model_pool: ["claude-opus-4-7"],
         condition: { kind: "single_agent", n: 1 },
         grade: true,

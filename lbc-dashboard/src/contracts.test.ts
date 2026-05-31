@@ -21,9 +21,17 @@ import {
   CellEventSchema,
   CellSummarySchema,
   CommitSnapshotSchema,
+  GraderConfigDraftSchema,
+  GraderSummarySchema,
   EvalScoreSchema,
+  RunSummarySchema,
   RunSpecSchema,
   TabSchema,
+  TaskDraftSchema,
+  TaskBuiltinDetailSchema,
+  TaskLocalDetailSchema,
+  TaskGraderRefSchema,
+  TaskSummarySchema,
   conditionName,
 } from "./contracts";
 import { listCells } from "./store";
@@ -183,10 +191,267 @@ describe("TabSchema", () => {
   });
 });
 
+// --- Task / grader schemas ----------------------------------------------
+
+describe("TaskGraderRefSchema", () => {
+  test("accepts the explicit none ref", () => {
+    expect(TaskGraderRefSchema.parse({ kind: "none" })).toEqual({
+      kind: "none",
+    });
+  });
+
+  test("accepts a registered grader key", () => {
+    expect(
+      TaskGraderRefSchema.parse({
+        kind: "registered",
+        key: "code_leetcode_regex_matching",
+      }),
+    ).toEqual({
+      kind: "registered",
+      key: "code_leetcode_regex_matching",
+    });
+  });
+
+  test("rejects unknown ref kinds", () => {
+    expect(() =>
+      TaskGraderRefSchema.parse({ kind: "custom", key: "x" }),
+    ).toThrow();
+  });
+});
+
+describe("TaskDraftSchema", () => {
+  test("accepts a prose task draft", () => {
+    const parsed = TaskDraftSchema.parse({
+      name: "prose_substrate_thesis",
+      artifact_type: "prose",
+      artifact_filename: "draft.md",
+      seed_content: "seed",
+      brief: {
+        target_spec: "write a concise thesis",
+        success_criteria: ["covers the architecture"],
+        constraints: ["keep it short"],
+      },
+      model_pool: ["claude-sonnet-4-5"],
+      frame_pool: ["precision", null],
+      grader: { kind: "registered", key: "prose_substrate_thesis" },
+    });
+    expect(parsed.brief.success_criteria).toHaveLength(1);
+    expect(parsed.frame_pool).toEqual(["precision", null]);
+  });
+
+  test("accepts code tasks with .py filenames", () => {
+    const parsed = TaskDraftSchema.parse({
+      name: "code_leetcode_longest_substring",
+      artifact_type: "code",
+      artifact_filename: "solution.py",
+      seed_content: "def f(): ...",
+      brief: {
+        target_spec: "implement the solution",
+        success_criteria: ["passes tests"],
+        constraints: [],
+      },
+      model_pool: ["claude-opus-4-7"],
+      frame_pool: [],
+      grader: { kind: "none" },
+    });
+    expect(parsed.artifact_filename).toBe("solution.py");
+  });
+
+  test("rejects code tasks without .py filenames", () => {
+    expect(() =>
+      TaskDraftSchema.parse({
+        name: "code_leetcode_longest_substring",
+        artifact_type: "code",
+        artifact_filename: "solution.md",
+        seed_content: "",
+        brief: {
+          target_spec: "x",
+          success_criteria: ["y"],
+          constraints: [],
+        },
+        model_pool: ["claude-opus-4-7"],
+        frame_pool: [],
+        grader: { kind: "none" },
+      }),
+    ).toThrow();
+  });
+
+  test("rejects filenames with path separators", () => {
+    expect(() =>
+      TaskDraftSchema.parse({
+        name: "code_leetcode_longest_substring",
+        artifact_type: "code",
+        artifact_filename: "subdir/solution.py",
+        seed_content: "",
+        brief: {
+          target_spec: "x",
+          success_criteria: ["y"],
+          constraints: [],
+        },
+        model_pool: ["claude-opus-4-7"],
+        frame_pool: [],
+        grader: { kind: "none" },
+      }),
+    ).toThrow();
+  });
+
+  test("rejects reserved sidecar filenames", () => {
+    expect(() =>
+      TaskDraftSchema.parse({
+        name: "code_leetcode_longest_substring",
+        artifact_type: "code",
+        artifact_filename: "events.jsonl",
+        seed_content: "",
+        brief: {
+          target_spec: "x",
+          success_criteria: ["y"],
+          constraints: [],
+        },
+        model_pool: ["claude-opus-4-7"],
+        frame_pool: [],
+        grader: { kind: "none" },
+      }),
+    ).toThrow();
+  });
+
+  test("rejects empty target_spec and empty success criteria", () => {
+    expect(() =>
+      TaskDraftSchema.parse({
+        name: "prose_substrate_thesis",
+        artifact_type: "prose",
+        artifact_filename: "draft.md",
+        seed_content: "",
+        brief: {
+          target_spec: "",
+          success_criteria: [],
+          constraints: [],
+        },
+        model_pool: ["claude-sonnet-4-5"],
+        frame_pool: [],
+        grader: { kind: "none" },
+      }),
+    ).toThrow();
+  });
+
+  test("rejects task names that are not snake_case", () => {
+    expect(() =>
+      TaskDraftSchema.parse({
+        name: "NotSnake",
+        artifact_type: "prose",
+        artifact_filename: "draft.md",
+        seed_content: "",
+        brief: {
+          target_spec: "x",
+          success_criteria: ["y"],
+          constraints: [],
+        },
+        model_pool: ["claude-sonnet-4-5"],
+        frame_pool: [],
+        grader: { kind: "none" },
+      }),
+    ).toThrow();
+  });
+});
+
+describe("TaskSummarySchema", () => {
+  test("accepts a local task summary", () => {
+    const parsed = TaskSummarySchema.parse({
+      name: "prose_substrate_thesis",
+      artifact_type: "prose",
+      artifact_filename: "draft.md",
+      has_grader: true,
+      grader_key: "prose_substrate_thesis",
+      source: "local",
+    });
+    expect(parsed.source).toBe("local");
+  });
+});
+
+describe("TaskBuiltinDetailSchema", () => {
+  test("accepts a builtin task detail", () => {
+    const parsed = TaskBuiltinDetailSchema.parse({
+      name: "prose_substrate_thesis",
+      artifact_type: "prose",
+      artifact_filename: "thesis.md",
+      seed_content: "",
+      brief: {
+        target_spec: "write a thesis",
+        success_criteria: ["covers the architecture"],
+        constraints: ["no marketing"],
+      },
+      model_pool: ["claude-sonnet-4-5"],
+      frame_pool: ["precision"],
+      has_grader: true,
+      grader_key: "prose_substrate_thesis",
+      source: "builtin",
+    });
+    expect(parsed.source).toBe("builtin");
+  });
+});
+
+describe("TaskLocalDetailSchema", () => {
+  test("accepts a local task detail", () => {
+    const parsed = TaskLocalDetailSchema.parse({
+      name: "dashboard_local_note",
+      artifact_type: "prose",
+      artifact_filename: "draft.md",
+      seed_content: "# seed",
+      brief: {
+        target_spec: "write a note",
+        success_criteria: ["covers the point"],
+        constraints: [],
+      },
+      model_pool: ["claude-sonnet-4-5"],
+      frame_pool: [],
+      grader: { kind: "none" },
+      has_grader: false,
+      grader_key: null,
+      source: "local",
+    });
+    expect(parsed.source).toBe("local");
+  });
+});
+
+describe("GraderSummarySchema", () => {
+  test("accepts a builtin grader summary", () => {
+    const parsed = GraderSummarySchema.parse({
+      key: "code_leetcode_longest_substring",
+      label: "LeetCode #3 mechanical grader",
+      supported_artifact_types: ["code"],
+      capabilities: ["pytest", "mypy"],
+      source: "builtin",
+      config_required: false,
+      config_schema: null,
+    });
+    expect(parsed.supported_artifact_types).toEqual(["code"]);
+  });
+});
+
+describe("GraderConfigDraftSchema", () => {
+  test("accepts a config draft with a snake_case task name", () => {
+    const parsed = GraderConfigDraftSchema.parse({
+      task_name: "prose_substrate_thesis",
+      grader_key: "prose_substrate_thesis",
+      config: { judge_model: "claude-sonnet-4-5" },
+    });
+    expect(parsed.config).toEqual({ judge_model: "claude-sonnet-4-5" });
+  });
+
+  test("rejects a task name that is not snake_case", () => {
+    expect(() =>
+      GraderConfigDraftSchema.parse({
+        task_name: "NotSnake",
+        grader_key: "prose_substrate_thesis",
+        config: {},
+      }),
+    ).toThrow();
+  });
+});
+
 // --- RunSpecSchema -------------------------------------------------------
 
 const validRunSpec = {
-  target: "prose_substrate_thesis",
+  task: "prose_substrate_thesis",
   model_pool: ["claude-opus-4-7"],
   condition: { kind: "single_agent", n: 1 },
   grade: true,
@@ -269,9 +534,7 @@ describe("RunSpecSchema", () => {
   });
 
   test("rejects empty model_pool", () => {
-    expect(() =>
-      RunSpecSchema.parse({ ...validRunSpec, model_pool: [] }),
-    ).toThrow();
+    expect(() => RunSpecSchema.parse({ ...validRunSpec, model_pool: [] })).toThrow();
   });
 
   test("rejects model_pool with an empty string", () => {
@@ -280,9 +543,26 @@ describe("RunSpecSchema", () => {
     ).toThrow();
   });
 
-  test("rejects unknown target", () => {
+  test("accepts safe task names", () => {
+    const parsed = RunSpecSchema.parse({
+      ...validRunSpec,
+      task: "dashboard_local_task",
+    });
+    expect(parsed.task).toBe("dashboard_local_task");
+  });
+
+  test("rejects unsafe task names", () => {
     expect(() =>
-      RunSpecSchema.parse({ ...validRunSpec, target: "not_a_target" }),
+      RunSpecSchema.parse({
+        ...validRunSpec,
+        task: "dashboard/local",
+      }),
+    ).toThrow();
+    expect(() =>
+      RunSpecSchema.parse({
+        ...validRunSpec,
+        task: "..",
+      }),
     ).toThrow();
   });
 
@@ -299,6 +579,23 @@ describe("RunSpecSchema", () => {
     const { grade: _, ...noGrade } = validRunSpec;
     const parsed = RunSpecSchema.parse(noGrade);
     expect(parsed.grade).toBe(true);
+  });
+});
+
+describe("RunSummarySchema", () => {
+  test("accepts a run summary with task-based fields", () => {
+    const parsed = RunSummarySchema.parse({
+      runId: "run-1",
+      run_ts: "2026-05-22T18-00-00-000000Z",
+      cell_id: "2026-05-22T18-00-00-000000Z:prose_substrate_thesis:single_agent",
+      task: "prose_substrate_thesis",
+      condition: { kind: "single_agent", n: 1 },
+      status: "running",
+      started_ms: 123,
+      exit_code: null,
+      stderr_tail: "",
+    });
+    expect(parsed.task).toBe("prose_substrate_thesis");
   });
 });
 

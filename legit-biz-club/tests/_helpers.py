@@ -6,7 +6,7 @@ shows up in 3+ tests.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from legit_biz_club.coordination.proposer import Proposer
 from legit_biz_club.core.models import Agent
@@ -38,7 +38,7 @@ def stub_proposer_factory(
     call site.
     """
 
-    def _factory(_agent: Agent, *, context: str = "") -> Proposer:  # noqa: ARG001
-        return proposer_class(**proposer_kwargs)
+    def _factory(agent: Agent, *, context: str = "") -> Proposer:  # noqa: ARG001
+        return cast(Proposer, proposer_class(**proposer_kwargs))
 
     return _factory

@@ -1,93 +1,95 @@
 /**
  * Operator form for launching a new study run.
  *
- * buildRunSpec is exported as a pure helper so it can be unit-tested
- * without a DOM (see pwa/LaunchForm.test.ts). On a successful launch
- * it calls useHashSelection.select(cell_id) to navigate the existing
- * SSE live view to the new cell.
+ * The task selector is backed by the task catalog supplied by the top-level
+ * dashboard so a task created in the Tasks section can be launched without a
+ * second fetch or manual re-selection.
  */
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useLaunch } from "../../hooks/useLaunch";
 import { useHashSelection } from "../../hooks/useHashSelection";
+import { CONDITION_KINDS } from "../../lib/types";
+import type { TaskSummary } from "../../lib/types";
 import {
-  TARGET_KEYS,
-  CONDITION_KINDS,
-  RunSpecSchema,
-} from "../../lib/types";
-import type { RunSpec, ConditionSpec } from "../../lib/types";
+  buildRunSpec,
+  coerceFormStateForSelectedTask,
+  createInitialFormState,
+  formatTaskGraderState,
+  formatTaskSource,
+  KNOWN_MODELS,
+  minNFor,
+  resolveSelectedTask,
+  selectedTaskLoadError,
+  type FormState,
+} from "./launchFormModel";
 
-export const KNOWN_MODELS = [
-  "claude-sonnet-4-5",
-  "claude-opus-4-8",
-  "claude-opus-4-7",
-  "claude-haiku-4-5",
-  "gpt-5",
-  "gpt-5-mini",
-] as const;
-
-export interface FormState {
-  target: string;
-  checkedModels: Set<string>;
-  extraModels: string[];
-  conditionKind: ConditionSpec["kind"];
-  n: number;
-  should_grade: boolean;
-}
-
-type BuildResult =
-  | { ok: true; spec: RunSpec }
-  | { ok: false; error: string };
-
-// Known models ordered by KNOWN_MODELS position; extras appended in
-// the order they were added (selection order matters: the harness
-// assigns agents model_pool[i % len]).
-export function buildRunSpec(state: FormState): BuildResult {
-  const modelPool = [
-    ...KNOWN_MODELS.filter((m) => state.checkedModels.has(m)),
-    ...state.extraModels,
-  ];
-  const result = RunSpecSchema.safeParse({
-    target: state.target,
-    model_pool: modelPool,
-    condition: { kind: state.conditionKind, n: state.n },
-    grade: state.should_grade,
-  });
-  if (result.success) return { ok: true, spec: result.data };
-  return {
-    ok: false,
-    error: result.error.issues[0]?.message ?? "invalid spec",
-  };
-}
-
-function minNFor(kind: ConditionSpec["kind"]): number {
-  return kind === "ensemble_single_round" || kind === "ensemble_multi_round"
-    ? 2
-    : 1;
-}
-
-export function LaunchForm() {
+export function LaunchForm({
+  tasks,
+  selectedTaskName,
+  onSelectTask,
+}: {
+  tasks: TaskSummary[];
+  selectedTaskName: string | null;
+  onSelectTask: (name: string | null) => void;
+}) {
   const [, select] = useHashSelection();
   const { launch, is_pending, error: launchError } = useLaunch();
   const [warning, setWarning] = useState<string | null>(null);
   const [freeText, setFreeText] = useState("");
-  const [state, setState] = useState<FormState>({
-    target: "",
-    checkedModels: new Set(),
-    extraModels: [],
-    conditionKind: "single_agent",
-    n: 1,
-    should_grade: true,
-  });
+  const [state, setState] = useState<FormState>(() =>
+    createInitialFormState(null),
+  );
+  const gradeInitialized = useRef(false);
 
-  const result = buildRunSpec(state);
+  const selectedTask = useMemo(() => {
+    if (selectedTaskName === null) return null;
+    return resolveSelectedTask(tasks, selectedTaskName).task;
+  }, [tasks, selectedTaskName]);
+
+  const selectedTaskLoadErrorValue = selectedTaskLoadError(
+    tasks,
+    selectedTaskName,
+    null,
+  );
+  const result = useMemo(() => buildRunSpec(state), [state]);
+  const minN = minNFor(state.conditionKind);
+  const gradeDisabled = selectedTask === null || !selectedTask.has_grader;
+
+  useEffect(() => {
+    if (selectedTaskName === null) {
+      setState((current) =>
+        current.selectedTaskName === ""
+          ? current
+          : { ...current, selectedTaskName: "", should_grade: false },
+      );
+      return;
+    }
+    setState((current) =>
+      current.selectedTaskName === selectedTaskName
+        ? current
+        : { ...current, selectedTaskName },
+    );
+  }, [selectedTaskName]);
+
+  useEffect(() => {
+    if (selectedTask === null) return;
+    setState((current) => {
+      const next = coerceFormStateForSelectedTask(current, selectedTask);
+      if (!gradeInitialized.current) {
+        gradeInitialized.current = true;
+        return { ...next, should_grade: selectedTask.has_grader };
+      }
+      return next;
+    });
+  }, [selectedTask]);
 
   function toggleModel(model: string) {
-    setState((s) => {
-      const next = new Set(s.checkedModels);
+    setState((current) => {
+      const next = new Set(current.checkedModels);
       if (next.has(model)) next.delete(model);
       else next.add(model);
-      return { ...s, checkedModels: next };
+      return { ...current, checkedModels: next };
     });
   }
 
@@ -97,36 +99,65 @@ export function LaunchForm() {
       setFreeText("");
       return;
     }
-    setState((s) => ({ ...s, extraModels: [...s.extraModels, trimmed] }));
+    setState((current) => ({
+      ...current,
+      extraModels: [...current.extraModels, trimmed],
+    }));
     setFreeText("");
   }
 
   function removeExtraModel(model: string) {
-    setState((s) => ({
-      ...s,
-      extraModels: s.extraModels.filter((m) => m !== model),
+    setState((current) => ({
+      ...current,
+      extraModels: current.extraModels.filter((entry) => entry !== model),
     }));
   }
 
-  function setKind(kind: ConditionSpec["kind"]) {
-    setState((s) => {
-      let n = s.n;
+  function setKind(kind: FormState["conditionKind"]) {
+    setState((current) => {
+      let n = current.n;
       if (kind === "single_agent") {
         n = 1;
       } else if (n < minNFor(kind)) {
         n = minNFor(kind);
       }
-      return { ...s, conditionKind: kind, n };
+      return { ...current, conditionKind: kind, n };
     });
   }
 
   function setN(raw: number) {
     const min = minNFor(state.conditionKind);
-    setState((s) => ({ ...s, n: Math.max(min, Math.min(16, raw)) }));
+    setState((current) => ({ ...current, n: Math.max(min, Math.min(16, raw)) }));
+  }
+
+  function onTaskChange(taskName: string) {
+    if (taskName === "") {
+      onSelectTask(null);
+      setState((current) => ({
+        ...current,
+        selectedTaskName: "",
+        should_grade: false,
+      }));
+      return;
+    }
+    onSelectTask(taskName);
+    const task = tasks.find((entry) => entry.name === taskName) ?? null;
+    setState((current) =>
+      coerceFormStateForSelectedTask(
+        { ...current, selectedTaskName: taskName },
+        task,
+      ),
+    );
   }
 
   async function handleLaunch() {
-    if (!result.ok) return;
+    if (
+      selectedTaskLoadErrorValue !== null ||
+      selectedTask === null ||
+      !result.ok
+    ) {
+      return;
+    }
     setWarning(null);
     const response = await launch(result.spec);
     if (response) {
@@ -135,60 +166,85 @@ export function LaunchForm() {
     }
   }
 
-  const minN = minNFor(state.conditionKind);
-
   return (
     <div className="flex flex-wrap gap-6 px-4 pb-4 pt-2">
-      {/* Target */}
       <div className="flex flex-col gap-1">
         <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">
-          Target
+          Task
         </label>
         <select
           className="rounded border border-stone-300 px-2 py-1 text-sm"
-          value={state.target}
-          onChange={(e) =>
-            setState((s) => ({ ...s, target: e.target.value }))
-          }
+          value={selectedTaskName ?? ""}
+          onChange={(e) => onTaskChange(e.target.value)}
         >
-          <option value="">— pick target —</option>
-          {TARGET_KEYS.map((t) => (
-            <option key={t} value={t}>
-              {t}
+          <option value="">— pick task —</option>
+          {tasks.map((task) => (
+            <option key={task.name} value={task.name}>
+              {task.name}
             </option>
           ))}
         </select>
+        <div className="mt-1 rounded border border-stone-200 bg-stone-50 px-2 py-2 text-xs text-stone-600">
+          {selectedTask === null ? (
+            <p>
+              {selectedTaskName === null
+                ? "Select a task to see details."
+                : "Task not found in the catalog."}
+            </p>
+          ) : (
+            <dl className="grid grid-cols-[auto,1fr] gap-x-2 gap-y-1">
+              <dt className="font-semibold uppercase tracking-wide text-stone-400">
+                Artifact
+              </dt>
+              <dd>
+                {selectedTask.artifact_filename} · {selectedTask.artifact_type}
+              </dd>
+              <dt className="font-semibold uppercase tracking-wide text-stone-400">
+                Source
+              </dt>
+              <dd>{formatTaskSource(selectedTask)}</dd>
+              <dt className="font-semibold uppercase tracking-wide text-stone-400">
+                Grader
+              </dt>
+              <dd>{formatTaskGraderState(selectedTask)}</dd>
+            </dl>
+          )}
+        </div>
+        {selectedTaskLoadErrorValue !== null && (
+          <div className="mt-1 flex items-center gap-2 text-xs text-red-500">
+            <span>{selectedTaskLoadErrorValue}</span>
+          </div>
+        )}
       </div>
 
-      {/* Models */}
       <div className="flex flex-col gap-1">
         <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">
           Models
         </label>
         <div className="flex flex-col gap-0.5">
-          {KNOWN_MODELS.map((m) => (
-            <label key={m} className="flex items-center gap-1.5 text-sm">
+          {KNOWN_MODELS.map((model) => (
+            <label key={model} className="flex items-center gap-1.5 text-sm">
               <input
                 type="checkbox"
-                checked={state.checkedModels.has(m)}
-                onChange={() => toggleModel(m)}
+                checked={state.checkedModels.has(model)}
+                onChange={() => toggleModel(model)}
               />
-              {m}
+              {model}
             </label>
           ))}
         </div>
         {state.extraModels.length > 0 && (
           <div className="mt-1 flex flex-col gap-0.5">
-            {state.extraModels.map((m) => (
-              <div key={m} className="flex items-center gap-1 text-sm">
+            {state.extraModels.map((model) => (
+              <div key={model} className="flex items-center gap-1 text-sm">
                 <span className="rounded bg-sky-50 px-1.5 py-0.5 text-xs text-sky-700">
-                  {m}
+                  {model}
                 </span>
                 <button
                   type="button"
-                  aria-label={`Remove model ${m}`}
+                  aria-label={`Remove model ${model}`}
                   className="text-stone-400 hover:text-red-500"
-                  onClick={() => removeExtraModel(m)}
+                  onClick={() => removeExtraModel(model)}
                 >
                   ×
                 </button>
@@ -203,7 +259,10 @@ export function LaunchForm() {
             value={freeText}
             onChange={(e) => setFreeText(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") { e.preventDefault(); addFreeTextModel(); }
+              if (e.key === "Enter") {
+                e.preventDefault();
+                addFreeTextModel();
+              }
             }}
           />
           <button
@@ -216,7 +275,6 @@ export function LaunchForm() {
         </div>
       </div>
 
-      {/* Condition */}
       <div className="flex flex-col gap-1">
         <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">
           Condition
@@ -250,7 +308,6 @@ export function LaunchForm() {
         </div>
       </div>
 
-      {/* Grade */}
       <div className="flex flex-col gap-1">
         <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">
           Grade
@@ -259,24 +316,33 @@ export function LaunchForm() {
           <input
             type="checkbox"
             checked={state.should_grade}
+            disabled={gradeDisabled}
             onChange={(e) =>
-              setState((s) => ({ ...s, should_grade: e.target.checked }))
+              setState((current) => ({ ...current, should_grade: e.target.checked }))
             }
           />
           Run grader
         </label>
+        {gradeDisabled && selectedTask !== null && (
+          <p className="text-xs text-stone-500">No valid grader for this task.</p>
+        )}
       </div>
 
-      {/* Launch */}
       <div className="flex flex-col justify-end gap-1.5">
-        {!result.ok && state.target !== "" && (
+        {!result.ok && selectedTaskName !== null && (
           <p className="text-xs text-red-500">{result.error}</p>
         )}
-        {warning && <p className="text-xs text-amber-600">⚠ {warning}</p>}
-        {launchError && <p className="text-xs text-red-500">{launchError}</p>}
+        {warning !== null && <p className="text-xs text-amber-600">⚠ {warning}</p>}
+        {launchError !== null && <p className="text-xs text-red-500">{launchError}</p>}
         <button
           className="rounded bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"
-          disabled={!result.ok || is_pending}
+          disabled={
+            is_pending ||
+            selectedTask === null ||
+            selectedTaskLoadErrorValue !== null ||
+            !result.ok ||
+            (state.should_grade && !selectedTask.has_grader)
+          }
           onClick={() => void handleLaunch()}
         >
           {is_pending ? "Launching…" : "Launch"}
