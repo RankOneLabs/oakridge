@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "bun run --hot server.ts",
     "dev:pwa": "cd pwa && vite",
-    "start": "bun run server.ts",
+    "start": "bun run build:pwa && bun run server.ts",
     "build:pwa": "cd pwa && vite build",
     "test": "bun test"
   },
