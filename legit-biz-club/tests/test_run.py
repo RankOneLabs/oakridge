@@ -19,14 +19,20 @@ from legit_biz_club.study import registry
 # ---------------------------------------------------------------------------
 
 _VALID_BASE: dict[str, object] = {
-    "target": "prose_substrate_thesis",
+    "task": "prose_substrate_thesis",
     "model_pool": ["claude-sonnet-4-5"],
     "condition": {"kind": "single_agent", "n": 1},
 }
 
 
 def _spec(**overrides: object) -> dict[str, object]:
-    return {**_VALID_BASE, **overrides}
+    base = dict(_VALID_BASE)
+    if "target" in overrides:
+        base.pop("task", None)
+    if "task" in overrides:
+        base.pop("target", None)
+    base.update(overrides)
+    return base
 
 
 # ---------------------------------------------------------------------------
@@ -37,14 +43,15 @@ def _spec(**overrides: object) -> dict[str, object]:
 @pytest.mark.parametrize("key", list(registry.TARGET_FACTORIES))
 def test_target_name_matches_key(key: str) -> None:
     spec = RunSpec.from_dict(_spec(target=key))
-    target = registry.TARGET_FACTORIES[spec.target]()
+    assert spec.task == key
+    target = registry.TARGET_FACTORIES[spec.task]()
     assert target.name == key
 
 
 @pytest.mark.parametrize("key", list(registry.TARGET_FACTORIES))
 def test_grader_factory_resolves_for_all_targets(key: str) -> None:
     spec = RunSpec.from_dict(_spec(target=key))
-    grader = registry.grader_factory_for(spec.target)
+    grader = registry.grader_factory_for(spec.task)
     assert callable(grader)
 
 
@@ -215,6 +222,84 @@ def test_grade_false_accepted() -> None:
 def test_grade_non_bool_raises() -> None:
     with pytest.raises(ValueError, match="grade"):
         RunSpec.from_dict(_spec(grade=1))
+
+
+# ---------------------------------------------------------------------------
+# New task field / local task resolution
+# ---------------------------------------------------------------------------
+
+
+def _write_local_task_dir(tmp_path: Path, name: str, *, artifact_type: str) -> Path:
+    local_task_dir = tmp_path / "local_tasks"
+    local_task_dir.mkdir()
+    local_task = {
+        "name": name,
+        "artifact_type": artifact_type,
+        "artifact_filename": "draft.md" if artifact_type == "prose" else "impl.py",
+        "seed_content": "seed",
+        "brief": {
+            "target_spec": "ship a thing",
+            "success_criteria": ["it ships"],
+            "constraints": ["be concise"],
+        },
+        "model_pool": ["claude-sonnet-4-5"],
+        "frame_pool": ["precision"],
+    }
+    (local_task_dir / f"{name}.json").write_text(
+        json.dumps(local_task),
+        encoding="utf-8",
+    )
+    return local_task_dir
+
+
+def test_task_field_parses_new_run_spec_shape(tmp_path: Path) -> None:
+    local_task_dir = _write_local_task_dir(
+        tmp_path, "custom_prose", artifact_type="prose"
+    )
+    spec = RunSpec.from_dict(
+        {
+            "task": "custom_prose",
+            "model_pool": ["claude-sonnet-4-5"],
+            "condition": {"kind": "single_agent", "n": 1},
+            "grade": False,
+            "local_task_dir": str(local_task_dir),
+        }
+    )
+    task = spec.resolve_task()
+    assert spec.task == "custom_prose"
+    assert spec.target == "custom_prose"
+    assert task.name == "custom_prose"
+    assert task.artifact_filename == "draft.md"
+
+
+def test_legacy_target_parsing_remains_compatible() -> None:
+    spec = RunSpec.from_dict(
+        {
+            "target": "prose_substrate_thesis",
+            "model_pool": ["claude-sonnet-4-5"],
+            "condition": {"kind": "single_agent", "n": 1},
+        }
+    )
+    assert spec.task == "prose_substrate_thesis"
+    assert spec.target == "prose_substrate_thesis"
+
+
+def test_grade_true_rejects_local_task_without_grader(tmp_path: Path) -> None:
+    local_task_dir = _write_local_task_dir(
+        tmp_path, "custom_prose", artifact_type="prose"
+    )
+    spec = RunSpec.from_dict(
+        {
+            "task": "custom_prose",
+            "model_pool": ["claude-sonnet-4-5"],
+            "condition": {"kind": "single_agent", "n": 1},
+            "grade": True,
+            "local_task_dir": str(local_task_dir),
+        }
+    )
+    task = spec.resolve_task()
+    with pytest.raises(ValueError, match="grade=true requires a grader"):
+        spec.resolve_grader(task)
 
 
 # ---------------------------------------------------------------------------
