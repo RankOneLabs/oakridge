@@ -6,16 +6,12 @@
  * it calls useHashSelection.select(cell_id) to navigate the existing
  * SSE live view to the new cell.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useLaunch } from "../../hooks/useLaunch";
 import { useHashSelection } from "../../hooks/useHashSelection";
-import {
-  TASK_NAMES,
-  CONDITION_KINDS,
-  RunSpecSchema,
-} from "../../lib/types";
-import type { RunSpec, ConditionSpec } from "../../lib/types";
+import { CONDITION_KINDS, RunSpecSchema } from "../../lib/types";
+import type { ConditionSpec, RunSpec, TaskSummary } from "../../lib/types";
 
 export const KNOWN_MODELS = [
   "claude-sonnet-4-5",
@@ -66,19 +62,35 @@ function minNFor(kind: ConditionSpec["kind"]): number {
     : 1;
 }
 
-export function LaunchForm() {
+export function LaunchForm({
+  tasks,
+  selectedTaskName,
+  onSelectTask,
+}: {
+  tasks: TaskSummary[];
+  selectedTaskName: string | null;
+  onSelectTask: (name: string | null) => void;
+}) {
   const [, select] = useHashSelection();
   const { launch, is_pending, error: launchError } = useLaunch();
   const [warning, setWarning] = useState<string | null>(null);
   const [freeText, setFreeText] = useState("");
-  const [state, setState] = useState<FormState>({
-    target: "",
+  const [state, setState] = useState<FormState>(() => ({
+    target: selectedTaskName ?? "",
     checkedModels: new Set(),
     extraModels: [],
     conditionKind: "single_agent",
     n: 1,
     should_grade: true,
-  });
+  }));
+
+  useEffect(() => {
+    setState((current) =>
+      current.target === (selectedTaskName ?? "")
+        ? current
+        : { ...current, target: selectedTaskName ?? "" },
+    );
+  }, [selectedTaskName]);
 
   const result = buildRunSpec(state);
 
@@ -142,19 +154,21 @@ export function LaunchForm() {
       {/* Target */}
       <div className="flex flex-col gap-1">
         <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">
-          Target
+          Task
         </label>
         <select
           className="rounded border border-stone-300 px-2 py-1 text-sm"
-          value={state.target}
-          onChange={(e) =>
-            setState((s) => ({ ...s, target: e.target.value }))
-          }
+          value={selectedTaskName ?? ""}
+          onChange={(e) => {
+            const next = e.target.value;
+            onSelectTask(next === "" ? null : next);
+            setState((s) => ({ ...s, target: next }));
+          }}
         >
           <option value="">— pick task —</option>
-          {TASK_NAMES.map((t) => (
-            <option key={t} value={t}>
-              {t}
+          {tasks.map((task) => (
+            <option key={task.name} value={task.name}>
+              {task.name}
             </option>
           ))}
         </select>
