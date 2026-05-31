@@ -24,6 +24,7 @@ import type { Tab } from "./lib/types";
 export function App() {
   const { cells } = useCells();
   const [selectedId, select] = useHashSelection();
+  const [selectedTaskName, setSelectedTaskName] = useState<string | null>(null);
   const events = useCellEvents(selectedId);
   // Debounce the artifact / commits / detail re-fetch. Without this,
   // selecting a cell with a long backlog turns one SSE replay into a
@@ -57,7 +58,10 @@ export function App() {
         <h2 className="px-4 pt-3 text-xs font-semibold uppercase tracking-wide text-stone-400">
           New run
         </h2>
-        <LaunchForm />
+        <LaunchForm
+          selectedTaskName={selectedTaskName}
+          onSelectedTaskNameChange={setSelectedTaskName}
+        />
         <ActiveRunsStrip />
       </section>
       <div className="flex flex-1 overflow-hidden">
