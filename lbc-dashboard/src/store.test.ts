@@ -422,6 +422,8 @@ describe("task + grader config stores", () => {
       success_criteria: ["covers the architecture"],
       constraints: ["keep it short"],
     },
+    model_pool: ["claude-sonnet-4-5"],
+    frame_pool: ["precision"],
     grader: { kind: "registered", key: "prose_substrate_thesis" },
   };
 
@@ -435,6 +437,8 @@ describe("task + grader config stores", () => {
       success_criteria: ["passes tests"],
       constraints: [],
     },
+    model_pool: ["claude-opus-4-7"],
+    frame_pool: [],
     grader: { kind: "none" },
   };
 
@@ -444,6 +448,8 @@ describe("task + grader config stores", () => {
       label: "Brief judge",
       supported_artifact_types: ["prose"],
       capabilities: ["brief-criteria", "llm-judge"],
+      source: "builtin",
+      config_required: false,
       config_schema: { judge_model: "" },
     },
     {
@@ -451,6 +457,8 @@ describe("task + grader config stores", () => {
       label: "LeetCode #3 mechanical grader",
       supported_artifact_types: ["code"],
       capabilities: ["pytest", "mypy"],
+      source: "builtin",
+      config_required: false,
       config_schema: { timeout_s: 0 },
     },
   ];

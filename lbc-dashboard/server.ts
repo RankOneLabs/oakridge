@@ -86,6 +86,8 @@ function taskDraftLikeForGraderValidation(task: {
       artifact_type: task.artifact_type as TaskDraft["artifact_type"],
       artifact_filename: task.artifact_filename,
       seed_content: "",
+      model_pool: [],
+      frame_pool: [],
       brief: task.brief,
       grader: task.grader ?? { kind: "none" },
     };
@@ -95,6 +97,8 @@ function taskDraftLikeForGraderValidation(task: {
     artifact_type: task.artifact_type as TaskDraft["artifact_type"],
     artifact_filename: task.artifact_filename,
     seed_content: "",
+    model_pool: [],
+    frame_pool: [],
     brief: task.brief,
     grader:
       task.grader_key === null

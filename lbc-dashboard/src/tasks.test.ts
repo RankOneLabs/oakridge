@@ -28,6 +28,8 @@ const LOCAL_TASK = {
     success_criteria: ["covers the main point"],
     constraints: ["keep it concise"],
   },
+  model_pool: ["claude-sonnet-4-5"],
+  frame_pool: ["precision"],
   grader: { kind: "none" as const },
 };
 

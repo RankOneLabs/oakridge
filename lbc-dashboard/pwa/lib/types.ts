@@ -15,6 +15,7 @@ export type {
   TaskBrief,
   TaskDraft,
   TaskGraderRef,
+  TaskDetail,
   TaskSummary,
   GraderSummary,
   GraderConfigDraft,
@@ -33,5 +34,10 @@ export {
   RunSpecSchema,
   RunsResponseSchema,
   LaunchResponseSchema,
+  TaskDetailSchema,
+  TaskDraftSchema,
+  TasksResponseSchema,
+  GradersResponseSchema,
+  GraderConfigsResponseSchema,
   conditionName,
 } from "../../src/contracts";

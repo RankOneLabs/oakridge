@@ -467,6 +467,7 @@ const BUILTIN_TASK_DETAILS: readonly TaskBuiltinDetail[] = [
     name: "prose_substrate_thesis",
     artifact_type: "prose",
     artifact_filename: "thesis.md",
+    seed_content: "",
     brief: {
       target_spec:
         "Draft a technical blog post explaining oakridge's substrate-mediated coordination architecture to senior software engineers.",
@@ -483,6 +484,24 @@ const BUILTIN_TASK_DETAILS: readonly TaskBuiltinDetail[] = [
         "no fictional code APIs",
       ],
     },
+    model_pool: [
+      "claude-sonnet-4-5",
+      "gpt-5-mini",
+      "gemini-2.5-pro",
+      "claude-opus-4-7",
+      "gpt-5",
+      "gemini-2.5-flash",
+      "claude-haiku-4-5",
+    ],
+    frame_pool: [
+      "precision",
+      "skepticism",
+      "synthesis",
+      "user-empathy",
+      "first-principles",
+      "concision",
+      "voice",
+    ],
     has_grader: true,
     grader_key: "prose_substrate_thesis",
     source: "builtin",
@@ -491,6 +510,9 @@ const BUILTIN_TASK_DETAILS: readonly TaskBuiltinDetail[] = [
     name: "code_leetcode_longest_substring",
     artifact_type: "code",
     artifact_filename: "solution.py",
+    seed_content:
+      "def length_of_longest_substring(s: str) -> int:\n" +
+      "    raise NotImplementedError\n",
     brief: {
       target_spec:
         "Implement length_of_longest_substring(s: str) -> int in solution.py.",
@@ -503,6 +525,24 @@ const BUILTIN_TASK_DETAILS: readonly TaskBuiltinDetail[] = [
         "no third-party imports",
       ],
     },
+    model_pool: [
+      "claude-sonnet-4-5",
+      "gpt-5",
+      "claude-opus-4-7",
+      "gemini-2.5-pro",
+      "gpt-5-mini",
+      "claude-haiku-4-5",
+      "gemini-2.5-flash",
+    ],
+    frame_pool: [
+      "type-safety",
+      "test-coverage",
+      "minimalism",
+      "defensive-programming",
+      "performance",
+      "readability",
+      "explicit-errors",
+    ],
     has_grader: true,
     grader_key: "code_leetcode_longest_substring",
     source: "builtin",
@@ -511,6 +551,9 @@ const BUILTIN_TASK_DETAILS: readonly TaskBuiltinDetail[] = [
     name: "code_leetcode_trapping_rain_water",
     artifact_type: "code",
     artifact_filename: "solution.py",
+    seed_content:
+      "def trap(height: list[int]) -> int:\n" +
+      "    raise NotImplementedError\n",
     brief: {
       target_spec:
         "Implement trap(height: list[int]) -> int in solution.py.",
@@ -523,6 +566,24 @@ const BUILTIN_TASK_DETAILS: readonly TaskBuiltinDetail[] = [
         "no third-party imports",
       ],
     },
+    model_pool: [
+      "claude-sonnet-4-5",
+      "gpt-5",
+      "claude-opus-4-7",
+      "gemini-2.5-pro",
+      "gpt-5-mini",
+      "claude-haiku-4-5",
+      "gemini-2.5-flash",
+    ],
+    frame_pool: [
+      "type-safety",
+      "test-coverage",
+      "minimalism",
+      "defensive-programming",
+      "performance",
+      "readability",
+      "explicit-errors",
+    ],
     has_grader: true,
     grader_key: "code_leetcode_trapping_rain_water",
     source: "builtin",
@@ -531,6 +592,9 @@ const BUILTIN_TASK_DETAILS: readonly TaskBuiltinDetail[] = [
     name: "code_leetcode_regex_matching",
     artifact_type: "code",
     artifact_filename: "solution.py",
+    seed_content:
+      "def is_match(s: str, p: str) -> bool:\n" +
+      "    raise NotImplementedError\n",
     brief: {
       target_spec:
         "Implement is_match(s: str, p: str) -> bool in solution.py.",
@@ -543,6 +607,24 @@ const BUILTIN_TASK_DETAILS: readonly TaskBuiltinDetail[] = [
         "no third-party imports",
       ],
     },
+    model_pool: [
+      "claude-sonnet-4-5",
+      "gpt-5",
+      "claude-opus-4-7",
+      "gemini-2.5-pro",
+      "gpt-5-mini",
+      "claude-haiku-4-5",
+      "gemini-2.5-flash",
+    ],
+    frame_pool: [
+      "type-safety",
+      "test-coverage",
+      "minimalism",
+      "defensive-programming",
+      "performance",
+      "readability",
+      "explicit-errors",
+    ],
     has_grader: true,
     grader_key: "code_leetcode_regex_matching",
     source: "builtin",
@@ -551,6 +633,11 @@ const BUILTIN_TASK_DETAILS: readonly TaskBuiltinDetail[] = [
     name: "code_leetcode_median_two_sorted_arrays",
     artifact_type: "code",
     artifact_filename: "solution.py",
+    seed_content:
+      "def find_median_sorted_arrays(\n" +
+      "    nums1: list[int], nums2: list[int]\n" +
+      ") -> float:\n" +
+      "    raise NotImplementedError\n",
     brief: {
       target_spec:
         "Implement find_median_sorted_arrays(nums1: list[int], nums2: list[int]) -> float in solution.py.",
@@ -565,6 +652,24 @@ const BUILTIN_TASK_DETAILS: readonly TaskBuiltinDetail[] = [
         "do not sort the input arrays",
       ],
     },
+    model_pool: [
+      "claude-sonnet-4-5",
+      "gpt-5",
+      "claude-opus-4-7",
+      "gemini-2.5-pro",
+      "gpt-5-mini",
+      "claude-haiku-4-5",
+      "gemini-2.5-flash",
+    ],
+    frame_pool: [
+      "type-safety",
+      "test-coverage",
+      "minimalism",
+      "defensive-programming",
+      "performance",
+      "readability",
+      "explicit-errors",
+    ],
     has_grader: true,
     grader_key: "code_leetcode_median_two_sorted_arrays",
     source: "builtin",
@@ -597,6 +702,8 @@ const BUILTIN_GRADER_SUMMARIES: readonly GraderSummary[] = [
     label: "Brief judge",
     supported_artifact_types: ["prose"],
     capabilities: ["brief-criteria", "llm-judge"],
+    source: "builtin",
+    config_required: false,
     config_schema: null,
   },
   {
@@ -604,6 +711,8 @@ const BUILTIN_GRADER_SUMMARIES: readonly GraderSummary[] = [
     label: "LeetCode #3 mechanical grader",
     supported_artifact_types: ["code"],
     capabilities: ["pytest", "mypy"],
+    source: "builtin",
+    config_required: false,
     config_schema: null,
   },
   {
@@ -611,6 +720,8 @@ const BUILTIN_GRADER_SUMMARIES: readonly GraderSummary[] = [
     label: "LeetCode #42 mechanical grader",
     supported_artifact_types: ["code"],
     capabilities: ["pytest", "mypy"],
+    source: "builtin",
+    config_required: false,
     config_schema: null,
   },
   {
@@ -618,6 +729,8 @@ const BUILTIN_GRADER_SUMMARIES: readonly GraderSummary[] = [
     label: "LeetCode #10 mechanical grader",
     supported_artifact_types: ["code"],
     capabilities: ["pytest", "mypy"],
+    source: "builtin",
+    config_required: false,
     config_schema: null,
   },
   {
@@ -625,6 +738,8 @@ const BUILTIN_GRADER_SUMMARIES: readonly GraderSummary[] = [
     label: "LeetCode #4 mechanical grader",
     supported_artifact_types: ["code"],
     capabilities: ["pytest", "mypy", "perf"],
+    source: "builtin",
+    config_required: false,
     config_schema: null,
   },
 ] as const satisfies readonly GraderSummary[];
