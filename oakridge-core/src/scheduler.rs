@@ -118,6 +118,7 @@ impl RunTask {
             Some(st) => st,
             None => {
                 tracing::error!(stage_key, stage_type = node.stage_type, "stage type not registered");
+                self.fail_activation(stage_key, StageInstanceId(Uuid::new_v4())).await;
                 return;
             }
         };
@@ -133,6 +134,7 @@ impl RunTask {
             Ok(c) => c,
             Err(e) => {
                 tracing::error!(stage_key, "build_config failed: {}", e);
+                self.fail_activation(stage_key, StageInstanceId(Uuid::new_v4())).await;
                 return;
             }
         };
@@ -155,6 +157,7 @@ impl RunTask {
         };
         if let Err(e) = queries::insert_stage_instance(&self.db, &si).await {
             tracing::error!(stage_key, "insert_stage_instance failed: {}", e);
+            self.fail_activation(stage_key, si_id).await;
             return;
         }
         self.index.insert(stage_key.clone(), (si_id, StageStatus::Pending));
@@ -186,6 +189,18 @@ impl RunTask {
                 }).await;
             }
         }
+    }
+
+    /// Mark a stage that could not be launched (unregistered type, build_config
+    /// failure, or insert failure) as Failed in-memory and emit a StatusChanged so
+    /// the run reaches quiescence as Failed instead of hanging in Running forever.
+    async fn fail_activation(&mut self, stage_key: &StageKey, si_id: StageInstanceId) {
+        self.index.insert(stage_key.clone(), (si_id, StageStatus::Failed));
+        let _ = self.events_tx.send(ExecutorEvent::StatusChanged {
+            instance_id: si_id,
+            status: StageStatus::Failed,
+            parked_reason: None,
+        }).await;
     }
 
     async fn on_artifact_emitted(&mut self, artifact: Artifact, output_name: String) {
@@ -331,8 +346,25 @@ impl Coordinator {
     }
 
     pub async fn start_run(&self, run_id: WorkflowRunId) -> anyhow::Result<()> {
+        // Ignore a duplicate start for an already-scheduled run; a second RunTask
+        // would race the first and corrupt shared run state.
+        if self.runs.lock().await.contains_key(&run_id) {
+            return Ok(());
+        }
+
         let run = queries::get_workflow_run_by_id(&self.db, &run_id).await?;
         let def = queries::get_workflow_def_by_id(&self.db, &run.workflow_def_id).await?;
+
+        // A graph with no stages emits no events, so a spawned RunTask would hang in
+        // Running forever with no handle to reap it. Short-circuit to Done.
+        if def.graph.stages.is_empty() {
+            queries::update_workflow_run_status(&self.db, &run_id, RunStatus::Done).await?;
+            self.bus.publish(run_id, SubstrateEvent::RunStatusChanged {
+                run_id,
+                status: RunStatus::Done,
+            });
+            return Ok(());
+        }
 
         // Transition run to Running before the scheduler begins executing stages.
         queries::update_workflow_run_status(&self.db, &run_id, RunStatus::Running).await?;
@@ -364,6 +396,9 @@ impl Coordinator {
         // Acquire the map lock before spawning so self-reaping cannot race ahead
         // of handle registration.
         let mut runs = self.runs.lock().await;
+        if runs.contains_key(&run_id) {
+            return Ok(());
+        }
         let join = tokio::spawn(async move {
             let mut t = task;
             t.prime_source_stages().await;
@@ -518,6 +553,9 @@ impl Coordinator {
             // Acquire the map lock before spawning so self-reaping cannot race
             // ahead of handle registration.
             let mut runs = self.runs.lock().await;
+            if runs.contains_key(&run_id) {
+                continue;
+            }
             let join = tokio::spawn(async move { task.run().await });
             runs.insert(run_id, RunHandle { control_tx, join });
         }
@@ -974,5 +1012,65 @@ mod tests {
         wait_run_done(&pool, run.id).await;
         let run_final = queries::get_workflow_run_by_id(&pool, &run.id).await.unwrap();
         assert_eq!(run_final.status, RunStatus::Done);
+    }
+
+    // ── (e) empty graph short-circuits to Done ────────────────────────────────
+
+    #[tokio::test]
+    async fn empty_graph_run_short_circuits_to_done() {
+        let pool = make_pool().await;
+        let artifact_reg = make_artifact_registry();
+        let bus = EventBus::new();
+        let coord = Coordinator::new(pool.clone(), Arc::new(StageTypeRegistry::new()), artifact_reg, bus);
+
+        let def = WorkflowDef {
+            id: WorkflowDefId(Uuid::new_v4()),
+            name: format!("wf-{}", Uuid::new_v4()),
+            version: 1,
+            graph: WorkflowGraph { stages: HashMap::new(), edges: vec![] },
+            created_at: fixed_dt(),
+        };
+        let run_id = insert_run_for_def(&pool, &def).await;
+
+        // start_run handles an empty graph synchronously, so the run is terminal on return.
+        coord.start_run(run_id).await.unwrap();
+
+        let run = queries::get_workflow_run_by_id(&pool, &run_id).await.unwrap();
+        assert_eq!(run.status, RunStatus::Done, "empty-graph run must short-circuit to Done, not hang");
+    }
+
+    // ── (f) unregistered stage type fails the run ─────────────────────────────
+
+    #[tokio::test]
+    async fn unregistered_stage_type_fails_run() {
+        let pool = make_pool().await;
+        let artifact_reg = make_artifact_registry();
+        let bus = EventBus::new();
+        // Register no stage types: the source stage's type is unresolved at activation.
+        let coord = Coordinator::new(pool.clone(), Arc::new(StageTypeRegistry::new()), artifact_reg, bus);
+
+        let def = WorkflowDef {
+            id: WorkflowDefId(Uuid::new_v4()),
+            name: format!("wf-{}", Uuid::new_v4()),
+            version: 1,
+            graph: WorkflowGraph {
+                stages: {
+                    let mut m = HashMap::new();
+                    m.insert("A".into(), StageNodeDef {
+                        stage_type: "missing_type".into(), config: json!({}),
+                        inputs: vec![], outputs: vec![],
+                    });
+                    m
+                },
+                edges: vec![],
+            },
+            created_at: fixed_dt(),
+        };
+        let run_id = insert_run_for_def(&pool, &def).await;
+        coord.start_run(run_id).await.unwrap();
+
+        wait_run_done(&pool, run_id).await;
+        let run = queries::get_workflow_run_by_id(&pool, &run_id).await.unwrap();
+        assert_eq!(run.status, RunStatus::Failed, "unregistered stage type must fail the run, not hang in Running");
     }
 }

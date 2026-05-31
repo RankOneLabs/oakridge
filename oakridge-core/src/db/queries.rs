@@ -362,6 +362,7 @@ pub async fn list_workflow_runs(
     if let Some(p) = project_id {
         qb.push(" AND project_id = ").push_bind(p.0.to_string());
     }
+    qb.push(" ORDER BY created_at, id");
     let rows = qb.build_query_as::<WorkflowRunRow>().fetch_all(pool).await?;
     rows.into_iter().map(row_to_workflow_run).collect()
 }
@@ -370,7 +371,7 @@ pub async fn list_active_runs(pool: &SqlitePool) -> crate::Result<Vec<WorkflowRu
     let rows = sqlx::query_as!(
         WorkflowRunRow,
         "SELECT id, workflow_def_id, project_id, status, context, version, created_at, updated_at \
-         FROM workflow_run WHERE status IN ('pending', 'running')",
+         FROM workflow_run WHERE status IN ('pending', 'running') ORDER BY created_at, id",
     )
     .fetch_all(pool)
     .await?;
@@ -575,7 +576,7 @@ pub async fn list_artifacts_for_run(
             ArtifactRow,
             "SELECT id, run_id, stage_instance_id, artifact_type, output_name, label, body, version, \
              parent_artifact_id, created_at \
-             FROM artifact WHERE run_id = ? AND artifact_type = ?",
+             FROM artifact WHERE run_id = ? AND artifact_type = ? ORDER BY created_at, id",
             run_id_str,
             at,
         )
@@ -586,7 +587,7 @@ pub async fn list_artifacts_for_run(
             ArtifactRow,
             "SELECT id, run_id, stage_instance_id, artifact_type, output_name, label, body, version, \
              parent_artifact_id, created_at \
-             FROM artifact WHERE run_id = ?",
+             FROM artifact WHERE run_id = ? ORDER BY created_at, id",
             run_id_str,
         )
         .fetch_all(pool)

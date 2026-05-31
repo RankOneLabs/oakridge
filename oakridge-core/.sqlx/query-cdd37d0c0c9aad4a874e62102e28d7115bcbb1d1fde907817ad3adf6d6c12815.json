@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, run_id, stage_instance_id, artifact_type, output_name, label, body, version, parent_artifact_id, created_at FROM artifact WHERE run_id = ? AND artifact_type = ?",
+  "query": "SELECT id, run_id, stage_instance_id, artifact_type, output_name, label, body, version, parent_artifact_id, created_at FROM artifact WHERE run_id = ? AND artifact_type = ? ORDER BY created_at, id",
   "describe": {
     "columns": [
       {
@@ -70,5 +70,5 @@
       false
     ]
   },
-  "hash": "4c5f8a790c11850620c524826f9b0161ac11c88e7cc70760c8b2624fc3553286"
+  "hash": "cdd37d0c0c9aad4a874e62102e28d7115bcbb1d1fde907817ad3adf6d6c12815"
 }

@@ -40,7 +40,11 @@ impl IntoResponse for AppError {
             }
             AppError::Internal(msg) => {
                 tracing::error!(error = %msg, "unhandled internal error mapped to 500");
-                (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": msg}))).into_response()
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": "internal server error"})),
+                )
+                    .into_response()
             }
         }
     }
@@ -58,7 +62,10 @@ fn map_domain_error(e: &crate::Error) -> (StatusCode, String) {
         }
         _ => {
             tracing::error!(error = %e, "internal domain error mapped to 500");
-            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal server error".to_string(),
+            )
         }
     }
 }
@@ -219,11 +226,16 @@ pub async fn create_workflow_run(
         );
         merged.insert("workdir".into(), Value::String(repo_dir_str));
 
-        // Shallow-merge caller context over injected so caller keys win on conflict
-        if let Value::Object(caller_obj) = caller_context {
-            for (k, v) in caller_obj {
-                merged.insert(k, v);
-            }
+        // Shallow-merge caller context over injected so caller keys win on conflict.
+        // Reject a non-object context instead of silently dropping it.
+        let Value::Object(caller_obj) = caller_context else {
+            return Err(crate::Error::Validation(
+                "context must be a JSON object when project_id is set".into(),
+            )
+            .into());
+        };
+        for (k, v) in caller_obj {
+            merged.insert(k, v);
         }
 
         Value::Object(merged)

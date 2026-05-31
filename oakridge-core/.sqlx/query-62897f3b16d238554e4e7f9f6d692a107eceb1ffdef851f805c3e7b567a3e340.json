@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, run_id, stage_instance_id, artifact_type, output_name, label, body, version, parent_artifact_id, created_at FROM artifact WHERE run_id = ?",
+  "query": "SELECT id, workflow_def_id, project_id, status, context, version, created_at, updated_at FROM workflow_run WHERE status IN ('pending', 'running') ORDER BY created_at, id",
   "describe": {
     "columns": [
       {
@@ -9,66 +9,54 @@
         "type_info": "Text"
       },
       {
-        "name": "run_id",
+        "name": "workflow_def_id",
         "ordinal": 1,
         "type_info": "Text"
       },
       {
-        "name": "stage_instance_id",
+        "name": "project_id",
         "ordinal": 2,
         "type_info": "Text"
       },
       {
-        "name": "artifact_type",
+        "name": "status",
         "ordinal": 3,
         "type_info": "Text"
       },
       {
-        "name": "output_name",
+        "name": "context",
         "ordinal": 4,
         "type_info": "Text"
       },
       {
-        "name": "label",
+        "name": "version",
         "ordinal": 5,
-        "type_info": "Text"
+        "type_info": "Int64"
       },
       {
-        "name": "body",
+        "name": "created_at",
         "ordinal": 6,
         "type_info": "Text"
       },
       {
-        "name": "version",
+        "name": "updated_at",
         "ordinal": 7,
-        "type_info": "Int64"
-      },
-      {
-        "name": "parent_artifact_id",
-        "ordinal": 8,
-        "type_info": "Text"
-      },
-      {
-        "name": "created_at",
-        "ordinal": 9,
         "type_info": "Text"
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 0
     },
     "nullable": [
       false,
       false,
-      false,
-      false,
-      true,
       true,
       false,
-      false,
       true,
+      false,
+      false,
       false
     ]
   },
-  "hash": "9b34069ac175f96ceee1c70c9528093b7b55f66ad35b3704ab9f01a18c7a9dd0"
+  "hash": "62897f3b16d238554e4e7f9f6d692a107eceb1ffdef851f805c3e7b567a3e340"
 }
