@@ -136,7 +136,7 @@ function TaskDetailPanel({
       </div>
 
       <div className="mt-5 space-y-4">
-        <TaskDetailField label="Brief target">
+        <TaskDetailField label="Task brief">
           <div className="rounded-xl bg-stone-50 p-4 text-sm leading-6 text-stone-800">
             {detail.brief.target_spec}
           </div>
@@ -198,7 +198,7 @@ function TaskCreateForm({
     window.localStorage.setItem(TASK_DRAFT_STORAGE_KEY, JSON.stringify(form));
   }, [form]);
 
-  const targetPoolLabel =
+  const modelPoolLabel =
     form.model_pool.length > 0
       ? `${form.model_pool.length} model entries`
       : "defaults will be used";
@@ -342,7 +342,7 @@ function TaskCreateForm({
         <div className="grid gap-4">
           <label className="space-y-1">
             <div className="text-xs font-semibold uppercase tracking-[0.18em] text-stone-400">
-              Brief target
+              Task brief
             </div>
             <textarea
               className="min-h-28 w-full rounded-xl border border-stone-300 px-3 py-2 text-sm"
@@ -380,7 +380,7 @@ function TaskCreateForm({
         <label className="space-y-1">
           <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-[0.18em] text-stone-400">
             <span>Model pool</span>
-            <span className="normal-case tracking-normal text-stone-400">{targetPoolLabel}</span>
+            <span className="normal-case tracking-normal text-stone-400">{modelPoolLabel}</span>
           </div>
           <textarea
             className="min-h-32 w-full rounded-xl border border-stone-300 px-3 py-2 text-sm"

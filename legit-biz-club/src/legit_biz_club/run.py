@@ -1,6 +1,6 @@
 """Spec-driven entrypoint for legit-biz-club.
 
-Reads a JSON run-spec, validates it, resolves target/condition/grader
+Reads a JSON run-spec, validates it, resolves task/condition/grader
 against the study registry, applies the model_pool override, wires the
 events.jsonl tee, and drives exactly one cell via run_cell.
 
@@ -64,13 +64,13 @@ class RunSpec:
 
     @property
     def target(self) -> str:
-        """Compatibility alias for older callers."""
+        """Legacy target compatibility alias for older callers."""
         return self.task
 
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> RunSpec:
         task_raw = data.get("task")
-        target_raw = data.get("target")
+        target_raw = data.get("target")  # legacy target compatibility
         if task_raw is None and target_raw is None:
             raise ValueError("task is required")
         if task_raw is not None and target_raw is not None:

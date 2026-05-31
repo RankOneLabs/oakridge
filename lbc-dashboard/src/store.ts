@@ -2,7 +2,7 @@
  * Cell discovery + event tailing.
  *
  * Reads from legit-biz-club's per-cell sidecars on disk:
- *   <run_root>/<run_ts>/<target_name>/<condition_name>/
+ *   <run_root>/<run_ts>/<task_name>/<condition_name>/
  *     ├── <artifact_filename>     final artifact
  *     ├── events.jsonl            workspace event log (one JSON record/line)
  *     ├── commits/v0001.<ext> ... per-commit snapshots
@@ -61,12 +61,12 @@ export function resolveRunRoot(): string {
 
 /**
  * Build the cell_id from the path segments. URL-safe and resilient
- * to unusual characters in target/condition names: each segment is
+ * to unusual characters in task/condition names: each segment is
  * encodeURIComponent'd, joined with ``:`` (which encodeURIComponent
  * escapes to ``%3A`` so it can't appear inside an encoded segment).
  *
- * The previous ``__`` delimiter would mis-split a target named e.g.
- * ``my__custom_target``. The harness doesn't validate target/
+ * The previous ``__`` delimiter would mis-split a task named e.g.
+ * ``my__custom_target``. The harness doesn't validate task/
  * condition names, so a future operator-supplied name with any
  * delimiter would be a footgun.
  */
@@ -211,7 +211,7 @@ async function summarize(
     cell_id: cellIdFor(runTs, target, condition),
     run_ts: runTs,
     // Filesystem directory names cross the brand boundary here: from
-    // this point on the values carry ``TargetName`` / ``ConditionName``
+    // From this point on the values carry ``TargetName`` / ``ConditionName``
     // so consumers can't accidentally swap them for unrelated strings.
     target_name: target as TargetName,
     condition_name: condition as ConditionName,
@@ -297,7 +297,7 @@ export async function readEvents(cellDir: string): Promise<CellEvent[]> {
 
 async function detectArtifactFilename(cellDir: string): Promise<string | null> {
   // The artifact lives at <cell_dir>/<artifact_filename>. We don't
-  // know the filename a priori (target-dependent), so scan the dir
+  // know the filename a priori (task-dependent), so scan the dir
   // for the file that isn't a known sidecar.
   //
   // Also skip dotfiles and ``.tmp`` files: the harness's writers use

@@ -1,5 +1,5 @@
 /**
- * One row in the cell list sidebar. Shows target name, status
+ * One row in the cell list sidebar. Shows task name, status
  * pill, condition + event count, and the run timestamp. Highlights
  * when selected.
  *

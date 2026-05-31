@@ -7,7 +7,7 @@ Exports:
 - :data:`GRADER_CATALOG` — immutable grader metadata for safe grader selection
 - :data:`CONDITION_FACTORIES` — condition kind -> keyword-only-``n`` factory
   returning :class:`ConditionConfig`
-- :func:`grader_factory_for` — resolve a :class:`GraderFactory` by target key
+- :func:`grader_factory_for` — resolve a :class:`GraderFactory` by task key
 - :func:`task_summary_for` — resolve a registered task summary by name
 - :func:`grader_metadata_for` — resolve a registered grader metadata entry by key
 - :func:`canonical_condition_name` — produce the on-disk condition directory segment
@@ -200,23 +200,23 @@ def grader_metadata_for(grader_key: str) -> GraderMetadata:
 
 
 def grader_factory_for(
-    target_key: str,
+    task_key: str,
     *,
     judge_llm: LLMClient | None = None,
 ) -> GraderFactory:
-    """Return a :class:`GraderFactory` for the given target key.
+    """Return a :class:`GraderFactory` for the given task key.
 
     ``judge_llm`` is forwarded to the prose grader factory and ignored
-    for all leetcode targets (which are fully mechanical). Pass ``None``
+    for all leetcode tasks (which are fully mechanical). Pass ``None``
     (the default) to let the prose factory fall back to its own default
     (``claude-sonnet-4-5``).
 
-    Raises :class:`ValueError` for unknown ``target_key``.
+    Raises :class:`ValueError` for unknown ``task_key``.
     """
     try:
-        builder = _GRADER_FACTORY_BUILDERS[target_key]
+        builder = _GRADER_FACTORY_BUILDERS[task_key]
     except KeyError as exc:
-        raise ValueError(f"no grader factory for target {target_key!r}") from exc
+        raise ValueError(f"no grader factory for task {task_key!r}") from exc
     return builder(judge_llm)
 
 
