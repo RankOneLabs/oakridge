@@ -161,7 +161,7 @@ export class RunRegistry {
   }): RunRecord {
     const cell_id = cellIdFor(
       runTs,
-      spec.target,
+      spec.task,
       conditionName(spec.condition.kind, spec.condition.n),
     );
 
@@ -246,7 +246,7 @@ export class RunRegistry {
       runId: record.runId,
       run_ts: record.run_ts,
       cell_id: record.cell_id,
-      target: record.spec.target,
+      task: record.spec.task,
       condition: record.spec.condition,
       status: record.status,
       started_ms: record.started_ms,

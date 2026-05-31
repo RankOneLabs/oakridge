@@ -5,9 +5,9 @@
  * between the Hono backend (server.ts + store.ts) and the PWA
  * (pwa/lib/types.ts re-exports the inferred types).
  *
- * Inbound request bodies don't exist — every route is GET and
- * path params validate inside store.ts::parseCellId. So this file
- * only carries response shapes.
+ * Inbound request bodies mostly don't exist yet, but launch now
+ * accepts a task-based run spec. The public schema is task-based;
+ * compatibility parsing for older callers lives at the server edge.
  */
 import { z } from "zod";
 
@@ -17,24 +17,65 @@ import type { CellId, ConditionName, TargetName } from "../pwa/lib/ids";
 // ``z.object``: in Zod v4, ``z.object`` strips unknown keys at parse
 // time, which would let a new field added to store.ts pass silently
 // to the wire and reach the PWA. The whole point of the boundary
-// parse in server.ts is to *catch* that drift as a visible 500 —
-// strict mode is what makes that work.
+// parse in server.ts is to *catch* that drift as a visible 500 — strict
+// mode is what makes that work.
+
+// ---------------------------------------------------------------------------
+// Shared primitives
+// ---------------------------------------------------------------------------
+
+export const ARTIFACT_TYPES = ["prose", "code"] as const;
+export const TASK_SOURCES = ["builtin", "local"] as const;
+export const TASK_NAMES = [
+  "prose_substrate_thesis",
+  "code_leetcode_longest_substring",
+  "code_leetcode_trapping_rain_water",
+  "code_leetcode_regex_matching",
+  "code_leetcode_median_two_sorted_arrays",
+] as const;
+export const CONDITION_KINDS = [
+  "single_agent",
+  "ensemble_single_round",
+  "ensemble_multi_round",
+  "ensemble_incremental",
+] as const;
+const RESERVED_ARTIFACT_FILENAMES = new Set([
+  "commits",
+  "agent_memory",
+  "events.jsonl",
+  "eval_scores.json",
+]);
+const SNAKE_CASE_NAME_RE = /^[a-z][a-z0-9_]*$/;
+
+function isBareFilename(value: string): boolean {
+  return (
+    value.length > 0 &&
+    value !== "." &&
+    value !== ".." &&
+    !value.includes("/") &&
+    !value.includes("\\")
+  );
+}
+
+function isSnakeCaseName(value: string): boolean {
+  return SNAKE_CASE_NAME_RE.test(value);
+}
 
 // ``cell_id`` / ``target_name`` / ``condition_name`` carry the brand
-// types defined in pwa/lib/ids.ts (cohort 1's product). We don't use
-// zod's ``.brand<>()`` because that produces a structurally distinct
-// branded type that wouldn't be assignable to/from cohort 1's
-// ``string & { readonly __brand: 'X' }`` pattern — every consumer
-// would have to choose a side. ``.transform`` re-uses cohort 1's
-// brand authoritatively: the runtime value is still a plain string;
-// only the inferred TS type carries the brand.
+// types defined in pwa/lib/ids.ts. We don't use zod's ``.brand<>()``
+// because that produces a structurally distinct branded type that
+// wouldn't be assignable to/from the project's ``string & { readonly
+// __brand: 'X' }`` pattern — every consumer would have to choose a
+// side. ``.transform`` re-uses the existing brand authoritatively: the
+// runtime value is still a plain string; only the inferred TS type
+// carries the brand.
 
 export const CellEventSchema = z.strictObject({
   ts: z.string(),
   kind: z.string(),
   // Payload shapes are kind-dependent and heterogeneous; a
-  // discriminated union over kinds would need an audit of
-  // legit-biz-club's event vocabulary that is out of scope here.
+  // discriminated union over kinds would need an audit of the full
+  // event vocabulary that is out of scope here.
   payload: z.record(z.string(), z.unknown()),
 });
 
@@ -57,10 +98,10 @@ export const CellSummarySchema = z.strictObject({
   event_count: z.number(),
 });
 
-// Spread the summary shape rather than calling ``.extend(...)`` so
-// the resulting schema is unambiguously a fresh strict object — no
-// dependence on whether ``.extend`` preserves strictness across
-// Zod versions.
+// Spread the summary shape rather than calling ``.extend(...)`` so the
+// resulting schema is unambiguously a fresh strict object — no
+// dependence on whether ``.extend`` preserves strictness across Zod
+// versions.
 export const CellDetailSchema = z.strictObject({
   ...CellSummarySchema.shape,
   events: z.array(CellEventSchema),
@@ -100,28 +141,103 @@ export const CommitsResponseSchema = z.strictObject({
 
 // --- PWA UI state --------------------------------------------------------
 
-// ``Tab`` doesn't cross the wire, but it's consumed in both App.tsx
-// (state) and CellPanel.tsx (rendering). Putting the enum here keeps
-// the "one shared definition" rule consistent across the codebase
-// rather than carving out an exception for non-wire string unions.
 export const TabSchema = z.enum(["events", "artifact", "commits", "scores"]);
 
-// --- run spec schemas ----------------------------------------------------
+export const TaskBriefSchema = z.strictObject({
+  target_spec: z.string().trim().min(1),
+  success_criteria: z.array(z.string().trim().min(1)).nonempty(),
+  constraints: z.array(z.string().trim().min(1)).default([]),
+});
 
-export const TARGET_KEYS = [
-  "prose_substrate_thesis",
-  "code_leetcode_longest_substring",
-  "code_leetcode_trapping_rain_water",
-  "code_leetcode_regex_matching",
-  "code_leetcode_median_two_sorted_arrays",
-] as const;
+export const TaskGraderRefSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("none"),
+  }),
+  z.strictObject({
+    kind: z.literal("registered"),
+    key: z.string().trim().min(1),
+  }),
+]);
 
-export const CONDITION_KINDS = [
-  "single_agent",
-  "ensemble_single_round",
-  "ensemble_multi_round",
-  "ensemble_incremental",
-] as const;
+export const TaskDraftSchema = z
+  .strictObject({
+    name: z.string().trim().min(1),
+    artifact_type: z.enum(ARTIFACT_TYPES),
+    artifact_filename: z.string().trim().min(1),
+    seed_content: z.string(),
+    brief: TaskBriefSchema,
+    grader: TaskGraderRefSchema,
+  })
+  .superRefine((task, ctx) => {
+    if (!isSnakeCaseName(task.name)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["name"],
+        message: "name must be snake_case and start with a letter",
+      });
+    }
+    if (!isBareFilename(task.artifact_filename)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["artifact_filename"],
+        message: "artifact_filename must be a single bare filename",
+      });
+    }
+    if (RESERVED_ARTIFACT_FILENAMES.has(task.artifact_filename.toLowerCase())) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["artifact_filename"],
+        message: "artifact_filename collides with a reserved sidecar name",
+      });
+    }
+    if (
+      task.artifact_type === "code" &&
+      !task.artifact_filename.endsWith(".py")
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["artifact_filename"],
+        message: "code tasks require a .py artifact_filename",
+      });
+    }
+  });
+
+export const TaskSummarySchema = z.strictObject({
+  name: z.string().trim().min(1),
+  artifact_type: z.enum(ARTIFACT_TYPES),
+  artifact_filename: z.string().trim().min(1),
+  has_grader: z.boolean(),
+  grader_key: z.string().trim().min(1).nullable(),
+  source: z.enum(TASK_SOURCES),
+});
+
+export const GraderSummarySchema = z.strictObject({
+  key: z.string().trim().min(1),
+  label: z.string().trim().min(1),
+  supported_artifact_types: z.array(z.enum(ARTIFACT_TYPES)).nonempty(),
+  capabilities: z.array(z.string().trim().min(1)),
+  config_schema: z.record(z.string(), z.unknown()).nullable(),
+});
+
+export const GraderConfigDraftSchema = z
+  .strictObject({
+    task_name: z.string().trim().min(1),
+    grader_key: z.string().trim().min(1),
+    config: z.record(z.string(), z.unknown()),
+  })
+  .superRefine((draft, ctx) => {
+    if (!isSnakeCaseName(draft.task_name)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["task_name"],
+        message: "task_name must be snake_case and start with a letter",
+      });
+    }
+  });
+
+// ---------------------------------------------------------------------------
+// Run spec schemas
+// ---------------------------------------------------------------------------
 
 export const ConditionSpecSchema = z.strictObject({
   kind: z.enum(CONDITION_KINDS),
@@ -135,7 +251,7 @@ export const ConditionSpecSchema = z.strictObject({
 //   ensemble_incremental  => n must be >= 1 (already enforced by min(1))
 export const RunSpecSchema = z
   .strictObject({
-    target: z.enum(TARGET_KEYS),
+    task: z.string().trim().min(1),
     model_pool: z.array(z.string().min(1)).nonempty(),
     condition: ConditionSpecSchema,
     grade: z.boolean().default(true),
@@ -170,7 +286,7 @@ export const RunSummarySchema = z.strictObject({
   runId: z.string(),
   run_ts: z.string(),
   cell_id: z.string().transform((s): CellId => s as CellId),
-  target: z.enum(TARGET_KEYS),
+  task: z.string().trim().min(1),
   condition: ConditionSpecSchema,
   status: RunStatusSchema,
   started_ms: z.number(),
@@ -188,7 +304,9 @@ export const LaunchResponseSchema = z.strictObject({
   warning: z.string().optional(),
 });
 
-// --- conditionName helper -------------------------------------------------
+// ---------------------------------------------------------------------------
+// conditionName helper
+// ---------------------------------------------------------------------------
 
 // Reproduces cohort 1's canonical_condition_name: the condition segment
 // of the on-disk directory path that run_cell creates. single_agent has
@@ -203,7 +321,9 @@ export function conditionName(
   return `${kind}_n${n}` as ConditionName;
 }
 
-// --- inferred types ------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Inferred types
+// ---------------------------------------------------------------------------
 
 export type CellEvent = z.infer<typeof CellEventSchema>;
 export type EvalScore = z.infer<typeof EvalScoreSchema>;
@@ -211,6 +331,12 @@ export type CellSummary = z.infer<typeof CellSummarySchema>;
 export type CellDetail = z.infer<typeof CellDetailSchema>;
 export type CommitSnapshot = z.infer<typeof CommitSnapshotSchema>;
 export type Tab = z.infer<typeof TabSchema>;
+export type TaskBrief = z.infer<typeof TaskBriefSchema>;
+export type TaskGraderRef = z.infer<typeof TaskGraderRefSchema>;
+export type TaskDraft = z.infer<typeof TaskDraftSchema>;
+export type TaskSummary = z.infer<typeof TaskSummarySchema>;
+export type GraderSummary = z.infer<typeof GraderSummarySchema>;
+export type GraderConfigDraft = z.infer<typeof GraderConfigDraftSchema>;
 export type ConditionSpec = z.infer<typeof ConditionSpecSchema>;
 export type RunSpec = z.infer<typeof RunSpecSchema>;
 export type RunStatus = z.infer<typeof RunStatusSchema>;

@@ -11,7 +11,7 @@ import { useState } from "react";
 import { useLaunch } from "../../hooks/useLaunch";
 import { useHashSelection } from "../../hooks/useHashSelection";
 import {
-  TARGET_KEYS,
+  TASK_NAMES,
   CONDITION_KINDS,
   RunSpecSchema,
 } from "../../lib/types";
@@ -48,7 +48,7 @@ export function buildRunSpec(state: FormState): BuildResult {
     ...state.extraModels,
   ];
   const result = RunSpecSchema.safeParse({
-    target: state.target,
+    task: state.target,
     model_pool: modelPool,
     condition: { kind: state.conditionKind, n: state.n },
     grade: state.should_grade,
@@ -152,7 +152,7 @@ export function LaunchForm() {
           }
         >
           <option value="">— pick target —</option>
-          {TARGET_KEYS.map((t) => (
+          {TASK_NAMES.map((t) => (
             <option key={t} value={t}>
               {t}
             </option>

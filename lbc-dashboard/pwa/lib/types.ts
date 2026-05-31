@@ -12,6 +12,12 @@ export type {
   CommitSnapshot,
   EvalScore,
   Tab,
+  TaskBrief,
+  TaskDraft,
+  TaskGraderRef,
+  TaskSummary,
+  GraderSummary,
+  GraderConfigDraft,
   // run types
   ConditionSpec,
   RunSpec,
@@ -22,7 +28,7 @@ export type {
 } from "../../src/contracts";
 
 export {
-  TARGET_KEYS,
+  TASK_NAMES,
   CONDITION_KINDS,
   RunSpecSchema,
   RunsResponseSchema,
