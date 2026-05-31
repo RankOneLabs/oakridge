@@ -203,6 +203,16 @@ async fn boot_twice_restart_recovery() {
     drop(_resume_rx1);
 
     // ── second "process" (recover() runs inside boot()) ───────────────────────
+    // The first coordinator's RunTask is intentionally NOT stopped before the
+    // second boot. The parked RunTask is blocked waiting for a GateDecision
+    // that will never arrive on its channel — it does not re-execute the stage,
+    // write anything new to the DB, or share channels with the second
+    // coordinator. The two coordinators each own independent runs maps and
+    // event channels; only the SQLite file is shared. The first RunTask leaks
+    // until the tokio test runtime drops all tasks at test exit, which is
+    // harmless. Exposing a clean-shutdown path on Coordinator is out of scope
+    // for this brief; a true two-process test (separate runtimes) would also
+    // work but adds complexity with no additional coverage of the recovery path.
     let (scripted2, mut rx2) = scripted("st_park");
     let (_router2, coord2) = boot(
         Config { port: 0, db_url: db_url.clone(), pwa_dir: pwa_dir.clone() },
