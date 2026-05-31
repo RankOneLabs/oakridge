@@ -217,6 +217,28 @@ export const TaskSummarySchema = z.strictObject({
   source: z.enum(TASK_SOURCES),
 });
 
+export const TaskBuiltinDetailSchema = z.strictObject({
+  name: TaskNameSchema,
+  artifact_type: z.enum(ARTIFACT_TYPES),
+  artifact_filename: z.string().trim().min(1),
+  brief: TaskBriefSchema,
+  has_grader: z.boolean(),
+  grader_key: z.string().trim().min(1).nullable(),
+  source: z.literal("builtin"),
+});
+
+export const TaskLocalDetailSchema = z.strictObject({
+  ...TaskDraftSchema.shape,
+  has_grader: z.boolean(),
+  grader_key: z.string().trim().min(1).nullable(),
+  source: z.literal("local"),
+});
+
+export const TaskDetailSchema = z.discriminatedUnion("source", [
+  TaskBuiltinDetailSchema,
+  TaskLocalDetailSchema,
+]);
+
 export const GraderSummarySchema = z.strictObject({
   key: z.string().trim().min(1),
   label: z.string().trim().min(1),
@@ -301,6 +323,18 @@ export const LaunchResponseSchema = z.strictObject({
   warning: z.string().optional(),
 });
 
+export const TasksResponseSchema = z.strictObject({
+  tasks: z.array(TaskSummarySchema),
+});
+
+export const GradersResponseSchema = z.strictObject({
+  graders: z.array(GraderSummarySchema),
+});
+
+export const GraderConfigsResponseSchema = z.strictObject({
+  grader_configs: z.array(GraderConfigDraftSchema),
+});
+
 // ---------------------------------------------------------------------------
 // conditionName helper
 // ---------------------------------------------------------------------------
@@ -332,11 +366,24 @@ export type TaskBrief = z.infer<typeof TaskBriefSchema>;
 export type TaskGraderRef = z.infer<typeof TaskGraderRefSchema>;
 export type TaskDraft = z.infer<typeof TaskDraftSchema>;
 export type TaskSummary = z.infer<typeof TaskSummarySchema>;
+export type TaskBuiltinDetail = z.infer<typeof TaskBuiltinDetailSchema>;
+export type TaskLocalDetail = z.infer<typeof TaskLocalDetailSchema>;
+export type TaskDetail = z.infer<typeof TaskDetailSchema>;
 export type GraderSummary = z.infer<typeof GraderSummarySchema>;
 export type GraderConfigDraft = z.infer<typeof GraderConfigDraftSchema>;
 export type ConditionSpec = z.infer<typeof ConditionSpecSchema>;
 export type RunSpec = z.infer<typeof RunSpecSchema>;
+export type RunLaunchSpec = RunSpec & {
+  grader?:
+    | { kind: "registered"; key: string }
+    | { kind: "local_config"; name: string };
+  local_task_dir?: string;
+  local_grader_config_dir?: string;
+};
 export type RunStatus = z.infer<typeof RunStatusSchema>;
 export type RunSummary = z.infer<typeof RunSummarySchema>;
 export type RunsResponse = z.infer<typeof RunsResponseSchema>;
 export type LaunchResponse = z.infer<typeof LaunchResponseSchema>;
+export type TasksResponse = z.infer<typeof TasksResponseSchema>;
+export type GradersResponse = z.infer<typeof GradersResponseSchema>;
+export type GraderConfigsResponse = z.infer<typeof GraderConfigsResponseSchema>;

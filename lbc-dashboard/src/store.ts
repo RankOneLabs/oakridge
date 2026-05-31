@@ -29,12 +29,15 @@ import type {
   EvalScore,
   GraderConfigDraft,
   GraderSummary,
+  TaskBuiltinDetail,
+  TaskDetail,
   TaskDraft,
   TaskSummary,
 } from "./contracts";
 import {
   GraderConfigDraftSchema,
   GraderSummarySchema,
+  TaskDetailSchema,
   TaskDraftSchema,
   TaskSummarySchema,
 } from "./contracts";
@@ -456,6 +459,201 @@ export async function resolveCellDir(cellId: string): Promise<string | null> {
 }
 
 // ---------------------------------------------------------------------------
+// Built-in task + grader catalog
+// ---------------------------------------------------------------------------
+
+const BUILTIN_TASK_DETAILS: readonly TaskBuiltinDetail[] = [
+  {
+    name: "prose_substrate_thesis",
+    artifact_type: "prose",
+    artifact_filename: "thesis.md",
+    brief: {
+      target_spec:
+        "Draft a technical blog post explaining oakridge's substrate-mediated coordination architecture to senior software engineers.",
+      success_criteria: [
+        "explains the substrate-mediated coordination thesis clearly",
+        "names the three coordination modes accurately",
+        "includes at least one concrete example",
+        "cites the blackboard ancestor and the Yunkaporta paper",
+        "reads as a technical blog post, not marketing copy",
+      ],
+      constraints: [
+        "no marketing language",
+        "no invented coordination modes",
+        "no fictional code APIs",
+      ],
+    },
+    has_grader: true,
+    grader_key: "prose_substrate_thesis",
+    source: "builtin",
+  },
+  {
+    name: "code_leetcode_longest_substring",
+    artifact_type: "code",
+    artifact_filename: "solution.py",
+    brief: {
+      target_spec:
+        "Implement length_of_longest_substring(s: str) -> int in solution.py.",
+      success_criteria: [
+        "passes the canonical example test cases",
+        "type-checks under strict mypy",
+      ],
+      constraints: [
+        "single file, single function",
+        "no third-party imports",
+      ],
+    },
+    has_grader: true,
+    grader_key: "code_leetcode_longest_substring",
+    source: "builtin",
+  },
+  {
+    name: "code_leetcode_trapping_rain_water",
+    artifact_type: "code",
+    artifact_filename: "solution.py",
+    brief: {
+      target_spec:
+        "Implement trap(height: list[int]) -> int in solution.py.",
+      success_criteria: [
+        "passes the canonical example test cases",
+        "type-checks under strict mypy",
+      ],
+      constraints: [
+        "single file, single function",
+        "no third-party imports",
+      ],
+    },
+    has_grader: true,
+    grader_key: "code_leetcode_trapping_rain_water",
+    source: "builtin",
+  },
+  {
+    name: "code_leetcode_regex_matching",
+    artifact_type: "code",
+    artifact_filename: "solution.py",
+    brief: {
+      target_spec:
+        "Implement is_match(s: str, p: str) -> bool in solution.py.",
+      success_criteria: [
+        "passes the canonical example test cases",
+        "type-checks under strict mypy",
+      ],
+      constraints: [
+        "single file, single function",
+        "no third-party imports",
+      ],
+    },
+    has_grader: true,
+    grader_key: "code_leetcode_regex_matching",
+    source: "builtin",
+  },
+  {
+    name: "code_leetcode_median_two_sorted_arrays",
+    artifact_type: "code",
+    artifact_filename: "solution.py",
+    brief: {
+      target_spec:
+        "Implement find_median_sorted_arrays(nums1: list[int], nums2: list[int]) -> float in solution.py.",
+      success_criteria: [
+        "passes the canonical correctness test cases",
+        "type-checks under strict mypy",
+        "meets the perf budget",
+      ],
+      constraints: [
+        "single file, single function",
+        "no imports needed",
+        "do not sort the input arrays",
+      ],
+    },
+    has_grader: true,
+    grader_key: "code_leetcode_median_two_sorted_arrays",
+    source: "builtin",
+  },
+] as const satisfies readonly TaskBuiltinDetail[];
+
+const BUILTIN_TASK_DETAILS_BY_NAME = new Map(
+  BUILTIN_TASK_DETAILS.map((task) => [task.name, task]),
+);
+
+const BUILTIN_TASK_SUMMARIES: readonly TaskSummary[] = BUILTIN_TASK_DETAILS.map(
+  (task) =>
+    TaskSummarySchema.parse({
+      name: task.name,
+      artifact_type: task.artifact_type,
+      artifact_filename: task.artifact_filename,
+      has_grader: task.has_grader,
+      grader_key: task.grader_key,
+      source: task.source,
+    }),
+);
+
+const BUILTIN_TASK_SUMMARIES_BY_NAME = new Map(
+  BUILTIN_TASK_SUMMARIES.map((task) => [task.name, task]),
+);
+
+const BUILTIN_GRADER_SUMMARIES: readonly GraderSummary[] = [
+  {
+    key: "prose_substrate_thesis",
+    label: "Brief judge",
+    supported_artifact_types: ["prose"],
+    capabilities: ["brief-criteria", "llm-judge"],
+    config_schema: null,
+  },
+  {
+    key: "code_leetcode_longest_substring",
+    label: "LeetCode #3 mechanical grader",
+    supported_artifact_types: ["code"],
+    capabilities: ["pytest", "mypy"],
+    config_schema: null,
+  },
+  {
+    key: "code_leetcode_trapping_rain_water",
+    label: "LeetCode #42 mechanical grader",
+    supported_artifact_types: ["code"],
+    capabilities: ["pytest", "mypy"],
+    config_schema: null,
+  },
+  {
+    key: "code_leetcode_regex_matching",
+    label: "LeetCode #10 mechanical grader",
+    supported_artifact_types: ["code"],
+    capabilities: ["pytest", "mypy"],
+    config_schema: null,
+  },
+  {
+    key: "code_leetcode_median_two_sorted_arrays",
+    label: "LeetCode #4 mechanical grader",
+    supported_artifact_types: ["code"],
+    capabilities: ["pytest", "mypy", "perf"],
+    config_schema: null,
+  },
+] as const satisfies readonly GraderSummary[];
+
+const BUILTIN_GRADER_SUMMARIES_BY_KEY = new Map(
+  BUILTIN_GRADER_SUMMARIES.map((grader) => [grader.key, grader]),
+);
+
+export function listBuiltinTaskSummaries(): TaskSummary[] {
+  return [...BUILTIN_TASK_SUMMARIES];
+}
+
+export function listBuiltinGraderSummaries(): GraderSummary[] {
+  return [...BUILTIN_GRADER_SUMMARIES];
+}
+
+export function getBuiltinTaskSummary(name: string): TaskSummary | null {
+  return BUILTIN_TASK_SUMMARIES_BY_NAME.get(name) ?? null;
+}
+
+export function getBuiltinTaskDetail(name: string): TaskBuiltinDetail | null {
+  return BUILTIN_TASK_DETAILS_BY_NAME.get(name) ?? null;
+}
+
+export function getBuiltinGraderSummary(name: string): GraderSummary | null {
+  return BUILTIN_GRADER_SUMMARIES_BY_KEY.get(name) ?? null;
+}
+
+// ---------------------------------------------------------------------------
 // Dashboard-local task + grader config stores
 // ---------------------------------------------------------------------------
 
@@ -572,7 +770,7 @@ export function validateGraderConfigDraftJson(
   return ok(parsed.data);
 }
 
-function resolveDashboardDataRoot(): string {
+export function resolveDashboardDataRoot(): string {
   const fromEnv = process.env.LBC_DASHBOARD_DATA_ROOT;
   if (fromEnv) return resolve(fromEnv);
   return resolve(import.meta.dirname, "..", "data");
@@ -661,6 +859,30 @@ export async function listTaskSummaries(): Promise<TaskSummary[]> {
   return drafts.map(taskSummaryForDraft);
 }
 
+function taskDetailForDraft(task: TaskDraft): TaskDetail {
+  return TaskDetailSchema.parse({
+    ...task,
+    has_grader: task.grader.kind === "registered",
+    grader_key: task.grader.kind === "registered" ? task.grader.key : null,
+    source: "local",
+  });
+}
+
+export async function listAllTaskSummaries(): Promise<TaskSummary[]> {
+  const locals = await listTaskDrafts();
+  for (const task of locals) {
+    if (getBuiltinTaskSummary(task.name) !== null) {
+      throw new Error(
+        `local task ${task.name} collides with built-in task names`,
+      );
+    }
+  }
+  return [
+    ...listBuiltinTaskSummaries(),
+    ...locals.map(taskSummaryForDraft),
+  ].sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export async function getTaskDraft(name: string): Promise<TaskDraft | null> {
   const validated = validateStoreName(name);
   if (validated === null) return null;
@@ -685,6 +907,45 @@ export async function deleteTaskDraft(name: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+export async function getTaskDetail(name: string): Promise<TaskDetail | null> {
+  const validated = validateStoreName(name);
+  if (validated === null) return null;
+  const local = await getTaskDraft(validated);
+  if (local !== null) {
+    if (getBuiltinTaskSummary(validated) !== null) {
+      throw new Error(
+        `local task ${validated} collides with built-in task names`,
+      );
+    }
+    return taskDetailForDraft(local);
+  }
+  const builtin = getBuiltinTaskDetail(validated);
+  return builtin !== null ? TaskDetailSchema.parse(builtin) : null;
+}
+
+export function getTaskSummary(name: string): TaskSummary | null {
+  return getBuiltinTaskSummary(name);
+}
+
+export async function resolveTaskSummary(name: string): Promise<TaskSummary | null> {
+  const validated = validateStoreName(name);
+  if (validated === null) return null;
+  const local = await getTaskDraft(validated);
+  if (local !== null) {
+    if (getBuiltinTaskSummary(validated) !== null) {
+      throw new Error(
+        `local task ${validated} collides with built-in task names`,
+      );
+    }
+    return taskSummaryForDraft(local);
+  }
+  return getBuiltinTaskSummary(validated);
+}
+
+export function resolveTaskDetail(name: string): Promise<TaskDetail | null> {
+  return getTaskDetail(name);
 }
 
 export async function listGraderConfigDrafts(): Promise<GraderConfigDraft[]> {
