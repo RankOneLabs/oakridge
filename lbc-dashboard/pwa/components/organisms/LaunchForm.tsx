@@ -19,6 +19,7 @@ import type { RunSpec, ConditionSpec } from "../../lib/types";
 
 export const KNOWN_MODELS = [
   "claude-sonnet-4-5",
+  "claude-opus-4-8",
   "claude-opus-4-7",
   "claude-haiku-4-5",
   "gpt-5",
