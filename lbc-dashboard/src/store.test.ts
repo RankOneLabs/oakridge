@@ -520,6 +520,22 @@ describe("task + grader config stores", () => {
       graders,
     );
     expect(mismatchedTask.ok).toBe(false);
+
+    const trimmedGrader = validateGraderConfigDraftJson(
+      {
+        task_name: "prose_substrate_thesis",
+        grader_key: "prose_substrate_thesis",
+        config: { judge_model: "claude-sonnet-4-5" },
+      },
+      proseTask,
+      [
+        {
+          ...graders[0],
+          key: " prose_substrate_thesis ",
+        },
+      ],
+    );
+    expect(trimmedGrader.ok).toBe(true);
   });
 
   test("task store write, list, get, and delete round-trip", async () => {

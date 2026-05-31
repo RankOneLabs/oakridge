@@ -542,13 +542,17 @@ export function validateGraderConfigDraftJson(
       `task ${task.name} expects grader ${task.grader.key}, got ${parsed.data.grader_key}`,
     ]);
   }
+  const parsedGraderSummaries: GraderSummary[] = [];
   for (const grader of graderSummaries) {
     const parsedGrader = GraderSummarySchema.safeParse(grader);
     if (!parsedGrader.success) {
       return err(parsedGrader.error.issues.map((issue) => issue.message));
     }
+    parsedGraderSummaries.push(parsedGrader.data);
   }
-  const grader = graderSummaries.find((entry) => entry.key === parsed.data.grader_key);
+  const grader = parsedGraderSummaries.find(
+    (entry) => entry.key === parsed.data.grader_key,
+  );
   if (grader === undefined) {
     return err([`unknown grader key ${parsed.data.grader_key}`]);
   }

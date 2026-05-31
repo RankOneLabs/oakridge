@@ -151,7 +151,7 @@ export function LaunchForm() {
             setState((s) => ({ ...s, target: e.target.value }))
           }
         >
-          <option value="">— pick target —</option>
+          <option value="">— pick task —</option>
           {TASK_NAMES.map((t) => (
             <option key={t} value={t}>
               {t}
