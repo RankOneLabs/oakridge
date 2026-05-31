@@ -50,9 +50,9 @@ from legit_biz_club.study.runner import (
     run_study,
 )
 from legit_biz_club.study.targets import (
-    TargetConfig,
-    code_target,
-    prose_target,
+    TaskConfig,
+    code_task,
+    prose_task,
 )
 from legit_biz_club.study.v1_graders import (
     make_leetcode_longest_substring_grader_factory,
@@ -78,13 +78,13 @@ __all__ = [
     "PeerContextLoader",
     "ProposerFactory",
     "StudyResult",
-    "TargetConfig",
+    "TaskConfig",
     "aggregate",
     "code_leetcode_longest_substring",
     "code_leetcode_median_two_sorted_arrays",
     "code_leetcode_regex_matching",
     "code_leetcode_trapping_rain_water",
-    "code_target",
+    "code_task",
     "make_leetcode_longest_substring_grader_factory",
     "make_leetcode_median_two_sorted_arrays_grader_factory",
     "make_leetcode_regex_matching_grader_factory",
@@ -94,7 +94,7 @@ __all__ = [
     "ensemble_with_multi_round",
     "ensemble_with_single_round",
     "prose_substrate_thesis",
-    "prose_target",
+    "prose_task",
     "run_cell",
     "run_study",
     "single_agent_baseline",

@@ -22,6 +22,7 @@ from jig.core.types import (
 from jig.tracing.stdout import StdoutTracer
 
 from legit_biz_club.coordination.proposal import Proposal
+from legit_biz_club.coordination.proposer import Proposer
 from legit_biz_club.core.models import Agent, Artifact, Brief
 from legit_biz_club.study.conditions import (
     ensemble_incremental_only,
@@ -35,7 +36,7 @@ from legit_biz_club.study.runner import (
     run_cell,
     run_study,
 )
-from legit_biz_club.study.targets import code_target, prose_target
+from legit_biz_club.study.targets import code_task, prose_task
 from tests._helpers import stub_proposer_factory
 
 
@@ -89,7 +90,7 @@ class _ConvergingProposer:
         )
 
 
-class _FixedScoreGrader(Grader):
+class _FixedScoreGrader(Grader):  # type: ignore[misc]
     """Returns the same scores on every grade() call."""
 
     def __init__(self, dimensions: list[str]) -> None:
@@ -107,7 +108,7 @@ class _FixedScoreGrader(Grader):
         ]
 
 
-class _EmptyScoreGrader(Grader):
+class _EmptyScoreGrader(Grader):  # type: ignore[misc]
     """Always returns no scores. Pins the 'grader wired but produced
     nothing' contract path."""
 
@@ -124,7 +125,7 @@ class _EmptyScoreGrader(Grader):
 
 
 async def test_run_cell_writes_artifact_to_cell_dir(tmp_path: Path) -> None:
-    target = prose_target(seed_content="seed")
+    target = prose_task(seed_content="seed")
     condition = single_agent_baseline()
 
     proposer_factory = stub_proposer_factory(_AppendingProposer)
@@ -148,7 +149,7 @@ async def test_run_cell_writes_artifact_to_cell_dir(tmp_path: Path) -> None:
 async def test_run_cell_metrics_capture_incremental_counters(
     tmp_path: Path,
 ) -> None:
-    target = prose_target(seed_content="seed")
+    target = prose_task(seed_content="seed")
     condition = ensemble_incremental_only(n=3)
 
     proposer_factory = stub_proposer_factory(_AppendingProposer)
@@ -175,7 +176,7 @@ async def test_run_cell_metrics_capture_incremental_counters(
 async def test_run_cell_with_consensus_records_convergence(
     tmp_path: Path,
 ) -> None:
-    target = prose_target(seed_content="seed")
+    target = prose_task(seed_content="seed")
     condition = ensemble_with_multi_round(n=3)
 
     proposer_factory = stub_proposer_factory(_ConvergingProposer, content="the agreed text")
@@ -199,7 +200,7 @@ async def test_run_cell_rejects_artifact_filename_with_separators(
 ) -> None:
     """Directory-shaped artifact_filenames are deferred to v1.x —
     catch both POSIX `/` and Windows `\\` separators via PurePath."""
-    target = prose_target(
+    target = prose_task(
         artifact_filename="subdir/draft.md",
         seed_content="seed",
     )
@@ -224,7 +225,7 @@ async def test_run_cell_handles_code_target_single_file(
 ) -> None:
     """v1 supports single-file CODE targets — runner builds them the
     same as prose targets, mediator handles the read/write path."""
-    target = code_target(seed_content="def stub(): ...\n")
+    target = code_task(seed_content="def stub(): ...\n")
     condition = single_agent_baseline()
 
     proposer_factory = stub_proposer_factory(_AppendingProposer)
@@ -245,7 +246,7 @@ async def test_run_cell_uses_consistent_project_id(tmp_path: Path) -> None:
     """Project.id and Enrollment.project_id must match — they refer
     to the same project. The runner uses a stable cell-id string for
     both."""
-    target = prose_target(seed_content="seed")
+    target = prose_task(seed_content="seed")
     condition = ensemble_incremental_only(n=2)
 
     proposer_factory = stub_proposer_factory(_AppendingProposer)
@@ -271,7 +272,7 @@ async def test_run_cell_singleround_marks_escalation_even_when_converged(
     happens to be byte-identical. Inferring from converged_at_round
     alone would undercount escalations and distort cross-condition
     aggregation."""
-    target = prose_target(seed_content="seed")
+    target = prose_task(seed_content="seed")
     condition = ensemble_with_single_round(n=3)
 
     proposer_factory = stub_proposer_factory(_ConvergingProposer, content="identical content")
@@ -310,7 +311,7 @@ async def test_run_cell_rejects_reserved_sidecar_filenames(
         "events.jsonl",
         "eval_scores.json",
     ):
-        target = prose_target(
+        target = prose_task(
             artifact_filename=reserved, seed_content="seed"
         )
         with pytest.raises(ValueError, match="reserved sidecar"):
@@ -343,7 +344,7 @@ async def test_run_cell_rejects_reserved_sidecar_filenames_case_insensitive(
         "Events.JSONL",
         "Commits",
     ):
-        target = prose_target(
+        target = prose_task(
             artifact_filename=reserved, seed_content="seed"
         )
         with pytest.raises(ValueError, match="reserved sidecar"):
@@ -363,7 +364,7 @@ async def test_run_cell_resets_commits_dir_between_runs(
     Mediator restarts numbering at v0001, so a shorter rerun would
     otherwise leave stale higher-numbered files mixing two runs'
     history into one cell directory."""
-    target = prose_target(seed_content="seed")
+    target = prose_task(seed_content="seed")
     condition = single_agent_baseline()
 
     proposer_factory = stub_proposer_factory(_AppendingProposer)
@@ -393,7 +394,7 @@ async def test_run_cell_threads_peer_context_to_proposer_factory(
     agent and the result is passed to proposer_factory via the
     `context` kwarg. A factory that records the contexts it received
     proves the loader -> factory wiring."""
-    target = prose_target(seed_content="seed")
+    target = prose_task(seed_content="seed")
     condition = ensemble_incremental_only(n=2)
 
     contexts_seen: dict[str, str] = {}
@@ -455,14 +456,15 @@ async def test_run_cell_passes_empty_context_when_no_loader(
     """Without peer_context_loader the factory still receives
     ``context=""`` — uniform call shape so the factory protocol is
     predictable."""
-    target = prose_target(seed_content="seed")
+    target = prose_task(seed_content="seed")
     condition = single_agent_baseline()
 
     received: list[str] = []
 
     def proposer_factory(
-        _agent: Agent, *, context: str = ""
-    ) -> _AppendingProposer:
+        agent: Agent, *, context: str = ""
+    ) -> Proposer:
+        del agent
         received.append(context)
         return _AppendingProposer()
 
@@ -487,7 +489,7 @@ async def test_run_cell_uses_termination_policy_factory_when_set(
     from legit_biz_club.core.models import CoordinationProtocol
     from legit_biz_club.study.conditions import ConditionConfig
 
-    target = prose_target(seed_content="seed")
+    target = prose_task(seed_content="seed")
     condition = ConditionConfig(
         name="custom_term",
         n=2,
@@ -511,7 +513,7 @@ async def test_run_cell_uses_termination_policy_factory_when_set(
 async def test_run_cell_runs_grader_when_factory_supplied(
     tmp_path: Path,
 ) -> None:
-    target = prose_target(seed_content="seed")
+    target = prose_task(seed_content="seed")
     condition = single_agent_baseline()
 
     proposer_factory = stub_proposer_factory(_AppendingProposer)
@@ -534,7 +536,7 @@ async def test_run_cell_runs_grader_when_factory_supplied(
 async def test_run_cell_with_no_grader_factory_yields_empty_scores(
     tmp_path: Path,
 ) -> None:
-    target = prose_target(seed_content="seed")
+    target = prose_task(seed_content="seed")
     condition = single_agent_baseline()
 
     proposer_factory = stub_proposer_factory(_AppendingProposer)
@@ -560,7 +562,7 @@ async def test_run_cell_writes_eval_scores_sidecar(tmp_path: Path) -> None:
     The wrapper envelope leaves room for future grader metadata."""
     import json
 
-    target = prose_target(seed_content="seed")
+    target = prose_task(seed_content="seed")
     condition = single_agent_baseline()
 
     proposer_factory = stub_proposer_factory(_AppendingProposer)
@@ -596,7 +598,7 @@ async def test_run_cell_skips_eval_scores_sidecar_when_no_grader(
     cleanest "no grader was wired" signal — readers don't have to
     distinguish "{}" from "{scores: []}" — and avoids littering
     cells with empty sidecars that mean nothing."""
-    target = prose_target(seed_content="seed")
+    target = prose_task(seed_content="seed")
     condition = single_agent_baseline()
 
     proposer_factory = stub_proposer_factory(_AppendingProposer)
@@ -621,7 +623,7 @@ async def test_run_cell_skips_eval_scores_sidecar_when_grader_returns_no_scores(
     contract collapses 'no grader' and 'grader returned zero scores'
     into the same absent-file signal — both render as 'no scores'
     downstream."""
-    target = prose_target(seed_content="seed")
+    target = prose_task(seed_content="seed")
     condition = single_agent_baseline()
 
     proposer_factory = stub_proposer_factory(_AppendingProposer)
@@ -653,7 +655,7 @@ async def test_run_cell_eval_scores_tmp_doesnt_clobber_artifact_named_like_tmp(
     use a deterministic ``<sidecar>.tmp`` sibling. The randomized
     dotfile-prefixed tmp via ``tempfile.mkstemp`` makes the collision
     impossible regardless of artifact name."""
-    target = prose_target(
+    target = prose_task(
         seed_content="seed", artifact_filename="eval_scores.json.tmp"
     )
     condition = single_agent_baseline()
@@ -691,7 +693,7 @@ async def test_run_cell_clears_stale_eval_scores_sidecar_on_rerun(
     run's sidecar. If run 1 wrote scores and run 2 has no grader (or
     returns []), the on-disk file has to disappear so the absent-file
     contract still holds."""
-    target = prose_target(seed_content="seed")
+    target = prose_task(seed_content="seed")
     condition = single_agent_baseline()
 
     proposer_factory = stub_proposer_factory(_AppendingProposer)
@@ -730,7 +732,7 @@ async def test_run_cell_clears_stale_eval_scores_sidecar_on_rerun(
 async def test_run_study_runs_every_target_condition_pair(
     tmp_path: Path,
 ) -> None:
-    targets = [prose_target(seed_content="prose-seed")]
+    targets = [prose_task(seed_content="prose-seed")]
     conditions = [
         single_agent_baseline(),
         ensemble_incremental_only(n=2),
@@ -756,7 +758,7 @@ async def test_run_study_isolates_cells_via_subdirectories(
 ) -> None:
     """Two cells writing to artifact files of the same name don't
     collide because each cell gets its own subdirectory."""
-    target = prose_target(seed_content="seed", artifact_filename="draft.md")
+    target = prose_task(seed_content="seed", artifact_filename="draft.md")
     conditions = [
         single_agent_baseline(),
         ensemble_incremental_only(n=2),

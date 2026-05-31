@@ -63,6 +63,7 @@ from legit_biz_club.memory import (
     PeerContextLoader,
     make_sqlite_observation_loader,
 )
+from legit_biz_club.study import TaskConfig, code_task, prose_task
 
 __all__ = [
     "Agent",
@@ -97,6 +98,7 @@ __all__ = [
     "ProjectCoordinator",
     "ProjectRunResult",
     "ProjectState",
+    "TaskConfig",
     "Proposal",
     "ProposalOutcome",
     "ProposalResult",
@@ -111,9 +113,11 @@ __all__ = [
     "WorkspaceEventEmitter",
     "WorkspaceEventKind",
     "WorkspaceEventPayload",
+    "code_task",
     "check_heterogeneity",
     "compute_version",
     "make_proposers",
     "make_sqlite_observation_loader",
+    "prose_task",
     "transition_to",
 ]

@@ -28,7 +28,7 @@ a corresponding grader factory:
   brief is explicitly "produce idiomatic, lint-clean Python" with
   the rule selection in the brief.
 
-Both fit the ``GraderFactory = Callable[[TargetConfig], Grader]``
+Both fit the ``GraderFactory = Callable[[TaskConfig], Grader]``
 signature and slot into ``run_cell``'s ``grader_factory=`` parameter.
 """
 from __future__ import annotations
@@ -46,7 +46,7 @@ from legit_biz_club.eval.code import (
 )
 from legit_biz_club.eval.prose import make_brief_judge
 from legit_biz_club.study.runner import GraderFactory
-from legit_biz_club.study.targets import TargetConfig
+from legit_biz_club.study.targets import TaskConfig
 
 # --- prose grader --------------------------------------------------------
 
@@ -80,7 +80,7 @@ def make_prose_substrate_thesis_grader_factory(
     OpenAI or Google needs that provider's API key.
     """
 
-    def factory(target: TargetConfig) -> Grader:
+    def factory(target: TaskConfig) -> Grader:
         # Resolve the LLM here rather than at builder-call time so
         # the env-var dependency surfaces at run_cell construction
         # (when the operator clearly intended to use it) rather than
@@ -283,7 +283,7 @@ def make_leetcode_longest_substring_grader_factory() -> GraderFactory:
     :mod:`jig.feedback.heuristic` ``Check`` machinery, not here.
     """
 
-    def factory(target: TargetConfig) -> Grader:
+    def factory(target: TaskConfig) -> Grader:
         # Wiring guard: each factory ships its own test-file string,
         # so routing the wrong target through this factory would
         # silently grade against the longest-substring tests. Fail
@@ -507,7 +507,7 @@ def make_leetcode_regex_matching_grader_factory() -> GraderFactory:
     the 0..1 range rather than clustering at the ceiling.
     """
 
-    def factory(target: TargetConfig) -> Grader:
+    def factory(target: TaskConfig) -> Grader:
         # Wiring guard — see longest-substring factory for rationale.
         if target.name != "code_leetcode_regex_matching":
             raise ValueError(
@@ -789,7 +789,7 @@ def make_leetcode_median_two_sorted_arrays_grader_factory() -> GraderFactory:
     typically produce on this target.
     """
 
-    def factory(target: TargetConfig) -> Grader:
+    def factory(target: TaskConfig) -> Grader:
         # Wiring guard — see longest-substring factory for rationale.
         if target.name != "code_leetcode_median_two_sorted_arrays":
             raise ValueError(
@@ -815,7 +815,7 @@ def make_leetcode_trapping_rain_water_grader_factory() -> GraderFactory:
     naive implementations.
     """
 
-    def factory(target: TargetConfig) -> Grader:
+    def factory(target: TaskConfig) -> Grader:
         # Wiring guard — see longest-substring factory for rationale.
         if target.name != "code_leetcode_trapping_rain_water":
             raise ValueError(
