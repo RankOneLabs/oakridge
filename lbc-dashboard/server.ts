@@ -37,7 +37,11 @@ import {
   TaskSummarySchema,
   TasksResponseSchema,
 } from "./src/contracts";
-import type { GraderConfigDraft, TaskDraft } from "./src/contracts";
+import type {
+  GraderConfigDraft,
+  RunLaunchSpec,
+  TaskDraft,
+} from "./src/contracts";
 import {
   deleteGraderConfigDraft,
   deleteTaskDraft,
@@ -97,6 +101,10 @@ function taskDraftLikeForGraderValidation(task: {
         ? { kind: "none" }
         : { kind: "registered", key: task.grader_key },
   };
+}
+
+function runtimeGraderConfigPath(outputDir: string, taskName: string): string {
+  return join(outputDir, "local-grader-configs", `${taskName}.json`);
 }
 
 async function validateGraderConfigForTask(
@@ -423,7 +431,11 @@ export function createApp(deps?: { registry?: RunRegistry }): Hono {
       return c.json({ error: "unknown task" }, 404);
     }
 
-    let runSpec: typeof spec & Record<string, unknown> = {
+    const localGraderConfig = spec.grade
+      ? await getGraderConfigDraft(spec.task)
+      : null;
+
+    let runSpec: RunLaunchSpec = {
       ...spec,
     };
     if (task.source === "local") {
@@ -434,7 +446,6 @@ export function createApp(deps?: { registry?: RunRegistry }): Hono {
     }
 
     if (spec.grade) {
-      const localGraderConfig = await getGraderConfigDraft(spec.task);
       if (localGraderConfig !== null) {
         const validation = await validateGraderConfigForTask(
           localGraderConfig,
@@ -452,10 +463,6 @@ export function createApp(deps?: { registry?: RunRegistry }): Hono {
         runSpec = {
           ...runSpec,
           grader: { kind: "local_config", name: spec.task },
-          local_grader_config_dir: join(
-            resolveDashboardDataRoot(),
-            "grader-configs",
-          ),
         };
       } else {
         const registeredKey =
@@ -501,6 +508,25 @@ export function createApp(deps?: { registry?: RunRegistry }): Hono {
     const specPath = join(output_dir, "run-spec.json");
     try {
       await mkdir(output_dir, { recursive: true });
+      if (localGraderConfig !== null) {
+        const runtimeGraderConfigDir = join(output_dir, "local-grader-configs");
+        await mkdir(runtimeGraderConfigDir, { recursive: true });
+        await writeFile(
+          runtimeGraderConfigPath(output_dir, spec.task),
+          JSON.stringify(
+            {
+              key: localGraderConfig.grader_key,
+              config: localGraderConfig.config,
+            },
+            null,
+            2,
+          ),
+        );
+        runSpec = {
+          ...runSpec,
+          local_grader_config_dir: runtimeGraderConfigDir,
+        };
+      }
       await writeFile(specPath, JSON.stringify(runSpec));
 
       const record = registry.launch({

@@ -11,7 +11,11 @@
 import { dirname } from "node:path";
 
 import type { CellId } from "../pwa/lib/ids";
-import { conditionName, type RunSpec, type RunSummary } from "./contracts";
+import {
+  conditionName,
+  type RunLaunchSpec,
+  type RunSummary,
+} from "./contracts";
 import { cellIdFor, resolveRunRoot } from "./store";
 
 // ---------------------------------------------------------------------------
@@ -129,7 +133,7 @@ export function newRunTs(): string {
 export interface RunRecord {
   runId: string;
   run_ts: string;
-  spec: RunSpec & Record<string, unknown>;
+  spec: RunLaunchSpec;
   cell_id: CellId;
   status: "running" | "exited" | "failed";
   pid: number;
@@ -155,7 +159,7 @@ export class RunRegistry {
     outputDir,
   }: {
     runTs: string;
-    spec: RunSpec & Record<string, unknown>;
+    spec: RunLaunchSpec;
     specPath: string;
     outputDir: string;
   }): RunRecord {

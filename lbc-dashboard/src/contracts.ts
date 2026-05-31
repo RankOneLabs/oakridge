@@ -373,6 +373,13 @@ export type GraderSummary = z.infer<typeof GraderSummarySchema>;
 export type GraderConfigDraft = z.infer<typeof GraderConfigDraftSchema>;
 export type ConditionSpec = z.infer<typeof ConditionSpecSchema>;
 export type RunSpec = z.infer<typeof RunSpecSchema>;
+export type RunLaunchSpec = RunSpec & {
+  grader?:
+    | { kind: "registered"; key: string }
+    | { kind: "local_config"; name: string };
+  local_task_dir?: string;
+  local_grader_config_dir?: string;
+};
 export type RunStatus = z.infer<typeof RunStatusSchema>;
 export type RunSummary = z.infer<typeof RunSummarySchema>;
 export type RunsResponse = z.infer<typeof RunsResponseSchema>;

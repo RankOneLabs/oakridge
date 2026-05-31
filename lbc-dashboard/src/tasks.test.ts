@@ -31,6 +31,12 @@ const LOCAL_TASK = {
   grader: { kind: "none" as const },
 };
 
+const LOCAL_GRADED_TASK = {
+  ...LOCAL_TASK,
+  name: "dashboard_local_judged_note",
+  grader: { kind: "registered" as const, key: "prose_substrate_thesis" },
+};
+
 describe("HTTP /api/tasks and /api/graders", () => {
   let dashboardDataRoot: string;
   let runRoot: string;
@@ -161,5 +167,91 @@ describe("HTTP /api/tasks and /api/graders", () => {
     expect(spec.grade).toBe(false);
     expect(spec.local_task_dir).toBe(join(dashboardDataRoot, "tasks"));
     expect(spec.target).toBeUndefined();
+  });
+
+  test("POST /api/grader-configs rejects mismatched grader keys", async () => {
+    const registry = new RunRegistry(makeStub(0));
+    const app = createApp({ registry });
+
+    const createRes = await app.request("/api/tasks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(LOCAL_GRADED_TASK),
+    });
+    expect(createRes.status).toBe(200);
+
+    const configRes = await app.request("/api/grader-configs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        task_name: LOCAL_GRADED_TASK.name,
+        grader_key: "code_leetcode_longest_substring",
+        config: {},
+      }),
+    });
+
+    expect(configRes.status).toBe(400);
+  });
+
+  test("POST /api/runs materializes a runtime grader config for a saved local config", async () => {
+    const registry = new RunRegistry(makeStub(0));
+    const app = createApp({ registry });
+
+    const createRes = await app.request("/api/tasks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(LOCAL_GRADED_TASK),
+    });
+    expect(createRes.status).toBe(200);
+
+    const configRes = await app.request("/api/grader-configs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        task_name: LOCAL_GRADED_TASK.name,
+        grader_key: "prose_substrate_thesis",
+        config: { judge_model: "claude-sonnet-4-5" },
+      }),
+    });
+    expect(configRes.status).toBe(200);
+
+    const runRes = await app.request("/api/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        task: LOCAL_GRADED_TASK.name,
+        model_pool: ["claude-opus-4-7"],
+        condition: { kind: "single_agent", n: 1 },
+        grade: true,
+      }),
+    });
+
+    expect(runRes.status).toBe(200);
+    const { run_ts } = (await runRes.json()) as { run_ts: string };
+    const spec = JSON.parse(
+      await readFile(join(runRoot, run_ts, "run-spec.json"), "utf-8"),
+    ) as {
+      grader?: { kind: string; name?: string };
+      local_grader_config_dir?: string;
+    };
+
+    expect(spec.grader).toEqual({
+      kind: "local_config",
+      name: LOCAL_GRADED_TASK.name,
+    });
+    expect(spec.local_grader_config_dir).toBe(
+      join(runRoot, run_ts, "local-grader-configs"),
+    );
+
+    const runtimeConfig = JSON.parse(
+      await readFile(
+        join(runRoot, run_ts, "local-grader-configs", `${LOCAL_GRADED_TASK.name}.json`),
+        "utf-8",
+      ),
+    ) as { key: string; config: Record<string, unknown> };
+    expect(runtimeConfig).toEqual({
+      key: "prose_substrate_thesis",
+      config: { judge_model: "claude-sonnet-4-5" },
+    });
   });
 });
