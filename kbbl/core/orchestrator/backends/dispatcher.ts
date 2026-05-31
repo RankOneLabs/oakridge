@@ -6,6 +6,7 @@ import { listResolvedDiscrepanciesBySpec } from "../../db/spec-discrepancies";
 import { getEpicBySpec } from "../../db/epics";
 import type { Cohort, CohortDependency } from "../../types/task-tracker";
 import type { RuntimeId } from "../../runtime";
+import { runExclusive } from "./keyed-mutex";
 
 interface DispatcherDeps {
   db: Database;
@@ -237,6 +238,16 @@ async function fetchEpicBranchLocally(epicBranch: string, workdir: string): Prom
  * resolved benignly and we proceed with a local fetch.
  */
 export async function ensureEpicBranchExists(epicBranch: string, workdir: string): Promise<void> {
+  // Serialize per-workdir. Two build dispatches for the same epic share a
+  // workdir and would otherwise run `git fetch origin <epicBranch>` at the same
+  // time, racing to update refs/remotes/origin/<epicBranch>. The loser fails
+  // with "cannot lock ref ... unable to update local ref" and its build session
+  // never launches. Same epic ⇒ same workdir ⇒ same lock key, so the fetches
+  // queue; distinct repos still run in parallel.
+  return runExclusive(workdir, () => ensureEpicBranchExistsUnlocked(epicBranch, workdir));
+}
+
+async function ensureEpicBranchExistsUnlocked(epicBranch: string, workdir: string): Promise<void> {
   const existingOut = await lsRemoteEpicBranch(epicBranch, workdir);
 
   if (existingOut !== "") {
