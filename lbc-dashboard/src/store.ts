@@ -66,7 +66,7 @@ export function resolveRunRoot(): string {
  * escapes to ``%3A`` so it can't appear inside an encoded segment).
  *
  * The previous ``__`` delimiter would mis-split a task named e.g.
- * ``my__custom_target``. The harness doesn't validate task/
+ * ``my__custom_task``. The harness doesn't validate task/
  * condition names, so a future operator-supplied name with any
  * delimiter would be a footgun.
  */
@@ -210,7 +210,7 @@ async function summarize(
   return {
     cell_id: cellIdFor(runTs, target, condition),
     run_ts: runTs,
-    // Filesystem directory names cross the brand boundary here: from
+    // Filesystem directory names cross the brand boundary here.
     // From this point on the values carry ``TargetName`` / ``ConditionName``
     // so consumers can't accidentally swap them for unrelated strings.
     target_name: target as TargetName,
