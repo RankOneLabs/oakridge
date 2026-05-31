@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO workflow_run (id, workflow_def_id, project_id, status, context, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 8
+    },
+    "nullable": []
+  },
+  "hash": "4c4e0f824d3fb678bd8f4a15d788f4a6df5455d49574acbaf6ab03c13c245069"
+}

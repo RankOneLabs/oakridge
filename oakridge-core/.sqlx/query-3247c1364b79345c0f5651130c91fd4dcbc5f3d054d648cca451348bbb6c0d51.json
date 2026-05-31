@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE stage_instance SET status = ?, parked_reason = ?, started_at = ?, ended_at = ?, updated_at = ? WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "3247c1364b79345c0f5651130c91fd4dcbc5f3d054d648cca451348bbb6c0d51"
+}
