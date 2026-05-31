@@ -1,6 +1,6 @@
 /**
  * Horizontal strip showing all tracked runs (most-recent first).
- * Each row shows target × condition label, a RunStatusPill, and a
+ * Each row shows task × condition label, a RunStatusPill, and a
  * Cancel button enabled only while status === 'running'.
  */
 import { useRuns } from "../../hooks/useRuns";
@@ -28,7 +28,7 @@ export function ActiveRunsStrip() {
             className="flex items-center gap-2 rounded border border-stone-200 bg-stone-50 px-3 py-1.5 text-sm"
           >
             <span className="font-medium text-stone-700">
-              {run.target} × {condLabel}
+              {run.task} × {condLabel}
             </span>
             <RunStatusPill status={run.status} />
             <button

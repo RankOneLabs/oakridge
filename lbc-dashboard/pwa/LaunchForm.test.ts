@@ -103,9 +103,12 @@ describe("buildRunSpec", () => {
     }
   });
 
-  test("rejects invalid target", () => {
-    const r = buildRunSpec({ ...base, target: "not_a_target" });
-    expect(r.ok).toBe(false);
+  test("accepts arbitrary task names", () => {
+    const r = buildRunSpec({ ...base, target: "dashboard_local_task" });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.spec.task).toBe("dashboard_local_task");
+    }
   });
 
   test("rejects single_agent with n=2", () => {

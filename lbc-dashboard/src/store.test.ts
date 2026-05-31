@@ -15,11 +15,23 @@ import type {
   ConditionName,
   TargetName,
 } from "../pwa/lib/ids";
+import type { GraderConfigDraft, GraderSummary, TaskDraft } from "./contracts";
 import {
+  deleteGraderConfigDraft,
+  deleteTaskDraft,
   getCellDetail,
+  getGraderConfigDraft,
+  getTaskDraft,
   listCells,
+  listGraderConfigDrafts,
+  listTaskDrafts,
+  listTaskSummaries,
   readEvalScores,
   readEvents,
+  upsertGraderConfigDraft,
+  upsertTaskDraft,
+  validateGraderConfigDraftJson,
+  validateTaskDraftJson,
 } from "./store";
 
 // Path-traversal rejection is enforced by parseCellId itself (via
@@ -376,5 +388,233 @@ describe("readEvents", () => {
     expect(events.length).toBe(2);
     expect(events[0].kind).toBe("a");
     expect(events[1].kind).toBe("b");
+  });
+});
+
+describe("task + grader config stores", () => {
+  let dashboardDataRoot: string;
+  let originalDashboardDataRoot: string | undefined;
+
+  beforeEach(async () => {
+    dashboardDataRoot = await mkdtemp(
+      join(tmpdir(), "lbc-dashboard-data-test-"),
+    );
+    originalDashboardDataRoot = process.env.LBC_DASHBOARD_DATA_ROOT;
+    process.env.LBC_DASHBOARD_DATA_ROOT = dashboardDataRoot;
+  });
+
+  afterEach(async () => {
+    if (originalDashboardDataRoot === undefined) {
+      delete process.env.LBC_DASHBOARD_DATA_ROOT;
+    } else {
+      process.env.LBC_DASHBOARD_DATA_ROOT = originalDashboardDataRoot;
+    }
+    await rm(dashboardDataRoot, { recursive: true, force: true });
+  });
+
+  const proseTask: TaskDraft = {
+    name: "prose_substrate_thesis",
+    artifact_type: "prose",
+    artifact_filename: "draft.md",
+    seed_content: "# seed",
+    brief: {
+      target_spec: "write a concise thesis",
+      success_criteria: ["covers the architecture"],
+      constraints: ["keep it short"],
+    },
+    grader: { kind: "registered", key: "prose_substrate_thesis" },
+  };
+
+  const codeTask: TaskDraft = {
+    name: "code_leetcode_longest_substring",
+    artifact_type: "code",
+    artifact_filename: "solution.py",
+    seed_content: "def length_of_longest_substring(s): ...",
+    brief: {
+      target_spec: "implement longest substring",
+      success_criteria: ["passes tests"],
+      constraints: [],
+    },
+    grader: { kind: "none" },
+  };
+
+  const graders: GraderSummary[] = [
+    {
+      key: "prose_substrate_thesis",
+      label: "Brief judge",
+      supported_artifact_types: ["prose"],
+      capabilities: ["brief-criteria", "llm-judge"],
+      config_schema: { judge_model: "" },
+    },
+    {
+      key: "code_leetcode_longest_substring",
+      label: "LeetCode #3 mechanical grader",
+      supported_artifact_types: ["code"],
+      capabilities: ["pytest", "mypy"],
+      config_schema: { timeout_s: 0 },
+    },
+  ];
+
+  test("validateTaskDraftJson accepts and rejects task JSON", () => {
+    expect(validateTaskDraftJson(proseTask).ok).toBe(true);
+    expect(
+      validateTaskDraftJson({
+        ...proseTask,
+        artifact_filename: "events.jsonl",
+      }).ok,
+    ).toBe(false);
+  });
+
+  test("validateGraderConfigDraftJson enforces registered grader, compatibility, and shape", () => {
+    const success = validateGraderConfigDraftJson(
+      {
+        task_name: "prose_substrate_thesis",
+        grader_key: "prose_substrate_thesis",
+        config: { judge_model: "claude-sonnet-4-5" },
+      },
+      proseTask,
+      graders,
+    );
+    expect(success.ok).toBe(true);
+
+    const noGrader = validateGraderConfigDraftJson(
+      {
+        task_name: "code_leetcode_longest_substring",
+        grader_key: "code_leetcode_longest_substring",
+        config: { timeout_s: 30 },
+      },
+      codeTask,
+      graders,
+    );
+    expect(noGrader.ok).toBe(false);
+
+    const wrongArtifact = validateGraderConfigDraftJson(
+      {
+        task_name: "prose_substrate_thesis",
+        grader_key: "code_leetcode_longest_substring",
+        config: { timeout_s: 30 },
+      },
+      proseTask,
+      graders,
+    );
+    expect(wrongArtifact.ok).toBe(false);
+
+    const wrongShape = validateGraderConfigDraftJson(
+      {
+        task_name: "prose_substrate_thesis",
+        grader_key: "prose_substrate_thesis",
+        config: { judge_model: 1 },
+      },
+      proseTask,
+      graders,
+    );
+    expect(wrongShape.ok).toBe(false);
+
+    const mismatchedTask = validateGraderConfigDraftJson(
+      {
+        task_name: "code_leetcode_longest_substring",
+        grader_key: "prose_substrate_thesis",
+        config: { judge_model: "claude-sonnet-4-5" },
+      },
+      proseTask,
+      graders,
+    );
+    expect(mismatchedTask.ok).toBe(false);
+
+    const trimmedGrader = validateGraderConfigDraftJson(
+      {
+        task_name: "prose_substrate_thesis",
+        grader_key: "prose_substrate_thesis",
+        config: { judge_model: "claude-sonnet-4-5" },
+      },
+      proseTask,
+      [
+        {
+          ...graders[0],
+          key: " prose_substrate_thesis ",
+        },
+      ],
+    );
+    expect(trimmedGrader.ok).toBe(true);
+  });
+
+  test("task store write, list, get, and delete round-trip", async () => {
+    await upsertTaskDraft(proseTask);
+    await upsertTaskDraft(codeTask);
+    await mkdir(join(dashboardDataRoot, "tasks"), { recursive: true });
+    await writeFile(
+      join(dashboardDataRoot, "tasks", "mismatched_task.json"),
+      JSON.stringify({
+        ...proseTask,
+        name: "code_leetcode_trapping_rain_water",
+      }),
+      "utf-8",
+    );
+
+    const summaries = await listTaskSummaries();
+    expect(summaries.map((task) => task.name)).toEqual([
+      "code_leetcode_longest_substring",
+      "prose_substrate_thesis",
+    ]);
+    expect(summaries[1]!.has_grader).toBe(true);
+
+    const got = await getTaskDraft("prose_substrate_thesis");
+    expect(got).not.toBeNull();
+    expect(got!.artifact_filename).toBe("draft.md");
+
+    const drafts = await listTaskDrafts();
+    expect(drafts).toHaveLength(2);
+
+    await writeFile(
+      join(dashboardDataRoot, "tasks", "prose_substrate_thesis.json"),
+      JSON.stringify({
+        ...proseTask,
+        name: "code_leetcode_trapping_rain_water",
+      }),
+      "utf-8",
+    );
+    expect(await getTaskDraft("prose_substrate_thesis")).toBeNull();
+
+    expect(await deleteTaskDraft("prose_substrate_thesis")).toBe(true);
+    expect(await getTaskDraft("prose_substrate_thesis")).toBeNull();
+  });
+
+  test("grader config store write, list, get, and delete round-trip", async () => {
+    const config: GraderConfigDraft = {
+      task_name: "prose_substrate_thesis",
+      grader_key: "prose_substrate_thesis",
+      config: { judge_model: "claude-sonnet-4-5" },
+    };
+
+    await upsertGraderConfigDraft(config);
+    await mkdir(join(dashboardDataRoot, "grader-configs"), { recursive: true });
+    await writeFile(
+      join(dashboardDataRoot, "grader-configs", "mismatched_task.json"),
+      JSON.stringify({
+        ...config,
+        task_name: "code_leetcode_trapping_rain_water",
+      }),
+      "utf-8",
+    );
+
+    const got = await getGraderConfigDraft("prose_substrate_thesis");
+    expect(got).not.toBeNull();
+    expect(got!.grader_key).toBe("prose_substrate_thesis");
+
+    const drafts = await listGraderConfigDrafts();
+    expect(drafts).toHaveLength(1);
+
+    await writeFile(
+      join(dashboardDataRoot, "grader-configs", "prose_substrate_thesis.json"),
+      JSON.stringify({
+        ...config,
+        task_name: "code_leetcode_trapping_rain_water",
+      }),
+      "utf-8",
+    );
+    expect(await getGraderConfigDraft("prose_substrate_thesis")).toBeNull();
+
+    expect(await deleteGraderConfigDraft("prose_substrate_thesis")).toBe(true);
+    expect(await getGraderConfigDraft("prose_substrate_thesis")).toBeNull();
   });
 });
