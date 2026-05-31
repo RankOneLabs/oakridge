@@ -946,6 +946,7 @@ mod tests {
             output_name: None,
             label: None,
             body: json!({"seeded": true}),
+            version: 1,
             parent_artifact_id: None,
             created_at: fixed_dt(),
         };

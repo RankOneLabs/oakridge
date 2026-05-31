@@ -69,6 +69,7 @@ struct ArtifactRow {
     output_name: Option<String>,
     label: Option<String>,
     body: String,
+    version: i64,
     parent_artifact_id: Option<String>,
     created_at: String,
 }
@@ -168,6 +169,7 @@ fn row_to_artifact(r: ArtifactRow) -> crate::Result<Artifact> {
         output_name: r.output_name,
         label: r.label,
         body: serde_json::from_str(&r.body)?,
+        version: r.version as i32,
         parent_artifact_id: r.parent_artifact_id.as_deref().map(parse_uuid).transpose()?.map(ArtifactId),
         created_at: parse_dt(&r.created_at)?,
     })
@@ -501,12 +503,13 @@ pub async fn insert_artifact(pool: &SqlitePool, a: &Artifact) -> crate::Result<(
     let run_id = a.run_id.0.to_string();
     let stage_instance_id = a.stage_instance_id.0.to_string();
     let body = serde_json::to_string(&a.body)?;
+    let version = a.version as i64;
     let parent_artifact_id = a.parent_artifact_id.map(|p| p.0.to_string());
     let created_at = a.created_at.to_rfc3339();
     sqlx::query!(
         "INSERT INTO artifact \
-         (id, run_id, stage_instance_id, artifact_type, output_name, label, body, parent_artifact_id, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         (id, run_id, stage_instance_id, artifact_type, output_name, label, body, version, parent_artifact_id, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         id,
         run_id,
         stage_instance_id,
@@ -514,6 +517,7 @@ pub async fn insert_artifact(pool: &SqlitePool, a: &Artifact) -> crate::Result<(
         a.output_name,
         a.label,
         body,
+        version,
         parent_artifact_id,
         created_at,
     )
@@ -526,7 +530,7 @@ pub async fn get_artifact_by_id(pool: &SqlitePool, id: &ArtifactId) -> crate::Re
     let id_str = id.0.to_string();
     let row = sqlx::query_as!(
         ArtifactRow,
-        "SELECT id, run_id, stage_instance_id, artifact_type, output_name, label, body, \
+        "SELECT id, run_id, stage_instance_id, artifact_type, output_name, label, body, version, \
          parent_artifact_id, created_at \
          FROM artifact WHERE id = ?",
         id_str,
@@ -569,7 +573,7 @@ pub async fn list_artifacts_for_run(
     let rows: Vec<ArtifactRow> = if let Some(at) = artifact_type {
         sqlx::query_as!(
             ArtifactRow,
-            "SELECT id, run_id, stage_instance_id, artifact_type, output_name, label, body, \
+            "SELECT id, run_id, stage_instance_id, artifact_type, output_name, label, body, version, \
              parent_artifact_id, created_at \
              FROM artifact WHERE run_id = ? AND artifact_type = ?",
             run_id_str,
@@ -580,7 +584,7 @@ pub async fn list_artifacts_for_run(
     } else {
         sqlx::query_as!(
             ArtifactRow,
-            "SELECT id, run_id, stage_instance_id, artifact_type, output_name, label, body, \
+            "SELECT id, run_id, stage_instance_id, artifact_type, output_name, label, body, version, \
              parent_artifact_id, created_at \
              FROM artifact WHERE run_id = ?",
             run_id_str,
@@ -669,6 +673,7 @@ mod tests {
             output_name: Some("out".into()),
             label: Some("output".into()),
             body: json!({"content": "hello"}),
+            version: 1,
             parent_artifact_id: None,
             created_at: fixed_dt(),
         }
@@ -797,6 +802,7 @@ mod tests {
             output_name: Some("report_out".into()),
             label: Some("final-report".into()),
             body: json!({"sections": ["intro", "body"]}),
+            version: 1,
             parent_artifact_id: None,
             created_at: fixed_dt(),
         };
@@ -888,6 +894,7 @@ mod tests {
             output_name: Some("out".into()),
             label: None,
             body: json!("v1"),
+            version: 1,
             parent_artifact_id: None,
             created_at: fixed_dt(),
         };
@@ -897,6 +904,7 @@ mod tests {
             id: ArtifactId(Uuid::new_v4()),
             parent_artifact_id: Some(a1.id),
             body: json!("v2"),
+            version: 2,
             ..a1.clone()
         };
         let a2_id = a2.id;
@@ -906,6 +914,7 @@ mod tests {
             id: ArtifactId(Uuid::new_v4()),
             parent_artifact_id: Some(a2_id),
             body: json!("v3"),
+            version: 3,
             ..a1.clone()
         };
         insert_artifact(&pool, &a3).await.unwrap();
@@ -915,6 +924,9 @@ mod tests {
         assert_eq!(chain[0].id, a3.id);
         assert_eq!(chain[1].id, a2_id);
         assert_eq!(chain[2].id, a1.id);
+        assert_eq!(chain[0].version, 3);
+        assert_eq!(chain[1].version, 2);
+        assert_eq!(chain[2].version, 1);
     }
 
     // ── List / filter tests ───────────────────────────────────────────────────
