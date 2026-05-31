@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Badge } from "../atoms/Badge";
 import { EmptyMessage } from "../atoms/EmptyMessage";
@@ -120,6 +120,9 @@ export function GradersSection({
   const [configJson, setConfigJson] = useState("{}");
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
+  const graderKeyDirtyRef = useRef(false);
+  const configJsonDirtyRef = useRef(false);
+  const graderKeySeedSourceRef = useRef<"detail" | "fallback" | null>(null);
   const activeTaskName = taskName.trim() === "" ? selectedTaskName : taskName;
   const taskDetail = useTaskDetail(activeTaskName);
 
@@ -131,24 +134,43 @@ export function GradersSection({
   useEffect(() => {
     if (selectedTaskName === null) return;
     setTaskName(selectedTaskName);
+    graderKeyDirtyRef.current = false;
+    configJsonDirtyRef.current = false;
+    graderKeySeedSourceRef.current = null;
   }, [selectedTaskName]);
 
   useEffect(() => {
-    if (taskName === "") return;
-    const task = tasks.find((entry) => entry.name === taskName);
-    if (task === undefined) return;
+    if (activeTaskName === null) return;
     const detailGraderKey = taskGraderKey(taskDetail);
     if (detailGraderKey !== null) {
-      setGraderKey(detailGraderKey);
-    } else if (graderKey === "" && graders.length > 0) {
-      setGraderKey(graders[0]!.key);
+      if (!graderKeyDirtyRef.current) {
+        setGraderKey((current) =>
+          current === detailGraderKey ? current : detailGraderKey,
+        );
+      }
+      graderKeySeedSourceRef.current = "detail";
+    } else if (
+      !graderKeyDirtyRef.current &&
+      graderKeySeedSourceRef.current !== "fallback"
+    ) {
+      const fallbackGraderKey = graders[0]?.key ?? "";
+      setGraderKey((current) =>
+        current === fallbackGraderKey ? current : fallbackGraderKey,
+      );
+      graderKeySeedSourceRef.current = "fallback";
     }
+
     if (selectedConfig !== null) {
-      setConfigJson(JSON.stringify(selectedConfig.config, null, 2));
-    } else {
-      setConfigJson("{}");
+      if (!configJsonDirtyRef.current) {
+        const nextConfigJson = JSON.stringify(selectedConfig.config, null, 2);
+        setConfigJson((current) =>
+          current === nextConfigJson ? current : nextConfigJson,
+        );
+      }
+    } else if (!configJsonDirtyRef.current) {
+      setConfigJson((current) => (current === "{}" ? current : "{}"));
     }
-  }, [graderKey, graders, selectedConfig, taskDetail, taskName, tasks]);
+  }, [activeTaskName, graders, selectedConfig, taskDetail]);
 
   async function handleDelete(task_name: string) {
     try {
@@ -222,13 +244,23 @@ export function GradersSection({
   function resetForm() {
     setError(null);
     setStatus(null);
+    graderKeyDirtyRef.current = false;
+    configJsonDirtyRef.current = false;
+    graderKeySeedSourceRef.current = null;
     if (selectedTaskName !== null) {
       setTaskName(selectedTaskName);
     } else {
       setTaskName("");
     }
+    if (activeTaskName === null) {
+      setGraderKey("");
+      setConfigJson("{}");
+      return;
+    }
     setGraderKey(taskGraderKey(taskDetail) ?? graders[0]?.key ?? "");
-    setConfigJson(selectedConfig !== null ? JSON.stringify(selectedConfig.config, null, 2) : "{}");
+    setConfigJson(
+      selectedConfig !== null ? JSON.stringify(selectedConfig.config, null, 2) : "{}",
+    );
   }
 
   return (
@@ -289,6 +321,9 @@ export function GradersSection({
                     value={taskName}
                     onChange={(e) => {
                       setTaskName(e.target.value);
+                      graderKeyDirtyRef.current = false;
+                      configJsonDirtyRef.current = false;
+                      graderKeySeedSourceRef.current = null;
                       onSelectTask(e.target.value === "" ? null : e.target.value);
                     }}
                   >
@@ -307,7 +342,10 @@ export function GradersSection({
                   <select
                     className="w-full rounded-xl border border-stone-300 px-3 py-2 text-sm"
                     value={graderKey}
-                    onChange={(e) => setGraderKey(e.target.value)}
+                    onChange={(e) => {
+                      graderKeyDirtyRef.current = true;
+                      setGraderKey(e.target.value);
+                    }}
                   >
                     <option value="">pick a grader</option>
                     {graders.map((grader) => (
@@ -326,7 +364,10 @@ export function GradersSection({
                 <textarea
                   className="min-h-60 w-full rounded-xl border border-stone-300 px-3 py-2 font-mono text-xs leading-5"
                   value={configJson}
-                  onChange={(e) => setConfigJson(e.target.value)}
+                  onChange={(e) => {
+                    configJsonDirtyRef.current = true;
+                    setConfigJson(e.target.value);
+                  }}
                   placeholder='{"judge_model":"claude-sonnet-4-5"}'
                 />
               </label>
