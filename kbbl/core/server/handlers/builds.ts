@@ -2,6 +2,7 @@ import type { Hono } from "hono";
 import type { Database } from "bun:sqlite";
 import type { SessionManager } from "../../session/session-manager";
 import type { createDispatcher } from "../../orchestrator/backends/dispatcher";
+import { countUnmetDependencies } from "../../db/cohorts";
 
 type Dispatcher = ReturnType<typeof createDispatcher>;
 
@@ -27,15 +28,7 @@ export function mountBuildsRoutes(app: Hono, { db, dispatcher, manager }: Builds
     // Refuse to start a build while any predecessor cohort is unbuilt. An
     // approved brief whose deps aren't done sits in 'ready_to_build'; the
     // orchestrator auto-dispatches the build only once the last dep resolves.
-    const unmetDeps = db
-      .prepare<{ cnt: number }, [string]>(
-        `SELECT COUNT(*) AS cnt
-         FROM cohort_dependencies cd
-         JOIN cohorts c ON c.id = cd.from_cohort_id
-         WHERE cd.to_cohort_id = ? AND c.status != 'done'`,
-      )
-      .get(brief.cohort_id);
-    if (unmetDeps && unmetDeps.cnt > 0) {
+    if (countUnmetDependencies(db, brief.cohort_id) > 0) {
       return c.json({ error: "cohort has unmet dependencies" }, 409);
     }
 

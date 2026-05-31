@@ -7,6 +7,7 @@ import { taskTrackerEvents } from "../../db/events";
 import { BRIEF_TRANSITIONS } from "../../orchestrator/state-machine";
 import { getEpicBySpec } from "../../db/epics";
 import { isFrozen } from "../../db/epic-freeze";
+import { countUnmetDependencies } from "../../db/cohorts";
 import type { Brief } from "../../types/task-tracker";
 
 const PatchBriefStatusSchema = z.object({
@@ -76,16 +77,8 @@ export function mountBriefStatusRoutes(app: Hono, deps: BriefStatusRouteDeps): v
         if (!nextStatus) return "no_transition";
 
         if (requestedStatus === "approved") {
-          const unmetDeps = db
-            .prepare<{ cnt: number }, [string]>(
-              `SELECT COUNT(*) AS cnt
-               FROM cohort_dependencies cd
-               JOIN cohorts c ON c.id = cd.from_cohort_id
-               WHERE cd.to_cohort_id = ? AND c.status != 'done'`,
-            )
-            .get(brief.cohort_id);
-
-          const nextCohortStatus = unmetDeps && unmetDeps.cnt > 0 ? "ready_to_build" : "building";
+          const nextCohortStatus =
+            countUnmetDependencies(db, brief.cohort_id) > 0 ? "ready_to_build" : "building";
           depsMet = nextCohortStatus === "building";
 
           const cohortResult = db.prepare(
