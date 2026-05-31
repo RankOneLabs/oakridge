@@ -944,8 +944,8 @@ export async function resolveTaskSummary(name: string): Promise<TaskSummary | nu
   return getBuiltinTaskSummary(validated);
 }
 
-export async function resolveTaskDetail(name: string): Promise<TaskDetail | null> {
-  return await getTaskDetail(name);
+export function resolveTaskDetail(name: string): Promise<TaskDetail | null> {
+  return getTaskDetail(name);
 }
 
 export async function listGraderConfigDrafts(): Promise<GraderConfigDraft[]> {

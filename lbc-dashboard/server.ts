@@ -26,6 +26,7 @@ import {
   CellsResponseSchema,
   CommitsResponseSchema,
   GraderConfigsResponseSchema,
+  GraderConfigDraftSchema,
   GradersResponseSchema,
   EvalResponseSchema,
   LaunchResponseSchema,
@@ -91,10 +92,10 @@ function taskDraftLikeForGraderValidation(task: {
     artifact_filename: task.artifact_filename,
     seed_content: "",
     brief: task.brief,
-    grader: {
-      kind: "registered",
-      key: task.grader_key ?? "",
-    },
+    grader:
+      task.grader_key === null
+        ? { kind: "none" }
+        : { kind: "registered", key: task.grader_key },
   };
 }
 
@@ -271,7 +272,7 @@ export function createApp(deps?: { registry?: RunRegistry }): Hono {
   app.get("/api/grader-configs/:task_name", async (c) => {
     const graderConfig = await getGraderConfigDraft(c.req.param("task_name"));
     if (graderConfig === null) return c.json({ error: "not found" }, 404);
-    return c.json(graderConfig);
+    return c.json(GraderConfigDraftSchema.parse(graderConfig));
   });
 
   app.post("/api/grader-configs", async (c) => {
@@ -301,7 +302,7 @@ export function createApp(deps?: { registry?: RunRegistry }): Hono {
         );
       }
       const saved = await upsertGraderConfigDraft(validation.value);
-      return c.json(saved);
+      return c.json(GraderConfigDraftSchema.parse(saved));
     } catch (error) {
       console.error("[lbc-dashboard] failed to save grader config", { error });
       return c.json({ error: "failed to save grader config" }, 409);

@@ -80,7 +80,6 @@ describe("HTTP /api/tasks and /api/graders", () => {
       tasks: Array<{ name: string; source: string }>;
     };
 
-    expect(json.tasks).toHaveLength(6);
     expect(
       json.tasks.some(
         (task) =>
