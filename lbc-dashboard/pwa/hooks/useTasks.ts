@@ -34,6 +34,8 @@ export function useTasks(): {
 
   useEffect(() => {
     void refresh();
+    const timer = window.setInterval(() => void refresh(), 2000);
+    return () => window.clearInterval(timer);
   }, [refresh]);
 
   return { tasks, refresh, error };
