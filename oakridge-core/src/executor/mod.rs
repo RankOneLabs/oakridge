@@ -66,6 +66,8 @@ fn is_unique_violation(err: &sqlx::Error) -> bool {
     matches!(err, sqlx::Error::Database(dbe) if dbe.kind() == sqlx::error::ErrorKind::UniqueViolation)
 }
 
+const MAX_ARTIFACT_EMIT_RETRIES: usize = 8;
+
 // ── StageContext ──────────────────────────────────────────────────────────────
 
 /// Runtime context injected into a stage when it executes.
@@ -141,82 +143,107 @@ impl StageContext {
             parent_artifact_id,
         } = args;
 
+        enum EmitAttempt {
+            Inserted(Artifact),
+            Retry,
+        }
+
+        let mut attempts = 0usize;
         let artifact = loop {
             let mut conn = self.db.acquire().await?;
             sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await?;
 
-            let version = if let Some(parent_id) = parent_artifact_id {
-                let parent_id_str = parent_id.0.to_string();
-                let parent = sqlx::query("SELECT run_id, version FROM artifact WHERE id = ?")
-                    .bind(parent_id_str.clone())
-                    .fetch_optional(&mut *conn)
-                .await?
-                .ok_or_else(|| crate::Error::NotFound {
-                    entity: "artifact".into(),
-                    id: parent_id.0.to_string(),
-                })?;
-                let parent_run_id: String = parent.get("run_id");
-                let parent_version: i64 = parent.get("version");
-                if parent_run_id != self.workflow_run_id.0.to_string() {
-                    return Err(anyhow::anyhow!(
-                        "parent artifact {} belongs to a different workflow run",
-                        parent_id.0
-                    ));
-                }
-                sqlx::query_scalar::<_, i64>(
-                    "SELECT COALESCE(MAX(version), ?) + 1 FROM artifact WHERE parent_artifact_id = ?",
+            let attempt: anyhow::Result<EmitAttempt> = async {
+                let version = if let Some(parent_id) = parent_artifact_id {
+                    let parent_id_str = parent_id.0.to_string();
+                    let parent = sqlx::query("SELECT run_id, version FROM artifact WHERE id = ?")
+                        .bind(parent_id_str.clone())
+                        .fetch_optional(&mut *conn)
+                        .await?
+                        .ok_or_else(|| crate::Error::NotFound {
+                            entity: "artifact".into(),
+                            id: parent_id.0.to_string(),
+                        })?;
+                    let parent_run_id: String = parent.get("run_id");
+                    let parent_version: i64 = parent.get("version");
+                    if parent_run_id != self.workflow_run_id.0.to_string() {
+                        return Err(anyhow::anyhow!(
+                            "parent artifact {} belongs to a different workflow run",
+                            parent_id.0
+                        ));
+                    }
+                    sqlx::query_scalar::<_, i64>(
+                        "SELECT COALESCE(MAX(version), ?) + 1 FROM artifact WHERE parent_artifact_id = ?",
+                    )
+                    .bind(parent_version)
+                    .bind(parent_id_str)
+                    .fetch_one(&mut *conn)
+                    .await?
+                } else {
+                    1
+                };
+
+                let artifact = Artifact {
+                    id: ArtifactId(Uuid::new_v4()),
+                    run_id: self.workflow_run_id,
+                    stage_instance_id: self.stage_instance_id,
+                    artifact_type: artifact_type.clone(),
+                    output_name: Some(output_name.clone()),
+                    label: label.clone(),
+                    body: body.clone(),
+                    version: version as i32,
+                    parent_artifact_id,
+                    created_at: Utc::now(),
+                };
+
+                let insert_result = sqlx::query(
+                    "INSERT INTO artifact \
+                     (id, run_id, stage_instance_id, artifact_type, output_name, label, body, version, parent_artifact_id, created_at) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 )
-                .bind(parent_version)
-                .bind(parent_id_str)
-                .fetch_one(&mut *conn)
-                .await?
-            } else {
-                1
-            };
+                .bind(artifact.id.0.to_string())
+                .bind(artifact.run_id.0.to_string())
+                .bind(artifact.stage_instance_id.0.to_string())
+                .bind(artifact.artifact_type.clone())
+                .bind(artifact.output_name.clone())
+                .bind(artifact.label.clone())
+                .bind(serde_json::to_string(&artifact.body)?)
+                .bind(artifact.version as i64)
+                .bind(artifact.parent_artifact_id.map(|parent| parent.0.to_string()))
+                .bind(artifact.created_at.to_rfc3339())
+                .execute(&mut *conn)
+                .await;
 
-            let artifact = Artifact {
-                id: ArtifactId(Uuid::new_v4()),
-                run_id: self.workflow_run_id,
-                stage_instance_id: self.stage_instance_id,
-                artifact_type: artifact_type.clone(),
-                output_name: Some(output_name.clone()),
-                label: label.clone(),
-                body: body.clone(),
-                version: version as i32,
-                parent_artifact_id,
-                created_at: Utc::now(),
-            };
-
-            let insert_result = sqlx::query(
-                "INSERT INTO artifact \
-                 (id, run_id, stage_instance_id, artifact_type, output_name, label, body, version, parent_artifact_id, created_at) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            )
-            .bind(artifact.id.0.to_string())
-            .bind(artifact.run_id.0.to_string())
-            .bind(artifact.stage_instance_id.0.to_string())
-            .bind(artifact.artifact_type.clone())
-            .bind(artifact.output_name.clone())
-            .bind(artifact.label.clone())
-            .bind(serde_json::to_string(&artifact.body)?)
-            .bind(artifact.version as i64)
-            .bind(artifact.parent_artifact_id.map(|parent| parent.0.to_string()))
-            .bind(artifact.created_at.to_rfc3339())
-            .execute(&mut *conn)
+                match insert_result {
+                    Ok(_) => Ok(EmitAttempt::Inserted(artifact)),
+                    Err(err) if is_unique_violation(&err) => Ok(EmitAttempt::Retry),
+                    Err(err) => Err(err.into()),
+                }
+            }
             .await;
 
-            match insert_result {
-                Ok(_) => {
-                    sqlx::query("COMMIT").execute(&mut *conn).await?;
+            match attempt {
+                Ok(EmitAttempt::Inserted(artifact)) => {
+                    if let Err(err) = sqlx::query("COMMIT").execute(&mut *conn).await {
+                        let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                        return Err(err.into());
+                    }
                     break artifact;
                 }
-                Err(err) if is_unique_violation(&err) => {
+                Ok(EmitAttempt::Retry) => {
                     let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                    if attempts >= MAX_ARTIFACT_EMIT_RETRIES {
+                        return Err(anyhow::anyhow!(
+                            "artifact emit exceeded {} retries on unique conflict",
+                            MAX_ARTIFACT_EMIT_RETRIES
+                        ));
+                    }
+                    attempts += 1;
                     continue;
                 }
                 Err(err) => {
                     let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
-                    return Err(err.into());
+                    return Err(err);
                 }
             }
         };
