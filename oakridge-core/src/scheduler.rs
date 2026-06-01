@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
+use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
+use tokio::time::{timeout, Duration};
 use uuid::Uuid;
 use chrono::Utc;
 use serde_json::Value;
@@ -22,9 +24,27 @@ pub enum ControlMsg {
     Decision {
         stage_instance_id: StageInstanceId,
         payload: ResumePayload,
+        reply_tx: oneshot::Sender<Result<(), DecisionError>>,
     },
     Cancel,
 }
+
+#[derive(Debug)]
+pub enum DecisionError {
+    Conflict(String),
+    Internal(anyhow::Error),
+}
+
+impl std::fmt::Display for DecisionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DecisionError::Conflict(msg) => write!(f, "{}", msg),
+            DecisionError::Internal(err) => write!(f, "{}", err),
+        }
+    }
+}
+
+impl std::error::Error for DecisionError {}
 
 // ── RunHandle ─────────────────────────────────────────────────────────────────
 
@@ -71,8 +91,9 @@ impl RunTask {
                     None => break,
                 },
                 msg = self.control_rx.recv() => match msg {
-                    Some(ControlMsg::Decision { stage_instance_id, payload }) => {
-                        self.on_decision(stage_instance_id, payload).await;
+                    Some(ControlMsg::Decision { stage_instance_id, payload, reply_tx }) => {
+                        let result = self.on_decision(stage_instance_id, payload).await;
+                        let _ = reply_tx.send(result);
                     }
                     Some(ControlMsg::Cancel) => {
                         self.on_cancel().await;
@@ -298,18 +319,112 @@ impl RunTask {
         true
     }
 
-    async fn on_decision(&mut self, stage_instance_id: StageInstanceId, payload: ResumePayload) {
+    async fn on_decision(
+        &mut self,
+        stage_instance_id: StageInstanceId,
+        payload: ResumePayload,
+    ) -> Result<(), DecisionError> {
         let resume_kind = match &payload {
             ResumePayload::GateDecision { .. } => "gate_decision",
             ResumePayload::FeedbackArtifact { .. } => "feedback_artifact",
         };
-        if let Some(handle) = self.handles.get(&stage_instance_id) {
-            let _ = handle.resume(payload).await;
-            self.bus.publish(self.run_id, SubstrateEvent::StageResumed {
-                stage_instance_id,
-                resume_kind: resume_kind.to_string(),
-            });
+        let current = queries::get_stage_instance_by_id(&self.db, &stage_instance_id)
+            .await
+            .map_err(|e| match e {
+                crate::Error::NotFound { .. } => DecisionError::Conflict(format!(
+                    "stage instance {} not found",
+                    stage_instance_id.0
+                )),
+                other => DecisionError::Internal(anyhow::Error::new(other)),
+            })?;
+
+        if current.run_id != self.run_id {
+            return Err(DecisionError::Conflict(format!(
+                "stage instance {} does not belong to run {}",
+                stage_instance_id.0,
+                self.run_id.0
+            )));
         }
+
+        let (stage_key, indexed_id, status) = match self.index.get(&current.stage_key) {
+            Some((indexed_id, status)) => (current.stage_key.clone(), *indexed_id, *status),
+            None => {
+                return Err(DecisionError::Conflict(format!(
+                    "stage instance {} is not known to this run",
+                    stage_instance_id.0
+                )));
+            }
+        };
+
+        if indexed_id != stage_instance_id {
+            return Err(DecisionError::Conflict(format!(
+                "stage instance {} is stale for stage {}; active instance is {}",
+                stage_instance_id.0,
+                stage_key,
+                indexed_id.0
+            )));
+        }
+
+        if !matches!(status, StageStatus::Parked) {
+            return Err(DecisionError::Conflict(format!(
+                "stage instance {} is not parked (status: {:?})",
+                stage_instance_id.0, status
+            )));
+        }
+
+        let handle = match self.handles.get(&stage_instance_id) {
+            Some(handle) => handle,
+            None => {
+                return Err(DecisionError::Conflict(format!(
+                    "stage instance {} has no active handle",
+                    stage_instance_id.0
+                )));
+            }
+        };
+
+        handle.resume(payload).await.map_err(|e| DecisionError::Internal(e.into()))?;
+
+        let after_resume = queries::get_stage_instance_by_id(&self.db, &stage_instance_id)
+            .await
+            .map_err(|e| match e {
+                crate::Error::NotFound { .. } => DecisionError::Conflict(format!(
+                    "stage instance {} not found after resume",
+                    stage_instance_id.0
+                )),
+                other => DecisionError::Internal(anyhow::Error::new(other)),
+            })?;
+
+        if matches!(after_resume.status, StageStatus::Parked) {
+            let started_at = after_resume.started_at.or(Some(Utc::now()));
+            let updated = queries::update_stage_instance_status_if_current_status(
+                &self.db,
+                &stage_instance_id,
+                StageStatus::Parked,
+                StageStatus::Running,
+                None,
+                started_at,
+                None,
+            )
+            .await
+            .map_err(|e| DecisionError::Internal(anyhow::Error::new(e)))?;
+
+            if updated {
+                if let Some((_, s)) = self.index.get_mut(&stage_key) {
+                    *s = StageStatus::Running;
+                }
+                self.bus.publish(self.run_id, SubstrateEvent::StageStatusChanged {
+                    stage_instance_id,
+                    status: StageStatus::Running,
+                    parked_reason: None,
+                });
+            }
+        }
+
+        self.bus.publish(self.run_id, SubstrateEvent::StageResumed {
+            stage_instance_id,
+            resume_kind: resume_kind.to_string(),
+        });
+        Ok(())
     }
 
     async fn on_cancel(&mut self) {
@@ -408,25 +523,65 @@ impl Coordinator {
         Ok(())
     }
 
+    pub async fn resume_parked_stage_if_active(
+        &self,
+        run_id: WorkflowRunId,
+        stage_instance_id: StageInstanceId,
+        payload: ResumePayload,
+    ) -> Result<(), DecisionError> {
+        let run = queries::get_workflow_run_by_id(&self.db, &run_id)
+            .await
+            .map_err(|e| match e {
+                crate::Error::NotFound { .. } => {
+                    DecisionError::Conflict(format!("run {} not found", run_id.0))
+                }
+                other => DecisionError::Internal(anyhow::Error::new(other)),
+            })?;
+        if !matches!(run.status, RunStatus::Pending | RunStatus::Running) {
+            return Err(DecisionError::Conflict(format!(
+                "run {} is not active (status: {:?})",
+                run_id.0, run.status
+            )));
+        }
+
+        let tx = {
+            let runs = self.runs.lock().await;
+            runs
+                .get(&run_id)
+                .ok_or_else(|| DecisionError::Conflict(format!("run {} not active", run_id.0)))?
+                .control_tx
+                .clone()
+        };
+
+        let (reply_tx, reply_rx) = oneshot::channel();
+        tx.send(ControlMsg::Decision {
+            stage_instance_id,
+            payload,
+            reply_tx,
+        })
+        .await
+        .map_err(|_| DecisionError::Conflict(format!("control channel closed for run {}", run_id.0)))?;
+
+        match timeout(Duration::from_secs(5), reply_rx).await {
+            Err(_) => Err(DecisionError::Internal(anyhow::anyhow!(
+                "scheduler task did not acknowledge decision for run {} in time",
+                run_id.0
+            ))),
+            Ok(Err(_)) => Err(DecisionError::Conflict(format!(
+                "scheduler task ended before acknowledging decision for run {}",
+                run_id.0
+            ))),
+            Ok(Ok(result)) => result,
+        }
+    }
+
     pub async fn deliver_decision(
         &self,
         run_id: WorkflowRunId,
         stage_instance_id: StageInstanceId,
         payload: ResumePayload,
-    ) -> anyhow::Result<()> {
-        // Clone the sender under the lock, then send after releasing it so a slow
-        // or full control channel cannot block other Coordinator operations.
-        let tx = {
-            let runs = self.runs.lock().await;
-            runs.get(&run_id)
-                .ok_or_else(|| anyhow::anyhow!("run {} not active", run_id.0))?
-                .control_tx
-                .clone()
-        };
-        tx.send(ControlMsg::Decision { stage_instance_id, payload })
-            .await
-            .map_err(|_| anyhow::anyhow!("control channel closed for run {}", run_id.0))?;
-        Ok(())
+    ) -> Result<(), DecisionError> {
+        self.resume_parked_stage_if_active(run_id, stage_instance_id, payload).await
     }
 
     /// Recover in-flight runs on boot. Spawns scheduler tasks in recovery mode
@@ -436,6 +591,24 @@ impl Coordinator {
         for run in active_runs {
             let run_id = run.id;
             let def = queries::get_workflow_def_by_id(&self.db, &run.workflow_def_id).await?;
+
+            if def.graph.stages.is_empty() {
+                queries::update_workflow_run_status(&self.db, &run_id, RunStatus::Done).await?;
+                self.bus.publish(run_id, SubstrateEvent::RunStatusChanged {
+                    run_id,
+                    status: RunStatus::Done,
+                });
+                continue;
+            }
+
+            if matches!(run.status, RunStatus::Pending) {
+                queries::update_workflow_run_status(&self.db, &run_id, RunStatus::Running).await?;
+                self.bus.publish(run_id, SubstrateEvent::RunStatusChanged {
+                    run_id,
+                    status: RunStatus::Running,
+                });
+            }
+
             let instances = queries::list_stage_instances_for_run(&self.db, &run_id).await?;
             let artifacts = queries::list_artifacts_for_run(&self.db, &run_id, None).await?;
 
@@ -549,6 +722,8 @@ impl Coordinator {
                     }
                 }
             }
+
+            task.prime_source_stages().await;
 
             // Acquire the map lock before spawning so self-reaping cannot race
             // ahead of handle registration.
@@ -1014,7 +1189,180 @@ mod tests {
         assert_eq!(run_final.status, RunStatus::Done);
     }
 
-    // ── (e) empty graph short-circuits to Done ────────────────────────────────
+    // ── (e) crash recovery primes missing source stages ───────────────────────
+
+    #[tokio::test]
+    async fn crash_recovery_primes_missing_source_stages_and_marks_pending_running() {
+        let pool = make_pool().await;
+        let artifact_reg = make_artifact_registry();
+        let bus = EventBus::new();
+
+        let (sa, mut a_rx) = scripted("st_a");
+        let mut reg = StageTypeRegistry::new();
+        reg.register(sa);
+
+        let coord = Coordinator::new(pool.clone(), Arc::new(reg), artifact_reg, bus.clone());
+
+        let def = WorkflowDef {
+            id: WorkflowDefId(Uuid::new_v4()),
+            name: format!("wf-{}", Uuid::new_v4()),
+            version: 1,
+            graph: WorkflowGraph {
+                stages: {
+                    let mut m = HashMap::new();
+                    m.insert("A".into(), StageNodeDef {
+                        stage_type: "st_a".into(), config: json!({}),
+                        inputs: vec![], outputs: vec![],
+                    });
+                    m
+                },
+                edges: vec![],
+            },
+            created_at: fixed_dt(),
+        };
+        queries::insert_workflow_def(&pool, &def).await.unwrap();
+
+        let run = WorkflowRun {
+            id: WorkflowRunId(Uuid::new_v4()),
+            workflow_def_id: def.id,
+            project_id: None,
+            status: RunStatus::Pending,
+            context: json!({}),
+            version: 1,
+            created_at: fixed_dt(),
+            updated_at: fixed_dt(),
+        };
+        queries::insert_workflow_run(&pool, &run).await.unwrap();
+
+        let mut global_rx = bus.subscribe_global();
+
+        coord.recover().await.unwrap();
+
+        let run_after = queries::get_workflow_run_by_id(&pool, &run.id).await.unwrap();
+        assert_eq!(run_after.status, RunStatus::Running, "recovered pending run must be promoted to Running");
+
+        let first_event = tokio::time::timeout(timeout_dur(), global_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            first_event.event,
+            SubstrateEvent::RunStatusChanged { status: RunStatus::Running, .. }
+        ));
+
+        let stage_instances = queries::list_stage_instances_for_run(&pool, &run.id).await.unwrap();
+        assert_eq!(stage_instances.len(), 1, "recover must prime the missing source stage once");
+
+        let (ctx_a, _) = tokio::time::timeout(timeout_dur(), a_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(stage_instances[0].stage_key, "A");
+        assert_eq!(ctx_a.stage_instance_id, stage_instances[0].id);
+
+        ctx_a.set_status(StageStatus::Running, None).await.unwrap();
+        ctx_a.set_status(StageStatus::Done, None).await.unwrap();
+
+        wait_run_done(&pool, run.id).await;
+        let run_final = queries::get_workflow_run_by_id(&pool, &run.id).await.unwrap();
+        assert_eq!(run_final.status, RunStatus::Done);
+    }
+
+    // ── (f) crash recovery reuses persisted stages and primes gaps ───────────
+
+    #[tokio::test]
+    async fn crash_recovery_reuses_persisted_stages_and_primes_missing_sources() {
+        let pool = make_pool().await;
+        let artifact_reg = make_artifact_registry();
+        let bus = EventBus::new();
+
+        let (sa, mut a_rx) = scripted("st_a");
+        let mut reg = StageTypeRegistry::new();
+        reg.register(sa);
+
+        let coord = Coordinator::new(pool.clone(), Arc::new(reg), artifact_reg, bus.clone());
+
+        let def = WorkflowDef {
+            id: WorkflowDefId(Uuid::new_v4()),
+            name: format!("wf-{}", Uuid::new_v4()),
+            version: 1,
+            graph: WorkflowGraph {
+                stages: {
+                    let mut m = HashMap::new();
+                    m.insert("A".into(), StageNodeDef {
+                        stage_type: "st_a".into(), config: json!({}),
+                        inputs: vec![], outputs: vec![],
+                    });
+                    m.insert("B".into(), StageNodeDef {
+                        stage_type: "st_a".into(), config: json!({}),
+                        inputs: vec![], outputs: vec![],
+                    });
+                    m
+                },
+                edges: vec![],
+            },
+            created_at: fixed_dt(),
+        };
+        queries::insert_workflow_def(&pool, &def).await.unwrap();
+
+        let run = WorkflowRun {
+            id: WorkflowRunId(Uuid::new_v4()),
+            workflow_def_id: def.id,
+            project_id: None,
+            status: RunStatus::Pending,
+            context: json!({}),
+            version: 1,
+            created_at: fixed_dt(),
+            updated_at: fixed_dt(),
+        };
+        queries::insert_workflow_run(&pool, &run).await.unwrap();
+
+        let persisted_a = StageInstance {
+            id: StageInstanceId(Uuid::new_v4()),
+            run_id: run.id,
+            stage_key: "A".into(),
+            stage_type: "st_a".into(),
+            status: StageStatus::Running,
+            config: json!({}),
+            parked_reason: None,
+            external_ref: None,
+            started_at: Some(fixed_dt()),
+            ended_at: None,
+            created_at: fixed_dt(),
+            updated_at: fixed_dt(),
+        };
+        queries::insert_stage_instance(&pool, &persisted_a).await.unwrap();
+
+        coord.recover().await.unwrap();
+
+        let mut contexts = vec![];
+        for _ in 0..2 {
+            let (ctx, _) = tokio::time::timeout(timeout_dur(), a_rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            contexts.push(ctx);
+        }
+
+        let ids: Vec<_> = contexts.iter().map(|ctx| ctx.stage_instance_id).collect();
+        assert!(ids.contains(&persisted_a.id), "recover must reuse the persisted stage instance");
+        assert_eq!(ids.len(), 2);
+        assert_ne!(ids[0], ids[1], "recover must prime exactly one missing stage instance");
+
+        let stage_instances = queries::list_stage_instances_for_run(&pool, &run.id).await.unwrap();
+        assert_eq!(stage_instances.len(), 2, "recover must not duplicate persisted stage instances");
+
+        for ctx in contexts {
+            ctx.set_status(StageStatus::Running, None).await.unwrap();
+            ctx.set_status(StageStatus::Done, None).await.unwrap();
+        }
+
+        wait_run_done(&pool, run.id).await;
+        let run_final = queries::get_workflow_run_by_id(&pool, &run.id).await.unwrap();
+        assert_eq!(run_final.status, RunStatus::Done);
+    }
+
+    // ── (g) empty graph short-circuits to Done ────────────────────────────────
 
     #[tokio::test]
     async fn empty_graph_run_short_circuits_to_done() {
@@ -1039,7 +1387,7 @@ mod tests {
         assert_eq!(run.status, RunStatus::Done, "empty-graph run must short-circuit to Done, not hang");
     }
 
-    // ── (f) unregistered stage type fails the run ─────────────────────────────
+    // ── (h) unregistered stage type fails the run ─────────────────────────────
 
     #[tokio::test]
     async fn unregistered_stage_type_fails_run() {

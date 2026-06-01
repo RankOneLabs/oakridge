@@ -468,6 +468,38 @@ pub async fn update_stage_instance_status(
     Ok(())
 }
 
+pub async fn update_stage_instance_status_if_current_status(
+    pool: &SqlitePool,
+    id: &StageInstanceId,
+    expected_status: StageStatus,
+    status: StageStatus,
+    parked_reason: Option<String>,
+    started_at: Option<DateTime<Utc>>,
+    ended_at: Option<DateTime<Utc>>,
+) -> crate::Result<bool> {
+    let id_str = id.0.to_string();
+    let expected_status_str = enum_to_str(&expected_status)?;
+    let status_str = enum_to_str(&status)?;
+    let updated_at = Utc::now().to_rfc3339();
+    let started_at_str = started_at.map(|t| t.to_rfc3339());
+    let ended_at_str = ended_at.map(|t| t.to_rfc3339());
+    let result = sqlx::query(
+        "UPDATE stage_instance \
+         SET status = ?, parked_reason = ?, started_at = ?, ended_at = ?, updated_at = ? \
+         WHERE id = ? AND status = ?",
+    )
+    .bind(status_str)
+    .bind(parked_reason)
+    .bind(started_at_str)
+    .bind(ended_at_str)
+    .bind(updated_at)
+    .bind(id_str)
+    .bind(expected_status_str)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
+}
+
 pub async fn list_stage_instances_for_run(
     pool: &SqlitePool,
     run_id: &WorkflowRunId,
