@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
+use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 use chrono::Utc;
@@ -22,9 +23,27 @@ pub enum ControlMsg {
     Decision {
         stage_instance_id: StageInstanceId,
         payload: ResumePayload,
+        reply_tx: oneshot::Sender<Result<(), String>>,
     },
     Cancel,
 }
+
+#[derive(Debug)]
+pub enum DecisionError {
+    Conflict(String),
+    Internal(anyhow::Error),
+}
+
+impl std::fmt::Display for DecisionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DecisionError::Conflict(msg) => write!(f, "{}", msg),
+            DecisionError::Internal(err) => write!(f, "{}", err),
+        }
+    }
+}
+
+impl std::error::Error for DecisionError {}
 
 // ── RunHandle ─────────────────────────────────────────────────────────────────
 
@@ -71,8 +90,9 @@ impl RunTask {
                     None => break,
                 },
                 msg = self.control_rx.recv() => match msg {
-                    Some(ControlMsg::Decision { stage_instance_id, payload }) => {
-                        self.on_decision(stage_instance_id, payload).await;
+                    Some(ControlMsg::Decision { stage_instance_id, payload, reply_tx }) => {
+                        let result = self.on_decision(stage_instance_id, payload).await;
+                        let _ = reply_tx.send(result);
                     }
                     Some(ControlMsg::Cancel) => {
                         self.on_cancel().await;
@@ -298,18 +318,68 @@ impl RunTask {
         true
     }
 
-    async fn on_decision(&mut self, stage_instance_id: StageInstanceId, payload: ResumePayload) {
+    async fn on_decision(
+        &mut self,
+        stage_instance_id: StageInstanceId,
+        payload: ResumePayload,
+    ) -> Result<(), String> {
         let resume_kind = match &payload {
             ResumePayload::GateDecision { .. } => "gate_decision",
             ResumePayload::FeedbackArtifact { .. } => "feedback_artifact",
         };
-        if let Some(handle) = self.handles.get(&stage_instance_id) {
-            let _ = handle.resume(payload).await;
-            self.bus.publish(self.run_id, SubstrateEvent::StageResumed {
-                stage_instance_id,
-                resume_kind: resume_kind.to_string(),
-            });
+        let (stage_key, status) = match self.index.iter().find(|(_, (id, _))| *id == stage_instance_id) {
+            Some((key, (_, status))) => (key.clone(), *status),
+            None => {
+                return Err(format!("stage instance {} is not known to this run", stage_instance_id.0));
+            }
+        };
+
+        if !matches!(status, StageStatus::Parked) {
+            return Err(format!(
+                "stage instance {} is not parked (status: {:?})",
+                stage_instance_id.0, status
+            ));
         }
+
+        let handle = match self.handles.get(&stage_instance_id) {
+            Some(handle) => handle,
+            None => {
+                return Err(format!("stage instance {} has no active handle", stage_instance_id.0));
+            }
+        };
+
+        let current = queries::get_stage_instance_by_id(&self.db, &stage_instance_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        let started_at = current.started_at.or(Some(Utc::now()));
+
+        queries::update_stage_instance_status(
+            &self.db,
+            &stage_instance_id,
+            StageStatus::Running,
+            None,
+            started_at,
+            None,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+        if let Some((_, s)) = self.index.get_mut(&stage_key) {
+            *s = StageStatus::Running;
+        }
+
+        self.bus.publish(self.run_id, SubstrateEvent::StageStatusChanged {
+            stage_instance_id,
+            status: StageStatus::Running,
+            parked_reason: None,
+        });
+
+        handle.resume(payload).await.map_err(|e| e.to_string())?;
+        self.bus.publish(self.run_id, SubstrateEvent::StageResumed {
+            stage_instance_id,
+            resume_kind: resume_kind.to_string(),
+        });
+        Ok(())
     }
 
     async fn on_cancel(&mut self) {
@@ -408,25 +478,57 @@ impl Coordinator {
         Ok(())
     }
 
+    pub async fn resume_parked_stage_if_active(
+        &self,
+        run_id: WorkflowRunId,
+        stage_instance_id: StageInstanceId,
+        payload: ResumePayload,
+    ) -> Result<(), DecisionError> {
+        let run = queries::get_workflow_run_by_id(&self.db, &run_id)
+            .await
+            .map_err(|e| DecisionError::Internal(anyhow::Error::new(e)))?;
+        if !matches!(run.status, RunStatus::Pending | RunStatus::Running) {
+            return Err(DecisionError::Conflict(format!(
+                "run {} is not active (status: {:?})",
+                run_id.0, run.status
+            )));
+        }
+
+        let tx = {
+            let runs = self.runs.lock().await;
+            runs
+                .get(&run_id)
+                .ok_or_else(|| DecisionError::Conflict(format!("run {} not active", run_id.0)))?
+                .control_tx
+                .clone()
+        };
+
+        let (reply_tx, reply_rx) = oneshot::channel();
+        tx.send(ControlMsg::Decision {
+            stage_instance_id,
+            payload,
+            reply_tx,
+        })
+        .await
+        .map_err(|_| DecisionError::Conflict(format!("control channel closed for run {}", run_id.0)))?;
+
+        match reply_rx.await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(msg)) => Err(DecisionError::Conflict(msg)),
+            Err(_) => Err(DecisionError::Conflict(format!(
+                "scheduler task ended before acknowledging decision for run {}",
+                run_id.0
+            ))),
+        }
+    }
+
     pub async fn deliver_decision(
         &self,
         run_id: WorkflowRunId,
         stage_instance_id: StageInstanceId,
         payload: ResumePayload,
-    ) -> anyhow::Result<()> {
-        // Clone the sender under the lock, then send after releasing it so a slow
-        // or full control channel cannot block other Coordinator operations.
-        let tx = {
-            let runs = self.runs.lock().await;
-            runs.get(&run_id)
-                .ok_or_else(|| anyhow::anyhow!("run {} not active", run_id.0))?
-                .control_tx
-                .clone()
-        };
-        tx.send(ControlMsg::Decision { stage_instance_id, payload })
-            .await
-            .map_err(|_| anyhow::anyhow!("control channel closed for run {}", run_id.0))?;
-        Ok(())
+    ) -> Result<(), DecisionError> {
+        self.resume_parked_stage_if_active(run_id, stage_instance_id, payload).await
     }
 
     /// Recover in-flight runs on boot. Spawns scheduler tasks in recovery mode
