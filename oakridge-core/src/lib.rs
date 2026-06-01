@@ -1,12 +1,14 @@
-pub mod types;
+pub mod config;
 pub mod db;
-pub mod registry;
-pub mod executor;
-pub mod scheduler;
 pub mod events;
+pub mod executor;
 pub mod http;
+pub mod registry;
+pub mod scheduler;
+pub mod types;
 
-pub use http::{boot, register_types, Config};
+pub use config::Config;
+pub use http::{boot, register_types};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
