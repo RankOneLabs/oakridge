@@ -1,7 +1,7 @@
 pub mod rest;
 pub mod sse;
 
-use axum::http::{header, Method};
+use axum::http::{header, HeaderName, Method};
 use axum::routing::{get, post};
 use axum::Router;
 use sqlx::SqlitePool;
@@ -75,7 +75,10 @@ where
             CorsLayer::new()
                 .allow_origin(AllowOrigin::list(cfg.cors_origins.clone()))
                 .allow_methods([Method::GET, Method::POST])
-                .allow_headers([header::CONTENT_TYPE]),
+                .allow_headers([
+                    header::CONTENT_TYPE,
+                    HeaderName::from_static("last-event-id"),
+                ]),
         )
     };
     let app = app.layer(TraceLayer::new_for_http());

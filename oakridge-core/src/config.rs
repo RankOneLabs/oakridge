@@ -89,6 +89,9 @@ fn parse_origin(raw: &str) -> anyhow::Result<HeaderValue> {
     if authority.as_str().contains('@') {
         anyhow::bail!("origin must not include userinfo: {raw}");
     }
+    if raw.ends_with('/') {
+        anyhow::bail!("origin must not end with a trailing slash: {raw}");
+    }
     if uri.path() != "/" || uri.query().is_some() {
         anyhow::bail!("origin must not include a path or query: {raw}");
     }
@@ -133,5 +136,11 @@ mod tests {
     fn invalid_origin_is_rejected() {
         let err = parse_cors_origins(Some("https://example.com/path")).unwrap_err();
         assert!(err.to_string().contains("path or query"));
+    }
+
+    #[test]
+    fn trailing_slash_origin_is_rejected() {
+        let err = parse_cors_origins(Some("https://example.com/")).unwrap_err();
+        assert!(err.to_string().contains("trailing slash"));
     }
 }

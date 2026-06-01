@@ -1,18 +1,14 @@
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::body::Body;
 use axum::http::{header, HeaderValue, Request, StatusCode};
 use tower::ServiceExt;
+use uuid::Uuid;
 
 use oakridge_core::{boot, register_types, Config};
 
 fn temp_db_url() -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    format!("sqlite:///tmp/oakridge-http-exposure-{nanos}.db")
+    format!("sqlite:///tmp/oakridge-http-exposure-{}.db", Uuid::new_v4())
 }
 
 async fn app_with(cors_origins: Vec<HeaderValue>) -> axum::Router {
