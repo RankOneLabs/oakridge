@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sqlx::SqlitePool;
+use sqlx::{Row, SqlitePool};
 use tokio::sync::mpsc;
 use chrono::Utc;
 use uuid::Uuid;
@@ -61,6 +61,12 @@ pub struct EmitArgs {
     /// If this artifact revises a previous one, the ID of its parent.
     pub parent_artifact_id: Option<ArtifactId>,
 }
+
+fn is_unique_violation(err: &sqlx::Error) -> bool {
+    matches!(err, sqlx::Error::Database(dbe) if dbe.kind() == sqlx::error::ErrorKind::UniqueViolation)
+}
+
+const MAX_ARTIFACT_EMIT_RETRIES: usize = 8;
 
 // ── StageContext ──────────────────────────────────────────────────────────────
 
@@ -129,38 +135,123 @@ impl StageContext {
 
         (type_def.validate)(&args.body)?;
 
-        let version = if let Some(parent_id) = args.parent_artifact_id {
-            let parent = queries::get_artifact_by_id(&self.db, &parent_id).await?;
-            if parent.run_id != self.workflow_run_id {
-                return Err(anyhow::anyhow!(
-                    "parent artifact {} belongs to a different workflow run",
-                    parent_id.0
-                ));
+        let EmitArgs {
+            output_name,
+            artifact_type,
+            body,
+            label,
+            parent_artifact_id,
+        } = args;
+
+        enum EmitAttempt {
+            Inserted(Artifact),
+            Retry,
+        }
+
+        let mut attempts = 0usize;
+        let artifact = loop {
+            let mut conn = self.db.acquire().await?;
+            sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await?;
+
+            let attempt: anyhow::Result<EmitAttempt> = async {
+                let version = if let Some(parent_id) = parent_artifact_id {
+                    let parent_id_str = parent_id.0.to_string();
+                    let parent = sqlx::query("SELECT run_id, version FROM artifact WHERE id = ?")
+                        .bind(parent_id_str.clone())
+                        .fetch_optional(&mut *conn)
+                        .await?
+                        .ok_or_else(|| crate::Error::NotFound {
+                            entity: "artifact".into(),
+                            id: parent_id.0.to_string(),
+                        })?;
+                    let parent_run_id: String = parent.get("run_id");
+                    let parent_version: i64 = parent.get("version");
+                    if parent_run_id != self.workflow_run_id.0.to_string() {
+                        return Err(anyhow::anyhow!(
+                            "parent artifact {} belongs to a different workflow run",
+                            parent_id.0
+                        ));
+                    }
+                    sqlx::query_scalar::<_, i64>(
+                        "SELECT COALESCE(MAX(version), ?) + 1 FROM artifact WHERE parent_artifact_id = ?",
+                    )
+                    .bind(parent_version)
+                    .bind(parent_id_str)
+                    .fetch_one(&mut *conn)
+                    .await?
+                } else {
+                    1
+                };
+
+                let artifact = Artifact {
+                    id: ArtifactId(Uuid::new_v4()),
+                    run_id: self.workflow_run_id,
+                    stage_instance_id: self.stage_instance_id,
+                    artifact_type: artifact_type.clone(),
+                    output_name: Some(output_name.clone()),
+                    label: label.clone(),
+                    body: body.clone(),
+                    version: version as i32,
+                    parent_artifact_id,
+                    created_at: Utc::now(),
+                };
+
+                let insert_result = sqlx::query(
+                    "INSERT INTO artifact \
+                     (id, run_id, stage_instance_id, artifact_type, output_name, label, body, version, parent_artifact_id, created_at) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                )
+                .bind(artifact.id.0.to_string())
+                .bind(artifact.run_id.0.to_string())
+                .bind(artifact.stage_instance_id.0.to_string())
+                .bind(artifact.artifact_type.clone())
+                .bind(artifact.output_name.clone())
+                .bind(artifact.label.clone())
+                .bind(serde_json::to_string(&artifact.body)?)
+                .bind(artifact.version as i64)
+                .bind(artifact.parent_artifact_id.map(|parent| parent.0.to_string()))
+                .bind(artifact.created_at.to_rfc3339())
+                .execute(&mut *conn)
+                .await;
+
+                match insert_result {
+                    Ok(_) => Ok(EmitAttempt::Inserted(artifact)),
+                    Err(err) if is_unique_violation(&err) => Ok(EmitAttempt::Retry),
+                    Err(err) => Err(err.into()),
+                }
             }
-            parent.version + 1
-        } else {
-            1
-        };
+            .await;
 
-        let artifact = Artifact {
-            id: ArtifactId(Uuid::new_v4()),
-            run_id: self.workflow_run_id,
-            stage_instance_id: self.stage_instance_id,
-            artifact_type: args.artifact_type,
-            output_name: Some(args.output_name.clone()),
-            label: args.label,
-            body: args.body,
-            version,
-            parent_artifact_id: args.parent_artifact_id,
-            created_at: Utc::now(),
+            match attempt {
+                Ok(EmitAttempt::Inserted(artifact)) => {
+                    if let Err(err) = sqlx::query("COMMIT").execute(&mut *conn).await {
+                        let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                        return Err(err.into());
+                    }
+                    break artifact;
+                }
+                Ok(EmitAttempt::Retry) => {
+                    let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                    if attempts >= MAX_ARTIFACT_EMIT_RETRIES {
+                        return Err(anyhow::anyhow!(
+                            "artifact emit exceeded {} retries on unique conflict",
+                            MAX_ARTIFACT_EMIT_RETRIES
+                        ));
+                    }
+                    attempts += 1;
+                    continue;
+                }
+                Err(err) => {
+                    let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                    return Err(err);
+                }
+            }
         };
-
-        queries::insert_artifact(&self.db, &artifact).await?;
 
         self.events_tx
             .send(ExecutorEvent::ArtifactEmitted {
                 artifact: artifact.clone(),
-                output_name: args.output_name,
+                output_name,
             })
             .await
             .map_err(|_| anyhow::anyhow!("executor event channel closed"))?;
@@ -279,7 +370,7 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use serde_json::json;
-    use tokio::sync::mpsc;
+    use tokio::sync::{mpsc, Barrier};
     use uuid::Uuid;
 
     use crate::db::queries;
@@ -654,6 +745,73 @@ mod tests {
         // Persisted, not just in-memory.
         let fetched = queries::get_artifact_by_id(&pool, &rev.id).await.unwrap();
         assert_eq!(fetched.version, 2);
+    }
+
+    #[tokio::test]
+    async fn emit_concurrent_sibling_revisions_get_distinct_versions() {
+        let pool = make_pool().await;
+        let (run_id, si_id) = setup_run(&pool).await;
+        let registry = make_artifact_registry();
+        let (tx, _rx) = mpsc::channel(8);
+
+        let root_ctx = make_ctx(pool.clone(), run_id, si_id, registry.clone(), tx.clone());
+        let root = root_ctx
+            .emit(EmitArgs {
+                output_name: "out".into(),
+                artifact_type: "any".into(),
+                body: json!({"v": 1}),
+                label: None,
+                parent_artifact_id: None,
+            })
+            .await
+            .unwrap();
+
+        let barrier = Arc::new(Barrier::new(2));
+        let left_ctx = make_ctx(pool.clone(), run_id, si_id, registry.clone(), tx.clone());
+        let right_ctx = make_ctx(pool.clone(), run_id, si_id, registry, tx);
+
+        let left = {
+            let barrier = barrier.clone();
+            async move {
+                barrier.wait().await;
+                left_ctx
+                    .emit(EmitArgs {
+                        output_name: "out".into(),
+                        artifact_type: "any".into(),
+                        body: json!({"v": 2}),
+                        label: Some("left".into()),
+                        parent_artifact_id: Some(root.id),
+                    })
+                    .await
+                    .unwrap()
+            }
+        };
+        let right = {
+            let barrier = barrier.clone();
+            async move {
+                barrier.wait().await;
+                right_ctx
+                    .emit(EmitArgs {
+                        output_name: "out".into(),
+                        artifact_type: "any".into(),
+                        body: json!({"v": 3}),
+                        label: Some("right".into()),
+                        parent_artifact_id: Some(root.id),
+                    })
+                    .await
+                    .unwrap()
+            }
+        };
+
+        let (left, right) = tokio::join!(left, right);
+        let mut versions = [left.version, right.version];
+        versions.sort_unstable();
+        assert_eq!(versions, [2, 3]);
+        assert_eq!(left.parent_artifact_id, Some(root.id));
+        assert_eq!(right.parent_artifact_id, Some(root.id));
+
+        let artifacts = queries::list_artifacts_for_run(&pool, &run_id, None).await.unwrap();
+        assert_eq!(artifacts.len(), 3);
     }
 
     #[tokio::test]

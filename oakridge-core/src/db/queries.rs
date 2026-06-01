@@ -903,6 +903,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_stage_instance_unique_per_run_and_stage_key() {
+        let pool = make_test_pool().await;
+        let def = test_workflow_def();
+        insert_workflow_def(&pool, &def).await.unwrap();
+        let run = test_run(def.id);
+        insert_workflow_run(&pool, &run).await.unwrap();
+
+        let first = test_stage(run.id);
+        let second = StageInstance {
+            id: StageInstanceId(Uuid::new_v4()),
+            ..first.clone()
+        };
+
+        insert_stage_instance(&pool, &first).await.unwrap();
+        let duplicate = insert_stage_instance(&pool, &second).await;
+        assert!(duplicate.is_err(), "duplicate (run_id, stage_key) must be rejected");
+    }
+
+    #[tokio::test]
     async fn test_arbitrary_stage_type_and_artifact_type_accepted() {
         let pool = make_test_pool().await;
         let def = test_workflow_def();
@@ -976,6 +995,66 @@ mod tests {
         assert_eq!(chain[0].version, 3);
         assert_eq!(chain[1].version, 2);
         assert_eq!(chain[2].version, 1);
+    }
+
+    #[tokio::test]
+    async fn test_delete_semantics_for_owned_and_definition_rows() {
+        let pool = make_test_pool().await;
+        let proj = test_project();
+        insert_project(&pool, &proj).await.unwrap();
+        let def = test_workflow_def();
+        insert_workflow_def(&pool, &def).await.unwrap();
+        let run = WorkflowRun {
+            project_id: Some(proj.id),
+            ..test_run(def.id)
+        };
+        insert_workflow_run(&pool, &run).await.unwrap();
+        let si = test_stage(run.id);
+        insert_stage_instance(&pool, &si).await.unwrap();
+
+        let root = Artifact {
+            id: ArtifactId(Uuid::new_v4()),
+            run_id: run.id,
+            stage_instance_id: si.id,
+            artifact_type: "text".into(),
+            output_name: Some("out".into()),
+            label: None,
+            body: json!("root"),
+            version: 1,
+            parent_artifact_id: None,
+            created_at: fixed_dt(),
+        };
+        insert_artifact(&pool, &root).await.unwrap();
+        let rev = Artifact {
+            id: ArtifactId(Uuid::new_v4()),
+            parent_artifact_id: Some(root.id),
+            body: json!("rev"),
+            version: 2,
+            ..root.clone()
+        };
+        insert_artifact(&pool, &rev).await.unwrap();
+
+        let delete_project = sqlx::query("DELETE FROM project WHERE id = ?")
+            .bind(proj.id.0.to_string())
+            .execute(&pool)
+            .await;
+        assert!(delete_project.is_err(), "project deletion must be restricted while referenced");
+
+        let delete_def = sqlx::query("DELETE FROM workflow_def WHERE id = ?")
+            .bind(def.id.0.to_string())
+            .execute(&pool)
+            .await;
+        assert!(delete_def.is_err(), "workflow_def deletion must be restricted while referenced");
+
+        sqlx::query("DELETE FROM workflow_run WHERE id = ?")
+            .bind(run.id.0.to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        assert!(get_stage_instance_by_id(&pool, &si.id).await.is_err());
+        assert!(get_artifact_by_id(&pool, &root.id).await.is_err());
+        assert!(get_artifact_by_id(&pool, &rev.id).await.is_err());
     }
 
     // ── List / filter tests ───────────────────────────────────────────────────
@@ -1151,5 +1230,15 @@ mod tests {
         assert_eq!(got.parked_reason, Some("gate waiting".into()));
         assert_eq!(got.started_at, Some(fixed_dt()));
         assert_eq!(got.ended_at, None);
+    }
+
+    #[tokio::test]
+    async fn test_busy_timeout_is_configured() {
+        let pool = make_test_pool().await;
+        let busy_timeout_ms: i64 = sqlx::query_scalar("PRAGMA busy_timeout")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(busy_timeout_ms, 5_000);
     }
 }
