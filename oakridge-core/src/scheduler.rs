@@ -23,7 +23,7 @@ pub enum ControlMsg {
     Decision {
         stage_instance_id: StageInstanceId,
         payload: ResumePayload,
-        reply_tx: oneshot::Sender<Result<(), String>>,
+        reply_tx: oneshot::Sender<Result<(), DecisionError>>,
     },
     Cancel,
 }
@@ -322,7 +322,7 @@ impl RunTask {
         &mut self,
         stage_instance_id: StageInstanceId,
         payload: ResumePayload,
-    ) -> Result<(), String> {
+    ) -> Result<(), DecisionError> {
         let resume_kind = match &payload {
             ResumePayload::GateDecision { .. } => "gate_decision",
             ResumePayload::FeedbackArtifact { .. } => "feedback_artifact",
@@ -330,27 +330,35 @@ impl RunTask {
         let (stage_key, status) = match self.index.iter().find(|(_, (id, _))| *id == stage_instance_id) {
             Some((key, (_, status))) => (key.clone(), *status),
             None => {
-                return Err(format!("stage instance {} is not known to this run", stage_instance_id.0));
+                return Err(DecisionError::Conflict(format!(
+                    "stage instance {} is not known to this run",
+                    stage_instance_id.0
+                )));
             }
         };
 
         if !matches!(status, StageStatus::Parked) {
-            return Err(format!(
+            return Err(DecisionError::Conflict(format!(
                 "stage instance {} is not parked (status: {:?})",
                 stage_instance_id.0, status
-            ));
+            )));
         }
 
         let handle = match self.handles.get(&stage_instance_id) {
             Some(handle) => handle,
             None => {
-                return Err(format!("stage instance {} has no active handle", stage_instance_id.0));
+                return Err(DecisionError::Conflict(format!(
+                    "stage instance {} has no active handle",
+                    stage_instance_id.0
+                )));
             }
         };
 
+        handle.resume(payload).await.map_err(|e| DecisionError::Internal(e.into()))?;
+
         let current = queries::get_stage_instance_by_id(&self.db, &stage_instance_id)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| DecisionError::Internal(anyhow::Error::new(e)))?;
         let started_at = current.started_at.or(Some(Utc::now()));
 
         queries::update_stage_instance_status(
@@ -362,7 +370,7 @@ impl RunTask {
             None,
         )
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| DecisionError::Internal(anyhow::Error::new(e)))?;
 
         if let Some((_, s)) = self.index.get_mut(&stage_key) {
             *s = StageStatus::Running;
@@ -374,7 +382,6 @@ impl RunTask {
             parked_reason: None,
         });
 
-        handle.resume(payload).await.map_err(|e| e.to_string())?;
         self.bus.publish(self.run_id, SubstrateEvent::StageResumed {
             stage_instance_id,
             resume_kind: resume_kind.to_string(),
@@ -486,7 +493,12 @@ impl Coordinator {
     ) -> Result<(), DecisionError> {
         let run = queries::get_workflow_run_by_id(&self.db, &run_id)
             .await
-            .map_err(|e| DecisionError::Internal(anyhow::Error::new(e)))?;
+            .map_err(|e| match e {
+                crate::Error::NotFound { .. } => {
+                    DecisionError::Conflict(format!("run {} not found", run_id.0))
+                }
+                other => DecisionError::Internal(anyhow::Error::new(other)),
+            })?;
         if !matches!(run.status, RunStatus::Pending | RunStatus::Running) {
             return Err(DecisionError::Conflict(format!(
                 "run {} is not active (status: {:?})",
@@ -514,7 +526,7 @@ impl Coordinator {
 
         match reply_rx.await {
             Ok(Ok(())) => Ok(()),
-            Ok(Err(msg)) => Err(DecisionError::Conflict(msg)),
+            Ok(Err(err)) => Err(err),
             Err(_) => Err(DecisionError::Conflict(format!(
                 "scheduler task ended before acknowledging decision for run {}",
                 run_id.0
