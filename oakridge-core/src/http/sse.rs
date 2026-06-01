@@ -38,7 +38,7 @@ use tokio::sync::broadcast;
 use uuid::Uuid;
 
 use crate::events::{BackfillScope, EventBus, SeqEvent, BROADCAST_CAP};
-use crate::types::WorkflowRunId;
+use crate::types::{RunStatus, WorkflowRunId};
 
 use super::rest::AppError;
 use super::AppState;
@@ -86,10 +86,11 @@ impl Stream for SseStream {
 /// 3. Emit the `gap` event if the cursor predates the oldest retained seq.
 /// 4. Yield buffered events, advancing `last_emitted_seq`.
 /// 5. Forward live events, skipping any whose seq ≤ `last_emitted_seq`.
-fn build_sse_stream(
+fn build_run_sse_stream(
     bus: Arc<EventBus>,
     scope: ScopeKey,
     since: u64,
+    terminal_only: bool,
 ) -> impl Stream<Item = Result<Event, Infallible>> {
     // Bounded channel: slow clients apply backpressure rather than accumulate memory.
     // Capacity matches EventBus's broadcast channel so both buffers are consistent.
@@ -100,10 +101,13 @@ fn build_sse_stream(
     // where live_rx.recv() would otherwise block indefinitely.
     let (cancel_tx, cancel_rx) = futures::channel::oneshot::channel::<()>();
 
-    // Step 1 — subscribe FIRST to close the race between buffer-read and live-attach.
-    let live_rx = match scope {
-        ScopeKey::Global => bus.subscribe_global(),
-        ScopeKey::Run(run_id) => bus.subscribe_run(run_id),
+    let live_rx = if terminal_only {
+        None
+    } else {
+        Some(match scope {
+            ScopeKey::Global => bus.subscribe_global(),
+            ScopeKey::Run(run_id) => bus.subscribe_run(run_id),
+        })
     };
 
     // Step 2 — read the ring buffer for events with seq > since.
@@ -134,10 +138,16 @@ fn build_sse_stream(
             }
         }
 
-        // Step 5 — forward live events, skipping any already covered by backfill.
+        if terminal_only {
+            return;
+        }
+
+        // Step 5 — subscribe ONLY for active runs, then forward live events while
+        // skipping any already covered by backfill.
+        let mut live_rx = live_rx.expect("active run streams must subscribe");
+
         // Race against cancel_rx so the task exits promptly on client disconnect
         // rather than sitting blocked on live_rx.recv() during idle periods.
-        let mut live_rx = live_rx;
         tokio::pin!(cancel_rx);
         loop {
             tokio::select! {
@@ -190,7 +200,7 @@ pub async fn stream_global_events(
     headers: HeaderMap,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let since = resolve_since(params.since, &headers);
-    Sse::new(build_sse_stream(state.bus, ScopeKey::Global, since))
+    Sse::new(build_run_sse_stream(state.bus, ScopeKey::Global, since, false))
         .keep_alive(KeepAlive::default())
 }
 
@@ -202,10 +212,11 @@ pub async fn stream_run_events(
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, AppError> {
     let run_id = WorkflowRunId(run_id);
     // 404 if the run id is unknown — avoids an indefinitely empty stream for a typo.
-    let _ = crate::db::queries::get_workflow_run_by_id(&state.pool, &run_id).await?;
+    let run = crate::db::queries::get_workflow_run_by_id(&state.pool, &run_id).await?;
 
     let since = resolve_since(params.since, &headers);
-    Ok(Sse::new(build_sse_stream(state.bus, ScopeKey::Run(run_id), since))
+    let terminal_only = matches!(run.status, RunStatus::Done | RunStatus::Failed);
+    Ok(Sse::new(build_run_sse_stream(state.bus, ScopeKey::Run(run_id), since, terminal_only))
         .keep_alive(KeepAlive::default()))
 }
 
@@ -294,6 +305,36 @@ fn build_seq_stream_for_test(
 }
 
 #[cfg(test)]
+fn build_terminal_seq_stream_for_test(
+    bus: Arc<EventBus>,
+    scope: ScopeKey,
+    since: u64,
+) -> impl futures::Stream<Item = u64> {
+    let (mut tx, rx) = futures::channel::mpsc::channel::<u64>(BROADCAST_CAP);
+
+    let (backfill_events, gap_flag) = match scope {
+        ScopeKey::Global => bus.backfill(BackfillScope::Global, since),
+        ScopeKey::Run(run_id) => bus.backfill(BackfillScope::Run(&run_id), since),
+    };
+
+    tokio::spawn(async move {
+        if gap_flag && since > 0 {
+            if tx.send(0).await.is_err() {
+                return;
+            }
+        }
+
+        for ev in backfill_events {
+            if tx.send(ev.seq).await.is_err() {
+                return;
+            }
+        }
+    });
+
+    rx
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Arc;
@@ -349,6 +390,26 @@ mod tests {
             .await;
 
         assert_eq!(seqs, vec![3, 4, 5]);
+    }
+
+    #[tokio::test]
+    async fn terminal_replay_keeps_events_until_ttl_then_evicts() {
+        let bus = EventBus::with_terminal_retention(std::time::Duration::from_millis(25));
+        let rid = run_id();
+
+        bus.publish(rid, running_event(rid));
+        bus.publish(rid, SubstrateEvent::RunStatusChanged { run_id: rid, status: RunStatus::Done });
+        bus.cleanup_run(rid);
+
+        let seqs: Vec<u64> = build_terminal_seq_stream_for_test(Arc::clone(&bus), ScopeKey::Run(rid), 0)
+            .collect()
+            .await;
+        assert_eq!(seqs, vec![1, 2], "terminal replay should include the final run events");
+
+        tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+        let (events, gap) = bus.backfill(BackfillScope::Run(&rid), 0);
+        assert!(events.is_empty(), "terminal history should be evicted after TTL");
+        assert!(!gap);
     }
 
     // ── (c) end-to-end: wire framing over raw TCP ─────────────────────────────

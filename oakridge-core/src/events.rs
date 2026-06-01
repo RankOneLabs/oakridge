@@ -1,5 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
@@ -61,19 +62,39 @@ struct Inner {
     global_ring: VecDeque<SeqEvent>,
     per_run_tx: HashMap<WorkflowRunId, broadcast::Sender<SeqEvent>>,
     per_run_ring: HashMap<WorkflowRunId, VecDeque<SeqEvent>>,
+    terminal_runs: HashMap<WorkflowRunId, Instant>,
 }
 
 pub struct EventBus {
     inner: Mutex<Inner>,
+    terminal_retention: Duration,
 }
 
 impl EventBus {
     pub fn new() -> Arc<Self> {
-        Arc::new(Self::default())
+        Self::with_terminal_retention(Duration::from_secs(5 * 60))
+    }
+
+    pub fn with_terminal_retention(terminal_retention: Duration) -> Arc<Self> {
+        Arc::new(Self {
+            inner: Mutex::new(Inner {
+                seq: 1,
+                global_tx: broadcast::channel(BROADCAST_CAP).0,
+                global_ring: VecDeque::new(),
+                per_run_tx: HashMap::new(),
+                per_run_ring: HashMap::new(),
+                terminal_runs: HashMap::new(),
+            }),
+            terminal_retention,
+        })
     }
 
     pub fn publish(&self, run_id: WorkflowRunId, event: SubstrateEvent) {
         let mut g = self.inner.lock().unwrap();
+        self.evict_expired_terminal_runs_locked(&mut g, Instant::now());
+        if g.terminal_runs.contains_key(&run_id) {
+            return;
+        }
         let seq = g.seq;
         g.seq += 1;
         let se = SeqEvent { seq, event };
@@ -99,6 +120,12 @@ impl EventBus {
 
     pub fn subscribe_run(&self, run_id: WorkflowRunId) -> broadcast::Receiver<SeqEvent> {
         let mut g = self.inner.lock().unwrap();
+        self.evict_expired_terminal_runs_locked(&mut g, Instant::now());
+        if g.terminal_runs.contains_key(&run_id) {
+            let (tx, rx) = broadcast::channel(BROADCAST_CAP);
+            drop(tx);
+            return rx;
+        }
         let tx = g.per_run_tx
             .entry(run_id)
             .or_insert_with(|| broadcast::channel(BROADCAST_CAP).0);
@@ -112,7 +139,8 @@ impl EventBus {
     /// Returns (events_with_seq_gt_since, gap_flag).
     /// gap_flag is true when `since` precedes the oldest retained seq.
     pub fn backfill(&self, scope: BackfillScope<'_>, since: u64) -> (Vec<SeqEvent>, bool) {
-        let g = self.inner.lock().unwrap();
+        let mut g = self.inner.lock().unwrap();
+        self.evict_expired_terminal_runs_locked(&mut g, Instant::now());
         match scope {
             BackfillScope::Global => Self::drain_ring(&g.global_ring, since),
             BackfillScope::Run(run_id) => {
@@ -127,7 +155,8 @@ impl EventBus {
     /// Returns the oldest retained sequence number for `scope`, or 0 if the ring is empty.
     /// Cheaper than `backfill(scope, 0)` when the caller only needs the oldest seq.
     pub fn oldest_seq(&self, scope: BackfillScope<'_>) -> u64 {
-        let g = self.inner.lock().unwrap();
+        let mut g = self.inner.lock().unwrap();
+        self.evict_expired_terminal_runs_locked(&mut g, Instant::now());
         match scope {
             BackfillScope::Global => g.global_ring.front().map_or(0, |e| e.seq),
             BackfillScope::Run(run_id) => g
@@ -138,13 +167,33 @@ impl EventBus {
         }
     }
 
-    /// Remove per-run state after a run reaches a terminal state.
-    /// Callers that previously subscribed via `subscribe_run` will receive
-    /// `RecvError::Closed` on their next recv, which is the expected signal.
+    /// Retain the per-run ring for terminal backfill, then evict it
+    /// opportunistically once the retention TTL expires.
     pub fn cleanup_run(&self, run_id: WorkflowRunId) {
         let mut g = self.inner.lock().unwrap();
+        self.evict_expired_terminal_runs_locked(&mut g, Instant::now());
         g.per_run_tx.remove(&run_id);
-        g.per_run_ring.remove(&run_id);
+        g.terminal_runs.insert(run_id, Instant::now());
+    }
+
+    fn evict_expired_terminal_runs_locked(&self, g: &mut Inner, now: Instant) {
+        let retention = self.terminal_retention;
+        let expired: Vec<WorkflowRunId> = g
+            .terminal_runs
+            .iter()
+            .filter_map(|(run_id, terminal_at)| {
+                if now.duration_since(*terminal_at) >= retention {
+                    Some(*run_id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for run_id in expired {
+            g.terminal_runs.remove(&run_id);
+            g.per_run_tx.remove(&run_id);
+            g.per_run_ring.remove(&run_id);
+        }
     }
 
     fn drain_ring(ring: &VecDeque<SeqEvent>, since: u64) -> (Vec<SeqEvent>, bool) {
@@ -168,7 +217,9 @@ impl Default for EventBus {
                 global_ring: VecDeque::new(),
                 per_run_tx: HashMap::new(),
                 per_run_ring: HashMap::new(),
+                terminal_runs: HashMap::new(),
             }),
+            terminal_retention: Duration::from_secs(5 * 60),
         }
     }
 }
@@ -180,6 +231,7 @@ mod tests {
     use super::*;
     use crate::types::RunStatus;
     use uuid::Uuid;
+    use std::time::Duration;
 
     fn run_id() -> WorkflowRunId {
         WorkflowRunId(Uuid::new_v4())
@@ -257,5 +309,24 @@ mod tests {
         let ev = SubstrateEvent::RunStatusChanged { run_id: r, status: RunStatus::Done };
         let v = serde_json::to_value(&ev).unwrap();
         assert_eq!(v["kind"], "run_status_changed");
+    }
+
+    #[tokio::test]
+    async fn terminal_ring_retained_then_evicted() {
+        let bus = EventBus::with_terminal_retention(Duration::from_millis(25));
+        let r = run_id();
+
+        bus.publish(r, SubstrateEvent::RunStatusChanged { run_id: r, status: RunStatus::Running });
+        bus.publish(r, SubstrateEvent::RunStatusChanged { run_id: r, status: RunStatus::Done });
+        bus.cleanup_run(r);
+
+        let (events, gap) = bus.backfill(BackfillScope::Run(&r), 0);
+        assert!(gap);
+        assert_eq!(events.len(), 2);
+
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        let (events, gap) = bus.backfill(BackfillScope::Run(&r), 0);
+        assert!(events.is_empty());
+        assert!(!gap);
     }
 }

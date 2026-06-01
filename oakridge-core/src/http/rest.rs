@@ -257,7 +257,18 @@ pub async fn create_workflow_run(
     };
 
     queries::insert_workflow_run(&state.pool, &run).await?;
-    state.coordinator.start_run(run.id).await?;
+    if let Err(start_err) = state.coordinator.start_run(run.id).await {
+        match queries::mark_workflow_run_failed_if_pending(&state.pool, &run.id).await {
+            Ok(true) => {}
+            Ok(false) => {
+                tracing::warn!(run_id = %run.id.0, "skipped workflow_run rollback because status was no longer pending");
+            }
+            Err(cleanup_err) => {
+                tracing::error!(run_id = %run.id.0, error = %cleanup_err, "failed to rollback workflow_run after start failure");
+            }
+        }
+        return Err(start_err.into());
+    }
 
     Ok((StatusCode::CREATED, Json(run)))
 }
@@ -373,7 +384,7 @@ mod tests {
     use crate::executor::{EmitArgs, ResumePayload, StageContext, StageHandle};
     use crate::registry::{ArtifactTypeDef, ArtifactTypeRegistry, StageTypeRegistry};
     use crate::scheduler::Coordinator;
-    use crate::types::StageStatus;
+    use crate::types::{StageNodeDef, StageStatus};
     use async_trait::async_trait;
     use axum::body::Body;
     use axum::http::Request;
@@ -486,10 +497,10 @@ mod tests {
 
     // ── Test state builder ────────────────────────────────────────────────────
 
-    async fn make_state(
+    async fn make_state_at(
+        path: &str,
         stage_types: Vec<Arc<dyn crate::registry::stage_type::StageType>>,
     ) -> AppState {
-        let path = format!("/tmp/oakridge_http_{}.db", Uuid::new_v4());
         let pool = Arc::new(db::init_pool(&format!("sqlite:{}", path)).await.unwrap());
 
         let mut stage_reg = StageTypeRegistry::new();
@@ -515,6 +526,13 @@ mod tests {
         ));
 
         AppState { pool, stage_registry, artifact_registry, coordinator, bus }
+    }
+
+    async fn make_state(
+        stage_types: Vec<Arc<dyn crate::registry::stage_type::StageType>>,
+    ) -> AppState {
+        let path = format!("/tmp/oakridge_http_{}.db", Uuid::new_v4());
+        make_state_at(&path, stage_types).await
     }
 
     // ── HTTP request helper ───────────────────────────────────────────────────
@@ -633,6 +651,86 @@ mod tests {
         let run_a_id = WorkflowRunId(Uuid::parse_str(run_a["id"].as_str().unwrap()).unwrap());
         let stored_a = queries::get_workflow_run_by_id(&pool, &run_a_id).await.unwrap();
         assert_eq!(stored_a.context["workdir"], json!("/caller/override"));
+    }
+
+    #[tokio::test]
+    async fn test_start_failure_rolls_back_pending_run_and_retry_stays_single_active() {
+        let (stage, _ctx_rx) = scripted("retry_stage");
+        let state = make_state(vec![stage.clone() as Arc<dyn crate::registry::stage_type::StageType>]).await;
+        let pool = state.pool.clone();
+
+        let def_id = WorkflowDefId(Uuid::new_v4());
+        let def = WorkflowDef {
+            id: def_id,
+            name: "retry-wf".into(),
+            version: 1,
+            graph: WorkflowGraph {
+                stages: {
+                    let mut stages = HashMap::new();
+                    stages.insert(
+                        "s1".into(),
+                        StageNodeDef {
+                            stage_type: "retry_stage".into(),
+                            config: json!({}),
+                            inputs: vec![],
+                            outputs: vec![],
+                        },
+                    );
+                    stages
+                },
+                edges: vec![],
+            },
+            created_at: Utc::now(),
+        };
+        queries::insert_workflow_def(&pool, &def).await.unwrap();
+        sqlx::query("UPDATE workflow_def SET graph = ? WHERE id = ?")
+            .bind("not-json")
+            .bind(def_id.0.to_string())
+            .execute(pool.as_ref())
+            .await
+            .unwrap();
+
+        let first_app = crate::http::router(state.clone());
+        let (status, err_body) = req(
+            first_app,
+            "POST",
+            "/workflow_runs",
+            Some(json!({"workflow_def_id": def_id})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "error body: {err_body}");
+
+        let runs = queries::list_workflow_runs(&pool, None, Some(&def_id), None)
+            .await
+            .unwrap();
+        assert_eq!(runs.len(), 1, "runs after failed create: {runs:?}");
+        assert_eq!(runs[0].status, RunStatus::Failed, "failed row should not remain pending");
+        assert_eq!(runs[0].workflow_def_id, def_id);
+
+        let active_after_failure = queries::list_active_runs(&pool).await.unwrap();
+        assert!(active_after_failure.is_empty(), "failed create must not leave active work behind");
+
+        sqlx::query("UPDATE workflow_def SET graph = ? WHERE id = ?")
+            .bind(serde_json::to_string(&def.graph).unwrap())
+            .bind(def_id.0.to_string())
+            .execute(pool.as_ref())
+            .await
+            .unwrap();
+
+        let second_app = crate::http::router(state.clone());
+        let (status, run) = req(
+            second_app,
+            "POST",
+            "/workflow_runs",
+            Some(json!({"workflow_def_id": def_id})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "retry body: {run}");
+        let retry_run_id = WorkflowRunId(Uuid::parse_str(run["id"].as_str().unwrap()).unwrap());
+
+        let active_after_retry = queries::list_active_runs(&pool).await.unwrap();
+        assert_eq!(active_after_retry.len(), 1, "retry should create only one active run");
+        assert_eq!(active_after_retry[0].id, retry_run_id);
     }
 
     #[tokio::test]
