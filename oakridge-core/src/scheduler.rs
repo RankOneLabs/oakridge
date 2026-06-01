@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
+use tokio::time::{timeout, Duration};
 use uuid::Uuid;
 use chrono::Utc;
 use serde_json::Value;
@@ -327,8 +328,26 @@ impl RunTask {
             ResumePayload::GateDecision { .. } => "gate_decision",
             ResumePayload::FeedbackArtifact { .. } => "feedback_artifact",
         };
-        let (stage_key, status) = match self.index.iter().find(|(_, (id, _))| *id == stage_instance_id) {
-            Some((key, (_, status))) => (key.clone(), *status),
+        let current = queries::get_stage_instance_by_id(&self.db, &stage_instance_id)
+            .await
+            .map_err(|e| match e {
+                crate::Error::NotFound { .. } => DecisionError::Conflict(format!(
+                    "stage instance {} not found",
+                    stage_instance_id.0
+                )),
+                other => DecisionError::Internal(anyhow::Error::new(other)),
+            })?;
+
+        if current.run_id != self.run_id {
+            return Err(DecisionError::Conflict(format!(
+                "stage instance {} does not belong to run {}",
+                stage_instance_id.0,
+                self.run_id.0
+            )));
+        }
+
+        let (stage_key, indexed_id, status) = match self.index.get(&current.stage_key) {
+            Some((indexed_id, status)) => (current.stage_key.clone(), *indexed_id, *status),
             None => {
                 return Err(DecisionError::Conflict(format!(
                     "stage instance {} is not known to this run",
@@ -336,6 +355,15 @@ impl RunTask {
                 )));
             }
         };
+
+        if indexed_id != stage_instance_id {
+            return Err(DecisionError::Conflict(format!(
+                "stage instance {} is stale for stage {}; active instance is {}",
+                stage_instance_id.0,
+                stage_key,
+                indexed_id.0
+            )));
+        }
 
         if !matches!(status, StageStatus::Parked) {
             return Err(DecisionError::Conflict(format!(
@@ -356,31 +384,41 @@ impl RunTask {
 
         handle.resume(payload).await.map_err(|e| DecisionError::Internal(e.into()))?;
 
-        let current = queries::get_stage_instance_by_id(&self.db, &stage_instance_id)
+        let after_resume = queries::get_stage_instance_by_id(&self.db, &stage_instance_id)
+            .await
+            .map_err(|e| match e {
+                crate::Error::NotFound { .. } => DecisionError::Conflict(format!(
+                    "stage instance {} not found after resume",
+                    stage_instance_id.0
+                )),
+                other => DecisionError::Internal(anyhow::Error::new(other)),
+            })?;
+
+        if matches!(after_resume.status, StageStatus::Parked) {
+            let started_at = after_resume.started_at.or(Some(Utc::now()));
+            let updated = queries::update_stage_instance_status_if_current_status(
+                &self.db,
+                &stage_instance_id,
+                StageStatus::Parked,
+                StageStatus::Running,
+                None,
+                started_at,
+                None,
+            )
             .await
             .map_err(|e| DecisionError::Internal(anyhow::Error::new(e)))?;
-        let started_at = current.started_at.or(Some(Utc::now()));
 
-        queries::update_stage_instance_status(
-            &self.db,
-            &stage_instance_id,
-            StageStatus::Running,
-            None,
-            started_at,
-            None,
-        )
-        .await
-        .map_err(|e| DecisionError::Internal(anyhow::Error::new(e)))?;
-
-        if let Some((_, s)) = self.index.get_mut(&stage_key) {
-            *s = StageStatus::Running;
+            if updated {
+                if let Some((_, s)) = self.index.get_mut(&stage_key) {
+                    *s = StageStatus::Running;
+                }
+                self.bus.publish(self.run_id, SubstrateEvent::StageStatusChanged {
+                    stage_instance_id,
+                    status: StageStatus::Running,
+                    parked_reason: None,
+                });
+            }
         }
-
-        self.bus.publish(self.run_id, SubstrateEvent::StageStatusChanged {
-            stage_instance_id,
-            status: StageStatus::Running,
-            parked_reason: None,
-        });
 
         self.bus.publish(self.run_id, SubstrateEvent::StageResumed {
             stage_instance_id,
@@ -524,13 +562,16 @@ impl Coordinator {
         .await
         .map_err(|_| DecisionError::Conflict(format!("control channel closed for run {}", run_id.0)))?;
 
-        match reply_rx.await {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(err)) => Err(err),
-            Err(_) => Err(DecisionError::Conflict(format!(
+        match timeout(Duration::from_secs(5), reply_rx).await {
+            Err(_) => Err(DecisionError::Internal(anyhow::anyhow!(
+                "scheduler task did not acknowledge decision for run {} in time",
+                run_id.0
+            ))),
+            Ok(Err(_)) => Err(DecisionError::Conflict(format!(
                 "scheduler task ended before acknowledging decision for run {}",
                 run_id.0
             ))),
+            Ok(Ok(result)) => result,
         }
     }
 
