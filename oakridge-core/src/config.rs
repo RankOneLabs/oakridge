@@ -139,6 +139,19 @@ mod tests {
     }
 
     #[test]
+    fn valid_origins_are_accepted_and_trimmed() {
+        let origins =
+            parse_cors_origins(Some(" https://example.com , https://dashboard.example ")).unwrap();
+        assert_eq!(
+            origins,
+            vec![
+                HeaderValue::from_static("https://example.com"),
+                HeaderValue::from_static("https://dashboard.example"),
+            ]
+        );
+    }
+
+    #[test]
     fn trailing_slash_origin_is_rejected() {
         let err = parse_cors_origins(Some("https://example.com/")).unwrap_err();
         assert!(err.to_string().contains("trailing slash"));
