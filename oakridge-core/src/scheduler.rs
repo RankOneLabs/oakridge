@@ -436,6 +436,24 @@ impl Coordinator {
         for run in active_runs {
             let run_id = run.id;
             let def = queries::get_workflow_def_by_id(&self.db, &run.workflow_def_id).await?;
+
+            if def.graph.stages.is_empty() {
+                queries::update_workflow_run_status(&self.db, &run_id, RunStatus::Done).await?;
+                self.bus.publish(run_id, SubstrateEvent::RunStatusChanged {
+                    run_id,
+                    status: RunStatus::Done,
+                });
+                continue;
+            }
+
+            if matches!(run.status, RunStatus::Pending) {
+                queries::update_workflow_run_status(&self.db, &run_id, RunStatus::Running).await?;
+                self.bus.publish(run_id, SubstrateEvent::RunStatusChanged {
+                    run_id,
+                    status: RunStatus::Running,
+                });
+            }
+
             let instances = queries::list_stage_instances_for_run(&self.db, &run_id).await?;
             let artifacts = queries::list_artifacts_for_run(&self.db, &run_id, None).await?;
 
@@ -549,6 +567,8 @@ impl Coordinator {
                     }
                 }
             }
+
+            task.prime_source_stages().await;
 
             // Acquire the map lock before spawning so self-reaping cannot race
             // ahead of handle registration.
@@ -1014,7 +1034,180 @@ mod tests {
         assert_eq!(run_final.status, RunStatus::Done);
     }
 
-    // ── (e) empty graph short-circuits to Done ────────────────────────────────
+    // ── (e) crash recovery primes missing source stages ───────────────────────
+
+    #[tokio::test]
+    async fn crash_recovery_primes_missing_source_stages_and_marks_pending_running() {
+        let pool = make_pool().await;
+        let artifact_reg = make_artifact_registry();
+        let bus = EventBus::new();
+
+        let (sa, mut a_rx) = scripted("st_a");
+        let mut reg = StageTypeRegistry::new();
+        reg.register(sa);
+
+        let coord = Coordinator::new(pool.clone(), Arc::new(reg), artifact_reg, bus.clone());
+
+        let def = WorkflowDef {
+            id: WorkflowDefId(Uuid::new_v4()),
+            name: format!("wf-{}", Uuid::new_v4()),
+            version: 1,
+            graph: WorkflowGraph {
+                stages: {
+                    let mut m = HashMap::new();
+                    m.insert("A".into(), StageNodeDef {
+                        stage_type: "st_a".into(), config: json!({}),
+                        inputs: vec![], outputs: vec![],
+                    });
+                    m
+                },
+                edges: vec![],
+            },
+            created_at: fixed_dt(),
+        };
+        queries::insert_workflow_def(&pool, &def).await.unwrap();
+
+        let run = WorkflowRun {
+            id: WorkflowRunId(Uuid::new_v4()),
+            workflow_def_id: def.id,
+            project_id: None,
+            status: RunStatus::Pending,
+            context: json!({}),
+            version: 1,
+            created_at: fixed_dt(),
+            updated_at: fixed_dt(),
+        };
+        queries::insert_workflow_run(&pool, &run).await.unwrap();
+
+        let mut global_rx = bus.subscribe_global();
+
+        coord.recover().await.unwrap();
+
+        let run_after = queries::get_workflow_run_by_id(&pool, &run.id).await.unwrap();
+        assert_eq!(run_after.status, RunStatus::Running, "recovered pending run must be promoted to Running");
+
+        let first_event = tokio::time::timeout(timeout_dur(), global_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            first_event.event,
+            SubstrateEvent::RunStatusChanged { status: RunStatus::Running, .. }
+        ));
+
+        let stage_instances = queries::list_stage_instances_for_run(&pool, &run.id).await.unwrap();
+        assert_eq!(stage_instances.len(), 1, "recover must prime the missing source stage once");
+
+        let (ctx_a, _) = tokio::time::timeout(timeout_dur(), a_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(stage_instances[0].stage_key, "A");
+        assert_eq!(ctx_a.stage_instance_id, stage_instances[0].id);
+
+        ctx_a.set_status(StageStatus::Running, None).await.unwrap();
+        ctx_a.set_status(StageStatus::Done, None).await.unwrap();
+
+        wait_run_done(&pool, run.id).await;
+        let run_final = queries::get_workflow_run_by_id(&pool, &run.id).await.unwrap();
+        assert_eq!(run_final.status, RunStatus::Done);
+    }
+
+    // ── (f) crash recovery reuses persisted stages and primes gaps ───────────
+
+    #[tokio::test]
+    async fn crash_recovery_reuses_persisted_stages_and_primes_missing_sources() {
+        let pool = make_pool().await;
+        let artifact_reg = make_artifact_registry();
+        let bus = EventBus::new();
+
+        let (sa, mut a_rx) = scripted("st_a");
+        let mut reg = StageTypeRegistry::new();
+        reg.register(sa);
+
+        let coord = Coordinator::new(pool.clone(), Arc::new(reg), artifact_reg, bus.clone());
+
+        let def = WorkflowDef {
+            id: WorkflowDefId(Uuid::new_v4()),
+            name: format!("wf-{}", Uuid::new_v4()),
+            version: 1,
+            graph: WorkflowGraph {
+                stages: {
+                    let mut m = HashMap::new();
+                    m.insert("A".into(), StageNodeDef {
+                        stage_type: "st_a".into(), config: json!({}),
+                        inputs: vec![], outputs: vec![],
+                    });
+                    m.insert("B".into(), StageNodeDef {
+                        stage_type: "st_a".into(), config: json!({}),
+                        inputs: vec![], outputs: vec![],
+                    });
+                    m
+                },
+                edges: vec![],
+            },
+            created_at: fixed_dt(),
+        };
+        queries::insert_workflow_def(&pool, &def).await.unwrap();
+
+        let run = WorkflowRun {
+            id: WorkflowRunId(Uuid::new_v4()),
+            workflow_def_id: def.id,
+            project_id: None,
+            status: RunStatus::Pending,
+            context: json!({}),
+            version: 1,
+            created_at: fixed_dt(),
+            updated_at: fixed_dt(),
+        };
+        queries::insert_workflow_run(&pool, &run).await.unwrap();
+
+        let persisted_a = StageInstance {
+            id: StageInstanceId(Uuid::new_v4()),
+            run_id: run.id,
+            stage_key: "A".into(),
+            stage_type: "st_a".into(),
+            status: StageStatus::Running,
+            config: json!({}),
+            parked_reason: None,
+            external_ref: None,
+            started_at: Some(fixed_dt()),
+            ended_at: None,
+            created_at: fixed_dt(),
+            updated_at: fixed_dt(),
+        };
+        queries::insert_stage_instance(&pool, &persisted_a).await.unwrap();
+
+        coord.recover().await.unwrap();
+
+        let mut contexts = vec![];
+        for _ in 0..2 {
+            let (ctx, _) = tokio::time::timeout(timeout_dur(), a_rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            contexts.push(ctx);
+        }
+
+        let ids: Vec<_> = contexts.iter().map(|ctx| ctx.stage_instance_id).collect();
+        assert!(ids.contains(&persisted_a.id), "recover must reuse the persisted stage instance");
+        assert_eq!(ids.len(), 2);
+        assert_ne!(ids[0], ids[1], "recover must prime exactly one missing stage instance");
+
+        let stage_instances = queries::list_stage_instances_for_run(&pool, &run.id).await.unwrap();
+        assert_eq!(stage_instances.len(), 2, "recover must not duplicate persisted stage instances");
+
+        for ctx in contexts {
+            ctx.set_status(StageStatus::Running, None).await.unwrap();
+            ctx.set_status(StageStatus::Done, None).await.unwrap();
+        }
+
+        wait_run_done(&pool, run.id).await;
+        let run_final = queries::get_workflow_run_by_id(&pool, &run.id).await.unwrap();
+        assert_eq!(run_final.status, RunStatus::Done);
+    }
+
+    // ── (g) empty graph short-circuits to Done ────────────────────────────────
 
     #[tokio::test]
     async fn empty_graph_run_short_circuits_to_done() {
@@ -1039,7 +1232,7 @@ mod tests {
         assert_eq!(run.status, RunStatus::Done, "empty-graph run must short-circuit to Done, not hang");
     }
 
-    // ── (f) unregistered stage type fails the run ─────────────────────────────
+    // ── (h) unregistered stage type fails the run ─────────────────────────────
 
     #[tokio::test]
     async fn unregistered_stage_type_fails_run() {
