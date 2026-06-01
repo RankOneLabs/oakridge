@@ -342,6 +342,22 @@ pub async fn update_workflow_run_status(
     Ok(())
 }
 
+pub async fn mark_workflow_run_failed_if_pending(
+    pool: &SqlitePool,
+    id: &WorkflowRunId,
+) -> crate::Result<bool> {
+    let id_str = id.0.to_string();
+    let updated_at = Utc::now().to_rfc3339();
+    let result = sqlx::query(
+        "UPDATE workflow_run SET status = 'failed', updated_at = ? WHERE id = ? AND status = 'pending'",
+    )
+    .bind(updated_at)
+    .bind(id_str)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
+}
+
 pub async fn list_workflow_runs(
     pool: &SqlitePool,
     status: Option<RunStatus>,
@@ -1012,6 +1028,25 @@ mod tests {
 
         let active = list_active_runs(&pool).await.unwrap();
         assert_eq!(active.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_mark_workflow_run_failed_if_pending_only_updates_pending_rows() {
+        let pool = make_test_pool().await;
+        let def = test_workflow_def();
+        insert_workflow_def(&pool, &def).await.unwrap();
+
+        let run = test_run(def.id);
+        insert_workflow_run(&pool, &run).await.unwrap();
+
+        let updated = mark_workflow_run_failed_if_pending(&pool, &run.id).await.unwrap();
+        assert!(updated, "pending row should be marked failed");
+
+        let stored = get_workflow_run_by_id(&pool, &run.id).await.unwrap();
+        assert_eq!(stored.status, RunStatus::Failed);
+
+        let updated_again = mark_workflow_run_failed_if_pending(&pool, &run.id).await.unwrap();
+        assert!(!updated_again, "non-pending row should not be touched twice");
     }
 
     #[tokio::test]
