@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -35,7 +36,9 @@ fn timeout_dur() -> Duration {
 async fn wait_run_done(pool: &sqlx::SqlitePool, run_id: WorkflowRunId) {
     for _ in 0..250 {
         tokio::time::sleep(Duration::from_millis(20)).await;
-        let run = queries::get_workflow_run_by_id(pool, &run_id).await.unwrap();
+        let run = queries::get_workflow_run_by_id(pool, &run_id)
+            .await
+            .unwrap();
         if matches!(run.status, RunStatus::Done | RunStatus::Failed) {
             return;
         }
@@ -94,7 +97,13 @@ fn scripted(
     mpsc::Receiver<(StageContext, mpsc::Receiver<ResumePayload>)>,
 ) {
     let (tx, rx) = mpsc::channel(8);
-    (Arc::new(ScriptedStageType { type_id: type_id.to_string(), ctx_tx: tx }), rx)
+    (
+        Arc::new(ScriptedStageType {
+            type_id: type_id.to_string(),
+            ctx_tx: tx,
+        }),
+        rx,
+    )
 }
 
 fn simple_def(stage_type_id: &str) -> WorkflowDef {
@@ -161,7 +170,13 @@ async fn boot_twice_restart_recovery() {
     // ── first "process" ──────────────────────────────────────────────────────
     let (scripted1, mut rx1) = scripted("st_park");
     let (_router1, coord1) = boot(
-        Config { port: 0, db_url: db_url.clone(), pwa_dir: pwa_dir.clone() },
+        Config {
+            port: 0,
+            bind_addr: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            db_url: db_url.clone(),
+            pwa_dir: pwa_dir.clone(),
+            cors_origins: vec![],
+        },
         move |stage, art| {
             art.register(ArtifactTypeDef {
                 id: "any".into(),
@@ -179,8 +194,10 @@ async fn boot_twice_restart_recovery() {
     queries::insert_workflow_run(&pool, &run).await.unwrap();
     coord1.start_run(run.id).await.unwrap();
 
-    let (ctx1, _resume_rx1) =
-        tokio::time::timeout(timeout_dur(), rx1.recv()).await.unwrap().unwrap();
+    let (ctx1, _resume_rx1) = tokio::time::timeout(timeout_dur(), rx1.recv())
+        .await
+        .unwrap()
+        .unwrap();
     let si_id = ctx1.stage_instance_id;
 
     ctx1.set_status(StageStatus::Running, None).await.unwrap();
@@ -195,7 +212,9 @@ async fn boot_twice_restart_recovery() {
         .await
         .unwrap();
     let artifact_id = artifact.id;
-    ctx1.set_status(StageStatus::Parked, Some("waiting_gate".into())).await.unwrap();
+    ctx1.set_status(StageStatus::Parked, Some("waiting_gate".into()))
+        .await
+        .unwrap();
 
     // DB is updated synchronously by set_status; no polling needed.
     // Drop ctx1 so its events_tx is released before the second boot.
@@ -215,7 +234,13 @@ async fn boot_twice_restart_recovery() {
     // work but adds complexity with no additional coverage of the recovery path.
     let (scripted2, mut rx2) = scripted("st_park");
     let (_router2, coord2) = boot(
-        Config { port: 0, db_url: db_url.clone(), pwa_dir: pwa_dir.clone() },
+        Config {
+            port: 0,
+            bind_addr: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            db_url: db_url.clone(),
+            pwa_dir: pwa_dir.clone(),
+            cors_origins: vec![],
+        },
         move |stage, art| {
             art.register(ArtifactTypeDef {
                 id: "any".into(),
@@ -229,9 +254,14 @@ async fn boot_twice_restart_recovery() {
     .unwrap();
 
     // recover() re-executed the parked stage; receive the new context.
-    let (ctx2, mut resume_rx2) =
-        tokio::time::timeout(timeout_dur(), rx2.recv()).await.unwrap().unwrap();
-    assert_eq!(ctx2.stage_instance_id, si_id, "recover must reuse the existing stage instance id");
+    let (ctx2, mut resume_rx2) = tokio::time::timeout(timeout_dur(), rx2.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        ctx2.stage_instance_id, si_id,
+        "recover must reuse the existing stage instance id"
+    );
 
     // Deliver gate decision via the second coordinator.
     coord2
@@ -259,7 +289,9 @@ async fn boot_twice_restart_recovery() {
     ctx2.set_status(StageStatus::Done, None).await.unwrap();
 
     wait_run_done(&pool, run.id).await;
-    let run_final = queries::get_workflow_run_by_id(&pool, &run.id).await.unwrap();
+    let run_final = queries::get_workflow_run_by_id(&pool, &run.id)
+        .await
+        .unwrap();
     assert_eq!(run_final.status, RunStatus::Done);
 }
 
@@ -276,10 +308,18 @@ async fn static_serving() {
 
     let db_url = format!("sqlite:///tmp/oakridge_static_{}.db", Uuid::new_v4());
 
-    let (router, _coord) =
-        boot(Config { port: 0, db_url, pwa_dir: pwa_dir.clone() }, register_types)
-            .await
-            .unwrap();
+    let (router, _coord) = boot(
+        Config {
+            port: 0,
+            bind_addr: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            db_url,
+            pwa_dir: pwa_dir.clone(),
+            cors_origins: vec![],
+        },
+        register_types,
+    )
+    .await
+    .unwrap();
 
     // GET / → index.html
     let resp = router
@@ -297,7 +337,12 @@ async fn static_serving() {
     // GET /assets/app.js → the asset
     let resp2 = router
         .clone()
-        .oneshot(Request::builder().uri("/assets/app.js").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/assets/app.js")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(resp2.status(), StatusCode::OK);

@@ -6,12 +6,13 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    let cfg = Config::from_env();
+    let cfg = Config::from_env()?;
     let port = cfg.port;
+    let bind_addr = cfg.bind_addr;
     let (app, _coordinator) = boot(cfg, register_types).await?;
 
-    let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await?;
-    tracing::info!("listening on port {port}");
+    let listener = tokio::net::TcpListener::bind((bind_addr, port)).await?;
+    tracing::info!(%bind_addr, port, "listening");
     axum::serve(listener, app).await?;
 
     Ok(())
