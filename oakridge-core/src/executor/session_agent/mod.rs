@@ -186,13 +186,21 @@ impl StageType for SessionAgent {
             write_cc_settings(&self.spawn_config, &sid.0.to_string()).await?;
         let settings_path_str = settings_path.to_string_lossy().to_string();
 
-        // 2. Build argv via cohort-3 helper.
+        // 2. Read persisted parent CC sid from the sidecar (written by the prior run's
+        //    stdout task). Present on cycle re-activation and crash recovery replay;
+        //    None on first activation. The dir already exists from step 1.
+        let parent_cc_sid = read_parent_cc_sid(
+            &self.spawn_config.oakridge_data,
+            &sid.0.to_string(),
+        ).await;
+
+        // 3. Build argv via cohort-3 helper.
         let session_cfg = SessionConfig {
             stage_instance_id: sid.0.to_string(),
             workdir: config.workdir.clone(),
             prompt: config.rendered_prompt.clone(),
             model: config.model.clone(),
-            parent_cc_sid: None,
+            parent_cc_sid,
         };
         let argv = build_argv(&self.spawn_config, &session_cfg, &settings_path_str);
 
@@ -256,6 +264,7 @@ impl StageType for SessionAgent {
         }
 
         // 6. Spawn background task: event loop → terminal status → deregister.
+        let oakridge_data = self.spawn_config.oakridge_data.clone();
         let live_stages = self.live_stages.clone();
         tokio::spawn(async move {
             // Drain stdout (NDJSON metadata bookkeeping).
@@ -284,7 +293,12 @@ impl StageType for SessionAgent {
                 last_line
             });
 
-            let _state = stdout_task.await.unwrap_or_default();
+            let state = stdout_task.await.unwrap_or_default();
+            // Persist the captured CC session id so the next execute() (cycle
+            // re-activation or crash recovery replay) forks via --resume/--fork-session.
+            if let Some(ref cc_sid) = state.cc_session_id {
+                write_parent_cc_sid(&oakridge_data, &sid.0.to_string(), cc_sid).await;
+            }
             let last_stderr = stderr_task.await.unwrap_or_default();
 
             // Take child from map (don't hold the lock across .await).
@@ -472,6 +486,42 @@ pub async fn write_cc_settings(
 
     tokio::fs::write(&settings_path, serde_json::to_string_pretty(&settings)?).await?;
     Ok(settings_path)
+}
+
+/// Path to the per-instance parent CC session id sidecar file.
+fn parent_cc_sid_path(oakridge_data: &std::path::Path, stage_instance_id: &str) -> PathBuf {
+    oakridge_data
+        .join("session_agent")
+        .join(stage_instance_id)
+        .join("parent_cc_sid")
+}
+
+/// Read the persisted parent CC sid from the sidecar written by the prior run.
+/// Returns None when the file is absent (first activation) or unreadable.
+async fn read_parent_cc_sid(
+    oakridge_data: &std::path::Path,
+    stage_instance_id: &str,
+) -> Option<String> {
+    let path = parent_cc_sid_path(oakridge_data, stage_instance_id);
+    match tokio::fs::read_to_string(&path).await {
+        Ok(s) => {
+            let trimmed = s.trim().to_string();
+            if trimmed.is_empty() { None } else { Some(trimmed) }
+        }
+        Err(_) => None,
+    }
+}
+
+/// Persist the captured CC session id to the sidecar for cycle re-activation and crash recovery.
+async fn write_parent_cc_sid(
+    oakridge_data: &std::path::Path,
+    stage_instance_id: &str,
+    cc_sid: &str,
+) {
+    let path = parent_cc_sid_path(oakridge_data, stage_instance_id);
+    if let Err(e) = tokio::fs::write(&path, cc_sid).await {
+        tracing::warn!("failed to write parent_cc_sid sidecar for {}: {}", stage_instance_id, e);
+    }
 }
 
 /// Write a rendered prompt to the child's stdin as a single stream-json user message.
@@ -1098,6 +1148,61 @@ mod tests {
         assert_eq!(v["type"], "user");
         assert_eq!(v["message"]["role"], "user");
         assert_eq!(v["message"]["content"], "hello world");
+    }
+
+    // ── sidecar helpers ───────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn read_parent_cc_sid_returns_none_when_absent() {
+        let tmp = std::env::temp_dir().join(format!("oak-sidecar-test-{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&tmp).await.unwrap();
+        let result = read_parent_cc_sid(&tmp, "inst-missing").await;
+        assert!(result.is_none());
+        tokio::fs::remove_dir_all(&tmp).await.ok();
+    }
+
+    #[tokio::test]
+    async fn write_and_read_parent_cc_sid_roundtrip() {
+        let tmp = std::env::temp_dir().join(format!("oak-sidecar-test-{}", Uuid::new_v4()));
+        let inst_dir = tmp.join("session_agent").join("inst-001");
+        tokio::fs::create_dir_all(&inst_dir).await.unwrap();
+
+        write_parent_cc_sid(&tmp, "inst-001", "abc-session-xyz").await;
+
+        let result = read_parent_cc_sid(&tmp, "inst-001").await;
+        assert_eq!(result.as_deref(), Some("abc-session-xyz"));
+
+        tokio::fs::remove_dir_all(&tmp).await.ok();
+    }
+
+    #[tokio::test]
+    async fn read_parent_cc_sid_trims_whitespace() {
+        let tmp = std::env::temp_dir().join(format!("oak-sidecar-test-{}", Uuid::new_v4()));
+        let inst_dir = tmp.join("session_agent").join("inst-002");
+        tokio::fs::create_dir_all(&inst_dir).await.unwrap();
+
+        let sidecar = inst_dir.join("parent_cc_sid");
+        tokio::fs::write(&sidecar, "  sid-with-spaces  \n").await.unwrap();
+
+        let result = read_parent_cc_sid(&tmp, "inst-002").await;
+        assert_eq!(result.as_deref(), Some("sid-with-spaces"));
+
+        tokio::fs::remove_dir_all(&tmp).await.ok();
+    }
+
+    #[tokio::test]
+    async fn read_parent_cc_sid_returns_none_for_empty_file() {
+        let tmp = std::env::temp_dir().join(format!("oak-sidecar-test-{}", Uuid::new_v4()));
+        let inst_dir = tmp.join("session_agent").join("inst-003");
+        tokio::fs::create_dir_all(&inst_dir).await.unwrap();
+
+        let sidecar = inst_dir.join("parent_cc_sid");
+        tokio::fs::write(&sidecar, "   ").await.unwrap();
+
+        let result = read_parent_cc_sid(&tmp, "inst-003").await;
+        assert!(result.is_none());
+
+        tokio::fs::remove_dir_all(&tmp).await.ok();
     }
 
     // ── subprocess integration (uses POSIX `true`/`false` binaries) ─────────────
