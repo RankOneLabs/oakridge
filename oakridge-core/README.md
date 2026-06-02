@@ -88,7 +88,7 @@ cargo run
 | `GET /workflow_runs/:id` | `200` | Run fields flattened with inline `stage_instances`. |
 | `GET /workflow_runs/:id/artifacts` | `200` | Filter: `?artifact_type=`. |
 | `GET /stage_instances/:id` | `200` | `404` when missing. |
-| `POST /stage_instances/:id/resume` | `202` | Body tagged `ResumePayload` (`{"kind":"gate_decision",...}`, `{"kind":"feedback_artifact",...}`, or `{"kind":"executor","payload":...}`); resumes a parked stage. |
+| `POST /stage_instances/:id/resume` | `202` | Body tagged `ResumePayload` (`{"kind":"gate_decision",...}`, `{"kind":"feedback_artifact",...}`, or `{"kind":"executor","payload":...}`); resumes a parked stage. **Expose only on a trusted network or behind an auth gateway — the server has no built-in authentication.** |
 | `GET /artifacts/:id` | `200` | Returns the revision chain, root-first. |
 | `GET /parked` | `200` | All currently parked stage instances. |
 
