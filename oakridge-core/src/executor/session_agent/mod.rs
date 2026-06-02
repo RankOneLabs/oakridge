@@ -4,12 +4,16 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use async_trait::async_trait;
 use serde_json::Value;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::process::Command;
 use crate::executor::{StageContext, StageHandle};
 use crate::registry::stage_type::StageType;
 use crate::types::{Artifact, OutputSlot, StageInstanceId};
 use config::{SessionAgentConfig, SessionAgentDefConfig, load_template, render_template, resolve_binding};
 
 const STAGE_INSTANCE_ID_SENTINEL: &str = "{{STAGE_INSTANCE_ID}}";
+
+// ── SessionAgent (StageType) ──────────────────────────────────────────────────
 
 pub struct SessionAgent {
     pub prompts_dir: PathBuf,
@@ -76,6 +80,324 @@ impl StageType for SessionAgent {
     }
 }
 
+// ── Subprocess harness ────────────────────────────────────────────────────────
+
+/// Static context set once at startup: binary path, port, data root, gate script.
+pub struct SpawnConfig {
+    pub claude_bin: String,
+    pub port: u16,
+    /// Root data dir; per-instance dirs live at <oakridge_data>/session_agent/<stage_instance_id>/
+    pub oakridge_data: PathBuf,
+    /// Absolute path to the PreToolUse gate script.
+    pub gate_path: String,
+}
+
+/// Per-session inputs supplied when launching a subprocess.
+pub struct SessionConfig {
+    pub stage_instance_id: String,
+    pub workdir: PathBuf,
+    pub prompt: String,
+    pub model: Option<String>,
+    /// CC session id of the parent — enables --resume/--fork-session pair.
+    pub parent_cc_sid: Option<String>,
+}
+
+/// Metadata observed from CC stdout during a run.
+#[derive(Debug, Default)]
+pub struct SubprocessState {
+    pub cc_session_id: Option<String>,
+    pub observed_model: Option<String>,
+}
+
+/// Outcome derived solely from subprocess exit code.
+#[derive(Debug)]
+pub enum SessionOutcome {
+    Done,
+    Failed { parked_reason: String },
+}
+
+/// Wrap a string in single quotes for safe inclusion in a bash command.
+/// Embedded single quotes are escaped via the '\'' close-reopen idiom.
+/// Port of shellQuote (spawn.ts:74-76).
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r"'\''"))
+}
+
+/// Build the CC argv with byte/arg parity to makeBuildSpawnCmd (spawn.ts L95-123).
+///
+/// Static 14-element prefix:
+///   [bin, --print, --input-format, stream-json, --output-format, stream-json,
+///    --include-hook-events, --include-partial-messages, --replay-user-messages,
+///    --verbose, --setting-sources, user, --settings, <settings_path>]
+/// Then conditional [--model, <m>] when model is set.
+/// Then [--resume, <parentCcSid>, --fork-session] as a unit when parent sid is set.
+///
+/// --fork-session must never appear without --resume; forking into a fresh session id
+/// stops multiple live forks off the same parent from colliding on CC's internal session id.
+pub fn build_argv(spawn: &SpawnConfig, session: &SessionConfig, settings_path: &str) -> Vec<String> {
+    let mut argv = vec![
+        spawn.claude_bin.clone(),
+        "--print".into(),
+        "--input-format".into(),
+        "stream-json".into(),
+        "--output-format".into(),
+        "stream-json".into(),
+        "--include-hook-events".into(),
+        "--include-partial-messages".into(),
+        "--replay-user-messages".into(),
+        "--verbose".into(),
+        "--setting-sources".into(),
+        "user".into(),
+        "--settings".into(),
+        settings_path.to_string(),
+    ];
+
+    if let Some(model) = &session.model {
+        argv.push("--model".into());
+        argv.push(model.clone());
+    }
+
+    if let Some(parent_sid) = &session.parent_cc_sid {
+        argv.push("--resume".into());
+        argv.push(parent_sid.clone());
+        argv.push("--fork-session".into());
+    }
+
+    argv
+}
+
+/// Write the per-instance settings.json registering the PreToolUse gate hook.
+///
+/// Ports writeCcSettings (spawn.ts L35-66). The file is written to
+/// <oakridge_data>/session_agent/<stage_instance_id>/settings.json.
+/// The gate path is shell-quoted before serialization so paths with spaces
+/// or shell-significant characters are handled safely by bash.
+pub async fn write_cc_settings(
+    spawn: &SpawnConfig,
+    stage_instance_id: &str,
+) -> anyhow::Result<PathBuf> {
+    // Require exactly one Normal path component: rejects empty, ".", "..", anything
+    // with a forward-slash separator, and absolute paths.
+    // Backslash and colon are also rejected explicitly: on Linux they are legal filename
+    // chars but would be path separators / drive prefixes on Windows, making them
+    // unsafe to embed in a directory name intended to be portable and shell-safe.
+    use std::path::{Component, Path};
+    let has_unsafe_char = stage_instance_id.contains(['\\', ':']);
+    let mut components = Path::new(stage_instance_id).components();
+    let is_single_normal = matches!(components.next(), Some(Component::Normal(_)))
+        && components.next().is_none();
+    if has_unsafe_char || !is_single_normal {
+        anyhow::bail!(
+            "stage_instance_id must be a single path component (no separators, '.', or '..'): {:?}",
+            stage_instance_id
+        );
+    }
+    let instance_dir = spawn
+        .oakridge_data
+        .join("session_agent")
+        .join(stage_instance_id);
+    tokio::fs::create_dir_all(&instance_dir).await?;
+
+    let settings_path = instance_dir.join("settings.json");
+    let gate_cmd = shell_quote(&spawn.gate_path);
+
+    let settings = serde_json::json!({
+        "hooks": {
+            "PreToolUse": [
+                {
+                    "matcher": ".*",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": gate_cmd,
+                            "timeout": 3600
+                        }
+                    ]
+                }
+            ]
+        }
+    });
+
+    tokio::fs::write(&settings_path, serde_json::to_string_pretty(&settings)?).await?;
+    Ok(settings_path)
+}
+
+/// Write a rendered prompt to the child's stdin as a single stream-json user message.
+///
+/// Format: {"type":"user","message":{"role":"user","content":<text>}}\n
+/// Port of writeInput (session.ts:1101-1110). Exposed as a reusable helper so
+/// cohort 5 can inject feedback artifacts mid-session using the same transport.
+pub async fn inject_user_message<W>(writer: &mut W, text: &str) -> anyhow::Result<()>
+where
+    W: AsyncWriteExt + Unpin,
+{
+    let msg = serde_json::json!({
+        "type": "user",
+        "message": { "role": "user", "content": text }
+    });
+    let mut bytes = serde_json::to_vec(&msg)?;
+    bytes.push(b'\n');
+    writer.write_all(&bytes).await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+/// Parse one NDJSON line from CC stdout and update metadata bookkeeping state.
+///
+/// Ports the metadata-bookkeeping portion of classifyCcEvent (event-classifier.ts L61-125),
+/// dropping the compactor forwarding (v2 non-goal).
+///
+/// - system+init: captures cc_session_id; seeds observed_model first-wins (guard: null check).
+/// - assistant: updates observed_model last-wins.
+/// - result: observes usage only; does NOT signal completion — Done/Failed derives from exit.
+///
+/// Returns () in all cases. Malformed JSON or missing fields are silently ignored
+/// so the caller's read loop never dies from a bad line.
+pub fn classify_cc_event(line: &str, state: &mut SubprocessState) {
+    let raw: serde_json::Value = match serde_json::from_str(line) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    let obj = match raw.as_object() {
+        Some(o) => o,
+        None => return,
+    };
+
+    match obj.get("type").and_then(|v| v.as_str()) {
+        Some("system") => {
+            if obj.get("subtype").and_then(|v| v.as_str()) != Some("init") {
+                return;
+            }
+            if let Some(sid) = obj.get("session_id").and_then(|v| v.as_str()) {
+                state.cc_session_id = Some(sid.to_string());
+            }
+            // First-wins: only seed when no model has been observed yet. Guards against
+            // a stray re-init clobbering a value already updated by a later assistant turn.
+            if state.observed_model.is_none() {
+                if let Some(model) = obj.get("model").and_then(|v| v.as_str()) {
+                    state.observed_model = Some(model.to_string());
+                }
+            }
+        }
+        Some("assistant") => {
+            // Last-wins: subagent turns may fire under a different model.
+            if let Some(model) = raw
+                .get("message")
+                .and_then(|m| m.get("model"))
+                .and_then(|v| v.as_str())
+            {
+                state.observed_model = Some(model.to_string());
+            }
+        }
+        Some("result") => {
+            // Metadata observation only. result events must NOT complete the session;
+            // Done/Failed derives solely from subprocess exit.
+        }
+        _ => {}
+    }
+}
+
+/// Run a session_agent subprocess to completion.
+///
+/// Ports _runAttachedLoop (session.ts:716-779) and the CC events loop (index.ts:172-253).
+/// Lifecycle:
+///   1. Write per-instance settings.json (PreToolUse gate hook).
+///   2. Build argv with byte/arg parity to makeBuildSpawnCmd.
+///   3. Spawn child with OAKRIDGE_PORT and OAKRIDGE_STAGE_INSTANCE set.
+///   4. Write the rendered prompt to stdin once as a stream-json user message; close stdin.
+///   5. Drain stdout (NDJSON metadata bookkeeping) and stderr concurrently.
+///   6. Read subprocess exit; derive Done (code 0) or Failed (non-zero/crash).
+///      Failed carries parked_reason = "<exit_code> + <last_stderr_line>".
+///
+/// Returns the outcome and the observed metadata state so callers can access
+/// the captured cc_session_id and observed_model.
+pub async fn run(
+    spawn: &SpawnConfig,
+    session: &SessionConfig,
+) -> anyhow::Result<(SessionOutcome, SubprocessState)> {
+    let settings_path = write_cc_settings(spawn, &session.stage_instance_id).await?;
+    let settings_path_str = settings_path.to_string_lossy().to_string();
+    let argv = build_argv(spawn, session, &settings_path_str);
+
+    let mut cmd = Command::new(&argv[0]);
+    cmd.args(&argv[1..]);
+    cmd.current_dir(&session.workdir);
+    cmd.env("OAKRIDGE_PORT", spawn.port.to_string());
+    cmd.env("OAKRIDGE_STAGE_INSTANCE", &session.stage_instance_id);
+    cmd.stdin(std::process::Stdio::piped());
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+    // Ensure the child is killed if this future is dropped (cancelled).
+    cmd.kill_on_drop(true);
+
+    let mut child = cmd.spawn()?;
+
+    // Write the prompt then close stdin (sends EOF to the child).
+    // Swallow broken-pipe: if the child exits before we write (e.g. spawn_failure),
+    // the exit code already encodes the outcome; propagating the write error would
+    // mask it with an Err and hide the real parked_reason.
+    {
+        let mut stdin = child.stdin.take().expect("stdin configured as piped");
+        let write_result = inject_user_message(&mut stdin, &session.prompt).await;
+        if let Err(ref e) = write_result {
+            let is_broken_pipe = e
+                .downcast_ref::<std::io::Error>()
+                .map(|io| io.kind() == std::io::ErrorKind::BrokenPipe)
+                .unwrap_or(false);
+            if !is_broken_pipe {
+                write_result?;
+            }
+        }
+    }
+
+    let stdout = child.stdout.take().expect("stdout configured as piped");
+    let stderr = child.stderr.take().expect("stderr configured as piped");
+
+    // Drain stdout: parse NDJSON and update metadata state.
+    // Classifier errors are swallowed; a malformed line must not kill the pump.
+    let stdout_task = tokio::spawn(async move {
+        let mut lines = BufReader::new(stdout).lines();
+        let mut state = SubprocessState::default();
+        loop {
+            match lines.next_line().await {
+                Ok(Some(line)) => classify_cc_event(&line, &mut state),
+                _ => break,
+            }
+        }
+        state
+    });
+
+    // Drain stderr: retain the last line for failure diagnostics.
+    let stderr_task = tokio::spawn(async move {
+        let mut lines = BufReader::new(stderr).lines();
+        let mut last_line: Option<String> = None;
+        loop {
+            match lines.next_line().await {
+                Ok(Some(line)) => last_line = Some(line),
+                _ => break,
+            }
+        }
+        last_line
+    });
+
+    // Drain both pipes then read exit status.
+    let state = stdout_task.await?;
+    let last_stderr = stderr_task.await?;
+    let status = child.wait().await?;
+    let exit_code = status.code().unwrap_or(1);
+
+    if exit_code == 0 {
+        Ok((SessionOutcome::Done, state))
+    } else {
+        let parked_reason = match last_stderr {
+            Some(line) => format!("{} + {}", exit_code, line),
+            None => format!("{}", exit_code),
+        };
+        Ok((SessionOutcome::Failed { parked_reason }, state))
+    }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -106,6 +428,8 @@ mod tests {
     fn write_template(dir: &std::path::Path, name: &str, content: &str) {
         std::fs::write(dir.join(name), content).unwrap();
     }
+
+    // ── SessionAgent::build_config ────────────────────────────────────────────
 
     #[tokio::test]
     async fn build_config_literal_bindings() {
@@ -176,8 +500,6 @@ mod tests {
         });
 
         let sid = StageInstanceId(Uuid::new_v4());
-        let mut slot_values: HashMap<String, String> = HashMap::new();
-        slot_values.insert("STAGE_INSTANCE_ID".into(), sid.0.to_string());
 
         let config_val = agent
             .build_config(&def_config, &inputs, &[], sid, &json!({}))
@@ -286,5 +608,300 @@ mod tests {
         assert_eq!(cfg.output_slots.len(), 2);
         assert_eq!(cfg.output_slots[0].name, "a");
         assert_eq!(cfg.output_slots[1].name, "b");
+    }
+
+    // ── shell_quote ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn shell_quote_no_special_chars() {
+        assert_eq!(shell_quote("/usr/local/bin/gate.sh"), "'/usr/local/bin/gate.sh'");
+    }
+
+    #[test]
+    fn shell_quote_with_single_quote() {
+        assert_eq!(shell_quote("/path/with'quote"), "'/path/with'\\''quote'");
+    }
+
+    // ── build_argv ────────────────────────────────────────────────────────────
+
+    fn spawn_cfg() -> SpawnConfig {
+        SpawnConfig {
+            claude_bin: "claude".into(),
+            port: 8788,
+            oakridge_data: "/tmp/oakridge".into(),
+            gate_path: "/usr/local/bin/gate.sh".into(),
+        }
+    }
+
+    fn session_cfg() -> SessionConfig {
+        SessionConfig {
+            stage_instance_id: "test-instance".into(),
+            workdir: "/tmp/work".into(),
+            prompt: "hello".into(),
+            model: None,
+            parent_cc_sid: None,
+        }
+    }
+
+    #[test]
+    fn build_argv_static_prefix_is_14_elements() {
+        let argv = build_argv(&spawn_cfg(), &session_cfg(), "/tmp/settings.json");
+        assert_eq!(argv.len(), 14);
+        assert_eq!(argv[0], "claude");
+        assert_eq!(argv[1], "--print");
+        assert_eq!(argv[2], "--input-format");
+        assert_eq!(argv[3], "stream-json");
+        assert_eq!(argv[4], "--output-format");
+        assert_eq!(argv[5], "stream-json");
+        assert_eq!(argv[6], "--include-hook-events");
+        assert_eq!(argv[7], "--include-partial-messages");
+        assert_eq!(argv[8], "--replay-user-messages");
+        assert_eq!(argv[9], "--verbose");
+        assert_eq!(argv[10], "--setting-sources");
+        assert_eq!(argv[11], "user");
+        assert_eq!(argv[12], "--settings");
+        assert_eq!(argv[13], "/tmp/settings.json");
+    }
+
+    #[test]
+    fn build_argv_with_model_appends_two_elements() {
+        let session = SessionConfig {
+            model: Some("claude-opus-4-7".into()),
+            ..session_cfg()
+        };
+        let argv = build_argv(&spawn_cfg(), &session, "/tmp/settings.json");
+        assert_eq!(argv.len(), 16);
+        assert_eq!(argv[14], "--model");
+        assert_eq!(argv[15], "claude-opus-4-7");
+    }
+
+    #[test]
+    fn build_argv_with_parent_sid_appends_resume_fork_unit() {
+        let session = SessionConfig {
+            parent_cc_sid: Some("parent-sid-abc".into()),
+            ..session_cfg()
+        };
+        let argv = build_argv(&spawn_cfg(), &session, "/tmp/settings.json");
+        assert_eq!(argv.len(), 17);
+        assert_eq!(argv[14], "--resume");
+        assert_eq!(argv[15], "parent-sid-abc");
+        assert_eq!(argv[16], "--fork-session");
+    }
+
+    #[test]
+    fn build_argv_fork_session_never_appears_without_resume() {
+        let argv = build_argv(&spawn_cfg(), &session_cfg(), "/tmp/settings.json");
+        assert!(!argv.contains(&"--fork-session".to_string()));
+        assert!(!argv.contains(&"--resume".to_string()));
+    }
+
+    #[test]
+    fn build_argv_model_and_parent_sid_correct_order() {
+        let session = SessionConfig {
+            model: Some("claude-sonnet-4-6".into()),
+            parent_cc_sid: Some("parent-sid-xyz".into()),
+            ..session_cfg()
+        };
+        let argv = build_argv(&spawn_cfg(), &session, "/tmp/settings.json");
+        assert_eq!(argv.len(), 19);
+        assert_eq!(argv[14], "--model");
+        assert_eq!(argv[15], "claude-sonnet-4-6");
+        assert_eq!(argv[16], "--resume");
+        assert_eq!(argv[17], "parent-sid-xyz");
+        assert_eq!(argv[18], "--fork-session");
+    }
+
+    // ── classify_cc_event ─────────────────────────────────────────────────────
+
+    #[test]
+    fn classify_captures_session_id_from_system_init() {
+        let mut state = SubprocessState::default();
+        classify_cc_event(
+            r#"{"type":"system","subtype":"init","session_id":"abc-123","model":"claude-opus-4-7"}"#,
+            &mut state,
+        );
+        assert_eq!(state.cc_session_id.as_deref(), Some("abc-123"));
+        assert_eq!(state.observed_model.as_deref(), Some("claude-opus-4-7"));
+    }
+
+    #[test]
+    fn classify_system_init_first_wins_on_model() {
+        let mut state = SubprocessState::default();
+        state.observed_model = Some("already-set".into());
+        classify_cc_event(
+            r#"{"type":"system","subtype":"init","session_id":"s1","model":"new-model"}"#,
+            &mut state,
+        );
+        assert_eq!(state.observed_model.as_deref(), Some("already-set"));
+        assert_eq!(state.cc_session_id.as_deref(), Some("s1"));
+    }
+
+    #[test]
+    fn classify_assistant_last_wins_on_model() {
+        let mut state = SubprocessState::default();
+        state.observed_model = Some("init-model".into());
+        classify_cc_event(
+            r#"{"type":"assistant","message":{"role":"assistant","model":"subagent-model"}}"#,
+            &mut state,
+        );
+        assert_eq!(state.observed_model.as_deref(), Some("subagent-model"));
+    }
+
+    #[test]
+    fn classify_result_does_not_complete_session() {
+        let mut state = SubprocessState::default();
+        classify_cc_event(
+            r#"{"type":"result","stop_reason":"end_turn","usage":{"input_tokens":100,"output_tokens":50}}"#,
+            &mut state,
+        );
+        assert!(state.cc_session_id.is_none());
+        assert!(state.observed_model.is_none());
+    }
+
+    #[test]
+    fn classify_swallows_malformed_json() {
+        let mut state = SubprocessState::default();
+        classify_cc_event("this is not { json }", &mut state);
+        classify_cc_event("", &mut state);
+        classify_cc_event("{}", &mut state);
+        assert!(state.cc_session_id.is_none());
+        assert!(state.observed_model.is_none());
+    }
+
+    #[test]
+    fn classify_ignores_non_init_system_events() {
+        let mut state = SubprocessState::default();
+        classify_cc_event(
+            r#"{"type":"system","subtype":"other","session_id":"should-not-capture"}"#,
+            &mut state,
+        );
+        assert!(state.cc_session_id.is_none());
+    }
+
+    // ── write_cc_settings (async) ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn write_cc_settings_creates_file_with_correct_structure() {
+        let tmp = std::env::temp_dir().join(format!("oak-test-{}", Uuid::new_v4()));
+        let spawn = SpawnConfig {
+            claude_bin: "claude".into(),
+            port: 8788,
+            oakridge_data: tmp.clone(),
+            gate_path: "/usr/local/bin/gate.sh".into(),
+        };
+        let path = write_cc_settings(&spawn, "inst-001").await.unwrap();
+
+        assert!(path.exists());
+        let contents = tokio::fs::read_to_string(&path).await.unwrap();
+        let v: serde_json::Value = serde_json::from_str(&contents).unwrap();
+
+        let hooks = &v["hooks"]["PreToolUse"][0]["hooks"][0];
+        assert_eq!(hooks["type"], "command");
+        assert_eq!(hooks["command"], "'/usr/local/bin/gate.sh'");
+        assert_eq!(hooks["timeout"], 3600);
+
+        tokio::fs::remove_dir_all(&tmp).await.ok();
+    }
+
+    #[tokio::test]
+    async fn write_cc_settings_rejects_path_separator_in_id() {
+        let tmp = std::env::temp_dir().join(format!("oak-guard-test-{}", Uuid::new_v4()));
+        let spawn = SpawnConfig {
+            claude_bin: "claude".into(),
+            port: 8788,
+            oakridge_data: tmp.clone(),
+            gate_path: "/usr/local/bin/gate.sh".into(),
+        };
+        for bad_id in &["../escape", "a/b", "a\\b", "a:b", "..", ".", "", "a/b/c"] {
+            let result = write_cc_settings(&spawn, bad_id).await;
+            assert!(result.is_err(), "expected Err for id {:?}", bad_id);
+            let msg = result.unwrap_err().to_string();
+            assert!(msg.contains("single path component"), "unexpected error for {:?}: {}", bad_id, msg);
+        }
+        tokio::fs::remove_dir_all(&tmp).await.ok();
+    }
+
+    // ── inject_user_message (async) ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn inject_user_message_writes_stream_json_line() {
+        let mut buf = Vec::new();
+        inject_user_message(&mut buf, "hello world").await.unwrap();
+        let s = String::from_utf8(buf).unwrap();
+        assert!(s.ends_with('\n'));
+        let v: serde_json::Value = serde_json::from_str(s.trim()).unwrap();
+        assert_eq!(v["type"], "user");
+        assert_eq!(v["message"]["role"], "user");
+        assert_eq!(v["message"]["content"], "hello world");
+    }
+
+    // ── subprocess integration (uses POSIX `true`/`false` binaries) ─────────────
+
+    #[tokio::test]
+    async fn run_exit_zero_returns_done() {
+        let tmp = std::env::temp_dir().join(format!("oak-run-test-{}", Uuid::new_v4()));
+        let spawn = SpawnConfig {
+            claude_bin: "true".into(),
+            port: 8788,
+            oakridge_data: tmp.clone(),
+            gate_path: "/usr/local/bin/gate.sh".into(),
+        };
+        let session = SessionConfig {
+            stage_instance_id: "run-inst-ok".into(),
+            workdir: std::env::temp_dir(),
+            prompt: "hello".into(),
+            model: None,
+            parent_cc_sid: None,
+        };
+        let (outcome, _state) = run(&spawn, &session).await.unwrap();
+        tokio::fs::remove_dir_all(&tmp).await.ok();
+        assert!(matches!(outcome, SessionOutcome::Done));
+    }
+
+    #[tokio::test]
+    async fn run_exit_nonzero_returns_failed_with_reason() {
+        let tmp = std::env::temp_dir().join(format!("oak-run-test-{}", Uuid::new_v4()));
+        let spawn = SpawnConfig {
+            claude_bin: "false".into(),
+            port: 8788,
+            oakridge_data: tmp.clone(),
+            gate_path: "/usr/local/bin/gate.sh".into(),
+        };
+        let session = SessionConfig {
+            stage_instance_id: "run-inst-fail".into(),
+            workdir: std::env::temp_dir(),
+            prompt: "hello".into(),
+            model: None,
+            parent_cc_sid: None,
+        };
+        let (outcome, _state) = run(&spawn, &session).await.unwrap();
+        tokio::fs::remove_dir_all(&tmp).await.ok();
+        match outcome {
+            SessionOutcome::Failed { parked_reason } => {
+                assert!(parked_reason.starts_with('1'), "parked_reason should start with exit code: {}", parked_reason);
+            }
+            SessionOutcome::Done => panic!("expected Failed"),
+        }
+    }
+
+    #[tokio::test]
+    async fn run_zero_exit_returns_done_no_stdout() {
+        let tmp = std::env::temp_dir().join(format!("oak-run-test-{}", Uuid::new_v4()));
+        let spawn = SpawnConfig {
+            claude_bin: "true".into(),
+            port: 8788,
+            oakridge_data: tmp.clone(),
+            gate_path: "/usr/local/bin/gate.sh".into(),
+        };
+        let session = SessionConfig {
+            stage_instance_id: "run-inst-ndjson".into(),
+            workdir: std::env::temp_dir(),
+            prompt: "hello".into(),
+            model: None,
+            parent_cc_sid: None,
+        };
+        let (outcome, _state) = run(&spawn, &session).await.unwrap();
+        tokio::fs::remove_dir_all(&tmp).await.ok();
+        assert!(matches!(outcome, SessionOutcome::Done));
     }
 }
