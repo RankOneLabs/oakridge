@@ -13,6 +13,7 @@ use tower_http::trace::TraceLayer;
 pub use crate::config::Config;
 use crate::db;
 use crate::events::EventBus;
+use crate::executor::session_agent::{SessionAgent, SpawnConfig};
 use crate::registry::{ArtifactTypeRegistry, StageTypeRegistry};
 use crate::scheduler::Coordinator;
 
@@ -25,9 +26,42 @@ pub struct AppState {
     pub bus: Arc<EventBus>,
 }
 
-/// Extension point for consumer binaries to register stage and artifact types.
-/// The substrate ships ZERO built-in stage/artifact types; consumer binaries register here.
-pub fn register_types(_stage: &mut StageTypeRegistry, _artifact: &mut ArtifactTypeRegistry) {}
+/// Register built-in stage and artifact types.
+/// Reads session_agent config from environment variables:
+///   CLAUDE_BIN           – path to the claude binary (default: "claude")
+///   OAKRIDGE_CORE_PORT   – port the gate script calls back on (default: 8790)
+///   OAKRIDGE_DATA        – root data dir for per-instance state (default: "./data")
+///   OAKRIDGE_GATE_PATH   – absolute path to the PreToolUse gate script
+///                          (default: "/usr/local/bin/gate.sh")
+///   OAKRIDGE_PROMPTS_DIR – directory containing prompt templates (default: "./prompts")
+pub fn register_types(stage: &mut StageTypeRegistry, _artifact: &mut ArtifactTypeRegistry) {
+    let port: u16 = std::env::var("OAKRIDGE_CORE_PORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(8790);
+
+    let spawn_config = SpawnConfig {
+        claude_bin: std::env::var("CLAUDE_BIN").unwrap_or_else(|_| "claude".to_string()),
+        port,
+        oakridge_data: std::env::var("OAKRIDGE_DATA")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::path::PathBuf::from("./data")),
+        gate_path: std::env::var("OAKRIDGE_GATE_PATH")
+            .unwrap_or_else(|_| "/usr/local/bin/gate.sh".to_string()),
+    };
+
+    let prompts_dir = std::env::var("OAKRIDGE_PROMPTS_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("./prompts"));
+
+    let agent = Arc::new(SessionAgent {
+        prompts_dir,
+        spawn_config,
+        live_stages: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+    });
+
+    stage.register(agent);
+}
 
 /// Initialize the substrate: run migrations, build registries via `register_fn`,
 /// construct the Coordinator, run crash-recovery, and return the composed Router
