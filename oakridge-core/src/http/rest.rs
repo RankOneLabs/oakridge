@@ -1069,7 +1069,10 @@ mod tests {
         assert_eq!(serialized["kind"], json!("executor"));
         assert_eq!(serialized["payload"], json!({"op": "permit", "id": 42}));
         let deserialized: ResumePayload = serde_json::from_value(serialized).unwrap();
-        assert!(matches!(deserialized, ResumePayload::Executor { .. }));
+        let ResumePayload::Executor { payload: deserialized_payload } = deserialized else {
+            panic!("expected Executor variant");
+        };
+        assert_eq!(deserialized_payload, json!({"op": "permit", "id": 42}));
     }
 
     #[tokio::test]
