@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
-use crate::types::Artifact;
+use crate::types::{Artifact, OutputSlot, StageInstanceId};
 use crate::executor::{StageContext, StageHandle};
 
 /// The interface that all stage-type implementations must satisfy.
@@ -20,8 +20,20 @@ pub trait StageType: Send + Sync {
         &self,
         def_config: &Value,
         inputs: &HashMap<String, Artifact>,
+        output_slots: &[OutputSlot],
+        stage_instance_id: StageInstanceId,
         run_context: &Value,
     ) -> anyhow::Result<Value>;
+
+    /// Optionally contribute an HTTP callback surface nested under /executors/<id>.
+    ///
+    /// The returned router must carry no outstanding state parameter — i.e. it must
+    /// already be a `Router<()>`. An implementation that needs per-executor state
+    /// applies its own `.with_state(...)` before returning (as `session_agent` does),
+    /// so the router handed back can be nested directly.
+    fn http_routes(&self) -> Option<axum::Router> {
+        None
+    }
 
     /// Launch the stage. Returns a handle the scheduler can use to resume or cancel the stage.
     async fn execute(&self, ctx: StageContext) -> anyhow::Result<Box<dyn StageHandle>>;
@@ -46,5 +58,10 @@ impl StageTypeRegistry {
     /// Look up a stage type by ID.
     pub fn get(&self, id: &str) -> Option<Arc<dyn StageType>> {
         self.types.get(id).cloned()
+    }
+
+    /// Iterate over all registered stage types.
+    pub fn all(&self) -> impl Iterator<Item = &Arc<dyn StageType>> {
+        self.types.values()
     }
 }

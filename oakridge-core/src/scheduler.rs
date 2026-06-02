@@ -135,11 +135,14 @@ impl RunTask {
             Some(n) => n.clone(),
             None => return,
         };
+
+        let si_id = StageInstanceId(Uuid::new_v4());
+
         let st = match self.stage_types.get(&node.stage_type) {
             Some(st) => st,
             None => {
                 tracing::error!(stage_key, stage_type = node.stage_type, "stage type not registered");
-                self.fail_activation(stage_key, StageInstanceId(Uuid::new_v4())).await;
+                self.fail_activation(stage_key, si_id).await;
                 return;
             }
         };
@@ -151,16 +154,14 @@ impl RunTask {
             })
             .collect();
 
-        let config = match st.build_config(&node.config, &inputs, &self.run_context).await {
+        let config = match st.build_config(&node.config, &inputs, &node.outputs, si_id, &self.run_context).await {
             Ok(c) => c,
             Err(e) => {
                 tracing::error!(stage_key, "build_config failed: {}", e);
-                self.fail_activation(stage_key, StageInstanceId(Uuid::new_v4())).await;
+                self.fail_activation(stage_key, si_id).await;
                 return;
             }
         };
-
-        let si_id = StageInstanceId(Uuid::new_v4());
         let now = Utc::now();
         let si = StageInstance {
             id: si_id,
@@ -170,6 +171,7 @@ impl RunTask {
             status: StageStatus::Pending,
             config: config.clone(),
             parked_reason: None,
+            parked_meta: None,
             external_ref: None,
             started_at: None,
             ended_at: None,
@@ -327,6 +329,7 @@ impl RunTask {
         let resume_kind = match &payload {
             ResumePayload::GateDecision { .. } => "gate_decision",
             ResumePayload::FeedbackArtifact { .. } => "feedback_artifact",
+            ResumePayload::Executor { .. } => "executor",
         };
         let current = queries::get_stage_instance_by_id(&self.db, &stage_instance_id)
             .await
@@ -821,7 +824,9 @@ mod tests {
         fn id(&self) -> &str { &self.type_id }
 
         async fn build_config(
-            &self, def_config: &Value, _inputs: &HashMap<String, Artifact>, _run_context: &Value,
+            &self, def_config: &Value, _inputs: &HashMap<String, Artifact>,
+            _output_slots: &[crate::types::OutputSlot], _stage_instance_id: crate::types::StageInstanceId,
+            _run_context: &Value,
         ) -> anyhow::Result<Value> { Ok(def_config.clone()) }
 
         async fn execute(&self, ctx: StageContext) -> anyhow::Result<Box<dyn StageHandle>> {
@@ -1151,6 +1156,7 @@ mod tests {
             status: StageStatus::Parked,
             config: json!({}),
             parked_reason: Some("waiting_gate".into()),
+            parked_meta: None,
             external_ref: None,
             started_at: Some(fixed_dt()),
             ended_at: None,
@@ -1333,6 +1339,7 @@ mod tests {
             status: StageStatus::Running,
             config: json!({}),
             parked_reason: None,
+            parked_meta: None,
             external_ref: None,
             started_at: Some(fixed_dt()),
             ended_at: None,

@@ -1,3 +1,5 @@
+pub mod session_agent;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use async_trait::async_trait;
@@ -75,6 +77,7 @@ const MAX_ARTIFACT_EMIT_RETRIES: usize = 8;
 /// The four data fields are public so stage implementations can read the resolved
 /// config and inputs. The three substrate fields (channel, pool, registry) are
 /// private; stages interact with them only through `emit` and `set_status`.
+#[derive(Clone)]
 pub struct StageContext {
     /// Unique identifier for this stage instance.
     pub stage_instance_id: StageInstanceId,
@@ -323,6 +326,16 @@ impl StageContext {
 
         Ok(())
     }
+
+    /// Attach (or clear, with `None`) structured park metadata on this stage
+    /// instance. Persisted to `stage_instance.parked_meta` and surfaced on
+    /// `GET /stage_instances/:id`, letting a client read executor-specific park
+    /// context (e.g. an approval `request_id`). Independent of `set_status` so it
+    /// does not touch the status/event path.
+    pub async fn set_parked_meta(&self, meta: Option<Value>) -> anyhow::Result<()> {
+        queries::set_stage_instance_parked_meta(&self.db, &self.stage_instance_id, meta).await?;
+        Ok(())
+    }
 }
 
 // ── StageHandle ───────────────────────────────────────────────────────────────
@@ -344,8 +357,8 @@ pub trait StageHandle: Send + Sync {
 
 /// Payload the scheduler delivers when resuming a parked stage.
 ///
-/// Serializes as `{"kind":"gate_decision",...}` or `{"kind":"feedback_artifact",...}`
-/// for scheduler dispatch over HTTP.
+/// Serializes as `{"kind":"gate_decision",...}`, `{"kind":"feedback_artifact",...}`,
+/// or `{"kind":"executor","payload":...}` for scheduler dispatch over HTTP.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ResumePayload {
@@ -360,6 +373,12 @@ pub enum ResumePayload {
     FeedbackArtifact {
         /// The feedback artifact.
         artifact: Artifact,
+    },
+    /// An opaque executor-specific payload routed to the parked stage's handle without
+    /// interpretation by the substrate.
+    Executor {
+        /// Executor-defined payload; the handle decodes its own shape.
+        payload: serde_json::Value,
     },
 }
 
@@ -427,6 +446,7 @@ mod tests {
             status: StageStatus::Running,
             config: json!({}),
             parked_reason: None,
+            parked_meta: None,
             external_ref: None,
             started_at: None,
             ended_at: None,
@@ -497,6 +517,8 @@ mod tests {
             &self,
             def_config: &Value,
             _inputs: &HashMap<String, Artifact>,
+            _output_slots: &[crate::types::OutputSlot],
+            _stage_instance_id: crate::types::StageInstanceId,
             _run_context: &Value,
         ) -> anyhow::Result<Value> {
             Ok(def_config.clone())

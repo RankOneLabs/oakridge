@@ -53,6 +53,7 @@ struct StageInstanceRow {
     status: String,
     config: String,
     parked_reason: Option<String>,
+    parked_meta: Option<String>,
     external_ref: Option<String>,
     started_at: Option<String>,
     ended_at: Option<String>,
@@ -152,6 +153,7 @@ fn row_to_stage_instance(r: StageInstanceRow) -> crate::Result<StageInstance> {
         status: str_to_enum(r.status)?,
         config: serde_json::from_str(&r.config)?,
         parked_reason: r.parked_reason,
+        parked_meta: r.parked_meta.map(|s| serde_json::from_str(&s)).transpose()?,
         external_ref: r.external_ref,
         started_at: opt_dt(r.started_at)?,
         ended_at: opt_dt(r.ended_at)?,
@@ -401,15 +403,16 @@ pub async fn insert_stage_instance(pool: &SqlitePool, s: &StageInstance) -> crat
     let run_id = s.run_id.0.to_string();
     let status = enum_to_str(&s.status)?;
     let config = serde_json::to_string(&s.config)?;
+    let parked_meta = s.parked_meta.as_ref().map(serde_json::to_string).transpose()?;
     let started_at = s.started_at.map(|t| t.to_rfc3339());
     let ended_at = s.ended_at.map(|t| t.to_rfc3339());
     let created_at = s.created_at.to_rfc3339();
     let updated_at = s.updated_at.to_rfc3339();
     sqlx::query!(
         "INSERT INTO stage_instance \
-         (id, run_id, stage_key, stage_type, status, config, parked_reason, external_ref, \
+         (id, run_id, stage_key, stage_type, status, config, parked_reason, parked_meta, external_ref, \
           started_at, ended_at, created_at, updated_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         id,
         run_id,
         s.stage_key,
@@ -417,6 +420,7 @@ pub async fn insert_stage_instance(pool: &SqlitePool, s: &StageInstance) -> crat
         status,
         config,
         s.parked_reason,
+        parked_meta,
         s.external_ref,
         started_at,
         ended_at,
@@ -435,7 +439,7 @@ pub async fn get_stage_instance_by_id(
     let id_str = id.0.to_string();
     let row = sqlx::query_as!(
         StageInstanceRow,
-        "SELECT id, run_id, stage_key, stage_type, status, config, parked_reason, external_ref, \
+        "SELECT id, run_id, stage_key, stage_type, status, config, parked_reason, parked_meta, external_ref, \
          started_at, ended_at, created_at, updated_at \
          FROM stage_instance WHERE id = ?",
         id_str,
@@ -470,6 +474,34 @@ pub async fn update_stage_instance_status(
         parked_reason,
         started_at_str,
         ended_at_str,
+        updated_at,
+        id_str,
+    )
+    .execute(pool)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(crate::Error::NotFound {
+            entity: "stage_instance".into(),
+            id: id_str,
+        });
+    }
+    Ok(())
+}
+
+/// Set (or clear, with `None`) the structured park metadata an executor attaches
+/// while a stage is parked. Kept independent of `update_stage_instance_status` so
+/// it does not disturb that function's many call sites.
+pub async fn set_stage_instance_parked_meta(
+    pool: &SqlitePool,
+    id: &StageInstanceId,
+    parked_meta: Option<Value>,
+) -> crate::Result<()> {
+    let id_str = id.0.to_string();
+    let parked_meta = parked_meta.as_ref().map(serde_json::to_string).transpose()?;
+    let updated_at = Utc::now().to_rfc3339();
+    let result = sqlx::query!(
+        "UPDATE stage_instance SET parked_meta = ?, updated_at = ? WHERE id = ?",
+        parked_meta,
         updated_at,
         id_str,
     )
@@ -523,7 +555,7 @@ pub async fn list_stage_instances_for_run(
     let run_id_str = run_id.0.to_string();
     let rows = sqlx::query_as!(
         StageInstanceRow,
-        "SELECT id, run_id, stage_key, stage_type, status, config, parked_reason, external_ref, \
+        "SELECT id, run_id, stage_key, stage_type, status, config, parked_reason, parked_meta, external_ref, \
          started_at, ended_at, created_at, updated_at \
          FROM stage_instance WHERE run_id = ?",
         run_id_str,
@@ -536,7 +568,7 @@ pub async fn list_stage_instances_for_run(
 pub async fn list_parked_stage_instances(pool: &SqlitePool) -> crate::Result<Vec<StageInstance>> {
     let rows = sqlx::query_as!(
         StageInstanceRow,
-        "SELECT id, run_id, stage_key, stage_type, status, config, parked_reason, external_ref, \
+        "SELECT id, run_id, stage_key, stage_type, status, config, parked_reason, parked_meta, external_ref, \
          started_at, ended_at, created_at, updated_at \
          FROM stage_instance WHERE status = 'parked'",
     )
@@ -705,6 +737,7 @@ mod tests {
             status: StageStatus::Pending,
             config: json!({"k": "v"}),
             parked_reason: None,
+            parked_meta: None,
             external_ref: None,
             started_at: None,
             ended_at: None,
@@ -823,6 +856,7 @@ mod tests {
             status: StageStatus::Parked,
             config: json!({"model": "gpt-4"}),
             parked_reason: Some("waiting for human gate".into()),
+            parked_meta: Some(serde_json::json!({"request_id": "req-1"})),
             external_ref: Some("ext-123".into()),
             started_at: Some(fixed_dt()),
             ended_at: None,

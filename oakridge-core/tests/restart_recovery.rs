@@ -78,6 +78,8 @@ impl StageType for ScriptedStageType {
         &self,
         def_config: &Value,
         _inputs: &HashMap<String, oakridge_core::types::Artifact>,
+        _output_slots: &[oakridge_core::types::OutputSlot],
+        _stage_instance_id: oakridge_core::types::StageInstanceId,
         _run_context: &Value,
     ) -> anyhow::Result<Value> {
         Ok(def_config.clone())

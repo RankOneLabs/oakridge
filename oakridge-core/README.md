@@ -4,9 +4,10 @@ A generic workflow-orchestration **substrate**. It models a workflow as a direct
 graph of typed stages connected by artifact-passing edges, runs instances of those
 graphs to completion, persists everything to SQLite, and streams progress over SSE.
 
-The substrate is deliberately domain-agnostic: it ships **zero** built-in stage or
-artifact types. A consumer binary supplies the concrete behavior by registering its
-own `StageType` and `ArtifactType` implementations at boot.
+The substrate is deliberately domain-agnostic: aside from the bundled `session_agent`
+stage type, it ships **zero** built-in stage or artifact types. A consumer binary supplies
+additional behavior by registering its own `StageType` and `ArtifactType` implementations
+at boot.
 
 ## Domain model
 
@@ -88,8 +89,8 @@ cargo run
 | `GET /workflow_runs/:id` | `200` | Run fields flattened with inline `stage_instances`. |
 | `GET /workflow_runs/:id/artifacts` | `200` | Filter: `?artifact_type=`. |
 | `GET /stage_instances/:id` | `200` | `404` when missing. |
+| `POST /stage_instances/:id/resume` | `202` | Body tagged `ResumePayload` (`{"kind":"gate_decision",...}`, `{"kind":"feedback_artifact",...}`, or `{"kind":"executor","payload":...}`); resumes a parked stage. **Expose only on a trusted network or behind an auth gateway — the server has no built-in authentication.** |
 | `GET /artifacts/:id` | `200` | Returns the revision chain, root-first. |
-| `POST /verb_results` | `202` | Body `{stage_instance_id, against_artifact_id, decision}`; delivers a gate decision to a parked stage. |
 | `GET /parked` | `200` | All currently parked stage instances. |
 
 **Status-code conventions**
@@ -136,13 +137,14 @@ let (app, coordinator) = boot(Config::from_env()?, |stages: &mut StageTypeRegist
   an unknown id fails that stage (and terminates the run) rather than hanging it.
 
 `boot` also runs migrations and crash recovery. The bundled binary passes
-`register_types`, an exported no-op, as its `register_fn`.
+`register_types` as its `register_fn`, which registers the built-in `session_agent`
+stage type.
 
 ## Persistence & migrations
 
-Schema lives in `src/db/migrations/` (`0001_initial`, `0002_artifact_output_name`,
-`0003_artifact_version`, `0004_harden_sqlite_constraints`) and is applied automatically
-on boot. Add schema changes as new additive migrations — never edit shipped ones.
+Schema lives in `src/db/migrations/` (a single consolidated `0001_initial`) and is
+applied automatically on boot. Add schema changes as new additive migrations — never
+edit shipped ones.
 
 Run-owned rows cascade when a `workflow_run` is deleted. Artifact revision trees are
 also cascade-owned: deleting a parent artifact deletes its descendant revisions. If a
