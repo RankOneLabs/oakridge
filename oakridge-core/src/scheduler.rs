@@ -327,6 +327,7 @@ impl RunTask {
         let resume_kind = match &payload {
             ResumePayload::GateDecision { .. } => "gate_decision",
             ResumePayload::FeedbackArtifact { .. } => "feedback_artifact",
+            ResumePayload::Executor { .. } => "executor",
         };
         let current = queries::get_stage_instance_by_id(&self.db, &stage_instance_id)
             .await
