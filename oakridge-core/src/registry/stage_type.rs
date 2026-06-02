@@ -27,8 +27,10 @@ pub trait StageType: Send + Sync {
 
     /// Optionally contribute an HTTP callback surface nested under /executors/<id>.
     ///
-    /// The returned router must be fully state-applied (Router<()>); the executor
-    /// applies its own `.with_state(...)` internally before returning.
+    /// The returned router must carry no outstanding state parameter — i.e. it must
+    /// already be a `Router<()>`. An implementation that needs per-executor state
+    /// applies its own `.with_state(...)` before returning (as `session_agent` does),
+    /// so the router handed back can be nested directly.
     fn http_routes(&self) -> Option<axum::Router> {
         None
     }

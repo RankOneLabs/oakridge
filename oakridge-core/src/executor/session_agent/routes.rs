@@ -244,6 +244,18 @@ async fn hook_approval_handler(
         }
     }
 
+    // ParkGuard removes the pending_approvals entry if the handler future is dropped
+    // (client disconnect detected by hyper cancelling the in-flight handler). Created
+    // immediately after the insert — before the set_parked_meta / set_status awaits — so
+    // a cancellation during those writes cannot leak the entry. Marked done once a
+    // decision arrives (by then the resume path has already removed the entry).
+    let mut guard = ParkGuard {
+        sid,
+        request_id: request_id.clone(),
+        live_stages: state.live_stages.clone(),
+        done: false,
+    };
+
     let input_preview = {
         let s = serde_json::to_string(&hook.tool_input).unwrap_or_default();
         if s.len() > 200 {
@@ -272,10 +284,7 @@ async fn hook_approval_handler(
         "tool_input": hook.tool_input,
     });
     if ctx.set_parked_meta(Some(approval_meta)).await.is_err() {
-        let mut map = state.live_stages.lock().unwrap();
-        if let Some(ls) = map.get_mut(&sid) {
-            ls.pending_approvals.remove(&request_id);
-        }
+        // guard drops on return → removes the pending_approvals entry.
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": "internal error"})),
@@ -288,15 +297,10 @@ async fn hook_approval_handler(
         .await
         .is_err()
     {
-        {
-            let mut map = state.live_stages.lock().unwrap();
-            if let Some(ls) = map.get_mut(&sid) {
-                ls.pending_approvals.remove(&request_id);
-            }
-        }
         // The Parked transition failed, so the parked_meta written just above no
         // longer describes a real park. Best-effort clear so a polling client never
         // builds a resume payload for a request_id the stage never actually parked on.
+        // (guard drops on return → removes the pending_approvals entry.)
         let _ = ctx.set_parked_meta(None).await;
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -304,15 +308,6 @@ async fn hook_approval_handler(
         )
             .into_response();
     }
-
-    // ParkGuard cleans up pending_approvals if the handler future is dropped
-    // (client disconnect detected by hyper cancelling the in-flight handler).
-    let mut guard = ParkGuard {
-        sid,
-        request_id,
-        live_stages: state.live_stages.clone(),
-        done: false,
-    };
 
     match rx.await {
         Ok(decision) => {
