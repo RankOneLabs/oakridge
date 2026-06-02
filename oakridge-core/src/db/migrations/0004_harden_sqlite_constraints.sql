@@ -7,6 +7,38 @@
 -- artifact revision removes its descendant revisions, and deleting a workflow
 -- run removes the full artifact tree without a separate traversal.
 
+CREATE TEMP TABLE migration_0004_preflight (
+    ok INTEGER NOT NULL CHECK (ok = 1)
+);
+
+INSERT INTO migration_0004_preflight (ok)
+SELECT 0
+FROM pragma_foreign_key_check
+LIMIT 1;
+
+INSERT INTO migration_0004_preflight (ok)
+SELECT 0
+FROM (
+    SELECT run_id, stage_key
+    FROM stage_instance
+    GROUP BY run_id, stage_key
+    HAVING COUNT(*) > 1
+)
+LIMIT 1;
+
+INSERT INTO migration_0004_preflight (ok)
+SELECT 0
+FROM (
+    SELECT parent_artifact_id, version
+    FROM artifact
+    WHERE parent_artifact_id IS NOT NULL
+    GROUP BY parent_artifact_id, version
+    HAVING COUNT(*) > 1
+)
+LIMIT 1;
+
+DROP TABLE migration_0004_preflight;
+
 PRAGMA foreign_keys = OFF;
 
 ALTER TABLE artifact RENAME TO artifact_old;

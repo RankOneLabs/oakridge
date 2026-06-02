@@ -346,6 +346,13 @@ impl RunTask {
             )));
         }
 
+        if !matches!(current.status, StageStatus::Parked) {
+            return Err(DecisionError::Conflict(format!(
+                "stage instance {} is not parked (status: {:?})",
+                stage_instance_id.0, current.status
+            )));
+        }
+
         let (stage_key, indexed_id, status) = match self.index.get(&current.stage_key) {
             Some((indexed_id, status)) => (current.stage_key.clone(), *indexed_id, *status),
             None => {
@@ -598,6 +605,7 @@ impl Coordinator {
                     run_id,
                     status: RunStatus::Done,
                 });
+                self.bus.cleanup_run(run_id);
                 continue;
             }
 

@@ -38,7 +38,7 @@ use tokio::sync::broadcast;
 use uuid::Uuid;
 
 use crate::events::{BackfillScope, EventBus, SeqEvent, BROADCAST_CAP};
-use crate::types::{RunStatus, WorkflowRunId};
+use crate::types::WorkflowRunId;
 
 use super::rest::AppError;
 use super::AppState;
@@ -80,12 +80,17 @@ impl Stream for SseStream {
 
 /// Build the SSE stream for `scope` starting from events with seq > `since`.
 ///
-/// Construction order guarantees no gap/dup at the backfill→live seam:
+/// In normal mode, construction order guarantees no gap/dup at the backfill→live seam:
 /// 1. Subscribe to the broadcast channel (live events start buffering).
 /// 2. Read the ring buffer for `seq > since`.
 /// 3. Emit the `gap` event if the cursor predates the oldest retained seq.
 /// 4. Yield buffered events, advancing `last_emitted_seq`.
 /// 5. Forward live events, skipping any whose seq ≤ `last_emitted_seq`.
+///
+/// In `terminal_only` mode, the stream serves retained backfill without a live tail.
+/// That is only for scopes that are already known to be terminal at the event-bus
+/// layer; run-scoped HTTP streams still attach live receivers so terminal events
+/// cannot race with cleanup.
 fn build_run_sse_stream(
     bus: Arc<EventBus>,
     scope: ScopeKey,
@@ -212,11 +217,10 @@ pub async fn stream_run_events(
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, AppError> {
     let run_id = WorkflowRunId(run_id);
     // 404 if the run id is unknown — avoids an indefinitely empty stream for a typo.
-    let run = crate::db::queries::get_workflow_run_by_id(&state.pool, &run_id).await?;
+    crate::db::queries::get_workflow_run_by_id(&state.pool, &run_id).await?;
 
     let since = resolve_since(params.since, &headers);
-    let terminal_only = matches!(run.status, RunStatus::Done | RunStatus::Failed);
-    Ok(Sse::new(build_run_sse_stream(state.bus, ScopeKey::Run(run_id), since, terminal_only))
+    Ok(Sse::new(build_run_sse_stream(state.bus, ScopeKey::Run(run_id), since, false))
         .keep_alive(KeepAlive::default()))
 }
 
