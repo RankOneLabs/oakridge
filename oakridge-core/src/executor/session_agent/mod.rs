@@ -242,8 +242,18 @@ impl StageType for SessionAgent {
             );
         }
 
-        // 5. Transition to Running.
-        ctx.set_status(StageStatus::Running, None).await?;
+        // 5. Transition to Running. On failure, clean up the already-spawned child
+        // so it doesn't leak in the map with no scheduler handle to cancel it.
+        if let Err(e) = ctx.set_status(StageStatus::Running, None).await {
+            let child_opt = self.live_stages.lock().unwrap()
+                .get_mut(&sid)
+                .and_then(|ls| ls.child.take());
+            self.live_stages.lock().unwrap().remove(&sid);
+            if let Some(mut child) = child_opt {
+                child.kill().await.ok();
+            }
+            return Err(e);
+        }
 
         // 6. Spawn background task: event loop → terminal status → deregister.
         let live_stages = self.live_stages.clone();

@@ -34,12 +34,14 @@ async fn emit_handler(
     Path((sid_str, output_name)): Path<(String, String)>,
     body: axum::body::Bytes,
 ) -> impl IntoResponse {
+    // A non-UUID sid can never identify a known stage; 404 treats all "stage
+    // not present" cases uniformly, matching the UnknownStage contract.
     let sid_uuid = match Uuid::parse_str(&sid_str) {
         Ok(u) => u,
         Err(_) => {
             return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({"error": format!("invalid stage id: {}", sid_str)})),
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "unknown stage"})),
             )
                 .into_response();
         }
