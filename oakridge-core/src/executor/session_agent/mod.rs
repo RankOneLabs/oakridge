@@ -176,9 +176,19 @@ pub async fn write_cc_settings(
     spawn: &SpawnConfig,
     stage_instance_id: &str,
 ) -> anyhow::Result<PathBuf> {
-    if stage_instance_id.contains(['/', '\\', ':']) {
+    // Require exactly one Normal path component: rejects empty, ".", "..", anything
+    // with a forward-slash separator, and absolute paths.
+    // Backslash and colon are also rejected explicitly: on Linux they are legal filename
+    // chars but would be path separators / drive prefixes on Windows, making them
+    // unsafe to embed in a directory name intended to be portable and shell-safe.
+    use std::path::{Component, Path};
+    let has_unsafe_char = stage_instance_id.contains(['\\', ':']);
+    let mut components = Path::new(stage_instance_id).components();
+    let is_single_normal = matches!(components.next(), Some(Component::Normal(_)))
+        && components.next().is_none();
+    if has_unsafe_char || !is_single_normal {
         anyhow::bail!(
-            "stage_instance_id contains a path separator or colon: {:?}",
+            "stage_instance_id must be a single path component (no separators, '.', or '..'): {:?}",
             stage_instance_id
         );
     }
@@ -318,6 +328,8 @@ pub async fn run(
     cmd.stdin(std::process::Stdio::piped());
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
+    // Ensure the child is killed if this future is dropped (cancelled).
+    cmd.kill_on_drop(true);
 
     let mut child = cmd.spawn()?;
 
@@ -800,11 +812,11 @@ mod tests {
             oakridge_data: tmp.clone(),
             gate_path: "/usr/local/bin/gate.sh".into(),
         };
-        for bad_id in &["../escape", "a/b", "a\\b", "a:b"] {
+        for bad_id in &["../escape", "a/b", "a\\b", "a:b", "..", ".", "", "a/b/c"] {
             let result = write_cc_settings(&spawn, bad_id).await;
             assert!(result.is_err(), "expected Err for id {:?}", bad_id);
             let msg = result.unwrap_err().to_string();
-            assert!(msg.contains("path separator"), "unexpected error for {:?}: {}", bad_id, msg);
+            assert!(msg.contains("single path component"), "unexpected error for {:?}: {}", bad_id, msg);
         }
         tokio::fs::remove_dir_all(&tmp).await.ok();
     }
