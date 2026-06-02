@@ -87,7 +87,9 @@ where
 }
 
 pub fn router(state: AppState) -> Router {
-    Router::new()
+    let stage_registry = state.stage_registry.clone();
+
+    let mut app = Router::new()
         .route(
             "/projects",
             post(rest::create_project).get(rest::list_projects),
@@ -111,6 +113,13 @@ pub fn router(state: AppState) -> Router {
         .route("/artifacts/:id", get(rest::get_artifact))
         .route("/verb_results", post(rest::post_verb_results))
         .route("/parked", get(rest::list_parked))
-        .merge(sse::sse_routes())
-        .with_state(state)
+        .merge(sse::sse_routes());
+
+    for st in stage_registry.all() {
+        if let Some(r) = st.http_routes() {
+            app = app.nest_service(&format!("/executors/{}", st.id()), r);
+        }
+    }
+
+    app.with_state(state)
 }
