@@ -326,6 +326,16 @@ impl StageContext {
 
         Ok(())
     }
+
+    /// Attach (or clear, with `None`) structured park metadata on this stage
+    /// instance. Persisted to `stage_instance.parked_meta` and surfaced on
+    /// `GET /stage_instances/:id`, letting a client read executor-specific park
+    /// context (e.g. an approval `request_id`). Independent of `set_status` so it
+    /// does not touch the status/event path.
+    pub async fn set_parked_meta(&self, meta: Option<Value>) -> anyhow::Result<()> {
+        queries::set_stage_instance_parked_meta(&self.db, &self.stage_instance_id, meta).await?;
+        Ok(())
+    }
 }
 
 // ── StageHandle ───────────────────────────────────────────────────────────────
@@ -436,6 +446,7 @@ mod tests {
             status: StageStatus::Running,
             config: json!({}),
             parked_reason: None,
+            parked_meta: None,
             external_ref: None,
             started_at: None,
             ended_at: None,

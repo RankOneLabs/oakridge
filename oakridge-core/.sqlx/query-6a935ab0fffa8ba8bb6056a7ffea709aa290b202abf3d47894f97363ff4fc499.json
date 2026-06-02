@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE stage_instance SET parked_meta = ?, updated_at = ? WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "6a935ab0fffa8ba8bb6056a7ffea709aa290b202abf3d47894f97363ff4fc499"
+}
