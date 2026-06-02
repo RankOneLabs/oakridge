@@ -497,6 +497,8 @@ mod tests {
             &self,
             def_config: &Value,
             _inputs: &HashMap<String, Artifact>,
+            _output_slots: &[crate::types::OutputSlot],
+            _stage_instance_id: crate::types::StageInstanceId,
             _run_context: &Value,
         ) -> anyhow::Result<Value> {
             Ok(def_config.clone())

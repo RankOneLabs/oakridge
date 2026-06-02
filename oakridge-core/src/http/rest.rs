@@ -423,6 +423,8 @@ mod tests {
             &self,
             def_config: &Value,
             _: &HashMap<String, crate::types::Artifact>,
+            _: &[crate::types::OutputSlot],
+            _: crate::types::StageInstanceId,
             _: &Value,
         ) -> anyhow::Result<Value> {
             Ok(def_config.clone())
@@ -467,6 +469,8 @@ mod tests {
             &self,
             def_config: &Value,
             _: &HashMap<String, crate::types::Artifact>,
+            _: &[crate::types::OutputSlot],
+            _: crate::types::StageInstanceId,
             _: &Value,
         ) -> anyhow::Result<Value> {
             Ok(def_config.clone())

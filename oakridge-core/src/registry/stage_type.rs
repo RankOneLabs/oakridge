@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
-use crate::types::Artifact;
+use crate::types::{Artifact, OutputSlot, StageInstanceId};
 use crate::executor::{StageContext, StageHandle};
 
 /// The interface that all stage-type implementations must satisfy.
@@ -20,6 +20,8 @@ pub trait StageType: Send + Sync {
         &self,
         def_config: &Value,
         inputs: &HashMap<String, Artifact>,
+        output_slots: &[OutputSlot],
+        stage_instance_id: StageInstanceId,
         run_context: &Value,
     ) -> anyhow::Result<Value>;
 
