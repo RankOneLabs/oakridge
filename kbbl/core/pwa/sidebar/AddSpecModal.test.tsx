@@ -67,6 +67,9 @@ describe("AddSpecModal agent runtime selection", () => {
     fireEvent.change(screen.getByLabelText("Agent"), {
       target: { value: "claude-code" },
     });
+    await waitFor(() => {
+      expect(screen.getByLabelText("Agent")).toHaveProperty("value", "claude-code");
+    });
     fireEvent.change(screen.getByLabelText("Title"), {
       target: { value: "Build the thing" },
     });

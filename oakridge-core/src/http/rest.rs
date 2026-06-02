@@ -12,9 +12,10 @@ use uuid::Uuid;
 
 use crate::db::queries;
 use crate::executor::ResumePayload;
+use crate::scheduler::DecisionError;
 use crate::types::{
     Artifact, ArtifactId, GateDecision, Project, ProjectId, RunStatus, StageInstance,
-    StageInstanceId, StageStatus, WorkflowDef, WorkflowDefId, WorkflowGraph, WorkflowRun,
+    StageInstanceId, WorkflowDef, WorkflowDefId, WorkflowGraph, WorkflowRun,
     WorkflowRunId,
 };
 
@@ -256,7 +257,18 @@ pub async fn create_workflow_run(
     };
 
     queries::insert_workflow_run(&state.pool, &run).await?;
-    state.coordinator.start_run(run.id).await?;
+    if let Err(start_err) = state.coordinator.start_run(run.id).await {
+        match queries::mark_workflow_run_failed_if_pending(&state.pool, &run.id).await {
+            Ok(true) => {}
+            Ok(false) => {
+                tracing::warn!(run_id = %run.id.0, "skipped workflow_run rollback because status was no longer pending");
+            }
+            Err(cleanup_err) => {
+                tracing::error!(run_id = %run.id.0, error = %cleanup_err, "failed to rollback workflow_run after start failure");
+            }
+        }
+        return Err(start_err.into());
+    }
 
     Ok((StatusCode::CREATED, Json(run)))
 }
@@ -333,23 +345,9 @@ pub async fn post_verb_results(
 ) -> Result<(StatusCode, Json<StageInstance>), AppError> {
     let si = queries::get_stage_instance_by_id(&state.pool, &body.stage_instance_id).await?;
 
-    if si.status != StageStatus::Parked {
-        return Err(AppError::Conflict(format!(
-            "stage instance {} is not parked (status: {:?})",
-            si.id.0, si.status
-        )));
-    }
-
-    // Known race: the parked check above and the deliver_decision call below are not
-    // atomic. A concurrent request (or a cancellation) can advance the stage out of
-    // Parked between the SELECT and the control-channel send. The duplicate caller
-    // will receive 202 even though the decision may be silently dropped, or a 409 if
-    // the run has since gone inactive. Making this atomic requires moving the guard
-    // into the Coordinator (cohort 5 scope); for now the window is small and the
-    // consequence is a no-op resume, not data corruption.
     state
         .coordinator
-        .deliver_decision(
+        .resume_parked_stage_if_active(
             si.run_id,
             body.stage_instance_id,
             ResumePayload::GateDecision {
@@ -358,10 +356,13 @@ pub async fn post_verb_results(
             },
         )
         .await
-        // run no longer active / control channel closed are stale-state conflicts, not 500s
-        .map_err(|e| AppError::Conflict(e.to_string()))?;
+        .map_err(|e| match e {
+            DecisionError::Conflict(msg) => AppError::Conflict(msg),
+            DecisionError::Internal(err) => AppError::Internal(err.to_string()),
+        })?;
 
-    Ok((StatusCode::ACCEPTED, Json(si)))
+    let updated = queries::get_stage_instance_by_id(&state.pool, &body.stage_instance_id).await?;
+    Ok((StatusCode::ACCEPTED, Json(updated)))
 }
 
 // ── Parked handler ────────────────────────────────────────────────────────────
@@ -383,7 +384,7 @@ mod tests {
     use crate::executor::{EmitArgs, ResumePayload, StageContext, StageHandle};
     use crate::registry::{ArtifactTypeDef, ArtifactTypeRegistry, StageTypeRegistry};
     use crate::scheduler::Coordinator;
-    use crate::types::WorkflowGraph;
+    use crate::types::{StageNodeDef, StageStatus};
     use async_trait::async_trait;
     use axum::body::Body;
     use axum::http::Request;
@@ -496,10 +497,10 @@ mod tests {
 
     // ── Test state builder ────────────────────────────────────────────────────
 
-    async fn make_state(
+    async fn make_state_at(
+        path: &str,
         stage_types: Vec<Arc<dyn crate::registry::stage_type::StageType>>,
     ) -> AppState {
-        let path = format!("/tmp/oakridge_http_{}.db", Uuid::new_v4());
         let pool = Arc::new(db::init_pool(&format!("sqlite:{}", path)).await.unwrap());
 
         let mut stage_reg = StageTypeRegistry::new();
@@ -525,6 +526,13 @@ mod tests {
         ));
 
         AppState { pool, stage_registry, artifact_registry, coordinator, bus }
+    }
+
+    async fn make_state(
+        stage_types: Vec<Arc<dyn crate::registry::stage_type::StageType>>,
+    ) -> AppState {
+        let path = format!("/tmp/oakridge_http_{}.db", Uuid::new_v4());
+        make_state_at(&path, stage_types).await
     }
 
     // ── HTTP request helper ───────────────────────────────────────────────────
@@ -643,6 +651,86 @@ mod tests {
         let run_a_id = WorkflowRunId(Uuid::parse_str(run_a["id"].as_str().unwrap()).unwrap());
         let stored_a = queries::get_workflow_run_by_id(&pool, &run_a_id).await.unwrap();
         assert_eq!(stored_a.context["workdir"], json!("/caller/override"));
+    }
+
+    #[tokio::test]
+    async fn test_start_failure_rolls_back_pending_run_and_retry_stays_single_active() {
+        let (stage, _ctx_rx) = scripted("retry_stage");
+        let state = make_state(vec![stage.clone() as Arc<dyn crate::registry::stage_type::StageType>]).await;
+        let pool = state.pool.clone();
+
+        let def_id = WorkflowDefId(Uuid::new_v4());
+        let def = WorkflowDef {
+            id: def_id,
+            name: "retry-wf".into(),
+            version: 1,
+            graph: WorkflowGraph {
+                stages: {
+                    let mut stages = HashMap::new();
+                    stages.insert(
+                        "s1".into(),
+                        StageNodeDef {
+                            stage_type: "retry_stage".into(),
+                            config: json!({}),
+                            inputs: vec![],
+                            outputs: vec![],
+                        },
+                    );
+                    stages
+                },
+                edges: vec![],
+            },
+            created_at: Utc::now(),
+        };
+        queries::insert_workflow_def(&pool, &def).await.unwrap();
+        sqlx::query("UPDATE workflow_def SET graph = ? WHERE id = ?")
+            .bind("not-json")
+            .bind(def_id.0.to_string())
+            .execute(pool.as_ref())
+            .await
+            .unwrap();
+
+        let first_app = crate::http::router(state.clone());
+        let (status, err_body) = req(
+            first_app,
+            "POST",
+            "/workflow_runs",
+            Some(json!({"workflow_def_id": def_id})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "error body: {err_body}");
+
+        let runs = queries::list_workflow_runs(&pool, None, Some(&def_id), None)
+            .await
+            .unwrap();
+        assert_eq!(runs.len(), 1, "runs after failed create: {runs:?}");
+        assert_eq!(runs[0].status, RunStatus::Failed, "failed row should not remain pending");
+        assert_eq!(runs[0].workflow_def_id, def_id);
+
+        let active_after_failure = queries::list_active_runs(&pool).await.unwrap();
+        assert!(active_after_failure.is_empty(), "failed create must not leave active work behind");
+
+        sqlx::query("UPDATE workflow_def SET graph = ? WHERE id = ?")
+            .bind(serde_json::to_string(&def.graph).unwrap())
+            .bind(def_id.0.to_string())
+            .execute(pool.as_ref())
+            .await
+            .unwrap();
+
+        let second_app = crate::http::router(state.clone());
+        let (status, run) = req(
+            second_app,
+            "POST",
+            "/workflow_runs",
+            Some(json!({"workflow_def_id": def_id})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "retry body: {run}");
+        let retry_run_id = WorkflowRunId(Uuid::parse_str(run["id"].as_str().unwrap()).unwrap());
+
+        let active_after_retry = queries::list_active_runs(&pool).await.unwrap();
+        assert_eq!(active_after_retry.len(), 1, "retry should create only one active run");
+        assert_eq!(active_after_retry[0].id, retry_run_id);
     }
 
     #[tokio::test]
@@ -773,7 +861,7 @@ mod tests {
 
         // POST /verb_results
         let app = crate::http::router(state.clone());
-        let (status, _) = req(
+        let (status, body) = req(
             app,
             "POST",
             "/verb_results",
@@ -785,6 +873,7 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::ACCEPTED);
+        assert_eq!(body["status"], json!("running"), "accepted resume should return the resumed running stage");
 
         // Wait for resume signal, then mark stage done
         let resume =
@@ -805,6 +894,181 @@ mod tests {
         }
         let final_run = queries::get_workflow_run_by_id(&pool, &run_id).await.unwrap();
         assert_eq!(final_run.status, RunStatus::Done);
+    }
+
+    #[tokio::test]
+    async fn test_park_verb_results_conflicts_on_duplicate_resume() {
+        let (scripted_stage, mut ctx_rx) = scripted("gate_stage");
+        let state = make_state(vec![scripted_stage as Arc<dyn crate::registry::stage_type::StageType>]).await;
+        let pool = state.pool.clone();
+
+        let gate_graph = json!({
+            "stages": {
+                "gate": {
+                    "stage_type": "gate_stage",
+                    "config": {},
+                    "inputs": [],
+                    "outputs": [{"name": "out", "artifact_type": "any"}]
+                }
+            },
+            "edges": []
+        });
+        let app = crate::http::router(state.clone());
+        let (status, def) = req(
+            app,
+            "POST",
+            "/workflow_defs",
+            Some(json!({"name": "gate-wf", "version": 1, "graph": gate_graph})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        let def_id = def["id"].as_str().unwrap().to_string();
+
+        let app = crate::http::router(state.clone());
+        let (status, run) = req(
+            app,
+            "POST",
+            "/workflow_runs",
+            Some(json!({"workflow_def_id": def_id})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        let run_id_str = run["id"].as_str().unwrap().to_string();
+        let run_id = WorkflowRunId(Uuid::parse_str(&run_id_str).unwrap());
+
+        let (ctx, mut resume_rx) =
+            tokio::time::timeout(Duration::from_secs(5), ctx_rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+
+        ctx.set_status(StageStatus::Running, None).await.unwrap();
+        let artifact = ctx
+            .emit(EmitArgs {
+                output_name: "out".into(),
+                artifact_type: "any".into(),
+                body: json!({"review_content": "check me"}),
+                label: None,
+                parent_artifact_id: None,
+            })
+            .await
+            .unwrap();
+        ctx.set_status(StageStatus::Parked, Some("waiting_gate".into()))
+            .await
+            .unwrap();
+
+        let si_id = ctx.stage_instance_id;
+        let payload = json!({
+            "stage_instance_id": si_id.0.to_string(),
+            "against_artifact_id": artifact.id.0.to_string(),
+            "decision": {"outcome": "pass", "comment": null, "feedback": null}
+        });
+
+        let app = crate::http::router(state.clone());
+        let (status, body) = req(app, "POST", "/verb_results", Some(payload.clone())).await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+        assert_eq!(body["status"], json!("running"));
+
+        let app = crate::http::router(state.clone());
+        let (status, body) = req(app, "POST", "/verb_results", Some(payload)).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(body["error"].as_str().is_some(), "duplicate resume should return a conflict message");
+
+        let resume =
+            tokio::time::timeout(Duration::from_secs(5), resume_rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        assert!(matches!(resume, ResumePayload::GateDecision { .. }));
+        ctx.set_status(StageStatus::Done, None).await.unwrap();
+
+        for _ in 0..50 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            let run = queries::get_workflow_run_by_id(&pool, &run_id).await.unwrap();
+            if matches!(run.status, RunStatus::Done | RunStatus::Failed) {
+                break;
+            }
+        }
+        let final_run = queries::get_workflow_run_by_id(&pool, &run_id).await.unwrap();
+        assert_eq!(final_run.status, RunStatus::Done);
+    }
+
+    #[tokio::test]
+    async fn test_park_verb_results_conflicts_on_inactive_run() {
+        let (scripted_stage, mut ctx_rx) = scripted("gate_stage");
+        let state = make_state(vec![scripted_stage as Arc<dyn crate::registry::stage_type::StageType>]).await;
+        let pool = state.pool.clone();
+
+        let gate_graph = json!({
+            "stages": {
+                "gate": {
+                    "stage_type": "gate_stage",
+                    "config": {},
+                    "inputs": [],
+                    "outputs": [{"name": "out", "artifact_type": "any"}]
+                }
+            },
+            "edges": []
+        });
+        let app = crate::http::router(state.clone());
+        let (status, def) = req(
+            app,
+            "POST",
+            "/workflow_defs",
+            Some(json!({"name": "gate-wf", "version": 1, "graph": gate_graph})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        let def_id = def["id"].as_str().unwrap().to_string();
+
+        let app = crate::http::router(state.clone());
+        let (status, run) = req(
+            app,
+            "POST",
+            "/workflow_runs",
+            Some(json!({"workflow_def_id": def_id})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        let run_id_str = run["id"].as_str().unwrap().to_string();
+        let run_id = WorkflowRunId(Uuid::parse_str(&run_id_str).unwrap());
+
+        let (ctx, _) = tokio::time::timeout(Duration::from_secs(5), ctx_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+
+        ctx.set_status(StageStatus::Running, None).await.unwrap();
+        let artifact = ctx
+            .emit(EmitArgs {
+                output_name: "out".into(),
+                artifact_type: "any".into(),
+                body: json!({"review_content": "check me"}),
+                label: None,
+                parent_artifact_id: None,
+            })
+            .await
+            .unwrap();
+        ctx.set_status(StageStatus::Parked, Some("waiting_gate".into()))
+            .await
+            .unwrap();
+
+        queries::update_workflow_run_status(&pool, &run_id, RunStatus::Done).await.unwrap();
+
+        let app = crate::http::router(state.clone());
+        let (status, body) = req(
+            app,
+            "POST",
+            "/verb_results",
+            Some(json!({
+                "stage_instance_id": ctx.stage_instance_id.0.to_string(),
+                "against_artifact_id": artifact.id.0.to_string(),
+                "decision": {"outcome": "pass", "comment": null, "feedback": null}
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(body["error"].as_str().is_some(), "inactive runs should return a conflict message");
     }
 
     #[tokio::test]

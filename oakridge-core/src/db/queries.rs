@@ -342,6 +342,22 @@ pub async fn update_workflow_run_status(
     Ok(())
 }
 
+pub async fn mark_workflow_run_failed_if_pending(
+    pool: &SqlitePool,
+    id: &WorkflowRunId,
+) -> crate::Result<bool> {
+    let id_str = id.0.to_string();
+    let updated_at = Utc::now().to_rfc3339();
+    let result = sqlx::query(
+        "UPDATE workflow_run SET status = 'failed', updated_at = ? WHERE id = ? AND status = 'pending'",
+    )
+    .bind(updated_at)
+    .bind(id_str)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
+}
+
 pub async fn list_workflow_runs(
     pool: &SqlitePool,
     status: Option<RunStatus>,
@@ -466,6 +482,38 @@ pub async fn update_stage_instance_status(
         });
     }
     Ok(())
+}
+
+pub async fn update_stage_instance_status_if_current_status(
+    pool: &SqlitePool,
+    id: &StageInstanceId,
+    expected_status: StageStatus,
+    status: StageStatus,
+    parked_reason: Option<String>,
+    started_at: Option<DateTime<Utc>>,
+    ended_at: Option<DateTime<Utc>>,
+) -> crate::Result<bool> {
+    let id_str = id.0.to_string();
+    let expected_status_str = enum_to_str(&expected_status)?;
+    let status_str = enum_to_str(&status)?;
+    let updated_at = Utc::now().to_rfc3339();
+    let started_at_str = started_at.map(|t| t.to_rfc3339());
+    let ended_at_str = ended_at.map(|t| t.to_rfc3339());
+    let result = sqlx::query(
+        "UPDATE stage_instance \
+         SET status = ?, parked_reason = ?, started_at = ?, ended_at = ?, updated_at = ? \
+         WHERE id = ? AND status = ?",
+    )
+    .bind(status_str)
+    .bind(parked_reason)
+    .bind(started_at_str)
+    .bind(ended_at_str)
+    .bind(updated_at)
+    .bind(id_str)
+    .bind(expected_status_str)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
 }
 
 pub async fn list_stage_instances_for_run(
@@ -855,6 +903,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_stage_instance_unique_per_run_and_stage_key() {
+        let pool = make_test_pool().await;
+        let def = test_workflow_def();
+        insert_workflow_def(&pool, &def).await.unwrap();
+        let run = test_run(def.id);
+        insert_workflow_run(&pool, &run).await.unwrap();
+
+        let first = test_stage(run.id);
+        let second = StageInstance {
+            id: StageInstanceId(Uuid::new_v4()),
+            ..first.clone()
+        };
+
+        insert_stage_instance(&pool, &first).await.unwrap();
+        let duplicate = insert_stage_instance(&pool, &second).await;
+        assert!(duplicate.is_err(), "duplicate (run_id, stage_key) must be rejected");
+    }
+
+    #[tokio::test]
     async fn test_arbitrary_stage_type_and_artifact_type_accepted() {
         let pool = make_test_pool().await;
         let def = test_workflow_def();
@@ -930,6 +997,106 @@ mod tests {
         assert_eq!(chain[2].version, 1);
     }
 
+    #[tokio::test]
+    async fn test_delete_semantics_for_owned_and_definition_rows() {
+        let pool = make_test_pool().await;
+        let proj = test_project();
+        insert_project(&pool, &proj).await.unwrap();
+        let def = test_workflow_def();
+        insert_workflow_def(&pool, &def).await.unwrap();
+        let run = WorkflowRun {
+            project_id: Some(proj.id),
+            ..test_run(def.id)
+        };
+        insert_workflow_run(&pool, &run).await.unwrap();
+        let si = test_stage(run.id);
+        insert_stage_instance(&pool, &si).await.unwrap();
+
+        let root = Artifact {
+            id: ArtifactId(Uuid::new_v4()),
+            run_id: run.id,
+            stage_instance_id: si.id,
+            artifact_type: "text".into(),
+            output_name: Some("out".into()),
+            label: None,
+            body: json!("root"),
+            version: 1,
+            parent_artifact_id: None,
+            created_at: fixed_dt(),
+        };
+        insert_artifact(&pool, &root).await.unwrap();
+        let rev = Artifact {
+            id: ArtifactId(Uuid::new_v4()),
+            parent_artifact_id: Some(root.id),
+            body: json!("rev"),
+            version: 2,
+            ..root.clone()
+        };
+        insert_artifact(&pool, &rev).await.unwrap();
+
+        let delete_project = sqlx::query("DELETE FROM project WHERE id = ?")
+            .bind(proj.id.0.to_string())
+            .execute(&pool)
+            .await;
+        assert!(delete_project.is_err(), "project deletion must be restricted while referenced");
+
+        let delete_def = sqlx::query("DELETE FROM workflow_def WHERE id = ?")
+            .bind(def.id.0.to_string())
+            .execute(&pool)
+            .await;
+        assert!(delete_def.is_err(), "workflow_def deletion must be restricted while referenced");
+
+        sqlx::query("DELETE FROM workflow_run WHERE id = ?")
+            .bind(run.id.0.to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        assert!(get_stage_instance_by_id(&pool, &si.id).await.is_err());
+        assert!(get_artifact_by_id(&pool, &root.id).await.is_err());
+        assert!(get_artifact_by_id(&pool, &rev.id).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_parent_artifact_deletion_cascades_to_descendant_revisions() {
+        let pool = make_test_pool().await;
+        let def = test_workflow_def();
+        insert_workflow_def(&pool, &def).await.unwrap();
+        let run = test_run(def.id);
+        insert_workflow_run(&pool, &run).await.unwrap();
+        let si = test_stage(run.id);
+        insert_stage_instance(&pool, &si).await.unwrap();
+
+        let root = test_artifact(run.id, si.id);
+        insert_artifact(&pool, &root).await.unwrap();
+        let child = Artifact {
+            id: ArtifactId(Uuid::new_v4()),
+            parent_artifact_id: Some(root.id),
+            body: json!("child"),
+            version: 2,
+            ..root.clone()
+        };
+        insert_artifact(&pool, &child).await.unwrap();
+        let grandchild = Artifact {
+            id: ArtifactId(Uuid::new_v4()),
+            parent_artifact_id: Some(child.id),
+            body: json!("grandchild"),
+            version: 3,
+            ..root.clone()
+        };
+        insert_artifact(&pool, &grandchild).await.unwrap();
+
+        sqlx::query("DELETE FROM artifact WHERE id = ?")
+            .bind(root.id.0.to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        assert!(get_artifact_by_id(&pool, &root.id).await.is_err());
+        assert!(get_artifact_by_id(&pool, &child.id).await.is_err());
+        assert!(get_artifact_by_id(&pool, &grandchild.id).await.is_err());
+    }
+
     // ── List / filter tests ───────────────────────────────────────────────────
 
     #[tokio::test]
@@ -980,6 +1147,25 @@ mod tests {
 
         let active = list_active_runs(&pool).await.unwrap();
         assert_eq!(active.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_mark_workflow_run_failed_if_pending_only_updates_pending_rows() {
+        let pool = make_test_pool().await;
+        let def = test_workflow_def();
+        insert_workflow_def(&pool, &def).await.unwrap();
+
+        let run = test_run(def.id);
+        insert_workflow_run(&pool, &run).await.unwrap();
+
+        let updated = mark_workflow_run_failed_if_pending(&pool, &run.id).await.unwrap();
+        assert!(updated, "pending row should be marked failed");
+
+        let stored = get_workflow_run_by_id(&pool, &run.id).await.unwrap();
+        assert_eq!(stored.status, RunStatus::Failed);
+
+        let updated_again = mark_workflow_run_failed_if_pending(&pool, &run.id).await.unwrap();
+        assert!(!updated_again, "non-pending row should not be touched twice");
     }
 
     #[tokio::test]
@@ -1084,5 +1270,15 @@ mod tests {
         assert_eq!(got.parked_reason, Some("gate waiting".into()));
         assert_eq!(got.started_at, Some(fixed_dt()));
         assert_eq!(got.ended_at, None);
+    }
+
+    #[tokio::test]
+    async fn test_busy_timeout_is_configured() {
+        let pool = make_test_pool().await;
+        let busy_timeout_ms: i64 = sqlx::query_scalar("PRAGMA busy_timeout")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(busy_timeout_ms, 5_000);
     }
 }

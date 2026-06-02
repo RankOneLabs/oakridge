@@ -50,11 +50,28 @@ Configuration is read from the environment (`Config::from_env`):
 | Var | Default | Purpose |
 | --- | --- | --- |
 | `OAKRIDGE_CORE_PORT` | `8790` | Listen port. |
+| `OAKRIDGE_CORE_BIND` | `127.0.0.1` | Bind address for the HTTP listener. |
 | `OAKRIDGE_CORE_DB` | `sqlite://oakridge-core.db` | SQLite URL (bare paths are prefixed with `sqlite://`). |
 | `OAKRIDGE_CORE_PWA_DIR` | `./pwa` | Directory served as the static fallback. |
+| `OAKRIDGE_CORE_CORS_ORIGINS` | unset | Comma-separated list of allowed browser origins. Empty or unset means same-origin only. |
 
-The binary binds `0.0.0.0:<port>` and applies a permissive CORS layer — appropriate
-for a trusted/tailnet deployment, not for direct public exposure.
+The binary binds `127.0.0.1:<port>` by default and does not add a CORS layer unless
+`OAKRIDGE_CORE_CORS_ORIGINS` is set. That keeps local development local-first while
+still allowing explicit tailnet or homelab exposure when you opt in.
+
+Local development:
+
+```sh
+cargo run
+```
+
+Tailnet or homelab exposure:
+
+```sh
+OAKRIDGE_CORE_BIND=0.0.0.0 \
+OAKRIDGE_CORE_CORS_ORIGINS=https://oakridge.tailnet.example \
+cargo run
+```
 
 ## HTTP API
 
@@ -105,8 +122,8 @@ A consumer binary registers its types and boots the substrate:
 use oakridge_core::{boot, Config};
 use oakridge_core::registry::{StageTypeRegistry, ArtifactTypeRegistry};
 
-let (app, coordinator) = boot(Config::from_env(), |stages: &mut StageTypeRegistry,
-                                                   artifacts: &mut ArtifactTypeRegistry| {
+let (app, coordinator) = boot(Config::from_env()?, |stages: &mut StageTypeRegistry,
+                                                    artifacts: &mut ArtifactTypeRegistry| {
     stages.register(/* Arc<dyn StageType> */);
     artifacts.register(/* ArtifactTypeDef */);
 }).await?;
@@ -124,8 +141,13 @@ let (app, coordinator) = boot(Config::from_env(), |stages: &mut StageTypeRegistr
 ## Persistence & migrations
 
 Schema lives in `src/db/migrations/` (`0001_initial`, `0002_artifact_output_name`,
-`0003_artifact_version`) and is applied automatically on boot. Add schema changes as new
-additive migrations — never edit shipped ones.
+`0003_artifact_version`, `0004_harden_sqlite_constraints`) and is applied automatically
+on boot. Add schema changes as new additive migrations — never edit shipped ones.
+
+Run-owned rows cascade when a `workflow_run` is deleted. Artifact revision trees are
+also cascade-owned: deleting a parent artifact deletes its descendant revisions. If a
+future product requirement needs artifact audit retention independent of a run, change
+that lifecycle first and add a migration rather than relying on detached revisions.
 
 Compile-time-checked queries (`query!` / `query_as!`) rely on committed offline metadata
 in `.sqlx/`. After changing such a query's SQL, regenerate it against a migrated database:
