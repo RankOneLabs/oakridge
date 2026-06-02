@@ -274,15 +274,15 @@ impl StageType for SessionAgent {
             let stdout_task = tokio::spawn(async move {
                 let mut lines = BufReader::new(stdout).lines();
                 let mut state = SubprocessState::default();
-                let mut sidecar_written = false;
+                let mut sidecar_write_attempted = false;
                 loop {
                     match lines.next_line().await {
                         Ok(Some(line)) => {
                             classify_cc_event(&line, &mut state);
-                            if !sidecar_written {
+                            if !sidecar_write_attempted {
                                 if let Some(ref cc_sid) = state.cc_session_id {
                                     write_parent_cc_sid(&oakridge_data, &sid_str, cc_sid).await;
-                                    sidecar_written = true;
+                                    sidecar_write_attempted = true;
                                 }
                             }
                         }
