@@ -37,9 +37,8 @@ fn scan_dir(
     session_agent_dir: &Path,
     violations: &mut Vec<(String, &'static str)>,
 ) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
+    let entries = std::fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("failed to read_dir {}: {}", dir.display(), e));
     for entry in entries.flatten() {
         let path = entry.path();
         if path.starts_with(session_agent_dir) {
@@ -48,7 +47,8 @@ fn scan_dir(
         if path.is_dir() {
             scan_dir(&path, session_agent_dir, violations);
         } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
-            let content = std::fs::read_to_string(&path).unwrap_or_default();
+            let content = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("failed to read {}: {}", path.display(), e));
             for &token in FORBIDDEN_TOKENS {
                 if content.contains(token) {
                     violations.push((path.to_string_lossy().into_owned(), token));

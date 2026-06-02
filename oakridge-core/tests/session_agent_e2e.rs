@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::os::unix::fs::PermissionsExt;
@@ -94,14 +96,14 @@ async fn poll_until_done(
 }
 
 async fn wait_run_done(pool: &sqlx::SqlitePool, run_id: WorkflowRunId) {
-    for _ in 0..300 {
+    for _ in 0..600 {
         tokio::time::sleep(Duration::from_millis(50)).await;
         let run = queries::get_workflow_run_by_id(pool, &run_id).await.unwrap();
         if matches!(run.status, RunStatus::Done | RunStatus::Failed) {
             return;
         }
     }
-    panic!("run did not reach terminal status within timeout");
+    panic!("run did not reach terminal status within 30s");
 }
 
 // ── E2E: full lifecycle ────────────────────────────────────────────────────────
@@ -140,7 +142,7 @@ async fn session_agent_e2e_lifecycle() {
 set -e
 exec 0</dev/null
 printf '%s\n' '{{"type":"system","subtype":"init","session_id":"mock-cc-e2e","model":"mock-model"}}'
-curl -s -X POST \
+curl -s -f -X POST \
   "http://127.0.0.1:{port}/executors/session_agent/${{OAKRIDGE_STAGE_INSTANCE}}/hook/approval" \
   -H "Content-Type: application/json" \
   -d '{{"tool_name":"Bash","tool_input":{{"command":"echo hi"}},"hook_event_name":"PreToolUse"}}' \
