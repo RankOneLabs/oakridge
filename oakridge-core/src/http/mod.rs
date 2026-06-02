@@ -108,8 +108,11 @@ pub fn router(state: AppState) -> Router {
             get(rest::list_run_artifacts),
         )
         .route("/stage_instances/:id", get(rest::get_stage_instance))
+        .route(
+            "/stage_instances/:id/resume",
+            post(rest::resume_stage_instance),
+        )
         .route("/artifacts/:id", get(rest::get_artifact))
-        .route("/verb_results", post(rest::post_verb_results))
         .route("/parked", get(rest::list_parked))
         .merge(sse::sse_routes())
         .with_state(state)
