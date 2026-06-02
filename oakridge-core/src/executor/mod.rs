@@ -344,8 +344,8 @@ pub trait StageHandle: Send + Sync {
 
 /// Payload the scheduler delivers when resuming a parked stage.
 ///
-/// Serializes as `{"kind":"gate_decision",...}` or `{"kind":"feedback_artifact",...}`
-/// for scheduler dispatch over HTTP.
+/// Serializes as `{"kind":"gate_decision",...}`, `{"kind":"feedback_artifact",...}`,
+/// or `{"kind":"executor","payload":...}` for scheduler dispatch over HTTP.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ResumePayload {
@@ -360,6 +360,12 @@ pub enum ResumePayload {
     FeedbackArtifact {
         /// The feedback artifact.
         artifact: Artifact,
+    },
+    /// An opaque executor-specific payload routed to the parked stage's handle without
+    /// interpretation by the substrate.
+    Executor {
+        /// Executor-defined payload; the handle decodes its own shape.
+        payload: serde_json::Value,
     },
 }
 

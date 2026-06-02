@@ -14,7 +14,7 @@ use crate::db::queries;
 use crate::executor::ResumePayload;
 use crate::scheduler::DecisionError;
 use crate::types::{
-    Artifact, ArtifactId, GateDecision, Project, ProjectId, RunStatus, StageInstance,
+    Artifact, ArtifactId, Project, ProjectId, RunStatus, StageInstance,
     StageInstanceId, WorkflowDef, WorkflowDefId, WorkflowGraph, WorkflowRun,
     WorkflowRunId,
 };
@@ -106,13 +106,6 @@ pub struct CreateWorkflowRun {
     pub workflow_def_id: WorkflowDefId,
     pub project_id: Option<ProjectId>,
     pub context: Option<Value>,
-}
-
-#[derive(Deserialize)]
-pub struct VerbResult {
-    pub stage_instance_id: StageInstanceId,
-    pub against_artifact_id: ArtifactId,
-    pub decision: GateDecision,
 }
 
 // ── Response DTOs ─────────────────────────────────────────────────────────────
@@ -337,31 +330,26 @@ pub async fn get_artifact(
     Ok(Json(chain))
 }
 
-// ── VerbResults handler ───────────────────────────────────────────────────────
+// ── Stage instance resume handler ─────────────────────────────────────────────
 
-pub async fn post_verb_results(
+pub async fn resume_stage_instance(
     State(state): State<AppState>,
-    Json(body): Json<VerbResult>,
+    Path(id): Path<Uuid>,
+    Json(payload): Json<ResumePayload>,
 ) -> Result<(StatusCode, Json<StageInstance>), AppError> {
-    let si = queries::get_stage_instance_by_id(&state.pool, &body.stage_instance_id).await?;
+    let si_id = StageInstanceId(id);
+    let si = queries::get_stage_instance_by_id(&state.pool, &si_id).await?;
 
     state
         .coordinator
-        .resume_parked_stage_if_active(
-            si.run_id,
-            body.stage_instance_id,
-            ResumePayload::GateDecision {
-                decision: body.decision,
-                against_artifact_id: body.against_artifact_id,
-            },
-        )
+        .resume_parked_stage_if_active(si.run_id, si_id, payload)
         .await
         .map_err(|e| match e {
             DecisionError::Conflict(msg) => AppError::Conflict(msg),
             DecisionError::Internal(err) => AppError::Internal(err.to_string()),
         })?;
 
-    let updated = queries::get_stage_instance_by_id(&state.pool, &body.stage_instance_id).await?;
+    let updated = queries::get_stage_instance_by_id(&state.pool, &si_id).await?;
     Ok((StatusCode::ACCEPTED, Json(updated)))
 }
 
@@ -863,16 +851,16 @@ mod tests {
         }
         assert!(parked_count > 0, "parked stage must appear in GET /parked");
 
-        // POST /verb_results
+        // POST /stage_instances/:id/resume
         let app = crate::http::router(state.clone());
         let (status, body) = req(
             app,
             "POST",
-            "/verb_results",
+            &format!("/stage_instances/{}/resume", si_id.0),
             Some(json!({
-                "stage_instance_id": si_id.0.to_string(),
-                "against_artifact_id": artifact_id.0.to_string(),
-                "decision": {"outcome": "pass", "comment": null, "feedback": null}
+                "kind": "gate_decision",
+                "decision": {"outcome": "pass", "comment": null, "feedback": null},
+                "against_artifact_id": artifact_id.0.to_string()
             })),
         )
         .await;
@@ -963,18 +951,19 @@ mod tests {
 
         let si_id = ctx.stage_instance_id;
         let payload = json!({
-            "stage_instance_id": si_id.0.to_string(),
-            "against_artifact_id": artifact.id.0.to_string(),
-            "decision": {"outcome": "pass", "comment": null, "feedback": null}
+            "kind": "gate_decision",
+            "decision": {"outcome": "pass", "comment": null, "feedback": null},
+            "against_artifact_id": artifact.id.0.to_string()
         });
+        let resume_url = format!("/stage_instances/{}/resume", si_id.0);
 
         let app = crate::http::router(state.clone());
-        let (status, body) = req(app, "POST", "/verb_results", Some(payload.clone())).await;
+        let (status, body) = req(app, "POST", &resume_url, Some(payload.clone())).await;
         assert_eq!(status, StatusCode::ACCEPTED);
         assert_eq!(body["status"], json!("running"));
 
         let app = crate::http::router(state.clone());
-        let (status, body) = req(app, "POST", "/verb_results", Some(payload)).await;
+        let (status, body) = req(app, "POST", &resume_url, Some(payload)).await;
         assert_eq!(status, StatusCode::CONFLICT);
         assert!(body["error"].as_str().is_some(), "duplicate resume should return a conflict message");
 
@@ -1063,16 +1052,31 @@ mod tests {
         let (status, body) = req(
             app,
             "POST",
-            "/verb_results",
+            &format!("/stage_instances/{}/resume", ctx.stage_instance_id.0),
             Some(json!({
-                "stage_instance_id": ctx.stage_instance_id.0.to_string(),
-                "against_artifact_id": artifact.id.0.to_string(),
-                "decision": {"outcome": "pass", "comment": null, "feedback": null}
+                "kind": "gate_decision",
+                "decision": {"outcome": "pass", "comment": null, "feedback": null},
+                "against_artifact_id": artifact.id.0.to_string()
             })),
         )
         .await;
         assert_eq!(status, StatusCode::CONFLICT);
         assert!(body["error"].as_str().is_some(), "inactive runs should return a conflict message");
+    }
+
+    #[test]
+    fn test_resume_payload_executor_serde_round_trip() {
+        let original = ResumePayload::Executor {
+            payload: json!({"op": "permit", "id": 42}),
+        };
+        let serialized = serde_json::to_value(&original).unwrap();
+        assert_eq!(serialized["kind"], json!("executor"));
+        assert_eq!(serialized["payload"], json!({"op": "permit", "id": 42}));
+        let deserialized: ResumePayload = serde_json::from_value(serialized).unwrap();
+        let ResumePayload::Executor { payload: deserialized_payload } = deserialized else {
+            panic!("expected Executor variant");
+        };
+        assert_eq!(deserialized_payload, json!({"op": "permit", "id": 42}));
     }
 
     #[tokio::test]
