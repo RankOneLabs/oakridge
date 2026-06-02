@@ -31,8 +31,8 @@ pub struct AppState {
 ///   CLAUDE_BIN           – path to the claude binary (default: "claude")
 ///   OAKRIDGE_CORE_PORT   – port the gate script calls back on (default: 8790)
 ///   OAKRIDGE_DATA        – root data dir for per-instance state (default: "./data")
-///   OAKRIDGE_GATE_PATH   – absolute path to the PreToolUse gate script
-///                          (default: "/usr/local/bin/gate.sh")
+///   OAKRIDGE_GATE_PATH   – absolute path to the tool-use gate script
+///                          (default: "/usr/local/bin/gate")
 ///   OAKRIDGE_PROMPTS_DIR – directory containing prompt templates (default: "./prompts")
 pub fn register_types(stage: &mut StageTypeRegistry, _artifact: &mut ArtifactTypeRegistry) {
     let port: u16 = std::env::var("OAKRIDGE_CORE_PORT")
@@ -47,7 +47,7 @@ pub fn register_types(stage: &mut StageTypeRegistry, _artifact: &mut ArtifactTyp
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|_| std::path::PathBuf::from("./data")),
         gate_path: std::env::var("OAKRIDGE_GATE_PATH")
-            .unwrap_or_else(|_| "/usr/local/bin/gate.sh".to_string()),
+            .unwrap_or_else(|_| "/usr/local/bin/gate".to_string()),
     };
 
     let prompts_dir = std::env::var("OAKRIDGE_PROMPTS_DIR")
