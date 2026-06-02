@@ -5,7 +5,7 @@
 # decision, echoes the server's ready-to-emit hookSpecificOutput reply.
 set -euo pipefail
 
-PORT="${OAKRIDGE_PORT:-8788}"
+PORT="${OAKRIDGE_PORT:-8790}"
 SID="${OAKRIDGE_STAGE_INSTANCE:?OAKRIDGE_STAGE_INSTANCE must be set}"
 INPUT="$(cat)"
 

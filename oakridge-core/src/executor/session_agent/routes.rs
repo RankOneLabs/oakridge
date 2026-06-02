@@ -136,7 +136,9 @@ struct ParkGuard {
 impl Drop for ParkGuard {
     fn drop(&mut self) {
         if !self.done {
-            let mut map = self.live_stages.lock().unwrap();
+            // unwrap_or_else: if the Mutex is poisoned, recover the inner value rather
+            // than panicking — a panic inside Drop during unwinding aborts the process.
+            let mut map = self.live_stages.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(ls) = map.get_mut(&self.sid) {
                 ls.pending_approvals.remove(&self.request_id);
             }
@@ -242,11 +244,11 @@ async fn hook_approval_handler(
         }
     }
 
-    let park_reason = format!(
-        "permission: {} on {}",
-        hook.tool_name,
-        serde_json::to_string(&hook.tool_input).unwrap_or_default()
-    );
+    let input_preview = {
+        let s = serde_json::to_string(&hook.tool_input).unwrap_or_default();
+        if s.len() > 200 { format!("{}…", &s[..200]) } else { s }
+    };
+    let park_reason = format!("permission: {} on {}", hook.tool_name, input_preview);
     if ctx
         .set_status(StageStatus::Parked, Some(park_reason))
         .await
