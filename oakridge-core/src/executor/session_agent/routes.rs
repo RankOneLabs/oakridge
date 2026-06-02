@@ -249,6 +249,28 @@ async fn hook_approval_handler(
         if s.len() > 200 { format!("{}…", &s[..200]) } else { s }
     };
     let park_reason = format!("permission: {} on {}", hook.tool_name, input_preview);
+
+    // Expose the approval request_id (and the tool being gated) on the stage row
+    // so a client polling GET /stage_instances/:id can build the resume payload
+    // { request_id, decision }. Written before the Parked transition so it is
+    // present as soon as the park is observable.
+    let approval_meta = serde_json::json!({
+        "request_id": request_id,
+        "tool": hook.tool_name,
+        "tool_input": hook.tool_input,
+    });
+    if ctx.set_parked_meta(Some(approval_meta)).await.is_err() {
+        let mut map = state.live_stages.lock().unwrap();
+        if let Some(ls) = map.get_mut(&sid) {
+            ls.pending_approvals.remove(&request_id);
+        }
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "internal error"})),
+        )
+            .into_response();
+    }
+
     if ctx
         .set_status(StageStatus::Parked, Some(park_reason))
         .await
@@ -284,6 +306,10 @@ async fn hook_approval_handler(
                 )
                     .into_response();
             }
+            // Best-effort clear: the approval is resolved, so the park metadata no
+            // longer applies. A failure here is cosmetic and must not block the
+            // decision returned to CC.
+            let _ = ctx.set_parked_meta(None).await;
             let (perm_decision, reason) = if decision.approved {
                 ("allow", "operator approved")
             } else {

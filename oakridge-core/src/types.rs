@@ -139,6 +139,10 @@ pub struct StageInstance {
     pub status: StageStatus,
     pub config: Value,
     pub parked_reason: Option<String>,
+    /// Structured metadata an executor attaches while a stage is parked (e.g. a
+    /// session_agent's approval `request_id`). Surfaced on `GET /stage_instances/:id`
+    /// so a client can act on the park; the substrate does not interpret it.
+    pub parked_meta: Option<Value>,
     pub external_ref: Option<String>,
     pub started_at: Option<DateTime<Utc>>,
     pub ended_at: Option<DateTime<Utc>>,
@@ -348,6 +352,7 @@ mod tests {
             status: StageStatus::Parked,
             config: json!({"k": "v"}),
             parked_reason: Some("waiting on human gate".to_string()),
+            parked_meta: Some(json!({"request_id": "abc"})),
             external_ref: None,
             started_at: Some(now()),
             ended_at: None,
