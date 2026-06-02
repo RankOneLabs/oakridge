@@ -77,6 +77,7 @@ const MAX_ARTIFACT_EMIT_RETRIES: usize = 8;
 /// The four data fields are public so stage implementations can read the resolved
 /// config and inputs. The three substrate fields (channel, pool, registry) are
 /// private; stages interact with them only through `emit` and `set_status`.
+#[derive(Clone)]
 pub struct StageContext {
     /// Unique identifier for this stage instance.
     pub stage_instance_id: StageInstanceId,

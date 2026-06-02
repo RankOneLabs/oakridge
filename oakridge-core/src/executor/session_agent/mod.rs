@@ -1,22 +1,120 @@
 pub mod config;
+pub mod routes;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
+use serde::Deserialize;
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
-use crate::executor::{StageContext, StageHandle};
+use tokio::sync::{mpsc, oneshot};
+use crate::executor::{StageContext, StageHandle, ResumePayload};
 use crate::registry::stage_type::StageType;
-use crate::types::{Artifact, OutputSlot, StageInstanceId};
+use crate::types::{Artifact, OutputSlot, StageInstanceId, StageStatus};
 use config::{SessionAgentConfig, SessionAgentDefConfig, load_template, render_template, resolve_binding};
 
 const STAGE_INSTANCE_ID_SENTINEL: &str = "{{STAGE_INSTANCE_ID}}";
+
+// ── RequestId / PermissionDecision ────────────────────────────────────────────
+
+pub type RequestId = String;
+
+#[derive(serde::Serialize, Deserialize, Debug, Clone)]
+pub struct PermissionDecision {
+    pub approved: bool,
+}
+
+// ── LiveStage ─────────────────────────────────────────────────────────────────
+
+pub struct LiveStage {
+    /// Subprocess handle; taken (Option→None) when cancel or wait is called.
+    pub child: Option<tokio::process::Child>,
+    /// Channel to the stdin writer task; send a string to inject a user message.
+    pub stdin_tx: mpsc::Sender<String>,
+    /// Resolved config for this stage instance.
+    pub config: SessionAgentConfig,
+    /// Pending PreToolUse approval requests, keyed by gate request id.
+    pub pending_approvals: HashMap<RequestId, oneshot::Sender<PermissionDecision>>,
+    /// Stage context for emit() and set_status().
+    pub ctx: StageContext,
+}
 
 // ── SessionAgent (StageType) ──────────────────────────────────────────────────
 
 pub struct SessionAgent {
     pub prompts_dir: PathBuf,
+    pub spawn_config: SpawnConfig,
+    pub live_stages: Arc<Mutex<HashMap<StageInstanceId, LiveStage>>>,
+}
+
+// ── SessionAgentHandle (StageHandle) ─────────────────────────────────────────
+
+struct SessionAgentHandle {
+    stage_instance_id: StageInstanceId,
+    live_stages: Arc<Mutex<HashMap<StageInstanceId, LiveStage>>>,
+}
+
+#[derive(Deserialize)]
+struct ApprovalPayload {
+    request_id: RequestId,
+    decision: PermissionDecision,
+}
+
+#[async_trait]
+impl StageHandle for SessionAgentHandle {
+    async fn resume(&self, payload: ResumePayload) -> anyhow::Result<()> {
+        match payload {
+            ResumePayload::GateDecision { .. } => {
+                anyhow::bail!("unexpected payload: session_agent hosts no gates")
+            }
+            ResumePayload::FeedbackArtifact { artifact } => {
+                let stdin_tx = {
+                    let map = self.live_stages.lock().unwrap();
+                    map.get(&self.stage_instance_id).map(|ls| ls.stdin_tx.clone())
+                };
+                let tx = stdin_tx.ok_or_else(|| anyhow::anyhow!("stage not live"))?;
+                let text = serde_json::to_string(&artifact.body)?;
+                tx.send(text)
+                    .await
+                    .map_err(|_| anyhow::anyhow!("stdin closed"))?;
+                Ok(())
+            }
+            ResumePayload::Executor { payload } => {
+                let approval: ApprovalPayload = serde_json::from_value(payload)
+                    .map_err(|e| anyhow::anyhow!("invalid executor payload: {}", e))?;
+                let tx = {
+                    let mut map = self.live_stages.lock().unwrap();
+                    map.get_mut(&self.stage_instance_id)
+                        .ok_or_else(|| anyhow::anyhow!("stage not live"))?
+                        .pending_approvals
+                        .remove(&approval.request_id)
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "unknown approval request: {}",
+                                approval.request_id
+                            )
+                        })?
+                };
+                tx.send(approval.decision)
+                    .map_err(|_| anyhow::anyhow!("approval receiver dropped"))?;
+                Ok(())
+            }
+        }
+    }
+
+    async fn cancel(&self) -> anyhow::Result<()> {
+        let child_opt = {
+            let mut map = self.live_stages.lock().unwrap();
+            map.get_mut(&self.stage_instance_id)
+                .and_then(|ls| ls.child.take())
+        };
+        if let Some(mut child) = child_opt {
+            child.kill().await?;
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -75,8 +173,162 @@ impl StageType for SessionAgent {
         Ok(serde_json::to_value(config)?)
     }
 
-    async fn execute(&self, _ctx: StageContext) -> anyhow::Result<Box<dyn StageHandle>> {
-        anyhow::bail!("session_agent execute not yet implemented in this cohort")
+    fn http_routes(&self) -> Option<axum::Router> {
+        Some(routes::emit_routes(self.live_stages.clone()))
+    }
+
+    async fn execute(&self, ctx: StageContext) -> anyhow::Result<Box<dyn StageHandle>> {
+        let sid = ctx.stage_instance_id;
+        let config: SessionAgentConfig = serde_json::from_value(ctx.config.clone())?;
+
+        // 1. Write per-instance settings.json (PreToolUse gate hook).
+        let settings_path =
+            write_cc_settings(&self.spawn_config, &sid.0.to_string()).await?;
+        let settings_path_str = settings_path.to_string_lossy().to_string();
+
+        // 2. Build argv via cohort-3 helper.
+        let session_cfg = SessionConfig {
+            stage_instance_id: sid.0.to_string(),
+            workdir: config.workdir.clone(),
+            prompt: config.rendered_prompt.clone(),
+            model: config.model.clone(),
+            parent_cc_sid: None,
+        };
+        let argv = build_argv(&self.spawn_config, &session_cfg, &settings_path_str);
+
+        // 3. Spawn child subprocess.
+        let mut cmd = Command::new(&argv[0]);
+        cmd.args(&argv[1..]);
+        cmd.current_dir(&config.workdir);
+        cmd.env("OAKRIDGE_PORT", self.spawn_config.port.to_string());
+        cmd.env("OAKRIDGE_STAGE_INSTANCE", &sid.0.to_string());
+        cmd.stdin(std::process::Stdio::piped());
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::piped());
+        cmd.kill_on_drop(true);
+
+        let mut child = cmd.spawn()?;
+        let stdout = child.stdout.take().expect("stdout configured as piped");
+        let stderr = child.stderr.take().expect("stderr configured as piped");
+        let mut raw_stdin = child.stdin.take().expect("stdin configured as piped");
+
+        // Stdin writer task: receives text, injects as stream-json user messages
+        // via the cohort-3 inject_user_message helper. Kept open for feedback injection.
+        let (stdin_tx, mut stdin_rx) = mpsc::channel::<String>(16);
+        tokio::spawn(async move {
+            while let Some(text) = stdin_rx.recv().await {
+                if inject_user_message(&mut raw_stdin, &text).await.is_err() {
+                    break;
+                }
+            }
+            // When channel closes, raw_stdin drops → child receives EOF.
+        });
+
+        // Send initial prompt (non-fatal on broken pipe: child may exit quickly).
+        stdin_tx.send(config.rendered_prompt.clone()).await.ok();
+
+        // 4. Insert LiveStage into map.
+        {
+            let mut map = self.live_stages.lock().unwrap();
+            map.insert(
+                sid,
+                LiveStage {
+                    child: Some(child),
+                    stdin_tx,
+                    config: config.clone(),
+                    pending_approvals: HashMap::new(),
+                    ctx: ctx.clone(),
+                },
+            );
+        }
+
+        // 5. Transition to Running. On failure, clean up the already-spawned child
+        // so it doesn't leak in the map with no scheduler handle to cancel it.
+        if let Err(e) = ctx.set_status(StageStatus::Running, None).await {
+            let child_opt = self.live_stages.lock().unwrap()
+                .get_mut(&sid)
+                .and_then(|ls| ls.child.take());
+            self.live_stages.lock().unwrap().remove(&sid);
+            if let Some(mut child) = child_opt {
+                child.kill().await.ok();
+            }
+            return Err(e);
+        }
+
+        // 6. Spawn background task: event loop → terminal status → deregister.
+        let live_stages = self.live_stages.clone();
+        tokio::spawn(async move {
+            // Drain stdout (NDJSON metadata bookkeeping).
+            let stdout_task = tokio::spawn(async move {
+                let mut lines = BufReader::new(stdout).lines();
+                let mut state = SubprocessState::default();
+                loop {
+                    match lines.next_line().await {
+                        Ok(Some(line)) => classify_cc_event(&line, &mut state),
+                        _ => break,
+                    }
+                }
+                state
+            });
+
+            // Drain stderr (retain last line for failure diagnostics).
+            let stderr_task = tokio::spawn(async move {
+                let mut lines = BufReader::new(stderr).lines();
+                let mut last_line: Option<String> = None;
+                loop {
+                    match lines.next_line().await {
+                        Ok(Some(line)) => last_line = Some(line),
+                        _ => break,
+                    }
+                }
+                last_line
+            });
+
+            let _state = stdout_task.await.unwrap_or_default();
+            let last_stderr = stderr_task.await.unwrap_or_default();
+
+            // Take child from map (don't hold the lock across .await).
+            let child_opt = {
+                live_stages
+                    .lock()
+                    .unwrap()
+                    .get_mut(&sid)
+                    .and_then(|ls| ls.child.take())
+            };
+
+            // Derive exit code; treat cancel (None) as non-zero.
+            let exit_code = match child_opt {
+                Some(mut child) => child
+                    .wait()
+                    .await
+                    .map(|s| s.code().unwrap_or(1))
+                    .unwrap_or(1),
+                None => 1,
+            };
+
+            // Determine terminal status using cohort-3 exit derivation.
+            let (status, parked_reason) = if exit_code == 0 {
+                (StageStatus::Done, None)
+            } else {
+                let reason = match last_stderr {
+                    Some(ref line) => format!("{} + {}", exit_code, line),
+                    None => format!("{}", exit_code),
+                };
+                (StageStatus::Failed, Some(reason))
+            };
+
+            if let Err(e) = ctx.set_status(status, parked_reason).await {
+                tracing::error!(sid = %sid.0, "failed to set terminal status: {}", e);
+            }
+
+            // Deregister keeps live_stages bounded to actually-live stages.
+            live_stages.lock().unwrap().remove(&sid);
+        });
+
+        Ok(Box::new(SessionAgentHandle {
+            stage_instance_id: sid,
+            live_stages: self.live_stages.clone(),
+        }))
     }
 }
 
@@ -429,6 +681,19 @@ mod tests {
         std::fs::write(dir.join(name), content).unwrap();
     }
 
+    fn make_agent(dir: &std::path::Path) -> SessionAgent {
+        SessionAgent {
+            prompts_dir: dir.to_path_buf(),
+            spawn_config: SpawnConfig {
+                claude_bin: "claude".into(),
+                port: 8790,
+                oakridge_data: dir.to_path_buf(),
+                gate_path: "/usr/local/bin/gate.sh".into(),
+            },
+            live_stages: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
     // ── SessionAgent::build_config ────────────────────────────────────────────
 
     #[tokio::test]
@@ -436,7 +701,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         write_template(dir.path(), "test.md", "Task: {{TASK}}. Instance: {{STAGE_INSTANCE_ID}}.");
 
-        let agent = SessionAgent { prompts_dir: dir.path().to_path_buf() };
+        let agent = make_agent(dir.path());
 
         let mut slot_bindings = serde_json::Map::new();
         slot_bindings.insert(
@@ -480,7 +745,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         write_template(dir.path(), "tmpl.md", "Spec: {{SPEC_NOTES}}");
 
-        let agent = SessionAgent { prompts_dir: dir.path().to_path_buf() };
+        let agent = make_agent(dir.path());
 
         let mut inputs = HashMap::new();
         inputs.insert(
@@ -516,7 +781,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         write_template(dir.path(), "t.md", "Project: {{PROJECT}}");
 
-        let agent = SessionAgent { prompts_dir: dir.path().to_path_buf() };
+        let agent = make_agent(dir.path());
         let run_context = json!({"project_id": "proj-abc"});
 
         let def_config = json!({
@@ -543,7 +808,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         write_template(dir.path(), "t.md", "{{MISSING_SLOT}}");
 
-        let agent = SessionAgent { prompts_dir: dir.path().to_path_buf() };
+        let agent = make_agent(dir.path());
         let def_config = json!({
             "backend": "claude_code",
             "prompt_template_path": "t.md",
@@ -563,7 +828,7 @@ mod tests {
     #[tokio::test]
     async fn build_config_missing_template_errors() {
         let dir = tempfile::tempdir().unwrap();
-        let agent = SessionAgent { prompts_dir: dir.path().to_path_buf() };
+        let agent = make_agent(dir.path());
 
         let def_config = json!({
             "backend": "claude_code",
@@ -585,7 +850,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         write_template(dir.path(), "t.md", "hello");
 
-        let agent = SessionAgent { prompts_dir: dir.path().to_path_buf() };
+        let agent = make_agent(dir.path());
         let output_slots = vec![
             OutputSlot { name: "a".into(), artifact_type: "text".into() },
             OutputSlot { name: "b".into(), artifact_type: "json".into() },
