@@ -204,7 +204,7 @@ impl StageType for SessionAgent {
         };
         let argv = build_argv(&self.spawn_config, &session_cfg, &settings_path_str);
 
-        // 3. Spawn child subprocess.
+        // 4. Spawn child subprocess.
         let mut cmd = Command::new(&argv[0]);
         cmd.args(&argv[1..]);
         cmd.current_dir(&config.workdir);
@@ -235,7 +235,7 @@ impl StageType for SessionAgent {
         // Send initial prompt (non-fatal on broken pipe: child may exit quickly).
         stdin_tx.send(config.rendered_prompt.clone()).await.ok();
 
-        // 4. Insert LiveStage into map.
+        // 5. Insert LiveStage into map.
         {
             let mut map = self.live_stages.lock().unwrap();
             map.insert(
@@ -250,7 +250,7 @@ impl StageType for SessionAgent {
             );
         }
 
-        // 5. Transition to Running. On failure, clean up the already-spawned child
+        // 6. Transition to Running. On failure, clean up the already-spawned child
         // so it doesn't leak in the map with no scheduler handle to cancel it.
         if let Err(e) = ctx.set_status(StageStatus::Running, None).await {
             let child_opt = self.live_stages.lock().unwrap()
@@ -263,17 +263,29 @@ impl StageType for SessionAgent {
             return Err(e);
         }
 
-        // 6. Spawn background task: event loop → terminal status → deregister.
+        // 7. Spawn background task: event loop → terminal status → deregister.
         let oakridge_data = self.spawn_config.oakridge_data.clone();
         let live_stages = self.live_stages.clone();
         tokio::spawn(async move {
             // Drain stdout (NDJSON metadata bookkeeping).
+            // Sidecar is written as soon as cc_session_id is first observed so crash
+            // recovery can fork even if the substrate dies before CC exits.
+            let sid_str = sid.0.to_string();
             let stdout_task = tokio::spawn(async move {
                 let mut lines = BufReader::new(stdout).lines();
                 let mut state = SubprocessState::default();
+                let mut sidecar_written = false;
                 loop {
                     match lines.next_line().await {
-                        Ok(Some(line)) => classify_cc_event(&line, &mut state),
+                        Ok(Some(line)) => {
+                            classify_cc_event(&line, &mut state);
+                            if !sidecar_written {
+                                if let Some(ref cc_sid) = state.cc_session_id {
+                                    write_parent_cc_sid(&oakridge_data, &sid_str, cc_sid).await;
+                                    sidecar_written = true;
+                                }
+                            }
+                        }
                         _ => break,
                     }
                 }
@@ -293,12 +305,7 @@ impl StageType for SessionAgent {
                 last_line
             });
 
-            let state = stdout_task.await.unwrap_or_default();
-            // Persist the captured CC session id so the next execute() (cycle
-            // re-activation or crash recovery replay) forks via --resume/--fork-session.
-            if let Some(ref cc_sid) = state.cc_session_id {
-                write_parent_cc_sid(&oakridge_data, &sid.0.to_string(), cc_sid).await;
-            }
+            let _state = stdout_task.await.unwrap_or_default();
             let last_stderr = stderr_task.await.unwrap_or_default();
 
             // Take child from map (don't hold the lock across .await).
