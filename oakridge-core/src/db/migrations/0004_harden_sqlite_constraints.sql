@@ -2,6 +2,10 @@
 -- Rebuild the run-owned tables with explicit delete behavior and uniqueness
 -- constraints. This keeps migration history additive while hardening the live
 -- schema for future writes.
+--
+-- Artifact revisions are run-owned. parent_artifact_id cascades so deleting an
+-- artifact revision removes its descendant revisions, and deleting a workflow
+-- run removes the full artifact tree without a separate traversal.
 
 PRAGMA foreign_keys = OFF;
 

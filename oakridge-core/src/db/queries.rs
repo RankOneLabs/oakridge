@@ -1057,6 +1057,46 @@ mod tests {
         assert!(get_artifact_by_id(&pool, &rev.id).await.is_err());
     }
 
+    #[tokio::test]
+    async fn test_parent_artifact_deletion_cascades_to_descendant_revisions() {
+        let pool = make_test_pool().await;
+        let def = test_workflow_def();
+        insert_workflow_def(&pool, &def).await.unwrap();
+        let run = test_run(def.id);
+        insert_workflow_run(&pool, &run).await.unwrap();
+        let si = test_stage(run.id);
+        insert_stage_instance(&pool, &si).await.unwrap();
+
+        let root = test_artifact(run.id, si.id);
+        insert_artifact(&pool, &root).await.unwrap();
+        let child = Artifact {
+            id: ArtifactId(Uuid::new_v4()),
+            parent_artifact_id: Some(root.id),
+            body: json!("child"),
+            version: 2,
+            ..root.clone()
+        };
+        insert_artifact(&pool, &child).await.unwrap();
+        let grandchild = Artifact {
+            id: ArtifactId(Uuid::new_v4()),
+            parent_artifact_id: Some(child.id),
+            body: json!("grandchild"),
+            version: 3,
+            ..root.clone()
+        };
+        insert_artifact(&pool, &grandchild).await.unwrap();
+
+        sqlx::query("DELETE FROM artifact WHERE id = ?")
+            .bind(root.id.0.to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        assert!(get_artifact_by_id(&pool, &root.id).await.is_err());
+        assert!(get_artifact_by_id(&pool, &child.id).await.is_err());
+        assert!(get_artifact_by_id(&pool, &grandchild.id).await.is_err());
+    }
+
     // ── List / filter tests ───────────────────────────────────────────────────
 
     #[tokio::test]

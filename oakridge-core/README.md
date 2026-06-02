@@ -141,8 +141,13 @@ let (app, coordinator) = boot(Config::from_env()?, |stages: &mut StageTypeRegist
 ## Persistence & migrations
 
 Schema lives in `src/db/migrations/` (`0001_initial`, `0002_artifact_output_name`,
-`0003_artifact_version`) and is applied automatically on boot. Add schema changes as new
-additive migrations — never edit shipped ones.
+`0003_artifact_version`, `0004_harden_sqlite_constraints`) and is applied automatically
+on boot. Add schema changes as new additive migrations — never edit shipped ones.
+
+Run-owned rows cascade when a `workflow_run` is deleted. Artifact revision trees are
+also cascade-owned: deleting a parent artifact deletes its descendant revisions. If a
+future product requirement needs artifact audit retention independent of a run, change
+that lifecycle first and add a migration rather than relying on detached revisions.
 
 Compile-time-checked queries (`query!` / `query_as!`) rely on committed offline metadata
 in `.sqlx/`. After changing such a query's SQL, regenerate it against a migrated database:
