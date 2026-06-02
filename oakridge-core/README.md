@@ -4,9 +4,10 @@ A generic workflow-orchestration **substrate**. It models a workflow as a direct
 graph of typed stages connected by artifact-passing edges, runs instances of those
 graphs to completion, persists everything to SQLite, and streams progress over SSE.
 
-The substrate is deliberately domain-agnostic: it ships **zero** built-in stage or
-artifact types. A consumer binary supplies the concrete behavior by registering its
-own `StageType` and `ArtifactType` implementations at boot.
+The substrate is deliberately domain-agnostic: aside from the bundled `session_agent`
+stage type, it ships **zero** built-in stage or artifact types. A consumer binary supplies
+additional behavior by registering its own `StageType` and `ArtifactType` implementations
+at boot.
 
 ## Domain model
 
@@ -136,7 +137,8 @@ let (app, coordinator) = boot(Config::from_env()?, |stages: &mut StageTypeRegist
   an unknown id fails that stage (and terminates the run) rather than hanging it.
 
 `boot` also runs migrations and crash recovery. The bundled binary passes
-`register_types`, an exported no-op, as its `register_fn`.
+`register_types` as its `register_fn`, which registers the built-in `session_agent`
+stage type.
 
 ## Persistence & migrations
 

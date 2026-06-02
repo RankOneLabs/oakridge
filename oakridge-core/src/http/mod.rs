@@ -67,8 +67,9 @@ pub fn register_types(stage: &mut StageTypeRegistry, _artifact: &mut ArtifactTyp
 /// construct the Coordinator, run crash-recovery, and return the composed Router
 /// with static-serving fallback plus the Coordinator Arc.
 ///
-/// Production code passes `register_types` (no-op); tests pass closures that
-/// inject dummy stage/artifact types without modifying production paths.
+/// Production code passes `register_types` (registers the built-in `session_agent`
+/// stage type); tests pass closures that inject dummy stage/artifact types without
+/// modifying production paths.
 pub async fn boot<F>(cfg: Config, register_fn: F) -> anyhow::Result<(Router, Arc<Coordinator>)>
 where
     F: FnOnce(&mut StageTypeRegistry, &mut ArtifactTypeRegistry),

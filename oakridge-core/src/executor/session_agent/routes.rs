@@ -246,7 +246,19 @@ async fn hook_approval_handler(
 
     let input_preview = {
         let s = serde_json::to_string(&hook.tool_input).unwrap_or_default();
-        if s.len() > 200 { format!("{}…", &s[..200]) } else { s }
+        if s.len() > 200 {
+            // Truncate on a char boundary: byte-slicing &s[..200] panics if byte 200
+            // lands inside a multi-byte UTF-8 sequence (tool_input is arbitrary JSON).
+            let boundary = s
+                .char_indices()
+                .take_while(|(i, _)| *i < 200)
+                .last()
+                .map(|(i, c)| i + c.len_utf8())
+                .unwrap_or(0);
+            format!("{}…", &s[..boundary])
+        } else {
+            s
+        }
     };
     let park_reason = format!("permission: {} on {}", hook.tool_name, input_preview);
 
@@ -276,10 +288,16 @@ async fn hook_approval_handler(
         .await
         .is_err()
     {
-        let mut map = state.live_stages.lock().unwrap();
-        if let Some(ls) = map.get_mut(&sid) {
-            ls.pending_approvals.remove(&request_id);
+        {
+            let mut map = state.live_stages.lock().unwrap();
+            if let Some(ls) = map.get_mut(&sid) {
+                ls.pending_approvals.remove(&request_id);
+            }
         }
+        // The Parked transition failed, so the parked_meta written just above no
+        // longer describes a real park. Best-effort clear so a polling client never
+        // builds a resume payload for a request_id the stage never actually parked on.
+        let _ = ctx.set_parked_meta(None).await;
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": "internal error"})),

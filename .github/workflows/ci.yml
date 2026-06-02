@@ -63,3 +63,27 @@ jobs:
       - run: uv run ruff check
       - run: uv run mypy src
       - run: uv run pytest
+
+  oakridge-core:
+    name: oakridge-core build & test (Rust)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: oakridge-core
+    env:
+      # Build against the committed .sqlx offline metadata so CI needs no live
+      # database for sqlx's compile-time query checking.
+      SQLX_OFFLINE: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: oakridge-core
+      # --locked fails fast if Cargo.lock has drifted from Cargo.toml,
+      # matching the bun/uv reproducibility guarantee.
+      - run: cargo build --locked --all-targets
+      # The lifecycle e2e drives a mock-cc bash script (needs only bash + curl,
+      # both present on ubuntu-latest); the real-CC smoke test is #[ignore]d, so
+      # the default run needs no claude binary or auth.
+      - run: cargo test --locked
