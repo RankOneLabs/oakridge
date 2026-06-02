@@ -23,6 +23,14 @@ pub trait StageType: Send + Sync {
         run_context: &Value,
     ) -> anyhow::Result<Value>;
 
+    /// Optionally contribute an HTTP callback surface nested under /executors/<id>.
+    ///
+    /// The returned router must be fully state-applied (Router<()>); the executor
+    /// applies its own `.with_state(...)` internally before returning.
+    fn http_routes(&self) -> Option<axum::Router> {
+        None
+    }
+
     /// Launch the stage. Returns a handle the scheduler can use to resume or cancel the stage.
     async fn execute(&self, ctx: StageContext) -> anyhow::Result<Box<dyn StageHandle>>;
 }
@@ -46,5 +54,10 @@ impl StageTypeRegistry {
     /// Look up a stage type by ID.
     pub fn get(&self, id: &str) -> Option<Arc<dyn StageType>> {
         self.types.get(id).cloned()
+    }
+
+    /// Iterate over all registered stage types.
+    pub fn all(&self) -> impl Iterator<Item = &Arc<dyn StageType>> {
+        self.types.values()
     }
 }
