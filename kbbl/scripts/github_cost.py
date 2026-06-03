@@ -20,6 +20,7 @@ Usage:
 """
 import argparse, json, glob, os, re
 from collections import defaultdict
+from datetime import datetime
 
 # --- Pricing (USD per 1M tokens), standard tier. Keyed by model-name substring. ---
 PRICING = {
@@ -98,6 +99,8 @@ def classify_command(cmd):
 def github_blocks(content):
     """Return [(tool_use_id, command-type label)] for each GitHub tool_use in a turn."""
     out = []
+    if not isinstance(content, list):
+        return out
     for b in content:
         if not isinstance(b, dict) or b.get("type") != "tool_use":
             continue
@@ -165,7 +168,6 @@ def parse_ts(s):
     if not s:
         return None
     try:
-        from datetime import datetime
         s = s.replace("Z", "+00:00")
         return datetime.fromisoformat(s).timestamp()
     except Exception:
@@ -270,12 +272,15 @@ def main():
                     est = res_tok.get(tid, 0.0)
                     if est <= 0 or i + 1 >= len(turns):
                         continue  # no result, or result never re-enters context (last turn)
-                    gh_result_tok += est
                     baseline = turns[i + 1]["ctx"]
+                    if baseline <= 0:
+                        continue  # missing usage on entry turn — can't estimate persistence
+                    gh_result_tok += est
                     write_cost = est * p["cw5"] / 1_000_000
                     k_reads = 0
                     j = i + 2
-                    while j < len(turns) and turns[j]["ctx"] >= PERSIST_SLACK * baseline:
+                    # only count reads on in-window turns so (C) stays consistent with the windowed TOTAL
+                    while j < len(turns) and turns[j]["is_in_window"] and turns[j]["ctx"] >= PERSIST_SLACK * baseline:
                         k_reads += 1
                         j += 1
                     read_cost = est * p["cr"] * k_reads / 1_000_000
