@@ -272,6 +272,8 @@ def main():
                     est = res_tok.get(tid, 0.0)
                     if est <= 0 or i + 1 >= len(turns):
                         continue  # no result, or result never re-enters context (last turn)
+                    if not turns[i + 1]["is_in_window"]:
+                        continue  # entry turn outside window — its write cost isn't in TOTAL
                     baseline = turns[i + 1]["ctx"]
                     if baseline <= 0:
                         continue  # missing usage on entry turn — can't estimate persistence
