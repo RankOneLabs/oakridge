@@ -27,6 +27,9 @@ The spec exists; no plan has been created yet. You will create the plan, then at
 
 1. Read the codebase at `{{REPO_PATH}}` thoroughly. Focus on files and modules relevant to the spec.
 2. Decompose the spec into concrete, shippable cohorts. Each cohort should be a self-contained unit of work that can be reviewed and built independently.
+   - For each cohort, identify the likely files, directories, and modules it will touch.
+   - Account for cohorts that are likely to hit the same files or tightly coupled code paths. If two cohorts would create significant merge or implementation conflicts when built in parallel, either combine them into one cohort or add dependency edges so they run in a safe order.
+   - Prefer parallel cohorts only when their file scopes and behavioral surfaces are genuinely independent.
 3. Create the plan for this spec, capture its `id`, and use it as `<plan_id>` for the cohort posts below:
 
    ```http
@@ -67,3 +70,5 @@ The spec exists; no plan has been created yet. You will create the plan, then at
 - Do not start any implementation work. Your only output is the plan.
 - One cohort per distinct deliverable. Avoid mega-cohorts that mix unrelated concerns.
 - Capture ordering constraints as dependency edges — do not bake ordering into position numbers alone.
+- Treat conflict avoidance as an ordering constraint. When cohorts share high-risk files, public interfaces, schemas, generated artifacts, or central state-management code, POST dependency edges that serialize them unless the cohort notes explain why parallel work is still safe.
+- Include expected file/module scope in cohort notes when it helps the operator understand why cohorts can run in parallel or why one must follow another.
