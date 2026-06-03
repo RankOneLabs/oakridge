@@ -18,7 +18,7 @@ Usage:
   python3 github_cost.py --csv-commands cmds.csv   # per-command-type table as CSV
   python3 github_cost.py --explain            # print methodology and exit
 """
-import argparse, json, glob, os, re, sys
+import argparse, json, glob, os, re
 from collections import defaultdict
 
 # --- Pricing (USD per 1M tokens), standard tier. Keyed by model-name substring. ---
@@ -103,11 +103,15 @@ def github_blocks(content):
             continue
         name, inp, tid = b.get("name"), b.get("input", {}) or {}, b.get("id")
         if name == "Bash":
-            cmd = inp.get("command", "") or ""
+            raw_cmd = inp.get("command")
+            cmd = (raw_cmd if isinstance(raw_cmd, str) else "").lower()
             if _GH_RE.search(cmd):
                 out.append((tid, classify_command(cmd)))
-        elif name == "WebFetch" and "github.com" in (inp.get("url", "") or ""):
-            out.append((tid, "webfetch github"))
+        elif name == "WebFetch":
+            raw_url = inp.get("url")
+            url = (raw_url if isinstance(raw_url, str) else "").lower()
+            if "github.com" in url:
+                out.append((tid, "webfetch github"))
         elif name == "Skill" and "ghreview" in str(inp.get("skill", "")):
             out.append((tid, "skill ghreview"))
     return out
@@ -124,7 +128,7 @@ def result_sizes(content):
     for b in content:
         if isinstance(b, dict) and b.get("type") == "tool_result":
             c = b.get("content")
-            txt = c if isinstance(c, str) else json.dumps(c)
+            txt = c if isinstance(c, str) else json.dumps(c, default=str)
             sizes[b.get("tool_use_id")] = len(txt) / CHARS_PER_TOKEN
     return sizes
 
@@ -133,12 +137,16 @@ def ctx_size(usage):
     """Total prompt tokens for a turn = input + cache_read + cache_creation."""
     if not usage:
         return 0
+    cc = usage.get("cache_creation") or {}
+    cc_tokens = cc.get("ephemeral_5m_input_tokens", 0) + cc.get("ephemeral_1h_input_tokens", 0)
+    if not cc_tokens:  # older records: flat field
+        cc_tokens = usage.get("cache_creation_input_tokens", 0)
     return (usage.get("input_tokens", 0)
             + usage.get("cache_read_input_tokens", 0)
-            + usage.get("cache_creation_input_tokens", 0))
+            + cc_tokens)
 
 
-def in_window(ts_str, since, until):
+def is_in_window(ts_str, since, until):
     """True if a turn's timestamp falls within [since, until)."""
     if since is None and until is None:
         return True
@@ -157,7 +165,7 @@ def parse_ts(s):
     if not s:
         return None
     try:
-        from datetime import datetime, timezone
+        from datetime import datetime
         s = s.replace("Z", "+00:00")
         return datetime.fromisoformat(s).timestamp()
     except Exception:
@@ -182,6 +190,10 @@ def main():
 
     since = parse_ts(args.since + "T00:00:00+00:00") if args.since else None
     until = parse_ts(args.until + "T00:00:00+00:00") if args.until else None
+    if args.since and since is None:
+        ap.error("--since must be YYYY-MM-DD")
+    if args.until and until is None:
+        ap.error("--until must be YYYY-MM-DD")
 
     proj_dirs = sorted(
         d for d in glob.glob(os.path.join(args.projects_dir, "*"))
@@ -193,7 +205,7 @@ def main():
     gh_out = 0.0     # bound (B): output-token cost of those turns
     gh_ingest = 0.0  # estimate (C): result-ingestion cost (write once + lifetime reads)
     gh_result_tok = 0.0
-    persist_Ks = []
+    persist_ks = []
     n_turns = n_gh = 0
     by_model = defaultdict(float)
     by_project = defaultdict(lambda: dict(total=0.0, gh_full=0.0, gh_out=0.0, gh_ingest=0.0, gh_turns=0))
@@ -204,38 +216,38 @@ def main():
     for pd in proj_dirs:
         proj = os.path.basename(pd)
         for f in glob.glob(os.path.join(pd, "*.jsonl")):
+            # ---- pass 1: parse session in order ----
+            turns = []          # ordered assistant turns (full, unfiltered — needed for persistence walk)
+            res_tok = {}         # tool_use_id -> estimated result tokens
             try:
                 fh = open(f, errors="replace")
             except OSError:
                 continue
-            # ---- pass 1: parse session in order ----
-            turns = []          # ordered assistant turns (full, unfiltered — needed for persistence walk)
-            res_tok = {}         # tool_use_id -> estimated result tokens
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    d = json.loads(line)
-                except Exception:
-                    continue
-                t = d.get("type")
-                if t == "assistant":
-                    msg = d.get("message", {})
-                    usage, model = msg.get("usage"), msg.get("model")
-                    turns.append(dict(
-                        model=model, usage=usage,
-                        cost=turn_cost(usage, model), out=output_cost(usage, model),
-                        ctx=ctx_size(usage), gh=github_blocks(msg.get("content", [])),
-                        in_window=in_window(d.get("timestamp"), since, until),
-                    ))
-                elif t == "user":
-                    res_tok.update(result_sizes(d.get("message", {}).get("content", [])))
-            fh.close()
+            with fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        d = json.loads(line)
+                    except Exception:
+                        continue
+                    t = d.get("type")
+                    if t == "assistant":
+                        msg = d.get("message", {})
+                        usage, model = msg.get("usage"), msg.get("model")
+                        turns.append(dict(
+                            model=model, usage=usage,
+                            cost=turn_cost(usage, model), out=output_cost(usage, model),
+                            ctx=ctx_size(usage), gh=github_blocks(msg.get("content", [])),
+                            is_in_window=is_in_window(d.get("timestamp"), since, until),
+                        ))
+                    elif t == "user":
+                        res_tok.update(result_sizes(d.get("message", {}).get("content", [])))
 
             # ---- pass 2: aggregate + ingestion ----
             for i, tn in enumerate(turns):
-                if not tn["in_window"]:
+                if not tn["is_in_window"]:
                     continue
                 total += tn["cost"]
                 n_turns += 1
@@ -271,9 +283,9 @@ def main():
                     gh_ingest += ingest
                     by_cmd[lab]["ingest_cost"] += ingest
                     by_project[proj]["gh_ingest"] += ingest
-                    persist_Ks.append(k_reads)
+                    persist_ks.append(k_reads)
 
-    avg_K = (sum(persist_Ks) / len(persist_Ks)) if persist_Ks else 0.0
+    avg_k = (sum(persist_ks) / len(persist_ks)) if persist_ks else 0.0
 
     # ---- stdout report ----
     print(f"projects scanned : {len(proj_dirs)}  (filter={args.filter!r})")
@@ -294,7 +306,7 @@ def main():
     print(f"  (A) full cost of github turns   : ${gh_full:,.2f}  ({a_pct:.1f}%)   [upper — includes whole-context cache reads]")
     print(f"  (C) result-ingestion cost       : ${gh_ingest:,.2f}  ({c_pct:.1f}%)   [best estimate — github result tokens, written once + read until evicted]")
     print(f"  (B) output tokens of those turns: ${gh_out:,.2f}  ({b_pct:.1f}%)   [lower — cost of writing the command only]")
-    print(f"      ~{gh_result_tok/1_000_000:.1f}M result tokens ingested; avg persistence {avg_K:.1f} subsequent turns")
+    print(f"      ~{gh_result_tok/1_000_000:.1f}M result tokens ingested; avg persistence {avg_k:.1f} subsequent turns")
     print()
     print("By command type:")
     print(f"  {'command':18s} {'count':>7s} {'out-cost':>10s} {'ingest-cost':>12s}")
@@ -305,7 +317,7 @@ def main():
         with open(args.json, "w") as out:
             json.dump({
                 "total": total, "gh_full_A": gh_full, "gh_ingest_C": gh_ingest, "gh_out_B": gh_out,
-                "gh_result_tokens": gh_result_tok, "avg_persistence_turns": avg_K,
+                "gh_result_tokens": gh_result_tok, "avg_persistence_turns": avg_k,
                 "n_turns": n_turns, "n_gh": n_gh,
                 "by_model": dict(by_model),
                 "by_project": {k: v for k, v in by_project.items()},
