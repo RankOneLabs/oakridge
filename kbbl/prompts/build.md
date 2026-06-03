@@ -8,11 +8,6 @@ Execute the brief below commit-by-commit. When the work is complete, open a pull
 
 {{BRIEF_RENDERED}}
 
-## Context
-
-Repository: `{{REPO_PATH}}`
-kbbl API base URL: `{{KBBL_URL}}`
-
 ## Your tasks
 
 1. You're already on the cohort's worktree branch off the epic branch. Implement the brief, committing per logical subgoal — every commit must leave tests passing and typecheck clean.
@@ -24,9 +19,9 @@ kbbl API base URL: `{{KBBL_URL}}`
    gh pr create --base {{EPIC_BRANCH}} --title "<brief goal, shortened to ≤70 chars>" \
      --body "Implements brief {{BRIEF_ID}}. <summary of what shipped and any deviations.>"
    ```
-6. Write a debrief back to kbbl:
+6. Write a debrief back to kbbl using the API base URL from the brief:
    ```http
-   PATCH {{KBBL_URL}}/briefs/{{BRIEF_ID}}/debrief
+   PATCH <kbbl_api_base_url>/briefs/{{BRIEF_ID}}/debrief
    Content-Type: application/json
 
    {
@@ -42,7 +37,7 @@ kbbl API base URL: `{{KBBL_URL}}`
    ```
 7. Signal that the PR is open so the operator can confirm the merge:
    ```
-   PATCH {{KBBL_URL}}/cohorts/{{COHORT_ID}}/status
+   PATCH <kbbl_api_base_url>/cohorts/{{COHORT_ID}}/status
    Content-Type: application/json
 
    {"status": "awaiting_merge", "pr_url": "<GitHub PR URL from step 5>"}
