@@ -7,7 +7,7 @@
  * the harness's writers and the dashboard's readers.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -17,9 +17,11 @@ import type {
 } from "../pwa/lib/ids";
 import type { GraderConfigDraft, GraderSummary, TaskDraft } from "./contracts";
 import {
+  addToArchivedCellsIndex,
   deleteGraderConfigDraft,
   deleteTaskDraft,
   getCellDetail,
+  getCellSummary,
   getGraderConfigDraft,
   getTaskDraft,
   listCells,
@@ -28,11 +30,15 @@ import {
   listTaskSummaries,
   readEvalScores,
   readEvents,
+  removeFromArchivedCellsIndex,
+  resolveCellDirPath,
   upsertGraderConfigDraft,
   upsertTaskDraft,
   validateGraderConfigDraftJson,
   validateTaskDraftJson,
 } from "./store";
+import { RunRegistry, type Launcher } from "./runs";
+import { createApp } from "../server";
 
 // Path-traversal rejection is enforced by parseCellId itself (via
 // isSafeSegment) and tested here at the getCellDetail public boundary —
@@ -624,5 +630,330 @@ describe("task + grader config stores", () => {
 
     expect(await deleteGraderConfigDraft("prose_substrate_thesis")).toBe(true);
     expect(await getGraderConfigDraft("prose_substrate_thesis")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Archive index, cleanable predicate, and cell cleanup
+// ---------------------------------------------------------------------------
+
+// Stub launcher that never spawns a process (used for server integration tests).
+const noopLauncher: Launcher = {
+  spawn(_args, _opts) {
+    return {
+      pid: 0,
+      kill: () => {},
+      done: new Promise(() => {}),
+    };
+  },
+};
+
+const STALE_MS = 5 * 60 * 1000;
+
+describe("archive index and cleanable predicate", () => {
+  let dashboardDataRoot: string;
+  let originalDashboardDataRoot: string | undefined;
+
+  beforeEach(async () => {
+    dashboardDataRoot = await mkdtemp(
+      join(tmpdir(), "lbc-dashboard-archive-test-"),
+    );
+    originalDashboardDataRoot = process.env.LBC_DASHBOARD_DATA_ROOT;
+    process.env.LBC_DASHBOARD_DATA_ROOT = dashboardDataRoot;
+  });
+
+  afterEach(async () => {
+    if (originalDashboardDataRoot === undefined) {
+      delete process.env.LBC_DASHBOARD_DATA_ROOT;
+    } else {
+      process.env.LBC_DASHBOARD_DATA_ROOT = originalDashboardDataRoot;
+    }
+    await rm(dashboardDataRoot, { recursive: true, force: true });
+  });
+
+  test("missing archived-cells.json is safe (no throw, treated as empty)", async () => {
+    await makeCell("2026-06-01T10-00-00Z", "task", "cond", [
+      eventLine("incremental_started"),
+    ]);
+    const cells = await listCells();
+    expect(cells).toHaveLength(1);
+    expect(cells[0].archived).toBe(false);
+  });
+
+  test("malformed JSON in archived-cells.json is treated as empty set", async () => {
+    await writeFile(
+      join(dashboardDataRoot, "archived-cells.json"),
+      "not valid json ][",
+      "utf-8",
+    );
+    await makeCell("2026-06-01T10-01-00Z", "task", "cond", [
+      eventLine("incremental_started"),
+    ]);
+    const cells = await listCells();
+    expect(cells[0].archived).toBe(false);
+  });
+
+  test("wrong-shape archived-cells.json is treated as empty set", async () => {
+    await writeFile(
+      join(dashboardDataRoot, "archived-cells.json"),
+      JSON.stringify({ wrong_key: [1, 2, 3] }),
+      "utf-8",
+    );
+    await makeCell("2026-06-01T10-02-00Z", "task", "cond", [
+      eventLine("incremental_started"),
+    ]);
+    const cells = await listCells();
+    expect(cells[0].archived).toBe(false);
+  });
+
+  test("archiving a cell marks it archived:true; non-archived sibling stays false", async () => {
+    await makeCell("2026-06-01T10-03-00Z", "task", "cond_a", [
+      eventLine("incremental_started"),
+    ]);
+    await makeCell("2026-06-01T10-03-00Z", "task", "cond_b", [
+      eventLine("incremental_started"),
+    ]);
+    const cells = await listCells();
+    const a = cells.find((c) => c.condition_name === "cond_a")!;
+    await addToArchivedCellsIndex(a.cell_id);
+
+    const updated = await listCells();
+    const archivedA = updated.find((c) => c.condition_name === "cond_a")!;
+    const freshB = updated.find((c) => c.condition_name === "cond_b")!;
+    expect(archivedA.archived).toBe(true);
+    expect(freshB.archived).toBe(false);
+  });
+
+  test("archived flag is set on archived cells; listCells callers can filter on it", async () => {
+    await makeCell("2026-06-01T10-04-00Z", "task", "cond", [
+      eventLine("incremental_started"),
+    ]);
+    const cellId = (await listCells())[0].cell_id;
+    await addToArchivedCellsIndex(cellId);
+
+    const all = await listCells();
+    const defaultVisible = all.filter((c) => !c.archived);
+    const archivedOnly = all.filter((c) => c.archived);
+    expect(defaultVisible).toHaveLength(0);
+    expect(archivedOnly).toHaveLength(1);
+  });
+
+  test("GET /api/cells ?archived=include returns all cells; ?archived=only returns archived cells only", async () => {
+    await makeCell("2026-06-01T10-05-00Z", "task", "archived_cond", [
+      eventLine("incremental_started"),
+    ]);
+    await makeCell("2026-06-01T10-05-00Z", "task", "live_cond", [
+      eventLine("incremental_started"),
+    ]);
+
+    const all = await listCells();
+    const toArchive = all.find((c) => c.condition_name === "archived_cond")!;
+    await addToArchivedCellsIndex(toArchive.cell_id);
+
+    const app = createApp({ registry: new RunRegistry(noopLauncher) });
+
+    const defaultResp = await app.request("/api/cells");
+    const defaultJson = (await defaultResp.json()) as { cells: unknown[] };
+    expect(defaultJson.cells).toHaveLength(1);
+
+    const includeResp = await app.request("/api/cells?archived=include");
+    const includeJson = (await includeResp.json()) as { cells: unknown[] };
+    expect(includeJson.cells).toHaveLength(2);
+
+    const onlyResp = await app.request("/api/cells?archived=only");
+    const onlyJson = (await onlyResp.json()) as { cells: unknown[] };
+    expect(onlyJson.cells).toHaveLength(1);
+    expect(
+      (onlyJson.cells[0] as { condition_name: string }).condition_name,
+    ).toBe("archived_cond");
+  });
+
+  test("restore removes archived:true from cell", async () => {
+    await makeCell("2026-06-01T10-06-00Z", "task", "cond", [
+      eventLine("incremental_started"),
+    ]);
+    const cellId = (await listCells())[0].cell_id;
+    await addToArchivedCellsIndex(cellId);
+    await removeFromArchivedCellsIndex(cellId);
+    const restored = await getCellSummary(cellId);
+    expect(restored?.archived).toBe(false);
+  });
+
+  test("delete removes only the selected cell dir; siblings survive", async () => {
+    await makeCell("2026-06-01T10-07-00Z", "task", "cond_del", [
+      eventLine("incremental_started"),
+      eventLine("incremental_terminated"),
+    ]);
+    await makeCell("2026-06-01T10-07-00Z", "task", "cond_keep", [
+      eventLine("incremental_started"),
+    ]);
+
+    const all = await listCells();
+    const toDelete = all.find((c) => c.condition_name === "cond_del")!;
+    expect(toDelete.cleanable).toBe(true);
+
+    const cellDir = resolveCellDirPath(toDelete.cell_id)!;
+    await rm(cellDir, { recursive: true });
+
+    const remaining = await listCells();
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].condition_name).toBe("cond_keep" as ConditionName);
+  });
+
+  test("delete removes archive-index entry for the deleted id", async () => {
+    await makeCell("2026-06-01T10-08-00Z", "task", "cond", [
+      eventLine("incremental_started"),
+      eventLine("incremental_terminated"),
+    ]);
+    const cellId = (await listCells())[0].cell_id;
+    await addToArchivedCellsIndex(cellId);
+
+    const cellDir = resolveCellDirPath(cellId)!;
+    await rm(cellDir, { recursive: true });
+    await removeFromArchivedCellsIndex(cellId);
+
+    const remaining = await listCells();
+    expect(remaining).toHaveLength(0);
+    expect(await getCellSummary(cellId)).toBeNull();
+  });
+
+  test("cleanable branch (a): ended cells are always cleanable regardless of liveness", async () => {
+    await makeCell("2026-06-01T10-09-00Z", "task", "cond", [
+      eventLine("incremental_started"),
+      eventLine("incremental_terminated"),
+    ]);
+    const cells = await listCells();
+    expect(cells[0].status).toBe("ended");
+    expect(cells[0].cleanable).toBe(true);
+  });
+
+  test("cleanable branch (b): active cell with no live run is cleanable after STALE_MS", async () => {
+    await makeCell("2026-06-01T10-10-00Z", "task", "cond", [
+      eventLine("incremental_started"),
+    ]);
+    const cells = await listCells();
+    const lastMs = cells[0].last_activity_ms;
+
+    const staleCells = await listCells(new Set(), lastMs + STALE_MS + 1);
+    expect(staleCells[0].status).toBe("active");
+    expect(staleCells[0].cleanable).toBe(true);
+  });
+
+  test("cleanable branch (b): active cell is NOT cleanable before STALE_MS elapses", async () => {
+    await makeCell("2026-06-01T10-11-00Z", "task", "cond", [
+      eventLine("incremental_started"),
+    ]);
+    const cells = await listCells();
+    const lastMs = cells[0].last_activity_ms;
+
+    const freshCells = await listCells(new Set(), lastMs + STALE_MS - 1);
+    expect(freshCells[0].cleanable).toBe(false);
+  });
+
+  test("cleanable branch (b): active cell with live run is NOT cleanable even if stale", async () => {
+    await makeCell("2026-06-01T10-12-00Z", "task", "cond", [
+      eventLine("incremental_started"),
+    ]);
+    const cells = await listCells();
+    const cellId = cells[0].cell_id;
+    const lastMs = cells[0].last_activity_ms;
+
+    const liveCellIds = new Set([cellId]);
+    const staleButLive = await listCells(liveCellIds, lastMs + STALE_MS + 1);
+    expect(staleButLive[0].cleanable).toBe(false);
+  });
+
+  test("archive is always allowed on active cells (no cleanable gate on archive)", async () => {
+    await makeCell("2026-06-01T10-13-00Z", "task", "cond", [
+      eventLine("incremental_started"),
+    ]);
+    const cells = await listCells();
+    const cellId = cells[0].cell_id;
+    expect(cells[0].status).toBe("active");
+    expect(cells[0].cleanable).toBe(false);
+
+    // Archive should succeed regardless of cleanable state
+    await addToArchivedCellsIndex(cellId);
+    const updated = await getCellSummary(cellId);
+    expect(updated?.archived).toBe(true);
+  });
+
+  test("DELETE /api/cells/:cellId returns 409 when cell is not cleanable", async () => {
+    await makeCell("2026-06-01T10-14-00Z", "task", "cond", [
+      eventLine("incremental_started"),
+    ]);
+    const cells = await listCells();
+    const cellId = cells[0].cell_id;
+    expect(cells[0].cleanable).toBe(false);
+
+    const app = createApp({ registry: new RunRegistry(noopLauncher) });
+    const resp = await app.request(`/api/cells/${cellId}`, { method: "DELETE" });
+    expect(resp.status).toBe(409);
+    const body = (await resp.json()) as { error: string };
+    expect(body.error).toBe("Run still in progress");
+  });
+
+  test("POST /api/cells/:cellId/archive returns updated CellSummary with archived:true", async () => {
+    await makeCell("2026-06-01T10-15-00Z", "task", "cond", [
+      eventLine("incremental_started"),
+    ]);
+    const cellId = (await listCells())[0].cell_id;
+
+    const app = createApp({ registry: new RunRegistry(noopLauncher) });
+    const resp = await app.request(`/api/cells/${cellId}/archive`, {
+      method: "POST",
+    });
+    expect(resp.status).toBe(200);
+    const body = (await resp.json()) as { archived: boolean; cell_id: string };
+    expect(body.archived).toBe(true);
+    expect(body.cell_id).toBe(cellId);
+  });
+
+  test("DELETE /api/cells/:cellId/archive returns updated CellSummary with archived:false", async () => {
+    await makeCell("2026-06-01T10-16-00Z", "task", "cond", [
+      eventLine("incremental_started"),
+    ]);
+    const cellId = (await listCells())[0].cell_id;
+    await addToArchivedCellsIndex(cellId);
+
+    const app = createApp({ registry: new RunRegistry(noopLauncher) });
+    const resp = await app.request(`/api/cells/${cellId}/archive`, {
+      method: "DELETE",
+    });
+    expect(resp.status).toBe(200);
+    const body = (await resp.json()) as { archived: boolean };
+    expect(body.archived).toBe(false);
+  });
+
+  test("DELETE /api/cells/:cellId succeeds and removes cell dir when cleanable", async () => {
+    await makeCell("2026-06-01T10-17-00Z", "task", "cond", [
+      eventLine("incremental_started"),
+      eventLine("incremental_terminated"),
+    ]);
+    const cells = await listCells();
+    const cellId = cells[0].cell_id;
+    expect(cells[0].cleanable).toBe(true);
+
+    // Also archive it — delete should clean up the index entry too
+    await addToArchivedCellsIndex(cellId);
+
+    const app = createApp({ registry: new RunRegistry(noopLauncher) });
+    const resp = await app.request(`/api/cells/${cellId}`, { method: "DELETE" });
+    expect(resp.status).toBe(200);
+    const body = (await resp.json()) as { ok: boolean };
+    expect(body.ok).toBe(true);
+
+    // Cell dir is gone
+    const remaining = await listCells();
+    expect(remaining).toHaveLength(0);
+
+    // Archive index entry is cleaned up — read the file directly since
+    // getCellSummary returns null on a missing dir regardless of index state.
+    const indexRaw = await readFile(
+      join(dashboardDataRoot, "archived-cells.json"),
+      "utf-8",
+    );
+    const index = JSON.parse(indexRaw) as { archived_cell_ids: string[] };
+    expect(index.archived_cell_ids).not.toContain(cellId);
   });
 });
