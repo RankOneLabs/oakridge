@@ -37,6 +37,7 @@ export function buildRunTimeline(input: RunTimelineInput): RunTimeline {
   const incrementalApplies: CellEvent[] = [];
   for (let i = 0; i < events.length; i++) {
     if (terminateIdx !== -1 && i >= terminateIdx) break;
+    if (pickedIdx !== -1 && i >= pickedIdx) break;
     if (events[i].kind === "proposal_applied") {
       incrementalApplies.push(events[i]);
     }

@@ -20,10 +20,10 @@ describe("buildRunTimeline", () => {
       makeEvent("proposal_applied", { agent_id: "a1", proposal_id: "p3", reason: null, new_version: "v0003" }),
       makeEvent("incremental_terminated", { terminated_by: "budget", commit_counts: { a1: 2, a2: 1 } }),
       makeEvent("convergence_started", { mechanism: "voting", agent_ids: ["a1", "a2"] }),
-      makeEvent("round_completed", { round_index: 0, converged: false, n_proposals: 3 }),
-      makeEvent("round_completed", { round_index: 1, converged: true, n_proposals: 1 }),
-      makeEvent("escalation_triggered", { round_index: 1, n_residual_proposals: 1 }),
-      makeEvent("proposal_picked", { agent_id: "a1", proposal_id: "p3", rationale: "best coverage", converged_at_round: 1 }),
+      makeEvent("round_completed", { round_index: 1, converged: false, n_proposals: 3 }),
+      makeEvent("round_completed", { round_index: 2, converged: true, n_proposals: 1 }),
+      makeEvent("escalation_triggered", { round_index: 2, n_residual_proposals: 1 }),
+      makeEvent("proposal_picked", { agent_id: "a1", proposal_id: "p3", rationale: "best coverage", converged_at_round: 2 }),
       makeEvent("proposal_applied", { agent_id: "a1", proposal_id: "p3", reason: null, new_version: "v0004" }),
     ];
 
@@ -51,11 +51,11 @@ describe("buildRunTimeline", () => {
       expect(timeline.consensus_rounds).toHaveLength(2);
     });
 
-    test("maps round_completed fields correctly", () => {
-      expect(timeline.consensus_rounds[0].roundIndex).toBe(0);
+    test("maps round_completed fields correctly (1-based round_index)", () => {
+      expect(timeline.consensus_rounds[0].roundIndex).toBe(1);
       expect(timeline.consensus_rounds[0].converged).toBe(false);
       expect(timeline.consensus_rounds[0].nProposals).toBe(3);
-      expect(timeline.consensus_rounds[1].roundIndex).toBe(1);
+      expect(timeline.consensus_rounds[1].roundIndex).toBe(2);
       expect(timeline.consensus_rounds[1].converged).toBe(true);
       expect(timeline.consensus_rounds[1].nProposals).toBe(1);
     });
@@ -125,6 +125,37 @@ describe("buildRunTimeline", () => {
       expect(timeline.escalation).toBeNull();
       expect(timeline.picked_proposal).toBeNull();
       expect(timeline.final_apply).toBeNull();
+    });
+  });
+
+  describe("consensus-only run (no incremental phase, no incremental_terminated)", () => {
+    const events: CellEvent[] = [
+      makeEvent("convergence_started", { mechanism: "voting", agent_ids: ["a1", "a2"] }),
+      makeEvent("round_completed", { round_index: 1, converged: true, n_proposals: 2 }),
+      makeEvent("proposal_picked", { agent_id: "a1", proposal_id: "p1", rationale: "best", converged_at_round: 1 }),
+      makeEvent("proposal_applied", { agent_id: "a1", proposal_id: "p1", reason: null, new_version: "v0001" }),
+    ];
+
+    const timeline = buildRunTimeline({ events, commits: [], metadata: null });
+
+    test("incremental_updates is empty (no incremental phase)", () => {
+      expect(timeline.incremental_updates).toHaveLength(0);
+    });
+
+    test("consensus_rounds has one entry", () => {
+      expect(timeline.consensus_rounds).toHaveLength(1);
+    });
+
+    test("final_apply is captured (post-proposal_picked apply)", () => {
+      expect(timeline.final_apply).not.toBeNull();
+      expect(timeline.final_apply?.kind).toBe("proposal_applied");
+    });
+
+    test("final_apply is not in incremental_updates", () => {
+      const inIncremental = timeline.incremental_updates.some(
+        (u) => u.event === timeline.final_apply,
+      );
+      expect(inIncremental).toBe(false);
     });
   });
 

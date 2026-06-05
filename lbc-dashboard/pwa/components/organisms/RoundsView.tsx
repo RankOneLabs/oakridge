@@ -37,9 +37,19 @@ export function RoundsView({ input }: RoundsViewProps) {
     );
   }
 
-  const pickedPayload = timeline.picked_proposal?.payload as
-    | { agent_id: string; rationale: string; converged_at_round: number | null }
-    | undefined;
+  const rawPicked = timeline.picked_proposal?.payload ?? {};
+  const pickedAgentId =
+    typeof (rawPicked as Record<string, unknown>).agent_id === "string"
+      ? ((rawPicked as Record<string, unknown>).agent_id as string)
+      : null;
+  const pickedRationale =
+    typeof (rawPicked as Record<string, unknown>).rationale === "string"
+      ? ((rawPicked as Record<string, unknown>).rationale as string)
+      : null;
+  const pickedConvergedAt =
+    typeof (rawPicked as Record<string, unknown>).converged_at_round === "number"
+      ? ((rawPicked as Record<string, unknown>).converged_at_round as number)
+      : null;
 
   return (
     <div className="space-y-6">
@@ -63,10 +73,9 @@ export function RoundsView({ input }: RoundsViewProps) {
           </h2>
           <ol className="m-0 list-none space-y-2 p-0">
             {timeline.incremental_updates.map((u) => {
-              const p = u.event.payload as {
-                agent_id: string;
-                new_version: string | null;
-              };
+              const raw = u.event.payload as Record<string, unknown>;
+              const agentId = typeof raw.agent_id === "string" ? raw.agent_id : null;
+              const newVersion = typeof raw.new_version === "string" ? raw.new_version : null;
               return (
                 <li
                   key={u.applyIndex}
@@ -76,11 +85,11 @@ export function RoundsView({ input }: RoundsViewProps) {
                     #{u.applyIndex + 1}
                   </span>{" "}
                   <span className="text-stone-700">
-                    {agentModel(p.agent_id, agents)}
+                    {agentId !== null ? agentModel(agentId, agents) : "—"}
                   </span>
-                  {p.new_version !== null && (
+                  {newVersion !== null && (
                     <span className="ml-2 font-mono text-xs text-stone-500">
-                      → {p.new_version}
+                      → {newVersion}
                     </span>
                   )}
                   {u.commit !== null && (
@@ -101,13 +110,13 @@ export function RoundsView({ input }: RoundsViewProps) {
             Consensus Rounds
           </h2>
           <ol className="m-0 list-none space-y-2 p-0">
-            {timeline.consensus_rounds.map((r) => (
+            {timeline.consensus_rounds.map((r, i) => (
               <li
-                key={r.roundIndex}
+                key={i}
                 className="flex items-center gap-3 rounded border border-stone-200 bg-white px-4 py-2 text-sm"
               >
                 <span className="font-mono text-stone-500">
-                  Round {r.roundIndex + 1}
+                  Round {r.roundIndex}
                 </span>
                 <span
                   className={
@@ -145,24 +154,18 @@ export function RoundsView({ input }: RoundsViewProps) {
             Final Pick
           </h2>
           <div className="rounded border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm">
-            {pickedPayload !== undefined && (
-              <>
-                <div className="text-indigo-800">
-                  <span className="font-medium">
-                    {agentModel(pickedPayload.agent_id, agents)}
-                  </span>
-                  {pickedPayload.converged_at_round !== null && (
-                    <span className="ml-2 text-xs text-indigo-600">
-                      converged at round {pickedPayload.converged_at_round + 1}
-                    </span>
-                  )}
-                </div>
-                {pickedPayload.rationale && (
-                  <p className="mt-1 text-indigo-700">
-                    {pickedPayload.rationale}
-                  </p>
-                )}
-              </>
+            <div className="text-indigo-800">
+              <span className="font-medium">
+                {pickedAgentId !== null ? agentModel(pickedAgentId, agents) : "—"}
+              </span>
+              {pickedConvergedAt !== null && (
+                <span className="ml-2 text-xs text-indigo-600">
+                  converged at round {pickedConvergedAt}
+                </span>
+              )}
+            </div>
+            {pickedRationale !== null && pickedRationale !== "" && (
+              <p className="mt-1 text-indigo-700">{pickedRationale}</p>
             )}
             {timeline.final_apply !== null && (
               <FinalApply event={timeline.final_apply} agents={agents} />
@@ -224,12 +227,14 @@ function FinalApply({
   event: { payload: Record<string, unknown> };
   agents: AgentModelSummary[];
 }) {
-  const p = event.payload as { agent_id: string; new_version: string | null };
+  const raw = event.payload;
+  const agentId = typeof raw.agent_id === "string" ? raw.agent_id : null;
+  const newVersion = typeof raw.new_version === "string" ? raw.new_version : null;
   return (
     <div className="mt-2 border-t border-indigo-200 pt-2 text-xs text-indigo-600">
-      Applied by {agentModel(p.agent_id, agents)}
-      {p.new_version !== null && (
-        <span className="ml-1 font-mono">→ {p.new_version}</span>
+      Applied by {agentId !== null ? agentModel(agentId, agents) : "—"}
+      {newVersion !== null && (
+        <span className="ml-1 font-mono">→ {newVersion}</span>
       )}
     </div>
   );
