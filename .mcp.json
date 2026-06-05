@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "gated-review": {
+      "type": "http",
+      "url": "http://willie:3555/mcp"
+    }
+  }
+}
