@@ -406,7 +406,8 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', r"'\''"))
 }
 
-/// Build the CC argv with byte/arg parity to makeBuildSpawnCmd (spawn.ts L95-123).
+/// Build the CC argv with byte/arg parity to makeBuildSpawnCmd
+/// (kbbl/adapters/claude-code/spawn.ts).
 ///
 /// Static 17-element prefix:
 ///   [bin, --print, --input-format, stream-json, --output-format, stream-json,
