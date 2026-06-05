@@ -9,6 +9,7 @@ import { TabButton } from "../atoms/TabButton";
 import { CommitCard } from "../molecules/CommitCard";
 import { EventRow } from "../molecules/EventRow";
 import { ScoreRow } from "../molecules/ScoreRow";
+import { RoundsView } from "./RoundsView";
 import { modelDisplay } from "../../lib/modelSelectors";
 import type {
   CellDetail,
@@ -19,7 +20,7 @@ import type {
   Tab,
 } from "../../lib/types";
 
-const TABS: Tab[] = ["events", "artifact", "commits", "scores"];
+const TABS: Tab[] = ["events", "artifact", "commits", "scores", "rounds"];
 
 interface CellPanelProps {
   detail: CellDetail | null;
@@ -92,6 +93,11 @@ export function CellPanel({
         {tab === "artifact" && <ArtifactView content={artifact} />}
         {tab === "commits" && <CommitsView commits={commits} />}
         {tab === "scores" && <ScoresView scores={scores} />}
+        {tab === "rounds" && (
+          <RoundsView
+            input={{ events, commits, metadata: detail?.run_metadata ?? null }}
+          />
+        )}
       </section>
     </>
   );
