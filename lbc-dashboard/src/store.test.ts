@@ -634,6 +634,88 @@ describe("task + grader config stores", () => {
 });
 
 // ---------------------------------------------------------------------------
+// run_metadata derivation
+// ---------------------------------------------------------------------------
+
+describe("getCellDetail run_metadata", () => {
+  async function makeRunSpec(runTs: string, modelPool: string[]): Promise<void> {
+    const specDir = join(runRoot, runTs);
+    await mkdir(specDir, { recursive: true });
+    await writeFile(
+      join(specDir, "run-spec.json"),
+      JSON.stringify({ task: "prose_substrate_thesis", model_pool: modelPool, condition: { kind: "ensemble_incremental", n: 2 }, grade: false }),
+      "utf-8",
+    );
+  }
+
+  function incrementalStartedLine(agentIds: string[], ts = "2026-06-04T10:00:00Z"): string {
+    return JSON.stringify({ ts, kind: "incremental_started", payload: { agent_ids: agentIds } });
+  }
+
+  test("maps agent_ids to models and sets attribution_source run_spec_derived", async () => {
+    const runTs = "2026-06-04T10-00-00Z";
+    const modelPool = ["claude-sonnet-4-6", "claude-opus-4-7"];
+    await makeRunSpec(runTs, modelPool);
+    await makeCell(runTs, "task", "cond", [
+      incrementalStartedLine(["agent-0", "agent-1"]),
+      eventLine("proposal_applied"),
+    ]);
+
+    const cells = await listCells();
+    const cell = cells.find((c) => c.run_ts === runTs);
+    expect(cell).toBeDefined();
+
+    const detail = await getCellDetail(cell!.cell_id);
+    expect(detail).not.toBeNull();
+    const rm = detail!.run_metadata;
+    expect(rm).not.toBeNull();
+    expect(rm!.attribution_source).toBe("run_spec_derived");
+    expect(rm!.model_pool).toEqual(modelPool);
+    expect(rm!.agents).toHaveLength(2);
+    expect(rm!.agents[0]).toEqual({ agent_id: "agent-0", model_id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" });
+    expect(rm!.agents[1]).toEqual({ agent_id: "agent-1", model_id: "claude-opus-4-7", label: "Claude Opus 4.7" });
+  });
+
+  test("returns run_metadata null when run-spec.json is absent", async () => {
+    await makeCell("2026-06-04T11-00-00Z", "task", "cond", [
+      incrementalStartedLine(["agent-0"]),
+    ]);
+
+    const cells = await listCells();
+    const cell = cells.find((c) => c.run_ts === "2026-06-04T11-00-00Z");
+    expect(cell).toBeDefined();
+
+    const detail = await getCellDetail(cell!.cell_id);
+    expect(detail).not.toBeNull();
+    expect(detail!.run_metadata).toBeNull();
+  });
+
+  test("wraps agent_ids longer than model_pool via modulo", async () => {
+    const runTs = "2026-06-04T12-00-00Z";
+    const modelPool = ["claude-sonnet-4-6", "claude-opus-4-7"];
+    await makeRunSpec(runTs, modelPool);
+    await makeCell(runTs, "task", "cond", [
+      incrementalStartedLine(["agent-0", "agent-1", "agent-2"]),
+    ]);
+
+    const cells = await listCells();
+    const cell = cells.find((c) => c.run_ts === runTs);
+    expect(cell).toBeDefined();
+
+    const detail = await getCellDetail(cell!.cell_id);
+    expect(detail).not.toBeNull();
+    const rm = detail!.run_metadata;
+    expect(rm).not.toBeNull();
+    expect(rm!.attribution_source).toBe("run_spec_derived");
+    expect(rm!.agents).toHaveLength(3);
+    // pool has 2 entries: [0]=claude-sonnet-4-6, [1]=claude-opus-4-7, [2 % 2=0]=claude-sonnet-4-6
+    expect(rm!.agents[0]!.model_id).toBe("claude-sonnet-4-6");
+    expect(rm!.agents[1]!.model_id).toBe("claude-opus-4-7");
+    expect(rm!.agents[2]!.model_id).toBe("claude-sonnet-4-6");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Archive index, cleanable predicate, and cell cleanup
 // ---------------------------------------------------------------------------
 

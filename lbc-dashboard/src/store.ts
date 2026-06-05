@@ -22,8 +22,10 @@ import type {
   TargetName,
 } from "../pwa/lib/ids";
 import type {
+  AgentModelSummary,
   CellDetail,
   CellEvent,
+  CellRunMetadata,
   CellSummary,
   CommitSnapshot,
   EvalScore,
@@ -407,11 +409,13 @@ export async function getCellDetail(
     countCommits(cellDir),
   ]);
   const summary = await annotate(raw, archivedIds, liveCellIds, nowMs);
+  const run_metadata = await deriveRunMetadata(resolveRunRoot(), parts.runTs, events);
   return {
     ...summary,
     events,
     artifact_filename: artifactFilename,
     commit_count: commitCount,
+    run_metadata,
   };
 }
 
@@ -504,6 +508,84 @@ async function countCommits(cellDir: string): Promise<number> {
   } catch {
     return 0;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Run-metadata derivation
+// ---------------------------------------------------------------------------
+
+const MODEL_LABELS: Record<string, string> = {
+  "claude-sonnet-4-6": "Claude Sonnet 4.6",
+  "claude-sonnet-4-5": "Claude Sonnet 4.5",
+  "claude-opus-4-7": "Claude Opus 4.7",
+  "claude-haiku-4-5": "Claude Haiku 4.5",
+  "gpt-5": "GPT-5",
+  "gpt-5-mini": "GPT-5 mini",
+  "gemini-2.5-pro": "Gemini 2.5 Pro",
+  "gemini-2.5-flash": "Gemini 2.5 Flash",
+};
+
+export function modelLabel(id: string): string {
+  return MODEL_LABELS[id] ?? id;
+}
+
+async function deriveRunMetadata(
+  runRoot: string,
+  runTs: string,
+  events: CellEvent[],
+): Promise<CellRunMetadata | null> {
+  // Step 1: Read run-spec.json
+  const specPath = join(runRoot, runTs, "run-spec.json");
+  let specRaw: string;
+  try {
+    specRaw = await readFile(specPath, "utf-8");
+  } catch {
+    return null;
+  }
+
+  // Step 2: Parse and validate model_pool
+  let modelPool: string[];
+  try {
+    const spec = JSON.parse(specRaw) as { model_pool?: unknown };
+    if (
+      !Array.isArray(spec.model_pool) ||
+      spec.model_pool.length === 0 ||
+      !spec.model_pool.every(
+        (m): m is string => typeof m === "string" && m.length > 0,
+      )
+    ) {
+      return null;
+    }
+    modelPool = spec.model_pool;
+  } catch {
+    return null;
+  }
+
+  // Step 3: Find first incremental_started event with agent_ids
+  const firstStarted = events.find((e) => e.kind === "incremental_started");
+  if (firstStarted === undefined) {
+    return { model_pool: modelPool, agents: [], attribution_source: "missing" };
+  }
+
+  const agentIds = (firstStarted.payload as { agent_ids?: unknown }).agent_ids;
+  if (
+    !Array.isArray(agentIds) ||
+    !agentIds.every((id): id is string => typeof id === "string")
+  ) {
+    return { model_pool: modelPool, agents: [], attribution_source: "missing" };
+  }
+
+  // Step 4: Map agent_id[i] -> model_pool[i % pool.length]
+  const agents: AgentModelSummary[] = agentIds.map((agentId, i) => {
+    const modelId = modelPool[i % modelPool.length] ?? null;
+    return {
+      agent_id: agentId,
+      model_id: modelId,
+      label: modelId !== null ? modelLabel(modelId) : agentId,
+    };
+  });
+
+  return { model_pool: modelPool, agents, attribution_source: "run_spec_derived" };
 }
 
 /**
