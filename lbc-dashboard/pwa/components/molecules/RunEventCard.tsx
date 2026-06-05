@@ -133,8 +133,6 @@ function ProposalAppliedCard({
             <span className="font-mono text-stone-800">
               {resolveModel(agentId, runMetadata)}
             </span>
-            {" · "}agent{" "}
-            <span className="font-mono">{idSuffix(agentId)}</span>
           </div>
         )}
         {proposalId !== null && (
