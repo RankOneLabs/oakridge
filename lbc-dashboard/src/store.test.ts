@@ -797,7 +797,7 @@ describe("archive index and cleanable predicate", () => {
 
     const remaining = await listCells();
     expect(remaining).toHaveLength(1);
-    expect(remaining[0].condition_name).toBe("cond_keep");
+    expect(remaining[0].condition_name).toBe("cond_keep" as ConditionName);
   });
 
   test("delete removes archive-index entry for the deleted id", async () => {
@@ -832,7 +832,6 @@ describe("archive index and cleanable predicate", () => {
       eventLine("incremental_started"),
     ]);
     const cells = await listCells();
-    const cellId = cells[0].cell_id;
     const lastMs = cells[0].last_activity_ms;
 
     const staleCells = await listCells(new Set(), lastMs + STALE_MS + 1);
