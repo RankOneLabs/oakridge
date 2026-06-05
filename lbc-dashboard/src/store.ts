@@ -567,7 +567,11 @@ async function deriveRunMetadata(
     return { model_pool: modelPool, agents: [], attribution_source: "missing" };
   }
 
-  const agentIds = (firstStarted.payload as { agent_ids?: unknown }).agent_ids;
+  const payload = firstStarted.payload;
+  const agentIds =
+    typeof payload === "object" && payload !== null
+      ? (payload as { agent_ids?: unknown }).agent_ids
+      : undefined;
   if (
     !Array.isArray(agentIds) ||
     !agentIds.every((id): id is string => typeof id === "string")

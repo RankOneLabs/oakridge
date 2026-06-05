@@ -690,6 +690,25 @@ describe("getCellDetail run_metadata", () => {
     expect(detail!.run_metadata).toBeNull();
   });
 
+  test("returns attribution_source missing when incremental_started payload is null", async () => {
+    const runTs = "2026-06-04T13-00-00Z";
+    await makeRunSpec(runTs, ["claude-sonnet-4-6"]);
+    await makeCell(runTs, "task", "cond", [
+      JSON.stringify({ ts: "2026-06-04T13:00:00Z", kind: "incremental_started", payload: null }),
+    ]);
+
+    const cells = await listCells();
+    const cell = cells.find((c) => c.run_ts === runTs);
+    expect(cell).toBeDefined();
+
+    const detail = await getCellDetail(cell!.cell_id);
+    expect(detail).not.toBeNull();
+    const rm = detail!.run_metadata;
+    expect(rm).not.toBeNull();
+    expect(rm!.attribution_source).toBe("missing");
+    expect(rm!.agents).toHaveLength(0);
+  });
+
   test("wraps agent_ids longer than model_pool via modulo", async () => {
     const runTs = "2026-06-04T12-00-00Z";
     const modelPool = ["claude-sonnet-4-6", "claude-opus-4-7"];

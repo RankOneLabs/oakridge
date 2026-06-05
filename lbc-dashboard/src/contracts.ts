@@ -116,13 +116,13 @@ export const CellSummarySchema = z.strictObject({
 });
 
 export const AgentModelSummarySchema = z.strictObject({
-  agent_id: z.string(),
-  model_id: z.string().nullable(),
-  label: z.string(),
+  agent_id: z.string().min(1),
+  model_id: z.string().min(1).nullable(),
+  label: z.string().min(1),
 });
 
 export const CellRunMetadataSchema = z.strictObject({
-  model_pool: z.array(z.string()).nonempty(),
+  model_pool: z.array(z.string().min(1)).nonempty(),
   agents: z.array(AgentModelSummarySchema),
   attribution_source: z.enum(["run_spec_derived", "missing"]),
 });

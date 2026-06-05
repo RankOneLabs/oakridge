@@ -194,6 +194,18 @@ describe("AgentModelSummarySchema", () => {
       AgentModelSummarySchema.parse({ model_id: "claude-sonnet-4-6", label: "x" }),
     ).toThrow();
   });
+
+  test("rejects empty-string agent_id, model_id, or label", () => {
+    expect(() =>
+      AgentModelSummarySchema.parse({ agent_id: "", model_id: "claude-sonnet-4-6", label: "x" }),
+    ).toThrow();
+    expect(() =>
+      AgentModelSummarySchema.parse({ agent_id: "a", model_id: "", label: "x" }),
+    ).toThrow();
+    expect(() =>
+      AgentModelSummarySchema.parse({ agent_id: "a", model_id: "claude-sonnet-4-6", label: "" }),
+    ).toThrow();
+  });
 });
 
 describe("CellRunMetadataSchema", () => {
@@ -242,6 +254,16 @@ describe("CellRunMetadataSchema", () => {
   test("rejects missing model_pool", () => {
     expect(() =>
       CellRunMetadataSchema.parse({
+        agents: [],
+        attribution_source: "run_spec_derived",
+      }),
+    ).toThrow();
+  });
+
+  test("rejects model_pool containing empty-string entries", () => {
+    expect(() =>
+      CellRunMetadataSchema.parse({
+        model_pool: ["claude-sonnet-4-6", ""],
         agents: [],
         attribution_source: "run_spec_derived",
       }),
