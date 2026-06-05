@@ -111,6 +111,8 @@ export const CellSummarySchema = z.strictObject({
   status: z.enum(["active", "ended"]),
   last_activity_ms: z.number(),
   event_count: z.number(),
+  archived: z.boolean(),
+  cleanable: z.boolean(),
 });
 
 // Spread the summary shape rather than calling ``.extend(...)`` so the
