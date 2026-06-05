@@ -122,7 +122,7 @@ export const AgentModelSummarySchema = z.strictObject({
 });
 
 export const CellRunMetadataSchema = z.strictObject({
-  model_pool: z.array(z.string()),
+  model_pool: z.array(z.string()).nonempty(),
   agents: z.array(AgentModelSummarySchema),
   attribution_source: z.enum(["run_spec_derived", "missing"]),
 });
