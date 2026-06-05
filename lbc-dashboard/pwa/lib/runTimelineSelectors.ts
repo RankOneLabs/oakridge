@@ -63,7 +63,8 @@ export function buildRunTimeline(input: RunTimelineInput): RunTimeline {
         converged: typeof p.converged === "boolean" ? p.converged : false,
         nProposals: typeof p.n_proposals === "number" ? p.n_proposals : 0,
       };
-    });
+    })
+    .sort((a, b) => a.roundIndex - b.roundIndex);
 
   const escalation = events.find((e) => e.kind === "escalation_triggered") ?? null;
 

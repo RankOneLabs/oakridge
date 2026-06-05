@@ -212,11 +212,17 @@ function ConvergenceStartedCard({
   const p = event.payload;
   const mechanism =
     typeof p.mechanism === "string" ? p.mechanism : null;
-  const participatingIds: string[] = Array.isArray(p.participating_agent_ids)
-    ? (p.participating_agent_ids as unknown[]).filter(
-        (x): x is string => typeof x === "string",
-      )
-    : [];
+  // The harness emits convergence_started with `agent_ids` (see
+  // coordination/consensus.py ConvergenceStartedPayload). Tolerate the legacy
+  // `participating_agent_ids` spelling as a fallback.
+  const rawParticipating = Array.isArray(p.agent_ids)
+    ? p.agent_ids
+    : Array.isArray(p.participating_agent_ids)
+      ? p.participating_agent_ids
+      : [];
+  const participatingIds: string[] = (rawParticipating as unknown[]).filter(
+    (x): x is string => typeof x === "string",
+  );
 
   return (
     <div>

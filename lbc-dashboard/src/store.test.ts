@@ -32,6 +32,7 @@ import {
   readEvents,
   removeFromArchivedCellsIndex,
   resolveCellDirPath,
+  STALE_MS,
   upsertGraderConfigDraft,
   upsertTaskDraft,
   validateGraderConfigDraftJson,
@@ -748,8 +749,6 @@ const noopLauncher: Launcher = {
     };
   },
 };
-
-const STALE_MS = 5 * 60 * 1000;
 
 describe("archive index and cleanable predicate", () => {
   let dashboardDataRoot: string;

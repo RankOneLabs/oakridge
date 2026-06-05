@@ -109,7 +109,7 @@ export function parseCellId(
 }
 
 // Cells stale longer than this with no live run entry are cleanable (branch b).
-const STALE_MS = 5 * 60 * 1000;
+export const STALE_MS = 5 * 60 * 1000;
 
 // Dashboard-owned archive metadata. Never stored inside cell directories.
 type ArchivedCellsIndex = { archived_cell_ids: string[] };
@@ -207,17 +207,7 @@ export async function listCells(
         const cellDir = join(targetDir, condition);
         const raw = await summarize(runTs, target, condition, cellDir);
         if (raw) {
-          summaries.push({
-            ...raw,
-            archived: archivedIds.has(raw.cell_id),
-            cleanable: computeCleanable(
-              raw.status,
-              raw.cell_id,
-              raw.last_activity_ms,
-              liveCellIds,
-              nowMs,
-            ),
-          });
+          summaries.push(await annotate(raw, archivedIds, liveCellIds, nowMs));
         }
       }
     }
