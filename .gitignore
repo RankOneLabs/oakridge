@@ -1,5 +1,6 @@
 node_modules/
 comms/
+.catagents/
 kbbl/data/
 kbbl/core/pwa/dist/
 lbc-dashboard/pwa/dist/
