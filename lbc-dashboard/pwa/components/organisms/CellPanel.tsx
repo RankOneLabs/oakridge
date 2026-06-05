@@ -9,15 +9,18 @@ import { TabButton } from "../atoms/TabButton";
 import { CommitCard } from "../molecules/CommitCard";
 import { EventRow } from "../molecules/EventRow";
 import { ScoreRow } from "../molecules/ScoreRow";
+import { RoundsView } from "./RoundsView";
+import { modelDisplay } from "../../lib/modelSelectors";
 import type {
   CellDetail,
   CellEvent,
+  CellRunMetadata,
   CommitSnapshot,
   EvalScore,
   Tab,
 } from "../../lib/types";
 
-const TABS: Tab[] = ["events", "artifact", "commits", "scores"];
+const TABS: Tab[] = ["events", "artifact", "commits", "scores", "rounds"];
 
 interface CellPanelProps {
   detail: CellDetail | null;
@@ -38,6 +41,9 @@ export function CellPanel({
   tab,
   onTab,
 }: CellPanelProps) {
+  const runMetadata = detail?.run_metadata ?? null;
+  const agents = runMetadata?.agents ?? [];
+
   return (
     <>
       <header className="border-b border-stone-300 bg-white px-6 py-4">
@@ -52,6 +58,23 @@ export function CellPanel({
             {detail.commit_count} commits · {detail.status}
           </div>
         )}
+        {agents.length > 0 && (
+          <div className="mt-1.5 flex flex-wrap gap-1">
+            {agents.map((a) => {
+              const disp = a.model_id !== null ? modelDisplay(a.model_id) : null;
+              const suffix = a.agent_id.slice(-8);
+              const chip = disp !== null ? `${disp.name} · ${suffix}` : suffix;
+              return (
+                <span
+                  key={a.agent_id}
+                  className="inline-block rounded bg-indigo-50 px-1.5 py-0.5 font-mono text-[11px] text-indigo-700"
+                >
+                  {chip}
+                </span>
+              );
+            })}
+          </div>
+        )}
         <nav className="mt-3 flex gap-4 border-b border-transparent">
           {TABS.map((t) => (
             <TabButton
@@ -64,23 +87,42 @@ export function CellPanel({
         </nav>
       </header>
       <section className="flex-1 overflow-auto p-6">
-        {tab === "events" && <EventsView events={events} />}
+        {tab === "events" && (
+          <EventsView events={events} runMetadata={runMetadata} />
+        )}
         {tab === "artifact" && <ArtifactView content={artifact} />}
         {tab === "commits" && <CommitsView commits={commits} />}
         {tab === "scores" && <ScoresView scores={scores} />}
+        {tab === "rounds" && (
+          <RoundsView
+            input={{ events, commits, metadata: detail?.run_metadata ?? null }}
+          />
+        )}
       </section>
     </>
   );
 }
 
-function EventsView({ events }: { events: CellEvent[] }) {
+function EventsView({
+  events,
+  runMetadata,
+}: {
+  events: CellEvent[];
+  runMetadata: CellRunMetadata | null;
+}) {
   if (events.length === 0) {
     return <EmptyMessage>No events yet.</EmptyMessage>;
   }
   return (
     <ol className="m-0 list-none p-0">
       {events.map((e, i) => (
-        <EventRow key={i} event={e} />
+        <EventRow
+          key={i}
+          event={e}
+          runMetadata={runMetadata}
+          eventIndex={i}
+          allEvents={events}
+        />
       ))}
     </ol>
   );

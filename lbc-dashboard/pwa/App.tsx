@@ -21,12 +21,13 @@ import {
   useCellDetail,
   useCommits,
 } from "./hooks/useCellResources";
+import { useCellCleanup } from "./hooks/useCellCleanup";
 import { useCells } from "./hooks/useCells";
 import { useEvalScores } from "./hooks/useEvalScores";
 import { useGraders } from "./hooks/useGraders";
 import { useHashSelection } from "./hooks/useHashSelection";
 import { useTasks } from "./hooks/useTasks";
-import type { Tab } from "./lib/types";
+import type { Tab, CellArchiveFilter } from "./lib/types";
 
 type DashboardSection = "launch" | "tasks" | "graders";
 
@@ -37,7 +38,11 @@ const SECTION_LABELS: Array<{ key: DashboardSection; label: string }> = [
 ];
 
 export function App() {
-  const { cells } = useCells();
+  const [archiveFilter, setArchiveFilter] =
+    useState<CellArchiveFilter>("default");
+  const { cells, refresh: refreshCells } = useCells(archiveFilter);
+  const { archive, restore, remove, error: cleanupError } =
+    useCellCleanup(refreshCells);
   const { tasks, refresh: refreshTasks } = useTasks();
   const { graders, graderConfigs, refresh: refreshGraderData } = useGraders();
   const [section, setSection] = useState<DashboardSection>("launch");
@@ -118,8 +123,22 @@ export function App() {
             />
             <ActiveRunsStrip />
           </section>
+          {cleanupError !== null && (
+            <div className="shrink-0 border-b border-red-200 bg-red-50 px-4 py-2 text-[12px] text-red-700">
+              Cleanup error: {cleanupError}
+            </div>
+          )}
           <div className="flex flex-1 overflow-hidden">
-            <CellList cells={cells} selectedId={selectedId} onSelect={select} />
+            <CellList
+              cells={cells}
+              selectedId={selectedId}
+              onSelect={select}
+              filter={archiveFilter}
+              onFilterChange={setArchiveFilter}
+              onArchive={archive}
+              onRestore={restore}
+              onDelete={remove}
+            />
             <main className="flex flex-1 flex-col overflow-hidden">
               {selectedId === null ? (
                 <EmptyMessage>Select a cell on the left.</EmptyMessage>

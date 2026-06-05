@@ -23,6 +23,7 @@ import { join } from "node:path";
 import {
   ArtifactResponseSchema,
   CellDetailSchema,
+  CellSummarySchema,
   CellsResponseSchema,
   CommitsResponseSchema,
   GraderConfigsResponseSchema,
@@ -43,19 +44,24 @@ import type {
   TaskDraft,
 } from "./src/contracts";
 import {
+  addToArchivedCellsIndex,
   deleteGraderConfigDraft,
   deleteTaskDraft,
   getCellDetail,
+  getCellSummary,
   getGraderConfigDraft,
   getTaskDetail,
   listCells,
   listAllTaskSummaries,
   listBuiltinGraderSummaries,
   listGraderConfigDrafts,
+  parseCellId,
   readArtifact,
   readCommits,
   readEvalScores,
+  removeFromArchivedCellsIndex,
   resolveCellDir,
+  resolveCellDirPath,
   resolveRunRoot,
   resolveDashboardDataRoot,
   upsertGraderConfigDraft,
@@ -138,14 +144,92 @@ export function createApp(deps?: { registry?: RunRegistry }): Hono {
   // the wire.
 
   app.get("/api/cells", async (c) => {
-    const cells = await listCells();
+    const liveCellIds = new Set(
+      registry.list()
+        .filter((r) => r.status === "running")
+        .map((r) => r.cell_id),
+    );
+    const all = await listCells(liveCellIds);
+    const archivedParam = c.req.query("archived");
+    let cells: typeof all;
+    if (archivedParam === "include") {
+      cells = all;
+    } else if (archivedParam === "only") {
+      cells = all.filter((cell) => cell.archived);
+    } else {
+      cells = all.filter((cell) => !cell.archived);
+    }
     return c.json(CellsResponseSchema.parse({ cells }));
   });
 
   app.get("/api/cells/:cellId", async (c) => {
-    const detail = await getCellDetail(c.req.param("cellId"));
+    const liveCellIds = new Set(
+      registry.list()
+        .filter((r) => r.status === "running")
+        .map((r) => r.cell_id),
+    );
+    const detail = await getCellDetail(c.req.param("cellId"), liveCellIds);
     if (detail === null) return c.json({ error: "not found" }, 404);
     return c.json(CellDetailSchema.parse(detail));
+  });
+
+  // Archive a cell (index-only, reversible, allowed on any cell).
+  app.post("/api/cells/:cellId/archive", async (c) => {
+    const cellId = c.req.param("cellId");
+    if (parseCellId(cellId) === null) return c.json({ error: "not found" }, 404);
+    const cellDir = await resolveCellDir(cellId);
+    if (cellDir === null) return c.json({ error: "not found" }, 404);
+    await addToArchivedCellsIndex(cellId);
+    const liveCellIds = new Set(
+      registry.list()
+        .filter((r) => r.status === "running")
+        .map((r) => r.cell_id),
+    );
+    const summary = await getCellSummary(cellId, liveCellIds);
+    if (summary === null) return c.json({ error: "not found" }, 404);
+    return c.json(CellSummarySchema.parse(summary));
+  });
+
+  // Restore a cell from the archive (remove from index).
+  app.delete("/api/cells/:cellId/archive", async (c) => {
+    const cellId = c.req.param("cellId");
+    if (parseCellId(cellId) === null) return c.json({ error: "not found" }, 404);
+    await removeFromArchivedCellsIndex(cellId);
+    const liveCellIds = new Set(
+      registry.list()
+        .filter((r) => r.status === "running")
+        .map((r) => r.cell_id),
+    );
+    const summary = await getCellSummary(cellId, liveCellIds);
+    if (summary === null) return c.json({ ok: true });
+    return c.json(CellSummarySchema.parse(summary));
+  });
+
+  // Physically delete a cell directory. Gated on cleanable predicate.
+  app.delete("/api/cells/:cellId", async (c) => {
+    const cellId = c.req.param("cellId");
+    if (parseCellId(cellId) === null) return c.json({ error: "not found" }, 404);
+    const liveCellIds = new Set(
+      registry.list()
+        .filter((r) => r.status === "running")
+        .map((r) => r.cell_id),
+    );
+    const nowMs = Date.now();
+    const summary = await getCellSummary(cellId, liveCellIds, nowMs);
+    if (summary === null) return c.json({ error: "not found" }, 404);
+    if (!summary.cleanable) {
+      return c.json({ error: "Run still in progress" }, 409);
+    }
+    const cellDir = resolveCellDirPath(cellId);
+    if (cellDir === null) return c.json({ error: "not found" }, 404);
+    try {
+      await rm(cellDir, { recursive: true, force: true });
+    } catch (error) {
+      console.error("[lbc-dashboard] failed to delete cell dir", { cellId, error });
+      return c.json({ error: "failed to delete cell" }, 500);
+    }
+    await removeFromArchivedCellsIndex(cellId);
+    return c.json({ ok: true });
   });
 
   app.get("/api/cells/:cellId/artifact", async (c) => {

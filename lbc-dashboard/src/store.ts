@@ -22,8 +22,10 @@ import type {
   TargetName,
 } from "../pwa/lib/ids";
 import type {
+  AgentModelSummary,
   CellDetail,
   CellEvent,
+  CellRunMetadata,
   CellSummary,
   CommitSnapshot,
   EvalScore,
@@ -43,6 +45,9 @@ import {
 } from "./contracts";
 
 export type { CellDetail, CellEvent, CellSummary, CommitSnapshot, EvalScore };
+
+// Internal type for the disk-derived fields before archived/cleanable are annotated.
+type RawSummary = Omit<CellSummary, "archived" | "cleanable">;
 
 /**
  * Resolve the run-root directory. Defaults to the sibling
@@ -103,6 +108,71 @@ export function parseCellId(
   return { runTs: decoded[0]!, target: decoded[1]!, condition: decoded[2]! };
 }
 
+// Cells stale longer than this with no live run entry are cleanable (branch b).
+export const STALE_MS = 5 * 60 * 1000;
+
+// Dashboard-owned archive metadata. Never stored inside cell directories.
+type ArchivedCellsIndex = { archived_cell_ids: string[] };
+
+function resolveArchivedCellsIndexPath(): string {
+  return join(resolveDashboardDataRoot(), "archived-cells.json");
+}
+
+async function readArchivedCellsIndex(): Promise<Set<string>> {
+  const path = resolveArchivedCellsIndexPath();
+  let raw: string;
+  try {
+    raw = await readFile(path, "utf-8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      console.warn("[lbc-dashboard] failed to read archived-cells.json:", error);
+    }
+    return new Set();
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    console.warn("[lbc-dashboard] archived-cells.json is malformed JSON; treating as empty");
+    return new Set();
+  }
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    !Array.isArray((parsed as ArchivedCellsIndex).archived_cell_ids) ||
+    !(parsed as ArchivedCellsIndex).archived_cell_ids.every(
+      (id) => typeof id === "string",
+    )
+  ) {
+    console.warn("[lbc-dashboard] archived-cells.json has wrong shape; treating as empty");
+    return new Set();
+  }
+  return new Set((parsed as ArchivedCellsIndex).archived_cell_ids);
+}
+
+async function writeArchivedCellsIndex(ids: Set<string>): Promise<void> {
+  await mkdir(resolveDashboardDataRoot(), { recursive: true });
+  const index: ArchivedCellsIndex = { archived_cell_ids: Array.from(ids) };
+  await writeFile(
+    resolveArchivedCellsIndexPath(),
+    JSON.stringify(index, null, 2),
+    "utf-8",
+  );
+}
+
+// A cell is cleanable when EITHER it has ended OR it has no live run entry
+// AND its last activity is older than STALE_MS (handles crashed/abandoned runs).
+function computeCleanable(
+  status: RawSummary["status"],
+  cellId: string,
+  lastActivityMs: number,
+  liveCellIds: Set<string>,
+  nowMs: number,
+): boolean {
+  if (status === "ended") return true;
+  return !liveCellIds.has(cellId) && nowMs - lastActivityMs > STALE_MS;
+}
+
 /**
  * Walk the run-root and enumerate every cell directory. A cell is
  * any 3-deep dir under the run-root that contains an events.jsonl;
@@ -111,11 +181,22 @@ export function parseCellId(
  * Read-only: returns an empty list when the run-root doesn't exist
  * yet (rather than creating it). The dashboard is a viewer; the
  * Python harness owns directory creation.
+ *
+ * liveCellIds — set of cell_ids with an active run (status === 'running')
+ * from the run registry. Injected so store.ts stays registry-free and
+ * the bun:test fixtures don't need to spin up a registry.
+ * nowMs — injectable for deterministic staleness tests.
  */
-export async function listCells(): Promise<CellSummary[]> {
+export async function listCells(
+  liveCellIds: Set<string> = new Set(),
+  nowMs: number = Date.now(),
+): Promise<CellSummary[]> {
+  const [archivedIds, runDirs] = await Promise.all([
+    readArchivedCellsIndex(),
+    safeReaddir(resolveRunRoot()),
+  ]);
   const runRoot = resolveRunRoot();
   const summaries: CellSummary[] = [];
-  const runDirs = await safeReaddir(runRoot);
   for (const runTs of runDirs) {
     const runDir = join(runRoot, runTs);
     const targetDirs = await safeReaddir(runDir);
@@ -124,8 +205,10 @@ export async function listCells(): Promise<CellSummary[]> {
       const conditionDirs = await safeReaddir(targetDir);
       for (const condition of conditionDirs) {
         const cellDir = join(targetDir, condition);
-        const summary = await summarize(runTs, target, condition, cellDir);
-        if (summary) summaries.push(summary);
+        const raw = await summarize(runTs, target, condition, cellDir);
+        if (raw) {
+          summaries.push(await annotate(raw, archivedIds, liveCellIds, nowMs));
+        }
       }
     }
   }
@@ -170,11 +253,11 @@ async function summarize(
   target: string,
   condition: string,
   cellDir: string,
-): Promise<CellSummary | null> {
+): Promise<RawSummary | null> {
   const eventsPath = join(cellDir, "events.jsonl");
   let mtimeMs = 0;
   let eventCount = 0;
-  let status: CellSummary["status"] = "active";
+  let status: RawSummary["status"] = "active";
   try {
     const st = await stat(eventsPath);
     mtimeMs = st.mtimeMs;
@@ -236,7 +319,7 @@ async function summarize(
  * would be misclassified as ended. Look at the last kind specifically
  * and require the picked-then-applied pair for the consensus case.
  */
-function classifyStatusFromKinds(kinds: string[]): CellSummary["status"] {
+function classifyStatusFromKinds(kinds: string[]): RawSummary["status"] {
   if (kinds.length === 0) return "active";
   const last = kinds[kinds.length - 1];
   if (last === "incremental_terminated") return "ended";
@@ -256,25 +339,106 @@ function parseEventKind(line: string): string | null {
 }
 
 /**
+ * Annotate a raw disk summary with server-computed archived/cleanable fields.
+ */
+async function annotate(
+  raw: RawSummary,
+  archivedIds: Set<string>,
+  liveCellIds: Set<string>,
+  nowMs: number,
+): Promise<CellSummary> {
+  return {
+    ...raw,
+    archived: archivedIds.has(raw.cell_id),
+    cleanable: computeCleanable(
+      raw.status,
+      raw.cell_id,
+      raw.last_activity_ms,
+      liveCellIds,
+      nowMs,
+    ),
+  };
+}
+
+/**
+ * Single-cell summary — disk fields + server-computed archived/cleanable.
+ */
+export async function getCellSummary(
+  cellId: string,
+  liveCellIds: Set<string> = new Set(),
+  nowMs: number = Date.now(),
+): Promise<CellSummary | null> {
+  const parts = parseCellId(cellId);
+  if (parts === null) return null;
+  const cellDir = join(resolveRunRoot(), parts.runTs, parts.target, parts.condition);
+  const raw = await summarize(parts.runTs, parts.target, parts.condition, cellDir);
+  if (raw === null) return null;
+  const archivedIds = await readArchivedCellsIndex();
+  return annotate(raw, archivedIds, liveCellIds, nowMs);
+}
+
+/**
  * Read full detail for one cell — events + artifact filename +
  * commit count. The artifact's content is fetched separately so
  * a large artifact doesn't bloat list responses.
  */
-export async function getCellDetail(cellId: string): Promise<CellDetail | null> {
+export async function getCellDetail(
+  cellId: string,
+  liveCellIds: Set<string> = new Set(),
+  nowMs: number = Date.now(),
+): Promise<CellDetail | null> {
   const parts = parseCellId(cellId);
   if (parts === null) return null;
   const cellDir = join(resolveRunRoot(), parts.runTs, parts.target, parts.condition);
-  const summary = await summarize(parts.runTs, parts.target, parts.condition, cellDir);
-  if (summary === null) return null;
-  const events = await readEvents(cellDir);
-  const artifactFilename = await detectArtifactFilename(cellDir);
-  const commitCount = await countCommits(cellDir);
+  const raw = await summarize(parts.runTs, parts.target, parts.condition, cellDir);
+  if (raw === null) return null;
+  const [archivedIds, events, artifactFilename, commitCount] = await Promise.all([
+    readArchivedCellsIndex(),
+    readEvents(cellDir),
+    detectArtifactFilename(cellDir),
+    countCommits(cellDir),
+  ]);
+  const summary = await annotate(raw, archivedIds, liveCellIds, nowMs);
+  const run_metadata = await deriveRunMetadata(resolveRunRoot(), parts.runTs, events);
   return {
     ...summary,
     events,
     artifact_filename: artifactFilename,
     commit_count: commitCount,
+    run_metadata,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Archive index mutations
+// ---------------------------------------------------------------------------
+
+/**
+ * Add a cell to the archived-cells index. Idempotent.
+ */
+export async function addToArchivedCellsIndex(cellId: string): Promise<void> {
+  const ids = await readArchivedCellsIndex();
+  ids.add(cellId);
+  await writeArchivedCellsIndex(ids);
+}
+
+/**
+ * Remove a cell from the archived-cells index. Idempotent.
+ */
+export async function removeFromArchivedCellsIndex(cellId: string): Promise<void> {
+  const ids = await readArchivedCellsIndex();
+  ids.delete(cellId);
+  await writeArchivedCellsIndex(ids);
+}
+
+/**
+ * Resolve a cell's on-disk directory path (for the delete route).
+ * Returns null only if cellId is invalid — does NOT check disk existence.
+ */
+export function resolveCellDirPath(cellId: string): string | null {
+  const parts = parseCellId(cellId);
+  if (parts === null) return null;
+  return join(resolveRunRoot(), parts.runTs, parts.target, parts.condition);
 }
 
 export async function readEvents(cellDir: string): Promise<CellEvent[]> {
@@ -334,6 +498,91 @@ async function countCommits(cellDir: string): Promise<number> {
   } catch {
     return 0;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Run-metadata derivation
+// ---------------------------------------------------------------------------
+
+const MODEL_LABELS: Record<string, string> = {
+  "claude-sonnet-4-6": "Claude Sonnet 4.6",
+  "claude-sonnet-4-5": "Claude Sonnet 4.5",
+  "claude-opus-4-7": "Claude Opus 4.7",
+  "claude-haiku-4-5": "Claude Haiku 4.5",
+  "gpt-5": "GPT-5",
+  "gpt-5-mini": "GPT-5 mini",
+  "gemini-2.5-pro": "Gemini 2.5 Pro",
+  "gemini-2.5-flash": "Gemini 2.5 Flash",
+};
+
+export function modelLabel(id: string): string {
+  return MODEL_LABELS[id] ?? id;
+}
+
+async function deriveRunMetadata(
+  runRoot: string,
+  runTs: string,
+  events: CellEvent[],
+): Promise<CellRunMetadata | null> {
+  // Step 1: Read run-spec.json
+  const specPath = join(runRoot, runTs, "run-spec.json");
+  let specRaw: string;
+  try {
+    specRaw = await readFile(specPath, "utf-8");
+  } catch {
+    return null;
+  }
+
+  // Step 2: Parse and validate model_pool
+  let modelPool: string[];
+  try {
+    const spec = JSON.parse(specRaw) as { model_pool?: unknown };
+    if (
+      !Array.isArray(spec.model_pool) ||
+      spec.model_pool.length === 0 ||
+      !spec.model_pool.every(
+        (m): m is string => typeof m === "string" && m.length > 0,
+      )
+    ) {
+      return null;
+    }
+    modelPool = spec.model_pool;
+  } catch {
+    return null;
+  }
+
+  // Step 3: Find first incremental_started event with agent_ids
+  const firstStarted = events.find((e) => e.kind === "incremental_started");
+  if (firstStarted === undefined) {
+    return { model_pool: modelPool, agents: [], attribution_source: "missing" };
+  }
+
+  const payload = firstStarted.payload;
+  const agentIds =
+    typeof payload === "object" && payload !== null
+      ? (payload as { agent_ids?: unknown }).agent_ids
+      : undefined;
+  // Require every id to be a non-empty string. AgentModelSummarySchema
+  // enforces agent_id.min(1), so an empty id would throw at the API
+  // boundary (500) — treat malformed ids as missing attribution instead.
+  if (
+    !Array.isArray(agentIds) ||
+    !agentIds.every((id): id is string => typeof id === "string" && id.length > 0)
+  ) {
+    return { model_pool: modelPool, agents: [], attribution_source: "missing" };
+  }
+
+  // Step 4: Map agent_id[i] -> model_pool[i % pool.length]
+  const agents: AgentModelSummary[] = agentIds.map((agentId, i) => {
+    const modelId = modelPool[i % modelPool.length] ?? null;
+    return {
+      agent_id: agentId,
+      model_id: modelId,
+      label: modelId !== null ? modelLabel(modelId) : agentId,
+    };
+  });
+
+  return { model_pool: modelPool, agents, attribution_source: "run_spec_derived" };
 }
 
 /**
