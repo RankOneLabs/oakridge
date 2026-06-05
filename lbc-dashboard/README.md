@@ -30,7 +30,7 @@ DELETE /api/cells/:cellId                  # permanent delete, gated on `cleanab
 Every `CellSummary` carries two server-computed booleans the UI must not re-derive:
 
 - `archived` — present in the dashboard-owned archive index.
-- `cleanable` — safe to permanently delete. True when the cell has `status === "ended"`, **or** when there is no live run for the cell and its `events.jsonl` has been idle longer than `STALE_MS` (5 minutes). The staleness branch lets operators reclaim crashed/abandoned runs that never emitted a terminal event; a non-cleanable delete returns `409 { error: "Run still in progress" }`. Delete removes only `<run_ts>/<task>/<condition>` — sibling conditions and `run-spec.json` are left untouched.
+- `cleanable` — safe to permanently delete. True when the cell has `status === "ended"`, **or** when there is no live run for the cell and its last activity has been idle longer than `STALE_MS` (5 minutes) — where last activity is the `events.jsonl` mtime, or the cell directory's mtime if it hasn't emitted events yet. The staleness branch lets operators reclaim crashed/abandoned runs that never emitted a terminal event; a non-cleanable delete returns `409 { error: "Run still in progress" }`. Delete removes only `<run_ts>/<task>/<condition>` — sibling conditions and `run-spec.json` are left untouched.
 
 Note: the archive/delete gate applies to **delete only**. Archive and restore are index-only and allowed on any cell, including active ones — hiding a still-running cell from the default list is safe because no harness output is touched.
 

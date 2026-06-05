@@ -710,6 +710,27 @@ describe("getCellDetail run_metadata", () => {
     expect(rm!.agents).toHaveLength(0);
   });
 
+  test("returns attribution_source missing when an agent_id is an empty string", async () => {
+    // An empty agent_id would violate AgentModelSummarySchema (agent_id.min(1))
+    // and throw at the API boundary; treat it as missing attribution instead.
+    const runTs = "2026-06-04T13-30-00Z";
+    await makeRunSpec(runTs, ["claude-sonnet-4-6"]);
+    await makeCell(runTs, "task", "cond", [
+      incrementalStartedLine(["agent-0", ""]),
+    ]);
+
+    const cells = await listCells();
+    const cell = cells.find((c) => c.run_ts === runTs);
+    expect(cell).toBeDefined();
+
+    const detail = await getCellDetail(cell!.cell_id);
+    expect(detail).not.toBeNull();
+    const rm = detail!.run_metadata;
+    expect(rm).not.toBeNull();
+    expect(rm!.attribution_source).toBe("missing");
+    expect(rm!.agents).toHaveLength(0);
+  });
+
   test("wraps agent_ids longer than model_pool via modulo", async () => {
     const runTs = "2026-06-04T12-00-00Z";
     const modelPool = ["claude-sonnet-4-6", "claude-opus-4-7"];

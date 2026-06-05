@@ -562,9 +562,12 @@ async function deriveRunMetadata(
     typeof payload === "object" && payload !== null
       ? (payload as { agent_ids?: unknown }).agent_ids
       : undefined;
+  // Require every id to be a non-empty string. AgentModelSummarySchema
+  // enforces agent_id.min(1), so an empty id would throw at the API
+  // boundary (500) — treat malformed ids as missing attribution instead.
   if (
     !Array.isArray(agentIds) ||
-    !agentIds.every((id): id is string => typeof id === "string")
+    !agentIds.every((id): id is string => typeof id === "string" && id.length > 0)
   ) {
     return { model_pool: modelPool, agents: [], attribution_source: "missing" };
   }
