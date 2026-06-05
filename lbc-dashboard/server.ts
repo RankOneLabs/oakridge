@@ -223,7 +223,7 @@ export function createApp(deps?: { registry?: RunRegistry }): Hono {
     const cellDir = resolveCellDirPath(cellId);
     if (cellDir === null) return c.json({ error: "not found" }, 404);
     try {
-      await rm(cellDir, { recursive: true });
+      await rm(cellDir, { recursive: true, force: true });
     } catch (error) {
       console.error("[lbc-dashboard] failed to delete cell dir", { cellId, error });
       return c.json({ error: "failed to delete cell" }, 500);

@@ -7,7 +7,7 @@
  * the harness's writers and the dashboard's readers.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -947,7 +947,13 @@ describe("archive index and cleanable predicate", () => {
     const remaining = await listCells();
     expect(remaining).toHaveLength(0);
 
-    // Archive index entry is cleaned up
-    expect(await getCellSummary(cellId)).toBeNull();
+    // Archive index entry is cleaned up — read the file directly since
+    // getCellSummary returns null on a missing dir regardless of index state.
+    const indexRaw = await readFile(
+      join(dashboardDataRoot, "archived-cells.json"),
+      "utf-8",
+    );
+    const index = JSON.parse(indexRaw) as { archived_cell_ids: string[] };
+    expect(index.archived_cell_ids).not.toContain(cellId);
   });
 });
