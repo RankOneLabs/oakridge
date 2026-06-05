@@ -11,8 +11,28 @@ The dashboard is the v0 of the lbc operator surface. Future iterations grow into
 - Renders the current artifact (markdown), per-commit snapshots, and the workspace-event timeline
 - Eval scores tab: when `eval_scores.json` is present for the cell, shows per-dimension scores (with a value bar) and the average
 - Status pill: `active` / `ended` (heuristic on the events.jsonl tail)
+- Run-detail panel renders **typed, model-aware event cards** (proposal applies, rounds, convergence, escalation, picks, termination, failures) instead of raw JSON, with the raw payload available behind a per-card disclosure; the detail header shows **model chips** (`Readable Name · agent-id suffix`) derived from the run's model pool
+- **Rounds tab** groups a cell's incremental updates, consensus rounds, escalation, and the final pick/apply into a readable timeline. Current logs do not persist full per-round proposal bodies, so the tab shows that rounds happened and which proposal was finally applied — not every round's full output (an inline note states this)
 
 The Python harness writes everything to disk. The dashboard also has a write surface: operators can configure and launch a study run from the UI (POST /api/runs), monitor it live, and cancel it (DELETE /api/runs/:runId) — all without touching the terminal. The run registry is in-memory; a dashboard restart forgets in-flight run status (cells still appear via disk discovery once the harness starts writing).
+
+The dashboard can also **clean up completed run output** without going through the filesystem: **archive** (hide a cell from the default list), **restore**, and **permanent delete** (remove the cell directory from `.run/`). Archive metadata is dashboard-owned (stored in `archived-cells.json` under the dashboard data root) — archiving never touches the harness's `.run/` output, so it is always allowed and fully reversible. Permanent delete is destructive and gated on a server-computed `cleanable` flag (see below); the UI requires a confirmation that names the task, condition, and run timestamp before deleting.
+
+### Cleanup API
+
+```http
+GET    /api/cells?archived=include|only   # default: non-archived only; include: all; only: archived
+POST   /api/cells/:cellId/archive          # add to archive index → updated CellSummary (always allowed)
+DELETE /api/cells/:cellId/archive          # restore → updated CellSummary (or { ok: true } if gone)
+DELETE /api/cells/:cellId                  # permanent delete, gated on `cleanable` (409 if not)
+```
+
+Every `CellSummary` carries two server-computed booleans the UI must not re-derive:
+
+- `archived` — present in the dashboard-owned archive index.
+- `cleanable` — safe to permanently delete. True when the cell has `status === "ended"`, **or** when there is no live run for the cell and its `events.jsonl` has been idle longer than `STALE_MS` (5 minutes). The staleness branch lets operators reclaim crashed/abandoned runs that never emitted a terminal event; a non-cleanable delete returns `409 { error: "Run still in progress" }`. Delete removes only `<run_ts>/<task>/<condition>` — sibling conditions and `run-spec.json` are left untouched.
+
+Note: the archive/delete gate applies to **delete only**. Archive and restore are index-only and allowed on any cell, including active ones — hiding a still-running cell from the default list is safe because no harness output is touched.
 
 ## Layout
 
