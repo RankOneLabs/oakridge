@@ -140,9 +140,11 @@ describe("CellDetailSchema", () => {
       ],
       artifact_filename: "draft.md",
       commit_count: 1,
+      run_metadata: null,
     });
     expect(parsed.events).toHaveLength(2);
     expect(parsed.artifact_filename).toBe("draft.md");
+    expect(parsed.run_metadata).toBeNull();
   });
 
   test("rejects when events array is missing", () => {
