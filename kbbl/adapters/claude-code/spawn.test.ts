@@ -8,6 +8,7 @@ function makeCtx(): BuildSpawnCmdContext {
     claudeBin: "claude",
     port: 3000,
     settingsPath: "/tmp/settings.json",
+    mcpConfigPath: "/tmp/mcp-servers.json",
   };
 }
 
@@ -26,7 +27,7 @@ function fakeSession(
   } as unknown as Session;
 }
 
-describe("makeBuildSpawnCmd --model flag", () => {
+describe("makeBuildSpawnCmd argv construction", () => {
   const buildSpawnCmd = makeBuildSpawnCmd(makeCtx());
 
   test("inserts --model when model is set", async () => {
@@ -42,6 +43,18 @@ describe("makeBuildSpawnCmd --model flag", () => {
     const session = fakeSession({ model: null });
     const { cmd } = await buildSpawnCmd(session);
     expect(cmd.includes("--model")).toBe(false);
+  });
+
+  test("loads the gated-review MCP config via --mcp-config --strict-mcp-config", async () => {
+    const session = fakeSession({ model: null });
+    const { cmd } = await buildSpawnCmd(session);
+    const mcpIdx = cmd.indexOf("--mcp-config");
+    expect(mcpIdx).toBeGreaterThanOrEqual(0);
+    expect(cmd[mcpIdx + 1]).toBe("/tmp/mcp-servers.json");
+    expect(cmd.includes("--strict-mcp-config")).toBe(true);
+    // Must sit after --settings so the static prefix mirrors oakridge-core's
+    // build_argv byte/arg parity.
+    expect(mcpIdx).toBeGreaterThan(cmd.indexOf("--settings"));
   });
 
   test("--model appears before --resume when both are set", async () => {
