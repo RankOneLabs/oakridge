@@ -17,8 +17,10 @@ import type {
   TargetName,
 } from "../pwa/lib/ids";
 import {
+  AgentModelSummarySchema,
   CellDetailSchema,
   CellEventSchema,
+  CellRunMetadataSchema,
   CellSummarySchema,
   CommitSnapshotSchema,
   GraderConfigDraftSchema,
@@ -140,9 +142,11 @@ describe("CellDetailSchema", () => {
       ],
       artifact_filename: "draft.md",
       commit_count: 1,
+      run_metadata: null,
     });
     expect(parsed.events).toHaveLength(2);
     expect(parsed.artifact_filename).toBe("draft.md");
+    expect(parsed.run_metadata).toBeNull();
   });
 
   test("rejects when events array is missing", () => {
@@ -160,6 +164,108 @@ describe("CellDetailSchema", () => {
         cleanable: true,
         artifact_filename: null,
         commit_count: 0,
+      }),
+    ).toThrow();
+  });
+});
+
+describe("AgentModelSummarySchema", () => {
+  test("accepts a well-formed agent-model entry", () => {
+    const parsed = AgentModelSummarySchema.parse({
+      agent_id: "agent-0",
+      model_id: "claude-sonnet-4-6",
+      label: "Claude Sonnet 4.6",
+    });
+    expect(parsed.agent_id).toBe("agent-0");
+    expect(parsed.model_id).toBe("claude-sonnet-4-6");
+  });
+
+  test("accepts model_id: null (unattributed agent)", () => {
+    const parsed = AgentModelSummarySchema.parse({
+      agent_id: "agent-0",
+      model_id: null,
+      label: "agent-0",
+    });
+    expect(parsed.model_id).toBeNull();
+  });
+
+  test("rejects missing agent_id", () => {
+    expect(() =>
+      AgentModelSummarySchema.parse({ model_id: "claude-sonnet-4-6", label: "x" }),
+    ).toThrow();
+  });
+
+  test("rejects empty-string agent_id, model_id, or label", () => {
+    expect(() =>
+      AgentModelSummarySchema.parse({ agent_id: "", model_id: "claude-sonnet-4-6", label: "x" }),
+    ).toThrow();
+    expect(() =>
+      AgentModelSummarySchema.parse({ agent_id: "a", model_id: "", label: "x" }),
+    ).toThrow();
+    expect(() =>
+      AgentModelSummarySchema.parse({ agent_id: "a", model_id: "claude-sonnet-4-6", label: "" }),
+    ).toThrow();
+  });
+});
+
+describe("CellRunMetadataSchema", () => {
+  test("accepts a run_spec_derived result with non-empty pool", () => {
+    const parsed = CellRunMetadataSchema.parse({
+      model_pool: ["claude-sonnet-4-6", "claude-opus-4-7"],
+      agents: [
+        { agent_id: "agent-0", model_id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+      ],
+      attribution_source: "run_spec_derived",
+    });
+    expect(parsed.model_pool).toHaveLength(2);
+    expect(parsed.attribution_source).toBe("run_spec_derived");
+  });
+
+  test("accepts a missing result with empty agents", () => {
+    const parsed = CellRunMetadataSchema.parse({
+      model_pool: ["claude-sonnet-4-6"],
+      agents: [],
+      attribution_source: "missing",
+    });
+    expect(parsed.agents).toHaveLength(0);
+    expect(parsed.attribution_source).toBe("missing");
+  });
+
+  test("rejects empty model_pool", () => {
+    expect(() =>
+      CellRunMetadataSchema.parse({
+        model_pool: [],
+        agents: [],
+        attribution_source: "run_spec_derived",
+      }),
+    ).toThrow();
+  });
+
+  test("rejects unknown attribution_source", () => {
+    expect(() =>
+      CellRunMetadataSchema.parse({
+        model_pool: ["claude-sonnet-4-6"],
+        agents: [],
+        attribution_source: "unknown_source",
+      }),
+    ).toThrow();
+  });
+
+  test("rejects missing model_pool", () => {
+    expect(() =>
+      CellRunMetadataSchema.parse({
+        agents: [],
+        attribution_source: "run_spec_derived",
+      }),
+    ).toThrow();
+  });
+
+  test("rejects model_pool containing empty-string entries", () => {
+    expect(() =>
+      CellRunMetadataSchema.parse({
+        model_pool: ["claude-sonnet-4-6", ""],
+        agents: [],
+        attribution_source: "run_spec_derived",
       }),
     ).toThrow();
   });

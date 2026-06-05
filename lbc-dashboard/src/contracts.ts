@@ -115,6 +115,18 @@ export const CellSummarySchema = z.strictObject({
   cleanable: z.boolean(),
 });
 
+export const AgentModelSummarySchema = z.strictObject({
+  agent_id: z.string().min(1),
+  model_id: z.string().min(1).nullable(),
+  label: z.string().min(1),
+});
+
+export const CellRunMetadataSchema = z.strictObject({
+  model_pool: z.array(z.string().min(1)).nonempty(),
+  agents: z.array(AgentModelSummarySchema),
+  attribution_source: z.enum(["run_spec_derived", "missing"]),
+});
+
 // Spread the summary shape rather than calling ``.extend(...)`` so the
 // resulting schema is unambiguously a fresh strict object — no
 // dependence on whether ``.extend`` preserves strictness across Zod
@@ -124,6 +136,7 @@ export const CellDetailSchema = z.strictObject({
   events: z.array(CellEventSchema),
   artifact_filename: z.string().nullable(),
   commit_count: z.number(),
+  run_metadata: CellRunMetadataSchema.nullable(),
 });
 
 export const CommitSnapshotSchema = z.strictObject({
@@ -370,6 +383,8 @@ export function conditionName(
 export type CellEvent = z.infer<typeof CellEventSchema>;
 export type EvalScore = z.infer<typeof EvalScoreSchema>;
 export type CellSummary = z.infer<typeof CellSummarySchema>;
+export type AgentModelSummary = z.infer<typeof AgentModelSummarySchema>;
+export type CellRunMetadata = z.infer<typeof CellRunMetadataSchema>;
 export type CellDetail = z.infer<typeof CellDetailSchema>;
 export type CommitSnapshot = z.infer<typeof CommitSnapshotSchema>;
 export type Tab = z.infer<typeof TabSchema>;
