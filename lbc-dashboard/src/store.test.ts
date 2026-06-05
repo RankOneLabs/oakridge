@@ -724,7 +724,7 @@ describe("archive index and cleanable predicate", () => {
     expect(freshB.archived).toBe(false);
   });
 
-  test("archived cell is hidden from default listCells result (archived=false filter)", async () => {
+  test("archived flag is set on archived cells; listCells callers can filter on it", async () => {
     await makeCell("2026-06-01T10-04-00Z", "task", "cond", [
       eventLine("incremental_started"),
     ]);
@@ -891,5 +891,63 @@ describe("archive index and cleanable predicate", () => {
     expect(resp.status).toBe(409);
     const body = (await resp.json()) as { error: string };
     expect(body.error).toBe("Run still in progress");
+  });
+
+  test("POST /api/cells/:cellId/archive returns updated CellSummary with archived:true", async () => {
+    await makeCell("2026-06-01T10-15-00Z", "task", "cond", [
+      eventLine("incremental_started"),
+    ]);
+    const cellId = (await listCells())[0].cell_id;
+
+    const app = createApp({ registry: new RunRegistry(noopLauncher) });
+    const resp = await app.request(`/api/cells/${cellId}/archive`, {
+      method: "POST",
+    });
+    expect(resp.status).toBe(200);
+    const body = (await resp.json()) as { archived: boolean; cell_id: string };
+    expect(body.archived).toBe(true);
+    expect(body.cell_id).toBe(cellId);
+  });
+
+  test("DELETE /api/cells/:cellId/archive returns updated CellSummary with archived:false", async () => {
+    await makeCell("2026-06-01T10-16-00Z", "task", "cond", [
+      eventLine("incremental_started"),
+    ]);
+    const cellId = (await listCells())[0].cell_id;
+    await addToArchivedCellsIndex(cellId);
+
+    const app = createApp({ registry: new RunRegistry(noopLauncher) });
+    const resp = await app.request(`/api/cells/${cellId}/archive`, {
+      method: "DELETE",
+    });
+    expect(resp.status).toBe(200);
+    const body = (await resp.json()) as { archived: boolean };
+    expect(body.archived).toBe(false);
+  });
+
+  test("DELETE /api/cells/:cellId succeeds and removes cell dir when cleanable", async () => {
+    await makeCell("2026-06-01T10-17-00Z", "task", "cond", [
+      eventLine("incremental_started"),
+      eventLine("incremental_terminated"),
+    ]);
+    const cells = await listCells();
+    const cellId = cells[0].cell_id;
+    expect(cells[0].cleanable).toBe(true);
+
+    // Also archive it — delete should clean up the index entry too
+    await addToArchivedCellsIndex(cellId);
+
+    const app = createApp({ registry: new RunRegistry(noopLauncher) });
+    const resp = await app.request(`/api/cells/${cellId}`, { method: "DELETE" });
+    expect(resp.status).toBe(200);
+    const body = (await resp.json()) as { ok: boolean };
+    expect(body.ok).toBe(true);
+
+    // Cell dir is gone
+    const remaining = await listCells();
+    expect(remaining).toHaveLength(0);
+
+    // Archive index entry is cleaned up
+    expect(await getCellSummary(cellId)).toBeNull();
   });
 });

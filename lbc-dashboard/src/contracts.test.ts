@@ -114,6 +114,8 @@ describe("CellSummarySchema", () => {
         status: "running", // not in ["active", "ended"]
         last_activity_ms: 0,
         event_count: 0,
+        archived: false,
+        cleanable: false,
       }),
     ).toThrow();
   });
@@ -154,6 +156,8 @@ describe("CellDetailSchema", () => {
         status: "ended",
         last_activity_ms: 1,
         event_count: 2,
+        archived: false,
+        cleanable: true,
         artifact_filename: null,
         commit_count: 0,
       }),

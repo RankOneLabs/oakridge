@@ -121,7 +121,10 @@ async function readArchivedCellsIndex(): Promise<Set<string>> {
   let raw: string;
   try {
     raw = await readFile(path, "utf-8");
-  } catch {
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      console.warn("[lbc-dashboard] failed to read archived-cells.json:", error);
+    }
     return new Set();
   }
   let parsed: unknown;
@@ -436,7 +439,7 @@ export async function removeFromArchivedCellsIndex(cellId: string): Promise<void
 
 /**
  * Resolve a cell's on-disk directory path (for the delete route).
- * Returns null if cellId is invalid or the directory doesn't exist.
+ * Returns null only if cellId is invalid — does NOT check disk existence.
  */
 export function resolveCellDirPath(cellId: string): string | null {
   const parts = parseCellId(cellId);
