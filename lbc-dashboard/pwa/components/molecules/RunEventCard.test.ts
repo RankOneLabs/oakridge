@@ -110,7 +110,7 @@ describe("classifyProposalApplied", () => {
     expect(classifyProposalApplied(3, events)).toBe("incremental_commit");
   });
 
-  test("terminal_apply: at index 0 with empty prior slice", () => {
+  test("incremental_commit: single event with no prior events", () => {
     const events: CellEvent[] = [makeEvent("proposal_applied")];
     expect(classifyProposalApplied(0, events)).toBe("incremental_commit");
   });

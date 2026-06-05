@@ -67,7 +67,7 @@ function IncrementalStartedCard({
   const retryBudget =
     typeof p.retry_budget === "number" ? p.retry_budget : null;
   const agentIds: string[] = Array.isArray(p.agent_ids)
-    ? (p.agent_ids as string[])
+    ? (p.agent_ids as unknown[]).filter((x): x is string => typeof x === "string")
     : (runMetadata?.agents.map((a) => a.agent_id) ?? []);
 
   return (
@@ -215,7 +215,9 @@ function ConvergenceStartedCard({
   const mechanism =
     typeof p.mechanism === "string" ? p.mechanism : null;
   const participatingIds: string[] = Array.isArray(p.participating_agent_ids)
-    ? (p.participating_agent_ids as string[])
+    ? (p.participating_agent_ids as unknown[]).filter(
+        (x): x is string => typeof x === "string",
+      )
     : [];
 
   return (
