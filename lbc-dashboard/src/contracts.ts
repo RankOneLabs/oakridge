@@ -171,7 +171,7 @@ export const CommitsResponseSchema = z.strictObject({
 
 // --- PWA UI state --------------------------------------------------------
 
-export const TabSchema = z.enum(["events", "artifact", "commits", "scores"]);
+export const TabSchema = z.enum(["events", "artifact", "commits", "scores", "rounds"]);
 
 export const TaskBriefSchema = z.strictObject({
   target_spec: z.string().trim().min(1),
