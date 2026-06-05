@@ -6,8 +6,10 @@
  * with the schemas.
  */
 export type {
+  AgentModelSummary,
   CellDetail,
   CellEvent,
+  CellRunMetadata,
   CellSummary,
   CommitSnapshot,
   EvalScore,
