@@ -298,6 +298,7 @@ describe("TabSchema", () => {
     expect(TabSchema.parse("artifact")).toBe("artifact");
     expect(TabSchema.parse("commits")).toBe("commits");
     expect(TabSchema.parse("scores")).toBe("scores");
+    expect(TabSchema.parse("rounds")).toBe("rounds");
   });
 
   test("rejects an unknown tab value", () => {

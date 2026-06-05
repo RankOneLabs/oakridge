@@ -55,13 +55,13 @@ export function buildRunTimeline(input: RunTimelineInput): RunTimeline {
 
   const consensus_rounds: ConsensusRound[] = events
     .filter((e) => e.kind === "round_completed")
-    .map((e) => {
-      const p = e.payload as { round_index: number; converged: boolean; n_proposals: number };
+    .map((e, i) => {
+      const p = e.payload;
       return {
         event: e,
-        roundIndex: p.round_index,
-        converged: p.converged,
-        nProposals: p.n_proposals,
+        roundIndex: typeof p.round_index === "number" ? p.round_index : i + 1,
+        converged: typeof p.converged === "boolean" ? p.converged : false,
+        nProposals: typeof p.n_proposals === "number" ? p.n_proposals : 0,
       };
     });
 
