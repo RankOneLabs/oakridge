@@ -32,12 +32,19 @@ export function useCellCleanup(refresh: () => Promise<void>): {
   const archive = useCallback(
     async (cellId: CellId) => {
       setError(null);
-      const r = await fetch(`/api/cells/${cellId}/archive`, { method: "POST" });
-      if (!r.ok) {
-        setError(await extractError(r));
-        return;
+      try {
+        const r = await fetch(
+          `/api/cells/${encodeURIComponent(cellId)}/archive`,
+          { method: "POST" },
+        );
+        if (!r.ok) {
+          setError(await extractError(r));
+          return;
+        }
+        await refresh();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Network error");
       }
-      await refresh();
     },
     [refresh],
   );
@@ -45,14 +52,19 @@ export function useCellCleanup(refresh: () => Promise<void>): {
   const restore = useCallback(
     async (cellId: CellId) => {
       setError(null);
-      const r = await fetch(`/api/cells/${cellId}/archive`, {
-        method: "DELETE",
-      });
-      if (!r.ok) {
-        setError(await extractError(r));
-        return;
+      try {
+        const r = await fetch(
+          `/api/cells/${encodeURIComponent(cellId)}/archive`,
+          { method: "DELETE" },
+        );
+        if (!r.ok) {
+          setError(await extractError(r));
+          return;
+        }
+        await refresh();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Network error");
       }
-      await refresh();
     },
     [refresh],
   );
@@ -60,12 +72,18 @@ export function useCellCleanup(refresh: () => Promise<void>): {
   const remove = useCallback(
     async (cellId: CellId) => {
       setError(null);
-      const r = await fetch(`/api/cells/${cellId}`, { method: "DELETE" });
-      if (!r.ok) {
-        setError(await extractError(r));
-        return;
+      try {
+        const r = await fetch(`/api/cells/${encodeURIComponent(cellId)}`, {
+          method: "DELETE",
+        });
+        if (!r.ok) {
+          setError(await extractError(r));
+          return;
+        }
+        await refresh();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Network error");
       }
-      await refresh();
     },
     [refresh],
   );

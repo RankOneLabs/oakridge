@@ -14,7 +14,9 @@
  *   - Restore:  shown when cell.archived === true
  *   - Delete:   shown when cell.archived === false;
  *               enabled only when cell.cleanable === true;
- *               disabled with tooltip "Run still in progress" otherwise;
+ *               disabled with tooltip "Run still in progress" otherwise
+ *               (tooltip carried by a wrapper <span> since disabled
+ *               buttons don't receive pointer events);
  *               requires window.confirm naming task/condition/run_ts.
  */
 import { StatusPill } from "../atoms/StatusPill";
@@ -60,9 +62,10 @@ export function CellRow({
         {!cell.archived ? (
           <button
             type="button"
+            aria-label="Archive"
             onClick={(e) => {
               e.stopPropagation();
-              onArchive(cell.cell_id);
+              void onArchive(cell.cell_id);
             }}
             className="rounded px-1.5 py-0.5 text-[10px] text-stone-500 hover:bg-stone-200"
             title="Archive"
@@ -72,9 +75,10 @@ export function CellRow({
         ) : (
           <button
             type="button"
+            aria-label="Restore"
             onClick={(e) => {
               e.stopPropagation();
-              onRestore(cell.cell_id);
+              void onRestore(cell.cell_id);
             }}
             className="rounded px-1.5 py-0.5 text-[10px] text-stone-500 hover:bg-stone-200"
             title="Restore"
@@ -84,25 +88,28 @@ export function CellRow({
         )}
 
         {!cell.archived && (
-          <button
-            type="button"
-            disabled={!cell.cleanable}
-            onClick={(e) => {
-              e.stopPropagation();
-              const ok = window.confirm(
-                `Permanently delete ${cell.target_name} × ${cell.condition_name} from run ${cell.run_ts}? This removes its output from disk and cannot be undone.`,
-              );
-              if (ok) onDelete(cell.cell_id);
-            }}
-            className={`rounded px-1.5 py-0.5 text-[10px] ${
-              cell.cleanable
-                ? "text-red-600 hover:bg-red-100"
-                : "cursor-not-allowed text-stone-300"
-            }`}
-            title={cell.cleanable ? "Delete permanently" : "Run still in progress"}
-          >
-            Del
-          </button>
+          <span title={cell.cleanable ? undefined : "Run still in progress"}>
+            <button
+              type="button"
+              aria-label="Delete permanently"
+              disabled={!cell.cleanable}
+              onClick={(e) => {
+                e.stopPropagation();
+                const ok = window.confirm(
+                  `Permanently delete ${cell.target_name} × ${cell.condition_name} from run ${cell.run_ts}? This removes its output from disk and cannot be undone.`,
+                );
+                if (ok) void onDelete(cell.cell_id);
+              }}
+              className={`rounded px-1.5 py-0.5 text-[10px] ${
+                cell.cleanable
+                  ? "text-red-600 hover:bg-red-100"
+                  : "cursor-not-allowed text-stone-300"
+              }`}
+              title={cell.cleanable ? "Delete permanently" : undefined}
+            >
+              Del
+            </button>
+          </span>
         )}
       </div>
     </li>

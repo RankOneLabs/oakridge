@@ -46,11 +46,12 @@ export function CellList({
         <h2 className="text-xs uppercase tracking-wide text-stone-600">
           cells
         </h2>
-        <div className="flex gap-0.5">
+        <div role="group" aria-label="Archive filter" className="flex gap-0.5">
           {FILTER_OPTIONS.map((opt) => (
             <button
               key={opt.value}
               type="button"
+              aria-pressed={filter === opt.value}
               onClick={() => onFilterChange(opt.value)}
               className={`rounded px-1.5 py-0.5 text-[10px] ${
                 filter === opt.value
