@@ -19,7 +19,7 @@ import { ALLOWED_MODELS } from "./models";
 
 import { classifyCcEvent } from "./event-classifier";
 import { hookApprovalHandler } from "./hook-route";
-import { makeBuildSpawnCmd, writeCcSettings } from "./spawn";
+import { makeBuildSpawnCmd, writeCcMcpConfig, writeCcSettings } from "./spawn";
 
 export interface CreateClaudeCodeRuntimeOpts {
   claudeBin: string;
@@ -66,10 +66,12 @@ export async function createClaudeCodeRuntime(
     dataDir: opts.dataDir,
     gatePath: opts.gatePath,
   });
+  const mcpConfigPath = await writeCcMcpConfig({ dataDir: opts.dataDir });
   const buildSpawnCmdFn = makeBuildSpawnCmd({
     claudeBin: opts.claudeBin,
     port: opts.port,
     settingsPath,
+    mcpConfigPath,
   });
 
   // === CC session id registry ===
@@ -134,6 +136,11 @@ export async function createClaudeCodeRuntime(
         "user",
         "--settings",
         settingsPath,
+        // See makeBuildSpawnCmd: loads gated-review independently of
+        // --setting-sources, which excludes the project-scoped .mcp.json.
+        "--mcp-config",
+        mcpConfigPath,
+        "--strict-mcp-config",
       ];
 
       if (model) cmd.push("--model", model);

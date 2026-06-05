@@ -75,12 +75,58 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
+/**
+ * URL of the gated-review MCP server kbbl injects into every CC session.
+ *
+ * Mirrors the repo's committed `.mcp.json` — keep the two in sync. They exist
+ * in parallel on purpose: interactive `claude` runs in the repo read
+ * `.mcp.json` (a project setting source, loaded by default), but kbbl launches
+ * CC with `--setting-sources user` — a deliberate gate-integrity choice, since
+ * project setting sources can carry permission allowlists that would let a
+ * session bypass the PreToolUse approval gate. That same flag excludes the
+ * project-scoped `.mcp.json`, so the server never registers in kbbl sessions
+ * unless we load it through `--mcp-config`, which is independent of
+ * `--setting-sources`. (oakridge-core's session_agent mirrors this URL.)
+ */
+const GATED_REVIEW_MCP_URL = "http://willie:3555/mcp";
+
+/**
+ * Writes the MCP-config file the spawned CC subprocess reads via
+ * `--mcp-config <path>`. Returns the absolute path.
+ *
+ * Regenerated on every server startup (like settings.json) so a changed URL is
+ * picked up without operator action. We generate a kbbl-owned file in dataDir
+ * rather than pointing `--mcp-config` at the session's checked-out `.mcp.json`
+ * so registration doesn't depend on the branch actually containing that file
+ * (forked or older sessions may predate it).
+ */
+export async function writeCcMcpConfig(opts: {
+  dataDir: string;
+}): Promise<string> {
+  const mcpConfigPath = join(opts.dataDir, "mcp-servers.json");
+  await writeFile(
+    mcpConfigPath,
+    JSON.stringify(
+      {
+        mcpServers: {
+          "gated-review": { type: "http", url: GATED_REVIEW_MCP_URL },
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  return mcpConfigPath;
+}
+
 export interface BuildSpawnCmdContext {
   claudeBin: string;
   /** The server's HTTP port — passed to the gate via KBBL_PORT env var. */
   port: number;
   /** Absolute path to the settings.json from writeCcSettings(). */
   settingsPath: string;
+  /** Absolute path to the mcp-servers.json from writeCcMcpConfig(). */
+  mcpConfigPath: string;
 }
 
 /**
@@ -111,6 +157,14 @@ export function makeBuildSpawnCmd(
       "user",
       "--settings",
       ctx.settingsPath,
+      // Load the gated-review MCP server. `--setting-sources user` (above)
+      // excludes the project-scoped .mcp.json, so without this the server never
+      // registers in kbbl sessions. --strict-mcp-config makes the MCP set
+      // hermetic — exactly what kbbl declares, ignoring user/project configs and
+      // their needs-auth noise.
+      "--mcp-config",
+      ctx.mcpConfigPath,
+      "--strict-mcp-config",
     ];
 
     if (session.model) {

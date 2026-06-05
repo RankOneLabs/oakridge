@@ -181,10 +181,15 @@ impl StageType for SessionAgent {
         let sid = ctx.stage_instance_id;
         let config: SessionAgentConfig = serde_json::from_value(ctx.config.clone())?;
 
-        // 1. Write per-instance settings.json (PreToolUse gate hook).
+        // 1. Write per-instance settings.json (PreToolUse gate hook) and
+        //    mcp-servers.json (gated-review MCP server). settings.json runs
+        //    first: it validates stage_instance_id before any path is built.
         let settings_path =
             write_cc_settings(&self.spawn_config, &sid.0.to_string()).await?;
         let settings_path_str = settings_path.to_string_lossy().to_string();
+        let mcp_config_path =
+            write_cc_mcp_config(&self.spawn_config, &sid.0.to_string()).await?;
+        let mcp_config_path_str = mcp_config_path.to_string_lossy().to_string();
 
         // 2. Read persisted parent CC sid from the sidecar (written by the prior run's
         //    stdout task). Present on cycle re-activation and crash recovery replay;
@@ -202,7 +207,12 @@ impl StageType for SessionAgent {
             model: config.model.clone(),
             parent_cc_sid,
         };
-        let argv = build_argv(&self.spawn_config, &session_cfg, &settings_path_str);
+        let argv = build_argv(
+            &self.spawn_config,
+            &session_cfg,
+            &settings_path_str,
+            &mcp_config_path_str,
+        );
 
         // 4. Spawn child subprocess.
         let mut cmd = Command::new(&argv[0]);
@@ -398,16 +408,22 @@ fn shell_quote(value: &str) -> String {
 
 /// Build the CC argv with byte/arg parity to makeBuildSpawnCmd (spawn.ts L95-123).
 ///
-/// Static 14-element prefix:
+/// Static 17-element prefix:
 ///   [bin, --print, --input-format, stream-json, --output-format, stream-json,
 ///    --include-hook-events, --include-partial-messages, --replay-user-messages,
-///    --verbose, --setting-sources, user, --settings, <settings_path>]
+///    --verbose, --setting-sources, user, --settings, <settings_path>,
+///    --mcp-config, <mcp_config_path>, --strict-mcp-config]
 /// Then conditional [--model, <m>] when model is set.
 /// Then [--resume, <parentCcSid>, --fork-session] as a unit when parent sid is set.
 ///
 /// --fork-session must never appear without --resume; forking into a fresh session id
 /// stops multiple live forks off the same parent from colliding on CC's internal session id.
-pub fn build_argv(spawn: &SpawnConfig, session: &SessionConfig, settings_path: &str) -> Vec<String> {
+pub fn build_argv(
+    spawn: &SpawnConfig,
+    session: &SessionConfig,
+    settings_path: &str,
+    mcp_config_path: &str,
+) -> Vec<String> {
     let mut argv = vec![
         spawn.claude_bin.clone(),
         "--print".into(),
@@ -423,6 +439,12 @@ pub fn build_argv(spawn: &SpawnConfig, session: &SessionConfig, settings_path: &
         "user".into(),
         "--settings".into(),
         settings_path.to_string(),
+        // Load gated-review independently of --setting-sources, which excludes
+        // the project-scoped .mcp.json. --strict-mcp-config keeps the MCP set
+        // hermetic. Mirrors makeBuildSpawnCmd (spawn.ts).
+        "--mcp-config".into(),
+        mcp_config_path.to_string(),
+        "--strict-mcp-config".into(),
     ];
 
     if let Some(model) = &session.model {
@@ -493,6 +515,38 @@ pub async fn write_cc_settings(
 
     tokio::fs::write(&settings_path, serde_json::to_string_pretty(&settings)?).await?;
     Ok(settings_path)
+}
+
+/// URL of the gated-review MCP server. Mirrors the repo's committed `.mcp.json`
+/// and kbbl's GATED_REVIEW_MCP_URL (spawn.ts) — keep the three in sync.
+const GATED_REVIEW_MCP_URL: &str = "http://willie:3555/mcp";
+
+/// Write the per-instance mcp-servers.json registering the gated-review server,
+/// read by CC via `--mcp-config <path>`. Returns the absolute path.
+///
+/// Ports writeCcMcpConfig (spawn.ts). The CC argv carries `--setting-sources
+/// user`, which excludes the project-scoped `.mcp.json`, so gated-review is
+/// loaded through `--mcp-config` instead (independent of setting sources).
+/// `stage_instance_id` is validated by write_cc_settings, which runs first in
+/// execute(); the instance dir already exists from that call.
+pub async fn write_cc_mcp_config(
+    spawn: &SpawnConfig,
+    stage_instance_id: &str,
+) -> anyhow::Result<PathBuf> {
+    let instance_dir = spawn
+        .oakridge_data
+        .join("session_agent")
+        .join(stage_instance_id);
+    tokio::fs::create_dir_all(&instance_dir).await?;
+
+    let mcp_config_path = instance_dir.join("mcp-servers.json");
+    let config = serde_json::json!({
+        "mcpServers": {
+            "gated-review": { "type": "http", "url": GATED_REVIEW_MCP_URL }
+        }
+    });
+    tokio::fs::write(&mcp_config_path, serde_json::to_string_pretty(&config)?).await?;
+    Ok(mcp_config_path)
 }
 
 /// Path to the per-instance parent CC session id sidecar file.
@@ -611,7 +665,8 @@ pub fn classify_cc_event(line: &str, state: &mut SubprocessState) {
 ///
 /// Ports _runAttachedLoop (session.ts:716-779) and the CC events loop (index.ts:172-253).
 /// Lifecycle:
-///   1. Write per-instance settings.json (PreToolUse gate hook).
+///   1. Write per-instance settings.json (PreToolUse gate hook) and
+///      mcp-servers.json (gated-review MCP server).
 ///   2. Build argv with byte/arg parity to makeBuildSpawnCmd.
 ///   3. Spawn child with OAKRIDGE_PORT and OAKRIDGE_STAGE_INSTANCE set.
 ///   4. Write the rendered prompt to stdin once as a stream-json user message; close stdin.
@@ -627,7 +682,9 @@ pub async fn run(
 ) -> anyhow::Result<(SessionOutcome, SubprocessState)> {
     let settings_path = write_cc_settings(spawn, &session.stage_instance_id).await?;
     let settings_path_str = settings_path.to_string_lossy().to_string();
-    let argv = build_argv(spawn, session, &settings_path_str);
+    let mcp_config_path = write_cc_mcp_config(spawn, &session.stage_instance_id).await?;
+    let mcp_config_path_str = mcp_config_path.to_string_lossy().to_string();
+    let argv = build_argv(spawn, session, &settings_path_str, &mcp_config_path_str);
 
     let mut cmd = Command::new(&argv[0]);
     cmd.args(&argv[1..]);
@@ -966,9 +1023,14 @@ mod tests {
     }
 
     #[test]
-    fn build_argv_static_prefix_is_14_elements() {
-        let argv = build_argv(&spawn_cfg(), &session_cfg(), "/tmp/settings.json");
-        assert_eq!(argv.len(), 14);
+    fn build_argv_static_prefix_is_17_elements() {
+        let argv = build_argv(
+            &spawn_cfg(),
+            &session_cfg(),
+            "/tmp/settings.json",
+            "/tmp/mcp-servers.json",
+        );
+        assert_eq!(argv.len(), 17);
         assert_eq!(argv[0], "claude");
         assert_eq!(argv[1], "--print");
         assert_eq!(argv[2], "--input-format");
@@ -983,6 +1045,9 @@ mod tests {
         assert_eq!(argv[11], "user");
         assert_eq!(argv[12], "--settings");
         assert_eq!(argv[13], "/tmp/settings.json");
+        assert_eq!(argv[14], "--mcp-config");
+        assert_eq!(argv[15], "/tmp/mcp-servers.json");
+        assert_eq!(argv[16], "--strict-mcp-config");
     }
 
     #[test]
@@ -991,10 +1056,15 @@ mod tests {
             model: Some("claude-opus-4-7".into()),
             ..session_cfg()
         };
-        let argv = build_argv(&spawn_cfg(), &session, "/tmp/settings.json");
-        assert_eq!(argv.len(), 16);
-        assert_eq!(argv[14], "--model");
-        assert_eq!(argv[15], "claude-opus-4-7");
+        let argv = build_argv(
+            &spawn_cfg(),
+            &session,
+            "/tmp/settings.json",
+            "/tmp/mcp-servers.json",
+        );
+        assert_eq!(argv.len(), 19);
+        assert_eq!(argv[17], "--model");
+        assert_eq!(argv[18], "claude-opus-4-7");
     }
 
     #[test]
@@ -1003,16 +1073,26 @@ mod tests {
             parent_cc_sid: Some("parent-sid-abc".into()),
             ..session_cfg()
         };
-        let argv = build_argv(&spawn_cfg(), &session, "/tmp/settings.json");
-        assert_eq!(argv.len(), 17);
-        assert_eq!(argv[14], "--resume");
-        assert_eq!(argv[15], "parent-sid-abc");
-        assert_eq!(argv[16], "--fork-session");
+        let argv = build_argv(
+            &spawn_cfg(),
+            &session,
+            "/tmp/settings.json",
+            "/tmp/mcp-servers.json",
+        );
+        assert_eq!(argv.len(), 20);
+        assert_eq!(argv[17], "--resume");
+        assert_eq!(argv[18], "parent-sid-abc");
+        assert_eq!(argv[19], "--fork-session");
     }
 
     #[test]
     fn build_argv_fork_session_never_appears_without_resume() {
-        let argv = build_argv(&spawn_cfg(), &session_cfg(), "/tmp/settings.json");
+        let argv = build_argv(
+            &spawn_cfg(),
+            &session_cfg(),
+            "/tmp/settings.json",
+            "/tmp/mcp-servers.json",
+        );
         assert!(!argv.contains(&"--fork-session".to_string()));
         assert!(!argv.contains(&"--resume".to_string()));
     }
@@ -1024,13 +1104,18 @@ mod tests {
             parent_cc_sid: Some("parent-sid-xyz".into()),
             ..session_cfg()
         };
-        let argv = build_argv(&spawn_cfg(), &session, "/tmp/settings.json");
-        assert_eq!(argv.len(), 19);
-        assert_eq!(argv[14], "--model");
-        assert_eq!(argv[15], "claude-sonnet-4-6");
-        assert_eq!(argv[16], "--resume");
-        assert_eq!(argv[17], "parent-sid-xyz");
-        assert_eq!(argv[18], "--fork-session");
+        let argv = build_argv(
+            &spawn_cfg(),
+            &session,
+            "/tmp/settings.json",
+            "/tmp/mcp-servers.json",
+        );
+        assert_eq!(argv.len(), 22);
+        assert_eq!(argv[17], "--model");
+        assert_eq!(argv[18], "claude-sonnet-4-6");
+        assert_eq!(argv[19], "--resume");
+        assert_eq!(argv[20], "parent-sid-xyz");
+        assert_eq!(argv[21], "--fork-session");
     }
 
     // ── classify_cc_event ─────────────────────────────────────────────────────
