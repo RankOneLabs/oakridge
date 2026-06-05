@@ -27,7 +27,7 @@ function fakeSession(
   } as unknown as Session;
 }
 
-describe("makeBuildSpawnCmd --model flag", () => {
+describe("makeBuildSpawnCmd argv construction", () => {
   const buildSpawnCmd = makeBuildSpawnCmd(makeCtx());
 
   test("inserts --model when model is set", async () => {

@@ -182,8 +182,8 @@ impl StageType for SessionAgent {
         let config: SessionAgentConfig = serde_json::from_value(ctx.config.clone())?;
 
         // 1. Write per-instance settings.json (PreToolUse gate hook) and
-        //    mcp-servers.json (gated-review MCP server). settings.json runs
-        //    first: it validates stage_instance_id before any path is built.
+        //    mcp-servers.json (gated-review MCP server). Both validate
+        //    stage_instance_id via validated_instance_dir before building paths.
         let settings_path =
             write_cc_settings(&self.spawn_config, &sid.0.to_string()).await?;
         let settings_path_str = settings_path.to_string_lossy().to_string();
@@ -461,21 +461,20 @@ pub fn build_argv(
     argv
 }
 
-/// Write the per-instance settings.json registering the PreToolUse gate hook.
+/// Resolve and create the per-instance directory
+/// `<oakridge_data>/session_agent/<stage_instance_id>`, validating the id first.
 ///
-/// Ports writeCcSettings (spawn.ts L35-66). The file is written to
-/// <oakridge_data>/session_agent/<stage_instance_id>/settings.json.
-/// The gate path is shell-quoted before serialization so paths with spaces
-/// or shell-significant characters are handled safely by bash.
-pub async fn write_cc_settings(
+/// Requires exactly one Normal path component: rejects empty, ".", "..", any
+/// forward-slash separator, and absolute paths. Backslash and colon are also
+/// rejected explicitly: on Linux they are legal filename chars but would be path
+/// separators / drive prefixes on Windows, making them unsafe to embed in a
+/// directory name intended to be portable and shell-safe. Shared by
+/// write_cc_settings and write_cc_mcp_config so neither can build an unvalidated
+/// path, regardless of call order.
+async fn validated_instance_dir(
     spawn: &SpawnConfig,
     stage_instance_id: &str,
 ) -> anyhow::Result<PathBuf> {
-    // Require exactly one Normal path component: rejects empty, ".", "..", anything
-    // with a forward-slash separator, and absolute paths.
-    // Backslash and colon are also rejected explicitly: on Linux they are legal filename
-    // chars but would be path separators / drive prefixes on Windows, making them
-    // unsafe to embed in a directory name intended to be portable and shell-safe.
     use std::path::{Component, Path};
     let has_unsafe_char = stage_instance_id.contains(['\\', ':']);
     let mut components = Path::new(stage_instance_id).components();
@@ -492,6 +491,20 @@ pub async fn write_cc_settings(
         .join("session_agent")
         .join(stage_instance_id);
     tokio::fs::create_dir_all(&instance_dir).await?;
+    Ok(instance_dir)
+}
+
+/// Write the per-instance settings.json registering the PreToolUse gate hook.
+///
+/// Ports writeCcSettings (spawn.ts L35-66). The file is written to
+/// <oakridge_data>/session_agent/<stage_instance_id>/settings.json.
+/// The gate path is shell-quoted before serialization so paths with spaces
+/// or shell-significant characters are handled safely by bash.
+pub async fn write_cc_settings(
+    spawn: &SpawnConfig,
+    stage_instance_id: &str,
+) -> anyhow::Result<PathBuf> {
+    let instance_dir = validated_instance_dir(spawn, stage_instance_id).await?;
 
     let settings_path = instance_dir.join("settings.json");
     let gate_cmd = shell_quote(&spawn.gate_path);
@@ -527,17 +540,11 @@ const GATED_REVIEW_MCP_URL: &str = "http://willie:3555/mcp";
 /// Ports writeCcMcpConfig (spawn.ts). The CC argv carries `--setting-sources
 /// user`, which excludes the project-scoped `.mcp.json`, so gated-review is
 /// loaded through `--mcp-config` instead (independent of setting sources).
-/// `stage_instance_id` is validated by write_cc_settings, which runs first in
-/// execute(); the instance dir already exists from that call.
 pub async fn write_cc_mcp_config(
     spawn: &SpawnConfig,
     stage_instance_id: &str,
 ) -> anyhow::Result<PathBuf> {
-    let instance_dir = spawn
-        .oakridge_data
-        .join("session_agent")
-        .join(stage_instance_id);
-    tokio::fs::create_dir_all(&instance_dir).await?;
+    let instance_dir = validated_instance_dir(spawn, stage_instance_id).await?;
 
     let mcp_config_path = instance_dir.join("mcp-servers.json");
     let config = serde_json::json!({
@@ -1221,6 +1228,48 @@ mod tests {
         };
         for bad_id in &["../escape", "a/b", "a\\b", "a:b", "..", ".", "", "a/b/c"] {
             let result = write_cc_settings(&spawn, bad_id).await;
+            assert!(result.is_err(), "expected Err for id {:?}", bad_id);
+            let msg = result.unwrap_err().to_string();
+            assert!(msg.contains("single path component"), "unexpected error for {:?}: {}", bad_id, msg);
+        }
+        tokio::fs::remove_dir_all(&tmp).await.ok();
+    }
+
+    // ── write_cc_mcp_config (async) ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn write_cc_mcp_config_creates_file_with_correct_structure() {
+        let tmp = std::env::temp_dir().join(format!("oak-mcp-test-{}", Uuid::new_v4()));
+        let spawn = SpawnConfig {
+            claude_bin: "claude".into(),
+            port: 8788,
+            oakridge_data: tmp.clone(),
+            gate_path: "/usr/local/bin/gate.sh".into(),
+        };
+        let path = write_cc_mcp_config(&spawn, "inst-001").await.unwrap();
+
+        assert!(path.exists());
+        let contents = tokio::fs::read_to_string(&path).await.unwrap();
+        let v: serde_json::Value = serde_json::from_str(&contents).unwrap();
+
+        let gated = &v["mcpServers"]["gated-review"];
+        assert_eq!(gated["type"], "http");
+        assert_eq!(gated["url"], GATED_REVIEW_MCP_URL);
+
+        tokio::fs::remove_dir_all(&tmp).await.ok();
+    }
+
+    #[tokio::test]
+    async fn write_cc_mcp_config_rejects_path_separator_in_id() {
+        let tmp = std::env::temp_dir().join(format!("oak-mcp-guard-test-{}", Uuid::new_v4()));
+        let spawn = SpawnConfig {
+            claude_bin: "claude".into(),
+            port: 8788,
+            oakridge_data: tmp.clone(),
+            gate_path: "/usr/local/bin/gate.sh".into(),
+        };
+        for bad_id in &["../escape", "a/b", "a\\b", "a:b", "..", ".", "", "a/b/c"] {
+            let result = write_cc_mcp_config(&spawn, bad_id).await;
             assert!(result.is_err(), "expected Err for id {:?}", bad_id);
             let msg = result.unwrap_err().to_string();
             assert!(msg.contains("single path component"), "unexpected error for {:?}: {}", bad_id, msg);
