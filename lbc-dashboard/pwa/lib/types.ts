@@ -42,3 +42,7 @@ export {
   GraderConfigsResponseSchema,
   conditionName,
 } from "../../src/contracts";
+
+// UI-local type for the three-state archive filter. Shared by
+// CellList, useCells, and App so the values stay in sync.
+export type CellArchiveFilter = "default" | "include" | "only";
