@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { responseError } from "../lib/http";
 
@@ -46,6 +46,7 @@ interface EpicDetailViewProps {
 
 export function EpicDetailView({ epic_id }: EpicDetailViewProps) {
   const queryClient = useQueryClient();
+  const [selectedSection, setSelectedSection] = useState<EpicStage | null>(null);
 
   const query = useQuery({
     queryKey: ["epic", epic_id],
@@ -129,24 +130,36 @@ export function EpicDetailView({ epic_id }: EpicDetailViewProps) {
   }
 
   const { epic, spec, plan, cohorts, assessment_present } = query.data;
+  const activeSection = selectedSection ?? epic.current_stage;
 
   let drilldown: ReactNode = null;
-  if (epic.current_stage === "spec" && spec) {
-    drilldown = (
-      <DiscrepanciesEditor
-        spec_id={spec.id}
-        epic_id={epic_id}
-        internal_status={spec.internal_status}
-      />
-    );
-  } else if (epic.current_stage === "plan" && plan) {
-    drilldown = <PlanDrilldown plan={plan} />;
-  } else if (epic.current_stage === "build") {
-    drilldown = <BuildDrilldown cohorts={cohorts} />;
-  } else if (epic.current_stage === "assess") {
-    drilldown = (
-      <ReviewDrilldown plan_id={plan?.id ?? null} assessment_present={assessment_present} />
-    );
+  switch (activeSection) {
+    case "spec":
+      drilldown = spec ? (
+        <DiscrepanciesEditor
+          spec_id={spec.id}
+          epic_id={epic_id}
+          internal_status={spec.internal_status}
+        />
+      ) : (
+        <div className="epic-detail__placeholder">Spec not available yet</div>
+      );
+      break;
+    case "plan":
+      drilldown = plan ? (
+        <PlanDrilldown plan={plan} />
+      ) : (
+        <div className="epic-detail__placeholder">Plan not available yet</div>
+      );
+      break;
+    case "build":
+      drilldown = <BuildDrilldown cohorts={cohorts} />;
+      break;
+    case "assess":
+      drilldown = (
+        <ReviewDrilldown plan_id={plan?.id ?? null} assessment_present={assessment_present} />
+      );
+      break;
   }
 
   const mutationErr =
@@ -225,8 +238,18 @@ export function EpicDetailView({ epic_id }: EpicDetailViewProps) {
         plan_status={plan?.status ?? null}
         cohorts={cohorts}
         assessment_present={assessment_present}
+        selected={activeSection}
+        onSelect={setSelectedSection}
       />
-      {drilldown && <div className="epic-detail__drilldown">{drilldown}</div>}
+      <div
+        className="epic-detail__drilldown"
+        role="tabpanel"
+        id="stage-panel"
+        aria-labelledby={`stage-tab-${activeSection}`}
+        tabIndex={0}
+      >
+        {drilldown}
+      </div>
     </div>
   );
 }

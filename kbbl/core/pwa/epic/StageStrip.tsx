@@ -1,3 +1,5 @@
+import { useRef, type KeyboardEvent } from "react";
+
 type EpicStage = "spec" | "plan" | "build" | "assess";
 type SpecInternalStatus = "analyzing" | "discrepancies" | "review" | "approved";
 type PlanStatus = "pending_approval" | "approved" | "rejected" | "superseded";
@@ -25,6 +27,8 @@ interface StageStripProps {
   plan_status: PlanStatus | null;
   cohorts: Cohort[];
   assessment_present: boolean;
+  selected?: EpicStage;
+  onSelect?: (stage: EpicStage) => void;
 }
 
 function buildStatusText(cohorts: Cohort[]): string {
@@ -57,17 +61,59 @@ export function StageStrip({
   plan_status,
   cohorts,
   assessment_present,
+  selected,
+  onSelect,
 }: StageStripProps) {
+  const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  // Roving tabindex: exactly one tab is in the tab order — the selected one,
+  // falling back to the epic's current stage when nothing is selected.
+  const focusable = selected ?? current_stage;
+
+  function handleKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    if (!onSelect) return;
+    let next: number;
+    switch (event.key) {
+      case "ArrowRight":
+        next = (index + 1) % STAGES.length;
+        break;
+      case "ArrowLeft":
+        next = (index - 1 + STAGES.length) % STAGES.length;
+        break;
+      case "Home":
+        next = 0;
+        break;
+      case "End":
+        next = STAGES.length - 1;
+        break;
+      default:
+        return;
+    }
+    event.preventDefault();
+    onSelect(STAGES[next]);
+    tabRefs.current[next]?.focus();
+  }
+
   return (
-    <div className="stage-strip" role="list" aria-label="Epic progression">
-      {STAGES.map((stage) => {
+    <div className="stage-strip" role="tablist" aria-label="Epic progression">
+      {STAGES.map((stage, index) => {
         const rel = stageRelation(stage, current_stage);
+        const isSelected = selected === stage;
         return (
-          <div
+          <button
             key={stage}
-            role="listitem"
-            className={`stage-strip__tile stage-strip__tile--${rel}`}
+            ref={(el) => {
+              tabRefs.current[index] = el;
+            }}
+            type="button"
+            role="tab"
+            id={`stage-tab-${stage}`}
+            aria-controls="stage-panel"
+            className={`stage-strip__tile stage-strip__tile--${rel}${isSelected ? " stage-strip__tile--selected" : ""}`}
             aria-current={rel === "current" ? "step" : undefined}
+            aria-selected={isSelected}
+            tabIndex={stage === focusable ? 0 : -1}
+            onClick={() => onSelect?.(stage)}
+            onKeyDown={(event) => handleKeyDown(event, index)}
           >
             <span className="stage-strip__tile-name">
               {stage.charAt(0).toUpperCase() + stage.slice(1)}
@@ -81,7 +127,7 @@ export function StageStrip({
                 assessment_present,
               )}
             </span>
-          </div>
+          </button>
         );
       })}
     </div>

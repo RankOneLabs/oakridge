@@ -100,7 +100,7 @@ export function App() {
       />
     );
   } else if (route?.view === "epic") {
-    view = <EpicDetailView epic_id={route.id} />;
+    view = <EpicDetailView key={route.id} epic_id={route.id} />;
   } else if (sid !== null) {
     view = (
       <SessionView
