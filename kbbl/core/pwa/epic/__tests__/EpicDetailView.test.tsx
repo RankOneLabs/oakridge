@@ -89,7 +89,7 @@ describe("EpicDetailView", () => {
 
     expect(await screen.findByRole("heading", { name: "Discrepancies" })).toBeTruthy();
 
-    const tiles = screen.getAllByRole("listitem");
+    const tiles = screen.getAllByRole("tab");
     const currentTile = tiles.find(
       (el) => el.getAttribute("aria-current") === "step",
     );
@@ -104,7 +104,7 @@ describe("EpicDetailView", () => {
     expect(await screen.findByRole("heading", { name: "Plan" })).toBeTruthy();
     expect(screen.getByRole("link", { name: "View plan" })).toBeTruthy();
 
-    const tiles = screen.getAllByRole("listitem");
+    const tiles = screen.getAllByRole("tab");
     const currentTile = tiles.find(
       (el) => el.getAttribute("aria-current") === "step",
     );
@@ -117,7 +117,7 @@ describe("EpicDetailView", () => {
 
     expect(await screen.findByRole("heading", { name: "Cohorts" })).toBeTruthy();
 
-    const tiles = screen.getAllByRole("listitem");
+    const tiles = screen.getAllByRole("tab");
     const currentTile = tiles.find(
       (el) => el.getAttribute("aria-current") === "step",
     );
@@ -130,7 +130,7 @@ describe("EpicDetailView", () => {
 
     expect(await screen.findByRole("heading", { name: "Assessment" })).toBeTruthy();
 
-    const tiles = screen.getAllByRole("listitem");
+    const tiles = screen.getAllByRole("tab");
     const currentTile = tiles.find(
       (el) => el.getAttribute("aria-current") === "step",
     );
