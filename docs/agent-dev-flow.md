@@ -171,7 +171,9 @@ Open `#brief/<brief_id>`. `StructuredDocEditor` renders the five sections
 Click **Run build** in the brief view (or `POST /briefs/:id/build`). The
 dispatcher spawns a build session, stamps `current_session_ref` onto the
 cohort, and the build agent reads its rendered prompt. The agent commits,
-opens a PR via `gh pr create`, and on completion writes back:
+pushes and opens a PR through the gated-review MCP tools (`git_push` /
+`open_pr` — shell `git push` and `gh` are blocked by the review gate), and on
+completion writes back:
 
 ```bash
 curl -sX PATCH "$KBBL/briefs/<brief_id>/debrief" \
