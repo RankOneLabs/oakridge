@@ -57,17 +57,18 @@ describe("buildSlotsForBrief — EPIC_BRANCH slot", () => {
     expect(slots.EPIC_BRANCH).toBe(`epic/${EPIC_SLUG}`);
   });
 
-  test("rendered build prompt contains --base epic/<slug>", () => {
+  test("rendered build prompt uses epic/<slug> as the open_pr base", () => {
     const slots = buildSlotsForBrief(db, BRIEF_ID, "http://kbbl");
     const template = loadPrompt("build.md");
     const rendered = renderPrompt(template, slots);
-    expect(rendered).toContain(`--base epic/${EPIC_SLUG}`);
+    expect(rendered).toContain(`\`base\` = \`epic/${EPIC_SLUG}\``);
   });
 
-  test("rendered build prompt has --base immediately before --title", () => {
+  test("rendered build prompt opens the PR via open_pr against the epic base", () => {
     const slots = buildSlotsForBrief(db, BRIEF_ID, "http://kbbl");
     const template = loadPrompt("build.md");
     const rendered = renderPrompt(template, slots);
-    expect(rendered).toContain(`--base epic/${EPIC_SLUG} --title`);
+    expect(rendered).toContain("mcp__gated-review__open_pr");
+    expect(rendered).toContain(`\`base\` = \`epic/${EPIC_SLUG}\`, \`head\``);
   });
 });
