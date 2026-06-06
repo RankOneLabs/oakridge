@@ -3960,6 +3960,12 @@ body {
   box-sizing: border-box;
 }
 
+.epic-detail__placeholder {
+  color: var(--text-muted);
+  padding: 24px 0;
+  font-size: 0.95rem;
+}
+
 /* --- stage strip --- */
 
 .stage-strip {

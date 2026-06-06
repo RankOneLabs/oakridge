@@ -137,6 +137,45 @@ describe("EpicDetailView", () => {
     expect(currentTile?.textContent).toMatch(/Assess/i);
   });
 
+  it("clicking a non-current tab swaps the drilldown (build -> assess)", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch("build"));
+    renderWithClient(<EpicDetailView epic_id="epic-1" />);
+
+    // Wait for build drilldown to load
+    expect(await screen.findByRole("heading", { name: "Cohorts" })).toBeTruthy();
+
+    // Click the Assess tab
+    const assessTab = screen.getByRole("tab", { name: /Assess/i });
+    fireEvent.click(assessTab);
+
+    expect(await screen.findByRole("heading", { name: "Assessment" })).toBeTruthy();
+  });
+
+  it("assess-stage fixture shows assessment when Assess tab is selected", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch("assess"));
+    renderWithClient(<EpicDetailView epic_id="epic-1" />);
+
+    const assessTab = await screen.findByRole("tab", { name: /Assess/i });
+    fireEvent.click(assessTab);
+
+    expect(await screen.findByRole("heading", { name: "Assessment" })).toBeTruthy();
+  });
+
+  it("clicking a tab whose artifact is null shows the placeholder", async () => {
+    // spec stage fixture has plan === null
+    vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch("spec"));
+    renderWithClient(<EpicDetailView epic_id="epic-1" />);
+
+    // Wait for spec drilldown to load
+    expect(await screen.findByRole("heading", { name: "Discrepancies" })).toBeTruthy();
+
+    // Click the Plan tab (plan is null for spec fixture)
+    const planTab = screen.getByRole("tab", { name: /Plan/i });
+    fireEvent.click(planTab);
+
+    expect(await screen.findByText("Plan not available yet")).toBeTruthy();
+  });
+
   it("invalidates sidebar specs after a successful archive", async () => {
     const fetchMock: FetchHandler = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
