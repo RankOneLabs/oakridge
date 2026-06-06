@@ -3982,9 +3982,19 @@ body {
   border-radius: 6px;
   margin-right: 4px;
   text-align: center;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  width: 100%;
 }
 .stage-strip__tile:last-child {
   margin-right: 0;
+}
+
+.stage-strip__tile:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 2px;
 }
 
 .stage-strip__tile--current {
@@ -3999,6 +4009,14 @@ body {
 
 .stage-strip__tile--upcoming {
   opacity: 0.35;
+}
+
+.stage-strip__tile--selected {
+  border-color: var(--accent-blue);
+  border-width: 2px;
+  box-shadow: 0 0 0 2px var(--accent-blue);
+  background: var(--accent-muted);
+  opacity: 1;
 }
 
 .stage-strip__tile-name {

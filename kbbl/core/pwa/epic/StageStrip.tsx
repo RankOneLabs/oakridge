@@ -25,6 +25,8 @@ interface StageStripProps {
   plan_status: PlanStatus | null;
   cohorts: Cohort[];
   assessment_present: boolean;
+  selected?: EpicStage;
+  onSelect?: (stage: EpicStage) => void;
 }
 
 function buildStatusText(cohorts: Cohort[]): string {
@@ -57,17 +59,23 @@ export function StageStrip({
   plan_status,
   cohorts,
   assessment_present,
+  selected,
+  onSelect,
 }: StageStripProps) {
   return (
-    <div className="stage-strip" role="list" aria-label="Epic progression">
+    <div className="stage-strip" role="tablist" aria-label="Epic progression">
       {STAGES.map((stage) => {
         const rel = stageRelation(stage, current_stage);
+        const isSelected = selected === stage;
         return (
-          <div
+          <button
             key={stage}
-            role="listitem"
-            className={`stage-strip__tile stage-strip__tile--${rel}`}
+            type="button"
+            role="tab"
+            className={`stage-strip__tile stage-strip__tile--${rel}${isSelected ? " stage-strip__tile--selected" : ""}`}
             aria-current={rel === "current" ? "step" : undefined}
+            aria-selected={isSelected}
+            onClick={() => onSelect?.(stage)}
           >
             <span className="stage-strip__tile-name">
               {stage.charAt(0).toUpperCase() + stage.slice(1)}
@@ -81,7 +89,7 @@ export function StageStrip({
                 assessment_present,
               )}
             </span>
-          </div>
+          </button>
         );
       })}
     </div>
