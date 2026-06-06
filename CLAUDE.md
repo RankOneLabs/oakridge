@@ -27,7 +27,7 @@ bun run typecheck          # typecheck across the repo
 Python sub-packages are independent uv projects — see each package's own
 AGENTS.md for its commands.
 
-<!-- import: ./standards/core.md @ 1362c01763c6 -->
+<!-- import: ./standards/core.md @ 5787c28ec1ee -->
 ## Two gates before building
 
 **Stop when uncertain.** Before introducing a pattern, dependency, file, or structural
@@ -114,7 +114,7 @@ over terse — `user_count`, not `n`. Booleans read as questions — `is_active`
 
 ## Environment
 
-<!-- import: ./standards/gated-review.md @ 1362c01763c6 -->
+<!-- import: ./standards/gated-review.md @ 5787c28ec1ee -->
 ## Gated Review environment
 
 This environment has the gated-review MCP server connected. All PR and
@@ -126,10 +126,10 @@ remote-git operations go through it — never the shell or the GitHub API.
 - the GitHub REST or GraphQL API directly
 
 **Always use instead:**
-- `get_review_round` — read PR review threads and comments
-- `reply_to_thread` — reply to a review thread
-- `resolve_thread` — resolve a handled thread
-- `git.push` / `git.pull` / `git.fetch` — all remote git operations
+- `mcp__gated-review__get_review_round` — read PR review threads and comments
+- `mcp__gated-review__reply_to_thread` — reply to a review thread
+- `mcp__gated-review__resolve_thread` — resolve a handled thread
+- `mcp__gated-review__git_push` / `mcp__gated-review__git_pull` / `mcp__gated-review__git_fetch` — all remote git operations
 
 **Merging and merge-ready are human-only.** Do not call `merge_pr` or
 `mark_merge_ready`, and do not decide merge readiness. Report the evidence
