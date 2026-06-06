@@ -88,7 +88,7 @@ function shellQuote(value: string): string {
  * unless we load it through `--mcp-config`, which is independent of
  * `--setting-sources`. (oakridge-core's session_agent mirrors this URL.)
  */
-const GATED_REVIEW_MCP_URL = "http://willie:3555/mcp";
+const GATED_REVIEW_MCP_URL = "http://otto:3555/mcp";
 
 /**
  * Writes the MCP-config file the spawned CC subprocess reads via

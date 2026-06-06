@@ -2,7 +2,7 @@
   "mcpServers": {
     "gated-review": {
       "type": "http",
-      "url": "http://willie:3555/mcp"
+      "url": "http://otto:3555/mcp"
     }
   }
 }

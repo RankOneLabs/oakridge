@@ -533,7 +533,7 @@ pub async fn write_cc_settings(
 
 /// URL of the gated-review MCP server. Mirrors the repo's committed `.mcp.json`
 /// and kbbl's GATED_REVIEW_MCP_URL (spawn.ts) — keep the three in sync.
-const GATED_REVIEW_MCP_URL: &str = "http://willie:3555/mcp";
+const GATED_REVIEW_MCP_URL: &str = "http://otto:3555/mcp";
 
 /// Write the per-instance mcp-servers.json registering the gated-review server,
 /// read by CC via `--mcp-config <path>`. Returns the absolute path.
