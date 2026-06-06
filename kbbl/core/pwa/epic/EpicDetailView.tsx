@@ -241,7 +241,15 @@ export function EpicDetailView({ epic_id }: EpicDetailViewProps) {
         selected={activeSection}
         onSelect={setSelectedSection}
       />
-      <div className="epic-detail__drilldown">{drilldown}</div>
+      <div
+        className="epic-detail__drilldown"
+        role="tabpanel"
+        id="stage-panel"
+        aria-labelledby={`stage-tab-${activeSection}`}
+        tabIndex={0}
+      >
+        {drilldown}
+      </div>
     </div>
   );
 }
