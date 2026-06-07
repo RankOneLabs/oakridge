@@ -63,4 +63,14 @@ describe("StageStrip", () => {
     expect(currentTab?.textContent).toMatch(/Build/i);
     expect(selectedTab?.textContent).toMatch(/Spec/i);
   });
+
+  it("current tile has --current but not --selected when a different tile is selected", () => {
+    render(<StageStrip {...baseProps} current_stage="build" selected="spec" />);
+    const tabs = screen.getAllByRole("tab");
+    const buildTab = tabs.find((t) => t.textContent?.match(/Build/i));
+    const specTab = tabs.find((t) => t.textContent?.match(/Spec/i));
+    expect(buildTab?.className).toContain("stage-strip__tile--current");
+    expect(buildTab?.className).not.toContain("stage-strip__tile--selected");
+    expect(specTab?.className).toContain("stage-strip__tile--selected");
+  });
 });
