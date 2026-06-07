@@ -4006,7 +4006,6 @@ body {
 .stage-strip__tile--current {
   border-color: var(--accent-blue);
   border-width: 2px;
-  background: var(--accent-muted);
 }
 
 .stage-strip__tile--done {
