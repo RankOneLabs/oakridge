@@ -11,11 +11,11 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 use crate::db::queries;
-use crate::executor::ResumePayload;
+use crate::executor::{EmitArgs, ResumePayload};
 use crate::scheduler::DecisionError;
 use crate::types::{
-    Artifact, ArtifactId, Project, ProjectId, RunStatus, StageInstance,
-    StageInstanceId, WorkflowDef, WorkflowDefId, WorkflowGraph, WorkflowRun,
+    Artifact, ArtifactId, OutputSlot, Project, ProjectId, RunStatus, StageInstance,
+    StageInstanceId, StageStatus, WorkflowDef, WorkflowDefId, WorkflowGraph, WorkflowRun,
     WorkflowRunId,
 };
 
@@ -353,6 +353,131 @@ pub async fn resume_stage_instance(
     Ok((StatusCode::ACCEPTED, Json(updated)))
 }
 
+// ── Delegated-session inbound callbacks ───────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct EmitArtifactBody {
+    pub output_name: String,
+    pub body: Value,
+}
+
+/// Receive an artifact emitted by a kbbl-delegated session (C.2a).
+///
+/// kbbl calls this when the running agent produces an output. The handler
+/// resolves the artifact type from the stage's output slots, validates, persists
+/// via ctx.emit, and routes the event to downstream stages.
+pub async fn post_stage_instance_artifacts(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<EmitArtifactBody>,
+) -> impl IntoResponse {
+    let sid = StageInstanceId(id);
+    let ctx = state.live_delegated.lock().unwrap().get(&sid).cloned();
+    let ctx = match ctx {
+        Some(c) => c,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "no live delegated stage for this id"})),
+            )
+                .into_response();
+        }
+    };
+
+    let output_slots: Vec<OutputSlot> =
+        serde_json::from_value(ctx.config["output_slots"].clone()).unwrap_or_default();
+
+    let slot = match output_slots.iter().find(|s| s.name == body.output_name) {
+        Some(s) => s.clone(),
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": format!("unknown output slot: {}", body.output_name)})),
+            )
+                .into_response();
+        }
+    };
+
+    match ctx
+        .emit(EmitArgs {
+            output_name: body.output_name,
+            artifact_type: slot.artifact_type,
+            body: body.body,
+            label: None,
+            parent_artifact_id: None,
+        })
+        .await
+    {
+        Ok(artifact) => (
+            StatusCode::OK,
+            Json(json!({"artifact_id": artifact.id.0.to_string()})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct TerminalStatusBody {
+    pub status: String,
+}
+
+/// Receive the terminal status of a kbbl-delegated session (C.2b).
+///
+/// kbbl calls this when the session ends. The handler transitions the stage to
+/// Done or Failed and removes it from the live map so subsequent callbacks 404.
+pub async fn post_stage_instance_status(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<TerminalStatusBody>,
+) -> impl IntoResponse {
+    let sid = StageInstanceId(id);
+
+    let stage_status = match body.status.as_str() {
+        "done" => StageStatus::Done,
+        "failed" => StageStatus::Failed,
+        other => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": format!("invalid status: {}", other)})),
+            )
+                .into_response();
+        }
+    };
+
+    let ctx = state.live_delegated.lock().unwrap().remove(&sid);
+    let ctx = match ctx {
+        Some(c) => c,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "no live delegated stage for this id"})),
+            )
+                .into_response();
+        }
+    };
+
+    match ctx.set_status(stage_status, None).await {
+        Ok(_) => (StatusCode::OK, Json(json!({}))).into_response(),
+        Err(e) => {
+            tracing::error!(
+                error = %e,
+                stage_instance_id = %id,
+                "failed to set terminal status from kbbl callback"
+            );
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal error"})),
+            )
+                .into_response()
+        }
+    }
+}
+
 // ── Parked handler ────────────────────────────────────────────────────────────
 
 pub async fn list_parked(
@@ -517,7 +642,14 @@ mod tests {
             bus.clone(),
         ));
 
-        AppState { pool, stage_registry, artifact_registry, coordinator, bus }
+        AppState {
+            pool,
+            stage_registry,
+            artifact_registry,
+            coordinator,
+            bus,
+            live_delegated: Arc::new(std::sync::Mutex::new(HashMap::new())),
+        }
     }
 
     async fn make_state(

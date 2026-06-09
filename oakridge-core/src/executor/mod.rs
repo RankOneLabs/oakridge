@@ -1,3 +1,4 @@
+pub mod delegated_session;
 pub mod session_agent;
 
 use std::collections::HashMap;
