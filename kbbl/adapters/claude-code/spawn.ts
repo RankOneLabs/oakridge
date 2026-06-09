@@ -123,6 +123,29 @@ export async function writeCcMcpConfig(opts: {
   return mcpConfigPath;
 }
 
+/**
+ * Distinguishes CC resume modes:
+ * - "fork": `--resume <ccSid> --fork-session` — mints a new CC session id and
+ *   a new kbbl row; used by the Resume button.
+ * - "continue-in-place": `--resume <ccSid>` only — continues in the SAME CC
+ *   session id and existing kbbl row; used by A.2 runtime-restart recovery.
+ *
+ * Phase 0 confirmed that plain --resume reopens an exited session with
+ * source:"resume" and the same session_id; --fork-session is the variant
+ * that diverges into a new id.
+ */
+export type ResumeMode = "fork" | "continue-in-place";
+
+/**
+ * Builds the `--resume` portion of the CC command line for the given mode.
+ * Call site appends the returned array to the main argv.
+ */
+export function buildResumeArgs(ccSid: string, mode: ResumeMode): string[] {
+  return mode === "continue-in-place"
+    ? ["--resume", ccSid]
+    : ["--resume", ccSid, "--fork-session"];
+}
+
 export interface BuildSpawnCmdContext {
   claudeBin: string;
   /** Absolute path to the settings.json from writeCcSettings(). */
@@ -160,9 +183,11 @@ export function makeBuildSpawnCmd(
       cmd.push("--model", session.model);
     }
     // Resume in a fresh session id so multiple live forks off the same parent
-    // don't collide on CC's internal session id.
+    // don't collide on CC's internal session id. "fork" is the only mode the
+    // legacy buildSpawnCmd path supports — continue-in-place recovery goes
+    // through the registry AgentRuntime.spawn() path (index.ts) exclusively.
     if (session.parentCcSid) {
-      cmd.push("--resume", session.parentCcSid, "--fork-session");
+      cmd.push(...buildResumeArgs(session.parentCcSid, "fork"));
     }
     return {
       cmd,

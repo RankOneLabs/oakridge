@@ -30,7 +30,7 @@ import {
   hookSubagentStopHandler,
   type HookHandlerDeps,
 } from "./hook-route";
-import { assertA1Invariants, makeBuildSpawnCmd, writeCcMcpConfig, writeCcSettings } from "./spawn";
+import { assertA1Invariants, buildResumeArgs, makeBuildSpawnCmd, writeCcMcpConfig, writeCcSettings } from "./spawn";
 
 export interface CreateClaudeCodeRuntimeOpts {
   claudeBin: string;
@@ -131,6 +131,26 @@ export async function createClaudeCodeRuntime(
         | string
         | null
         | undefined;
+      // A.2 continue-in-place recovery: plain --resume without --fork-session.
+      // Distinct from parentCcSid (fork path used by the Resume button).
+      const resumeCcSid = config.runtimeSpecific?.resumeCcSid as
+        | string
+        | null
+        | undefined;
+
+      // Single-writer supervisor: before a continue-in-place relaunch, confirm
+      // no live PTY holds this ccSid in the current server instance. Two live
+      // claude processes on the same session_id corrupt the unlocked JSONL.
+      // (After a server restart the prior process is presumed dead via PTY
+      // SIGHUP; this guard defends against accidental same-run double-relaunch.)
+      if (resumeCcSid) {
+        const existingOakSid = ccSidToOakridgeSid.get(resumeCcSid);
+        if (existingOakSid && procs.has(existingOakSid)) {
+          throw new Error(
+            `kbbl: refusing continue-in-place relaunch for ccSid ${resumeCcSid} — live PTY handle is still held for session ${existingOakSid}`,
+          );
+        }
+      }
 
       const spawnEnv: Record<string, string | undefined> = {
         ...process.env,
@@ -148,7 +168,13 @@ export async function createClaudeCodeRuntime(
         "--strict-mcp-config",
       ];
       if (model) argv.push("--model", model);
-      if (parentCcSid) argv.push("--resume", parentCcSid, "--fork-session");
+      // Continue-in-place recovery: plain --resume keeps the same CC session id
+      // and row. Fork (Resume button): --resume --fork-session mints a new id.
+      if (resumeCcSid) {
+        argv.push(...buildResumeArgs(resumeCcSid, "continue-in-place"));
+      } else if (parentCcSid) {
+        argv.push(...buildResumeArgs(parentCcSid, "fork"));
+      }
 
       // A.1: hard billing invariant — refuse rather than downgrade.
       await assertA1Invariants({ claudeBin: opts.claudeBin, argv, env: spawnEnv });
