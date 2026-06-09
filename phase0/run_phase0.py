@@ -5,9 +5,11 @@ Phase 0 verification harness.
 Tests three empirical unknowns that gate the execution_v2 migration:
   1. Billing: CC interactive PTY session under OAuth subscription consumes
      ZERO Agent SDK API credits.
-  2. Hook-firing: all 8 native type:http hooks fire in interactive non-print mode.
+  2. Hook-firing: 6/8 native type:http hooks fire in interactive non-print mode.
+     SessionStart and SubagentStart do NOT fire as HTTP hooks (confirmed empirically).
   3. Continue-in-place resume: `claude --resume <id>` (no --fork-session)
-     reopens same session_id and SessionStart reports source:"resume".
+     reopens the same session_id and appends to the same transcript file.
+     SessionStart source:"resume" is not observable via HTTP hook.
 
 PTY driver: pexpect (Python) — node-pty is not installed; pexpect creates a
 real POSIX PTY so isatty() is true, satisfying the A.1 interactive invariants.
@@ -15,7 +17,6 @@ real POSIX PTY so isatty() is true, satisfying the A.1 interactive invariants.
 
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -29,15 +30,15 @@ import pexpect
 
 HERE = Path(__file__).parent.resolve()
 SETTINGS = HERE / "settings.json"
-CC_BIN = os.environ.get("CC_BIN") or shutil.which("claude") or "/home/steve/.local/bin/claude"
+CC_BIN = os.environ.get("CC_BIN") or shutil.which("claude")
+if not CC_BIN:
+    sys.exit("ERROR: claude not found on PATH. Set CC_BIN env var or add claude to PATH.")
 CREDS_FILE = Path.home() / ".claude" / ".credentials.json"
 HOOK_PORT = 19876
 
 # Use the worktree itself as CWD — CC already trusts it, so no first-run
 # directory dialog will appear.
 WORKTREE_CWD = HERE.parent
-
-ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07|\r")
 
 # Env vars set by the outer CC session — strip so child CC starts clean.
 CHILD_ENV_STRIP = {
@@ -321,7 +322,7 @@ def run_interactive_hook_test() -> dict:
     if not wait_for_prompt(timeout=20):
         print("[interactive-test] no prompt detected, proceeding anyway", flush=True)
 
-    time.sleep(3)  # wait for SessionStart hook
+    time.sleep(3)  # wait for startup Notification hooks
     print(f"[interactive-test] hooks at startup: {sorted({e['event'] for e in get_hooks()})}", flush=True)
 
     # Send a tool-using command — uses Write tool which needs PermissionRequest
@@ -348,7 +349,6 @@ def run_interactive_hook_test() -> dict:
         print("[interactive-test] exit timeout — terminating", flush=True)
         child.terminate(force=True)
 
-    t_after = time.time()
     time.sleep(3)  # let SessionEnd fire
 
     events = get_hooks()
@@ -442,11 +442,7 @@ def run_resume_test() -> dict:
     except (pexpect.TIMEOUT, pexpect.EOF):
         print("[resume-test] no prompt — proceeding", flush=True)
 
-    time.sleep(4)  # wait for SessionStart hook
-
-    # Capture SessionStart from hook
-    resume_hooks = get_hooks()
-    session_start = next((e for e in resume_hooks if e["event"] == "SessionStart"), None)
+    time.sleep(4)  # wait for initial hooks from resumed session
 
     child2.send("/exit\r")
     try:
@@ -669,7 +665,7 @@ def main() -> int:
     # 3. Resume test
     print("\n[3/4] Continue-in-place resume test...", flush=True)
     resume = run_resume_test()
-    print(f"  pass={resume.get('pass')}, same_id={resume.get('same_session_id')}, source={resume.get('resumed_source')}", flush=True)
+    print(f"  pass={resume.get('pass')}, same_id={resume.get('same_session_id')}, same_transcript={resume.get('same_transcript')}", flush=True)
 
     out = write_results(cc_ver, billing, print_hooks, interactive_hooks, resume)
 
