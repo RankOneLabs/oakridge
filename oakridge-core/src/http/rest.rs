@@ -487,12 +487,19 @@ pub async fn post_stage_instance_status(
             // Remove only after the transition persisted successfully so a
             // transient DB error doesn't drop the context and strand the stage.
             state.live_delegated.lock().unwrap().remove(&sid);
+            tracing::debug!(
+                stage_instance_id = %id,
+                kbbl_sid = ?body.sid,
+                status = %body.status,
+                "delegated stage reached terminal status via kbbl callback"
+            );
             (StatusCode::OK, Json(json!({}))).into_response()
         }
         Err(e) => {
             tracing::error!(
                 error = %e,
                 stage_instance_id = %id,
+                kbbl_sid = ?body.sid,
                 "failed to set terminal status from kbbl callback"
             );
             (

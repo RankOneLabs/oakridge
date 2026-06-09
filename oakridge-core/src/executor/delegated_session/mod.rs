@@ -109,21 +109,33 @@ impl StageHandle for DelegatedSessionHandle {
     }
 
     async fn cancel(&self) -> anyhow::Result<()> {
-        // Best-effort: tell kbbl to stop the remote session. kbbl DELETE /sessions/:sid
-        // exists; we call it here and log on failure rather than propagating the error
-        // because the orchestrator may already be tearing down and the remote agent will
-        // eventually be cleaned up by kbbl's own session lifecycle.
+        // Best-effort: tell kbbl to stop the remote session. Log on all failure
+        // modes (transport error or non-2xx) without propagating — the orchestrator
+        // may already be tearing down and kbbl handles orphaned sessions via its
+        // own session lifecycle.
         let delete_url = format!(
             "{}/sessions/{}",
             self.execution_service_url.trim_end_matches('/'),
             self.kbbl_sid,
         );
-        if let Err(e) = self.client.delete(&delete_url).send().await {
-            tracing::warn!(
+        match self
+            .client
+            .delete(&delete_url)
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await
+        {
+            Err(e) => tracing::warn!(
                 error = %e,
                 kbbl_sid = %self.kbbl_sid,
                 "failed to cancel kbbl session; it will be orphaned until kbbl cleans it up"
-            );
+            ),
+            Ok(resp) if !resp.status().is_success() => tracing::warn!(
+                status = %resp.status(),
+                kbbl_sid = %self.kbbl_sid,
+                "kbbl DELETE /sessions returned non-2xx; remote session may still be running"
+            ),
+            Ok(_) => {}
         }
         self.live_ctxs.lock().unwrap().remove(&self.stage_instance_id);
         Ok(())
@@ -187,6 +199,25 @@ impl StageType for DelegatedSession {
         let sid = ctx.stage_instance_id;
         let config: DelegatedSessionConfig = serde_json::from_value(ctx.config.clone())?;
 
+        // Idempotency guard: Coordinator::recover() re-calls execute() for every
+        // non-terminal stage on restart. If a prior execute() already persisted the
+        // kbbl sid in external_ref, reuse that session instead of spawning a new one.
+        if let Some(existing_sid) = ctx.get_external_ref().await? {
+            tracing::info!(
+                stage_instance_id = %sid.0,
+                kbbl_sid = %existing_sid,
+                "delegated_session: reusing existing kbbl session (crash-recovery path)"
+            );
+            self.live_ctxs.lock().unwrap().insert(sid, ctx.clone());
+            return Ok(Box::new(DelegatedSessionHandle {
+                stage_instance_id: sid,
+                kbbl_sid: existing_sid,
+                execution_service_url: config.execution_service_url.clone(),
+                client: self.client.clone(),
+                live_ctxs: self.live_ctxs.clone(),
+            }));
+        }
+
         let sid_str = sid.0.to_string();
         let body = serde_json::json!({
             "backend": config.backend,
@@ -233,11 +264,41 @@ impl StageType for DelegatedSession {
             .map_err(|e| anyhow::anyhow!("failed to parse POST /sessions response: {}", e))?;
         let kbbl_sid = resp_body.sid;
 
-        ctx.set_external_ref(Some(&kbbl_sid)).await?;
+        // Build the cleanup URL once; reused on both error paths below.
+        let delete_url = format!(
+            "{}/sessions/{}",
+            config.execution_service_url.trim_end_matches('/'),
+            &kbbl_sid
+        );
+
+        if let Err(e) = ctx.set_external_ref(Some(&kbbl_sid)).await {
+            // Best-effort: cancel the newly created kbbl session so it doesn't leak.
+            if let Err(ce) = self
+                .client
+                .delete(&delete_url)
+                .timeout(std::time::Duration::from_secs(10))
+                .send()
+                .await
+            {
+                tracing::warn!(error = %ce, kbbl_sid = %kbbl_sid, "best-effort cancel failed after set_external_ref error");
+            }
+            return Err(e);
+        }
+
         self.live_ctxs.lock().unwrap().insert(sid, ctx.clone());
 
         if let Err(e) = ctx.set_status(StageStatus::Running, None).await {
             self.live_ctxs.lock().unwrap().remove(&sid);
+            // Best-effort: cancel the newly created kbbl session so it doesn't leak.
+            if let Err(ce) = self
+                .client
+                .delete(&delete_url)
+                .timeout(std::time::Duration::from_secs(10))
+                .send()
+                .await
+            {
+                tracing::warn!(error = %ce, kbbl_sid = %kbbl_sid, "best-effort cancel failed after set_status error");
+            }
             return Err(e);
         }
 

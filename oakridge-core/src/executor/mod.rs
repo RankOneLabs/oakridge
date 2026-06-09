@@ -346,6 +346,15 @@ impl StageContext {
             .await?;
         Ok(())
     }
+
+    /// Read the persisted external service reference for this stage instance,
+    /// or `None` if none has been set. Used by delegated_session to detect a
+    /// prior execute() call and reuse the existing kbbl session on recovery.
+    pub async fn get_external_ref(&self) -> anyhow::Result<Option<String>> {
+        let si =
+            queries::get_stage_instance_by_id(&self.db, &self.stage_instance_id).await?;
+        Ok(si.external_ref)
+    }
 }
 
 // ── StageHandle ───────────────────────────────────────────────────────────────
