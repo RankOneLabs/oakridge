@@ -13,6 +13,7 @@ use tower_http::trace::TraceLayer;
 pub use crate::config::Config;
 use crate::db;
 use crate::events::EventBus;
+use crate::executor::delegated_session::{DelegatedSession, LiveContexts};
 use crate::executor::session_agent::{SessionAgent, SpawnConfig};
 use crate::registry::{ArtifactTypeRegistry, StageTypeRegistry};
 use crate::scheduler::Coordinator;
@@ -24,6 +25,9 @@ pub struct AppState {
     pub artifact_registry: Arc<ArtifactTypeRegistry>,
     pub coordinator: Arc<Coordinator>,
     pub bus: Arc<EventBus>,
+    /// Shared with DelegatedSession executors; populated in execute(), consumed
+    /// by the /stage_instances/:id/artifacts and /stage_instances/:id/status callbacks.
+    pub live_delegated: LiveContexts,
 }
 
 /// Register built-in stage and artifact types.
@@ -80,6 +84,21 @@ where
     let mut artifact_reg = ArtifactTypeRegistry::new();
     register_fn(&mut stage_reg, &mut artifact_reg);
 
+    // Always register delegated_session; shares its live_ctxs with AppState so
+    // the /stage_instances/:id/artifacts and /stage_instances/:id/status callback
+    // handlers can reach the running StageContext without executor-specific routes.
+    let live_delegated: LiveContexts =
+        Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+    let delegated_prompts_dir = std::env::var("OAKRIDGE_PROMPTS_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("./prompts"));
+    let delegated = Arc::new(DelegatedSession {
+        prompts_dir: delegated_prompts_dir,
+        live_ctxs: live_delegated.clone(),
+        client: reqwest::Client::new(),
+    });
+    stage_reg.register(delegated);
+
     let bus = EventBus::new();
     let stage_reg = Arc::new(stage_reg);
     let artifact_reg = Arc::new(artifact_reg);
@@ -97,6 +116,7 @@ where
         artifact_registry: artifact_reg,
         coordinator: coordinator.clone(),
         bus,
+        live_delegated,
     };
 
     let static_fallback =
@@ -148,6 +168,14 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/stage_instances/:id/resume",
             post(rest::resume_stage_instance),
+        )
+        .route(
+            "/stage_instances/:id/artifacts",
+            post(rest::post_stage_instance_artifacts),
+        )
+        .route(
+            "/stage_instances/:id/status",
+            post(rest::post_stage_instance_status),
         )
         .route("/artifacts/:id", get(rest::get_artifact))
         .route("/parked", get(rest::list_parked))

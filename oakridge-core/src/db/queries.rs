@@ -516,6 +516,30 @@ pub async fn set_stage_instance_parked_meta(
     Ok(())
 }
 
+pub async fn set_stage_instance_external_ref(
+    pool: &SqlitePool,
+    id: &StageInstanceId,
+    external_ref: Option<&str>,
+) -> crate::Result<()> {
+    let id_str = id.0.to_string();
+    let updated_at = Utc::now().to_rfc3339();
+    let result = sqlx::query!(
+        "UPDATE stage_instance SET external_ref = ?, updated_at = ? WHERE id = ?",
+        external_ref,
+        updated_at,
+        id_str,
+    )
+    .execute(pool)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(crate::Error::NotFound {
+            entity: "stage_instance".into(),
+            id: id_str,
+        });
+    }
+    Ok(())
+}
+
 pub async fn update_stage_instance_status_if_current_status(
     pool: &SqlitePool,
     id: &StageInstanceId,

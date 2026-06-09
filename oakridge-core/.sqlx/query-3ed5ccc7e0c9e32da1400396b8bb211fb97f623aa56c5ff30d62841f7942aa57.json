@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE stage_instance SET external_ref = ?, updated_at = ? WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "3ed5ccc7e0c9e32da1400396b8bb211fb97f623aa56c5ff30d62841f7942aa57"
+}

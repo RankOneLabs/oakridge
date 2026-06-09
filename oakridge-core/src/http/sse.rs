@@ -445,7 +445,14 @@ mod tests {
             bus.clone(),
         ));
 
-        AppState { pool, stage_registry, artifact_registry, coordinator, bus }
+        AppState {
+            pool,
+            stage_registry,
+            artifact_registry,
+            coordinator,
+            bus,
+            live_delegated: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        }
     }
 
     #[tokio::test]

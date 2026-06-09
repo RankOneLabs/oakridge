@@ -11,11 +11,11 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 use crate::db::queries;
-use crate::executor::ResumePayload;
+use crate::executor::{EmitArgs, ResumePayload};
 use crate::scheduler::DecisionError;
 use crate::types::{
-    Artifact, ArtifactId, Project, ProjectId, RunStatus, StageInstance,
-    StageInstanceId, WorkflowDef, WorkflowDefId, WorkflowGraph, WorkflowRun,
+    Artifact, ArtifactId, OutputSlot, Project, ProjectId, RunStatus, StageInstance,
+    StageInstanceId, StageStatus, WorkflowDef, WorkflowDefId, WorkflowGraph, WorkflowRun,
     WorkflowRunId,
 };
 
@@ -353,6 +353,164 @@ pub async fn resume_stage_instance(
     Ok((StatusCode::ACCEPTED, Json(updated)))
 }
 
+// ── Delegated-session inbound callbacks ───────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct EmitArtifactBody {
+    pub output_name: String,
+    pub body: Value,
+}
+
+/// Receive an artifact emitted by a kbbl-delegated session (C.2a).
+///
+/// kbbl calls this when the running agent produces an output. The handler
+/// resolves the artifact type from the stage's output slots, validates, persists
+/// via ctx.emit, and routes the event to downstream stages.
+pub async fn post_stage_instance_artifacts(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<EmitArtifactBody>,
+) -> impl IntoResponse {
+    let sid = StageInstanceId(id);
+    let ctx = state.live_delegated.lock().unwrap().get(&sid).cloned();
+    let ctx = match ctx {
+        Some(c) => c,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "no live delegated stage for this id"})),
+            )
+                .into_response();
+        }
+    };
+
+    let output_slots: Vec<OutputSlot> =
+        match serde_json::from_value(ctx.config["output_slots"].clone()) {
+            Ok(slots) => slots,
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    stage_instance_id = %id,
+                    "output_slots config is corrupt"
+                );
+                return AppError::Internal("output_slots config is corrupt".into())
+                    .into_response();
+            }
+        };
+
+    let slot = match output_slots.iter().find(|s| s.name == body.output_name) {
+        Some(s) => s.clone(),
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": format!("unknown output slot: {}", body.output_name)})),
+            )
+                .into_response();
+        }
+    };
+
+    match ctx
+        .emit(EmitArgs {
+            output_name: body.output_name,
+            artifact_type: slot.artifact_type,
+            body: body.body,
+            label: None,
+            parent_artifact_id: None,
+        })
+        .await
+    {
+        Ok(artifact) => (
+            StatusCode::OK,
+            Json(json!({"artifact_id": artifact.id.0.to_string()})),
+        )
+            .into_response(),
+        Err(e) => AppError::from(e).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct TerminalStatusBody {
+    pub status: String,
+    /// kbbl session ID (informational; echoed back by kbbl, not used for routing).
+    pub sid: Option<String>,
+    /// Stage instance ID claimed by kbbl; validated against the :id path param.
+    pub stage_instance_id: Option<String>,
+}
+
+/// Receive the terminal status of a kbbl-delegated session (C.2b).
+///
+/// kbbl calls this when the session ends. The handler transitions the stage to
+/// Done or Failed and removes it from the live map so subsequent callbacks 404.
+pub async fn post_stage_instance_status(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<TerminalStatusBody>,
+) -> impl IntoResponse {
+    let sid = StageInstanceId(id);
+
+    if let Some(ref claimed) = body.stage_instance_id {
+        if claimed != &id.to_string() {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "stage_instance_id mismatch"})),
+            )
+                .into_response();
+        }
+    }
+
+    let stage_status = match body.status.as_str() {
+        "done" => StageStatus::Done,
+        "failed" => StageStatus::Failed,
+        other => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": format!("invalid status: {}", other)})),
+            )
+                .into_response();
+        }
+    };
+
+    let ctx = state.live_delegated.lock().unwrap().get(&sid).cloned();
+    let ctx = match ctx {
+        Some(c) => c,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "no live delegated stage for this id"})),
+            )
+                .into_response();
+        }
+    };
+
+    match ctx.set_status(stage_status, None).await {
+        Ok(_) => {
+            // Remove only after the transition persisted successfully so a
+            // transient DB error doesn't drop the context and strand the stage.
+            state.live_delegated.lock().unwrap().remove(&sid);
+            tracing::debug!(
+                stage_instance_id = %id,
+                kbbl_sid = ?body.sid,
+                status = %body.status,
+                "delegated stage reached terminal status via kbbl callback"
+            );
+            (StatusCode::OK, Json(json!({}))).into_response()
+        }
+        Err(e) => {
+            tracing::error!(
+                error = %e,
+                stage_instance_id = %id,
+                kbbl_sid = ?body.sid,
+                "failed to set terminal status from kbbl callback"
+            );
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal error"})),
+            )
+                .into_response()
+        }
+    }
+}
+
 // ── Parked handler ────────────────────────────────────────────────────────────
 
 pub async fn list_parked(
@@ -517,7 +675,14 @@ mod tests {
             bus.clone(),
         ));
 
-        AppState { pool, stage_registry, artifact_registry, coordinator, bus }
+        AppState {
+            pool,
+            stage_registry,
+            artifact_registry,
+            coordinator,
+            bus,
+            live_delegated: Arc::new(std::sync::Mutex::new(HashMap::new())),
+        }
     }
 
     async fn make_state(
@@ -1115,5 +1280,199 @@ mod tests {
         let (status, body) = req(app, "POST", "/workflow_defs", Some(payload)).await;
         assert_eq!(status, StatusCode::CONFLICT);
         assert!(body["error"].as_str().is_some(), "error field must be present");
+    }
+
+    // ── Delegated-session callback handler tests ───────────────────────────────
+
+    #[tokio::test]
+    async fn callback_artifacts_404_for_unknown_stage() {
+        let state = make_state(vec![]).await;
+        let app = crate::http::router(state);
+        let unknown = Uuid::new_v4();
+        let (status, body) = req(
+            app,
+            "POST",
+            &format!("/stage_instances/{}/artifacts", unknown),
+            Some(json!({"output_name": "out", "body": "hello"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(body["error"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn callback_status_invalid_string_returns_400() {
+        let state = make_state(vec![]).await;
+        let app = crate::http::router(state);
+        let unknown = Uuid::new_v4();
+        let (status, body) = req(
+            app,
+            "POST",
+            &format!("/stage_instances/{}/status", unknown),
+            Some(json!({"status": "cancelled"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body["error"].as_str().unwrap().contains("invalid status"));
+    }
+
+    #[tokio::test]
+    async fn callback_status_stage_instance_id_mismatch_returns_400() {
+        let state = make_state(vec![]).await;
+        let app = crate::http::router(state);
+        let path_id = Uuid::new_v4();
+        let other_id = Uuid::new_v4();
+        let (status, body) = req(
+            app,
+            "POST",
+            &format!("/stage_instances/{}/status", path_id),
+            Some(json!({"status": "done", "stage_instance_id": other_id.to_string()})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body["error"].as_str().unwrap().contains("mismatch"));
+    }
+
+    // Helper: launch a scripted stage with a named type and return a live ctx
+    // inserted into state.live_delegated. Returns (state, si_id, ctx).
+    //
+    // `outputs` is both the graph-level outputs list AND the `output_slots` value
+    // embedded in the stage config — ScriptedStage returns def_config verbatim,
+    // so the callback handler can find `ctx.config["output_slots"]`.
+    async fn launch_scripted_delegated(
+        type_id: &'static str,
+        outputs: Value,
+    ) -> (
+        AppState,
+        crate::types::StageInstanceId,
+        StageContext,
+    ) {
+        let (scripted_stage, mut ctx_rx) = scripted(type_id);
+        let state =
+            make_state(vec![scripted_stage as Arc<dyn crate::registry::stage_type::StageType>])
+                .await;
+
+        let app = crate::http::router(state.clone());
+        let (_, def) = req(
+            app,
+            "POST",
+            "/workflow_defs",
+            Some(json!({
+                "name": type_id,
+                "version": 1,
+                "graph": {
+                    "stages": {
+                        "s": {
+                            "stage_type": type_id,
+                            // embed output_slots in def_config so ScriptedStage
+                            // returns {"output_slots": [...]} as ctx.config
+                            "config": {"output_slots": outputs},
+                            "inputs": [],
+                            "outputs": outputs
+                        }
+                    },
+                    "edges": []
+                }
+            })),
+        )
+        .await;
+        let def_id = def["id"].as_str().unwrap().to_string();
+
+        let app = crate::http::router(state.clone());
+        req(
+            app,
+            "POST",
+            "/workflow_runs",
+            Some(json!({"workflow_def_id": def_id})),
+        )
+        .await;
+
+        let (ctx, _resume_rx) =
+            tokio::time::timeout(Duration::from_secs(5), ctx_rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        ctx.set_status(StageStatus::Running, None).await.unwrap();
+
+        let si_id = ctx.stage_instance_id;
+        state.live_delegated.lock().unwrap().insert(si_id, ctx.clone());
+        (state, si_id, ctx)
+    }
+
+    #[tokio::test]
+    async fn callback_artifacts_unknown_output_name_returns_400() {
+        let (state, si_id, _ctx) = launch_scripted_delegated(
+            "ds_stub_a",
+            json!([{"name": "result", "artifact_type": "any"}]),
+        )
+        .await;
+
+        let app = crate::http::router(state);
+        let (status, body) = req(
+            app,
+            "POST",
+            &format!("/stage_instances/{}/artifacts", si_id.0),
+            Some(json!({"output_name": "no_such_slot", "body": "hello"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body["error"].as_str().unwrap().contains("unknown output slot"));
+    }
+
+    #[tokio::test]
+    async fn callback_status_removes_from_live_map_on_success() {
+        let (state, si_id, _ctx) =
+            launch_scripted_delegated("ds_stub_b", json!([])).await;
+
+        assert_eq!(
+            state.live_delegated.lock().unwrap().len(),
+            1,
+            "ctx must be in live map before callback"
+        );
+
+        let app = crate::http::router(state.clone());
+        let (status, _) = req(
+            app,
+            "POST",
+            &format!("/stage_instances/{}/status", si_id.0),
+            Some(json!({"status": "done"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        assert!(
+            state.live_delegated.lock().unwrap().is_empty(),
+            "live map must be empty after terminal status callback"
+        );
+    }
+
+    #[tokio::test]
+    async fn callback_artifacts_emit_routes_through_ctx() {
+        let (state, si_id, _ctx) = launch_scripted_delegated(
+            "ds_stub_c",
+            json!([{"name": "out", "artifact_type": "any"}]),
+        )
+        .await;
+        let pool = state.pool.clone();
+        let run_id = {
+            let map = state.live_delegated.lock().unwrap();
+            map[&si_id].workflow_run_id
+        };
+
+        let app = crate::http::router(state);
+        let (status, body) = req(
+            app,
+            "POST",
+            &format!("/stage_instances/{}/artifacts", si_id.0),
+            Some(json!({"output_name": "out", "body": {"value": 42}})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "emit body: {body}");
+        assert!(body["artifact_id"].as_str().is_some(), "response must contain artifact_id");
+
+        // Artifact must be persisted in the DB
+        let artifacts = queries::list_artifacts_for_run(&pool, &run_id, None).await.unwrap();
+        assert_eq!(artifacts.len(), 1, "artifact must be persisted");
+        assert_eq!(artifacts[0].output_name.as_deref(), Some("out"));
     }
 }
