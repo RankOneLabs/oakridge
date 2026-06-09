@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 
 import type { Decision, Session } from "../../core/session/session";
 import type { SessionManager } from "../../core/session/session-manager";
+import { notifyApprovalNeeded } from "../../core/server/callbacks";
 
 /**
  * CC native http hook payloads.
@@ -124,6 +125,10 @@ export function hookPermissionHandler(deps: HookHandlerDeps) {
       resolve: resolveDecision!,
       toolName: hook.tool_name ?? "",
     });
+    const delegatedCb = deps.manager.getDelegatedCallback(session.oakridgeSid);
+    if (delegatedCb) {
+      notifyApprovalNeeded(delegatedCb, requestId, hook.tool_name ?? "", session.oakridgeSid);
+    }
     signal.addEventListener(
       "abort",
       () => rejectDecision!(new Error("gate_aborted")),
