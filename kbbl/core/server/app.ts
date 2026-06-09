@@ -189,7 +189,7 @@ export function createApp(deps: CreateAppDeps): Hono {
   });
 
   // ---- sessions CRUD ----
-  mountSessionsRoutes(app, { manager, defaultWorkdir, sessionsDir, registry });
+  mountSessionsRoutes(app, { manager, defaultWorkdir, registry });
 
   // ---- local directory browser ----
   mountDirectoriesRoutes(app, { defaultWorkdir });
