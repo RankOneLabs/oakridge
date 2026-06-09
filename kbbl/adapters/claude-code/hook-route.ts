@@ -168,12 +168,19 @@ export function hookPermissionHandler(deps: HookHandlerDeps) {
               }`,
             );
           });
-        return c.json({ error: "gate aborted" }, 408);
+      } else {
+        console.error(
+          `kbbl: /hook/permission failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
-      console.error(
-        `kbbl: /hook/permission failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      return c.json({ error: "internal error" }, 500);
+      // Return an explicit deny so CC receives a decision rather than a hook
+      // failure (which may stall the agent). Diagnostics are in logs/events.
+      return c.json({
+        hookSpecificOutput: {
+          hookEventName: "PermissionRequest",
+          decision: { behavior: "deny" },
+        },
+      });
     }
   };
 }
