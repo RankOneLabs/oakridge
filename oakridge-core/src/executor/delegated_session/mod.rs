@@ -91,8 +91,46 @@ impl StageHandle for DelegatedSessionHandle {
                 // kbbl owns feedback injection; nothing to do here.
                 Ok(())
             }
-            ResumePayload::Executor { .. } => {
-                // Operator resolved a pending approval. Clear park state.
+            ResumePayload::Executor { payload } => {
+                // Forward the approval decision to kbbl so the CC/Codex hook
+                // handler can unblock. Best-effort: log failures but don't
+                // propagate — the substrate has already accepted the decision.
+                let request_id = payload
+                    .get("request_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let approved = payload
+                    .get("decision")
+                    .and_then(|d| d.get("approved"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let approval_url = format!(
+                    "{}/{}/approval",
+                    self.execution_service_url.trim_end_matches('/'),
+                    self.kbbl_sid,
+                );
+                let approval_body = serde_json::json!({
+                    "request_id": request_id,
+                    "decision": if approved { "approve" } else { "deny" },
+                    "scope": "once",
+                });
+                if let Err(e) = self
+                    .client
+                    .post(&approval_url)
+                    .timeout(std::time::Duration::from_secs(10))
+                    .json(&approval_body)
+                    .send()
+                    .await
+                {
+                    tracing::warn!(
+                        error = %e,
+                        kbbl_sid = %self.kbbl_sid,
+                        "failed to forward approval decision to kbbl"
+                    );
+                }
+
+                // Clear park state.
                 let ctx = self
                     .live_ctxs
                     .lock()

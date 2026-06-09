@@ -177,6 +177,10 @@ pub fn router(state: AppState) -> Router {
             "/stage_instances/:id/status",
             post(rest::post_stage_instance_status),
         )
+        .route(
+            "/stages/:id/approvals",
+            post(rest::post_stage_approvals),
+        )
         .route("/artifacts/:id", get(rest::get_artifact))
         .route("/parked", get(rest::list_parked))
         .merge(sse::sse_routes());
