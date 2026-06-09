@@ -283,12 +283,25 @@ impl StageContext {
         let current =
             queries::get_stage_instance_by_id(&self.db, &self.stage_instance_id).await?;
 
-        let started_at =
-            if matches!(status, StageStatus::Running) && current.started_at.is_none() {
-                Some(now)
-            } else {
-                current.started_at
-            };
+        // Fix 3: don't overwrite a terminal status with Running. This handles the race
+        // where kbbl reports Done/Failed via callback before execute() completes its
+        // initial Running transition.
+        let current_is_terminal =
+            matches!(current.status, StageStatus::Done | StageStatus::Failed);
+        if matches!(status, StageStatus::Running) && current_is_terminal {
+            return Ok(());
+        }
+
+        let started_at = if matches!(status, StageStatus::Running) && current.started_at.is_none()
+        {
+            Some(now)
+        } else if is_terminal && current.started_at.is_none() {
+            // Fast terminal: kbbl completed before execute() set Running; seed started_at
+            // so the stage doesn't appear to have completed without ever starting.
+            Some(now)
+        } else {
+            current.started_at
+        };
 
         // Preserve the original completion time: a repeat terminal transition must
         // not clobber the ended_at recorded by the first one.
