@@ -228,7 +228,7 @@ impl StageType for DelegatedSession {
             "yolo": config.yolo,
             "output_slots": config.output_slots,
             "callback": {
-                "base_url": config.callback_base_url.trim_end_matches('/').trim(),
+                "base_url": config.callback_base_url.trim().trim_end_matches('/').trim(),
                 "stage_instance_id": sid_str,
                 "emit_path": format!("/stage_instances/{}/artifacts", sid_str),
                 "status_path": format!("/stage_instances/{}/status", sid_str)
