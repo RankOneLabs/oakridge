@@ -100,6 +100,11 @@ impl StageHandle for DelegatedSessionHandle {
     }
 
     async fn cancel(&self) -> anyhow::Result<()> {
+        // TODO: call kbbl DELETE /sessions/:kbbl_sid to stop the remote agent.
+        // Requires storing the kbbl session ID from the POST /sessions response
+        // and a cancellation endpoint on the kbbl side (neither in scope yet).
+        // Until then, we evict the context so callback handlers 404; the agent
+        // may continue running until kbbl detects the orphaned session.
         self.live_ctxs.lock().unwrap().remove(&self.stage_instance_id);
         Ok(())
     }
@@ -186,6 +191,7 @@ impl StageType for DelegatedSession {
         let response = self
             .client
             .post(&sessions_url)
+            .timeout(std::time::Duration::from_secs(30))
             .json(&body)
             .send()
             .await

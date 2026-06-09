@@ -413,11 +413,7 @@ pub async fn post_stage_instance_artifacts(
             Json(json!({"artifact_id": artifact.id.0.to_string()})),
         )
             .into_response(),
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": e.to_string()})),
-        )
-            .into_response(),
+        Err(e) => AppError::from(e).into_response(),
     }
 }
 
@@ -449,7 +445,7 @@ pub async fn post_stage_instance_status(
         }
     };
 
-    let ctx = state.live_delegated.lock().unwrap().remove(&sid);
+    let ctx = state.live_delegated.lock().unwrap().get(&sid).cloned();
     let ctx = match ctx {
         Some(c) => c,
         None => {
@@ -462,7 +458,12 @@ pub async fn post_stage_instance_status(
     };
 
     match ctx.set_status(stage_status, None).await {
-        Ok(_) => (StatusCode::OK, Json(json!({}))).into_response(),
+        Ok(_) => {
+            // Remove only after the transition persisted successfully so a
+            // transient DB error doesn't drop the context and strand the stage.
+            state.live_delegated.lock().unwrap().remove(&sid);
+            (StatusCode::OK, Json(json!({}))).into_response()
+        }
         Err(e) => {
             tracing::error!(
                 error = %e,
