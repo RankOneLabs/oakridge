@@ -20,14 +20,16 @@ Verdict: **PASS**
 - `credentials.subscriptionType`: `"max"`
 - `ANTHROPIC_API_KEY` in env: `false`
 
-**Interactive PTY sessions** use Max subscription usage limits. **`--print` (`claude -p`) sessions draw from a separate monthly Agent SDK credit** ($200/mo on Max); once that pool is exhausted, charges fall through to pay-as-you-go API rates.
+Currently (pre-split) both modes bill to Max subscription usage limits. After the billing split takes effect, routing diverges by invocation mode — same OAuth credentials, different billing pools server-side:
 
-This split is already in effect (confirmed via Anthropic Help Center: "Use the Claude Agent SDK with your Claude plan"). The billing signal is the invocation mode, not the auth method — both modes use the same OAuth credentials, but CC routes them to different billing pools server-side.
+- **Interactive PTY sessions** → Max subscription usage limits (unchanged)
+- **`--print` / `claude -p`** → monthly Agent SDK credit ($200/mo on Max); pay-as-you-go API rates once that pool is exhausted
 
-Billing PASS is specifically for **interactive PTY sessions only**. The `--print` sessions run during Phase 0 testing (resume seed session, SessionStart probe) consumed Agent SDK credit, not subscription limits. In execution_v2, all sessions must be interactive PTY so they draw only from subscription usage limits.
+Billing policy confirmed via Anthropic Help Center ("Use the Claude Agent SDK with your Claude plan"). The split is forward-dated; `--print` sessions run during Phase 0 testing currently still draw from subscription limits.
 
-> Console meter delta not checked (Console not accessible from build agent). Billing routing
-> confirmed via Anthropic's published policy, not empirical meter observation.
+Billing PASS is specifically for **interactive PTY sessions**, which remain on subscription limits both before and after the split. execution_v2 avoids `--print` so all sessions stay on subscription limits post-split.
+
+> Console meter delta not checked (Console not accessible from build agent).
 
 ---
 
