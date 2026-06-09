@@ -337,6 +337,15 @@ impl StageContext {
         queries::set_stage_instance_parked_meta(&self.db, &self.stage_instance_id, meta).await?;
         Ok(())
     }
+
+    /// Persist an opaque external service reference (e.g. a kbbl session `sid`)
+    /// on this stage instance. Stored in `stage_instance.external_ref` so it
+    /// survives restarts and is accessible to crash-recovery and cancel paths.
+    pub async fn set_external_ref(&self, external_ref: Option<&str>) -> anyhow::Result<()> {
+        queries::set_stage_instance_external_ref(&self.db, &self.stage_instance_id, external_ref)
+            .await?;
+        Ok(())
+    }
 }
 
 // ── StageHandle ───────────────────────────────────────────────────────────────

@@ -58,6 +58,12 @@ pub type LiveContexts = Arc<Mutex<HashMap<StageInstanceId, StageContext>>>;
 
 // ── DelegatedSession (StageType) ──────────────────────────────────────────────
 
+/// Shape of the 201 response from kbbl POST /sessions.
+#[derive(Deserialize)]
+struct SessionsResponse {
+    sid: String,
+}
+
 pub struct DelegatedSession {
     pub prompts_dir: PathBuf,
     pub live_ctxs: LiveContexts,
@@ -68,6 +74,9 @@ pub struct DelegatedSession {
 
 struct DelegatedSessionHandle {
     stage_instance_id: StageInstanceId,
+    kbbl_sid: String,
+    execution_service_url: String,
+    client: reqwest::Client,
     live_ctxs: LiveContexts,
 }
 
@@ -100,11 +109,22 @@ impl StageHandle for DelegatedSessionHandle {
     }
 
     async fn cancel(&self) -> anyhow::Result<()> {
-        // TODO: call kbbl DELETE /sessions/:kbbl_sid to stop the remote agent.
-        // Requires storing the kbbl session ID from the POST /sessions response
-        // and a cancellation endpoint on the kbbl side (neither in scope yet).
-        // Until then, we evict the context so callback handlers 404; the agent
-        // may continue running until kbbl detects the orphaned session.
+        // Best-effort: tell kbbl to stop the remote session. kbbl DELETE /sessions/:sid
+        // exists; we call it here and log on failure rather than propagating the error
+        // because the orchestrator may already be tearing down and the remote agent will
+        // eventually be cleaned up by kbbl's own session lifecycle.
+        let delete_url = format!(
+            "{}/sessions/{}",
+            self.execution_service_url.trim_end_matches('/'),
+            self.kbbl_sid,
+        );
+        if let Err(e) = self.client.delete(&delete_url).send().await {
+            tracing::warn!(
+                error = %e,
+                kbbl_sid = %self.kbbl_sid,
+                "failed to cancel kbbl session; it will be orphaned until kbbl cleans it up"
+            );
+        }
         self.live_ctxs.lock().unwrap().remove(&self.stage_instance_id);
         Ok(())
     }
@@ -207,6 +227,13 @@ impl StageType for DelegatedSession {
             ));
         }
 
+        let resp_body: SessionsResponse = response
+            .json()
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to parse POST /sessions response: {}", e))?;
+        let kbbl_sid = resp_body.sid;
+
+        ctx.set_external_ref(Some(&kbbl_sid)).await?;
         self.live_ctxs.lock().unwrap().insert(sid, ctx.clone());
 
         if let Err(e) = ctx.set_status(StageStatus::Running, None).await {
@@ -216,6 +243,9 @@ impl StageType for DelegatedSession {
 
         Ok(Box::new(DelegatedSessionHandle {
             stage_instance_id: sid,
+            kbbl_sid,
+            execution_service_url: config.execution_service_url.clone(),
+            client: self.client.clone(),
             live_ctxs: self.live_ctxs.clone(),
         }))
     }
