@@ -1,15 +1,14 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import { assertA1Invariants, makeBuildSpawnCmd, type BuildSpawnCmdContext } from "./spawn";
+import { assertA1Invariants, makeBuildSpawnCmd, writeCcSettings, type BuildSpawnCmdContext } from "./spawn";
 import type { Session } from "../../core/session/session";
 
 function makeCtx(): BuildSpawnCmdContext {
   return {
     claudeBin: "claude",
-    port: 3000,
     settingsPath: "/tmp/settings.json",
     mcpConfigPath: "/tmp/mcp-servers.json",
   };
@@ -155,5 +154,66 @@ describe("assertA1Invariants", () => {
         env: {},
       }),
     ).rejects.toThrow("A.1");
+  });
+});
+
+describe("writeCcSettings", () => {
+  let settingsDir: string;
+
+  beforeEach(() => {
+    settingsDir = mkdtempSync(join(tmpdir(), "cc-settings-test-"));
+  });
+
+  afterEach(() => {
+    rmSync(settingsDir, { recursive: true, force: true });
+  });
+
+  test("writes native http hooks for all 8 events with baked port URL", async () => {
+    const settingsPath = await writeCcSettings({ dataDir: settingsDir, port: 3456 });
+    const raw = JSON.parse(readFileSync(settingsPath, "utf8")) as {
+      hooks: Record<string, Array<{ matcher?: string; hooks: Array<{ type: string; url: string }> }>>;
+      permissions: { allow: string[] };
+    };
+    expect(raw.hooks.PermissionRequest?.[0]?.hooks?.[0]).toMatchObject({
+      type: "http",
+      url: "http://127.0.0.1:3456/hook/permission",
+      timeout: 3600,
+    });
+    expect(raw.hooks.PostToolUse?.[0]?.hooks?.[0]).toMatchObject({
+      type: "http",
+      url: "http://127.0.0.1:3456/hook/tool",
+    });
+    expect(raw.hooks.Stop?.[0]?.hooks?.[0]?.url).toBe("http://127.0.0.1:3456/hook/stop");
+    expect(raw.hooks.SessionStart?.[0]?.hooks?.[0]?.url).toBe("http://127.0.0.1:3456/hook/session-start");
+    expect(raw.hooks.SessionEnd?.[0]?.hooks?.[0]?.url).toBe("http://127.0.0.1:3456/hook/session-end");
+    expect(raw.hooks.Notification?.[0]?.hooks?.[0]?.url).toBe("http://127.0.0.1:3456/hook/notification");
+    expect(raw.hooks.SubagentStart?.[0]?.hooks?.[0]?.url).toBe("http://127.0.0.1:3456/hook/subagent-start");
+    expect(raw.hooks.SubagentStop?.[0]?.hooks?.[0]?.url).toBe("http://127.0.0.1:3456/hook/subagent-stop");
+    // All 8 hook event types present
+    expect(Object.keys(raw.hooks)).toHaveLength(8);
+  });
+
+  test("includes permissions.allow with Agent(*) and Task(*)", async () => {
+    const settingsPath = await writeCcSettings({ dataDir: settingsDir, port: 8788 });
+    const raw = JSON.parse(readFileSync(settingsPath, "utf8")) as {
+      permissions: { allow: string[] };
+    };
+    expect(raw.permissions.allow).toContain("Agent(*)");
+    expect(raw.permissions.allow).toContain("Task(*)");
+  });
+
+  test("no shell command hooks — no gate.sh reference", async () => {
+    const settingsPath = await writeCcSettings({ dataDir: settingsDir, port: 8788 });
+    const content = readFileSync(settingsPath, "utf8");
+    expect(content).not.toContain('"command"');
+    expect(content).not.toContain("gate.sh");
+    expect(content).not.toContain("PreToolUse");
+  });
+
+  test("port is baked into URL at write time", async () => {
+    const settingsPath = await writeCcSettings({ dataDir: settingsDir, port: 9999 });
+    const content = readFileSync(settingsPath, "utf8");
+    expect(content).toContain("9999");
+    expect(content).not.toContain("8788");
   });
 });

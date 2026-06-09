@@ -14,11 +14,6 @@ let tmpRoot: string;
 let dataDir: string;
 let sessionsDir: string;
 
-// Minimal gate.sh that always exits 0 (the adapter writes settings.json
-// referencing it, but tests don't actually spawn CC, so this only needs
-// to exist as a file path).
-const gatePath = "/bin/true";
-
 beforeEach(() => {
   tmpRoot = mkdtempSync(join(tmpdir(), "kbbl-cc-test-"));
   dataDir = join(tmpRoot, "data");
@@ -36,7 +31,6 @@ async function makeRuntime() {
     claudeBin: "claude",
     port: 8788,
     dataDir,
-    gatePath,
   });
 }
 

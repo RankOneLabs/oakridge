@@ -19,17 +19,25 @@ import { readJsonlOrEmpty } from "../../core/session/session";
 import { ALLOWED_MODELS } from "./models";
 
 import { classifyCcEvent } from "./event-classifier";
-import { hookApprovalHandler } from "./hook-route";
+import {
+  hookPermissionHandler,
+  hookPostToolUseHandler,
+  hookStopHandler,
+  hookSessionStartHandler,
+  hookSessionEndHandler,
+  hookNotificationHandler,
+  hookSubagentStartHandler,
+  hookSubagentStopHandler,
+  type HookHandlerDeps,
+} from "./hook-route";
 import { assertA1Invariants, makeBuildSpawnCmd, writeCcMcpConfig, writeCcSettings } from "./spawn";
 
 export interface CreateClaudeCodeRuntimeOpts {
   claudeBin: string;
-  /** Server's HTTP port — passed into the gate via KBBL_PORT env var. */
+  /** Server's HTTP port — baked into hook URLs in the generated settings.json. */
   port: number;
   /** Directory where the generated settings.json lives. */
   dataDir: string;
-  /** Absolute path to the PreToolUse gate script. */
-  gatePath: string;
 }
 
 /** CC-specific session handle backed by a bun-pty process. */
@@ -65,12 +73,11 @@ export async function createClaudeCodeRuntime(
 ): Promise<AgentRuntime & AppRuntime> {
   const settingsPath = await writeCcSettings({
     dataDir: opts.dataDir,
-    gatePath: opts.gatePath,
+    port: opts.port,
   });
   const mcpConfigPath = await writeCcMcpConfig({ dataDir: opts.dataDir });
   const buildSpawnCmdFn = makeBuildSpawnCmd({
     claudeBin: opts.claudeBin,
-    port: opts.port,
     settingsPath,
     mcpConfigPath,
   });
@@ -92,6 +99,7 @@ export async function createClaudeCodeRuntime(
       ccSidToOakridgeSid.delete(ccSid);
     }
     oakridgeSidToSession.delete(session.oakridgeSid);
+    subagentCounts.delete(session.oakridgeSid);
   }
 
   function lookupByCcSid(ccSid: string): Session | undefined {
@@ -101,6 +109,10 @@ export async function createClaudeCodeRuntime(
 
   // === in-flight process map ===
   const procs = new Map<string, CcHandle>();
+
+  // === billing observability (A.7) ===
+  // Cumulative SubagentStop count per oakridgeSid for this server lifetime.
+  const subagentCounts = new Map<string, number>();
 
   // === AgentRuntime implementation ===
 
@@ -122,7 +134,6 @@ export async function createClaudeCodeRuntime(
 
       const spawnEnv: Record<string, string | undefined> = {
         ...process.env,
-        KBBL_PORT: String(opts.port),
       };
 
       // Build interactive argv (no --print / stream-json).
@@ -233,7 +244,13 @@ export async function createClaudeCodeRuntime(
     async send(handle: SessionHandle, input: string): Promise<void> {
       const h = procs.get(handle.sessionId);
       if (!h) throw new Error(`no proc for session ${handle.sessionId}`);
-      h.pty.write(input.endsWith("\n") ? input : input + "\n");
+      // Bracketed paste for multiline prevents embedded \n from triggering
+      // premature submission; single-line gets a bare CR (terminal Enter).
+      if (input.includes("\n")) {
+        h.pty.write(`\x1b[200~${input}\x1b[201~\r`);
+      } else {
+        h.pty.write(`${input}\r`);
+      }
     },
 
     // --- AgentRuntime.resolveResumeRef ---
@@ -402,13 +419,19 @@ export async function createClaudeCodeRuntime(
       (deps.manager as { getByCcSid: (ccSid: string) => Session | undefined }).getByCcSid =
         (ccSid: string) => origGet(ccSid) ?? lookupByCcSid(ccSid);
 
-      app.post(
-        "/hook/approval",
-        hookApprovalHandler({
-          manager: deps.manager,
-          getBunServer: deps.getBunServer,
-        }),
-      );
+      const hookDeps: HookHandlerDeps = {
+        manager: deps.manager,
+        getBunServer: deps.getBunServer,
+        subagentCounts,
+      };
+      app.post("/hook/permission", hookPermissionHandler(hookDeps));
+      app.post("/hook/tool", hookPostToolUseHandler(hookDeps));
+      app.post("/hook/stop", hookStopHandler(hookDeps));
+      app.post("/hook/session-start", hookSessionStartHandler(hookDeps));
+      app.post("/hook/session-end", hookSessionEndHandler(hookDeps));
+      app.post("/hook/notification", hookNotificationHandler(hookDeps));
+      app.post("/hook/subagent-start", hookSubagentStartHandler(hookDeps));
+      app.post("/hook/subagent-stop", hookSubagentStopHandler(hookDeps));
     },
 
     // --- Legacy AppRuntime.buildSpawnCmd ---

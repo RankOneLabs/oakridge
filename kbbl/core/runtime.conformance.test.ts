@@ -10,7 +10,6 @@ runConformanceTests({
       claudeBin: "claude",
       port: 8788,
       dataDir: "/tmp",
-      gatePath: "/bin/true",
     }),
   runtimeId: "claude-code",
 });
