@@ -45,7 +45,18 @@ export async function writeCcSettings(opts: CcSettingsOpts): Promise<string> {
       {
         hooks: {
           PermissionRequest: [
-            { matcher: ".*", hooks: [httpHook("/hook/permission")] },
+            {
+              matcher: ".*",
+              hooks: [
+                {
+                  ...httpHook("/hook/permission"),
+                  // PermissionRequest blocks until the operator approves or denies.
+                  // Explicit 3600s matches the previous gate behavior so approval
+                  // latency is "time to tap" regardless of CC default changes.
+                  timeout: 3600,
+                },
+              ],
+            },
           ],
           PostToolUse: [
             { matcher: ".*", hooks: [httpHook("/hook/tool")] },

@@ -187,22 +187,22 @@ export function hookPermissionHandler(deps: HookHandlerDeps) {
 
 /** POST /hook/tool — PostToolUse informational event. */
 export function hookPostToolUseHandler(deps: HookHandlerDeps) {
-  return makeInformationalHandler(deps, "hook_post_tool_use");
+  return makeInformationalHandler(deps, "PostToolUse", "hook_post_tool_use");
 }
 
 /** POST /hook/stop — Stop informational event (turn complete). */
 export function hookStopHandler(deps: HookHandlerDeps) {
-  return makeInformationalHandler(deps, "hook_stop");
+  return makeInformationalHandler(deps, "Stop", "hook_stop");
 }
 
 /** POST /hook/session-start — SessionStart informational event. */
 export function hookSessionStartHandler(deps: HookHandlerDeps) {
-  return makeInformationalHandler(deps, "hook_session_start");
+  return makeInformationalHandler(deps, "SessionStart", "hook_session_start");
 }
 
 /** POST /hook/session-end — SessionEnd informational event. */
 export function hookSessionEndHandler(deps: HookHandlerDeps) {
-  return makeInformationalHandler(deps, "hook_session_end");
+  return makeInformationalHandler(deps, "SessionEnd", "hook_session_end");
 }
 
 /**
@@ -214,12 +214,12 @@ export function hookSessionEndHandler(deps: HookHandlerDeps) {
  * (waiting on next turn).
  */
 export function hookNotificationHandler(deps: HookHandlerDeps) {
-  return makeInformationalHandler(deps, "hook_notification");
+  return makeInformationalHandler(deps, "Notification", "hook_notification");
 }
 
 /** POST /hook/subagent-start — SubagentStart informational event. */
 export function hookSubagentStartHandler(deps: HookHandlerDeps) {
-  return makeInformationalHandler(deps, "hook_subagent_start");
+  return makeInformationalHandler(deps, "SubagentStart", "hook_subagent_start");
 }
 
 /**
@@ -278,8 +278,16 @@ export function hookSubagentStopHandler(deps: HookHandlerDeps) {
  * Uses resolveSessionForHook to tolerate the hooks/stdout race at session
  * startup: events that arrive before system/init maps the ccSid would
  * otherwise be silently dropped.
+ *
+ * @param expectedHookEvent - CC hook_event_name expected on this route (e.g.
+ *   "PostToolUse"). Mismatches are silently dropped so a miswired URL or CC
+ *   routing change cannot misclassify events in the transcript.
  */
-function makeInformationalHandler(deps: HookHandlerDeps, eventType: string) {
+function makeInformationalHandler(
+  deps: HookHandlerDeps,
+  expectedHookEvent: string,
+  eventType: string,
+) {
   return async (c: Context) => {
     const bunServer = deps.getBunServer();
     if (!bunServer) return c.text("server not ready", 503);
@@ -292,6 +300,9 @@ function makeInformationalHandler(deps: HookHandlerDeps, eventType: string) {
     try {
       hook = (await c.req.json()) as HookInput;
     } catch {
+      return c.json({}, 200);
+    }
+    if (hook.hook_event_name !== expectedHookEvent) {
       return c.json({}, 200);
     }
 

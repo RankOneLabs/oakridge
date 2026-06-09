@@ -208,4 +208,19 @@ describe("hookPostToolUseHandler: informational", () => {
     await new Promise((r) => setTimeout(r, 10));
     expect(emitted.some((e) => e.type === "hook_post_tool_use")).toBe(true);
   });
+
+  test("drops event silently when hook_event_name does not match route", async () => {
+    const { session, emitted } = makeFakeSession({});
+    const handler = hookPostToolUseHandler(makeHookDeps(session));
+
+    const ctx = makeCtx({
+      hook_event_name: "Stop", // wrong event for /hook/tool
+      session_id: CC_SID,
+    });
+    const res = await handler(ctx as Parameters<typeof handler>[0]);
+    expect(res.status).toBe(200);
+
+    await new Promise((r) => setTimeout(r, 10));
+    expect(emitted.some((e) => e.type === "hook_post_tool_use")).toBe(false);
+  });
 });

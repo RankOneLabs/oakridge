@@ -177,6 +177,7 @@ describe("writeCcSettings", () => {
     expect(raw.hooks.PermissionRequest?.[0]?.hooks?.[0]).toMatchObject({
       type: "http",
       url: "http://127.0.0.1:3456/hook/permission",
+      timeout: 3600,
     });
     expect(raw.hooks.PostToolUse?.[0]?.hooks?.[0]).toMatchObject({
       type: "http",
