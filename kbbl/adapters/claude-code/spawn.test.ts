@@ -131,6 +131,16 @@ describe("assertA1Invariants", () => {
     ).rejects.toThrow("A.1");
   });
 
+  test("rejects when ANTHROPIC_API_KEY is set to empty string", async () => {
+    await expect(
+      assertA1Invariants({
+        claudeBin: fakeBin,
+        argv: ["claude"],
+        env: { ANTHROPIC_API_KEY: "" },
+      }),
+    ).rejects.toThrow("A.1");
+  });
+
   test("rejects when binary path does not contain @anthropic-ai/claude-code", async () => {
     await expect(
       assertA1Invariants({ claudeBin: "/bin/true", argv: ["claude"], env: {} }),

@@ -195,7 +195,7 @@ export async function assertA1Invariants(opts: {
   if (opts.argv.includes("-p") || opts.argv.includes("--print")) {
     throw new Error("A.1: interactive mode forbids -p / --print in argv");
   }
-  if (opts.env.ANTHROPIC_API_KEY) {
+  if (opts.env.ANTHROPIC_API_KEY !== undefined) {
     throw new Error(
       "A.1: ANTHROPIC_API_KEY is set — only subscription OAuth auth is permitted (unset the key)",
     );

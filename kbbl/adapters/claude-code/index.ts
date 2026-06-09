@@ -203,11 +203,11 @@ export async function createClaudeCodeRuntime(
         push({ type: "envelope", payload: { type: "pty_output", content: data } });
       });
 
-      // Intentionally not assigned: the IDisposable is never disposed so the
-      // onExit listener outlives the generator. If the consumer cancels early
-      // (breaks the for-await), procs.delete still fires when the PTY exits,
-      // preventing a procs leak. push() after the generator ends is harmless —
-      // the queue is GC'd with the closure once the PTY exits.
+      // The onExit disposable is intentionally not retained. Unlike dataDisposable
+      // (disposed in finally), the onExit listener must outlive the generator: if
+      // the consumer cancels early (breaks the for-await), procs.delete still fires
+      // when the PTY exits, preventing a leak. push() after the generator ends is
+      // harmless — the queue is GC'd with the closure once the PTY exits.
       ptyProc.onExit(({ exitCode }) => {
         push({ type: "completed", result: { code: exitCode } });
         done = true;
