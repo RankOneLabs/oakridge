@@ -511,6 +511,62 @@ pub async fn post_stage_instance_status(
     }
 }
 
+// ── Delegated-session approval notification (C.3) ─────────────────────────────
+
+#[derive(Deserialize)]
+pub struct ApprovalNotificationBody {
+    pub request_id: String,
+    pub tool_label: String,
+    /// kbbl session ID (informational; retained in parked_meta for operator display).
+    pub sid: Option<String>,
+}
+
+/// Receive an approval-needed notification from kbbl (C.3).
+///
+/// kbbl calls this when a delegated session hits a tool that requires approval.
+/// The handler parks the stage so it appears in GET /parked, with `parked_meta`
+/// carrying `request_id` and `tool_label` for the operator to include in the
+/// `ResumePayload::Executor` call that resolves it.
+pub async fn post_stage_approvals(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<ApprovalNotificationBody>,
+) -> impl IntoResponse {
+    let stage_sid = StageInstanceId(id);
+    let ctx = state.live_delegated.lock().unwrap().get(&stage_sid).cloned();
+    let ctx = match ctx {
+        Some(c) => c,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "no live delegated stage for this id"})),
+            )
+                .into_response();
+        }
+    };
+
+    let parked_meta = json!({
+        "request_id": body.request_id,
+        "tool_label": body.tool_label,
+        "sid": body.sid,
+    });
+    if let Err(e) = ctx.set_parked_meta(Some(parked_meta)).await {
+        return AppError::from(e).into_response();
+    }
+    match ctx
+        .set_status(StageStatus::Parked, Some("awaiting executor approval".into()))
+        .await
+    {
+        Ok(_) => (StatusCode::OK, Json(json!({}))).into_response(),
+        Err(e) => {
+            // Best-effort: clear the stale parked_meta we just wrote so the
+            // stage row isn't left with metadata that implies it's parked.
+            let _ = ctx.set_parked_meta(None).await;
+            AppError::from(e).into_response()
+        }
+    }
+}
+
 // ── Parked handler ────────────────────────────────────────────────────────────
 
 pub async fn list_parked(
