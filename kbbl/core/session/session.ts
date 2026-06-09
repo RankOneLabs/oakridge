@@ -119,6 +119,13 @@ export interface SessionOpts {
    * the transcript and slow `/events` replay.
    */
   nonPersistedEventTypes?: ReadonlySet<string>;
+  /**
+   * Seed nextId past any already-written events in the JSONL. Required for
+   * recovery (relaunch): the existing transcript already contains ids 0..N,
+   * so new events must start at N+1 or SSE sentUpTo dedup drops them.
+   * Callers read the max id from the JSONL before constructing the Session.
+   */
+  startingNextId?: number;
 }
 
 /**
@@ -278,6 +285,9 @@ export class Session {
     this.callbacks = opts.callbacks ?? {};
     this.classifyEvent = opts.classifyEvent;
     this.nonPersistedEventTypes = opts.nonPersistedEventTypes ?? new Set();
+    if (opts.startingNextId !== undefined && opts.startingNextId > 0) {
+      this.nextId = opts.startingNextId;
+    }
     this.jsonlWriter = Bun.file(this.jsonlPath).writer();
   }
 

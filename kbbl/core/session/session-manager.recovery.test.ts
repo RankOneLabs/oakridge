@@ -245,8 +245,70 @@ describe("SessionManager.relaunch", () => {
     const session = await manager.relaunch(oakridgeSid);
     expect(session.status).toBe("live");
 
-    await expect(manager.relaunch(oakridgeSid)).rejects.toThrow(/already live/);
+    await expect(manager.relaunch(oakridgeSid)).rejects.toThrow(/not ended/);
     await manager.endAll();
+  });
+
+  test("startingNextId is seeded past the max id in the existing JSONL", async () => {
+    const oakridgeSid = "aabbccdd11223344";
+    const ccSid = "cc-session-nextid";
+    // JSONL with max id = 3 (subprocess_exited).
+    writeMinimalJsonl(sessionsDir, oakridgeSid, repoDir, ccSid);
+
+    const runtime = makeRecoveryRuntime({ ccSid, workdir: repoDir });
+    const registry = createRuntimeRegistry([runtime]);
+    const manager = new SessionManager({
+      sessionsDir,
+      handoffsDir: join(tmpRoot, "handoffs"),
+      worktreesDir,
+      registry,
+      config: KbblConfigSchema.parse({}),
+    });
+
+    const session = await manager.relaunch(oakridgeSid);
+    // The first event emitted by attachRuntime is session_started. It must
+    // have id > 3 (the max pre-restart id).
+    const firstRecoveryEventId = await new Promise<number>((resolve) => {
+      const unsub = session.subscribe((evt) => {
+        unsub();
+        resolve(evt.id);
+      });
+    });
+    expect(firstRecoveryEventId).toBeGreaterThan(3);
+    await session.waitForEnd();
+  });
+
+  test("throws for compacted sessions (successor is the live branch)", async () => {
+    const oakridgeSid = "aabbccdd11223344";
+    const ccSid = "cc-session-compacted";
+    // Write a JSONL that looks like a compacted session.
+    const events = [
+      { id: 0, type: "session_started", ts: "2026-01-01T00:00:00.000Z",
+        payload: { workdir: repoDir, name: "s", runtimeId: "claude-code" } },
+      { id: 1, type: "cc_session_id_observed", ts: "2026-01-01T00:00:01.000Z",
+        payload: { cc_session_id: ccSid } },
+      { id: 2, type: "runtime_session_observed", ts: "2026-01-01T00:00:01.000Z",
+        payload: { runtime_sid: ccSid, runtime_id: "claude-code" } },
+      { id: 3, type: "compact_completed", ts: "2026-01-01T00:01:00.000Z",
+        payload: { handoff_doc: {}, successor_sid: "successor-sid-9999" } },
+      { id: 4, type: "subprocess_exited", ts: "2026-01-01T00:02:00.000Z",
+        payload: { code: 0, reason: "clean" } },
+    ];
+    writeFileSync(
+      join(sessionsDir, `${oakridgeSid}.jsonl`),
+      events.map((e) => JSON.stringify(e)).join("\n") + "\n",
+    );
+
+    const runtime = makeRecoveryRuntime({ ccSid, workdir: repoDir });
+    const registry = createRuntimeRegistry([runtime]);
+    const manager = new SessionManager({
+      sessionsDir,
+      handoffsDir: join(tmpRoot, "handoffs"),
+      worktreesDir,
+      registry,
+      config: KbblConfigSchema.parse({}),
+    });
+    await expect(manager.relaunch(oakridgeSid)).rejects.toThrow(/compacted/);
   });
 
   test("throws if no registry is configured", async () => {

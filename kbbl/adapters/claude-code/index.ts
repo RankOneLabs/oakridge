@@ -143,7 +143,19 @@ export async function createClaudeCodeRuntime(
       // claude processes on the same session_id corrupt the unlocked JSONL.
       // (After a server restart the prior process is presumed dead via PTY
       // SIGHUP; this guard defends against accidental same-run double-relaunch.)
+      //
+      // Two complementary checks:
+      // 1. procs.has(oakridgeSid): direct PTY-by-session guard — populated on
+      //    every spawn, so it catches double-relaunch even before the hook fires
+      //    the ccSid observation that populates ccSidToOakridgeSid.
+      // 2. ccSidToOakridgeSid lookup: catches the case where a different session
+      //    slot already holds a live PTY for the same CC session id.
       if (resumeCcSid) {
+        if (procs.has(oakridgeSid)) {
+          throw new Error(
+            `kbbl: refusing continue-in-place relaunch for ${oakridgeSid} — live PTY handle is still held`,
+          );
+        }
         const existingOakSid = ccSidToOakridgeSid.get(resumeCcSid);
         if (existingOakSid && procs.has(existingOakSid)) {
           throw new Error(

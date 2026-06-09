@@ -598,10 +598,13 @@ export class SessionManager {
    * Requires opts.registry; throws for the legacy buildSpawnCmd-only path.
    */
   async relaunch(oakridgeSid: string): Promise<Session> {
+    // Guard: refuse if any active subprocess is attached — "live", "starting"
+    // (mid-spawn), and "compacting" (PTY active) all mean a process is running.
+    // Only "ended" is safe to relaunch over.
     const existing = this.sessions.get(oakridgeSid);
-    if (existing && existing.status === "live") {
+    if (existing && existing.status !== "ended") {
       throw new Error(
-        `kbbl: relaunch refused for ${oakridgeSid} — session is already live`,
+        `kbbl: relaunch refused for ${oakridgeSid} — session is not ended (status: ${existing.status})`,
       );
     }
 
@@ -623,6 +626,13 @@ export class SessionManager {
       );
     }
 
+    // Guard: never revive a compacted row — its successor is the live branch.
+    if (snap.endReason === "compacted") {
+      throw new Error(
+        `kbbl: relaunch refused for ${oakridgeSid} — session was compacted (successor: ${snap.successorSid ?? "unknown"}); relaunch the successor instead`,
+      );
+    }
+
     const runtimeId = snap.runtimeId;
     const runtime = this.opts.registry.runtimes.get(runtimeId);
     if (!runtime) {
@@ -639,6 +649,12 @@ export class SessionManager {
     }
     const ccSid = ref.runtimeSid;
 
+    // Seed nextId past the highest id already written so appended recovery
+    // events never collide with pre-restart ids. SSE sentUpTo dedup drops
+    // events with id <= sentUpTo; without this, a reconnecting client with a
+    // stale sentUpTo would silently lose all recovery events.
+    const startingNextId = (await readMaxEventId(jsonlPath)) + 1;
+
     // Construct a fresh Session with the same oakridgeSid. The JSONL FileSink
     // opens in append mode so recovery events are added after the original
     // history without overwriting it.
@@ -652,6 +668,7 @@ export class SessionManager {
       parentOakridgeSid: snap.parentOakridgeSid ?? undefined,
       artifactId: snap.artifactId ?? undefined,
       model: snap.model,
+      startingNextId,
       worktreePath: snap.worktreePath,
       worktreeBranch: snap.worktreeBranch,
       worktreeBaseRef: snap.worktreeBaseRef,
@@ -1565,6 +1582,32 @@ function extractCompactMarkdown(payload: unknown): string | null {
   }
   if (parts.length === 0) return null;
   return parts.join("\n\n");
+}
+
+/**
+ * Reads the highest event `id` written to the JSONL at the given path.
+ * Returns -1 if the file is empty, missing, or contains no parseable events.
+ * Used by relaunch() to seed Session.nextId past the pre-restart history so
+ * recovery events never collide with already-written ids.
+ */
+async function readMaxEventId(jsonlPath: string): Promise<number> {
+  let contents: string;
+  try {
+    contents = await readJsonlOrEmpty(jsonlPath);
+  } catch {
+    return -1;
+  }
+  let max = -1;
+  for (const line of contents.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const parsed = JSON.parse(line) as { id?: unknown };
+      if (typeof parsed.id === "number" && parsed.id > max) max = parsed.id;
+    } catch {
+      // skip malformed lines
+    }
+  }
+  return max;
 }
 
 /**
