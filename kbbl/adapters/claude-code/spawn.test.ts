@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import { assertA1Invariants, makeBuildSpawnCmd, writeCcSettings, type BuildSpawnCmdContext } from "./spawn";
+import { assertA1Invariants, buildResumeArgs, makeBuildSpawnCmd, writeCcSettings, type BuildSpawnCmdContext } from "./spawn";
 import type { Session } from "../../core/session/session";
 
 function makeCtx(): BuildSpawnCmdContext {
@@ -83,6 +83,27 @@ describe("makeBuildSpawnCmd argv construction", () => {
     expect(cmd.includes("--include-hook-events")).toBe(false);
     expect(cmd.includes("--include-partial-messages")).toBe(false);
     expect(cmd.includes("--replay-user-messages")).toBe(false);
+  });
+});
+
+describe("buildResumeArgs", () => {
+  test("fork mode appends --resume <ccSid> --fork-session", () => {
+    expect(buildResumeArgs("cc-abc", "fork")).toEqual(["--resume", "cc-abc", "--fork-session"]);
+  });
+
+  test("continue-in-place mode appends --resume <ccSid> only", () => {
+    expect(buildResumeArgs("cc-abc", "continue-in-place")).toEqual(["--resume", "cc-abc"]);
+  });
+});
+
+describe("makeBuildSpawnCmd — fork via parentCcSid", () => {
+  test("parentCcSid produces --resume --fork-session (fork mode unchanged)", async () => {
+    const cmd = makeBuildSpawnCmd(makeCtx());
+    const { cmd: argv } = await cmd(fakeSession({ parentCcSid: "sid-xyz" }));
+    const resumeIdx = argv.indexOf("--resume");
+    expect(resumeIdx).toBeGreaterThanOrEqual(0);
+    expect(argv[resumeIdx + 1]).toBe("sid-xyz");
+    expect(argv.includes("--fork-session")).toBe(true);
   });
 });
 

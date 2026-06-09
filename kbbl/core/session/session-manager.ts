@@ -574,6 +574,197 @@ export class SessionManager {
     return session;
   }
 
+  /**
+   * Relaunch a live-but-orphaned row after a server restart (A.2 recovery).
+   * Distinct from create() (new row, new ids) and the compaction successor
+   * path (new id, new row). Recovery continues in the SAME row: same
+   * oakridgeSid, same currentCcSid, appending to the existing JSONL and the
+   * same CC transcript.
+   *
+   * Flow:
+   *  1. Guard: refuse if the session is already live in memory (PTY held).
+   *  2. Load the archived snapshot from the JSONL to recover session metadata.
+   *  3. Resolve the CC session id via runtime.resolveResumeRef.
+   *  4. Construct a fresh Session (same oakridgeSid → same JSONL file, append).
+   *  5. Spawn with --resume <ccSid> and NO --fork-session (continue-in-place).
+   *  6. Wire the fresh PTY to the session via attachRuntime.
+   *
+   * The single-writer supervisor in the adapter (index.ts) guards the ccSid
+   * map before opening the new PTY, ensuring at most one live claude process
+   * per CC session id within the running server. Accepted loss on recovery:
+   * only the in-flight turn at the instant of the prior crash; completed
+   * history is fully recovered from the transcript.
+   *
+   * Requires opts.registry; throws for the legacy buildSpawnCmd-only path.
+   */
+  async relaunch(oakridgeSid: string): Promise<Session> {
+    // Guard: refuse if any active subprocess is attached — "live", "starting"
+    // (mid-spawn), and "compacting" (PTY active) all mean a process is running.
+    // Only "ended" is safe to relaunch over.
+    const existing = this.sessions.get(oakridgeSid);
+    if (existing && existing.status !== "ended") {
+      throw new Error(
+        `kbbl: relaunch refused for ${oakridgeSid} — session is not ended (status: ${existing.status})`,
+      );
+    }
+
+    if (!this.opts.registry) {
+      throw new Error(
+        "kbbl: relaunch requires opts.registry — the legacy buildSpawnCmd path does not support recovery",
+      );
+    }
+
+    const jsonlPath = join(this.opts.sessionsDir, `${oakridgeSid}.jsonl`);
+    const snap = await loadArchivedSnapshot(
+      oakridgeSid,
+      jsonlPath,
+      this.opts.registry,
+    );
+    if (!snap) {
+      throw new Error(
+        `kbbl: relaunch failed for ${oakridgeSid} — archived snapshot missing or empty`,
+      );
+    }
+
+    // Guard: never revive a compacted row — its successor is the live branch.
+    if (snap.endReason === "compacted") {
+      throw new Error(
+        `kbbl: relaunch refused for ${oakridgeSid} — session was compacted (successor: ${snap.successorSid ?? "unknown"}); relaunch the successor instead`,
+      );
+    }
+
+    const runtimeId = snap.runtimeId;
+    const runtime = this.opts.registry.runtimes.get(runtimeId);
+    if (!runtime) {
+      throw new Error(
+        `kbbl: relaunch failed for ${oakridgeSid} — runtime "${runtimeId}" is not registered`,
+      );
+    }
+
+    const ref = await runtime.resolveResumeRef(this.opts.sessionsDir, oakridgeSid);
+    if (ref.kind !== "ok") {
+      throw new Error(
+        `kbbl: relaunch failed for ${oakridgeSid} — cannot resolve CC session id: ${ref.kind}`,
+      );
+    }
+    const ccSid = ref.runtimeSid;
+
+    // Seed nextId past the highest id already written so appended recovery
+    // events never collide with pre-restart ids. SSE sentUpTo dedup drops
+    // events with id <= sentUpTo; without this, a reconnecting client with a
+    // stale sentUpTo would silently lose all recovery events.
+    const startingNextId = (await readMaxEventId(jsonlPath)) + 1;
+
+    // Construct a fresh Session with the same oakridgeSid. The JSONL FileSink
+    // opens in append mode so recovery events are added after the original
+    // history without overwriting it.
+    const session = new Session({
+      oakridgeSid,
+      workdir: snap.workdir,
+      name: snap.name,
+      sessionsDir: this.opts.sessionsDir,
+      runtimeId,
+      parentCcSid: snap.parentCcSid ?? undefined,
+      parentOakridgeSid: snap.parentOakridgeSid ?? undefined,
+      artifactId: snap.artifactId ?? undefined,
+      model: snap.model,
+      createdAt: snap.createdAt,
+      startingNextId,
+      worktreePath: snap.worktreePath,
+      worktreeBranch: snap.worktreeBranch,
+      worktreeBaseRef: snap.worktreeBaseRef,
+      projectWorkdir: snap.projectWorkdir,
+      nonPersistedEventTypes:
+        runtime.nonPersistedEventTypes ?? this.opts.nonPersistedEventTypes,
+      callbacks: {
+        onRuntimeSessionObserved: (s, runtimeSid) => {
+          this.opts.onRuntimeSessionObserved?.(s, runtimeSid);
+        },
+        onEnded: (s) => {
+          this.opts.onRuntimeSessionEnded?.(s);
+          this.clearActivityTimer(s.oakridgeSid);
+          this.broadcastDelta({ type: "session_ended", sid: s.oakridgeSid });
+        },
+        onStatusChanged: (s, status) => {
+          this.broadcastDelta({
+            type: "status_changed",
+            sid: s.oakridgeSid,
+            status,
+          });
+        },
+        onPendingCountChanged: (s, count) => {
+          this.broadcastDelta({
+            type: "pending_count_changed",
+            sid: s.oakridgeSid,
+            count,
+          });
+        },
+        onLastActivityChanged: (s, ts) => {
+          this.scheduleActivityDelta(s.oakridgeSid, ts);
+        },
+        onYoloChanged: (s, yoloMode) => {
+          this.broadcastDelta({
+            type: "yolo_changed",
+            sid: s.oakridgeSid,
+            yoloMode,
+          });
+        },
+        onRuntimeModelObserved: (s, observedModel) => {
+          this.broadcastDelta({
+            type: "observed_model_changed",
+            sid: s.oakridgeSid,
+            initialObservedModel: s.initialObservedModel ?? observedModel,
+            observedModel,
+          });
+        },
+      },
+    });
+
+    this.sessions.set(session.oakridgeSid, session);
+
+    const compactor = new Compactor(this.opts.config.compact, {
+      onSuggested: (reason, sessionTokens) => {
+        session
+          .emit("compact_suggested", {
+            reason: reason.kind,
+            session_tokens: sessionTokens,
+          })
+          .catch((err) => {
+            console.error(
+              `kbbl: compact_suggested emit failed for ${session.oakridgeSid}: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            );
+          });
+        this.broadcastDelta({
+          type: "compact_suggested",
+          sid: session.oakridgeSid,
+          tokens: sessionTokens,
+          reason: reason.kind,
+        });
+      },
+      onFire: async (reason, sessionTokens) => {
+        await this.runCompact(session.oakridgeSid, reason, sessionTokens);
+      },
+    });
+    session.attachCompactor(compactor);
+
+    this.broadcastDelta({ type: "session_created", session: session.snapshot() });
+
+    const handle = await runtime.spawn({
+      workingDirectory: session.workdir,
+      runtimeSpecific: {
+        resumeCcSid: ccSid,
+        oakridgeSid: session.oakridgeSid,
+        model: session.model,
+        projectWorkdir: session.projectWorkdir,
+      },
+    });
+    await session.attachRuntime(runtime, handle);
+
+    return session;
+  }
+
   async drainLifecycle(): Promise<void> {
     await Promise.allSettled([...this.pendingLifecycle]);
   }
@@ -1392,6 +1583,32 @@ function extractCompactMarkdown(payload: unknown): string | null {
   }
   if (parts.length === 0) return null;
   return parts.join("\n\n");
+}
+
+/**
+ * Reads the highest event `id` written to the JSONL at the given path.
+ * Returns -1 if the file is empty, missing, or contains no parseable events.
+ * Used by relaunch() to seed Session.nextId past the pre-restart history so
+ * recovery events never collide with already-written ids.
+ */
+async function readMaxEventId(jsonlPath: string): Promise<number> {
+  let contents: string;
+  try {
+    contents = await readJsonlOrEmpty(jsonlPath);
+  } catch {
+    return -1;
+  }
+  let max = -1;
+  for (const line of contents.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const parsed = JSON.parse(line) as { id?: unknown };
+      if (typeof parsed.id === "number" && parsed.id > max) max = parsed.id;
+    } catch {
+      // skip malformed lines
+    }
+  }
+  return max;
 }
 
 /**

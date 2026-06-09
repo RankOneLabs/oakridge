@@ -302,3 +302,27 @@ describe("Session.attachRuntime", () => {
     expect(session.status).toBe("ended");
   });
 });
+
+describe("Session constructor — startingNextId validation", () => {
+  test("accepts 0 and seeds nextId to 0", () => {
+    const session = makeSession({ startingNextId: 0 });
+    expect((session as unknown as { nextId: number }).nextId).toBe(0);
+  });
+
+  test("accepts a positive integer and seeds nextId", () => {
+    const session = makeSession({ startingNextId: 42 });
+    expect((session as unknown as { nextId: number }).nextId).toBe(42);
+  });
+
+  test("throws on negative value", () => {
+    expect(() => makeSession({ startingNextId: -1 })).toThrow(/startingNextId/);
+  });
+
+  test("throws on float value", () => {
+    expect(() => makeSession({ startingNextId: 1.5 })).toThrow(/startingNextId/);
+  });
+
+  test("throws on NaN", () => {
+    expect(() => makeSession({ startingNextId: NaN })).toThrow(/startingNextId/);
+  });
+});
