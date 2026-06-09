@@ -219,7 +219,12 @@ export async function createClaudeCodeRuntime(
         }
       } finally {
         dataDisposable.dispose();
-        exitDisposable.dispose();
+        // exitDisposable is intentionally NOT disposed here. If the consumer
+        // cancels early (breaks the for-await), the PTY may still be running.
+        // Keeping the onExit listener alive ensures procs.delete fires when
+        // the process eventually exits, preventing a procs leak. The push()
+        // call inside onExit after the generator ends is harmless — the queue
+        // is GC'd along with the rest of the closure once the PTY exits.
       }
     },
 

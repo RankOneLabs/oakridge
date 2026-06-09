@@ -181,7 +181,7 @@ export function makeBuildSpawnCmd(
  *      per-token billing regardless of the OAuth login state).
  *   3. The binary resolves (via symlinks) to a path containing
  *      @anthropic-ai/claude-code (the real subscription CLI, not an impostor).
- *   4. Real TTY: guaranteed by the caller using node-pty — this function
+ *   4. Real TTY: guaranteed by the caller using bun-pty — this function
  *      documents the invariant but cannot check it pre-spawn.
  *
  * Throws with an "A.1:" prefix on any violation so callers can surface the
