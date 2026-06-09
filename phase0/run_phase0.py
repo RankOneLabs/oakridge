@@ -49,14 +49,17 @@ CHILD_ENV_STRIP = {
     "AI_AGENT", "CLAUDE_EFFORT", "ANTHROPIC_API_KEY",
 }
 
-# Hooks confirmed to fire as HTTP hooks — used for PASS/FAIL gating.
+# Hooks that fire in normal single-turn interactive sessions — used for PASS/FAIL gating.
+# SubagentStop only fires when the Agent tool is used; a simple file-write prompt won't
+# trigger it reliably, so it's informational only.
 REQUIRED_EVENTS = {
     "SessionEnd", "Stop", "Notification",
-    "PermissionRequest", "PostToolUse", "SubagentStop",
+    "PermissionRequest", "PostToolUse",
 }
 # All 8 registered hooks — used for reporting tables only.
-# SessionStart and SubagentStart never fire as HTTP hooks (empirically confirmed).
-ALL_EVENTS = REQUIRED_EVENTS | {"SessionStart", "SubagentStart"}
+# SessionStart/SubagentStart never fire as HTTP hooks (empirically confirmed).
+# SubagentStop fires only with explicit Agent tool use.
+ALL_EVENTS = REQUIRED_EVENTS | {"SessionStart", "SubagentStart", "SubagentStop"}
 
 # ── shared hook state ─────────────────────────────────────────────────────────
 
@@ -195,13 +198,14 @@ def check_billing() -> dict:
     has_oauth = "claudeAiOauth" in creds
     has_api_key = "apiKey" in creds
     sub_type = creds.get("claudeAiOauth", {}).get("subscriptionType", "unknown")
-    api_key_env = bool(os.environ.get("ANTHROPIC_API_KEY", ""))
+    # Check child env (what CC actually sees) — harness strips ANTHROPIC_API_KEY via child_env()
+    api_key_env = bool(child_env().get("ANTHROPIC_API_KEY", ""))
 
     result["evidence"] = [
         f"credentials.claudeAiOauth present: {has_oauth}",
         f"credentials.apiKey present: {has_api_key}",
         f"credentials.subscriptionType: {sub_type}",
-        f"ANTHROPIC_API_KEY in env: {api_key_env}",
+        f"ANTHROPIC_API_KEY in child env: {api_key_env}",
     ]
 
     if has_oauth and not has_api_key and not api_key_env:
