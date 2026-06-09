@@ -20,10 +20,15 @@ Verdict: **PASS**
 - `credentials.subscriptionType`: `"max"`
 - `ANTHROPIC_API_KEY` in env: `false`
 
-OAuth-only auth. No `apiKey` in credentials, no `ANTHROPIC_API_KEY` env var. Interactive CC sessions bill to the Max subscription, not the Agent SDK API credit meter. Delta is 0 by construction — there is no API key to charge against.
+**Interactive PTY sessions** bill to the Max subscription, not the Agent SDK API credit meter. Delta is 0 by construction — no API key exists to charge against.
+
+> `--print` mode is NOT covered by this PASS verdict. After the 2026-06-15 billing split,
+> `--print` will route to the API credit meter. execution_v2 is explicitly designed to avoid
+> `--print` precisely because of this. The billing gate tests only the interactive PTY path.
 
 > Console meter check not automated (Console not accessible from build agent). Structural
-> evidence is authoritative: OAuth-only credentials cannot route charges to the SDK credit meter.
+> evidence is authoritative: OAuth-only credentials cannot route interactive PTY charges to
+> the SDK credit meter.
 
 ---
 
@@ -121,8 +126,10 @@ Do not rely on `SessionStart` or `SubagentStart` HTTP hooks — they never fire.
 Verdict: **PASS**
 
 Test:
-1. Initial session: `--print "say ok"` → session `edfccb26-92c4-4b05-a682-3620d7769460`, `promptSource: "sdk"`
-2. Resume: `claude --resume edfccb26-92c4-4b05-a682-3620d7769460 --dangerously-skip-permissions --strict-mcp-config --settings phase0/settings.json --setting-sources user`
+1. Initial session: `--print "say ok"` → session `edfccb26-92c4-4b05-a682-3620d7769460`, `promptSource: "sdk"`  
+   _(Note: `--print` used for test setup convenience only. In production execution_v2, the initial session will also be interactive PTY — `--print` will consume API credits after 2026-06-15.)_
+2. Resume: `claude --resume edfccb26-92c4-4b05-a682-3620d7769460 --dangerously-skip-permissions --strict-mcp-config --settings phase0/settings.json --setting-sources user`  
+   _(Interactive, `promptSource: "typed"` — this is the production pattern.)_
 
 Results:
 - **Same session_id**: PASS — hook payloads from resumed session all report `session_id: edfccb26-92c4-4b05-a682-3620d7769460`
