@@ -638,11 +638,27 @@ export class SessionManager {
     // the first agent step see the allowlist already applied.
     if (opts.preAuthorizedTools && opts.preAuthorizedTools.length > 0) {
       for (const tool of opts.preAuthorizedTools) {
-        await session.allowlistTool(tool);
+        try {
+          await session.allowlistTool(tool);
+        } catch (err) {
+          console.error(
+            `kbbl: failed to allowlist tool "${tool}" for ${session.oakridgeSid}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
       }
     }
     if (opts.yoloMode === true) {
-      await session.setYolo(true);
+      try {
+        await session.setYolo(true);
+      } catch (err) {
+        console.error(
+          `kbbl: failed to set yolo for ${session.oakridgeSid}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
     }
     // Seed the first turn with the rendered prompt so the agent starts
     // immediately without a separate /:sid/input call.
