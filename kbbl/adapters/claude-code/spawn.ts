@@ -209,7 +209,7 @@ export async function assertA1Invariants(opts: {
   } catch {
     throw new Error(`A.1: cannot resolve binary '${opts.claudeBin}'`);
   }
-  if (!resolvedBin.includes("@anthropic-ai/claude-code")) {
+  if (!/\/@anthropic-ai\/claude-code(\/|$)/.test(resolvedBin)) {
     throw new Error(
       `A.1: '${resolvedBin}' is not @anthropic-ai/claude-code — refusing to launch (interactive mode requires the subscription CLI)`,
     );

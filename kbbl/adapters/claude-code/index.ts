@@ -197,11 +197,18 @@ export async function createClaudeCodeRuntime(
       }
 
       // Raw PTY byte stream — break-glass only (A.6). Never parsed for content.
+      // Wrapped as envelope/pty_output so the core loop persists to JSONL and
+      // broadcasts over SSE (the loop only handles "envelope", not "output").
       const dataDisposable = ptyProc.onData((data) => {
-        push({ type: "output", content: data });
+        push({ type: "envelope", payload: { type: "pty_output", content: data } });
       });
 
-      const exitDisposable = ptyProc.onExit(({ exitCode }) => {
+      // Intentionally not assigned: the IDisposable is never disposed so the
+      // onExit listener outlives the generator. If the consumer cancels early
+      // (breaks the for-await), procs.delete still fires when the PTY exits,
+      // preventing a procs leak. push() after the generator ends is harmless —
+      // the queue is GC'd with the closure once the PTY exits.
+      ptyProc.onExit(({ exitCode }) => {
         push({ type: "completed", result: { code: exitCode } });
         done = true;
         queueResolve?.();
@@ -219,12 +226,6 @@ export async function createClaudeCodeRuntime(
         }
       } finally {
         dataDisposable.dispose();
-        // exitDisposable is intentionally NOT disposed here. If the consumer
-        // cancels early (breaks the for-await), the PTY may still be running.
-        // Keeping the onExit listener alive ensures procs.delete fires when
-        // the process eventually exits, preventing a procs leak. The push()
-        // call inside onExit after the generator ends is harmless — the queue
-        // is GC'd along with the rest of the closure once the PTY exits.
       }
     },
 
