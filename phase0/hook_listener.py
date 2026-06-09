@@ -39,7 +39,8 @@ class HookHandler(BaseHTTPRequestHandler):
             body = {"_raw": raw.decode(errors="replace")}
 
         # Extract event name from path: /hook/<EventName>
-        event_name = self.path.lstrip("/hook/").lstrip("/")
+        path = self.path
+        event_name = path[len("/hook/"):] if path.startswith("/hook/") else path.lstrip("/")
 
         record = {"event": event_name, "path": self.path, "body": body}
         with _lock:
