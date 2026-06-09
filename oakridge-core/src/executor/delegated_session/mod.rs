@@ -98,13 +98,13 @@ impl StageHandle for DelegatedSessionHandle {
                 let request_id = payload
                     .get("request_id")
                     .and_then(|v| v.as_str())
-                    .unwrap_or("")
+                    .ok_or_else(|| anyhow::anyhow!("ResumePayload::Executor missing required field: request_id"))?
                     .to_string();
                 let approved = payload
                     .get("decision")
                     .and_then(|d| d.get("approved"))
                     .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+                    .ok_or_else(|| anyhow::anyhow!("ResumePayload::Executor missing required field: decision.approved"))?;
                 let approval_url = format!(
                     "{}/{}/approval",
                     self.execution_service_url.trim_end_matches('/'),
