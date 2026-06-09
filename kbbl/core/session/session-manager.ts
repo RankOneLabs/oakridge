@@ -36,6 +36,8 @@ import {
   resolveRepoTopLevel,
 } from "./worktree";
 import type { RuntimeId, RuntimeRegistry } from "../runtime";
+import type { DelegatedCallback, OutputSlot } from "../server/callbacks";
+import { reportTerminalStatus } from "../server/callbacks";
 
 export interface SessionManagerOpts {
   sessionsDir: string;
@@ -181,6 +183,25 @@ export interface CreateSessionOpts {
    * calls — those fall back to sid-based naming against HEAD.
    */
   worktreeIdentity?: EpicIdentity;
+  // ── C.1 delegated-session fields ──────────────────────────────────────────
+  /**
+   * Rendered prompt to seed as the first turn. Seeded via session.writeInput()
+   * right after the session becomes live so the agent starts immediately
+   * without a separate /:sid/input call from the caller.
+   */
+  prompt?: string;
+  /**
+   * Tool names to pre-authorize via the session's allowlist before the first
+   * turn is seeded. Applied before the prompt so tool hooks that fire on the
+   * very first agent step are already authorized.
+   */
+  preAuthorizedTools?: string[];
+  /** If true, enable yolo mode (auto-approve all tool calls) on the session. */
+  yoloMode?: boolean;
+  /** Declared output slots; stored alongside the callback for artifact validation. */
+  outputSlots?: OutputSlot[];
+  /** Outbound callback routing for the three C.2 / C.3 callbacks. */
+  delegatedCallback?: DelegatedCallback;
 }
 
 /**
@@ -262,9 +283,21 @@ export function parseDepthFromBranch(branch: string): number {
   return m ? Number.parseInt(m[1], 10) : 0;
 }
 
+interface DelegatedSessionConfig {
+  callback: DelegatedCallback;
+  outputSlots: OutputSlot[];
+}
+
 export class SessionManager {
   private readonly opts: SessionManagerOpts;
   private readonly sessions = new Map<string, Session>();
+  /**
+   * Delegated-session configs keyed by oakridgeSid. Populated in create()
+   * when opts.delegatedCallback is set; cleaned up in onEnded. Provides
+   * the callback to hook-route.ts for C.3 approval forwarding and to the
+   * terminal-status reporter for C.2b.
+   */
+  private readonly delegatedConfigs = new Map<string, DelegatedSessionConfig>();
 
   private readonly inboxSubscribers = new Set<InboxSubscriber>();
   /**
@@ -301,6 +334,15 @@ export class SessionManager {
 
   constructor(opts: SessionManagerOpts) {
     this.opts = opts;
+  }
+
+  /**
+   * Returns the delegated callback for the given session, or null if the
+   * session was not created via the C.1 delegated-execution contract.
+   * Used by hook-route.ts to forward approval notifications (C.3).
+   */
+  getDelegatedCallback(oakridgeSid: string): DelegatedCallback | null {
+    return this.delegatedConfigs.get(oakridgeSid)?.callback ?? null;
   }
 
   private async ensureWorktreesDirSafeForRepo(workdir: string): Promise<void> {
@@ -449,6 +491,15 @@ export class SessionManager {
           this.opts.onRuntimeSessionObserved?.(s, runtimeSid);
         },
         onEnded: (s) => {
+          // C.2b: report terminal status for delegated sessions unless this
+          // was a compaction (the successor session continues the work).
+          const delegatedCfg = this.delegatedConfigs.get(s.oakridgeSid);
+          if (delegatedCfg) {
+            this.delegatedConfigs.delete(s.oakridgeSid);
+            if (s.endReason !== "compacted") {
+              void reportTerminalStatus(delegatedCfg.callback, "done", s.oakridgeSid);
+            }
+          }
           this.opts.onRuntimeSessionEnded?.(s);
           this.clearActivityTimer(s.oakridgeSid);
           this.broadcastDelta({ type: "session_ended", sid: s.oakridgeSid });
@@ -569,6 +620,39 @@ export class SessionManager {
       throw new Error(
         "kbbl: SessionManager requires either opts.registry or opts.buildSpawnCmd",
       );
+    }
+
+    // ── C.1 delegated-session post-spawn wiring ──────────────────────────
+    // Stash the config first so the hook handler can find the callback as
+    // soon as the first tool call arrives (before we even send the prompt).
+    if (opts.delegatedCallback) {
+      this.delegatedConfigs.set(session.oakridgeSid, {
+        callback: opts.delegatedCallback,
+        outputSlots: opts.outputSlots ?? [],
+      });
+    }
+    // Pre-authorize tools before seeding the prompt so hooks that fire on
+    // the first agent step see the allowlist already applied.
+    if (opts.preAuthorizedTools && opts.preAuthorizedTools.length > 0) {
+      for (const tool of opts.preAuthorizedTools) {
+        await session.allowlistTool(tool);
+      }
+    }
+    if (opts.yoloMode === true) {
+      await session.setYolo(true);
+    }
+    // Seed the first turn with the rendered prompt so the agent starts
+    // immediately without a separate /:sid/input call.
+    if (opts.prompt) {
+      try {
+        await session.writeInput(opts.prompt);
+      } catch (err) {
+        console.error(
+          `kbbl: failed to seed initial prompt for ${session.oakridgeSid}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
     }
 
     return session;
