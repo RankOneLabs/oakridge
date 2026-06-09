@@ -1,5 +1,6 @@
 import type { Hono } from "hono";
 import { join } from "node:path";
+import * as pty from "bun-pty";
 
 import type { EnvelopeEvent, Session, SpawnCmd } from "../../core/session/session";
 import type { SessionManager } from "../../core/session/session-manager";
@@ -19,7 +20,7 @@ import { ALLOWED_MODELS } from "./models";
 
 import { classifyCcEvent } from "./event-classifier";
 import { hookApprovalHandler } from "./hook-route";
-import { makeBuildSpawnCmd, writeCcMcpConfig, writeCcSettings } from "./spawn";
+import { assertA1Invariants, makeBuildSpawnCmd, writeCcMcpConfig, writeCcSettings } from "./spawn";
 
 export interface CreateClaudeCodeRuntimeOpts {
   claudeBin: string;
@@ -31,10 +32,10 @@ export interface CreateClaudeCodeRuntimeOpts {
   gatePath: string;
 }
 
-/** CC-specific session handle with a direct reference to the spawned proc. */
+/** CC-specific session handle backed by a bun-pty process. */
 interface CcHandle {
   readonly sessionId: string;
-  proc: ReturnType<typeof Bun.spawn>;
+  pty: pty.IPty;
 }
 
 /**
@@ -119,46 +120,43 @@ export async function createClaudeCodeRuntime(
         | null
         | undefined;
 
-      // Build argv the same way buildSpawnCmd does, but inline so we can
-      // use the RuntimeConfig values without a full Session object.
-      const cmd = [
+      const spawnEnv: Record<string, string | undefined> = {
+        ...process.env,
+        KBBL_PORT: String(opts.port),
+      };
+
+      // Build interactive argv (no --print / stream-json).
+      const argv = [
         opts.claudeBin,
-        "--print",
-        "--input-format",
-        "stream-json",
-        "--output-format",
-        "stream-json",
-        "--include-hook-events",
-        "--include-partial-messages",
-        "--replay-user-messages",
-        "--verbose",
         "--setting-sources",
         "user",
         "--settings",
         settingsPath,
-        // See makeBuildSpawnCmd: loads gated-review independently of
-        // --setting-sources, which excludes the project-scoped .mcp.json.
         "--mcp-config",
         mcpConfigPath,
         "--strict-mcp-config",
       ];
+      if (model) argv.push("--model", model);
+      if (parentCcSid) argv.push("--resume", parentCcSid, "--fork-session");
 
-      if (model) cmd.push("--model", model);
-      if (parentCcSid) cmd.push("--resume", parentCcSid, "--fork-session");
+      // A.1: hard billing invariant — refuse rather than downgrade.
+      await assertA1Invariants({ claudeBin: opts.claudeBin, argv, env: spawnEnv });
 
-      const proc = Bun.spawn({
-        cmd,
+      // Strip undefined values — bun-pty requires Record<string, string>.
+      const ptyEnv = Object.fromEntries(
+        Object.entries(spawnEnv).filter((e): e is [string, string] => e[1] !== undefined),
+      );
+
+      // Launch claude in a PTY (invariant 4: real TTY guaranteed by bun-pty).
+      const ptyProc = pty.spawn(opts.claudeBin, argv.slice(1), {
+        name: "xterm-256color",
+        cols: 220,
+        rows: 50,
         cwd: config.workingDirectory,
-        stdin: "pipe",
-        stdout: "pipe",
-        stderr: "pipe",
-        env: {
-          ...process.env,
-          KBBL_PORT: String(opts.port),
-        } as Record<string, string>,
+        env: ptyEnv,
       });
 
-      const handle: CcHandle = { sessionId: oakridgeSid, proc };
+      const handle: CcHandle = { sessionId: oakridgeSid, pty: ptyProc };
       procs.set(oakridgeSid, handle);
       return { sessionId: oakridgeSid };
     },
@@ -168,7 +166,7 @@ export async function createClaudeCodeRuntime(
       const h = procs.get(handle.sessionId);
       if (h) {
         try {
-          h.proc.kill();
+          h.pty.kill();
         } catch {
           // already dead
         }
@@ -179,12 +177,8 @@ export async function createClaudeCodeRuntime(
     async *events(handle: SessionHandle): AsyncIterable<RuntimeEvent> {
       const h = procs.get(handle.sessionId);
       if (!h) return;
-      const { proc } = h;
+      const { pty: ptyProc } = h;
 
-      const procStdout = proc.stdout as ReadableStream<Uint8Array>;
-      const procStderr = proc.stderr as ReadableStream<Uint8Array>;
-
-      // Use a shared event queue to merge stdout + stderr lines.
       const queue: RuntimeEvent[] = [];
       let queueResolve: (() => void) | null = null;
       let done = false;
@@ -202,43 +196,19 @@ export async function createClaudeCodeRuntime(
         });
       }
 
-      const stdoutPump = (async () => {
-        for await (const line of readLines(procStdout)) {
-          if (!line.trim()) continue;
-          try {
-            const raw = JSON.parse(line);
-            push({ type: "envelope", payload: raw });
-          } catch {
-            push({
-              type: "envelope",
-              payload: { type: "subprocess_stdout_parse_error", line },
-            });
-          }
-        }
-      })();
+      // Raw PTY byte stream — break-glass only (A.6). Never parsed for content.
+      const dataDisposable = ptyProc.onData((data) => {
+        push({ type: "output", content: data });
+      });
 
-      const stderrPump = (async () => {
-        for await (const line of readLines(procStderr)) {
-          push({ type: "envelope", payload: { type: "subprocess_stderr", line } });
-        }
-      })();
+      const exitDisposable = ptyProc.onExit(({ exitCode }) => {
+        push({ type: "completed", result: { code: exitCode } });
+        done = true;
+        queueResolve?.();
+        queueResolve = null;
+        procs.delete(handle.sessionId);
+      });
 
-      // Drive all three (stdout, stderr, exit) concurrently; signal done
-      // once both pumps + exit have finished.
-      const allDone = Promise.allSettled([stdoutPump, stderrPump]).then(
-        async () => {
-          const exitCode = await proc.exited;
-          push({ type: "completed", result: { code: exitCode } });
-          done = true;
-          queueResolve?.();
-          queueResolve = null;
-          // Clean up the proc map once we've drained.
-          procs.delete(handle.sessionId);
-        },
-      );
-
-      // Yield items as they arrive. try/finally ensures allDone runs even if
-      // the consumer breaks early (e.g. session abort), so procs.delete fires.
       try {
         while (true) {
           await waitForItem();
@@ -248,14 +218,8 @@ export async function createClaudeCodeRuntime(
           if (done) break;
         }
       } finally {
-        // allDone resolves when both stdout/stderr pumps drain. On normal
-        // completion/error the proc has already exited so this is immediate.
-        // On early consumer cancellation (break without terminate) this will
-        // hang until the proc exits naturally — intentional: the proc is
-        // still running and we don't own its lifecycle from here. Callers
-        // that want to force-stop the proc should call runtime.terminate()
-        // before breaking the for-await loop.
-        await allDone.catch(() => {});
+        dataDisposable.dispose();
+        exitDisposable.dispose();
       }
     },
 
@@ -263,14 +227,7 @@ export async function createClaudeCodeRuntime(
     async send(handle: SessionHandle, input: string): Promise<void> {
       const h = procs.get(handle.sessionId);
       if (!h) throw new Error(`no proc for session ${handle.sessionId}`);
-      const stdin = h.proc.stdin as import("bun").FileSink;
-      const line =
-        JSON.stringify({
-          type: "user",
-          message: { role: "user", content: input },
-        }) + "\n";
-      stdin.write(line);
-      await stdin.flush();
+      h.pty.write(input.endsWith("\n") ? input : input + "\n");
     },
 
     // --- AgentRuntime.resolveResumeRef ---
@@ -410,11 +367,8 @@ export async function createClaudeCodeRuntime(
     // --- AgentRuntime.classifyEvent ---
     classifyEvent: classifyCcEvent,
 
-    // CC's --include-partial-messages emits one stream_event per delta —
-    // many thousands per long turn. Subscribers (the PWA's
-    // InFlightAssistantRow) need them live, but the canonical transcript
-    // record is the final `assistant` event that follows.
-    nonPersistedEventTypes: new Set(["stream_event"]),
+    // No stream_event records in PTY mode — the byte stream is never parsed.
+    nonPersistedEventTypes: new Set<string>(),
 
     // --- AgentRuntime.mountRoutes ---
     mountRoutes(
@@ -488,31 +442,4 @@ export async function createClaudeCodeRuntime(
   };
 
   return runtime;
-}
-
-async function* readLines(
-  stream: ReadableStream<Uint8Array>,
-): AsyncGenerator<string> {
-  const reader = stream.getReader();
-  const decoder = new TextDecoder();
-  let buf = "";
-  const trimCR = (s: string) => (s.endsWith("\r") ? s.slice(0, -1) : s);
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        buf += decoder.decode();
-        if (buf.length > 0) yield trimCR(buf);
-        return;
-      }
-      buf += decoder.decode(value, { stream: true });
-      let idx: number;
-      while ((idx = buf.indexOf("\n")) !== -1) {
-        yield trimCR(buf.slice(0, idx));
-        buf = buf.slice(idx + 1);
-      }
-    }
-  } finally {
-    reader.releaseLock();
-  }
 }
