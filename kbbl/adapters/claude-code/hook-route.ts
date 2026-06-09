@@ -68,14 +68,14 @@ export function hookPermissionHandler(deps: HookHandlerDeps) {
 
     const session = await resolveSessionForHook(deps.manager, hook.session_id);
     if (!session) {
+      console.error(
+        `kbbl: /hook/permission — no session for ccSid ${hook.session_id}, denying`,
+      );
       return c.json(
         {
           hookSpecificOutput: {
             hookEventName: "PermissionRequest",
-            decision: {
-              behavior: "deny",
-              message: "kbbl: no oakridge session for this CC session_id",
-            },
+            decision: { behavior: "deny" },
           },
         },
         200,
@@ -237,8 +237,11 @@ export function hookSubagentStopHandler(deps: HookHandlerDeps) {
     } catch {
       return c.json({}, 200);
     }
+    if (hook.hook_event_name !== "SubagentStop") {
+      return c.json({}, 200);
+    }
 
-    const session = deps.manager.getByCcSid(hook.session_id);
+    const session = await resolveSessionForHook(deps.manager, hook.session_id);
     if (session) {
       const prev = deps.subagentCounts.get(session.oakridgeSid) ?? 0;
       const count = prev + 1;
@@ -264,6 +267,10 @@ export function hookSubagentStopHandler(deps: HookHandlerDeps) {
  * Factory for fire-and-forget informational hook handlers. Emits a structured
  * event into the session and returns 200 immediately — CC does not wait on a
  * specific response shape for non-decision hooks.
+ *
+ * Uses resolveSessionForHook to tolerate the hooks/stdout race at session
+ * startup: events that arrive before system/init maps the ccSid would
+ * otherwise be silently dropped.
  */
 function makeInformationalHandler(deps: HookHandlerDeps, eventType: string) {
   return async (c: Context) => {
@@ -281,16 +288,19 @@ function makeInformationalHandler(deps: HookHandlerDeps, eventType: string) {
       return c.json({}, 200);
     }
 
-    const session = deps.manager.getByCcSid(hook.session_id);
-    if (session) {
-      session.emit(eventType, { ...hook }).catch((err) => {
-        console.error(
-          `kbbl: ${eventType} emit failed: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-      });
-    }
+    // resolveSessionForHook absorbs the hooks/stdout race: informational hooks
+    // can fire before system/init has established the ccSid→oakridgeSid mapping.
+    resolveSessionForHook(deps.manager, hook.session_id).then((session) => {
+      if (session) {
+        session.emit(eventType, { ...hook }).catch((err) => {
+          console.error(
+            `kbbl: ${eventType} emit failed: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        });
+      }
+    }).catch(() => {});
     return c.json({}, 200);
   };
 }

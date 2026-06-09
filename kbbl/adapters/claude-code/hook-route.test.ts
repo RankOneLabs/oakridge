@@ -129,7 +129,7 @@ describe("hookPermissionHandler: allowlist auto-approves", () => {
 });
 
 describe("hookPermissionHandler: session not found", () => {
-  test("returns deny when session cannot be resolved", async () => {
+  test("returns minimal deny (no extra fields) when session cannot be resolved", async () => {
     const handler = hookPermissionHandler(makeHookDeps(null));
 
     const ctx = makeCtx({
@@ -141,15 +141,28 @@ describe("hookPermissionHandler: session not found", () => {
     });
     const res = await handler(ctx as Parameters<typeof handler>[0]);
     const body = await res.json() as {
-      hookSpecificOutput: { hookEventName: string; decision: { behavior: string } };
+      hookSpecificOutput: { hookEventName: string; decision: Record<string, unknown> };
     };
 
     expect(body.hookSpecificOutput.hookEventName).toBe("PermissionRequest");
     expect(body.hookSpecificOutput.decision.behavior).toBe("deny");
+    // CC may reject strict-mode hook output with extra fields; keep decision minimal.
+    expect(Object.keys(body.hookSpecificOutput.decision)).toEqual(["behavior"]);
   });
 });
 
 describe("hookSubagentStopHandler: billing observability", () => {
+  test("ignores payloads with wrong hook_event_name", async () => {
+    const { session } = makeFakeSession({});
+    const deps = makeHookDeps(session);
+    const handler = hookSubagentStopHandler(deps);
+
+    const ctx = makeCtx({ hook_event_name: "PostToolUse", session_id: CC_SID });
+    const res = await handler(ctx as Parameters<typeof handler>[0]);
+    expect(res.status).toBe(200);
+    expect(deps.subagentCounts.get("fake-session-id")).toBeUndefined();
+  });
+
   test("increments subagentCounts and emits subagent_stopped with count", async () => {
     const { session, emitted } = makeFakeSession({});
     const deps = makeHookDeps(session);
