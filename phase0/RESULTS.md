@@ -20,15 +20,14 @@ Verdict: **PASS**
 - `credentials.subscriptionType`: `"max"`
 - `ANTHROPIC_API_KEY` in env: `false`
 
-**Interactive PTY sessions** bill to the Max subscription, not the Agent SDK API credit meter. Delta is 0 by construction — no API key exists to charge against.
+**Interactive PTY sessions** use Max subscription usage limits. **`--print` (`claude -p`) sessions draw from a separate monthly Agent SDK credit** ($200/mo on Max); once that pool is exhausted, charges fall through to pay-as-you-go API rates.
 
-> `--print` mode is NOT covered by this PASS verdict. After the 2026-06-15 billing split,
-> `--print` will route to the API credit meter. execution_v2 is explicitly designed to avoid
-> `--print` precisely because of this. The billing gate tests only the interactive PTY path.
+This split is already in effect (confirmed via Anthropic Help Center: "Use the Claude Agent SDK with your Claude plan"). The billing signal is the invocation mode, not the auth method — both modes use the same OAuth credentials, but CC routes them to different billing pools server-side.
 
-> Console meter check not automated (Console not accessible from build agent). Structural
-> evidence is authoritative: OAuth-only credentials cannot route interactive PTY charges to
-> the SDK credit meter.
+Billing PASS is specifically for **interactive PTY sessions only**. The `--print` sessions run during Phase 0 testing (resume seed session, SessionStart probe) consumed Agent SDK credit, not subscription limits. In execution_v2, all sessions must be interactive PTY so they draw only from subscription usage limits.
+
+> Console meter delta not checked (Console not accessible from build agent). Billing routing
+> confirmed via Anthropic's published policy, not empirical meter observation.
 
 ---
 
