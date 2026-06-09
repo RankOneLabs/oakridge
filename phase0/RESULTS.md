@@ -20,16 +20,10 @@ Verdict: **PASS**
 - `credentials.subscriptionType`: `"max"`
 - `ANTHROPIC_API_KEY` in env: `false`
 
-Currently (pre-split) both modes bill to Max subscription usage limits. After the billing split takes effect, routing diverges by invocation mode — same OAuth credentials, different billing pools server-side:
+Interactive PTY sessions bill to Max subscription usage limits — both now and after the forthcoming billing split (confirmed via Anthropic Help Center: "Use the Claude Agent SDK with your Claude plan"). execution_v2 uses interactive PTY exclusively, so this holds permanently.
 
-- **Interactive PTY sessions** → Max subscription usage limits (unchanged)
-- **`--print` / `claude -p`** → monthly Agent SDK credit ($200/mo on Max); pay-as-you-go API rates once that pool is exhausted
-
-Billing policy confirmed via Anthropic Help Center ("Use the Claude Agent SDK with your Claude plan"). The split is forward-dated; `--print` sessions run during Phase 0 testing currently still draw from subscription limits.
-
-Billing PASS is specifically for **interactive PTY sessions**, which remain on subscription limits both before and after the split. execution_v2 avoids `--print` so all sessions stay on subscription limits post-split.
-
-> Console meter delta not checked (Console not accessible from build agent).
+> Console meter delta not checked (Console not accessible from build agent). Billing routing
+> confirmed via published Anthropic policy and structural credential evidence.
 
 ---
 
