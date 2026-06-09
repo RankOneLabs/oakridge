@@ -138,6 +138,12 @@ export async function createClaudeCodeRuntime(
         | null
         | undefined;
 
+      if (resumeCcSid && parentCcSid) {
+        throw new Error(
+          `kbbl: resumeCcSid and parentCcSid are mutually exclusive — cannot combine continue-in-place and fork`,
+        );
+      }
+
       // Single-writer supervisor: before a continue-in-place relaunch, confirm
       // no live PTY holds this ccSid in the current server instance. Two live
       // claude processes on the same session_id corrupt the unlocked JSONL.

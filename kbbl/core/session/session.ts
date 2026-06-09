@@ -291,7 +291,16 @@ export class Session {
     this.callbacks = opts.callbacks ?? {};
     this.classifyEvent = opts.classifyEvent;
     this.nonPersistedEventTypes = opts.nonPersistedEventTypes ?? new Set();
-    if (opts.startingNextId !== undefined && opts.startingNextId > 0) {
+    if (opts.startingNextId !== undefined) {
+      if (
+        !Number.isInteger(opts.startingNextId) ||
+        opts.startingNextId < 0 ||
+        opts.startingNextId > Number.MAX_SAFE_INTEGER
+      ) {
+        throw new Error(
+          `kbbl: startingNextId must be a non-negative safe integer, got ${opts.startingNextId}`,
+        );
+      }
       this.nextId = opts.startingNextId;
     }
     this.jsonlWriter = Bun.file(this.jsonlPath).writer();
