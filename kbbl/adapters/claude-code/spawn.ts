@@ -14,8 +14,8 @@ import type { Session, SpawnCmd } from "../../core/session/session";
 
 export interface CcSettingsOpts {
   dataDir: string;
-  /** Absolute path to the PreToolUse gate script. */
-  gatePath: string;
+  /** HTTP port of the kbbl server — baked into hook URLs at settings-generation time. */
+  port: number;
 }
 
 /**
@@ -23,38 +23,42 @@ export interface CcSettingsOpts {
  * `--settings <path>`. Returns the absolute settings-file path.
  *
  * The file is regenerated on every server startup (no idempotence check)
- * so a moved gate script or relocated dataDir is picked up without operator
- * action.
+ * so a port change or relocated dataDir is picked up without operator action.
  *
- * The gate path is shell-quoted before serialization because CC executes
- * `hooks[].command` as a bash command. A checkout path containing spaces or
- * other shell-significant characters would otherwise be split by the shell
- * and break the approval gate.
+ * All eight CC hook events are registered as native type:http hooks POSTing
+ * to the kbbl server at the port known at settings-generation time. No shell
+ * wrapper (gate.sh) is involved — CC posts event JSON directly.
+ *
+ * permissions.allow pre-authorizes Agent(*) and Task(*) (Task is the legacy
+ * alias) so subagent delegation flows never hit the PermissionRequest hook.
+ * Everything else goes through the PermissionRequest hook for operator review.
  */
 export async function writeCcSettings(opts: CcSettingsOpts): Promise<string> {
   const settingsPath = join(opts.dataDir, "settings.json");
+  const base = `http://127.0.0.1:${opts.port}`;
+  function httpHook(route: string) {
+    return { type: "http", url: `${base}${route}` };
+  }
   await writeFile(
     settingsPath,
     JSON.stringify(
       {
         hooks: {
-          PreToolUse: [
-            {
-              matcher: ".*",
-              hooks: [
-                {
-                  type: "command",
-                  command: shellQuote(opts.gatePath),
-                  // CC's default PreToolUse hook timeout (~10 min) silently
-                  // cancels the gate when the operator's away from the PWA;
-                  // the deny that comes back as "you haven't granted it yet"
-                  // confuses the agent. Match gate.sh's curl --max-time so
-                  // approval latency really is "time to tap".
-                  timeout: 3600,
-                },
-              ],
-            },
+          PermissionRequest: [
+            { matcher: ".*", hooks: [httpHook("/hook/permission")] },
           ],
+          PostToolUse: [
+            { matcher: ".*", hooks: [httpHook("/hook/tool")] },
+          ],
+          Stop: [{ hooks: [httpHook("/hook/stop")] }],
+          SessionStart: [{ hooks: [httpHook("/hook/session-start")] }],
+          SessionEnd: [{ hooks: [httpHook("/hook/session-end")] }],
+          Notification: [{ hooks: [httpHook("/hook/notification")] }],
+          SubagentStart: [{ hooks: [httpHook("/hook/subagent-start")] }],
+          SubagentStop: [{ hooks: [httpHook("/hook/subagent-stop")] }],
+        },
+        permissions: {
+          allow: ["Agent(*)", "Task(*)"],
         },
       },
       null,
@@ -62,16 +66,6 @@ export async function writeCcSettings(opts: CcSettingsOpts): Promise<string> {
     ),
   );
   return settingsPath;
-}
-
-/**
- * Wrap a string in single quotes for safe inclusion in a bash command.
- * Embedded single quotes are escaped via the standard `'\''` close-reopen
- * idiom. Single-quoted strings in bash don't interpret any metacharacters,
- * so wrapping is sufficient for any filesystem path.
- */
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 /**
@@ -120,8 +114,6 @@ export async function writeCcMcpConfig(opts: {
 
 export interface BuildSpawnCmdContext {
   claudeBin: string;
-  /** The server's HTTP port — passed to the gate via KBBL_PORT env var. */
-  port: number;
   /** Absolute path to the settings.json from writeCcSettings(). */
   settingsPath: string;
   /** Absolute path to the mcp-servers.json from writeCcMcpConfig(). */
@@ -164,10 +156,7 @@ export function makeBuildSpawnCmd(
     return {
       cmd,
       cwd: session.workdir,
-      env: {
-        ...process.env,
-        KBBL_PORT: String(ctx.port),
-      } as Record<string, string>,
+      env: { ...process.env } as Record<string, string>,
     };
   };
 }

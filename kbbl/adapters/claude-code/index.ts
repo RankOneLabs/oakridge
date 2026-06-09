@@ -24,12 +24,10 @@ import { assertA1Invariants, makeBuildSpawnCmd, writeCcMcpConfig, writeCcSetting
 
 export interface CreateClaudeCodeRuntimeOpts {
   claudeBin: string;
-  /** Server's HTTP port — passed into the gate via KBBL_PORT env var. */
+  /** Server's HTTP port — baked into hook URLs in the generated settings.json. */
   port: number;
   /** Directory where the generated settings.json lives. */
   dataDir: string;
-  /** Absolute path to the PreToolUse gate script. */
-  gatePath: string;
 }
 
 /** CC-specific session handle backed by a bun-pty process. */
@@ -65,12 +63,11 @@ export async function createClaudeCodeRuntime(
 ): Promise<AgentRuntime & AppRuntime> {
   const settingsPath = await writeCcSettings({
     dataDir: opts.dataDir,
-    gatePath: opts.gatePath,
+    port: opts.port,
   });
   const mcpConfigPath = await writeCcMcpConfig({ dataDir: opts.dataDir });
   const buildSpawnCmdFn = makeBuildSpawnCmd({
     claudeBin: opts.claudeBin,
-    port: opts.port,
     settingsPath,
     mcpConfigPath,
   });
@@ -122,7 +119,6 @@ export async function createClaudeCodeRuntime(
 
       const spawnEnv: Record<string, string | undefined> = {
         ...process.env,
-        KBBL_PORT: String(opts.port),
       };
 
       // Build interactive argv (no --print / stream-json).
@@ -233,7 +229,13 @@ export async function createClaudeCodeRuntime(
     async send(handle: SessionHandle, input: string): Promise<void> {
       const h = procs.get(handle.sessionId);
       if (!h) throw new Error(`no proc for session ${handle.sessionId}`);
-      h.pty.write(input.endsWith("\n") ? input : input + "\n");
+      // Bracketed paste for multiline prevents embedded \n from triggering
+      // premature submission; single-line gets a bare CR (terminal Enter).
+      if (input.includes("\n")) {
+        h.pty.write(`\x1b[200~${input}\x1b[201~\r`);
+      } else {
+        h.pty.write(`${input}\r`);
+      }
     },
 
     // --- AgentRuntime.resolveResumeRef ---
