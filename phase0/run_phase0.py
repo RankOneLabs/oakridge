@@ -26,7 +26,10 @@ from datetime import date
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
-import pexpect
+try:
+    import pexpect
+except ModuleNotFoundError:
+    sys.exit("ERROR: pexpect not installed. Run: pip install pexpect")
 
 HERE = Path(__file__).parent.resolve()
 SETTINGS = HERE / "settings.json"
@@ -115,6 +118,7 @@ class HookHandler(BaseHTTPRequestHandler):
 
 def start_listener(port: int = HOOK_PORT) -> HTTPServer:
     server = HTTPServer(("127.0.0.1", port), HookHandler)
+    server.allow_reuse_address = True
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
     print(f"[listener] running on 127.0.0.1:{port}", flush=True)
@@ -488,11 +492,11 @@ def write_results(
     interactive_hooks: dict,
     resume: dict,
 ) -> Path:
-    # Combine print + interactive fired events for the overall verdict
     fired_print = set(print_hooks.get("fired", []))
     fired_interactive = set(interactive_hooks.get("fired", []))
     fired_all = fired_print | fired_interactive
-    missing = sorted(REQUIRED_EVENTS - fired_all)
+    # Gate on interactive only — the production path. fired_all is kept for reporting.
+    missing = sorted(REQUIRED_EVENTS - fired_interactive)
     hook_pass = len(missing) == 0
 
     billing_pass = billing.get("pass", False)
@@ -671,8 +675,8 @@ def main() -> int:
 
     print("\n" + "=" * 60, flush=True)
     print("SUMMARY", flush=True)
-    fired_all = set(print_hooks.get("fired", [])) | set(interactive_hooks.get("fired", []))
-    missing = REQUIRED_EVENTS - fired_all
+    fired_interactive = set(interactive_hooks.get("fired", []))
+    missing = REQUIRED_EVENTS - fired_interactive  # gate on interactive only
     print(f"  Billing:     {'PASS' if billing['pass'] else 'FAIL'}", flush=True)
     print(f"  Hooks print: {sorted(set(print_hooks.get('fired', [])))}", flush=True)
     print(f"  Hooks iact:  {sorted(set(interactive_hooks.get('fired', [])))}", flush=True)
