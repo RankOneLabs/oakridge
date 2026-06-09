@@ -73,7 +73,7 @@ export interface SessionsRouteDeps {
  * on the given Hono app.
  */
 export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
-  const { manager, defaultWorkdir, sessionsDir, registry } = deps;
+  const { manager, defaultWorkdir, registry } = deps;
 
   function runtimeForId(runtimeId: RuntimeId): AgentRuntime | null {
     return registry?.runtimes.get(runtimeId) ?? null;
