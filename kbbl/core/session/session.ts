@@ -126,6 +126,12 @@ export interface SessionOpts {
    * Callers read the max id from the JSONL before constructing the Session.
    */
   startingNextId?: number;
+  /**
+   * Override the creation timestamp (ISO string). Pass the original
+   * `session_started.ts` when relaunching so the recovered in-memory snapshot
+   * stays consistent with the archived JSONL.
+   */
+  createdAt?: string;
 }
 
 /**
@@ -279,7 +285,7 @@ export class Session {
     this.worktreeBaseRef = opts.worktreeBaseRef ?? null;
     this.projectWorkdir = opts.projectWorkdir ?? null;
     this.model = opts.model ?? null;
-    this.createdAt = new Date().toISOString();
+    this.createdAt = opts.createdAt ?? new Date().toISOString();
     this.lastActivityTs = this.createdAt;
     this.lastResultTs = this.createdAt;
     this.callbacks = opts.callbacks ?? {};

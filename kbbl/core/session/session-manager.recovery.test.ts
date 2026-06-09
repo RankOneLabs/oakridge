@@ -266,16 +266,17 @@ describe("SessionManager.relaunch", () => {
     });
 
     const session = await manager.relaunch(oakridgeSid);
-    // The first event emitted by attachRuntime is session_started. It must
-    // have id > 3 (the max pre-restart id).
-    const firstRecoveryEventId = await new Promise<number>((resolve) => {
-      const unsub = session.subscribe((evt) => {
-        unsub();
-        resolve(evt.id);
-      });
-    });
-    expect(firstRecoveryEventId).toBeGreaterThan(3);
     await session.waitForEnd();
+    // All recovery events must have ids > 3 (the max pre-restart id). Read the
+    // JSONL directly — this avoids a subscribe-after-relaunch race where
+    // session_started may have already fired before the subscriber attaches.
+    const jsonlPath = join(sessionsDir, `${oakridgeSid}.jsonl`);
+    const lines = (await import("node:fs/promises")).readFile(jsonlPath, "utf8").then((c) =>
+      c.split("\n").filter((l) => l.trim()),
+    );
+    const ids = (await lines).map((l) => (JSON.parse(l) as { id: number }).id);
+    const recoveryIds = ids.filter((id) => id > 3);
+    expect(recoveryIds.length).toBeGreaterThan(0);
   });
 
   test("throws for compacted sessions (successor is the live branch)", async () => {

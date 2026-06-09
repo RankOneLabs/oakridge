@@ -668,6 +668,7 @@ export class SessionManager {
       parentOakridgeSid: snap.parentOakridgeSid ?? undefined,
       artifactId: snap.artifactId ?? undefined,
       model: snap.model,
+      createdAt: snap.createdAt,
       startingNextId,
       worktreePath: snap.worktreePath,
       worktreeBranch: snap.worktreeBranch,
