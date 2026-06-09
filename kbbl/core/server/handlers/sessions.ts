@@ -58,8 +58,6 @@ export interface SessionsRouteDeps {
   manager: SessionManager;
   /** Optional server default workdir (from --workdir CLI arg). */
   defaultWorkdir: string | null;
-  /** Path to the on-disk sessions directory for archived JSONL lookups. */
-  sessionsDir: string;
   /**
    * Optional runtime registry for model validation. When present, delegates
    * to the default runtime's isAllowedModel() method. When absent, falls back
@@ -197,6 +195,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       if (!Array.isArray(parsed.pre_authorized_tools)) {
         return c.json({ error: "pre_authorized_tools must be an array" }, 400);
       }
+      const parsedTools: string[] = [];
       for (const t of parsed.pre_authorized_tools) {
         if (typeof t !== "string") {
           return c.json(
@@ -204,8 +203,16 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
             400,
           );
         }
+        const trimmed = t.trim();
+        if (trimmed === "") {
+          return c.json(
+            { error: "pre_authorized_tools entries must be non-empty strings" },
+            400,
+          );
+        }
+        parsedTools.push(trimmed);
       }
-      bodyPreAuthorizedTools = parsed.pre_authorized_tools as string[];
+      bodyPreAuthorizedTools = parsedTools;
 
       // yolo (required, boolean)
       if (parsed.yolo === undefined) {
@@ -305,8 +312,13 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
     if (wdErr) return c.json({ error: wdErr }, 400);
     const target = resolve(requestedWorkdir);
 
-    // Backend registration check (only when a registry is wired).
-    if (registry && !registry.runtimes.has(bodyBackend!)) {
+    // Backend registration check. Registry is required — without it we can't
+    // validate or route the backend, so reject rather than silently spawn the
+    // wrong runtime.
+    if (!registry) {
+      return c.json({ error: "server has no runtime registry" }, 500);
+    }
+    if (!registry.runtimes.has(bodyBackend!)) {
       return c.json(
         {
           error: `backend "${bodyBackend}" is not registered — registered: ${registeredRuntimeList()}`,

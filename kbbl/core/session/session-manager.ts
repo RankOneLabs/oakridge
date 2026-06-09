@@ -496,7 +496,10 @@ export class SessionManager {
           const delegatedCfg = this.delegatedConfigs.get(s.oakridgeSid);
           if (delegatedCfg) {
             this.delegatedConfigs.delete(s.oakridgeSid);
-            if (s.endReason !== "compacted") {
+            if (s.endReason === "compacted" && s.successorSid) {
+              // Transfer to successor so C.2b/C.3 keep working after compact.
+              this.delegatedConfigs.set(s.successorSid, delegatedCfg);
+            } else if (s.endReason !== "compacted") {
               void reportTerminalStatus(delegatedCfg.callback, "done", s.oakridgeSid);
             }
           }

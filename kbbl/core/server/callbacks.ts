@@ -41,6 +41,7 @@ export async function emitArtifact(
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) {
       console.error(`kbbl: artifact emit to ${url} returned ${res.status}`);
@@ -77,6 +78,7 @@ export async function reportTerminalStatus(
         sid,
         stage_instance_id: callback.stage_instance_id,
       }),
+      signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) {
       console.error(
@@ -110,6 +112,7 @@ export function notifyApprovalNeeded(
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ request_id: requestId, tool_label: toolLabel, sid }),
+    signal: AbortSignal.timeout(10_000),
   })
     .then((res) => {
       if (!res.ok) {

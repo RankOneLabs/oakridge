@@ -107,7 +107,6 @@ function makeApp(
   mountSessionsRoutes(app, {
     manager,
     defaultWorkdir,
-    sessionsDir,
     registry,
   });
   return app;
