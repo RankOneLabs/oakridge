@@ -99,6 +99,7 @@ export async function createClaudeCodeRuntime(
       ccSidToOakridgeSid.delete(ccSid);
     }
     oakridgeSidToSession.delete(session.oakridgeSid);
+    subagentCounts.delete(session.oakridgeSid);
   }
 
   function lookupByCcSid(ccSid: string): Session | undefined {

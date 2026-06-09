@@ -87,7 +87,7 @@ export async function writeCcSettings(opts: CcSettingsOpts): Promise<string> {
  * `.mcp.json` (a project setting source, loaded by default), but kbbl launches
  * CC with `--setting-sources user` — a deliberate gate-integrity choice, since
  * project setting sources can carry permission allowlists that would let a
- * session bypass the PreToolUse approval gate. That same flag excludes the
+ * session bypass the PermissionRequest hook gate. That same flag excludes the
  * project-scoped `.mcp.json`, so the server never registers in kbbl sessions
  * unless we load it through `--mcp-config`, which is independent of
  * `--setting-sources`. (oakridge-core's session_agent mirrors this URL.)
