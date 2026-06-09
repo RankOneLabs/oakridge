@@ -70,8 +70,12 @@ class HookHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"{}")
 
 
+class _ReuseHTTPServer(HTTPServer):
+    allow_reuse_address = True
+
+
 def start(port: int = 19876) -> HTTPServer:
-    server = HTTPServer(("127.0.0.1", port), HookHandler)
+    server = _ReuseHTTPServer(("127.0.0.1", port), HookHandler)
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
     print(f"[hook-listener] running on 127.0.0.1:{port}", flush=True)

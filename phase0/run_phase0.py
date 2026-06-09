@@ -116,9 +116,12 @@ class HookHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"{}")
 
 
+class _ReuseHTTPServer(HTTPServer):
+    allow_reuse_address = True
+
+
 def start_listener(port: int = HOOK_PORT) -> HTTPServer:
-    server = HTTPServer(("127.0.0.1", port), HookHandler)
-    server.allow_reuse_address = True
+    server = _ReuseHTTPServer(("127.0.0.1", port), HookHandler)
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
     print(f"[listener] running on 127.0.0.1:{port}", flush=True)
@@ -379,7 +382,8 @@ def run_resume_test() -> dict:
     """
     1. Run --print session → capture session_id.
     2. Interactive resume with `claude --resume <id>` (no --fork-session).
-    3. Verify same session_id + SessionStart source:"resume".
+    3. Verify same session_id (via hook payload) + same transcript file.
+       SessionStart source:"resume" is not verifiable — SessionStart never fires as HTTP hook.
     """
     slug = project_slug_for_cwd(WORKTREE_CWD)
     env = child_env()
@@ -571,7 +575,7 @@ def write_results(
         lines += ["", f"Unexpected events also fired: {', '.join(f'`{e}`' for e in sorted(unexpected))}"]
 
     if missing:
-        lines += ["", f"**Missing events (neither mode):** {', '.join(f'`{e}`' for e in missing)}"]
+        lines += ["", f"**Missing from interactive mode (required for PASS):** {', '.join(f'`{e}`' for e in missing)}"]
 
     lines += [
         "",
