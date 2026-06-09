@@ -29,9 +29,9 @@ pub struct AppState {
     pub live_delegated: LiveContexts,
 }
 
-/// Register built-in stage and artifact types.
-/// delegated_session is always registered in boot(); this hook is reserved for
-/// future non-CC stage types.
+/// No-op hook passed to `boot()` by `main`. `delegated_session` is registered
+/// unconditionally in `boot()`; this function is reserved for future additional
+/// stage or artifact types that production startup may need to inject.
 pub fn register_types(_stage: &mut StageTypeRegistry, _artifact: &mut ArtifactTypeRegistry) {}
 
 /// Initialize the substrate: run migrations, build registries via `register_fn`,
