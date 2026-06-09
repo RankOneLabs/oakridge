@@ -151,19 +151,27 @@ async fn mock_sessions_handler(
     let stage_id = s.stage_instance_id.clone();
 
     // Simulate a tool-approval request: POST to oakridge's /stages/:id/approvals.
+    // Retry until 2xx so the callback tolerates the window between execute()
+    // returning the kbbl sid and the StageContext being inserted into live_delegated.
     tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(20)).await;
         let url = format!("{}/stages/{}/approvals", base_url, stage_id);
-        let _ = client
-            .post(&url)
-            .json(&json!({
-                "request_id": "test-req-001",
-                "tool_label": "Bash",
-                "sid": "mock-kbbl-0001",
-            }))
-            .timeout(Duration::from_secs(5))
-            .send()
-            .await;
+        for _ in 0..50u32 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            match client
+                .post(&url)
+                .json(&json!({
+                    "request_id": "test-req-001",
+                    "tool_label": "Bash",
+                    "sid": "mock-kbbl-0001",
+                }))
+                .timeout(Duration::from_secs(5))
+                .send()
+                .await
+            {
+                Ok(resp) if resp.status().is_success() => break,
+                _ => {}
+            }
+        }
     });
 
     (StatusCode::CREATED, Json(json!({"sid": "mock-kbbl-0001"})))
