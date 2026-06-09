@@ -274,6 +274,9 @@ async fn delegated_session_e2e_lifecycle() {
     )
     .await
     .unwrap();
+    // Remove immediately after boot() reads it — avoids leaking a tempdir path
+    // into parallel tests that call boot(register_types).
+    std::env::remove_var("OAKRIDGE_PROMPTS_DIR");
 
     tokio::spawn(async move {
         axum::serve(

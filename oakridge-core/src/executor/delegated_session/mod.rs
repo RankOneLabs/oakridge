@@ -115,7 +115,7 @@ impl StageHandle for DelegatedSessionHandle {
                     "decision": if approved { "approve" } else { "deny" },
                     "scope": "once",
                 });
-                if let Err(e) = self
+                match self
                     .client
                     .post(&approval_url)
                     .timeout(std::time::Duration::from_secs(10))
@@ -123,11 +123,17 @@ impl StageHandle for DelegatedSessionHandle {
                     .send()
                     .await
                 {
-                    tracing::warn!(
+                    Err(e) => tracing::warn!(
                         error = %e,
                         kbbl_sid = %self.kbbl_sid,
-                        "failed to forward approval decision to kbbl"
-                    );
+                        "failed to forward approval decision to kbbl (transport error)"
+                    ),
+                    Ok(resp) if !resp.status().is_success() => tracing::warn!(
+                        status = %resp.status(),
+                        kbbl_sid = %self.kbbl_sid,
+                        "kbbl rejected approval decision; remote session may remain blocked"
+                    ),
+                    Ok(_) => {}
                 }
 
                 // Clear park state.

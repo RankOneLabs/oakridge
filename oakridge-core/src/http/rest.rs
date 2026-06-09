@@ -532,8 +532,8 @@ pub async fn post_stage_approvals(
     Path(id): Path<Uuid>,
     Json(body): Json<ApprovalNotificationBody>,
 ) -> impl IntoResponse {
-    let sid = StageInstanceId(id);
-    let ctx = state.live_delegated.lock().unwrap().get(&sid).cloned();
+    let stage_sid = StageInstanceId(id);
+    let ctx = state.live_delegated.lock().unwrap().get(&stage_sid).cloned();
     let ctx = match ctx {
         Some(c) => c,
         None => {
@@ -548,6 +548,7 @@ pub async fn post_stage_approvals(
     let parked_meta = json!({
         "request_id": body.request_id,
         "tool_label": body.tool_label,
+        "sid": body.sid,
     });
     if let Err(e) = ctx.set_parked_meta(Some(parked_meta)).await {
         return AppError::from(e).into_response();
