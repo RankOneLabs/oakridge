@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -6,11 +7,9 @@ import type { Session, SpawnCmd } from "../../core/session/session";
 /**
  * CC-specific spawn-command construction and settings-file generation.
  *
- * NOTE: This module is Claude Code-specific. It builds a `claude --print
- * --input-format stream-json ...` command line and writes the settings.json
- * file that registers the PreToolUse hook. In PR 3 of the restructure it
- * moves into kbbl/adapters/claude-code/ and is invoked through the
- * runtime-interface.ts AgentRuntime.spawn() contract.
+ * Builds the interactive `claude` command line (PTY launch; no --print /
+ * stream-json) and provides the A.1 billing invariant guard that must be
+ * satisfied before the PTY is opened.
  */
 
 export interface CcSettingsOpts {
@@ -140,19 +139,6 @@ export function makeBuildSpawnCmd(
   return async function buildSpawnCmd(session: Session): Promise<SpawnCmd> {
     const cmd = [
       ctx.claudeBin,
-      "--print",
-      "--input-format",
-      "stream-json",
-      "--output-format",
-      "stream-json",
-      "--include-hook-events",
-      // Without partial-messages, kbbl only sees the final assistant message
-      // when the model is fully done — a long thinking phase is indistinguishable
-      // from a wedge. Partial events let the PWA stream incremental thinking +
-      // text and surface a live token counter.
-      "--include-partial-messages",
-      "--replay-user-messages",
-      "--verbose",
       "--setting-sources",
       "user",
       "--settings",
@@ -184,5 +170,49 @@ export function makeBuildSpawnCmd(
       } as Record<string, string>,
     };
   };
+}
+
+/**
+ * A.1 billing invariant guard — must pass before the PTY is opened.
+ *
+ * Verifies:
+ *   1. No -p / --print in the argv (interactive mode only; print = metered API path).
+ *   2. ANTHROPIC_API_KEY is absent (subscription OAuth only; an API key forces
+ *      per-token billing regardless of the OAuth login state).
+ *   3. The binary resolves (via symlinks) to a path containing
+ *      @anthropic-ai/claude-code (the real subscription CLI, not an impostor).
+ *   4. Real TTY: guaranteed by the caller using bun-pty — this function
+ *      documents the invariant but cannot check it pre-spawn.
+ *
+ * Throws with an "A.1:" prefix on any violation so callers can surface the
+ * reason without additional parsing.
+ */
+export async function assertA1Invariants(opts: {
+  claudeBin: string;
+  argv: string[];
+  env: Record<string, string | undefined>;
+}): Promise<void> {
+  if (opts.argv.includes("-p") || opts.argv.includes("--print")) {
+    throw new Error("A.1: interactive mode forbids -p / --print in argv");
+  }
+  if (opts.env.ANTHROPIC_API_KEY !== undefined) {
+    throw new Error(
+      "A.1: ANTHROPIC_API_KEY is set — only subscription OAuth auth is permitted (unset the key)",
+    );
+  }
+  let resolvedBin: string;
+  try {
+    const fullPath = opts.claudeBin.startsWith("/")
+      ? opts.claudeBin
+      : (Bun.which(opts.claudeBin) ?? opts.claudeBin);
+    resolvedBin = realpathSync(fullPath);
+  } catch {
+    throw new Error(`A.1: cannot resolve binary '${opts.claudeBin}'`);
+  }
+  if (!/\/@anthropic-ai\/claude-code(\/|$)/.test(resolvedBin)) {
+    throw new Error(
+      `A.1: '${resolvedBin}' is not @anthropic-ai/claude-code — refusing to launch (interactive mode requires the subscription CLI)`,
+    );
+  }
 }
 

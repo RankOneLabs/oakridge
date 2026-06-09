@@ -1,6 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import { makeBuildSpawnCmd, type BuildSpawnCmdContext } from "./spawn";
+import { assertA1Invariants, makeBuildSpawnCmd, type BuildSpawnCmdContext } from "./spawn";
 import type { Session } from "../../core/session/session";
 
 function makeCtx(): BuildSpawnCmdContext {
@@ -68,5 +71,89 @@ describe("makeBuildSpawnCmd argv construction", () => {
     expect(cmd[resumeIdx + 1]).toBe("abc");
     expect(cmd.includes("--fork-session")).toBe(true);
     expect(modelIdx).toBeLessThan(resumeIdx);
+  });
+
+  test("does not contain --print or stream-json flags (interactive PTY mode)", async () => {
+    const session = fakeSession({ model: null });
+    const { cmd } = await buildSpawnCmd(session);
+    expect(cmd.includes("--print")).toBe(false);
+    expect(cmd.includes("-p")).toBe(false);
+    expect(cmd.includes("--input-format")).toBe(false);
+    expect(cmd.includes("--output-format")).toBe(false);
+    expect(cmd.includes("stream-json")).toBe(false);
+    expect(cmd.includes("--include-hook-events")).toBe(false);
+    expect(cmd.includes("--include-partial-messages")).toBe(false);
+    expect(cmd.includes("--replay-user-messages")).toBe(false);
+  });
+});
+
+describe("assertA1Invariants", () => {
+  let tmpRoot: string;
+  let fakeBin: string;
+
+  beforeEach(() => {
+    tmpRoot = mkdtempSync(join(tmpdir(), "cc-a1-test-"));
+    const binDir = join(tmpRoot, "node_modules/@anthropic-ai/claude-code/bin");
+    mkdirSync(binDir, { recursive: true });
+    fakeBin = join(binDir, "claude");
+    writeFileSync(fakeBin, "#!/bin/sh\necho fake", { mode: 0o755 });
+  });
+
+  afterEach(() => {
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  test("passes with a valid CC binary and no API key", async () => {
+    await expect(
+      assertA1Invariants({ claudeBin: fakeBin, argv: ["claude"], env: {} }),
+    ).resolves.toBeUndefined();
+  });
+
+  test("rejects when --print is in argv", async () => {
+    await expect(
+      assertA1Invariants({ claudeBin: fakeBin, argv: ["claude", "--print"], env: {} }),
+    ).rejects.toThrow("A.1");
+  });
+
+  test("rejects when -p is in argv", async () => {
+    await expect(
+      assertA1Invariants({ claudeBin: fakeBin, argv: ["claude", "-p"], env: {} }),
+    ).rejects.toThrow("A.1");
+  });
+
+  test("rejects when ANTHROPIC_API_KEY is set", async () => {
+    await expect(
+      assertA1Invariants({
+        claudeBin: fakeBin,
+        argv: ["claude"],
+        env: { ANTHROPIC_API_KEY: "sk-ant-test" },
+      }),
+    ).rejects.toThrow("A.1");
+  });
+
+  test("rejects when ANTHROPIC_API_KEY is set to empty string", async () => {
+    await expect(
+      assertA1Invariants({
+        claudeBin: fakeBin,
+        argv: ["claude"],
+        env: { ANTHROPIC_API_KEY: "" },
+      }),
+    ).rejects.toThrow("A.1");
+  });
+
+  test("rejects when binary path does not contain @anthropic-ai/claude-code", async () => {
+    await expect(
+      assertA1Invariants({ claudeBin: "/bin/true", argv: ["claude"], env: {} }),
+    ).rejects.toThrow("A.1");
+  });
+
+  test("rejects when binary does not exist", async () => {
+    await expect(
+      assertA1Invariants({
+        claudeBin: "/nonexistent/claude",
+        argv: ["claude"],
+        env: {},
+      }),
+    ).rejects.toThrow("A.1");
   });
 });

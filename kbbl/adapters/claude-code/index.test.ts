@@ -261,9 +261,11 @@ describe("CC adapter reconstructSnapshot", () => {
 });
 
 describe("CC adapter nonPersistedEventTypes", () => {
-  test("stream_event is non-persisted", async () => {
+  test("stream_event is not in nonPersistedEventTypes (PTY mode emits no stream_event)", async () => {
     const rt = await makeRuntime();
-    expect(rt.nonPersistedEventTypes?.has("stream_event")).toBe(true);
+    // In PTY mode the byte stream is never parsed, so stream_event is never
+    // emitted and does not need to be filtered from the transcript.
+    expect(rt.nonPersistedEventTypes?.has("stream_event")).toBe(false);
   });
 });
 
