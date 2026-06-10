@@ -115,3 +115,38 @@ already idempotent). A Postgres/SQLite outbox table, no new infra.
 spec §10 "extract the runtime into a standalone service" step), or the first
 time a real workflow loses a terminal-status callback to an oakridge restart.
 Until then, fire-and-forget + recovery reconciliation is sufficient.
+
+## PR #264 review — deferred follow-ups
+
+Items raised in the PR #264 (epic→main) review round and consciously deferred
+after operator triage. Each is understood and non-blocking for the merge.
+
+- **`relaunch()` drops delegated wiring.** `kbbl/core/session/session-manager.ts`
+  `relaunch()` rebuilds a plain `Session`: its `onEnded` does not restore
+  `delegatedConfigs` / `delegatedByStageInstance` and does not report terminal
+  status. So a relaunched delegated session would never report back to oakridge
+  and could not forward approvals — the stage would strand. **Currently
+  dormant:** `manager.relaunch()` has no non-test caller, so a mid-flight crash
+  strands the stage regardless (no auto-relaunch exists yet). Close this *with*
+  the crash-recovery wiring (restore the delegated config from the snapshot and
+  re-report terminal status), alongside the callback-durability outbox above.
+
+- **Delegated callbacks are unauthenticated** (`oakridge-core/src/http/rest.rs`
+  artifact / terminal-status / approval handlers). State-mutating, identified
+  only by `stage_instance_id`. Safe only because they're loopback-bound in the
+  co-located deployment. Add a shared-secret / mTLS verifier on the **same
+  trigger** as the durability outbox: when kbbl moves off-host.
+
+- **Terminal status is always `"done"`** (`kbbl/core/server/callbacks.ts`,
+  `session-manager.ts` `onEnded`). A non-zero runtime exit is still reported as
+  `done`, so a failed delegated stage reads as successful. Thread the real
+  terminal outcome through `onEnded` and map non-zero / event-loop errors to
+  `"failed"`. Deferred (larger lifecycle change).
+
+- **Typed contracts on the C.1 surface.** `callbacks.ts` helpers should return a
+  `Result<void, DelegatedCallbackError>` (operation + `stage_instance_id` +
+  detail) instead of collapsing failures to `console.error`; `POST /sessions`
+  should parse into a named `CreateSessionRequest` via a `Result`-returning
+  validator rather than reconstructing from `Record<string, unknown>`. (The
+  callback *field* shapes — base_url/paths/stage_instance_id — already get
+  up-front validation as of the #264 fixes; this is the broader typing pass.)
