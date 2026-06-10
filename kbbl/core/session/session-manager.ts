@@ -298,6 +298,16 @@ export class SessionManager {
    * terminal-status reporter for C.2b.
    */
   private readonly delegatedConfigs = new Map<string, DelegatedSessionConfig>();
+  /**
+   * Idempotency index: stage_instance_id → oakridgeSid for delegated sessions.
+   * Lets POST /sessions dedup a recovery re-POST — oakridge crashing after kbbl
+   * created the session but before persisting the returned sid — back onto the
+   * existing session instead of spawning a duplicate that would interleave
+   * writes into the same transcript. Maintained symmetrically with
+   * delegatedConfigs: transferred to the successor on compaction, removed on
+   * terminal end.
+   */
+  private readonly delegatedByStageInstance = new Map<string, string>();
 
   private readonly inboxSubscribers = new Set<InboxSubscriber>();
   /**
@@ -343,6 +353,34 @@ export class SessionManager {
    */
   getDelegatedCallback(oakridgeSid: string): DelegatedCallback | null {
     return this.delegatedConfigs.get(oakridgeSid)?.callback ?? null;
+  }
+
+  /**
+   * Returns the live delegated session for the given oakridge stage_instance_id,
+   * or null if none exists. Used by POST /sessions to make session creation
+   * idempotent across oakridge crash-recovery re-POSTs.
+   *
+   * Ended sessions are filtered out explicitly: SessionManager intentionally
+   * keeps ended sessions in `this.sessions` (so a client can still read the
+   * failure via /:sid/events), so we cannot rely on the map dropping them. If
+   * the index ever points at an ended sid, returning it would let POST /sessions
+   * "dedup" onto a dead session instead of spawning fresh. onEnded already
+   * removes the index entry, but enforcing "live" here keeps the contract
+   * self-evident rather than dependent on that bookkeeping staying in sync.
+   *
+   * Self-healing: when the entry resolves to a missing or ended session it is
+   * deleted from the index before returning null, so a stale key can't survive
+   * a lookup and the index can't grow unbounded with dead mappings.
+   */
+  getDelegatedByStageInstance(stageInstanceId: string): Session | null {
+    const sid = this.delegatedByStageInstance.get(stageInstanceId);
+    if (sid === undefined) return null;
+    const session = this.sessions.get(sid);
+    if (session === undefined || session.status === "ended") {
+      this.delegatedByStageInstance.delete(stageInstanceId);
+      return null;
+    }
+    return session;
   }
 
   private async ensureWorktreesDirSafeForRepo(workdir: string): Promise<void> {
@@ -496,9 +534,15 @@ export class SessionManager {
           const delegatedCfg = this.delegatedConfigs.get(s.oakridgeSid);
           if (delegatedCfg) {
             this.delegatedConfigs.delete(s.oakridgeSid);
+            // Drop the idempotency index entry unconditionally, then re-point it
+            // at the successor below if this was a compaction — mirroring the
+            // delegatedConfigs handling so the two stay consistent.
+            const stageInstanceId = delegatedCfg.callback.stage_instance_id;
+            this.delegatedByStageInstance.delete(stageInstanceId);
             if (s.endReason === "compacted" && s.successorSid) {
               // Transfer to successor so C.2b/C.3 keep working after compact.
               this.delegatedConfigs.set(s.successorSid, delegatedCfg);
+              this.delegatedByStageInstance.set(stageInstanceId, s.successorSid);
             } else if (s.endReason !== "compacted") {
               void reportTerminalStatus(delegatedCfg.callback, "done", s.oakridgeSid);
             }
@@ -628,11 +672,24 @@ export class SessionManager {
     // ── C.1 delegated-session post-spawn wiring ──────────────────────────
     // Stash the config first so the hook handler can find the callback as
     // soon as the first tool call arrives (before we even send the prompt).
-    if (opts.delegatedCallback) {
+    //
+    // Defensive precondition: never register delegated mappings for an already-
+    // ended session — onEnded keys its cleanup off delegatedConfigs, so a mapping
+    // inserted after onEnded ran would be stale forever. Today this can't trigger
+    // via the registry path: attachRuntime resolves with status="live" and runs
+    // the event loop detached (session.ts _wireAttached), so onEnded cannot
+    // preempt this synchronous block. The guard encodes the invariant cheaply in
+    // case that ordering ever changes; getDelegatedByStageInstance() self-heals
+    // any stale entry that slips through from another path.
+    if (opts.delegatedCallback && session.status !== "ended") {
       this.delegatedConfigs.set(session.oakridgeSid, {
         callback: opts.delegatedCallback,
         outputSlots: opts.outputSlots ?? [],
       });
+      this.delegatedByStageInstance.set(
+        opts.delegatedCallback.stage_instance_id,
+        session.oakridgeSid,
+      );
     }
     // Pre-authorize tools before seeding the prompt so hooks that fire on
     // the first agent step see the allowlist already applied.

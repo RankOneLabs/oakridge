@@ -262,6 +262,20 @@ impl StageType for DelegatedSession {
             }));
         }
 
+        // Be "live" before making the remote call: transition to Running and
+        // register the ctx in the live map BEFORE POSTing to kbbl. kbbl learns the
+        // callback URLs only from the POST body, so it cannot call back until after
+        // the POST is sent — by which point the stage is already Running and the
+        // ctx is discoverable. This closes the window where an early artifact/status
+        // callback would 404 (and be silently lost, since callbacks are
+        // fire-and-forget) or race the initial Running transition.
+        //
+        // The terminal-guard in StageContext::set_status is deliberately retained as
+        // a centralized invariant: this ordering makes it unreachable on the happy
+        // path, but it still protects any caller that does not preserve this order.
+        ctx.set_status(StageStatus::Running, None).await?;
+        self.live_ctxs.lock().unwrap().insert(sid, ctx.clone());
+
         let sid_str = sid.0.to_string();
         let body = serde_json::json!({
             "backend": config.backend,
@@ -283,18 +297,36 @@ impl StageType for DelegatedSession {
             "{}/sessions",
             config.execution_service_url.trim_end_matches('/')
         );
-        let response = self
+
+        // From here the stage is Running with no remote session yet. Any failure
+        // before the kbbl sid is persisted must drop the ctx from the live map and
+        // return Err. The Coordinator owns the Err → Failed transition for every
+        // stage type (scheduler.rs), so the executor does NOT set the terminal
+        // status itself — its only extra responsibility is the live map the
+        // Coordinator cannot see. (Pre-reorder this returned with the stage still
+        // Pending; it now returns Running, which the Coordinator then marks Failed.
+        // The Coordinator's Failed write passes started_at=None, but the query
+        // COALESCEs it, so the started_at this Running transition seeded is
+        // preserved — a POST-failure Failed stage keeps its real start time.)
+        let response = match self
             .client
             .post(&sessions_url)
             .timeout(std::time::Duration::from_secs(30))
             .json(&body)
             .send()
             .await
-            .map_err(|e| anyhow::anyhow!("POST {} failed: {}", sessions_url, e))?;
+        {
+            Ok(r) => r,
+            Err(e) => {
+                self.live_ctxs.lock().unwrap().remove(&sid);
+                return Err(anyhow::anyhow!("POST {} failed: {}", sessions_url, e));
+            }
+        };
 
         if !response.status().is_success() {
             let http_status = response.status();
             let text = response.text().await.unwrap_or_default();
+            self.live_ctxs.lock().unwrap().remove(&sid);
             return Err(anyhow::anyhow!(
                 "execution service returned {}: {}",
                 http_status,
@@ -302,21 +334,32 @@ impl StageType for DelegatedSession {
             ));
         }
 
-        let resp_body: SessionsResponse = response
-            .json()
-            .await
-            .map_err(|e| anyhow::anyhow!("failed to parse POST /sessions response: {}", e))?;
+        let resp_body: SessionsResponse = match response.json().await {
+            Ok(b) => b,
+            Err(e) => {
+                self.live_ctxs.lock().unwrap().remove(&sid);
+                return Err(anyhow::anyhow!(
+                    "failed to parse POST /sessions response: {}",
+                    e
+                ));
+            }
+        };
         let kbbl_sid = resp_body.sid;
 
-        // Build the cleanup URL once; reused on both error paths below.
-        let delete_url = format!(
-            "{}/sessions/{}",
-            config.execution_service_url.trim_end_matches('/'),
-            &kbbl_sid
-        );
-
+        // Persist the kbbl sid so crash-recovery (Coordinator::recover) rebinds to
+        // this session instead of spawning a new one. NOTE: a crash in the window
+        // between session creation (above) and this write loses the sid and causes a
+        // re-POST on recovery; that duplicate-session window is closed on the kbbl
+        // side by making POST /sessions idempotent on stage_instance_id (follow-up).
         if let Err(e) = ctx.set_external_ref(Some(&kbbl_sid)).await {
-            // Best-effort: cancel the newly created kbbl session so it doesn't leak.
+            // The kbbl session exists but we could not persist its sid. Best-effort
+            // cancel it so it doesn't leak, drop the ctx from the live map, and
+            // return Err (the Coordinator marks the stage Failed).
+            let delete_url = format!(
+                "{}/sessions/{}",
+                config.execution_service_url.trim_end_matches('/'),
+                &kbbl_sid
+            );
             if let Err(ce) = self
                 .client
                 .delete(&delete_url)
@@ -326,23 +369,7 @@ impl StageType for DelegatedSession {
             {
                 tracing::warn!(error = %ce, kbbl_sid = %kbbl_sid, "best-effort cancel failed after set_external_ref error");
             }
-            return Err(e);
-        }
-
-        self.live_ctxs.lock().unwrap().insert(sid, ctx.clone());
-
-        if let Err(e) = ctx.set_status(StageStatus::Running, None).await {
             self.live_ctxs.lock().unwrap().remove(&sid);
-            // Best-effort: cancel the newly created kbbl session so it doesn't leak.
-            if let Err(ce) = self
-                .client
-                .delete(&delete_url)
-                .timeout(std::time::Duration::from_secs(10))
-                .send()
-                .await
-            {
-                tracing::warn!(error = %ce, kbbl_sid = %kbbl_sid, "best-effort cancel failed after set_status error");
-            }
             return Err(e);
         }
 

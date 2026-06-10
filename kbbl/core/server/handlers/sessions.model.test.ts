@@ -88,6 +88,35 @@ function makeRegistry(defaultId: RuntimeId = "claude-code"): RuntimeRegistry {
   ], defaultId);
 }
 
+/**
+ * Like makeRegistry, but its runtimes keep the session live: events() pends
+ * until terminate() is called, so a created session stays live across calls
+ * (the default makeRuntime yields "completed" immediately and ends at once).
+ * terminate() releases the pend so endAll() cleanup still completes.
+ */
+function makeLiveRegistry(): RuntimeRegistry {
+  const live = (id: RuntimeId, models: string[]): AgentRuntime => {
+    let release = () => {};
+    const stopped = new Promise<void>((r) => {
+      release = r;
+    });
+    return {
+      ...makeRuntime(id, models),
+      async terminate(): Promise<void> {
+        release();
+      },
+      async *events(): AsyncIterable<RuntimeEvent> {
+        await stopped;
+        yield { type: "completed", result: { code: 0 } };
+      },
+    };
+  };
+  return createRuntimeRegistry([
+    live("claude-code", ["claude-sonnet-4-6", "claude-opus-4-7"]),
+    live("codex", ["gpt-5.1-codex"]),
+  ], "claude-code");
+}
+
 function makeRegistryManager(registry: RuntimeRegistry): SessionManager {
   return new SessionManager({
     sessionsDir,
@@ -347,6 +376,62 @@ describe("POST /sessions — C.1 contract validation", () => {
     expect(snap.runtimeId).toBe("claude-code");
     expect(snap.status).toBe("live");
     await manager.endAll();
+  });
+
+  test("re-POST for same stage_instance_id is idempotent (no duplicate session)", async () => {
+    // Live registry so the first session stays live across the second POST —
+    // idempotency only rebinds a LIVE session; an ended one spawns fresh.
+    const registry = makeLiveRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+
+    // First POST creates the session.
+    const res1 = await postSessions(app, validBody());
+    expect(res1.status).toBe(200);
+    const snap1 = (await res1.json()) as { sid: string };
+
+    // Recovery re-POST with the same callback.stage_instance_id — oakridge
+    // crashed before persisting the sid and re-runs execute(). kbbl must return
+    // the existing session rather than spawn a second claude on the same id.
+    const res2 = await postSessions(app, validBody());
+    expect(res2.status).toBe(200);
+    const snap2 = (await res2.json()) as { sid: string };
+
+    expect(snap2.sid).toBe(snap1.sid);
+    expect(manager.listLive().length).toBe(1);
+
+    await manager.endAll();
+  });
+
+  test("stale index entry pointing at an ended session is not reused (explicit live filter)", async () => {
+    // SessionManager intentionally keeps ended sessions in its map, and onEnded
+    // normally clears the stage_instance_id index. This simulates the index
+    // going stale — still pointing at a now-ended session — and asserts the
+    // lookup filters it out, so a re-POST spawns fresh instead of "deduping"
+    // onto a dead session. Without the explicit status === "ended" filter, the
+    // final lookup would return the ended session and this test would fail.
+    const registry = makeLiveRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+
+    const res = await postSessions(app, validBody());
+    expect(res.status).toBe(200);
+    const { sid } = (await res.json()) as { sid: string };
+
+    // End the session; it stays in the map as "ended" and onEnded clears the index.
+    await manager.endAll();
+    expect(manager.getDelegatedByStageInstance("stage-abc")).toBeNull();
+
+    // Re-introduce a stale index entry (the failure mode the filter defends against).
+    const rawIndex = (
+      manager as unknown as { delegatedByStageInstance: Map<string, string> }
+    ).delegatedByStageInstance;
+    rawIndex.set("stage-abc", sid);
+
+    // The ended session must still not be returned.
+    expect(manager.getDelegatedByStageInstance("stage-abc")).toBeNull();
+    // Self-healing: the stale entry is removed by the lookup, so it can't accumulate.
+    expect(rawIndex.has("stage-abc")).toBe(false);
   });
 
   test("codex backend selects codex runtime", async () => {

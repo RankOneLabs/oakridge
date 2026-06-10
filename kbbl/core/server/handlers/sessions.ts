@@ -340,6 +340,18 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       );
     }
 
+    // Idempotency (C.1 recovery): if oakridge re-POSTs for a stage_instance_id
+    // whose session is still live — e.g. it crashed after kbbl created the
+    // session but before persisting the returned sid — return the existing
+    // session instead of spawning a duplicate. Two claude processes resuming the
+    // same transcript would interleave writes and corrupt the JSONL.
+    const existingDelegated = manager.getDelegatedByStageInstance(
+      bodyCallback!.stage_instance_id,
+    );
+    if (existingDelegated) {
+      return c.json(existingDelegated.snapshot());
+    }
+
     try {
       const session = await manager.create({
         workdir: target,
