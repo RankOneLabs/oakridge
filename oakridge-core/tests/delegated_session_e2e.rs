@@ -277,7 +277,7 @@ async fn delegated_session_e2e_lifecycle() {
     let _env_guard = PROMPTS_ENV_LOCK.lock().await;
     std::env::set_var("OAKRIDGE_PROMPTS_DIR", prompts_dir_clone.to_str().unwrap());
 
-    let (router, coord) = boot(
+    let boot_result = boot(
         Config {
             port: oakridge_port,
             bind_addr: IpAddr::V4(Ipv4Addr::LOCALHOST),
@@ -294,12 +294,15 @@ async fn delegated_session_e2e_lifecycle() {
             // DelegatedSession is always registered inside boot(); no explicit call needed.
         },
     )
-    .await
-    .unwrap();
-    // Remove immediately after boot() reads it — avoids leaking a tempdir path
-    // into parallel tests that call boot(register_types).
+    .await;
+    // Clean up the env var (and release the guard) BEFORE unwrapping: if boot()
+    // returned Err, unwrapping panics, and a panic here must not leak
+    // OAKRIDGE_PROMPTS_DIR into the other tests in this binary. Remove immediately
+    // after boot() reads it — avoids leaking a tempdir path into parallel tests
+    // that call boot(register_types).
     std::env::remove_var("OAKRIDGE_PROMPTS_DIR");
     drop(_env_guard);
+    let (router, coord) = boot_result.unwrap();
 
     tokio::spawn(async move {
         axum::serve(
@@ -484,7 +487,7 @@ async fn delegated_session_post_failure_rolls_to_failed() {
     // prompts dir; see PROMPTS_ENV_LOCK.
     let _env_guard = PROMPTS_ENV_LOCK.lock().await;
     std::env::set_var("OAKRIDGE_PROMPTS_DIR", prompts_dir.to_str().unwrap());
-    let (router, coord) = boot(
+    let boot_result = boot(
         Config {
             port: oakridge_port,
             bind_addr: IpAddr::V4(Ipv4Addr::LOCALHOST),
@@ -500,10 +503,12 @@ async fn delegated_session_post_failure_rolls_to_failed() {
             });
         },
     )
-    .await
-    .unwrap();
+    .await;
+    // Clean up env var + release the guard BEFORE unwrapping, so a boot() Err
+    // panic can't leak OAKRIDGE_PROMPTS_DIR into the other tests in this binary.
     std::env::remove_var("OAKRIDGE_PROMPTS_DIR");
     drop(_env_guard);
+    let (router, coord) = boot_result.unwrap();
 
     tokio::spawn(async move {
         axum::serve(
