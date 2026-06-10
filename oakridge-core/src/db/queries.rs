@@ -466,9 +466,17 @@ pub async fn update_stage_instance_status(
     let updated_at = Utc::now().to_rfc3339();
     let started_at_str = started_at.map(|t| t.to_rfc3339());
     let ended_at_str = ended_at.map(|t| t.to_rfc3339());
+    // started_at uses COALESCE(?, started_at): a None arg preserves any existing
+    // start time rather than clobbering it to NULL. This matters for the raw
+    // Err→Failed call sites in the scheduler, which pass started_at=None — after
+    // the delegated_session execute() reorder a stage can already be Running (and
+    // have started_at seeded) when execute() returns Err, and a Failed stage must
+    // not lose the time it actually started. Callers that intend to set a start
+    // time (set_status) still pass Some(..) and COALESCE returns it unchanged; no
+    // caller ever needs to reset started_at back to NULL.
     let result = sqlx::query!(
         "UPDATE stage_instance \
-         SET status = ?, parked_reason = ?, started_at = ?, ended_at = ?, updated_at = ? \
+         SET status = ?, parked_reason = ?, started_at = COALESCE(CAST(? AS TEXT), started_at), ended_at = ?, updated_at = ? \
          WHERE id = ?",
         status_str,
         parked_reason,

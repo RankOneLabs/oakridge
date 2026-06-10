@@ -580,4 +580,12 @@ async fn delegated_session_post_failure_rolls_to_failed() {
 
     let si = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
     assert_eq!(si.status, StageStatus::Failed);
+    // Regression lock: execute() sets Running (seeding started_at) BEFORE the POST.
+    // The Coordinator's Err → Failed write passes started_at=None; the query must
+    // COALESCE it so the stage keeps the time it actually started. A NULL here
+    // would mean a Failed stage that looks like it never ran.
+    assert!(
+        si.started_at.is_some(),
+        "Failed stage must retain the started_at seeded by the Running transition"
+    );
 }

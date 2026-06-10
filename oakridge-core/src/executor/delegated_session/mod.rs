@@ -304,7 +304,10 @@ impl StageType for DelegatedSession {
         // stage type (scheduler.rs), so the executor does NOT set the terminal
         // status itself — its only extra responsibility is the live map the
         // Coordinator cannot see. (Pre-reorder this returned with the stage still
-        // Pending; it now returns Running, which the Coordinator then marks Failed.)
+        // Pending; it now returns Running, which the Coordinator then marks Failed.
+        // The Coordinator's Failed write passes started_at=None, but the query
+        // COALESCEs it, so the started_at this Running transition seeded is
+        // preserved — a POST-failure Failed stage keeps its real start time.)
         let response = match self
             .client
             .post(&sessions_url)
