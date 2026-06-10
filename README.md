@@ -1,21 +1,24 @@
 # oakridge
 <!-- ci-probe: cohort-5 triage -->
 
-Multi-agent workspace built on jig (separate repo, agent kit) and kbbl (operator surface for CLI coding agents). The workspace layer is in design; today, oakridge is a top-level monorepo containing kbbl as its operational sub-package.
+Multi-agent workspace built on jig (separate repo, agent kit) and kbbl (operator surface for CLI coding agents). The workspace layer is in design; today, oakridge is a top-level monorepo whose operational core is **oakridge-core** — a workflow-orchestration substrate (Rust) that drives agent work by **delegating** each session to **kbbl** over HTTP. That oakridge-core ⇄ kbbl split is the "v2" execution model (see [Running v2](#running-v2-oakridge-core--kbbl)).
 
 ## Layout
 
 ```text
 oakridge/
-├── kbbl/                  # operator surface for CLI coding agents (v0, shipping)
+├── oakridge-core/         # workflow-orchestration substrate (Rust); drives delegated sessions
+├── kbbl/                  # session service + operator surface for CLI coding agents
 ├── legit-biz-club/        # workspace layer (v1, complete)
+├── lbc-dashboard/         # legit-biz-club study dashboard
 ├── docs/                  # public-facing documentation (placeholder)
 └── comms/                 # internal architecture memos and specs (gitignored)
 ```
 
 ## Sub-packages
 
-- **kbbl** — the operator surface. Drives one or more CLI coding agents (Claude Code today; runtime-agnostic by design) from a tablet- or phone-friendly PWA over Tailscale. Standalone; works without the workspace layer. See `kbbl/README.md`.
+- **oakridge-core** — the workflow-orchestration substrate. Models a workflow as a directed graph of typed stages, runs instances to completion, persists to SQLite, and streams progress over SSE. Its bundled `delegated_session` stage type delegates agent execution to kbbl over HTTP. Rust (axum + sqlx). See `oakridge-core/README.md`.
+- **kbbl** — the session service and operator surface. Drives one or more CLI coding agents (Claude Code today; runtime-agnostic by design) from a tablet- or phone-friendly PWA over Tailscale, and accepts delegated sessions from oakridge-core. See `kbbl/README.md`.
 - **legit-biz-club** — the workspace layer (multi-agent collaboration over a shared artifact). v1 build complete — all five phases (foundation, incremental coordination, convergence, evals + memory commit, study harness) shipped on `main`. Python library; no CLI. See `legit-biz-club/README.md`.
 
 ## Quick start
@@ -28,6 +31,22 @@ bun install
 ```
 
 Defaults to `127.0.0.1:8788`. See `kbbl/README.md` for tablet/phone exposure, dev mode, compaction config, and security posture.
+
+### Running v2 (oakridge-core + kbbl)
+
+The v2 execution model runs both halves together: oakridge-core orchestrates the workflow
+graph and delegates each agent session to kbbl.
+
+```bash
+bun install
+./kbbl/scripts/kbbl-start                     # session service → 127.0.0.1:8788
+( cd oakridge-core && cargo run )             # orchestrator    → 127.0.0.1:8790
+```
+
+Then register a workflow whose `delegated_session` stage points `execution_service_url` at
+kbbl and `callback_base_url` back at oakridge-core, and start a run. Details:
+`oakridge-core/README.md` → *Delegated session execution (v2)* and `kbbl/README.md` →
+*Delegated sessions*.
 
 ## Development
 

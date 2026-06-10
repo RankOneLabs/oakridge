@@ -4,10 +4,17 @@ A generic workflow-orchestration **substrate**. It models a workflow as a direct
 graph of typed stages connected by artifact-passing edges, runs instances of those
 graphs to completion, persists everything to SQLite, and streams progress over SSE.
 
-The substrate is deliberately domain-agnostic: aside from the bundled `session_agent`
+The substrate is deliberately domain-agnostic: aside from the bundled `delegated_session`
 stage type, it ships **zero** built-in stage or artifact types. A consumer binary supplies
 additional behavior by registering its own `StageType` and `ArtifactType` implementations
 at boot.
+
+The bundled `delegated_session` stage type is what makes the substrate useful out of the
+box. Rather than running an agent in-process, it **delegates** execution to an external
+session service — kbbl — over HTTP, and reconciles the result through callbacks. That
+oakridge-core ⇄ kbbl split is the "v2" execution model; see
+[Delegated session execution (v2)](#delegated-session-execution-v2) for the run model and
+how to stand up both halves.
 
 ## Domain model
 
@@ -55,6 +62,7 @@ Configuration is read from the environment (`Config::from_env`):
 | `OAKRIDGE_CORE_DB` | `sqlite://oakridge-core.db` | SQLite URL (bare paths are prefixed with `sqlite://`). |
 | `OAKRIDGE_CORE_PWA_DIR` | `./pwa` | Directory served as the static fallback. |
 | `OAKRIDGE_CORE_CORS_ORIGINS` | unset | Comma-separated list of allowed browser origins. Empty or unset means same-origin only. |
+| `OAKRIDGE_PROMPTS_DIR` | `./prompts` | Directory of prompt templates referenced by `delegated_session` stages' `prompt_template_path`. |
 
 The binary binds `127.0.0.1:<port>` by default and does not add a CORS layer unless
 `OAKRIDGE_CORE_CORS_ORIGINS` is set. That keeps local development local-first while
@@ -74,6 +82,66 @@ OAKRIDGE_CORE_CORS_ORIGINS=https://oakridge.tailnet.example \
 cargo run
 ```
 
+### Running the full v2 system (oakridge-core + kbbl)
+
+`cargo run` alone only starts the orchestrator. A `delegated_session` stage needs kbbl
+running to execute the agent. The two are co-located services (loopback, or one tailnet
+host) that talk only over HTTP:
+
+1. **Start kbbl** (the session service): `./kbbl/scripts/kbbl-start` → `127.0.0.1:8788`.
+   See `kbbl/README.md`.
+2. **Start oakridge-core**: `cargo run` → `127.0.0.1:8790`.
+3. **Register a workflow** whose `delegated_session` stage config points
+   `execution_service_url` at kbbl (`http://127.0.0.1:8788`) and `callback_base_url` back
+   at oakridge-core (`http://127.0.0.1:8790`), then `POST /workflow_runs` to start it.
+
+oakridge-core drives the graph and state; kbbl spawns and supervises the agent and reports
+back. Both default to loopback, and the callback endpoints are unauthenticated — keep them
+on a trusted network (same host or Tailscale). See
+[Delegated session execution (v2)](#delegated-session-execution-v2).
+
+## Delegated session execution (v2)
+
+The bundled `delegated_session` stage type runs an agent **out of process**. Instead of
+driving a CLI agent itself, the substrate POSTs a session request to kbbl and lets kbbl
+spawn and supervise the agent; kbbl reports back over HTTP callbacks. oakridge-core owns
+the workflow graph and durable state; kbbl owns the live agent session.
+
+**Flow**
+
+1. A `delegated_session` stage activates and POSTs `{execution_service_url}/sessions` with
+   the rendered prompt, workdir, model, `pre_authorized_tools`, declared `output_slots`,
+   and a `callback` block (`base_url`, `stage_instance_id`, `emit_path`, `status_path`).
+2. kbbl spawns the agent and returns `201 {"sid": "<session id>"}`. The stage records the
+   sid in `external_ref` and streams while the agent runs.
+3. kbbl calls back into oakridge-core:
+   - `POST {base_url}{emit_path}` (`/stage_instances/:id/artifacts`) — agent emitted an artifact.
+   - `POST {base_url}/stages/:id/approvals` — a tool hit the approval gate; the stage parks
+     and surfaces in `GET /parked` with the `request_id` in `parked_meta`.
+   - `POST {base_url}{status_path}` (`/stage_instances/:id/status`) — terminal `done`/`failed`.
+4. An operator resolves a parked approval via `POST /stage_instances/:id/resume`;
+   oakridge-core forwards the decision to kbbl, which unblocks the agent.
+
+**Stage config** — the workflow graph node's `config` for a `delegated_session` stage
+(`DelegatedSessionDefConfig`):
+
+| Field | Purpose |
+| --- | --- |
+| `backend` | Agent backend forwarded verbatim to kbbl (`"claude-code"`, `"codex"`). |
+| `prompt_template_path` | Template under `OAKRIDGE_PROMPTS_DIR`, rendered with the slot bindings. |
+| `slot_bindings` | Map of template variable → input-slot binding. |
+| `workdir` | Slot binding resolving to the agent's working directory. |
+| `model` | Optional model override. |
+| `pre_authorized_tools` | Tools kbbl allowlists before the first turn. |
+| `yolo` | Auto-approve every tool (no operator gate). |
+| `execution_service_url` | kbbl base URL, e.g. `http://127.0.0.1:8788`. |
+| `callback_base_url` | This oakridge-core's own base URL — the callback origin kbbl uses. |
+
+The kbbl URL and callback origin are **per-stage config in the workflow definition**, not
+environment variables, so one oakridge-core can fan stages out to different kbbl instances.
+The `delegated_session` stage type is registered unconditionally by `boot()`; it does not
+depend on the consumer's `register_fn`.
+
 ## HTTP API
 
 ### REST
@@ -92,6 +160,14 @@ cargo run
 | `POST /stage_instances/:id/resume` | `202` | Body tagged `ResumePayload` (`{"kind":"gate_decision",...}`, `{"kind":"feedback_artifact",...}`, or `{"kind":"executor","payload":...}`); resumes a parked stage. **Expose only on a trusted network or behind an auth gateway — the server has no built-in authentication.** |
 | `GET /artifacts/:id` | `200` | Returns the revision chain, root-first. |
 | `GET /parked` | `200` | All currently parked stage instances. |
+| `POST /stage_instances/:id/artifacts` | `200` | **kbbl callback** — emit an artifact from a delegated session. Body `{output_name, body}`. |
+| `POST /stage_instances/:id/status` | `200` | **kbbl callback** — terminal `done`/`failed` for a delegated session. |
+| `POST /stages/:id/approvals` | `200` | **kbbl callback** — park the stage pending operator approval; `request_id` lands in `parked_meta`. |
+
+The three `kbbl callback` rows are machine-to-machine, called by kbbl while a
+`delegated_session` stage runs (see below). They are **unauthenticated** and identified
+only by stage-instance id — safe only because they're loopback-/tailnet-bound in the
+co-located deployment.
 
 **Status-code conventions**
 
@@ -136,9 +212,11 @@ let (app, coordinator) = boot(Config::from_env()?, |stages: &mut StageTypeRegist
 - A graph node's `stage_type` / artifact `artifact_type` strings must match registered ids;
   an unknown id fails that stage (and terminates the run) rather than hanging it.
 
-`boot` also runs migrations and crash recovery. The bundled binary passes
-`register_types` as its `register_fn`, which registers the built-in `session_agent`
-stage type.
+`boot` also runs migrations and crash recovery, and **always registers the bundled
+`delegated_session` stage type** independently of `register_fn`. The bundled binary passes
+a no-op `register_types` as its `register_fn`; that hook exists for a consumer to inject
+*additional* stage/artifact types at boot (see
+[Delegated session execution (v2)](#delegated-session-execution-v2)).
 
 ## Persistence & migrations
 

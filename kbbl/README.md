@@ -6,9 +6,9 @@ Two runtime adapters ship: **claude-code** (default) and **codex** (opt-in). The
 
 ## How it works
 
-A single Bun + Hono server hosts many sessions. Each session is a runtime-spawned subprocess; the server pipes its NDJSON events through a per-session JSONL transcript and broadcasts them over SSE to connected PWA clients. A PreToolUse hook (currently `adapters/claude-code/scripts/gate.sh`) routes every tool call through the server, which parks the decision until the operator taps Approve or Deny in the PWA — approval latency = time to tap.
+A single Bun + Hono server hosts many sessions. Each session is a runtime-spawned subprocess; the server records per-session events to a JSONL transcript and broadcasts them over SSE to connected PWA clients. The Claude Code adapter spawns `claude` **interactively in a PTY** and configures it with **native HTTP hooks** — CC POSTs each hook event straight to a kbbl route, with no shell wrapper. The `PermissionRequest` hook (`POST /hook/permission`) parks every tool call until the operator taps Approve or Deny in the PWA — approval latency = time to tap. The remaining hooks (`/hook/tool`, `/hook/stop`, `/hook/session-{start,end}`, `/hook/notification`, `/hook/subagent-{start,stop}`) are informational and feed the transcript.
 
-The PWA opens to a session list backed by a `/inbox` delta stream (snapshot + create/end/status/pending/activity events). New sessions are created from the list view, not by launching another server. Ended sessions linger on disk and can be resumed from their row in the list — the resumed session is a new fork that inherits the parent's context.
+The PWA opens to a session list backed by a `/inbox` delta stream (snapshot + create/end/status/pending/activity events). In the **v2 execution model**, sessions are created programmatically by an orchestrator — oakridge-core — through the delegated `POST /sessions` contract; see [Delegated sessions](#delegated-sessions-driven-by-oakridge-core). The PWA remains the operator surface for those live sessions: the list, the transcript, and the approval gate.
 
 ### Compaction
 
@@ -25,7 +25,7 @@ kbbl supports two agent runtimes. Configure via `kbbl/config.json`:
 
 | Runtime | ID | Default | Notes |
 |---|---|---|---|
-| Claude Code | `claude-code` | yes | Drives CC via `--output-format stream-json`. Full feature set: compaction, approval hook, yolo mode. |
+| Claude Code | `claude-code` | yes | Spawns `claude` interactively in a PTY; approvals + observability via native HTTP hooks. Full feature set: compaction, approval gate, yolo mode. |
 | Codex | `codex` | no | Connects to the `codex` CLI app-server over a unix socket. Approval cards work; compaction not supported in v0. |
 
 ### Switching to Codex
@@ -105,7 +105,7 @@ Stop with `systemctl --user stop kbbl`. Not needed on a dedicated workstation.
 ### Sessions
 
 - `GET /sessions` — list live sessions (add `?include=archived` to fold in on-disk JSONL)
-- `POST /sessions` — create a session; body: `{ workdir?, resume_from?, name?, artifact_id?, model? }`. With `resume_from`, forks an ended session.
+- `POST /sessions` — create a delegated session (the C.1 contract, called by oakridge-core). Body: `{ backend, prompt, workdir?, model?, pre_authorized_tools, yolo, output_slots, callback }`, where `callback = { base_url, stage_instance_id, emit_path, status_path }`. Idempotent on `callback.stage_instance_id`: a re-POST for a still-live stage returns the existing session rather than spawning a duplicate. See [Delegated sessions](#delegated-sessions-driven-by-oakridge-core).
 - `DELETE /sessions/:sid` — kill a live session (`?purge=true` also deletes the transcript)
 - `GET /artifacts/:artifactId/sessions` — list sessions tagged with a given workspace-layer artifact id
 
@@ -114,7 +114,7 @@ Stop with `systemctl --user stop kbbl`. Not needed on a dedicated workstation.
 - `GET /:sid/stream` — SSE event stream for one session
 - `GET /:sid/events` — replay JSONL history (falls through to disk for archived sessions)
 - `POST /:sid/input` — send operator text to the session
-- `POST /:sid/approval` — Approve / Deny / Always-{tool} reply for a parked PreToolUse
+- `POST /:sid/approval` — Approve / Deny / Always-{tool} reply for a parked permission request
 - `POST /:sid/yolo` — toggle the session's auto-approve mode
 - `POST /:sid/compact` — operator-initiated compaction (the soft-threshold banner action)
 - `GET /:sid/handoff` — markdown body of the session's compaction handoff (404 if never compacted)
@@ -127,9 +127,12 @@ Stop with `systemctl --user stop kbbl`. Not needed on a dedicated workstation.
 - `PATCH /config` — mutate `softThresholdTokens` at runtime (persisted back to `config.json`)
 - `GET /directories?path=<absolute-path>` — list child directories for the new-session directory picker
 
-### Runtime-private
+### Runtime-private (Claude Code hooks)
 
-- `POST /hook/approval` — `127.0.0.1`-only loopback endpoint mounted by the Claude Code adapter's gate script
+All `127.0.0.1`/`::1`-only; CC POSTs the hook event JSON directly (no gate script).
+
+- `POST /hook/permission` — `PermissionRequest` approval gate. Auto-approves under yolo or a per-tool allowlist; otherwise parks until the operator decides. Responds with `hookSpecificOutput.permissionDecision` (`allow`/`deny`/`ask`) + `permissionDecisionReason`.
+- `POST /hook/tool` · `/hook/stop` · `/hook/session-start` · `/hook/session-end` · `/hook/notification` · `/hook/subagent-start` · `/hook/subagent-stop` — informational events recorded into the transcript (`subagent-stop` also counts subagents for billing observability).
 
 ## Layout
 
@@ -159,11 +162,11 @@ kbbl/
 │   └── pwa/                       # React + Vite client (built to core/pwa/dist/)
 ├── adapters/
 │   └── claude-code/               # Claude Code runtime adapter
-│       ├── index.ts               # createClaudeCodeRuntime — implements AppRuntime
-│       ├── spawn.ts               # CLI flags + settings.json generator
-│       ├── hook-route.ts          # /hook/approval handler
-│       ├── event-classifier.ts    # parses CC stdout for ccSid + result usage
-│       └── scripts/gate.sh        # PreToolUse hook script invoked by CC
+│       ├── index.ts               # createClaudeCodeRuntime — spawns CC in a PTY, mounts hook routes
+│       ├── spawn.ts               # CLI flags + settings.json / mcp-config generators + session-id resolution
+│       ├── hook-route.ts          # hook handlers: /hook/permission gate + informational routes
+│       ├── event-classifier.ts    # CC stdout metadata (ccSid, result usage)
+│       └── models.ts              # CC model allowlist for POST /sessions validation
 ├── scripts/
 │   └── kbbl-start                 # launcher: validates optional workdir, execs core/server.ts
 ├── config.json                    # compact thresholds, retention
@@ -177,12 +180,48 @@ The `core/` ↔ `adapters/` boundary is enforced by import direction: only `core
 ## Security posture
 
 - **Network:** binds to `127.0.0.1` by default. Operator opts into wider exposure with `--host=0.0.0.0` for tailnet/phone access, and is responsible for ensuring only trusted peers can reach the port (Tailscale-only, LAN firewall, etc.). Control endpoints are unauthenticated in v0 — token-based auth is planned follow-up work.
-- **Hook endpoint:** `/hook/approval` is filtered to `127.0.0.1` at the route handler — only the in-process gate script can park approval requests, not a tailnet peer.
+- **Hook endpoints:** the `/hook/*` routes are filtered to `127.0.0.1`/`::1` at the route handler — only the local CC subprocess can park approval requests or post events, not a tailnet peer.
 - **Path-traversal guard:** `:sid` route params are validated against a strict v4 UUID regex before any filesystem access.
 - **Markdown:** assistant text is rendered with `react-markdown` + `rehype-sanitize`; no `dangerouslySetInnerHTML`, so prompt-injected HTML from web-fetched content can't execute.
-- **Agent user settings (Claude Code adapter):** the server spawns CC with `--setting-sources user` so your user-level skills and slash commands are available inside the spawned subprocess. Tradeoff: user-level allowlists and permission settings in `~/.claude/settings.json` can bypass kbbl's approval gate — if you've globally approved a tool there, the PreToolUse hook won't fire for it. The operator-controlled escape hatches below (YOLO, "Always {tool}") are the intended path for short-circuiting the gate; don't rely on the gate to stop things you've already auto-approved at the user level.
-- **YOLO mode and per-tool always-allow** are operator-controlled escape hatches, scoped to a single session. YOLO mode (top-bar toggle) auto-approves every PreToolUse for the rest of the session — useful for setting an agent loose on a long task without tapping each prompt. The "Always {tool}" button on a permission card adds that tool name to a session-scoped allowlist; matching future calls auto-approve. Both reset on server restart, are emitted as visible events, and turn the gate into "see what happened" rather than "decide each call." Use them deliberately.
+- **Agent user settings (Claude Code adapter):** the server spawns CC with `--setting-sources user` so your user-level skills and slash commands are available inside the spawned subprocess. Tradeoff: user-level allowlists and permission settings in `~/.claude/settings.json` can bypass kbbl's approval gate — if you've globally approved a tool there, the permission hook won't fire for it. The operator-controlled escape hatches below (YOLO, "Always {tool}") are the intended path for short-circuiting the gate; don't rely on the gate to stop things you've already auto-approved at the user level.
+- **YOLO mode and per-tool always-allow** are operator-controlled escape hatches, scoped to a single session. YOLO mode (top-bar toggle) auto-approves every permission request for the rest of the session — useful for setting an agent loose on a long task without tapping each prompt. The "Always {tool}" button on a permission card adds that tool name to a session-scoped allowlist; matching future calls auto-approve. Both reset on server restart, are emitted as visible events, and turn the gate into "see what happened" rather than "decide each call." Use them deliberately.
 
-## Known issue: permission_required stream events
+## Delegated sessions (driven by oakridge-core)
 
-Agents running under `--print --output-format stream-json` emit permission prompts as events in the JSON stream rather than as interactive terminal prompts. The PWA currently does not render these events as approval cards (only PreToolUse hook calls are rendered). If your runtime's permission system rejects something pre-hook, the rejection drops silently. Workaround: configure the runtime so the gate is the only approval surface (for Claude Code, ensure user-level allowlist covers the tool so the permission system passes through to the hook). Surfacing permission_required events in the PWA is on the roadmap.
+In the v2 execution model, kbbl is the **session service** behind oakridge-core (the
+workflow orchestrator). oakridge-core owns the graph and durable state; kbbl spawns and
+supervises the agent and reports back. The two are co-located and talk only over HTTP.
+
+A `delegated_session` stage in oakridge-core:
+
+1. `POST`s `/sessions` (the C.1 contract above) with the rendered prompt, workdir, model,
+   `pre_authorized_tools`, `yolo`, declared `output_slots`, and a `callback` block
+   (`base_url`, `stage_instance_id`, `emit_path`, `status_path`). kbbl spawns the agent and
+   returns `201 { sid }`.
+2. kbbl then fires callbacks back into oakridge-core as the session runs:
+   - **artifact emit** → `POST {base_url}{emit_path}`
+   - **approval needed** → `POST {base_url}/stages/{stage_instance_id}/approvals` — the
+     permission gate parked a tool call. The operator resolves it on the oakridge-core
+     side, which forwards the decision back to kbbl to unblock the agent.
+   - **terminal status** → `POST {base_url}{status_path}` with `done`/`failed`.
+
+   These are fire-and-forget; failures are logged, not retried (durability is a tracked
+   follow-up — see `docs/known_issues.md`).
+
+### Running it
+
+```bash
+# 1. kbbl (this server) — the session service
+./scripts/kbbl-start                 # 127.0.0.1:8788
+
+# 2. oakridge-core — the orchestrator (separate crate)
+cd ../oakridge-core && cargo run     # 127.0.0.1:8790
+```
+
+Then register a workflow whose `delegated_session` stage config points
+`execution_service_url` at kbbl (`http://127.0.0.1:8788`) and `callback_base_url` back at
+oakridge-core (`http://127.0.0.1:8790`), and start a run. See `oakridge-core/README.md` →
+*Delegated session execution (v2)*.
+
+The callback endpoints are unauthenticated and identified only by stage-instance id — keep
+both services on a trusted network (same host or Tailscale).
