@@ -423,12 +423,15 @@ describe("POST /sessions — C.1 contract validation", () => {
     expect(manager.getDelegatedByStageInstance("stage-abc")).toBeNull();
 
     // Re-introduce a stale index entry (the failure mode the filter defends against).
-    (
+    const rawIndex = (
       manager as unknown as { delegatedByStageInstance: Map<string, string> }
-    ).delegatedByStageInstance.set("stage-abc", sid);
+    ).delegatedByStageInstance;
+    rawIndex.set("stage-abc", sid);
 
     // The ended session must still not be returned.
     expect(manager.getDelegatedByStageInstance("stage-abc")).toBeNull();
+    // Self-healing: the stale entry is removed by the lookup, so it can't accumulate.
+    expect(rawIndex.has("stage-abc")).toBe(false);
   });
 
   test("codex backend selects codex runtime", async () => {

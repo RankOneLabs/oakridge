@@ -367,12 +367,19 @@ export class SessionManager {
    * "dedup" onto a dead session instead of spawning fresh. onEnded already
    * removes the index entry, but enforcing "live" here keeps the contract
    * self-evident rather than dependent on that bookkeeping staying in sync.
+   *
+   * Self-healing: when the entry resolves to a missing or ended session it is
+   * deleted from the index before returning null, so a stale key can't survive
+   * a lookup and the index can't grow unbounded with dead mappings.
    */
   getDelegatedByStageInstance(stageInstanceId: string): Session | null {
     const sid = this.delegatedByStageInstance.get(stageInstanceId);
     if (sid === undefined) return null;
     const session = this.sessions.get(sid);
-    if (session === undefined || session.status === "ended") return null;
+    if (session === undefined || session.status === "ended") {
+      this.delegatedByStageInstance.delete(stageInstanceId);
+      return null;
+    }
     return session;
   }
 
@@ -665,7 +672,16 @@ export class SessionManager {
     // ── C.1 delegated-session post-spawn wiring ──────────────────────────
     // Stash the config first so the hook handler can find the callback as
     // soon as the first tool call arrives (before we even send the prompt).
-    if (opts.delegatedCallback) {
+    //
+    // Defensive precondition: never register delegated mappings for an already-
+    // ended session — onEnded keys its cleanup off delegatedConfigs, so a mapping
+    // inserted after onEnded ran would be stale forever. Today this can't trigger
+    // via the registry path: attachRuntime resolves with status="live" and runs
+    // the event loop detached (session.ts _wireAttached), so onEnded cannot
+    // preempt this synchronous block. The guard encodes the invariant cheaply in
+    // case that ordering ever changes; getDelegatedByStageInstance() self-heals
+    // any stale entry that slips through from another path.
+    if (opts.delegatedCallback && session.status !== "ended") {
       this.delegatedConfigs.set(session.oakridgeSid, {
         callback: opts.delegatedCallback,
         outputSlots: opts.outputSlots ?? [],
