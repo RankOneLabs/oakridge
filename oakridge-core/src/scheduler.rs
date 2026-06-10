@@ -1079,6 +1079,7 @@ mod tests {
         };
 
         let run_id = insert_run_for_def(&pool, &def).await;
+        let mut global_rx = bus.subscribe_global();
         coord.start_run(run_id).await.unwrap();
 
         let (ctx_a, mut resume_rx_a) = tokio::time::timeout(timeout_dur(), a_rx.recv())
@@ -1092,6 +1093,29 @@ mod tests {
         ctx_a.set_status(StageStatus::Parked, Some("waiting_gate".into())).await.unwrap();
 
         let si_id = ctx_a.stage_instance_id;
+
+        // Barrier before delivering the decision. set_status writes the DB synchronously,
+        // but the RunTask updates the in-memory index that deliver_decision's park-guard
+        // reads only after it drains the StatusChanged event off its channel.
+        // on_status_changed updates that index *before* publishing to the bus, so waiting
+        // for the Parked event here guarantees the index reads Parked before we deliver.
+        // Without it the decision can beat the index update and fail with "is not parked
+        // (status: Running)" on a loaded runner (the flake that failed CI).
+        let mut parked = false;
+        for _ in 0..30 {
+            match tokio::time::timeout(timeout_dur(), global_rx.recv()).await {
+                Ok(Ok(ev)) => {
+                    if matches!(ev.event, SubstrateEvent::StageStatusChanged {
+                        stage_instance_id, status: StageStatus::Parked, ..
+                    } if stage_instance_id == si_id) {
+                        parked = true;
+                        break;
+                    }
+                }
+                _ => break,
+            }
+        }
+        assert!(parked, "stage must publish StageStatusChanged Parked before the decision");
 
         // inject gate decision
         coord.deliver_decision(run_id, si_id, ResumePayload::GateDecision {
