@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { EnvelopeEvent, Session, SessionStatus } from "../../core/session/session";
-import { hookApprovalHandler } from "./hook-route";
+import { hookPermissionHandler, hookSubagentStopHandler, hookPostToolUseHandler } from "./hook-route";
 import type { SessionManager } from "../../core/session/session-manager";
 
 let tmpRoot: string;
@@ -29,9 +29,16 @@ function makeFakeSession(opts: {
 }): {
   session: Session;
   emitted: EnvelopeEvent[];
+  // Resolves once at least `n` events have been emitted. Hook handlers emit
+  // fire-and-forget (resolveSessionForHook(...).then(s => s.emit(...))), so the
+  // emit lands a few microtasks after the handler returns 200. waitForEmits lets
+  // a test await that exact point instead of guessing with a fixed sleep, which
+  // is scheduler-dependent and can flake on a busy runner.
+  waitForEmits: (n: number) => Promise<void>;
 } {
   const emitted: EnvelopeEvent[] = [];
   let nextId = 0;
+  const waiters: Array<{ n: number; resolve: () => void }> = [];
   const session = {
     oakridgeSid: "fake-session-id",
     status: opts.status ?? "live",
@@ -41,12 +48,21 @@ function makeFakeSession(opts: {
     emit: async (type: string, payload: unknown) => {
       const evt: EnvelopeEvent = { id: nextId++, type, ts: new Date().toISOString(), payload };
       emitted.push(evt);
+      for (const w of waiters.splice(0)) {
+        if (emitted.length >= w.n) w.resolve();
+        else waiters.push(w);
+      }
       return evt;
     },
     registerApproval: () => {},
     deleteApproval: () => {},
   } as unknown as Session;
-  return { session, emitted };
+  const waitForEmits = (n: number): Promise<void> =>
+    new Promise<void>((resolve) => {
+      if (emitted.length >= n) resolve();
+      else waiters.push({ n, resolve });
+    });
+  return { session, emitted, waitForEmits };
 }
 
 function makeFakeManager(session: Session | null, ccSid: string): SessionManager {
@@ -57,59 +73,184 @@ function makeFakeManager(session: Session | null, ccSid: string): SessionManager
 
 const CC_SID = "mock-cc-sid-1";
 
-describe("hookApprovalHandler: yolo auto-approves", () => {
+function makeHookDeps(session: Session | null, ccSid = CC_SID) {
+  return {
+    manager: makeFakeManager(session, ccSid),
+    getBunServer: () => ({
+      requestIP: () => ({ address: "127.0.0.1", family: "IPv4", port: 0 }),
+    }) as unknown as import("bun").Server<unknown>,
+    subagentCounts: new Map<string, number>(),
+  };
+}
+
+function makeCtx(body: unknown) {
+  return {
+    req: {
+      json: () => Promise.resolve(body),
+      raw: { signal: new AbortController().signal },
+    },
+    json: (b: unknown, status?: number) => new Response(JSON.stringify(b), { status: status ?? 200 }),
+    text: (b: string, status?: number) => new Response(b, { status: status ?? 200 }),
+  };
+}
+
+describe("hookPermissionHandler: yolo auto-approves", () => {
   test("yolo session auto-approves any tool", async () => {
     const { session, emitted } = makeFakeSession({ yolo: true });
-    const manager = makeFakeManager(session, CC_SID);
-    const handler = hookApprovalHandler({
-      manager,
-      getBunServer: () => ({
-        requestIP: () => ({ address: "127.0.0.1", family: "IPv4", port: 0 }),
-      }) as unknown as import("bun").Server<unknown>,
-    });
+    const handler = hookPermissionHandler(makeHookDeps(session));
 
-    const ctx = { req: { json: () => Promise.resolve({
-      hook_event_name: "PreToolUse",
+    const ctx = makeCtx({
+      hook_event_name: "PermissionRequest",
       session_id: CC_SID,
       tool_name: "Write",
       tool_input: {},
       tool_use_id: "tu-3",
-    }), raw: { signal: new AbortController().signal } }, json: (body: unknown, status?: number) => new Response(JSON.stringify(body), { status: status ?? 200 }) };
+    });
     const res = await handler(ctx as Parameters<typeof handler>[0]);
-    const body = await res.json() as { hookSpecificOutput: { permissionDecision: string; permissionDecisionReason: string } };
+    const body = await res.json() as {
+      hookSpecificOutput: {
+        hookEventName: string;
+        permissionDecision: string;
+        permissionDecisionReason: string;
+      };
+    };
 
+    expect(body.hookSpecificOutput.hookEventName).toBe("PermissionRequest");
     expect(body.hookSpecificOutput.permissionDecision).toBe("allow");
-    expect(body.hookSpecificOutput.permissionDecisionReason).toContain("yolo");
 
     const event = emitted.find((e) => e.type === "permission_auto_approved");
     expect(event).toMatchObject({ payload: { reason: "yolo" } });
   });
 });
 
-describe("hookApprovalHandler: allowlist auto-approves", () => {
+describe("hookPermissionHandler: allowlist auto-approves", () => {
   test("allowlisted tool auto-approves", async () => {
     const { session, emitted } = makeFakeSession({ toolAllowlist: ["Read"] });
-    const manager = makeFakeManager(session, CC_SID);
-    const handler = hookApprovalHandler({
-      manager,
-      getBunServer: () => ({
-        requestIP: () => ({ address: "127.0.0.1", family: "IPv4", port: 0 }),
-      }) as unknown as import("bun").Server<unknown>,
-    });
+    const handler = hookPermissionHandler(makeHookDeps(session));
 
-    const ctx = { req: { json: () => Promise.resolve({
-      hook_event_name: "PreToolUse",
+    const ctx = makeCtx({
+      hook_event_name: "PermissionRequest",
       session_id: CC_SID,
       tool_name: "Read",
       tool_input: { file_path: "/tmp/foo" },
       tool_use_id: "tu-1",
-    }), raw: { signal: new AbortController().signal } }, json: (body: unknown, status?: number) => new Response(JSON.stringify(body), { status: status ?? 200 }) };
+    });
     const res = await handler(ctx as Parameters<typeof handler>[0]);
-    const body = await res.json() as { hookSpecificOutput: { permissionDecision: string } };
+    const body = await res.json() as {
+      hookSpecificOutput: {
+        hookEventName: string;
+        permissionDecision: string;
+        permissionDecisionReason: string;
+      };
+    };
 
+    expect(body.hookSpecificOutput.hookEventName).toBe("PermissionRequest");
     expect(body.hookSpecificOutput.permissionDecision).toBe("allow");
 
     const event = emitted.find((e) => e.type === "permission_auto_approved");
     expect(event).toMatchObject({ payload: { reason: "allowlist" } });
+  });
+});
+
+describe("hookPermissionHandler: session not found", () => {
+  test("returns deny in the verified hook shape when session cannot be resolved", async () => {
+    const handler = hookPermissionHandler(makeHookDeps(null));
+
+    const ctx = makeCtx({
+      hook_event_name: "PermissionRequest",
+      session_id: "unknown-sid",
+      tool_name: "Write",
+      tool_input: {},
+      tool_use_id: "tu-99",
+    });
+    const res = await handler(ctx as Parameters<typeof handler>[0]);
+    const body = await res.json() as {
+      hookSpecificOutput: {
+        hookEventName: string;
+        permissionDecision: string;
+        permissionDecisionReason: string;
+      };
+    };
+
+    // CC 2.1.169 (per phase0/RESULTS.md) expects permissionDecision +
+    // permissionDecisionReason, not decision.behavior.
+    expect(body.hookSpecificOutput.hookEventName).toBe("PermissionRequest");
+    expect(body.hookSpecificOutput.permissionDecision).toBe("deny");
+    expect(typeof body.hookSpecificOutput.permissionDecisionReason).toBe("string");
+  });
+});
+
+describe("hookSubagentStopHandler: billing observability", () => {
+  test("ignores payloads with wrong hook_event_name", async () => {
+    const { session } = makeFakeSession({});
+    const deps = makeHookDeps(session);
+    const handler = hookSubagentStopHandler(deps);
+
+    const ctx = makeCtx({ hook_event_name: "PostToolUse", session_id: CC_SID });
+    const res = await handler(ctx as Parameters<typeof handler>[0]);
+    expect(res.status).toBe(200);
+    expect(deps.subagentCounts.get("fake-session-id")).toBeUndefined();
+  });
+
+  test("increments subagentCounts and emits subagent_stopped with count", async () => {
+    const { session, emitted, waitForEmits } = makeFakeSession({});
+    const deps = makeHookDeps(session);
+    const handler = hookSubagentStopHandler(deps);
+
+    const ctx1 = makeCtx({
+      hook_event_name: "SubagentStop",
+      session_id: CC_SID,
+    });
+    await handler(ctx1 as Parameters<typeof handler>[0]);
+
+    const ctx2 = makeCtx({
+      hook_event_name: "SubagentStop",
+      session_id: CC_SID,
+    });
+    await handler(ctx2 as Parameters<typeof handler>[0]);
+
+    expect(deps.subagentCounts.get("fake-session-id")).toBe(2);
+
+    // Wait for both fire-and-forget emits to land (deterministic, no fixed sleep).
+    await waitForEmits(2);
+    const stopEvents = emitted.filter((e) => e.type === "subagent_stopped");
+    expect(stopEvents.length).toBe(2);
+    expect((stopEvents[0].payload as { subagent_count: number }).subagent_count).toBe(1);
+    expect((stopEvents[1].payload as { subagent_count: number }).subagent_count).toBe(2);
+  });
+});
+
+describe("hookPostToolUseHandler: informational", () => {
+  test("emits hook_post_tool_use event and returns 200", async () => {
+    const { session, emitted, waitForEmits } = makeFakeSession({});
+    const handler = hookPostToolUseHandler(makeHookDeps(session));
+
+    const ctx = makeCtx({
+      hook_event_name: "PostToolUse",
+      session_id: CC_SID,
+      tool_name: "Read",
+      tool_use_id: "tu-42",
+    });
+    const res = await handler(ctx as Parameters<typeof handler>[0]);
+    expect(res.status).toBe(200);
+
+    await waitForEmits(1);
+    expect(emitted.some((e) => e.type === "hook_post_tool_use")).toBe(true);
+  });
+
+  test("drops event silently when hook_event_name does not match route", async () => {
+    const { session, emitted } = makeFakeSession({});
+    const handler = hookPostToolUseHandler(makeHookDeps(session));
+
+    const ctx = makeCtx({
+      hook_event_name: "Stop", // wrong event for /hook/tool
+      session_id: CC_SID,
+    });
+    const res = await handler(ctx as Parameters<typeof handler>[0]);
+    expect(res.status).toBe(200);
+
+    // A hook_event_name mismatch returns early, before any fire-and-forget emit
+    // is scheduled, so no emit can ever land — assert directly without a sleep.
+    expect(emitted.some((e) => e.type === "hook_post_tool_use")).toBe(false);
   });
 });

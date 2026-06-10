@@ -198,16 +198,21 @@ impl RunTask {
             Ok(handle) => { self.handles.insert(si_id, handle); }
             Err(e) => {
                 tracing::error!(stage_key, "execute failed: {}", e);
-                // Mark Failed so quiescence fires and the run is terminated.
-                if let Some((_, ref mut s)) = self.index.get_mut(stage_key) {
-                    *s = StageStatus::Failed;
-                }
-                let _ = queries::update_stage_instance_status(
+                // Persist Failed, but honor a terminal status a fast kbbl callback
+                // may have already landed: the DB freezes terminal rows, so the
+                // *effective* post-write status (not a forced Failed) drives the
+                // in-memory index and the emitted event — otherwise quiescence and
+                // subscribers would contradict a row the callback marked done. On a
+                // DB error, fall back to Failed so the run still reaches quiescence.
+                let effective = queries::update_stage_instance_status(
                     &self.db, &si_id, StageStatus::Failed, None, None, Some(Utc::now()),
-                ).await;
+                ).await.unwrap_or(StageStatus::Failed);
+                if let Some((_, ref mut s)) = self.index.get_mut(stage_key) {
+                    *s = effective;
+                }
                 let _ = self.events_tx.send(ExecutorEvent::StatusChanged {
                     instance_id: si_id,
-                    status: StageStatus::Failed,
+                    status: effective,
                     parked_reason: None,
                 }).await;
             }
@@ -719,15 +724,18 @@ impl Coordinator {
                     Ok(handle) => { task.handles.insert(si.id, handle); }
                     Err(e) => {
                         tracing::error!(stage_key = si.stage_key, "recovery execute failed: {}", e);
-                        if let Some((_, ref mut s)) = task.index.get_mut(&si.stage_key) {
-                            *s = StageStatus::Failed;
-                        }
-                        let _ = queries::update_stage_instance_status(
+                        // Honor a terminal status a fast callback may have landed;
+                        // use the effective post-write status (see the primary
+                        // execute() Err path above for the full rationale).
+                        let effective = queries::update_stage_instance_status(
                             &self.db, &si.id, StageStatus::Failed, None, None, Some(Utc::now()),
-                        ).await;
+                        ).await.unwrap_or(StageStatus::Failed);
+                        if let Some((_, ref mut s)) = task.index.get_mut(&si.stage_key) {
+                            *s = effective;
+                        }
                         let _ = events_tx.send(ExecutorEvent::StatusChanged {
                             instance_id: si.id,
-                            status: StageStatus::Failed,
+                            status: effective,
                             parked_reason: None,
                         }).await;
                     }
@@ -1071,6 +1079,7 @@ mod tests {
         };
 
         let run_id = insert_run_for_def(&pool, &def).await;
+        let mut global_rx = bus.subscribe_global();
         coord.start_run(run_id).await.unwrap();
 
         let (ctx_a, mut resume_rx_a) = tokio::time::timeout(timeout_dur(), a_rx.recv())
@@ -1084,6 +1093,29 @@ mod tests {
         ctx_a.set_status(StageStatus::Parked, Some("waiting_gate".into())).await.unwrap();
 
         let si_id = ctx_a.stage_instance_id;
+
+        // Barrier before delivering the decision. set_status writes the DB synchronously,
+        // but the RunTask updates the in-memory index that deliver_decision's park-guard
+        // reads only after it drains the StatusChanged event off its channel.
+        // on_status_changed updates that index *before* publishing to the bus, so waiting
+        // for the Parked event here guarantees the index reads Parked before we deliver.
+        // Without it the decision can beat the index update and fail with "is not parked
+        // (status: Running)" on a loaded runner (the flake that failed CI).
+        let mut parked = false;
+        for _ in 0..30 {
+            match tokio::time::timeout(timeout_dur(), global_rx.recv()).await {
+                Ok(Ok(ev)) => {
+                    if matches!(ev.event, SubstrateEvent::StageStatusChanged {
+                        stage_instance_id, status: StageStatus::Parked, ..
+                    } if stage_instance_id == si_id) {
+                        parked = true;
+                        break;
+                    }
+                }
+                _ => break,
+            }
+        }
+        assert!(parked, "stage must publish StageStatusChanged Parked before the decision");
 
         // inject gate decision
         coord.deliver_decision(run_id, si_id, ResumePayload::GateDecision {

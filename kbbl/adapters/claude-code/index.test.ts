@@ -14,11 +14,6 @@ let tmpRoot: string;
 let dataDir: string;
 let sessionsDir: string;
 
-// Minimal gate.sh that always exits 0 (the adapter writes settings.json
-// referencing it, but tests don't actually spawn CC, so this only needs
-// to exist as a file path).
-const gatePath = "/bin/true";
-
 beforeEach(() => {
   tmpRoot = mkdtempSync(join(tmpdir(), "kbbl-cc-test-"));
   dataDir = join(tmpRoot, "data");
@@ -36,7 +31,6 @@ async function makeRuntime() {
     claudeBin: "claude",
     port: 8788,
     dataDir,
-    gatePath,
   });
 }
 
@@ -261,9 +255,11 @@ describe("CC adapter reconstructSnapshot", () => {
 });
 
 describe("CC adapter nonPersistedEventTypes", () => {
-  test("stream_event is non-persisted", async () => {
+  test("stream_event is not in nonPersistedEventTypes (PTY mode emits no stream_event)", async () => {
     const rt = await makeRuntime();
-    expect(rt.nonPersistedEventTypes?.has("stream_event")).toBe(true);
+    // In PTY mode the byte stream is never parsed, so stream_event is never
+    // emitted and does not need to be filtered from the transcript.
+    expect(rt.nonPersistedEventTypes?.has("stream_event")).toBe(false);
   });
 });
 

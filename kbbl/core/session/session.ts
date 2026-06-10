@@ -119,6 +119,19 @@ export interface SessionOpts {
    * the transcript and slow `/events` replay.
    */
   nonPersistedEventTypes?: ReadonlySet<string>;
+  /**
+   * Seed nextId past any already-written events in the JSONL. Required for
+   * recovery (relaunch): the existing transcript already contains ids 0..N,
+   * so new events must start at N+1 or SSE sentUpTo dedup drops them.
+   * Callers read the max id from the JSONL before constructing the Session.
+   */
+  startingNextId?: number;
+  /**
+   * Override the creation timestamp (ISO string). Pass the original
+   * `session_started.ts` when relaunching so the recovered in-memory snapshot
+   * stays consistent with the archived JSONL.
+   */
+  createdAt?: string;
 }
 
 /**
@@ -272,12 +285,24 @@ export class Session {
     this.worktreeBaseRef = opts.worktreeBaseRef ?? null;
     this.projectWorkdir = opts.projectWorkdir ?? null;
     this.model = opts.model ?? null;
-    this.createdAt = new Date().toISOString();
+    this.createdAt = opts.createdAt ?? new Date().toISOString();
     this.lastActivityTs = this.createdAt;
     this.lastResultTs = this.createdAt;
     this.callbacks = opts.callbacks ?? {};
     this.classifyEvent = opts.classifyEvent;
     this.nonPersistedEventTypes = opts.nonPersistedEventTypes ?? new Set();
+    if (opts.startingNextId !== undefined) {
+      if (
+        !Number.isInteger(opts.startingNextId) ||
+        opts.startingNextId < 0 ||
+        opts.startingNextId > Number.MAX_SAFE_INTEGER
+      ) {
+        throw new Error(
+          `kbbl: startingNextId must be a non-negative safe integer, got ${opts.startingNextId}`,
+        );
+      }
+      this.nextId = opts.startingNextId;
+    }
     this.jsonlWriter = Bun.file(this.jsonlPath).writer();
   }
 

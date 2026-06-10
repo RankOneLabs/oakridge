@@ -1,3 +1,4 @@
+pub mod delegated_session;
 pub mod session_agent;
 
 use std::collections::HashMap;
@@ -282,12 +283,29 @@ impl StageContext {
         let current =
             queries::get_stage_instance_by_id(&self.db, &self.stage_instance_id).await?;
 
-        let started_at =
-            if matches!(status, StageStatus::Running) && current.started_at.is_none() {
-                Some(now)
-            } else {
-                current.started_at
-            };
+        // A terminal row ('done'/'failed') is frozen in the DB against any later write
+        // (see update_stage_instance_status). Short-circuit *every* transition out of a
+        // terminal state here too: otherwise we'd emit StatusChanged with the requested
+        // status while the persisted row stays terminal, diverging the scheduler index
+        // and subscribers from the DB (e.g. Parked emitted after Done). This also covers
+        // the original race where a fast kbbl Done/Failed callback lands before
+        // execute()'s initial Running transition.
+        let current_is_terminal =
+            matches!(current.status, StageStatus::Done | StageStatus::Failed);
+        if current_is_terminal {
+            return Ok(());
+        }
+
+        let started_at = if matches!(status, StageStatus::Running) && current.started_at.is_none()
+        {
+            Some(now)
+        } else if is_terminal && current.started_at.is_none() {
+            // Fast terminal: kbbl completed before execute() set Running; seed started_at
+            // so the stage doesn't appear to have completed without ever starting.
+            Some(now)
+        } else {
+            current.started_at
+        };
 
         // Preserve the original completion time: a repeat terminal transition must
         // not clobber the ended_at recorded by the first one.
@@ -335,6 +353,24 @@ impl StageContext {
     pub async fn set_parked_meta(&self, meta: Option<Value>) -> anyhow::Result<()> {
         queries::set_stage_instance_parked_meta(&self.db, &self.stage_instance_id, meta).await?;
         Ok(())
+    }
+
+    /// Persist an opaque external service reference (e.g. a kbbl session `sid`)
+    /// on this stage instance. Stored in `stage_instance.external_ref` so it
+    /// survives restarts and is accessible to crash-recovery and cancel paths.
+    pub async fn set_external_ref(&self, external_ref: Option<&str>) -> anyhow::Result<()> {
+        queries::set_stage_instance_external_ref(&self.db, &self.stage_instance_id, external_ref)
+            .await?;
+        Ok(())
+    }
+
+    /// Read the persisted external service reference for this stage instance,
+    /// or `None` if none has been set. Used by delegated_session to detect a
+    /// prior execute() call and reuse the existing kbbl session on recovery.
+    pub async fn get_external_ref(&self) -> anyhow::Result<Option<String>> {
+        let si =
+            queries::get_stage_instance_by_id(&self.db, &self.stage_instance_id).await?;
+        Ok(si.external_ref)
     }
 }
 

@@ -1,15 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 
 import { KbblConfigSchema } from "../../config";
 import { SessionManager } from "../../session/session-manager";
-import type { Session, SpawnCmd } from "../../session/session";
-import { mountSessionsRoutes } from "./sessions";
 import {
   createRuntimeRegistry,
   type AgentRuntime,
@@ -22,6 +19,7 @@ import {
   type SessionHandle,
 } from "../../runtime";
 import type { EnvelopeEvent } from "../../session/session";
+import { mountSessionsRoutes } from "./sessions";
 
 let tmpRoot: string;
 let sessionsDir: string;
@@ -42,20 +40,6 @@ async function gitInitRepo(dir: string): Promise<void> {
     const [stderr, code] = await Promise.all([new Response(p.stderr).text(), p.exited]);
     if (code !== 0) throw new Error(`${cmd.join(" ")} failed (exit ${code}): ${stderr}`);
   }
-}
-
-async function noopSpawn(_session: Session): Promise<SpawnCmd> {
-  return { cmd: ["true"], cwd: "/tmp", env: {} };
-}
-
-function makeManager(): SessionManager {
-  return new SessionManager({
-    sessionsDir,
-    handoffsDir: join(tmpRoot, "handoffs"),
-    worktreesDir,
-    buildSpawnCmd: noopSpawn,
-    config: KbblConfigSchema.parse({}),
-  });
 }
 
 function makeRuntime(id: RuntimeId, models: string[]): AgentRuntime {
@@ -104,6 +88,35 @@ function makeRegistry(defaultId: RuntimeId = "claude-code"): RuntimeRegistry {
   ], defaultId);
 }
 
+/**
+ * Like makeRegistry, but its runtimes keep the session live: events() pends
+ * until terminate() is called, so a created session stays live across calls
+ * (the default makeRuntime yields "completed" immediately and ends at once).
+ * terminate() releases the pend so endAll() cleanup still completes.
+ */
+function makeLiveRegistry(): RuntimeRegistry {
+  const live = (id: RuntimeId, models: string[]): AgentRuntime => {
+    let release = () => {};
+    const stopped = new Promise<void>((r) => {
+      release = r;
+    });
+    return {
+      ...makeRuntime(id, models),
+      async terminate(): Promise<void> {
+        release();
+      },
+      async *events(): AsyncIterable<RuntimeEvent> {
+        await stopped;
+        yield { type: "completed", result: { code: 0 } };
+      },
+    };
+  };
+  return createRuntimeRegistry([
+    live("claude-code", ["claude-sonnet-4-6", "claude-opus-4-7"]),
+    live("codex", ["gpt-5.1-codex"]),
+  ], "claude-code");
+}
+
 function makeRegistryManager(registry: RuntimeRegistry): SessionManager {
   return new SessionManager({
     sessionsDir,
@@ -129,57 +142,34 @@ function makeApp(
   return app;
 }
 
-async function postSessions(app: Hono, body: Record<string, unknown>): Promise<Response> {
+/** Minimal valid C.1 body, using repoDir for workdir. */
+function validBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    backend: "claude-code",
+    prompt: "implement the feature",
+    workdir: repoDir,
+    pre_authorized_tools: [],
+    yolo: false,
+    output_slots: [],
+    callback: {
+      base_url: "http://oakridge:3000",
+      stage_instance_id: "stage-abc",
+      emit_path: "/emit",
+      status_path: "/status",
+    },
+    ...overrides,
+  };
+}
+
+async function postSessions(
+  app: Hono,
+  body: Record<string, unknown>,
+): Promise<Response> {
   return app.request("/sessions", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
-}
-
-/** Write a minimal archived JSONL for a fake parent session. */
-async function writeArchivedParent(opts: {
-  sid: string;
-  model: string | null;
-  runtimeId?: RuntimeId;
-  ccSid?: string;
-}): Promise<void> {
-  const ccSid = opts.ccSid ?? `fake-cc-${opts.sid.slice(0, 8)}`;
-  const lines = [
-    JSON.stringify({
-      id: 0,
-      type: "session_started",
-      ts: "2025-01-01T00:00:00.000Z",
-      payload: {
-        command: ["true"],
-        workdir: repoDir,
-        name: "parent",
-        sessionId: opts.sid,
-        parentCcSid: null,
-        parentOakridgeSid: null,
-        artifactId: null,
-        runtimeId: opts.runtimeId ?? "claude-code",
-        worktreePath: null,
-        worktreeBranch: null,
-        worktreeBaseRef: null,
-        projectWorkdir: null,
-        model: opts.model,
-      },
-    }),
-    JSON.stringify({
-      id: 1,
-      type: "cc_session_id_observed",
-      ts: "2025-01-01T00:00:01.000Z",
-      payload: { cc_session_id: ccSid },
-    }),
-    JSON.stringify({
-      id: 2,
-      type: "subprocess_exited",
-      ts: "2025-01-01T00:00:02.000Z",
-      payload: { code: 0, reason: "clean" },
-    }),
-  ];
-  await writeFile(join(sessionsDir, `${opts.sid}.jsonl`), lines.join("\n") + "\n");
 }
 
 beforeEach(async () => {
@@ -197,241 +187,490 @@ afterEach(async () => {
   rmSync(tmpRoot, { recursive: true, force: true });
 });
 
-describe("POST /sessions model validation", () => {
-  test("rejects fresh session without workdir when no default is configured", async () => {
-    const manager = makeManager();
-    const app = makeApp(manager, undefined, null);
-
-    const res = await postSessions(app, {});
-
+describe("POST /sessions — C.1 contract validation", () => {
+  test("rejects request with no body", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await app.request("/sessions", { method: "POST" });
     expect(res.status).toBe(400);
-    expect(((await res.json()) as { error: string }).error).toBe("workdir is required");
-  });
-
-  test("case 1: valid model accepted, snapshot.model matches", async () => {
-    const manager = makeManager();
-    const app = makeApp(manager, undefined, repoDir);
-    const res = await postSessions(app, { model: "claude-sonnet-4-6", workdir: repoDir });
-    expect(res.status).toBe(200);
-    const body = await res.json() as { model: string | null };
-    expect(body.model).toBe("claude-sonnet-4-6");
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("json body is required");
     await manager.endAll();
   });
 
-  test("case 2: unknown model returns 400 with error", async () => {
-    const manager = makeManager();
-    try {
-      const app = makeApp(manager, undefined, repoDir);
-      const res = await postSessions(app, { model: "garbage", workdir: repoDir });
-      expect(res.status).toBe(400);
-      const body = await res.json() as { error: string };
-      expect(body.error).toBe("unknown model: garbage");
-    } finally {
-      await manager.endAll();
-    }
-  });
-
-  test("case 3: empty string model returns 400 with error", async () => {
-    const manager = makeManager();
-    try {
-      const app = makeApp(manager, undefined, repoDir);
-      const res = await postSessions(app, { model: "", workdir: repoDir });
-      expect(res.status).toBe(400);
-      const body = await res.json() as { error: string };
-      expect(body.error).toBe("model must be non-empty when provided");
-    } finally {
-      await manager.endAll();
-    }
-  });
-
-  test("case 4: non-string model returns 400 with error", async () => {
-    const manager = makeManager();
-    try {
-      const app = makeApp(manager, undefined, repoDir);
-      const res = await postSessions(app, { model: 42, workdir: repoDir });
-      expect(res.status).toBe(400);
-      const body = await res.json() as { error: string };
-      expect(body.error).toBe("model must be a string");
-    } finally {
-      await manager.endAll();
-    }
-  });
-
-  test("case 5: omitted model → snapshot.model is null", async () => {
-    const manager = makeManager();
-    const app = makeApp(manager, undefined, repoDir);
-    const res = await postSessions(app, { workdir: repoDir });
-    expect(res.status).toBe(200);
-    const body = await res.json() as { model: string | null };
-    expect(body.model).toBeNull();
-    await manager.endAll();
-  });
-
-  test("case 6: resume inherits parent model when no model in body", async () => {
-    const parentSid = randomUUID();
-    await writeArchivedParent({ sid: parentSid, model: "claude-sonnet-4-6" });
-    const manager = makeManager();
-    const app = makeApp(manager, undefined, repoDir);
-    const res = await postSessions(app, { resume_from: parentSid });
-    expect(res.status).toBe(200);
-    const body = await res.json() as { model: string | null };
-    expect(body.model).toBe("claude-sonnet-4-6");
-    await manager.endAll();
-  });
-
-  test("case 7: resume with explicit model overrides parent model", async () => {
-    const parentSid = randomUUID();
-    await writeArchivedParent({ sid: parentSid, model: "claude-sonnet-4-6" });
-    const manager = makeManager();
-    const app = makeApp(manager, undefined, repoDir);
-    const res = await postSessions(app, {
-      resume_from: parentSid,
-      model: "claude-opus-4-7",
-    });
-    expect(res.status).toBe(200);
-    const body = await res.json() as { model: string | null };
-    expect(body.model).toBe("claude-opus-4-7");
-    await manager.endAll();
-  });
-
-  test("case 8: resume from archived parent (disk-only) inherits model", async () => {
-    const parentSid = randomUUID();
-    await writeArchivedParent({ sid: parentSid, model: "claude-haiku-4-5-20251001" });
-    // Explicitly not adding the parent to any in-memory manager — it only exists on disk.
-    const manager = makeManager();
-    const app = makeApp(manager, undefined, repoDir);
-    const res = await postSessions(app, { resume_from: parentSid });
-    expect(res.status).toBe(200);
-    const body = await res.json() as { model: string | null };
-    expect(body.model).toBe("claude-haiku-4-5-20251001");
-    await manager.endAll();
-  });
-
-  test("accepts a Codex model when runtime is Codex", async () => {
+  test("rejects non-object body", async () => {
     const registry = makeRegistry();
     const manager = makeRegistryManager(registry);
     const app = makeApp(manager, registry, repoDir);
-    const res = await postSessions(app, {
-      runtime: "codex",
-      model: "gpt-5.1-codex",
-      workdir: repoDir,
+    const res = await app.request("/sessions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify([1, 2, 3]),
     });
-    expect(res.status).toBe(200);
-    const body = await res.json() as { runtimeId: RuntimeId; model: string | null };
-    expect(body.runtimeId).toBe("codex");
-    expect(body.model).toBe("gpt-5.1-codex");
+    expect(res.status).toBe(400);
     await manager.endAll();
   });
 
-  test("rejects a Claude model for Codex runtime", async () => {
+  test("rejects missing backend", async () => {
     const registry = makeRegistry();
-    const manager = makeRegistryManager(registry);
-    try {
-      const app = makeApp(manager, registry, repoDir);
-      const res = await postSessions(app, {
-        runtime: "codex",
-        model: "claude-sonnet-4-6",
-        workdir: repoDir,
-      });
-      expect(res.status).toBe(400);
-      const body = await res.json() as { error: string };
-      expect(body.error).toBe("unknown model for codex: claude-sonnet-4-6");
-    } finally {
-      await manager.endAll();
-    }
-  });
-
-  test("rejects a Codex model for Claude runtime", async () => {
-    const registry = makeRegistry();
-    const manager = makeRegistryManager(registry);
-    try {
-      const app = makeApp(manager, registry, repoDir);
-      const res = await postSessions(app, {
-        runtime: "claude-code",
-        model: "gpt-5.1-codex",
-        workdir: repoDir,
-      });
-      expect(res.status).toBe(400);
-      const body = await res.json() as { error: string };
-      expect(body.error).toBe("unknown model for claude-code: gpt-5.1-codex");
-    } finally {
-      await manager.endAll();
-    }
-  });
-
-  test("omitted runtime validates against configured default runtime", async () => {
-    const registry = makeRegistry("codex");
     const manager = makeRegistryManager(registry);
     const app = makeApp(manager, registry, repoDir);
-    const res = await postSessions(app, {
-      model: "gpt-5.1-codex",
-      workdir: repoDir,
-    });
-    expect(res.status).toBe(200);
-    const body = await res.json() as { runtimeId: RuntimeId; model: string | null };
-    expect(body.runtimeId).toBe("codex");
-    expect(body.model).toBe("gpt-5.1-codex");
+    const { backend: _b, ...rest } = validBody();
+    const res = await postSessions(app, rest);
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("backend is required");
     await manager.endAll();
   });
 
-  test("unknown runtime returns 400", async () => {
+  test("rejects unknown backend", async () => {
     const registry = makeRegistry();
     const manager = makeRegistryManager(registry);
-    try {
-      const app = makeApp(manager, registry, repoDir);
-      const res = await postSessions(app, {
-        runtime: "future-runtime",
-        workdir: repoDir,
-      });
-      expect(res.status).toBe(400);
-      const body = await res.json() as { error: string };
-      const registered = [...registry.runtimes.keys()].join(", ");
-      expect(body.error).toContain("unknown runtime: future-runtime");
-      expect(body.error).toContain(`registered: ${registered}`);
-    } finally {
-      await manager.endAll();
-    }
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postSessions(app, validBody({ backend: "gpt" }));
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toContain("unknown backend: gpt");
+    await manager.endAll();
   });
 
-  test("resume rejects cross-runtime override", async () => {
+  test("rejects missing prompt", async () => {
     const registry = makeRegistry();
     const manager = makeRegistryManager(registry);
-    try {
-      const parent = await manager.create({ workdir: repoDir, runtime: "codex" });
-      const app = makeApp(manager, registry, repoDir);
-      const res = await postSessions(app, {
-        resume_from: parent.oakridgeSid,
-        runtime: "claude-code",
-      });
-      expect(res.status).toBe(400);
-      const body = await res.json() as { error: string };
-      expect(body.error).toBe(
-        "resume_from parent runtime is codex; cross-runtime resume to claude-code is not supported",
-      );
-    } finally {
-      await manager.endAll();
-    }
+    const app = makeApp(manager, registry, repoDir);
+    const { prompt: _p, ...rest } = validBody();
+    const res = await postSessions(app, rest);
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("prompt is required");
+    await manager.endAll();
   });
 
-  test("resume returns 400 when parent runtime is not registered", async () => {
-    const parentSid = randomUUID();
-    await writeArchivedParent({
-      sid: parentSid,
-      runtimeId: "codex",
-      model: null,
-    });
+  test("rejects empty prompt", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postSessions(app, validBody({ prompt: "   " }));
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("prompt must be non-empty");
+    await manager.endAll();
+  });
+
+  test("rejects missing workdir when no server default", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, null);
+    const { workdir: _w, ...rest } = validBody();
+    const res = await postSessions(app, rest);
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("workdir is required");
+    await manager.endAll();
+  });
+
+  test("rejects missing pre_authorized_tools", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const { pre_authorized_tools: _t, ...rest } = validBody();
+    const res = await postSessions(app, rest);
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("pre_authorized_tools is required");
+    await manager.endAll();
+  });
+
+  test("rejects non-array pre_authorized_tools", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postSessions(app, validBody({ pre_authorized_tools: "Bash" }));
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("pre_authorized_tools must be an array");
+    await manager.endAll();
+  });
+
+  test("rejects missing yolo", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const { yolo: _y, ...rest } = validBody();
+    const res = await postSessions(app, rest);
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("yolo is required");
+    await manager.endAll();
+  });
+
+  test("rejects non-boolean yolo", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postSessions(app, validBody({ yolo: "true" }));
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("yolo must be a boolean");
+    await manager.endAll();
+  });
+
+  test("rejects missing output_slots", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const { output_slots: _o, ...rest } = validBody();
+    const res = await postSessions(app, rest);
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("output_slots is required");
+    await manager.endAll();
+  });
+
+  test("rejects output_slot with missing name", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postSessions(app, validBody({
+      output_slots: [{ artifact_type: "code" }],
+    }));
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toContain("output_slots[].name");
+    await manager.endAll();
+  });
+
+  test("rejects missing callback", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const { callback: _c, ...rest } = validBody();
+    const res = await postSessions(app, rest);
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("callback is required");
+    await manager.endAll();
+  });
+
+  test("rejects callback missing base_url", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postSessions(app, validBody({
+      callback: { stage_instance_id: "s1", emit_path: "/e", status_path: "/s" },
+    }));
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toContain("callback.base_url");
+    await manager.endAll();
+  });
+
+  // Shape validation: callbacks.ts concatenates these verbatim, and a failed
+  // callback there only logs — so a malformed value must be rejected up front
+  // rather than stranding a live delegated stage.
+  test("rejects callback base_url that is not a URL", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postSessions(app, validBody({
+      callback: { base_url: "not a url", stage_instance_id: "s1", emit_path: "/e", status_path: "/s" },
+    }));
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toContain("callback.base_url must be a valid URL");
+    await manager.endAll();
+  });
+
+  test("rejects callback base_url with non-http(s) protocol", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postSessions(app, validBody({
+      callback: { base_url: "ftp://oakridge:3000", stage_instance_id: "s1", emit_path: "/e", status_path: "/s" },
+    }));
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toContain("http(s)");
+    await manager.endAll();
+  });
+
+  test("rejects callback emit_path without a leading slash", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postSessions(app, validBody({
+      callback: { base_url: "http://oakridge:3000", stage_instance_id: "s1", emit_path: "emit", status_path: "/s" },
+    }));
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toContain("callback.emit_path");
+    await manager.endAll();
+  });
+
+  test("rejects callback stage_instance_id with path-unsafe characters", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postSessions(app, validBody({
+      callback: { base_url: "http://oakridge:3000", stage_instance_id: "../../etc", emit_path: "/e", status_path: "/s" },
+    }));
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toContain("callback.stage_instance_id");
+    await manager.endAll();
+  });
+
+  test("valid request creates session and returns snapshot", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postSessions(app, validBody());
+    expect(res.status).toBe(200);
+    const snap = await res.json() as { sid: string; runtimeId: RuntimeId; status: string };
+    expect(typeof snap.sid).toBe("string");
+    expect(snap.runtimeId).toBe("claude-code");
+    expect(snap.status).toBe("live");
+    await manager.endAll();
+  });
+
+  test("re-POST for same stage_instance_id is idempotent (no duplicate session)", async () => {
+    // Live registry so the first session stays live across the second POST —
+    // idempotency only rebinds a LIVE session; an ended one spawns fresh.
+    const registry = makeLiveRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+
+    // First POST creates the session.
+    const res1 = await postSessions(app, validBody());
+    expect(res1.status).toBe(200);
+    const snap1 = (await res1.json()) as { sid: string };
+
+    // Recovery re-POST with the same callback.stage_instance_id — oakridge
+    // crashed before persisting the sid and re-runs execute(). kbbl must return
+    // the existing session rather than spawn a second claude on the same id.
+    const res2 = await postSessions(app, validBody());
+    expect(res2.status).toBe(200);
+    const snap2 = (await res2.json()) as { sid: string };
+
+    expect(snap2.sid).toBe(snap1.sid);
+    expect(manager.listLive().length).toBe(1);
+
+    await manager.endAll();
+  });
+
+  test("stale index entry pointing at an ended session is not reused (explicit live filter)", async () => {
+    // SessionManager intentionally keeps ended sessions in its map, and onEnded
+    // normally clears the stage_instance_id index. This simulates the index
+    // going stale — still pointing at a now-ended session — and asserts the
+    // lookup filters it out, so a re-POST spawns fresh instead of "deduping"
+    // onto a dead session. Without the explicit status === "ended" filter, the
+    // final lookup would return the ended session and this test would fail.
+    const registry = makeLiveRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+
+    const res = await postSessions(app, validBody());
+    expect(res.status).toBe(200);
+    const { sid } = (await res.json()) as { sid: string };
+
+    // End the session; it stays in the map as "ended" and onEnded clears the index.
+    await manager.endAll();
+    expect(manager.getDelegatedByStageInstance("stage-abc")).toBeNull();
+
+    // Re-introduce a stale index entry (the failure mode the filter defends against).
+    const rawIndex = (
+      manager as unknown as { delegatedByStageInstance: Map<string, string> }
+    ).delegatedByStageInstance;
+    rawIndex.set("stage-abc", sid);
+
+    // The ended session must still not be returned.
+    expect(manager.getDelegatedByStageInstance("stage-abc")).toBeNull();
+    // Self-healing: the stale entry is removed by the lookup, so it can't accumulate.
+    expect(rawIndex.has("stage-abc")).toBe(false);
+  });
+
+  test("codex backend selects codex runtime", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postSessions(app, validBody({ backend: "codex" }));
+    expect(res.status).toBe(200);
+    const snap = await res.json() as { runtimeId: RuntimeId };
+    expect(snap.runtimeId).toBe("codex");
+    await manager.endAll();
+  });
+
+  test("valid model accepted, snapshot.model matches", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postSessions(app, validBody({ model: "claude-sonnet-4-6" }));
+    expect(res.status).toBe(200);
+    const snap = await res.json() as { model: string | null };
+    expect(snap.model).toBe("claude-sonnet-4-6");
+    await manager.endAll();
+  });
+
+  test("unknown model returns 400", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postSessions(app, validBody({ model: "garbage-model" }));
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("unknown model for claude-code: garbage-model");
+    await manager.endAll();
+  });
+
+  test("empty model string returns 400", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postSessions(app, validBody({ model: "" }));
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("model must be non-empty when provided");
+    await manager.endAll();
+  });
+
+  test("omitted model → snapshot.model is null", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postSessions(app, validBody());
+    expect(res.status).toBe(200);
+    const snap = await res.json() as { model: string | null };
+    expect(snap.model).toBeNull();
+    await manager.endAll();
+  });
+
+  test("accepts Codex model with codex backend", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postSessions(app, validBody({ backend: "codex", model: "gpt-5.1-codex" }));
+    expect(res.status).toBe(200);
+    const snap = await res.json() as { runtimeId: RuntimeId; model: string | null };
+    expect(snap.runtimeId).toBe("codex");
+    expect(snap.model).toBe("gpt-5.1-codex");
+    await manager.endAll();
+  });
+
+  test("rejects Claude model for codex backend", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postSessions(app, validBody({ backend: "codex", model: "claude-sonnet-4-6" }));
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("unknown model for codex: claude-sonnet-4-6");
+    await manager.endAll();
+  });
+
+  test("workdir defaults to server default when omitted from body", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const { workdir: _w, ...rest } = validBody();
+    const res = await postSessions(app, rest);
+    expect(res.status).toBe(200);
+    await manager.endAll();
+  });
+
+  test("unregistered backend returns 400", async () => {
     const registry = createRuntimeRegistry([
-      makeRuntime("claude-code", ["claude-sonnet-4-6", "claude-opus-4-7"]),
+      makeRuntime("claude-code", ["claude-sonnet-4-6"]),
     ]);
     const manager = makeRegistryManager(registry);
-    try {
-      const app = makeApp(manager, registry, repoDir);
-      const res = await postSessions(app, { resume_from: parentSid });
-      expect(res.status).toBe(400);
-      const body = await res.json() as { error: string };
-      expect(body.error).toBe('resume_from parent runtime "codex" is not registered');
-    } finally {
-      await manager.endAll();
-    }
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postSessions(app, validBody({ backend: "codex" }));
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toContain('"codex" is not registered');
+    await manager.endAll();
+  });
+});
+
+describe("POST /sessions/operator — operator create / resume", () => {
+  async function postOperator(
+    app: Hono,
+    body: Record<string, unknown>,
+  ): Promise<Response> {
+    return app.request("/sessions/operator", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  test("fresh create with explicit workdir returns a live snapshot", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postOperator(app, { workdir: repoDir });
+    expect(res.status).toBe(200);
+    const snap = (await res.json()) as { sid: string; runtimeId: RuntimeId; status: string };
+    expect(typeof snap.sid).toBe("string");
+    expect(snap.runtimeId).toBe("claude-code");
+    expect(snap.status).toBe("live");
+    await manager.endAll();
+  });
+
+  test("fresh create without workdir and no server default → 400", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, null);
+    const res = await postOperator(app, {});
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("workdir is required");
+    await manager.endAll();
+  });
+
+  test("unknown runtime → 400", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postOperator(app, { workdir: repoDir, runtime: "gpt" });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("unknown runtime: gpt");
+    await manager.endAll();
+  });
+
+  test("resume_from with a malformed sid → 400", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postOperator(app, { resume_from: "not-a-sid" });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("invalid resume_from");
+    await manager.endAll();
+  });
+
+  test("resume_from a well-formed but unknown sid → 404", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postOperator(app, {
+      resume_from: "11111111-1111-4111-8111-111111111111",
+    });
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("unknown resume_from session");
+    await manager.endAll();
+  });
+
+  test("no runtime registry → 500", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, undefined, repoDir);
+    const res = await postOperator(app, { workdir: repoDir });
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("no runtime registry");
+    await manager.endAll();
   });
 });

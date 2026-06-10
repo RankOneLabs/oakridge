@@ -36,6 +36,8 @@ import {
   resolveRepoTopLevel,
 } from "./worktree";
 import type { RuntimeId, RuntimeRegistry } from "../runtime";
+import type { DelegatedCallback, OutputSlot } from "../server/callbacks";
+import { reportTerminalStatus } from "../server/callbacks";
 
 export interface SessionManagerOpts {
   sessionsDir: string;
@@ -181,6 +183,25 @@ export interface CreateSessionOpts {
    * calls — those fall back to sid-based naming against HEAD.
    */
   worktreeIdentity?: EpicIdentity;
+  // ── C.1 delegated-session fields ──────────────────────────────────────────
+  /**
+   * Rendered prompt to seed as the first turn. Seeded via session.writeInput()
+   * right after the session becomes live so the agent starts immediately
+   * without a separate /:sid/input call from the caller.
+   */
+  prompt?: string;
+  /**
+   * Tool names to pre-authorize via the session's allowlist before the first
+   * turn is seeded. Applied before the prompt so tool hooks that fire on the
+   * very first agent step are already authorized.
+   */
+  preAuthorizedTools?: string[];
+  /** If true, enable yolo mode (auto-approve all tool calls) on the session. */
+  yoloMode?: boolean;
+  /** Declared output slots; stored alongside the callback for artifact validation. */
+  outputSlots?: OutputSlot[];
+  /** Outbound callback routing for the three C.2 / C.3 callbacks. */
+  delegatedCallback?: DelegatedCallback;
 }
 
 /**
@@ -262,9 +283,31 @@ export function parseDepthFromBranch(branch: string): number {
   return m ? Number.parseInt(m[1], 10) : 0;
 }
 
+interface DelegatedSessionConfig {
+  callback: DelegatedCallback;
+  outputSlots: OutputSlot[];
+}
+
 export class SessionManager {
   private readonly opts: SessionManagerOpts;
   private readonly sessions = new Map<string, Session>();
+  /**
+   * Delegated-session configs keyed by oakridgeSid. Populated in create()
+   * when opts.delegatedCallback is set; cleaned up in onEnded. Provides
+   * the callback to hook-route.ts for C.3 approval forwarding and to the
+   * terminal-status reporter for C.2b.
+   */
+  private readonly delegatedConfigs = new Map<string, DelegatedSessionConfig>();
+  /**
+   * Idempotency index: stage_instance_id → oakridgeSid for delegated sessions.
+   * Lets POST /sessions dedup a recovery re-POST — oakridge crashing after kbbl
+   * created the session but before persisting the returned sid — back onto the
+   * existing session instead of spawning a duplicate that would interleave
+   * writes into the same transcript. Maintained symmetrically with
+   * delegatedConfigs: transferred to the successor on compaction, removed on
+   * terminal end.
+   */
+  private readonly delegatedByStageInstance = new Map<string, string>();
 
   private readonly inboxSubscribers = new Set<InboxSubscriber>();
   /**
@@ -301,6 +344,43 @@ export class SessionManager {
 
   constructor(opts: SessionManagerOpts) {
     this.opts = opts;
+  }
+
+  /**
+   * Returns the delegated callback for the given session, or null if the
+   * session was not created via the C.1 delegated-execution contract.
+   * Used by hook-route.ts to forward approval notifications (C.3).
+   */
+  getDelegatedCallback(oakridgeSid: string): DelegatedCallback | null {
+    return this.delegatedConfigs.get(oakridgeSid)?.callback ?? null;
+  }
+
+  /**
+   * Returns the live delegated session for the given oakridge stage_instance_id,
+   * or null if none exists. Used by POST /sessions to make session creation
+   * idempotent across oakridge crash-recovery re-POSTs.
+   *
+   * Ended sessions are filtered out explicitly: SessionManager intentionally
+   * keeps ended sessions in `this.sessions` (so a client can still read the
+   * failure via /:sid/events), so we cannot rely on the map dropping them. If
+   * the index ever points at an ended sid, returning it would let POST /sessions
+   * "dedup" onto a dead session instead of spawning fresh. onEnded already
+   * removes the index entry, but enforcing "live" here keeps the contract
+   * self-evident rather than dependent on that bookkeeping staying in sync.
+   *
+   * Self-healing: when the entry resolves to a missing or ended session it is
+   * deleted from the index before returning null, so a stale key can't survive
+   * a lookup and the index can't grow unbounded with dead mappings.
+   */
+  getDelegatedByStageInstance(stageInstanceId: string): Session | null {
+    const sid = this.delegatedByStageInstance.get(stageInstanceId);
+    if (sid === undefined) return null;
+    const session = this.sessions.get(sid);
+    if (session === undefined || session.status === "ended") {
+      this.delegatedByStageInstance.delete(stageInstanceId);
+      return null;
+    }
+    return session;
   }
 
   private async ensureWorktreesDirSafeForRepo(workdir: string): Promise<void> {
@@ -449,6 +529,24 @@ export class SessionManager {
           this.opts.onRuntimeSessionObserved?.(s, runtimeSid);
         },
         onEnded: (s) => {
+          // C.2b: report terminal status for delegated sessions unless this
+          // was a compaction (the successor session continues the work).
+          const delegatedCfg = this.delegatedConfigs.get(s.oakridgeSid);
+          if (delegatedCfg) {
+            this.delegatedConfigs.delete(s.oakridgeSid);
+            // Drop the idempotency index entry unconditionally, then re-point it
+            // at the successor below if this was a compaction — mirroring the
+            // delegatedConfigs handling so the two stay consistent.
+            const stageInstanceId = delegatedCfg.callback.stage_instance_id;
+            this.delegatedByStageInstance.delete(stageInstanceId);
+            if (s.endReason === "compacted" && s.successorSid) {
+              // Transfer to successor so C.2b/C.3 keep working after compact.
+              this.delegatedConfigs.set(s.successorSid, delegatedCfg);
+              this.delegatedByStageInstance.set(stageInstanceId, s.successorSid);
+            } else if (s.endReason !== "compacted") {
+              void reportTerminalStatus(delegatedCfg.callback, "done", s.oakridgeSid);
+            }
+          }
           this.opts.onRuntimeSessionEnded?.(s);
           this.clearActivityTimer(s.oakridgeSid);
           this.broadcastDelta({ type: "session_ended", sid: s.oakridgeSid });
@@ -569,6 +667,271 @@ export class SessionManager {
       throw new Error(
         "kbbl: SessionManager requires either opts.registry or opts.buildSpawnCmd",
       );
+    }
+
+    // ── C.1 delegated-session post-spawn wiring ──────────────────────────
+    // Stash the config first so the hook handler can find the callback as
+    // soon as the first tool call arrives (before we even send the prompt).
+    //
+    // Defensive precondition: never register delegated mappings for an already-
+    // ended session — onEnded keys its cleanup off delegatedConfigs, so a mapping
+    // inserted after onEnded ran would be stale forever. Today this can't trigger
+    // via the registry path: attachRuntime resolves with status="live" and runs
+    // the event loop detached (session.ts _wireAttached), so onEnded cannot
+    // preempt this synchronous block. The guard encodes the invariant cheaply in
+    // case that ordering ever changes; getDelegatedByStageInstance() self-heals
+    // any stale entry that slips through from another path.
+    if (opts.delegatedCallback && session.status !== "ended") {
+      this.delegatedConfigs.set(session.oakridgeSid, {
+        callback: opts.delegatedCallback,
+        outputSlots: opts.outputSlots ?? [],
+      });
+      this.delegatedByStageInstance.set(
+        opts.delegatedCallback.stage_instance_id,
+        session.oakridgeSid,
+      );
+    }
+    // Pre-authorize tools before seeding the prompt so hooks that fire on
+    // the first agent step see the allowlist already applied.
+    if (opts.preAuthorizedTools && opts.preAuthorizedTools.length > 0) {
+      for (const tool of opts.preAuthorizedTools) {
+        try {
+          await session.allowlistTool(tool);
+        } catch (err) {
+          console.error(
+            `kbbl: failed to allowlist tool "${tool}" for ${session.oakridgeSid}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+      }
+    }
+    if (opts.yoloMode === true) {
+      try {
+        await session.setYolo(true);
+      } catch (err) {
+        console.error(
+          `kbbl: failed to set yolo for ${session.oakridgeSid}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+    // Seed the first turn with the rendered prompt so the agent starts
+    // immediately without a separate /:sid/input call.
+    if (opts.prompt) {
+      try {
+        await session.writeInput(opts.prompt);
+      } catch (err) {
+        console.error(
+          `kbbl: failed to seed initial prompt for ${session.oakridgeSid}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+
+    return session;
+  }
+
+  /**
+   * Relaunch a live-but-orphaned row after a server restart (A.2 recovery).
+   * Distinct from create() (new row, new ids) and the compaction successor
+   * path (new id, new row). Recovery continues in the SAME row: same
+   * oakridgeSid, same currentCcSid, appending to the existing JSONL and the
+   * same CC transcript.
+   *
+   * Flow:
+   *  1. Guard: refuse if the session is already live in memory (PTY held).
+   *  2. Load the archived snapshot from the JSONL to recover session metadata.
+   *  3. Resolve the CC session id via runtime.resolveResumeRef.
+   *  4. Construct a fresh Session (same oakridgeSid → same JSONL file, append).
+   *  5. Spawn with --resume <ccSid> and NO --fork-session (continue-in-place).
+   *  6. Wire the fresh PTY to the session via attachRuntime.
+   *
+   * The single-writer supervisor in the adapter (index.ts) guards the ccSid
+   * map before opening the new PTY, ensuring at most one live claude process
+   * per CC session id within the running server. Accepted loss on recovery:
+   * only the in-flight turn at the instant of the prior crash; completed
+   * history is fully recovered from the transcript.
+   *
+   * Requires opts.registry; throws for the legacy buildSpawnCmd-only path.
+   */
+  async relaunch(oakridgeSid: string): Promise<Session> {
+    // Guard: refuse if any active subprocess is attached — "live", "starting"
+    // (mid-spawn), and "compacting" (PTY active) all mean a process is running.
+    // Only "ended" is safe to relaunch over.
+    const existing = this.sessions.get(oakridgeSid);
+    if (existing && existing.status !== "ended") {
+      throw new Error(
+        `kbbl: relaunch refused for ${oakridgeSid} — session is not ended (status: ${existing.status})`,
+      );
+    }
+
+    if (!this.opts.registry) {
+      throw new Error(
+        "kbbl: relaunch requires opts.registry — the legacy buildSpawnCmd path does not support recovery",
+      );
+    }
+
+    const jsonlPath = join(this.opts.sessionsDir, `${oakridgeSid}.jsonl`);
+    const snap = await loadArchivedSnapshot(
+      oakridgeSid,
+      jsonlPath,
+      this.opts.registry,
+    );
+    if (!snap) {
+      throw new Error(
+        `kbbl: relaunch failed for ${oakridgeSid} — archived snapshot missing or empty`,
+      );
+    }
+
+    // Guard: never revive a compacted row — its successor is the live branch.
+    if (snap.endReason === "compacted") {
+      throw new Error(
+        `kbbl: relaunch refused for ${oakridgeSid} — session was compacted (successor: ${snap.successorSid ?? "unknown"}); relaunch the successor instead`,
+      );
+    }
+
+    const runtimeId = snap.runtimeId;
+    const runtime = this.opts.registry.runtimes.get(runtimeId);
+    if (!runtime) {
+      throw new Error(
+        `kbbl: relaunch failed for ${oakridgeSid} — runtime "${runtimeId}" is not registered`,
+      );
+    }
+
+    const ref = await runtime.resolveResumeRef(this.opts.sessionsDir, oakridgeSid);
+    if (ref.kind !== "ok") {
+      throw new Error(
+        `kbbl: relaunch failed for ${oakridgeSid} — cannot resolve CC session id: ${ref.kind}`,
+      );
+    }
+    const ccSid = ref.runtimeSid;
+
+    // Seed nextId past the highest id already written so appended recovery
+    // events never collide with pre-restart ids. SSE sentUpTo dedup drops
+    // events with id <= sentUpTo; without this, a reconnecting client with a
+    // stale sentUpTo would silently lose all recovery events.
+    const startingNextId = (await readMaxEventId(jsonlPath)) + 1;
+
+    // Construct a fresh Session with the same oakridgeSid. The JSONL FileSink
+    // opens in append mode so recovery events are added after the original
+    // history without overwriting it.
+    const session = new Session({
+      oakridgeSid,
+      workdir: snap.workdir,
+      name: snap.name,
+      sessionsDir: this.opts.sessionsDir,
+      runtimeId,
+      parentCcSid: snap.parentCcSid ?? undefined,
+      parentOakridgeSid: snap.parentOakridgeSid ?? undefined,
+      artifactId: snap.artifactId ?? undefined,
+      model: snap.model,
+      createdAt: snap.createdAt,
+      startingNextId,
+      worktreePath: snap.worktreePath,
+      worktreeBranch: snap.worktreeBranch,
+      worktreeBaseRef: snap.worktreeBaseRef,
+      projectWorkdir: snap.projectWorkdir,
+      nonPersistedEventTypes:
+        runtime.nonPersistedEventTypes ?? this.opts.nonPersistedEventTypes,
+      callbacks: {
+        onRuntimeSessionObserved: (s, runtimeSid) => {
+          this.opts.onRuntimeSessionObserved?.(s, runtimeSid);
+        },
+        onEnded: (s) => {
+          this.opts.onRuntimeSessionEnded?.(s);
+          this.clearActivityTimer(s.oakridgeSid);
+          this.broadcastDelta({ type: "session_ended", sid: s.oakridgeSid });
+        },
+        onStatusChanged: (s, status) => {
+          this.broadcastDelta({
+            type: "status_changed",
+            sid: s.oakridgeSid,
+            status,
+          });
+        },
+        onPendingCountChanged: (s, count) => {
+          this.broadcastDelta({
+            type: "pending_count_changed",
+            sid: s.oakridgeSid,
+            count,
+          });
+        },
+        onLastActivityChanged: (s, ts) => {
+          this.scheduleActivityDelta(s.oakridgeSid, ts);
+        },
+        onYoloChanged: (s, yoloMode) => {
+          this.broadcastDelta({
+            type: "yolo_changed",
+            sid: s.oakridgeSid,
+            yoloMode,
+          });
+        },
+        onRuntimeModelObserved: (s, observedModel) => {
+          this.broadcastDelta({
+            type: "observed_model_changed",
+            sid: s.oakridgeSid,
+            initialObservedModel: s.initialObservedModel ?? observedModel,
+            observedModel,
+          });
+        },
+      },
+    });
+
+    this.sessions.set(session.oakridgeSid, session);
+
+    const compactor = new Compactor(this.opts.config.compact, {
+      onSuggested: (reason, sessionTokens) => {
+        session
+          .emit("compact_suggested", {
+            reason: reason.kind,
+            session_tokens: sessionTokens,
+          })
+          .catch((err) => {
+            console.error(
+              `kbbl: compact_suggested emit failed for ${session.oakridgeSid}: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            );
+          });
+        this.broadcastDelta({
+          type: "compact_suggested",
+          sid: session.oakridgeSid,
+          tokens: sessionTokens,
+          reason: reason.kind,
+        });
+      },
+      onFire: async (reason, sessionTokens) => {
+        await this.runCompact(session.oakridgeSid, reason, sessionTokens);
+      },
+    });
+    session.attachCompactor(compactor);
+
+    this.broadcastDelta({ type: "session_created", session: session.snapshot() });
+
+    // The "starting" row is already in this.sessions. If spawn/attach throws we
+    // must remove it (and dispose the compactor) before rethrowing: the relaunch
+    // guard refuses any session whose status !== "ended", so leaving a partial
+    // "starting" row behind would wedge recovery — the next relaunch() would fail
+    // on the guard until someone purged the row by hand. Cleanup restores the
+    // pre-relaunch state so a transient failure is retriable.
+    try {
+      const handle = await runtime.spawn({
+        workingDirectory: session.workdir,
+        runtimeSpecific: {
+          resumeCcSid: ccSid,
+          oakridgeSid: session.oakridgeSid,
+          model: session.model,
+          projectWorkdir: session.projectWorkdir,
+        },
+      });
+      await session.attachRuntime(runtime, handle);
+    } catch (err) {
+      this.sessions.delete(session.oakridgeSid);
+      compactor.dispose();
+      throw err;
     }
 
     return session;
@@ -1392,6 +1755,32 @@ function extractCompactMarkdown(payload: unknown): string | null {
   }
   if (parts.length === 0) return null;
   return parts.join("\n\n");
+}
+
+/**
+ * Reads the highest event `id` written to the JSONL at the given path.
+ * Returns -1 if the file is empty, missing, or contains no parseable events.
+ * Used by relaunch() to seed Session.nextId past the pre-restart history so
+ * recovery events never collide with already-written ids.
+ */
+async function readMaxEventId(jsonlPath: string): Promise<number> {
+  let contents: string;
+  try {
+    contents = await readJsonlOrEmpty(jsonlPath);
+  } catch {
+    return -1;
+  }
+  let max = -1;
+  for (const line of contents.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const parsed = JSON.parse(line) as { id?: unknown };
+      if (typeof parsed.id === "number" && parsed.id > max) max = parsed.id;
+    } catch {
+      // skip malformed lines
+    }
+  }
+  return max;
 }
 
 /**

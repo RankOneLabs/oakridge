@@ -17,6 +17,7 @@
   "dependencies": {
     "@tanstack/react-query": "^5.100.13",
     "@types/dagre": "^0.7.54",
+    "bun-pty": "^0.4.9",
     "dagre": "^0.8.5",
     "hono": "^4.6.14",
     "react": "^19.0.0",
