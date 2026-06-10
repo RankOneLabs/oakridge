@@ -78,3 +78,40 @@ instead of "none" while that ID is in flight. Three render branches
 in `fetchSpecsFor`.
 
 Originally surfaced by Copilot on PR #83.
+
+## Delegated-session callbacks are not durable (no outbox)
+
+**Files:** `oakridge-core/src/executor/delegated_session/mod.rs`,
+`oakridge-core/src/http/rest.rs`, `kbbl/core/server/callbacks.ts`
+
+The kbbl → oakridge seam (Part C) delivers artifact-emit and terminal-status
+callbacks as **fire-and-forget** HTTP POSTs. The `execute()` reorder
+("be live before the remote call") closes the *self-inflicted* race where a
+callback arrived before the stage was Running / in the live map, and kbbl's
+`POST /sessions` is now idempotent on `stage_instance_id` so a recovery
+re-POST rebinds the live session instead of spawning a duplicate. What
+remains:
+
+- **Callback durability.** If oakridge is down/restarting when kbbl fires a
+  terminal status or artifact emit, that POST is lost. The stage then relies
+  on `Coordinator::recover()` reconciliation on the next oakridge start to
+  converge — delayed, not silent loss, because kbbl remains the source of
+  truth (durable transcript).
+- **Residual duplicate-session window.** A crash *between* kbbl creating the
+  session and oakridge persisting the returned sid in `external_ref` still
+  causes a re-POST on recovery. The kbbl-side idempotency index closes this
+  in practice (same `stage_instance_id` → same session); it would only
+  reappear if that index were lost (kbbl restart) in the same window.
+
+**Decision (do not re-litigate):** a durable message queue / broker is **not**
+warranted at current scale — this is loopback, co-located kbbl + oakridge on
+one host, low callback volume. The correct durability design when it *is*
+warranted is an **outbox + idempotent consumer**, not a broker: kbbl persists
+pending callbacks and retries with backoff (at-least-once); oakridge applies
+them idempotently (the `set_status` terminal-guard and slot-keyed emit are
+already idempotent). A Postgres/SQLite outbox table, no new infra.
+
+**Trigger to build it:** the moment kbbl moves off-host from oakridge (the
+spec §10 "extract the runtime into a standalone service" step), or the first
+time a real workflow loses a terminal-status callback to an oakridge restart.
+Until then, fire-and-forget + recovery reconciliation is sufficient.

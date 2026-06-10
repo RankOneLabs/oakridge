@@ -298,6 +298,16 @@ export class SessionManager {
    * terminal-status reporter for C.2b.
    */
   private readonly delegatedConfigs = new Map<string, DelegatedSessionConfig>();
+  /**
+   * Idempotency index: stage_instance_id → oakridgeSid for delegated sessions.
+   * Lets POST /sessions dedup a recovery re-POST — oakridge crashing after kbbl
+   * created the session but before persisting the returned sid — back onto the
+   * existing session instead of spawning a duplicate that would interleave
+   * writes into the same transcript. Maintained symmetrically with
+   * delegatedConfigs: transferred to the successor on compaction, removed on
+   * terminal end.
+   */
+  private readonly delegatedByStageInstance = new Map<string, string>();
 
   private readonly inboxSubscribers = new Set<InboxSubscriber>();
   /**
@@ -343,6 +353,19 @@ export class SessionManager {
    */
   getDelegatedCallback(oakridgeSid: string): DelegatedCallback | null {
     return this.delegatedConfigs.get(oakridgeSid)?.callback ?? null;
+  }
+
+  /**
+   * Returns the live delegated session for the given oakridge stage_instance_id,
+   * or null if none exists. Used by POST /sessions to make session creation
+   * idempotent across oakridge crash-recovery re-POSTs. A stale index entry
+   * whose session has already ended resolves to null (the sessions map no
+   * longer holds it), so callers spawn fresh rather than rebind a dead session.
+   */
+  getDelegatedByStageInstance(stageInstanceId: string): Session | null {
+    const sid = this.delegatedByStageInstance.get(stageInstanceId);
+    if (sid === undefined) return null;
+    return this.sessions.get(sid) ?? null;
   }
 
   private async ensureWorktreesDirSafeForRepo(workdir: string): Promise<void> {
@@ -496,9 +519,15 @@ export class SessionManager {
           const delegatedCfg = this.delegatedConfigs.get(s.oakridgeSid);
           if (delegatedCfg) {
             this.delegatedConfigs.delete(s.oakridgeSid);
+            // Drop the idempotency index entry unconditionally, then re-point it
+            // at the successor below if this was a compaction — mirroring the
+            // delegatedConfigs handling so the two stay consistent.
+            const stageInstanceId = delegatedCfg.callback.stage_instance_id;
+            this.delegatedByStageInstance.delete(stageInstanceId);
             if (s.endReason === "compacted" && s.successorSid) {
               // Transfer to successor so C.2b/C.3 keep working after compact.
               this.delegatedConfigs.set(s.successorSid, delegatedCfg);
+              this.delegatedByStageInstance.set(stageInstanceId, s.successorSid);
             } else if (s.endReason !== "compacted") {
               void reportTerminalStatus(delegatedCfg.callback, "done", s.oakridgeSid);
             }
@@ -633,6 +662,10 @@ export class SessionManager {
         callback: opts.delegatedCallback,
         outputSlots: opts.outputSlots ?? [],
       });
+      this.delegatedByStageInstance.set(
+        opts.delegatedCallback.stage_instance_id,
+        session.oakridgeSid,
+      );
     }
     // Pre-authorize tools before seeding the prompt so hooks that fire on
     // the first agent step see the allowlist already applied.

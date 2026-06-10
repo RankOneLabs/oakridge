@@ -88,6 +88,35 @@ function makeRegistry(defaultId: RuntimeId = "claude-code"): RuntimeRegistry {
   ], defaultId);
 }
 
+/**
+ * Like makeRegistry, but its runtimes keep the session live: events() pends
+ * until terminate() is called, so a created session stays live across calls
+ * (the default makeRuntime yields "completed" immediately and ends at once).
+ * terminate() releases the pend so endAll() cleanup still completes.
+ */
+function makeLiveRegistry(): RuntimeRegistry {
+  const live = (id: RuntimeId, models: string[]): AgentRuntime => {
+    let release = () => {};
+    const stopped = new Promise<void>((r) => {
+      release = r;
+    });
+    return {
+      ...makeRuntime(id, models),
+      async terminate(): Promise<void> {
+        release();
+      },
+      async *events(): AsyncIterable<RuntimeEvent> {
+        await stopped;
+        yield { type: "completed", result: { code: 0 } };
+      },
+    };
+  };
+  return createRuntimeRegistry([
+    live("claude-code", ["claude-sonnet-4-6", "claude-opus-4-7"]),
+    live("codex", ["gpt-5.1-codex"]),
+  ], "claude-code");
+}
+
 function makeRegistryManager(registry: RuntimeRegistry): SessionManager {
   return new SessionManager({
     sessionsDir,
@@ -346,6 +375,31 @@ describe("POST /sessions — C.1 contract validation", () => {
     expect(typeof snap.sid).toBe("string");
     expect(snap.runtimeId).toBe("claude-code");
     expect(snap.status).toBe("live");
+    await manager.endAll();
+  });
+
+  test("re-POST for same stage_instance_id is idempotent (no duplicate session)", async () => {
+    // Live registry so the first session stays live across the second POST —
+    // idempotency only rebinds a LIVE session; an ended one spawns fresh.
+    const registry = makeLiveRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+
+    // First POST creates the session.
+    const res1 = await postSessions(app, validBody());
+    expect(res1.status).toBe(200);
+    const snap1 = (await res1.json()) as { sid: string };
+
+    // Recovery re-POST with the same callback.stage_instance_id — oakridge
+    // crashed before persisting the sid and re-runs execute(). kbbl must return
+    // the existing session rather than spawn a second claude on the same id.
+    const res2 = await postSessions(app, validBody());
+    expect(res2.status).toBe(200);
+    const snap2 = (await res2.json()) as { sid: string };
+
+    expect(snap2.sid).toBe(snap1.sid);
+    expect(manager.listLive().length).toBe(1);
+
     await manager.endAll();
   });
 
