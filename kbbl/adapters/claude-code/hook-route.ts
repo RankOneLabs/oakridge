@@ -43,7 +43,10 @@ export interface HookHandlerDeps {
  * operator taps Approve/Deny in the PWA.
  *
  * Returns { hookSpecificOutput: { hookEventName: "PermissionRequest",
- * decision: { behavior: "allow" | "deny" } } } as CC requires.
+ * permissionDecision: "allow" | "deny" | "ask", permissionDecisionReason } }
+ * as CC requires — NOT decision.behavior (that's the SDK canUseTool programmatic
+ * return, not the hook JSON; a wrong shape is silently ignored and CC keeps
+ * blocking the tool).
  */
 export function hookPermissionHandler(deps: HookHandlerDeps) {
   return async (c: Context) => {
@@ -64,6 +67,34 @@ export function hookPermissionHandler(deps: HookHandlerDeps) {
       return c.json(
         { error: `unexpected hook_event_name: ${hook.hook_event_name}` },
         400,
+      );
+    }
+    // A well-formed PermissionRequest always carries the tool being gated and the
+    // tool_use it targets. Downstream consumers key off both — allowlisting uses
+    // tool_name, approvals are keyed to tool_use_id — so a missing value would let
+    // an "Always" allowlist the empty string or register an approval against no
+    // tool. Reject malformed payloads with an explicit deny (never stall CC).
+    if (
+      typeof hook.tool_name !== "string" ||
+      hook.tool_name.length === 0 ||
+      typeof hook.tool_use_id !== "string" ||
+      hook.tool_use_id.length === 0
+    ) {
+      console.error(
+        `kbbl: /hook/permission — malformed PermissionRequest (tool_name=${
+          hook.tool_name ?? "<missing>"
+        }, tool_use_id=${hook.tool_use_id ?? "<missing>"}), denying`,
+      );
+      return c.json(
+        {
+          hookSpecificOutput: {
+            hookEventName: "PermissionRequest",
+            permissionDecision: "deny",
+            permissionDecisionReason:
+              "malformed PermissionRequest: missing tool_name or tool_use_id",
+          },
+        },
+        200,
       );
     }
 

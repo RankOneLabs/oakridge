@@ -283,12 +283,16 @@ impl StageContext {
         let current =
             queries::get_stage_instance_by_id(&self.db, &self.stage_instance_id).await?;
 
-        // Fix 3: don't overwrite a terminal status with Running. This handles the race
-        // where kbbl reports Done/Failed via callback before execute() completes its
-        // initial Running transition.
+        // A terminal row ('done'/'failed') is frozen in the DB against any later write
+        // (see update_stage_instance_status). Short-circuit *every* transition out of a
+        // terminal state here too: otherwise we'd emit StatusChanged with the requested
+        // status while the persisted row stays terminal, diverging the scheduler index
+        // and subscribers from the DB (e.g. Parked emitted after Done). This also covers
+        // the original race where a fast kbbl Done/Failed callback lands before
+        // execute()'s initial Running transition.
         let current_is_terminal =
             matches!(current.status, StageStatus::Done | StageStatus::Failed);
-        if matches!(status, StageStatus::Running) && current_is_terminal {
+        if current_is_terminal {
             return Ok(());
         }
 

@@ -557,7 +557,33 @@ pub async fn post_stage_approvals(
         .set_status(StageStatus::Parked, Some("awaiting executor approval".into()))
         .await
     {
-        Ok(_) => (StatusCode::OK, Json(json!({}))).into_response(),
+        Ok(_) => {
+            // set_status returns Ok even when the DB row was frozen terminal and the
+            // Parked transition no-opped (a racing Done/Failed callback already landed).
+            // Re-read to confirm the stage actually parked; if it didn't, the
+            // parked_meta we just wrote would falsely imply a pending approval, so
+            // clear it and surface a conflict rather than a misleading 200.
+            match queries::get_stage_instance_by_id(&state.pool, &stage_sid).await {
+                Ok(si) if matches!(si.status, StageStatus::Parked) => {
+                    (StatusCode::OK, Json(json!({}))).into_response()
+                }
+                Ok(si) => {
+                    let _ = ctx.set_parked_meta(None).await;
+                    (
+                        StatusCode::CONFLICT,
+                        Json(json!({
+                            "error": "stage is not parked (already terminal)",
+                            "status": si.status,
+                        })),
+                    )
+                        .into_response()
+                }
+                Err(e) => {
+                    let _ = ctx.set_parked_meta(None).await;
+                    AppError::from(e).into_response()
+                }
+            }
+        }
         Err(e) => {
             // Best-effort: clear the stale parked_meta we just wrote so the
             // stage row isn't left with metadata that implies it's parked.
