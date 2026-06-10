@@ -358,14 +358,22 @@ export class SessionManager {
   /**
    * Returns the live delegated session for the given oakridge stage_instance_id,
    * or null if none exists. Used by POST /sessions to make session creation
-   * idempotent across oakridge crash-recovery re-POSTs. A stale index entry
-   * whose session has already ended resolves to null (the sessions map no
-   * longer holds it), so callers spawn fresh rather than rebind a dead session.
+   * idempotent across oakridge crash-recovery re-POSTs.
+   *
+   * Ended sessions are filtered out explicitly: SessionManager intentionally
+   * keeps ended sessions in `this.sessions` (so a client can still read the
+   * failure via /:sid/events), so we cannot rely on the map dropping them. If
+   * the index ever points at an ended sid, returning it would let POST /sessions
+   * "dedup" onto a dead session instead of spawning fresh. onEnded already
+   * removes the index entry, but enforcing "live" here keeps the contract
+   * self-evident rather than dependent on that bookkeeping staying in sync.
    */
   getDelegatedByStageInstance(stageInstanceId: string): Session | null {
     const sid = this.delegatedByStageInstance.get(stageInstanceId);
     if (sid === undefined) return null;
-    return this.sessions.get(sid) ?? null;
+    const session = this.sessions.get(sid);
+    if (session === undefined || session.status === "ended") return null;
+    return session;
   }
 
   private async ensureWorktreesDirSafeForRepo(workdir: string): Promise<void> {

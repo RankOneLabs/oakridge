@@ -403,6 +403,34 @@ describe("POST /sessions — C.1 contract validation", () => {
     await manager.endAll();
   });
 
+  test("stale index entry pointing at an ended session is not reused (explicit live filter)", async () => {
+    // SessionManager intentionally keeps ended sessions in its map, and onEnded
+    // normally clears the stage_instance_id index. This simulates the index
+    // going stale — still pointing at a now-ended session — and asserts the
+    // lookup filters it out, so a re-POST spawns fresh instead of "deduping"
+    // onto a dead session. Without the explicit status === "ended" filter, the
+    // final lookup would return the ended session and this test would fail.
+    const registry = makeLiveRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+
+    const res = await postSessions(app, validBody());
+    expect(res.status).toBe(200);
+    const { sid } = (await res.json()) as { sid: string };
+
+    // End the session; it stays in the map as "ended" and onEnded clears the index.
+    await manager.endAll();
+    expect(manager.getDelegatedByStageInstance("stage-abc")).toBeNull();
+
+    // Re-introduce a stale index entry (the failure mode the filter defends against).
+    (
+      manager as unknown as { delegatedByStageInstance: Map<string, string> }
+    ).delegatedByStageInstance.set("stage-abc", sid);
+
+    // The ended session must still not be returned.
+    expect(manager.getDelegatedByStageInstance("stage-abc")).toBeNull();
+  });
+
   test("codex backend selects codex runtime", async () => {
     const registry = makeRegistry();
     const manager = makeRegistryManager(registry);
