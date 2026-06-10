@@ -431,3 +431,137 @@ async fn delegated_session_e2e_lifecycle() {
     let final_run = queries::get_workflow_run_by_id(&pool, &run.id).await.unwrap();
     assert_eq!(final_run.status, RunStatus::Done);
 }
+
+// ── E2E: POST /sessions failure rolls the stage to Failed ───────────────────────
+
+/// A mock kbbl whose POST /sessions always rejects.
+async fn mock_sessions_fail_handler() -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({"error": "simulated execution-service failure"})),
+    )
+}
+
+/// Regression for the execute() reorder: the stage is moved to Running and
+/// registered in the live map BEFORE the POST. When the POST is rejected, the
+/// rollback drops the ctx from the live map and returns Err; the Coordinator then
+/// marks the stage Failed. The stage must end Failed — never stranded in Running.
+#[tokio::test(flavor = "multi_thread")]
+async fn delegated_session_post_failure_rolls_to_failed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let prompts_dir = tmp.path().join("prompts");
+    let workdir = tmp.path().join("work");
+    std::fs::create_dir_all(&prompts_dir).unwrap();
+    std::fs::create_dir_all(&workdir).unwrap();
+    // Same filename as the lifecycle test's prompt: boot() reads the prompts dir
+    // from the global OAKRIDGE_PROMPTS_DIR env var, which races with the parallel
+    // lifecycle test. Sharing the filename makes either dir a valid resolution.
+    std::fs::write(prompts_dir.join("e2e_prompt.md"), "delegated failure test prompt").unwrap();
+
+    let oakridge_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let oakridge_port = oakridge_listener.local_addr().unwrap().port();
+    let mock_kbbl_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mock_kbbl_port = mock_kbbl_listener.local_addr().unwrap().port();
+    let oakridge_base = format!("http://127.0.0.1:{}", oakridge_port);
+    let mock_kbbl_base = format!("http://127.0.0.1:{}", mock_kbbl_port);
+
+    let db_url = format!("sqlite://{}", tmp.path().join("fail.db").to_str().unwrap());
+    let db_url2 = db_url.clone();
+
+    std::env::set_var("OAKRIDGE_PROMPTS_DIR", prompts_dir.to_str().unwrap());
+    let (router, coord) = boot(
+        Config {
+            port: oakridge_port,
+            bind_addr: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            db_url: db_url.clone(),
+            pwa_dir: PathBuf::from("/tmp"),
+            cors_origins: vec![],
+        },
+        |_stage, art| {
+            art.register(ArtifactTypeDef {
+                id: "any".into(),
+                validate: |_| Ok(()),
+                component_id: "v".into(),
+            });
+        },
+    )
+    .await
+    .unwrap();
+    std::env::remove_var("OAKRIDGE_PROMPTS_DIR");
+
+    tokio::spawn(async move {
+        axum::serve(
+            oakridge_listener,
+            router.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+
+    let mock_router = Router::new().route("/sessions", post(mock_sessions_fail_handler));
+    tokio::spawn(async move {
+        axum::serve(mock_kbbl_listener, mock_router).await.unwrap();
+    });
+
+    let pool = db::init_pool(&db_url2).await.unwrap();
+    let workdir_str = workdir.to_string_lossy().to_string();
+
+    let def = WorkflowDef {
+        id: WorkflowDefId(Uuid::new_v4()),
+        name: format!("e2e-delegated-fail-{}", Uuid::new_v4()),
+        version: 1,
+        graph: WorkflowGraph {
+            stages: {
+                let mut m = HashMap::new();
+                m.insert(
+                    "agent".into(),
+                    StageNodeDef {
+                        stage_type: "delegated_session".into(),
+                        config: json!({
+                            "backend": "claude-code",
+                            "prompt_template_path": "e2e_prompt.md",
+                            "slot_bindings": {},
+                            "workdir": {"from": "literal", "value": workdir_str},
+                            "model": null,
+                            "pre_authorized_tools": [],
+                            "yolo": false,
+                            "execution_service_url": mock_kbbl_base,
+                            "callback_base_url": oakridge_base,
+                        }),
+                        inputs: vec![],
+                        outputs: vec![OutputSlot {
+                            name: "out".into(),
+                            artifact_type: "any".into(),
+                        }],
+                    },
+                );
+                m
+            },
+            edges: vec![],
+        },
+        created_at: Utc::now(),
+    };
+    queries::insert_workflow_def(&pool, &def).await.unwrap();
+
+    let run = WorkflowRun {
+        id: WorkflowRunId(Uuid::new_v4()),
+        workflow_def_id: def.id,
+        project_id: None,
+        status: RunStatus::Pending,
+        context: json!({}),
+        version: 1,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    queries::insert_workflow_run(&pool, &run).await.unwrap();
+    coord.start_run(run.id).await.unwrap();
+
+    let timeout = Duration::from_secs(30);
+    let si_id = poll_for_any_stage(&pool, run.id, timeout).await;
+
+    // POST /sessions 500 → rollback → Coordinator marks Failed. Never stuck Running.
+    poll_until_status(&pool, si_id, StageStatus::Failed, timeout).await;
+
+    let si = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+    assert_eq!(si.status, StageStatus::Failed);
+}
