@@ -293,11 +293,60 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
           400,
         );
       }
+      const cbBaseUrl = cb.base_url.trim();
+      const cbStageInstanceId = cb.stage_instance_id.trim();
+      const cbEmitPath = cb.emit_path.trim();
+      const cbStatusPath = cb.status_path.trim();
+
+      // Validate callback shapes up front. callbacks.ts concatenates these
+      // verbatim ({base_url}{emit_path}, /stages/{stage_instance_id}/approvals),
+      // and a failed callback there only logs — so a malformed URL/path would
+      // otherwise strand a live delegated stage with no report path back to
+      // oakridge. Reject the request now instead.
+      let parsedBaseUrl: URL;
+      try {
+        parsedBaseUrl = new URL(cbBaseUrl);
+      } catch {
+        return c.json({ error: "callback.base_url must be a valid URL" }, 400);
+      }
+      if (
+        parsedBaseUrl.protocol !== "http:" &&
+        parsedBaseUrl.protocol !== "https:"
+      ) {
+        return c.json({ error: "callback.base_url must be an http(s) URL" }, 400);
+      }
+      if (!cbEmitPath.startsWith("/") || /\s/.test(cbEmitPath)) {
+        return c.json(
+          {
+            error:
+              "callback.emit_path must be an absolute path (leading '/', no whitespace)",
+          },
+          400,
+        );
+      }
+      if (!cbStatusPath.startsWith("/") || /\s/.test(cbStatusPath)) {
+        return c.json(
+          {
+            error:
+              "callback.status_path must be an absolute path (leading '/', no whitespace)",
+          },
+          400,
+        );
+      }
+      if (!/^[A-Za-z0-9._-]+$/.test(cbStageInstanceId)) {
+        return c.json(
+          {
+            error:
+              "callback.stage_instance_id must be path-safe ([A-Za-z0-9._-])",
+          },
+          400,
+        );
+      }
       bodyCallback = {
-        base_url: cb.base_url.trim(),
-        stage_instance_id: cb.stage_instance_id.trim(),
-        emit_path: cb.emit_path.trim(),
-        status_path: cb.status_path.trim(),
+        base_url: cbBaseUrl,
+        stage_instance_id: cbStageInstanceId,
+        emit_path: cbEmitPath,
+        status_path: cbStatusPath,
       };
     } catch {
       return c.json({ error: "invalid json" }, 400);

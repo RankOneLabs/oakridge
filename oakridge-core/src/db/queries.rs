@@ -466,17 +466,29 @@ pub async fn update_stage_instance_status(
     let updated_at = Utc::now().to_rfc3339();
     let started_at_str = started_at.map(|t| t.to_rfc3339());
     let ended_at_str = ended_at.map(|t| t.to_rfc3339());
+    // A terminal row ('done'/'failed') is frozen: status, parked_reason and
+    // ended_at are preserved against any later write. The delegated_session
+    // execute() reorder makes a stage live *before* the POST to kbbl so a fast
+    // callback can land a real terminal status while execute() is still running;
+    // scheduler.rs then turns any later execute() Err into a raw Failed write
+    // through this helper. Without the guard that fallback would demote a row the
+    // callback already marked done (state regression) — the CASE expressions keep
+    // the existing terminal values. The guard is a no-op for the first, legitimate
+    // transition to terminal (current status is still non-terminal then). updated_at
+    // always advances so the touch is observable; rows_affected stays 1 (WHERE id)
+    // so a frozen no-op does not surface as NotFound.
+    //
     // started_at uses COALESCE(?, started_at): a None arg preserves any existing
-    // start time rather than clobbering it to NULL. This matters for the raw
-    // Err→Failed call sites in the scheduler, which pass started_at=None — after
-    // the delegated_session execute() reorder a stage can already be Running (and
-    // have started_at seeded) when execute() returns Err, and a Failed stage must
-    // not lose the time it actually started. Callers that intend to set a start
-    // time (set_status) still pass Some(..) and COALESCE returns it unchanged; no
-    // caller ever needs to reset started_at back to NULL.
+    // start time rather than clobbering it to NULL, so a Failed stage keeps the
+    // time it actually started. Callers that intend to set a start time
+    // (set_status) pass Some(..) and COALESCE returns it unchanged.
     let result = sqlx::query!(
         "UPDATE stage_instance \
-         SET status = ?, parked_reason = ?, started_at = COALESCE(CAST(? AS TEXT), started_at), ended_at = ?, updated_at = ? \
+         SET status = CASE WHEN status IN ('done', 'failed') THEN status ELSE ? END, \
+             parked_reason = CASE WHEN status IN ('done', 'failed') THEN parked_reason ELSE ? END, \
+             started_at = COALESCE(CAST(? AS TEXT), started_at), \
+             ended_at = CASE WHEN status IN ('done', 'failed') THEN ended_at ELSE ? END, \
+             updated_at = ? \
          WHERE id = ?",
         status_str,
         parked_reason,
@@ -1336,6 +1348,58 @@ mod tests {
         assert_eq!(got.parked_reason, Some("gate waiting".into()));
         assert_eq!(got.started_at, Some(fixed_dt()));
         assert_eq!(got.ended_at, None);
+    }
+
+    /// A terminal row is frozen: a later non-terminal write (the raw Err→Failed
+    /// path in the scheduler, or a stray Running) must not demote a status a fast
+    /// kbbl callback already set, nor clobber its ended_at. The first transition
+    /// into terminal still succeeds; only writes against an already-terminal row
+    /// are no-ops on the frozen fields.
+    #[tokio::test]
+    async fn test_terminal_status_is_not_demoted() {
+        let pool = make_test_pool().await;
+        let def = test_workflow_def();
+        insert_workflow_def(&pool, &def).await.unwrap();
+        let run = test_run(def.id);
+        insert_workflow_run(&pool, &run).await.unwrap();
+        let si = test_stage(run.id);
+        insert_stage_instance(&pool, &si).await.unwrap();
+
+        // A fast callback marks the stage done with a real completion time.
+        let done_at = fixed_dt();
+        update_stage_instance_status(
+            &pool,
+            &si.id,
+            StageStatus::Done,
+            None,
+            Some(fixed_dt()),
+            Some(done_at),
+        )
+        .await
+        .unwrap();
+
+        // The scheduler's raw Err→Failed fallback fires afterwards: status=Failed,
+        // parked_reason=None, started_at=None, a *later* ended_at. It must not win.
+        let later = DateTime::parse_from_rfc3339("2026-02-02T00:00:00.000Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let res = update_stage_instance_status(
+            &pool,
+            &si.id,
+            StageStatus::Failed,
+            Some("execute() returned Err".into()),
+            None,
+            Some(later),
+        )
+        .await;
+        // The write is a row-matching no-op on frozen fields, not a NotFound.
+        assert!(res.is_ok());
+
+        let got = get_stage_instance_by_id(&pool, &si.id).await.unwrap();
+        assert_eq!(got.status, StageStatus::Done, "terminal status must not be demoted");
+        assert_eq!(got.parked_reason, None);
+        assert_eq!(got.started_at, Some(fixed_dt()), "started_at preserved");
+        assert_eq!(got.ended_at, Some(done_at), "original completion time preserved");
     }
 
     #[tokio::test]

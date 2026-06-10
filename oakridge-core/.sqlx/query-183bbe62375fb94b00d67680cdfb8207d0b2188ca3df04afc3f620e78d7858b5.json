@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE stage_instance SET status = CASE WHEN status IN ('done', 'failed') THEN status ELSE ? END, parked_reason = CASE WHEN status IN ('done', 'failed') THEN parked_reason ELSE ? END, started_at = COALESCE(CAST(? AS TEXT), started_at), ended_at = CASE WHEN status IN ('done', 'failed') THEN ended_at ELSE ? END, updated_at = ? WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "183bbe62375fb94b00d67680cdfb8207d0b2188ca3df04afc3f620e78d7858b5"
+}

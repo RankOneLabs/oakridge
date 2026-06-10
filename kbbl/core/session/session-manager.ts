@@ -911,16 +911,28 @@ export class SessionManager {
 
     this.broadcastDelta({ type: "session_created", session: session.snapshot() });
 
-    const handle = await runtime.spawn({
-      workingDirectory: session.workdir,
-      runtimeSpecific: {
-        resumeCcSid: ccSid,
-        oakridgeSid: session.oakridgeSid,
-        model: session.model,
-        projectWorkdir: session.projectWorkdir,
-      },
-    });
-    await session.attachRuntime(runtime, handle);
+    // The "starting" row is already in this.sessions. If spawn/attach throws we
+    // must remove it (and dispose the compactor) before rethrowing: the relaunch
+    // guard refuses any session whose status !== "ended", so leaving a partial
+    // "starting" row behind would wedge recovery — the next relaunch() would fail
+    // on the guard until someone purged the row by hand. Cleanup restores the
+    // pre-relaunch state so a transient failure is retriable.
+    try {
+      const handle = await runtime.spawn({
+        workingDirectory: session.workdir,
+        runtimeSpecific: {
+          resumeCcSid: ccSid,
+          oakridgeSid: session.oakridgeSid,
+          model: session.model,
+          projectWorkdir: session.projectWorkdir,
+        },
+      });
+      await session.attachRuntime(runtime, handle);
+    } catch (err) {
+      this.sessions.delete(session.oakridgeSid);
+      compactor.dispose();
+      throw err;
+    }
 
     return session;
   }

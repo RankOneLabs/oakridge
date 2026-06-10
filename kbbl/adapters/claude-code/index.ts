@@ -30,7 +30,7 @@ import {
   hookSubagentStopHandler,
   type HookHandlerDeps,
 } from "./hook-route";
-import { assertA1Invariants, buildResumeArgs, makeBuildSpawnCmd, writeCcMcpConfig, writeCcSettings } from "./spawn";
+import { assertA1Invariants, buildResumeArgs, makeBuildSpawnCmd, resolveCcSessionId, writeCcMcpConfig, writeCcSettings } from "./spawn";
 
 export interface CreateClaudeCodeRuntimeOpts {
   claudeBin: string;
@@ -174,6 +174,16 @@ export async function createClaudeCodeRuntime(
         ...process.env,
       };
 
+      // CC session id resolution. In PTY mode kbbl must know the runtime session
+      // id at spawn time (the byte stream is never parsed, so system/init never
+      // teaches it) — otherwise the first hook can never resolve. See
+      // resolveCcSessionId for the per-path rationale. runtimeSid is returned as
+      // handle.runtimeSid; attachRuntime feeds it to observeRuntimeSessionId.
+      const { runtimeSid, sessionIdArgs } = resolveCcSessionId({
+        resumeCcSid,
+        parentCcSid,
+      });
+
       // Build interactive argv (no --print / stream-json).
       const argv = [
         opts.claudeBin,
@@ -188,10 +198,13 @@ export async function createClaudeCodeRuntime(
       if (model) argv.push("--model", model);
       // Continue-in-place recovery: plain --resume keeps the same CC session id
       // and row. Fork (Resume button): --resume --fork-session mints a new id.
+      // Fresh: --session-id pins the kbbl-minted id (see resolveCcSessionId).
       if (resumeCcSid) {
         argv.push(...buildResumeArgs(resumeCcSid, "continue-in-place"));
       } else if (parentCcSid) {
         argv.push(...buildResumeArgs(parentCcSid, "fork"));
+      } else {
+        argv.push(...sessionIdArgs);
       }
 
       // A.1: hard billing invariant — refuse rather than downgrade.
@@ -213,7 +226,7 @@ export async function createClaudeCodeRuntime(
 
       const handle: CcHandle = { sessionId: oakridgeSid, pty: ptyProc };
       procs.set(oakridgeSid, handle);
-      return { sessionId: oakridgeSid };
+      return { sessionId: oakridgeSid, runtimeSid };
     },
 
     // --- AgentRuntime.terminate ---

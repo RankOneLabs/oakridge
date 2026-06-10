@@ -115,14 +115,14 @@ impl StageHandle for DelegatedSessionHandle {
                     "decision": if approved { "approve" } else { "deny" },
                     "scope": "once",
                 });
-                match self
+                let forwarded = self
                     .client
                     .post(&approval_url)
                     .timeout(std::time::Duration::from_secs(10))
                     .json(&approval_body)
                     .send()
-                    .await
-                {
+                    .await;
+                match &forwarded {
                     Err(e) => tracing::warn!(
                         error = %e,
                         kbbl_sid = %self.kbbl_sid,
@@ -134,6 +134,17 @@ impl StageHandle for DelegatedSessionHandle {
                         "kbbl rejected approval decision; remote session may remain blocked"
                     ),
                     Ok(_) => {}
+                }
+
+                // Only clear park state once the decision actually reached kbbl.
+                // On a transport error or non-2xx we leave the stage parked and
+                // return Err so the approval can be retried — clearing here would
+                // flip oakridge to Running while kbbl is still blocked, stranding
+                // the stage with no path back to retriable.
+                if !matches!(&forwarded, Ok(resp) if resp.status().is_success()) {
+                    return Err(anyhow::anyhow!(
+                        "approval forward to kbbl failed; leaving stage parked for retry"
+                    ));
                 }
 
                 // Clear park state.

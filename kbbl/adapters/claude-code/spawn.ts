@@ -1,6 +1,7 @@
 import { realpathSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 
 import type { Session, SpawnCmd } from "../../core/session/session";
 
@@ -144,6 +145,39 @@ export function buildResumeArgs(ccSid: string, mode: ResumeMode): string[] {
   return mode === "continue-in-place"
     ? ["--resume", ccSid]
     : ["--resume", ccSid, "--fork-session"];
+}
+
+/**
+ * Decides the CC session id for a PTY spawn and the `--session-id` argv it
+ * implies. PTY mode never parses the byte stream, so the system/init event that
+ * normally teaches kbbl the runtime session id (→ observeRuntimeSessionId →
+ * registerCcSid) never arrives. To make hooks resolvable from the very first
+ * request we must know the id at spawn time:
+ *
+ * - fresh (no resume, no fork): mint a uuid and pin it with `--session-id` so
+ *   the ccSid→oakridgeSid mapping exists the instant the session goes live.
+ * - continue-in-place (resumeCcSid): CC keeps its existing id, carried by
+ *   `--resume`; reuse it as the runtime sid (no `--session-id`, which would
+ *   conflict with `--resume`).
+ * - fork (parentCcSid): CC mints a new id we cannot pin without a
+ *   `--session-id`/`--resume` conflict, so it stays unregistered (pre-existing
+ *   PTY limitation; the Resume-button path).
+ *
+ * The returned `runtimeSid` is surfaced as `SessionHandle.runtimeSid`, which
+ * `attachRuntime` feeds to `observeRuntimeSessionId`.
+ */
+export function resolveCcSessionId(opts: {
+  resumeCcSid?: string | null;
+  parentCcSid?: string | null;
+}): { runtimeSid: string | undefined; sessionIdArgs: string[] } {
+  if (opts.resumeCcSid) {
+    return { runtimeSid: opts.resumeCcSid, sessionIdArgs: [] };
+  }
+  if (opts.parentCcSid) {
+    return { runtimeSid: undefined, sessionIdArgs: [] };
+  }
+  const runtimeSid = randomUUID();
+  return { runtimeSid, sessionIdArgs: ["--session-id", runtimeSid] };
 }
 
 export interface BuildSpawnCmdContext {

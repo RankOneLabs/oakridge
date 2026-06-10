@@ -365,6 +365,61 @@ describe("POST /sessions — C.1 contract validation", () => {
     await manager.endAll();
   });
 
+  // Shape validation: callbacks.ts concatenates these verbatim, and a failed
+  // callback there only logs — so a malformed value must be rejected up front
+  // rather than stranding a live delegated stage.
+  test("rejects callback base_url that is not a URL", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postSessions(app, validBody({
+      callback: { base_url: "not a url", stage_instance_id: "s1", emit_path: "/e", status_path: "/s" },
+    }));
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toContain("callback.base_url must be a valid URL");
+    await manager.endAll();
+  });
+
+  test("rejects callback base_url with non-http(s) protocol", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postSessions(app, validBody({
+      callback: { base_url: "ftp://oakridge:3000", stage_instance_id: "s1", emit_path: "/e", status_path: "/s" },
+    }));
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toContain("http(s)");
+    await manager.endAll();
+  });
+
+  test("rejects callback emit_path without a leading slash", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postSessions(app, validBody({
+      callback: { base_url: "http://oakridge:3000", stage_instance_id: "s1", emit_path: "emit", status_path: "/s" },
+    }));
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toContain("callback.emit_path");
+    await manager.endAll();
+  });
+
+  test("rejects callback stage_instance_id with path-unsafe characters", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postSessions(app, validBody({
+      callback: { base_url: "http://oakridge:3000", stage_instance_id: "../../etc", emit_path: "/e", status_path: "/s" },
+    }));
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toContain("callback.stage_instance_id");
+    await manager.endAll();
+  });
+
   test("valid request creates session and returns snapshot", async () => {
     const registry = makeRegistry();
     const manager = makeRegistryManager(registry);

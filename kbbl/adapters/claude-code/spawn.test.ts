@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import { assertA1Invariants, buildResumeArgs, makeBuildSpawnCmd, writeCcSettings, type BuildSpawnCmdContext } from "./spawn";
+import { assertA1Invariants, buildResumeArgs, makeBuildSpawnCmd, resolveCcSessionId, writeCcSettings, type BuildSpawnCmdContext } from "./spawn";
 import type { Session } from "../../core/session/session";
 
 function makeCtx(): BuildSpawnCmdContext {
@@ -93,6 +93,38 @@ describe("buildResumeArgs", () => {
 
   test("continue-in-place mode appends --resume <ccSid> only", () => {
     expect(buildResumeArgs("cc-abc", "continue-in-place")).toEqual(["--resume", "cc-abc"]);
+  });
+});
+
+describe("resolveCcSessionId", () => {
+  // Regression guard for the PTY hook-resolution gap: a fresh PTY session must
+  // know its CC session id at spawn time (via --session-id) because the byte
+  // stream is never parsed to learn it from system/init. Without a runtimeSid the
+  // ccSid→oakridgeSid map stays empty and every first-turn hook times out.
+  test("fresh session mints a uuid and pins it with --session-id", () => {
+    const { runtimeSid, sessionIdArgs } = resolveCcSessionId({});
+    expect(typeof runtimeSid).toBe("string");
+    expect(runtimeSid).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+    expect(sessionIdArgs).toEqual(["--session-id", runtimeSid]);
+  });
+
+  test("continue-in-place reuses the resume id without --session-id", () => {
+    const { runtimeSid, sessionIdArgs } = resolveCcSessionId({ resumeCcSid: "cc-existing" });
+    expect(runtimeSid).toBe("cc-existing");
+    expect(sessionIdArgs).toEqual([]);
+  });
+
+  test("fork leaves runtimeSid undefined (CC mints the forked id)", () => {
+    const { runtimeSid, sessionIdArgs } = resolveCcSessionId({ parentCcSid: "cc-parent" });
+    expect(runtimeSid).toBeUndefined();
+    expect(sessionIdArgs).toEqual([]);
+  });
+
+  test("resume takes precedence over fork when both are somehow present", () => {
+    const { runtimeSid } = resolveCcSessionId({ resumeCcSid: "cc-resume", parentCcSid: "cc-parent" });
+    expect(runtimeSid).toBe("cc-resume");
   });
 });
 

@@ -29,9 +29,16 @@ function makeFakeSession(opts: {
 }): {
   session: Session;
   emitted: EnvelopeEvent[];
+  // Resolves once at least `n` events have been emitted. Hook handlers emit
+  // fire-and-forget (resolveSessionForHook(...).then(s => s.emit(...))), so the
+  // emit lands a few microtasks after the handler returns 200. waitForEmits lets
+  // a test await that exact point instead of guessing with a fixed sleep, which
+  // is scheduler-dependent and can flake on a busy runner.
+  waitForEmits: (n: number) => Promise<void>;
 } {
   const emitted: EnvelopeEvent[] = [];
   let nextId = 0;
+  const waiters: Array<{ n: number; resolve: () => void }> = [];
   const session = {
     oakridgeSid: "fake-session-id",
     status: opts.status ?? "live",
@@ -41,12 +48,21 @@ function makeFakeSession(opts: {
     emit: async (type: string, payload: unknown) => {
       const evt: EnvelopeEvent = { id: nextId++, type, ts: new Date().toISOString(), payload };
       emitted.push(evt);
+      for (const w of waiters.splice(0)) {
+        if (emitted.length >= w.n) w.resolve();
+        else waiters.push(w);
+      }
       return evt;
     },
     registerApproval: () => {},
     deleteApproval: () => {},
   } as unknown as Session;
-  return { session, emitted };
+  const waitForEmits = (n: number): Promise<void> =>
+    new Promise<void>((resolve) => {
+      if (emitted.length >= n) resolve();
+      else waiters.push({ n, resolve });
+    });
+  return { session, emitted, waitForEmits };
 }
 
 function makeFakeManager(session: Session | null, ccSid: string): SessionManager {
@@ -164,7 +180,7 @@ describe("hookSubagentStopHandler: billing observability", () => {
   });
 
   test("increments subagentCounts and emits subagent_stopped with count", async () => {
-    const { session, emitted } = makeFakeSession({});
+    const { session, emitted, waitForEmits } = makeFakeSession({});
     const deps = makeHookDeps(session);
     const handler = hookSubagentStopHandler(deps);
 
@@ -182,8 +198,8 @@ describe("hookSubagentStopHandler: billing observability", () => {
 
     expect(deps.subagentCounts.get("fake-session-id")).toBe(2);
 
-    // Give fire-and-forget emits a tick to settle
-    await new Promise((r) => setTimeout(r, 10));
+    // Wait for both fire-and-forget emits to land (deterministic, no fixed sleep).
+    await waitForEmits(2);
     const stopEvents = emitted.filter((e) => e.type === "subagent_stopped");
     expect(stopEvents.length).toBe(2);
     expect((stopEvents[0].payload as { subagent_count: number }).subagent_count).toBe(1);
@@ -193,7 +209,7 @@ describe("hookSubagentStopHandler: billing observability", () => {
 
 describe("hookPostToolUseHandler: informational", () => {
   test("emits hook_post_tool_use event and returns 200", async () => {
-    const { session, emitted } = makeFakeSession({});
+    const { session, emitted, waitForEmits } = makeFakeSession({});
     const handler = hookPostToolUseHandler(makeHookDeps(session));
 
     const ctx = makeCtx({
@@ -205,7 +221,7 @@ describe("hookPostToolUseHandler: informational", () => {
     const res = await handler(ctx as Parameters<typeof handler>[0]);
     expect(res.status).toBe(200);
 
-    await new Promise((r) => setTimeout(r, 10));
+    await waitForEmits(1);
     expect(emitted.some((e) => e.type === "hook_post_tool_use")).toBe(true);
   });
 
@@ -220,7 +236,8 @@ describe("hookPostToolUseHandler: informational", () => {
     const res = await handler(ctx as Parameters<typeof handler>[0]);
     expect(res.status).toBe(200);
 
-    await new Promise((r) => setTimeout(r, 10));
+    // A hook_event_name mismatch returns early, before any fire-and-forget emit
+    // is scheduled, so no emit can ever land — assert directly without a sleep.
     expect(emitted.some((e) => e.type === "hook_post_tool_use")).toBe(false);
   });
 });
