@@ -198,16 +198,21 @@ impl RunTask {
             Ok(handle) => { self.handles.insert(si_id, handle); }
             Err(e) => {
                 tracing::error!(stage_key, "execute failed: {}", e);
-                // Mark Failed so quiescence fires and the run is terminated.
-                if let Some((_, ref mut s)) = self.index.get_mut(stage_key) {
-                    *s = StageStatus::Failed;
-                }
-                let _ = queries::update_stage_instance_status(
+                // Persist Failed, but honor a terminal status a fast kbbl callback
+                // may have already landed: the DB freezes terminal rows, so the
+                // *effective* post-write status (not a forced Failed) drives the
+                // in-memory index and the emitted event — otherwise quiescence and
+                // subscribers would contradict a row the callback marked done. On a
+                // DB error, fall back to Failed so the run still reaches quiescence.
+                let effective = queries::update_stage_instance_status(
                     &self.db, &si_id, StageStatus::Failed, None, None, Some(Utc::now()),
-                ).await;
+                ).await.unwrap_or(StageStatus::Failed);
+                if let Some((_, ref mut s)) = self.index.get_mut(stage_key) {
+                    *s = effective;
+                }
                 let _ = self.events_tx.send(ExecutorEvent::StatusChanged {
                     instance_id: si_id,
-                    status: StageStatus::Failed,
+                    status: effective,
                     parked_reason: None,
                 }).await;
             }
@@ -719,15 +724,18 @@ impl Coordinator {
                     Ok(handle) => { task.handles.insert(si.id, handle); }
                     Err(e) => {
                         tracing::error!(stage_key = si.stage_key, "recovery execute failed: {}", e);
-                        if let Some((_, ref mut s)) = task.index.get_mut(&si.stage_key) {
-                            *s = StageStatus::Failed;
-                        }
-                        let _ = queries::update_stage_instance_status(
+                        // Honor a terminal status a fast callback may have landed;
+                        // use the effective post-write status (see the primary
+                        // execute() Err path above for the full rationale).
+                        let effective = queries::update_stage_instance_status(
                             &self.db, &si.id, StageStatus::Failed, None, None, Some(Utc::now()),
-                        ).await;
+                        ).await.unwrap_or(StageStatus::Failed);
+                        if let Some((_, ref mut s)) = task.index.get_mut(&si.stage_key) {
+                            *s = effective;
+                        }
                         let _ = events_tx.send(ExecutorEvent::StatusChanged {
                             instance_id: si.id,
-                            status: StageStatus::Failed,
+                            status: effective,
                             parked_reason: None,
                         }).await;
                     }

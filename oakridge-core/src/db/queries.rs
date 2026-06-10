@@ -460,7 +460,7 @@ pub async fn update_stage_instance_status(
     parked_reason: Option<String>,
     started_at: Option<DateTime<Utc>>,
     ended_at: Option<DateTime<Utc>>,
-) -> crate::Result<()> {
+) -> crate::Result<StageStatus> {
     let id_str = id.0.to_string();
     let status_str = enum_to_str(&status)?;
     let updated_at = Utc::now().to_rfc3339();
@@ -474,9 +474,16 @@ pub async fn update_stage_instance_status(
     // through this helper. Without the guard that fallback would demote a row the
     // callback already marked done (state regression) — the CASE expressions keep
     // the existing terminal values. The guard is a no-op for the first, legitimate
-    // transition to terminal (current status is still non-terminal then). updated_at
-    // always advances so the touch is observable; rows_affected stays 1 (WHERE id)
-    // so a frozen no-op does not surface as NotFound.
+    // transition to terminal (current status is still non-terminal then).
+    //
+    // The function returns the *effective* post-write status so callers can tell
+    // whether their intended transition actually landed: the raw scheduler
+    // Err→Failed sites use it to avoid forcing Failed in-memory / emitting
+    // StatusChanged{Failed} when the row stayed terminally done — otherwise the
+    // in-memory index and event stream would contradict the persisted row (and
+    // run quiescence would mark a succeeded stage's run Failed). The effective
+    // value is read back with a follow-up SELECT rather than UPDATE ... RETURNING
+    // (the latter does not reliably persist via sqlx's fetch path on SQLite).
     //
     // started_at uses COALESCE(?, started_at): a None arg preserves any existing
     // start time rather than clobbering it to NULL, so a Failed stage keeps the
@@ -505,7 +512,13 @@ pub async fn update_stage_instance_status(
             id: id_str,
         });
     }
-    Ok(())
+    let row = sqlx::query!(
+        "SELECT status FROM stage_instance WHERE id = ?",
+        id_str,
+    )
+    .fetch_one(pool)
+    .await?;
+    str_to_enum::<StageStatus>(row.status)
 }
 
 /// Set (or clear, with `None`) the structured park metadata an executor attaches
@@ -1367,7 +1380,7 @@ mod tests {
 
         // A fast callback marks the stage done with a real completion time.
         let done_at = fixed_dt();
-        update_stage_instance_status(
+        let first = update_stage_instance_status(
             &pool,
             &si.id,
             StageStatus::Done,
@@ -1377,13 +1390,14 @@ mod tests {
         )
         .await
         .unwrap();
+        assert_eq!(first, StageStatus::Done, "first transition into terminal lands");
 
         // The scheduler's raw Err→Failed fallback fires afterwards: status=Failed,
         // parked_reason=None, started_at=None, a *later* ended_at. It must not win.
         let later = DateTime::parse_from_rfc3339("2026-02-02T00:00:00.000Z")
             .unwrap()
             .with_timezone(&Utc);
-        let res = update_stage_instance_status(
+        let effective = update_stage_instance_status(
             &pool,
             &si.id,
             StageStatus::Failed,
@@ -1391,9 +1405,12 @@ mod tests {
             None,
             Some(later),
         )
-        .await;
-        // The write is a row-matching no-op on frozen fields, not a NotFound.
-        assert!(res.is_ok());
+        .await
+        // A row-matching no-op on frozen fields, not a NotFound...
+        .expect("frozen-row update must not error");
+        // ...and the returned effective status is the preserved terminal one, so
+        // the scheduler reflects done (not Failed) in-memory and on the event bus.
+        assert_eq!(effective, StageStatus::Done, "effective status is the frozen terminal value");
 
         let got = get_stage_instance_by_id(&pool, &si.id).await.unwrap();
         assert_eq!(got.status, StageStatus::Done, "terminal status must not be demoted");

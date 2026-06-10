@@ -108,11 +108,15 @@ describe("hookPermissionHandler: yolo auto-approves", () => {
     });
     const res = await handler(ctx as Parameters<typeof handler>[0]);
     const body = await res.json() as {
-      hookSpecificOutput: { hookEventName: string; decision: { behavior: string } };
+      hookSpecificOutput: {
+        hookEventName: string;
+        permissionDecision: string;
+        permissionDecisionReason: string;
+      };
     };
 
     expect(body.hookSpecificOutput.hookEventName).toBe("PermissionRequest");
-    expect(body.hookSpecificOutput.decision.behavior).toBe("allow");
+    expect(body.hookSpecificOutput.permissionDecision).toBe("allow");
 
     const event = emitted.find((e) => e.type === "permission_auto_approved");
     expect(event).toMatchObject({ payload: { reason: "yolo" } });
@@ -133,11 +137,15 @@ describe("hookPermissionHandler: allowlist auto-approves", () => {
     });
     const res = await handler(ctx as Parameters<typeof handler>[0]);
     const body = await res.json() as {
-      hookSpecificOutput: { hookEventName: string; decision: { behavior: string } };
+      hookSpecificOutput: {
+        hookEventName: string;
+        permissionDecision: string;
+        permissionDecisionReason: string;
+      };
     };
 
     expect(body.hookSpecificOutput.hookEventName).toBe("PermissionRequest");
-    expect(body.hookSpecificOutput.decision.behavior).toBe("allow");
+    expect(body.hookSpecificOutput.permissionDecision).toBe("allow");
 
     const event = emitted.find((e) => e.type === "permission_auto_approved");
     expect(event).toMatchObject({ payload: { reason: "allowlist" } });
@@ -145,7 +153,7 @@ describe("hookPermissionHandler: allowlist auto-approves", () => {
 });
 
 describe("hookPermissionHandler: session not found", () => {
-  test("returns minimal deny (no extra fields) when session cannot be resolved", async () => {
+  test("returns deny in the verified hook shape when session cannot be resolved", async () => {
     const handler = hookPermissionHandler(makeHookDeps(null));
 
     const ctx = makeCtx({
@@ -157,13 +165,18 @@ describe("hookPermissionHandler: session not found", () => {
     });
     const res = await handler(ctx as Parameters<typeof handler>[0]);
     const body = await res.json() as {
-      hookSpecificOutput: { hookEventName: string; decision: Record<string, unknown> };
+      hookSpecificOutput: {
+        hookEventName: string;
+        permissionDecision: string;
+        permissionDecisionReason: string;
+      };
     };
 
+    // CC 2.1.169 (per phase0/RESULTS.md) expects permissionDecision +
+    // permissionDecisionReason, not decision.behavior.
     expect(body.hookSpecificOutput.hookEventName).toBe("PermissionRequest");
-    expect(body.hookSpecificOutput.decision.behavior).toBe("deny");
-    // CC may reject strict-mode hook output with extra fields; keep decision minimal.
-    expect(Object.keys(body.hookSpecificOutput.decision)).toEqual(["behavior"]);
+    expect(body.hookSpecificOutput.permissionDecision).toBe("deny");
+    expect(typeof body.hookSpecificOutput.permissionDecisionReason).toBe("string");
   });
 });
 

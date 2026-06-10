@@ -76,7 +76,8 @@ export function hookPermissionHandler(deps: HookHandlerDeps) {
         {
           hookSpecificOutput: {
             hookEventName: "PermissionRequest",
-            decision: { behavior: "deny" },
+            permissionDecision: "deny",
+            permissionDecisionReason: "no kbbl session for this CC session id",
           },
         },
         200,
@@ -103,12 +104,16 @@ export function hookPermissionHandler(deps: HookHandlerDeps) {
           }`,
         );
       }
+      // PermissionRequest hook response shape: CC (verified against 2.1.169 in
+      // phase0/RESULTS.md) expects hookSpecificOutput.permissionDecision
+      // ("allow"|"deny"|"ask") + permissionDecisionReason — NOT decision.behavior
+      // (that's the SDK canUseTool programmatic return, not the hook JSON). A
+      // wrong shape is silently ignored and CC keeps blocking the tool.
       return c.json({
         hookSpecificOutput: {
           hookEventName: "PermissionRequest",
-          decision: {
-            behavior: "allow",
-          },
+          permissionDecision: "allow",
+          permissionDecisionReason: `auto-approved (${autoReason})`,
         },
       });
     }
@@ -150,9 +155,9 @@ export function hookPermissionHandler(deps: HookHandlerDeps) {
       return c.json({
         hookSpecificOutput: {
           hookEventName: "PermissionRequest",
-          decision: {
-            behavior: decision,
-          },
+          permissionDecision: decision,
+          permissionDecisionReason:
+            decision === "allow" ? "operator approved" : "operator denied",
         },
       });
     } catch (err) {
@@ -183,7 +188,8 @@ export function hookPermissionHandler(deps: HookHandlerDeps) {
       return c.json({
         hookSpecificOutput: {
           hookEventName: "PermissionRequest",
-          decision: { behavior: "deny" },
+          permissionDecision: "deny",
+          permissionDecisionReason: isGateAbort ? "gate aborted" : "hook handler error",
         },
       });
     }
