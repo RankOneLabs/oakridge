@@ -136,6 +136,7 @@ function makeApp(
   mountSessionsRoutes(app, {
     manager,
     defaultWorkdir,
+    sessionsDir,
     registry,
   });
   return app;
@@ -587,6 +588,89 @@ describe("POST /sessions — C.1 contract validation", () => {
     expect(res.status).toBe(400);
     const body = await res.json() as { error: string };
     expect(body.error).toContain('"codex" is not registered');
+    await manager.endAll();
+  });
+});
+
+describe("POST /sessions/operator — operator create / resume", () => {
+  async function postOperator(
+    app: Hono,
+    body: Record<string, unknown>,
+  ): Promise<Response> {
+    return app.request("/sessions/operator", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  test("fresh create with explicit workdir returns a live snapshot", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postOperator(app, { workdir: repoDir });
+    expect(res.status).toBe(200);
+    const snap = (await res.json()) as { sid: string; runtimeId: RuntimeId; status: string };
+    expect(typeof snap.sid).toBe("string");
+    expect(snap.runtimeId).toBe("claude-code");
+    expect(snap.status).toBe("live");
+    await manager.endAll();
+  });
+
+  test("fresh create without workdir and no server default → 400", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, null);
+    const res = await postOperator(app, {});
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("workdir is required");
+    await manager.endAll();
+  });
+
+  test("unknown runtime → 400", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postOperator(app, { workdir: repoDir, runtime: "gpt" });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("unknown runtime: gpt");
+    await manager.endAll();
+  });
+
+  test("resume_from with a malformed sid → 400", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postOperator(app, { resume_from: "not-a-sid" });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("invalid resume_from");
+    await manager.endAll();
+  });
+
+  test("resume_from a well-formed but unknown sid → 404", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postOperator(app, {
+      resume_from: "11111111-1111-4111-8111-111111111111",
+    });
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("unknown resume_from session");
+    await manager.endAll();
+  });
+
+  test("no runtime registry → 500", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, undefined, repoDir);
+    const res = await postOperator(app, { workdir: repoDir });
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("no runtime registry");
     await manager.endAll();
   });
 });

@@ -8,7 +8,7 @@ Two runtime adapters ship: **claude-code** (default) and **codex** (opt-in). The
 
 A single Bun + Hono server hosts many sessions. Each session is a runtime-spawned subprocess; the server records per-session events to a JSONL transcript and broadcasts them over SSE to connected PWA clients. The Claude Code adapter spawns `claude` **interactively in a PTY** and configures it with **native HTTP hooks** — CC POSTs each hook event straight to a kbbl route, with no shell wrapper. The `PermissionRequest` hook (`POST /hook/permission`) parks every tool call until the operator taps Approve or Deny in the PWA — approval latency = time to tap. The remaining hooks (`/hook/tool`, `/hook/stop`, `/hook/session-{start,end}`, `/hook/notification`, `/hook/subagent-{start,stop}`) are informational and feed the transcript.
 
-The PWA opens to a session list backed by a `/inbox` delta stream (snapshot + create/end/status/pending/activity events). In the **v2 execution model**, sessions are created programmatically by an orchestrator — oakridge-core — through the delegated `POST /sessions` contract; see [Delegated sessions](#delegated-sessions-driven-by-oakridge-core). The PWA remains the operator surface for those live sessions: the list, the transcript, and the approval gate.
+The PWA opens to a session list backed by a `/inbox` delta stream (snapshot + create/end/status/pending/activity events). A session can start two ways: the operator creates or resumes one from the PWA (`POST /sessions/operator`), or — in the **v2 execution model** — an orchestrator (oakridge-core) launches one programmatically through the delegated `POST /sessions` contract (see [Delegated sessions](#delegated-sessions-driven-by-oakridge-core)). Either way the PWA is the operator surface: the list, the transcript, and the approval gate. Ended sessions linger on disk and can be resumed from their row — the resumed session is a new fork that inherits the parent's context.
 
 ### Compaction
 
@@ -106,6 +106,7 @@ Stop with `systemctl --user stop kbbl`. Not needed on a dedicated workstation.
 
 - `GET /sessions` — list live sessions (add `?include=archived` to fold in on-disk JSONL)
 - `POST /sessions` — create a delegated session (the C.1 contract, called by oakridge-core). Body: `{ backend, prompt, workdir?, model?, pre_authorized_tools, yolo, output_slots, callback }`, where `callback = { base_url, stage_instance_id, emit_path, status_path }`. Idempotent on `callback.stage_instance_id`: a re-POST for a still-live stage returns the existing session rather than spawning a duplicate. See [Delegated sessions](#delegated-sessions-driven-by-oakridge-core).
+- `POST /sessions/operator` — operator-initiated create / resume (the PWA "+ New session" and per-row Resume). Body: `{ resume_from?, workdir?, name?, artifact_id?, model?, runtime? }`. Fresh sessions need an absolute `workdir` (or the server default); `resume_from` (a parent session id) forks the parent via `--resume … --fork-session`, inheriting the parent's workdir and context (any `workdir` override is ignored).
 - `DELETE /sessions/:sid` — kill a live session (`?purge=true` also deletes the transcript)
 - `GET /artifacts/:artifactId/sessions` — list sessions tagged with a given workspace-layer artifact id
 

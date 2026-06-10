@@ -1,12 +1,15 @@
 import type { Hono } from "hono";
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { stat } from "node:fs/promises";
 
 import {
   MAX_ARTIFACT_ID_LENGTH,
   type ArtifactId,
+  type EnvelopeEvent,
+  readJsonlOrEmpty,
 } from "../../session/session";
 import {
+  type CreateSessionOpts,
   NonGitWorkdirError,
   RemoveFailedError,
   SessionManager,
@@ -54,10 +57,58 @@ function isRuntimeId(value: unknown): value is RuntimeId {
   return value === "claude-code" || value === "codex";
 }
 
+/**
+ * Determine the runtime a resume parent ran under, so the right runtime's
+ * resolveResumeRef() parses its transcript. Live sessions report it directly;
+ * archived parents are read from their `session_started` event. `runtimeId` is
+ * a core concept (not runtime-specific), so reading it here keeps the
+ * runtime-specific JSONL parsing inside the adapter's resolveResumeRef().
+ */
+async function resolveParentRuntimeId(
+  manager: SessionManager,
+  sessionsDir: string,
+  sid: string,
+): Promise<RuntimeId | null> {
+  const live = manager.get(sid);
+  if (live) return live.runtimeId;
+
+  const jsonlPath = join(sessionsDir, `${sid}.jsonl`);
+  let contents: string;
+  try {
+    contents = await readJsonlOrEmpty(jsonlPath);
+  } catch (err) {
+    console.error(
+      `kbbl: failed to read parent jsonl ${jsonlPath}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    return null;
+  }
+  if (!contents) return null;
+  for (const line of contents.split("\n")) {
+    if (!line.trim()) continue;
+    let evt: EnvelopeEvent;
+    try {
+      evt = JSON.parse(line) as EnvelopeEvent;
+    } catch {
+      continue;
+    }
+    if (evt.type !== "session_started") continue;
+    const payload =
+      typeof evt.payload === "object" && evt.payload !== null
+        ? (evt.payload as Record<string, unknown>)
+        : {};
+    return isRuntimeId(payload.runtimeId) ? payload.runtimeId : "claude-code";
+  }
+  return null;
+}
+
 export interface SessionsRouteDeps {
   manager: SessionManager;
   /** Optional server default workdir (from --workdir CLI arg). */
   defaultWorkdir: string | null;
+  /** On-disk sessions directory, for resolving resume parents' transcripts. */
+  sessionsDir: string;
   /**
    * Optional runtime registry for model validation. When present, delegates
    * to the default runtime's isAllowedModel() method. When absent, falls back
@@ -71,7 +122,7 @@ export interface SessionsRouteDeps {
  * on the given Hono app.
  */
 export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
-  const { manager, defaultWorkdir, registry } = deps;
+  const { manager, defaultWorkdir, sessionsDir, registry } = deps;
 
   function runtimeForId(runtimeId: RuntimeId): AgentRuntime | null {
     return registry?.runtimes.get(runtimeId) ?? null;
@@ -412,6 +463,264 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
         outputSlots: bodyOutputSlots!,
         delegatedCallback: bodyCallback!,
       });
+      return c.json(session.snapshot());
+    } catch (err) {
+      if (err instanceof NonGitWorkdirError) {
+        return c.json({ error: err.message }, 400);
+      }
+      const msg = err instanceof Error ? err.message : String(err);
+      return c.json({ error: `spawn failed: ${msg}` }, 500);
+    }
+  });
+
+  /**
+   * POST /sessions/operator — operator-initiated session create / resume.
+   *
+   * The human entry point (PWA "+ New session" and per-row Resume), distinct
+   * from POST /sessions (the delegated C.1 contract driven by oakridge-core).
+   * Body: { resume_from?, workdir?, name?, artifact_id?, model?, runtime? }.
+   * Fresh sessions need an explicit workdir (or the server default). With
+   * resume_from (a parent oakridgeSid), the parent's CC session is inherited
+   * via --resume <ccSid> --fork-session and the parent's workdir is
+   * authoritative — any workdir override is ignored.
+   */
+  app.post("/sessions/operator", async (c) => {
+    // Registry is required: this path routes by runtime and resolves resume
+    // refs through the runtime, so without it we can't validate or spawn.
+    if (!registry) {
+      return c.json({ error: "server has no runtime registry" }, 500);
+    }
+
+    let resumeFrom: string | null = null;
+    let bodyWorkdir: string | null = null;
+    let bodyName: string | null = null;
+    let bodyArtifactId: ArtifactId | null = null;
+    let bodyModel: string | null = null;
+    let bodyRuntime: RuntimeId | null = null;
+    // Read raw text first so "no body" (treat as fresh under the server
+    // default) is distinct from "bad body" (400) — c.req.json() with an inner
+    // catch would silently turn malformed JSON into a fresh-session spawn.
+    try {
+      const bodyText = await c.req.text();
+      if (bodyText !== "") {
+        const raw = JSON.parse(bodyText) as unknown;
+        if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+          return c.json({ error: "json body must be an object" }, 400);
+        }
+        const parsed = raw as {
+          resume_from?: unknown;
+          workdir?: unknown;
+          name?: unknown;
+          artifact_id?: unknown;
+          model?: unknown;
+          runtime?: unknown;
+        };
+        if (parsed.runtime !== undefined) {
+          if (typeof parsed.runtime !== "string") {
+            return c.json({ error: "runtime must be a string" }, 400);
+          }
+          if (!isRuntimeId(parsed.runtime)) {
+            return c.json(
+              {
+                error: `unknown runtime: ${parsed.runtime} — registered: ${registeredRuntimeList()}`,
+              },
+              400,
+            );
+          }
+          if (!registry.runtimes.has(parsed.runtime)) {
+            return c.json(
+              {
+                error: `runtime "${parsed.runtime}" is not registered — registered: ${registeredRuntimeList()}`,
+              },
+              400,
+            );
+          }
+          bodyRuntime = parsed.runtime;
+        }
+        if (parsed.resume_from !== undefined) {
+          if (typeof parsed.resume_from !== "string") {
+            return c.json({ error: "resume_from must be a string" }, 400);
+          }
+          resumeFrom = parsed.resume_from;
+        }
+        if (parsed.workdir !== undefined) {
+          if (typeof parsed.workdir !== "string") {
+            return c.json({ error: "workdir must be a string" }, 400);
+          }
+          bodyWorkdir = parsed.workdir;
+        }
+        if (parsed.name !== undefined) {
+          if (typeof parsed.name !== "string") {
+            return c.json({ error: "name must be a string" }, 400);
+          }
+          const trimmedName = parsed.name.trim();
+          if (trimmedName.length > 80) {
+            return c.json({ error: "name must be ≤ 80 chars after trimming" }, 400);
+          }
+          bodyName = trimmedName;
+        }
+        if (parsed.artifact_id !== undefined) {
+          if (typeof parsed.artifact_id !== "string") {
+            return c.json({ error: "artifact_id must be a string" }, 400);
+          }
+          const trimmedArtifactId = parsed.artifact_id.trim();
+          if (trimmedArtifactId === "") {
+            return c.json(
+              { error: "artifact_id must be non-empty when provided" },
+              400,
+            );
+          }
+          if (trimmedArtifactId.length > MAX_ARTIFACT_ID_LENGTH) {
+            return c.json(
+              {
+                error: `artifact_id must be ≤ ${MAX_ARTIFACT_ID_LENGTH} chars after trimming`,
+              },
+              400,
+            );
+          }
+          bodyArtifactId = trimmedArtifactId as ArtifactId;
+        }
+        if (parsed.model !== undefined) {
+          if (typeof parsed.model !== "string") {
+            return c.json({ error: "model must be a string" }, 400);
+          }
+          const trimmedModel = parsed.model.trim();
+          if (trimmedModel === "") {
+            return c.json({ error: "model must be non-empty when provided" }, 400);
+          }
+          bodyModel = trimmedModel;
+        }
+      }
+    } catch {
+      return c.json({ error: "invalid json" }, 400);
+    }
+
+    let spawnOpts: CreateSessionOpts;
+    if (resumeFrom === null) {
+      // Fresh session: require an absolute workdir (body > server default).
+      const requestedWorkdir = bodyWorkdir ?? defaultWorkdir;
+      if (requestedWorkdir === null) {
+        return c.json({ error: "workdir is required" }, 400);
+      }
+      const err = await validateWorkdir(requestedWorkdir);
+      if (err) return c.json({ error: err }, 400);
+      const target = resolve(requestedWorkdir);
+      const selectedRuntimeId = bodyRuntime ?? registry.defaultId;
+      const selectedRuntime = runtimeForId(selectedRuntimeId);
+      if (bodyModel !== null && !isAllowedModelForRuntime(selectedRuntime, bodyModel)) {
+        return c.json(
+          { error: `unknown model for ${selectedRuntimeId}: ${bodyModel}` },
+          400,
+        );
+      }
+      spawnOpts = {
+        workdir: target,
+        name: bodyName ?? undefined,
+        artifactId: bodyArtifactId ?? undefined,
+        runtime: selectedRuntimeId,
+        model: bodyModel ?? undefined,
+      };
+    } else {
+      // Resume: inherit the parent's CC session + workdir.
+      if (!isValidSid(resumeFrom)) {
+        return c.json({ error: "invalid resume_from" }, 400);
+      }
+      const parentRuntimeId =
+        (await resolveParentRuntimeId(manager, sessionsDir, resumeFrom)) ??
+        registry.defaultId;
+      if (bodyRuntime !== null && bodyRuntime !== parentRuntimeId) {
+        return c.json(
+          {
+            error: `resume_from parent runtime is ${parentRuntimeId}; cross-runtime resume to ${bodyRuntime} is not supported`,
+          },
+          400,
+        );
+      }
+      const resumeRuntime = registry.runtimes.get(parentRuntimeId);
+      if (!resumeRuntime) {
+        return c.json(
+          { error: `resume_from parent runtime "${parentRuntimeId}" is not registered` },
+          400,
+        );
+      }
+
+      let parentRuntimeSid: string;
+      let parentWorkdir: string;
+      let parentWorktreePath: string | null;
+      let parentModel: string | null;
+      const ref = await resumeRuntime.resolveResumeRef(sessionsDir, resumeFrom);
+      if (ref.kind === "ok") {
+        parentRuntimeSid = ref.runtimeSid;
+        parentWorkdir = ref.workdir;
+        parentWorktreePath = ref.parentWorktreePath;
+        parentModel = ref.model;
+      } else if (ref.kind === "no_runtime_sid") {
+        return c.json(
+          { error: "resume_from parent never observed a runtime session id — can't resume" },
+          400,
+        );
+      } else if (ref.kind === "no_workdir") {
+        return c.json(
+          { error: "resume_from parent transcript is missing the workdir — can't resume safely" },
+          400,
+        );
+      } else {
+        // Transcript unknown — fall back to a live session if one exists.
+        const live = manager.get(resumeFrom);
+        if (!live) {
+          return c.json({ error: "unknown resume_from session" }, 404);
+        }
+        const snap = live.snapshot();
+        if (!snap.runtimeSid) {
+          return c.json(
+            { error: "resume_from parent never observed a runtime session id — can't resume" },
+            400,
+          );
+        }
+        parentRuntimeSid = snap.runtimeSid;
+        parentWorkdir = live.workdir;
+        parentWorktreePath = live.worktreePath;
+        parentModel = live.model;
+      }
+
+      const selectedModel = bodyModel ?? parentModel;
+      const selectedRuntime = runtimeForId(parentRuntimeId);
+      if (
+        selectedModel !== null &&
+        !isAllowedModelForRuntime(selectedRuntime, selectedModel)
+      ) {
+        return c.json(
+          { error: `unknown model for ${parentRuntimeId}: ${selectedModel}` },
+          400,
+        );
+      }
+      // Validate the inherited workdir before spawn — archived metadata can
+      // outlive the directory it points at (e.g. operator discarded the
+      // worktree). Re-resolve so /repo/.//worktree validates as /repo/worktree.
+      const resolvedParentWorkdir = resolve(parentWorkdir);
+      const parentErr = await validateWorkdir(resolvedParentWorkdir);
+      if (parentErr) {
+        if (parentWorktreePath !== null && parentErr === "workdir does not exist") {
+          return c.json({ error: "resume_from parent's worktree was discarded" }, 400);
+        }
+        return c.json(
+          { error: `resume_from parent workdir invalid: ${parentErr}` },
+          400,
+        );
+      }
+      spawnOpts = {
+        workdir: resolvedParentWorkdir,
+        name: bodyName ?? undefined,
+        parentCcSid: parentRuntimeSid,
+        parentOakridgeSid: resumeFrom,
+        artifactId: bodyArtifactId ?? undefined,
+        runtime: parentRuntimeId,
+        model: selectedModel ?? undefined,
+      };
+    }
+
+    try {
+      const session = await manager.create(spawnOpts);
       return c.json(session.snapshot());
     } catch (err) {
       if (err instanceof NonGitWorkdirError) {

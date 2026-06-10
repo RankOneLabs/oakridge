@@ -71,7 +71,7 @@ export async function resumeSession(
   navigate: (sid: string) => void,
 ): Promise<string | null> {
   try {
-    const res = await fetch("/sessions", {
+    const res = await fetch("/sessions/operator", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ resume_from: parentSid }),

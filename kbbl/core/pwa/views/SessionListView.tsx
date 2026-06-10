@@ -64,7 +64,7 @@ export function SessionListView({
 
   const startMutation = useMutation({
     mutationFn: async (body: StartSessionBody): Promise<SessionSnapshot> => {
-      const res = await fetch("/sessions", {
+      const res = await fetch("/sessions/operator", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
