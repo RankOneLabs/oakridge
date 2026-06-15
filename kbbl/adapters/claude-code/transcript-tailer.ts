@@ -23,6 +23,12 @@ const NEWLINE = 0x0a;
 const POLL_MS = 750;
 // Debounce window so a burst of watch/poll triggers collapses into one drain.
 const DEBOUNCE_MS = 30;
+// Upper bound on a single read allocation. A long session's transcript can
+// reach many MB; on the backlog catch-up path (attach with offset 0, or a
+// post-truncation reset) the whole tail would otherwise be read into one
+// Buffer.alloc, spiking memory. We read in fixed-size chunks instead and carry
+// any trailing partial line across chunk boundaries via `leftover`.
+const MAX_READ_CHUNK = 64 * 1024;
 
 export interface TailerHandle {
   dispose: () => void;
@@ -112,43 +118,62 @@ export function startTranscriptTailer(opts: TailerOpts): TailerHandle {
     }
     if (size === offset) return;
 
-    const length = size - offset;
-    const buf = Buffer.alloc(length);
-    let bytesRead = 0;
+    let fh: Awaited<ReturnType<typeof open>>;
     try {
-      const fh = await open(path, "r");
-      try {
-        const res = await fh.read(buf, 0, length, offset);
-        bytesRead = res.bytesRead;
-      } finally {
-        await fh.close();
-      }
+      fh = await open(path, "r");
     } catch (err) {
       console.error(
-        `kbbl: transcript read failed [${label}]: ${
+        `kbbl: transcript open failed [${label}]: ${
           err instanceof Error ? err.message : String(err)
         }`,
       );
       return;
     }
-    offset += bytesRead;
+    try {
+      // Read the backlog (offset → the size snapshot taken above) in bounded
+      // chunks; appends past `size` are picked up by the next scheduled drain.
+      // A line that straddles a chunk boundary stays in `leftover` until a
+      // newline arrives in a later chunk, so multi-byte UTF-8 and long lines
+      // are never decoded mid-sequence.
+      while (offset < size && !disposed) {
+        const length = Math.min(size - offset, MAX_READ_CHUNK);
+        const buf = Buffer.alloc(length);
+        let bytesRead = 0;
+        try {
+          const res = await fh.read(buf, 0, length, offset);
+          bytesRead = res.bytesRead;
+        } catch (err) {
+          console.error(
+            `kbbl: transcript read failed [${label}]: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+          return;
+        }
+        // Defensive: a 0-byte read with bytes still expected would spin.
+        if (bytesRead === 0) break;
+        offset += bytesRead;
 
-    const combined =
-      leftover.length === 0
-        ? buf.subarray(0, bytesRead)
-        : Buffer.concat([leftover, buf.subarray(0, bytesRead)]);
-    const lastNewline = combined.lastIndexOf(NEWLINE);
-    if (lastNewline === -1) {
-      // No complete line yet; keep accumulating.
-      leftover = combined;
-      return;
-    }
-    const complete = combined.subarray(0, lastNewline).toString("utf8");
-    leftover = combined.subarray(lastNewline + 1);
+        const combined =
+          leftover.length === 0
+            ? buf.subarray(0, bytesRead)
+            : Buffer.concat([leftover, buf.subarray(0, bytesRead)]);
+        const lastNewline = combined.lastIndexOf(NEWLINE);
+        if (lastNewline === -1) {
+          // No complete line in this chunk yet; carry it and read more.
+          leftover = combined;
+          continue;
+        }
+        const complete = combined.subarray(0, lastNewline).toString("utf8");
+        leftover = combined.subarray(lastNewline + 1);
 
-    for (const line of complete.split("\n")) {
-      if (disposed) return;
-      await processLine(line);
+        for (const line of complete.split("\n")) {
+          if (disposed) return;
+          await processLine(line);
+        }
+      }
+    } finally {
+      await fh.close();
     }
   };
 
