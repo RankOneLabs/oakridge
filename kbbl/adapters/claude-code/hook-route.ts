@@ -7,16 +7,113 @@ import type { SessionManager } from "../../core/session/session-manager";
 /**
  * CC native http hook payloads.
  *
- * CC POSTs these directly to kbbl's hook routes. Fields marked optional are
- * event-type-specific; session_id and hook_event_name are always present.
+ * CC POSTs these directly to kbbl's hook routes. The payload is a discriminated
+ * union over `hook_event_name`: each of the eight events kbbl subscribes to has
+ * its own variant carrying only the fields CC sends for that event. `session_id`
+ * is common to all. Narrow at the HTTP boundary with `parseHookInput` before
+ * routing, so an impossible shape never reaches a handler.
  */
-export interface HookInput {
+export type HookEventName =
+  | "PermissionRequest"
+  | "PostToolUse"
+  | "Stop"
+  | "SessionStart"
+  | "SessionEnd"
+  | "Notification"
+  | "SubagentStart"
+  | "SubagentStop";
+
+/** Fields CC stamps on every hook payload regardless of event. */
+interface HookCommon {
   session_id: string;
-  hook_event_name: string;
+  transcript_path?: string;
+  cwd?: string;
+}
+
+export interface PermissionRequestHook extends HookCommon {
+  hook_event_name: "PermissionRequest";
   tool_name?: string;
   tool_input?: unknown;
   tool_use_id?: string;
-  [key: string]: unknown;
+}
+
+export interface PostToolUseHook extends HookCommon {
+  hook_event_name: "PostToolUse";
+  tool_name?: string;
+  tool_input?: unknown;
+  tool_response?: unknown;
+  tool_use_id?: string;
+}
+
+export interface StopHook extends HookCommon {
+  hook_event_name: "Stop";
+  stop_hook_active?: boolean;
+}
+
+export interface SessionStartHook extends HookCommon {
+  hook_event_name: "SessionStart";
+  source?: string;
+}
+
+export interface SessionEndHook extends HookCommon {
+  hook_event_name: "SessionEnd";
+  reason?: string;
+}
+
+export interface NotificationHook extends HookCommon {
+  hook_event_name: "Notification";
+  message?: string;
+  notification_type?: string;
+}
+
+export interface SubagentStartHook extends HookCommon {
+  hook_event_name: "SubagentStart";
+}
+
+export interface SubagentStopHook extends HookCommon {
+  hook_event_name: "SubagentStop";
+  stop_hook_active?: boolean;
+}
+
+export type HookInput =
+  | PermissionRequestHook
+  | PostToolUseHook
+  | StopHook
+  | SessionStartHook
+  | SessionEndHook
+  | NotificationHook
+  | SubagentStartHook
+  | SubagentStopHook;
+
+const HOOK_EVENT_NAMES: ReadonlySet<string> = new Set<HookEventName>([
+  "PermissionRequest",
+  "PostToolUse",
+  "Stop",
+  "SessionStart",
+  "SessionEnd",
+  "Notification",
+  "SubagentStart",
+  "SubagentStop",
+]);
+
+/**
+ * Narrow a parsed JSON body into the HookInput union. Returns null for anything
+ * that isn't an object with a string `session_id` and a recognized
+ * `hook_event_name` — the per-event optional fields are passed through as-is
+ * (CC owns their shape; we only gate on the discriminant and the always-present
+ * session id).
+ */
+export function parseHookInput(raw: unknown): HookInput | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.session_id !== "string") return null;
+  if (
+    typeof obj.hook_event_name !== "string" ||
+    !HOOK_EVENT_NAMES.has(obj.hook_event_name)
+  ) {
+    return null;
+  }
+  return obj as unknown as HookInput;
 }
 
 export interface HookHandlerDeps {
@@ -53,15 +150,20 @@ export function hookPermissionHandler(deps: HookHandlerDeps) {
       return c.text("forbidden", 403);
     }
 
-    let hook: HookInput;
+    let raw: unknown;
     try {
-      hook = (await c.req.json()) as HookInput;
+      raw = await c.req.json();
     } catch {
       return c.json({ error: "invalid json" }, 400);
     }
-    if (hook.hook_event_name !== "PermissionRequest") {
+    const hook = parseHookInput(raw);
+    if (!hook || hook.hook_event_name !== "PermissionRequest") {
       return c.json(
-        { error: `unexpected hook_event_name: ${hook.hook_event_name}` },
+        {
+          error: `unexpected hook_event_name: ${
+            (raw as { hook_event_name?: unknown } | null)?.hook_event_name
+          }`,
+        },
         400,
       );
     }
@@ -238,13 +340,14 @@ export function hookSubagentStopHandler(deps: HookHandlerDeps) {
       return c.text("forbidden", 403);
     }
 
-    let hook: HookInput;
+    let raw: unknown;
     try {
-      hook = (await c.req.json()) as HookInput;
+      raw = await c.req.json();
     } catch {
       return c.json({}, 200);
     }
-    if (hook.hook_event_name !== "SubagentStop") {
+    const hook = parseHookInput(raw);
+    if (!hook || hook.hook_event_name !== "SubagentStop") {
       return c.json({}, 200);
     }
 
@@ -285,7 +388,7 @@ export function hookSubagentStopHandler(deps: HookHandlerDeps) {
  */
 function makeInformationalHandler(
   deps: HookHandlerDeps,
-  expectedHookEvent: string,
+  expectedHookEvent: HookEventName,
   eventType: string,
 ) {
   return async (c: Context) => {
@@ -296,13 +399,14 @@ function makeInformationalHandler(
       return c.text("forbidden", 403);
     }
 
-    let hook: HookInput;
+    let raw: unknown;
     try {
-      hook = (await c.req.json()) as HookInput;
+      raw = await c.req.json();
     } catch {
       return c.json({}, 200);
     }
-    if (hook.hook_event_name !== expectedHookEvent) {
+    const hook = parseHookInput(raw);
+    if (!hook || hook.hook_event_name !== expectedHookEvent) {
       return c.json({}, 200);
     }
 

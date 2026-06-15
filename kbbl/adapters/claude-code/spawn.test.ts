@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -102,10 +102,16 @@ describe("assertA1Invariants", () => {
     rmSync(tmpRoot, { recursive: true, force: true });
   });
 
-  test("passes with a valid CC binary and no API key", async () => {
-    await expect(
-      assertA1Invariants({ claudeBin: fakeBin, argv: ["claude"], env: {} }),
-    ).resolves.toBeUndefined();
+  test("passes with a valid CC binary and no API key, returning the resolved path", async () => {
+    const resolved = await assertA1Invariants({
+      claudeBin: fakeBin,
+      argv: ["claude"],
+      env: {},
+    });
+    // Returns the realpath-resolved binary so the caller spawns exactly what
+    // was validated (guards against relative-path resolution drift).
+    expect(resolved).toContain("@anthropic-ai/claude-code");
+    expect(resolved).toBe(realpathSync(fakeBin));
   });
 
   test("rejects when --print is in argv", async () => {

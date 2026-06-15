@@ -186,12 +186,18 @@ export function makeBuildSpawnCmd(
  *
  * Throws with an "A.1:" prefix on any violation so callers can surface the
  * reason without additional parsing.
+ *
+ * Returns the realpath-resolved binary path so the caller spawns exactly the
+ * file that was validated. Spawning the un-resolved `claudeBin` instead would
+ * reopen the guard: a relative path validates against the server's lookup but,
+ * executed under the session's working directory, could resolve to a different
+ * binary — defeating invariant 3.
  */
 export async function assertA1Invariants(opts: {
   claudeBin: string;
   argv: string[];
   env: Record<string, string | undefined>;
-}): Promise<void> {
+}): Promise<string> {
   if (opts.argv.includes("-p") || opts.argv.includes("--print")) {
     throw new Error("A.1: interactive mode forbids -p / --print in argv");
   }
@@ -214,5 +220,6 @@ export async function assertA1Invariants(opts: {
       `A.1: '${resolvedBin}' is not @anthropic-ai/claude-code — refusing to launch (interactive mode requires the subscription CLI)`,
     );
   }
+  return resolvedBin;
 }
 

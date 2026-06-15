@@ -1,5 +1,6 @@
 import type { Hono } from "hono";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import * as pty from "bun-pty";
 
 import type { EnvelopeEvent, Session, SpawnCmd } from "../../core/session/session";
@@ -44,6 +45,15 @@ export interface CreateClaudeCodeRuntimeOpts {
 interface CcHandle {
   readonly sessionId: string;
   pty: pty.IPty;
+  /**
+   * Set by the onExit listener (registered in spawn(), so it fires even if
+   * events() is never consumed). Lets events() replay the completion if the
+   * PTY exits during the window between spawn() returning and events() being
+   * entered.
+   */
+  exited: { code: number } | null;
+  /** Set by an active events() consumer so onExit can wake it. */
+  notifyExit: (() => void) | null;
 }
 
 /**
@@ -136,6 +146,16 @@ export async function createClaudeCodeRuntime(
         ...process.env,
       };
 
+      // We assign CC's session id ourselves rather than discover it from a
+      // parsed system/init event — in PTY mode the byte stream is never parsed,
+      // so this is the only point at which the ccSid → oakridgeSid mapping can
+      // be established. Returning it as the handle's runtimeSid drives
+      // observeRuntimeSessionId → onRuntimeSessionObserved → registerCcSid, so
+      // the hook routes can resolve the session by the session_id CC stamps on
+      // every hook payload. Without this the PermissionRequest gate would never
+      // find the session and would deny every request.
+      const ccSessionId = randomUUID();
+
       // Build interactive argv (no --print / stream-json).
       const argv = [
         opts.claudeBin,
@@ -146,12 +166,23 @@ export async function createClaudeCodeRuntime(
         "--mcp-config",
         mcpConfigPath,
         "--strict-mcp-config",
+        "--session-id",
+        ccSessionId,
       ];
       if (model) argv.push("--model", model);
+      // --fork-session is required for --session-id to be accepted alongside
+      // --resume; it forks the parent conversation into our chosen ccSessionId.
       if (parentCcSid) argv.push("--resume", parentCcSid, "--fork-session");
 
-      // A.1: hard billing invariant — refuse rather than downgrade.
-      await assertA1Invariants({ claudeBin: opts.claudeBin, argv, env: spawnEnv });
+      // A.1: hard billing invariant — refuse rather than downgrade. Returns the
+      // realpath-resolved binary; we spawn THAT (not opts.claudeBin) so a
+      // relative path can't validate here yet resolve to a different file under
+      // the session's cwd, slipping past the billing guard.
+      const resolvedClaudeBin = await assertA1Invariants({
+        claudeBin: opts.claudeBin,
+        argv,
+        env: spawnEnv,
+      });
 
       // Strip undefined values — bun-pty requires Record<string, string>.
       const ptyEnv = Object.fromEntries(
@@ -159,7 +190,7 @@ export async function createClaudeCodeRuntime(
       );
 
       // Launch claude in a PTY (invariant 4: real TTY guaranteed by bun-pty).
-      const ptyProc = pty.spawn(opts.claudeBin, argv.slice(1), {
+      const ptyProc = pty.spawn(resolvedClaudeBin, argv.slice(1), {
         name: "xterm-256color",
         cols: 220,
         rows: 50,
@@ -167,9 +198,27 @@ export async function createClaudeCodeRuntime(
         env: ptyEnv,
       });
 
-      const handle: CcHandle = { sessionId: oakridgeSid, pty: ptyProc };
+      const handle: CcHandle = {
+        sessionId: oakridgeSid,
+        pty: ptyProc,
+        exited: null,
+        notifyExit: null,
+      };
       procs.set(oakridgeSid, handle);
-      return { sessionId: oakridgeSid };
+
+      // Register exit handling immediately — not in events() — so a process
+      // that dies before events() is entered still records its exit. We record
+      // the code on the handle and wake any active consumer; we deliberately do
+      // NOT delete from procs here, so events() (entered after a fast exit) can
+      // still find the handle and replay the completion. procs cleanup is owned
+      // by events()'s finally on the normal path, and by terminate() as the
+      // backstop if events() is never consumed.
+      ptyProc.onExit(({ exitCode }) => {
+        handle.exited = { code: exitCode };
+        handle.notifyExit?.();
+      });
+
+      return { sessionId: oakridgeSid, runtimeSid: ccSessionId };
     },
 
     // --- AgentRuntime.terminate ---
@@ -181,14 +230,22 @@ export async function createClaudeCodeRuntime(
         } catch {
           // already dead
         }
+        // Backstop cleanup: events() owns procs.delete on the normal path, but
+        // if a session is terminated before its events() generator is consumed
+        // the handle would otherwise linger. Safe to delete unconditionally —
+        // events()'s own delete is idempotent.
+        procs.delete(handle.sessionId);
       }
     },
 
     // --- AgentRuntime.events ---
     async *events(handle: SessionHandle): AsyncIterable<RuntimeEvent> {
-      const h = procs.get(handle.sessionId);
-      if (!h) return;
-      const { pty: ptyProc } = h;
+      const maybeHandle = procs.get(handle.sessionId);
+      if (!maybeHandle) return;
+      // Explicit non-nullable binding: TS does not preserve the `!maybeHandle`
+      // narrowing into the nested deliverExit() closure, so alias it here.
+      const live: CcHandle = maybeHandle;
+      const { pty: ptyProc } = live;
 
       const queue: RuntimeEvent[] = [];
       let queueResolve: (() => void) | null = null;
@@ -208,24 +265,42 @@ export async function createClaudeCodeRuntime(
       }
 
       // Raw PTY byte stream — break-glass only (A.6). Never parsed for content.
-      // Wrapped as envelope/pty_output so the core loop persists to JSONL and
-      // broadcasts over SSE (the loop only handles "envelope", not "output").
+      // Coalesce chunks within a macrotask tick before emitting: a verbose TUI
+      // can fire onData many times per frame, and emitting one RuntimeEvent per
+      // raw chunk lets the in-memory queue grow without bound and writes a flood
+      // of tiny records. We buffer arriving chunks and flush a single
+      // pty_output per tick, bounding both event count and per-event overhead.
+      let pendingOutput = "";
+      let flushScheduled = false;
+      function flushOutput(): void {
+        flushScheduled = false;
+        if (pendingOutput.length === 0) return;
+        const content = pendingOutput;
+        pendingOutput = "";
+        push({ type: "envelope", payload: { type: "pty_output", content } });
+      }
       const dataDisposable = ptyProc.onData((data) => {
-        push({ type: "envelope", payload: { type: "pty_output", content: data } });
+        pendingOutput += data;
+        if (!flushScheduled) {
+          flushScheduled = true;
+          setTimeout(flushOutput, 0);
+        }
       });
 
-      // The onExit disposable is intentionally not retained. Unlike dataDisposable
-      // (disposed in finally), the onExit listener must outlive the generator: if
-      // the consumer cancels early (breaks the for-await), procs.delete still fires
-      // when the PTY exits, preventing a leak. push() after the generator ends is
-      // harmless — the queue is GC'd with the closure once the PTY exits.
-      ptyProc.onExit(({ exitCode }) => {
-        push({ type: "completed", result: { code: exitCode } });
+      // Surface the process exit as a completion event. onExit is registered in
+      // spawn() (so it fires regardless of this generator); here we install the
+      // wake hook and also replay synchronously if the PTY already exited during
+      // the window between spawn() returning and this generator being entered.
+      function deliverExit(): void {
+        if (done) return;
+        flushOutput();
+        push({ type: "completed", result: { code: live.exited?.code ?? 0 } });
         done = true;
         queueResolve?.();
         queueResolve = null;
-        procs.delete(handle.sessionId);
-      });
+      }
+      live.notifyExit = deliverExit;
+      if (live.exited) deliverExit();
 
       try {
         while (true) {
@@ -237,6 +312,8 @@ export async function createClaudeCodeRuntime(
         }
       } finally {
         dataDisposable.dispose();
+        live.notifyExit = null;
+        procs.delete(handle.sessionId);
       }
     },
 
@@ -390,8 +467,12 @@ export async function createClaudeCodeRuntime(
     // --- AgentRuntime.classifyEvent ---
     classifyEvent: classifyCcEvent,
 
-    // No stream_event records in PTY mode — the byte stream is never parsed.
-    nonPersistedEventTypes: new Set<string>(),
+    // pty_output is the raw break-glass byte stream: high-volume and not a
+    // canonical structured transcript event. Broadcast it live over SSE (the
+    // xterm view consumes it) but keep it out of the JSONL so transcripts stay
+    // small and replays fast. (No stream_event records exist in PTY mode — the
+    // byte stream is never parsed — so it needs no entry here.)
+    nonPersistedEventTypes: new Set<string>(["pty_output"]),
 
     // --- AgentRuntime.mountRoutes ---
     mountRoutes(
