@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 
 import type { Decision, Session } from "../../core/session/session";
 import type { SessionManager } from "../../core/session/session-manager";
+import { ensureTranscriptTailer } from "./transcript-tailer";
 
 /**
  * CC native http hook payloads.
@@ -263,6 +264,12 @@ export function hookPermissionHandler(deps: HookHandlerDeps) {
       );
     }
 
+    // Backstop in case SessionStart was missed: the permission hook also
+    // carries the transcript path. ensureTranscriptTailer is idempotent.
+    if (hook.transcript_path) {
+      ensureTranscriptTailer(session, hook.transcript_path);
+    }
+
     const autoReason = session.yolo
       ? "yolo"
       : session.toolAllowlist.has(hook.tool_name ?? "")
@@ -495,6 +502,13 @@ function makeInformationalHandler(
     // can fire before system/init has established the ccSid→oakridgeSid mapping.
     resolveSessionForHook(deps.manager, hook.session_id).then((session) => {
       if (session) {
+        // In PTY mode the only source of user/assistant/result events is CC's
+        // on-disk transcript. Every hook carries its path; start the tailer
+        // here (idempotent) so SessionStart — the first hook — brings the
+        // Conversation view online.
+        if (hook.transcript_path) {
+          ensureTranscriptTailer(session, hook.transcript_path);
+        }
         session.emit(eventType, { ...hook }).catch((err) => {
           console.error(
             `kbbl: ${eventType} emit failed: ${
