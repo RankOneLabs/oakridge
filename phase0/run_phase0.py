@@ -169,11 +169,13 @@ class HookHandler(BaseHTTPRequestHandler):
         # PermissionRequest: auto-approve so the session can proceed without
         # waiting for a human in the TUI.
         if event_name == "PermissionRequest":
+            # PermissionRequest uses decision.behavior (not the PreToolUse
+            # permissionDecision/permissionDecisionReason shape); this matches
+            # the kbbl CC adapter's hookPermissionHandler response.
             resp = json.dumps({
                 "hookSpecificOutput": {
                     "hookEventName": "PermissionRequest",
-                    "permissionDecision": "allow",
-                    "permissionDecisionReason": "phase0 auto-approve",
+                    "decision": {"behavior": "allow"},
                 }
             }).encode()
             self.send_response(200)
@@ -592,6 +594,29 @@ def run_resume_test() -> Result[ResumeOutcome]:
     ))
 
 
+# ── redaction (artifacts are committed to the repo) ─────────────────────────────
+# RESULTS.md is checked in, so machine-local identifiers (home dir, cwd,
+# transcript paths inside hook payloads) must be scrubbed before they are
+# persisted — otherwise the report leaks a developer's filesystem layout.
+
+_HOME = str(Path.home())
+
+
+def redact_text(value: str) -> str:
+    """Replace the developer's home directory with a portable `~` placeholder."""
+    return value.replace(_HOME, "~")
+
+
+def redact_payload(body: dict) -> dict:
+    """Scrub local filesystem paths from the fields CC stamps with absolute paths."""
+    redacted = dict(body)
+    for key in ("transcript_path", "cwd"):
+        value = redacted.get(key)
+        if isinstance(value, str):
+            redacted[key] = redact_text(value)
+    return redacted
+
+
 # ── write RESULTS.md ──────────────────────────────────────────────────────────
 
 def write_results(
@@ -647,7 +672,7 @@ def write_results(
         tp = ev.get("body", {}).get("transcript_path", "")
         if tp:
             p = Path(tp)
-            transcript_path_pattern = str(p.parent) + "/<session_id>.jsonl"
+            transcript_path_pattern = redact_text(str(p.parent)) + "/<session_id>.jsonl"
             break
 
     lines = [
@@ -655,7 +680,7 @@ def write_results(
         "",
         f"Overall verdict: {overall}",
         "",
-        f"- CC binary: `{CC_BIN}`",
+        f"- CC binary: `{redact_text(str(CC_BIN))}`",
         f"- CC version: `{cc_ver}`",
         f"- Test date: {date.today().isoformat()}",
         "- PTY driver: pexpect (Python) — node-pty not installed; same POSIX PTY semantics",
@@ -727,7 +752,7 @@ def write_results(
         name = rec["event"]
         if name not in seen:
             seen.add(name)
-            body_str = json.dumps(rec.get("body", {}), indent=2)
+            body_str = json.dumps(redact_payload(rec.get("body", {})), indent=2)
             lines += [
                 f"<details><summary><code>{name}</code></summary>",
                 "",
@@ -753,8 +778,8 @@ def write_results(
         "- SessionStart source field: not capturable (SessionStart never fires as HTTP hook)",
         "",
         "Resume command: `claude --resume <id>` (no `--fork-session`)",
-        f"- Transcript 1 (initial): `{resume_fields.get('transcript_1', 'n/a')}`",
-        f"- Transcript 2 (after resume): `{resume_fields.get('transcript_2', 'n/a')}`",
+        f"- Transcript 1 (initial): `{redact_text(str(resume_fields.get('transcript_1', 'n/a')))}`",
+        f"- Transcript 2 (after resume): `{redact_text(str(resume_fields.get('transcript_2', 'n/a')))}`",
         "",
         "---",
         "",

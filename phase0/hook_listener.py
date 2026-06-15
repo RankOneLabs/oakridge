@@ -49,13 +49,14 @@ class HookHandler(BaseHTTPRequestHandler):
         print(f"[hook] {event_name}: {json.dumps(body)[:200]}", flush=True)
 
         # For PermissionRequest: auto-approve so the session can proceed.
-        # Return the hookSpecificOutput format CC expects.
+        # PermissionRequest uses decision.behavior (not the PreToolUse
+        # permissionDecision/permissionDecisionReason shape); this matches the
+        # kbbl CC adapter's hookPermissionHandler response.
         if event_name == "PermissionRequest":
             resp = json.dumps({
                 "hookSpecificOutput": {
                     "hookEventName": "PermissionRequest",
-                    "permissionDecision": "allow",
-                    "permissionDecisionReason": "phase0 auto-approve",
+                    "decision": {"behavior": "allow"},
                 }
             }).encode()
             self.send_response(200)
