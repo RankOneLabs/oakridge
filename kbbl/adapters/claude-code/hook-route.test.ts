@@ -127,6 +127,37 @@ describe("parseHookInput: traced Result at the HTTP boundary", () => {
       expect(result.error.entity_id).toBe(CC_SID);
     }
   });
+
+  test("Err when an event-specific string field is non-string", () => {
+    // Notification.message / notification_type, SessionEnd.reason,
+    // SessionStart.source spread into emitted events, so a non-string must be
+    // rejected rather than leak under a string type.
+    const badNotification = parseHookInput({
+      hook_event_name: "Notification",
+      session_id: CC_SID,
+      message: { not: "a string" },
+    });
+    const badSessionEnd = parseHookInput({
+      hook_event_name: "SessionEnd",
+      session_id: CC_SID,
+      reason: 7,
+    });
+    expect(badNotification.ok).toBe(false);
+    expect(badSessionEnd.ok).toBe(false);
+    if (!badNotification.ok) {
+      expect(badNotification.error.detail).toContain("message");
+      expect(badNotification.error.entity_id).toBe(CC_SID);
+    }
+  });
+
+  test("Ok when event-specific string fields are well-typed", () => {
+    const result = parseHookInput({
+      hook_event_name: "SessionStart",
+      session_id: CC_SID,
+      source: "resume",
+    });
+    expect(result.ok).toBe(true);
+  });
 });
 
 describe("hookPermissionHandler: yolo auto-approves", () => {

@@ -148,6 +148,10 @@ export function parseHookInput(raw: unknown): Result<HookInput, HookParseError> 
     transcript_path?: unknown;
     cwd?: unknown;
     stop_hook_active?: unknown;
+    message?: unknown;
+    notification_type?: unknown;
+    reason?: unknown;
+    source?: unknown;
   };
   if (typeof obj.session_id !== "string") {
     return hookParseErr("missing or non-string session_id");
@@ -170,6 +174,17 @@ export function parseHookInput(raw: unknown): Result<HookInput, HookParseError> 
   if (!isOptionalString(obj.tool_name) || !isOptionalString(obj.tool_use_id)) {
     return hookParseErr(
       "tool_name/tool_use_id must be strings when present",
+      obj.session_id,
+    );
+  }
+  if (
+    !isOptionalString(obj.message) ||
+    !isOptionalString(obj.notification_type) ||
+    !isOptionalString(obj.reason) ||
+    !isOptionalString(obj.source)
+  ) {
+    return hookParseErr(
+      "message/notification_type/reason/source must be strings when present",
       obj.session_id,
     );
   }
