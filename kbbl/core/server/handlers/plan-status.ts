@@ -71,6 +71,9 @@ export function mountPlanStatusRoutes(app: Hono, deps: PlanStatusRouteDeps): voi
       return c.json({ error: "internal server error" }, 500);
     }
 
+    // updated is only null if the row vanished between UPDATE and re-read;
+    // never respond 200 with a null body.
+    if (!updated) return c.json({ error: "internal server error" }, 500);
     return c.json(updated);
   });
 
@@ -171,6 +174,10 @@ export function mountPlanStatusRoutes(app: Hono, deps: PlanStatusRouteDeps): voi
       console.error("plan-status:patch failed", err);
       return c.json({ error: "internal server error" }, 500);
     }
+
+    // updated is only null if the row vanished between UPDATE and re-read;
+    // never emit events or respond 200 with a null body.
+    if (!updated) return c.json({ error: "internal server error" }, 500);
 
     if (emitApproved) {
       taskTrackerEvents.emit("plan.approved", emitApproved);
