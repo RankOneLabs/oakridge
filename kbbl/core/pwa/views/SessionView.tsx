@@ -172,11 +172,10 @@ export function SessionView({
           onClear={onClearCompactSuggestion}
         />
       )}
-      <div className="view-mode-toggle" role="tablist">
+      <div className="view-mode-toggle">
         <button
           type="button"
-          role="tab"
-          aria-selected={viewMode === "conversation"}
+          aria-pressed={viewMode === "conversation"}
           className={`theme-toggle ${viewMode === "conversation" ? "is-on" : ""}`}
           onClick={() => setViewMode("conversation")}
         >
@@ -184,8 +183,7 @@ export function SessionView({
         </button>
         <button
           type="button"
-          role="tab"
-          aria-selected={viewMode === "terminal"}
+          aria-pressed={viewMode === "terminal"}
           className={`theme-toggle ${viewMode === "terminal" ? "is-on" : ""}`}
           onClick={() => setViewMode("terminal")}
         >
@@ -224,7 +222,9 @@ export function SessionView({
         </>
       ) : (
         <div className="session-terminal-wrap">
-          <SessionTerminal ref={terminalRef} />
+          {/* key={sid} forces a fresh xterm instance per session so a previous
+              session's buffer never bleeds into a new one's output. */}
+          <SessionTerminal key={sid} ref={terminalRef} />
         </div>
       )}
       {canInput && (

@@ -56,17 +56,22 @@ export const SessionTerminal = forwardRef<SessionTerminalHandle, { className?: s
       termRef.current = term;
       fitRef.current = fit;
 
-      const observer = new ResizeObserver(() => {
-        try {
-          fit.fit();
-        } catch {
-          // container collapsed to zero size; ignore until it has layout again.
-        }
-      });
-      observer.observe(container);
+      // Guard for environments without ResizeObserver (older browsers, some
+      // test runners) — matches the guard in useAutoScrollAndLayout.
+      const observer =
+        typeof ResizeObserver !== "undefined"
+          ? new ResizeObserver(() => {
+              try {
+                fit.fit();
+              } catch {
+                // container collapsed to zero size; refit once it has layout.
+              }
+            })
+          : null;
+      observer?.observe(container);
 
       return () => {
-        observer.disconnect();
+        observer?.disconnect();
         term.dispose();
         termRef.current = null;
         fitRef.current = null;

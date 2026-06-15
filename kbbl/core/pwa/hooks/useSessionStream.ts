@@ -42,18 +42,20 @@ export function useSessionStream(
 
   useEffect(() => {
     const ingest = (evt: EnvelopeEvent) => {
-      if (seenIds.current.has(evt.id)) return;
-      seenIds.current.add(evt.id);
       // pty_output is the raw, high-volume terminal byte stream (PTY mode's
-      // break-glass surface). It is never persisted and must not enter the
-      // React events array — that would both bloat state / trigger a
-      // re-render per chunk and render as junk UnknownRows. Hand the bytes to
-      // the terminal sink (if mounted) and stop here.
+      // break-glass surface). Handle it before the seenIds dedupe: it is never
+      // replayed (not persisted to JSONL; the server honors Last-Event-Id), so
+      // tracking each chunk's id would grow seenIds without bound. The bytes
+      // bypass React state entirely and go straight to the terminal sink (if
+      // mounted) — keeping them out of the events array, where they would both
+      // trigger a re-render per chunk and render as junk UnknownRows.
       if (evt.type === "pty_output") {
         const p = evt.payload as { content?: unknown };
         if (typeof p.content === "string") onPtyOutputRef.current?.(p.content);
         return;
       }
+      if (seenIds.current.has(evt.id)) return;
+      seenIds.current.add(evt.id);
       setEvents((prev) => [...prev, evt]);
       if (evt.type === "permission_resolved") {
         const p = evt.payload as {

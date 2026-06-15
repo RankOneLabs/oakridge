@@ -327,7 +327,13 @@ body {
    height since .app is a normal-flow scrolling column, not a flex parent;
    xterm fills the box and manages its own scrollback. */
 .session-terminal-wrap {
-  height: calc(100vh - var(--top-bar-h, 3rem) - 4rem);
+  /* Fill the space between the measured top bar and the fixed input bar.
+     --bottom-bar-h is measured + set by SessionView (same var .app uses for
+     its padding-bottom), so the terminal tracks the input/banner height
+     instead of a magic number. dvh keeps it stable when mobile browser chrome
+     shows/hides; the vh line is the fallback for browsers without dvh. */
+  height: calc(100vh - var(--top-bar-h, 3rem) - var(--bottom-bar-h, 4rem));
+  height: calc(100dvh - var(--top-bar-h, 3rem) - var(--bottom-bar-h, 4rem));
   min-height: 18rem;
   margin-bottom: 0.5rem;
   border: 1px solid var(--border-subtle);
