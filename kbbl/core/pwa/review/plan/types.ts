@@ -17,7 +17,7 @@ export interface CohortDependency {
 export interface Plan {
   id: string;
   spec_id: string;
-  status: "pending_approval" | "approved" | "rejected" | "superseded";
+  status: "draft" | "pending_approval" | "approved" | "rejected" | "superseded";
   predecessor_plan_id: string | null;
   model: string | null;
   rejection_reason: string | null;

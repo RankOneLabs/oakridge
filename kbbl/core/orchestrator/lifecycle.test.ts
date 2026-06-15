@@ -103,7 +103,7 @@ describe("full lifecycle — two-cohort plan with dependency", () => {
       const planRes = await post("/plans", { spec_id: spec.id });
       expect(planRes.status).toBe(201);
       const plan = (await planRes.json()) as { id: string; status: string };
-      expect(plan.status).toBe("pending_approval");
+      expect(plan.status).toBe("draft");
 
       // specs.status was dropped in migration 016; POST /plans no longer writes it
       // (internal_status remains as-is; Epic.status tracks lifecycle now)
@@ -126,6 +126,15 @@ describe("full lifecycle — two-cohort plan with dependency", () => {
         to_cohort_id: cohortB.id,
       });
       expect(depRes.status).toBe(201);
+
+      // --- submit plan for review (agent signals all cohorts are posted) ---
+      // Approval is gated on this: a draft plan cannot be approved.
+      const earlyApprove = await patch(`/plans/${plan.id}/status`, { status: "approved" });
+      expect(earlyApprove.status).toBe(409);
+      const submitRes = await post(`/plans/${plan.id}/submit`, {});
+      expect(submitRes.status).toBe(200);
+      const submittedPlan = (await submitRes.json()) as { status: string };
+      expect(submittedPlan.status).toBe("pending_approval");
 
       // --- approve plan ---
       const approveRes = await patch(`/plans/${plan.id}/status`, { status: "approved" });
@@ -247,6 +256,8 @@ describe("full lifecycle — two-cohort plan with dependency", () => {
     const spec = (await specRes.json()) as { id: string };
     const planRes = await post("/plans", { spec_id: spec.id });
     const plan = (await planRes.json()) as { id: string };
+    await post("/cohorts", { plan_id: plan.id, title: "C", position: 1 });
+    expect((await post(`/plans/${plan.id}/submit`, {})).status).toBe(200);
 
     const rejectRes = await patch(`/plans/${plan.id}/status`, { status: "rejected", reason: "needs more work" });
     expect(rejectRes.status).toBe(200);

@@ -49,6 +49,13 @@ export function mountPlanReopenRoutes(app: Hono, deps: PlanReopenRouteDeps): voi
           model: model ?? oldPlan.model ?? null,
           predecessor_plan_id: old_id,
         });
+        // Plans now default to 'draft' (the plan_writer agent submits them once
+        // every cohort is posted). Reopen is an operator-driven path that does
+        // not re-dispatch plan_writer, so the successor would otherwise be
+        // stranded invisibly in draft. Put it straight into pending_approval to
+        // preserve the prior reopen behaviour.
+        db.prepare("UPDATE plans SET status = 'pending_approval' WHERE id = ?").run(new_id);
+        newPlan = getPlan(db, new_id);
 
         unfreeze(db, "plan", old_id);
         db.prepare("UPDATE plans SET status = 'superseded' WHERE id = ?").run(old_id);

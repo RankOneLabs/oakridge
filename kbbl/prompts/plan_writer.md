@@ -63,7 +63,14 @@ The spec exists; no plan has been created yet. You will create the plan, then at
      "to_cohort_id": "<id of cohort that depends on it>"
    }
    ```
-6. When all cohorts and dependencies are posted, summarise what you submitted and stop. The operator will approve the plan in the kbbl PWA.
+6. When every cohort and dependency is posted, submit the plan for review:
+
+   ```http
+   POST {{KBBL_URL}}/plans/<plan_id>/submit
+   ```
+
+   The plan is created as a `draft` and stays invisible to the operator until you submit it — this is what guarantees the operator never approves a half-written plan, so do not submit until all cohorts and dependencies are posted. Submitting requires at least one cohort.
+7. After submitting, summarise what you posted and stop. The operator will approve the plan in the kbbl PWA.
 
 ## Constraints
 
