@@ -1,7 +1,10 @@
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 /**
  * CC-specific spawn-command construction and settings-file generation.
@@ -230,13 +233,16 @@ export async function assertA1Invariants(opts: {
   // Identity check: the resolved binary must self-report as Claude Code.
   // `--version` is a fast, non-billing invocation (no session, no tokens) and
   // is installer-layout independent — unlike the prior path-substring heuristic.
+  // Async exec (not execFileSync): this runs on the runtime spawn path, so a
+  // blocking call would stall hook handling and other concurrent sessions for
+  // the duration of CC's startup (or the full timeout on a hang).
   let versionOut: string;
   try {
-    versionOut = execFileSync(resolvedBin, ["--version"], {
+    const result = await execFileAsync(resolvedBin, ["--version"], {
       encoding: "utf8",
       timeout: 10_000,
-      stdio: ["ignore", "pipe", "ignore"],
     });
+    versionOut = result.stdout;
   } catch {
     throw new Error(
       `A.1: '${resolvedBin}' failed to run '--version' — refusing to launch (interactive mode requires the subscription CLI)`,
