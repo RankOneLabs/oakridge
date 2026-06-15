@@ -21,6 +21,59 @@ interface PlanStatusRouteDeps {
 export function mountPlanStatusRoutes(app: Hono, deps: PlanStatusRouteDeps): void {
   const { db } = deps;
 
+  // The plan_writer agent creates a plan in 'draft', posts every cohort and
+  // dependency, then submits it for review. Submitting is the signal that the
+  // plan is complete; only then does it enter 'pending_approval' and become
+  // visible/approvable in the PWA. This is what prevents the operator from
+  // approving a half-written plan.
+  app.post("/plans/:id/submit", async (c) => {
+    const plan_id = c.req.param("id");
+
+    const planForFreeze = db
+      .prepare<{ spec_id: string }, [string]>("SELECT spec_id FROM plans WHERE id = ?")
+      .get(plan_id);
+    if (planForFreeze) {
+      const epic = getEpicBySpec(db, planForFreeze.spec_id);
+      if (epic && isFrozen(db, epic.id)) {
+        return c.json({ error: "epic is archived" }, 409);
+      }
+    }
+
+    let updated: Plan | null = null;
+    try {
+      const error = db.transaction((): string | null => {
+        const plan = getPlan(db, plan_id);
+        if (!plan) return "not_found";
+        if (plan.status !== "draft") return "not_draft";
+
+        const nextStatus = PLAN_TRANSITIONS[plan.status]?.submit;
+        if (!nextStatus) return "no_transition";
+
+        const cohortCount = db
+          .prepare<{ cnt: number }, [string]>(
+            "SELECT COUNT(*) AS cnt FROM cohorts WHERE plan_id = ?",
+          )
+          .get(plan_id);
+        if (!cohortCount || cohortCount.cnt === 0) return "no_cohorts";
+
+        db.prepare("UPDATE plans SET status = ? WHERE id = ?").run(nextStatus, plan_id);
+        updated = getPlan(db, plan_id);
+        return null;
+      })();
+
+      if (error === "not_found") return c.json({ error: "not found" }, 404);
+      if (error === "not_draft") return c.json({ error: "plan is not in draft" }, 409);
+      if (error === "no_transition") return c.json({ error: "transition not defined" }, 409);
+      if (error === "no_cohorts")
+        return c.json({ error: "plan must have at least one cohort before it can be submitted" }, 409);
+    } catch (err) {
+      console.error("plan-status:submit failed", err);
+      return c.json({ error: "internal server error" }, 500);
+    }
+
+    return c.json(updated);
+  });
+
   app.patch("/plans/:id/status", async (c) => {
     let body: unknown;
     try {

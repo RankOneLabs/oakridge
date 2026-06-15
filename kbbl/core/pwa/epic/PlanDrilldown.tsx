@@ -1,4 +1,4 @@
-type PlanStatus = "pending_approval" | "approved" | "rejected" | "superseded";
+type PlanStatus = "draft" | "pending_approval" | "approved" | "rejected" | "superseded";
 
 interface Plan {
   id: string;

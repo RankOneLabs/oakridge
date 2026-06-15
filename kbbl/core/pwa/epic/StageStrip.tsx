@@ -2,7 +2,7 @@ import { useRef, type KeyboardEvent } from "react";
 
 type EpicStage = "spec" | "plan" | "build" | "assess";
 type SpecInternalStatus = "analyzing" | "discrepancies" | "review" | "approved";
-type PlanStatus = "pending_approval" | "approved" | "rejected" | "superseded";
+type PlanStatus = "draft" | "pending_approval" | "approved" | "rejected" | "superseded";
 
 const STAGES: EpicStage[] = ["spec", "plan", "build", "assess"];
 

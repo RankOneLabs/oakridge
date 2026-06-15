@@ -258,7 +258,8 @@ describe("full dispatch pipeline with MockBackend", () => {
     expect(cohortRes.status).toBe(201);
     const cohort = (await cohortRes.json()) as { id: string };
 
-    // 3. Approve plan → plan.approved → brief_writer dispatch; all waiting cohorts → briefing
+    // 3. Submit then approve plan → plan.approved → brief_writer dispatch; all waiting cohorts → briefing
+    expect((await post(app, `/plans/${plan.id}/submit`, {})).status).toBe(200);
     const approveRes = await patch(app, `/plans/${plan.id}/status`, { status: "approved" });
     expect(approveRes.status).toBe(200);
 
@@ -417,7 +418,8 @@ describe("full dispatch pipeline with MockBackend", () => {
 
     const callsBefore = mockBackend.calls.length;
 
-    // 4. Approve plan → plan.approved → exactly ONE brief_writer call for the whole plan
+    // 4. Submit then approve plan → plan.approved → exactly ONE brief_writer call for the whole plan
+    expect((await post(app, `/plans/${plan.id}/submit`, {})).status).toBe(200);
     const approveRes = await patch(app, `/plans/${plan.id}/status`, { status: "approved" });
     expect(approveRes.status).toBe(200);
     await flushAsync();
@@ -537,7 +539,8 @@ describe("full dispatch pipeline with MockBackend", () => {
     await post(app, "/cohort-dependencies", { from_cohort_id: cohortA.id, to_cohort_id: cohortB.id });
     await post(app, "/cohort-dependencies", { from_cohort_id: cohortB.id, to_cohort_id: cohortC.id });
 
-    // 4. Approve plan → brief_writer
+    // 4. Submit then approve plan → brief_writer
+    expect((await post(app, `/plans/${plan.id}/submit`, {})).status).toBe(200);
     await patch(app, `/plans/${plan.id}/status`, { status: "approved" });
     await flushAsync();
 

@@ -27,7 +27,7 @@ export function mountPlansRoutes(app: Hono, deps: PlansRouteDeps): void {
     const status = c.req.query("status");
 
     if (status) {
-      const validStatuses = ["pending_approval", "approved", "rejected", "superseded"] as const;
+      const validStatuses = ["draft", "pending_approval", "approved", "rejected", "superseded"] as const;
       type PlanStatus = (typeof validStatuses)[number];
       if (!validStatuses.includes(status as PlanStatus)) {
         return c.json({ error: "invalid status value" }, 400);
