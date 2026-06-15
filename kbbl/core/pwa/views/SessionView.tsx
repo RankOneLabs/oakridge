@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type {
   SessionSnapshot, Theme, Status, CompactSuggestion, CCUserPayload,
@@ -21,6 +21,12 @@ import { CompactSuggestionBanner } from "../components/organisms/CompactSuggesti
 import { CompactingBanner } from "../components/molecules/CompactingBanner";
 import { InFlightAssistantRow } from "../components/molecules/InFlightAssistantRow";
 import { ThinkingIndicator } from "../components/atoms/ThinkingIndicator";
+import {
+  SessionTerminal,
+  type SessionTerminalHandle,
+} from "../components/organisms/SessionTerminal";
+
+type ViewMode = "conversation" | "terminal";
 
 export function SessionView({
   sid,
@@ -52,12 +58,26 @@ export function SessionView({
   onResume: (parentSid: string) => Promise<string | null>;
 }) {
   const [showSystemEvents, setShowSystemEvents] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>("conversation");
   const appRef = useRef<HTMLDivElement>(null);
   const topBarRef = useRef<HTMLElement>(null);
   const bottomBarRef = useRef<HTMLDivElement>(null);
+  const terminalRef = useRef<SessionTerminalHandle>(null);
+
+  // Raw PTY bytes go straight to the xterm instance, never through React
+  // state. Stable identity keeps useSessionStream's SSE effect from churning.
+  const handlePtyOutput = useCallback((content: string) => {
+    terminalRef.current?.write(content);
+  }, []);
 
   const { events, streamStatus, resolutions, yoloMode, allowedTools } =
-    useSessionStream(sid, inMemory);
+    useSessionStream(sid, inMemory, handlePtyOutput);
+
+  // The terminal container has no layout while the conversation view is shown,
+  // so refit when it becomes visible.
+  useEffect(() => {
+    if (viewMode === "terminal") terminalRef.current?.fit();
+  }, [viewMode]);
 
   const sessionStatus = snapshot?.status ?? null;
 
@@ -152,32 +172,60 @@ export function SessionView({
           onClear={onClearCompactSuggestion}
         />
       )}
-      <MetricsStrip events={events} />
-      <EventList
-        events={events}
-        resolutions={resolutions}
-        allowedTools={allowedTools}
-        sid={sid}
-        sessionStatus={sessionStatus}
-        showSystemEvents={showSystemEvents}
-        latestEventId={latestEventId}
-      />
-      {pendingMessages.map((m) => (
-        <PendingUserBubble
-          key={m.localId}
-          text={m.text}
-          sentAt={m.sentAt}
-          isLatest={m.localId === lastPendingLocalId}
-        />
-      ))}
-      {awaitingResult && inFlightAssistant && (
-        <InFlightAssistantRow message={inFlightAssistant} />
-      )}
-      {awaitingResult && (
-        <ThinkingIndicator
-          elapsedSec={elapsedSec}
-          outputTokens={inFlightAssistant?.outputTokens ?? null}
-        />
+      <div className="view-mode-toggle">
+        <button
+          type="button"
+          aria-pressed={viewMode === "conversation"}
+          className={`theme-toggle ${viewMode === "conversation" ? "is-on" : ""}`}
+          onClick={() => setViewMode("conversation")}
+        >
+          Conversation
+        </button>
+        <button
+          type="button"
+          aria-pressed={viewMode === "terminal"}
+          className={`theme-toggle ${viewMode === "terminal" ? "is-on" : ""}`}
+          onClick={() => setViewMode("terminal")}
+        >
+          Terminal
+        </button>
+      </div>
+      {viewMode === "conversation" ? (
+        <>
+          <MetricsStrip events={events} />
+          <EventList
+            events={events}
+            resolutions={resolutions}
+            allowedTools={allowedTools}
+            sid={sid}
+            sessionStatus={sessionStatus}
+            showSystemEvents={showSystemEvents}
+            latestEventId={latestEventId}
+          />
+          {pendingMessages.map((m) => (
+            <PendingUserBubble
+              key={m.localId}
+              text={m.text}
+              sentAt={m.sentAt}
+              isLatest={m.localId === lastPendingLocalId}
+            />
+          ))}
+          {awaitingResult && inFlightAssistant && (
+            <InFlightAssistantRow message={inFlightAssistant} />
+          )}
+          {awaitingResult && (
+            <ThinkingIndicator
+              elapsedSec={elapsedSec}
+              outputTokens={inFlightAssistant?.outputTokens ?? null}
+            />
+          )}
+        </>
+      ) : (
+        <div className="session-terminal-wrap">
+          {/* key={sid} forces a fresh xterm instance per session so a previous
+              session's buffer never bleeds into a new one's output. */}
+          <SessionTerminal key={sid} ref={terminalRef} />
+        </div>
       )}
       {canInput && (
         <InputBox

@@ -13,6 +13,7 @@ export interface SessionStreamState {
 export function useSessionStream(
   sid: string,
   inMemory: boolean,
+  onPtyOutput?: (content: string) => void,
 ): SessionStreamState {
   const [events, setEvents] = useState<EnvelopeEvent[]>([]);
   const [streamStatus, setStreamStatus] = useState<Status>("connecting");
@@ -24,6 +25,10 @@ export function useSessionStream(
     () => new Set(),
   );
   const seenIds = useRef<Set<number>>(new Set());
+  // Held in a ref so a changing callback identity doesn't churn the SSE
+  // effect (which would tear down and reconnect the EventSource).
+  const onPtyOutputRef = useRef(onPtyOutput);
+  onPtyOutputRef.current = onPtyOutput;
 
   // Reset per-session state when navigating between sids so stale events
   // from the previous session's EventSource don't leak into this view.
@@ -37,6 +42,18 @@ export function useSessionStream(
 
   useEffect(() => {
     const ingest = (evt: EnvelopeEvent) => {
+      // pty_output is the raw, high-volume terminal byte stream (PTY mode's
+      // break-glass surface). Handle it before the seenIds dedupe: it is never
+      // replayed (not persisted to JSONL; the server honors Last-Event-Id), so
+      // tracking each chunk's id would grow seenIds without bound. The bytes
+      // bypass React state entirely and go straight to the terminal sink (if
+      // mounted) — keeping them out of the events array, where they would both
+      // trigger a re-render per chunk and render as junk UnknownRows.
+      if (evt.type === "pty_output") {
+        const p = evt.payload as { content?: unknown };
+        if (typeof p.content === "string") onPtyOutputRef.current?.(p.content);
+        return;
+      }
       if (seenIds.current.has(evt.id)) return;
       seenIds.current.add(evt.id);
       setEvents((prev) => [...prev, evt]);
