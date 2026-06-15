@@ -31,7 +31,7 @@ import {
   hookSubagentStopHandler,
   type HookHandlerDeps,
 } from "./hook-route";
-import { assertA1Invariants, makeBuildSpawnCmd, writeCcMcpConfig, writeCcSettings } from "./spawn";
+import { assertA1Invariants, writeCcMcpConfig, writeCcSettings } from "./spawn";
 
 export interface CreateClaudeCodeRuntimeOpts {
   claudeBin: string;
@@ -86,11 +86,6 @@ export async function createClaudeCodeRuntime(
     port: opts.port,
   });
   const mcpConfigPath = await writeCcMcpConfig({ dataDir: opts.dataDir });
-  const buildSpawnCmdFn = makeBuildSpawnCmd({
-    claudeBin: opts.claudeBin,
-    settingsPath,
-    mcpConfigPath,
-  });
 
   // === CC session id registry ===
   // Maps CC's runtime session_id (from system/init) → oakridgeSid. The
@@ -515,11 +510,24 @@ export async function createClaudeCodeRuntime(
       app.post("/hook/subagent-stop", hookSubagentStopHandler(hookDeps));
     },
 
-    // --- Legacy AppRuntime.buildSpawnCmd ---
-    buildSpawnCmd: (session: Session): Promise<SpawnCmd> => {
-      // Track the session so lookupByCcSid works in legacy mode.
-      oakridgeSidToSession.set(session.oakridgeSid, session);
-      return buildSpawnCmdFn(session);
+    // --- Legacy AppRuntime.buildSpawnCmd (registry-only adapter: refuse) ---
+    // The PTY billing transport is fundamentally incompatible with the legacy
+    // buildSpawnCmd + Session.spawn() path: that path JSON.parses every stdout
+    // line, but interactive `claude` (no --print/stream-json) emits raw TUI
+    // bytes, which would spew subprocess_stdout_parse_error continuously.
+    // Emitting --print/stream-json argv here to satisfy the parser is worse —
+    // --print routes the session through API-priced billing, defeating the A.1
+    // invariant this whole transport exists to enforce. So fail loud: this
+    // adapter is registry-only. SessionManager always takes the registry path
+    // when a registry is configured (server.ts wires both); this throw only
+    // fires if a manager is built with buildSpawnCmd and no registry.
+    buildSpawnCmd: (_session: Session): Promise<SpawnCmd> => {
+      throw new Error(
+        "claude-code adapter is registry-only: the PTY billing transport cannot " +
+          "use the legacy buildSpawnCmd + Session.spawn() stdout-parse path " +
+          "(it would either break on raw TUI bytes or fall back to API-priced " +
+          "--print). Configure SessionManager with opts.registry, not buildSpawnCmd.",
+      );
     },
   };
 
