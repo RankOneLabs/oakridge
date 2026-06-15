@@ -173,7 +173,19 @@ export function startTranscriptTailer(opts: TailerOpts): TailerHandle {
         }
       }
     } finally {
-      await fh.close();
+      // Contain a close() failure: drainOnce runs under `void drain()`, so a
+      // rejection here would surface as an unhandled rejection rather than
+      // being observed anywhere. Log and move on, mirroring the read/open
+      // error handling above.
+      try {
+        await fh.close();
+      } catch (err) {
+        console.error(
+          `kbbl: transcript close failed [${label}]: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
     }
   };
 
