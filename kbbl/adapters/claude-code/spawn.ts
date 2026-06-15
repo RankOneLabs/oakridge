@@ -2,8 +2,6 @@ import { realpathSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { Session, SpawnCmd } from "../../core/session/session";
-
 /**
  * CC-specific spawn-command construction and settings-file generation.
  *
@@ -123,53 +121,62 @@ export async function writeCcMcpConfig(opts: {
   return mcpConfigPath;
 }
 
-export interface BuildSpawnCmdContext {
+export interface CcArgvOpts {
   claudeBin: string;
   /** Absolute path to the settings.json from writeCcSettings(). */
   settingsPath: string;
   /** Absolute path to the mcp-servers.json from writeCcMcpConfig(). */
   mcpConfigPath: string;
+  /** Pinned model, or null/omitted for CC's default. */
+  model?: string | null;
+  /** Parent CC session id to fork from (continue-in-place / live fork). */
+  parentCcSid?: string | null;
+  /**
+   * Forced CC session id (`--session-id`). The PTY transport assigns this
+   * before launch so the ccSid→oakridgeSid mapping is known by the time the
+   * first hook fires. Omit it and CC picks its own id.
+   */
+  sessionId?: string | null;
 }
 
 /**
- * Returns a function that constructs the per-session SpawnCmd consumed by
- * SessionManager. The returned closure captures the static context so the
- * manager only needs `(session) => Promise<SpawnCmd>`.
+ * Builds the interactive `claude` argv (PTY launch; no --print / stream-json).
+ *
+ * Pure and order-stable so it is testable in isolation and shared by the only
+ * production launcher (the AgentRuntime PTY `spawn()` path): the static prefix
+ * mirrors oakridge-core's build_argv for byte/arg parity, then optional
+ * `--session-id`, `--model`, and `--resume`/`--fork-session` in that order.
  */
-export function makeBuildSpawnCmd(
-  ctx: BuildSpawnCmdContext,
-): (session: Session) => Promise<SpawnCmd> {
-  return async function buildSpawnCmd(session: Session): Promise<SpawnCmd> {
-    const cmd = [
-      ctx.claudeBin,
-      "--setting-sources",
-      "user",
-      "--settings",
-      ctx.settingsPath,
-      // Load the gated-review MCP server. `--setting-sources user` (above)
-      // excludes the project-scoped .mcp.json, so without this the server never
-      // registers in kbbl sessions. --strict-mcp-config makes the MCP set
-      // hermetic — exactly what kbbl declares, ignoring user/project configs and
-      // their needs-auth noise.
-      "--mcp-config",
-      ctx.mcpConfigPath,
-      "--strict-mcp-config",
-    ];
-
-    if (session.model) {
-      cmd.push("--model", session.model);
-    }
-    // Resume in a fresh session id so multiple live forks off the same parent
-    // don't collide on CC's internal session id.
-    if (session.parentCcSid) {
-      cmd.push("--resume", session.parentCcSid, "--fork-session");
-    }
-    return {
-      cmd,
-      cwd: session.workdir,
-      env: { ...process.env } as Record<string, string>,
-    };
-  };
+export function buildCcArgv(opts: CcArgvOpts): string[] {
+  const argv = [
+    opts.claudeBin,
+    "--setting-sources",
+    "user",
+    "--settings",
+    opts.settingsPath,
+    // Load the gated-review MCP server. `--setting-sources user` (above)
+    // excludes the project-scoped .mcp.json, so without this the server never
+    // registers in kbbl sessions. --strict-mcp-config makes the MCP set
+    // hermetic — exactly what kbbl declares, ignoring user/project configs and
+    // their needs-auth noise.
+    "--mcp-config",
+    opts.mcpConfigPath,
+    "--strict-mcp-config",
+  ];
+  // Forced session id (PTY mode), assigned before launch. --fork-session below
+  // is required for CC to accept --session-id alongside --resume.
+  if (opts.sessionId) {
+    argv.push("--session-id", opts.sessionId);
+  }
+  if (opts.model) {
+    argv.push("--model", opts.model);
+  }
+  // Resume in a fresh session id so multiple live forks off the same parent
+  // don't collide on CC's internal session id.
+  if (opts.parentCcSid) {
+    argv.push("--resume", opts.parentCcSid, "--fork-session");
+  }
+  return argv;
 }
 
 /**

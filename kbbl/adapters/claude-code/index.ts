@@ -31,7 +31,7 @@ import {
   hookSubagentStopHandler,
   type HookHandlerDeps,
 } from "./hook-route";
-import { assertA1Invariants, writeCcMcpConfig, writeCcSettings } from "./spawn";
+import { assertA1Invariants, buildCcArgv, writeCcMcpConfig, writeCcSettings } from "./spawn";
 
 export interface CreateClaudeCodeRuntimeOpts {
   claudeBin: string;
@@ -151,23 +151,18 @@ export async function createClaudeCodeRuntime(
       // find the session and would deny every request.
       const ccSessionId = randomUUID();
 
-      // Build interactive argv (no --print / stream-json).
-      const argv = [
-        opts.claudeBin,
-        "--setting-sources",
-        "user",
-        "--settings",
+      // Build interactive argv (no --print / stream-json) via the shared,
+      // unit-tested builder so the argv exercised by spawn.test.ts is exactly
+      // the one launched here. --fork-session (added when parentCcSid is set) is
+      // required for CC to accept our forced --session-id alongside --resume.
+      const argv = buildCcArgv({
+        claudeBin: opts.claudeBin,
         settingsPath,
-        "--mcp-config",
         mcpConfigPath,
-        "--strict-mcp-config",
-        "--session-id",
-        ccSessionId,
-      ];
-      if (model) argv.push("--model", model);
-      // --fork-session is required for --session-id to be accepted alongside
-      // --resume; it forks the parent conversation into our chosen ccSessionId.
-      if (parentCcSid) argv.push("--resume", parentCcSid, "--fork-session");
+        model,
+        parentCcSid,
+        sessionId: ccSessionId,
+      });
 
       // A.1: hard billing invariant — refuse rather than downgrade. Returns the
       // realpath-resolved binary; we spawn THAT (not opts.claudeBin) so a
