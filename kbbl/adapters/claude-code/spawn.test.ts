@@ -89,7 +89,9 @@ describe("assertA1Invariants", () => {
     const binDir = join(tmpRoot, "node_modules/@anthropic-ai/claude-code/bin");
     mkdirSync(binDir, { recursive: true });
     fakeBin = join(binDir, "claude");
-    writeFileSync(fakeBin, "#!/bin/sh\necho fake", { mode: 0o755 });
+    // The A.1 identity check runs `<bin> --version` and requires it to report
+    // "(Claude Code)", so the fake must emit a CC-shaped version string.
+    writeFileSync(fakeBin, "#!/bin/sh\necho '2.1.177 (Claude Code)'", { mode: 0o755 });
   });
 
   afterEach(() => {
@@ -140,9 +142,23 @@ describe("assertA1Invariants", () => {
     ).rejects.toThrow("A.1");
   });
 
-  test("rejects when binary path does not contain @anthropic-ai/claude-code", async () => {
+  test("rejects when the binary does not self-report as Claude Code", async () => {
+    // /bin/true runs cleanly but its --version output is not Claude Code, so
+    // the identity check must reject it regardless of its path.
     await expect(
       assertA1Invariants({ claudeBin: "/bin/true", argv: ["claude"], env: {} }),
+    ).rejects.toThrow("A.1");
+  });
+
+  test("rejects a binary on the CC path whose --version is not Claude Code", async () => {
+    // Path alone is no longer trusted: an impostor sitting at the right path
+    // must still fail the --version identity check.
+    const impostorDir = join(tmpRoot, "node_modules/@anthropic-ai/claude-code/impostor");
+    mkdirSync(impostorDir, { recursive: true });
+    const impostor = join(impostorDir, "claude");
+    writeFileSync(impostor, "#!/bin/sh\necho 'totally-not-cc 9.9.9'", { mode: 0o755 });
+    await expect(
+      assertA1Invariants({ claudeBin: impostor, argv: ["claude"], env: {} }),
     ).rejects.toThrow("A.1");
   });
 

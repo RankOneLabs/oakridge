@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -186,8 +187,12 @@ export function buildCcArgv(opts: CcArgvOpts): string[] {
  *   1. No -p / --print in the argv (interactive mode only; print = metered API path).
  *   2. ANTHROPIC_API_KEY is absent (subscription OAuth only; an API key forces
  *      per-token billing regardless of the OAuth login state).
- *   3. The binary resolves (via symlinks) to a path containing
- *      @anthropic-ai/claude-code (the real subscription CLI, not an impostor).
+ *   3. The realpath-resolved binary self-reports as Claude Code via `--version`
+ *      (the real subscription CLI, not an impostor). We verify the reported
+ *      identity rather than match the install path: the layout is not stable
+ *      (npm `node_modules/@anthropic-ai/claude-code/…` vs the native installer's
+ *      `~/.local/share/claude/versions/<ver>`), so a path heuristic
+ *      false-negatives the genuine CLI whenever the install layout changes.
  *   4. Real TTY: guaranteed by the caller using bun-pty — this function
  *      documents the invariant but cannot check it pre-spawn.
  *
@@ -222,9 +227,24 @@ export async function assertA1Invariants(opts: {
   } catch {
     throw new Error(`A.1: cannot resolve binary '${opts.claudeBin}'`);
   }
-  if (!/\/@anthropic-ai\/claude-code(\/|$)/.test(resolvedBin)) {
+  // Identity check: the resolved binary must self-report as Claude Code.
+  // `--version` is a fast, non-billing invocation (no session, no tokens) and
+  // is installer-layout independent — unlike the prior path-substring heuristic.
+  let versionOut: string;
+  try {
+    versionOut = execFileSync(resolvedBin, ["--version"], {
+      encoding: "utf8",
+      timeout: 10_000,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch {
     throw new Error(
-      `A.1: '${resolvedBin}' is not @anthropic-ai/claude-code — refusing to launch (interactive mode requires the subscription CLI)`,
+      `A.1: '${resolvedBin}' failed to run '--version' — refusing to launch (interactive mode requires the subscription CLI)`,
+    );
+  }
+  if (!/\(Claude Code\)/.test(versionOut)) {
+    throw new Error(
+      `A.1: '${resolvedBin}' does not self-report as Claude Code (--version: ${JSON.stringify(versionOut.trim())}) — refusing to launch (interactive mode requires the subscription CLI)`,
     );
   }
   return resolvedBin;
