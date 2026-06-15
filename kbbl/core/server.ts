@@ -141,15 +141,13 @@ if (workdir !== null && (await isGitRepo(workdir))) {
 
 // === runtime adapter ===
 // The Claude Code adapter owns its CLI flags, settings.json, and the
-// PreToolUse gate route. Core consumes it through the AppRuntime contract
+// hook routes. Core consumes it through the AppRuntime contract
 // and never imports CC-specific files directly.
 
-const gatePath = resolve(moduleDir, "..", "adapters", "claude-code", "scripts", "gate.sh");
 const runtime = await createClaudeCodeRuntime({
   claudeBin,
   port,
   dataDir,
-  gatePath,
 });
 
 // === runtime registry ===

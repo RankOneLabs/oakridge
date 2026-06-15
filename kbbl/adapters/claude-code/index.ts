@@ -1,5 +1,7 @@
 import type { Hono } from "hono";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
+import * as pty from "bun-pty";
 
 import type { EnvelopeEvent, Session, SpawnCmd } from "../../core/session/session";
 import type { SessionManager } from "../../core/session/session-manager";
@@ -18,23 +20,40 @@ import { readJsonlOrEmpty } from "../../core/session/session";
 import { ALLOWED_MODELS } from "./models";
 
 import { classifyCcEvent } from "./event-classifier";
-import { hookApprovalHandler } from "./hook-route";
-import { makeBuildSpawnCmd, writeCcMcpConfig, writeCcSettings } from "./spawn";
+import {
+  hookPermissionHandler,
+  hookPostToolUseHandler,
+  hookStopHandler,
+  hookSessionStartHandler,
+  hookSessionEndHandler,
+  hookNotificationHandler,
+  hookSubagentStartHandler,
+  hookSubagentStopHandler,
+  type HookHandlerDeps,
+} from "./hook-route";
+import { assertA1Invariants, buildCcArgv, writeCcMcpConfig, writeCcSettings } from "./spawn";
 
 export interface CreateClaudeCodeRuntimeOpts {
   claudeBin: string;
-  /** Server's HTTP port — passed into the gate via KBBL_PORT env var. */
+  /** Server's HTTP port — baked into hook URLs in the generated settings.json. */
   port: number;
   /** Directory where the generated settings.json lives. */
   dataDir: string;
-  /** Absolute path to the PreToolUse gate script. */
-  gatePath: string;
 }
 
-/** CC-specific session handle with a direct reference to the spawned proc. */
+/** CC-specific session handle backed by a bun-pty process. */
 interface CcHandle {
   readonly sessionId: string;
-  proc: ReturnType<typeof Bun.spawn>;
+  pty: pty.IPty;
+  /**
+   * Set by the onExit listener (registered in spawn(), so it fires even if
+   * events() is never consumed). Lets events() replay the completion if the
+   * PTY exits during the window between spawn() returning and events() being
+   * entered.
+   */
+  exited: { code: number } | null;
+  /** Set by an active events() consumer so onExit can wake it. */
+  notifyExit: (() => void) | null;
 }
 
 /**
@@ -64,15 +83,9 @@ export async function createClaudeCodeRuntime(
 ): Promise<AgentRuntime & AppRuntime> {
   const settingsPath = await writeCcSettings({
     dataDir: opts.dataDir,
-    gatePath: opts.gatePath,
+    port: opts.port,
   });
   const mcpConfigPath = await writeCcMcpConfig({ dataDir: opts.dataDir });
-  const buildSpawnCmdFn = makeBuildSpawnCmd({
-    claudeBin: opts.claudeBin,
-    port: opts.port,
-    settingsPath,
-    mcpConfigPath,
-  });
 
   // === CC session id registry ===
   // Maps CC's runtime session_id (from system/init) → oakridgeSid. The
@@ -91,6 +104,7 @@ export async function createClaudeCodeRuntime(
       ccSidToOakridgeSid.delete(ccSid);
     }
     oakridgeSidToSession.delete(session.oakridgeSid);
+    subagentCounts.delete(session.oakridgeSid);
   }
 
   function lookupByCcSid(ccSid: string): Session | undefined {
@@ -100,6 +114,10 @@ export async function createClaudeCodeRuntime(
 
   // === in-flight process map ===
   const procs = new Map<string, CcHandle>();
+
+  // === billing observability (A.7) ===
+  // Cumulative SubagentStop count per oakridgeSid for this server lifetime.
+  const subagentCounts = new Map<string, number>();
 
   // === AgentRuntime implementation ===
 
@@ -119,48 +137,78 @@ export async function createClaudeCodeRuntime(
         | null
         | undefined;
 
-      // Build argv the same way buildSpawnCmd does, but inline so we can
-      // use the RuntimeConfig values without a full Session object.
-      const cmd = [
-        opts.claudeBin,
-        "--print",
-        "--input-format",
-        "stream-json",
-        "--output-format",
-        "stream-json",
-        "--include-hook-events",
-        "--include-partial-messages",
-        "--replay-user-messages",
-        "--verbose",
-        "--setting-sources",
-        "user",
-        "--settings",
+      const spawnEnv: Record<string, string | undefined> = {
+        ...process.env,
+      };
+
+      // We assign CC's session id ourselves rather than discover it from a
+      // parsed system/init event — in PTY mode the byte stream is never parsed,
+      // so this is the only point at which the ccSid → oakridgeSid mapping can
+      // be established. Returning it as the handle's runtimeSid drives
+      // observeRuntimeSessionId → onRuntimeSessionObserved → registerCcSid, so
+      // the hook routes can resolve the session by the session_id CC stamps on
+      // every hook payload. Without this the PermissionRequest gate would never
+      // find the session and would deny every request.
+      const ccSessionId = randomUUID();
+
+      // Build interactive argv (no --print / stream-json) via the shared,
+      // unit-tested builder so the argv exercised by spawn.test.ts is exactly
+      // the one launched here. --fork-session (added when parentCcSid is set) is
+      // required for CC to accept our forced --session-id alongside --resume.
+      const argv = buildCcArgv({
+        claudeBin: opts.claudeBin,
         settingsPath,
-        // See makeBuildSpawnCmd: loads gated-review independently of
-        // --setting-sources, which excludes the project-scoped .mcp.json.
-        "--mcp-config",
         mcpConfigPath,
-        "--strict-mcp-config",
-      ];
-
-      if (model) cmd.push("--model", model);
-      if (parentCcSid) cmd.push("--resume", parentCcSid, "--fork-session");
-
-      const proc = Bun.spawn({
-        cmd,
-        cwd: config.workingDirectory,
-        stdin: "pipe",
-        stdout: "pipe",
-        stderr: "pipe",
-        env: {
-          ...process.env,
-          KBBL_PORT: String(opts.port),
-        } as Record<string, string>,
+        model,
+        parentCcSid,
+        sessionId: ccSessionId,
       });
 
-      const handle: CcHandle = { sessionId: oakridgeSid, proc };
+      // A.1: hard billing invariant — refuse rather than downgrade. Returns the
+      // realpath-resolved binary; we spawn THAT (not opts.claudeBin) so a
+      // relative path can't validate here yet resolve to a different file under
+      // the session's cwd, slipping past the billing guard.
+      const resolvedClaudeBin = await assertA1Invariants({
+        claudeBin: opts.claudeBin,
+        argv,
+        env: spawnEnv,
+      });
+
+      // Strip undefined values — bun-pty requires Record<string, string>.
+      const ptyEnv = Object.fromEntries(
+        Object.entries(spawnEnv).filter((e): e is [string, string] => e[1] !== undefined),
+      );
+
+      // Launch claude in a PTY (invariant 4: real TTY guaranteed by bun-pty).
+      const ptyProc = pty.spawn(resolvedClaudeBin, argv.slice(1), {
+        name: "xterm-256color",
+        cols: 220,
+        rows: 50,
+        cwd: config.workingDirectory,
+        env: ptyEnv,
+      });
+
+      const handle: CcHandle = {
+        sessionId: oakridgeSid,
+        pty: ptyProc,
+        exited: null,
+        notifyExit: null,
+      };
       procs.set(oakridgeSid, handle);
-      return { sessionId: oakridgeSid };
+
+      // Register exit handling immediately — not in events() — so a process
+      // that dies before events() is entered still records its exit. We record
+      // the code on the handle and wake any active consumer; we deliberately do
+      // NOT delete from procs here, so events() (entered after a fast exit) can
+      // still find the handle and replay the completion. procs cleanup is owned
+      // by events()'s finally on the normal path, and by terminate() as the
+      // backstop if events() is never consumed.
+      ptyProc.onExit(({ exitCode }) => {
+        handle.exited = { code: exitCode };
+        handle.notifyExit?.();
+      });
+
+      return { sessionId: oakridgeSid, runtimeSid: ccSessionId };
     },
 
     // --- AgentRuntime.terminate ---
@@ -168,23 +216,27 @@ export async function createClaudeCodeRuntime(
       const h = procs.get(handle.sessionId);
       if (h) {
         try {
-          h.proc.kill();
+          h.pty.kill();
         } catch {
           // already dead
         }
+        // Backstop cleanup: events() owns procs.delete on the normal path, but
+        // if a session is terminated before its events() generator is consumed
+        // the handle would otherwise linger. Safe to delete unconditionally —
+        // events()'s own delete is idempotent.
+        procs.delete(handle.sessionId);
       }
     },
 
     // --- AgentRuntime.events ---
     async *events(handle: SessionHandle): AsyncIterable<RuntimeEvent> {
-      const h = procs.get(handle.sessionId);
-      if (!h) return;
-      const { proc } = h;
+      const maybeHandle = procs.get(handle.sessionId);
+      if (!maybeHandle) return;
+      // Explicit non-nullable binding: TS does not preserve the `!maybeHandle`
+      // narrowing into the nested deliverExit() closure, so alias it here.
+      const live: CcHandle = maybeHandle;
+      const { pty: ptyProc } = live;
 
-      const procStdout = proc.stdout as ReadableStream<Uint8Array>;
-      const procStderr = proc.stderr as ReadableStream<Uint8Array>;
-
-      // Use a shared event queue to merge stdout + stderr lines.
       const queue: RuntimeEvent[] = [];
       let queueResolve: (() => void) | null = null;
       let done = false;
@@ -202,43 +254,44 @@ export async function createClaudeCodeRuntime(
         });
       }
 
-      const stdoutPump = (async () => {
-        for await (const line of readLines(procStdout)) {
-          if (!line.trim()) continue;
-          try {
-            const raw = JSON.parse(line);
-            push({ type: "envelope", payload: raw });
-          } catch {
-            push({
-              type: "envelope",
-              payload: { type: "subprocess_stdout_parse_error", line },
-            });
-          }
+      // Raw PTY byte stream — break-glass only (A.6). Never parsed for content.
+      // Coalesce chunks within a macrotask tick before emitting: a verbose TUI
+      // can fire onData many times per frame, and emitting one RuntimeEvent per
+      // raw chunk lets the in-memory queue grow without bound and writes a flood
+      // of tiny records. We buffer arriving chunks and flush a single
+      // pty_output per tick, bounding both event count and per-event overhead.
+      let pendingOutput = "";
+      let flushScheduled = false;
+      function flushOutput(): void {
+        flushScheduled = false;
+        if (pendingOutput.length === 0) return;
+        const content = pendingOutput;
+        pendingOutput = "";
+        push({ type: "envelope", payload: { type: "pty_output", content } });
+      }
+      const dataDisposable = ptyProc.onData((data) => {
+        pendingOutput += data;
+        if (!flushScheduled) {
+          flushScheduled = true;
+          setTimeout(flushOutput, 0);
         }
-      })();
+      });
 
-      const stderrPump = (async () => {
-        for await (const line of readLines(procStderr)) {
-          push({ type: "envelope", payload: { type: "subprocess_stderr", line } });
-        }
-      })();
+      // Surface the process exit as a completion event. onExit is registered in
+      // spawn() (so it fires regardless of this generator); here we install the
+      // wake hook and also replay synchronously if the PTY already exited during
+      // the window between spawn() returning and this generator being entered.
+      function deliverExit(): void {
+        if (done) return;
+        flushOutput();
+        push({ type: "completed", result: { code: live.exited?.code ?? 0 } });
+        done = true;
+        queueResolve?.();
+        queueResolve = null;
+      }
+      live.notifyExit = deliverExit;
+      if (live.exited) deliverExit();
 
-      // Drive all three (stdout, stderr, exit) concurrently; signal done
-      // once both pumps + exit have finished.
-      const allDone = Promise.allSettled([stdoutPump, stderrPump]).then(
-        async () => {
-          const exitCode = await proc.exited;
-          push({ type: "completed", result: { code: exitCode } });
-          done = true;
-          queueResolve?.();
-          queueResolve = null;
-          // Clean up the proc map once we've drained.
-          procs.delete(handle.sessionId);
-        },
-      );
-
-      // Yield items as they arrive. try/finally ensures allDone runs even if
-      // the consumer breaks early (e.g. session abort), so procs.delete fires.
       try {
         while (true) {
           await waitForItem();
@@ -248,14 +301,9 @@ export async function createClaudeCodeRuntime(
           if (done) break;
         }
       } finally {
-        // allDone resolves when both stdout/stderr pumps drain. On normal
-        // completion/error the proc has already exited so this is immediate.
-        // On early consumer cancellation (break without terminate) this will
-        // hang until the proc exits naturally — intentional: the proc is
-        // still running and we don't own its lifecycle from here. Callers
-        // that want to force-stop the proc should call runtime.terminate()
-        // before breaking the for-await loop.
-        await allDone.catch(() => {});
+        dataDisposable.dispose();
+        live.notifyExit = null;
+        procs.delete(handle.sessionId);
       }
     },
 
@@ -263,14 +311,13 @@ export async function createClaudeCodeRuntime(
     async send(handle: SessionHandle, input: string): Promise<void> {
       const h = procs.get(handle.sessionId);
       if (!h) throw new Error(`no proc for session ${handle.sessionId}`);
-      const stdin = h.proc.stdin as import("bun").FileSink;
-      const line =
-        JSON.stringify({
-          type: "user",
-          message: { role: "user", content: input },
-        }) + "\n";
-      stdin.write(line);
-      await stdin.flush();
+      // Bracketed paste for multiline prevents embedded \n from triggering
+      // premature submission; single-line gets a bare CR (terminal Enter).
+      if (input.includes("\n")) {
+        h.pty.write(`\x1b[200~${input}\x1b[201~\r`);
+      } else {
+        h.pty.write(`${input}\r`);
+      }
     },
 
     // --- AgentRuntime.resolveResumeRef ---
@@ -410,11 +457,12 @@ export async function createClaudeCodeRuntime(
     // --- AgentRuntime.classifyEvent ---
     classifyEvent: classifyCcEvent,
 
-    // CC's --include-partial-messages emits one stream_event per delta —
-    // many thousands per long turn. Subscribers (the PWA's
-    // InFlightAssistantRow) need them live, but the canonical transcript
-    // record is the final `assistant` event that follows.
-    nonPersistedEventTypes: new Set(["stream_event"]),
+    // pty_output is the raw break-glass byte stream: high-volume and not a
+    // canonical structured transcript event. Broadcast it live over SSE (the
+    // xterm view consumes it) but keep it out of the JSONL so transcripts stay
+    // small and replays fast. (No stream_event records exist in PTY mode — the
+    // byte stream is never parsed — so it needs no entry here.)
+    nonPersistedEventTypes: new Set<string>(["pty_output"]),
 
     // --- AgentRuntime.mountRoutes ---
     mountRoutes(
@@ -442,20 +490,39 @@ export async function createClaudeCodeRuntime(
       (deps.manager as { getByCcSid: (ccSid: string) => Session | undefined }).getByCcSid =
         (ccSid: string) => origGet(ccSid) ?? lookupByCcSid(ccSid);
 
-      app.post(
-        "/hook/approval",
-        hookApprovalHandler({
-          manager: deps.manager,
-          getBunServer: deps.getBunServer,
-        }),
-      );
+      const hookDeps: HookHandlerDeps = {
+        manager: deps.manager,
+        getBunServer: deps.getBunServer,
+        subagentCounts,
+      };
+      app.post("/hook/permission", hookPermissionHandler(hookDeps));
+      app.post("/hook/tool", hookPostToolUseHandler(hookDeps));
+      app.post("/hook/stop", hookStopHandler(hookDeps));
+      app.post("/hook/session-start", hookSessionStartHandler(hookDeps));
+      app.post("/hook/session-end", hookSessionEndHandler(hookDeps));
+      app.post("/hook/notification", hookNotificationHandler(hookDeps));
+      app.post("/hook/subagent-start", hookSubagentStartHandler(hookDeps));
+      app.post("/hook/subagent-stop", hookSubagentStopHandler(hookDeps));
     },
 
-    // --- Legacy AppRuntime.buildSpawnCmd ---
-    buildSpawnCmd: (session: Session): Promise<SpawnCmd> => {
-      // Track the session so lookupByCcSid works in legacy mode.
-      oakridgeSidToSession.set(session.oakridgeSid, session);
-      return buildSpawnCmdFn(session);
+    // --- Legacy AppRuntime.buildSpawnCmd (registry-only adapter: refuse) ---
+    // The PTY billing transport is fundamentally incompatible with the legacy
+    // buildSpawnCmd + Session.spawn() path: that path JSON.parses every stdout
+    // line, but interactive `claude` (no --print/stream-json) emits raw TUI
+    // bytes, which would spew subprocess_stdout_parse_error continuously.
+    // Emitting --print/stream-json argv here to satisfy the parser is worse —
+    // --print routes the session through API-priced billing, defeating the A.1
+    // invariant this whole transport exists to enforce. So fail loud: this
+    // adapter is registry-only. SessionManager always takes the registry path
+    // when a registry is configured (server.ts wires both); this throw only
+    // fires if a manager is built with buildSpawnCmd and no registry.
+    buildSpawnCmd: (_session: Session): Promise<SpawnCmd> => {
+      throw new Error(
+        "claude-code adapter is registry-only: the PTY billing transport cannot " +
+          "use the legacy buildSpawnCmd + Session.spawn() stdout-parse path " +
+          "(it would either break on raw TUI bytes or fall back to API-priced " +
+          "--print). Configure SessionManager with opts.registry, not buildSpawnCmd.",
+      );
     },
   };
 
@@ -488,31 +555,4 @@ export async function createClaudeCodeRuntime(
   };
 
   return runtime;
-}
-
-async function* readLines(
-  stream: ReadableStream<Uint8Array>,
-): AsyncGenerator<string> {
-  const reader = stream.getReader();
-  const decoder = new TextDecoder();
-  let buf = "";
-  const trimCR = (s: string) => (s.endsWith("\r") ? s.slice(0, -1) : s);
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        buf += decoder.decode();
-        if (buf.length > 0) yield trimCR(buf);
-        return;
-      }
-      buf += decoder.decode(value, { stream: true });
-      let idx: number;
-      while ((idx = buf.indexOf("\n")) !== -1) {
-        yield trimCR(buf.slice(0, idx));
-        buf = buf.slice(idx + 1);
-      }
-    }
-  } finally {
-    reader.releaseLock();
-  }
 }

@@ -1,22 +1,19 @@
+import { realpathSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-
-import type { Session, SpawnCmd } from "../../core/session/session";
 
 /**
  * CC-specific spawn-command construction and settings-file generation.
  *
- * NOTE: This module is Claude Code-specific. It builds a `claude --print
- * --input-format stream-json ...` command line and writes the settings.json
- * file that registers the PreToolUse hook. In PR 3 of the restructure it
- * moves into kbbl/adapters/claude-code/ and is invoked through the
- * runtime-interface.ts AgentRuntime.spawn() contract.
+ * Builds the interactive `claude` command line (PTY launch; no --print /
+ * stream-json) and provides the A.1 billing invariant guard that must be
+ * satisfied before the PTY is opened.
  */
 
 export interface CcSettingsOpts {
   dataDir: string;
-  /** Absolute path to the PreToolUse gate script. */
-  gatePath: string;
+  /** HTTP port of the kbbl server — baked into hook URLs at settings-generation time. */
+  port: number;
 }
 
 /**
@@ -24,38 +21,53 @@ export interface CcSettingsOpts {
  * `--settings <path>`. Returns the absolute settings-file path.
  *
  * The file is regenerated on every server startup (no idempotence check)
- * so a moved gate script or relocated dataDir is picked up without operator
- * action.
+ * so a port change or relocated dataDir is picked up without operator action.
  *
- * The gate path is shell-quoted before serialization because CC executes
- * `hooks[].command` as a bash command. A checkout path containing spaces or
- * other shell-significant characters would otherwise be split by the shell
- * and break the approval gate.
+ * All eight CC hook events are registered as native type:http hooks POSTing
+ * to the kbbl server at the port known at settings-generation time. No shell
+ * wrapper (gate.sh) is involved — CC posts event JSON directly.
+ *
+ * permissions.allow pre-authorizes Agent(*) and Task(*) (Task is the legacy
+ * alias) so subagent delegation flows never hit the PermissionRequest hook.
+ * Everything else goes through the PermissionRequest hook for operator review.
  */
 export async function writeCcSettings(opts: CcSettingsOpts): Promise<string> {
   const settingsPath = join(opts.dataDir, "settings.json");
+  const base = `http://127.0.0.1:${opts.port}`;
+  function httpHook(route: string) {
+    return { type: "http", url: `${base}${route}` };
+  }
   await writeFile(
     settingsPath,
     JSON.stringify(
       {
         hooks: {
-          PreToolUse: [
+          PermissionRequest: [
             {
               matcher: ".*",
               hooks: [
                 {
-                  type: "command",
-                  command: shellQuote(opts.gatePath),
-                  // CC's default PreToolUse hook timeout (~10 min) silently
-                  // cancels the gate when the operator's away from the PWA;
-                  // the deny that comes back as "you haven't granted it yet"
-                  // confuses the agent. Match gate.sh's curl --max-time so
-                  // approval latency really is "time to tap".
+                  ...httpHook("/hook/permission"),
+                  // PermissionRequest blocks until the operator approves or denies.
+                  // Explicit 3600s matches the previous gate behavior so approval
+                  // latency is "time to tap" regardless of CC default changes.
                   timeout: 3600,
                 },
               ],
             },
           ],
+          PostToolUse: [
+            { matcher: ".*", hooks: [httpHook("/hook/tool")] },
+          ],
+          Stop: [{ hooks: [httpHook("/hook/stop")] }],
+          SessionStart: [{ hooks: [httpHook("/hook/session-start")] }],
+          SessionEnd: [{ hooks: [httpHook("/hook/session-end")] }],
+          Notification: [{ hooks: [httpHook("/hook/notification")] }],
+          SubagentStart: [{ hooks: [httpHook("/hook/subagent-start")] }],
+          SubagentStop: [{ hooks: [httpHook("/hook/subagent-stop")] }],
+        },
+        permissions: {
+          allow: ["Agent(*)", "Task(*)"],
         },
       },
       null,
@@ -66,16 +78,6 @@ export async function writeCcSettings(opts: CcSettingsOpts): Promise<string> {
 }
 
 /**
- * Wrap a string in single quotes for safe inclusion in a bash command.
- * Embedded single quotes are escaped via the standard `'\''` close-reopen
- * idiom. Single-quoted strings in bash don't interpret any metacharacters,
- * so wrapping is sufficient for any filesystem path.
- */
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
-/**
  * URL of the gated-review MCP server kbbl injects into every CC session.
  *
  * Mirrors the repo's committed `.mcp.json` — keep the two in sync. They exist
@@ -83,7 +85,7 @@ function shellQuote(value: string): string {
  * `.mcp.json` (a project setting source, loaded by default), but kbbl launches
  * CC with `--setting-sources user` — a deliberate gate-integrity choice, since
  * project setting sources can carry permission allowlists that would let a
- * session bypass the PreToolUse approval gate. That same flag excludes the
+ * session bypass the PermissionRequest hook gate. That same flag excludes the
  * project-scoped `.mcp.json`, so the server never registers in kbbl sessions
  * unless we load it through `--mcp-config`, which is independent of
  * `--setting-sources`. (oakridge-core's session_agent mirrors this URL.)
@@ -119,70 +121,112 @@ export async function writeCcMcpConfig(opts: {
   return mcpConfigPath;
 }
 
-export interface BuildSpawnCmdContext {
+export interface CcArgvOpts {
   claudeBin: string;
-  /** The server's HTTP port — passed to the gate via KBBL_PORT env var. */
-  port: number;
   /** Absolute path to the settings.json from writeCcSettings(). */
   settingsPath: string;
   /** Absolute path to the mcp-servers.json from writeCcMcpConfig(). */
   mcpConfigPath: string;
+  /** Pinned model, or null/omitted for CC's default. */
+  model?: string | null;
+  /** Parent CC session id to fork from (continue-in-place / live fork). */
+  parentCcSid?: string | null;
+  /**
+   * Forced CC session id (`--session-id`). The PTY transport assigns this
+   * before launch so the ccSid→oakridgeSid mapping is known by the time the
+   * first hook fires. Omit it and CC picks its own id.
+   */
+  sessionId?: string | null;
 }
 
 /**
- * Returns a function that constructs the per-session SpawnCmd consumed by
- * SessionManager. The returned closure captures the static context so the
- * manager only needs `(session) => Promise<SpawnCmd>`.
+ * Builds the interactive `claude` argv (PTY launch; no --print / stream-json).
+ *
+ * Pure and order-stable so it is testable in isolation and shared by the only
+ * production launcher (the AgentRuntime PTY `spawn()` path): the static prefix
+ * mirrors oakridge-core's build_argv for byte/arg parity, then optional
+ * `--session-id`, `--model`, and `--resume`/`--fork-session` in that order.
  */
-export function makeBuildSpawnCmd(
-  ctx: BuildSpawnCmdContext,
-): (session: Session) => Promise<SpawnCmd> {
-  return async function buildSpawnCmd(session: Session): Promise<SpawnCmd> {
-    const cmd = [
-      ctx.claudeBin,
-      "--print",
-      "--input-format",
-      "stream-json",
-      "--output-format",
-      "stream-json",
-      "--include-hook-events",
-      // Without partial-messages, kbbl only sees the final assistant message
-      // when the model is fully done — a long thinking phase is indistinguishable
-      // from a wedge. Partial events let the PWA stream incremental thinking +
-      // text and surface a live token counter.
-      "--include-partial-messages",
-      "--replay-user-messages",
-      "--verbose",
-      "--setting-sources",
-      "user",
-      "--settings",
-      ctx.settingsPath,
-      // Load the gated-review MCP server. `--setting-sources user` (above)
-      // excludes the project-scoped .mcp.json, so without this the server never
-      // registers in kbbl sessions. --strict-mcp-config makes the MCP set
-      // hermetic — exactly what kbbl declares, ignoring user/project configs and
-      // their needs-auth noise.
-      "--mcp-config",
-      ctx.mcpConfigPath,
-      "--strict-mcp-config",
-    ];
+export function buildCcArgv(opts: CcArgvOpts): string[] {
+  const argv = [
+    opts.claudeBin,
+    "--setting-sources",
+    "user",
+    "--settings",
+    opts.settingsPath,
+    // Load the gated-review MCP server. `--setting-sources user` (above)
+    // excludes the project-scoped .mcp.json, so without this the server never
+    // registers in kbbl sessions. --strict-mcp-config makes the MCP set
+    // hermetic — exactly what kbbl declares, ignoring user/project configs and
+    // their needs-auth noise.
+    "--mcp-config",
+    opts.mcpConfigPath,
+    "--strict-mcp-config",
+  ];
+  // Forced session id (PTY mode), assigned before launch. --fork-session below
+  // is required for CC to accept --session-id alongside --resume.
+  if (opts.sessionId) {
+    argv.push("--session-id", opts.sessionId);
+  }
+  if (opts.model) {
+    argv.push("--model", opts.model);
+  }
+  // Resume in a fresh session id so multiple live forks off the same parent
+  // don't collide on CC's internal session id.
+  if (opts.parentCcSid) {
+    argv.push("--resume", opts.parentCcSid, "--fork-session");
+  }
+  return argv;
+}
 
-    if (session.model) {
-      cmd.push("--model", session.model);
-    }
-    // Resume in a fresh session id so multiple live forks off the same parent
-    // don't collide on CC's internal session id.
-    if (session.parentCcSid) {
-      cmd.push("--resume", session.parentCcSid, "--fork-session");
-    }
-    return {
-      cmd,
-      cwd: session.workdir,
-      env: {
-        ...process.env,
-        KBBL_PORT: String(ctx.port),
-      } as Record<string, string>,
-    };
-  };
+/**
+ * A.1 billing invariant guard — must pass before the PTY is opened.
+ *
+ * Verifies:
+ *   1. No -p / --print in the argv (interactive mode only; print = metered API path).
+ *   2. ANTHROPIC_API_KEY is absent (subscription OAuth only; an API key forces
+ *      per-token billing regardless of the OAuth login state).
+ *   3. The binary resolves (via symlinks) to a path containing
+ *      @anthropic-ai/claude-code (the real subscription CLI, not an impostor).
+ *   4. Real TTY: guaranteed by the caller using bun-pty — this function
+ *      documents the invariant but cannot check it pre-spawn.
+ *
+ * Throws with an "A.1:" prefix on any violation so callers can surface the
+ * reason without additional parsing.
+ *
+ * Returns the realpath-resolved binary path so the caller spawns exactly the
+ * file that was validated. Spawning the un-resolved `claudeBin` instead would
+ * reopen the guard: a relative path validates against the server's lookup but,
+ * executed under the session's working directory, could resolve to a different
+ * binary — defeating invariant 3.
+ */
+export async function assertA1Invariants(opts: {
+  claudeBin: string;
+  argv: string[];
+  env: Record<string, string | undefined>;
+}): Promise<string> {
+  if (opts.argv.includes("-p") || opts.argv.includes("--print")) {
+    throw new Error("A.1: interactive mode forbids -p / --print in argv");
+  }
+  if (opts.env.ANTHROPIC_API_KEY !== undefined) {
+    throw new Error(
+      "A.1: ANTHROPIC_API_KEY is set — only subscription OAuth auth is permitted (unset the key)",
+    );
+  }
+  let resolvedBin: string;
+  try {
+    const fullPath = opts.claudeBin.startsWith("/")
+      ? opts.claudeBin
+      : (Bun.which(opts.claudeBin) ?? opts.claudeBin);
+    resolvedBin = realpathSync(fullPath);
+  } catch {
+    throw new Error(`A.1: cannot resolve binary '${opts.claudeBin}'`);
+  }
+  if (!/\/@anthropic-ai\/claude-code(\/|$)/.test(resolvedBin)) {
+    throw new Error(
+      `A.1: '${resolvedBin}' is not @anthropic-ai/claude-code — refusing to launch (interactive mode requires the subscription CLI)`,
+    );
+  }
+  return resolvedBin;
 }
 
