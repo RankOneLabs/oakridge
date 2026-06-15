@@ -234,7 +234,21 @@ export function ensureTranscriptTailer(
       // assistant payloads and, from the synthesized end_turn result payload
       // (which now carries stop_reason + usage), drives observeTurnEnd —
       // lastResultUsage, the usage_observation ring, compactor scheduling.
-      await classifyCcEvent(payload, session);
+      //
+      // Classification runs in its own try/catch so emit success isn't coupled
+      // to it: the line's uuid is already marked seen, so a classifier throw
+      // (e.g. a JSONL write failure inside observeTurnEnd) must not bubble up
+      // as an "emit failed" and silently strand the observation. Same
+      // separate-catch contract as the runtime stdout pump (session.ts).
+      try {
+        await classifyCcEvent(payload, session);
+      } catch (err) {
+        console.error(
+          `kbbl: transcript classifier failed [${session.oakridgeSid}]: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
       return record;
     },
     signal: session.endedSignal,
