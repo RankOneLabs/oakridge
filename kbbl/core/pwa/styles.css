@@ -319,7 +319,10 @@ body {
 .view-mode-toggle {
   display: flex;
   gap: 0.375rem;
-  padding-top: var(--top-bar-h, 0.5rem);
+  /* The sticky .top-bar is in normal flow, so this (first in-flow) element
+     sits below it already — a small fixed gap is enough; --top-bar-h would
+     add a spurious full-header-height of blank space. */
+  padding-top: 0.5rem;
   padding-bottom: 0.25rem;
 }
 
