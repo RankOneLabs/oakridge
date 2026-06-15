@@ -96,24 +96,90 @@ const HOOK_EVENT_NAMES: ReadonlySet<string> = new Set<HookEventName>([
   "SubagentStop",
 ]);
 
+/** Project-local Result — see kbbl/core/pwa/lib/result.ts for the same shape. */
+type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
+
 /**
- * Narrow a parsed JSON body into the HookInput union. Returns null for anything
- * that isn't an object with a string `session_id` and a recognized
- * `hook_event_name` — the per-event optional fields are passed through as-is
- * (CC owns their shape; we only gate on the discriminant and the always-present
- * session id).
+ * Trace context for a rejected hook body at the HTTP boundary. Carries the
+ * operation, the offending session id when one was present, and a human-readable
+ * detail so a dropped hook can be traced back to why the parser refused it
+ * (distinguishing a missing session_id from an unknown event from a malformed
+ * field — outcomes a bare `null` would have collapsed into one).
  */
-export function parseHookInput(raw: unknown): HookInput | null {
-  if (typeof raw !== "object" || raw === null) return null;
-  const obj = raw as Record<string, unknown>;
-  if (typeof obj.session_id !== "string") return null;
+export interface HookParseError {
+  operation: "parse_hook_input";
+  entity_id?: string;
+  detail: string;
+}
+
+function hookParseErr(
+  detail: string,
+  entity_id?: string,
+): Result<HookInput, HookParseError> {
+  return { ok: false, error: { operation: "parse_hook_input", entity_id, detail } };
+}
+
+function isOptionalString(value: unknown): value is string | undefined {
+  return value === undefined || typeof value === "string";
+}
+
+function isOptionalBoolean(value: unknown): value is boolean | undefined {
+  return value === undefined || typeof value === "boolean";
+}
+
+/**
+ * Narrow a parsed JSON body into the HookInput union at the HTTP boundary.
+ * Returns an `Err` carrying trace context for anything that isn't an object
+ * with a string `session_id`, a recognized `hook_event_name`, and well-typed
+ * optional fields — `tool_name`/`tool_use_id`/`transcript_path`/`cwd` must be
+ * strings when present and `stop_hook_active` a boolean, so a non-string tool
+ * name can't masquerade as typed hook data downstream. Returns `Ok(hook)` once
+ * the discriminant and every field downstream code treats as typed validate.
+ */
+export function parseHookInput(raw: unknown): Result<HookInput, HookParseError> {
+  if (typeof raw !== "object" || raw === null) {
+    return hookParseErr("body is not a JSON object");
+  }
+  const obj = raw as {
+    session_id?: unknown;
+    hook_event_name?: unknown;
+    tool_name?: unknown;
+    tool_use_id?: unknown;
+    transcript_path?: unknown;
+    cwd?: unknown;
+    stop_hook_active?: unknown;
+  };
+  if (typeof obj.session_id !== "string") {
+    return hookParseErr("missing or non-string session_id");
+  }
   if (
     typeof obj.hook_event_name !== "string" ||
     !HOOK_EVENT_NAMES.has(obj.hook_event_name)
   ) {
-    return null;
+    return hookParseErr(
+      `unrecognized hook_event_name: ${String(obj.hook_event_name)}`,
+      obj.session_id,
+    );
   }
-  return obj as unknown as HookInput;
+  if (!isOptionalString(obj.transcript_path) || !isOptionalString(obj.cwd)) {
+    return hookParseErr(
+      "transcript_path/cwd must be strings when present",
+      obj.session_id,
+    );
+  }
+  if (!isOptionalString(obj.tool_name) || !isOptionalString(obj.tool_use_id)) {
+    return hookParseErr(
+      "tool_name/tool_use_id must be strings when present",
+      obj.session_id,
+    );
+  }
+  if (!isOptionalBoolean(obj.stop_hook_active)) {
+    return hookParseErr(
+      "stop_hook_active must be a boolean when present",
+      obj.session_id,
+    );
+  }
+  return { ok: true, value: obj as unknown as HookInput };
 }
 
 export interface HookHandlerDeps {
@@ -156,17 +222,15 @@ export function hookPermissionHandler(deps: HookHandlerDeps) {
     } catch {
       return c.json({ error: "invalid json" }, 400);
     }
-    const hook = parseHookInput(raw);
-    if (!hook || hook.hook_event_name !== "PermissionRequest") {
-      return c.json(
-        {
-          error: `unexpected hook_event_name: ${
-            (raw as { hook_event_name?: unknown } | null)?.hook_event_name
-          }`,
-        },
-        400,
-      );
+    const parsed = parseHookInput(raw);
+    if (!parsed.ok || parsed.value.hook_event_name !== "PermissionRequest") {
+      const detail = parsed.ok
+        ? `unexpected hook_event_name: ${parsed.value.hook_event_name}`
+        : parsed.error.detail;
+      console.error(`kbbl: /hook/permission rejected body: ${detail}`);
+      return c.json({ error: detail }, 400);
     }
+    const hook = parsed.value;
 
     const session = await resolveSessionForHook(deps.manager, hook.session_id);
     if (!session) {
@@ -346,10 +410,11 @@ export function hookSubagentStopHandler(deps: HookHandlerDeps) {
     } catch {
       return c.json({}, 200);
     }
-    const hook = parseHookInput(raw);
-    if (!hook || hook.hook_event_name !== "SubagentStop") {
+    const parsed = parseHookInput(raw);
+    if (!parsed.ok || parsed.value.hook_event_name !== "SubagentStop") {
       return c.json({}, 200);
     }
+    const hook = parsed.value;
 
     const session = await resolveSessionForHook(deps.manager, hook.session_id);
     if (session) {
@@ -405,10 +470,11 @@ function makeInformationalHandler(
     } catch {
       return c.json({}, 200);
     }
-    const hook = parseHookInput(raw);
-    if (!hook || hook.hook_event_name !== expectedHookEvent) {
+    const parsed = parseHookInput(raw);
+    if (!parsed.ok || parsed.value.hook_event_name !== expectedHookEvent) {
       return c.json({}, 200);
     }
+    const hook = parsed.value;
 
     // resolveSessionForHook absorbs the hooks/stdout race: informational hooks
     // can fire before system/init has established the ccSid→oakridgeSid mapping.

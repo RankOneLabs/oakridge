@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { EnvelopeEvent, Session, SessionStatus } from "../../core/session/session";
-import { hookPermissionHandler, hookSubagentStopHandler, hookPostToolUseHandler } from "./hook-route";
+import { hookPermissionHandler, hookSubagentStopHandler, hookPostToolUseHandler, parseHookInput } from "./hook-route";
 import type { SessionManager } from "../../core/session/session-manager";
 
 let tmpRoot: string;
@@ -77,6 +77,57 @@ function makeCtx(body: unknown) {
     text: (b: string, status?: number) => new Response(b, { status: status ?? 200 }),
   };
 }
+
+describe("parseHookInput: traced Result at the HTTP boundary", () => {
+  test("Ok for a well-formed PermissionRequest body", () => {
+    const result = parseHookInput({
+      hook_event_name: "PermissionRequest",
+      session_id: CC_SID,
+      tool_name: "Write",
+      tool_use_id: "tu-1",
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.hook_event_name).toBe("PermissionRequest");
+      expect(result.value.session_id).toBe(CC_SID);
+    }
+  });
+
+  test("Err with trace context for a non-object body", () => {
+    const result = parseHookInput("not json");
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.operation).toBe("parse_hook_input");
+      expect(result.error.detail).toContain("not a JSON object");
+    }
+  });
+
+  test("Err for a missing session_id, distinct from an unknown event", () => {
+    const noSid = parseHookInput({ hook_event_name: "Stop" });
+    const badEvent = parseHookInput({ hook_event_name: "Nope", session_id: CC_SID });
+    expect(noSid.ok).toBe(false);
+    expect(badEvent.ok).toBe(false);
+    if (!noSid.ok) expect(noSid.error.detail).toContain("session_id");
+    if (!badEvent.ok) {
+      expect(badEvent.error.detail).toContain("hook_event_name");
+      // entity_id carries the session id once it is known.
+      expect(badEvent.error.entity_id).toBe(CC_SID);
+    }
+  });
+
+  test("Err when a typed optional field has the wrong type", () => {
+    const result = parseHookInput({
+      hook_event_name: "PostToolUse",
+      session_id: CC_SID,
+      tool_name: 42,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.detail).toContain("tool_name");
+      expect(result.error.entity_id).toBe(CC_SID);
+    }
+  });
+});
 
 describe("hookPermissionHandler: yolo auto-approves", () => {
   test("yolo session auto-approves any tool", async () => {
