@@ -13,6 +13,7 @@ import { watch, type FSWatcher } from "node:fs";
 import { open, stat } from "node:fs/promises";
 
 import type { Session } from "../../core/session/session";
+import { classifyCcEvent } from "./event-classifier";
 import { transcriptEntryToEvents } from "./transcript";
 
 const NEWLINE = 0x0a;
@@ -78,7 +79,21 @@ export function startTranscriptTailer(opts: TailerOpts): TailerHandle {
       seenUuids.add(uuid);
     }
     for (const evt of transcriptEntryToEvents(parsed)) {
-      await emit(evt.type, evt.payload);
+      if (disposed) return;
+      // drain() is fired with `void drain()` (scheduleDrain), so a rejected
+      // emit would surface as an unhandled rejection AND halt forward
+      // processing of the remaining events. Contain it here: log and continue,
+      // so one transient emit failure (disk error, emitQueue hiccup) can't
+      // stall the tailer for the rest of the session.
+      try {
+        await emit(evt.type, evt.payload);
+      } catch (err) {
+        console.error(
+          `kbbl: transcript emit failed [${label}] type=${evt.type}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
     }
   };
 
@@ -211,7 +226,17 @@ export function ensureTranscriptTailer(
   tailing.add(session);
   startTranscriptTailer({
     path: transcriptPath,
-    emit: (type, payload) => session.emit(type, payload),
+    emit: async (type, payload) => {
+      const record = await session.emit(type, payload);
+      // Mirror the legacy stdout path: after emit, run the CC classifier so
+      // the runtime-observed side effects still fire in PTY mode (where there
+      // is no stdout stream-json to classify). It updates observedModel from
+      // assistant payloads and, from the synthesized end_turn result payload
+      // (which now carries stop_reason + usage), drives observeTurnEnd —
+      // lastResultUsage, the usage_observation ring, compactor scheduling.
+      await classifyCcEvent(payload, session);
+      return record;
+    },
     signal: session.endedSignal,
     label: session.oakridgeSid,
   });

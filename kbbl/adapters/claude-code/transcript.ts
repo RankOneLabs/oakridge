@@ -100,17 +100,21 @@ export function parseTranscriptEntry(raw: unknown): TranscriptEntry | null {
   return raw as TranscriptEntry;
 }
 
-/** Project the Anthropic usage bag down to the four ResultUsage fields. */
+/**
+ * Project the Anthropic usage bag down to the four ResultUsage fields. Always
+ * returns a fully-numeric ResultUsage — a missing or partial usage bag yields
+ * zeros, never `undefined` — so the synthesized result payload never violates
+ * the numeric-field contract downstream metrics consumers rely on.
+ */
 function projectUsage(
   usage: TranscriptAssistantMessage["usage"],
-): ResultUsage | undefined {
-  if (!usage) return undefined;
+): ResultUsage {
   const num = (v: unknown): number => (typeof v === "number" ? v : 0);
   return {
-    input_tokens: num(usage.input_tokens),
-    output_tokens: num(usage.output_tokens),
-    cache_creation_input_tokens: num(usage.cache_creation_input_tokens),
-    cache_read_input_tokens: num(usage.cache_read_input_tokens),
+    input_tokens: num(usage?.input_tokens),
+    output_tokens: num(usage?.output_tokens),
+    cache_creation_input_tokens: num(usage?.cache_creation_input_tokens),
+    cache_read_input_tokens: num(usage?.cache_read_input_tokens),
   };
 }
 
@@ -152,9 +156,20 @@ export function transcriptEntryToEvents(raw: unknown): EmittedEvent[] {
       { type: "assistant", payload: { type: "assistant", message } },
     ];
     if (message.stop_reason === "end_turn") {
+      // Carry stop_reason + content (the assistant message's blocks) onto the
+      // synthesized result, matching the legacy CC result-event shape. Internal
+      // consumers depend on both: extractCompactMarkdown filters on
+      // stop_reason === "end_turn" and concatenates the text blocks of
+      // `content`, and the CC classifier reads stop_reason + usage to drive
+      // observeTurnEnd / compactor scheduling. usage rides along for metrics.
       events.push({
         type: "result",
-        payload: { type: "result", usage: projectUsage(message.usage) },
+        payload: {
+          type: "result",
+          stop_reason: "end_turn",
+          content: message.content,
+          usage: projectUsage(message.usage),
+        },
       });
     }
     return events;

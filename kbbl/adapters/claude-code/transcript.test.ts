@@ -87,11 +87,15 @@ describe("transcriptEntryToEvents", () => {
     });
   });
 
-  test("emits a result with projected usage on end_turn", () => {
+  test("emits a result carrying stop_reason, content, and projected usage on end_turn", () => {
     const events = transcriptEntryToEvents(assistantEndTurnLine);
     expect(events.map((e) => e.type)).toEqual(["assistant", "result"]);
+    // stop_reason + content are what extractCompactMarkdown and the CC
+    // classifier read; usage feeds the metrics strip.
     expect(events[1].payload).toEqual({
       type: "result",
+      stop_reason: "end_turn",
+      content: [{ type: "text", text: "Done." }],
       usage: {
         input_tokens: 5,
         output_tokens: 50,
@@ -140,6 +144,28 @@ describe("transcriptEntryToEvents", () => {
     const events = transcriptEntryToEvents(line);
     expect(events[1].payload).toEqual({
       type: "result",
+      stop_reason: "end_turn",
+      content: [],
+      usage: {
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+      },
+    });
+  });
+
+  test("result usage is fully numeric even when the usage bag is absent", () => {
+    const line = {
+      type: "assistant",
+      uuid: "a-4",
+      message: { role: "assistant", stop_reason: "end_turn", content: [] },
+    };
+    const events = transcriptEntryToEvents(line);
+    expect(events[1].payload).toEqual({
+      type: "result",
+      stop_reason: "end_turn",
+      content: [],
       usage: {
         input_tokens: 0,
         output_tokens: 0,

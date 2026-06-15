@@ -120,7 +120,8 @@ describe("startTranscriptTailer", () => {
       line({ type: "user", uuid: "u3", message: { role: "user", content: "a" } }),
     );
     await waitFor(() => emitted.length >= 1);
-    handle!.dispose();
+    if (!handle) throw new Error("tailer handle not initialized");
+    handle.dispose();
     appendFileSync(
       path,
       line({ type: "user", uuid: "u4", message: { role: "user", content: "b" } }),
