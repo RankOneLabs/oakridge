@@ -166,4 +166,44 @@ describe("startTranscriptTailer", () => {
     await new Promise((r) => setTimeout(r, 300));
     expect(emitted).toHaveLength(1);
   });
+
+  test("drainNow awaits a pending drain to quiescence before returning", async () => {
+    // Write content before starting the tailer so the first drain catches it.
+    const lines: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      lines.push(line({ type: "user", uuid: `dn${i}`, message: { role: "user", content: "x" } }));
+    }
+    writeFileSync(path, lines.join(""));
+    start();
+
+    if (!handle) throw new Error("tailer handle not initialized");
+    // drainNow must await until all pending content is processed.
+    await handle.drainNow();
+    // All 5 lines must be emitted before drainNow resolves.
+    expect(emitted.length).toBeGreaterThanOrEqual(5);
+  });
+
+  test("drainNow picks up content appended while a drain is already in flight", async () => {
+    writeFileSync(path, "");
+    start();
+
+    // Schedule two concurrent drains; the second must see content written after
+    // the first started.
+    appendFileSync(
+      path,
+      line({ type: "user", uuid: "d1", message: { role: "user", content: "first" } }),
+    );
+    if (!handle) throw new Error("tailer handle not initialized");
+    const p1 = handle.drainNow();
+    // Append more content while the drain is in flight.
+    appendFileSync(
+      path,
+      line({ type: "user", uuid: "d2", message: { role: "user", content: "second" } }),
+    );
+    const p2 = handle.drainNow();
+
+    await Promise.all([p1, p2]);
+    // Both lines must be present after both drains settle.
+    expect(emitted.map((e) => e.type)).toEqual(["user", "user"]);
+  });
 });

@@ -236,6 +236,12 @@ export class Session {
   // wiring the pumps + exitPromise) can wait for wiring to complete
   // instead of racing finalize() against still-running spawn code.
   private _spawnPromise: Promise<void> | null = null;
+  // Turn-state and pending input queue for the attached-runtime path (CC PTY).
+  // turnState gates the queue: only one operator message goes to the PTY at a
+  // time; the next waits for the Stop hook to call notifyTurnEnd(). Internal
+  // writes (compaction, handoff) bypass both fields entirely.
+  private turnState: "idle" | "busy" = "idle";
+  private pendingInput: string[] = [];
   // Aborts when finalize() runs so long-lived consumers (SSE streams,
   // subscribers) can exit their loops instead of hanging on a dead session.
   private readonly endedController = new AbortController();
@@ -537,6 +543,8 @@ export class Session {
   markLive(): void {
     if (this._status !== "compacting") return;
     this.setStatus("live");
+    // Flush any messages queued during compaction now that the session is live.
+    this.pumpInputQueue();
   }
 
   snapshot(): SessionSnapshot {
@@ -695,6 +703,8 @@ export class Session {
     if (handle.resolvedModel) await this.observeRuntimeModel(handle.resolvedModel);
 
     this.setStatus("live");
+    // Flush any messages that were queued before the session became live.
+    this.pumpInputQueue();
 
     this.flushInterval = setInterval(() => {
       if (this.flushInterval === null || this._status === "ended") return;
@@ -972,6 +982,8 @@ export class Session {
         );
       }
     }
+    // Drop any undelivered queued messages — the subprocess is gone.
+    this.pendingInput = [];
     // Flip status BEFORE draining so any emit() racing with finalize sees
     // the ended flag and short-circuits instead of queueing new writes
     // onto a writer we're about to close.
@@ -1046,6 +1058,44 @@ export class Session {
     }
   }
 
+  /**
+   * Single entry point that advances the pending-input queue by one message.
+   * All synchronous state mutations happen before any await (shift + turnState)
+   * so concurrent calls from writeInput and notifyTurnEnd can't both pass the
+   * guard and double-send. Only applies to the attached-runtime path without
+   * synthesizeUserInputEvents (i.e., CC PTY mode); other paths never enqueue.
+   */
+  private pumpInputQueue(): void {
+    if (
+      this._status !== "live" ||
+      this.turnState !== "idle" ||
+      this.pendingInput.length === 0
+    ) return;
+    if (this._runtime === null || this._handle === null) return;
+    // Claim the message and transition to busy before any await. JS is
+    // single-threaded, so this block is atomic with respect to other callers.
+    const msg = this.pendingInput.shift() as string; // length > 0 checked above
+    this.turnState = "busy";
+    const runtime = this._runtime;
+    const handle = this._handle;
+    const task = async () => {
+      await runtime.send(handle, msg);
+    };
+    this.inputQueue = this.inputQueue.then(task, task);
+  }
+
+  /**
+   * Called by the CC adapter's Stop hook handler when the main agent finishes
+   * a turn. Sets turn-state to idle and pumps the next queued message (if any).
+   * Idempotent: calling while already idle just re-pumps (no-op when queue is
+   * empty). The Stop hook guarantees exactly one call per turn, so no debounce
+   * or dedup is needed here.
+   */
+  notifyTurnEnd(): void {
+    this.turnState = "idle";
+    this.pumpInputQueue();
+  }
+
   async writeInput(
     text: string,
     opts: { internal?: boolean } = {},
@@ -1057,9 +1107,20 @@ export class Session {
     // shared session-level flag) makes the gate per-call so an external
     // POST during compaction can't piggy-back on runCompact's
     // authorization.
+    //
+    // External attached-runtime writes without synthesizeUserInputEvents (CC
+    // PTY mode) are additionally accepted during "compacting": they are queued
+    // and flushed once the session returns to "live" via markLive(). The
+    // attached check is inside the block below — this outer gate accepts
+    // "compacting" only when that condition would hold.
     const isInternal = opts.internal === true;
+    const isAttachedExternal =
+      !isInternal &&
+      this._runtime !== null &&
+      this._handle !== null &&
+      this._runtime.synthesizeUserInputEvents !== true;
     const allowedDuringCompacting =
-      this._status === "compacting" && isInternal;
+      this._status === "compacting" && (isInternal || isAttachedExternal);
     // Accept writes when using the attached runtime path too (no proc).
     const hasWriteTarget = this.proc !== null || (this._runtime !== null && this._handle !== null);
     if (
@@ -1069,21 +1130,52 @@ export class Session {
       throw new SessionNotReadyError();
     }
 
-    // Attached-runtime path: delegate to runtime.send().
+    // Attached-runtime path.
     if (this._runtime !== null && this._handle !== null) {
       const runtime = this._runtime;
       const handle = this._handle;
-      const task = async () => {
-        if (!isInternal && runtime.synthesizeUserInputEvents === true) {
+
+      if (isInternal) {
+        // Internal writes bypass the turn queue: compaction prompts and
+        // handoff delivery are not operator turns and must not be held.
+        const task = async () => { await runtime.send(handle, text); };
+        this.inputQueue = this.inputQueue.then(task, task);
+        await this.inputQueue;
+        return;
+      }
+
+      if (runtime.synthesizeUserInputEvents === true) {
+        // synthesizeUserInputEvents runtimes (Codex) use the immediate send
+        // path — unchanged from pre-queue behavior. Codex has no Stop hook so
+        // the turn-state machine is never driven; queuing would deadlock.
+        const task = async () => {
           await this.emit("user", {
             type: "user",
             message: { role: "user", content: text },
           });
+          await runtime.send(handle, text);
+        };
+        this.inputQueue = this.inputQueue.then(task, task);
+        if (this._compactor) {
+          try {
+            this._compactor.observeUserMessage();
+          } catch (err) {
+            console.error(
+              `kbbl: compactor.observeUserMessage threw: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            );
+          }
         }
-        await runtime.send(handle, text);
-      };
-      this.inputQueue = this.inputQueue.then(task, task);
-      if (!isInternal && this._compactor) {
+        await this.inputQueue;
+        return;
+      }
+
+      // External CC-style write: push onto the pending queue. Return once
+      // accepted — do not await delivery to the PTY. pumpInputQueue() will
+      // send immediately if the turn is idle, or defer until notifyTurnEnd().
+      this.pendingInput.push(text);
+      if (this._compactor) {
         try {
           this._compactor.observeUserMessage();
         } catch (err) {
@@ -1094,10 +1186,12 @@ export class Session {
           );
         }
       }
-      await this.inputQueue;
+      this.pumpInputQueue();
       return;
     }
 
+    // Legacy stdin/Bun.spawn path — no turn queue (behavior unchanged).
+    // proc is non-null here: hasWriteTarget passed and runtime/handle are null.
     const stdin = this.proc!.stdin as import("bun").FileSink;
     const task = async () => {
       const line =

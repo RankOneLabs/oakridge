@@ -30,7 +30,9 @@ import {
   hookSubagentStartHandler,
   hookSubagentStopHandler,
   type HookHandlerDeps,
+  type CcTurnTracker,
 } from "./hook-route";
+import { projectUsage, type TranscriptAssistantMessage } from "./transcript";
 import { assertA1Invariants, buildCcArgv, writeCcMcpConfig, writeCcSettings } from "./spawn";
 
 export interface CreateClaudeCodeRuntimeOpts {
@@ -72,6 +74,39 @@ const CC_DESCRIPTOR: RuntimeDescriptor = {
 };
 
 /**
+ * Apply a single transcript event to a CcTurnTracker. Pure function; exported
+ * so it can be unit-tested independently of the factory closure.
+ *
+ * - `user` with string content → new operator turn started; reset resultedThisTurn.
+ * - `user` with array content → tool_result block, not a turn start; no reset.
+ * - `assistant` with usage → update lastAssistantUsage for the synthetic result.
+ * - `result` → mark resultedThisTurn = true (a real result was already emitted).
+ */
+export function updateCcTurnTracker(
+  tracker: CcTurnTracker,
+  type: string,
+  payload: unknown,
+): void {
+  if (type === "user") {
+    // String content = operator message (new turn start).
+    // Array content = tool_result block; not a new operator turn.
+    const msg = (payload as { message?: { content?: unknown } })?.message;
+    if (typeof msg?.content === "string") {
+      tracker.resultedThisTurn = false;
+    }
+  } else if (type === "assistant") {
+    const msg = (payload as { message?: { usage?: unknown } })?.message;
+    if (msg?.usage !== undefined) {
+      tracker.lastAssistantUsage = projectUsage(
+        msg.usage as TranscriptAssistantMessage["usage"],
+      );
+    }
+  } else if (type === "result") {
+    tracker.resultedThisTurn = true;
+  }
+}
+
+/**
  * Constructs the Claude Code adapter. The async factory writes the CC
  * settings.json (so the spawn flag `--settings <path>` resolves) and
  * captures the static spawn context. The returned object implements both
@@ -105,6 +140,7 @@ export async function createClaudeCodeRuntime(
     }
     oakridgeSidToSession.delete(session.oakridgeSid);
     subagentCounts.delete(session.oakridgeSid);
+    turnTrackers.delete(session.oakridgeSid);
   }
 
   function lookupByCcSid(ccSid: string): Session | undefined {
@@ -118,6 +154,21 @@ export async function createClaudeCodeRuntime(
   // === billing observability (A.7) ===
   // Cumulative SubagentStop count per oakridgeSid for this server lifetime.
   const subagentCounts = new Map<string, number>();
+
+  // === per-session turn/result tracker ===
+  // Keyed by oakridgeSid. Maintained by the tailer emit callback (via
+  // onTranscriptEvent → updateTurnTracker) and read/written by the Stop handler.
+  const turnTrackers = new Map<string, CcTurnTracker>();
+
+  function updateTurnTracker(
+    oakridgeSid: string,
+    type: string,
+    payload: unknown,
+  ): void {
+    const tracker = turnTrackers.get(oakridgeSid);
+    if (!tracker) return;
+    updateCcTurnTracker(tracker, type, payload);
+  }
 
   // === AgentRuntime implementation ===
 
@@ -311,12 +362,19 @@ export async function createClaudeCodeRuntime(
     async send(handle: SessionHandle, input: string): Promise<void> {
       const h = procs.get(handle.sessionId);
       if (!h) throw new Error(`no proc for session ${handle.sessionId}`);
+      // Ctrl-U (\x15) clears any stale text CC may have left in its input
+      // box. With the input queue in place, CC is idle when we write, so the
+      // box is always empty — this is belt-and-suspenders for legacy stuck
+      // sessions only. Manual test (§3.5) confirmed it does not munge normal
+      // single-line input. Remove this prefix if it causes problems with a
+      // future CC version that interprets Ctrl-U differently.
+      //
       // Bracketed paste for multiline prevents embedded \n from triggering
       // premature submission; single-line gets a bare CR (terminal Enter).
       if (input.includes("\n")) {
-        h.pty.write(`\x1b[200~${input}\x1b[201~\r`);
+        h.pty.write(`\x15\x1b[200~${input}\x1b[201~\r`);
       } else {
-        h.pty.write(`${input}\r`);
+        h.pty.write(`\x15${input}\r`);
       }
     },
 
@@ -494,6 +552,10 @@ export async function createClaudeCodeRuntime(
         manager: deps.manager,
         getBunServer: deps.getBunServer,
         subagentCounts,
+        turnTrackers,
+        onTranscriptEvent: (session, type, payload) => {
+          updateTurnTracker(session.oakridgeSid, type, payload);
+        },
       };
       app.post("/hook/permission", hookPermissionHandler(hookDeps));
       app.post("/hook/tool", hookPostToolUseHandler(hookDeps));
@@ -552,6 +614,7 @@ export async function createClaudeCodeRuntime(
     trackSession: (s: Session) => void;
   }).trackSession = (s: Session) => {
     oakridgeSidToSession.set(s.oakridgeSid, s);
+    turnTrackers.set(s.oakridgeSid, { resultedThisTurn: false, lastAssistantUsage: null });
   };
 
   return runtime;

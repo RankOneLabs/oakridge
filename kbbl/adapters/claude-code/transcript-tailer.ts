@@ -32,6 +32,13 @@ const MAX_READ_CHUNK = 64 * 1024;
 
 export interface TailerHandle {
   dispose: () => void;
+  /**
+   * Force a drain right now and await it to quiescence. If a drain is already
+   * in flight, chains on the same promise so the caller sees the full settled
+   * state — never returns early. Used by the Stop hook handler to flush any
+   * end_turn line CC just wrote before deciding whether to synthesize a result.
+   */
+  drainNow: () => Promise<void>;
 }
 
 interface TailerOpts {
@@ -64,6 +71,9 @@ export function startTranscriptTailer(opts: TailerOpts): TailerHandle {
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   let watcher: FSWatcher | null = null;
   let poll: ReturnType<typeof setInterval> | null = null;
+  // Tracks the active drain promise so drainNow can chain on it rather than
+  // returning early when a drain is already in flight.
+  let drainPromise: Promise<void> | null = null;
 
   const processLine = async (line: string): Promise<void> => {
     const trimmed = line.trim();
@@ -189,20 +199,29 @@ export function startTranscriptTailer(opts: TailerOpts): TailerHandle {
     }
   };
 
-  const drain = async (): Promise<void> => {
+  const drain = (): Promise<void> => {
     if (draining) {
+      // A drain is in flight. Set drainAgain so the loop iterates at least
+      // once more (picks up content written after the current drainOnce
+      // started). Return the running promise so callers (drainNow) can
+      // await quiescence rather than returning early.
       drainAgain = true;
-      return;
+      return drainPromise ?? Promise.resolve();
     }
     draining = true;
-    try {
-      do {
-        drainAgain = false;
-        await drainOnce();
-      } while (drainAgain && !disposed);
-    } finally {
-      draining = false;
-    }
+    const p = (async () => {
+      try {
+        do {
+          drainAgain = false;
+          await drainOnce();
+        } while (drainAgain && !disposed);
+      } finally {
+        draining = false;
+        drainPromise = null;
+      }
+    })();
+    drainPromise = p;
+    return p;
   };
 
   const scheduleDrain = (): void => {
@@ -212,6 +231,16 @@ export function startTranscriptTailer(opts: TailerOpts): TailerHandle {
       debounceTimer = null;
       void drain();
     }, DEBOUNCE_MS);
+  };
+
+  const drainNow = (): Promise<void> => {
+    // Cancel any pending debounce so we drain immediately, not after the
+    // debounce window.
+    if (debounceTimer !== null) {
+      clearTimeout(debounceTimer);
+      debounceTimer = null;
+    }
+    return drain();
   };
 
   const dispose = (): void => {
@@ -225,7 +254,7 @@ export function startTranscriptTailer(opts: TailerOpts): TailerHandle {
 
   if (signal.aborted) {
     // Session already ended before we got here; nothing to tail.
-    return { dispose: () => {} };
+    return { dispose: () => {}, drainNow: () => Promise.resolve() };
   }
   signal.addEventListener("abort", dispose, { once: true });
 
@@ -242,26 +271,31 @@ export function startTranscriptTailer(opts: TailerOpts): TailerHandle {
   // a touch after CC's first writes) are picked up without waiting a poll.
   scheduleDrain();
 
-  return { dispose };
+  return { dispose, drainNow };
 }
 
-// One tailer per session for this server lifetime. A WeakSet keyed by the
-// Session keeps the "already started" flag off the Session's own surface and
-// lets it be collected with the session.
-const tailing = new WeakSet<Session>();
+// One tailer per session for this server lifetime. WeakMap keyed by Session so
+// the handle can be retrieved for drainNow() calls, and so both map and handle
+// are collected when the session is GC'd.
+const tailing = new WeakMap<Session, TailerHandle>();
 
 /**
  * Idempotently start a transcript tailer for `session`. Safe to call from
  * every hook that carries a transcript_path — the first call wins; later calls
  * are no-ops. Disposal is wired to the session's ended signal.
+ *
+ * @param onEventClassified - Optional callback invoked after each event is
+ *   emitted and classified. Used by the CC adapter to update its per-session
+ *   turn tracker (resultedThisTurn, lastAssistantUsage) without pulling the
+ *   tracker into this module.
  */
 export function ensureTranscriptTailer(
   session: Session,
   transcriptPath: string,
+  onEventClassified?: (type: string, payload: unknown) => void,
 ): void {
   if (tailing.has(session)) return;
-  tailing.add(session);
-  startTranscriptTailer({
+  const handle = startTranscriptTailer({
     path: transcriptPath,
     emit: async (type, payload) => {
       const record = await session.emit(type, payload);
@@ -286,9 +320,33 @@ export function ensureTranscriptTailer(
           }`,
         );
       }
+      if (onEventClassified) {
+        try {
+          onEventClassified(type, payload);
+        } catch (err) {
+          console.error(
+            `kbbl: turn tracker update failed [${session.oakridgeSid}]: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+      }
       return record;
     },
     signal: session.endedSignal,
     label: session.oakridgeSid,
   });
+  tailing.set(session, handle);
+}
+
+/**
+ * Force-drain the transcript tailer for `session` and await quiescence.
+ * Called by the Stop hook handler before deciding whether to synthesize a
+ * result, so any end_turn line CC just wrote is processed first. Resolves
+ * immediately if no tailer is registered (session may have ended).
+ */
+export async function drainTranscript(session: Session): Promise<void> {
+  const handle = tailing.get(session);
+  if (!handle) return;
+  await handle.drainNow();
 }
