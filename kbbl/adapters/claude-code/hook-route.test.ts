@@ -371,22 +371,26 @@ describe("hookStopHandler: Stop drives turn-end and result synthesis", () => {
 });
 
 describe("updateCcTurnTracker: turn tracker state machine", () => {
-  test("string-content user event resets resultedThisTurn", () => {
-    const tracker: CcTurnTracker = { resultedThisTurn: true, lastAssistantUsage: null };
+  test("string-content user event resets resultedThisTurn and lastAssistantUsage", () => {
+    const prevUsage = { input_tokens: 10, output_tokens: 5, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+    const tracker: CcTurnTracker = { resultedThisTurn: true, lastAssistantUsage: prevUsage };
     updateCcTurnTracker(tracker, "user", {
       type: "user",
       message: { role: "user", content: "hello" },
     });
     expect(tracker.resultedThisTurn).toBe(false);
+    expect(tracker.lastAssistantUsage).toBeNull();
   });
 
-  test("array-content user event (tool_result) does NOT reset resultedThisTurn", () => {
-    const tracker: CcTurnTracker = { resultedThisTurn: true, lastAssistantUsage: null };
+  test("array-content user event (tool_result) does NOT reset resultedThisTurn or lastAssistantUsage", () => {
+    const prevUsage = { input_tokens: 10, output_tokens: 5, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+    const tracker: CcTurnTracker = { resultedThisTurn: true, lastAssistantUsage: prevUsage };
     updateCcTurnTracker(tracker, "user", {
       type: "user",
       message: { role: "user", content: [{ type: "tool_result", tool_use_id: "x" }] },
     });
     expect(tracker.resultedThisTurn).toBe(true); // unchanged
+    expect(tracker.lastAssistantUsage).toBe(prevUsage); // unchanged
   });
 
   test("assistant event with usage updates lastAssistantUsage", () => {

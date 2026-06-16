@@ -229,7 +229,13 @@ export function startTranscriptTailer(opts: TailerOpts): TailerHandle {
     if (debounceTimer !== null) return;
     debounceTimer = setTimeout(() => {
       debounceTimer = null;
-      void drain();
+      drain().catch((err) => {
+        console.error(
+          `kbbl: transcript drain failed [${label}]: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      });
     }, DEBOUNCE_MS);
   };
 
@@ -336,6 +342,11 @@ export function ensureTranscriptTailer(
     signal: session.endedSignal,
     label: session.oakridgeSid,
   });
+  // If the session ended before we entered (pre-aborted signal), the handle is
+  // already a noop — skip the map entirely rather than registering an entry that
+  // would never be cleaned up (the abort listener won't fire for signals that are
+  // already aborted when addEventListener is called).
+  if (session.endedSignal.aborted) return;
   tailing.set(session, handle);
   // Delete the entry when the session ends so the tailer's captured state
   // (seenUuids, leftover) can be GC'd even though SessionManager holds the

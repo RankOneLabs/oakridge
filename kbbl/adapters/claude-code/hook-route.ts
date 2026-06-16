@@ -292,12 +292,11 @@ export function hookPermissionHandler(deps: HookHandlerDeps) {
     // Backstop in case SessionStart was missed: the permission hook also
     // carries the transcript path. ensureTranscriptTailer is idempotent.
     if (hook.transcript_path) {
+      const onTranscriptEvent = deps.onTranscriptEvent;
       ensureTranscriptTailer(
         session,
         hook.transcript_path,
-        deps.onTranscriptEvent
-          ? (t, p) => deps.onTranscriptEvent!(session, t, p)
-          : undefined,
+        onTranscriptEvent ? (t, p) => onTranscriptEvent(session, t, p) : undefined,
       );
     }
 
@@ -448,12 +447,11 @@ export function hookStopHandler(deps: HookHandlerDeps) {
 
     // Backstop tailer start (idempotent) — Stop always carries transcript_path.
     if (hook.transcript_path) {
+      const onTranscriptEvent = deps.onTranscriptEvent;
       ensureTranscriptTailer(
         session,
         hook.transcript_path,
-        deps.onTranscriptEvent
-          ? (t, p) => deps.onTranscriptEvent!(session, t, p)
-          : undefined,
+        onTranscriptEvent ? (t, p) => onTranscriptEvent(session, t, p) : undefined,
       );
     }
 
@@ -475,37 +473,49 @@ export function hookStopHandler(deps: HookHandlerDeps) {
     // that ended on stop_reason: "tool_use" or null — the tailer only emits
     // a result on stop_reason: "end_turn", so those turns would otherwise
     // leave the PWA spinner stuck forever.
-    const tracker = deps.turnTrackers.get(session.oakridgeSid);
-    if (tracker && !tracker.resultedThisTurn) {
-      const usage: ResultUsage = tracker.lastAssistantUsage ?? {
-        input_tokens: 0,
-        output_tokens: 0,
-        cache_creation_input_tokens: 0,
-        cache_read_input_tokens: 0,
-      };
-      const syntheticPayload = {
-        type: "result",
-        stop_reason: "end_turn",
-        content: [],
-        usage,
-      };
-      await session.emit("result", syntheticPayload);
-      // Run the CC classifier so observeTurnEnd / compactor scheduling fire,
-      // matching what the tailer does for real end_turn results.
-      try {
-        await classifyCcEvent(syntheticPayload, session);
-      } catch (err) {
-        console.error(
-          `kbbl: stop handler classifyCcEvent failed [${session.oakridgeSid}]: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
+    // try-finally guarantees notifyTurnEnd() in step 6 even if emit throws
+    // (e.g. disk full, writer already closed on a fast session end).
+    try {
+      const tracker = deps.turnTrackers.get(session.oakridgeSid);
+      if (tracker && !tracker.resultedThisTurn) {
+        const usage: ResultUsage = tracker.lastAssistantUsage ?? {
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        };
+        const syntheticPayload = {
+          type: "result",
+          stop_reason: "end_turn",
+          content: [],
+          usage,
+        };
+        try {
+          await session.emit("result", syntheticPayload);
+        } catch (err) {
+          console.error(
+            `kbbl: stop handler synthetic result emit failed [${session.oakridgeSid}]: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+        // Run the CC classifier so observeTurnEnd / compactor scheduling fire,
+        // matching what the tailer does for real end_turn results.
+        try {
+          await classifyCcEvent(syntheticPayload, session);
+        } catch (err) {
+          console.error(
+            `kbbl: stop handler classifyCcEvent failed [${session.oakridgeSid}]: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+        tracker.resultedThisTurn = true;
       }
-      tracker.resultedThisTurn = true;
+    } finally {
+      // 6. Advance the pending-input queue now that the turn is done.
+      session.notifyTurnEnd();
     }
-
-    // 6. Advance the pending-input queue now that the turn is done.
-    session.notifyTurnEnd();
 
     return c.json({}, 200);
   };
@@ -635,12 +645,11 @@ function makeInformationalHandler(
         // here (idempotent) so SessionStart — the first hook — brings the
         // Conversation view online.
         if (hook.transcript_path) {
+          const onTranscriptEvent = deps.onTranscriptEvent;
           ensureTranscriptTailer(
             session,
             hook.transcript_path,
-            deps.onTranscriptEvent
-              ? (t, p) => deps.onTranscriptEvent!(session, t, p)
-              : undefined,
+            onTranscriptEvent ? (t, p) => onTranscriptEvent(session, t, p) : undefined,
           );
         }
         session.emit(eventType, { ...hook }).catch((err) => {

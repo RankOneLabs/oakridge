@@ -93,6 +93,7 @@ export function updateCcTurnTracker(
     const msg = (payload as { message?: { content?: unknown } })?.message;
     if (typeof msg?.content === "string") {
       tracker.resultedThisTurn = false;
+      tracker.lastAssistantUsage = null;
     }
   } else if (type === "assistant") {
     const msg = (payload as { message?: { usage?: unknown } })?.message;
