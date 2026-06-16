@@ -466,8 +466,17 @@ export function hookStopHandler(deps: HookHandlerDeps) {
 
     // 4. Force-drain the transcript tailer: any end_turn line CC just wrote
     // must be processed so that step 5's "did this turn result?" check is
-    // accurate.
-    await drainTranscript(session);
+    // accurate. Wrap in try/catch so an unexpected drain failure (FS/read
+    // edge case) doesn't skip notifyTurnEnd() in the finally below.
+    try {
+      await drainTranscript(session);
+    } catch (err) {
+      console.error(
+        `kbbl: stop handler drainTranscript failed [${session.oakridgeSid}]: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
 
     // 5. Synthesize a result iff the turn produced none. This covers turns
     // that ended on stop_reason: "tool_use" or null — the tailer only emits
