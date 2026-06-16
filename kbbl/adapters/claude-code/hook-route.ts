@@ -499,8 +499,10 @@ export function hookStopHandler(deps: HookHandlerDeps) {
           content: [],
           usage,
         };
+        let resultEmitted = false;
         try {
           await session.emit("result", syntheticPayload);
+          resultEmitted = true;
         } catch (err) {
           console.error(
             `kbbl: stop handler synthetic result emit failed [${session.oakridgeSid}]: ${
@@ -519,7 +521,9 @@ export function hookStopHandler(deps: HookHandlerDeps) {
             }`,
           );
         }
-        tracker.resultedThisTurn = true;
+        // Only mark as resulted if the event was actually emitted — the tracker
+        // semantic is "a result event has been delivered", not "we tried".
+        if (resultEmitted) tracker.resultedThisTurn = true;
       }
     } finally {
       // 6. Advance the pending-input queue now that the turn is done.
