@@ -8,7 +8,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { EnvelopeEvent, Session, SessionStatus } from "../../core/session/session";
-import { hookPermissionHandler, hookSubagentStopHandler, hookPostToolUseHandler, parseHookInput } from "./hook-route";
+import { hookPermissionHandler, hookSubagentStopHandler, hookPostToolUseHandler, hookStopHandler, parseHookInput, type CcTurnTracker } from "./hook-route";
+import { updateCcTurnTracker } from "./index";
 import type { SessionManager } from "../../core/session/session-manager";
 
 let tmpRoot: string;
@@ -29,9 +30,11 @@ function makeFakeSession(opts: {
 }): {
   session: Session;
   emitted: EnvelopeEvent[];
+  turnEndCount: { value: number };
 } {
   const emitted: EnvelopeEvent[] = [];
   let nextId = 0;
+  const turnEndCount = { value: 0 };
   const session = {
     oakridgeSid: "fake-session-id",
     status: opts.status ?? "live",
@@ -45,8 +48,9 @@ function makeFakeSession(opts: {
     },
     registerApproval: () => {},
     deleteApproval: () => {},
+    notifyTurnEnd: () => { turnEndCount.value++; },
   } as unknown as Session;
-  return { session, emitted };
+  return { session, emitted, turnEndCount };
 }
 
 function makeFakeManager(session: Session | null, ccSid: string): SessionManager {
@@ -57,13 +61,18 @@ function makeFakeManager(session: Session | null, ccSid: string): SessionManager
 
 const CC_SID = "mock-cc-sid-1";
 
-function makeHookDeps(session: Session | null, ccSid = CC_SID) {
+function makeHookDeps(
+  session: Session | null,
+  ccSid = CC_SID,
+  turnTrackers?: Map<string, CcTurnTracker>,
+) {
   return {
     manager: makeFakeManager(session, ccSid),
     getBunServer: () => ({
       requestIP: () => ({ address: "127.0.0.1", family: "IPv4", port: 0 }),
     }) as unknown as import("bun").Server<unknown>,
     subagentCounts: new Map<string, number>(),
+    turnTrackers: turnTrackers ?? new Map<string, CcTurnTracker>(),
   };
 }
 
@@ -304,5 +313,107 @@ describe("hookPostToolUseHandler: informational", () => {
 
     await new Promise((r) => setTimeout(r, 10));
     expect(emitted.some((e) => e.type === "hook_post_tool_use")).toBe(false);
+  });
+});
+
+describe("hookStopHandler: Stop drives turn-end and result synthesis", () => {
+  function makeStopCtx(extra: Record<string, unknown> = {}) {
+    return makeCtx({ hook_event_name: "Stop", session_id: CC_SID, ...extra });
+  }
+
+  test("turn that already emitted an end_turn result: no synthetic result, notifyTurnEnd called once", async () => {
+    const { session, emitted, turnEndCount } = makeFakeSession({});
+    // Mark this turn as already resulted (tailer emitted a real result).
+    const tracker: CcTurnTracker = { resultedThisTurn: true, lastAssistantUsage: null };
+    const deps = makeHookDeps(session, CC_SID, new Map([["fake-session-id", tracker]]));
+    const handler = hookStopHandler(deps);
+
+    const res = await handler(makeStopCtx() as Parameters<typeof handler>[0]);
+    expect(res.status).toBe(200);
+
+    // No synthetic result should be emitted.
+    expect(emitted.filter((e) => e.type === "result")).toHaveLength(0);
+    // notifyTurnEnd must have been called exactly once.
+    expect(turnEndCount.value).toBe(1);
+  });
+
+  test("turn with no result emitted: exactly one synthetic result with end_turn, then notifyTurnEnd", async () => {
+    const { session, emitted, turnEndCount } = makeFakeSession({});
+    const lastUsage = {
+      input_tokens: 10,
+      output_tokens: 5,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 2,
+    };
+    const tracker: CcTurnTracker = { resultedThisTurn: false, lastAssistantUsage: lastUsage };
+    const deps = makeHookDeps(session, CC_SID, new Map([["fake-session-id", tracker]]));
+    const handler = hookStopHandler(deps);
+
+    const res = await handler(makeStopCtx() as Parameters<typeof handler>[0]);
+    expect(res.status).toBe(200);
+
+    const results = emitted.filter((e) => e.type === "result");
+    expect(results).toHaveLength(1);
+    const payload = results[0].payload as {
+      type: string;
+      stop_reason: string;
+      usage: typeof lastUsage;
+    };
+    expect(payload.type).toBe("result");
+    expect(payload.stop_reason).toBe("end_turn");
+    expect(payload.usage).toEqual(lastUsage);
+
+    // notifyTurnEnd called exactly once.
+    expect(turnEndCount.value).toBe(1);
+    // tracker marked as resulted.
+    expect(tracker.resultedThisTurn).toBe(true);
+  });
+});
+
+describe("updateCcTurnTracker: turn tracker state machine", () => {
+  test("string-content user event resets resultedThisTurn and lastAssistantUsage", () => {
+    const prevUsage = { input_tokens: 10, output_tokens: 5, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+    const tracker: CcTurnTracker = { resultedThisTurn: true, lastAssistantUsage: prevUsage };
+    updateCcTurnTracker(tracker, "user", {
+      type: "user",
+      message: { role: "user", content: "hello" },
+    });
+    expect(tracker.resultedThisTurn).toBe(false);
+    expect(tracker.lastAssistantUsage).toBeNull();
+  });
+
+  test("array-content user event (tool_result) does NOT reset resultedThisTurn or lastAssistantUsage", () => {
+    const prevUsage = { input_tokens: 10, output_tokens: 5, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+    const tracker: CcTurnTracker = { resultedThisTurn: true, lastAssistantUsage: prevUsage };
+    updateCcTurnTracker(tracker, "user", {
+      type: "user",
+      message: { role: "user", content: [{ type: "tool_result", tool_use_id: "x" }] },
+    });
+    expect(tracker.resultedThisTurn).toBe(true); // unchanged
+    expect(tracker.lastAssistantUsage).toBe(prevUsage); // unchanged
+  });
+
+  test("assistant event with usage updates lastAssistantUsage", () => {
+    const tracker: CcTurnTracker = { resultedThisTurn: false, lastAssistantUsage: null };
+    updateCcTurnTracker(tracker, "assistant", {
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [],
+        usage: { input_tokens: 42, output_tokens: 7, cache_creation_input_tokens: 1, cache_read_input_tokens: 3 },
+      },
+    });
+    expect(tracker.lastAssistantUsage).toEqual({
+      input_tokens: 42,
+      output_tokens: 7,
+      cache_creation_input_tokens: 1,
+      cache_read_input_tokens: 3,
+    });
+  });
+
+  test("result event sets resultedThisTurn = true", () => {
+    const tracker: CcTurnTracker = { resultedThisTurn: false, lastAssistantUsage: null };
+    updateCcTurnTracker(tracker, "result", { type: "result", stop_reason: "end_turn" });
+    expect(tracker.resultedThisTurn).toBe(true);
   });
 });

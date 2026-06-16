@@ -106,7 +106,7 @@ export function parseTranscriptEntry(raw: unknown): TranscriptEntry | null {
  * zeros, never `undefined` — so the synthesized result payload never violates
  * the numeric-field contract downstream metrics consumers rely on.
  */
-function projectUsage(
+export function projectUsage(
   usage: TranscriptAssistantMessage["usage"],
 ): ResultUsage {
   const num = (v: unknown): number => (typeof v === "number" ? v : 0);

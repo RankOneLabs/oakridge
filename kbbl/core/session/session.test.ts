@@ -302,3 +302,212 @@ describe("Session.attachRuntime", () => {
     expect(session.status).toBe("ended");
   });
 });
+
+// Helper: a runtime that stays alive until finish() is called, records sends.
+function makeControllableRuntime(): {
+  runtime: AgentRuntime;
+  sent: string[];
+  finish: () => void;
+} {
+  const sent: string[] = [];
+  let finish!: () => void;
+  const done = new Promise<void>((resolve) => { finish = resolve; });
+
+  const runtime: AgentRuntime = {
+    ...makeRuntime(),
+    async *events(_handle: SessionHandle): AsyncIterable<RuntimeEvent> {
+      await done;
+      yield { type: "completed", result: { code: 0 } };
+    },
+    async send(_handle: SessionHandle, input: string): Promise<void> {
+      sent.push(input);
+    },
+  };
+  return { runtime, sent, finish };
+}
+
+describe("Session input queue (CC PTY mode)", () => {
+  test("two external writes while busy: first sent immediately, second queued until notifyTurnEnd", async () => {
+    const { runtime, sent, finish } = makeControllableRuntime();
+    const session = makeSession();
+    const handle = await runtime.spawn({ workingDirectory: "/tmp" });
+    await session.attachRuntime(runtime, handle);
+
+    // First write: session is idle → sent immediately.
+    await session.writeInput("msg1");
+    // Give the queued task a tick to run (pumpInputQueue chains on inputQueue).
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent).toEqual(["msg1"]);
+
+    // Second write: turnState is now "busy" → queued.
+    await session.writeInput("msg2");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent).toEqual(["msg1"]); // msg2 still held
+
+    // Turn ends → msg2 is flushed.
+    session.notifyTurnEnd();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent).toEqual(["msg1", "msg2"]);
+
+    finish();
+    await session.waitForEnd();
+  });
+
+  test("order preserved across three queued messages", async () => {
+    const { runtime, sent, finish } = makeControllableRuntime();
+    const session = makeSession();
+    const handle = await runtime.spawn({ workingDirectory: "/tmp" });
+    await session.attachRuntime(runtime, handle);
+
+    await session.writeInput("a");
+    await session.writeInput("b");
+    await session.writeInput("c");
+
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent).toEqual(["a"]); // only first delivered
+
+    session.notifyTurnEnd();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent).toEqual(["a", "b"]);
+
+    session.notifyTurnEnd();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent).toEqual(["a", "b", "c"]);
+
+    finish();
+    await session.waitForEnd();
+  });
+
+  test("internal write bypasses queue and sends immediately while busy", async () => {
+    const { runtime, sent, finish } = makeControllableRuntime();
+    const session = makeSession();
+    const handle = await runtime.spawn({ workingDirectory: "/tmp" });
+    await session.attachRuntime(runtime, handle);
+
+    // Make the session busy by sending one message.
+    await session.writeInput("external");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent).toEqual(["external"]);
+
+    // Internal write must bypass queue and go out immediately (even while busy).
+    await session.writeInput("compact-prompt", { internal: true });
+    expect(sent).toEqual(["external", "compact-prompt"]);
+
+    finish();
+    await session.waitForEnd();
+  });
+
+  test("writeInput during compacting queues; markLive flushes it", async () => {
+    const { runtime, sent, finish } = makeControllableRuntime();
+    const session = makeSession();
+    const handle = await runtime.spawn({ workingDirectory: "/tmp" });
+    await session.attachRuntime(runtime, handle);
+
+    // Simulate compaction in progress.
+    session.markCompacting();
+    expect(session.status).toBe("compacting");
+
+    // External write during compacting must be accepted (not throw).
+    await session.writeInput("queued-during-compact");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent).toHaveLength(0); // not sent yet (compacting + turnState idle but status not live)
+
+    // Return to live → flush.
+    session.markLive();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent).toEqual(["queued-during-compact"]);
+
+    finish();
+    await session.waitForEnd();
+  });
+
+  test("notifyTurnEnd on empty queue is a no-op, leaves state idle", async () => {
+    const { runtime, sent, finish } = makeControllableRuntime();
+    const session = makeSession();
+    const handle = await runtime.spawn({ workingDirectory: "/tmp" });
+    await session.attachRuntime(runtime, handle);
+
+    // Queue is empty; calling notifyTurnEnd should not throw and not send.
+    session.notifyTurnEnd();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent).toHaveLength(0);
+
+    // Another external write should still go through (still idle).
+    await session.writeInput("after-noop-turnend");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent).toEqual(["after-noop-turnend"]);
+
+    finish();
+    await session.waitForEnd();
+  });
+
+  test("finalize drops queued messages without further runtime.send", async () => {
+    const { runtime, sent, finish } = makeControllableRuntime();
+    const session = makeSession();
+    const handle = await runtime.spawn({ workingDirectory: "/tmp" });
+    await session.attachRuntime(runtime, handle);
+
+    // Make session busy so the next message queues.
+    await session.writeInput("first");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent).toEqual(["first"]);
+
+    // Queue a second message (will be held while busy).
+    await session.writeInput("second-should-drop");
+
+    // Terminate the session before notifyTurnEnd is called.
+    finish();
+    await session.waitForEnd();
+
+    // The queued message must have been dropped, not sent.
+    expect(sent).toEqual(["first"]);
+  });
+
+  test("runtime.send failure resets turnState so subsequent messages are delivered", async () => {
+    const sent: string[] = [];
+    let failNext = false;
+    let finish!: () => void;
+    const done = new Promise<void>((resolve) => { finish = resolve; });
+
+    const runtime: AgentRuntime = {
+      ...makeRuntime(),
+      async *events(_handle: SessionHandle): AsyncIterable<RuntimeEvent> {
+        await done;
+        yield { type: "completed", result: { code: 0 } };
+      },
+      async send(_handle: SessionHandle, input: string): Promise<void> {
+        if (failNext) {
+          failNext = false;
+          throw new Error("pty write failed");
+        }
+        sent.push(input);
+      },
+    };
+
+    const session = makeSession();
+    const handle = await runtime.spawn({ workingDirectory: "/tmp" });
+    await session.attachRuntime(runtime, handle);
+
+    // First write: idle → busy, sends successfully.
+    await session.writeInput("msg1");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent).toEqual(["msg1"]);
+
+    // Arm failure for the next send, then queue a second message.
+    failNext = true;
+    await session.writeInput("msg2");
+
+    // Turn ends → pump tries msg2, send throws, turnState resets to idle.
+    session.notifyTurnEnd();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(sent).toEqual(["msg1"]); // msg2 dropped
+
+    // Session must not be wedged — a new write goes through cleanly.
+    await session.writeInput("msg3");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent).toEqual(["msg1", "msg3"]);
+
+    finish();
+    await session.waitForEnd();
+  });
+});
