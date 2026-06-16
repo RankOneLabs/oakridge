@@ -261,6 +261,13 @@ describe("CC adapter nonPersistedEventTypes", () => {
     // emitted and does not need to be filtered from the transcript.
     expect(rt.nonPersistedEventTypes?.has("stream_event")).toBe(false);
   });
+
+  test("pty_output is non-persisted (broadcast live, kept out of JSONL)", async () => {
+    const rt = await makeRuntime();
+    // The raw break-glass byte stream is high-volume; it must be broadcast for
+    // the xterm view but excluded from the persisted transcript.
+    expect(rt.nonPersistedEventTypes?.has("pty_output")).toBe(true);
+  });
 });
 
 describe("CC adapter lookupByCcSid (extension methods)", () => {

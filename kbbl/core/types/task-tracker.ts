@@ -26,7 +26,7 @@ export type Spec = z.infer<typeof SpecSchema>;
 export const PlanSchema = z.object({
   id: z.string(),
   spec_id: z.string(),
-  status: z.enum(["pending_approval", "approved", "rejected", "superseded"]),
+  status: z.enum(["draft", "pending_approval", "approved", "rejected", "superseded"]),
   predecessor_plan_id: z.string().nullable(),
   model: z.string().nullable(),
   rejection_reason: z.string().nullable(),

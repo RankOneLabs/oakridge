@@ -22,14 +22,83 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import dataclass, field
 from datetime import date
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from typing import Generic, TypeVar, Union
 
 try:
     import pexpect
 except ModuleNotFoundError:
     sys.exit("ERROR: pexpect not installed. Run: pip install pexpect")
+
+
+# ── Result primitive (errors as values) ───────────────────────────────────────
+# Rolled locally per the workspace standard: the connecting contract between the
+# harness's pipeline stages. Every fallible stage returns Result; main() and
+# write_results() pattern-match on `.ok`. try/except lives only at the IO edges
+# (subprocess, pexpect, file reads), where it is converted to an Err.
+
+T = TypeVar("T")
+
+
+@dataclass(frozen=True)
+class DomainError:
+    """Carries enough trace context to locate where a stage failed."""
+
+    operation: str
+    detail: str
+    entity_id: str | None = None
+
+    def __str__(self) -> str:
+        loc = f" [{self.entity_id}]" if self.entity_id else ""
+        return f"{self.operation}{loc}: {self.detail}"
+
+
+@dataclass(frozen=True)
+class Ok(Generic[T]):
+    value: T
+    ok: bool = field(default=True, init=False)
+
+
+@dataclass(frozen=True)
+class Err:
+    error: DomainError
+    ok: bool = field(default=False, init=False)
+
+
+Result = Union[Ok[T], Err]
+
+
+# ── typed stage payloads ───────────────────────────────────────────────────────
+
+
+@dataclass
+class BillingOutcome:
+    passed: bool
+    evidence: list[str]
+    note: str
+
+
+@dataclass
+class HookOutcome:
+    fired: list[str]
+    payloads: list[dict]
+    transcript: str | None
+    session_id: str | None = None
+    exit_code: int | None = None
+
+
+@dataclass
+class ResumeOutcome:
+    passed: bool
+    initial_session_id: str
+    resumed_session_id: str | None
+    same_session_id: bool
+    same_transcript: bool
+    transcript_1: str | None
+    transcript_2: str | None
 
 HERE = Path(__file__).parent.resolve()
 SETTINGS = HERE / "settings.json"
@@ -100,11 +169,13 @@ class HookHandler(BaseHTTPRequestHandler):
         # PermissionRequest: auto-approve so the session can proceed without
         # waiting for a human in the TUI.
         if event_name == "PermissionRequest":
+            # PermissionRequest uses decision.behavior (not the PreToolUse
+            # permissionDecision/permissionDecisionReason shape); this matches
+            # the kbbl CC adapter's hookPermissionHandler response.
             resp = json.dumps({
                 "hookSpecificOutput": {
                     "hookEventName": "PermissionRequest",
-                    "permissionDecision": "allow",
-                    "permissionDecisionReason": "phase0 auto-approve",
+                    "decision": {"behavior": "allow"},
                 }
             }).encode()
             self.send_response(200)
@@ -186,14 +257,16 @@ def extract_session_id_from_print_output(stdout: str) -> str | None:
 
 # ── billing premise ───────────────────────────────────────────────────────────
 
-def check_billing() -> dict:
-    result: dict = {"pass": False, "evidence": [], "note": ""}
+def check_billing() -> Result[BillingOutcome]:
     try:
         with CREDS_FILE.open() as f:
             creds = json.load(f)
     except Exception as e:
-        result["evidence"].append(f"Cannot read credentials: {e}")
-        return result
+        return Err(DomainError(
+            operation="check_billing",
+            detail=f"cannot read credentials: {e}",
+            entity_id=str(CREDS_FILE),
+        ))
 
     has_oauth = "claudeAiOauth" in creds
     has_api_key = "apiKey" in creds
@@ -201,7 +274,7 @@ def check_billing() -> dict:
     # Check child env (what CC actually sees) — harness strips ANTHROPIC_API_KEY via child_env()
     api_key_env = bool(child_env().get("ANTHROPIC_API_KEY", ""))
 
-    result["evidence"] = [
+    evidence = [
         f"credentials.claudeAiOauth present: {has_oauth}",
         f"credentials.apiKey present: {has_api_key}",
         f"credentials.subscriptionType: {sub_type}",
@@ -209,21 +282,24 @@ def check_billing() -> dict:
     ]
 
     if has_oauth and not has_api_key and not api_key_env:
-        result["pass"] = True
-        result["note"] = (
+        note = (
             f"PASS — OAuth-only auth (subscriptionType={sub_type}). "
             "No apiKey in credentials, no ANTHROPIC_API_KEY env var. "
             "Interactive sessions bill to the subscription, not the API credit meter. "
             "Agent SDK API credit delta: 0 by construction."
         )
-    else:
-        result["note"] = "FAIL — API key found; interactive sessions may consume API credits."
-    return result
+        return Ok(BillingOutcome(passed=True, evidence=evidence, note=note))
+
+    return Ok(BillingOutcome(
+        passed=False,
+        evidence=evidence,
+        note="FAIL — API key found; interactive sessions may consume API credits.",
+    ))
 
 
 # ── hook-firing: --print mode ─────────────────────────────────────────────────
 
-def run_print_hook_test() -> dict:
+def run_print_hook_test() -> Result[HookOutcome]:
     """
     --print --verbose mode: establishes baseline of which events fire at all.
     Uses WORKTREE_CWD to avoid the first-run directory trust dialog.
@@ -244,8 +320,15 @@ def run_print_hook_test() -> dict:
         "--verbose",
     ]
     print(f"\n[print-hook-test] launching with --print --verbose", flush=True)
-    r = subprocess.run(cmd, cwd=str(WORKTREE_CWD), env=env,
-                       capture_output=True, text=True, timeout=90)
+    try:
+        r = subprocess.run(cmd, cwd=str(WORKTREE_CWD), env=env,
+                           capture_output=True, text=True, timeout=90)
+    except (subprocess.SubprocessError, OSError) as e:
+        return Err(DomainError(
+            operation="run_print_hook_test",
+            detail=f"--print launch failed: {e}",
+            entity_id=CC_BIN,
+        ))
 
     session_id = extract_session_id_from_print_output(r.stdout)
     print(f"[print-hook-test] session_id: {session_id}", flush=True)
@@ -262,18 +345,18 @@ def run_print_hook_test() -> dict:
             transcript = ev["body"]["transcript_path"]
             break
 
-    return {
-        "fired": sorted(fired),
-        "payloads": events,
-        "session_id": session_id,
-        "transcript": transcript,
-        "exit_code": r.returncode,
-    }
+    return Ok(HookOutcome(
+        fired=sorted(fired),
+        payloads=events,
+        session_id=session_id,
+        transcript=transcript,
+        exit_code=r.returncode,
+    ))
 
 
 # ── hook-firing: interactive mode ─────────────────────────────────────────────
 
-def run_interactive_hook_test() -> dict:
+def run_interactive_hook_test() -> Result[HookOutcome]:
     """
     Interactive PTY mode (no --print): the primary test.
     Uses pexpect to drive CC in a real PTY (isatty() = True).
@@ -296,14 +379,21 @@ def run_interactive_hook_test() -> dict:
     ]
     print(f"\n[interactive-test] launching: {' '.join(cmd)}", flush=True)
 
-    child = pexpect.spawn(
-        cmd[0], cmd[1:],
-        cwd=str(WORKTREE_CWD),
-        env=env,
-        encoding="utf-8",
-        timeout=90,
-        dimensions=(40, 200),
-    )
+    try:
+        child = pexpect.spawn(
+            cmd[0], cmd[1:],
+            cwd=str(WORKTREE_CWD),
+            env=env,
+            encoding="utf-8",
+            timeout=90,
+            dimensions=(40, 200),
+        )
+    except (pexpect.ExceptionPexpect, OSError) as e:
+        return Err(DomainError(
+            operation="run_interactive_hook_test",
+            detail=f"PTY spawn failed: {e}",
+            entity_id=CC_BIN,
+        ))
 
     def wait_for_prompt(timeout: int = 20) -> bool:
         """Wait for CC's interactive prompt or a usable state."""
@@ -373,16 +463,16 @@ def run_interactive_hook_test() -> dict:
             transcript = ev["body"]["transcript_path"]
             break
 
-    return {
-        "fired": sorted(fired),
-        "payloads": events,
-        "transcript": transcript,
-    }
+    return Ok(HookOutcome(
+        fired=sorted(fired),
+        payloads=events,
+        transcript=transcript,
+    ))
 
 
 # ── resume test ───────────────────────────────────────────────────────────────
 
-def run_resume_test() -> dict:
+def run_resume_test() -> Result[ResumeOutcome]:
     """
     1. Run --print session → capture session_id.
     2. Interactive resume with `claude --resume <id>` (no --fork-session).
@@ -395,31 +485,37 @@ def run_resume_test() -> dict:
     # ── step 1: initial --print session ──────────────────────────────────────
     print("\n[resume-test] initial --print session...", flush=True)
     t1 = time.time()
-    r = subprocess.run(
-        [
-            CC_BIN,
-            "--settings", str(SETTINGS),
-            "--setting-sources", "user",
-            "--strict-mcp-config",
-            "--dangerously-skip-permissions",
-            "--print", "echo 'resume-seed' | tee /tmp/phase0_resume_seed.txt",
-            "--output-format", "stream-json",
-            "--verbose",
-        ],
-        cwd=str(WORKTREE_CWD),
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=90,
-    )
+    try:
+        r = subprocess.run(
+            [
+                CC_BIN,
+                "--settings", str(SETTINGS),
+                "--setting-sources", "user",
+                "--strict-mcp-config",
+                "--dangerously-skip-permissions",
+                "--print", "echo 'resume-seed' | tee /tmp/phase0_resume_seed.txt",
+                "--output-format", "stream-json",
+                "--verbose",
+            ],
+            cwd=str(WORKTREE_CWD),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=90,
+        )
+    except (subprocess.SubprocessError, OSError) as e:
+        return Err(DomainError(
+            operation="run_resume_test",
+            detail=f"initial --print seed launch failed: {e}",
+            entity_id=CC_BIN,
+        ))
 
     session_id = extract_session_id_from_print_output(r.stdout)
     if not session_id:
-        return {
-            "pass": False,
-            "error": "no session_id from initial --print run",
-            "stdout_snippet": r.stdout[:400],
-        }
+        return Err(DomainError(
+            operation="run_resume_test",
+            detail=f"no session_id from initial --print run; stdout: {r.stdout[:400]}",
+        ))
 
     print(f"[resume-test] initial session_id: {session_id}", flush=True)
     transcript_1 = find_transcript(slug, t1, session_id)
@@ -432,21 +528,28 @@ def run_resume_test() -> dict:
     print(f"[resume-test] resuming: claude --resume {session_id}", flush=True)
     t2 = time.time()
 
-    child2 = pexpect.spawn(
-        CC_BIN,
-        [
-            "--resume", session_id,
-            "--settings", str(SETTINGS),
-            "--setting-sources", "user",
-            "--strict-mcp-config",
-            "--dangerously-skip-permissions",
-        ],
-        cwd=str(WORKTREE_CWD),
-        env=env,
-        encoding="utf-8",
-        timeout=60,
-        dimensions=(40, 200),
-    )
+    try:
+        child2 = pexpect.spawn(
+            CC_BIN,
+            [
+                "--resume", session_id,
+                "--settings", str(SETTINGS),
+                "--setting-sources", "user",
+                "--strict-mcp-config",
+                "--dangerously-skip-permissions",
+            ],
+            cwd=str(WORKTREE_CWD),
+            env=env,
+            encoding="utf-8",
+            timeout=60,
+            dimensions=(40, 200),
+        )
+    except (pexpect.ExceptionPexpect, OSError) as e:
+        return Err(DomainError(
+            operation="run_resume_test",
+            detail=f"resume PTY spawn failed: {e}",
+            entity_id=session_id,
+        ))
 
     try:
         child2.expect([r"[>◆»❯]", r"esc to interrupt"], timeout=15)
@@ -480,44 +583,96 @@ def run_resume_test() -> dict:
     same_transcript = bool(transcript_1 and transcript_2 and transcript_1 == transcript_2)
     print(f"[resume-test] same_id={same_id} same_transcript={same_transcript}", flush=True)
 
-    return {
-        "pass": same_id and same_transcript,
-        "initial_session_id": session_id,
-        "resumed_session_id": resumed_id,
-        "same_session_id": same_id,
-        "same_transcript": same_transcript,
-        "transcript_1": transcript_1,
-        "transcript_2": transcript_2,
-    }
+    return Ok(ResumeOutcome(
+        passed=same_id and same_transcript,
+        initial_session_id=session_id,
+        resumed_session_id=resumed_id,
+        same_session_id=same_id,
+        same_transcript=same_transcript,
+        transcript_1=transcript_1,
+        transcript_2=transcript_2,
+    ))
+
+
+# ── redaction (artifacts are committed to the repo) ─────────────────────────────
+# RESULTS.md is checked in, so machine-local identifiers (home dir, cwd,
+# transcript paths inside hook payloads) must be scrubbed before they are
+# persisted — otherwise the report leaks a developer's filesystem layout.
+
+_HOME = str(Path.home())
+
+
+def redact_text(value: str) -> str:
+    """Replace the developer's home directory with a portable `~` placeholder."""
+    return value.replace(_HOME, "~")
+
+
+def redact_payload(body: dict) -> dict:
+    """Scrub local filesystem paths from the fields CC stamps with absolute paths."""
+    redacted = dict(body)
+    for key in ("transcript_path", "cwd"):
+        value = redacted.get(key)
+        if isinstance(value, str):
+            redacted[key] = redact_text(value)
+    return redacted
 
 
 # ── write RESULTS.md ──────────────────────────────────────────────────────────
 
 def write_results(
     cc_ver: str,
-    billing: dict,
-    print_hooks: dict,
-    interactive_hooks: dict,
-    resume: dict,
+    billing: Result[BillingOutcome],
+    print_hooks: Result[HookOutcome],
+    interactive_hooks: Result[HookOutcome],
+    resume: Result[ResumeOutcome],
 ) -> Path:
-    fired_print = set(print_hooks.get("fired", []))
-    fired_interactive = set(interactive_hooks.get("fired", []))
+    # Unwrap each stage Result into report inputs. An Err renders as a FAIL
+    # verdict carrying the DomainError trace context rather than aborting the
+    # whole report — a failed stage shouldn't lose the other stages' findings.
+    if isinstance(billing, Ok):
+        billing_pass = billing.value.passed
+        billing_evidence = billing.value.evidence
+        billing_note = billing.value.note
+    else:
+        billing_pass = False
+        billing_evidence = [f"ERROR — {billing.error}"]
+        billing_note = f"FAIL — {billing.error}"
+
+    def hook_view(res: Result[HookOutcome]) -> tuple[set[str], list[dict]]:
+        if isinstance(res, Ok):
+            return set(res.value.fired), res.value.payloads
+        return set(), []
+
+    fired_print, print_payloads = hook_view(print_hooks)
+    fired_interactive, interactive_payloads = hook_view(interactive_hooks)
     fired_all = fired_print | fired_interactive
     # Gate on interactive only — the production path. fired_all is kept for reporting.
     missing = sorted(REQUIRED_EVENTS - fired_interactive)
     hook_pass = len(missing) == 0
 
-    billing_pass = billing.get("pass", False)
-    resume_pass = resume.get("pass", False)
+    if isinstance(resume, Ok):
+        resume_pass = resume.value.passed
+        resume_fields: dict[str, object] = {
+            "initial_session_id": resume.value.initial_session_id,
+            "resumed_session_id": resume.value.resumed_session_id,
+            "same_session_id": resume.value.same_session_id,
+            "same_transcript": resume.value.same_transcript,
+            "transcript_1": resume.value.transcript_1,
+            "transcript_2": resume.value.transcript_2,
+        }
+    else:
+        resume_pass = False
+        resume_fields = {"error": str(resume.error)}
+
     overall = "**GO**" if (billing_pass and hook_pass and resume_pass) else "**NO-GO**"
 
     # Transcript path pattern from hook payload
     transcript_path_pattern = "~/.claude/projects/<project-slug>/<session_id>.jsonl"
-    for ev in (interactive_hooks.get("payloads", []) + print_hooks.get("payloads", [])):
+    for ev in (interactive_payloads + print_payloads):
         tp = ev.get("body", {}).get("transcript_path", "")
         if tp:
             p = Path(tp)
-            transcript_path_pattern = str(p.parent) + "/<session_id>.jsonl"
+            transcript_path_pattern = redact_text(str(p.parent)) + "/<session_id>.jsonl"
             break
 
     lines = [
@@ -525,7 +680,7 @@ def write_results(
         "",
         f"Overall verdict: {overall}",
         "",
-        f"- CC binary: `{CC_BIN}`",
+        f"- CC binary: `{redact_text(str(CC_BIN))}`",
         f"- CC version: `{cc_ver}`",
         f"- Test date: {date.today().isoformat()}",
         "- PTY driver: pexpect (Python) — node-pty not installed; same POSIX PTY semantics",
@@ -538,11 +693,11 @@ def write_results(
         f"Verdict: **{'PASS' if billing_pass else 'FAIL'}**",
         "",
     ]
-    for e in billing.get("evidence", []):
+    for e in billing_evidence:
         lines.append(f"- {e}")
     lines += [
         "",
-        billing.get("note", ""),
+        billing_note,
         "",
         "> Agent SDK Console meter was not queried programmatically (Console not accessible",
         "> from the build agent). Structural evidence is authoritative: OAuth-only credentials",
@@ -592,12 +747,12 @@ def write_results(
         "",
     ]
     seen: set = set()
-    all_payloads = interactive_hooks.get("payloads", []) + print_hooks.get("payloads", [])
+    all_payloads = interactive_payloads + print_payloads
     for rec in all_payloads:
         name = rec["event"]
         if name not in seen:
             seen.add(name)
-            body_str = json.dumps(rec.get("body", {}), indent=2)
+            body_str = json.dumps(redact_payload(rec.get("body", {})), indent=2)
             lines += [
                 f"<details><summary><code>{name}</code></summary>",
                 "",
@@ -616,15 +771,15 @@ def write_results(
         "",
         f"Verdict: **{'PASS' if resume_pass else 'FAIL'}**",
         "",
-        f"- Initial session_id: `{resume.get('initial_session_id', 'n/a')}`",
-        f"- Resumed session_id (from hook payload): `{resume.get('resumed_session_id', 'n/a')}`",
-        f"- Same session_id: `{resume.get('same_session_id', 'n/a')}`",
-        f"- Same transcript file: `{resume.get('same_transcript', 'n/a')}`",
+        f"- Initial session_id: `{resume_fields.get('initial_session_id', 'n/a')}`",
+        f"- Resumed session_id (from hook payload): `{resume_fields.get('resumed_session_id', 'n/a')}`",
+        f"- Same session_id: `{resume_fields.get('same_session_id', 'n/a')}`",
+        f"- Same transcript file: `{resume_fields.get('same_transcript', 'n/a')}`",
         "- SessionStart source field: not capturable (SessionStart never fires as HTTP hook)",
         "",
         "Resume command: `claude --resume <id>` (no `--fork-session`)",
-        f"- Transcript 1 (initial): `{resume.get('transcript_1', 'n/a')}`",
-        f"- Transcript 2 (after resume): `{resume.get('transcript_2', 'n/a')}`",
+        f"- Transcript 1 (initial): `{redact_text(str(resume_fields.get('transcript_1', 'n/a')))}`",
+        f"- Transcript 2 (after resume): `{redact_text(str(resume_fields.get('transcript_2', 'n/a')))}`",
         "",
         "---",
         "",
@@ -662,38 +817,55 @@ def main() -> int:
     # 1. Billing premise
     print("\n[1/4] Billing premise...", flush=True)
     billing = check_billing()
-    print(f"  {billing['note'][:80]}", flush=True)
+    if isinstance(billing, Ok):
+        print(f"  {billing.value.note[:80]}", flush=True)
+        billing_pass = billing.value.passed
+    else:
+        print(f"  ERROR — {billing.error}", flush=True)
+        billing_pass = False
 
     # 2a. Hook-firing: --print mode
     print("\n[2a/4] Hook-firing (--print --verbose)...", flush=True)
     print_hooks = run_print_hook_test()
-    print(f"  fired: {print_hooks['fired']}", flush=True)
+    if isinstance(print_hooks, Ok):
+        print(f"  fired: {print_hooks.value.fired}", flush=True)
+    else:
+        print(f"  ERROR — {print_hooks.error}", flush=True)
 
     # 2b. Hook-firing: interactive mode
     print("\n[2b/4] Hook-firing (interactive PTY)...", flush=True)
     interactive_hooks = run_interactive_hook_test()
-    print(f"  fired: {interactive_hooks['fired']}", flush=True)
+    fired_interactive: set[str] = set()
+    if isinstance(interactive_hooks, Ok):
+        fired_interactive = set(interactive_hooks.value.fired)
+        print(f"  fired: {interactive_hooks.value.fired}", flush=True)
+    else:
+        print(f"  ERROR — {interactive_hooks.error}", flush=True)
 
     # 3. Resume test
     print("\n[3/4] Continue-in-place resume test...", flush=True)
     resume = run_resume_test()
-    print(f"  pass={resume.get('pass')}, same_id={resume.get('same_session_id')}, same_transcript={resume.get('same_transcript')}", flush=True)
+    if isinstance(resume, Ok):
+        resume_pass = resume.value.passed
+        print(f"  pass={resume_pass}, same_id={resume.value.same_session_id}, "
+              f"same_transcript={resume.value.same_transcript}", flush=True)
+    else:
+        resume_pass = False
+        print(f"  ERROR — {resume.error}", flush=True)
 
     out = write_results(cc_ver, billing, print_hooks, interactive_hooks, resume)
 
     print("\n" + "=" * 60, flush=True)
     print("SUMMARY", flush=True)
-    fired_interactive = set(interactive_hooks.get("fired", []))
     missing = REQUIRED_EVENTS - fired_interactive  # gate on interactive only
-    print(f"  Billing:     {'PASS' if billing['pass'] else 'FAIL'}", flush=True)
-    print(f"  Hooks print: {sorted(set(print_hooks.get('fired', [])))}", flush=True)
-    print(f"  Hooks iact:  {sorted(set(interactive_hooks.get('fired', [])))}", flush=True)
+    print(f"  Billing:     {'PASS' if billing_pass else 'FAIL'}", flush=True)
+    print(f"  Hooks iact:  {sorted(fired_interactive)}", flush=True)
     print(f"  Missing:     {sorted(missing)}", flush=True)
     print(f"  Hooks:       {'PASS' if not missing else 'FAIL'}", flush=True)
-    print(f"  Resume:      {'PASS' if resume.get('pass') else 'FAIL'}", flush=True)
+    print(f"  Resume:      {'PASS' if resume_pass else 'FAIL'}", flush=True)
     print(f"\nResults: {out}", flush=True)
 
-    all_pass = billing["pass"] and not missing and resume.get("pass", False)
+    all_pass = billing_pass and not missing and resume_pass
     return 0 if all_pass else 1
 
 

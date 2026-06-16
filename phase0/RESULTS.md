@@ -2,7 +2,7 @@
 
 Overall verdict: **GO with one design constraint**
 
-- CC binary: `/home/steve/.local/bin/claude`
+- CC binary: `~/.local/bin/claude`
 - CC version: `2.1.169 (Claude Code)`
 - Test date: 2026-06-09
 - PTY driver: pexpect (Python) — node-pty not installed; same POSIX PTY semantics (isatty=True)
@@ -32,7 +32,7 @@ Interactive PTY sessions bill to Max subscription usage limits — both now and 
 Verdict: **PARTIAL PASS — 6/8 fire; SessionStart and SubagentStart do not**
 
 Settings file: `phase0/settings.json`, loaded via `--settings phase0/settings.json --setting-sources user`.  
-Invocation flags: `--strict-mcp-config --dangerously-skip-permissions`.  
+Invocation flags: `--strict-mcp-config` in both modes. The `--print` baseline adds `--dangerously-skip-permissions`; the interactive test deliberately omits it so `PermissionRequest` fires and is auto-approved by the http listener.  
 Working dir: worktree root (pre-trusted by CC).
 
 | Hook | Fires | Mode tested | Notes |
@@ -62,7 +62,7 @@ Working dir: worktree root (pre-trusted by CC).
 ```json
 {
   "session_id": "f8dcc026-f816-4bc6-a060-c881f27ae8fe",
-  "transcript_path": "/home/steve/.claude/projects/.../<session_id>.jsonl",
+  "transcript_path": "~/.claude/projects/.../<session_id>.jsonl",
   "cwd": "...",
   "permission_mode": "bypassPermissions",
   "effort": {"level": "high"},
@@ -104,11 +104,14 @@ Working dir: worktree root (pre-trusted by CC).
 {
   "hookSpecificOutput": {
     "hookEventName": "PermissionRequest",
-    "permissionDecision": "allow",
-    "permissionDecisionReason": "<reason string>"
+    "decision": { "behavior": "allow" }
   }
 }
 ```
+
+> `PermissionRequest` uses `decision.behavior` (`allow`/`deny`); the
+> `permissionDecision`/`permissionDecisionReason` fields belong to `PreToolUse`.
+> This matches the kbbl CC adapter's `hookPermissionHandler` response shape.
 
 ### Design constraint for execution_v2
 

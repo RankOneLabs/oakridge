@@ -17,8 +17,8 @@ export type CohortEvent =
   | "brief_approved_deps_pending"
   | "pr_opened";
 
-export type PlanStatus = "pending_approval" | "approved" | "rejected" | "superseded";
-export type PlanEvent = "approve" | "reject" | "supersede";
+export type PlanStatus = "draft" | "pending_approval" | "approved" | "rejected" | "superseded";
+export type PlanEvent = "submit" | "approve" | "reject" | "supersede";
 
 export type BriefStatus = "pending_approval" | "approved" | "rejected" | "superseded";
 export type BriefEvent = "approve" | "reject" | "supersede";
@@ -36,6 +36,7 @@ export const COHORT_TRANSITIONS: Record<CohortStatus, Partial<Record<CohortEvent
 };
 
 export const PLAN_TRANSITIONS: Record<PlanStatus, Partial<Record<PlanEvent, PlanStatus>>> = {
+  draft:            { submit: "pending_approval" },
   pending_approval: { approve: "approved", reject: "rejected" },
   approved:         { supersede: "superseded" },
   rejected:         { supersede: "superseded" },

@@ -3,21 +3,199 @@ import { randomUUID } from "node:crypto";
 
 import type { Decision, Session } from "../../core/session/session";
 import type { SessionManager } from "../../core/session/session-manager";
-import { notifyApprovalNeeded } from "../../core/server/callbacks";
+import { ensureTranscriptTailer } from "./transcript-tailer";
 
 /**
  * CC native http hook payloads.
  *
- * CC POSTs these directly to kbbl's hook routes. Fields marked optional are
- * event-type-specific; session_id and hook_event_name are always present.
+ * CC POSTs these directly to kbbl's hook routes. The payload is a discriminated
+ * union over `hook_event_name`: each of the eight events kbbl subscribes to has
+ * its own variant carrying only the fields CC sends for that event. `session_id`
+ * is common to all. Narrow at the HTTP boundary with `parseHookInput` before
+ * routing, so an impossible shape never reaches a handler.
  */
-export interface HookInput {
+export type HookEventName =
+  | "PermissionRequest"
+  | "PostToolUse"
+  | "Stop"
+  | "SessionStart"
+  | "SessionEnd"
+  | "Notification"
+  | "SubagentStart"
+  | "SubagentStop";
+
+/** Fields CC stamps on every hook payload regardless of event. */
+interface HookCommon {
   session_id: string;
-  hook_event_name: string;
+  transcript_path?: string;
+  cwd?: string;
+}
+
+export interface PermissionRequestHook extends HookCommon {
+  hook_event_name: "PermissionRequest";
   tool_name?: string;
   tool_input?: unknown;
   tool_use_id?: string;
-  [key: string]: unknown;
+}
+
+export interface PostToolUseHook extends HookCommon {
+  hook_event_name: "PostToolUse";
+  tool_name?: string;
+  tool_input?: unknown;
+  tool_response?: unknown;
+  tool_use_id?: string;
+}
+
+export interface StopHook extends HookCommon {
+  hook_event_name: "Stop";
+  stop_hook_active?: boolean;
+}
+
+export interface SessionStartHook extends HookCommon {
+  hook_event_name: "SessionStart";
+  source?: string;
+}
+
+export interface SessionEndHook extends HookCommon {
+  hook_event_name: "SessionEnd";
+  reason?: string;
+}
+
+export interface NotificationHook extends HookCommon {
+  hook_event_name: "Notification";
+  message?: string;
+  notification_type?: string;
+}
+
+export interface SubagentStartHook extends HookCommon {
+  hook_event_name: "SubagentStart";
+}
+
+export interface SubagentStopHook extends HookCommon {
+  hook_event_name: "SubagentStop";
+  stop_hook_active?: boolean;
+}
+
+export type HookInput =
+  | PermissionRequestHook
+  | PostToolUseHook
+  | StopHook
+  | SessionStartHook
+  | SessionEndHook
+  | NotificationHook
+  | SubagentStartHook
+  | SubagentStopHook;
+
+const HOOK_EVENT_NAMES: ReadonlySet<string> = new Set<HookEventName>([
+  "PermissionRequest",
+  "PostToolUse",
+  "Stop",
+  "SessionStart",
+  "SessionEnd",
+  "Notification",
+  "SubagentStart",
+  "SubagentStop",
+]);
+
+/** Project-local Result — see kbbl/core/pwa/lib/result.ts for the same shape. */
+type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
+
+/**
+ * Trace context for a rejected hook body at the HTTP boundary. Carries the
+ * operation, the offending session id when one was present, and a human-readable
+ * detail so a dropped hook can be traced back to why the parser refused it
+ * (distinguishing a missing session_id from an unknown event from a malformed
+ * field — outcomes a bare `null` would have collapsed into one).
+ */
+export interface HookParseError {
+  operation: "parse_hook_input";
+  entity_id?: string;
+  detail: string;
+}
+
+function hookParseErr(
+  detail: string,
+  entity_id?: string,
+): Result<HookInput, HookParseError> {
+  return { ok: false, error: { operation: "parse_hook_input", entity_id, detail } };
+}
+
+function isOptionalString(value: unknown): value is string | undefined {
+  return value === undefined || typeof value === "string";
+}
+
+function isOptionalBoolean(value: unknown): value is boolean | undefined {
+  return value === undefined || typeof value === "boolean";
+}
+
+/**
+ * Narrow a parsed JSON body into the HookInput union at the HTTP boundary.
+ * Returns an `Err` carrying trace context for anything that isn't an object
+ * with a string `session_id`, a recognized `hook_event_name`, and well-typed
+ * optional fields — `tool_name`/`tool_use_id`/`transcript_path`/`cwd` must be
+ * strings when present and `stop_hook_active` a boolean, so a non-string tool
+ * name can't masquerade as typed hook data downstream. Returns `Ok(hook)` once
+ * the discriminant and every field downstream code treats as typed validate.
+ */
+export function parseHookInput(raw: unknown): Result<HookInput, HookParseError> {
+  if (typeof raw !== "object" || raw === null) {
+    return hookParseErr("body is not a JSON object");
+  }
+  const obj = raw as {
+    session_id?: unknown;
+    hook_event_name?: unknown;
+    tool_name?: unknown;
+    tool_use_id?: unknown;
+    transcript_path?: unknown;
+    cwd?: unknown;
+    stop_hook_active?: unknown;
+    message?: unknown;
+    notification_type?: unknown;
+    reason?: unknown;
+    source?: unknown;
+  };
+  if (typeof obj.session_id !== "string") {
+    return hookParseErr("missing or non-string session_id");
+  }
+  if (
+    typeof obj.hook_event_name !== "string" ||
+    !HOOK_EVENT_NAMES.has(obj.hook_event_name)
+  ) {
+    return hookParseErr(
+      `unrecognized hook_event_name: ${String(obj.hook_event_name)}`,
+      obj.session_id,
+    );
+  }
+  if (!isOptionalString(obj.transcript_path) || !isOptionalString(obj.cwd)) {
+    return hookParseErr(
+      "transcript_path/cwd must be strings when present",
+      obj.session_id,
+    );
+  }
+  if (!isOptionalString(obj.tool_name) || !isOptionalString(obj.tool_use_id)) {
+    return hookParseErr(
+      "tool_name/tool_use_id must be strings when present",
+      obj.session_id,
+    );
+  }
+  if (
+    !isOptionalString(obj.message) ||
+    !isOptionalString(obj.notification_type) ||
+    !isOptionalString(obj.reason) ||
+    !isOptionalString(obj.source)
+  ) {
+    return hookParseErr(
+      "message/notification_type/reason/source must be strings when present",
+      obj.session_id,
+    );
+  }
+  if (!isOptionalBoolean(obj.stop_hook_active)) {
+    return hookParseErr(
+      "stop_hook_active must be a boolean when present",
+      obj.session_id,
+    );
+  }
+  return { ok: true, value: obj as unknown as HookInput };
 }
 
 export interface HookHandlerDeps {
@@ -43,10 +221,7 @@ export interface HookHandlerDeps {
  * operator taps Approve/Deny in the PWA.
  *
  * Returns { hookSpecificOutput: { hookEventName: "PermissionRequest",
- * permissionDecision: "allow" | "deny" | "ask", permissionDecisionReason } }
- * as CC requires — NOT decision.behavior (that's the SDK canUseTool programmatic
- * return, not the hook JSON; a wrong shape is silently ignored and CC keeps
- * blocking the tool).
+ * decision: { behavior: "allow" | "deny" } } } as CC requires.
  */
 export function hookPermissionHandler(deps: HookHandlerDeps) {
   return async (c: Context) => {
@@ -57,46 +232,21 @@ export function hookPermissionHandler(deps: HookHandlerDeps) {
       return c.text("forbidden", 403);
     }
 
-    let hook: HookInput;
+    let raw: unknown;
     try {
-      hook = (await c.req.json()) as HookInput;
+      raw = await c.req.json();
     } catch {
       return c.json({ error: "invalid json" }, 400);
     }
-    if (hook.hook_event_name !== "PermissionRequest") {
-      return c.json(
-        { error: `unexpected hook_event_name: ${hook.hook_event_name}` },
-        400,
-      );
+    const parsed = parseHookInput(raw);
+    if (!parsed.ok || parsed.value.hook_event_name !== "PermissionRequest") {
+      const detail = parsed.ok
+        ? `unexpected hook_event_name: ${parsed.value.hook_event_name}`
+        : parsed.error.detail;
+      console.error(`kbbl: /hook/permission rejected body: ${detail}`);
+      return c.json({ error: detail }, 400);
     }
-    // A well-formed PermissionRequest always carries the tool being gated and the
-    // tool_use it targets. Downstream consumers key off both — allowlisting uses
-    // tool_name, approvals are keyed to tool_use_id — so a missing value would let
-    // an "Always" allowlist the empty string or register an approval against no
-    // tool. Reject malformed payloads with an explicit deny (never stall CC).
-    if (
-      typeof hook.tool_name !== "string" ||
-      hook.tool_name.length === 0 ||
-      typeof hook.tool_use_id !== "string" ||
-      hook.tool_use_id.length === 0
-    ) {
-      console.error(
-        `kbbl: /hook/permission — malformed PermissionRequest (tool_name=${
-          hook.tool_name ?? "<missing>"
-        }, tool_use_id=${hook.tool_use_id ?? "<missing>"}), denying`,
-      );
-      return c.json(
-        {
-          hookSpecificOutput: {
-            hookEventName: "PermissionRequest",
-            permissionDecision: "deny",
-            permissionDecisionReason:
-              "malformed PermissionRequest: missing tool_name or tool_use_id",
-          },
-        },
-        200,
-      );
-    }
+    const hook = parsed.value;
 
     const session = await resolveSessionForHook(deps.manager, hook.session_id);
     if (!session) {
@@ -107,12 +257,17 @@ export function hookPermissionHandler(deps: HookHandlerDeps) {
         {
           hookSpecificOutput: {
             hookEventName: "PermissionRequest",
-            permissionDecision: "deny",
-            permissionDecisionReason: "no kbbl session for this CC session id",
+            decision: { behavior: "deny" },
           },
         },
         200,
       );
+    }
+
+    // Backstop in case SessionStart was missed: the permission hook also
+    // carries the transcript path. ensureTranscriptTailer is idempotent.
+    if (hook.transcript_path) {
+      ensureTranscriptTailer(session, hook.transcript_path);
     }
 
     const autoReason = session.yolo
@@ -135,16 +290,12 @@ export function hookPermissionHandler(deps: HookHandlerDeps) {
           }`,
         );
       }
-      // PermissionRequest hook response shape: CC (verified against 2.1.169 in
-      // phase0/RESULTS.md) expects hookSpecificOutput.permissionDecision
-      // ("allow"|"deny"|"ask") + permissionDecisionReason — NOT decision.behavior
-      // (that's the SDK canUseTool programmatic return, not the hook JSON). A
-      // wrong shape is silently ignored and CC keeps blocking the tool.
       return c.json({
         hookSpecificOutput: {
           hookEventName: "PermissionRequest",
-          permissionDecision: "allow",
-          permissionDecisionReason: `auto-approved (${autoReason})`,
+          decision: {
+            behavior: "allow",
+          },
         },
       });
     }
@@ -161,10 +312,6 @@ export function hookPermissionHandler(deps: HookHandlerDeps) {
       resolve: resolveDecision!,
       toolName: hook.tool_name ?? "",
     });
-    const delegatedCb = deps.manager.getDelegatedCallback(session.oakridgeSid);
-    if (delegatedCb) {
-      notifyApprovalNeeded(delegatedCb, requestId, hook.tool_name ?? "", session.oakridgeSid);
-    }
     signal.addEventListener(
       "abort",
       () => rejectDecision!(new Error("gate_aborted")),
@@ -186,9 +333,9 @@ export function hookPermissionHandler(deps: HookHandlerDeps) {
       return c.json({
         hookSpecificOutput: {
           hookEventName: "PermissionRequest",
-          permissionDecision: decision,
-          permissionDecisionReason:
-            decision === "allow" ? "operator approved" : "operator denied",
+          decision: {
+            behavior: decision,
+          },
         },
       });
     } catch (err) {
@@ -219,8 +366,7 @@ export function hookPermissionHandler(deps: HookHandlerDeps) {
       return c.json({
         hookSpecificOutput: {
           hookEventName: "PermissionRequest",
-          permissionDecision: "deny",
-          permissionDecisionReason: isGateAbort ? "gate aborted" : "hook handler error",
+          decision: { behavior: "deny" },
         },
       });
     }
@@ -280,15 +426,17 @@ export function hookSubagentStopHandler(deps: HookHandlerDeps) {
       return c.text("forbidden", 403);
     }
 
-    let hook: HookInput;
+    let raw: unknown;
     try {
-      hook = (await c.req.json()) as HookInput;
+      raw = await c.req.json();
     } catch {
       return c.json({}, 200);
     }
-    if (hook.hook_event_name !== "SubagentStop") {
+    const parsed = parseHookInput(raw);
+    if (!parsed.ok || parsed.value.hook_event_name !== "SubagentStop") {
       return c.json({}, 200);
     }
+    const hook = parsed.value;
 
     const session = await resolveSessionForHook(deps.manager, hook.session_id);
     if (session) {
@@ -327,7 +475,7 @@ export function hookSubagentStopHandler(deps: HookHandlerDeps) {
  */
 function makeInformationalHandler(
   deps: HookHandlerDeps,
-  expectedHookEvent: string,
+  expectedHookEvent: HookEventName,
   eventType: string,
 ) {
   return async (c: Context) => {
@@ -338,20 +486,29 @@ function makeInformationalHandler(
       return c.text("forbidden", 403);
     }
 
-    let hook: HookInput;
+    let raw: unknown;
     try {
-      hook = (await c.req.json()) as HookInput;
+      raw = await c.req.json();
     } catch {
       return c.json({}, 200);
     }
-    if (hook.hook_event_name !== expectedHookEvent) {
+    const parsed = parseHookInput(raw);
+    if (!parsed.ok || parsed.value.hook_event_name !== expectedHookEvent) {
       return c.json({}, 200);
     }
+    const hook = parsed.value;
 
     // resolveSessionForHook absorbs the hooks/stdout race: informational hooks
     // can fire before system/init has established the ccSid→oakridgeSid mapping.
     resolveSessionForHook(deps.manager, hook.session_id).then((session) => {
       if (session) {
+        // In PTY mode the only source of user/assistant/result events is CC's
+        // on-disk transcript. Every hook carries its path; start the tailer
+        // here (idempotent) so SessionStart — the first hook — brings the
+        // Conversation view online.
+        if (hook.transcript_path) {
+          ensureTranscriptTailer(session, hook.transcript_path);
+        }
         session.emit(eventType, { ...hook }).catch((err) => {
           console.error(
             `kbbl: ${eventType} emit failed: ${

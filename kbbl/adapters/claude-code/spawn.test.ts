@@ -1,55 +1,32 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import { assertA1Invariants, buildResumeArgs, makeBuildSpawnCmd, resolveCcSessionId, writeCcSettings, type BuildSpawnCmdContext } from "./spawn";
-import type { Session } from "../../core/session/session";
+import { assertA1Invariants, buildCcArgv, writeCcSettings } from "./spawn";
 
-function makeCtx(): BuildSpawnCmdContext {
-  return {
-    claudeBin: "claude",
-    settingsPath: "/tmp/settings.json",
-    mcpConfigPath: "/tmp/mcp-servers.json",
-  };
-}
+const BASE_ARGV_OPTS = {
+  claudeBin: "claude",
+  settingsPath: "/tmp/settings.json",
+  mcpConfigPath: "/tmp/mcp-servers.json",
+};
 
-function fakeSession(
-  overrides: Partial<{
-    model: string | null;
-    parentCcSid: string | null;
-    oakridgeSid: string;
-  }>,
-): Session {
-  return {
-    model: overrides.model ?? null,
-    parentCcSid: overrides.parentCcSid ?? null,
-    workdir: "/tmp",
-    oakridgeSid: overrides.oakridgeSid ?? "sess-test-sid",
-  } as unknown as Session;
-}
-
-describe("makeBuildSpawnCmd argv construction", () => {
-  const buildSpawnCmd = makeBuildSpawnCmd(makeCtx());
-
-  test("inserts --model when model is set", async () => {
-    const session = fakeSession({ model: "claude-sonnet-4-6" });
-    const { cmd } = await buildSpawnCmd(session);
+describe("buildCcArgv construction", () => {
+  test("inserts --model when model is set", () => {
+    const cmd = buildCcArgv({ ...BASE_ARGV_OPTS, model: "claude-sonnet-4-6" });
     const modelIdx = cmd.indexOf("--model");
     expect(modelIdx).toBeGreaterThanOrEqual(0);
     expect(cmd[modelIdx + 1]).toBe("claude-sonnet-4-6");
     expect(cmd.includes("--resume")).toBe(false);
   });
 
-  test("omits --model entirely when model is null", async () => {
-    const session = fakeSession({ model: null });
-    const { cmd } = await buildSpawnCmd(session);
+  test("omits --model entirely when model is null", () => {
+    const cmd = buildCcArgv({ ...BASE_ARGV_OPTS, model: null });
     expect(cmd.includes("--model")).toBe(false);
   });
 
-  test("loads the gated-review MCP config via --mcp-config --strict-mcp-config", async () => {
-    const session = fakeSession({ model: null });
-    const { cmd } = await buildSpawnCmd(session);
+  test("loads the gated-review MCP config via --mcp-config --strict-mcp-config", () => {
+    const cmd = buildCcArgv(BASE_ARGV_OPTS);
     const mcpIdx = cmd.indexOf("--mcp-config");
     expect(mcpIdx).toBeGreaterThanOrEqual(0);
     expect(cmd[mcpIdx + 1]).toBe("/tmp/mcp-servers.json");
@@ -59,9 +36,8 @@ describe("makeBuildSpawnCmd argv construction", () => {
     expect(mcpIdx).toBeGreaterThan(cmd.indexOf("--settings"));
   });
 
-  test("--model appears before --resume when both are set", async () => {
-    const session = fakeSession({ model: "claude-opus-4-7", parentCcSid: "abc" });
-    const { cmd } = await buildSpawnCmd(session);
+  test("--model appears before --resume when both are set", () => {
+    const cmd = buildCcArgv({ ...BASE_ARGV_OPTS, model: "claude-opus-4-7", parentCcSid: "abc" });
     const modelIdx = cmd.indexOf("--model");
     const resumeIdx = cmd.indexOf("--resume");
     expect(modelIdx).toBeGreaterThanOrEqual(0);
@@ -72,9 +48,27 @@ describe("makeBuildSpawnCmd argv construction", () => {
     expect(modelIdx).toBeLessThan(resumeIdx);
   });
 
-  test("does not contain --print or stream-json flags (interactive PTY mode)", async () => {
-    const session = fakeSession({ model: null });
-    const { cmd } = await buildSpawnCmd(session);
+  test("injects --session-id (before --model) when sessionId is set", () => {
+    const cmd = buildCcArgv({ ...BASE_ARGV_OPTS, sessionId: "forced-sid", model: "claude-opus-4-7" });
+    const sidIdx = cmd.indexOf("--session-id");
+    expect(sidIdx).toBeGreaterThanOrEqual(0);
+    expect(cmd[sidIdx + 1]).toBe("forced-sid");
+    // Forced id precedes --model so the static prefix stays stable.
+    expect(sidIdx).toBeLessThan(cmd.indexOf("--model"));
+  });
+
+  test("omits --session-id when not provided", () => {
+    const cmd = buildCcArgv(BASE_ARGV_OPTS);
+    expect(cmd.includes("--session-id")).toBe(false);
+  });
+
+  test("does not contain --print or stream-json flags (interactive PTY mode)", () => {
+    const cmd = buildCcArgv({
+      ...BASE_ARGV_OPTS,
+      sessionId: "forced-sid",
+      model: "claude-opus-4-7",
+      parentCcSid: "parent-sid",
+    });
     expect(cmd.includes("--print")).toBe(false);
     expect(cmd.includes("-p")).toBe(false);
     expect(cmd.includes("--input-format")).toBe(false);
@@ -83,59 +77,6 @@ describe("makeBuildSpawnCmd argv construction", () => {
     expect(cmd.includes("--include-hook-events")).toBe(false);
     expect(cmd.includes("--include-partial-messages")).toBe(false);
     expect(cmd.includes("--replay-user-messages")).toBe(false);
-  });
-});
-
-describe("buildResumeArgs", () => {
-  test("fork mode appends --resume <ccSid> --fork-session", () => {
-    expect(buildResumeArgs("cc-abc", "fork")).toEqual(["--resume", "cc-abc", "--fork-session"]);
-  });
-
-  test("continue-in-place mode appends --resume <ccSid> only", () => {
-    expect(buildResumeArgs("cc-abc", "continue-in-place")).toEqual(["--resume", "cc-abc"]);
-  });
-});
-
-describe("resolveCcSessionId", () => {
-  // Regression guard for the PTY hook-resolution gap: a fresh PTY session must
-  // know its CC session id at spawn time (via --session-id) because the byte
-  // stream is never parsed to learn it from system/init. Without a runtimeSid the
-  // ccSid→oakridgeSid map stays empty and every first-turn hook times out.
-  test("fresh session mints a uuid and pins it with --session-id", () => {
-    const { runtimeSid, sessionIdArgs } = resolveCcSessionId({});
-    expect(typeof runtimeSid).toBe("string");
-    expect(runtimeSid).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
-    );
-    expect(sessionIdArgs).toEqual(["--session-id", runtimeSid]);
-  });
-
-  test("continue-in-place reuses the resume id without --session-id", () => {
-    const { runtimeSid, sessionIdArgs } = resolveCcSessionId({ resumeCcSid: "cc-existing" });
-    expect(runtimeSid).toBe("cc-existing");
-    expect(sessionIdArgs).toEqual([]);
-  });
-
-  test("fork leaves runtimeSid undefined (CC mints the forked id)", () => {
-    const { runtimeSid, sessionIdArgs } = resolveCcSessionId({ parentCcSid: "cc-parent" });
-    expect(runtimeSid).toBeUndefined();
-    expect(sessionIdArgs).toEqual([]);
-  });
-
-  test("resume takes precedence over fork when both are somehow present", () => {
-    const { runtimeSid } = resolveCcSessionId({ resumeCcSid: "cc-resume", parentCcSid: "cc-parent" });
-    expect(runtimeSid).toBe("cc-resume");
-  });
-});
-
-describe("makeBuildSpawnCmd — fork via parentCcSid", () => {
-  test("parentCcSid produces --resume --fork-session (fork mode unchanged)", async () => {
-    const cmd = makeBuildSpawnCmd(makeCtx());
-    const { cmd: argv } = await cmd(fakeSession({ parentCcSid: "sid-xyz" }));
-    const resumeIdx = argv.indexOf("--resume");
-    expect(resumeIdx).toBeGreaterThanOrEqual(0);
-    expect(argv[resumeIdx + 1]).toBe("sid-xyz");
-    expect(argv.includes("--fork-session")).toBe(true);
   });
 });
 
@@ -148,17 +89,25 @@ describe("assertA1Invariants", () => {
     const binDir = join(tmpRoot, "node_modules/@anthropic-ai/claude-code/bin");
     mkdirSync(binDir, { recursive: true });
     fakeBin = join(binDir, "claude");
-    writeFileSync(fakeBin, "#!/bin/sh\necho fake", { mode: 0o755 });
+    // The A.1 identity check runs `<bin> --version` and requires it to report
+    // "(Claude Code)", so the fake must emit a CC-shaped version string.
+    writeFileSync(fakeBin, "#!/bin/sh\necho '2.1.177 (Claude Code)'", { mode: 0o755 });
   });
 
   afterEach(() => {
     rmSync(tmpRoot, { recursive: true, force: true });
   });
 
-  test("passes with a valid CC binary and no API key", async () => {
-    await expect(
-      assertA1Invariants({ claudeBin: fakeBin, argv: ["claude"], env: {} }),
-    ).resolves.toBeUndefined();
+  test("passes with a valid CC binary and no API key, returning the resolved path", async () => {
+    const resolved = await assertA1Invariants({
+      claudeBin: fakeBin,
+      argv: ["claude"],
+      env: {},
+    });
+    // Returns the realpath-resolved binary so the caller spawns exactly what
+    // was validated (guards against relative-path resolution drift).
+    expect(resolved).toContain("@anthropic-ai/claude-code");
+    expect(resolved).toBe(realpathSync(fakeBin));
   });
 
   test("rejects when --print is in argv", async () => {
@@ -193,9 +142,23 @@ describe("assertA1Invariants", () => {
     ).rejects.toThrow("A.1");
   });
 
-  test("rejects when binary path does not contain @anthropic-ai/claude-code", async () => {
+  test("rejects when the binary does not self-report as Claude Code", async () => {
+    // /bin/true runs cleanly but its --version output is not Claude Code, so
+    // the identity check must reject it regardless of its path.
     await expect(
       assertA1Invariants({ claudeBin: "/bin/true", argv: ["claude"], env: {} }),
+    ).rejects.toThrow("A.1");
+  });
+
+  test("rejects a binary on the CC path whose --version is not Claude Code", async () => {
+    // Path alone is no longer trusted: an impostor sitting at the right path
+    // must still fail the --version identity check.
+    const impostorDir = join(tmpRoot, "node_modules/@anthropic-ai/claude-code/impostor");
+    mkdirSync(impostorDir, { recursive: true });
+    const impostor = join(impostorDir, "claude");
+    writeFileSync(impostor, "#!/bin/sh\necho 'totally-not-cc 9.9.9'", { mode: 0o755 });
+    await expect(
+      assertA1Invariants({ claudeBin: impostor, argv: ["claude"], env: {} }),
     ).rejects.toThrow("A.1");
   });
 

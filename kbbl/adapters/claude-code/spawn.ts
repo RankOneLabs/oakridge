@@ -1,9 +1,10 @@
+import { execFile } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
+import { promisify } from "node:util";
 
-import type { Session, SpawnCmd } from "../../core/session/session";
+const execFileAsync = promisify(execFile);
 
 /**
  * CC-specific spawn-command construction and settings-file generation.
@@ -124,111 +125,62 @@ export async function writeCcMcpConfig(opts: {
   return mcpConfigPath;
 }
 
-/**
- * Distinguishes CC resume modes:
- * - "fork": `--resume <ccSid> --fork-session` — mints a new CC session id and
- *   a new kbbl row; used by the Resume button.
- * - "continue-in-place": `--resume <ccSid>` only — continues in the SAME CC
- *   session id and existing kbbl row; used by A.2 runtime-restart recovery.
- *
- * Phase 0 confirmed that plain --resume reopens an exited session with
- * source:"resume" and the same session_id; --fork-session is the variant
- * that diverges into a new id.
- */
-export type ResumeMode = "fork" | "continue-in-place";
-
-/**
- * Builds the `--resume` portion of the CC command line for the given mode.
- * Call site appends the returned array to the main argv.
- */
-export function buildResumeArgs(ccSid: string, mode: ResumeMode): string[] {
-  return mode === "continue-in-place"
-    ? ["--resume", ccSid]
-    : ["--resume", ccSid, "--fork-session"];
-}
-
-/**
- * Decides the CC session id for a PTY spawn and the `--session-id` argv it
- * implies. PTY mode never parses the byte stream, so the system/init event that
- * normally teaches kbbl the runtime session id (→ observeRuntimeSessionId →
- * registerCcSid) never arrives. To make hooks resolvable from the very first
- * request we must know the id at spawn time:
- *
- * - fresh (no resume, no fork): mint a uuid and pin it with `--session-id` so
- *   the ccSid→oakridgeSid mapping exists the instant the session goes live.
- * - continue-in-place (resumeCcSid): CC keeps its existing id, carried by
- *   `--resume`; reuse it as the runtime sid (no `--session-id`, which would
- *   conflict with `--resume`).
- * - fork (parentCcSid): CC mints a new id we cannot pin without a
- *   `--session-id`/`--resume` conflict, so it stays unregistered (pre-existing
- *   PTY limitation; the Resume-button path).
- *
- * The returned `runtimeSid` is surfaced as `SessionHandle.runtimeSid`, which
- * `attachRuntime` feeds to `observeRuntimeSessionId`.
- */
-export function resolveCcSessionId(opts: {
-  resumeCcSid?: string | null;
-  parentCcSid?: string | null;
-}): { runtimeSid: string | undefined; sessionIdArgs: string[] } {
-  if (opts.resumeCcSid) {
-    return { runtimeSid: opts.resumeCcSid, sessionIdArgs: [] };
-  }
-  if (opts.parentCcSid) {
-    return { runtimeSid: undefined, sessionIdArgs: [] };
-  }
-  const runtimeSid = randomUUID();
-  return { runtimeSid, sessionIdArgs: ["--session-id", runtimeSid] };
-}
-
-export interface BuildSpawnCmdContext {
+export interface CcArgvOpts {
   claudeBin: string;
   /** Absolute path to the settings.json from writeCcSettings(). */
   settingsPath: string;
   /** Absolute path to the mcp-servers.json from writeCcMcpConfig(). */
   mcpConfigPath: string;
+  /** Pinned model, or null/omitted for CC's default. */
+  model?: string | null;
+  /** Parent CC session id to fork from (continue-in-place / live fork). */
+  parentCcSid?: string | null;
+  /**
+   * Forced CC session id (`--session-id`). The PTY transport assigns this
+   * before launch so the ccSid→oakridgeSid mapping is known by the time the
+   * first hook fires. Omit it and CC picks its own id.
+   */
+  sessionId?: string | null;
 }
 
 /**
- * Returns a function that constructs the per-session SpawnCmd consumed by
- * SessionManager. The returned closure captures the static context so the
- * manager only needs `(session) => Promise<SpawnCmd>`.
+ * Builds the interactive `claude` argv (PTY launch; no --print / stream-json).
+ *
+ * Pure and order-stable so it is testable in isolation and shared by the only
+ * production launcher (the AgentRuntime PTY `spawn()` path): the static prefix
+ * mirrors oakridge-core's build_argv for byte/arg parity, then optional
+ * `--session-id`, `--model`, and `--resume`/`--fork-session` in that order.
  */
-export function makeBuildSpawnCmd(
-  ctx: BuildSpawnCmdContext,
-): (session: Session) => Promise<SpawnCmd> {
-  return async function buildSpawnCmd(session: Session): Promise<SpawnCmd> {
-    const cmd = [
-      ctx.claudeBin,
-      "--setting-sources",
-      "user",
-      "--settings",
-      ctx.settingsPath,
-      // Load the gated-review MCP server. `--setting-sources user` (above)
-      // excludes the project-scoped .mcp.json, so without this the server never
-      // registers in kbbl sessions. --strict-mcp-config makes the MCP set
-      // hermetic — exactly what kbbl declares, ignoring user/project configs and
-      // their needs-auth noise.
-      "--mcp-config",
-      ctx.mcpConfigPath,
-      "--strict-mcp-config",
-    ];
-
-    if (session.model) {
-      cmd.push("--model", session.model);
-    }
-    // Resume in a fresh session id so multiple live forks off the same parent
-    // don't collide on CC's internal session id. "fork" is the only mode the
-    // legacy buildSpawnCmd path supports — continue-in-place recovery goes
-    // through the registry AgentRuntime.spawn() path (index.ts) exclusively.
-    if (session.parentCcSid) {
-      cmd.push(...buildResumeArgs(session.parentCcSid, "fork"));
-    }
-    return {
-      cmd,
-      cwd: session.workdir,
-      env: { ...process.env } as Record<string, string>,
-    };
-  };
+export function buildCcArgv(opts: CcArgvOpts): string[] {
+  const argv = [
+    opts.claudeBin,
+    "--setting-sources",
+    "user",
+    "--settings",
+    opts.settingsPath,
+    // Load the gated-review MCP server. `--setting-sources user` (above)
+    // excludes the project-scoped .mcp.json, so without this the server never
+    // registers in kbbl sessions. --strict-mcp-config makes the MCP set
+    // hermetic — exactly what kbbl declares, ignoring user/project configs and
+    // their needs-auth noise.
+    "--mcp-config",
+    opts.mcpConfigPath,
+    "--strict-mcp-config",
+  ];
+  // Forced session id (PTY mode), assigned before launch. --fork-session below
+  // is required for CC to accept --session-id alongside --resume.
+  if (opts.sessionId) {
+    argv.push("--session-id", opts.sessionId);
+  }
+  if (opts.model) {
+    argv.push("--model", opts.model);
+  }
+  // Resume in a fresh session id so multiple live forks off the same parent
+  // don't collide on CC's internal session id.
+  if (opts.parentCcSid) {
+    argv.push("--resume", opts.parentCcSid, "--fork-session");
+  }
+  return argv;
 }
 
 /**
@@ -238,19 +190,29 @@ export function makeBuildSpawnCmd(
  *   1. No -p / --print in the argv (interactive mode only; print = metered API path).
  *   2. ANTHROPIC_API_KEY is absent (subscription OAuth only; an API key forces
  *      per-token billing regardless of the OAuth login state).
- *   3. The binary resolves (via symlinks) to a path containing
- *      @anthropic-ai/claude-code (the real subscription CLI, not an impostor).
+ *   3. The realpath-resolved binary self-reports as Claude Code via `--version`
+ *      (the real subscription CLI, not an impostor). We verify the reported
+ *      identity rather than match the install path: the layout is not stable
+ *      (npm `node_modules/@anthropic-ai/claude-code/…` vs the native installer's
+ *      `~/.local/share/claude/versions/<ver>`), so a path heuristic
+ *      false-negatives the genuine CLI whenever the install layout changes.
  *   4. Real TTY: guaranteed by the caller using bun-pty — this function
  *      documents the invariant but cannot check it pre-spawn.
  *
  * Throws with an "A.1:" prefix on any violation so callers can surface the
  * reason without additional parsing.
+ *
+ * Returns the realpath-resolved binary path so the caller spawns exactly the
+ * file that was validated. Spawning the un-resolved `claudeBin` instead would
+ * reopen the guard: a relative path validates against the server's lookup but,
+ * executed under the session's working directory, could resolve to a different
+ * binary — defeating invariant 3.
  */
 export async function assertA1Invariants(opts: {
   claudeBin: string;
   argv: string[];
   env: Record<string, string | undefined>;
-}): Promise<void> {
+}): Promise<string> {
   if (opts.argv.includes("-p") || opts.argv.includes("--print")) {
     throw new Error("A.1: interactive mode forbids -p / --print in argv");
   }
@@ -268,10 +230,29 @@ export async function assertA1Invariants(opts: {
   } catch {
     throw new Error(`A.1: cannot resolve binary '${opts.claudeBin}'`);
   }
-  if (!/\/@anthropic-ai\/claude-code(\/|$)/.test(resolvedBin)) {
+  // Identity check: the resolved binary must self-report as Claude Code.
+  // `--version` is a fast, non-billing invocation (no session, no tokens) and
+  // is installer-layout independent — unlike the prior path-substring heuristic.
+  // Async exec (not execFileSync): this runs on the runtime spawn path, so a
+  // blocking call would stall hook handling and other concurrent sessions for
+  // the duration of CC's startup (or the full timeout on a hang).
+  let versionOut: string;
+  try {
+    const result = await execFileAsync(resolvedBin, ["--version"], {
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    versionOut = result.stdout;
+  } catch {
     throw new Error(
-      `A.1: '${resolvedBin}' is not @anthropic-ai/claude-code — refusing to launch (interactive mode requires the subscription CLI)`,
+      `A.1: '${resolvedBin}' failed to run '--version' — refusing to launch (interactive mode requires the subscription CLI)`,
     );
   }
+  if (!/\(Claude Code\)/.test(versionOut)) {
+    throw new Error(
+      `A.1: '${resolvedBin}' does not self-report as Claude Code (--version: ${JSON.stringify(versionOut.trim())}) — refusing to launch (interactive mode requires the subscription CLI)`,
+    );
+  }
+  return resolvedBin;
 }
 

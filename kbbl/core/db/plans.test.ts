@@ -30,7 +30,7 @@ describe("plans query helpers", () => {
     const plan = insertPlan(db, { id: "pl1", spec_id: SPEC_ID });
     expect(plan.id).toBe("pl1");
     expect(plan.spec_id).toBe(SPEC_ID);
-    expect(plan.status).toBe("pending_approval");
+    expect(plan.status).toBe("draft");
     expect(plan.predecessor_plan_id).toBeNull();
     expect(plan.model).toBeNull();
     expect(plan.created_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
@@ -113,7 +113,7 @@ describe("POST /plans", () => {
     });
     expect(res.status).toBe(201);
     const body = (await res.json()) as { status: string; predecessor_plan_id: null };
-    expect(body.status).toBe("pending_approval");
+    expect(body.status).toBe("draft");
     expect(body.predecessor_plan_id).toBeNull();
   });
 
