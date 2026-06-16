@@ -462,4 +462,52 @@ describe("Session input queue (CC PTY mode)", () => {
     // The queued message must have been dropped, not sent.
     expect(sent).toEqual(["first"]);
   });
+
+  test("runtime.send failure resets turnState so subsequent messages are delivered", async () => {
+    const sent: string[] = [];
+    let failNext = false;
+    let finish!: () => void;
+    const done = new Promise<void>((resolve) => { finish = resolve; });
+
+    const runtime: AgentRuntime = {
+      ...makeRuntime(),
+      async *events(_handle: SessionHandle): AsyncIterable<RuntimeEvent> {
+        await done;
+        yield { type: "completed", result: { code: 0 } };
+      },
+      async send(_handle: SessionHandle, input: string): Promise<void> {
+        if (failNext) {
+          failNext = false;
+          throw new Error("pty write failed");
+        }
+        sent.push(input);
+      },
+    };
+
+    const session = makeSession();
+    const handle = await runtime.spawn({ workingDirectory: "/tmp" });
+    await session.attachRuntime(runtime, handle);
+
+    // First write: idle → busy, sends successfully.
+    await session.writeInput("msg1");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent).toEqual(["msg1"]);
+
+    // Arm failure for the next send, then queue a second message.
+    failNext = true;
+    await session.writeInput("msg2");
+
+    // Turn ends → pump tries msg2, send throws, turnState resets to idle.
+    session.notifyTurnEnd();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(sent).toEqual(["msg1"]); // msg2 dropped
+
+    // Session must not be wedged — a new write goes through cleanly.
+    await session.writeInput("msg3");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent).toEqual(["msg1", "msg3"]);
+
+    finish();
+    await session.waitForEnd();
+  });
 });

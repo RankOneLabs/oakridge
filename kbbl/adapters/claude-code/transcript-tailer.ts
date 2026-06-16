@@ -337,6 +337,12 @@ export function ensureTranscriptTailer(
     label: session.oakridgeSid,
   });
   tailing.set(session, handle);
+  // Delete the entry when the session ends so the tailer's captured state
+  // (seenUuids, leftover) can be GC'd even though SessionManager holds the
+  // Session object for the server lifetime.
+  session.endedSignal.addEventListener("abort", () => {
+    tailing.delete(session);
+  }, { once: true });
 }
 
 /**

@@ -1079,7 +1079,19 @@ export class Session {
     const runtime = this._runtime;
     const handle = this._handle;
     const task = async () => {
-      await runtime.send(handle, msg);
+      try {
+        await runtime.send(handle, msg);
+      } catch (err) {
+        // send() failed (e.g. CC proc already gone). Reset state so the queue
+        // isn't permanently wedged; finalize() will clear pendingInput shortly.
+        console.error(
+          `kbbl: runtime.send failed [${this.oakridgeSid}]: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        this.turnState = "idle";
+        this.pumpInputQueue();
+      }
     };
     this.inputQueue = this.inputQueue.then(task, task);
   }
