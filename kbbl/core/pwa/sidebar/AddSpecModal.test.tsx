@@ -73,7 +73,7 @@ describe("AddSpecModal agent runtime selection", () => {
     fireEvent.change(screen.getByLabelText("Title"), {
       target: { value: "Build the thing" },
     });
-    fireEvent.submit(screen.getByRole("button", { name: "Create" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
     await waitFor(() => {
       expect(postBody).toMatchObject({
@@ -145,7 +145,7 @@ describe("AddSpecModal agent runtime selection", () => {
       );
     });
 
-    fireEvent.submit(screen.getByRole("button", { name: "Create" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
     await waitFor(() => {
       expect(postBody).toMatchObject({
@@ -155,6 +155,147 @@ describe("AddSpecModal agent runtime selection", () => {
         agent_runtime: "claude-code",
       });
     });
+  });
+
+  test("clears uploaded file notes when reading a replacement file fails", async () => {
+    let postBody: unknown = null;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/config") {
+        return new Response(
+          JSON.stringify({
+            defaultWorkdir: "/tmp/repo",
+            defaultRuntimeId: "claude-code",
+            runtimes: [
+              {
+                id: "claude-code",
+                label: "Claude Code",
+                supportsCompaction: true,
+                models: [],
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      if (url === "/specs" && init?.method === "POST") {
+        postBody = JSON.parse(String(init.body));
+        return new Response(JSON.stringify({ id: "spec-1" }), { status: 201 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithClient(
+      <AddSpecModal
+        project={{ id: "project-1", name: "Project", repo_path: "/tmp/repo" }}
+        onCreated={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Agent")).toHaveProperty("value", "claude-code");
+    });
+
+    fireEvent.change(screen.getByLabelText("Title"), {
+      target: { value: "From a file" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Upload file" }));
+
+    const firstContent = "spec from file";
+    const firstFile = new File([firstContent], "spec.md", { type: "text/markdown" });
+    Object.defineProperty(firstFile, "text", { value: async () => firstContent });
+    fireEvent.change(screen.getByLabelText("Notes file"), {
+      target: { files: [firstFile] },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Notes preview")).toHaveProperty("value", firstContent);
+    });
+
+    const failedFile = new File([""], "broken.md", { type: "text/markdown" });
+    Object.defineProperty(failedFile, "text", {
+      value: async () => {
+        throw new Error("read failed");
+      },
+    });
+    fireEvent.change(screen.getByLabelText("Notes file"), {
+      target: { files: [failedFile] },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert").textContent).toBe("could not read file");
+    });
+    expect(screen.queryByLabelText("Notes preview")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => {
+      expect(postBody).toMatchObject({
+        project_id: "project-1",
+        title: "From a file",
+        agent_runtime: "claude-code",
+      });
+    });
+    expect(postBody).not.toHaveProperty("notes");
+  });
+
+  test("clears the uploaded file name when notes are edited manually", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/config") {
+        return new Response(
+          JSON.stringify({
+            defaultWorkdir: "/tmp/repo",
+            defaultRuntimeId: "claude-code",
+            runtimes: [
+              {
+                id: "claude-code",
+                label: "Claude Code",
+                supportsCompaction: true,
+                models: [],
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response("not found", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithClient(
+      <AddSpecModal
+        project={{ id: "project-1", name: "Project", repo_path: "/tmp/repo" }}
+        onCreated={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Agent")).toHaveProperty("value", "claude-code");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Upload file" }));
+    const content = "spec from file";
+    const file = new File([content], "spec.md", { type: "text/markdown" });
+    Object.defineProperty(file, "text", { value: async () => content });
+    fireEvent.change(screen.getByLabelText("Notes file"), {
+      target: { files: [file] },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Loaded spec.md — 14 chars")).not.toBeNull();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Write" }));
+    fireEvent.change(screen.getByLabelText("Notes"), {
+      target: { value: "manual changes" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Upload file" }));
+
+    expect(screen.queryByText(/Loaded spec\.md/)).toBeNull();
   });
 
   test("defaults to the first available runtime when configured default is absent", async () => {
@@ -200,7 +341,7 @@ describe("AddSpecModal agent runtime selection", () => {
     fireEvent.change(screen.getByLabelText("Title"), {
       target: { value: "Build the thing" },
     });
-    fireEvent.submit(screen.getByRole("button", { name: "Create" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
     await waitFor(() => {
       expect(postBody).toMatchObject({

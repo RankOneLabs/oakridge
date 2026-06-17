@@ -104,6 +104,7 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
       setFileName(file.name);
     } catch {
       setError("could not read file");
+      setNotes("");
       setFileName(null);
     }
   }
@@ -208,7 +209,7 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
               }}
             >
               <span style={{ opacity: 0.8 }}>Notes (optional)</span>
-              <div role="radiogroup" aria-label="Notes source" style={{ display: "flex", gap: 4 }}>
+              <div role="group" aria-label="Notes source" style={{ display: "flex", gap: 4 }}>
                 <button
                   type="button"
                   aria-pressed={notesSource === "text"}
@@ -232,7 +233,10 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
             {notesSource === "text" ? (
               <textarea
                 value={notes}
-                onChange={(e) => setNotes(e.target.value)}
+                onChange={(e) => {
+                  setNotes(e.target.value);
+                  setFileName(null);
+                }}
                 placeholder="Context, constraints, links — anything plan_writer should know."
                 rows={10}
                 style={{ fontSize: 13, resize: "vertical", width: "100%", boxSizing: "border-box" }}
@@ -243,7 +247,7 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 <input
                   type="file"
-                  accept=".md,.markdown,.txt,.text,text/*"
+                  accept=".md,.markdown,.txt,text/markdown,text/plain,text/*"
                   aria-label="Notes file"
                   disabled={pending}
                   onChange={handleFileChange}
