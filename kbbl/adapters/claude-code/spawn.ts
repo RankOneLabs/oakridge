@@ -172,11 +172,16 @@ export async function ensureWorkspaceTrusted(
     // throw downstream — treat it as empty and let CC rewrite the rest.
     config = isPlainObject(parsed) ? parsed : {};
   } catch (err) {
-    console.error(
-      `kbbl: workspace-trust seed skipped — cannot read or parse ${configPath}: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
+    // A missing config is a normal first-run state (CC creates it on first
+    // launch) — return silently rather than logging an error on every spawn.
+    // Genuine failures (corrupt file, permissions) still surface.
+    if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") {
+      console.error(
+        `kbbl: workspace-trust seed skipped — cannot read or parse ${configPath}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
     return;
   }
   // Guard the nested shapes too: a corrupt `projects` (or a non-object entry

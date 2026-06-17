@@ -1114,6 +1114,9 @@ export class Session {
             err instanceof Error ? err.message : String(err)
           }`,
         );
+        // This dispatch never reached CC, so its watchdog is moot — clear it
+        // so a stray timer doesn't linger (re-pump below re-arms if it sends).
+        this.clearBusyWatchdog();
         this.turnState = "idle";
         this.pumpInputQueue();
       }
