@@ -3,7 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import { assertA1Invariants, buildCcArgv, writeCcSettings } from "./spawn";
+import {
+  assertA1Invariants,
+  buildCcArgv,
+  ensureWorkspaceTrusted,
+  writeCcSettings,
+} from "./spawn";
 
 const BASE_ARGV_OPTS = {
   claudeBin: "claude",
@@ -231,5 +236,64 @@ describe("writeCcSettings", () => {
     const content = readFileSync(settingsPath, "utf8");
     expect(content).toContain("9999");
     expect(content).not.toContain("8788");
+  });
+});
+
+describe("ensureWorkspaceTrusted", () => {
+  let homeDir: string;
+  let configPath: string;
+
+  beforeEach(() => {
+    homeDir = mkdtempSync(join(tmpdir(), "kbbl-home-"));
+    configPath = join(homeDir, ".claude.json");
+  });
+
+  afterEach(() => {
+    rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  const wt = "/home/steve/codes/rol/oakridge/kbbl/data/worktrees/abc-123";
+
+  test("seeds hasTrustDialogAccepted for an untrusted worktree", async () => {
+    writeFileSync(configPath, JSON.stringify({ projects: {} }));
+    await ensureWorkspaceTrusted(wt, configPath);
+    const cfg = JSON.parse(readFileSync(configPath, "utf8"));
+    expect(cfg.projects[wt].hasTrustDialogAccepted).toBe(true);
+  });
+
+  test("preserves existing project fields when seeding trust", async () => {
+    writeFileSync(
+      configPath,
+      JSON.stringify({ projects: { [wt]: { lastCost: 42, allowedTools: ["X"] } } }),
+    );
+    await ensureWorkspaceTrusted(wt, configPath);
+    const cfg = JSON.parse(readFileSync(configPath, "utf8"));
+    expect(cfg.projects[wt].hasTrustDialogAccepted).toBe(true);
+    expect(cfg.projects[wt].lastCost).toBe(42);
+    expect(cfg.projects[wt].allowedTools).toEqual(["X"]);
+  });
+
+  test("is a no-op (no rewrite) when already trusted", async () => {
+    writeFileSync(
+      configPath,
+      JSON.stringify({ projects: { [wt]: { hasTrustDialogAccepted: true } } }),
+    );
+    const before = readFileSync(configPath, "utf8");
+    await ensureWorkspaceTrusted(wt, configPath);
+    expect(readFileSync(configPath, "utf8")).toBe(before);
+  });
+
+  test("creates the projects map when the config lacks one", async () => {
+    writeFileSync(configPath, JSON.stringify({ numStartups: 7 }));
+    await ensureWorkspaceTrusted(wt, configPath);
+    const cfg = JSON.parse(readFileSync(configPath, "utf8"));
+    expect(cfg.numStartups).toBe(7);
+    expect(cfg.projects[wt].hasTrustDialogAccepted).toBe(true);
+  });
+
+  test("non-fatal when the config file is missing", async () => {
+    // No file written — must not throw, and must not create one (best-effort).
+    await ensureWorkspaceTrusted(wt, configPath);
+    expect(() => readFileSync(configPath, "utf8")).toThrow();
   });
 });

@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { realpathSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { readFile, rename, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -123,6 +124,70 @@ export async function writeCcMcpConfig(opts: {
     ),
   );
   return mcpConfigPath;
+}
+
+/**
+ * Pre-trust `workdir` in CC's global config so the interactive launch skips
+ * the "Is this a project you trust?" workspace-trust modal.
+ *
+ * Why this is needed: kbbl spawns CC in a fresh per-session git worktree, and
+ * CC keys workspace trust on the absolute directory path (stored in
+ * ~/.claude.json under `projects[dir].hasTrustDialogAccepted`). Every new
+ * worktree is therefore untrusted, so the modal blocks the prompt on launch.
+ * In PTY mode the operator's first message is swallowed by that modal — it
+ * never reaches the CC prompt and no turn ever starts, so the session looks
+ * permanently empty. (The prior --print/headless transport never showed the
+ * modal, which is why this only surfaced once PTY mode landed.)
+ *
+ * Best-effort and non-fatal: on any IO/parse failure we log and return so the
+ * launch still proceeds — the Session input-queue watchdog recovers the queue
+ * if the modal does appear. The write is atomic (temp file + rename) so a
+ * crash mid-write can't truncate the operator's global config. Concurrent
+ * writers (CC itself, other kbbl sessions) are a small unguarded race;
+ * ~/.claude.json has no lock protocol and trust writes are infrequent, so
+ * last-writer-wins is acceptable here.
+ *
+ * `configPath` defaults to the operator's real `~/.claude.json`; it is a
+ * parameter only so this IO boundary can be exercised against a temp file in
+ * tests without touching the real config.
+ */
+export async function ensureWorkspaceTrusted(
+  workdir: string,
+  configPath: string = join(homedir(), ".claude.json"),
+): Promise<void> {
+  let config: Record<string, unknown>;
+  try {
+    config = JSON.parse(await readFile(configPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+  } catch (err) {
+    console.error(
+      `kbbl: workspace-trust seed skipped — cannot read ${configPath}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    return;
+  }
+  const projects =
+    (config.projects as Record<string, Record<string, unknown>> | undefined) ??
+    {};
+  const existing = projects[workdir];
+  // Already trusted — no write, no race window.
+  if (existing?.hasTrustDialogAccepted === true) return;
+  projects[workdir] = { ...existing, hasTrustDialogAccepted: true };
+  config.projects = projects;
+  const tmpPath = `${configPath}.kbbl-${process.pid}.tmp`;
+  try {
+    await writeFile(tmpPath, JSON.stringify(config, null, 2));
+    await rename(tmpPath, configPath);
+  } catch (err) {
+    console.error(
+      `kbbl: workspace-trust seed failed for ${workdir}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
 }
 
 export interface CcArgvOpts {
