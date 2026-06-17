@@ -1,4 +1,15 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, realpathSync } from "node:fs";
+import {
+  chmodSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -309,6 +320,28 @@ describe("ensureWorkspaceTrusted", () => {
     writeFileSync(configPath, JSON.stringify({ projects: "corrupt" }));
     await ensureWorkspaceTrusted(wt, configPath);
     const cfg = JSON.parse(readFileSync(configPath, "utf8"));
+    expect(cfg.projects[wt].hasTrustDialogAccepted).toBe(true);
+  });
+
+  test("preserves the existing config file mode (does not widen)", async () => {
+    writeFileSync(configPath, JSON.stringify({ projects: {} }));
+    chmodSync(configPath, 0o600);
+    await ensureWorkspaceTrusted(wt, configPath);
+    expect(statSync(configPath).mode & 0o777).toBe(0o600);
+    const cfg = JSON.parse(readFileSync(configPath, "utf8"));
+    expect(cfg.projects[wt].hasTrustDialogAccepted).toBe(true);
+  });
+
+  test("writes through a symlinked config without replacing the link", async () => {
+    const realPath = join(homeDir, "real-claude.json");
+    const linkPath = join(homeDir, "link-claude.json");
+    writeFileSync(realPath, JSON.stringify({ projects: {} }));
+    symlinkSync(realPath, linkPath);
+    await ensureWorkspaceTrusted(wt, linkPath);
+    // The link is still a symlink (not clobbered into a regular file)...
+    expect(lstatSync(linkPath).isSymbolicLink()).toBe(true);
+    // ...and the seed landed in the real target.
+    const cfg = JSON.parse(readFileSync(realPath, "utf8"));
     expect(cfg.projects[wt].hasTrustDialogAccepted).toBe(true);
   });
 });

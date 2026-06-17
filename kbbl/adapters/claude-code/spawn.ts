@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { realpathSync, statSync } from "node:fs";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -196,10 +196,23 @@ export async function ensureWorkspaceTrusted(
   if (existing?.hasTrustDialogAccepted === true) return;
   projects[workdir] = { ...existing, hasTrustDialogAccepted: true };
   config.projects = projects;
-  const tmpPath = `${configPath}.kbbl-${process.pid}-${trustSeedTmpCounter++}.tmp`;
+  // Resolve through a symlink so rename() replaces the link's target rather
+  // than the symlink itself (dotfile managers commonly symlink ~/.claude.json),
+  // and preserve the existing file's mode so a token-bearing config isn't
+  // widened past its prior permissions by the temp file's default umask.
+  // Default to 0o600 — private — if the mode can't be read.
+  let targetPath = configPath;
+  let mode = 0o600;
   try {
-    await writeFile(tmpPath, JSON.stringify(config, null, 2));
-    await rename(tmpPath, configPath);
+    targetPath = realpathSync(configPath);
+    mode = statSync(targetPath).mode & 0o777;
+  } catch {
+    // Keep the given path / restrictive default — best-effort.
+  }
+  const tmpPath = `${targetPath}.kbbl-${process.pid}-${trustSeedTmpCounter++}.tmp`;
+  try {
+    await writeFile(tmpPath, JSON.stringify(config, null, 2), { mode });
+    await rename(tmpPath, targetPath);
   } catch (err) {
     console.error(
       `kbbl: workspace-trust seed failed for ${workdir}: ${
