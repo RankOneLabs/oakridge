@@ -302,10 +302,13 @@ describe("ensureWorkspaceTrusted", () => {
     expect(cfg.projects[wt].hasTrustDialogAccepted).toBe(true);
   });
 
-  test("non-fatal when the config file is missing", async () => {
-    // No file written — must not throw, and must not create one (best-effort).
+  test("creates a fresh private config and seeds trust when none exists", async () => {
+    // First-run state: no file. Must create one with the trust seed (otherwise
+    // the modal reappears) and keep it private (it will later hold tokens).
     await ensureWorkspaceTrusted(wt, configPath);
-    expect(() => readFileSync(configPath, "utf8")).toThrow();
+    const cfg = JSON.parse(readFileSync(configPath, "utf8"));
+    expect(cfg.projects[wt].hasTrustDialogAccepted).toBe(true);
+    expect(statSync(configPath).mode & 0o777).toBe(0o600);
   });
 
   test("recovers when the parsed config is not an object", async () => {

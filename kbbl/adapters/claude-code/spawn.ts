@@ -172,17 +172,21 @@ export async function ensureWorkspaceTrusted(
     // throw downstream — treat it as empty and let CC rewrite the rest.
     config = isPlainObject(parsed) ? parsed : {};
   } catch (err) {
-    // A missing config is a normal first-run state (CC creates it on first
-    // launch) — return silently rather than logging an error on every spawn.
-    // Genuine failures (corrupt file, permissions) still surface.
+    // A missing config is the normal first-run state — treat it as empty and
+    // fall through to create it below, so trust is still seeded and the modal
+    // is skipped on the very first launch (returning here would reintroduce
+    // the swallowed-first-message bug). Silent: ENOENT isn't an error worth
+    // logging on every spawn. Genuine failures (corrupt file, permissions)
+    // are unexpected — log and bail without touching the file.
     if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") {
       console.error(
         `kbbl: workspace-trust seed skipped — cannot read or parse ${configPath}: ${
           err instanceof Error ? err.message : String(err)
         }`,
       );
+      return;
     }
-    return;
+    config = {};
   }
   // Guard the nested shapes too: a corrupt `projects` (or a non-object entry
   // for this workdir) would otherwise throw on index/spread and, since spawn()
