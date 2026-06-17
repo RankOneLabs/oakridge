@@ -33,7 +33,13 @@ import {
   type CcTurnTracker,
 } from "./hook-route";
 import { projectUsage, type TranscriptAssistantMessage } from "./transcript";
-import { assertA1Invariants, buildCcArgv, writeCcMcpConfig, writeCcSettings } from "./spawn";
+import {
+  assertA1Invariants,
+  buildCcArgv,
+  ensureWorkspaceTrusted,
+  writeCcMcpConfig,
+  writeCcSettings,
+} from "./spawn";
 
 export interface CreateClaudeCodeRuntimeOpts {
   claudeBin: string;
@@ -230,6 +236,11 @@ export async function createClaudeCodeRuntime(
       const ptyEnv = Object.fromEntries(
         Object.entries(spawnEnv).filter((e): e is [string, string] => e[1] !== undefined),
       );
+
+      // Pre-trust the worktree so CC's launch skips the workspace-trust modal.
+      // Without this the modal blocks the prompt in PTY mode and swallows the
+      // operator's first message. Best-effort — see ensureWorkspaceTrusted.
+      await ensureWorkspaceTrusted(config.workingDirectory);
 
       // Launch claude in a PTY (invariant 4: real TTY guaranteed by bun-pty).
       const ptyProc = pty.spawn(resolvedClaudeBin, argv.slice(1), {
@@ -556,6 +567,10 @@ export async function createClaudeCodeRuntime(
         turnTrackers,
         onTranscriptEvent: (session, type, payload) => {
           updateTurnTracker(session.oakridgeSid, type, payload);
+          // Any transcript line proves CC is actively processing the
+          // dispatched message — cancel the input-queue watchdog so a long
+          // but legitimate turn isn't mistaken for a swallowed message.
+          session.notifyTurnStarted();
         },
       };
       app.post("/hook/permission", hookPermissionHandler(hookDeps));

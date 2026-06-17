@@ -1,9 +1,25 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, realpathSync } from "node:fs";
+import {
+  chmodSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import { assertA1Invariants, buildCcArgv, writeCcSettings } from "./spawn";
+import {
+  assertA1Invariants,
+  buildCcArgv,
+  ensureWorkspaceTrusted,
+  writeCcSettings,
+} from "./spawn";
 
 const BASE_ARGV_OPTS = {
   claudeBin: "claude",
@@ -231,5 +247,111 @@ describe("writeCcSettings", () => {
     const content = readFileSync(settingsPath, "utf8");
     expect(content).toContain("9999");
     expect(content).not.toContain("8788");
+  });
+});
+
+describe("ensureWorkspaceTrusted", () => {
+  let homeDir: string;
+  let configPath: string;
+
+  beforeEach(() => {
+    homeDir = mkdtempSync(join(tmpdir(), "kbbl-home-"));
+    configPath = join(homeDir, ".claude.json");
+  });
+
+  afterEach(() => {
+    rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  const wt = "/home/steve/codes/rol/oakridge/kbbl/data/worktrees/abc-123";
+
+  test("seeds hasTrustDialogAccepted for an untrusted worktree", async () => {
+    writeFileSync(configPath, JSON.stringify({ projects: {} }));
+    await ensureWorkspaceTrusted(wt, configPath);
+    const cfg = JSON.parse(readFileSync(configPath, "utf8"));
+    expect(cfg.projects[wt].hasTrustDialogAccepted).toBe(true);
+  });
+
+  test("preserves existing project fields when seeding trust", async () => {
+    writeFileSync(
+      configPath,
+      JSON.stringify({ projects: { [wt]: { lastCost: 42, allowedTools: ["X"] } } }),
+    );
+    await ensureWorkspaceTrusted(wt, configPath);
+    const cfg = JSON.parse(readFileSync(configPath, "utf8"));
+    expect(cfg.projects[wt].hasTrustDialogAccepted).toBe(true);
+    expect(cfg.projects[wt].lastCost).toBe(42);
+    expect(cfg.projects[wt].allowedTools).toEqual(["X"]);
+  });
+
+  test("is a no-op (no rewrite) when already trusted", async () => {
+    writeFileSync(
+      configPath,
+      JSON.stringify({ projects: { [wt]: { hasTrustDialogAccepted: true } } }),
+    );
+    const before = readFileSync(configPath, "utf8");
+    await ensureWorkspaceTrusted(wt, configPath);
+    expect(readFileSync(configPath, "utf8")).toBe(before);
+  });
+
+  test("creates the projects map when the config lacks one", async () => {
+    writeFileSync(configPath, JSON.stringify({ numStartups: 7 }));
+    await ensureWorkspaceTrusted(wt, configPath);
+    const cfg = JSON.parse(readFileSync(configPath, "utf8"));
+    expect(cfg.numStartups).toBe(7);
+    expect(cfg.projects[wt].hasTrustDialogAccepted).toBe(true);
+  });
+
+  test("creates a fresh private config and seeds trust when none exists", async () => {
+    // First-run state: no file. Must create one with the trust seed (otherwise
+    // the modal reappears) and keep it private (it will later hold tokens).
+    await ensureWorkspaceTrusted(wt, configPath);
+    const cfg = JSON.parse(readFileSync(configPath, "utf8"));
+    expect(cfg.projects[wt].hasTrustDialogAccepted).toBe(true);
+    expect(statSync(configPath).mode & 0o777).toBe(0o600);
+  });
+
+  test("recovers when the parsed config is not an object", async () => {
+    // Valid JSON, unexpected top-level shape — must not throw, seeds anyway.
+    writeFileSync(configPath, JSON.stringify(null));
+    await ensureWorkspaceTrusted(wt, configPath);
+    const cfg = JSON.parse(readFileSync(configPath, "utf8"));
+    expect(cfg.projects[wt].hasTrustDialogAccepted).toBe(true);
+  });
+
+  test("recovers when projects is not an object", async () => {
+    writeFileSync(configPath, JSON.stringify({ projects: "corrupt" }));
+    await ensureWorkspaceTrusted(wt, configPath);
+    const cfg = JSON.parse(readFileSync(configPath, "utf8"));
+    expect(cfg.projects[wt].hasTrustDialogAccepted).toBe(true);
+  });
+
+  test("recovers when the workdir entry is not an object", async () => {
+    writeFileSync(configPath, JSON.stringify({ projects: { [wt]: "corrupt-entry" } }));
+    await ensureWorkspaceTrusted(wt, configPath);
+    const cfg = JSON.parse(readFileSync(configPath, "utf8"));
+    expect(cfg.projects[wt].hasTrustDialogAccepted).toBe(true);
+  });
+
+  test("preserves the existing config file mode (does not widen)", async () => {
+    writeFileSync(configPath, JSON.stringify({ projects: {} }));
+    chmodSync(configPath, 0o600);
+    await ensureWorkspaceTrusted(wt, configPath);
+    expect(statSync(configPath).mode & 0o777).toBe(0o600);
+    const cfg = JSON.parse(readFileSync(configPath, "utf8"));
+    expect(cfg.projects[wt].hasTrustDialogAccepted).toBe(true);
+  });
+
+  test("writes through a symlinked config without replacing the link", async () => {
+    const realPath = join(homeDir, "real-claude.json");
+    const linkPath = join(homeDir, "link-claude.json");
+    writeFileSync(realPath, JSON.stringify({ projects: {} }));
+    symlinkSync(realPath, linkPath);
+    await ensureWorkspaceTrusted(wt, linkPath);
+    // The link is still a symlink (not clobbered into a regular file)...
+    expect(lstatSync(linkPath).isSymbolicLink()).toBe(true);
+    // ...and the seed landed in the real target.
+    const cfg = JSON.parse(readFileSync(realPath, "utf8"));
+    expect(cfg.projects[wt].hasTrustDialogAccepted).toBe(true);
   });
 });

@@ -378,6 +378,59 @@ describe("Session input queue (CC PTY mode)", () => {
     await session.waitForEnd();
   });
 
+  test("watchdog recovers the queue when a dispatched message produces no turn", async () => {
+    const { runtime, sent, finish } = makeControllableRuntime();
+    const session = makeSession({ busyWatchdogMs: 20 });
+    const handle = await runtime.spawn({ workingDirectory: "/tmp" });
+    await session.attachRuntime(runtime, handle);
+
+    // First message is dispatched but (simulating a swallowing modal) no
+    // turn-start is ever observed, so no Stop hook / notifyTurnEnd follows.
+    await session.writeInput("eaten-by-modal");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent).toEqual(["eaten-by-modal"]);
+
+    // A second message is held behind the stuck "busy"...
+    await session.writeInput("next");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent).toEqual(["eaten-by-modal"]);
+
+    // ...until the watchdog fires and un-wedges the queue.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(sent).toEqual(["eaten-by-modal", "next"]);
+
+    finish();
+    await session.waitForEnd();
+  });
+
+  test("notifyTurnStarted cancels the watchdog so a long turn holds queued messages", async () => {
+    const { runtime, sent, finish } = makeControllableRuntime();
+    const session = makeSession({ busyWatchdogMs: 20 });
+    const handle = await runtime.spawn({ workingDirectory: "/tmp" });
+    await session.attachRuntime(runtime, handle);
+
+    await session.writeInput("msg1");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent).toEqual(["msg1"]);
+
+    await session.writeInput("msg2");
+    // The turn actually started (transcript activity observed) — this cancels
+    // the watchdog even though the turn will run longer than busyWatchdogMs.
+    session.notifyTurnStarted();
+
+    // Past the watchdog window: msg2 must still be held (turn legitimately busy).
+    await new Promise((r) => setTimeout(r, 50));
+    expect(sent).toEqual(["msg1"]);
+
+    // Only the real turn-end releases msg2.
+    session.notifyTurnEnd();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent).toEqual(["msg1", "msg2"]);
+
+    finish();
+    await session.waitForEnd();
+  });
+
   test("internal write bypasses queue and sends immediately while busy", async () => {
     const { runtime, sent, finish } = makeControllableRuntime();
     const session = makeSession();

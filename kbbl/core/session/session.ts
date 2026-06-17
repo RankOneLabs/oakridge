@@ -119,7 +119,23 @@ export interface SessionOpts {
    * the transcript and slow `/events` replay.
    */
   nonPersistedEventTypes?: ReadonlySet<string>;
+  /**
+   * Milliseconds a dispatched operator message may stay "busy" with no
+   * observed turn-start before the input-queue watchdog assumes it was
+   * swallowed (e.g. by a CC startup modal) and recovers the queue. Override
+   * only in tests; production uses {@link BUSY_TURN_WATCHDOG_MS}.
+   */
+  busyWatchdogMs?: number;
 }
+
+/**
+ * Default for {@link SessionOpts.busyWatchdogMs}. A real turn writes its first
+ * transcript line (the user message) within ~1s of submission — well inside
+ * this window — so the watchdog only fires when a dispatched message produced
+ * no turn at all. Generous enough that transcript-tailer poll/debounce latency
+ * never trips it on a legitimate turn.
+ */
+export const BUSY_TURN_WATCHDOG_MS = 15_000;
 
 /**
  * Hard cap on `artifactId` length. Enforced at the Session constructor,
@@ -242,6 +258,12 @@ export class Session {
   // writes (compaction, handoff) bypass both fields entirely.
   private turnState: "idle" | "busy" = "idle";
   private pendingInput: string[] = [];
+  // Watchdog that recovers the queue if a dispatched message never becomes a
+  // turn (e.g. swallowed by a CC startup modal) and so never yields a Stop
+  // hook. Armed when a message is sent; cleared once a turn is observed to
+  // start (notifyTurnStarted) or end (notifyTurnEnd). See pumpInputQueue.
+  private busyWatchdog: ReturnType<typeof setTimeout> | null = null;
+  private readonly busyWatchdogMs: number;
   // Aborts when finalize() runs so long-lived consumers (SSE streams,
   // subscribers) can exit their loops instead of hanging on a dead session.
   private readonly endedController = new AbortController();
@@ -284,6 +306,7 @@ export class Session {
     this.callbacks = opts.callbacks ?? {};
     this.classifyEvent = opts.classifyEvent;
     this.nonPersistedEventTypes = opts.nonPersistedEventTypes ?? new Set();
+    this.busyWatchdogMs = opts.busyWatchdogMs ?? BUSY_TURN_WATCHDOG_MS;
     this.jsonlWriter = Bun.file(this.jsonlPath).writer();
   }
 
@@ -984,6 +1007,7 @@ export class Session {
     }
     // Drop any undelivered queued messages — the subprocess is gone.
     this.pendingInput = [];
+    this.clearBusyWatchdog();
     // Flip status BEFORE draining so any emit() racing with finalize sees
     // the ended flag and short-circuits instead of queueing new writes
     // onto a writer we're about to close.
@@ -1076,6 +1100,7 @@ export class Session {
     // single-threaded, so this block is atomic with respect to other callers.
     const msg = this.pendingInput.shift() as string; // length > 0 checked above
     this.turnState = "busy";
+    this.armBusyWatchdog();
     const runtime = this._runtime;
     const handle = this._handle;
     const task = async () => {
@@ -1089,6 +1114,9 @@ export class Session {
             err instanceof Error ? err.message : String(err)
           }`,
         );
+        // This dispatch never reached CC, so its watchdog is moot — clear it
+        // so a stray timer doesn't linger (re-pump below re-arms if it sends).
+        this.clearBusyWatchdog();
         this.turnState = "idle";
         this.pumpInputQueue();
       }
@@ -1104,8 +1132,46 @@ export class Session {
    * or dedup is needed here.
    */
   notifyTurnEnd(): void {
+    this.clearBusyWatchdog();
     this.turnState = "idle";
     this.pumpInputQueue();
+  }
+
+  /**
+   * Called when a transcript event proves CC actually began processing the
+   * dispatched message (any user/assistant/result line appeared). Cancels the
+   * busy watchdog — the turn is legitimately running and will end via the Stop
+   * hook (notifyTurnEnd). Leaves turnState "busy"; does NOT pump the queue.
+   */
+  notifyTurnStarted(): void {
+    this.clearBusyWatchdog();
+  }
+
+  /**
+   * Arm (or re-arm) the watchdog for the message just dispatched. If no
+   * turn-start is observed within busyWatchdogMs, the message was consumed
+   * without starting a turn (no Stop hook will follow) — recover via
+   * notifyTurnEnd so queued messages aren't stranded behind a stuck "busy".
+   */
+  private armBusyWatchdog(): void {
+    this.clearBusyWatchdog();
+    this.busyWatchdog = setTimeout(() => {
+      this.busyWatchdog = null;
+      if (this.turnState !== "busy") return;
+      console.error(
+        `kbbl: input queue watchdog fired [${this.oakridgeSid}] — dispatched message produced no turn after ${this.busyWatchdogMs}ms; recovering queue`,
+      );
+      this.notifyTurnEnd();
+    }, this.busyWatchdogMs);
+    // Don't let the watchdog timer keep the event loop alive on its own.
+    this.busyWatchdog.unref?.();
+  }
+
+  private clearBusyWatchdog(): void {
+    if (this.busyWatchdog !== null) {
+      clearTimeout(this.busyWatchdog);
+      this.busyWatchdog = null;
+    }
   }
 
   async writeInput(

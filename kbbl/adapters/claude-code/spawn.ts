@@ -1,10 +1,21 @@
 import { execFile } from "node:child_process";
-import { realpathSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { realpathSync, statSync } from "node:fs";
+import { readFile, rename, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+
+/** True for a non-null, non-array object — the shape we can safely index/spread. */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// Monotonic suffix so concurrent ensureWorkspaceTrusted() calls in the same
+// process never collide on one temp file (process.pid alone is identical across
+// calls, so two simultaneous spawns could rename away each other's temp).
+let trustSeedTmpCounter = 0;
 
 /**
  * CC-specific spawn-command construction and settings-file generation.
@@ -123,6 +134,96 @@ export async function writeCcMcpConfig(opts: {
     ),
   );
   return mcpConfigPath;
+}
+
+/**
+ * Pre-trust `workdir` in CC's global config so the interactive launch skips
+ * the "Is this a project you trust?" workspace-trust modal.
+ *
+ * Why this is needed: kbbl spawns CC in a fresh per-session git worktree, and
+ * CC keys workspace trust on the absolute directory path (stored in
+ * ~/.claude.json under `projects[dir].hasTrustDialogAccepted`). Every new
+ * worktree is therefore untrusted, so the modal blocks the prompt on launch.
+ * In PTY mode the operator's first message is swallowed by that modal — it
+ * never reaches the CC prompt and no turn ever starts, so the session looks
+ * permanently empty. (The prior --print/headless transport never showed the
+ * modal, which is why this only surfaced once PTY mode landed.)
+ *
+ * Best-effort and non-fatal: on any IO/parse failure we log and return so the
+ * launch still proceeds — the Session input-queue watchdog recovers the queue
+ * if the modal does appear. The write is atomic (temp file + rename) so a
+ * crash mid-write can't truncate the operator's global config. Concurrent
+ * writers (CC itself, other kbbl sessions) are a small unguarded race;
+ * ~/.claude.json has no lock protocol and trust writes are infrequent, so
+ * last-writer-wins is acceptable here.
+ *
+ * `configPath` defaults to the operator's real `~/.claude.json`; it is a
+ * parameter only so this IO boundary can be exercised against a temp file in
+ * tests without touching the real config.
+ */
+export async function ensureWorkspaceTrusted(
+  workdir: string,
+  configPath: string = join(homedir(), ".claude.json"),
+): Promise<void> {
+  let config: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(await readFile(configPath, "utf8"));
+    // A valid-but-unexpected top-level shape (null, array, scalar) must not
+    // throw downstream — treat it as empty and let CC rewrite the rest.
+    config = isPlainObject(parsed) ? parsed : {};
+  } catch (err) {
+    // A missing config is the normal first-run state — treat it as empty and
+    // fall through to create it below, so trust is still seeded and the modal
+    // is skipped on the very first launch (returning here would reintroduce
+    // the swallowed-first-message bug). Silent: ENOENT isn't an error worth
+    // logging on every spawn. Genuine failures (corrupt file, permissions)
+    // are unexpected — log and bail without touching the file.
+    if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") {
+      console.error(
+        `kbbl: workspace-trust seed skipped — cannot read or parse ${configPath}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return;
+    }
+    config = {};
+  }
+  // Guard the nested shapes too: a corrupt `projects` (or a non-object entry
+  // for this workdir) would otherwise throw on index/spread and, since spawn()
+  // awaits this function, abort the launch — defeating the best-effort contract.
+  const projects = isPlainObject(config.projects)
+    ? (config.projects as Record<string, unknown>)
+    : {};
+  const candidate = projects[workdir];
+  const existing = isPlainObject(candidate) ? candidate : undefined;
+  // Already trusted — no write, no race window.
+  if (existing?.hasTrustDialogAccepted === true) return;
+  projects[workdir] = { ...existing, hasTrustDialogAccepted: true };
+  config.projects = projects;
+  // Resolve through a symlink so rename() replaces the link's target rather
+  // than the symlink itself (dotfile managers commonly symlink ~/.claude.json),
+  // and preserve the existing file's mode so a token-bearing config isn't
+  // widened past its prior permissions by the temp file's default umask.
+  // Default to 0o600 — private — if the mode can't be read.
+  let targetPath = configPath;
+  let mode = 0o600;
+  try {
+    targetPath = realpathSync(configPath);
+    mode = statSync(targetPath).mode & 0o777;
+  } catch {
+    // Keep the given path / restrictive default — best-effort.
+  }
+  const tmpPath = `${targetPath}.kbbl-${process.pid}-${trustSeedTmpCounter++}.tmp`;
+  try {
+    await writeFile(tmpPath, JSON.stringify(config, null, 2), { mode });
+    await rename(tmpPath, targetPath);
+  } catch (err) {
+    console.error(
+      `kbbl: workspace-trust seed failed for ${workdir}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
 }
 
 export interface CcArgvOpts {
