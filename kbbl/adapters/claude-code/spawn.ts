@@ -7,6 +7,16 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
+/** True for a non-null, non-array object — the shape we can safely index/spread. */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// Monotonic suffix so concurrent ensureWorkspaceTrusted() calls in the same
+// process never collide on one temp file (process.pid alone is identical across
+// calls, so two simultaneous spawns could rename away each other's temp).
+let trustSeedTmpCounter = 0;
+
 /**
  * CC-specific spawn-command construction and settings-file generation.
  *
@@ -157,27 +167,31 @@ export async function ensureWorkspaceTrusted(
 ): Promise<void> {
   let config: Record<string, unknown>;
   try {
-    config = JSON.parse(await readFile(configPath, "utf8")) as Record<
-      string,
-      unknown
-    >;
+    const parsed: unknown = JSON.parse(await readFile(configPath, "utf8"));
+    // A valid-but-unexpected top-level shape (null, array, scalar) must not
+    // throw downstream — treat it as empty and let CC rewrite the rest.
+    config = isPlainObject(parsed) ? parsed : {};
   } catch (err) {
     console.error(
-      `kbbl: workspace-trust seed skipped — cannot read ${configPath}: ${
+      `kbbl: workspace-trust seed skipped — cannot read or parse ${configPath}: ${
         err instanceof Error ? err.message : String(err)
       }`,
     );
     return;
   }
-  const projects =
-    (config.projects as Record<string, Record<string, unknown>> | undefined) ??
-    {};
-  const existing = projects[workdir];
+  // Guard the nested shapes too: a corrupt `projects` (or a non-object entry
+  // for this workdir) would otherwise throw on index/spread and, since spawn()
+  // awaits this function, abort the launch — defeating the best-effort contract.
+  const projects = isPlainObject(config.projects)
+    ? (config.projects as Record<string, unknown>)
+    : {};
+  const candidate = projects[workdir];
+  const existing = isPlainObject(candidate) ? candidate : undefined;
   // Already trusted — no write, no race window.
   if (existing?.hasTrustDialogAccepted === true) return;
   projects[workdir] = { ...existing, hasTrustDialogAccepted: true };
   config.projects = projects;
-  const tmpPath = `${configPath}.kbbl-${process.pid}.tmp`;
+  const tmpPath = `${configPath}.kbbl-${process.pid}-${trustSeedTmpCounter++}.tmp`;
   try {
     await writeFile(tmpPath, JSON.stringify(config, null, 2));
     await rename(tmpPath, configPath);

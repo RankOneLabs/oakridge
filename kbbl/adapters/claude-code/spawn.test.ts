@@ -296,4 +296,19 @@ describe("ensureWorkspaceTrusted", () => {
     await ensureWorkspaceTrusted(wt, configPath);
     expect(() => readFileSync(configPath, "utf8")).toThrow();
   });
+
+  test("recovers when the parsed config is not an object", async () => {
+    // Valid JSON, unexpected top-level shape — must not throw, seeds anyway.
+    writeFileSync(configPath, JSON.stringify(null));
+    await ensureWorkspaceTrusted(wt, configPath);
+    const cfg = JSON.parse(readFileSync(configPath, "utf8"));
+    expect(cfg.projects[wt].hasTrustDialogAccepted).toBe(true);
+  });
+
+  test("recovers when projects (or the workdir entry) is not an object", async () => {
+    writeFileSync(configPath, JSON.stringify({ projects: "corrupt" }));
+    await ensureWorkspaceTrusted(wt, configPath);
+    const cfg = JSON.parse(readFileSync(configPath, "utf8"));
+    expect(cfg.projects[wt].hasTrustDialogAccepted).toBe(true);
+  });
 });
