@@ -319,8 +319,15 @@ describe("ensureWorkspaceTrusted", () => {
     expect(cfg.projects[wt].hasTrustDialogAccepted).toBe(true);
   });
 
-  test("recovers when projects (or the workdir entry) is not an object", async () => {
+  test("recovers when projects is not an object", async () => {
     writeFileSync(configPath, JSON.stringify({ projects: "corrupt" }));
+    await ensureWorkspaceTrusted(wt, configPath);
+    const cfg = JSON.parse(readFileSync(configPath, "utf8"));
+    expect(cfg.projects[wt].hasTrustDialogAccepted).toBe(true);
+  });
+
+  test("recovers when the workdir entry is not an object", async () => {
+    writeFileSync(configPath, JSON.stringify({ projects: { [wt]: "corrupt-entry" } }));
     await ensureWorkspaceTrusted(wt, configPath);
     const cfg = JSON.parse(readFileSync(configPath, "utf8"));
     expect(cfg.projects[wt].hasTrustDialogAccepted).toBe(true);
