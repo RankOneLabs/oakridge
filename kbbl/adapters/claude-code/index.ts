@@ -153,9 +153,11 @@ interface CcHandle {
   /** CC's session id — the transcript filename stem. */
   readonly ccSessionId: string;
   /**
-   * Epoch-ms of the most recent PTY output, updated by the events() onData
-   * handler. send() uses it to detect quiescence (CC idle at the prompt) before
-   * writing, so a message isn't dispatched into CC's busy/finalization window.
+   * Epoch-ms of the most recent PTY output, kept current by the spawn()-level
+   * onData listener (registered at process creation, so it stays live even
+   * before events() begins consuming). send() uses it to detect quiescence (CC
+   * idle at the prompt) before writing, so a message isn't dispatched into CC's
+   * busy/finalization window.
    */
   lastOutputAt: number;
 }
