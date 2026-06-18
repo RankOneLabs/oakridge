@@ -18,6 +18,7 @@ import { EpicDetailView } from "./epic/EpicDetailView";
 import { SessionListView } from "./views/SessionListView";
 import { SessionView } from "./views/SessionView";
 import { ToastViewport } from "./components/organisms/ToastViewport";
+import { PendingApprovalsBadge } from "./components/organisms/PendingApprovalsBadge";
 
 export function App() {
   const route = useHashRoute();
@@ -141,6 +142,7 @@ export function App() {
   return (
     <>
       {view}
+      <PendingApprovalsBadge />
       <ToastViewport />
     </>
   );

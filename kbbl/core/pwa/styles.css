@@ -3607,6 +3607,58 @@ body {
   pointer-events: none;
 }
 
+/* Global pending-approval badge: fixed top-center so a parked tool-approval is
+   visible from any view, not just the session's own conversation. */
+.pending-approvals-badge {
+  position: fixed;
+  /* Offset by the notch/status-bar inset on mobile so the badge clears it. */
+  top: calc(0.75rem + env(safe-area-inset-top, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  /* Below the overlay layer (toasts / pickers at 1000) so modals stay on top. */
+  z-index: 990;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.9rem;
+  border: none;
+  border-radius: 999px;
+  background: #b45309;
+  color: #fff;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+
+.pending-approvals-badge:hover {
+  background: #c2620a;
+}
+
+.pending-approvals-badge:focus-visible {
+  outline: 2px solid #fde68a;
+  outline-offset: 2px;
+}
+
+.pending-approvals-badge-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: #fde68a;
+  animation: pending-approvals-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pending-approvals-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pending-approvals-badge-dot {
+    animation: none;
+  }
+}
+
 .toast-item {
   display: flex;
   align-items: center;

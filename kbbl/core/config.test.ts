@@ -55,3 +55,21 @@ describe("sessions.worktree_dir_name validation", () => {
     expect(r.sessions.worktree_dir_name).toBe("worktrees");
   });
 });
+
+describe("sessions.default_allowlist", () => {
+  test("defaults to read-only tools plus Bash when omitted", () => {
+    const r = KbblConfigSchema.parse({});
+    expect(r.sessions.default_allowlist).toEqual(["Read", "Glob", "Grep", "Bash"]);
+  });
+
+  test("an explicit list overrides the default (incl. empty = require approval for everything)", () => {
+    expect(
+      KbblConfigSchema.parse({ sessions: { default_allowlist: [] } }).sessions
+        .default_allowlist,
+    ).toEqual([]);
+    expect(
+      KbblConfigSchema.parse({ sessions: { default_allowlist: ["Read"] } }).sessions
+        .default_allowlist,
+    ).toEqual(["Read"]);
+  });
+});

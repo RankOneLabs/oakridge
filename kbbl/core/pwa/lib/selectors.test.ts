@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import type { Sid } from "./ids";
 import {
+  selectPendingApprovalCount,
   selectPendingReviewsCount,
+  selectSessionsAwaitingApproval,
   selectSessionView,
   selectSidebarSessions,
   selectSortedSessions,
@@ -149,5 +151,56 @@ describe("selectPendingReviewsCount", () => {
 
   it("returns 0 when both lists are empty", () => {
     expect(selectPendingReviewsCount([], [])).toBe(0);
+  });
+});
+
+describe("selectSessionsAwaitingApproval", () => {
+  it("returns only sessions with a positive pending count", () => {
+    const sessions = [
+      snap({ sid: "a", pendingCount: 0 }),
+      snap({ sid: "b", name: "beta", pendingCount: 2 }),
+      snap({ sid: "c", pendingCount: 0 }),
+    ];
+    expect(selectSessionsAwaitingApproval(sessions)).toEqual([
+      { sid: "b", name: "beta", pendingCount: 2 },
+    ]);
+  });
+
+  it("excludes ended sessions even if a stale pending count lingers", () => {
+    const sessions = [snap({ sid: "x", pendingCount: 3, status: "ended" })];
+    expect(selectSessionsAwaitingApproval(sessions)).toEqual([]);
+  });
+
+  it("returns an empty list when nothing is pending", () => {
+    expect(selectSessionsAwaitingApproval([snap({ sid: "a" })])).toEqual([]);
+  });
+
+  it("orders waiters newest-activity first (the badge's navigation target)", () => {
+    const sessions = [
+      snap({ sid: "old", pendingCount: 1, lastActivityTs: "2026-05-22T00:00:01Z" }),
+      snap({ sid: "new", pendingCount: 1, lastActivityTs: "2026-05-22T00:00:03Z" }),
+      snap({ sid: "mid", pendingCount: 1, lastActivityTs: "2026-05-22T00:00:02Z" }),
+    ];
+    expect(selectSessionsAwaitingApproval(sessions).map((w) => w.sid)).toEqual([
+      "new",
+      "mid",
+      "old",
+    ]);
+  });
+});
+
+describe("selectPendingApprovalCount", () => {
+  it("sums pending counts across live sessions", () => {
+    const sessions = [
+      snap({ sid: "a", pendingCount: 1 }),
+      snap({ sid: "b", pendingCount: 2 }),
+      snap({ sid: "c", pendingCount: 0 }),
+      snap({ sid: "d", pendingCount: 5, status: "ended" }),
+    ];
+    expect(selectPendingApprovalCount(sessions)).toBe(3);
+  });
+
+  it("returns 0 when nothing is pending", () => {
+    expect(selectPendingApprovalCount([])).toBe(0);
   });
 });

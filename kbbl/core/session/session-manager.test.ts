@@ -186,6 +186,41 @@ describe("SessionManager.create with registry", () => {
     expect(session.status).toBe("ended");
     expect(session.runtimeId).toBe("claude-code");
   });
+
+  test("seeds the configured default allowlist onto a fresh session", async () => {
+    const runtime = makeNoopRuntime();
+    const registry: RuntimeRegistry = createRuntimeRegistry([runtime]);
+    const manager = new SessionManager({
+      sessionsDir,
+      handoffsDir: join(tmpRoot, "handoffs"),
+      worktreesDir,
+      registry,
+      config: KbblConfigSchema.parse({}), // default_allowlist = Read, Glob, Grep, Bash
+    });
+    const session = await manager.create({ workdir: repoDir });
+    expect([...session.toolAllowlist].sort()).toEqual([
+      "Bash",
+      "Glob",
+      "Grep",
+      "Read",
+    ]);
+    await session.waitForEnd();
+  });
+
+  test("seeds nothing when default_allowlist is empty", async () => {
+    const runtime = makeNoopRuntime();
+    const registry: RuntimeRegistry = createRuntimeRegistry([runtime]);
+    const manager = new SessionManager({
+      sessionsDir,
+      handoffsDir: join(tmpRoot, "handoffs"),
+      worktreesDir,
+      registry,
+      config: KbblConfigSchema.parse({ sessions: { default_allowlist: [] } }),
+    });
+    const session = await manager.create({ workdir: repoDir });
+    expect([...session.toolAllowlist]).toEqual([]);
+    await session.waitForEnd();
+  });
 });
 
 describe("createRuntimeRegistry", () => {
