@@ -86,3 +86,34 @@ export function selectPendingReviewsCount(
 ): number {
   return plans.length + briefs.length;
 }
+
+/** One session with at least one parked tool-approval. */
+export interface ApprovalWaiter {
+  sid: string;
+  name: string;
+  pendingCount: number;
+}
+
+/**
+ * Sessions with at least one pending tool-approval, newest-activity first.
+ * Powers the global approval badge so a parked approval is visible from any
+ * view — not only inside that session's own conversation, where it would
+ * otherwise sit unseen until CC's permission hook times out. pendingCount is
+ * reset to 0 when a session ends, so a positive count already implies the
+ * session is live and actionable; we still drop "ended" defensively.
+ */
+export function selectSessionsAwaitingApproval(
+  sessions: SessionSnapshot[],
+): ApprovalWaiter[] {
+  return sessions
+    .filter((s) => s.pendingCount > 0 && s.status !== "ended")
+    .map((s) => ({ sid: s.sid, name: s.name, pendingCount: s.pendingCount }));
+}
+
+/** Total parked tool-approvals across all live sessions (the badge count). */
+export function selectPendingApprovalCount(sessions: SessionSnapshot[]): number {
+  return selectSessionsAwaitingApproval(sessions).reduce(
+    (total, s) => total + s.pendingCount,
+    0,
+  );
+}

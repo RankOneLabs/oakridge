@@ -3607,6 +3607,45 @@ body {
   pointer-events: none;
 }
 
+/* Global pending-approval badge: fixed top-center so a parked tool-approval is
+   visible from any view, not just the session's own conversation. */
+.pending-approvals-badge {
+  position: fixed;
+  top: 0.75rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1100;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.9rem;
+  border: none;
+  border-radius: 999px;
+  background: #b45309;
+  color: #fff;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+
+.pending-approvals-badge:hover {
+  background: #c2620a;
+}
+
+.pending-approvals-badge-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: #fde68a;
+  animation: pending-approvals-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pending-approvals-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
 .toast-item {
   display: flex;
   align-items: center;

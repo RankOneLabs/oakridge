@@ -55,6 +55,14 @@ const SessionsSchema = z
         "worktree_dir_name must be a simple name (no '.', '/', '\\', or '..')",
       )
       .default("worktrees"),
+    // Tools auto-approved from the start of every freshly created session, so
+    // the operator isn't prompted for each one. Seeded onto the session's
+    // allowlist at create() (persisted as tool_allowlisted events). Default is
+    // read-only tools plus Bash; Edit/Write deliberately still prompt. Set to
+    // [] to require approval for everything.
+    default_allowlist: z
+      .array(z.string().min(1))
+      .default(["Read", "Glob", "Grep", "Bash"]),
   })
   .strict();
 

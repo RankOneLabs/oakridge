@@ -510,6 +510,21 @@ export class SessionManager {
     // read the failure via /:sid/events. Reaping of ended sessions is a
     // future PR; for now they accumulate, bounded by server lifetime.
     this.sessions.set(session.oakridgeSid, session);
+    // Seed the configured default allowlist so common tools aren't prompted on
+    // a fresh session. Emitted as tool_allowlisted events (persisted + replayed
+    // on reconnect), before the session_created broadcast so the starting
+    // snapshot already reflects them. allowlistTool is idempotent.
+    for (const tool of this.opts.config.sessions.default_allowlist) {
+      try {
+        await session.allowlistTool(tool);
+      } catch (err) {
+        console.error(
+          `kbbl: failed to seed default-allowlist tool "${tool}" for ${session.oakridgeSid}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
     // Compactor: schedules /compact firings based on session-token pressure.
     const compactor = new Compactor(this.opts.config.compact, {
       onSuggested: (reason, sessionTokens) => {
