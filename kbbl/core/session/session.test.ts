@@ -191,6 +191,7 @@ describe("Session.attachRuntime", () => {
         supportsCompaction: false,
       },
       synthesizeUserInputEvents: true,
+      sendsWithoutTurnQueue: true,
       async *events(_handle: SessionHandle): AsyncIterable<RuntimeEvent> {
         await done;
         yield { type: "completed", result: { code: 0 } };
@@ -498,6 +499,39 @@ describe("Session input queue (CC PTY mode)", () => {
     session.markLive();
     await new Promise((r) => setTimeout(r, 0));
     expect(sent).toEqual(["queued-during-compact"]);
+
+    finish();
+    await session.waitForEnd();
+  });
+
+  test("CC (synthesizeUserInputEvents, turn-queue) write during compacting queues, not rejected", async () => {
+    // Regression: the compacting gate must key on sendsWithoutTurnQueue, not
+    // synthesizeUserInputEvents. Real CC sets synthesizeUserInputEvents: true
+    // (channel transport doesn't echo) while leaving sendsWithoutTurnQueue
+    // unset (its Stop hook drives the queue). An external write during
+    // compaction must be queued + flushed on markLive(), never throw
+    // SessionNotReadyError.
+    const { runtime, sent, finish } = makeControllableRuntime();
+    const ccRuntime: AgentRuntime = {
+      ...runtime,
+      synthesizeUserInputEvents: true,
+      // sendsWithoutTurnQueue deliberately unset — this is the CC shape.
+    };
+    const session = makeSession();
+    const handle = await ccRuntime.spawn({ workingDirectory: "/tmp" });
+    await session.attachRuntime(ccRuntime, handle);
+
+    session.markCompacting();
+    expect(session.status).toBe("compacting");
+
+    // Must not throw, must not send yet.
+    await session.writeInput("queued-during-cc-compact");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent).toHaveLength(0);
+
+    session.markLive();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent).toEqual(["queued-during-cc-compact"]);
 
     finish();
     await session.waitForEnd();

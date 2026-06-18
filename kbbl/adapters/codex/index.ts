@@ -67,6 +67,7 @@ export function createCodexRuntimeDescriptorOnly(
     descriptor,
     nonPersistedEventTypes: CODEX_NON_PERSISTED_EVENT_TYPES,
     synthesizeUserInputEvents: true,
+    sendsWithoutTurnQueue: true, // no Stop hook — immediate send, never the turn queue
 
     async spawn(): Promise<SessionHandle> {
       throw new Error("createCodexRuntimeDescriptorOnly: spawn not supported (no client)");
@@ -208,6 +209,7 @@ export async function createCodexRuntime(
     descriptor,
     nonPersistedEventTypes: CODEX_NON_PERSISTED_EVENT_TYPES,
     synthesizeUserInputEvents: true,
+    sendsWithoutTurnQueue: true, // no Stop hook — immediate send, never the turn queue
 
     // --- spawn ---
     async spawn(config: RuntimeConfig): Promise<SessionHandle> {

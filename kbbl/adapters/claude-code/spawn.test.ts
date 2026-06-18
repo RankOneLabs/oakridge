@@ -94,6 +94,46 @@ describe("buildCcArgv construction", () => {
     expect(cmd.includes("--include-partial-messages")).toBe(false);
     expect(cmd.includes("--replay-user-messages")).toBe(false);
   });
+
+  test("channel flags: --dangerously-load-development-channels server:kbbl-channel are present", () => {
+    const cmd = buildCcArgv(BASE_ARGV_OPTS);
+    const idx = cmd.indexOf("--dangerously-load-development-channels");
+    expect(idx).toBeGreaterThanOrEqual(0);
+    expect(cmd[idx + 1]).toBe("server:kbbl-channel");
+  });
+
+  test("channel flags: --dangerously-load-development-channels server:kbbl-channel are last in argv", () => {
+    // The flag is variadic (commander consumes tokens until the next `-`), so
+    // it must be the last pair of tokens in argv.
+    const cmd = buildCcArgv({
+      ...BASE_ARGV_OPTS,
+      sessionId: "s1",
+      model: "claude-opus-4-7",
+      parentCcSid: "parent-sid",
+    });
+    const n = cmd.length;
+    expect(cmd[n - 2]).toBe("--dangerously-load-development-channels");
+    expect(cmd[n - 1]).toBe("server:kbbl-channel");
+  });
+
+  test("channel flags: --channels flag is absent (would reject server: entries)", () => {
+    const cmd = buildCcArgv(BASE_ARGV_OPTS);
+    // --channels is for the Anthropic plugin allowlist; passing a `server:`
+    // entry to it produces an error. Only --dangerously-load-development-channels
+    // is the correct flag for server-registered channels.
+    expect(cmd.includes("--channels")).toBe(false);
+  });
+
+  test("A.1 invariant: no -p/--print in argv even with channel flags appended", () => {
+    // Channel flags must not accidentally introduce -p/--print.
+    const cmd = buildCcArgv({
+      ...BASE_ARGV_OPTS,
+      sessionId: "s1",
+      model: "claude-opus-4-7",
+    });
+    expect(cmd.includes("-p")).toBe(false);
+    expect(cmd.includes("--print")).toBe(false);
+  });
 });
 
 describe("assertA1Invariants", () => {

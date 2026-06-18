@@ -1230,17 +1230,20 @@ export class Session {
     // POST during compaction can't piggy-back on runCompact's
     // authorization.
     //
-    // External attached-runtime writes without synthesizeUserInputEvents (CC
-    // PTY mode) are additionally accepted during "compacting": they are queued
-    // and flushed once the session returns to "live" via markLive(). The
-    // attached check is inside the block below — this outer gate accepts
-    // "compacting" only when that condition would hold.
+    // External attached-runtime writes on a turn-queue runtime (Claude Code)
+    // are additionally accepted during "compacting": they are queued and
+    // flushed once the session returns to "live" via markLive(). The attached
+    // check is inside the block below — this outer gate accepts "compacting"
+    // only when that condition would hold. Keyed on sendsWithoutTurnQueue (not
+    // synthesizeUserInputEvents, which CC also sets for channel transport):
+    // immediate-send runtimes (Codex) have no queue to buffer into, so they are
+    // excluded — they also never enter "compacting" (supportsCompaction: false).
     const isInternal = opts.internal === true;
     const isAttachedExternal =
       !isInternal &&
       this._runtime !== null &&
       this._handle !== null &&
-      this._runtime.synthesizeUserInputEvents !== true;
+      this._runtime.sendsWithoutTurnQueue !== true;
     const allowedDuringCompacting =
       this._status === "compacting" && (isInternal || isAttachedExternal);
     // Accept writes when using the attached runtime path too (no proc).
@@ -1266,15 +1269,18 @@ export class Session {
         return;
       }
 
-      if (runtime.synthesizeUserInputEvents === true) {
-        // synthesizeUserInputEvents runtimes (Codex) use the immediate send
-        // path — unchanged from pre-queue behavior. Codex has no Stop hook so
-        // the turn-state machine is never driven; queuing would deadlock.
+      if (runtime.sendsWithoutTurnQueue === true) {
+        // Immediate-send runtimes (Codex) have no Stop hook, so the turn-state
+        // machine is never driven and queuing would deadlock — send right away.
+        // Synthesis is a separate opt-in: emit the `user` row only when the
+        // runtime doesn't echo input back (synthesizeUserInputEvents).
         const task = async () => {
-          await this.emit("user", {
-            type: "user",
-            message: { role: "user", content: text },
-          });
+          if (runtime.synthesizeUserInputEvents === true) {
+            await this.emit("user", {
+              type: "user",
+              message: { role: "user", content: text },
+            });
+          }
           await runtime.send(handle, text);
         };
         this.inputQueue = this.inputQueue.then(task, task);
@@ -1293,9 +1299,21 @@ export class Session {
         return;
       }
 
-      // External CC-style write: push onto the pending queue. Return once
-      // accepted — do not await delivery to the PTY. pumpInputQueue() will
-      // send immediately if the turn is idle, or defer until notifyTurnEnd().
+      // Turn-queue delivery path (Claude Code): operator input is deferred to
+      // turn boundaries via pumpInputQueue/notifyTurnEnd. Synthesize the `user`
+      // event when the runtime opts in (synthesizeUserInputEvents) — CC's
+      // channel transport does not echo operator input back as a transcript
+      // event the way PTY input did via CC's output stream, so without this the
+      // operator message would never appear in the JSONL or the PWA inbox.
+      if (runtime.synthesizeUserInputEvents === true) {
+        await this.emit("user", {
+          type: "user",
+          message: { role: "user", content: text },
+        });
+      }
+      // Push onto the pending queue. Return once accepted — do not await
+      // delivery to the channel outbox. pumpInputQueue() will send immediately
+      // if the turn is idle, or defer until notifyTurnEnd().
       this.pendingInput.push(text);
       if (this._compactor) {
         try {
