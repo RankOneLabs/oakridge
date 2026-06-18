@@ -14,12 +14,15 @@ import {
   appendFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-const CHANNEL_SERVER = resolve(
-  new URL("./channel-server.ts", import.meta.url).pathname,
+// fileURLToPath (not .pathname) so a repo path with spaces / non-ASCII isn't
+// percent-encoded and break the subprocess spawn — matches the adapter runtime.
+const CHANNEL_SERVER = fileURLToPath(
+  new URL("./channel-server.ts", import.meta.url),
 );
 
 interface JsonRpcMsg {

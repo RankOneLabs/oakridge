@@ -1230,17 +1230,20 @@ export class Session {
     // POST during compaction can't piggy-back on runCompact's
     // authorization.
     //
-    // External attached-runtime writes without synthesizeUserInputEvents (CC
-    // PTY mode) are additionally accepted during "compacting": they are queued
-    // and flushed once the session returns to "live" via markLive(). The
-    // attached check is inside the block below — this outer gate accepts
-    // "compacting" only when that condition would hold.
+    // External attached-runtime writes on a turn-queue runtime (Claude Code)
+    // are additionally accepted during "compacting": they are queued and
+    // flushed once the session returns to "live" via markLive(). The attached
+    // check is inside the block below — this outer gate accepts "compacting"
+    // only when that condition would hold. Keyed on sendsWithoutTurnQueue (not
+    // synthesizeUserInputEvents, which CC also sets for channel transport):
+    // immediate-send runtimes (Codex) have no queue to buffer into, so they are
+    // excluded — they also never enter "compacting" (supportsCompaction: false).
     const isInternal = opts.internal === true;
     const isAttachedExternal =
       !isInternal &&
       this._runtime !== null &&
       this._handle !== null &&
-      this._runtime.synthesizeUserInputEvents !== true;
+      this._runtime.sendsWithoutTurnQueue !== true;
     const allowedDuringCompacting =
       this._status === "compacting" && (isInternal || isAttachedExternal);
     // Accept writes when using the attached runtime path too (no proc).
