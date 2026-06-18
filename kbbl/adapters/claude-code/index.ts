@@ -1,5 +1,6 @@
 import type { Hono } from "hono";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import * as pty from "bun-pty";
 
@@ -33,6 +34,7 @@ import {
   type CcTurnTracker,
 } from "./hook-route";
 import { projectUsage, type TranscriptAssistantMessage } from "./transcript";
+import { ensureTranscriptTailer } from "./transcript-tailer";
 import {
   assertA1Invariants,
   buildCcArgv,
@@ -40,6 +42,31 @@ import {
   writeCcMcpConfig,
   writeCcSettings,
 } from "./spawn";
+
+// Resolve the readiness gate (see CcHandle.ready) on this fallback even if CC
+// produces no PTY output, so send() can never hang on a silent/broken launch.
+// Comfortably under the input-queue watchdog (BUSY_TURN_WATCHDOG_MS) so a
+// first message delayed to this bound still has watchdog headroom.
+const READY_FALLBACK_MS = 10_000;
+
+/**
+ * Derive CC's on-disk transcript path from the session cwd and CC session id.
+ * CC stores transcripts at `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl`,
+ * where `<encoded-cwd>` is the absolute cwd with every non-alphanumeric
+ * character replaced by `-`.
+ *
+ * Computing this lets the transcript tailer start at launch instead of waiting
+ * for a hook to report `transcript_path`: the SessionStart hook is not
+ * guaranteed to arrive, and a plain text turn fires no tool/permission hook, so
+ * the first reliable hook would otherwise be Stop — i.e. only at the END of the
+ * first turn, leaving turn-start detection and the Conversation view blind for
+ * the whole turn. The hook-driven `ensureTranscriptTailer` calls remain as
+ * idempotent backstops should CC ever change this encoding.
+ */
+export function ccTranscriptPath(cwd: string, ccSessionId: string): string {
+  const encoded = cwd.replace(/[^A-Za-z0-9]/g, "-");
+  return join(homedir(), ".claude", "projects", encoded, `${ccSessionId}.jsonl`);
+}
 
 export interface CreateClaudeCodeRuntimeOpts {
   claudeBin: string;
@@ -62,6 +89,19 @@ interface CcHandle {
   exited: { code: number } | null;
   /** Set by an active events() consumer so onExit can wake it. */
   notifyExit: (() => void) | null;
+  /**
+   * Resolves once CC's PTY has produced its first output (the REPL is up and
+   * rendering) — or a fallback timeout / process exit, whichever comes first.
+   * send() awaits this before writing so the operator's first message isn't
+   * written into a REPL that isn't yet reading stdin (which silently drops it).
+   */
+  ready: Promise<void>;
+  /** Idempotent resolver for `ready` (multiple calls are harmless). */
+  markReady: () => void;
+  /** Absolute cwd of the CC process — used to derive the transcript path. */
+  readonly cwd: string;
+  /** CC's session id — the transcript filename stem. */
+  readonly ccSessionId: string;
 }
 
 /**
@@ -177,6 +217,22 @@ export async function createClaudeCodeRuntime(
     updateCcTurnTracker(tracker, type, payload);
   }
 
+  /**
+   * Applied to every transcript line the tailer emits — from launch and from
+   * the hook backstops alike. Updates the turn tracker and calls
+   * notifyTurnStarted(): any transcript line proves CC is actively processing
+   * the dispatched message, so the input-queue watchdog is cancelled and a long
+   * but legitimate turn isn't mistaken for a swallowed message.
+   */
+  function onCcTranscriptEvent(
+    session: Session,
+    type: string,
+    payload: unknown,
+  ): void {
+    updateTurnTracker(session.oakridgeSid, type, payload);
+    session.notifyTurnStarted();
+  }
+
   // === AgentRuntime implementation ===
 
   const runtime: AgentRuntime & AppRuntime = {
@@ -251,13 +307,32 @@ export async function createClaudeCodeRuntime(
         env: ptyEnv,
       });
 
+      // Readiness gate: send() awaits this so the first operator message isn't
+      // written before CC's REPL is reading stdin. Resolved by the first PTY
+      // output (events()), the fallback timer below, or process exit.
+      let markReady!: () => void;
+      const ready = new Promise<void>((resolve) => {
+        markReady = resolve;
+      });
+
       const handle: CcHandle = {
         sessionId: oakridgeSid,
         pty: ptyProc,
         exited: null,
         notifyExit: null,
+        ready,
+        markReady,
+        cwd: config.workingDirectory,
+        ccSessionId,
       };
       procs.set(oakridgeSid, handle);
+
+      // Fallback: resolve readiness even if CC emits no output, so send() can
+      // never hang on a silent/broken launch. unref so it can't keep the loop
+      // alive on its own; markReady is idempotent so a later real signal is a
+      // no-op.
+      const readyFallback = setTimeout(() => handle.markReady(), READY_FALLBACK_MS);
+      readyFallback.unref?.();
 
       // Register exit handling immediately — not in events() — so a process
       // that dies before events() is entered still records its exit. We record
@@ -268,6 +343,10 @@ export async function createClaudeCodeRuntime(
       // backstop if events() is never consumed.
       ptyProc.onExit(({ exitCode }) => {
         handle.exited = { code: exitCode };
+        // Unblock any send() waiting on readiness — the process is gone, so the
+        // write will fail fast rather than hang forever on `ready`.
+        clearTimeout(readyFallback);
+        handle.markReady();
         handle.notifyExit?.();
       });
 
@@ -333,12 +412,33 @@ export async function createClaudeCodeRuntime(
         push({ type: "envelope", payload: { type: "pty_output", content } });
       }
       const dataDisposable = ptyProc.onData((data) => {
+        // First output proves CC's REPL is up and rendering — release the
+        // readiness gate so send() may write the first message. Idempotent.
+        live.markReady();
         pendingOutput += data;
         if (!flushScheduled) {
           flushScheduled = true;
           setTimeout(flushOutput, 0);
         }
       });
+
+      // Start the transcript tailer at launch — not on the first hook. In PTY
+      // mode the on-disk transcript is the only content signal: it drives the
+      // Conversation view AND notifyTurnStarted (which cancels the input-queue
+      // watchdog). Deriving the path here (rather than waiting for a hook to
+      // report transcript_path) makes turn-start detection independent of which
+      // hook arrives first — SessionStart is not guaranteed, and a plain text
+      // turn fires no tool/permission hook. The tailer tolerates the file not
+      // existing yet (it polls until CC writes the first line). The hook-driven
+      // ensureTranscriptTailer calls remain as idempotent backstops.
+      const tailSession = oakridgeSidToSession.get(handle.sessionId);
+      if (tailSession) {
+        ensureTranscriptTailer(
+          tailSession,
+          ccTranscriptPath(live.cwd, live.ccSessionId),
+          (type, payload) => onCcTranscriptEvent(tailSession, type, payload),
+        );
+      }
 
       // Surface the process exit as a completion event. onExit is registered in
       // spawn() (so it fires regardless of this generator); here we install the
@@ -374,6 +474,11 @@ export async function createClaudeCodeRuntime(
     async send(handle: SessionHandle, input: string): Promise<void> {
       const h = procs.get(handle.sessionId);
       if (!h) throw new Error(`no proc for session ${handle.sessionId}`);
+      // Wait until CC's REPL is up before writing. Without this the first
+      // message can be written into a not-yet-listening REPL and silently
+      // dropped (the operator's message then never starts a turn). Resolves on
+      // first PTY output, a fallback timeout, or process exit — see CcHandle.
+      await h.ready;
       // Ctrl-U (\x15) clears any stale text CC may have left in its input
       // box. With the input queue in place, CC is idle when we write, so the
       // box is always empty — this is belt-and-suspenders for legacy stuck
@@ -565,13 +670,7 @@ export async function createClaudeCodeRuntime(
         getBunServer: deps.getBunServer,
         subagentCounts,
         turnTrackers,
-        onTranscriptEvent: (session, type, payload) => {
-          updateTurnTracker(session.oakridgeSid, type, payload);
-          // Any transcript line proves CC is actively processing the
-          // dispatched message — cancel the input-queue watchdog so a long
-          // but legitimate turn isn't mistaken for a swallowed message.
-          session.notifyTurnStarted();
-        },
+        onTranscriptEvent: onCcTranscriptEvent,
       };
       app.post("/hook/permission", hookPermissionHandler(hookDeps));
       app.post("/hook/tool", hookPostToolUseHandler(hookDeps));

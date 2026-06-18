@@ -264,6 +264,17 @@ export class Session {
   // start (notifyTurnStarted) or end (notifyTurnEnd). See pumpInputQueue.
   private busyWatchdog: ReturnType<typeof setTimeout> | null = null;
   private readonly busyWatchdogMs: number;
+  // The message currently dispatched to the PTY (claimed by pumpInputQueue).
+  // Held so the watchdog can re-deliver it once if it produced no turn.
+  private lastDispatched: string | null = null;
+  // True when the in-flight dispatch is a fresh message eligible for exactly
+  // one watchdog re-delivery. Cleared once that re-delivery is used so a
+  // genuinely unprocessable message can't loop forever.
+  private redeliverArmed = false;
+  // Set by the watchdog when it re-queues lastDispatched; tells the next
+  // pumpInputQueue dispatch that it IS that re-delivery (so it does not grant
+  // the same message another retry).
+  private nextDispatchIsRetry = false;
   // Aborts when finalize() runs so long-lived consumers (SSE streams,
   // subscribers) can exit their loops instead of hanging on a dead session.
   private readonly endedController = new AbortController();
@@ -1100,6 +1111,16 @@ export class Session {
     // single-threaded, so this block is atomic with respect to other callers.
     const msg = this.pendingInput.shift() as string; // length > 0 checked above
     this.turnState = "busy";
+    this.lastDispatched = msg;
+    if (this.nextDispatchIsRetry) {
+      // This dispatch is the one-shot re-delivery of a previously lost
+      // message — don't grant it another retry.
+      this.nextDispatchIsRetry = false;
+      this.redeliverArmed = false;
+    } else {
+      // Fresh message — eligible for exactly one watchdog re-delivery.
+      this.redeliverArmed = true;
+    }
     this.armBusyWatchdog();
     const runtime = this._runtime;
     const handle = this._handle;
@@ -1158,9 +1179,24 @@ export class Session {
     this.busyWatchdog = setTimeout(() => {
       this.busyWatchdog = null;
       if (this.turnState !== "busy") return;
-      console.error(
-        `kbbl: input queue watchdog fired [${this.oakridgeSid}] — dispatched message produced no turn after ${this.busyWatchdogMs}ms; recovering queue`,
-      );
+      // With the transcript tailer running from launch, any real turn cancels
+      // this watchdog via notifyTurnStarted(). Reaching here means the
+      // dispatched message produced no turn at all — written before the REPL
+      // was ready, or swallowed. Re-deliver it once before recovering so a
+      // genuinely lost message isn't silently dropped; if this was already the
+      // re-delivery, drop it so an unprocessable message can't loop forever.
+      if (this.redeliverArmed && this.lastDispatched !== null) {
+        this.redeliverArmed = false;
+        this.nextDispatchIsRetry = true;
+        this.pendingInput.unshift(this.lastDispatched);
+        console.error(
+          `kbbl: input queue watchdog fired [${this.oakridgeSid}] — dispatched message produced no turn after ${this.busyWatchdogMs}ms; re-delivering once`,
+        );
+      } else {
+        console.error(
+          `kbbl: input queue watchdog fired [${this.oakridgeSid}] — re-delivered message still produced no turn after ${this.busyWatchdogMs}ms; recovering queue`,
+        );
+      }
       this.notifyTurnEnd();
     }, this.busyWatchdogMs);
     // Don't let the watchdog timer keep the event loop alive on its own.
