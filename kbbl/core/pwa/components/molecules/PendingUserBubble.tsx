@@ -12,7 +12,12 @@ export function PendingUserBubble({
   isLatest: boolean;
 }) {
   // Re-render once after the 2s threshold so the label rolls from "sending"
-  // to "delivered, awaiting reply" without polling forever.
+  // to "awaiting agent" without polling forever. The bubble is pending the
+  // whole time it is visible: the message is NOT in the conversation until the
+  // agent actually ingests it, at which point its transcript row arrives, this
+  // bubble reconciles away, and the message is inserted into the flow. So the
+  // label never claims "delivered" — delivery and insertion are the same event,
+  // and that event is this bubble disappearing.
   const [, setTick] = useState(0);
   useEffect(() => {
     const elapsed = Date.now() - sentAt;
@@ -32,7 +37,7 @@ export function PendingUserBubble({
         <div className="bubble bubble-user bubble-user-pending">
           {text}
           <span className="bubble-pending-tag">
-            {slow ? "delivered · awaiting reply" : "sending…"}
+            {slow ? "awaiting agent…" : "sending…"}
           </span>
         </div>
       </div>

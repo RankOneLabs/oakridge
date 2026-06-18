@@ -3,6 +3,7 @@ import { describe, test, expect } from "bun:test";
 import {
   parseTranscriptEntry,
   transcriptEntryToEvents,
+  unwrapChannelContent,
 } from "./transcript";
 
 // Shapes lifted from a real CC transcript (PTY mode) — one content block per
@@ -135,12 +136,14 @@ describe("transcriptEntryToEvents", () => {
     expect(events[0].type).toBe("user");
   });
 
-  test("skips channel-origin user lines (core already synthesized them)", () => {
-    // CC echoes a kbbl channel push into its transcript as a channel-origin
-    // user row wrapped in `<channel>…</channel>`. Core already synthesized the
-    // clean operator message at send time, so the transform must drop this echo
-    // to avoid rendering the message twice (and in the raw wrapper).
-    const channelEcho = {
+  test("unwraps a channel-origin user line into a clean user event", () => {
+    // CC writes a kbbl channel push into its transcript as a channel-origin user
+    // row wrapped in `<channel>…</channel>`, when it actually ingests the
+    // message. Core does NOT synthesize for CC, so this row is the single source
+    // for the operator's message — the transform unwraps the shell so it renders
+    // as clean text (and reconciles the optimistic pending bubble, which holds
+    // the raw text).
+    const channelRow = {
       type: "user",
       uuid: "u-3",
       isMeta: true,
@@ -152,7 +155,29 @@ describe("transcriptEntryToEvents", () => {
           '<channel source="kbbl-channel" source="kbbl">\nany current sweeps?\n</channel>',
       },
     };
-    expect(transcriptEntryToEvents(channelEcho)).toEqual([]);
+    expect(transcriptEntryToEvents(channelRow)).toEqual([
+      {
+        type: "user",
+        payload: {
+          type: "user",
+          message: { role: "user", content: "any current sweeps?" },
+        },
+      },
+    ]);
+  });
+
+  test("unwrapChannelContent strips the wrapper and newline padding", () => {
+    expect(
+      unwrapChannelContent(
+        '<channel source="kbbl-channel" source="kbbl">\nhello world\n</channel>',
+      ),
+    ).toBe("hello world");
+    // Multiline operator input survives intact (only the outer padding goes).
+    expect(
+      unwrapChannelContent("<channel source=\"kbbl\">\nline one\nline two\n</channel>"),
+    ).toBe("line one\nline two");
+    // A string that isn't channel-wrapped is returned unchanged.
+    expect(unwrapChannelContent("just text")).toBe("just text");
   });
 
   test("result usage defaults missing token fields to zero", () => {

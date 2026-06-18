@@ -1301,14 +1301,12 @@ export class Session {
 
       // Turn-queue delivery path (Claude Code): operator input is deferred to
       // turn boundaries via pumpInputQueue/notifyTurnEnd. Synthesize the `user`
-      // event when the runtime opts in (synthesizeUserInputEvents). CC DOES
-      // echo channel-pushed input back into its on-disk transcript, but as a
-      // channel-origin row wrapped in `<channel>…</channel>`; the CC adapter's
-      // transcript transform skips those (origin.kind === "channel") so this
-      // synthesized event stays the single, clean source for the operator's
-      // message. Without synthesis the message would render only in CC's raw
-      // channel wrapper, and the optimistic bubble would never reconcile
-      // against it (wrapped content ≠ the text the operator typed).
+      // event only when the runtime opts in (synthesizeUserInputEvents). CC sets
+      // this FALSE: it echoes operator input via its transcript (a channel-origin
+      // row the CC adapter's transform surfaces, unwrapped) when it actually
+      // ingests the message, so synthesizing here would both double the message
+      // and insert it into the flow before CC has processed it. The flag remains
+      // the general mechanism for a turn-queue runtime that echoes by no path.
       if (runtime.synthesizeUserInputEvents === true) {
         await this.emit("user", {
           type: "user",

@@ -45,13 +45,14 @@ export interface TranscriptUserEntry {
   isSidechain?: boolean;
   /**
    * Provenance CC stamps on the user row. `origin.kind === "channel"` marks a
-   * row CC injected from a kbbl channel push (our send() path) — i.e. the echo
-   * of operator input that core has ALREADY synthesized at send time
-   * (synthesizeUserInputEvents). The transform skips those (see
-   * transcriptEntryToEvents) so the operator's message renders once, as the
-   * clean synthesized text rather than CC's raw `<channel>…</channel>` wrapper.
-   * Tool-result user rows and any directly-typed input carry a different origin
-   * and flow through normally.
+   * row CC wrote when it pulled a kbbl channel push (our send() path) off the
+   * channel and started the turn — i.e. the moment CC actually ingests the
+   * operator's message. This row is the single source for that message: core
+   * does NOT synthesize one for CC (synthesizeUserInputEvents is false), so the
+   * message enters the conversation only when CC has actually processed it. The
+   * transform unwraps the `<channel>…</channel>` shell CC adds (see
+   * transcriptEntryToEvents). Tool-result user rows and any directly-typed input
+   * carry a different origin and flow through unchanged.
    */
   origin?: { kind?: string; server?: string };
   message: TranscriptUserMessage;
@@ -130,6 +131,19 @@ export function projectUsage(
 }
 
 /**
+ * Strip CC's `<channel source=…>…</channel>` wrapper from a channel-pushed
+ * operator message, returning the clean text the operator typed. CC pads the
+ * inner content with a single leading/trailing newline; we drop the wrapper and
+ * that padding so the result matches the raw text held by the optimistic
+ * pending bubble (which reconciles on exact-string match). A string that isn't
+ * wrapped (unexpected) is returned unchanged.
+ */
+export function unwrapChannelContent(content: string): string {
+  const match = content.match(/^<channel\b[^>]*>\n?([\s\S]*?)\n?<\/channel>\s*$/);
+  return match ? match[1] : content;
+}
+
+/**
  * Map one transcript entry to the envelope events it should emit.
  *
  * - sidechain (subagent-internal) entries → skip; the SubagentStart/Stop hooks
@@ -158,14 +172,33 @@ export function transcriptEntryToEvents(raw: unknown): EmittedEvent[] {
 
   if (entry.type === "user") {
     const userEntry = entry as TranscriptUserEntry;
-    // Channel-origin user rows are CC's echo of operator input that core
-    // already synthesized at send() time (synthesizeUserInputEvents). Emitting
-    // one here would render the operator's message twice — and in CC's raw
-    // `<channel source=…>…</channel>` wrapper rather than the clean text. Skip
-    // them; the synthesized event is the single source for operator prompts.
-    // Tool-result user rows (block content) carry no channel origin and still
-    // flow through.
-    if (userEntry.origin?.kind === "channel") return [];
+    // Channel-origin user rows are CC's record of operator input it pulled off
+    // the kbbl channel — written when CC actually ingests the message and begins
+    // the turn. This is the single source for the operator's message: core does
+    // NOT synthesize for CC (synthesizeUserInputEvents is false), so the message
+    // enters the flow only once CC has actually processed it, and the optimistic
+    // pending bubble holds at the bottom of the chat until then. CC wraps the
+    // content in `<channel source=…>…</channel>`; unwrap it so the row renders as
+    // the clean text the operator typed and reconciles the pending bubble (which
+    // holds that raw text). Tool-result user rows (block content) carry no
+    // channel origin and pass through unchanged.
+    if (
+      userEntry.origin?.kind === "channel" &&
+      typeof userEntry.message.content === "string"
+    ) {
+      return [
+        {
+          type: "user",
+          payload: {
+            type: "user",
+            message: {
+              role: "user",
+              content: unwrapChannelContent(userEntry.message.content),
+            },
+          },
+        },
+      ];
+    }
     return [
       { type: "user", payload: { type: "user", message: userEntry.message } },
     ];
