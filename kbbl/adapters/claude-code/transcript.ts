@@ -148,9 +148,13 @@ export function unwrapChannelContent(content: string): string {
  *
  * - sidechain (subagent-internal) entries → skip; the SubagentStart/Stop hooks
  *   already mark that activity, and rendering nested turns inline is out of v1.
- * - `user` → a `user` event carrying the message verbatim. String content is
- *   the typed prompt that reconciles the operator's optimistic bubble; block
- *   content is a tool_result, which the EventList renders as it did pre-PTY.
+ * - `user` → a `user` event. A channel-origin row (operator input CC pulled off
+ *   the kbbl channel) has its `<channel source=…>…</channel>` wrapper and
+ *   newline padding stripped via unwrapChannelContent, so it renders as the
+ *   clean typed text AND reconciles the operator's optimistic pending bubble on
+ *   exact-string match. Every other user row is carried verbatim: a non-channel
+ *   string prompt, or block content (a tool_result the EventList renders as it
+ *   did pre-PTY).
  * - `assistant` → an `assistant` event carrying the message verbatim. CC writes
  *   one transcript line PER content block (all sharing the message id/usage),
  *   so a turn surfaces as separate thinking/text/tool_use rows — the same way
