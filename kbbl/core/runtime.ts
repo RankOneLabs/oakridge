@@ -120,12 +120,16 @@ export interface AgentRuntime {
   send(handle: SessionHandle, input: string): Promise<void>;
 
   /**
-   * True when the runtime does not echo operator input back as `user`
-   * envelope events. Core will synthesize a user transcript row for those
-   * runtimes after accepting external input. Independent of delivery path:
-   * both Codex (immediate send) and Claude Code (channel transport, turn
-   * queue) set this because neither echoes input back through its event
-   * stream.
+   * True when the runtime does not echo operator input back as a `user`
+   * envelope event by ANY path. Core synthesizes one for those runtimes after
+   * accepting external input. Codex sets this — its protocol never echoes input
+   * back. Claude Code does NOT: it writes each channel-pushed message into its
+   * transcript as a channel-origin `user` row when it ingests it, and the CC
+   * adapter's transcript transform surfaces that as the `user` event — so
+   * synthesizing as well would both double the message and insert it before CC
+   * has actually processed it. (Earlier this looked true for CC because it
+   * doesn't echo through its stdout event stream; the transcript bridge is the
+   * path that was overlooked.)
    */
   synthesizeUserInputEvents?: boolean;
   /**

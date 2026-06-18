@@ -132,6 +132,17 @@ describe("CC adapter descriptor", () => {
     expect(typeof rt.descriptor.label).toBe("string");
     expect(rt.descriptor.label.length).toBeGreaterThan(0);
   });
+
+  test("does NOT synthesize user input events (CC echoes via its transcript)", async () => {
+    // CC writes each channel-pushed message into its transcript as a
+    // channel-origin user row; the transcript transform surfaces it. Core must
+    // not also synthesize, or the operator message would double and appear
+    // before CC has actually processed it.
+    const rt = await makeRuntime();
+    expect(rt.synthesizeUserInputEvents).toBe(false);
+    // And it stays on the turn-queue delivery path (not immediate-send).
+    expect(rt.sendsWithoutTurnQueue).toBeUndefined();
+  });
 });
 
 describe("CC adapter resolveResumeRef", () => {

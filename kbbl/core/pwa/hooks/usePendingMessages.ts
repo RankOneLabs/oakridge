@@ -32,8 +32,8 @@ export function usePendingMessages(
   }, [sid]);
 
   // Drop optimistic bubbles when the session is no longer live so a
-  // mid-turn Stop / subprocess crash doesn't leave a permanent
-  // "delivered · awaiting reply" tag on the read-only transcript.
+  // mid-turn Stop / subprocess crash doesn't leave a permanent pending
+  // bubble stuck to the bottom of the read-only transcript.
   useEffect(() => {
     if (sessionStatus !== "live") setPendingMessages([]);
   }, [sessionStatus]);

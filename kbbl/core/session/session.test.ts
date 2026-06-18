@@ -504,18 +504,20 @@ describe("Session input queue (CC PTY mode)", () => {
     await session.waitForEnd();
   });
 
-  test("CC (synthesizeUserInputEvents, turn-queue) write during compacting queues, not rejected", async () => {
+  test("turn-queue runtime that opts into synthesis: write during compacting queues, not rejected", async () => {
     // Regression: the compacting gate must key on sendsWithoutTurnQueue, not
-    // synthesizeUserInputEvents. Real CC sets synthesizeUserInputEvents: true
-    // (channel transport doesn't echo) while leaving sendsWithoutTurnQueue
-    // unset (its Stop hook drives the queue). An external write during
-    // compaction must be queued + flushed on markLive(), never throw
-    // SessionNotReadyError.
+    // synthesizeUserInputEvents. This adversarial shape sets
+    // synthesizeUserInputEvents: true while leaving sendsWithoutTurnQueue unset
+    // (a turn-queue runtime) — the combination that a gate wrongly keyed on
+    // synthesize would reject. (Real CC is a turn-queue runtime too but sets
+    // synthesizeUserInputEvents: false; the gate behaviour must not depend on
+    // that.) An external write during compaction must be queued + flushed on
+    // markLive(), never throw SessionNotReadyError.
     const { runtime, sent, finish } = makeControllableRuntime();
     const ccRuntime: AgentRuntime = {
       ...runtime,
       synthesizeUserInputEvents: true,
-      // sendsWithoutTurnQueue deliberately unset — this is the CC shape.
+      // sendsWithoutTurnQueue deliberately unset — the turn-queue shape.
     };
     const session = makeSession();
     const handle = await ccRuntime.spawn({ workingDirectory: "/tmp" });
