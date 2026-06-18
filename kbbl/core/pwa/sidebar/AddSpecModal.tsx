@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { SidebarProject } from "./Sidebar";
 import type { RuntimeId } from "../../runtime-interface";
@@ -48,6 +48,8 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
   const runtimeKey = runtimeIds.join("\0");
   const [title, setTitle] = useState("");
   const [notes, setNotes] = useState("");
+  const [notesSource, setNotesSource] = useState<"text" | "file">("text");
+  const [fileName, setFileName] = useState<string | null>(null);
   const [agentRuntime, setAgentRuntime] = useState<RuntimeId>(defaultAgentRuntime);
   const [agentRuntimeTouched, setAgentRuntimeTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -91,6 +93,23 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
       });
     },
   });
+
+  async function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setError(null);
+    try {
+      const text = await file.text();
+      setNotes(text);
+      setFileName(file.name);
+    } catch {
+      setError("could not read file");
+      setNotes("");
+      setFileName(null);
+    } finally {
+      e.target.value = "";
+    }
+  }
 
   async function submit() {
     if (createMutation.isPending) return;
@@ -183,17 +202,84 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
               {hasCodex && <option value="codex">Codex</option>}
             </select>
           </label>
-          <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
-            <span style={{ opacity: 0.8 }}>Notes (optional)</span>
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="Context, constraints, links — anything plan_writer should know."
-              rows={10}
-              style={{ fontSize: 13, resize: "vertical", width: "100%", boxSizing: "border-box" }}
-              disabled={pending}
-            />
-          </label>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+            >
+              <span style={{ opacity: 0.8 }}>Notes (optional)</span>
+              <div role="group" aria-label="Notes source" style={{ display: "flex", gap: 4 }}>
+                <button
+                  type="button"
+                  aria-pressed={notesSource === "text"}
+                  disabled={pending}
+                  onClick={() => setNotesSource("text")}
+                  style={{ fontSize: 12, opacity: notesSource === "text" ? 1 : 0.6 }}
+                >
+                  Write
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={notesSource === "file"}
+                  disabled={pending}
+                  onClick={() => {
+                    setNotesSource("file");
+                    if (fileName === null) setNotes("");
+                  }}
+                  style={{ fontSize: 12, opacity: notesSource === "file" ? 1 : 0.6 }}
+                >
+                  Upload file
+                </button>
+              </div>
+            </div>
+            {notesSource === "text" ? (
+              <textarea
+                value={notes}
+                onChange={(e) => {
+                  setNotes(e.target.value);
+                  setFileName(null);
+                }}
+                placeholder="Context, constraints, links — anything plan_writer should know."
+                rows={10}
+                style={{ fontSize: 13, resize: "vertical", width: "100%", boxSizing: "border-box" }}
+                disabled={pending}
+                aria-label="Notes"
+              />
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <input
+                  type="file"
+                  accept=".md,.markdown,.txt,text/markdown,text/plain,text/*"
+                  aria-label="Notes file"
+                  disabled={pending}
+                  onChange={handleFileChange}
+                />
+                {fileName && (
+                  <div style={{ opacity: 0.7 }}>
+                    Loaded {fileName} — {notes.length} chars
+                  </div>
+                )}
+                {notes && (
+                  <textarea
+                    value={notes}
+                    readOnly
+                    rows={8}
+                    style={{
+                      fontSize: 13,
+                      resize: "vertical",
+                      width: "100%",
+                      boxSizing: "border-box",
+                      opacity: 0.8,
+                    }}
+                    aria-label="Notes preview"
+                  />
+                )}
+              </div>
+            )}
+          </div>
           {error && (
             <div style={{ color: "var(--danger-fg, #e67070)", fontSize: 13 }} role="alert">
               {error}
