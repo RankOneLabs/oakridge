@@ -106,6 +106,8 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
       setError("could not read file");
       setNotes("");
       setFileName(null);
+    } finally {
+      e.target.value = "";
     }
   }
 
@@ -223,7 +225,10 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
                   type="button"
                   aria-pressed={notesSource === "file"}
                   disabled={pending}
-                  onClick={() => setNotesSource("file")}
+                  onClick={() => {
+                    setNotesSource("file");
+                    if (fileName === null) setNotes("");
+                  }}
                   style={{ fontSize: 12, opacity: notesSource === "file" ? 1 : 0.6 }}
                 >
                   Upload file
