@@ -1,5 +1,6 @@
 import type { Hono } from "hono";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
@@ -227,9 +228,16 @@ export async function createClaudeCodeRuntime(
   // The channel-server is co-located in the same adapter directory as this
   // module — resolve relative to import.meta so it works regardless of the
   // working directory the server process was launched from.
-  const bunBin = Bun.which("bun") ?? "/home/steve/.bun/bin/bun";
-  const channelServerPath = resolve(
-    new URL("./channel-server.ts", import.meta.url).pathname,
+  const bunBin = Bun.which("bun");
+  if (!bunBin) {
+    throw new Error(
+      "kbbl-channel: unable to resolve the bun binary (Bun.which returned null) — the channel MCP server cannot be spawned",
+    );
+  }
+  // fileURLToPath (not .pathname) so a repo path with spaces / non-ASCII
+  // doesn't arrive percent-encoded and break the spawn.
+  const channelServerPath = fileURLToPath(
+    new URL("./channel-server.ts", import.meta.url),
   );
 
   // === CC session id registry ===

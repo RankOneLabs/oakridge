@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { realpathSync, statSync } from "node:fs";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -131,7 +131,11 @@ export async function writeCcMcpConfig(opts: {
   /** Absolute path to channel-server.ts (resolved relative to this module). */
   channelServerPath: string;
 }): Promise<string> {
-  const mcpConfigPath = join(opts.dataDir, "mcp-servers.json");
+  // Per-session config filename, derived from the per-session outbox stem, so
+  // concurrent session startups don't overwrite each other's outbox pointer in
+  // a shared file (which would cross-route channel messages between sessions).
+  const outboxStem = basename(opts.channelOutboxPath, ".jsonl");
+  const mcpConfigPath = join(opts.dataDir, `mcp-servers-${outboxStem}.json`);
   await writeFile(
     mcpConfigPath,
     JSON.stringify(

@@ -126,7 +126,13 @@ function drainOutbox(): string[] {
   // The last element is either empty (trailing newline) or a partial line
   // (write in progress). Either way, do not advance byteOffset past it.
   const completeLines = lines.slice(0, -1);
-  const consumed = completeLines.reduce((acc, l) => acc + l.length + 1 /* \n */, 0);
+  // byteOffset indexes the file in UTF-8 bytes (drainOutbox reads by byte
+  // position), so advance by UTF-8 byte length — l.length would count UTF-16
+  // code units and desync the offset on any multibyte content.
+  const consumed = completeLines.reduce(
+    (acc, l) => acc + Buffer.byteLength(l, "utf8") + 1 /* \n */,
+    0,
+  );
   byteOffset += consumed;
   return completeLines;
 }

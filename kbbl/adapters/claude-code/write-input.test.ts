@@ -4,12 +4,14 @@
  * Tests:
  *   (a) Session.writeInput on an external CC-style write emits exactly one
  *       `user` event with the text before queuing.
- *   (b) The CC adapter's send() appends a well-formed JSON line to the channel
- *       outbox and performs NO PTY write.
+ *   (b) A channel-transport send() appends a well-formed JSON line to the
+ *       channel outbox and performs NO PTY write.
  *
- * The test creates a real Session backed by a minimal mock AgentRuntime whose
- * events() generator blocks until told to complete, whose send() records calls
- * to the outbox, and whose spawn() returns a handle with the session id.
+ * These exercise the core Session.writeInput delivery path against a minimal
+ * mock AgentRuntime that mirrors the real CC adapter's channel send() (append
+ * to outbox, never touch a PTY); they do NOT import the real adapter's send().
+ * The mock's events() generator blocks until told to complete, its send()
+ * records calls + writes the outbox, and spawn() returns a handle with the sid.
  */
 
 import {
