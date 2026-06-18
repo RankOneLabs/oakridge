@@ -62,7 +62,7 @@ describe("sessions.default_allowlist", () => {
     expect(r.sessions.default_allowlist).toEqual(["Read", "Glob", "Grep", "Bash"]);
   });
 
-  test("an explicit list overrides the default (incl. empty = approve everything)", () => {
+  test("an explicit list overrides the default (incl. empty = require approval for everything)", () => {
     expect(
       KbblConfigSchema.parse({ sessions: { default_allowlist: [] } }).sessions
         .default_allowlist,

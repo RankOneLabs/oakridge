@@ -174,6 +174,19 @@ describe("selectSessionsAwaitingApproval", () => {
   it("returns an empty list when nothing is pending", () => {
     expect(selectSessionsAwaitingApproval([snap({ sid: "a" })])).toEqual([]);
   });
+
+  it("orders waiters newest-activity first (the badge's navigation target)", () => {
+    const sessions = [
+      snap({ sid: "old", pendingCount: 1, lastActivityTs: "2026-05-22T00:00:01Z" }),
+      snap({ sid: "new", pendingCount: 1, lastActivityTs: "2026-05-22T00:00:03Z" }),
+      snap({ sid: "mid", pendingCount: 1, lastActivityTs: "2026-05-22T00:00:02Z" }),
+    ];
+    expect(selectSessionsAwaitingApproval(sessions).map((w) => w.sid)).toEqual([
+      "new",
+      "mid",
+      "old",
+    ]);
+  });
 });
 
 describe("selectPendingApprovalCount", () => {

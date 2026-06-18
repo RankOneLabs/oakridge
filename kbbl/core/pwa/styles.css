@@ -3611,10 +3611,12 @@ body {
    visible from any view, not just the session's own conversation. */
 .pending-approvals-badge {
   position: fixed;
-  top: 0.75rem;
+  /* Offset by the notch/status-bar inset on mobile so the badge clears it. */
+  top: calc(0.75rem + env(safe-area-inset-top, 0px));
   left: 50%;
   transform: translateX(-50%);
-  z-index: 1100;
+  /* Below the overlay layer (toasts / pickers at 1000) so modals stay on top. */
+  z-index: 990;
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
@@ -3631,6 +3633,11 @@ body {
 
 .pending-approvals-badge:hover {
   background: #c2620a;
+}
+
+.pending-approvals-badge:focus-visible {
+  outline: 2px solid #fde68a;
+  outline-offset: 2px;
 }
 
 .pending-approvals-badge-dot {

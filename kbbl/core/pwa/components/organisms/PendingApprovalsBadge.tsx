@@ -1,5 +1,6 @@
 import { useStore } from "../../state/store";
 import { selectSessionsAwaitingApproval } from "../../lib/selectors";
+import { writeHashSid } from "../../lib/hash";
 
 /**
  * Global, always-visible badge for parked tool-approvals. Rendered in the app
@@ -26,7 +27,7 @@ export function PendingApprovalsBadge() {
       type="button"
       className="pending-approvals-badge"
       onClick={() => {
-        window.location.hash = target.sid;
+        writeHashSid(target.sid);
       }}
       title="Open the session waiting for tool approval"
       aria-label={`${total} tool ${total === 1 ? "approval" : "approvals"} pending — open session`}

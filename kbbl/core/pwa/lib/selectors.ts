@@ -107,6 +107,7 @@ export function selectSessionsAwaitingApproval(
 ): ApprovalWaiter[] {
   return sessions
     .filter((s) => s.pendingCount > 0 && s.status !== "ended")
+    .sort((a, b) => Date.parse(b.lastActivityTs) - Date.parse(a.lastActivityTs))
     .map((s) => ({ sid: s.sid, name: s.name, pendingCount: s.pendingCount }));
 }
 
