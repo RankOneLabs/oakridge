@@ -3,11 +3,11 @@
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
-import { createClaudeCodeRuntime } from "./index";
+import { ccTranscriptPath, createClaudeCodeRuntime } from "./index";
 import type { EnvelopeEvent } from "../../core/session/session";
 
 let tmpRoot: string;
@@ -33,6 +33,41 @@ async function makeRuntime() {
     dataDir,
   });
 }
+
+describe("ccTranscriptPath", () => {
+  test("encodes a worktree cwd to CC's project-dir convention", () => {
+    // This is the exact path CC wrote for the live session that motivated the
+    // fix — every non-alphanumeric char in the cwd becomes '-', then
+    // <session-id>.jsonl. If CC ever changes this, the hook backstops still
+    // start the tailer with the real transcript_path.
+    const cwd =
+      "/home/steve/codes/rol/oakridge/kbbl/data/worktrees/89c4a0bb-05d3-4833-84c9-48d0973891e4";
+    const sid = "1c716f79-f221-4815-b26b-cd68acb22dfa";
+    expect(ccTranscriptPath(cwd, sid)).toBe(
+      join(
+        homedir(),
+        ".claude",
+        "projects",
+        "-home-steve-codes-rol-oakridge-kbbl-data-worktrees-89c4a0bb-05d3-4833-84c9-48d0973891e4",
+        `${sid}.jsonl`,
+      ),
+    );
+  });
+
+  test("encodes dotted path segments (e.g. .claude) to '-'", () => {
+    const cwd = "/home/steve/codes/rol/oakridge/.claude/worktrees/feature";
+    const sid = "abc";
+    expect(ccTranscriptPath(cwd, sid)).toBe(
+      join(
+        homedir(),
+        ".claude",
+        "projects",
+        "-home-steve-codes-rol-oakridge--claude-worktrees-feature",
+        "abc.jsonl",
+      ),
+    );
+  });
+});
 
 describe("CC adapter descriptor", () => {
   test("has id claude-code", async () => {

@@ -378,26 +378,55 @@ describe("Session input queue (CC PTY mode)", () => {
     await session.waitForEnd();
   });
 
-  test("watchdog recovers the queue when a dispatched message produces no turn", async () => {
+  test("watchdog re-delivers a swallowed message once, then drops it and recovers the queue", async () => {
     const { runtime, sent, finish } = makeControllableRuntime();
     const session = makeSession({ busyWatchdogMs: 20 });
     const handle = await runtime.spawn({ workingDirectory: "/tmp" });
     await session.attachRuntime(runtime, handle);
 
-    // First message is dispatched but (simulating a swallowing modal) no
+    // Dispatched but (simulating a not-yet-ready REPL / swallowing modal) no
     // turn-start is ever observed, so no Stop hook / notifyTurnEnd follows.
-    await session.writeInput("eaten-by-modal");
+    await session.writeInput("eaten");
     await new Promise((r) => setTimeout(r, 0));
-    expect(sent).toEqual(["eaten-by-modal"]);
+    expect(sent).toEqual(["eaten"]);
 
-    // A second message is held behind the stuck "busy"...
-    await session.writeInput("next");
+    // Watchdog fires → the message is re-delivered exactly once (a genuinely
+    // lost first message must not be silently dropped). The re-delivery also
+    // produces no turn, so a second watchdog fires and drops it rather than
+    // looping. Both fires land inside this window (margin well above the 20ms
+    // watchdog to avoid scheduler-jitter flake).
+    await new Promise((r) => setTimeout(r, 80));
+    expect(sent).toEqual(["eaten", "eaten"]);
+
+    // A further wait confirms the dropped message is not delivered a third time.
+    await new Promise((r) => setTimeout(r, 80));
+    expect(sent).toEqual(["eaten", "eaten"]);
+
+    // The queue is recovered: a fresh message dispatches normally (and is not a
+    // continuation of "eaten"'s exhausted retry budget).
+    await session.writeInput("after");
     await new Promise((r) => setTimeout(r, 0));
-    expect(sent).toEqual(["eaten-by-modal"]);
+    expect(sent).toEqual(["eaten", "eaten", "after"]);
 
-    // ...until the watchdog fires and un-wedges the queue.
-    await new Promise((r) => setTimeout(r, 50));
-    expect(sent).toEqual(["eaten-by-modal", "next"]);
+    finish();
+    await session.waitForEnd();
+  });
+
+  test("a message that starts a turn is not re-delivered by the watchdog", async () => {
+    const { runtime, sent, finish } = makeControllableRuntime();
+    const session = makeSession({ busyWatchdogMs: 20 });
+    const handle = await runtime.spawn({ workingDirectory: "/tmp" });
+    await session.attachRuntime(runtime, handle);
+
+    await session.writeInput("real");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent).toEqual(["real"]);
+
+    // The turn actually started (transcript activity) — cancels the watchdog,
+    // so the in-flight message is never re-delivered even past the window.
+    session.notifyTurnStarted();
+    await new Promise((r) => setTimeout(r, 80));
+    expect(sent).toEqual(["real"]);
 
     finish();
     await session.waitForEnd();
