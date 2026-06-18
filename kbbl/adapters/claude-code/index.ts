@@ -45,8 +45,8 @@ import {
 
 // Resolve the readiness gate (see CcHandle.ready) on this fallback even if CC
 // produces no PTY output, so send() can never hang on a silent/broken launch.
-// Comfortably under the input-queue watchdog (BUSY_TURN_WATCHDOG_MS) so a
-// first message delayed to this bound still has watchdog headroom.
+// Bounds worst-case first-write latency: a launch that emits nothing still
+// dispatches the first message within this window rather than waiting forever.
 const READY_FALLBACK_MS = 10_000;
 
 /**
