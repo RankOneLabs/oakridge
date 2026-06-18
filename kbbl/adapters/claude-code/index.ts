@@ -49,6 +49,43 @@ import {
 // dispatches the first message within this window rather than waiting forever.
 const READY_FALLBACK_MS = 10_000;
 
+// Per-dispatch quiescence gate. CC's TUI emits continuously while a turn runs
+// (the spinner animates every few hundred ms) and goes silent when it returns
+// to the idle prompt. We therefore treat "no PTY output for QUIESCE_QUIET_MS"
+// as "CC is idle and ready for input". The Stop hook flips kbbl's turnState to
+// idle BEFORE CC is actually back at the prompt (the subagent/finalization
+// tail), so dispatching on the Stop hook alone writes into CC's busy window —
+// where CC turns the message into one of its own native "queued messages" that
+// it does not reliably auto-run, wedging the input box. Gating each write on
+// quiescence writes only when CC is genuinely at the prompt.
+const QUIESCE_QUIET_MS = 750;
+// Safety cap: if CC never goes quiet (pathological — a hung spinner, or a turn
+// that legitimately runs longer than this after the Stop hook), write anyway as
+// best-effort rather than hang the queue forever. The input-queue watchdog +
+// re-delivery remain the backstop for a write that lands in a busy window.
+const QUIESCE_MAX_WAIT_MS = 12_000;
+
+/**
+ * Block until CC's PTY output has been quiet for `quietMs`, or `maxWaitMs`
+ * elapses. `getLastOutputAt()` returns the epoch-ms of the most recent PTY
+ * output (updated by the events() onData handler). Returns "quiet" when CC went
+ * idle, or "timeout" when the safety cap fired first. Exported for unit tests.
+ */
+export async function awaitPtyQuiescence(
+  getLastOutputAt: () => number,
+  opts: { quietMs: number; maxWaitMs: number; pollMs?: number },
+): Promise<"quiet" | "timeout"> {
+  const pollMs = opts.pollMs ?? 50;
+  const deadline = Date.now() + opts.maxWaitMs;
+  for (;;) {
+    const quietFor = Date.now() - getLastOutputAt();
+    if (quietFor >= opts.quietMs) return "quiet";
+    if (Date.now() >= deadline) return "timeout";
+    const wait = Math.min(opts.quietMs - quietFor, pollMs, deadline - Date.now());
+    await new Promise((r) => setTimeout(r, Math.max(wait, 1)));
+  }
+}
+
 /**
  * Derive CC's on-disk transcript path from the session cwd and CC session id.
  * CC stores transcripts at `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl`,
@@ -102,6 +139,12 @@ interface CcHandle {
   readonly cwd: string;
   /** CC's session id — the transcript filename stem. */
   readonly ccSessionId: string;
+  /**
+   * Epoch-ms of the most recent PTY output, updated by the events() onData
+   * handler. send() uses it to detect quiescence (CC idle at the prompt) before
+   * writing, so a message isn't dispatched into CC's busy/finalization window.
+   */
+  lastOutputAt: number;
 }
 
 /**
@@ -333,6 +376,9 @@ export async function createClaudeCodeRuntime(
         markReady,
         cwd: config.workingDirectory,
         ccSessionId,
+        // Seed to launch time so quiescence isn't declared before any output;
+        // the ready gate (first output) precedes any send() quiescence check.
+        lastOutputAt: Date.now(),
       };
       procs.set(oakridgeSid, handle);
 
@@ -424,6 +470,9 @@ export async function createClaudeCodeRuntime(
         // First output proves CC's REPL is up and rendering — release the
         // readiness gate so send() may write the first message. Idempotent.
         live.markReady();
+        // Track output recency so send() can detect quiescence (CC idle) before
+        // writing. The spinner emits while busy and stops when idle.
+        live.lastOutputAt = Date.now();
         pendingOutput += data;
         if (!flushScheduled) {
           flushScheduled = true;
@@ -488,6 +537,24 @@ export async function createClaudeCodeRuntime(
       // dropped (the operator's message then never starts a turn). Resolves on
       // first PTY output, a fallback timeout, or process exit — see CcHandle.
       await h.ready;
+      // Then wait for CC to be genuinely idle at the prompt. The Stop hook
+      // (which advances kbbl's queue) fires before CC's TUI returns to the
+      // prompt — the subagent/finalization tail keeps the spinner running — so
+      // dispatching on the Stop hook alone writes into the busy window, where
+      // CC turns the message into a native "queued message" it doesn't reliably
+      // auto-run, wedging the input box. Quiescence (PTY output quiet for
+      // QUIESCE_QUIET_MS) means the spinner has stopped and CC is at the prompt.
+      // Best-effort: on the safety-cap timeout we write anyway and let the
+      // input-queue watchdog/re-delivery backstop a bad-window write.
+      const quiescence = await awaitPtyQuiescence(() => h.lastOutputAt, {
+        quietMs: QUIESCE_QUIET_MS,
+        maxWaitMs: QUIESCE_MAX_WAIT_MS,
+      });
+      if (quiescence === "timeout") {
+        console.error(
+          `kbbl: CC PTY never quiesced within ${QUIESCE_MAX_WAIT_MS}ms before write [${handle.sessionId}] — writing anyway (may queue behind a busy turn)`,
+        );
+      }
       // Ctrl-U (\x15) clears any stale text CC may have left in its input
       // box. With the input queue in place, CC is idle when we write, so the
       // box is always empty — this is belt-and-suspenders for legacy stuck

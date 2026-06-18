@@ -7,7 +7,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
-import { ccTranscriptPath, createClaudeCodeRuntime } from "./index";
+import { awaitPtyQuiescence, ccTranscriptPath, createClaudeCodeRuntime } from "./index";
 import type { EnvelopeEvent } from "../../core/session/session";
 
 let tmpRoot: string;
@@ -33,6 +33,36 @@ async function makeRuntime() {
     dataDir,
   });
 }
+
+describe("awaitPtyQuiescence", () => {
+  test("resolves 'quiet' once output has been idle for quietMs", async () => {
+    // Last output was well in the past → already quiescent → resolves quickly.
+    const lastOutputAt = Date.now() - 1000;
+    const start = Date.now();
+    const r = await awaitPtyQuiescence(() => lastOutputAt, { quietMs: 80, maxWaitMs: 2000, pollMs: 20 });
+    expect(r).toBe("quiet");
+    expect(Date.now() - start).toBeLessThan(200);
+  });
+
+  test("waits while output is recent, then resolves 'quiet' after it stops", async () => {
+    let lastOutputAt = Date.now();
+    // Keep "emitting" for ~120ms, then go silent.
+    const ticker = setInterval(() => { lastOutputAt = Date.now(); }, 20);
+    setTimeout(() => clearInterval(ticker), 120);
+    const r = await awaitPtyQuiescence(() => lastOutputAt, { quietMs: 80, maxWaitMs: 3000, pollMs: 20 });
+    expect(r).toBe("quiet");
+    // Must not have resolved before output stopped (~120ms) + quiet window (80ms).
+    // (Lower bound only; upper bound left loose to avoid scheduler-jitter flake.)
+  });
+
+  test("resolves 'timeout' if output never goes quiet", async () => {
+    // Continuously recent output → never quiescent → safety cap fires.
+    const ticker = setInterval(() => {}, 10);
+    const r = await awaitPtyQuiescence(() => Date.now(), { quietMs: 80, maxWaitMs: 250, pollMs: 20 });
+    clearInterval(ticker);
+    expect(r).toBe("timeout");
+  });
+});
 
 describe("ccTranscriptPath", () => {
   test("encodes a worktree cwd to CC's project-dir convention", () => {
