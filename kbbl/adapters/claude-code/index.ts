@@ -68,21 +68,34 @@ const QUIESCE_MAX_WAIT_MS = 12_000;
 /**
  * Block until CC's PTY output has been quiet for `quietMs`, or `maxWaitMs`
  * elapses. `getLastOutputAt()` returns the epoch-ms of the most recent PTY
- * output (updated by the events() onData handler). Returns "quiet" when CC went
- * idle, or "timeout" when the safety cap fired first. Exported for unit tests.
+ * output (kept current by the onData listeners). Returns "quiet" when CC went
+ * idle, or "timeout" when the safety cap fired first.
+ *
+ * `now`/`sleep` are injectable (default `Date.now` / `setTimeout`) so tests can
+ * drive a deterministic fake clock instead of asserting against wall-clock.
+ * `now()` is read once per loop iteration.
  */
 export async function awaitPtyQuiescence(
   getLastOutputAt: () => number,
-  opts: { quietMs: number; maxWaitMs: number; pollMs?: number },
+  opts: {
+    quietMs: number;
+    maxWaitMs: number;
+    pollMs?: number;
+    now?: () => number;
+    sleep?: (ms: number) => Promise<void>;
+  },
 ): Promise<"quiet" | "timeout"> {
   const pollMs = opts.pollMs ?? 50;
-  const deadline = Date.now() + opts.maxWaitMs;
+  const now = opts.now ?? Date.now;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const deadline = now() + opts.maxWaitMs;
   for (;;) {
-    const quietFor = Date.now() - getLastOutputAt();
+    const tick = now();
+    const quietFor = tick - getLastOutputAt();
     if (quietFor >= opts.quietMs) return "quiet";
-    if (Date.now() >= deadline) return "timeout";
-    const wait = Math.min(opts.quietMs - quietFor, pollMs, deadline - Date.now());
-    await new Promise((r) => setTimeout(r, Math.max(wait, 1)));
+    if (tick >= deadline) return "timeout";
+    const wait = Math.min(opts.quietMs - quietFor, pollMs, deadline - tick);
+    await sleep(Math.max(wait, 1));
   }
 }
 
@@ -389,6 +402,19 @@ export async function createClaudeCodeRuntime(
       readyFallback = setTimeout(() => handle.markReady(), READY_FALLBACK_MS);
       readyFallback.unref?.();
 
+      // Track PTY output from the moment the process exists — NOT only once the
+      // events() generator starts consuming. _wireAttached can pump the queue
+      // (runtime.send) before it begins iterating runtime.events(), so a send
+      // dispatched in that window would otherwise read a stale lastOutputAt and
+      // wrongly pass the quiescence gate while CC is still spinning. This
+      // listener keeps markReady (readiness) and lastOutputAt (quiescence) live
+      // independent of events(); events()'s own listener handles pty_output
+      // streaming. Disposed on exit so it can't outlive the process.
+      const outputDisposable = ptyProc.onData(() => {
+        handle.markReady();
+        handle.lastOutputAt = Date.now();
+      });
+
       // Register exit handling immediately — not in events() — so a process
       // that dies before events() is entered still records its exit. We record
       // the code on the handle and wake any active consumer; we deliberately do
@@ -402,6 +428,7 @@ export async function createClaudeCodeRuntime(
         // write will fail fast rather than hang forever on `ready`. markReady
         // also clears the fallback timer.
         handle.markReady();
+        outputDisposable.dispose();
         handle.notifyExit?.();
       });
 
@@ -467,12 +494,9 @@ export async function createClaudeCodeRuntime(
         push({ type: "envelope", payload: { type: "pty_output", content } });
       }
       const dataDisposable = ptyProc.onData((data) => {
-        // First output proves CC's REPL is up and rendering — release the
-        // readiness gate so send() may write the first message. Idempotent.
-        live.markReady();
-        // Track output recency so send() can detect quiescence (CC idle) before
-        // writing. The spinner emits while busy and stops when idle.
-        live.lastOutputAt = Date.now();
+        // readiness (markReady) and output-recency (lastOutputAt) are owned by
+        // the spawn()-level onData listener so they stay correct even before
+        // this generator starts consuming. Here we only buffer for pty_output.
         pendingOutput += data;
         if (!flushScheduled) {
           flushScheduled = true;

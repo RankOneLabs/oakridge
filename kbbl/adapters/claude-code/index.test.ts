@@ -35,32 +35,41 @@ async function makeRuntime() {
 }
 
 describe("awaitPtyQuiescence", () => {
-  test("resolves 'quiet' once output has been idle for quietMs", async () => {
-    // Last output was well in the past → already quiescent → resolves quickly.
-    const lastOutputAt = Date.now() - 1000;
-    const start = Date.now();
-    const r = await awaitPtyQuiescence(() => lastOutputAt, { quietMs: 80, maxWaitMs: 2000, pollMs: 20 });
+  // Deterministic fake clock: virtual time only advances when the helper sleeps,
+  // so there are no real timers and no wall-clock assertions.
+  function fakeClock(start = 0) {
+    let t = start;
+    return {
+      now: () => t,
+      sleep: (ms: number) => { t += ms; return Promise.resolve(); },
+      get t() { return t; },
+    };
+  }
+
+  test("resolves 'quiet' immediately when output is already older than quietMs", async () => {
+    const clk = fakeClock(1000);
+    const r = await awaitPtyQuiescence(() => 0, { quietMs: 80, maxWaitMs: 2000, now: clk.now, sleep: clk.sleep });
     expect(r).toBe("quiet");
-    expect(Date.now() - start).toBeLessThan(200);
+    expect(clk.t).toBe(1000); // never had to sleep
   });
 
   test("waits while output is recent, then resolves 'quiet' after it stops", async () => {
-    let lastOutputAt = Date.now();
-    // Keep "emitting" for ~120ms, then go silent.
-    const ticker = setInterval(() => { lastOutputAt = Date.now(); }, 20);
-    setTimeout(() => clearInterval(ticker), 120);
-    const r = await awaitPtyQuiescence(() => lastOutputAt, { quietMs: 80, maxWaitMs: 3000, pollMs: 20 });
+    const clk = fakeClock(0);
+    // Output arrives continuously until virtual time 120, then goes silent.
+    const lastOutputAt = () => Math.min(clk.now(), 120);
+    const r = await awaitPtyQuiescence(lastOutputAt, { quietMs: 80, maxWaitMs: 5000, pollMs: 20, now: clk.now, sleep: clk.sleep });
     expect(r).toBe("quiet");
-    // Must not have resolved before output stopped (~120ms) + quiet window (80ms).
-    // (Lower bound only; upper bound left loose to avoid scheduler-jitter flake.)
+    // Quiet is declared once (now - 120) >= 80, i.e. at virtual time ~200.
+    expect(clk.t).toBeGreaterThanOrEqual(200);
+    expect(clk.t).toBeLessThan(260);
   });
 
-  test("resolves 'timeout' if output never goes quiet", async () => {
-    // Continuously recent output → never quiescent → safety cap fires.
-    const ticker = setInterval(() => {}, 10);
-    const r = await awaitPtyQuiescence(() => Date.now(), { quietMs: 80, maxWaitMs: 250, pollMs: 20 });
-    clearInterval(ticker);
+  test("resolves 'timeout' when output never goes quiet", async () => {
+    const clk = fakeClock(0);
+    // lastOutputAt always equals now → never quiescent → safety cap fires.
+    const r = await awaitPtyQuiescence(clk.now, { quietMs: 80, maxWaitMs: 250, pollMs: 20, now: clk.now, sleep: clk.sleep });
     expect(r).toBe("timeout");
+    expect(clk.t).toBeGreaterThanOrEqual(250);
   });
 });
 
