@@ -43,6 +43,17 @@ export interface TranscriptUserEntry {
   type: "user";
   uuid: string;
   isSidechain?: boolean;
+  /**
+   * Provenance CC stamps on the user row. `origin.kind === "channel"` marks a
+   * row CC injected from a kbbl channel push (our send() path) — i.e. the echo
+   * of operator input that core has ALREADY synthesized at send time
+   * (synthesizeUserInputEvents). The transform skips those (see
+   * transcriptEntryToEvents) so the operator's message renders once, as the
+   * clean synthesized text rather than CC's raw `<channel>…</channel>` wrapper.
+   * Tool-result user rows and any directly-typed input carry a different origin
+   * and flow through normally.
+   */
+  origin?: { kind?: string; server?: string };
   message: TranscriptUserMessage;
 }
 
@@ -146,8 +157,18 @@ export function transcriptEntryToEvents(raw: unknown): EmittedEvent[] {
   if (entry.isSidechain === true) return [];
 
   if (entry.type === "user") {
-    const { message } = entry as TranscriptUserEntry;
-    return [{ type: "user", payload: { type: "user", message } }];
+    const userEntry = entry as TranscriptUserEntry;
+    // Channel-origin user rows are CC's echo of operator input that core
+    // already synthesized at send() time (synthesizeUserInputEvents). Emitting
+    // one here would render the operator's message twice — and in CC's raw
+    // `<channel source=…>…</channel>` wrapper rather than the clean text. Skip
+    // them; the synthesized event is the single source for operator prompts.
+    // Tool-result user rows (block content) carry no channel origin and still
+    // flow through.
+    if (userEntry.origin?.kind === "channel") return [];
+    return [
+      { type: "user", payload: { type: "user", message: userEntry.message } },
+    ];
   }
 
   if (entry.type === "assistant") {

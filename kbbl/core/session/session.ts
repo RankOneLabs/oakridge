@@ -1301,10 +1301,14 @@ export class Session {
 
       // Turn-queue delivery path (Claude Code): operator input is deferred to
       // turn boundaries via pumpInputQueue/notifyTurnEnd. Synthesize the `user`
-      // event when the runtime opts in (synthesizeUserInputEvents) — CC's
-      // channel transport does not echo operator input back as a transcript
-      // event the way PTY input did via CC's output stream, so without this the
-      // operator message would never appear in the JSONL or the PWA inbox.
+      // event when the runtime opts in (synthesizeUserInputEvents). CC DOES
+      // echo channel-pushed input back into its on-disk transcript, but as a
+      // channel-origin row wrapped in `<channel>…</channel>`; the CC adapter's
+      // transcript transform skips those (origin.kind === "channel") so this
+      // synthesized event stays the single, clean source for the operator's
+      // message. Without synthesis the message would render only in CC's raw
+      // channel wrapper, and the optimistic bubble would never reconcile
+      // against it (wrapped content ≠ the text the operator typed).
       if (runtime.synthesizeUserInputEvents === true) {
         await this.emit("user", {
           type: "user",

@@ -135,6 +135,26 @@ describe("transcriptEntryToEvents", () => {
     expect(events[0].type).toBe("user");
   });
 
+  test("skips channel-origin user lines (core already synthesized them)", () => {
+    // CC echoes a kbbl channel push into its transcript as a channel-origin
+    // user row wrapped in `<channel>…</channel>`. Core already synthesized the
+    // clean operator message at send time, so the transform must drop this echo
+    // to avoid rendering the message twice (and in the raw wrapper).
+    const channelEcho = {
+      type: "user",
+      uuid: "u-3",
+      isMeta: true,
+      promptSource: "system",
+      origin: { kind: "channel", server: "kbbl-channel" },
+      message: {
+        role: "user",
+        content:
+          '<channel source="kbbl-channel" source="kbbl">\nany current sweeps?\n</channel>',
+      },
+    };
+    expect(transcriptEntryToEvents(channelEcho)).toEqual([]);
+  });
+
   test("result usage defaults missing token fields to zero", () => {
     const line = {
       type: "assistant",
