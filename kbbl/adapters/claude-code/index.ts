@@ -308,11 +308,20 @@ export async function createClaudeCodeRuntime(
       });
 
       // Readiness gate: send() awaits this so the first operator message isn't
-      // written before CC's REPL is reading stdin. Resolved by the first PTY
-      // output (events()), the fallback timer below, or process exit.
+      // written before CC's REPL is reading stdin. Resolved (whichever comes
+      // first) by the first PTY output (events()), the fallback timer below, or
+      // process exit. The resolver clears the fallback so a session that became
+      // ready via real output doesn't leave a timer to fire later.
+      let readyFallback: ReturnType<typeof setTimeout> | null = null;
       let markReady!: () => void;
       const ready = new Promise<void>((resolve) => {
-        markReady = resolve;
+        markReady = () => {
+          if (readyFallback !== null) {
+            clearTimeout(readyFallback);
+            readyFallback = null;
+          }
+          resolve();
+        };
       });
 
       const handle: CcHandle = {
@@ -331,7 +340,7 @@ export async function createClaudeCodeRuntime(
       // never hang on a silent/broken launch. unref so it can't keep the loop
       // alive on its own; markReady is idempotent so a later real signal is a
       // no-op.
-      const readyFallback = setTimeout(() => handle.markReady(), READY_FALLBACK_MS);
+      readyFallback = setTimeout(() => handle.markReady(), READY_FALLBACK_MS);
       readyFallback.unref?.();
 
       // Register exit handling immediately — not in events() — so a process
@@ -344,8 +353,8 @@ export async function createClaudeCodeRuntime(
       ptyProc.onExit(({ exitCode }) => {
         handle.exited = { code: exitCode };
         // Unblock any send() waiting on readiness — the process is gone, so the
-        // write will fail fast rather than hang forever on `ready`.
-        clearTimeout(readyFallback);
+        // write will fail fast rather than hang forever on `ready`. markReady
+        // also clears the fallback timer.
         handle.markReady();
         handle.notifyExit?.();
       });

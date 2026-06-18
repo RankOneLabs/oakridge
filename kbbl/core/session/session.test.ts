@@ -391,13 +391,15 @@ describe("Session input queue (CC PTY mode)", () => {
     expect(sent).toEqual(["eaten"]);
 
     // Watchdog fires → the message is re-delivered exactly once (a genuinely
-    // lost first message must not be silently dropped).
-    await new Promise((r) => setTimeout(r, 35));
+    // lost first message must not be silently dropped). The re-delivery also
+    // produces no turn, so a second watchdog fires and drops it rather than
+    // looping. Both fires land inside this window (margin well above the 20ms
+    // watchdog to avoid scheduler-jitter flake).
+    await new Promise((r) => setTimeout(r, 80));
     expect(sent).toEqual(["eaten", "eaten"]);
 
-    // The re-delivery also produces no turn → the watchdog fires again, but now
-    // the message is dropped rather than looping forever.
-    await new Promise((r) => setTimeout(r, 35));
+    // A further wait confirms the dropped message is not delivered a third time.
+    await new Promise((r) => setTimeout(r, 80));
     expect(sent).toEqual(["eaten", "eaten"]);
 
     // The queue is recovered: a fresh message dispatches normally (and is not a
@@ -423,7 +425,7 @@ describe("Session input queue (CC PTY mode)", () => {
     // The turn actually started (transcript activity) — cancels the watchdog,
     // so the in-flight message is never re-delivered even past the window.
     session.notifyTurnStarted();
-    await new Promise((r) => setTimeout(r, 35));
+    await new Promise((r) => setTimeout(r, 80));
     expect(sent).toEqual(["real"]);
 
     finish();

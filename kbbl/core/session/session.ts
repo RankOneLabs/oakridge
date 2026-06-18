@@ -1121,12 +1121,20 @@ export class Session {
       // Fresh message — eligible for exactly one watchdog re-delivery.
       this.redeliverArmed = true;
     }
-    this.armBusyWatchdog();
     const runtime = this._runtime;
     const handle = this._handle;
     const task = async () => {
       try {
         await runtime.send(handle, msg);
+        // Arm the watchdog only after the message is actually written to the
+        // PTY — not at queue-claim. The CC readiness gate makes send() await
+        // the REPL coming up; arming earlier would start the "no turn" clock
+        // while the message is still waiting to be written and could trip a
+        // spurious re-delivery. Armed here, the timer measures "no turn after
+        // write". notifyTurnStarted() (which cancels it) is driven by the
+        // transcript tailer and so can't fire until CC has received this
+        // message — i.e. after this write — so arming here never races it.
+        this.armBusyWatchdog();
       } catch (err) {
         // send() failed (e.g. CC proc already gone). Reset state so the queue
         // isn't permanently wedged; finalize() will clear pendingInput shortly.
@@ -1135,8 +1143,8 @@ export class Session {
             err instanceof Error ? err.message : String(err)
           }`,
         );
-        // This dispatch never reached CC, so its watchdog is moot — clear it
-        // so a stray timer doesn't linger (re-pump below re-arms if it sends).
+        // Nothing was armed for this dispatch (arming happens only after a
+        // successful send), but clear defensively in case a prior timer lingers.
         this.clearBusyWatchdog();
         this.turnState = "idle";
         this.pumpInputQueue();
