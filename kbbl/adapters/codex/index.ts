@@ -36,7 +36,7 @@ interface CodexSessionState {
   threadId: string;
   resolvedModel: string | null;
   activeTurnId: string | null;
-  /** kbbl request id → resolver fn (called when operator decides) */
+  /** kbbl request id â resolver fn (called when operator decides) */
   approvalResolvers: Map<string, (d: "allow" | "deny") => void>;
   /** Per-turn token usage keyed by turnId; consumed by classifyEvent on the matching result */
   lastTokenUsage: { turnId: string; inputTokens: number; outputTokens: number; cachedInputTokens: number } | null;
@@ -67,6 +67,7 @@ export function createCodexRuntimeDescriptorOnly(
     descriptor,
     nonPersistedEventTypes: CODEX_NON_PERSISTED_EVENT_TYPES,
     synthesizeUserInputEvents: true,
+    sendsWithoutTurnQueue: true, // no Stop hook — immediate send, never the turn queue
 
     async spawn(): Promise<SessionHandle> {
       throw new Error("createCodexRuntimeDescriptorOnly: spawn not supported (no client)");
@@ -147,7 +148,7 @@ function reconstructSnapshot(
 // === Full runtime factory ===
 
 export interface CreateCodexRuntimeOpts extends CodexAppServerOpts {
-  /** Path to the sessions directory — required for resume to work. */
+  /** Path to the sessions directory â required for resume to work. */
   sessionsDir?: string;
   /** Approval policy to pass to Codex; defaults to ~/.codex/config.toml or untrusted. */
   approvalPolicy?: ApprovalPolicy;
@@ -156,7 +157,7 @@ export interface CreateCodexRuntimeOpts extends CodexAppServerOpts {
 /**
  * Start the Codex app-server and return a fully wired AgentRuntime.
  * Throws if the app-server fails to start (caller should catch and
- * continue without Codex — see server.ts wiring).
+ * continue without Codex â see server.ts wiring).
  */
 export async function createCodexRuntime(
   opts: CreateCodexRuntimeOpts,
@@ -208,6 +209,7 @@ export async function createCodexRuntime(
     descriptor,
     nonPersistedEventTypes: CODEX_NON_PERSISTED_EVENT_TYPES,
     synthesizeUserInputEvents: true,
+    sendsWithoutTurnQueue: true, // no Stop hook — immediate send, never the turn queue
 
     // --- spawn ---
     async spawn(config: RuntimeConfig): Promise<SessionHandle> {
@@ -244,7 +246,7 @@ export async function createCodexRuntime(
           threadId = forkResult.thread.id;
           resolvedModel = typeof forkResult.model === "string" ? forkResult.model : null;
         } else {
-          // Resume ref unavailable — fall through to new thread
+          // Resume ref unavailable â fall through to new thread
           const startResult = await client.threadStart({
             experimentalRawEvents: false,
             persistExtendedHistory: false,
@@ -365,7 +367,7 @@ export async function createCodexRuntime(
           markIdle(state);
         }
 
-        // Capture per-turn token usage for classifyEvent → observeTurnEnd
+        // Capture per-turn token usage for classifyEvent â observeTurnEnd
         if (notif.method === "thread/tokenUsage/updated") {
           const p = notif.params as Parameters<typeof extractTurnUsage>[0];
           state.lastTokenUsage = { turnId: p.turnId, ...extractTurnUsage(p) };
@@ -384,7 +386,7 @@ export async function createCodexRuntime(
       client.setServerRequestHandler(threadId, async (req) => {
         const normalized = normalizeApprovalByMethod(req.method, req.params);
         if (!normalized) {
-          // Unknown method — cancel immediately
+          // Unknown method â cancel immediately
           await client.sendServerResponse(req.id, { decision: "cancel" });
           return;
         }
@@ -396,7 +398,7 @@ export async function createCodexRuntime(
           state.approvalResolvers.set(kbblRequestId, resolve);
         });
 
-        // Push the approval envelope — classifyEvent will pick this up and call
+        // Push the approval envelope â classifyEvent will pick this up and call
         // session.registerApproval or auto-approve via yolo/allowlist.
         pushEvent({
           type: "envelope",
@@ -420,7 +422,7 @@ export async function createCodexRuntime(
       client["transport" as never]; // TypeScript appeasement
       const closeUnsub = (() => {
         // Register on the transport indirectly via the client's closed flag
-        // by polling every 500ms — simpler than exposing transport.onClose here
+        // by polling every 500ms â simpler than exposing transport.onClose here
         const pollInterval = setInterval(() => {
           if (client.closed) {
             clearInterval(pollInterval);
@@ -610,7 +612,7 @@ export async function createCodexRuntime(
   ) => {
     await originalTerminate(handle);
     if (sessions.size === 0) {
-      // All sessions terminated — optionally stop the server.
+      // All sessions terminated â optionally stop the server.
       // We don't auto-stop since other sessions may spin up.
     }
   };

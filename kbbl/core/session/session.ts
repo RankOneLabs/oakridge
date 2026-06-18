@@ -1266,15 +1266,18 @@ export class Session {
         return;
       }
 
-      if (runtime.synthesizeUserInputEvents === true) {
-        // synthesizeUserInputEvents runtimes (Codex) use the immediate send
-        // path — unchanged from pre-queue behavior. Codex has no Stop hook so
-        // the turn-state machine is never driven; queuing would deadlock.
+      if (runtime.sendsWithoutTurnQueue === true) {
+        // Immediate-send runtimes (Codex) have no Stop hook, so the turn-state
+        // machine is never driven and queuing would deadlock — send right away.
+        // Synthesis is a separate opt-in: emit the `user` row only when the
+        // runtime doesn't echo input back (synthesizeUserInputEvents).
         const task = async () => {
-          await this.emit("user", {
-            type: "user",
-            message: { role: "user", content: text },
-          });
+          if (runtime.synthesizeUserInputEvents === true) {
+            await this.emit("user", {
+              type: "user",
+              message: { role: "user", content: text },
+            });
+          }
           await runtime.send(handle, text);
         };
         this.inputQueue = this.inputQueue.then(task, task);
@@ -1293,15 +1296,18 @@ export class Session {
         return;
       }
 
-      // External CC-style write: synthesize the `user` event here because the
-      // channel transport (notifications/claude/channel) does not echo operator
-      // input back as a transcript event the way PTY input did via CC's output
-      // stream. Without this the operator message would never appear in the
-      // JSONL or the PWA inbox. Mirrors the Codex branch at session.ts:1274.
-      await this.emit("user", {
-        type: "user",
-        message: { role: "user", content: text },
-      });
+      // Turn-queue delivery path (Claude Code): operator input is deferred to
+      // turn boundaries via pumpInputQueue/notifyTurnEnd. Synthesize the `user`
+      // event when the runtime opts in (synthesizeUserInputEvents) — CC's
+      // channel transport does not echo operator input back as a transcript
+      // event the way PTY input did via CC's output stream, so without this the
+      // operator message would never appear in the JSONL or the PWA inbox.
+      if (runtime.synthesizeUserInputEvents === true) {
+        await this.emit("user", {
+          type: "user",
+          message: { role: "user", content: text },
+        });
+      }
       // Push onto the pending queue. Return once accepted — do not await
       // delivery to the channel outbox. pumpInputQueue() will send immediately
       // if the turn is idle, or defer until notifyTurnEnd().

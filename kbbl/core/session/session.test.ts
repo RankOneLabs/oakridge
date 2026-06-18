@@ -191,6 +191,7 @@ describe("Session.attachRuntime", () => {
         supportsCompaction: false,
       },
       synthesizeUserInputEvents: true,
+      sendsWithoutTurnQueue: true,
       async *events(_handle: SessionHandle): AsyncIterable<RuntimeEvent> {
         await done;
         yield { type: "completed", result: { code: 0 } };

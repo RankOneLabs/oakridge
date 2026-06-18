@@ -762,6 +762,13 @@ export async function createClaudeCodeRuntime(
     // byte stream is never parsed — so it needs no entry here.)
     nonPersistedEventTypes: new Set<string>(["pty_output"]),
 
+    // Channel transport delivers operator input via notifications/claude/channel,
+    // which CC does not echo back as a `user` transcript event the way PTY input
+    // did. Opt into synthesis so operator messages still land in the JSONL/inbox.
+    // We do NOT set sendsWithoutTurnQueue: CC's Stop hook drives the turn queue,
+    // so input stays on the pumpInputQueue/notifyTurnEnd delivery path.
+    synthesizeUserInputEvents: true,
+
     // --- AgentRuntime.mountRoutes ---
     mountRoutes(
       app: Hono,

@@ -122,9 +122,20 @@ export interface AgentRuntime {
   /**
    * True when the runtime does not echo operator input back as `user`
    * envelope events. Core will synthesize a user transcript row for those
-   * runtimes after accepting external input.
+   * runtimes after accepting external input. Independent of delivery path:
+   * both Codex (immediate send) and Claude Code (channel transport, turn
+   * queue) set this because neither echoes input back through its event
+   * stream.
    */
   synthesizeUserInputEvents?: boolean;
+  /**
+   * True when the runtime has no turn-state machine (no Stop hook driving
+   * notifyTurnEnd), so operator input must be sent immediately rather than
+   * deferred through the per-turn input queue — queuing would deadlock because
+   * nothing ever flushes it. Codex sets this; Claude Code does not (its Stop
+   * hook drives the turn queue, so its input is delivered at turn boundaries).
+   */
+  sendsWithoutTurnQueue?: boolean;
 
   // --- approval ---
 

@@ -82,7 +82,9 @@ function makeMockRuntime(channelOutbox: string): {
       models: [],
       supportsCompaction: false,
     },
-    synthesizeUserInputEvents: undefined, // NOT set — this is the CC path
+    // CC opts into synthesis (channel transport doesn't echo input back), but
+    // stays on the turn-queue path because sendsWithoutTurnQueue is unset.
+    synthesizeUserInputEvents: true,
 
     async spawn(_config: RuntimeConfig): Promise<SessionHandle> {
       return { sessionId: "mock-session" };
