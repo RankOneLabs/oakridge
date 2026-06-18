@@ -116,9 +116,20 @@ const GATED_REVIEW_MCP_URL = "http://otto:3555/mcp";
  * rather than pointing `--mcp-config` at the session's checked-out `.mcp.json`
  * so registration doesn't depend on the branch actually containing that file
  * (forked or older sessions may predate it).
+ *
+ * Includes the kbbl-channel stdio MCP server alongside gated-review. The
+ * channel server receives the per-session outbox path via KBBL_CHANNEL_OUTBOX
+ * so it can tail it and push each line as a `notifications/claude/channel`.
+ * `--strict-mcp-config` (set in buildCcArgv) makes this the complete MCP set.
  */
 export async function writeCcMcpConfig(opts: {
   dataDir: string;
+  /** Absolute path to the per-session channel outbox file. */
+  channelOutboxPath: string;
+  /** Absolute path to the bun binary. */
+  bunBin: string;
+  /** Absolute path to channel-server.ts (resolved relative to this module). */
+  channelServerPath: string;
 }): Promise<string> {
   const mcpConfigPath = join(opts.dataDir, "mcp-servers.json");
   await writeFile(
@@ -127,6 +138,15 @@ export async function writeCcMcpConfig(opts: {
       {
         mcpServers: {
           "gated-review": { type: "http", url: GATED_REVIEW_MCP_URL },
+          "kbbl-channel": {
+            type: "stdio",
+            command: opts.bunBin,
+            args: [opts.channelServerPath],
+            env: {
+              KBBL_CHANNEL_OUTBOX: opts.channelOutboxPath,
+              KBBL_CHANNEL_NAME: "kbbl-channel",
+            },
+          },
         },
       },
       null,
@@ -281,6 +301,15 @@ export function buildCcArgv(opts: CcArgvOpts): string[] {
   if (opts.parentCcSid) {
     argv.push("--resume", opts.parentCcSid, "--fork-session");
   }
+  // Channel transport: register kbbl-channel as a development channel so CC
+  // accepts push notifications from our stdio MCP server. Must be last: the
+  // flag is variadic (commander consumes tokens until the next `-`) so placing
+  // it earlier would swallow subsequent flags. Do NOT add --channels — that
+  // flag is for the Anthropic plugin allowlist and rejects "server:" entries
+  // with "server: entries need --dangerously-load-development-channels".
+  // Passing the same value to both flags creates a duplicate dev:false entry
+  // that CC rejects, so pass it to the dev flag only.
+  argv.push("--dangerously-load-development-channels", "server:kbbl-channel");
   return argv;
 }
 

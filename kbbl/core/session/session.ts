@@ -1293,9 +1293,18 @@ export class Session {
         return;
       }
 
-      // External CC-style write: push onto the pending queue. Return once
-      // accepted — do not await delivery to the PTY. pumpInputQueue() will
-      // send immediately if the turn is idle, or defer until notifyTurnEnd().
+      // External CC-style write: synthesize the `user` event here because the
+      // channel transport (notifications/claude/channel) does not echo operator
+      // input back as a transcript event the way PTY input did via CC's output
+      // stream. Without this the operator message would never appear in the
+      // JSONL or the PWA inbox. Mirrors the Codex branch at session.ts:1274.
+      await this.emit("user", {
+        type: "user",
+        message: { role: "user", content: text },
+      });
+      // Push onto the pending queue. Return once accepted — do not await
+      // delivery to the channel outbox. pumpInputQueue() will send immediately
+      // if the turn is idle, or defer until notifyTurnEnd().
       this.pendingInput.push(text);
       if (this._compactor) {
         try {

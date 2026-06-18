@@ -1,7 +1,8 @@
 import type { Hono } from "hono";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { writeFile } from "node:fs/promises";
 import * as pty from "bun-pty";
 
 import type { EnvelopeEvent, Session, SpawnCmd } from "../../core/session/session";
@@ -48,22 +49,6 @@ import {
 // Bounds worst-case first-write latency: a launch that emits nothing still
 // dispatches the first message within this window rather than waiting forever.
 const READY_FALLBACK_MS = 10_000;
-
-// Per-dispatch quiescence gate. CC's TUI emits continuously while a turn runs
-// (the spinner animates every few hundred ms) and goes silent when it returns
-// to the idle prompt. We therefore treat "no PTY output for QUIESCE_QUIET_MS"
-// as "CC is idle and ready for input". The Stop hook flips kbbl's turnState to
-// idle BEFORE CC is actually back at the prompt (the subagent/finalization
-// tail), so dispatching on the Stop hook alone writes into CC's busy window —
-// where CC turns the message into one of its own native "queued messages" that
-// it does not reliably auto-run, wedging the input box. Gating each write on
-// quiescence writes only when CC is genuinely at the prompt.
-const QUIESCE_QUIET_MS = 750;
-// Safety cap: if CC never goes quiet (pathological — a hung spinner, or a turn
-// that legitimately runs longer than this after the Stop hook), write anyway as
-// best-effort rather than hang the queue forever. The input-queue watchdog +
-// re-delivery remain the backstop for a write that lands in a busy window.
-const QUIESCE_MAX_WAIT_MS = 12_000;
 
 /**
  * Block until CC's PTY output has been quiet for `quietMs`, or `maxWaitMs`
@@ -142,8 +127,8 @@ interface CcHandle {
   /**
    * Resolves once CC's PTY has produced its first output (the REPL is up and
    * rendering) — or a fallback timeout / process exit, whichever comes first.
-   * send() awaits this before writing so the operator's first message isn't
-   * written into a REPL that isn't yet reading stdin (which silently drops it).
+   * Awaited by events() before starting the transcript tailer so the first
+   * output (including modal acceptance) is not missed.
    */
   ready: Promise<void>;
   /** Idempotent resolver for `ready` (multiple calls are harmless). */
@@ -155,11 +140,23 @@ interface CcHandle {
   /**
    * Epoch-ms of the most recent PTY output, kept current by the spawn()-level
    * onData listener (registered at process creation, so it stays live even
-   * before events() begins consuming). send() uses it to detect quiescence (CC
-   * idle at the prompt) before writing, so a message isn't dispatched into CC's
-   * busy/finalization window.
+   * before events() begins consuming).
    */
   lastOutputAt: number;
+  /**
+   * Absolute path to the per-session channel outbox file. The channel server
+   * tails this file and pushes each line as `notifications/claude/channel`.
+   * `send()` appends to it instead of writing PTY bytes.
+   */
+  readonly channelOutboxPath: string;
+  /**
+   * Guard for the dev-channels modal acceptance. The `--dangerously-load-
+   * development-channels` flag causes CC to show a warning modal on every
+   * launch that blocks the REPL. We accept it with a single `\r` on the first
+   * PTY output that matches `/development/i`. This boolean ensures we fire
+   * at most once per session.
+   */
+  devChannelsAccepted: boolean;
 }
 
 /**
@@ -225,7 +222,15 @@ export async function createClaudeCodeRuntime(
     dataDir: opts.dataDir,
     port: opts.port,
   });
-  const mcpConfigPath = await writeCcMcpConfig({ dataDir: opts.dataDir });
+
+  // Resolve bun binary and channel-server path once at factory time.
+  // The channel-server is co-located in the same adapter directory as this
+  // module — resolve relative to import.meta so it works regardless of the
+  // working directory the server process was launched from.
+  const bunBin = Bun.which("bun") ?? "/home/steve/.bun/bin/bun";
+  const channelServerPath = resolve(
+    new URL("./channel-server.ts", import.meta.url).pathname,
+  );
 
   // === CC session id registry ===
   // Maps CC's runtime session_id (from system/init) → oakridgeSid. The
@@ -323,10 +328,31 @@ export async function createClaudeCodeRuntime(
       // find the session and would deny every request.
       const ccSessionId = randomUUID();
 
+      // Allocate per-session channel outbox file. The channel-server (spawned
+      // by CC as an MCP stdio server) tails this file and pushes each line as
+      // a `notifications/claude/channel` notification. Creating it empty here
+      // guarantees it exists when CC starts the channel server, avoiding any
+      // ENOENT during the initial tail. The file lives in dataDir alongside
+      // settings.json and mcp-servers.json so all session artifacts are in one
+      // place and cleaned up together.
+      const channelOutboxPath = join(opts.dataDir, `channel-outbox-${oakridgeSid}.jsonl`);
+      await writeFile(channelOutboxPath, "");
+
+      // Write the per-session MCP config that includes the channel server with
+      // this session's outbox path. Must be per-session (not shared) because
+      // KBBL_CHANNEL_OUTBOX differs across sessions.
+      const mcpConfigPath = await writeCcMcpConfig({
+        dataDir: opts.dataDir,
+        channelOutboxPath,
+        bunBin,
+        channelServerPath,
+      });
+
       // Build interactive argv (no --print / stream-json) via the shared,
       // unit-tested builder so the argv exercised by spawn.test.ts is exactly
       // the one launched here. --fork-session (added when parentCcSid is set) is
       // required for CC to accept our forced --session-id alongside --resume.
+      // Channel flags are appended last (variadic — see buildCcArgv).
       const argv = buildCcArgv({
         claudeBin: opts.claudeBin,
         settingsPath,
@@ -394,6 +420,9 @@ export async function createClaudeCodeRuntime(
         // Seed to launch time so quiescence isn't declared before any output;
         // the ready gate (first output) precedes any send() quiescence check.
         lastOutputAt: Date.now(),
+        channelOutboxPath,
+        // Guard: the dev-channels modal acceptance fires at most once per session.
+        devChannelsAccepted: false,
       };
       procs.set(oakridgeSid, handle);
 
@@ -412,9 +441,25 @@ export async function createClaudeCodeRuntime(
       // listener keeps markReady (readiness) and lastOutputAt (quiescence) live
       // independent of events(); events()'s own listener handles pty_output
       // streaming. Disposed on exit so it can't outlive the process.
-      const outputDisposable = ptyProc.onData(() => {
+      //
+      // Additionally: when the dev-channels warning modal appears (detected by
+      // /development/i in the PTY output), accept it with a single `\r`. This
+      // modal is a one-time, pre-REPL confirmation; CC is blocking on exactly
+      // this input, so writing `\r` here is categorically safe — unlike the
+      // recurring bug where prompts were written mid-turn. The guard ensures
+      // we fire at most once per session. Workspace-trust is already handled
+      // by ensureWorkspaceTrusted() above, so this is the only remaining modal.
+      const outputDisposable = ptyProc.onData((data: string) => {
         handle.markReady();
         handle.lastOutputAt = Date.now();
+        if (!handle.devChannelsAccepted && /development/i.test(data)) {
+          handle.devChannelsAccepted = true;
+          try {
+            ptyProc.write("\r");
+          } catch {
+            // PTY may have already exited — ignore.
+          }
+        }
       });
 
       // Register exit handling immediately — not in events() — so a process
@@ -558,43 +603,19 @@ export async function createClaudeCodeRuntime(
     async send(handle: SessionHandle, input: string): Promise<void> {
       const h = procs.get(handle.sessionId);
       if (!h) throw new Error(`no proc for session ${handle.sessionId}`);
-      // Wait until CC's REPL is up before writing. Without this the first
-      // message can be written into a not-yet-listening REPL and silently
-      // dropped (the operator's message then never starts a turn). Resolves on
-      // first PTY output, a fallback timeout, or process exit — see CcHandle.
-      await h.ready;
-      // Then wait for CC to be genuinely idle at the prompt. The Stop hook
-      // (which advances kbbl's queue) fires before CC's TUI returns to the
-      // prompt — the subagent/finalization tail keeps the spinner running — so
-      // dispatching on the Stop hook alone writes into the busy window, where
-      // CC turns the message into a native "queued message" it doesn't reliably
-      // auto-run, wedging the input box. Quiescence (PTY output quiet for
-      // QUIESCE_QUIET_MS) means the spinner has stopped and CC is at the prompt.
-      // Best-effort: on the safety-cap timeout we write anyway and let the
-      // input-queue watchdog/re-delivery backstop a bad-window write.
-      const quiescence = await awaitPtyQuiescence(() => h.lastOutputAt, {
-        quietMs: QUIESCE_QUIET_MS,
-        maxWaitMs: QUIESCE_MAX_WAIT_MS,
-      });
-      if (quiescence === "timeout") {
-        console.error(
-          `kbbl: CC PTY never quiesced within ${QUIESCE_MAX_WAIT_MS}ms before write [${handle.sessionId}] — writing anyway (may queue behind a busy turn)`,
-        );
-      }
-      // Ctrl-U (\x15) clears any stale text CC may have left in its input
-      // box. With the input queue in place, CC is idle when we write, so the
-      // box is always empty — this is belt-and-suspenders for legacy stuck
-      // sessions only. Manual test (§3.5) confirmed it does not munge normal
-      // single-line input. Remove this prefix if it causes problems with a
-      // future CC version that interprets Ctrl-U differently.
+      // Channel transport: append one line to the session's outbox file.
+      // The channel server (spawned by CC as a stdio MCP server) tails the
+      // file and pushes each line as `notifications/claude/channel`. CC
+      // treats the push as a user turn — functionally identical to typed
+      // input but without any PTY write race.
       //
-      // Bracketed paste for multiline prevents embedded \n from triggering
-      // premature submission; single-line gets a bare CR (terminal Enter).
-      if (input.includes("\n")) {
-        h.pty.write(`\x15\x1b[200~${input}\x1b[201~\r`);
-      } else {
-        h.pty.write(`\x15${input}\r`);
-      }
+      // No PTY quiescence gate needed: the channel delivers to CC's native
+      // message handler, not to its input box, so there is no "busy window"
+      // to avoid. The per-session turn queue in Session (pumpInputQueue) still
+      // ensures only one operator message is in flight at a time — we just
+      // removed the last source of fragility (raw PTY byte injection).
+      const line = JSON.stringify({ content: input, meta: { source: "kbbl" } }) + "\n";
+      await writeFile(h.channelOutboxPath, line, { flag: "a" });
     },
 
     // --- AgentRuntime.resolveResumeRef ---
