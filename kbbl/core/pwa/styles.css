@@ -3653,6 +3653,12 @@ body {
   50% { opacity: 0.35; }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .pending-approvals-badge-dot {
+    animation: none;
+  }
+}
+
 .toast-item {
   display: flex;
   align-items: center;

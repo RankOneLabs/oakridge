@@ -30,7 +30,6 @@ export function PendingApprovalsBadge() {
         writeHashSid(target.sid);
       }}
       title="Open the session waiting for tool approval"
-      aria-label={`${total} tool ${total === 1 ? "approval" : "approvals"} pending — open session`}
     >
       <span className="pending-approvals-badge-dot" aria-hidden="true" />
       {label}
