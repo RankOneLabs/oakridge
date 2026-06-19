@@ -626,6 +626,21 @@ export async function createClaudeCodeRuntime(
       await writeFile(h.channelOutboxPath, line, { flag: "a" });
     },
 
+    // --- AgentRuntime.interrupt ---
+    async interrupt(handle: SessionHandle): Promise<void> {
+      const h = procs.get(handle.sessionId);
+      if (!h) throw new Error(`no proc for session ${handle.sessionId}`);
+      // Cancel the in-flight turn by writing a raw ESC to the PTY — exactly the
+      // key an interactive operator presses to stop CC mid-response. This is the
+      // ONE input path that deliberately bypasses the channel transport and its
+      // turn-boundary gate: a channel push is ingested only when CC starts a new
+      // turn, so it can never cancel the turn already running. The session stays
+      // live (this is not terminate()); CC drops back to the prompt and the
+      // operator can immediately send a redirect. Fire-and-forget — CC consumes
+      // the ESC on its next read wherever it is in the turn.
+      h.pty.write("\x1b");
+    },
+
     // --- AgentRuntime.resolveResumeRef ---
     async resolveResumeRef(
       sessionsDir: string,

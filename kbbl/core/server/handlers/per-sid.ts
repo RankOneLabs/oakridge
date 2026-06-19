@@ -153,6 +153,14 @@ async function approvalForSession(session: Session, c: Context) {
   return applyApproval(session, parsed, c);
 }
 
+async function interruptForSession(session: Session, c: Context) {
+  const interrupted = await session.interrupt();
+  if (!interrupted) {
+    return c.json({ error: "session not live or interrupt unsupported" }, 409);
+  }
+  return c.json({ ok: true });
+}
+
 export interface PerSidRouteDeps {
   manager: SessionManager;
   sessionsDir: string;
@@ -160,7 +168,7 @@ export interface PerSidRouteDeps {
 
 /**
  * Registers `/:sid/stream`, `/:sid/events`, `/:sid/input`, `/:sid/yolo`,
- * and `/:sid/approval` on the given Hono app.
+ * `/:sid/approval`, `/:sid/interrupt`, and `/:sid/compact` on the given Hono app.
  */
 export function mountPerSidRoutes(app: Hono, deps: PerSidRouteDeps): void {
   const { manager, sessionsDir } = deps;
@@ -216,6 +224,12 @@ export function mountPerSidRoutes(app: Hono, deps: PerSidRouteDeps): void {
     const session = manager.get(c.req.param("sid"));
     if (!session) return c.json({ error: "unknown session" }, 404);
     return approvalForSession(session, c);
+  });
+
+  app.post("/:sid/interrupt", async (c) => {
+    const session = manager.get(c.req.param("sid"));
+    if (!session) return c.json({ error: "unknown session" }, 404);
+    return interruptForSession(session, c);
   });
 
   app.post("/:sid/compact", (c) => {

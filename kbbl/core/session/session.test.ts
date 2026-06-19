@@ -85,6 +85,77 @@ function makeRuntime(
   };
 }
 
+describe("Session.interrupt", () => {
+  // A runtime whose events() blocks on `finish` keeps the session "live" so
+  // interrupt() exercises its real (live + attached) path rather than the
+  // not-live early return.
+  function liveRuntime(extra: Partial<AgentRuntime>): {
+    runtime: AgentRuntime;
+    finish: () => void;
+  } {
+    let finish!: () => void;
+    const done = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const runtime = {
+      ...makeRuntime(),
+      async *events(_handle: SessionHandle): AsyncIterable<RuntimeEvent> {
+        await done;
+        yield { type: "completed", result: { code: 0 } };
+      },
+      ...extra,
+    } satisfies AgentRuntime;
+    return { runtime, finish };
+  }
+
+  test("delegates to runtime.interrupt and returns true when live", async () => {
+    const interrupted: SessionHandle[] = [];
+    const { runtime, finish } = liveRuntime({
+      async interrupt(handle: SessionHandle): Promise<void> {
+        interrupted.push(handle);
+      },
+    });
+    const session = makeSession();
+    const handle = await runtime.spawn({ workingDirectory: "/tmp" });
+    await session.attachRuntime(runtime, handle);
+
+    expect(await session.interrupt()).toBe(true);
+    expect(interrupted).toEqual([handle]);
+
+    finish();
+    await session.waitForEnd();
+  });
+
+  test("returns false when the runtime exposes no interrupt affordance", async () => {
+    const { runtime, finish } = liveRuntime({});
+    const session = makeSession();
+    const handle = await runtime.spawn({ workingDirectory: "/tmp" });
+    await session.attachRuntime(runtime, handle);
+
+    expect(await session.interrupt()).toBe(false);
+
+    finish();
+    await session.waitForEnd();
+  });
+
+  test("returns false once the session is no longer live", async () => {
+    const interrupted: SessionHandle[] = [];
+    const { runtime, finish } = liveRuntime({
+      async interrupt(handle: SessionHandle): Promise<void> {
+        interrupted.push(handle);
+      },
+    });
+    const session = makeSession();
+    const handle = await runtime.spawn({ workingDirectory: "/tmp" });
+    await session.attachRuntime(runtime, handle);
+    finish();
+    await session.waitForEnd();
+
+    expect(await session.interrupt()).toBe(false);
+    expect(interrupted).toEqual([]);
+  });
+});
+
 describe("Session runtimeId", () => {
   test("defaults to claude-code when not specified", () => {
     const session = makeSession();

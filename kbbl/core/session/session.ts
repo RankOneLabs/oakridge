@@ -1424,6 +1424,23 @@ export class Session {
    * actually changes. The emit happens before the mutation so the JSONL log
    * stays authoritative if emit throws.
    */
+  /**
+   * Cancel the in-flight turn, leaving the session live. Delegates straight to
+   * runtime.interrupt (CC: ESC to the PTY) with no turn-queue or quiescence gate
+   * — interrupting is only meaningful mid-turn, and the operator is the one who
+   * decided the turn is going wrong. Returns false when the session isn't live,
+   * has no attached runtime, or the runtime exposes no interrupt affordance, so
+   * the handler can answer 409 rather than silently no-op. Distinct from abort()
+   * /terminate, which kill the subprocess.
+   */
+  async interrupt(): Promise<boolean> {
+    if (this._status !== "live") return false;
+    if (this._runtime === null || this._handle === null) return false;
+    if (typeof this._runtime.interrupt !== "function") return false;
+    await this._runtime.interrupt(this._handle);
+    return true;
+  }
+
   async setYolo(enabled: boolean): Promise<boolean> {
     if (this.yoloMode === enabled) return this.yoloMode;
     await this.emit("yolo_mode_changed", { enabled });
