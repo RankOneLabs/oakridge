@@ -168,6 +168,17 @@ export interface UsageObservation {
 /** Bound on per-session in-memory usage history. */
 export const USAGE_OBSERVATION_BUFFER_CAPACITY = 200;
 
+/**
+ * Outcome of Session.interrupt(). A value, not a thrown error: the only failure
+ * that can reach a caller is a benign "nothing to interrupt" (not_live /
+ * unsupported, → 409) or an IO failure from the runtime's interrupt call
+ * (io_failed, → 503). The handler maps each reason to a status code, so the
+ * runtime's throw never escapes as an unclassified 500.
+ */
+export type InterruptOutcome =
+  | { ok: true }
+  | { ok: false; reason: "not_live" | "unsupported" | "io_failed"; detail?: string };
+
 export async function readJsonlOrEmpty(path: string): Promise<string> {
   try {
     return await readFile(path, "utf8");
@@ -1420,27 +1431,41 @@ export class Session {
   }
 
   /**
+   * Cancel the in-flight turn, leaving the session live. Delegates to
+   * runtime.interrupt (CC: ESC to the PTY) with no turn-queue or quiescence gate
+   * — interrupting is only meaningful mid-turn, and the operator is the one who
+   * decided the turn is going wrong. Returns a typed InterruptOutcome rather than
+   * a bare boolean: runtime.interrupt is an IO call that can throw (missing proc,
+   * dead pty), and the handler must tell "nothing to interrupt" (→ 409) apart
+   * from "tried, IO failed" (→ 503). The try/catch lives here, at the boundary
+   * that consumes the runtime call, so the throw becomes a value. Distinct from
+   * abort()/terminate, which kill the subprocess.
+   */
+  async interrupt(): Promise<InterruptOutcome> {
+    if (this._status !== "live") return { ok: false, reason: "not_live" };
+    if (this._runtime === null || this._handle === null) {
+      return { ok: false, reason: "not_live" };
+    }
+    if (typeof this._runtime.interrupt !== "function") {
+      return { ok: false, reason: "unsupported" };
+    }
+    try {
+      await this._runtime.interrupt(this._handle);
+      return { ok: true };
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      console.error(
+        `kbbl: runtime.interrupt failed [${this.oakridgeSid}]: ${detail}`,
+      );
+      return { ok: false, reason: "io_failed", detail };
+    }
+  }
+
+  /**
    * Emits yolo_mode_changed and flips yoloMode, but only when the value
    * actually changes. The emit happens before the mutation so the JSONL log
    * stays authoritative if emit throws.
    */
-  /**
-   * Cancel the in-flight turn, leaving the session live. Delegates straight to
-   * runtime.interrupt (CC: ESC to the PTY) with no turn-queue or quiescence gate
-   * — interrupting is only meaningful mid-turn, and the operator is the one who
-   * decided the turn is going wrong. Returns false when the session isn't live,
-   * has no attached runtime, or the runtime exposes no interrupt affordance, so
-   * the handler can answer 409 rather than silently no-op. Distinct from abort()
-   * /terminate, which kill the subprocess.
-   */
-  async interrupt(): Promise<boolean> {
-    if (this._status !== "live") return false;
-    if (this._runtime === null || this._handle === null) return false;
-    if (typeof this._runtime.interrupt !== "function") return false;
-    await this._runtime.interrupt(this._handle);
-    return true;
-  }
-
   async setYolo(enabled: boolean): Promise<boolean> {
     if (this.yoloMode === enabled) return this.yoloMode;
     await this.emit("yolo_mode_changed", { enabled });

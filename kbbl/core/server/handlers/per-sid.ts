@@ -154,11 +154,15 @@ async function approvalForSession(session: Session, c: Context) {
 }
 
 async function interruptForSession(session: Session, c: Context) {
-  const interrupted = await session.interrupt();
-  if (!interrupted) {
-    return c.json({ error: "session not live or interrupt unsupported" }, 409);
+  const outcome = await session.interrupt();
+  if (outcome.ok) return c.json({ ok: true });
+  // "nothing to interrupt" is a 409 (session isn't running a turn this transport
+  // can cancel); an IO failure in the runtime's interrupt call is a 503, mirroring
+  // /input. The session never lets the runtime throw escape as an unclassified 500.
+  if (outcome.reason === "io_failed") {
+    return c.json({ error: `interrupt failed: ${outcome.detail ?? "unknown"}` }, 503);
   }
-  return c.json({ ok: true });
+  return c.json({ error: "session not live or interrupt unsupported" }, 409);
 }
 
 export interface PerSidRouteDeps {

@@ -108,7 +108,7 @@ describe("Session.interrupt", () => {
     return { runtime, finish };
   }
 
-  test("delegates to runtime.interrupt and returns true when live", async () => {
+  test("delegates to runtime.interrupt and returns ok when live", async () => {
     const interrupted: SessionHandle[] = [];
     const { runtime, finish } = liveRuntime({
       async interrupt(handle: SessionHandle): Promise<void> {
@@ -119,26 +119,44 @@ describe("Session.interrupt", () => {
     const handle = await runtime.spawn({ workingDirectory: "/tmp" });
     await session.attachRuntime(runtime, handle);
 
-    expect(await session.interrupt()).toBe(true);
+    expect(await session.interrupt()).toEqual({ ok: true });
     expect(interrupted).toEqual([handle]);
 
     finish();
     await session.waitForEnd();
   });
 
-  test("returns false when the runtime exposes no interrupt affordance", async () => {
+  test("reports 'unsupported' when the runtime exposes no interrupt affordance", async () => {
     const { runtime, finish } = liveRuntime({});
     const session = makeSession();
     const handle = await runtime.spawn({ workingDirectory: "/tmp" });
     await session.attachRuntime(runtime, handle);
 
-    expect(await session.interrupt()).toBe(false);
+    expect(await session.interrupt()).toEqual({ ok: false, reason: "unsupported" });
 
     finish();
     await session.waitForEnd();
   });
 
-  test("returns false once the session is no longer live", async () => {
+  test("converts a throwing runtime.interrupt into an 'io_failed' value", async () => {
+    const { runtime, finish } = liveRuntime({
+      async interrupt(_handle: SessionHandle): Promise<void> {
+        throw new Error("no proc for session");
+      },
+    });
+    const session = makeSession();
+    const handle = await runtime.spawn({ workingDirectory: "/tmp" });
+    await session.attachRuntime(runtime, handle);
+
+    const outcome = await session.interrupt();
+    expect(outcome.ok).toBe(false);
+    expect(outcome).toMatchObject({ reason: "io_failed", detail: "no proc for session" });
+
+    finish();
+    await session.waitForEnd();
+  });
+
+  test("reports 'not_live' once the session is no longer live", async () => {
     const interrupted: SessionHandle[] = [];
     const { runtime, finish } = liveRuntime({
       async interrupt(handle: SessionHandle): Promise<void> {
@@ -151,7 +169,7 @@ describe("Session.interrupt", () => {
     finish();
     await session.waitForEnd();
 
-    expect(await session.interrupt()).toBe(false);
+    expect(await session.interrupt()).toEqual({ ok: false, reason: "not_live" });
     expect(interrupted).toEqual([]);
   });
 });
