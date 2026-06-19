@@ -1,7 +1,7 @@
 /**
  * Tests for Session.attachRuntime() and related new functionality.
  */
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -148,9 +148,18 @@ describe("Session.interrupt", () => {
     const handle = await runtime.spawn({ workingDirectory: "/tmp" });
     await session.attachRuntime(runtime, handle);
 
-    const outcome = await session.interrupt();
-    expect(outcome.ok).toBe(false);
-    expect(outcome).toMatchObject({ reason: "io_failed", detail: "no proc for session" });
+    // This path is expected to log the runtime failure; suppress the noise and
+    // assert the log fired so the logging is part of the contract under test,
+    // not incidental output.
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const outcome = await session.interrupt();
+      expect(outcome.ok).toBe(false);
+      expect(outcome).toMatchObject({ reason: "io_failed", detail: "no proc for session" });
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      errorSpy.mockRestore();
+    }
 
     finish();
     await session.waitForEnd();

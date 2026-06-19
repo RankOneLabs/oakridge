@@ -156,9 +156,11 @@ async function approvalForSession(session: Session, c: Context) {
 async function interruptForSession(session: Session, c: Context) {
   const outcome = await session.interrupt();
   if (outcome.ok) return c.json({ ok: true });
-  // "nothing to interrupt" is a 409 (session isn't running a turn this transport
-  // can cancel); an IO failure in the runtime's interrupt call is a 503, mirroring
-  // /input. The session never lets the runtime throw escape as an unclassified 500.
+  // 409 covers both "nothing to interrupt" reasons — not_live (no live turn this
+  // transport can cancel) and unsupported (the runtime has no interrupt
+  // affordance). An IO failure in the runtime's interrupt call is a 503,
+  // mirroring /input. The session never lets the runtime throw escape as an
+  // unclassified 500.
   if (outcome.reason === "io_failed") {
     return c.json({ error: `interrupt failed: ${outcome.detail ?? "unknown"}` }, 503);
   }
