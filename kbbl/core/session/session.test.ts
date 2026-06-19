@@ -1,7 +1,7 @@
 /**
  * Tests for Session.attachRuntime() and related new functionality.
  */
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -84,6 +84,104 @@ function makeRuntime(
     },
   };
 }
+
+describe("Session.interrupt", () => {
+  // A runtime whose events() blocks on `finish` keeps the session "live" so
+  // interrupt() exercises its real (live + attached) path rather than the
+  // not-live early return.
+  function liveRuntime(extra: Partial<AgentRuntime>): {
+    runtime: AgentRuntime;
+    finish: () => void;
+  } {
+    let finish!: () => void;
+    const done = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const runtime = {
+      ...makeRuntime(),
+      async *events(_handle: SessionHandle): AsyncIterable<RuntimeEvent> {
+        await done;
+        yield { type: "completed", result: { code: 0 } };
+      },
+      ...extra,
+    } satisfies AgentRuntime;
+    return { runtime, finish };
+  }
+
+  test("delegates to runtime.interrupt and returns ok when live", async () => {
+    const interrupted: SessionHandle[] = [];
+    const { runtime, finish } = liveRuntime({
+      async interrupt(handle: SessionHandle): Promise<void> {
+        interrupted.push(handle);
+      },
+    });
+    const session = makeSession();
+    const handle = await runtime.spawn({ workingDirectory: "/tmp" });
+    await session.attachRuntime(runtime, handle);
+
+    expect(await session.interrupt()).toEqual({ ok: true });
+    expect(interrupted).toEqual([handle]);
+
+    finish();
+    await session.waitForEnd();
+  });
+
+  test("reports 'unsupported' when the runtime exposes no interrupt affordance", async () => {
+    const { runtime, finish } = liveRuntime({});
+    const session = makeSession();
+    const handle = await runtime.spawn({ workingDirectory: "/tmp" });
+    await session.attachRuntime(runtime, handle);
+
+    expect(await session.interrupt()).toEqual({ ok: false, reason: "unsupported" });
+
+    finish();
+    await session.waitForEnd();
+  });
+
+  test("converts a throwing runtime.interrupt into an 'io_failed' value", async () => {
+    const { runtime, finish } = liveRuntime({
+      async interrupt(_handle: SessionHandle): Promise<void> {
+        throw new Error("no proc for session");
+      },
+    });
+    const session = makeSession();
+    const handle = await runtime.spawn({ workingDirectory: "/tmp" });
+    await session.attachRuntime(runtime, handle);
+
+    // This path is expected to log the runtime failure; suppress the noise and
+    // assert the log fired so the logging is part of the contract under test,
+    // not incidental output.
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const outcome = await session.interrupt();
+      expect(outcome.ok).toBe(false);
+      expect(outcome).toMatchObject({ reason: "io_failed", detail: "no proc for session" });
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      errorSpy.mockRestore();
+    }
+
+    finish();
+    await session.waitForEnd();
+  });
+
+  test("reports 'not_live' once the session is no longer live", async () => {
+    const interrupted: SessionHandle[] = [];
+    const { runtime, finish } = liveRuntime({
+      async interrupt(handle: SessionHandle): Promise<void> {
+        interrupted.push(handle);
+      },
+    });
+    const session = makeSession();
+    const handle = await runtime.spawn({ workingDirectory: "/tmp" });
+    await session.attachRuntime(runtime, handle);
+    finish();
+    await session.waitForEnd();
+
+    expect(await session.interrupt()).toEqual({ ok: false, reason: "not_live" });
+    expect(interrupted).toEqual([]);
+  });
+});
 
 describe("Session runtimeId", () => {
   test("defaults to claude-code when not specified", () => {

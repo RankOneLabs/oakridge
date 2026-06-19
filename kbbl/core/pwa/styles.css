@@ -1394,6 +1394,32 @@ body {
   background: transparent;
 }
 
+/* Interrupt: cancels the current turn but leaves the session live. Amber, not
+   red — it's a "stop what you're doing" control, distinct from the red
+   session-killing Stop button next to it. Same specificity bump as btn-stop so
+   it overrides the generic Send-button styling. Shown only mid-turn. */
+.input-bar button.btn-interrupt {
+  background: var(--amber-bg);
+  color: var(--amber-fg);
+  border: 1px solid var(--amber-border);
+  border-radius: 6px;
+  padding: 0 0.75rem;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  min-height: 44px;
+  white-space: nowrap;
+}
+.input-bar button.btn-interrupt:hover:not(:disabled) {
+  border-color: var(--amber-fg);
+  box-shadow: 0 0 0 2px var(--amber-glow);
+}
+.input-bar button.btn-interrupt:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* Optimistic user bubble shown immediately on send. Visually echoes the
    real bubble but slightly faded with an inline status tag. */
 .bubble-user-pending {

@@ -153,6 +153,20 @@ async function approvalForSession(session: Session, c: Context) {
   return applyApproval(session, parsed, c);
 }
 
+async function interruptForSession(session: Session, c: Context) {
+  const outcome = await session.interrupt();
+  if (outcome.ok) return c.json({ ok: true });
+  // 409 covers both "nothing to interrupt" reasons — not_live (no live turn this
+  // transport can cancel) and unsupported (the runtime has no interrupt
+  // affordance). An IO failure in the runtime's interrupt call is a 503,
+  // mirroring /input. The session never lets the runtime throw escape as an
+  // unclassified 500.
+  if (outcome.reason === "io_failed") {
+    return c.json({ error: `interrupt failed: ${outcome.detail ?? "unknown"}` }, 503);
+  }
+  return c.json({ error: "session not live or interrupt unsupported" }, 409);
+}
+
 export interface PerSidRouteDeps {
   manager: SessionManager;
   sessionsDir: string;
@@ -160,7 +174,7 @@ export interface PerSidRouteDeps {
 
 /**
  * Registers `/:sid/stream`, `/:sid/events`, `/:sid/input`, `/:sid/yolo`,
- * and `/:sid/approval` on the given Hono app.
+ * `/:sid/approval`, `/:sid/interrupt`, and `/:sid/compact` on the given Hono app.
  */
 export function mountPerSidRoutes(app: Hono, deps: PerSidRouteDeps): void {
   const { manager, sessionsDir } = deps;
@@ -216,6 +230,12 @@ export function mountPerSidRoutes(app: Hono, deps: PerSidRouteDeps): void {
     const session = manager.get(c.req.param("sid"));
     if (!session) return c.json({ error: "unknown session" }, 404);
     return approvalForSession(session, c);
+  });
+
+  app.post("/:sid/interrupt", async (c) => {
+    const session = manager.get(c.req.param("sid"));
+    if (!session) return c.json({ error: "unknown session" }, 404);
+    return interruptForSession(session, c);
   });
 
   app.post("/:sid/compact", (c) => {

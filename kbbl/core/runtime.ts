@@ -141,6 +141,19 @@ export interface AgentRuntime {
    */
   sendsWithoutTurnQueue?: boolean;
 
+  /**
+   * Optional: cancel the in-flight turn immediately. Unlike send(), this MUST
+   * bypass every turn-queue / quiescence gate — its entire purpose is to land
+   * mid-turn, the moment the operator sees the model going wrong and wants it to
+   * stop, WITHOUT killing the session (that is terminate()). The CC adapter
+   * writes a raw ESC byte to the PTY — the same key an interactive operator
+   * presses. The channel transport cannot do this: a channel push is only
+   * ingested when CC starts a new turn, so it can never cancel the turn already
+   * running. Runtimes with no interrupt affordance omit this; core treats its
+   * absence as "interrupt unsupported".
+   */
+  interrupt?(handle: SessionHandle): Promise<void>;
+
   // --- approval ---
 
   respond?(

@@ -234,6 +234,7 @@ export function SessionView({
           onSend={addPendingMessage}
           onSendFailed={removePendingMessage}
           canStop={true}
+          isTurnActive={awaitingResult}
         />
       )}
       {!canInput && snapshot?.status === "compacting" && (

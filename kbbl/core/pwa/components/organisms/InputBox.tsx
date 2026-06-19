@@ -19,12 +19,18 @@ export function InputBox({
   onSend,
   onSendFailed,
   canStop,
+  isTurnActive,
 }: {
   ref?: Ref<HTMLDivElement>;
   sid: string;
   onSend: (text: string) => number;
   onSendFailed: (localId: number) => void;
   canStop: boolean;
+  // True while a turn is in flight (the thinking indicator is up). The
+  // Interrupt control is shown only then — it cancels the current turn (ESC to
+  // the agent) and leaves the session live, distinct from the always-present
+  // Stop button which kills the whole session.
+  isTurnActive: boolean;
 }) {
   const [text, setText] = useState("");
   const [confirmStop, setConfirmStop] = useState(false);
@@ -109,6 +115,34 @@ export function InputBox({
     }
   }
 
+  const interruptMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/${encodeURIComponent(sid)}/interrupt`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as {
+          error?: unknown;
+        } | null;
+        throw new Error(
+          typeof body?.error === "string"
+            ? body.error
+            : `server returned ${res.status}`,
+        );
+      }
+    },
+  });
+
+  async function interrupt() {
+    if (interruptMutation.isPending) return;
+    setError(null);
+    try {
+      await interruptMutation.mutateAsync();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "network error");
+    }
+  }
+
   async function stop() {
     if (stopMutation.isPending) return;
     setError(null);
@@ -142,6 +176,17 @@ export function InputBox({
             title="Stops this agent session. Resume from the ended banner to fork a new session with the same context."
           >
             {stopMutation.isPending ? "stopping…" : confirmStop ? "confirm" : "Stop"}
+          </button>
+        )}
+        {isTurnActive && (
+          <button
+            type="button"
+            className="btn-interrupt"
+            onClick={() => void interrupt()}
+            disabled={interruptMutation.isPending}
+            title="Cancels the agent's current turn (ESC). The session stays live — type your next message to redirect."
+          >
+            {interruptMutation.isPending ? "interrupting…" : "Interrupt"}
           </button>
         )}
         <textarea
