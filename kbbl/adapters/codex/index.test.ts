@@ -389,7 +389,7 @@ describe("skill wiring on descriptor-only runtime", () => {
       model_invocable: true,
     };
     const result = rt.formatSkillInvocation!(skill, {});
-    // Result is either slash or mention form — both are valid depending on probe result.
-    expect(result).toMatch(/^[/$]my-skill/);
+    // Descriptor-only runtime defaults to the slash form (no app-server to probe).
+    expect(result).toBe("/my-skill");
   });
 });

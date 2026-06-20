@@ -35,10 +35,9 @@ import {
   MIN_CODEX_VERSION,
   compareVersions,
   parseCodexVersionOutput,
-  setSlashForSkillsSupported,
   probeSlashForSkillsSupported,
   discoverSkills,
-  formatSkillInvocation,
+  makeSkillInvocationFormatter,
 } from "./skills";
 
 // === Per-session state ===
@@ -98,7 +97,9 @@ export function createCodexRuntimeDescriptorOnly(
       return [];
     },
 
-    formatSkillInvocation,
+    // Descriptor-only mode has no live app-server to probe; default to the
+    // modern slash form (createCodexRuntime() overrides this per the probe).
+    formatSkillInvocation: makeSkillInvocationFormatter(true),
 
     async resolveResumeRef(sessionsDir, oakridgeSid): Promise<ResumeRef> {
       return resolveCodexResumeRef(sessionsDir, oakridgeSid);
@@ -192,12 +193,12 @@ export async function createCodexRuntime(
   // presence is the ground-truth signal that slash-for-skills is supported. Fall back to
   // the mention form only when the method is unknown. The `codex --version` read is kept
   // purely as an informational log alongside the probe, never as the deciding signal.
+  let slashForSkillsSupported = true;
   try {
-    const supported = await probeSlashForSkillsSupported((method, params) =>
+    slashForSkillsSupported = await probeSlashForSkillsSupported((method, params) =>
       client.request(method, params),
     );
-    setSlashForSkillsSupported(supported);
-    if (!supported) {
+    if (!slashForSkillsSupported) {
       console.warn(
         "kbbl codex: running Codex does not serve the native skills API (skills/list); " +
           "falling back to mention form for skill invocation.",
@@ -206,8 +207,10 @@ export async function createCodexRuntime(
   } catch {
     // The probe itself should not throw (it resolves to a boolean), but guard defensively:
     // assume supported so a transient probe failure does not silently disable slash form.
-    setSlashForSkillsSupported(true);
+    slashForSkillsSupported = true;
   }
+  // Per-runtime formatter capturing this runtime's probe result (no module global).
+  const formatSkillInvocation = makeSkillInvocationFormatter(slashForSkillsSupported);
 
   // Informational only: log when the running version is below the pinned floor. Does not
   // affect the invocation form — the capability probe above is authoritative.

@@ -18,9 +18,10 @@
 // request) — a behavioral capability check, not a version-string guess (spec §7:
 // "Probe the actual behavior of the running version ... verify, do not assume"). If the
 // method is absent (JSON-RPC -32601 Method not found) the adapter falls back to the mention
-// form via setSlashForSkillsSupported(false). The pinned MIN_CODEX_VERSION is retained only
-// as an informational signal logged alongside the probe. formatSkillInvocation() selects the
-// form from the recorded probe result.
+// form. The pinned MIN_CODEX_VERSION is retained only as an informational signal logged
+// alongside the probe. The probe result is captured PER RUNTIME: createCodexRuntime() builds
+// its formatter via makeSkillInvocationFormatter(supported), so concurrent runtimes (or
+// tests) never clobber a shared module global.
 //
 // Arguments: the native skills/list SkillMetadata carries NO argument spec, so SKILL.md is
 // the only source of arg shape. Codex skills use the same conventions as Claude Code
@@ -36,14 +37,6 @@ import type { Skill, ArgSpec } from "../../core/skills/types";
 
 // Pinned at build time from `codex --version` output: "codex-cli 0.137.0"
 export const MIN_CODEX_VERSION = "0.137.0";
-
-// Module-level slash-for-skills toggle, set at adapter init time.
-let _slashForSkillsSupported = true;
-
-/** Called once at createCodexRuntime() init, after the version probe. */
-export function setSlashForSkillsSupported(supported: boolean): void {
-  _slashForSkillsSupported = supported;
-}
 
 /**
  * Compare two semver strings. Returns negative/0/positive like Array.sort comparators.
@@ -379,45 +372,51 @@ export function discoverSkills(workingDirectory: string): Skill[] {
  * Positional args are keyed "1", "2", ... in ascending order.
  * Named args are any keys that are not numeric strings.
  * Both forms are pure and synchronous; the caller submits the result via send().
+ *
+ * The slash-vs-mention capability is captured per runtime (via the closure) rather than
+ * a module global, so multiple Codex runtimes cannot overwrite each other's probe result.
+ *
+ * @param slashForSkillsSupported  result of the init-time skills/list capability probe.
  */
-export function formatSkillInvocation(
-  skill: Skill,
-  args: Record<string, string>,
-): string {
-  const prefix = _slashForSkillsSupported ? `/${skill.name}` : `$${skill.name}`;
+export function makeSkillInvocationFormatter(
+  slashForSkillsSupported: boolean,
+): (skill: Skill, args: Record<string, string>) => string {
+  return (skill: Skill, args: Record<string, string>): string => {
+    const prefix = slashForSkillsSupported ? `/${skill.name}` : `$${skill.name}`;
 
-  // Separate positional (numeric keys) from named (string keys)
-  const positional: Array<[number, string]> = [];
-  const named: Array<[string, string]> = [];
+    // Separate positional (numeric keys) from named (string keys)
+    const positional: Array<[number, string]> = [];
+    const named: Array<[string, string]> = [];
 
-  for (const [key, value] of Object.entries(args)) {
-    const n = Number(key);
-    if (Number.isInteger(n) && n > 0) {
-      positional.push([n, value]);
-    } else {
-      named.push([key, value]);
+    for (const [key, value] of Object.entries(args)) {
+      const n = Number(key);
+      if (Number.isInteger(n) && n > 0) {
+        positional.push([n, value]);
+      } else {
+        named.push([key, value]);
+      }
     }
-  }
 
-  positional.sort((a, b) => a[0] - b[0]);
+    positional.sort((a, b) => a[0] - b[0]);
 
-  const parts: string[] = [prefix];
+    const parts: string[] = [prefix];
 
-  for (const [, value] of positional) {
-    if (value) parts.push(value);
-  }
-
-  if (_slashForSkillsSupported) {
-    // Named args only make sense in slash form (Codex documented named-placeholder form)
-    for (const [key, value] of named) {
-      if (value) parts.push(`--${key}`, value);
-    }
-  } else {
-    // In mention form, append named values positionally (best-effort)
-    for (const [, value] of named) {
+    for (const [, value] of positional) {
       if (value) parts.push(value);
     }
-  }
 
-  return parts.join(" ").trim();
+    if (slashForSkillsSupported) {
+      // Named args only make sense in slash form (Codex documented named-placeholder form)
+      for (const [key, value] of named) {
+        if (value) parts.push(`--${key}`, value);
+      }
+    } else {
+      // In mention form, append named values positionally (best-effort)
+      for (const [, value] of named) {
+        if (value) parts.push(value);
+      }
+    }
+
+    return parts.join(" ").trim();
+  };
 }

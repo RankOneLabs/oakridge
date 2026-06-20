@@ -12,8 +12,7 @@ import {
   parseSkillDir,
   discoverSkills,
   extractArgs,
-  formatSkillInvocation,
-  setSlashForSkillsSupported,
+  makeSkillInvocationFormatter,
   probeSlashForSkillsSupported,
 } from "./skills";
 
@@ -493,8 +492,8 @@ describe("discoverSkills", () => {
 // formatSkillInvocation — slash form, mention form, arg serialization
 // ---------------------------------------------------------------------------
 
-describe("formatSkillInvocation — slash form", () => {
-  beforeEach(() => { setSlashForSkillsSupported(true); });
+describe("makeSkillInvocationFormatter — slash form (supported)", () => {
+  const formatSkillInvocation = makeSkillInvocationFormatter(true);
 
   const skill = {
     id: "codex:ghreview",
@@ -534,9 +533,8 @@ describe("formatSkillInvocation — slash form", () => {
   });
 });
 
-describe("formatSkillInvocation — mention form (probe failed)", () => {
-  beforeEach(() => { setSlashForSkillsSupported(false); });
-  afterEach(() => { setSlashForSkillsSupported(true); });
+describe("makeSkillInvocationFormatter — mention form (probe failed)", () => {
+  const formatSkillInvocation = makeSkillInvocationFormatter(false);
 
   const skill = {
     id: "codex:ghreview",
@@ -560,6 +558,13 @@ describe("formatSkillInvocation — mention form (probe failed)", () => {
   test("named arg → $<name> <value> (positional fallback, no --key)", () => {
     expect(formatSkillInvocation(skill, { repo: "owner/name" })).toBe("$ghreview owner/name");
   });
+
+  test("formatters are independent (no shared module state)", () => {
+    const slash = makeSkillInvocationFormatter(true);
+    const mention = makeSkillInvocationFormatter(false);
+    expect(slash(skill, {})).toBe("/ghreview");
+    expect(mention(skill, {})).toBe("$ghreview");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -572,7 +577,7 @@ describe("createCodexRuntimeDescriptorOnly skill wiring", () => {
     // verify that the skills exports used by index.ts compile and are present.
     const mod = await import("./skills");
     expect(typeof mod.discoverSkills).toBe("function");
-    expect(typeof mod.formatSkillInvocation).toBe("function");
+    expect(typeof mod.makeSkillInvocationFormatter).toBe("function");
     expect(typeof mod.MIN_CODEX_VERSION).toBe("string");
   });
 });
