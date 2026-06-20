@@ -63,6 +63,55 @@ export function parseCodexVersionOutput(raw: string): string | null {
 
 /** JSON-RPC code for an unrecognized method. */
 const METHOD_NOT_FOUND = -32601;
+type SkillScope = Skill["scope"];
+
+type CodexRequest = (method: string, params: unknown) => Promise<unknown>;
+
+interface CodexSkillInterface {
+  displayName?: unknown;
+  shortDescription?: unknown;
+}
+
+interface CodexSkillMetadata {
+  name?: unknown;
+  description?: unknown;
+  shortDescription?: unknown;
+  interface?: CodexSkillInterface | null;
+  scope?: unknown;
+  enabled?: unknown;
+}
+
+interface CodexSkillsListEntry {
+  skills?: unknown;
+}
+
+interface CodexMcpTool {
+  name?: unknown;
+  title?: unknown;
+  description?: unknown;
+}
+
+interface CodexMcpServerStatus {
+  name?: unknown;
+  tools?: unknown;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function mapCodexScope(scope: unknown): SkillScope {
+  if (scope === "repo") return "project";
+  if (scope === "system" || scope === "admin" || scope === "user") return scope;
+  return "user";
+}
 
 /**
  * Behavioral probe: ask the running Codex app-server whether it serves the native
@@ -353,6 +402,144 @@ export function discoverSkills(workingDirectory: string): Skill[] {
   return [...merged.values()];
 }
 
+function normalizeNativeSkill(raw: unknown): Skill | null {
+  const meta = asRecord(raw) as CodexSkillMetadata | null;
+  if (meta === null || meta.enabled === false) return null;
+
+  const name = stringValue(meta.name);
+  if (name === null) return null;
+  const iface = asRecord(meta.interface) as CodexSkillInterface | null;
+  const description =
+    stringValue(iface?.shortDescription) ??
+    stringValue(meta.shortDescription) ??
+    stringValue(meta.description) ??
+    name;
+
+  return {
+    id: `codex:${name}`,
+    name,
+    description,
+    backend: "codex",
+    scope: mapCodexScope(meta.scope),
+    args: [],
+    user_invocable: true,
+    model_invocable: true,
+  };
+}
+
+export function parseNativeSkillsListResponse(response: unknown): Skill[] {
+  const root = asRecord(response);
+  const data = root?.data;
+  if (!Array.isArray(data)) return [];
+
+  const byId = new Map<string, Skill>();
+  for (const rawEntry of data) {
+    const entry = asRecord(rawEntry) as CodexSkillsListEntry | null;
+    if (entry === null || !Array.isArray(entry.skills)) continue;
+    for (const rawSkill of entry.skills) {
+      const skill = normalizeNativeSkill(rawSkill);
+      if (skill !== null) byId.set(skill.id, skill);
+    }
+  }
+  return [...byId.values()];
+}
+
+export async function discoverNativeSkills(
+  request: CodexRequest,
+  workingDirectory: string,
+): Promise<Skill[]> {
+  const response = await request("skills/list", {
+    cwds: [workingDirectory],
+    forceReload: false,
+  });
+  return parseNativeSkillsListResponse(response);
+}
+
+function normalizeMcpTool(serverName: string, rawTool: unknown): Skill | null {
+  const tool = asRecord(rawTool) as CodexMcpTool | null;
+  if (tool === null) return null;
+  const toolName = stringValue(tool.name);
+  if (toolName === null) return null;
+  const displayName = stringValue(tool.title) ?? toolName;
+  const description =
+    stringValue(tool.description) ??
+    `Use the ${serverName} MCP tool ${toolName}.`;
+
+  return {
+    id: `codex:mcp:${serverName}:${toolName}`,
+    name: `mcp:${serverName}:${displayName}`,
+    description,
+    backend: "codex",
+    scope: "system",
+    args: [],
+    user_invocable: true,
+    model_invocable: true,
+  };
+}
+
+function normalizeMcpServerTools(rawServer: unknown): Skill[] {
+  const server = asRecord(rawServer) as CodexMcpServerStatus | null;
+  const serverName = stringValue(server?.name);
+  const tools = asRecord(server?.tools);
+  if (serverName === null || tools === null) return [];
+
+  const skills: Skill[] = [];
+  for (const [fallbackName, rawTool] of Object.entries(tools)) {
+    const toolRecord = asRecord(rawTool);
+    const normalized = normalizeMcpTool(serverName, {
+      name: toolRecord?.name ?? fallbackName,
+      title: toolRecord?.title,
+      description: toolRecord?.description,
+    });
+    if (normalized !== null) skills.push(normalized);
+  }
+  return skills;
+}
+
+export function parseMcpServerStatusResponse(response: unknown): Skill[] {
+  const root = asRecord(response);
+  const data = root?.data;
+  if (!Array.isArray(data)) return [];
+  return data.flatMap(normalizeMcpServerTools);
+}
+
+export async function discoverMcpToolSkills(
+  request: CodexRequest,
+  threadId: string | null,
+): Promise<Skill[]> {
+  const response = await request("mcpServerStatus/list", {
+    detail: "toolsAndAuthOnly",
+    threadId,
+  });
+  return parseMcpServerStatusResponse(response);
+}
+
+export function mergeCodexSkills({
+  local,
+  native,
+  mcpTools,
+}: {
+  local: Skill[];
+  native: Skill[];
+  mcpTools: Skill[];
+}): Skill[] {
+  const localById = new Map(local.map((skill) => [skill.id, skill]));
+  const merged = new Map<string, Skill>();
+
+  for (const skill of local) merged.set(skill.id, skill);
+  for (const skill of native) {
+    const localSkill = localById.get(skill.id);
+    merged.set(skill.id, {
+      ...skill,
+      args: localSkill?.args ?? skill.args,
+      model_invocable: localSkill?.model_invocable ?? skill.model_invocable,
+    });
+  }
+  for (const skill of mcpTools) merged.set(skill.id, skill);
+
+  return [...merged.values()];
+}
+
 // ---------------------------------------------------------------------------
 // formatSkillInvocation
 // ---------------------------------------------------------------------------
@@ -382,6 +569,11 @@ export function makeSkillInvocationFormatter(
   slashForSkillsSupported: boolean,
 ): (skill: Skill, args: Record<string, string>) => string {
   return (skill: Skill, args: Record<string, string>): string => {
+    if (skill.id.startsWith("codex:mcp:")) {
+      const [, , serverName, toolName] = skill.id.split(":");
+      return `Use the ${serverName} MCP tool ${toolName}.`;
+    }
+
     const prefix = slashForSkillsSupported ? `/${skill.name}` : `$${skill.name}`;
 
     // Separate positional (numeric keys) from named (string keys)

@@ -11,8 +11,13 @@ import {
   readAllowImplicitInvocation,
   parseSkillDir,
   discoverSkills,
+  discoverMcpToolSkills,
+  discoverNativeSkills,
   extractArgs,
   makeSkillInvocationFormatter,
+  mergeCodexSkills,
+  parseMcpServerStatusResponse,
+  parseNativeSkillsListResponse,
   probeSlashForSkillsSupported,
 } from "./skills";
 
@@ -488,6 +493,147 @@ describe("discoverSkills", () => {
   });
 });
 
+describe("native Codex skill discovery", () => {
+  test("includes enabled system and repo skills from skills/list", () => {
+    const skills = parseNativeSkillsListResponse({
+      data: [
+        {
+          cwd: "/repo",
+          skills: [
+            {
+              name: "openai-docs",
+              description: "Use official OpenAI docs",
+              scope: "system",
+              enabled: true,
+            },
+            {
+              name: "repo-skill",
+              description: "Repo local",
+              scope: "repo",
+              enabled: true,
+            },
+            {
+              name: "disabled",
+              description: "Hidden",
+              scope: "user",
+              enabled: false,
+            },
+          ],
+          errors: [],
+        },
+      ],
+    });
+
+    expect(skills.map((s) => s.name)).toEqual(["openai-docs", "repo-skill"]);
+    expect(skills[0]?.scope).toBe("system");
+    expect(skills[1]?.scope).toBe("project");
+  });
+
+  test("discoverNativeSkills requests skills for the session cwd", async () => {
+    const calls: Array<{ method: string; params: unknown }> = [];
+    const request = async (method: string, params: unknown) => {
+      calls.push({ method, params });
+      return { data: [{ cwd: "/repo", skills: [], errors: [] }] };
+    };
+
+    await discoverNativeSkills(request, "/repo");
+
+    expect(calls).toEqual([
+      {
+        method: "skills/list",
+        params: { cwds: ["/repo"], forceReload: false },
+      },
+    ]);
+  });
+});
+
+describe("MCP tool discovery", () => {
+  test("normalizes mcpServerStatus/list tools into skill buttons", () => {
+    const skills = parseMcpServerStatusResponse({
+      data: [
+        {
+          name: "gated-review",
+          tools: {
+            git_push: {
+              name: "git_push",
+              title: "Git push",
+              description: "Push through the review gate",
+            },
+          },
+        },
+      ],
+      nextCursor: null,
+    });
+
+    expect(skills).toHaveLength(1);
+    expect(skills[0]?.id).toBe("codex:mcp:gated-review:git_push");
+    expect(skills[0]?.name).toBe("mcp:gated-review:Git push");
+    expect(skills[0]?.scope).toBe("system");
+  });
+
+  test("discoverMcpToolSkills requests tools for the current thread", async () => {
+    const calls: Array<{ method: string; params: unknown }> = [];
+    const request = async (method: string, params: unknown) => {
+      calls.push({ method, params });
+      return { data: [], nextCursor: null };
+    };
+
+    await discoverMcpToolSkills(request, "thread-1");
+
+    expect(calls).toEqual([
+      {
+        method: "mcpServerStatus/list",
+        params: { detail: "toolsAndAuthOnly", threadId: "thread-1" },
+      },
+    ]);
+  });
+});
+
+describe("mergeCodexSkills", () => {
+  test("native metadata keeps local arg specs and adds MCP tools", () => {
+    const local = [
+      {
+        id: "codex:ghreview",
+        name: "ghreview",
+        description: "local",
+        backend: "codex" as const,
+        scope: "user" as const,
+        args: [{ key: "1", required: false, hint: "<pr>" }],
+        user_invocable: true,
+        model_invocable: false,
+      },
+    ];
+    const native = [
+      {
+        ...local[0]!,
+        description: "native",
+        args: [],
+        model_invocable: true,
+      },
+    ];
+    const mcpTools = [
+      {
+        id: "codex:mcp:gated-review:git_push",
+        name: "mcp:gated-review:git_push",
+        description: "push",
+        backend: "codex" as const,
+        scope: "system" as const,
+        args: [],
+        user_invocable: true,
+        model_invocable: true,
+      },
+    ];
+
+    const skills = mergeCodexSkills({ local, native, mcpTools });
+
+    expect(skills).toHaveLength(2);
+    expect(skills[0]?.description).toBe("native");
+    expect(skills[0]?.args).toEqual(local[0]!.args);
+    expect(skills[0]?.model_invocable).toBe(false);
+    expect(skills[1]?.id).toBe("codex:mcp:gated-review:git_push");
+  });
+});
+
 // ---------------------------------------------------------------------------
 // formatSkillInvocation — slash form, mention form, arg serialization
 // ---------------------------------------------------------------------------
@@ -530,6 +676,20 @@ describe("makeSkillInvocationFormatter — slash form (supported)", () => {
 
   test("empty arg values are skipped", () => {
     expect(formatSkillInvocation(skill, { "1": "" })).toBe("/ghreview");
+  });
+
+  test("mcp tool button sends a tool-use steering prompt", () => {
+    expect(
+      formatSkillInvocation(
+        {
+          ...skill,
+          id: "codex:mcp:gated-review:git_push",
+          name: "mcp:gated-review:git_push",
+          args: [],
+        },
+        {},
+      ),
+    ).toBe("Use the gated-review MCP tool git_push.");
   });
 });
 

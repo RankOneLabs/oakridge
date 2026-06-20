@@ -228,38 +228,38 @@ export function SessionView({
           <SessionTerminal key={sid} ref={terminalRef} />
         </div>
       )}
-      <SkillRail sid={sid} snapshot={snapshot} />
-      {canInput && (
-        <InputBox
-          ref={bottomBarRef}
-          sid={sid}
-          onSend={addPendingMessage}
-          onSendFailed={removePendingMessage}
-          canStop={true}
-          isTurnActive={awaitingResult}
-        />
-      )}
-      {!canInput && snapshot?.status === "compacting" && (
-        <CompactingBanner ref={bottomBarRef} />
-      )}
-      {!canInput &&
-        snapshot?.status === "ended" &&
-        snapshot.endReason === "compacted" && (
-          <CompactedBanner
-            key={sid}
-            ref={bottomBarRef}
+      <div className="bottom-stack" ref={bottomBarRef}>
+        <SkillRail sid={sid} snapshot={snapshot} />
+        {canInput && (
+          <InputBox
             sid={sid}
-            successorSid={snapshot.successorSid}
-            onOpenSuccessor={(nextSid) => {
-              window.location.hash = `sid=${encodeURIComponent(nextSid)}`;
-            }}
+            onSend={addPendingMessage}
+            onSendFailed={removePendingMessage}
+            canStop={true}
+            isTurnActive={awaitingResult}
           />
         )}
-      {!canInput &&
-        snapshot?.status === "ended" &&
-        snapshot.endReason !== "compacted" && (
-          <EndedBanner ref={bottomBarRef} sid={sid} onResume={onResume} />
+        {!canInput && snapshot?.status === "compacting" && (
+          <CompactingBanner />
         )}
+        {!canInput &&
+          snapshot?.status === "ended" &&
+          snapshot.endReason === "compacted" && (
+            <CompactedBanner
+              key={sid}
+              sid={sid}
+              successorSid={snapshot.successorSid}
+              onOpenSuccessor={(nextSid) => {
+                window.location.hash = `sid=${encodeURIComponent(nextSid)}`;
+              }}
+            />
+          )}
+        {!canInput &&
+          snapshot?.status === "ended" &&
+          snapshot.endReason !== "compacted" && (
+            <EndedBanner sid={sid} onResume={onResume} />
+          )}
+      </div>
     </div>
   );
 }

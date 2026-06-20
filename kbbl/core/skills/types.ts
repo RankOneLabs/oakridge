@@ -11,7 +11,7 @@ export interface Skill {
   name: string;
   description: string;
   backend: RuntimeId;
-  scope: "user" | "project";
+  scope: "user" | "project" | "system" | "admin";
   args: ArgSpec[];
   user_invocable: boolean;
   model_invocable: boolean;
