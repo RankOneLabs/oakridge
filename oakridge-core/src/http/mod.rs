@@ -57,6 +57,7 @@ pub fn register_types(stage: &mut StageTypeRegistry, _artifact: &mut ArtifactTyp
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| std::path::PathBuf::from("./prompts"));
 
+    let delegated_prompts_dir = prompts_dir.clone();
     let agent = Arc::new(SessionAgent {
         prompts_dir,
         spawn_config,
@@ -67,11 +68,10 @@ pub fn register_types(stage: &mut StageTypeRegistry, _artifact: &mut ArtifactTyp
 
     let kbbl_base_url =
         std::env::var("KBBL_API_BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:8080/".to_string());
-    let kbbl_client = KbblClient::new(kbbl_base_url).expect("invalid KBBL_API_BASE_URL");
+    let kbbl_client = KbblClient::new(kbbl_base_url.clone())
+        .unwrap_or_else(|err| panic!("invalid KBBL_API_BASE_URL {kbbl_base_url:?}: {err}"));
     let delegated = Arc::new(DelegatedSessionStage::new(
-        std::env::var("OAKRIDGE_PROMPTS_DIR")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|_| std::path::PathBuf::from("./prompts")),
+        delegated_prompts_dir,
         kbbl_client,
     ));
 

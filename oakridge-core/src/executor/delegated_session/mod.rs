@@ -79,7 +79,7 @@ impl DelegatedSessionStage {
         Ok(snapshot.sid)
     }
 
-    async fn probe_live_session(&self, sid: &str) -> anyhow::Result<i64> {
+    async fn probe_live_session(&self, sid: &str) -> anyhow::Result<Option<i64>> {
         let response = self.kbbl_client.read_events_since(sid, -1).await?;
         self.ensure_observable(sid, &response)?;
         Ok(latest_event_id(&response.events))
@@ -189,7 +189,9 @@ impl DelegatedSessionStage {
                             break;
                         }
 
-                        last_seen = latest_event_id(&response.events);
+                        if let Some(new_last_seen) = latest_event_id(&response.events) {
+                            last_seen = new_last_seen;
+                        }
                     }
                     Err(err) => {
                         if !cancelled.load(Ordering::SeqCst) {
@@ -280,7 +282,9 @@ impl StageType for DelegatedSessionStage {
         let mut recovery_last_seen = -1;
         let sid = match summary.external_ref.clone() {
             Some(existing_sid) => {
-                recovery_last_seen = self.probe_live_session(&existing_sid).await?;
+                if let Some(last_seen) = self.probe_live_session(&existing_sid).await? {
+                    recovery_last_seen = last_seen;
+                }
                 existing_sid
             }
             None => {
@@ -365,12 +369,8 @@ impl StageHandle for DelegatedSessionHandle {
     }
 }
 
-fn latest_event_id(events: &[kbbl_client::SessionEvent]) -> i64 {
-    events
-        .iter()
-        .map(|event| event.id as i64)
-        .max()
-        .unwrap_or(-1)
+fn latest_event_id(events: &[kbbl_client::SessionEvent]) -> Option<i64> {
+    events.iter().map(|event| event.id as i64).max().or(None)
 }
 
 fn failure_reason_from_events(sid: &str, events: &[kbbl_client::SessionEvent]) -> Option<String> {
@@ -378,7 +378,9 @@ fn failure_reason_from_events(sid: &str, events: &[kbbl_client::SessionEvent]) -
         .iter()
         .find_map(|event| match event.event_type.as_str() {
             "runtime-error" => Some(format!("kbbl session {} emitted runtime-error", sid)),
-            "session-ended" | "ended" => Some(format!("kbbl session {} ended unexpectedly", sid)),
+            "subprocess_exited" | "session-ended" | "ended" => {
+                Some(format!("kbbl session {} ended unexpectedly", sid))
+            }
             _ => None,
         })
 }
@@ -586,6 +588,25 @@ mod tests {
             KbblClient::new("http://127.0.0.1:8080/").unwrap(),
         );
         assert_eq!(stage.id(), "delegated_session");
+    }
+
+    #[test]
+    fn latest_event_id_ignores_empty_batches() {
+        assert_eq!(latest_event_id(&[]), None);
+    }
+
+    #[test]
+    fn failure_reason_treats_subprocess_exit_as_terminal_failure() {
+        let events = vec![kbbl_client::SessionEvent {
+            id: 7,
+            event_type: "subprocess_exited".into(),
+            ts: "2026-01-01T00:00:00Z".into(),
+            payload: json!({}),
+        }];
+
+        let reason = failure_reason_from_events("sid-123", &events).unwrap();
+        assert!(reason.contains("sid-123"));
+        assert!(reason.contains("ended unexpectedly"));
     }
 
     #[tokio::test]
