@@ -13,7 +13,7 @@ use tower_http::trace::TraceLayer;
 pub use crate::config::Config;
 use crate::db;
 use crate::events::EventBus;
-use crate::executor::delegated_session::{DelegatedSessionStage, kbbl_client::KbblClient};
+use crate::executor::delegated_session::{kbbl_client::KbblClient, DelegatedSessionStage};
 use crate::executor::session_agent::{SessionAgent, SpawnConfig};
 use crate::registry::{ArtifactTypeRegistry, StageTypeRegistry};
 use crate::scheduler::Coordinator;
@@ -65,10 +65,9 @@ pub fn register_types(stage: &mut StageTypeRegistry, _artifact: &mut ArtifactTyp
 
     stage.register(agent);
 
-    let kbbl_base_url = std::env::var("KBBL_API_BASE_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:8080/".to_string());
-    let kbbl_client = KbblClient::new(kbbl_base_url)
-        .expect("invalid KBBL_API_BASE_URL");
+    let kbbl_base_url =
+        std::env::var("KBBL_API_BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:8080/".to_string());
+    let kbbl_client = KbblClient::new(kbbl_base_url).expect("invalid KBBL_API_BASE_URL");
     let delegated = Arc::new(DelegatedSessionStage::new(
         std::env::var("OAKRIDGE_PROMPTS_DIR")
             .map(std::path::PathBuf::from)
