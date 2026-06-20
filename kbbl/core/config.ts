@@ -111,6 +111,10 @@ const SkillsSchema = z
     // When true, aggregate() returns FIXTURE_SKILLS instead of calling the
     // runtime. Lets cohort-3 frontend develop against real routes with no adapter.
     fixtures: z.boolean().default(false),
+    // Skill-name allowlist for the tablet confirm gate (spec 3.4). Skills whose
+    // name matches are annotated confirm=true by the registry. Empty by default
+    // so the gate is fully dormant unless the operator opts in.
+    confirm: z.array(z.string()).default([]),
   })
   .strict();
 
