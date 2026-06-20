@@ -215,10 +215,10 @@ export interface AgentRuntime {
    * Build the backend-native trigger string for a skill invocation. This is a
    * PURE, synchronous, IO-free function — it has no side effects and sends
    * nothing. The caller (the registry) passes the returned string to send()
-   * through the existing session.writeInput seam (channel-push for CC per
-   * PR #277). Keeping slash/mention/frontmatter syntax here, inside the
-   * adapter, honors the spec rule that the backend-native invocation contract
-   * lives entirely in the adapter.
+   * through the existing session.writeInput seam (the Claude Code channel-push
+   * transport for CC adapters). Keeping slash/mention/frontmatter syntax here,
+   * inside the adapter, honors the spec rule that the backend-native invocation
+   * contract lives entirely in the adapter.
    */
   formatSkillInvocation?(skill: Skill, args: Record<string, string>): string;
 
