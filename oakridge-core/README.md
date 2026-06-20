@@ -138,7 +138,9 @@ let (app, coordinator) = boot(Config::from_env()?, |stages: &mut StageTypeRegist
 
 `boot` also runs migrations and crash recovery. The bundled binary passes
 `register_types` as its `register_fn`, which registers the built-in `session_agent`
-stage type.
+and `delegated_session` stage types. `delegated_session` keeps artifact approval
+and merge confirmation as distinct gate steps, so a kbbl session ending is not
+itself treated as stage completion.
 
 ## Persistence & migrations
 
