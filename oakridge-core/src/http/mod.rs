@@ -13,6 +13,7 @@ use tower_http::trace::TraceLayer;
 pub use crate::config::Config;
 use crate::db;
 use crate::events::EventBus;
+use crate::executor::delegated_session::{DelegatedSessionStage, kbbl_client::KbblClient};
 use crate::executor::session_agent::{SessionAgent, SpawnConfig};
 use crate::registry::{ArtifactTypeRegistry, StageTypeRegistry};
 use crate::scheduler::Coordinator;
@@ -34,6 +35,8 @@ pub struct AppState {
 ///   OAKRIDGE_GATE_PATH   – absolute path to the tool-use gate script
 ///                          (default: "/usr/local/bin/gate")
 ///   OAKRIDGE_PROMPTS_DIR – directory containing prompt templates (default: "./prompts")
+/// Reads delegated_session config from environment variables:
+///   KBBL_API_BASE_URL    – kbbl HTTP base URL (default: "http://127.0.0.1:8080/")
 pub fn register_types(stage: &mut StageTypeRegistry, _artifact: &mut ArtifactTypeRegistry) {
     let port: u16 = std::env::var("OAKRIDGE_CORE_PORT")
         .ok()
@@ -61,6 +64,19 @@ pub fn register_types(stage: &mut StageTypeRegistry, _artifact: &mut ArtifactTyp
     });
 
     stage.register(agent);
+
+    let kbbl_base_url = std::env::var("KBBL_API_BASE_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:8080/".to_string());
+    let kbbl_client = KbblClient::new(kbbl_base_url)
+        .expect("invalid KBBL_API_BASE_URL");
+    let delegated = Arc::new(DelegatedSessionStage::new(
+        std::env::var("OAKRIDGE_PROMPTS_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::path::PathBuf::from("./prompts")),
+        kbbl_client,
+    ));
+
+    stage.register(delegated);
 }
 
 /// Initialize the substrate: run migrations, build registries via `register_fn`,
@@ -68,8 +84,8 @@ pub fn register_types(stage: &mut StageTypeRegistry, _artifact: &mut ArtifactTyp
 /// with static-serving fallback plus the Coordinator Arc.
 ///
 /// Production code passes `register_types` (registers the built-in `session_agent`
-/// stage type); tests pass closures that inject dummy stage/artifact types without
-/// modifying production paths.
+/// and `delegated_session` stage types); tests pass closures that inject dummy
+/// stage/artifact types without modifying production paths.
 pub async fn boot<F>(cfg: Config, register_fn: F) -> anyhow::Result<(Router, Arc<Coordinator>)>
 where
     F: FnOnce(&mut StageTypeRegistry, &mut ArtifactTypeRegistry),
