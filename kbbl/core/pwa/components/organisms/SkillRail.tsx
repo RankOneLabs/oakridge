@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { SessionSnapshot } from "../../types";
 import type { Skill } from "../../../runtime-interface";
 import { useSkills, useInvokeSkill } from "../../hooks/useSkills";
@@ -18,7 +18,15 @@ export function SkillRail({
   const invokeMutation = useInvokeSkill(sid);
   const [dispatchingId, setDispatchingId] = useState<string | null>(null);
   const [collecting, setCollecting] = useState<Skill | null>(null);
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [collapsed, setCollapsed] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      if (confirmTimerRef.current !== null) clearTimeout(confirmTimerRef.current);
+    };
+  }, []);
 
   const isSessionLive = snapshot?.status === "live";
 
@@ -46,6 +54,7 @@ export function SkillRail({
     if (!isSessionLive) return "disabled" as const;
     if (dispatchingId === skill.id) return "dispatching" as const;
     if (collecting?.id === skill.id) return "collecting" as const;
+    if (confirmingId === skill.id) return "confirming" as const;
     return "idle" as const;
   }
 
@@ -61,8 +70,44 @@ export function SkillRail({
     }
   }
 
+  function clearConfirming() {
+    if (confirmTimerRef.current !== null) {
+      clearTimeout(confirmTimerRef.current);
+      confirmTimerRef.current = null;
+    }
+    setConfirmingId(null);
+  }
+
   function handleTap(skill: Skill) {
     if (!isSessionLive || dispatchingId !== null) return;
+
+    if (confirmingId === skill.id) {
+      // Second tap: clear gate and proceed — confirm → collect or dispatch
+      clearConfirming();
+      if (skill.args.length > 0) {
+        setCollecting(skill);
+      } else {
+        void dispatch(skill, {});
+      }
+      return;
+    }
+
+    // Tapping a different skill cancels any in-flight confirm gate
+    if (confirmingId !== null) clearConfirming();
+
+    if (skill.confirm) {
+      // First tap on a confirm-gate skill: enter confirming state with timeout revert.
+      // Clear any open ArgSheet so collecting and confirming can't be set simultaneously.
+      setCollecting(null);
+      setConfirmingId(skill.id);
+      confirmTimerRef.current = setTimeout(() => {
+        setConfirmingId(null);
+        confirmTimerRef.current = null;
+      }, 3000);
+      return;
+    }
+
+    // Normal skill: collect args or dispatch directly
     if (skill.args.length > 0) {
       setCollecting(skill);
     } else {

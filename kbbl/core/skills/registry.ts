@@ -53,7 +53,9 @@ export function buildSkillRegistry({
     }
 
     const visible = raw.filter((s) => s.user_invocable !== false);
-    return filterSkillsForSession(session, visible, config.skills.hidden);
+    const filtered = filterSkillsForSession(session, visible, config.skills.hidden);
+    const confirmNames = new Set(config.skills.confirm);
+    return filtered.map((s) => ({ ...s, confirm: confirmNames.has(s.name) }));
   }
 
   return { aggregate };

@@ -29,11 +29,12 @@ function makeSession(overrides: {
   } as unknown as Session;
 }
 
-function makeConfig(overrides: { hidden?: string[]; fixtures?: boolean } = {}) {
+function makeConfig(overrides: { hidden?: string[]; fixtures?: boolean; confirm?: string[] } = {}) {
   return KbblConfigSchema.parse({
     skills: {
       hidden: overrides.hidden ?? [],
       fixtures: overrides.fixtures ?? false,
+      confirm: overrides.confirm ?? [],
     },
   });
 }
@@ -219,6 +220,78 @@ describe("buildSkillRegistry aggregate()", () => {
     const agg = buildSkillRegistry({ registry: undefined, config });
     const result = await agg.aggregate(makeSession());
     expect(result.every((s) => s.name !== "list-tasks")).toBe(true);
+  });
+
+  test("confirm annotation: empty allowlist means no skill gets confirm=true", async () => {
+    const skills: Skill[] = [
+      {
+        id: "s1",
+        name: "deploy",
+        description: "",
+        backend: "claude-code",
+        scope: "user",
+        args: [],
+        user_invocable: true,
+        model_invocable: false,
+      },
+    ];
+    const registry = makeRegistry(() => Promise.resolve(skills));
+    const config = makeConfig(); // confirm defaults to []
+    const agg = buildSkillRegistry({ registry, config });
+    const result = await agg.aggregate(makeSession());
+    expect(result.every((s) => s.confirm !== true)).toBe(true);
+  });
+
+  test("confirm annotation: skills matching the allowlist get confirm=true, others get confirm=false", async () => {
+    const skills: Skill[] = [
+      {
+        id: "s1",
+        name: "deploy",
+        description: "",
+        backend: "claude-code",
+        scope: "user",
+        args: [],
+        user_invocable: true,
+        model_invocable: false,
+      },
+      {
+        id: "s2",
+        name: "list-tasks",
+        description: "",
+        backend: "claude-code",
+        scope: "user",
+        args: [],
+        user_invocable: true,
+        model_invocable: true,
+      },
+    ];
+    const registry = makeRegistry(() => Promise.resolve(skills));
+    const config = makeConfig({ confirm: ["deploy"] });
+    const agg = buildSkillRegistry({ registry, config });
+    const result = await agg.aggregate(makeSession());
+    expect(result.find((s) => s.name === "deploy")?.confirm).toBe(true);
+    expect(result.find((s) => s.name === "list-tasks")?.confirm).toBe(false);
+  });
+
+  test("confirm annotation runs after hidden filter: hidden skills are absent from result", async () => {
+    const skills: Skill[] = [
+      {
+        id: "s1",
+        name: "deploy",
+        description: "",
+        backend: "claude-code",
+        scope: "user",
+        args: [],
+        user_invocable: true,
+        model_invocable: false,
+      },
+    ];
+    const registry = makeRegistry(() => Promise.resolve(skills));
+    // deploy is in both the confirm allowlist and the hidden denylist
+    const config = makeConfig({ confirm: ["deploy"], hidden: ["deploy"] });
+    const agg = buildSkillRegistry({ registry, config });
+    const result = await agg.aggregate(makeSession());
+    expect(result).toHaveLength(0);
   });
 });
 
