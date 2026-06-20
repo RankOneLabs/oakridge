@@ -1,6 +1,7 @@
 // Codex adapter: implements the AgentRuntime interface backed by the Codex app-server.
 
 import { randomUUID } from "node:crypto";
+import { execSync } from "node:child_process";
 
 import type {
   AgentRuntime,
@@ -12,6 +13,7 @@ import type {
   RuntimeSnapshotContrib,
   SessionHandle,
 } from "../../core/runtime";
+import type { Skill } from "../../core/skills/types";
 import type { EnvelopeEvent, Session } from "../../core/session/session";
 import { extractResultUsage } from "../../core/session/session";
 
@@ -29,6 +31,14 @@ import {
   loadCodexApprovalPolicyForWorkdir,
   type ApprovalPolicy,
 } from "./config";
+import {
+  MIN_CODEX_VERSION,
+  compareVersions,
+  parseCodexVersionOutput,
+  setSlashForSkillsSupported,
+  discoverSkills,
+  formatSkillInvocation,
+} from "./skills";
 
 // === Per-session state ===
 
@@ -43,6 +53,8 @@ interface CodexSessionState {
   isTerminating: boolean;
   idleWaiters: Set<() => void>;
   stopEvents: (() => void) | null;
+  /** Working directory captured at spawn time; used by discoverSkills. */
+  workingDirectory: string;
 }
 
 // === Descriptor-only factory (for conformance tests without a live server) ===
@@ -68,6 +80,7 @@ export function createCodexRuntimeDescriptorOnly(
     nonPersistedEventTypes: CODEX_NON_PERSISTED_EVENT_TYPES,
     synthesizeUserInputEvents: true,
     sendsWithoutTurnQueue: true, // no Stop hook — immediate send, never the turn queue
+    supportsSkillArgs: true,
 
     async spawn(): Promise<SessionHandle> {
       throw new Error("createCodexRuntimeDescriptorOnly: spawn not supported (no client)");
@@ -77,6 +90,14 @@ export function createCodexRuntimeDescriptorOnly(
     async send(): Promise<void> {
       throw new Error("createCodexRuntimeDescriptorOnly: send not supported (no client)");
     },
+
+    async discoverSkills(handle: SessionHandle): Promise<Skill[]> {
+      // Descriptor-only mode: no working directory — return empty list.
+      void handle;
+      return [];
+    },
+
+    formatSkillInvocation,
 
     async resolveResumeRef(sessionsDir, oakridgeSid): Promise<ResumeRef> {
       return resolveCodexResumeRef(sessionsDir, oakridgeSid);
@@ -165,6 +186,28 @@ export async function createCodexRuntime(
   const { client, models, stop } = await startCodexAppServer(opts);
   const { sessionsDir } = opts;
 
+  // Version probe: check that the running Codex meets the minimum version for
+  // slash-for-skills. If the version is older or unparseable, fall back to the
+  // mention form ($skill-name) which has been stable across releases.
+  try {
+    const raw = execSync("codex --version", { encoding: "utf8", timeout: 5000 });
+    const version = parseCodexVersionOutput(raw);
+    if (version === null || compareVersions(version, MIN_CODEX_VERSION) < 0) {
+      setSlashForSkillsSupported(false);
+      console.warn(
+        `kbbl codex: running version ${version ?? "(unknown)"} is below the minimum ` +
+          `${MIN_CODEX_VERSION} required for slash-for-skills; falling back to mention form.`,
+      );
+    } else {
+      setSlashForSkillsSupported(true);
+    }
+  } catch {
+    setSlashForSkillsSupported(false);
+    console.warn(
+      "kbbl codex: could not determine Codex version; falling back to mention form for skill invocation.",
+    );
+  }
+
   const descriptor: RuntimeDescriptor = {
     id: "codex",
     label: "Codex",
@@ -210,6 +253,17 @@ export async function createCodexRuntime(
     nonPersistedEventTypes: CODEX_NON_PERSISTED_EVENT_TYPES,
     synthesizeUserInputEvents: true,
     sendsWithoutTurnQueue: true, // no Stop hook — immediate send, never the turn queue
+    supportsSkillArgs: true,
+
+    // --- discoverSkills ---
+    async discoverSkills(handle: SessionHandle): Promise<Skill[]> {
+      const state = getState(handle.sessionId);
+      if (!state) return [];
+      return discoverSkills(state.workingDirectory);
+    },
+
+    // --- formatSkillInvocation ---
+    formatSkillInvocation,
 
     // --- spawn ---
     async spawn(config: RuntimeConfig): Promise<SessionHandle> {
@@ -283,6 +337,7 @@ export async function createCodexRuntime(
         isTerminating: false,
         idleWaiters: new Set(),
         stopEvents: null,
+        workingDirectory: cwd,
       };
       sessions.set(oakridgeSid, state);
 
