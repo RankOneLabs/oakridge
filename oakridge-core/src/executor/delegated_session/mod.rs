@@ -625,6 +625,17 @@ fn failure_reason_from_events(sid: &str, events: &[kbbl_client::SessionEvent]) -
             "runtime_error" | "runtime-error" => {
                 Some(format!("kbbl session {} emitted runtime_error", sid))
             }
+            "subprocess_exited" => event
+                .payload
+                .get("code")
+                .and_then(|code| code.as_i64())
+                .filter(|code| *code != 0)
+                .map(|code| {
+                    format!(
+                        "kbbl session {} exited unexpectedly with code {}",
+                        sid, code
+                    )
+                }),
             _ => None,
         })
 }
@@ -894,6 +905,20 @@ mod tests {
         }];
 
         assert_eq!(failure_reason_from_events("sid-123", &events), None);
+    }
+
+    #[test]
+    fn failure_reason_treats_non_zero_subprocess_exit_as_terminal_failure() {
+        let events = vec![kbbl_client::SessionEvent {
+            id: 7,
+            event_type: "subprocess_exited".into(),
+            ts: "2026-01-01T00:00:00Z".into(),
+            payload: json!({ "code": 17 }),
+        }];
+
+        let reason = failure_reason_from_events("sid-123", &events).unwrap();
+        assert!(reason.contains("sid-123"));
+        assert!(reason.contains("17"));
     }
 
     #[test]
