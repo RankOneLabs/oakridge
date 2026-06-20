@@ -188,14 +188,25 @@ describe("buildSkillRegistry aggregate()", () => {
     expect(result[0].name).toBe("list-tasks");
   });
 
+  test("fixtures mode returns only skills matching session.runtimeId", async () => {
+    const config = makeConfig({ fixtures: true });
+    const agg = buildSkillRegistry({ registry: undefined, config });
+
+    const ccResult = await agg.aggregate(makeSession({ runtimeId: "claude-code" }));
+    expect(ccResult.every((s) => s.backend === "claude-code")).toBe(true);
+
+    const codexResult = await agg.aggregate(makeSession({ runtimeId: "codex" }));
+    expect(codexResult.every((s) => s.backend === "codex")).toBe(true);
+  });
+
   test("fixtures mode returns FIXTURE_SKILLS minus user_invocable=false", async () => {
     const config = makeConfig({ fixtures: true });
     const agg = buildSkillRegistry({ registry: undefined, config });
-    const result = await agg.aggregate(makeSession());
+    const result = await agg.aggregate(makeSession({ runtimeId: "claude-code" }));
 
-    // FIXTURE_SKILLS has one entry with user_invocable=false — it must be dropped
+    // Only CC fixtures, minus the one with user_invocable=false
     const expectedCount = FIXTURE_SKILLS.filter(
-      (s) => s.user_invocable !== false,
+      (s) => s.backend === "claude-code" && s.user_invocable !== false,
     ).length;
     expect(result).toHaveLength(expectedCount);
     expect(result.every((s) => s.user_invocable !== false)).toBe(true);
@@ -311,6 +322,14 @@ describe("POST /:sid/skills/invoke", () => {
     const res = await post(app, { skill_id: SKILL_ID });
     expect(res.status).toBe(404);
     expect((await res.json() as { error: string }).error).toMatch(/unknown session/);
+  });
+
+  test("returns 400 when an args value is not a string", async () => {
+    const session = makeSession();
+    const app = buildRoutesApp({ session, fixtures: true });
+    const res = await post(app, { skill_id: SKILL_ID, args: { query: 123 } });
+    expect(res.status).toBe(400);
+    expect((await res.json() as { error: string }).error).toMatch(/args\.query must be a string/);
   });
 
   test("returns 404 for unknown or hidden skill id", async () => {

@@ -34,7 +34,7 @@ export function buildSkillRegistry({
     let raw: Skill[];
 
     if (config.skills.fixtures) {
-      raw = FIXTURE_SKILLS;
+      raw = FIXTURE_SKILLS.filter((s) => s.backend === session.runtimeId);
     } else {
       const runtime = registry?.runtimes.get(session.runtimeId);
       if (!runtime?.discoverSkills) return [];

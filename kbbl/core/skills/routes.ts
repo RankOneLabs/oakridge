@@ -60,7 +60,13 @@ export function mountSkillsRoutes(app: Hono, deps: SkillRoutesDeps): void {
     ) {
       return c.json({ error: "args must be an object" }, 400);
     }
-    const args = (body.args ?? {}) as Record<string, string>;
+    const rawArgs = (body.args ?? {}) as Record<string, unknown>;
+    for (const [k, v] of Object.entries(rawArgs)) {
+      if (typeof v !== "string") {
+        return c.json({ error: `args.${k} must be a string` }, 400);
+      }
+    }
+    const args = rawArgs as Record<string, string>;
 
     // Re-aggregate on every invoke — this is the authorization boundary.
     // Re-applying the policy filter here ensures a hidden or stale skill
