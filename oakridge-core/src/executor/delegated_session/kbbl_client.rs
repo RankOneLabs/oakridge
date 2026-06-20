@@ -6,8 +6,8 @@ use super::config::DelegatedRuntime;
 pub enum KbblClientError {
     #[error("invalid kbbl base url: {0}")]
     InvalidBaseUrl(String),
-    #[error("request transport failed: {0}")]
-    Transport(#[from] reqwest::Error),
+    #[error("kbbl request failed: {0}")]
+    Request(#[from] reqwest::Error),
     #[error("{method} {path} rejected with {status}: {detail:?}")]
     Rejected {
         method: reqwest::Method,
@@ -99,8 +99,13 @@ pub struct EventsSinceResponse {
 
 impl KbblClient {
     pub fn new(base_url: impl AsRef<str>) -> Result<Self, KbblClientError> {
-        let base_url = reqwest::Url::parse(base_url.as_ref())
+        let mut base_url = reqwest::Url::parse(base_url.as_ref())
             .map_err(|err| KbblClientError::InvalidBaseUrl(err.to_string()))?;
+        if !base_url.path().ends_with('/') {
+            let mut path = base_url.path().to_owned();
+            path.push('/');
+            base_url.set_path(&path);
+        }
         Ok(Self {
             base_url,
             http: reqwest::Client::new(),
@@ -149,7 +154,7 @@ impl KbblClient {
     pub async fn read_events_since(
         &self,
         sid: &str,
-        since: u64,
+        since: i64,
     ) -> Result<EventsSinceResponse, KbblClientError> {
         self.get_json(&format!("{sid}/events?since={since}")).await
     }
@@ -234,12 +239,13 @@ impl KbblClient {
 }
 
 fn extract_error(body: &str) -> Option<String> {
-    let value: serde_json::Value = serde_json::from_str(body).ok()?;
-    if let Some(error) = value.get("error").and_then(|v| v.as_str()) {
-        return Some(error.to_string());
-    }
-    if let Some(detail) = value.get("detail").and_then(|v| v.as_str()) {
-        return Some(detail.to_string());
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(body) {
+        if let Some(error) = value.get("error").and_then(|v| v.as_str()) {
+            return Some(error.to_string());
+        }
+        if let Some(detail) = value.get("detail").and_then(|v| v.as_str()) {
+            return Some(detail.to_string());
+        }
     }
     if body.trim().is_empty() {
         None
@@ -288,9 +294,15 @@ mod tests {
 
     async fn capture_create(
         State(state): State<TestState>,
+        OriginalUri(uri): OriginalUri,
         Json(body): Json<serde_json::Value>,
     ) -> impl IntoResponse {
-        capture_request(&state.capture, Method::POST, "/sessions".to_string(), Some(body));
+        capture_request(
+            &state.capture,
+            Method::POST,
+            uri.path().to_string(),
+            Some(body),
+        );
         (
             StatusCode::CREATED,
             Json(serde_json::json!({ "sid": "sid-123", "ignored": "extra" })),
@@ -485,7 +497,7 @@ mod tests {
             .unwrap();
         assert!(approval.ok);
 
-        let events = client.read_events_since(&snapshot.sid, 17).await.unwrap();
+        let events = client.read_events_since(&snapshot.sid, -1).await.unwrap();
         assert_eq!(
             events,
             EventsSinceResponse {
@@ -546,7 +558,7 @@ mod tests {
                 },
                 RecordedRequest {
                     method: Method::GET,
-                    path: format!("/{}/events?since=17", snapshot.sid),
+                    path: format!("/{}/events?since=-1", snapshot.sid),
                     body: None,
                 },
                 RecordedRequest {
@@ -592,6 +604,75 @@ mod tests {
             } => {
                 assert_eq!(status, StatusCode::BAD_GATEWAY);
                 assert_eq!(detail.as_deref(), Some("kbbl down"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+
+        join.abort();
+    }
+
+    #[tokio::test]
+    async fn base_url_with_path_prefix_keeps_prefix_when_joining() {
+        let capture = Arc::new(Mutex::new(VecDeque::new()));
+        let state = TestState {
+            capture: capture.clone(),
+        };
+        let app = Router::new()
+            .route("/api/sessions", post(capture_create))
+            .with_state(state);
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let join = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client = KbblClient::new(format!("http://{addr}/api")).unwrap();
+        let snapshot = client
+            .create_session(CreateSessionRequest {
+                workdir: "/work/one".into(),
+                name: "delegate-1".into(),
+                artifact_id: "artifact-9".into(),
+                runtime: DelegatedRuntime::Codex,
+                model: None,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(snapshot.sid, "sid-123");
+        let capture = capture.lock().unwrap();
+        let request = capture.front().unwrap();
+        assert_eq!(request.path, "/api/sessions");
+
+        join.abort();
+    }
+
+    #[tokio::test]
+    async fn plain_text_error_body_is_preserved() {
+        let app = Router::new().route(
+            "/sessions",
+            post(|| async { (StatusCode::BAD_REQUEST, "plain text failure") }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let join = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client = KbblClient::new(format!("http://{addr}/")).unwrap();
+        let err = client
+            .create_session(CreateSessionRequest {
+                workdir: "/work/one".into(),
+                name: "delegate-1".into(),
+                artifact_id: "artifact-9".into(),
+                runtime: DelegatedRuntime::Codex,
+                model: None,
+            })
+            .await
+            .unwrap_err();
+
+        match err {
+            KbblClientError::Rejected { detail, .. } => {
+                assert_eq!(detail.as_deref(), Some("plain text failure"));
             }
             other => panic!("unexpected error: {other:?}"),
         }
