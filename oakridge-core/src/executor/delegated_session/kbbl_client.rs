@@ -1,4 +1,5 @@
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use std::time::Duration;
 
 use super::config::DelegatedRuntime;
 
@@ -106,9 +107,14 @@ impl KbblClient {
             path.push('/');
             base_url.set_path(&path);
         }
+        let http = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(30))
+            .build()
+            .map_err(KbblClientError::Request)?;
         Ok(Self {
             base_url,
-            http: reqwest::Client::new(),
+            http,
         })
     }
 
@@ -678,5 +684,11 @@ mod tests {
         }
 
         join.abort();
+    }
+
+    #[test]
+    fn client_construction_accepts_prefixed_base_urls() {
+        let client = KbblClient::new("http://example.com/api").unwrap();
+        assert_eq!(client.base_url.as_str(), "http://example.com/api/");
     }
 }
