@@ -1381,11 +1381,11 @@ mod tests {
             run_id: run.id,
             stage_key: "A".into(),
             stage_type: "st_a".into(),
-            status: StageStatus::Running,
+            status: StageStatus::Parked,
             config: json!({}),
-            parked_reason: None,
-            parked_meta: None,
-            external_ref: None,
+            parked_reason: Some("waiting_gate".into()),
+            parked_meta: Some(json!({"request_id": "req-1"})),
+            external_ref: Some("ext-123".into()),
             started_at: Some(fixed_dt()),
             ended_at: None,
             created_at: fixed_dt(),
@@ -1408,6 +1408,19 @@ mod tests {
         assert!(ids.contains(&persisted_a.id), "recover must reuse the persisted stage instance");
         assert_eq!(ids.len(), 2);
         assert_ne!(ids[0], ids[1], "recover must prime exactly one missing stage instance");
+
+        let recovered = contexts
+            .iter()
+            .find(|ctx| ctx.stage_instance_id == persisted_a.id)
+            .expect("persisted stage instance context must be present");
+        let summary = recovered.stage_instance_summary();
+        assert_eq!(summary.stage_instance_id, persisted_a.id);
+        assert_eq!(summary.workflow_run_id, run.id);
+        assert_eq!(summary.stage_key, "A");
+        assert_eq!(summary.status, StageStatus::Parked);
+        assert_eq!(summary.parked_reason.as_deref(), Some("waiting_gate"));
+        assert_eq!(summary.parked_meta, Some(json!({"request_id": "req-1"})));
+        assert_eq!(summary.external_ref.as_deref(), Some("ext-123"));
 
         let stage_instances = queries::list_stage_instances_for_run(&pool, &run.id).await.unwrap();
         assert_eq!(stage_instances.len(), 2, "recover must not duplicate persisted stage instances");
