@@ -1,5 +1,6 @@
 pub mod config;
 pub mod kbbl_client;
+pub mod routes;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -9,6 +10,7 @@ use std::sync::{
 };
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::time::{sleep, Duration};
 use tracing::{debug, warn};
@@ -26,10 +28,55 @@ use kbbl_client::{
 
 const STAGE_INSTANCE_ID_SENTINEL: &str = "{{STAGE_INSTANCE_ID}}";
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DelegatedGate {
+    ArtifactApproval,
+    MergeConfirmation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DelegatedExecutor {
+    DelegatedSession,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct DelegatedGateState {
+    pub executor: DelegatedExecutor,
+    pub kbbl_sid: String,
+    pub gate: DelegatedGate,
+    pub artifact_id: crate::types::ArtifactId,
+    pub revision_count: u32,
+}
+
+impl DelegatedGateState {
+    pub fn artifact_approval(
+        kbbl_sid: String,
+        artifact_id: crate::types::ArtifactId,
+        revision_count: u32,
+    ) -> Self {
+        Self {
+            executor: DelegatedExecutor::DelegatedSession,
+            kbbl_sid,
+            gate: DelegatedGate::ArtifactApproval,
+            artifact_id,
+            revision_count,
+        }
+    }
+}
+
+fn revision_count_from_meta(meta: Option<&Value>) -> u32 {
+    meta.and_then(|meta| serde_json::from_value::<DelegatedGateState>(meta.clone()).ok())
+        .map(|state| state.revision_count)
+        .unwrap_or(1)
+}
+
 pub struct DelegatedSessionStage {
     pub prompts_dir: PathBuf,
     pub kbbl_client: Arc<KbblClient>,
-    live_sessions: Arc<Mutex<HashMap<StageInstanceId, LiveSession>>>,
+    live_sessions: LiveSessions,
 }
 
 impl DelegatedSessionStage {
@@ -43,15 +90,20 @@ impl DelegatedSessionStage {
 }
 
 #[derive(Clone)]
-struct LiveSession {
-    cancelled: Arc<AtomicBool>,
+pub(crate) struct LiveSession {
+    pub cancelled: Arc<AtomicBool>,
+    pub ctx: StageContext,
+    pub sid: String,
+    pub config: DelegatedSessionConfig,
 }
+
+pub(crate) type LiveSessions = Arc<Mutex<HashMap<StageInstanceId, LiveSession>>>;
 
 struct DelegatedSessionHandle {
     stage_instance_id: StageInstanceId,
     sid: String,
     kbbl_client: Arc<KbblClient>,
-    live_sessions: Arc<Mutex<HashMap<StageInstanceId, LiveSession>>>,
+    live_sessions: LiveSessions,
 }
 
 impl DelegatedSessionStage {
@@ -122,12 +174,21 @@ impl DelegatedSessionStage {
             .map(|_: AckResponse| ())?)
     }
 
-    fn insert_live_session(&self, stage_instance_id: StageInstanceId) -> Arc<AtomicBool> {
+    fn insert_live_session(
+        &self,
+        stage_instance_id: StageInstanceId,
+        ctx: StageContext,
+        sid: String,
+        config: DelegatedSessionConfig,
+    ) -> Arc<AtomicBool> {
         let cancelled = Arc::new(AtomicBool::new(false));
         self.live_sessions.lock().unwrap().insert(
             stage_instance_id,
             LiveSession {
                 cancelled: cancelled.clone(),
+                ctx,
+                sid,
+                config,
             },
         );
         cancelled
@@ -312,8 +373,12 @@ impl StageType for DelegatedSessionStage {
             }
         }
 
-        let cancelled = self.insert_live_session(stage_instance_id);
-
+        let cancelled = self.insert_live_session(
+            stage_instance_id,
+            ctx.clone(),
+            sid.clone(),
+            config.clone(),
+        );
         self.spawn_observer(
             ctx.clone(),
             stage_instance_id,
@@ -339,12 +404,35 @@ impl StageType for DelegatedSessionStage {
             live_sessions: self.live_sessions.clone(),
         }))
     }
+
+    fn http_routes(&self) -> Option<axum::Router> {
+        Some(routes::emit_routes(
+            self.kbbl_client.clone(),
+            self.live_sessions.clone(),
+        ))
+    }
 }
 
 #[async_trait]
 impl StageHandle for DelegatedSessionHandle {
-    async fn resume(&self, _payload: crate::executor::ResumePayload) -> anyhow::Result<()> {
-        anyhow::bail!("delegated_session does not accept resume payloads")
+    async fn resume(&self, payload: crate::executor::ResumePayload) -> anyhow::Result<()> {
+        match payload {
+            crate::executor::ResumePayload::GateDecision {
+                decision,
+                against_artifact_id,
+            } => {
+                self.resume_gate_decision(decision, against_artifact_id)
+                    .await
+            }
+            crate::executor::ResumePayload::FeedbackArtifact { artifact } => {
+                self.resume_feedback_artifact(artifact).await
+            }
+            crate::executor::ResumePayload::Executor { .. } => {
+                anyhow::bail!(
+                    "delegated approval forwarding is not enabled until K1 exists"
+                )
+            }
+        }
     }
 
     async fn cancel(&self) -> anyhow::Result<()> {
@@ -366,6 +454,163 @@ impl StageHandle for DelegatedSessionHandle {
             );
         }
         Ok(())
+    }
+}
+
+impl DelegatedSessionHandle {
+    fn live_session(&self) -> anyhow::Result<LiveSession> {
+        self.live_sessions
+            .lock()
+            .unwrap()
+            .get(&self.stage_instance_id)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("stage not live"))
+    }
+
+    fn parked_gate_state(&self, session: &LiveSession) -> anyhow::Result<DelegatedGateState> {
+        let summary = session.ctx.stage_instance_summary();
+        let meta = summary
+            .parked_meta
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("delegated session is missing parked gate state"))?;
+        serde_json::from_value(meta.clone())
+            .map_err(|err| anyhow::anyhow!("invalid delegated gate state: {}", err))
+    }
+
+    fn follow_up_message(
+        &self,
+        decision: &crate::types::GateDecision,
+        gate_state: &DelegatedGateState,
+    ) -> String {
+        if let Some(feedback) = decision
+            .feedback
+            .as_ref()
+            .filter(|feedback| !feedback.trim().is_empty())
+        {
+            return feedback.trim().to_string();
+        }
+        if let Some(comment) = decision
+            .comment
+            .as_ref()
+            .filter(|comment| !comment.trim().is_empty())
+        {
+            return comment.trim().to_string();
+        }
+        format!(
+            "Gate decision on artifact {}: {:?}",
+            gate_state.artifact_id.0, decision.outcome
+        )
+    }
+
+    async fn send_kbbl_input(&self, sid: &str, text: String) -> anyhow::Result<()> {
+        self.kbbl_client
+            .send_input(sid, SendInputRequest { text })
+            .await
+            .map(|_: AckResponse| ())
+            .map_err(|err| anyhow::anyhow!(err))
+    }
+
+    async fn resume_feedback_artifact(&self, artifact: Artifact) -> anyhow::Result<()> {
+        let session = self.live_session()?;
+        let pretty_body =
+            serde_json::to_string_pretty(&artifact.body).unwrap_or_else(|_| artifact.body.to_string());
+        let text = format!(
+            "Feedback artifact {} (type {}):\n{}",
+            artifact.id.0, artifact.artifact_type, pretty_body
+        );
+        self.send_kbbl_input(&session.sid, text).await
+    }
+
+    async fn resume_gate_decision(
+        &self,
+        decision: crate::types::GateDecision,
+        against_artifact_id: crate::types::ArtifactId,
+    ) -> anyhow::Result<()> {
+        let session = self.live_session()?;
+        let gate_state = self.parked_gate_state(&session)?;
+        if gate_state.artifact_id != against_artifact_id {
+            anyhow::bail!(
+                "gate decision artifact {} does not match parked artifact {}",
+                against_artifact_id.0,
+                gate_state.artifact_id.0
+            );
+        }
+
+        match gate_state.gate {
+            DelegatedGate::ArtifactApproval => {
+                self.resume_artifact_approval(session, gate_state, decision)
+                    .await
+            }
+            DelegatedGate::MergeConfirmation => {
+                self.resume_merge_confirmation(session, gate_state, decision)
+                    .await
+            }
+        }
+    }
+
+    async fn resume_artifact_approval(
+        &self,
+        session: LiveSession,
+        gate_state: DelegatedGateState,
+        decision: crate::types::GateDecision,
+    ) -> anyhow::Result<()> {
+        match decision.outcome {
+            crate::types::GateOutcome::Pass => {
+                let updated_state = DelegatedGateState {
+                    gate: DelegatedGate::MergeConfirmation,
+                    ..gate_state
+                };
+                session
+                    .ctx
+                    .set_parked_meta(Some(serde_json::to_value(&updated_state)?))
+                    .await?;
+                Ok(())
+            }
+            crate::types::GateOutcome::Fail | crate::types::GateOutcome::Rerun => {
+                let follow_up = self.follow_up_message(&decision, &gate_state);
+                self.send_kbbl_input(&session.sid, follow_up).await?;
+                let updated_state = DelegatedGateState {
+                    revision_count: gate_state.revision_count.saturating_add(1),
+                    ..gate_state
+                };
+                session
+                    .ctx
+                    .set_parked_meta(Some(serde_json::to_value(&updated_state)?))
+                    .await?;
+                Ok(())
+            }
+        }
+    }
+
+    async fn resume_merge_confirmation(
+        &self,
+        session: LiveSession,
+        _gate_state: DelegatedGateState,
+        decision: crate::types::GateDecision,
+    ) -> anyhow::Result<()> {
+        match decision.outcome {
+            crate::types::GateOutcome::Pass => {
+                session.ctx.set_status(StageStatus::Done, None).await?;
+                let _ = session.ctx.set_parked_meta(None).await;
+                session.cancelled.store(true, Ordering::SeqCst);
+                self.live_sessions
+                    .lock()
+                    .unwrap()
+                    .remove(&self.stage_instance_id);
+                if let Err(err) = self.kbbl_client.stop_session(&session.sid).await {
+                    debug!(
+                        stage_instance_id = %self.stage_instance_id.0,
+                        sid = %session.sid,
+                        "best-effort kbbl stop after merge confirmation failed: {}",
+                        err
+                    );
+                }
+                Ok(())
+            }
+            crate::types::GateOutcome::Fail | crate::types::GateOutcome::Rerun => {
+                anyhow::bail!("merge confirmation only accepts pass decisions")
+            }
+        }
     }
 }
 
@@ -391,15 +636,16 @@ fn failure_reason_from_events(sid: &str, events: &[kbbl_client::SessionEvent]) -
 mod tests {
     use super::*;
     use crate::db::queries;
-    use crate::executor::ExecutorEvent;
-    use crate::registry::ArtifactTypeRegistry;
+    use crate::executor::{ExecutorEvent, ResumePayload};
+    use crate::registry::{ArtifactTypeDef, ArtifactTypeRegistry};
     use crate::types::{
-        RunStatus, StageInstance, StageKey, WorkflowDef, WorkflowDefId, WorkflowGraph, WorkflowRun,
-        WorkflowRunId,
+        ArtifactId, GateDecision, GateOutcome, RunStatus, StageInstance, StageKey, WorkflowDef,
+        WorkflowDefId, WorkflowGraph, WorkflowRun, WorkflowRunId,
     };
     use axum::{
+        body::Body,
         extract::{OriginalUri, State},
-        http::{Method, StatusCode},
+        http::{Method, Request, StatusCode},
         response::IntoResponse,
         routing::{delete, get, post},
         Json, Router,
@@ -407,6 +653,7 @@ mod tests {
     use serde_json::json;
     use std::collections::VecDeque;
     use tokio::net::TcpListener;
+    use tower::ServiceExt;
     use uuid::Uuid;
 
     #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -583,6 +830,34 @@ mod tests {
         })
     }
 
+    fn delegated_config_json_with_outputs(
+        prompt: &str,
+        workdir: &str,
+        yolo: bool,
+        output_slots: Vec<OutputSlot>,
+    ) -> Value {
+        json!({
+            "runtime": "codex",
+            "rendered_prompt": prompt,
+            "workdir": workdir,
+            "session_name": "delegate",
+            "model": null,
+            "pre_authorized_tools": [],
+            "yolo": yolo,
+            "output_slots": output_slots
+        })
+    }
+
+    fn make_text_artifact_registry() -> Arc<ArtifactTypeRegistry> {
+        let mut registry = ArtifactTypeRegistry::new();
+        registry.register(ArtifactTypeDef {
+            id: "text".into(),
+            validate: |_| Ok(()),
+            component_id: "text-viewer".into(),
+        });
+        Arc::new(registry)
+    }
+
     #[test]
     fn delegated_session_stage_id_is_stable() {
         let stage = DelegatedSessionStage::new(
@@ -590,6 +865,21 @@ mod tests {
             KbblClient::new("http://127.0.0.1:8080/").unwrap(),
         );
         assert_eq!(stage.id(), "delegated_session");
+    }
+
+    #[test]
+    fn delegated_gate_state_roundtrip() {
+        let state = DelegatedGateState {
+            executor: DelegatedExecutor::DelegatedSession,
+            kbbl_sid: "sid-123".into(),
+            gate: DelegatedGate::ArtifactApproval,
+            artifact_id: crate::types::ArtifactId(Uuid::new_v4()),
+            revision_count: 3,
+        };
+
+        let value = serde_json::to_value(&state).unwrap();
+        let back: DelegatedGateState = serde_json::from_value(value).unwrap();
+        assert_eq!(state, back);
     }
 
     #[test]
@@ -858,6 +1148,351 @@ mod tests {
         assert!(requests
             .iter()
             .any(|req| req.method == Method::DELETE && req.path == "/sessions/sid-123"));
+
+        join.abort();
+    }
+
+    #[tokio::test]
+    async fn emit_route_parks_stage_with_artifact_approval_gate_state() {
+        let (base_url, capture, join) = spawn_kbbl_mock().await;
+        let pool = make_pool().await;
+        let (run_id, si_id) = setup_stage_instance(
+            &pool,
+            delegated_config_json_with_outputs(
+                "hello artifact",
+                "/workdir",
+                false,
+                vec![OutputSlot {
+                    name: "out".into(),
+                    artifact_type: "text".into(),
+                }],
+            ),
+            None,
+        )
+        .await;
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        let stage = DelegatedSessionStage::new(
+            PathBuf::from("/tmp"),
+            KbblClient::new(base_url).unwrap(),
+        );
+        let artifact_types = make_text_artifact_registry();
+        let ctx = StageContext::new(
+            crate::types::StageInstanceSummary {
+                stage_instance_id: si_id,
+                workflow_run_id: run_id,
+                stage_key: "delegate".into(),
+                status: crate::types::StageStatus::Pending,
+                parked_reason: None,
+                parked_meta: None,
+                external_ref: None,
+            },
+            delegated_config_json_with_outputs(
+                "hello artifact",
+                "/workdir",
+                false,
+                vec![OutputSlot {
+                    name: "out".into(),
+                    artifact_type: "text".into(),
+                }],
+            ),
+            HashMap::new(),
+            tx,
+            pool.clone(),
+            artifact_types,
+        );
+
+        let _handle = stage.execute(ctx).await.unwrap();
+        let app = stage.http_routes().unwrap();
+        let request = Request::builder()
+            .method("POST")
+            .uri(format!("/{}/emit/out", si_id.0))
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"content":"draft"}"#))
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let artifact_id = payload["artifact_id"].as_str().unwrap().to_string();
+        assert!(!artifact_id.is_empty());
+
+        let si = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+        assert_eq!(si.status, crate::types::StageStatus::Parked);
+        assert_eq!(si.parked_reason.as_deref(), Some("waiting_gate"));
+        let meta: DelegatedGateState = serde_json::from_value(si.parked_meta.clone().unwrap())
+            .unwrap();
+        assert_eq!(meta.executor, DelegatedExecutor::DelegatedSession);
+        assert_eq!(meta.kbbl_sid, "sid-123");
+        assert_eq!(meta.gate, DelegatedGate::ArtifactApproval);
+        assert_eq!(meta.revision_count, 1);
+        assert_eq!(meta.artifact_id.0.to_string(), artifact_id);
+
+        let requests: Vec<_> = capture.lock().unwrap().iter().cloned().collect();
+        assert_eq!(
+            requests,
+            vec![
+                RecordedRequest {
+                    method: Method::POST,
+                    path: "/sessions".into(),
+                    body: Some(json!({
+                        "workdir": "/workdir",
+                        "name": "delegate",
+                        "artifact_id": si_id.0.to_string(),
+                        "runtime": "codex",
+                        "model": null
+                    })),
+                },
+                RecordedRequest {
+                    method: Method::POST,
+                    path: "/sid-123/input".into(),
+                    body: Some(json!({ "text": "hello artifact" })),
+                },
+            ]
+        );
+
+        join.abort();
+    }
+
+    #[tokio::test]
+    async fn resume_feedback_artifact_forwards_body_to_kbbl_input() {
+        let (base_url, capture, join) = spawn_kbbl_mock().await;
+        let pool = make_pool().await;
+        let (run_id, si_id) = setup_stage_instance(
+            &pool,
+            delegated_config_json("hello feedback", "/workdir", false),
+            None,
+        )
+        .await;
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        let stage = DelegatedSessionStage::new(
+            PathBuf::from("/tmp"),
+            KbblClient::new(base_url).unwrap(),
+        );
+        let ctx = StageContext::new(
+            crate::types::StageInstanceSummary {
+                stage_instance_id: si_id,
+                workflow_run_id: run_id,
+                stage_key: "delegate".into(),
+                status: crate::types::StageStatus::Pending,
+                parked_reason: None,
+                parked_meta: None,
+                external_ref: None,
+            },
+            delegated_config_json("hello feedback", "/workdir", false),
+            HashMap::new(),
+            tx,
+            pool.clone(),
+            Arc::new(ArtifactTypeRegistry::new()),
+        );
+
+        let handle = stage.execute(ctx).await.unwrap();
+        let artifact = Artifact {
+            id: ArtifactId(Uuid::new_v4()),
+            run_id,
+            stage_instance_id: si_id,
+            artifact_type: "text".into(),
+            output_name: Some("out".into()),
+            label: None,
+            body: json!({"feedback": "revise the second paragraph"}),
+            version: 1,
+            parent_artifact_id: None,
+            created_at: fixed_dt(),
+        };
+
+        let expected_text = format!(
+            "Feedback artifact {} (type text):\n{{\n  \"feedback\": \"revise the second paragraph\"\n}}",
+            artifact.id.0
+        );
+        handle
+            .resume(ResumePayload::FeedbackArtifact { artifact })
+            .await
+            .unwrap();
+        let requests: Vec<_> = capture.lock().unwrap().iter().cloned().collect();
+        assert_eq!(
+            requests,
+            vec![
+                RecordedRequest {
+                    method: Method::POST,
+                    path: "/sessions".into(),
+                    body: Some(json!({
+                        "workdir": "/workdir",
+                        "name": "delegate",
+                        "artifact_id": si_id.0.to_string(),
+                        "runtime": "codex",
+                        "model": null
+                    })),
+                },
+                RecordedRequest {
+                    method: Method::POST,
+                    path: "/sid-123/input".into(),
+                    body: Some(json!({ "text": "hello feedback" })),
+                },
+                RecordedRequest {
+                    method: Method::POST,
+                    path: "/sid-123/input".into(),
+                    body: Some(json!({ "text": expected_text })),
+                },
+            ]
+        );
+
+        handle.cancel().await.unwrap();
+        join.abort();
+    }
+
+    #[tokio::test]
+    async fn gate_decisions_progress_and_complete_kbbl_session() {
+        let (base_url, capture, join) = spawn_kbbl_mock().await;
+        let pool = make_pool().await;
+        let (run_id, si_id) = setup_stage_instance(
+            &pool,
+            delegated_config_json_with_outputs(
+                "hello gate",
+                "/workdir",
+                false,
+                vec![OutputSlot {
+                    name: "out".into(),
+                    artifact_type: "text".into(),
+                }],
+            ),
+            None,
+        )
+        .await;
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        let stage = DelegatedSessionStage::new(
+            PathBuf::from("/tmp"),
+            KbblClient::new(base_url).unwrap(),
+        );
+        let artifact_types = make_text_artifact_registry();
+        let ctx = StageContext::new(
+            crate::types::StageInstanceSummary {
+                stage_instance_id: si_id,
+                workflow_run_id: run_id,
+                stage_key: "delegate".into(),
+                status: crate::types::StageStatus::Pending,
+                parked_reason: None,
+                parked_meta: None,
+                external_ref: None,
+            },
+            delegated_config_json_with_outputs(
+                "hello gate",
+                "/workdir",
+                false,
+                vec![OutputSlot {
+                    name: "out".into(),
+                    artifact_type: "text".into(),
+                }],
+            ),
+            HashMap::new(),
+            tx,
+            pool.clone(),
+            artifact_types,
+        );
+
+        let handle = stage.execute(ctx).await.unwrap();
+        let app = stage.http_routes().unwrap();
+        let request = Request::builder()
+            .method("POST")
+            .uri(format!("/{}/emit/out", si_id.0))
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"content":"draft"}"#))
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let artifact_id = ArtifactId(
+            Uuid::parse_str(payload["artifact_id"].as_str().unwrap()).unwrap(),
+        );
+
+        handle
+            .resume(ResumePayload::GateDecision {
+                decision: GateDecision {
+                    outcome: GateOutcome::Rerun,
+                    comment: Some("needs more detail".into()),
+                    feedback: Some("please revise the conclusion".into()),
+                },
+                against_artifact_id: artifact_id,
+            })
+            .await
+            .unwrap();
+
+        let si = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+        let meta: DelegatedGateState = serde_json::from_value(si.parked_meta.clone().unwrap())
+            .unwrap();
+        assert_eq!(meta.gate, DelegatedGate::ArtifactApproval);
+        assert_eq!(meta.revision_count, 2);
+
+        handle
+            .resume(ResumePayload::GateDecision {
+                decision: GateDecision {
+                    outcome: GateOutcome::Pass,
+                    comment: None,
+                    feedback: None,
+                },
+                against_artifact_id: artifact_id,
+            })
+            .await
+            .unwrap();
+
+        let si = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+        let meta: DelegatedGateState = serde_json::from_value(si.parked_meta.clone().unwrap())
+            .unwrap();
+        assert_eq!(meta.gate, DelegatedGate::MergeConfirmation);
+        assert_eq!(si.status, crate::types::StageStatus::Parked);
+
+        handle
+            .resume(ResumePayload::GateDecision {
+                decision: GateDecision {
+                    outcome: GateOutcome::Pass,
+                    comment: None,
+                    feedback: None,
+                },
+                against_artifact_id: artifact_id,
+            })
+            .await
+            .unwrap();
+
+        let si = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+        assert_eq!(si.status, crate::types::StageStatus::Done);
+        assert!(si.parked_meta.is_none());
+
+        let requests: Vec<_> = capture.lock().unwrap().iter().cloned().collect();
+        assert_eq!(
+            requests,
+            vec![
+                RecordedRequest {
+                    method: Method::POST,
+                    path: "/sessions".into(),
+                    body: Some(json!({
+                        "workdir": "/workdir",
+                        "name": "delegate",
+                        "artifact_id": si_id.0.to_string(),
+                        "runtime": "codex",
+                        "model": null
+                    })),
+                },
+                RecordedRequest {
+                    method: Method::POST,
+                    path: "/sid-123/input".into(),
+                    body: Some(json!({ "text": "hello gate" })),
+                },
+                RecordedRequest {
+                    method: Method::POST,
+                    path: "/sid-123/input".into(),
+                    body: Some(json!({ "text": "please revise the conclusion" })),
+                },
+                RecordedRequest {
+                    method: Method::DELETE,
+                    path: "/sessions/sid-123".into(),
+                    body: None,
+                },
+            ]
+        );
 
         join.abort();
     }
