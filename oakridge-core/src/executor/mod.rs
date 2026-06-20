@@ -95,6 +95,15 @@ pub struct StageContext {
 }
 
 impl StageContext {
+    fn stage_instance_summary_mut(
+        &self,
+    ) -> std::sync::MutexGuard<'_, StageInstanceSummary> {
+        match self.stage_instance.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
     /// Construct a `StageContext`. Called by the scheduler when launching a stage.
     pub fn new(
         stage_instance: StageInstanceSummary,
@@ -120,10 +129,7 @@ impl StageContext {
 
     /// Return the current cached stage-instance summary visible to the executor.
     pub fn stage_instance_summary(&self) -> StageInstanceSummary {
-        self.stage_instance
-            .lock()
-            .expect("stage_instance summary mutex poisoned")
-            .clone()
+        self.stage_instance_summary_mut().clone()
     }
 
     /// Emit an artifact.
@@ -328,10 +334,7 @@ impl StageContext {
         .await?;
 
         {
-            let mut summary = self
-                .stage_instance
-                .lock()
-                .expect("stage_instance summary mutex poisoned");
+            let mut summary = self.stage_instance_summary_mut();
             summary.status = status;
             summary.parked_reason = parked_reason.clone();
         }
@@ -355,10 +358,7 @@ impl StageContext {
     /// does not touch the status/event path.
     pub async fn set_parked_meta(&self, meta: Option<Value>) -> anyhow::Result<()> {
         queries::set_stage_instance_parked_meta(&self.db, &self.stage_instance_id, meta.clone()).await?;
-        self.stage_instance
-            .lock()
-            .expect("stage_instance summary mutex poisoned")
-            .parked_meta = meta;
+        self.stage_instance_summary_mut().parked_meta = meta;
         Ok(())
     }
 
@@ -366,10 +366,7 @@ impl StageContext {
     /// the in-memory summary so subsequent reads observe the new handle.
     pub async fn set_external_ref(&self, external_ref: Option<String>) -> anyhow::Result<()> {
         queries::set_stage_instance_external_ref(&self.db, &self.stage_instance_id, external_ref.clone()).await?;
-        self.stage_instance
-            .lock()
-            .expect("stage_instance summary mutex poisoned")
-            .external_ref = external_ref;
+        self.stage_instance_summary_mut().external_ref = external_ref;
         Ok(())
     }
 }
