@@ -117,17 +117,58 @@ export function useSessionStream(
       };
     }
 
-    const es = new EventSource(`/${encodeURIComponent(sid)}/stream`);
-    es.onopen = () => setStreamStatus("connected");
-    es.onerror = () => setStreamStatus("disconnected");
-    es.onmessage = (e) => {
-      try {
-        ingest(JSON.parse(e.data) as EnvelopeEvent);
-      } catch {
-        // malformed frame; ignore
-      }
+    // Live in-memory session: a long-lived EventSource. The browser auto-retries
+    // transient drops on its own, but it gives up permanently when the socket is
+    // killed while the page is backgrounded — the common tablet case: the PWA
+    // sleeps, the stream dies, and `onerror` leaves us stranded on whatever frame
+    // last arrived (often a mid-turn "thinking" the turn-end `result` never came
+    // to clear). The page then looks like a slow agent when the agent is idle.
+    //
+    // Fix: rebuild the stream whenever the page returns to the foreground and the
+    // current source isn't OPEN. A fresh connection replays the JSONL, but every
+    // already-seen event is dropped by the seenIds dedupe in ingest(), so the
+    // only events that reach React state are the ones genuinely missed while the
+    // stream was dead. That self-heals a frozen page without a manual reload.
+    let current: EventSource | null = null;
+    let stopped = false;
+
+    const connect = () => {
+      if (stopped) return;
+      current?.close();
+      setStreamStatus("connecting");
+      const es = new EventSource(`/${encodeURIComponent(sid)}/stream`);
+      current = es;
+      es.onopen = () => setStreamStatus("connected");
+      es.onerror = () => setStreamStatus("disconnected");
+      es.onmessage = (e) => {
+        try {
+          ingest(JSON.parse(e.data) as EnvelopeEvent);
+        } catch {
+          // malformed frame; ignore
+        }
+      };
     };
-    return () => es.close();
+
+    const reviveIfStale = () => {
+      if (document.visibilityState !== "visible") return;
+      // Only rebuild when the browser has actually given up (CLOSED) or there's
+      // no source. A CONNECTING source is the browser's own retry/backoff in
+      // flight after a transient drop — tearing it down on every focus event
+      // would reset that backoff and could hammer the server. The failure we
+      // target is the permanent give-up, which lands the source in CLOSED.
+      if (!current || current.readyState === EventSource.CLOSED) connect();
+    };
+
+    connect();
+    document.addEventListener("visibilitychange", reviveIfStale);
+    window.addEventListener("focus", reviveIfStale);
+
+    return () => {
+      stopped = true;
+      document.removeEventListener("visibilitychange", reviveIfStale);
+      window.removeEventListener("focus", reviveIfStale);
+      current?.close();
+    };
   }, [sid, inMemory]);
 
   return { events, streamStatus, resolutions, yoloMode, allowedTools };
