@@ -162,6 +162,26 @@ describe("SkillRail confirm gate — non-confirm skills bypass gate", () => {
   });
 });
 
+describe("SkillRail dispatch in-flight", () => {
+  it("disables other buttons while a dispatch is pending", () => {
+    const PLAIN_B: Skill = { ...PLAIN_SKILL, id: "s-other", name: "other-task" };
+    vi.mocked(useSkills).mockReturnValue([PLAIN_SKILL, PLAIN_B]);
+    vi.mocked(useInvokeSkill).mockReturnValue({
+      mutateAsync: vi.fn().mockReturnValue(new Promise(() => {})), // never resolves
+      error: null,
+    } as unknown as ReturnType<typeof useInvokeSkill>);
+    render(<SkillRail sid="test-sid" snapshot={LIVE_SNAPSHOT} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /list-tasks/ }));
+
+    // The tapped button is dispatching (disabled); the sibling is now disabled too.
+    expect(
+      (screen.getByRole("button", { name: /other-task/ }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+  });
+});
+
 describe("SkillRail invoke failure", () => {
   it("surfaces an error alert when dispatch fails", async () => {
     vi.mocked(useSkills).mockReturnValue([PLAIN_SKILL]);

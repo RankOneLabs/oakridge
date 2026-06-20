@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Skill } from "../../../runtime-interface";
 
 export function ArgSheet({
@@ -13,6 +13,15 @@ export function ArgSheet({
   const [args, setArgs] = useState<Record<string, string>>(() =>
     Object.fromEntries(skill.args.map((a) => [a.key, ""])),
   );
+
+  // Escape-to-close, matching the other modal surfaces (e.g. DirectoryPicker).
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onCancel();
+    }
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [onCancel]);
 
   const canSubmit = skill.args
     .filter((a) => a.required)

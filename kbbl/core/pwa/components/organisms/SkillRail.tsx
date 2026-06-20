@@ -54,6 +54,9 @@ export function SkillRail({
   function getButtonState(skill: Skill) {
     if (!isSessionLive) return "disabled" as const;
     if (dispatchingId === skill.id) return "dispatching" as const;
+    // A dispatch in-flight blocks taps on every button (see handleTap), so the
+    // other buttons must look disabled rather than enabled-but-inert.
+    if (dispatchingId !== null) return "disabled" as const;
     if (collecting?.id === skill.id) return "collecting" as const;
     if (confirmingId === skill.id) return "confirming" as const;
     return "idle" as const;
