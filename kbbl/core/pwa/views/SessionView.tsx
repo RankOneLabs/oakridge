@@ -9,6 +9,7 @@ import { useSessionStream } from "../hooks/useSessionStream";
 import { usePendingMessages } from "../hooks/usePendingMessages";
 import { useAutoScrollAndLayout } from "../hooks/useAutoScrollAndLayout";
 import { lastMessageEventId } from "../lib/events";
+import { writeHashSid } from "../lib/hash";
 
 import { SessionTopBar } from "../components/organisms/SessionTopBar";
 import { MetricsStrip } from "../components/organisms/MetricsStrip";
@@ -250,7 +251,7 @@ export function SessionView({
               sid={sid}
               successorSid={snapshot.successorSid}
               onOpenSuccessor={(nextSid) => {
-                window.location.hash = `sid=${encodeURIComponent(nextSid)}`;
+                writeHashSid(nextSid);
               }}
             />
           )}
