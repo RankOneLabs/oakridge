@@ -30,7 +30,6 @@ use oakridge_core::executor::delegated_session::{
     DelegatedExecutor, DelegatedGate, DelegatedGateState, DelegatedSessionStage,
 };
 use oakridge_core::executor::prompt_config::SlotBinding;
-use oakridge_core::executor::session_agent::{SessionAgent, SpawnConfig};
 use oakridge_core::http::{boot, Config};
 use oakridge_core::registry::{ArtifactTypeDef, ArtifactTypeRegistry, StageTypeRegistry};
 use oakridge_core::types::*;
@@ -250,7 +249,7 @@ fn delegated_workflow_def(
     slot_bindings.insert(
         "TASK".to_string(),
         SlotBinding::Literal {
-            value: "cut over session_agent data".into(),
+            value: "cut over delegated session data".into(),
         },
     );
 
@@ -399,10 +398,8 @@ async fn emit_artifact(app: &Router, stage_instance_id: StageInstanceId, body: V
 #[tokio::test(flavor = "multi_thread")]
 async fn delegated_session_e2e_gate_driven_completion() {
     let tmp = tempfile::tempdir().unwrap();
-    let data_dir = tmp.path().join("data");
     let prompts_dir = tmp.path().join("prompts");
     let workdir = tmp.path().join("work");
-    std::fs::create_dir_all(&data_dir).unwrap();
     std::fs::create_dir_all(&prompts_dir).unwrap();
     std::fs::create_dir_all(&workdir).unwrap();
 
@@ -416,7 +413,6 @@ async fn delegated_session_e2e_gate_driven_completion() {
     let db_url = format!("sqlite://{}", tmp.path().join("e2e.db").to_str().unwrap());
     let db_url2 = db_url.clone();
     let prompts_dir_for_boot = prompts_dir.clone();
-    let data_dir_for_boot = data_dir.clone();
     let kbbl_base_url_for_boot = kbbl_base_url.clone();
 
     let (app, _coord) = boot(
@@ -433,17 +429,6 @@ async fn delegated_session_e2e_gate_driven_completion() {
                 validate: |_| Ok(()),
                 component_id: "text-viewer".into(),
             });
-
-            stage_types.register(Arc::new(SessionAgent {
-                prompts_dir: prompts_dir_for_boot.clone(),
-                spawn_config: SpawnConfig {
-                    claude_bin: "/bin/true".into(),
-                    port: 8790,
-                    oakridge_data: data_dir_for_boot.clone(),
-                    gate_path: "/bin/true".into(),
-                },
-                live_stages: Arc::new(Mutex::new(HashMap::new())),
-            }));
 
             stage_types.register(Arc::new(DelegatedSessionStage::new(
                 prompts_dir_for_boot.clone(),
@@ -468,7 +453,7 @@ async fn delegated_session_e2e_gate_driven_completion() {
 
     let workdir_request = format!("{}/{}", workdir.display(), si_id.0);
     let prompt_text = format!(
-        "Task: cut over session_agent data\nStage: {}",
+        "Task: cut over delegated session data\nStage: {}",
         si_id.0
     );
 

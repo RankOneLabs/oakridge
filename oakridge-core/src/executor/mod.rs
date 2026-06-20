@@ -1,6 +1,5 @@
 pub mod prompt_config;
 pub mod delegated_session;
-pub mod session_agent;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
