@@ -39,6 +39,12 @@ export function mountSkillsRoutes(app: Hono, deps: SkillRoutesDeps): void {
 
     const session = manager.get(sid);
     if (!session) return c.json({ error: "unknown session" }, 404);
+    // Reject non-live sessions early with an explicit state error. The rail
+    // already disables when status !== "live"; without this guard the invoke
+    // falls through to writeInput() and surfaces as a misleading 503.
+    if (session.status !== "live") {
+      return c.json({ error: "session not live" }, 409);
+    }
 
     let body: { skill_id?: unknown; args?: unknown };
     try {

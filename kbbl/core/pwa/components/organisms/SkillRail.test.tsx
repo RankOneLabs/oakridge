@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { SkillRail } from "./SkillRail";
 import type { Skill } from "../../../runtime-interface";
@@ -79,8 +79,9 @@ describe("SkillRail two-tap confirm chain — no args", () => {
     fireEvent.click(btn); // first tap → confirming
     fireEvent.click(btn); // second tap → dispatch
 
-    await act(async () => {});
-    expect(mockMutateAsync).toHaveBeenCalledWith({ skill_id: "s-deploy", args: {} });
+    await waitFor(() =>
+      expect(mockMutateAsync).toHaveBeenCalledWith({ skill_id: "s-deploy", args: {} }),
+    );
   });
 });
 
@@ -141,8 +142,9 @@ describe("SkillRail confirm gate — non-confirm skills bypass gate", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /list-tasks/ }));
 
-    await act(async () => {});
-    expect(mockMutateAsync).toHaveBeenCalledWith({ skill_id: "s-list", args: {} });
+    await waitFor(() =>
+      expect(mockMutateAsync).toHaveBeenCalledWith({ skill_id: "s-list", args: {} }),
+    );
   });
 
   it("tapping a different skill cancels in-flight confirm gate", async () => {
@@ -157,5 +159,21 @@ describe("SkillRail confirm gate — non-confirm skills bypass gate", () => {
       fireEvent.click(screen.getByRole("button", { name: /list-tasks/ }));
     });
     expect(screen.queryByLabelText("tap to confirm")).toBeNull();
+  });
+});
+
+describe("SkillRail invoke failure", () => {
+  it("surfaces an error alert when dispatch fails", async () => {
+    vi.mocked(useSkills).mockReturnValue([PLAIN_SKILL]);
+    vi.mocked(useInvokeSkill).mockReturnValue({
+      mutateAsync: vi.fn().mockRejectedValue(new Error("transport down")),
+      error: null,
+    } as unknown as ReturnType<typeof useInvokeSkill>);
+    render(<SkillRail sid="test-sid" snapshot={LIVE_SNAPSHOT} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /list-tasks/ }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("list-tasks");
   });
 });

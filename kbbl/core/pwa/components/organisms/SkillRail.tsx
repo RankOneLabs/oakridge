@@ -21,6 +21,7 @@ export function SkillRail({
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [collapsed, setCollapsed] = useState(false);
+  const [invokeError, setInvokeError] = useState<string | null>(null);
 
   useEffect(() => {
     return () => {
@@ -60,11 +61,14 @@ export function SkillRail({
 
   async function dispatch(skill: Skill, args: Record<string, string>) {
     setCollecting(null);
+    setInvokeError(null);
     setDispatchingId(skill.id);
     try {
       await invokeMutation.mutateAsync({ skill_id: skill.id, args });
     } catch {
-      // invokeMutation.error carries the rejection for any UI that surfaces it
+      // Submission failed (transport down, session not live, …). Surface it
+      // explicitly so the user can tell "not dispatched" from "dispatched".
+      setInvokeError(`Couldn't invoke "${skill.name}" — it was not submitted.`);
     } finally {
       setDispatchingId(null);
     }
@@ -128,6 +132,19 @@ export function SkillRail({
         >
           Skills
         </button>
+        {invokeError !== null && (
+          <div className="skill-rail__error" role="alert">
+            <span className="skill-rail__error-text">{invokeError}</span>
+            <button
+              type="button"
+              className="skill-rail__error-dismiss"
+              onClick={() => setInvokeError(null)}
+              aria-label="dismiss error"
+            >
+              ×
+            </button>
+          </div>
+        )}
         {!collapsed && (
           <div className="skill-rail__groups">
             {[...grouped.entries()].map(([backend, byScope]) => (

@@ -28,7 +28,11 @@ export const FIXTURE_SKILLS: Skill[] = [
     model_invocable: false,
   },
 
-  // 3. CC, user scope, no args, confirm=true — exercises confirm badge (cohort 6)
+  // 3. CC, user scope, no args — the confirm-gate demo skill (cohort 6).
+  // NOTE: `confirm` is not set here on purpose. buildSkillRegistry() derives it
+  // for every skill from config.skills.confirm, so any value set on the fixture
+  // would be overwritten. To exercise the confirm badge/gate against the fixtures,
+  // add "deploy" to config.skills.confirm.
   {
     id: "cc-deploy",
     name: "deploy",
@@ -38,7 +42,6 @@ export const FIXTURE_SKILLS: Skill[] = [
     args: [],
     user_invocable: true,
     model_invocable: false,
-    confirm: true,
   },
 
   // 4. CC, user scope, user_invocable=false — must be dropped by aggregate()
