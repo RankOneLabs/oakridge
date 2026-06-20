@@ -139,9 +139,9 @@ pub struct StageInstance {
     pub status: StageStatus,
     pub config: Value,
     pub parked_reason: Option<String>,
-    /// Structured metadata an executor attaches while a stage is parked (e.g. a
-    /// session_agent's approval `request_id`). Surfaced on `GET /stage_instances/:id`
-    /// so a client can act on the park; the substrate does not interpret it.
+    /// Structured metadata an executor attaches while a stage is parked.
+    /// Surfaced on `GET /stage_instances/:id` so a client can act on the park;
+    /// the substrate does not interpret it.
     pub parked_meta: Option<Value>,
     pub external_ref: Option<String>,
     pub started_at: Option<DateTime<Utc>>,
