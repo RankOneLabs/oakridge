@@ -36,6 +36,7 @@ import {
   compareVersions,
   parseCodexVersionOutput,
   setSlashForSkillsSupported,
+  probeSlashForSkillsSupported,
   discoverSkills,
   formatSkillInvocation,
 } from "./skills";
@@ -186,26 +187,41 @@ export async function createCodexRuntime(
   const { client, models, stop } = await startCodexAppServer(opts);
   const { sessionsDir } = opts;
 
-  // Version probe: check that the running Codex meets the minimum version for
-  // slash-for-skills. If the version is older or unparseable, fall back to the
-  // mention form ($skill-name) which has been stable across releases.
+  // Slash-for-skills capability probe (spec §7: verify, do not assume). Ask the running
+  // app-server directly whether it serves the native skills API (`skills/list`); its
+  // presence is the ground-truth signal that slash-for-skills is supported. Fall back to
+  // the mention form only when the method is unknown. The `codex --version` read is kept
+  // purely as an informational log alongside the probe, never as the deciding signal.
+  try {
+    const supported = await probeSlashForSkillsSupported((method, params) =>
+      client.request(method, params),
+    );
+    setSlashForSkillsSupported(supported);
+    if (!supported) {
+      console.warn(
+        "kbbl codex: running Codex does not serve the native skills API (skills/list); " +
+          "falling back to mention form for skill invocation.",
+      );
+    }
+  } catch {
+    // The probe itself should not throw (it resolves to a boolean), but guard defensively:
+    // assume supported so a transient probe failure does not silently disable slash form.
+    setSlashForSkillsSupported(true);
+  }
+
+  // Informational only: log when the running version is below the pinned floor. Does not
+  // affect the invocation form — the capability probe above is authoritative.
   try {
     const raw = execFileSync("codex", ["--version"], { encoding: "utf8", timeout: 5000 });
     const version = parseCodexVersionOutput(raw);
-    if (version === null || compareVersions(version, MIN_CODEX_VERSION) < 0) {
-      setSlashForSkillsSupported(false);
+    if (version !== null && compareVersions(version, MIN_CODEX_VERSION) < 0) {
       console.warn(
-        `kbbl codex: running version ${version ?? "(unknown)"} is below the minimum ` +
-          `${MIN_CODEX_VERSION} required for slash-for-skills; falling back to mention form.`,
+        `kbbl codex: running version ${version} is below the pinned minimum ` +
+          `${MIN_CODEX_VERSION}; skill behavior may differ from what was validated.`,
       );
-    } else {
-      setSlashForSkillsSupported(true);
     }
   } catch {
-    setSlashForSkillsSupported(false);
-    console.warn(
-      "kbbl codex: could not determine Codex version; falling back to mention form for skill invocation.",
-    );
+    // Non-fatal: version is informational only.
   }
 
   const descriptor: RuntimeDescriptor = {

@@ -13,9 +13,20 @@
 // out by default. Until then all non-.system skills are treated as curated and included.
 //
 // Invocation form: slash (`/<name> [args]`) is the primary form; mention (`$<name> [args]`)
-// is the documented fallback. The probe at createCodexRuntime() init time checks whether
-// the running Codex version supports slash-for-skills and records the result via
-// setSlashForSkillsSupported(); formatSkillInvocation() selects the form from that record.
+// is the documented fallback. The probe at createCodexRuntime() init time asks the running
+// Codex app-server directly whether it serves the native skills API (the `skills/list`
+// request) — a behavioral capability check, not a version-string guess (spec §7:
+// "Probe the actual behavior of the running version ... verify, do not assume"). If the
+// method is absent (JSON-RPC -32601 Method not found) the adapter falls back to the mention
+// form via setSlashForSkillsSupported(false). The pinned MIN_CODEX_VERSION is retained only
+// as an informational signal logged alongside the probe. formatSkillInvocation() selects the
+// form from the recorded probe result.
+//
+// Arguments: the native skills/list SkillMetadata carries NO argument spec, so SKILL.md is
+// the only source of arg shape. Codex skills use the same conventions as Claude Code
+// commands — an `argument-hint` frontmatter field and `$ARGUMENTS` / `$1..$9` placeholders in
+// the body — so extractArgs() mirrors the claude-code adapter to keep the two backends at
+// parity against the single normalized ArgSpec model.
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -57,19 +68,55 @@ export function parseCodexVersionOutput(raw: string): string | null {
   return match ? match[1] : null;
 }
 
+/** JSON-RPC code for an unrecognized method. */
+const METHOD_NOT_FOUND = -32601;
+
+/**
+ * Behavioral probe: ask the running Codex app-server whether it serves the native
+ * skills API by issuing a `skills/list` request. This verifies the actual capability
+ * of the running build rather than inferring it from a version string (spec §7).
+ *
+ * Returns true (slash-for-skills supported) when the method responds at all — including
+ * an application-level error that is NOT "method not found", since that still proves the
+ * method exists. Returns false only when the server reports the method is unknown
+ * (JSON-RPC -32601, or the standard "Method not found" message), in which case the caller
+ * falls back to the mention form.
+ *
+ * @param request  A bound request function (typically client.request) returning a Promise.
+ */
+export async function probeSlashForSkillsSupported(
+  request: (method: string, params: unknown) => Promise<unknown>,
+): Promise<boolean> {
+  try {
+    await request("skills/list", { cwds: [] });
+    return true;
+  } catch (err) {
+    const code = (err as { code?: number } | null)?.code;
+    if (code === METHOD_NOT_FOUND) return false;
+    const message = err instanceof Error ? err.message.toLowerCase() : "";
+    if (message.includes("method not found") || message.includes("-32601")) {
+      return false;
+    }
+    // The method exists but failed for another reason (e.g. transient); assume supported.
+    return true;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Manifest parsing
 // ---------------------------------------------------------------------------
 
-/** Raw fields extracted from a SKILL.md YAML frontmatter block. */
+/** Raw fields extracted from a SKILL.md YAML frontmatter block, plus its body. */
 interface SkillManifest {
   name: string;
   description: string;
   argumentHint: string | null;
+  /** Markdown body following the frontmatter; scanned for $ARGUMENTS / $1..$9. */
+  body: string;
 }
 
 /**
- * Parse a SKILL.md file, extracting YAML frontmatter fields.
+ * Parse a SKILL.md file, extracting YAML frontmatter fields and the body.
  *
  * Expected format (YAML block delimited by --- lines):
  *   name: <string>
@@ -90,6 +137,8 @@ export function parseSkillManifest(skillMdPath: string): SkillManifest | null {
   const match = contents.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!match) return null;
   const frontmatter = match[1];
+  // Everything after the closing --- fence is the body.
+  const body = contents.slice(match.index! + match[0].length).trim();
 
   let name: string | null = null;
   let description: string | null = null;
@@ -112,7 +161,55 @@ export function parseSkillManifest(skillMdPath: string): SkillManifest | null {
   }
 
   if (!name || !description) return null;
-  return { name, description, argumentHint };
+  return { name, description, argumentHint, body };
+}
+
+// ---------------------------------------------------------------------------
+// Argument extraction
+// ---------------------------------------------------------------------------
+
+/**
+ * Map a Codex skill's argument conventions onto the normalized ArgSpec list.
+ *
+ * Precedence (mirrors the claude-code adapter so both backends behave identically):
+ *   1. `argument-hint` frontmatter — split on whitespace into ordered positional
+ *      ArgSpecs keyed "1","2",... with each token as the hint.
+ *   2. `$ARGUMENTS` in the body — a single positional ArgSpec keyed "1".
+ *   3. `$1..$9` in the body — N positional ArgSpecs up to the highest index seen.
+ *   4. otherwise no args.
+ *
+ * Codex (like Claude Code) has no required-argument marker, so every ArgSpec is
+ * required=false to avoid blocking dispatch on args the backend itself treats as optional.
+ */
+export function extractArgs(
+  argumentHint: string | null,
+  body: string,
+): ArgSpec[] {
+  if (argumentHint && argumentHint.trim()) {
+    return argumentHint
+      .trim()
+      .split(/\s+/)
+      .map((tok, i) => ({ key: String(i + 1), required: false, hint: tok }));
+  }
+
+  if (/\$ARGUMENTS/.test(body)) {
+    return [{ key: "1", required: false, hint: "$ARGUMENTS" }];
+  }
+
+  const matches = body.match(/\$([1-9])/g);
+  if (matches && matches.length > 0) {
+    const maxN = matches.reduce(
+      (acc, m) => Math.max(acc, parseInt(m.slice(1), 10)),
+      0,
+    );
+    return Array.from({ length: maxN }, (_, i) => ({
+      key: String(i + 1),
+      required: false,
+      hint: `$${i + 1}`,
+    }));
+  }
+
+  return [];
 }
 
 // ---------------------------------------------------------------------------
@@ -172,14 +269,7 @@ export function parseSkillDir(
   const manifest = parseSkillManifest(manifestPath);
   if (!manifest) return null;
 
-  const args: ArgSpec[] = [];
-  if (manifest.argumentHint) {
-    args.push({
-      key: "1",
-      required: false,
-      hint: manifest.argumentHint,
-    });
-  }
+  const args = extractArgs(manifest.argumentHint, manifest.body);
 
   const modelInvocable = readAllowImplicitInvocation(skillDir);
 

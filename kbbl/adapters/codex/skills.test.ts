@@ -11,8 +11,10 @@ import {
   readAllowImplicitInvocation,
   parseSkillDir,
   discoverSkills,
+  extractArgs,
   formatSkillInvocation,
   setSlashForSkillsSupported,
+  probeSlashForSkillsSupported,
 } from "./skills";
 
 // ---------------------------------------------------------------------------
@@ -33,15 +35,17 @@ function writeSkill(
     argumentHint?: string;
     allowImplicitInvocation?: boolean;
     extraFrontmatter?: string;
+    body?: string;
   } = {},
 ): string {
   const dir = mkdirp(root, name);
   const desc = opts.description ?? `Description for ${name}`;
   const argHintLine = opts.argumentHint ? `\nargument-hint: ${opts.argumentHint}` : "";
   const extra = opts.extraFrontmatter ? `\n${opts.extraFrontmatter}` : "";
+  const body = opts.body ?? "# Body";
   writeFileSync(
     join(dir, "SKILL.md"),
-    `---\nname: ${name}\ndescription: ${desc}${argHintLine}${extra}\n---\n\n# Body`,
+    `---\nname: ${name}\ndescription: ${desc}${argHintLine}${extra}\n---\n\n${body}`,
   );
   if (opts.allowImplicitInvocation === false) {
     mkdirp(dir, "agents");
@@ -286,6 +290,121 @@ describe("parseSkillDir", () => {
   test("returns null for directory with no SKILL.md", () => {
     const dir = mkdirp(tmpDir, "empty-dir");
     expect(parseSkillDir(dir, "user")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractArgs — cc-parity argument extraction
+// ---------------------------------------------------------------------------
+
+describe("extractArgs", () => {
+  test("returns [] when no hint and no placeholders", () => {
+    expect(extractArgs(null, "# Just prose")).toHaveLength(0);
+  });
+
+  test("single-token argument-hint → one positional ArgSpec", () => {
+    const args = extractArgs("<pr-number>", "");
+    expect(args).toEqual([{ key: "1", required: false, hint: "<pr-number>" }]);
+  });
+
+  test("multi-token argument-hint → ordered positional ArgSpecs", () => {
+    const args = extractArgs("<owner> <repo> <branch>", "");
+    expect(args.map((a) => a.key)).toEqual(["1", "2", "3"]);
+    expect(args.map((a) => a.hint)).toEqual(["<owner>", "<repo>", "<branch>"]);
+    expect(args.every((a) => a.required === false)).toBe(true);
+  });
+
+  test("argument-hint takes precedence over body placeholders", () => {
+    const args = extractArgs("<only-this>", "uses $1 and $2 in the body");
+    expect(args).toHaveLength(1);
+    expect(args[0].hint).toBe("<only-this>");
+  });
+
+  test("$ARGUMENTS in body → single positional ArgSpec", () => {
+    const args = extractArgs(null, "Triage PR #$ARGUMENTS now");
+    expect(args).toEqual([{ key: "1", required: false, hint: "$ARGUMENTS" }]);
+  });
+
+  test("$1..$N in body → N positional ArgSpecs up to the highest index", () => {
+    const args = extractArgs(null, "compare $1 against $3");
+    expect(args.map((a) => a.key)).toEqual(["1", "2", "3"]);
+    expect(args.map((a) => a.hint)).toEqual(["$1", "$2", "$3"]);
+  });
+
+  test("$ARGUMENTS wins over $1..$N when both present", () => {
+    const args = extractArgs(null, "$ARGUMENTS but also $2");
+    expect(args).toHaveLength(1);
+    expect(args[0].hint).toBe("$ARGUMENTS");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseSkillDir — multi-arg discovery from the body
+// ---------------------------------------------------------------------------
+
+describe("parseSkillDir argument discovery", () => {
+  let tmpDir: string;
+  beforeEach(() => { tmpDir = mkdtempSync(join(tmpdir(), "kbbl-skills-args-")); });
+  afterEach(() => { rmSync(tmpDir, { recursive: true, force: true }); });
+
+  test("multi-token argument-hint yields multiple ArgSpecs", () => {
+    const dir = writeSkill(tmpDir, "s", { argumentHint: "<a> <b>" });
+    expect(parseSkillDir(dir, "user")?.args).toHaveLength(2);
+  });
+
+  test("body $ARGUMENTS is discovered when no argument-hint", () => {
+    const dir = writeSkill(tmpDir, "s", { body: "Run on #$ARGUMENTS" });
+    const args = parseSkillDir(dir, "user")?.args ?? [];
+    expect(args).toHaveLength(1);
+    expect(args[0].hint).toBe("$ARGUMENTS");
+  });
+
+  test("body $1..$N is discovered when no argument-hint", () => {
+    const dir = writeSkill(tmpDir, "s", { body: "diff $1 vs $2" });
+    expect(parseSkillDir(dir, "user")?.args).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// probeSlashForSkillsSupported — behavioral capability probe
+// ---------------------------------------------------------------------------
+
+describe("probeSlashForSkillsSupported", () => {
+  test("resolves true when skills/list responds", async () => {
+    const request = async (method: string) => {
+      expect(method).toBe("skills/list");
+      return { data: [] };
+    };
+    expect(await probeSlashForSkillsSupported(request)).toBe(true);
+  });
+
+  test("resolves false on JSON-RPC -32601 (numeric code)", async () => {
+    const request = async () => {
+      const err = new Error("CodexAppServer error: Method not found") as Error & {
+        code?: number;
+      };
+      err.code = -32601;
+      throw err;
+    };
+    expect(await probeSlashForSkillsSupported(request)).toBe(false);
+  });
+
+  test("resolves false when message says 'Method not found' without a code", async () => {
+    const request = async () => {
+      throw new Error("CodexAppServer error: Method not found");
+    };
+    expect(await probeSlashForSkillsSupported(request)).toBe(false);
+  });
+
+  test("resolves true for unrelated errors (method exists, failed otherwise)", async () => {
+    const request = async () => {
+      const err = new Error("CodexAppServer error: transient") as Error & {
+        code?: number;
+      };
+      err.code = -32000;
+      throw err;
+    };
+    expect(await probeSlashForSkillsSupported(request)).toBe(true);
   });
 });
 
