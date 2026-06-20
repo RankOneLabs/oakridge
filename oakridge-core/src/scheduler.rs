@@ -405,13 +405,9 @@ impl RunTask {
 
         // Delegated sessions use a two-step gate: artifact approval keeps the
         // stage parked until the explicit merge-confirmation decision arrives.
-        let keep_parked_for_merge_confirmation = self
-            .def
-            .graph
-            .stages
-            .get(&stage_key)
-            .map(|node| node.stage_type == "delegated_session")
-            .unwrap_or(false)
+        let keep_parked_for_merge_confirmation = after_resume
+            .stage_type
+            == "delegated_session"
             && after_resume
                 .parked_meta
                 .as_ref()

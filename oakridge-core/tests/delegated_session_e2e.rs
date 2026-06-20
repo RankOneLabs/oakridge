@@ -4,7 +4,7 @@ use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc, Mutex,
 };
 use std::time::Duration;
@@ -46,6 +46,7 @@ struct RecordedRequest {
 struct FakeKbblState {
     requests: Arc<Mutex<VecDeque<RecordedRequest>>>,
     emit_terminal_event: Arc<AtomicBool>,
+    event_poll_count: Arc<AtomicUsize>,
 }
 
 impl FakeKbblState {
@@ -53,6 +54,7 @@ impl FakeKbblState {
         Self {
             requests: Arc::new(Mutex::new(VecDeque::new())),
             emit_terminal_event: Arc::new(AtomicBool::new(false)),
+            event_poll_count: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -71,6 +73,10 @@ impl FakeKbblState {
             .filter(|request| request.method != Method::GET)
             .cloned()
             .collect()
+    }
+
+    fn event_poll_count(&self) -> usize {
+        self.event_poll_count.load(Ordering::SeqCst)
     }
 }
 
@@ -103,12 +109,13 @@ async fn fake_read_events(
     OriginalUri(uri): OriginalUri,
 ) -> impl IntoResponse {
     state.record(Method::GET, uri.to_string(), None);
+    state.event_poll_count.fetch_add(1, Ordering::SeqCst);
     let events = if state.emit_terminal_event.load(Ordering::SeqCst) {
         vec![json!({
             "id": 1,
-            "type": "session-ended",
+            "type": "subprocess_exited",
             "ts": "2026-01-01T00:00:00Z",
-            "payload": {}
+            "payload": { "code": 0, "reason": "completed" }
         })]
     } else {
         vec![]
@@ -487,8 +494,19 @@ async fn delegated_session_e2e_gate_driven_completion() {
     assert_eq!(gate_state.artifact_id, artifact_id);
     assert_eq!(gate_state.revision_count, 1);
 
+    let baseline_event_polls = fake_kbbl.event_poll_count();
     fake_kbbl.emit_terminal_event.store(true, Ordering::SeqCst);
-    tokio::time::sleep(Duration::from_secs(6)).await;
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if fake_kbbl.event_poll_count() > baseline_event_polls {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "delegated session observer did not poll kbbl events again within timeout"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 
     let parked_after_terminal = queries::get_stage_instance_by_id(&pool, &si_id)
         .await
@@ -496,7 +514,7 @@ async fn delegated_session_e2e_gate_driven_completion() {
     assert_eq!(
         parked_after_terminal.status,
         StageStatus::Parked,
-        "kbbl session-ended event must not complete the delegated stage"
+        "kbbl subprocess_exited code 0 must not complete the delegated stage"
     );
 
     let approved = resume_stage(

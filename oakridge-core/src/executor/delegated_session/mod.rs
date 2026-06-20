@@ -896,12 +896,12 @@ mod tests {
     }
 
     #[test]
-    fn failure_reason_ignores_terminal_events() {
+    fn failure_reason_ignores_clean_subprocess_exit() {
         let events = vec![kbbl_client::SessionEvent {
             id: 7,
-            event_type: "session-ended".into(),
+            event_type: "subprocess_exited".into(),
             ts: "2026-01-01T00:00:00Z".into(),
-            payload: json!({}),
+            payload: json!({ "code": 0, "reason": "completed" }),
         }];
 
         assert_eq!(failure_reason_from_events("sid-123", &events), None);
