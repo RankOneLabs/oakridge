@@ -104,9 +104,31 @@ pub fn render_template(
 
 pub fn load_template(prompts_dir: &Path, rel_path: &str) -> anyhow::Result<String> {
     let rel_path = validate_relative_template_path(rel_path)?;
+    let canonical_prompts_dir = std::fs::canonicalize(prompts_dir).map_err(|e| {
+        anyhow::anyhow!(
+            "failed to resolve prompts directory '{}': {}",
+            prompts_dir.display(),
+            e
+        )
+    })?;
     let path = prompts_dir.join(rel_path);
-    std::fs::read_to_string(&path)
-        .map_err(|e| anyhow::anyhow!("failed to load template '{}': {}", path.display(), e))
+    let canonical_path = std::fs::canonicalize(&path).map_err(|e| {
+        anyhow::anyhow!("failed to load template '{}': {}", path.display(), e)
+    })?;
+    if !canonical_path.starts_with(&canonical_prompts_dir) {
+        return Err(anyhow::anyhow!(
+            "template path '{}' escapes prompts directory '{}'",
+            path.display(),
+            prompts_dir.display()
+        ));
+    }
+    std::fs::read_to_string(&canonical_path).map_err(|e| {
+        anyhow::anyhow!(
+            "failed to load template '{}': {}",
+            canonical_path.display(),
+            e
+        )
+    })
 }
 
 fn validate_relative_template_path(rel_path: &str) -> anyhow::Result<&Path> {
@@ -333,5 +355,23 @@ mod tests {
         let res = load_template(dir.path(), "/etc/passwd");
         assert!(res.is_err());
         assert!(res.unwrap_err().to_string().contains("relative"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_template_rejects_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let prompts_dir = dir.path().join("prompts");
+        std::fs::create_dir(&prompts_dir).unwrap();
+
+        let outside = dir.path().join("outside.md");
+        std::fs::write(&outside, "secret").unwrap();
+        symlink(&outside, prompts_dir.join("leak.md")).unwrap();
+
+        let res = load_template(&prompts_dir, "leak.md");
+        assert!(res.is_err());
+        assert!(res.unwrap_err().to_string().contains("escapes prompts directory"));
     }
 }
