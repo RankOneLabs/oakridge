@@ -139,15 +139,40 @@ pub struct StageInstance {
     pub status: StageStatus,
     pub config: Value,
     pub parked_reason: Option<String>,
-    /// Structured metadata an executor attaches while a stage is parked (e.g. a
-    /// session_agent's approval `request_id`). Surfaced on `GET /stage_instances/:id`
-    /// so a client can act on the park; the substrate does not interpret it.
+    /// Structured metadata an executor attaches while a stage is parked.
+    /// Surfaced on `GET /stage_instances/:id` so a client can act on the park;
+    /// the substrate does not interpret it.
     pub parked_meta: Option<Value>,
     pub external_ref: Option<String>,
     pub started_at: Option<DateTime<Utc>>,
     pub ended_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct StageInstanceSummary {
+    pub stage_instance_id: StageInstanceId,
+    pub workflow_run_id: WorkflowRunId,
+    pub stage_key: StageKey,
+    pub status: StageStatus,
+    pub parked_reason: Option<String>,
+    pub parked_meta: Option<Value>,
+    pub external_ref: Option<String>,
+}
+
+impl From<&StageInstance> for StageInstanceSummary {
+    fn from(stage_instance: &StageInstance) -> Self {
+        Self {
+            stage_instance_id: stage_instance.id,
+            workflow_run_id: stage_instance.run_id,
+            stage_key: stage_instance.stage_key.clone(),
+            status: stage_instance.status,
+            parked_reason: stage_instance.parked_reason.clone(),
+            parked_meta: stage_instance.parked_meta.clone(),
+            external_ref: stage_instance.external_ref.clone(),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

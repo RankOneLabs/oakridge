@@ -1,18 +1,10 @@
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path};
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use crate::types::{Artifact, OutputSlot};
 
-// ── SessionBackend ────────────────────────────────────────────────────────────
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum SessionBackend {
-    ClaudeCode,
-    /// Defined for serde stability; subprocess wiring lands in a future cohort.
-    Codex,
-}
+use crate::types::Artifact;
 
 // ── SlotBinding ───────────────────────────────────────────────────────────────
 
@@ -32,43 +24,6 @@ pub enum SlotBinding {
     Context { path: String },
     /// A static string value.
     Literal { value: String },
-}
-
-// ── SessionAgentDefConfig ─────────────────────────────────────────────────────
-
-/// Definition-time config; lives in `workflow_def.graph` as the stage's config.
-/// Deserialized from `def_config` inside `build_config`.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct SessionAgentDefConfig {
-    pub backend: SessionBackend,
-    pub prompt_template_path: String,
-    pub slot_bindings: HashMap<String, SlotBinding>,
-    pub workdir: SlotBinding,
-    pub session_name: String,
-    pub model: Option<String>,
-    #[serde(default)]
-    pub pre_authorized_tools: Vec<String>,
-    #[serde(default)]
-    pub yolo: bool,
-}
-
-// ── SessionAgentConfig ────────────────────────────────────────────────────────
-
-/// Resolved config persisted as `stage_instance.config`; received by `execute`.
-///
-/// All values are fully resolved so crash recovery can replay without re-rendering.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct SessionAgentConfig {
-    pub backend: SessionBackend,
-    pub rendered_prompt: String,
-    pub workdir: PathBuf,
-    pub session_name: String,
-    pub model: Option<String>,
-    #[serde(default)]
-    pub pre_authorized_tools: Vec<String>,
-    #[serde(default)]
-    pub yolo: bool,
-    pub output_slots: Vec<OutputSlot>,
 }
 
 // ── resolve_binding ───────────────────────────────────────────────────────────
@@ -148,9 +103,54 @@ pub fn render_template(
 // ── load_template ─────────────────────────────────────────────────────────────
 
 pub fn load_template(prompts_dir: &Path, rel_path: &str) -> anyhow::Result<String> {
+    let rel_path = validate_relative_template_path(rel_path)?;
+    let canonical_prompts_dir = std::fs::canonicalize(prompts_dir).map_err(|e| {
+        anyhow::anyhow!(
+            "failed to resolve prompts directory '{}': {}",
+            prompts_dir.display(),
+            e
+        )
+    })?;
     let path = prompts_dir.join(rel_path);
-    std::fs::read_to_string(&path)
-        .map_err(|e| anyhow::anyhow!("failed to load template '{}': {}", path.display(), e))
+    let canonical_path = std::fs::canonicalize(&path).map_err(|e| {
+        anyhow::anyhow!("failed to load template '{}': {}", path.display(), e)
+    })?;
+    if !canonical_path.starts_with(&canonical_prompts_dir) {
+        return Err(anyhow::anyhow!(
+            "template path '{}' escapes prompts directory '{}'",
+            path.display(),
+            prompts_dir.display()
+        ));
+    }
+    std::fs::read_to_string(&canonical_path).map_err(|e| {
+        anyhow::anyhow!(
+            "failed to load template '{}': {}",
+            canonical_path.display(),
+            e
+        )
+    })
+}
+
+fn validate_relative_template_path(rel_path: &str) -> anyhow::Result<&Path> {
+    let path = Path::new(rel_path);
+    if path.is_absolute() {
+        return Err(anyhow::anyhow!(
+            "template path must be relative to the prompts directory"
+        ));
+    }
+
+    for component in path.components() {
+        match component {
+            Component::ParentDir | Component::Prefix(_) | Component::RootDir => {
+                return Err(anyhow::anyhow!(
+                    "template path must not escape the prompts directory"
+                ));
+            }
+            Component::CurDir | Component::Normal(_) => {}
+        }
+    }
+
+    Ok(path)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -158,10 +158,10 @@ pub fn load_template(prompts_dir: &Path, rel_path: &str) -> anyhow::Result<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::{ArtifactId, StageInstanceId, WorkflowRunId};
+    use chrono::Utc;
     use serde_json::json;
     use uuid::Uuid;
-    use chrono::Utc;
-    use crate::types::{ArtifactId, StageInstanceId, WorkflowRunId};
 
     fn make_artifact(body: Value) -> Artifact {
         Artifact {
@@ -222,18 +222,6 @@ mod tests {
         assert_eq!(v["value"], "hello world");
         let back: SlotBinding = serde_json::from_value(v).unwrap();
         assert_eq!(b, back);
-    }
-
-    #[test]
-    fn session_backend_snake_case() {
-        assert_eq!(
-            serde_json::to_value(SessionBackend::ClaudeCode).unwrap(),
-            json!("claude_code")
-        );
-        assert_eq!(
-            serde_json::to_value(SessionBackend::Codex).unwrap(),
-            json!("codex")
-        );
     }
 
     // ── resolve_binding ───────────────────────────────────────────────────────
@@ -353,46 +341,37 @@ mod tests {
         assert!(res.is_err());
     }
 
-    // ── SessionAgentDefConfig / SessionAgentConfig roundtrip ─────────────────
-
     #[test]
-    fn session_agent_def_config_roundtrip() {
-        let mut slot_bindings = HashMap::new();
-        slot_bindings.insert("SPEC".to_owned(), SlotBinding::Literal { value: "val".into() });
-        let def = SessionAgentDefConfig {
-            backend: SessionBackend::ClaudeCode,
-            prompt_template_path: "build.md".into(),
-            slot_bindings,
-            workdir: SlotBinding::Literal { value: "/work".into() },
-            session_name: "test-session".into(),
-            model: Some("claude-sonnet-4-6".into()),
-            pre_authorized_tools: vec!["Bash".into()],
-            yolo: false,
-        };
-        let v = serde_json::to_value(&def).unwrap();
-        let back: SessionAgentDefConfig = serde_json::from_value(v).unwrap();
-        assert_eq!(def.backend, back.backend);
-        assert_eq!(def.session_name, back.session_name);
-        assert_eq!(def.model, back.model);
+    fn load_template_rejects_traversal() {
+        let dir = tempfile::tempdir().unwrap();
+        let res = load_template(dir.path(), "../secrets.md");
+        assert!(res.is_err());
+        assert!(res.unwrap_err().to_string().contains("prompts directory"));
     }
 
     #[test]
-    fn session_agent_config_roundtrip() {
-        let cfg = SessionAgentConfig {
-            backend: SessionBackend::ClaudeCode,
-            rendered_prompt: "do the thing".into(),
-            workdir: PathBuf::from("/workspace/abc"),
-            session_name: "s1".into(),
-            model: None,
-            pre_authorized_tools: vec![],
-            yolo: true,
-            output_slots: vec![OutputSlot { name: "out".into(), artifact_type: "text".into() }],
-        };
-        let v = serde_json::to_value(&cfg).unwrap();
-        let back: SessionAgentConfig = serde_json::from_value(v).unwrap();
-        assert_eq!(cfg.workdir, back.workdir);
-        assert_eq!(cfg.session_name, back.session_name);
-        assert_eq!(cfg.yolo, back.yolo);
-        assert_eq!(cfg.output_slots.len(), 1);
+    fn load_template_rejects_absolute_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let res = load_template(dir.path(), "/etc/passwd");
+        assert!(res.is_err());
+        assert!(res.unwrap_err().to_string().contains("relative"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_template_rejects_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let prompts_dir = dir.path().join("prompts");
+        std::fs::create_dir(&prompts_dir).unwrap();
+
+        let outside = dir.path().join("outside.md");
+        std::fs::write(&outside, "secret").unwrap();
+        symlink(&outside, prompts_dir.join("leak.md")).unwrap();
+
+        let res = load_template(&prompts_dir, "leak.md");
+        assert!(res.is_err());
+        assert!(res.unwrap_err().to_string().contains("escapes prompts directory"));
     }
 }

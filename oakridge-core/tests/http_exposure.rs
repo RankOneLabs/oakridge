@@ -49,6 +49,16 @@ async fn default_cors_does_not_allow_unrelated_origins() {
 }
 
 #[tokio::test]
+async fn delegated_session_is_registered_by_default() {
+    let mut stage_types = oakridge_core::registry::StageTypeRegistry::new();
+    let mut artifact_types = oakridge_core::registry::ArtifactTypeRegistry::new();
+    register_types(&mut stage_types, &mut artifact_types);
+
+    assert!(stage_types.get("session_agent").is_none());
+    assert!(stage_types.get("delegated_session").is_some());
+}
+
+#[tokio::test]
 async fn allow_list_accepts_only_listed_origins() {
     let allowed = HeaderValue::from_static("https://dashboard.example");
     let app = app_with(vec![allowed.clone()]).await;

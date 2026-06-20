@@ -4,7 +4,7 @@ A generic workflow-orchestration **substrate**. It models a workflow as a direct
 graph of typed stages connected by artifact-passing edges, runs instances of those
 graphs to completion, persists everything to SQLite, and streams progress over SSE.
 
-The substrate is deliberately domain-agnostic: aside from the bundled `session_agent`
+The substrate is deliberately domain-agnostic: aside from the bundled `delegated_session`
 stage type, it ships **zero** built-in stage or artifact types. A consumer binary supplies
 additional behavior by registering its own `StageType` and `ArtifactType` implementations
 at boot.
@@ -66,6 +66,22 @@ Local development:
 cargo run
 ```
 
+To run delegated workflow stages locally, start kbbl first, then oakridge-core:
+
+```sh
+# Terminal 1, from the repo root
+./kbbl/scripts/kbbl-start /path/to/workdir
+
+# Terminal 2, from oakridge-core/
+KBBL_API_BASE_URL=http://127.0.0.1:8788 \
+cargo run
+```
+
+kbbl listens on `127.0.0.1:8788` by default. oakridge-core listens on
+`127.0.0.1:8790` by default. Direct kbbl sessions launched from the kbbl PWA or
+`POST /sessions` continue to work; delegated workflow sessions are an additional path
+where oakridge-core creates and tags a kbbl session for a workflow stage.
+
 Tailnet or homelab exposure:
 
 ```sh
@@ -90,6 +106,7 @@ cargo run
 | `GET /workflow_runs/:id/artifacts` | `200` | Filter: `?artifact_type=`. |
 | `GET /stage_instances/:id` | `200` | `404` when missing. |
 | `POST /stage_instances/:id/resume` | `202` | Body tagged `ResumePayload` (`{"kind":"gate_decision",...}`, `{"kind":"feedback_artifact",...}`, or `{"kind":"executor","payload":...}`); resumes a parked stage. **Expose only on a trusted network or behind an auth gateway — the server has no built-in authentication.** |
+| `POST /executors/delegated_session/:stage_instance_id/emit/:output_name` | `200` | Delegated agents emit declared output artifacts directly to oakridge-core. Returns `{ "artifact_id": "..." }`. |
 | `GET /artifacts/:id` | `200` | Returns the revision chain, root-first. |
 | `GET /parked` | `200` | All currently parked stage instances. |
 
@@ -115,6 +132,60 @@ Data events are unnamed SSE messages whose JSON payload carries a `kind` field; 
 emits a named `gap` event (`{"oldest_seq": N}`) — clients should reload state via REST
 and resubscribe from `oldest_seq`.
 
+## Delegated sessions
+
+`delegated_session` is the built-in execution stage for agent-backed workflows. It
+replaces the old direct Claude Code executor inside oakridge-core; it does not replace
+directly launched kbbl sessions. kbbl remains the runtime owner for both paths.
+
+The stage creates a kbbl session through `POST /sessions`, tags it with
+`artifact_id = <stage_instance_id>`, then sends the rendered prompt through
+`POST /:sid/input`. Runtime selection is workflow data:
+
+- `runtime: "claude-code"` starts a Claude Code kbbl session.
+- `runtime: "codex"` starts a Codex kbbl session, if Codex is enabled in kbbl.
+
+Workflow completion is domain-driven, not inferred from kbbl session state. The v1 flow
+is:
+
+1. The delegated agent emits an artifact to
+   `POST /executors/delegated_session/:stage_instance_id/emit/:output_name`.
+2. oakridge-core parks the stage for artifact approval.
+3. A needs-changes `GateDecision` is forwarded to the same live kbbl session with
+   `POST /:sid/input`.
+4. A passing artifact-approval `GateDecision` advances to merge confirmation.
+5. A passing merge-confirmation `GateDecision` marks the stage `done` and tears down
+   the kbbl session with `DELETE /sessions/:sid`.
+
+A workflow node uses the normal `POST /workflow_defs` graph shape with
+`stage_type: "delegated_session"`. The kbbl base URL is process config from
+`KBBL_API_BASE_URL`; it is not a per-stage config field. `prompt_template_path` is
+relative to `OAKRIDGE_PROMPTS_DIR`:
+
+```json
+{
+  "stage_type": "delegated_session",
+  "config": {
+    "runtime": "claude-code",
+    "prompt_template_path": "stage.md",
+    "slot_bindings": {
+      "TASK": { "from": "input", "input_name": "task", "path": "/summary" }
+    },
+    "workdir": { "from": "context", "path": "/workdir" },
+    "session_name": "stage name",
+    "model": null,
+    "pre_authorized_tools": [],
+    "yolo": false
+  },
+  "inputs": [{ "name": "task", "artifact_type": "text", "optional": false }],
+  "outputs": [{ "name": "out", "artifact_type": "text" }]
+}
+```
+
+`pre_authorized_tools` is present in the config schema for future kbbl support, but it
+is inert until kbbl has create-time allowlist support. Use kbbl approvals or `yolo` for
+the current delegated flow.
+
 ## Extending the substrate
 
 A consumer binary registers its types and boots the substrate:
@@ -137,8 +208,14 @@ let (app, coordinator) = boot(Config::from_env()?, |stages: &mut StageTypeRegist
   an unknown id fails that stage (and terminates the run) rather than hanging it.
 
 `boot` also runs migrations and crash recovery. The bundled binary passes
-`register_types` as its `register_fn`, which registers the built-in `session_agent`
-stage type.
+`register_types` as its `register_fn`, which registers the built-in
+`delegated_session` stage type. `delegated_session` keeps artifact approval and
+merge confirmation as distinct gate steps, so a kbbl session ending is not
+itself treated as stage completion.
+
+Delegated agents receive their runtime MCP server configuration from kbbl or a
+workdir-local `.mcp.json`, not from oakridge-core generating per-instance Claude
+config.
 
 ## Persistence & migrations
 

@@ -45,8 +45,8 @@ CREATE TABLE IF NOT EXISTS stage_instance (
     ended_at TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-    -- Structured park metadata attached by an executor while a stage is parked
-    -- (e.g. the session_agent approval request_id). JSON-encoded, nullable.
+    -- Structured park metadata attached by an executor while a stage is parked.
+    -- JSON-encoded, nullable.
     parked_meta TEXT,
     UNIQUE(run_id, stage_key)
 );

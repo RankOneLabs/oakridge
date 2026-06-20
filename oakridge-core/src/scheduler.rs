@@ -14,8 +14,8 @@ use crate::events::{EventBus, SubstrateEvent};
 use crate::executor::{ExecutorEvent, ResumePayload, StageContext, StageHandle};
 use crate::registry::{ArtifactTypeRegistry, StageTypeRegistry};
 use crate::types::{
-    Artifact, RunStatus, StageInstance, StageInstanceId, StageKey, StageStatus,
-    WorkflowDef, WorkflowRunId,
+    Artifact, RunStatus, StageInstance, StageInstanceId, StageInstanceSummary, StageKey,
+    StageStatus, WorkflowDef, WorkflowRunId,
 };
 
 // ── Control messages ──────────────────────────────────────────────────────────
@@ -186,8 +186,7 @@ impl RunTask {
         self.index.insert(stage_key.clone(), (si_id, StageStatus::Pending));
 
         let ctx = StageContext::new(
-            si_id,
-            self.run_id,
+            StageInstanceSummary::from(&si),
             config,
             inputs,
             self.events_tx.clone(),
@@ -404,7 +403,26 @@ impl RunTask {
                 other => DecisionError::Internal(anyhow::Error::new(other)),
             })?;
 
-        if matches!(after_resume.status, StageStatus::Parked) {
+        // Delegated sessions use a two-step gate: artifact approval keeps the
+        // stage parked until the explicit merge-confirmation decision arrives.
+        let keep_parked_for_merge_confirmation = after_resume
+            .stage_type
+            == "delegated_session"
+            && after_resume
+                .parked_meta
+                .as_ref()
+                .and_then(|meta| serde_json::from_value::<
+                    crate::executor::delegated_session::DelegatedGateState,
+                >(meta.clone()).ok())
+                .map(|gate_state| {
+                    matches!(
+                        gate_state.gate,
+                        crate::executor::delegated_session::DelegatedGate::MergeConfirmation
+                    )
+                })
+                .unwrap_or(false);
+
+        if matches!(after_resume.status, StageStatus::Parked) && !keep_parked_for_merge_confirmation {
             let started_at = after_resume.started_at.or(Some(Utc::now()));
             let updated = queries::update_stage_instance_status_if_current_status(
                 &self.db,
@@ -707,8 +725,7 @@ impl Coordinator {
                     })
                     .collect();
                 let ctx = StageContext::new(
-                    si.id,
-                    run_id,
+                    StageInstanceSummary::from(&si),
                     si.config.clone(),
                     inputs,
                     events_tx.clone(),
@@ -857,6 +874,53 @@ mod tests {
             }
         }
         panic!("run did not reach terminal status");
+    }
+
+    #[tokio::test]
+    async fn fresh_activation_passes_stage_instance_summary_into_context() {
+        let pool = make_pool().await;
+        let artifact_reg = make_artifact_registry();
+        let (sa, mut a_rx) = scripted("st_a");
+        let mut reg = StageTypeRegistry::new();
+        reg.register(sa);
+
+        let coord = Coordinator::new(pool.clone(), Arc::new(reg), artifact_reg, EventBus::new());
+
+        let def = WorkflowDef {
+            id: WorkflowDefId(Uuid::new_v4()),
+            name: format!("wf-{}", Uuid::new_v4()),
+            version: 1,
+            graph: WorkflowGraph {
+                stages: {
+                    let mut m = HashMap::new();
+                    m.insert("A".into(), StageNodeDef {
+                        stage_type: "st_a".into(),
+                        config: json!({ "mode": "fresh" }),
+                        inputs: vec![],
+                        outputs: vec![],
+                    });
+                    m
+                },
+                edges: vec![],
+            },
+            created_at: fixed_dt(),
+        };
+
+        let run_id = insert_run_for_def(&pool, &def).await;
+        coord.start_run(run_id).await.unwrap();
+
+        let (ctx, _) = tokio::time::timeout(timeout_dur(), a_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let summary = ctx.stage_instance_summary();
+        assert_eq!(summary.stage_instance_id, ctx.stage_instance_id);
+        assert_eq!(summary.workflow_run_id, run_id);
+        assert_eq!(summary.stage_key, "A");
+        assert_eq!(summary.status, StageStatus::Pending);
+        assert!(summary.parked_reason.is_none());
+        assert!(summary.parked_meta.is_none());
+        assert!(summary.external_ref.is_none());
     }
 
     // ── (a) two-stage end-to-end ──────────────────────────────────────────────
@@ -1336,11 +1400,11 @@ mod tests {
             run_id: run.id,
             stage_key: "A".into(),
             stage_type: "st_a".into(),
-            status: StageStatus::Running,
+            status: StageStatus::Parked,
             config: json!({}),
-            parked_reason: None,
-            parked_meta: None,
-            external_ref: None,
+            parked_reason: Some("waiting_gate".into()),
+            parked_meta: Some(json!({"request_id": "req-1"})),
+            external_ref: Some("ext-123".into()),
             started_at: Some(fixed_dt()),
             ended_at: None,
             created_at: fixed_dt(),
@@ -1363,6 +1427,19 @@ mod tests {
         assert!(ids.contains(&persisted_a.id), "recover must reuse the persisted stage instance");
         assert_eq!(ids.len(), 2);
         assert_ne!(ids[0], ids[1], "recover must prime exactly one missing stage instance");
+
+        let recovered = contexts
+            .iter()
+            .find(|ctx| ctx.stage_instance_id == persisted_a.id)
+            .expect("persisted stage instance context must be present");
+        let summary = recovered.stage_instance_summary();
+        assert_eq!(summary.stage_instance_id, persisted_a.id);
+        assert_eq!(summary.workflow_run_id, run.id);
+        assert_eq!(summary.stage_key, "A");
+        assert_eq!(summary.status, StageStatus::Parked);
+        assert_eq!(summary.parked_reason.as_deref(), Some("waiting_gate"));
+        assert_eq!(summary.parked_meta, Some(json!({"request_id": "req-1"})));
+        assert_eq!(summary.external_ref.as_deref(), Some("ext-123"));
 
         let stage_instances = queries::list_stage_instances_for_run(&pool, &run.id).await.unwrap();
         assert_eq!(stage_instances.len(), 2, "recover must not duplicate persisted stage instances");
