@@ -113,4 +113,18 @@ describe("useSessionStream pty_output routing", () => {
 
     expect(MockEventSource.instances).toHaveLength(1);
   });
+
+  it("does not rebuild a CONNECTING stream (browser's own retry is in flight)", () => {
+    renderHook(() => useSessionStream("sid-1", true));
+    expect(MockEventSource.instances).toHaveLength(1);
+
+    // A transient drop the browser is already retrying: state is CONNECTING,
+    // not CLOSED. Tearing it down would reset the browser's backoff.
+    act(() => {
+      MockEventSource.last!.readyState = MockEventSource.CONNECTING;
+      window.dispatchEvent(new Event("focus"));
+    });
+
+    expect(MockEventSource.instances).toHaveLength(1);
+  });
 });

@@ -151,7 +151,12 @@ export function useSessionStream(
 
     const reviveIfStale = () => {
       if (document.visibilityState !== "visible") return;
-      if (!current || current.readyState !== EventSource.OPEN) connect();
+      // Only rebuild when the browser has actually given up (CLOSED) or there's
+      // no source. A CONNECTING source is the browser's own retry/backoff in
+      // flight after a transient drop — tearing it down on every focus event
+      // would reset that backoff and could hammer the server. The failure we
+      // target is the permanent give-up, which lands the source in CLOSED.
+      if (!current || current.readyState === EventSource.CLOSED) connect();
     };
 
     connect();
