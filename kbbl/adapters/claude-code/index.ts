@@ -816,8 +816,8 @@ export async function createClaudeCodeRuntime(
 
     async discoverSkills(handle: SessionHandle): Promise<Skill[]> {
       const h = procs.get(handle.sessionId);
-      const cwd = h?.cwd ?? "";
-      return discoverSkillsFromDisk(cwd);
+      if (!h) return [];
+      return discoverSkillsFromDisk(h.cwd);
     },
 
     formatSkillInvocation,

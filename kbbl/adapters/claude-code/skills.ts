@@ -24,11 +24,15 @@ function parseFrontmatter(content: string): FrontmatterResult {
   if (!content.startsWith("---")) {
     return { fm: {}, body: content };
   }
-  // The closing fence must be on its own line.
-  const closeIdx = content.indexOf("\n---", 3);
-  if (closeIdx === -1) {
+  // The closing fence must be `---` alone on its own line (followed by \n or
+  // end-of-string). indexOf("\n---") would match "---not-a-fence" or "---"
+  // inside a block scalar; the regex requires the fence to end at a line
+  // boundary so partial matches are rejected.
+  const closeMatch = /\n---(\n|$)/.exec(content.slice(3));
+  if (!closeMatch) {
     return { fm: {}, body: content };
   }
+  const closeIdx = 3 + closeMatch.index;
   const fmText = content.slice(3, closeIdx).trim();
   const body = content.slice(closeIdx + 4).trim();
   let fm: Record<string, unknown> = {};
