@@ -223,8 +223,8 @@ function scanSkillsRoot(
   }
 
   for (const entry of entries) {
-    // Skip .system and hidden directories (other than the skill dirs themselves)
-    if (entry === ".system" || entry.startsWith(".")) continue;
+    // Skip only the Codex-internal .system directory; dot-prefixed skill names are valid.
+    if (entry === ".system") continue;
 
     const skillDir = join(root, entry);
     const skill = parseSkillDir(skillDir, scope);

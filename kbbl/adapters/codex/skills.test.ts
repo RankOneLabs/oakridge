@@ -345,7 +345,8 @@ describe("discoverSkills", () => {
       join(sysDir, "SKILL.md"),
       "---\nname: sys-skill\ndescription: system skill\n---\n",
     );
-    const skills = discoverSkills(workDir);
+    // Scope to project only to avoid false failure if home dir has a skill named sys-skill.
+    const skills = discoverSkills(workDir).filter((s) => s.scope === "project");
     expect(skills.some((s) => s.name === "sys-skill")).toBe(false);
   });
 
