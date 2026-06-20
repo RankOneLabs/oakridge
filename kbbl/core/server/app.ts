@@ -34,6 +34,7 @@ import { mountDirectoriesRoutes } from "./handlers/directories";
 import { mountWorkspaceEventsRoutes } from "./handlers/workspace-events";
 import { mountArtifactStreamRoutes } from "./handlers/artifact-stream";
 import { artifactEventBus } from "../stream/artifact-event-bus";
+import { mountSkillsRoutes } from "../skills/routes";
 
 export interface CreateAppDeps {
   manager: SessionManager;
@@ -106,6 +107,9 @@ export function createApp(deps: CreateAppDeps): Hono {
 
   // ---- per-sid routes ----
   mountPerSidRoutes(app, { manager, sessionsDir });
+
+  // ---- per-sid skills ----
+  mountSkillsRoutes(app, { manager, registry, config });
 
   // ---- per-sid handoff ----
   //

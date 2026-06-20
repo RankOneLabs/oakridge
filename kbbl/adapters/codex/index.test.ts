@@ -351,3 +351,45 @@ describe("nonPersistedEventTypes", () => {
     }
   });
 });
+
+describe("skill wiring on descriptor-only runtime", () => {
+  test("supportsSkillArgs is true", () => {
+    const rt = createCodexRuntimeDescriptorOnly();
+    expect(rt.supportsSkillArgs).toBe(true);
+  });
+
+  test("discoverSkills is defined", () => {
+    const rt = createCodexRuntimeDescriptorOnly();
+    expect(typeof rt.discoverSkills).toBe("function");
+  });
+
+  test("discoverSkills returns empty list (no workdir in descriptor-only mode)", async () => {
+    const rt = createCodexRuntimeDescriptorOnly();
+    const handle = { sessionId: randomUUID(), runtimeSid: randomUUID(), resolvedModel: null };
+    const skills = await rt.discoverSkills!(handle);
+    expect(Array.isArray(skills)).toBe(true);
+    expect(skills).toHaveLength(0);
+  });
+
+  test("formatSkillInvocation is defined", () => {
+    const rt = createCodexRuntimeDescriptorOnly();
+    expect(typeof rt.formatSkillInvocation).toBe("function");
+  });
+
+  test("formatSkillInvocation returns slash form for a basic skill", () => {
+    const rt = createCodexRuntimeDescriptorOnly();
+    const skill = {
+      id: "codex:my-skill",
+      name: "my-skill",
+      description: "test",
+      backend: "codex" as const,
+      scope: "user" as const,
+      args: [],
+      user_invocable: true,
+      model_invocable: true,
+    };
+    const result = rt.formatSkillInvocation!(skill, {});
+    // Descriptor-only runtime defaults to the slash form (no app-server to probe).
+    expect(result).toBe("/my-skill");
+  });
+});

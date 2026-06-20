@@ -4415,3 +4415,375 @@ body {
   overflow-wrap: break-word;
   color: var(--text-secondary);
 }
+
+/* =========================================================
+   SkillRail + SkillButton + ArgSheet
+   ========================================================= */
+
+.skill-rail {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-subtle);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.skill-rail--bottom {
+  position: fixed;
+  bottom: var(--bottom-bar-h, 4rem);
+  left: 0;
+  right: 0;
+  max-width: 800px;
+  margin: 0 auto;
+  z-index: 9;
+}
+
+@media (min-width: 1024px) {
+  .skill-rail--bottom {
+    max-width: 1200px;
+  }
+}
+
+.skill-rail--right {
+  position: fixed;
+  right: 0;
+  top: var(--top-bar-h, 3rem);
+  bottom: var(--bottom-bar-h, 4rem);
+  flex-direction: column;
+  align-items: flex-start;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border-top: none;
+  border-left: 1px solid var(--border-subtle);
+  z-index: 9;
+  max-width: 180px;
+  scrollbar-width: none;
+}
+
+.skill-rail__toggle {
+  flex-shrink: 0;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 0.75rem;
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border-muted);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.skill-rail__toggle:hover {
+  color: var(--text-secondary);
+  border-color: var(--border-hover);
+}
+
+.skill-rail__error {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--danger-fg, var(--accent-blue));
+  border-radius: 6px;
+  background: var(--danger-muted, var(--bg-surface));
+  color: var(--danger-fg, var(--text-primary));
+  font-size: 0.78rem;
+}
+
+.skill-rail__error-text {
+  flex: 1;
+}
+
+.skill-rail__error-dismiss {
+  flex-shrink: 0;
+  min-width: 44px;
+  min-height: 44px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.skill-rail__error-dismiss:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 2px;
+}
+
+.skill-rail__groups {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: nowrap;
+}
+
+.skill-rail--right .skill-rail__groups {
+  flex-direction: column;
+  width: 100%;
+}
+
+.skill-rail__group {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.skill-rail--right .skill-rail__group {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.skill-rail__group-label {
+  font-size: 0.7rem;
+  color: var(--text-faint);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.skill-rail__scope {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: nowrap;
+}
+
+.skill-rail--right .skill-rail__scope {
+  flex-direction: column;
+}
+
+/* SkillButton */
+
+.skill-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 0.75rem;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.skill-btn:hover:not(:disabled) {
+  border-color: var(--border-hover);
+  color: var(--text-primary);
+}
+
+/* Keyboard-visible focus for the rail's interactive controls (matches the
+   app-wide :focus-visible convention defined near the top of this file). */
+.skill-rail__toggle:focus-visible,
+.skill-btn:focus-visible,
+.arg-sheet__close:focus-visible,
+.arg-sheet__submit:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 2px;
+}
+
+.skill-btn--collecting,
+.skill-btn[aria-pressed="true"] {
+  border-color: var(--accent-blue);
+  background: var(--accent-muted);
+  color: var(--text-primary);
+}
+
+.skill-btn--dispatching {
+  opacity: 0.7;
+}
+
+/* Raise specificity above .skill-btn:disabled (equal-specificity, defined later)
+   so cursor: wait wins while the button is disabled-during-dispatch. */
+.skill-btn.skill-btn--dispatching,
+.skill-btn.skill-btn--dispatching:disabled {
+  cursor: wait;
+}
+
+.skill-btn--disabled,
+.skill-btn:disabled {
+  color: var(--text-fainter);
+  border-color: var(--border-subtle);
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.skill-btn__name {
+  font-weight: 500;
+}
+
+.skill-btn__badge {
+  font-size: 0.7rem;
+  color: var(--text-faint);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 0 0.25rem;
+  line-height: 1.4;
+}
+
+.skill-btn__arg-affordance {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.skill-btn__confirm-affordance {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--amber-fg);
+  flex-shrink: 0;
+}
+
+/* Active confirm state reuses the affordance element for the "Confirm?" label;
+   override the fixed-dot geometry so the text renders instead of being clipped. */
+.skill-btn__confirm-affordance--active {
+  width: auto;
+  height: auto;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--amber-fg);
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1;
+  padding: 0;
+}
+
+.skill-btn__spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border-muted);
+  border-top-color: var(--text-secondary);
+  border-radius: 50%;
+  animation: skill-spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes skill-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ArgSheet */
+
+.arg-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+}
+
+.arg-sheet__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.arg-sheet__panel {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  max-width: 800px;
+  margin: 0 auto;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-muted);
+  border-radius: 12px 12px 0 0;
+  padding: 1rem;
+  padding-bottom: calc(env(safe-area-inset-bottom) + 1rem);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.arg-sheet__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.arg-sheet__title {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.arg-sheet__close {
+  min-height: 44px;
+  min-width: 44px;
+  background: transparent;
+  color: var(--text-muted);
+  border: none;
+  border-radius: 6px;
+  font: inherit;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.arg-sheet__close:hover {
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+}
+
+.arg-sheet__fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.arg-sheet__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.arg-sheet__label {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.arg-sheet__required {
+  color: var(--danger-fg);
+  margin-left: 0.25rem;
+}
+
+.arg-sheet__input {
+  min-height: 44px;
+  padding: 0.6rem 0.8rem;
+  background: var(--bg-app);
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.arg-sheet__input:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
+
+.arg-sheet__submit {
+  min-height: 44px;
+  padding: 0 1.25rem;
+  background: var(--accent-blue);
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.arg-sheet__submit:disabled {
+  background: var(--border-muted);
+  color: var(--text-fainter);
+  cursor: not-allowed;
+}

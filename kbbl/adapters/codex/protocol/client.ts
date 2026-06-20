@@ -103,11 +103,15 @@ export class CodexAppServerClient {
         if (entry) {
           this.pending.delete(id);
           const errObj = msg.error as { message?: string; code?: number } | null;
-          entry.reject(
-            new Error(
-              `CodexAppServer error: ${errObj?.message ?? JSON.stringify(msg.error)}`,
-            ),
+          const err = new Error(
+            `CodexAppServer error: ${errObj?.message ?? JSON.stringify(msg.error)}`,
           );
+          // Preserve the numeric JSON-RPC code so callers can distinguish failure
+          // modes (e.g. -32601 Method not found) without parsing the message text.
+          if (typeof errObj?.code === "number") {
+            (err as Error & { code?: number }).code = errObj.code;
+          }
+          entry.reject(err);
         }
       } else if ("method" in msg && !("id" in msg)) {
         // Server → client notification (no id)

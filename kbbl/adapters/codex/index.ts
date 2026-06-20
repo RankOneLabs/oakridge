@@ -1,6 +1,7 @@
 // Codex adapter: implements the AgentRuntime interface backed by the Codex app-server.
 
 import { randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 
 import type {
   AgentRuntime,
@@ -12,6 +13,7 @@ import type {
   RuntimeSnapshotContrib,
   SessionHandle,
 } from "../../core/runtime";
+import type { Skill } from "../../core/skills/types";
 import type { EnvelopeEvent, Session } from "../../core/session/session";
 import { extractResultUsage } from "../../core/session/session";
 
@@ -29,6 +31,14 @@ import {
   loadCodexApprovalPolicyForWorkdir,
   type ApprovalPolicy,
 } from "./config";
+import {
+  MIN_CODEX_VERSION,
+  compareVersions,
+  parseCodexVersionOutput,
+  probeSlashForSkillsSupported,
+  discoverSkills,
+  makeSkillInvocationFormatter,
+} from "./skills";
 
 // === Per-session state ===
 
@@ -43,6 +53,8 @@ interface CodexSessionState {
   isTerminating: boolean;
   idleWaiters: Set<() => void>;
   stopEvents: (() => void) | null;
+  /** Working directory captured at spawn time; used by discoverSkills. */
+  workingDirectory: string;
 }
 
 // === Descriptor-only factory (for conformance tests without a live server) ===
@@ -68,6 +80,7 @@ export function createCodexRuntimeDescriptorOnly(
     nonPersistedEventTypes: CODEX_NON_PERSISTED_EVENT_TYPES,
     synthesizeUserInputEvents: true,
     sendsWithoutTurnQueue: true, // no Stop hook — immediate send, never the turn queue
+    supportsSkillArgs: true,
 
     async spawn(): Promise<SessionHandle> {
       throw new Error("createCodexRuntimeDescriptorOnly: spawn not supported (no client)");
@@ -77,6 +90,16 @@ export function createCodexRuntimeDescriptorOnly(
     async send(): Promise<void> {
       throw new Error("createCodexRuntimeDescriptorOnly: send not supported (no client)");
     },
+
+    async discoverSkills(handle: SessionHandle): Promise<Skill[]> {
+      // Descriptor-only mode: no working directory — return empty list.
+      void handle;
+      return [];
+    },
+
+    // Descriptor-only mode has no live app-server to probe; default to the
+    // modern slash form (createCodexRuntime() overrides this per the probe).
+    formatSkillInvocation: makeSkillInvocationFormatter(true),
 
     async resolveResumeRef(sessionsDir, oakridgeSid): Promise<ResumeRef> {
       return resolveCodexResumeRef(sessionsDir, oakridgeSid);
@@ -165,6 +188,45 @@ export async function createCodexRuntime(
   const { client, models, stop } = await startCodexAppServer(opts);
   const { sessionsDir } = opts;
 
+  // Slash-for-skills capability probe (spec §7: verify, do not assume). Ask the running
+  // app-server directly whether it serves the native skills API (`skills/list`); its
+  // presence is the ground-truth signal that slash-for-skills is supported. Fall back to
+  // the mention form only when the method is unknown. The `codex --version` read is kept
+  // purely as an informational log alongside the probe, never as the deciding signal.
+  let slashForSkillsSupported = true;
+  try {
+    slashForSkillsSupported = await probeSlashForSkillsSupported((method, params) =>
+      client.request(method, params),
+    );
+    if (!slashForSkillsSupported) {
+      console.warn(
+        "kbbl codex: running Codex does not serve the native skills API (skills/list); " +
+          "falling back to mention form for skill invocation.",
+      );
+    }
+  } catch {
+    // The probe itself should not throw (it resolves to a boolean), but guard defensively:
+    // assume supported so a transient probe failure does not silently disable slash form.
+    slashForSkillsSupported = true;
+  }
+  // Per-runtime formatter capturing this runtime's probe result (no module global).
+  const formatSkillInvocation = makeSkillInvocationFormatter(slashForSkillsSupported);
+
+  // Informational only: log when the running version is below the pinned floor. Does not
+  // affect the invocation form — the capability probe above is authoritative.
+  try {
+    const raw = execFileSync("codex", ["--version"], { encoding: "utf8", timeout: 5000 });
+    const version = parseCodexVersionOutput(raw);
+    if (version !== null && compareVersions(version, MIN_CODEX_VERSION) < 0) {
+      console.warn(
+        `kbbl codex: running version ${version} is below the pinned minimum ` +
+          `${MIN_CODEX_VERSION}; skill behavior may differ from what was validated.`,
+      );
+    }
+  } catch {
+    // Non-fatal: version is informational only.
+  }
+
   const descriptor: RuntimeDescriptor = {
     id: "codex",
     label: "Codex",
@@ -210,6 +272,17 @@ export async function createCodexRuntime(
     nonPersistedEventTypes: CODEX_NON_PERSISTED_EVENT_TYPES,
     synthesizeUserInputEvents: true,
     sendsWithoutTurnQueue: true, // no Stop hook — immediate send, never the turn queue
+    supportsSkillArgs: true,
+
+    // --- discoverSkills ---
+    async discoverSkills(handle: SessionHandle): Promise<Skill[]> {
+      const state = getState(handle.sessionId);
+      if (!state) return [];
+      return discoverSkills(state.workingDirectory);
+    },
+
+    // --- formatSkillInvocation ---
+    formatSkillInvocation,
 
     // --- spawn ---
     async spawn(config: RuntimeConfig): Promise<SessionHandle> {
@@ -283,6 +356,7 @@ export async function createCodexRuntime(
         isTerminating: false,
         idleWaiters: new Set(),
         stopEvents: null,
+        workingDirectory: cwd,
       };
       sessions.set(oakridgeSid, state);
 
