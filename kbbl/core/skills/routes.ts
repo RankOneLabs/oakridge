@@ -25,7 +25,7 @@ export function mountSkillsRoutes(app: Hono, deps: SkillRoutesDeps): void {
     if (!isValidSid(sid)) return c.json({ error: "invalid sid" }, 400);
 
     const session = manager.get(sid);
-    if (!session) return c.json([]);
+    if (!session || session.status !== "live") return c.json([]);
 
     const skills = await aggregator.aggregate(session);
     return c.json(skills);

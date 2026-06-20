@@ -16,11 +16,13 @@ const VALID_SID = "deadbeef-cafe-4abc-8def-aaaaaaaaaaaa";
 // Minimal session stub — cast to Session since Session is a large class
 function makeSession(overrides: {
   runtimeId?: "claude-code" | "codex";
+  status?: "starting" | "live" | "compacting" | "ended";
   writeInput?: (text: string) => Promise<void>;
 } = {}): Session {
   return {
     oakridgeSid: VALID_SID,
     runtimeId: overrides.runtimeId ?? "claude-code",
+    status: overrides.status ?? "live",
     currentCcSid: null,
     currentObservedModel: null,
     writeInput: overrides.writeInput ?? (() => Promise.resolve()),
@@ -255,6 +257,16 @@ describe("GET /:sid/skills", () => {
 
   test("returns 200 [] for unknown session (not in manager)", async () => {
     const app = buildRoutesApp({ session: null });
+    const res = await app.fetch(
+      new Request(`http://kbbl.test/${VALID_SID}/skills`),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
+  });
+
+  test("returns 200 [] for a non-live (ended) session", async () => {
+    const session = makeSession({ status: "ended" });
+    const app = buildRoutesApp({ session, fixtures: true });
     const res = await app.fetch(
       new Request(`http://kbbl.test/${VALID_SID}/skills`),
     );
