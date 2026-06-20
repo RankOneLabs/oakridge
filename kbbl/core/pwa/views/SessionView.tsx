@@ -25,6 +25,7 @@ import {
   SessionTerminal,
   type SessionTerminalHandle,
 } from "../components/organisms/SessionTerminal";
+import { SkillRail } from "../components/organisms/SkillRail";
 
 type ViewMode = "conversation" | "terminal";
 
@@ -227,6 +228,7 @@ export function SessionView({
           <SessionTerminal key={sid} ref={terminalRef} />
         </div>
       )}
+      <SkillRail sid={sid} snapshot={snapshot} />
       {canInput && (
         <InputBox
           ref={bottomBarRef}
