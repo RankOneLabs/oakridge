@@ -516,6 +516,33 @@ pub async fn set_stage_instance_parked_meta(
     Ok(())
 }
 
+/// Set (or clear, with `None`) the durable external substrate reference attached
+/// to a stage instance. Kept narrow so executors can persist their handoff handle
+/// without touching status or park metadata.
+pub async fn set_stage_instance_external_ref(
+    pool: &SqlitePool,
+    id: &StageInstanceId,
+    external_ref: Option<String>,
+) -> crate::Result<()> {
+    let id_str = id.0.to_string();
+    let updated_at = Utc::now().to_rfc3339();
+    let result = sqlx::query(
+        "UPDATE stage_instance SET external_ref = ?, updated_at = ? WHERE id = ?",
+    )
+    .bind(external_ref)
+    .bind(updated_at)
+    .bind(id_str.clone())
+    .execute(pool)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(crate::Error::NotFound {
+            entity: "stage_instance".into(),
+            id: id_str,
+        });
+    }
+    Ok(())
+}
+
 pub async fn update_stage_instance_status_if_current_status(
     pool: &SqlitePool,
     id: &StageInstanceId,
@@ -1264,6 +1291,24 @@ mod tests {
         let parked = list_parked_stage_instances(&pool).await.unwrap();
         assert_eq!(parked.len(), 1);
         assert_eq!(parked[0].id, si_parked.id);
+    }
+
+    #[tokio::test]
+    async fn test_set_stage_instance_external_ref() {
+        let pool = make_test_pool().await;
+        let def = test_workflow_def();
+        insert_workflow_def(&pool, &def).await.unwrap();
+        let run = test_run(def.id);
+        insert_workflow_run(&pool, &run).await.unwrap();
+        let si = test_stage(run.id);
+        insert_stage_instance(&pool, &si).await.unwrap();
+
+        set_stage_instance_external_ref(&pool, &si.id, Some("ext-123".into()))
+            .await
+            .unwrap();
+
+        let got = get_stage_instance_by_id(&pool, &si.id).await.unwrap();
+        assert_eq!(got.external_ref.as_deref(), Some("ext-123"));
     }
 
     #[tokio::test]

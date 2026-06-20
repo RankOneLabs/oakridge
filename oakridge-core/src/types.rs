@@ -151,6 +151,31 @@ pub struct StageInstance {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct StageInstanceSummary {
+    pub stage_instance_id: StageInstanceId,
+    pub workflow_run_id: WorkflowRunId,
+    pub stage_key: StageKey,
+    pub status: StageStatus,
+    pub parked_reason: Option<String>,
+    pub parked_meta: Option<Value>,
+    pub external_ref: Option<String>,
+}
+
+impl From<&StageInstance> for StageInstanceSummary {
+    fn from(stage_instance: &StageInstance) -> Self {
+        Self {
+            stage_instance_id: stage_instance.id,
+            workflow_run_id: stage_instance.run_id,
+            stage_key: stage_instance.stage_key.clone(),
+            status: stage_instance.status,
+            parked_reason: stage_instance.parked_reason.clone(),
+            parked_meta: stage_instance.parked_meta.clone(),
+            external_ref: stage_instance.external_ref.clone(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Artifact {
     pub id: ArtifactId,
     pub run_id: WorkflowRunId,

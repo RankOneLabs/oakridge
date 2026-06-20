@@ -1,7 +1,7 @@
 pub mod session_agent;
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -13,8 +13,8 @@ use uuid::Uuid;
 use crate::db::queries;
 use crate::registry::ArtifactTypeRegistry;
 use crate::types::{
-    Artifact, ArtifactId, ArtifactTypeId, GateDecision, StageInstanceId, StageStatus,
-    WorkflowRunId,
+    Artifact, ArtifactId, ArtifactTypeId, GateDecision, StageInstanceId, StageInstanceSummary,
+    StageStatus, WorkflowRunId,
 };
 
 // ── Event ─────────────────────────────────────────────────────────────────────
@@ -87,6 +87,7 @@ pub struct StageContext {
     pub config: Value,
     /// Resolved input artifacts, keyed by input slot name.
     pub inputs: HashMap<String, Artifact>,
+    stage_instance: Arc<Mutex<StageInstanceSummary>>,
     events_tx: mpsc::Sender<ExecutorEvent>,
     db: Arc<SqlitePool>,
     registry: Arc<ArtifactTypeRegistry>,
@@ -95,23 +96,33 @@ pub struct StageContext {
 impl StageContext {
     /// Construct a `StageContext`. Called by the scheduler when launching a stage.
     pub fn new(
-        stage_instance_id: StageInstanceId,
-        workflow_run_id: WorkflowRunId,
+        stage_instance: StageInstanceSummary,
         config: Value,
         inputs: HashMap<String, Artifact>,
         events_tx: mpsc::Sender<ExecutorEvent>,
         db: Arc<SqlitePool>,
         registry: Arc<ArtifactTypeRegistry>,
     ) -> Self {
+        let stage_instance_id = stage_instance.stage_instance_id;
+        let workflow_run_id = stage_instance.workflow_run_id;
         Self {
             stage_instance_id,
             workflow_run_id,
             config,
             inputs,
+            stage_instance: Arc::new(Mutex::new(stage_instance)),
             events_tx,
             db,
             registry,
         }
+    }
+
+    /// Return the current persisted stage-instance summary visible to the executor.
+    pub fn stage_instance_summary(&self) -> StageInstanceSummary {
+        self.stage_instance
+            .lock()
+            .expect("stage_instance summary mutex poisoned")
+            .clone()
     }
 
     /// Emit an artifact.
@@ -334,6 +345,17 @@ impl StageContext {
     /// does not touch the status/event path.
     pub async fn set_parked_meta(&self, meta: Option<Value>) -> anyhow::Result<()> {
         queries::set_stage_instance_parked_meta(&self.db, &self.stage_instance_id, meta).await?;
+        Ok(())
+    }
+
+    /// Persist the external substrate reference for this stage instance and update
+    /// the in-memory summary so subsequent reads observe the new handle.
+    pub async fn set_external_ref(&self, external_ref: Option<String>) -> anyhow::Result<()> {
+        queries::set_stage_instance_external_ref(&self.db, &self.stage_instance_id, external_ref.clone()).await?;
+        self.stage_instance
+            .lock()
+            .expect("stage_instance summary mutex poisoned")
+            .external_ref = external_ref;
         Ok(())
     }
 }
@@ -560,9 +582,17 @@ mod tests {
         registry: Arc<ArtifactTypeRegistry>,
         tx: mpsc::Sender<ExecutorEvent>,
     ) -> StageContext {
+        let summary = StageInstanceSummary {
+            stage_instance_id: si_id,
+            workflow_run_id: run_id,
+            stage_key: "s1".into(),
+            status: StageStatus::Running,
+            parked_reason: None,
+            parked_meta: None,
+            external_ref: None,
+        };
         StageContext::new(
-            si_id,
-            run_id,
+            summary,
             json!({}),
             HashMap::new(),
             tx,
@@ -729,6 +759,23 @@ mod tests {
             }
             other => panic!("unexpected event: {:?}", other),
         }
+    }
+
+    #[tokio::test]
+    async fn set_external_ref_persists_and_updates_summary() {
+        let pool = make_pool().await;
+        let (run_id, si_id) = setup_run(&pool).await;
+        let registry = make_artifact_registry();
+        let (tx, _rx) = mpsc::channel(8);
+
+        let ctx = make_ctx(pool.clone(), run_id, si_id, registry, tx);
+        assert!(ctx.stage_instance_summary().external_ref.is_none());
+
+        ctx.set_external_ref(Some("ext-456".into())).await.unwrap();
+
+        let si = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+        assert_eq!(si.external_ref.as_deref(), Some("ext-456"));
+        assert_eq!(ctx.stage_instance_summary().external_ref.as_deref(), Some("ext-456"));
     }
 
     #[tokio::test]
