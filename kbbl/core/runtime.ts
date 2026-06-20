@@ -3,6 +3,7 @@ import type { Hono } from "hono";
 import type { Session, EnvelopeEvent, SpawnCmd } from "./session/session";
 import type { SessionManager } from "./session/session-manager";
 import type { ResultUsage } from "./session/types";
+import type { Skill } from "./skills/types";
 
 // === runtime identity ===
 
@@ -193,6 +194,33 @@ export interface AgentRuntime {
       getBunServer: () => import("bun").Server<unknown> | null;
     },
   ): void;
+
+  // --- skills ---
+
+  /**
+   * Return all skills available to this session. The adapter resolves
+   * project-scoped skills from its own per-session spawn state (workingDirectory
+   * captured from RuntimeConfig at spawn); callers need only pass the
+   * SessionHandle. Adapters with no skill concept omit this.
+   */
+  discoverSkills?(handle: SessionHandle): Promise<Skill[]>;
+
+  /**
+   * True when the runtime supports structured skill arguments (ArgSpec key/hint).
+   * Adapters that only support bare slash commands omit this or set it to false.
+   */
+  supportsSkillArgs?: boolean;
+
+  /**
+   * Build the backend-native trigger string for a skill invocation. This is a
+   * PURE, synchronous, IO-free function — it has no side effects and sends
+   * nothing. The caller (the registry) passes the returned string to send()
+   * through the existing session.writeInput seam (channel-push for CC per
+   * PR #277). Keeping slash/mention/frontmatter syntax here, inside the
+   * adapter, honors the spec rule that the backend-native invocation contract
+   * lives entirely in the adapter.
+   */
+  formatSkillInvocation?(skill: Skill, args: Record<string, string>): string;
 
   // --- resume ---
 
