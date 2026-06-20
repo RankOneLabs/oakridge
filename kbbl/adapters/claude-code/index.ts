@@ -246,7 +246,7 @@ export async function createClaudeCodeRuntime(
   try {
     const versionProc = Bun.spawn([opts.claudeBin, "--version"], { stdout: "pipe", stderr: "pipe" });
     const raw = await new Response(versionProc.stdout).text();
-    const m = raw.match(/^(\d+\.\d+\.\d+)/);
+    const m = raw.match(/(\d+\.\d+\.\d+)/);
     if (m) {
       const running = m[1]!;
       if (compareSemver(running, MIN_CC_VERSION) < 0) {

@@ -24,17 +24,16 @@ function parseFrontmatter(content: string): FrontmatterResult {
   if (!content.startsWith("---")) {
     return { fm: {}, body: content };
   }
-  // The closing fence must be `---` alone on its own line (followed by \n or
-  // end-of-string). indexOf("\n---") would match "---not-a-fence" or "---"
-  // inside a block scalar; the regex requires the fence to end at a line
-  // boundary so partial matches are rejected.
-  const closeMatch = /\n---(\n|$)/.exec(content.slice(3));
+  // The closing fence must be `---` alone on its own line (followed by \n,
+  // \r\n, or end-of-string). CRLF files need \r?\n on both sides; advancing
+  // by the actual match length rather than a hardcoded +4 handles either EOL.
+  const closeMatch = /\r?\n---(\r?\n|$)/.exec(content.slice(3));
   if (!closeMatch) {
     return { fm: {}, body: content };
   }
   const closeIdx = 3 + closeMatch.index;
   const fmText = content.slice(3, closeIdx).trim();
-  const body = content.slice(closeIdx + 4).trim();
+  const body = content.slice(closeIdx + closeMatch[0].length).trim();
   let fm: Record<string, unknown> = {};
   try {
     const parsed = parseYaml(fmText);
@@ -206,6 +205,7 @@ export function formatSkillInvocation(
     .map(([, v]) => v);
   const namedParts = Object.entries(args)
     .filter(([k]) => !/^\d+$/.test(k))
+    .sort(([a], [b]) => a.localeCompare(b))
     .map(([, v]) => v);
   const allParts = [...numericParts, ...namedParts].filter((v) => v.length > 0);
   return allParts.length > 0 ? `/${skill.name} ${allParts.join(" ")}` : `/${skill.name}`;
