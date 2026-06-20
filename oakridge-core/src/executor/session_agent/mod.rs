@@ -11,9 +11,10 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::{mpsc, oneshot};
 use crate::executor::{StageContext, StageHandle, ResumePayload};
+use crate::executor::prompt_config::{load_template, render_template, resolve_binding};
 use crate::registry::stage_type::StageType;
 use crate::types::{Artifact, OutputSlot, StageInstanceId, StageStatus};
-use config::{SessionAgentConfig, SessionAgentDefConfig, load_template, render_template, resolve_binding};
+use config::{SessionAgentConfig, SessionAgentDefConfig};
 
 const STAGE_INSTANCE_ID_SENTINEL: &str = "{{STAGE_INSTANCE_ID}}";
 
