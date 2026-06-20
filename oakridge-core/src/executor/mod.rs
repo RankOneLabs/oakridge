@@ -74,9 +74,10 @@ const MAX_ARTIFACT_EMIT_RETRIES: usize = 8;
 
 /// Runtime context injected into a stage when it executes.
 ///
-/// The four data fields are public so stage implementations can read the resolved
-/// config and inputs. The three substrate fields (channel, pool, registry) are
-/// private; stages interact with them only through `emit` and `set_status`.
+/// The public data fields let stage implementations read the resolved config and
+/// inputs. The private substrate fields are the event channel, DB pool, registry,
+/// and cached stage-instance summary; stages interact with them through the
+/// context helpers instead of reaching around the scheduler.
 #[derive(Clone)]
 pub struct StageContext {
     /// Unique identifier for this stage instance.
@@ -117,7 +118,7 @@ impl StageContext {
         }
     }
 
-    /// Return the current persisted stage-instance summary visible to the executor.
+    /// Return the current cached stage-instance summary visible to the executor.
     pub fn stage_instance_summary(&self) -> StageInstanceSummary {
         self.stage_instance
             .lock()
@@ -326,6 +327,15 @@ impl StageContext {
         )
         .await?;
 
+        {
+            let mut summary = self
+                .stage_instance
+                .lock()
+                .expect("stage_instance summary mutex poisoned");
+            summary.status = status;
+            summary.parked_reason = parked_reason.clone();
+        }
+
         self.events_tx
             .send(ExecutorEvent::StatusChanged {
                 instance_id: self.stage_instance_id,
@@ -344,7 +354,11 @@ impl StageContext {
     /// context (e.g. an approval `request_id`). Independent of `set_status` so it
     /// does not touch the status/event path.
     pub async fn set_parked_meta(&self, meta: Option<Value>) -> anyhow::Result<()> {
-        queries::set_stage_instance_parked_meta(&self.db, &self.stage_instance_id, meta).await?;
+        queries::set_stage_instance_parked_meta(&self.db, &self.stage_instance_id, meta.clone()).await?;
+        self.stage_instance
+            .lock()
+            .expect("stage_instance summary mutex poisoned")
+            .parked_meta = meta;
         Ok(())
     }
 

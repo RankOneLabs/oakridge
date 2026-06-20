@@ -531,7 +531,7 @@ pub async fn set_stage_instance_external_ref(
     )
     .bind(external_ref)
     .bind(updated_at)
-    .bind(id_str.clone())
+    .bind(&id_str)
     .execute(pool)
     .await?;
     if result.rows_affected() == 0 {
