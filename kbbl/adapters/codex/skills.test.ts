@@ -295,20 +295,13 @@ describe("parseSkillDir", () => {
 
 describe("discoverSkills", () => {
   let tmpDir: string;
-  let homeDir: string;
   let workDir: string;
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "kbbl-skills-discover-"));
-    homeDir = mkdirp(tmpDir, "home");
     workDir = mkdirp(tmpDir, "work");
   });
   afterEach(() => { rmSync(tmpDir, { recursive: true, force: true }); });
-
-  // We need to point the module at our fake home dir.
-  // Since discoverSkills uses homedir() internally, we can test it by
-  // using a workdir that has both .codex and .agents subdirs, and rely
-  // on the real home for home-dir skills (which won't interfere in tests).
 
   test("returns skills from workdir .codex/skills", () => {
     const repoSkillsDir = mkdirp(workDir, ".codex", "skills");

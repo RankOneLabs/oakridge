@@ -141,8 +141,8 @@ export function readAllowImplicitInvocation(skillDir: string): boolean {
       inPolicySection = true;
       continue;
     }
-    // A new top-level key ends the policy section
-    if (inPolicySection && /^[a-z]/.test(line)) {
+    // A new top-level key ends the policy section (any non-indented, non-blank line)
+    if (inPolicySection && /^\S/.test(line)) {
       inPolicySection = false;
     }
     if (inPolicySection) {

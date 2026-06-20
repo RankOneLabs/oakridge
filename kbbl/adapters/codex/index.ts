@@ -1,7 +1,7 @@
 // Codex adapter: implements the AgentRuntime interface backed by the Codex app-server.
 
 import { randomUUID } from "node:crypto";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 
 import type {
   AgentRuntime,
@@ -190,7 +190,7 @@ export async function createCodexRuntime(
   // slash-for-skills. If the version is older or unparseable, fall back to the
   // mention form ($skill-name) which has been stable across releases.
   try {
-    const raw = execSync("codex --version", { encoding: "utf8", timeout: 5000 });
+    const raw = execFileSync("codex", ["--version"], { encoding: "utf8", timeout: 5000 });
     const version = parseCodexVersionOutput(raw);
     if (version === null || compareVersions(version, MIN_CODEX_VERSION) < 0) {
       setSlashForSkillsSupported(false);
