@@ -591,6 +591,7 @@ impl DelegatedSessionHandle {
         match decision.outcome {
             crate::types::GateOutcome::Pass => {
                 session.ctx.set_status(StageStatus::Done, None).await?;
+                let _ = session.ctx.set_parked_meta(None).await;
                 session.cancelled.store(true, Ordering::SeqCst);
                 self.live_sessions
                     .lock()
@@ -1458,6 +1459,7 @@ mod tests {
 
         let si = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
         assert_eq!(si.status, crate::types::StageStatus::Done);
+        assert!(si.parked_meta.is_none());
 
         let requests: Vec<_> = capture.lock().unwrap().iter().cloned().collect();
         assert_eq!(
