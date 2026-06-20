@@ -102,6 +102,18 @@ const RuntimeSchema = z
   })
   .strict();
 
+const SkillsSchema = z
+  .object({
+    // Global skill-name denylist applied by filterSkillsForSession before the
+    // list leaves core. Names (not ids) so the operator can hide a skill class
+    // across all runtimes without knowing backend-specific id prefixes.
+    hidden: z.array(z.string()).default([]),
+    // When true, aggregate() returns FIXTURE_SKILLS instead of calling the
+    // runtime. Lets cohort-3 frontend develop against real routes with no adapter.
+    fixtures: z.boolean().default(false),
+  })
+  .strict();
+
 export const KbblConfigSchema = z
   .object({
     // .prefault({}) is the input-side default in Zod 4: when the key is
@@ -113,6 +125,7 @@ export const KbblConfigSchema = z
     retention: RetentionSchema.prefault({}),
     sessions: SessionsSchema.prefault({}),
     runtime: RuntimeSchema.prefault({}),
+    skills: SkillsSchema.prefault({}),
   })
   .strict();
 
