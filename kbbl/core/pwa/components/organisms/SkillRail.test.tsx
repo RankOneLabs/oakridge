@@ -109,6 +109,31 @@ describe("SkillRail two-tap confirm chain — with args", () => {
   });
 });
 
+describe("SkillRail confirm gate — ArgSheet cleared on gate entry", () => {
+  it("closes open ArgSheet when a confirm-gate skill is tapped", async () => {
+    // PLAIN_SKILL_WITH_ARGS opens ArgSheet on first tap (no confirm gate)
+    const PLAIN_WITH_ARGS: Skill = {
+      ...PLAIN_SKILL,
+      id: "s-plain-args",
+      name: "search",
+      args: [{ key: "query", required: true, hint: "search query" }],
+    };
+    setup([PLAIN_WITH_ARGS, CONFIRM_SKILL]);
+    render(<SkillRail sid="test-sid" snapshot={LIVE_SNAPSHOT} />);
+
+    // Open ArgSheet for the plain-with-args skill
+    fireEvent.click(screen.getByRole("button", { name: /search/ }));
+    expect(screen.getByRole("dialog")).toBeTruthy();
+
+    // Tap the confirm-gate skill — ArgSheet should close, confirming state entered
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /deploy/ }));
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByLabelText("tap to confirm")).toBeTruthy();
+  });
+});
+
 describe("SkillRail confirm gate — non-confirm skills bypass gate", () => {
   it("plain skill dispatches on first tap (no confirm gate)", async () => {
     setup([PLAIN_SKILL]);

@@ -96,7 +96,9 @@ export function SkillRail({
     if (confirmingId !== null) clearConfirming();
 
     if (skill.confirm) {
-      // First tap on a confirm-gate skill: enter confirming state with timeout revert
+      // First tap on a confirm-gate skill: enter confirming state with timeout revert.
+      // Clear any open ArgSheet so collecting and confirming can't be set simultaneously.
+      setCollecting(null);
       setConfirmingId(skill.id);
       confirmTimerRef.current = setTimeout(() => {
         setConfirmingId(null);
