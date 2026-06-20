@@ -1,0 +1,156 @@
+use std::sync::Arc;
+
+use axum::{
+    body::Bytes,
+    extract::{Path, State},
+    http::StatusCode,
+    response::IntoResponse,
+    routing::post,
+    Json, Router,
+};
+use uuid::Uuid;
+
+use crate::executor::EmitArgs;
+use crate::types::{StageInstanceId, StageStatus};
+
+use super::{revision_count_from_meta, DelegatedGateState, KbblClient, LiveSessions};
+
+#[derive(Clone)]
+struct RouteState {
+    _kbbl_client: Arc<KbblClient>,
+    live_sessions: LiveSessions,
+}
+
+pub(crate) fn emit_routes(kbbl_client: Arc<KbblClient>, live_sessions: LiveSessions) -> Router {
+    Router::new()
+        .route("/:stage_instance_id/emit/:output_name", post(emit_handler))
+        .with_state(RouteState {
+            _kbbl_client: kbbl_client,
+            live_sessions,
+        })
+}
+
+async fn emit_handler(
+    State(state): State<RouteState>,
+    Path((stage_instance_id_str, output_name)): Path<(String, String)>,
+    body: Bytes,
+) -> impl IntoResponse {
+    let stage_instance_id = match Uuid::parse_str(&stage_instance_id_str) {
+        Ok(uuid) => StageInstanceId(uuid),
+        Err(_) => return not_found(),
+    };
+
+    let live_session = {
+        let live_sessions = state.live_sessions.lock().unwrap();
+        match live_sessions.get(&stage_instance_id) {
+            Some(session) => session.clone(),
+            None => return not_found(),
+        }
+    };
+
+    let slot = match live_session
+        .config
+        .output_slots
+        .iter()
+        .find(|slot| slot.name == output_name)
+    {
+        Some(slot) => slot.clone(),
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": format!("unknown output slot: {}", output_name)
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    let body: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(body) => body,
+        Err(err) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": format!("invalid json body: {}", err)
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    let artifact = match live_session
+        .ctx
+        .emit(EmitArgs {
+            output_name: output_name.clone(),
+            artifact_type: slot.artifact_type,
+            body,
+            label: None,
+            parent_artifact_id: None,
+        })
+        .await
+    {
+        Ok(artifact) => artifact,
+        Err(err) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": err.to_string()
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    let summary = live_session.ctx.stage_instance_summary();
+    let revision_count = revision_count_from_meta(summary.parked_meta.as_ref());
+    let gate_state = DelegatedGateState::artifact_approval(
+        live_session.sid.clone(),
+        artifact.id,
+        revision_count,
+    );
+
+    if live_session
+        .ctx
+        .set_parked_meta(Some(match serde_json::to_value(&gate_state) {
+            Ok(value) => value,
+            Err(_) => return internal_error(),
+        }))
+        .await
+        .is_err()
+    {
+        return internal_error();
+    }
+
+    if live_session
+        .ctx
+        .set_status(StageStatus::Parked, Some("waiting_gate".into()))
+        .await
+        .is_err()
+    {
+        let _ = live_session.ctx.set_parked_meta(None).await;
+        return internal_error();
+    }
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "artifact_id": artifact.id.0.to_string() })),
+    )
+        .into_response()
+}
+
+fn not_found() -> axum::response::Response {
+    (
+        StatusCode::NOT_FOUND,
+        Json(serde_json::json!({"error": "unknown stage"})),
+    )
+        .into_response()
+}
+
+fn internal_error() -> axum::response::Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(serde_json::json!({"error": "internal error"})),
+    )
+        .into_response()
+}
