@@ -54,7 +54,7 @@ async fn delegated_session_is_registered_by_default() {
     let mut artifact_types = oakridge_core::registry::ArtifactTypeRegistry::new();
     register_types(&mut stage_types, &mut artifact_types);
 
-    assert!(stage_types.get("session_agent").is_some());
+    assert!(stage_types.get("session_agent").is_none());
     assert!(stage_types.get("delegated_session").is_some());
 }
 

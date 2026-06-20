@@ -14,7 +14,6 @@ pub use crate::config::Config;
 use crate::db;
 use crate::events::EventBus;
 use crate::executor::delegated_session::{kbbl_client::KbblClient, DelegatedSessionStage};
-use crate::executor::session_agent::{SessionAgent, SpawnConfig};
 use crate::registry::{ArtifactTypeRegistry, StageTypeRegistry};
 use crate::scheduler::Coordinator;
 
@@ -28,43 +27,14 @@ pub struct AppState {
 }
 
 /// Register built-in stage and artifact types.
-/// Reads session_agent config from environment variables:
-///   CLAUDE_BIN           – path to the claude binary (default: "claude")
-///   OAKRIDGE_CORE_PORT   – port the gate script calls back on (default: 8790)
-///   OAKRIDGE_DATA        – root data dir for per-instance state (default: "./data")
-///   OAKRIDGE_GATE_PATH   – absolute path to the tool-use gate script
-///                          (default: "/usr/local/bin/gate")
-///   OAKRIDGE_PROMPTS_DIR – directory containing prompt templates (default: "./prompts")
 /// Reads delegated_session config from environment variables:
 ///   KBBL_API_BASE_URL    – kbbl HTTP base URL (default: "http://127.0.0.1:8080/")
 pub fn register_types(stage: &mut StageTypeRegistry, _artifact: &mut ArtifactTypeRegistry) {
-    let port: u16 = std::env::var("OAKRIDGE_CORE_PORT")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(8790);
-
-    let spawn_config = SpawnConfig {
-        claude_bin: std::env::var("CLAUDE_BIN").unwrap_or_else(|_| "claude".to_string()),
-        port,
-        oakridge_data: std::env::var("OAKRIDGE_DATA")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|_| std::path::PathBuf::from("./data")),
-        gate_path: std::env::var("OAKRIDGE_GATE_PATH")
-            .unwrap_or_else(|_| "/usr/local/bin/gate".to_string()),
-    };
-
     let prompts_dir = std::env::var("OAKRIDGE_PROMPTS_DIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| std::path::PathBuf::from("./prompts"));
 
     let delegated_prompts_dir = prompts_dir.clone();
-    let agent = Arc::new(SessionAgent {
-        prompts_dir,
-        spawn_config,
-        live_stages: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-    });
-
-    stage.register(agent);
 
     let kbbl_base_url =
         std::env::var("KBBL_API_BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:8080/".to_string());
@@ -82,8 +52,8 @@ pub fn register_types(stage: &mut StageTypeRegistry, _artifact: &mut ArtifactTyp
 /// construct the Coordinator, run crash-recovery, and return the composed Router
 /// with static-serving fallback plus the Coordinator Arc.
 ///
-/// Production code passes `register_types` (registers the built-in `session_agent`
-/// and `delegated_session` stage types); tests pass closures that inject dummy
+/// Production code passes `register_types` (registers the built-in
+/// `delegated_session` stage type); tests pass closures that inject dummy
 /// stage/artifact types without modifying production paths.
 pub async fn boot<F>(cfg: Config, register_fn: F) -> anyhow::Result<(Router, Arc<Coordinator>)>
 where

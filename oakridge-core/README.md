@@ -4,7 +4,7 @@ A generic workflow-orchestration **substrate**. It models a workflow as a direct
 graph of typed stages connected by artifact-passing edges, runs instances of those
 graphs to completion, persists everything to SQLite, and streams progress over SSE.
 
-The substrate is deliberately domain-agnostic: aside from the bundled `session_agent`
+The substrate is deliberately domain-agnostic: aside from the bundled `delegated_session`
 stage type, it ships **zero** built-in stage or artifact types. A consumer binary supplies
 additional behavior by registering its own `StageType` and `ArtifactType` implementations
 at boot.
@@ -137,10 +137,14 @@ let (app, coordinator) = boot(Config::from_env()?, |stages: &mut StageTypeRegist
   an unknown id fails that stage (and terminates the run) rather than hanging it.
 
 `boot` also runs migrations and crash recovery. The bundled binary passes
-`register_types` as its `register_fn`, which registers the built-in `session_agent`
-and `delegated_session` stage types. `delegated_session` keeps artifact approval
-and merge confirmation as distinct gate steps, so a kbbl session ending is not
+`register_types` as its `register_fn`, which registers the built-in
+`delegated_session` stage type. `delegated_session` keeps artifact approval and
+merge confirmation as distinct gate steps, so a kbbl session ending is not
 itself treated as stage completion.
+
+Delegated agents receive their runtime MCP server configuration from kbbl or a
+workdir-local `.mcp.json`, not from oakridge-core generating per-instance Claude
+config.
 
 ## Persistence & migrations
 
