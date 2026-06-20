@@ -1,4 +1,4 @@
-/// Opacity check: no direct Claude Code concept leaks outside `src/`.
+/// Opacity check: no direct Claude Code concept leaks under `src/`.
 ///
 /// Scans all `.rs` source files under `src/` and asserts that none of the
 /// following direct-execution tokens appear:
