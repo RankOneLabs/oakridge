@@ -1,13 +1,16 @@
 # oakridge
 <!-- ci-probe: cohort-5 triage -->
 
-Multi-agent workspace built on jig (separate repo, agent kit) and kbbl (operator surface for CLI coding agents). The workspace layer is in design; today, oakridge is a top-level monorepo containing kbbl as its operational sub-package.
+Multi-agent workspace built on jig (separate repo, agent kit), kbbl (operator
+surface for CLI coding agents), and oakridge-core (workflow orchestration that can
+delegate agent execution to kbbl).
 
 ## Layout
 
 ```text
 oakridge/
-├── kbbl/                  # operator surface for CLI coding agents (v0, shipping)
+├── kbbl/                  # operator surface for CLI coding agents
+├── oakridge-core/         # workflow substrate with kbbl delegated execution
 ├── legit-biz-club/        # workspace layer (v1, complete)
 ├── docs/                  # public-facing documentation (placeholder)
 └── comms/                 # internal architecture memos and specs (gitignored)
@@ -15,7 +18,13 @@ oakridge/
 
 ## Sub-packages
 
-- **kbbl** — the operator surface. Drives one or more CLI coding agents (Claude Code today; runtime-agnostic by design) from a tablet- or phone-friendly PWA over Tailscale. Standalone; works without the workspace layer. See `kbbl/README.md`.
+- **kbbl** — the operator surface. Drives one or more CLI coding agents
+  (`claude-code` by default, `codex` opt-in) from a tablet- or phone-friendly PWA
+  over Tailscale. Standalone; works without the workflow layer. See
+  `kbbl/README.md`.
+- **oakridge-core** — the workflow substrate. Its bundled `delegated_session` stage
+  starts and controls kbbl sessions for workflow runs while preserving direct kbbl
+  session launching. See `oakridge-core/README.md`.
 - **legit-biz-club** — the workspace layer (multi-agent collaboration over a shared artifact). v1 build complete — all five phases (foundation, incremental coordination, convergence, evals + memory commit, study harness) shipped on `main`. Python library; no CLI. See `legit-biz-club/README.md`.
 
 ## Quick start
@@ -28,6 +37,21 @@ bun install
 ```
 
 Defaults to `127.0.0.1:8788`. See `kbbl/README.md` for tablet/phone exposure, dev mode, compaction config, and security posture.
+
+For workflow-driven delegated sessions, run kbbl and oakridge-core together:
+
+```bash
+# Terminal 1
+./kbbl/scripts/kbbl-start /path/to/your/repo
+
+# Terminal 2
+cd oakridge-core
+cargo run
+```
+
+Then create workflow definitions through oakridge-core with
+`stage_type: "delegated_session"` and `execution_service_url:
+"http://127.0.0.1:8788"`.
 
 ## Development
 

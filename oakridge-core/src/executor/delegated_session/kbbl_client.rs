@@ -131,6 +131,7 @@ impl KbblClient {
         sid: &str,
         request: SendInputRequest,
     ) -> Result<AckResponse, KbblClientError> {
+        let sid = path_segment_encode(sid);
         self.request_json(reqwest::Method::POST, &format!("{sid}/input"), &request)
             .await
     }
@@ -140,6 +141,7 @@ impl KbblClient {
         sid: &str,
         request: SetYoloRequest,
     ) -> Result<AckResponse, KbblClientError> {
+        let sid = path_segment_encode(sid);
         self.request_json(reqwest::Method::POST, &format!("{sid}/yolo"), &request)
             .await
     }
@@ -149,11 +151,13 @@ impl KbblClient {
         sid: &str,
         request: ResolveApprovalRequest,
     ) -> Result<AckResponse, KbblClientError> {
+        let sid = path_segment_encode(sid);
         self.request_json(reqwest::Method::POST, &format!("{sid}/approval"), &request)
             .await
     }
 
     pub async fn stop_session(&self, sid: &str) -> Result<StopSessionResponse, KbblClientError> {
+        let sid = path_segment_encode(sid);
         self.delete_json(&format!("sessions/{sid}")).await
     }
 
@@ -162,6 +166,7 @@ impl KbblClient {
         sid: &str,
         since: i64,
     ) -> Result<EventsSinceResponse, KbblClientError> {
+        let sid = path_segment_encode(sid);
         self.get_json(&format!("{sid}/events?since={since}")).await
     }
 
@@ -258,6 +263,18 @@ fn extract_error(body: &str) -> Option<String> {
     } else {
         Some(body.trim().to_string())
     }
+}
+
+fn path_segment_encode(value: &str) -> String {
+    value
+        .bytes()
+        .flat_map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                vec![byte as char]
+            }
+            _ => format!("%{byte:02X}").chars().collect(),
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -690,5 +707,13 @@ mod tests {
     fn client_construction_accepts_prefixed_base_urls() {
         let client = KbblClient::new("http://example.com/api").unwrap();
         assert_eq!(client.base_url.as_str(), "http://example.com/api/");
+    }
+
+    #[test]
+    fn path_segment_encode_escapes_opaque_session_ids() {
+        assert_eq!(
+            path_segment_encode("sid/with?query#fragment.."),
+            "sid%2Fwith%3Fquery%23fragment.."
+        );
     }
 }

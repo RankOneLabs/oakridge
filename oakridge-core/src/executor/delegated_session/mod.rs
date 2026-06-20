@@ -337,6 +337,7 @@ impl StageType for DelegatedSessionStage {
         }
 
         let summary = ctx.stage_instance_summary();
+        let recovered_parked = matches!(summary.status, StageStatus::Parked);
         let stage_instance_id = ctx.stage_instance_id;
         let mut created_session = false;
 
@@ -354,9 +355,24 @@ impl StageType for DelegatedSessionStage {
             }
         };
 
+        let cancelled = self.insert_live_session(
+            stage_instance_id,
+            ctx.clone(),
+            sid.clone(),
+            config.clone(),
+        );
+
+        if !recovered_parked {
+            if let Err(err) = ctx.set_status(StageStatus::Running, None).await {
+                self.cleanup_live_session(stage_instance_id, &sid, Some(&cancelled))
+                    .await;
+                return Err(err);
+            }
+        }
+
         if config.yolo {
             if let Err(err) = self.apply_yolo(&sid).await {
-                self.cleanup_live_session(stage_instance_id, &sid, None)
+                self.cleanup_live_session(stage_instance_id, &sid, Some(&cancelled))
                     .await;
                 return Err(err);
             }
@@ -367,18 +383,12 @@ impl StageType for DelegatedSessionStage {
                 .send_initial_prompt(&sid, &config.rendered_prompt)
                 .await
             {
-                self.cleanup_live_session(stage_instance_id, &sid, None)
+                self.cleanup_live_session(stage_instance_id, &sid, Some(&cancelled))
                     .await;
                 return Err(err);
             }
         }
 
-        let cancelled = self.insert_live_session(
-            stage_instance_id,
-            ctx.clone(),
-            sid.clone(),
-            config.clone(),
-        );
         self.spawn_observer(
             ctx.clone(),
             stage_instance_id,
@@ -390,12 +400,6 @@ impl StageType for DelegatedSessionStage {
                 recovery_last_seen
             },
         );
-
-        if let Err(err) = ctx.set_status(StageStatus::Running, None).await {
-            self.cleanup_live_session(stage_instance_id, &sid, Some(&cancelled))
-                .await;
-            return Err(err);
-        }
 
         Ok(Box::new(DelegatedSessionHandle {
             stage_instance_id,
@@ -577,6 +581,7 @@ impl DelegatedSessionHandle {
                     .ctx
                     .set_parked_meta(Some(serde_json::to_value(&updated_state)?))
                     .await?;
+                session.ctx.set_status(StageStatus::Running, None).await?;
                 Ok(())
             }
         }
@@ -1446,6 +1451,24 @@ mod tests {
             .unwrap();
         assert_eq!(meta.gate, DelegatedGate::ArtifactApproval);
         assert_eq!(meta.revision_count, 2);
+        assert_eq!(si.status, crate::types::StageStatus::Running);
+
+        let app = stage.http_routes().unwrap();
+        let request = Request::builder()
+            .method("POST")
+            .uri(format!("/{}/emit/out", si_id.0))
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"content":"revised"}"#))
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let artifact_id = ArtifactId(
+            Uuid::parse_str(payload["artifact_id"].as_str().unwrap()).unwrap(),
+        );
 
         handle
             .resume(ResumePayload::GateDecision {

@@ -128,7 +128,10 @@ impl StageContext {
         }
     }
 
-    /// Return the current cached stage-instance summary visible to the executor.
+    /// Return the cached stage-instance summary visible to the executor.
+    ///
+    /// This snapshot is updated by `StageContext` helpers. Scheduler-owned writes
+    /// can make it temporarily stale relative to the persisted row.
     pub fn stage_instance_summary(&self) -> StageInstanceSummary {
         self.stage_instance_summary_mut().clone()
     }

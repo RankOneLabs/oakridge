@@ -51,7 +51,9 @@ fn no_direct_claude_concepts_leak_into_src() {
 fn scan_dir(dir: &Path, violations: &mut Vec<(String, &'static str)>) {
     let entries = std::fs::read_dir(dir)
         .unwrap_or_else(|e| panic!("failed to read_dir {}: {}", dir.display(), e));
-    for entry in entries.flatten() {
+    for entry in entries {
+        let entry =
+            entry.unwrap_or_else(|e| panic!("failed to read entry in {}: {}", dir.display(), e));
         let path = entry.path();
         if path.is_dir() {
             scan_dir(&path, violations);

@@ -41,7 +41,9 @@ Set `runtime.codex.enabled = true` in `kbbl/config.json` and restart the server:
 }
 ```
 
-`default` stays `claude-code` — new sessions always use CC in v0. Runtime selection via the PWA form or `POST /sessions` is a planned follow-up (see `docs/codex-followups.md` §6).
+`default` stays `claude-code`. Direct sessions can be launched from the PWA, and
+trusted local callers can choose a runtime with `POST /sessions` by passing
+`runtime: "claude-code"` or `runtime: "codex"`.
 
 ### Not in v0
 
@@ -88,6 +90,20 @@ The primary flow is `./scripts/kbbl-start` in a terminal — that's the *server*
 
 Ctrl-C stops the server; all live agent subprocesses die with it. Ended sessions remain readable via their on-disk JSONL the next time the server starts.
 
+### Oakridge delegated sessions
+
+oakridge-core can also create kbbl sessions as workflow execution substrates. Those
+sessions use the same runtime adapters and operator approval UI as directly launched
+sessions, but oakridge-core supplies `artifact_id = <stage_instance_id>` so the session
+can be correlated with a workflow stage.
+
+This does not replace direct kbbl usage. The two supported launch paths are:
+
+- Direct session: operator uses the PWA or calls `POST /sessions`.
+- Delegated workflow session: oakridge-core calls `POST /sessions`, sends the workflow
+  prompt with `POST /:sid/input`, and later tears the session down with
+  `DELETE /sessions/:sid` when the workflow reaches its terminal gate.
+
 ### Optional: cgroup limits via systemd-run
 
 If you want to bound resource use (shared box, or a box hosting other workloads), wrap the invocation:
@@ -105,7 +121,11 @@ Stop with `systemctl --user stop kbbl`. Not needed on a dedicated workstation.
 ### Sessions
 
 - `GET /sessions` — list live sessions (add `?include=archived` to fold in on-disk JSONL)
-- `POST /sessions` — create a session; body: `{ workdir?, resume_from?, name?, artifact_id?, model? }`. With `resume_from`, forks an ended session.
+- `POST /sessions` — create a session; body:
+  `{ workdir?, resume_from?, name?, artifact_id?, model?, runtime? }`.
+  `runtime` accepts `"claude-code"` or `"codex"`; omitted uses the configured default.
+  With `resume_from`, forks an ended session. The response is a session snapshot whose
+  session id field is `sid`.
 - `DELETE /sessions/:sid` — kill a live session (`?purge=true` also deletes the transcript)
 - `GET /artifacts/:artifactId/sessions` — list sessions tagged with a given workspace-layer artifact id
 
