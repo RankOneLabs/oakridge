@@ -5,9 +5,13 @@ export function useSkills(sid: string): Skill[] {
   const query = useQuery({
     queryKey: ["skills", sid],
     queryFn: async (): Promise<Skill[]> => {
-      const res = await fetch(`/${encodeURIComponent(sid)}/skills`);
-      if (!res.ok) return [];
-      return (await res.json()) as Skill[];
+      try {
+        const res = await fetch(`/${encodeURIComponent(sid)}/skills`);
+        if (!res.ok) return [];
+        return (await res.json()) as Skill[];
+      } catch {
+        return [];
+      }
     },
     staleTime: 30_000,
     refetchOnWindowFocus: true,

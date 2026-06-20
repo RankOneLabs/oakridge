@@ -4441,6 +4441,12 @@ body {
   z-index: 9;
 }
 
+@media (min-width: 1024px) {
+  .skill-rail--bottom {
+    max-width: 1200px;
+  }
+}
+
 .skill-rail--right {
   position: fixed;
   right: 0;
@@ -4551,6 +4557,12 @@ body {
 
 .skill-btn--dispatching {
   opacity: 0.7;
+}
+
+/* Raise specificity above .skill-btn:disabled so cursor: wait wins while
+   the button is disabled-during-dispatch. */
+.skill-btn--dispatching,
+.skill-btn--dispatching:disabled {
   cursor: wait;
 }
 

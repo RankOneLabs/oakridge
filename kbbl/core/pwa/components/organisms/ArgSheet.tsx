@@ -18,10 +18,15 @@ export function ArgSheet({
     .filter((a) => a.required)
     .every((a) => args[a.key]?.trim());
 
+  const titleId = `arg-sheet-title-${skill.id}`;
+
   return (
     <div className="arg-sheet">
       <div className="arg-sheet__backdrop" onClick={onCancel} />
       <form
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
         className="arg-sheet__panel"
         onSubmit={(e) => {
           e.preventDefault();
@@ -29,7 +34,7 @@ export function ArgSheet({
         }}
       >
         <div className="arg-sheet__header">
-          <span className="arg-sheet__title">{skill.name}</span>
+          <span id={titleId} className="arg-sheet__title">{skill.name}</span>
           <button
             type="button"
             className="arg-sheet__close"

@@ -54,6 +54,8 @@ export function SkillRail({
     setDispatchingId(skill.id);
     try {
       await invokeMutation.mutateAsync({ skill_id: skill.id, args });
+    } catch {
+      // invokeMutation.error carries the rejection for any UI that surfaces it
     } finally {
       setDispatchingId(null);
     }
