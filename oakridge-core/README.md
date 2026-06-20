@@ -73,6 +73,7 @@ To run delegated workflow stages locally, start kbbl first, then oakridge-core:
 ./kbbl/scripts/kbbl-start /path/to/workdir
 
 # Terminal 2, from oakridge-core/
+KBBL_API_BASE_URL=http://127.0.0.1:8788 \
 cargo run
 ```
 
@@ -157,24 +158,27 @@ is:
    the kbbl session with `DELETE /sessions/:sid`.
 
 A workflow node uses the normal `POST /workflow_defs` graph shape with
-`stage_type: "delegated_session"`:
+`stage_type: "delegated_session"`. The kbbl base URL is process config from
+`KBBL_API_BASE_URL`; it is not a per-stage config field. `prompt_template_path` is
+relative to `OAKRIDGE_PROMPTS_DIR`:
 
 ```json
 {
   "stage_type": "delegated_session",
   "config": {
     "runtime": "claude-code",
-    "execution_service_url": "http://127.0.0.1:8788",
-    "prompt_template_path": "prompts/stage.md",
-    "slot_bindings": {},
-    "workdir": { "context": { "path": "workdir" } },
+    "prompt_template_path": "stage.md",
+    "slot_bindings": {
+      "TASK": { "from": "input", "input_name": "task", "path": "/summary" }
+    },
+    "workdir": { "from": "context", "path": "/workdir" },
     "session_name": "stage name",
     "model": null,
     "pre_authorized_tools": [],
     "yolo": false
   },
-  "inputs": [],
-  "outputs": ["out"]
+  "inputs": [{ "name": "task", "artifact_type": "text", "optional": false }],
+  "outputs": [{ "name": "out", "artifact_type": "text" }]
 }
 ```
 

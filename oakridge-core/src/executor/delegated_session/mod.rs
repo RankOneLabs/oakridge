@@ -1488,6 +1488,21 @@ mod tests {
         assert_eq!(meta.gate, DelegatedGate::MergeConfirmation);
         assert_eq!(si.status, crate::types::StageStatus::Parked);
 
+        let app = stage.http_routes().unwrap();
+        let request = Request::builder()
+            .method("POST")
+            .uri(format!("/{}/emit/out", si_id.0))
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"content":"late"}"#))
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let si = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+        let unchanged_meta: DelegatedGateState =
+            serde_json::from_value(si.parked_meta.clone().unwrap()).unwrap();
+        assert_eq!(unchanged_meta.gate, DelegatedGate::MergeConfirmation);
+        assert_eq!(unchanged_meta.artifact_id, artifact_id);
+
         handle
             .resume(ResumePayload::GateDecision {
                 decision: GateDecision {

@@ -13,7 +13,7 @@ use uuid::Uuid;
 use crate::executor::EmitArgs;
 use crate::types::{StageInstanceId, StageStatus};
 
-use super::{revision_count_from_meta, DelegatedGateState, KbblClient, LiveSessions};
+use super::{revision_count_from_meta, DelegatedGate, DelegatedGateState, KbblClient, LiveSessions};
 
 #[derive(Clone)]
 struct RouteState {
@@ -47,6 +47,24 @@ async fn emit_handler(
             None => return not_found(),
         }
     };
+
+    let summary = live_session.ctx.stage_instance_summary();
+    let current_gate = summary
+        .parked_meta
+        .as_ref()
+        .and_then(|meta| serde_json::from_value::<DelegatedGateState>(meta.clone()).ok());
+    if matches!(
+        current_gate.as_ref().map(|gate_state| &gate_state.gate),
+        Some(DelegatedGate::MergeConfirmation)
+    ) {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": "stage is awaiting merge confirmation"
+            })),
+        )
+            .into_response();
+    }
 
     let slot = match live_session
         .config
@@ -102,7 +120,6 @@ async fn emit_handler(
         }
     };
 
-    let summary = live_session.ctx.stage_instance_summary();
     let revision_count = revision_count_from_meta(summary.parked_meta.as_ref());
     let gate_state = DelegatedGateState::artifact_approval(
         live_session.sid.clone(),

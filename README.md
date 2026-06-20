@@ -46,12 +46,13 @@ For workflow-driven delegated sessions, run kbbl and oakridge-core together:
 
 # Terminal 2
 cd oakridge-core
+KBBL_API_BASE_URL=http://127.0.0.1:8788 \
 cargo run
 ```
 
 Then create workflow definitions through oakridge-core with
-`stage_type: "delegated_session"` and `execution_service_url:
-"http://127.0.0.1:8788"`.
+`stage_type: "delegated_session"`. oakridge-core reads the kbbl base URL from
+`KBBL_API_BASE_URL`.
 
 ## Development
 

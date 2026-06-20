@@ -28,7 +28,7 @@ pub struct AppState {
 
 /// Register built-in stage and artifact types.
 /// Reads delegated_session config from environment variables:
-///   KBBL_API_BASE_URL    – kbbl HTTP base URL (default: "http://127.0.0.1:8080/")
+///   KBBL_API_BASE_URL    – kbbl HTTP base URL (default: "http://127.0.0.1:8788/")
 pub fn register_types(stage: &mut StageTypeRegistry, _artifact: &mut ArtifactTypeRegistry) {
     let prompts_dir = std::env::var("OAKRIDGE_PROMPTS_DIR")
         .map(std::path::PathBuf::from)
@@ -37,7 +37,7 @@ pub fn register_types(stage: &mut StageTypeRegistry, _artifact: &mut ArtifactTyp
     let delegated_prompts_dir = prompts_dir.clone();
 
     let kbbl_base_url =
-        std::env::var("KBBL_API_BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:8080/".to_string());
+        std::env::var("KBBL_API_BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:8788/".to_string());
     let kbbl_client = KbblClient::new(kbbl_base_url.clone())
         .unwrap_or_else(|err| panic!("invalid KBBL_API_BASE_URL {kbbl_base_url:?}: {err}"));
     let delegated = Arc::new(DelegatedSessionStage::new(
