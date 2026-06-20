@@ -625,9 +625,6 @@ fn failure_reason_from_events(sid: &str, events: &[kbbl_client::SessionEvent]) -
             "runtime_error" | "runtime-error" => {
                 Some(format!("kbbl session {} emitted runtime_error", sid))
             }
-            "subprocess_exited" | "session-ended" | "ended" => {
-                Some(format!("kbbl session {} ended unexpectedly", sid))
-            }
             _ => None,
         })
 }
@@ -888,17 +885,15 @@ mod tests {
     }
 
     #[test]
-    fn failure_reason_treats_subprocess_exit_as_terminal_failure() {
+    fn failure_reason_ignores_terminal_events() {
         let events = vec![kbbl_client::SessionEvent {
             id: 7,
-            event_type: "subprocess_exited".into(),
+            event_type: "session-ended".into(),
             ts: "2026-01-01T00:00:00Z".into(),
             payload: json!({}),
         }];
 
-        let reason = failure_reason_from_events("sid-123", &events).unwrap();
-        assert!(reason.contains("sid-123"));
-        assert!(reason.contains("ended unexpectedly"));
+        assert_eq!(failure_reason_from_events("sid-123", &events), None);
     }
 
     #[test]
