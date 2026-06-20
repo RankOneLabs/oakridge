@@ -44,6 +44,12 @@ import {
   writeCcMcpConfig,
   writeCcSettings,
 } from "./spawn";
+import {
+  discoverSkills as discoverSkillsFromDisk,
+  formatSkillInvocation,
+  MIN_CC_VERSION,
+} from "./skills";
+import type { Skill } from "../../core/skills/types";
 
 // Resolve the readiness gate (see CcHandle.ready) on this fallback even if CC
 // produces no PTY output, so send() can never hang on a silent/broken launch.
@@ -209,6 +215,17 @@ export function updateCcTurnTracker(
   }
 }
 
+/** Lexicographic semver comparison: -1, 0, or 1. Major.minor.patch only. */
+function compareSemver(a: string, b: string): -1 | 0 | 1 {
+  const parse = (s: string) => s.split(".").map((n) => parseInt(n, 10));
+  const [a1 = 0, a2 = 0, a3 = 0] = parse(a);
+  const [b1 = 0, b2 = 0, b3 = 0] = parse(b);
+  if (a1 !== b1) return a1 < b1 ? -1 : 1;
+  if (a2 !== b2) return a2 < b2 ? -1 : 1;
+  if (a3 !== b3) return a3 < b3 ? -1 : 1;
+  return 0;
+}
+
 /**
  * Constructs the Claude Code adapter. The async factory writes the CC
  * settings.json (so the spawn flag `--settings <path>` resolves) and
@@ -223,6 +240,25 @@ export async function createClaudeCodeRuntime(
     dataDir: opts.dataDir,
     port: opts.port,
   });
+
+  // Non-fatal CC version check: log a warning when the running binary is older
+  // than the version at which the slash+frontmatter behavior was validated.
+  try {
+    const versionProc = Bun.spawn([opts.claudeBin, "--version"], { stdout: "pipe", stderr: "pipe" });
+    const raw = await new Response(versionProc.stdout).text();
+    const m = raw.match(/^(\d+\.\d+\.\d+)/);
+    if (m) {
+      const running = m[1]!;
+      if (compareSemver(running, MIN_CC_VERSION) < 0) {
+        console.warn(
+          `kbbl: running CC version ${running} is older than validated minimum ${MIN_CC_VERSION}; ` +
+            "skill slash+frontmatter behavior may differ — upgrade claude to avoid surprises",
+        );
+      }
+    }
+  } catch {
+    // best-effort — never block startup on a version check failure
+  }
 
   // Resolve bun binary and channel-server path once at factory time.
   // The channel-server is co-located in the same adapter directory as this
@@ -774,6 +810,17 @@ export async function createClaudeCodeRuntime(
         observedModel,
       };
     },
+
+    // --- AgentRuntime.skills ---
+    supportsSkillArgs: true,
+
+    async discoverSkills(handle: SessionHandle): Promise<Skill[]> {
+      const h = procs.get(handle.sessionId);
+      const cwd = h?.cwd ?? "";
+      return discoverSkillsFromDisk(cwd);
+    },
+
+    formatSkillInvocation,
 
     // --- AgentRuntime.classifyEvent ---
     classifyEvent: classifyCcEvent,
