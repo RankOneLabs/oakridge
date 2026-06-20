@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Component, Path};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -103,9 +103,32 @@ pub fn render_template(
 // ── load_template ─────────────────────────────────────────────────────────────
 
 pub fn load_template(prompts_dir: &Path, rel_path: &str) -> anyhow::Result<String> {
+    let rel_path = validate_relative_template_path(rel_path)?;
     let path = prompts_dir.join(rel_path);
     std::fs::read_to_string(&path)
         .map_err(|e| anyhow::anyhow!("failed to load template '{}': {}", path.display(), e))
+}
+
+fn validate_relative_template_path(rel_path: &str) -> anyhow::Result<&Path> {
+    let path = Path::new(rel_path);
+    if path.is_absolute() {
+        return Err(anyhow::anyhow!(
+            "template path must be relative to the prompts directory"
+        ));
+    }
+
+    for component in path.components() {
+        match component {
+            Component::ParentDir | Component::Prefix(_) | Component::RootDir => {
+                return Err(anyhow::anyhow!(
+                    "template path must not escape the prompts directory"
+                ));
+            }
+            Component::CurDir | Component::Normal(_) => {}
+        }
+    }
+
+    Ok(path)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -294,5 +317,21 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let res = load_template(dir.path(), "nope.md");
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn load_template_rejects_traversal() {
+        let dir = tempfile::tempdir().unwrap();
+        let res = load_template(dir.path(), "../secrets.md");
+        assert!(res.is_err());
+        assert!(res.unwrap_err().to_string().contains("prompts directory"));
+    }
+
+    #[test]
+    fn load_template_rejects_absolute_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let res = load_template(dir.path(), "/etc/passwd");
+        assert!(res.is_err());
+        assert!(res.unwrap_err().to_string().contains("relative"));
     }
 }
