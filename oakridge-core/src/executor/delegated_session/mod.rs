@@ -377,7 +377,9 @@ fn failure_reason_from_events(sid: &str, events: &[kbbl_client::SessionEvent]) -
     events
         .iter()
         .find_map(|event| match event.event_type.as_str() {
-            "runtime-error" => Some(format!("kbbl session {} emitted runtime-error", sid)),
+            "runtime_error" | "runtime-error" => {
+                Some(format!("kbbl session {} emitted runtime_error", sid))
+            }
             "subprocess_exited" | "session-ended" | "ended" => {
                 Some(format!("kbbl session {} ended unexpectedly", sid))
             }
@@ -607,6 +609,20 @@ mod tests {
         let reason = failure_reason_from_events("sid-123", &events).unwrap();
         assert!(reason.contains("sid-123"));
         assert!(reason.contains("ended unexpectedly"));
+    }
+
+    #[test]
+    fn failure_reason_treats_runtime_error_as_terminal_failure() {
+        let events = vec![kbbl_client::SessionEvent {
+            id: 8,
+            event_type: "runtime_error".into(),
+            ts: "2026-01-01T00:00:00Z".into(),
+            payload: json!({}),
+        }];
+
+        let reason = failure_reason_from_events("sid-123", &events).unwrap();
+        assert!(reason.contains("sid-123"));
+        assert!(reason.contains("runtime_error"));
     }
 
     #[tokio::test]
