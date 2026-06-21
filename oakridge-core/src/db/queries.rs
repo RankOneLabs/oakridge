@@ -54,6 +54,7 @@ struct StageInstanceRow {
     config: String,
     parked_reason: Option<String>,
     parked_meta: Option<String>,
+    terminal_meta: Option<String>,
     external_ref: Option<String>,
     started_at: Option<String>,
     ended_at: Option<String>,
@@ -154,6 +155,7 @@ fn row_to_stage_instance(r: StageInstanceRow) -> crate::Result<StageInstance> {
         config: serde_json::from_str(&r.config)?,
         parked_reason: r.parked_reason,
         parked_meta: r.parked_meta.map(|s| serde_json::from_str(&s)).transpose()?,
+        terminal_meta: r.terminal_meta.map(|s| serde_json::from_str(&s)).transpose()?,
         external_ref: r.external_ref,
         started_at: opt_dt(r.started_at)?,
         ended_at: opt_dt(r.ended_at)?,
@@ -404,29 +406,31 @@ pub async fn insert_stage_instance(pool: &SqlitePool, s: &StageInstance) -> crat
     let status = enum_to_str(&s.status)?;
     let config = serde_json::to_string(&s.config)?;
     let parked_meta = s.parked_meta.as_ref().map(serde_json::to_string).transpose()?;
+    let terminal_meta = s.terminal_meta.as_ref().map(serde_json::to_string).transpose()?;
     let started_at = s.started_at.map(|t| t.to_rfc3339());
     let ended_at = s.ended_at.map(|t| t.to_rfc3339());
     let created_at = s.created_at.to_rfc3339();
     let updated_at = s.updated_at.to_rfc3339();
-    sqlx::query!(
+    sqlx::query(
         "INSERT INTO stage_instance \
-         (id, run_id, stage_key, stage_type, status, config, parked_reason, parked_meta, external_ref, \
+         (id, run_id, stage_key, stage_type, status, config, parked_reason, parked_meta, terminal_meta, external_ref, \
           started_at, ended_at, created_at, updated_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        id,
-        run_id,
-        s.stage_key,
-        s.stage_type,
-        status,
-        config,
-        s.parked_reason,
-        parked_meta,
-        s.external_ref,
-        started_at,
-        ended_at,
-        created_at,
-        updated_at,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
+    .bind(id)
+    .bind(run_id)
+    .bind(s.stage_key.clone())
+    .bind(s.stage_type.clone())
+    .bind(status)
+    .bind(config)
+    .bind(s.parked_reason.clone())
+    .bind(parked_meta)
+    .bind(terminal_meta)
+    .bind(s.external_ref.clone())
+    .bind(started_at)
+    .bind(ended_at)
+    .bind(created_at)
+    .bind(updated_at)
     .execute(pool)
     .await?;
     Ok(())
@@ -437,13 +441,12 @@ pub async fn get_stage_instance_by_id(
     id: &StageInstanceId,
 ) -> crate::Result<StageInstance> {
     let id_str = id.0.to_string();
-    let row = sqlx::query_as!(
-        StageInstanceRow,
-        "SELECT id, run_id, stage_key, stage_type, status, config, parked_reason, parked_meta, external_ref, \
+    let row = sqlx::query_as::<_, StageInstanceRow>(
+        "SELECT id, run_id, stage_key, stage_type, status, config, parked_reason, parked_meta, terminal_meta, external_ref, \
          started_at, ended_at, created_at, updated_at \
          FROM stage_instance WHERE id = ?",
-        id_str,
     )
+    .bind(&id_str)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| crate::Error::NotFound {
@@ -458,6 +461,28 @@ pub async fn update_stage_instance_status(
     id: &StageInstanceId,
     status: StageStatus,
     parked_reason: Option<String>,
+    terminal_meta: Option<Value>,
+    started_at: Option<DateTime<Utc>>,
+    ended_at: Option<DateTime<Utc>>,
+) -> crate::Result<()> {
+    update_stage_instance_status_with_terminal_meta(
+        pool,
+        id,
+        status,
+        parked_reason,
+        terminal_meta,
+        started_at,
+        ended_at,
+    )
+    .await
+}
+
+pub async fn update_stage_instance_status_with_terminal_meta(
+    pool: &SqlitePool,
+    id: &StageInstanceId,
+    status: StageStatus,
+    parked_reason: Option<String>,
+    terminal_meta: Option<Value>,
     started_at: Option<DateTime<Utc>>,
     ended_at: Option<DateTime<Utc>>,
 ) -> crate::Result<()> {
@@ -466,17 +491,19 @@ pub async fn update_stage_instance_status(
     let updated_at = Utc::now().to_rfc3339();
     let started_at_str = started_at.map(|t| t.to_rfc3339());
     let ended_at_str = ended_at.map(|t| t.to_rfc3339());
-    let result = sqlx::query!(
+    let terminal_meta = terminal_meta.as_ref().map(serde_json::to_string).transpose()?;
+    let result = sqlx::query(
         "UPDATE stage_instance \
-         SET status = ?, parked_reason = ?, started_at = ?, ended_at = ?, updated_at = ? \
+         SET status = ?, parked_reason = ?, terminal_meta = ?, started_at = ?, ended_at = ?, updated_at = ? \
          WHERE id = ?",
-        status_str,
-        parked_reason,
-        started_at_str,
-        ended_at_str,
-        updated_at,
-        id_str,
     )
+    .bind(status_str)
+    .bind(parked_reason)
+    .bind(terminal_meta)
+    .bind(started_at_str)
+    .bind(ended_at_str)
+    .bind(updated_at)
+    .bind(&id_str)
     .execute(pool)
     .await?;
     if result.rows_affected() == 0 {
@@ -549,6 +576,30 @@ pub async fn update_stage_instance_status_if_current_status(
     expected_status: StageStatus,
     status: StageStatus,
     parked_reason: Option<String>,
+    terminal_meta: Option<Value>,
+    started_at: Option<DateTime<Utc>>,
+    ended_at: Option<DateTime<Utc>>,
+) -> crate::Result<bool> {
+    update_stage_instance_status_if_current_status_with_terminal_meta(
+        pool,
+        id,
+        expected_status,
+        status,
+        parked_reason,
+        terminal_meta,
+        started_at,
+        ended_at,
+    )
+    .await
+}
+
+pub async fn update_stage_instance_status_if_current_status_with_terminal_meta(
+    pool: &SqlitePool,
+    id: &StageInstanceId,
+    expected_status: StageStatus,
+    status: StageStatus,
+    parked_reason: Option<String>,
+    terminal_meta: Option<Value>,
     started_at: Option<DateTime<Utc>>,
     ended_at: Option<DateTime<Utc>>,
 ) -> crate::Result<bool> {
@@ -558,13 +609,15 @@ pub async fn update_stage_instance_status_if_current_status(
     let updated_at = Utc::now().to_rfc3339();
     let started_at_str = started_at.map(|t| t.to_rfc3339());
     let ended_at_str = ended_at.map(|t| t.to_rfc3339());
+    let terminal_meta = terminal_meta.as_ref().map(serde_json::to_string).transpose()?;
     let result = sqlx::query(
         "UPDATE stage_instance \
-         SET status = ?, parked_reason = ?, started_at = ?, ended_at = ?, updated_at = ? \
+         SET status = ?, parked_reason = ?, terminal_meta = ?, started_at = ?, ended_at = ?, updated_at = ? \
          WHERE id = ? AND status = ?",
     )
     .bind(status_str)
     .bind(parked_reason)
+    .bind(terminal_meta)
     .bind(started_at_str)
     .bind(ended_at_str)
     .bind(updated_at)
@@ -580,22 +633,20 @@ pub async fn list_stage_instances_for_run(
     run_id: &WorkflowRunId,
 ) -> crate::Result<Vec<StageInstance>> {
     let run_id_str = run_id.0.to_string();
-    let rows = sqlx::query_as!(
-        StageInstanceRow,
-        "SELECT id, run_id, stage_key, stage_type, status, config, parked_reason, parked_meta, external_ref, \
+    let rows = sqlx::query_as::<_, StageInstanceRow>(
+        "SELECT id, run_id, stage_key, stage_type, status, config, parked_reason, parked_meta, terminal_meta, external_ref, \
          started_at, ended_at, created_at, updated_at \
          FROM stage_instance WHERE run_id = ?",
-        run_id_str,
     )
+    .bind(run_id_str)
     .fetch_all(pool)
     .await?;
     rows.into_iter().map(row_to_stage_instance).collect()
 }
 
 pub async fn list_parked_stage_instances(pool: &SqlitePool) -> crate::Result<Vec<StageInstance>> {
-    let rows = sqlx::query_as!(
-        StageInstanceRow,
-        "SELECT id, run_id, stage_key, stage_type, status, config, parked_reason, parked_meta, external_ref, \
+    let rows = sqlx::query_as::<_, StageInstanceRow>(
+        "SELECT id, run_id, stage_key, stage_type, status, config, parked_reason, parked_meta, terminal_meta, external_ref, \
          started_at, ended_at, created_at, updated_at \
          FROM stage_instance WHERE status = 'parked'",
     )
@@ -765,6 +816,7 @@ mod tests {
             config: json!({"k": "v"}),
             parked_reason: None,
             parked_meta: None,
+            terminal_meta: None,
             external_ref: None,
             started_at: None,
             ended_at: None,
@@ -884,6 +936,7 @@ mod tests {
             config: json!({"model": "gpt-4"}),
             parked_reason: Some("waiting for human gate".into()),
             parked_meta: Some(serde_json::json!({"request_id": "req-1"})),
+            terminal_meta: Some(serde_json::json!({"reason": "completed"})),
             external_ref: Some("ext-123".into()),
             started_at: Some(fixed_dt()),
             ended_at: None,
@@ -1280,6 +1333,7 @@ mod tests {
             stage_key: "stage2".into(),
             status: StageStatus::Parked,
             parked_reason: Some("waiting".into()),
+            terminal_meta: None,
             ..test_stage(run.id)
         };
         insert_stage_instance(&pool, &si_pending).await.unwrap();
@@ -1339,6 +1393,7 @@ mod tests {
             &si.id,
             StageStatus::Parked,
             Some("gate waiting".into()),
+            None,
             Some(fixed_dt()),
             None,
         )
@@ -1349,6 +1404,34 @@ mod tests {
         assert_eq!(got.parked_reason, Some("gate waiting".into()));
         assert_eq!(got.started_at, Some(fixed_dt()));
         assert_eq!(got.ended_at, None);
+    }
+
+    #[tokio::test]
+    async fn test_update_stage_instance_status_with_terminal_meta() {
+        let pool = make_test_pool().await;
+        let def = test_workflow_def();
+        insert_workflow_def(&pool, &def).await.unwrap();
+        let run = test_run(def.id);
+        insert_workflow_run(&pool, &run).await.unwrap();
+        let si = test_stage(run.id);
+        insert_stage_instance(&pool, &si).await.unwrap();
+
+        update_stage_instance_status_with_terminal_meta(
+            &pool,
+            &si.id,
+            StageStatus::Failed,
+            None,
+            Some(json!({"reason": "boom"})),
+            None,
+            Some(fixed_dt()),
+        )
+        .await
+        .unwrap();
+
+        let got = get_stage_instance_by_id(&pool, &si.id).await.unwrap();
+        assert_eq!(got.status, StageStatus::Failed);
+        assert_eq!(got.terminal_meta, Some(json!({"reason": "boom"})));
+        assert_eq!(got.ended_at, Some(fixed_dt()));
     }
 
     #[tokio::test]
