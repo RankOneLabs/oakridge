@@ -1,14 +1,15 @@
-pub mod prompt_config;
+pub mod delegated_lbc_run;
 pub mod delegated_session;
+pub mod prompt_config;
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::{Row, SqlitePool};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
-use chrono::Utc;
 use uuid::Uuid;
 
 use crate::db::queries;
@@ -96,9 +97,7 @@ pub struct StageContext {
 }
 
 impl StageContext {
-    fn stage_instance_summary_mut(
-        &self,
-    ) -> std::sync::MutexGuard<'_, StageInstanceSummary> {
+    fn stage_instance_summary_mut(&self) -> std::sync::MutexGuard<'_, StageInstanceSummary> {
         match self.stage_instance.lock() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
@@ -301,15 +300,13 @@ impl StageContext {
         let now = Utc::now();
         let is_terminal = matches!(status, StageStatus::Done | StageStatus::Failed);
 
-        let current =
-            queries::get_stage_instance_by_id(&self.db, &self.stage_instance_id).await?;
+        let current = queries::get_stage_instance_by_id(&self.db, &self.stage_instance_id).await?;
 
-        let started_at =
-            if matches!(status, StageStatus::Running) && current.started_at.is_none() {
-                Some(now)
-            } else {
-                current.started_at
-            };
+        let started_at = if matches!(status, StageStatus::Running) && current.started_at.is_none() {
+            Some(now)
+        } else {
+            current.started_at
+        };
 
         // Preserve the original completion time: a repeat terminal transition must
         // not clobber the ended_at recorded by the first one.
@@ -361,7 +358,8 @@ impl StageContext {
     /// context (e.g. an approval `request_id`). Independent of `set_status` so it
     /// does not touch the status/event path.
     pub async fn set_parked_meta(&self, meta: Option<Value>) -> anyhow::Result<()> {
-        queries::set_stage_instance_parked_meta(&self.db, &self.stage_instance_id, meta.clone()).await?;
+        queries::set_stage_instance_parked_meta(&self.db, &self.stage_instance_id, meta.clone())
+            .await?;
         self.stage_instance_summary_mut().parked_meta = meta;
         Ok(())
     }
@@ -369,7 +367,12 @@ impl StageContext {
     /// Persist the external substrate reference for this stage instance and update
     /// the in-memory summary so subsequent reads observe the new handle.
     pub async fn set_external_ref(&self, external_ref: Option<String>) -> anyhow::Result<()> {
-        queries::set_stage_instance_external_ref(&self.db, &self.stage_instance_id, external_ref.clone()).await?;
+        queries::set_stage_instance_external_ref(
+            &self.db,
+            &self.stage_instance_id,
+            external_ref.clone(),
+        )
+        .await?;
         self.stage_instance_summary_mut().external_ref = external_ref;
         Ok(())
     }
@@ -424,16 +427,16 @@ pub enum ResumePayload {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use serde_json::json;
+    use std::sync::Arc;
     use tokio::sync::{mpsc, Barrier};
     use uuid::Uuid;
 
     use crate::db::queries;
     use crate::registry::{ArtifactTypeDef, ArtifactTypeRegistry, StageTypeRegistry};
     use crate::types::{
-        RunStatus, StageInstance, StageKey, StageStatus, WorkflowDef, WorkflowDefId,
-        WorkflowGraph, WorkflowRun, WorkflowRunId,
+        RunStatus, StageInstance, StageKey, StageStatus, WorkflowDef, WorkflowDefId, WorkflowGraph,
+        WorkflowRun, WorkflowRunId,
     };
 
     // ── DB helpers ────────────────────────────────────────────────────────────
@@ -458,7 +461,10 @@ mod tests {
             id: WorkflowDefId(Uuid::new_v4()),
             name: format!("wf-{}", Uuid::new_v4()),
             version: 1,
-            graph: WorkflowGraph { stages: std::collections::HashMap::new(), edges: vec![] },
+            graph: WorkflowGraph {
+                stages: std::collections::HashMap::new(),
+                edges: vec![],
+            },
             created_at: fixed_dt(),
         };
         queries::insert_workflow_def(pool, &def).await.unwrap();
@@ -606,14 +612,7 @@ mod tests {
             parked_meta: None,
             external_ref: None,
         };
-        StageContext::new(
-            summary,
-            json!({}),
-            HashMap::new(),
-            tx,
-            pool,
-            registry,
-        )
+        StageContext::new(summary, json!({}), HashMap::new(), tx, pool, registry)
     }
 
     #[tokio::test]
@@ -641,7 +640,10 @@ mod tests {
         assert!(rx.try_recv().is_err(), "expected exactly one event");
 
         match event {
-            ExecutorEvent::ArtifactEmitted { artifact: ev_artifact, output_name } => {
+            ExecutorEvent::ArtifactEmitted {
+                artifact: ev_artifact,
+                output_name,
+            } => {
                 assert_eq!(output_name, "out");
                 assert_eq!(ev_artifact.id, artifact.id);
             }
@@ -649,7 +651,9 @@ mod tests {
         }
 
         // Artifact is readable back via cohort 3's query.
-        let fetched = queries::get_artifact_by_id(&pool, &artifact.id).await.unwrap();
+        let fetched = queries::get_artifact_by_id(&pool, &artifact.id)
+            .await
+            .unwrap();
         assert_eq!(fetched.id, artifact.id);
         assert_eq!(fetched.artifact_type, "any");
         assert_eq!(fetched.body, json!({"x": 1}));
@@ -674,7 +678,11 @@ mod tests {
             .await;
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("registry miss") || msg.contains("not registered"), "{}", msg);
+        assert!(
+            msg.contains("registry miss") || msg.contains("not registered"),
+            "{}",
+            msg
+        );
     }
 
     #[tokio::test]
@@ -699,7 +707,10 @@ mod tests {
         assert!(result.is_err());
 
         // No event must have been sent on validation failure.
-        assert!(rx.try_recv().is_err(), "no event expected on validation failure");
+        assert!(
+            rx.try_recv().is_err(),
+            "no event expected on validation failure"
+        );
     }
 
     // ── set_status tests ──────────────────────────────────────────────────────
@@ -714,14 +725,23 @@ mod tests {
         let ctx = make_ctx(pool.clone(), run_id, si_id, registry, tx);
         ctx.set_status(StageStatus::Running, None).await.unwrap();
 
-        let si = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+        let si = queries::get_stage_instance_by_id(&pool, &si_id)
+            .await
+            .unwrap();
         assert_eq!(si.status, StageStatus::Running);
-        assert!(si.started_at.is_some(), "started_at must be set on Running transition");
+        assert!(
+            si.started_at.is_some(),
+            "started_at must be set on Running transition"
+        );
         assert!(si.ended_at.is_none());
 
         let event = rx.try_recv().expect("expected a StatusChanged event");
         match event {
-            ExecutorEvent::StatusChanged { instance_id, status, parked_reason } => {
+            ExecutorEvent::StatusChanged {
+                instance_id,
+                status,
+                parked_reason,
+            } => {
                 assert_eq!(instance_id, si_id);
                 assert_eq!(status, StageStatus::Running);
                 assert!(parked_reason.is_none());
@@ -741,12 +761,23 @@ mod tests {
         let ctx = make_ctx(pool.clone(), run_id, si_id, registry, tx);
         ctx.set_status(StageStatus::Done, None).await.unwrap();
 
-        let si = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+        let si = queries::get_stage_instance_by_id(&pool, &si_id)
+            .await
+            .unwrap();
         assert_eq!(si.status, StageStatus::Done);
-        assert!(si.ended_at.is_some(), "ended_at must be set on Done transition");
+        assert!(
+            si.ended_at.is_some(),
+            "ended_at must be set on Done transition"
+        );
 
         let event = rx.try_recv().expect("expected a StatusChanged event");
-        assert!(matches!(event, ExecutorEvent::StatusChanged { status: StageStatus::Done, .. }));
+        assert!(matches!(
+            event,
+            ExecutorEvent::StatusChanged {
+                status: StageStatus::Done,
+                ..
+            }
+        ));
     }
 
     #[tokio::test]
@@ -761,14 +792,20 @@ mod tests {
             .await
             .unwrap();
 
-        let si = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+        let si = queries::get_stage_instance_by_id(&pool, &si_id)
+            .await
+            .unwrap();
         assert_eq!(si.status, StageStatus::Parked);
         assert_eq!(si.parked_reason.as_deref(), Some("waiting for gate"));
         assert!(si.ended_at.is_none());
 
         let event = rx.try_recv().expect("expected a StatusChanged event");
         match event {
-            ExecutorEvent::StatusChanged { status, parked_reason, .. } => {
+            ExecutorEvent::StatusChanged {
+                status,
+                parked_reason,
+                ..
+            } => {
                 assert_eq!(status, StageStatus::Parked);
                 assert_eq!(parked_reason.as_deref(), Some("waiting for gate"));
             }
@@ -788,9 +825,14 @@ mod tests {
 
         ctx.set_external_ref(Some("ext-456".into())).await.unwrap();
 
-        let si = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+        let si = queries::get_stage_instance_by_id(&pool, &si_id)
+            .await
+            .unwrap();
         assert_eq!(si.external_ref.as_deref(), Some("ext-456"));
-        assert_eq!(ctx.stage_instance_summary().external_ref.as_deref(), Some("ext-456"));
+        assert_eq!(
+            ctx.stage_instance_summary().external_ref.as_deref(),
+            Some("ext-456")
+        );
     }
 
     #[tokio::test]
@@ -894,7 +936,9 @@ mod tests {
         assert_eq!(left.parent_artifact_id, Some(root.id));
         assert_eq!(right.parent_artifact_id, Some(root.id));
 
-        let artifacts = queries::list_artifacts_for_run(&pool, &run_id, None).await.unwrap();
+        let artifacts = queries::list_artifacts_for_run(&pool, &run_id, None)
+            .await
+            .unwrap();
         assert_eq!(artifacts.len(), 3);
     }
 
@@ -936,13 +980,21 @@ mod tests {
             .await
             .unwrap();
 
-        let si = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
-        assert!(si.parked_reason.is_none(), "parked_reason must be None for non-Parked status");
+        let si = queries::get_stage_instance_by_id(&pool, &si_id)
+            .await
+            .unwrap();
+        assert!(
+            si.parked_reason.is_none(),
+            "parked_reason must be None for non-Parked status"
+        );
 
         let event = rx.try_recv().expect("expected a StatusChanged event");
         match event {
             ExecutorEvent::StatusChanged { parked_reason, .. } => {
-                assert!(parked_reason.is_none(), "event parked_reason must be None for non-Parked status");
+                assert!(
+                    parked_reason.is_none(),
+                    "event parked_reason must be None for non-Parked status"
+                );
             }
             other => panic!("unexpected event: {:?}", other),
         }
