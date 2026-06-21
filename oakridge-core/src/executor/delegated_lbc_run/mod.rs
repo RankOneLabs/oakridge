@@ -120,15 +120,12 @@ impl StageType for DelegatedLbcRunStage {
         let run_spec_json = serde_json::to_vec_pretty(&config.run_spec)?;
         fs::write(&run_spec_path, run_spec_json).await?;
 
-        let spec_arg = run_spec_path.to_string_lossy().to_string();
-        let output_dir_arg = output_dir.to_string_lossy().to_string();
-
         let mut command = Command::new(&config.bridge_command);
         command.args(&config.bridge_args);
         command.arg("--spec");
-        command.arg(&spec_arg);
+        command.arg(&run_spec_path);
         command.arg("--output-dir");
-        command.arg(&output_dir_arg);
+        command.arg(&output_dir);
         command.current_dir(&output_dir);
         command.stdout(std::process::Stdio::piped());
         command.stderr(std::process::Stdio::piped());
@@ -235,7 +232,12 @@ async fn run_bridge(
     mut cancel_rx: watch::Receiver<bool>,
     completion_tx: oneshot::Sender<()>,
 ) {
-    let command_display = terminal_command(&config.bridge_command, &config.bridge_args);
+    let command_display = terminal_command(
+        &config.bridge_command,
+        &config.bridge_args,
+        &run_spec_path,
+        &output_dir,
+    );
     let command_display_for_task = command_display.clone();
     let result = async {
         let stdout = child.stdout.take().ok_or_else(|| {
@@ -403,9 +405,20 @@ async fn run_bridge(
     let _ = completion_tx.send(());
 }
 
-fn terminal_command(command: &str, args: &[String]) -> String {
+fn terminal_command(
+    command: &str,
+    args: &[String],
+    run_spec_path: &Path,
+    output_dir: &Path,
+) -> String {
+    // Mirror the args actually injected by `execute` so the recorded command is a
+    // faithful reflection of what was spawned.
     let mut parts = vec![command.to_owned()];
     parts.extend(args.iter().cloned());
+    parts.push("--spec".to_owned());
+    parts.push(run_spec_path.to_string_lossy().into_owned());
+    parts.push("--output-dir".to_owned());
+    parts.push(output_dir.to_string_lossy().into_owned());
     parts.join(" ")
 }
 
@@ -542,27 +555,17 @@ async fn capture_output(
 }
 
 fn last_result_payload(stdout: &str) -> Result<Option<BridgeResultPayload>, ResultScanError> {
-    let mut last_valid = None;
-    let mut last_json_error = None;
-    let mut last_payload_error = None;
+    // The bridge's final `RESULT` line is authoritative: it represents the run's
+    // verdict. If that last line cannot be parsed we fail rather than silently
+    // falling back to an earlier valid RESULT, which could mask a broken final
+    // result and report a stale payload as success.
+    let mut last_result = None;
     for line in stdout.lines() {
         if let Some(rest) = line.strip_prefix("RESULT ") {
-            match parse_result_payload(rest) {
-                Ok(payload) => last_valid = Some(payload),
-                Err(ResultScanError::InvalidJson(err)) => last_json_error = Some(err),
-                Err(ResultScanError::InvalidPayload(err)) => last_payload_error = Some(err),
-            }
+            last_result = Some(parse_result_payload(rest));
         }
     }
-    if last_valid.is_some() {
-        Ok(last_valid)
-    } else if let Some(err) = last_json_error {
-        Err(ResultScanError::InvalidJson(err))
-    } else if let Some(err) = last_payload_error {
-        Err(ResultScanError::InvalidPayload(err))
-    } else {
-        Ok(None)
-    }
+    last_result.transpose()
 }
 
 fn parse_result_payload(rest: &str) -> Result<BridgeResultPayload, ResultScanError> {
