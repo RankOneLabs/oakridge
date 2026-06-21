@@ -83,8 +83,8 @@ impl RunTask {
                     Some(ExecutorEvent::ArtifactEmitted { artifact, output_name }) => {
                         self.on_artifact_emitted(artifact, output_name).await;
                     }
-                    Some(ExecutorEvent::StatusChanged { instance_id, status, parked_reason }) => {
-                        if self.on_status_changed(instance_id, status, parked_reason).await {
+                    Some(ExecutorEvent::StatusChanged { instance_id, status, parked_reason, terminal_meta }) => {
+                        if self.on_status_changed(instance_id, status, parked_reason, terminal_meta).await {
                             break;
                         }
                     }
@@ -142,7 +142,12 @@ impl RunTask {
             Some(st) => st,
             None => {
                 tracing::error!(stage_key, stage_type = node.stage_type, "stage type not registered");
-                self.fail_activation(stage_key, si_id).await;
+                self.fail_activation(
+                    stage_key,
+                    si_id,
+                    Some(serde_json::json!({"error": "stage type not registered", "stage_type": node.stage_type})),
+                )
+                .await;
                 return;
             }
         };
@@ -158,7 +163,12 @@ impl RunTask {
             Ok(c) => c,
             Err(e) => {
                 tracing::error!(stage_key, "build_config failed: {}", e);
-                self.fail_activation(stage_key, si_id).await;
+                self.fail_activation(
+                    stage_key,
+                    si_id,
+                    Some(serde_json::json!({"error": e.to_string()})),
+                )
+                .await;
                 return;
             }
         };
@@ -172,6 +182,7 @@ impl RunTask {
             config: config.clone(),
             parked_reason: None,
             parked_meta: None,
+            terminal_meta: None,
             external_ref: None,
             started_at: None,
             ended_at: None,
@@ -180,7 +191,12 @@ impl RunTask {
         };
         if let Err(e) = queries::insert_stage_instance(&self.db, &si).await {
             tracing::error!(stage_key, "insert_stage_instance failed: {}", e);
-            self.fail_activation(stage_key, si_id).await;
+            self.fail_activation(
+                stage_key,
+                si_id,
+                Some(serde_json::json!({"error": e.to_string()})),
+            )
+            .await;
             return;
         }
         self.index.insert(stage_key.clone(), (si_id, StageStatus::Pending));
@@ -201,13 +217,21 @@ impl RunTask {
                 if let Some((_, ref mut s)) = self.index.get_mut(stage_key) {
                     *s = StageStatus::Failed;
                 }
-                let _ = queries::update_stage_instance_status(
-                    &self.db, &si_id, StageStatus::Failed, None, None, Some(Utc::now()),
-                ).await;
+                let _ = queries::update_stage_instance_status_with_terminal_meta(
+                    &self.db,
+                    &si_id,
+                    StageStatus::Failed,
+                    None,
+                    Some(serde_json::json!({"error": e.to_string()})),
+                    None,
+                    Some(Utc::now()),
+                )
+                .await;
                 let _ = self.events_tx.send(ExecutorEvent::StatusChanged {
                     instance_id: si_id,
                     status: StageStatus::Failed,
                     parked_reason: None,
+                    terminal_meta: Some(serde_json::json!({"error": e.to_string()})),
                 }).await;
             }
         }
@@ -216,12 +240,18 @@ impl RunTask {
     /// Mark a stage that could not be launched (unregistered type, build_config
     /// failure, or insert failure) as Failed in-memory and emit a StatusChanged so
     /// the run reaches quiescence as Failed instead of hanging in Running forever.
-    async fn fail_activation(&mut self, stage_key: &StageKey, si_id: StageInstanceId) {
+    async fn fail_activation(
+        &mut self,
+        stage_key: &StageKey,
+        si_id: StageInstanceId,
+        terminal_meta: Option<Value>,
+    ) {
         self.index.insert(stage_key.clone(), (si_id, StageStatus::Failed));
         let _ = self.events_tx.send(ExecutorEvent::StatusChanged {
             instance_id: si_id,
             status: StageStatus::Failed,
             parked_reason: None,
+            terminal_meta,
         }).await;
     }
 
@@ -282,6 +312,7 @@ impl RunTask {
         instance_id: StageInstanceId,
         status: StageStatus,
         parked_reason: Option<String>,
+        terminal_meta: Option<Value>,
     ) -> bool {
         for (_, (id, s)) in self.index.iter_mut() {
             if *id == instance_id {
@@ -297,6 +328,7 @@ impl RunTask {
             stage_instance_id: instance_id,
             status,
             parked_reason,
+            terminal_meta,
         });
 
         // quiescence: no stage is pending|running|parked
@@ -424,11 +456,12 @@ impl RunTask {
 
         if matches!(after_resume.status, StageStatus::Parked) && !keep_parked_for_merge_confirmation {
             let started_at = after_resume.started_at.or(Some(Utc::now()));
-            let updated = queries::update_stage_instance_status_if_current_status(
+            let updated = queries::update_stage_instance_status_if_current_status_with_terminal_meta(
                 &self.db,
                 &stage_instance_id,
                 StageStatus::Parked,
                 StageStatus::Running,
+                None,
                 None,
                 started_at,
                 None,
@@ -444,6 +477,7 @@ impl RunTask {
                     stage_instance_id,
                     status: StageStatus::Running,
                     parked_reason: None,
+                    terminal_meta: None,
                 });
             }
         }
@@ -739,13 +773,21 @@ impl Coordinator {
                         if let Some((_, ref mut s)) = task.index.get_mut(&si.stage_key) {
                             *s = StageStatus::Failed;
                         }
-                        let _ = queries::update_stage_instance_status(
-                            &self.db, &si.id, StageStatus::Failed, None, None, Some(Utc::now()),
-                        ).await;
+                        let _ = queries::update_stage_instance_status_with_terminal_meta(
+                            &self.db,
+                            &si.id,
+                            StageStatus::Failed,
+                            None,
+                            Some(serde_json::json!({"error": e.to_string()})),
+                            None,
+                            Some(Utc::now()),
+                        )
+                        .await;
                         let _ = events_tx.send(ExecutorEvent::StatusChanged {
                             instance_id: si.id,
                             status: StageStatus::Failed,
                             parked_reason: None,
+                            terminal_meta: Some(serde_json::json!({"error": e.to_string()})),
                         }).await;
                     }
                 }
@@ -1221,6 +1263,7 @@ mod tests {
             config: json!({}),
             parked_reason: Some("waiting_gate".into()),
             parked_meta: None,
+            terminal_meta: None,
             external_ref: None,
             started_at: Some(fixed_dt()),
             ended_at: None,
@@ -1404,6 +1447,7 @@ mod tests {
             config: json!({}),
             parked_reason: Some("waiting_gate".into()),
             parked_meta: Some(json!({"request_id": "req-1"})),
+            terminal_meta: None,
             external_ref: Some("ext-123".into()),
             started_at: Some(fixed_dt()),
             ended_at: None,

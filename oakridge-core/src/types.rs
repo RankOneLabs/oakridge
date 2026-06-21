@@ -143,6 +143,9 @@ pub struct StageInstance {
     /// Surfaced on `GET /stage_instances/:id` so a client can act on the park;
     /// the substrate does not interpret it.
     pub parked_meta: Option<Value>,
+    /// Structured metadata an executor attaches when a stage reaches a terminal
+    /// status. Surfaced on read models; the substrate does not interpret it.
+    pub terminal_meta: Option<Value>,
     pub external_ref: Option<String>,
     pub started_at: Option<DateTime<Utc>>,
     pub ended_at: Option<DateTime<Utc>>,
@@ -158,6 +161,7 @@ pub struct StageInstanceSummary {
     pub status: StageStatus,
     pub parked_reason: Option<String>,
     pub parked_meta: Option<Value>,
+    pub terminal_meta: Option<Value>,
     pub external_ref: Option<String>,
 }
 
@@ -170,6 +174,7 @@ impl From<&StageInstance> for StageInstanceSummary {
             status: stage_instance.status,
             parked_reason: stage_instance.parked_reason.clone(),
             parked_meta: stage_instance.parked_meta.clone(),
+            terminal_meta: stage_instance.terminal_meta.clone(),
             external_ref: stage_instance.external_ref.clone(),
         }
     }
@@ -378,6 +383,7 @@ mod tests {
             config: json!({"k": "v"}),
             parked_reason: Some("waiting on human gate".to_string()),
             parked_meta: Some(json!({"request_id": "abc"})),
+            terminal_meta: Some(json!({"reason": "completed"})),
             external_ref: None,
             started_at: Some(now()),
             ended_at: None,
