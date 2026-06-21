@@ -233,10 +233,13 @@ impl DelegatedSessionStage {
                     Ok(response) => {
                         if response.session_id != sid {
                             if !cancelled.load(Ordering::SeqCst) {
+                                let terminal_meta =
+                                    serde_json::json!({"reason": format!("kbbl session {} became unavailable", sid)});
                                 let _ = ctx
-                                    .set_status(
+                                    .set_status_with_terminal_meta(
                                         StageStatus::Failed,
                                         Some(format!("kbbl session {} became unavailable", sid)),
+                                        Some(terminal_meta),
                                     )
                                     .await;
                             }
@@ -245,7 +248,14 @@ impl DelegatedSessionStage {
 
                         if let Some(reason) = failure_reason_from_events(&sid, &response.events) {
                             if !cancelled.load(Ordering::SeqCst) {
-                                let _ = ctx.set_status(StageStatus::Failed, Some(reason)).await;
+                                let terminal_meta = serde_json::json!({"reason": reason.clone()});
+                                let _ = ctx
+                                    .set_status_with_terminal_meta(
+                                        StageStatus::Failed,
+                                        Some(reason),
+                                        Some(terminal_meta),
+                                    )
+                                    .await;
                             }
                             break;
                         }
@@ -256,13 +266,16 @@ impl DelegatedSessionStage {
                     }
                     Err(err) => {
                         if !cancelled.load(Ordering::SeqCst) {
+                            let terminal_reason = format!(
+                                "kbbl session {} became unavailable: {}",
+                                sid, err
+                            );
+                            let terminal_meta = serde_json::json!({"reason": terminal_reason.clone()});
                             let _ = ctx
-                                .set_status(
+                                .set_status_with_terminal_meta(
                                     StageStatus::Failed,
-                                    Some(format!(
-                                        "kbbl session {} became unavailable: {}",
-                                        sid, err
-                                    )),
+                                    Some(terminal_reason),
+                                    Some(terminal_meta),
                                 )
                                 .await;
                         }

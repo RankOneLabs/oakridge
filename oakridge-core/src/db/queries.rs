@@ -461,6 +461,28 @@ pub async fn update_stage_instance_status(
     id: &StageInstanceId,
     status: StageStatus,
     parked_reason: Option<String>,
+    terminal_meta: Option<Value>,
+    started_at: Option<DateTime<Utc>>,
+    ended_at: Option<DateTime<Utc>>,
+) -> crate::Result<()> {
+    update_stage_instance_status_with_terminal_meta(
+        pool,
+        id,
+        status,
+        parked_reason,
+        terminal_meta,
+        started_at,
+        ended_at,
+    )
+    .await
+}
+
+pub async fn update_stage_instance_status_with_terminal_meta(
+    pool: &SqlitePool,
+    id: &StageInstanceId,
+    status: StageStatus,
+    parked_reason: Option<String>,
+    terminal_meta: Option<Value>,
     started_at: Option<DateTime<Utc>>,
     ended_at: Option<DateTime<Utc>>,
 ) -> crate::Result<()> {
@@ -469,17 +491,19 @@ pub async fn update_stage_instance_status(
     let updated_at = Utc::now().to_rfc3339();
     let started_at_str = started_at.map(|t| t.to_rfc3339());
     let ended_at_str = ended_at.map(|t| t.to_rfc3339());
-    let result = sqlx::query!(
+    let terminal_meta = terminal_meta.as_ref().map(serde_json::to_string).transpose()?;
+    let result = sqlx::query(
         "UPDATE stage_instance \
-         SET status = ?, parked_reason = ?, started_at = ?, ended_at = ?, updated_at = ? \
+         SET status = ?, parked_reason = ?, terminal_meta = ?, started_at = ?, ended_at = ?, updated_at = ? \
          WHERE id = ?",
-        status_str,
-        parked_reason,
-        started_at_str,
-        ended_at_str,
-        updated_at,
-        id_str,
     )
+    .bind(status_str)
+    .bind(parked_reason)
+    .bind(terminal_meta)
+    .bind(started_at_str)
+    .bind(ended_at_str)
+    .bind(updated_at)
+    .bind(&id_str)
     .execute(pool)
     .await?;
     if result.rows_affected() == 0 {
@@ -552,6 +576,30 @@ pub async fn update_stage_instance_status_if_current_status(
     expected_status: StageStatus,
     status: StageStatus,
     parked_reason: Option<String>,
+    terminal_meta: Option<Value>,
+    started_at: Option<DateTime<Utc>>,
+    ended_at: Option<DateTime<Utc>>,
+) -> crate::Result<bool> {
+    update_stage_instance_status_if_current_status_with_terminal_meta(
+        pool,
+        id,
+        expected_status,
+        status,
+        parked_reason,
+        terminal_meta,
+        started_at,
+        ended_at,
+    )
+    .await
+}
+
+pub async fn update_stage_instance_status_if_current_status_with_terminal_meta(
+    pool: &SqlitePool,
+    id: &StageInstanceId,
+    expected_status: StageStatus,
+    status: StageStatus,
+    parked_reason: Option<String>,
+    terminal_meta: Option<Value>,
     started_at: Option<DateTime<Utc>>,
     ended_at: Option<DateTime<Utc>>,
 ) -> crate::Result<bool> {
@@ -561,13 +609,15 @@ pub async fn update_stage_instance_status_if_current_status(
     let updated_at = Utc::now().to_rfc3339();
     let started_at_str = started_at.map(|t| t.to_rfc3339());
     let ended_at_str = ended_at.map(|t| t.to_rfc3339());
+    let terminal_meta = terminal_meta.as_ref().map(serde_json::to_string).transpose()?;
     let result = sqlx::query(
         "UPDATE stage_instance \
-         SET status = ?, parked_reason = ?, started_at = ?, ended_at = ?, updated_at = ? \
+         SET status = ?, parked_reason = ?, terminal_meta = ?, started_at = ?, ended_at = ?, updated_at = ? \
          WHERE id = ? AND status = ?",
     )
     .bind(status_str)
     .bind(parked_reason)
+    .bind(terminal_meta)
     .bind(started_at_str)
     .bind(ended_at_str)
     .bind(updated_at)
@@ -1343,6 +1393,7 @@ mod tests {
             &si.id,
             StageStatus::Parked,
             Some("gate waiting".into()),
+            None,
             Some(fixed_dt()),
             None,
         )
@@ -1353,6 +1404,34 @@ mod tests {
         assert_eq!(got.parked_reason, Some("gate waiting".into()));
         assert_eq!(got.started_at, Some(fixed_dt()));
         assert_eq!(got.ended_at, None);
+    }
+
+    #[tokio::test]
+    async fn test_update_stage_instance_status_with_terminal_meta() {
+        let pool = make_test_pool().await;
+        let def = test_workflow_def();
+        insert_workflow_def(&pool, &def).await.unwrap();
+        let run = test_run(def.id);
+        insert_workflow_run(&pool, &run).await.unwrap();
+        let si = test_stage(run.id);
+        insert_stage_instance(&pool, &si).await.unwrap();
+
+        update_stage_instance_status_with_terminal_meta(
+            &pool,
+            &si.id,
+            StageStatus::Failed,
+            None,
+            Some(json!({"reason": "boom"})),
+            None,
+            Some(fixed_dt()),
+        )
+        .await
+        .unwrap();
+
+        let got = get_stage_instance_by_id(&pool, &si.id).await.unwrap();
+        assert_eq!(got.status, StageStatus::Failed);
+        assert_eq!(got.terminal_meta, Some(json!({"reason": "boom"})));
+        assert_eq!(got.ended_at, Some(fixed_dt()));
     }
 
     #[tokio::test]

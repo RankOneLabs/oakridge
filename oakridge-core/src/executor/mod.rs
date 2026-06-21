@@ -45,6 +45,8 @@ pub enum ExecutorEvent {
         status: StageStatus,
         /// Populated when `status` is `Parked`; describes why the stage is waiting.
         parked_reason: Option<String>,
+        /// Structured metadata attached when the stage reaches a terminal status.
+        terminal_meta: Option<Value>,
     },
 }
 
@@ -298,6 +300,16 @@ impl StageContext {
         status: StageStatus,
         parked_reason: Option<String>,
     ) -> anyhow::Result<()> {
+        self.set_status_with_terminal_meta(status, parked_reason, None).await
+    }
+
+    /// Transition this stage instance to a new status with structured terminal metadata.
+    pub async fn set_status_with_terminal_meta(
+        &self,
+        status: StageStatus,
+        parked_reason: Option<String>,
+        terminal_meta: Option<Value>,
+    ) -> anyhow::Result<()> {
         let now = Utc::now();
         let is_terminal = matches!(status, StageStatus::Done | StageStatus::Failed);
 
@@ -326,12 +338,18 @@ impl StageContext {
         } else {
             None
         };
+        let terminal_meta = if is_terminal {
+            current.terminal_meta.clone().or(terminal_meta)
+        } else {
+            None
+        };
 
-        queries::update_stage_instance_status(
+        queries::update_stage_instance_status_with_terminal_meta(
             &self.db,
             &self.stage_instance_id,
             status,
             parked_reason.clone(),
+            terminal_meta.clone(),
             started_at,
             ended_at,
         )
@@ -341,6 +359,7 @@ impl StageContext {
             let mut summary = self.stage_instance_summary_mut();
             summary.status = status;
             summary.parked_reason = parked_reason.clone();
+            summary.terminal_meta = terminal_meta.clone();
         }
 
         self.events_tx
@@ -348,6 +367,7 @@ impl StageContext {
                 instance_id: self.stage_instance_id,
                 status,
                 parked_reason,
+                terminal_meta,
             })
             .await
             .map_err(|_| anyhow::anyhow!("executor event channel closed"))?;
@@ -723,10 +743,11 @@ mod tests {
 
         let event = rx.try_recv().expect("expected a StatusChanged event");
         match event {
-            ExecutorEvent::StatusChanged { instance_id, status, parked_reason } => {
+            ExecutorEvent::StatusChanged { instance_id, status, parked_reason, terminal_meta } => {
                 assert_eq!(instance_id, si_id);
                 assert_eq!(status, StageStatus::Running);
                 assert!(parked_reason.is_none());
+                assert!(terminal_meta.is_none());
             }
             other => panic!("unexpected event: {:?}", other),
         }
@@ -752,6 +773,72 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn set_status_done_with_terminal_meta_persists_meta_and_updates_summary() {
+        let pool = make_pool().await;
+        let (run_id, si_id) = setup_run(&pool).await;
+        let registry = make_artifact_registry();
+        let (tx, mut rx) = mpsc::channel(8);
+
+        let ctx = make_ctx(pool.clone(), run_id, si_id, registry, tx);
+        let terminal_meta = json!({"result": "complete"});
+        ctx.set_status_with_terminal_meta(
+            StageStatus::Done,
+            None,
+            Some(terminal_meta.clone()),
+        )
+        .await
+        .unwrap();
+
+        let si = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+        assert_eq!(si.status, StageStatus::Done);
+        assert_eq!(si.terminal_meta, Some(terminal_meta.clone()));
+
+        let summary = ctx.stage_instance_summary();
+        assert_eq!(summary.terminal_meta, Some(terminal_meta.clone()));
+
+        let event = rx.try_recv().expect("expected a StatusChanged event");
+        match event {
+            ExecutorEvent::StatusChanged { status: StageStatus::Done, terminal_meta: event_meta, .. } => {
+                assert_eq!(event_meta, Some(terminal_meta));
+            }
+            other => panic!("unexpected event: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn set_status_failed_with_terminal_meta_persists_meta_and_updates_summary() {
+        let pool = make_pool().await;
+        let (run_id, si_id) = setup_run(&pool).await;
+        let registry = make_artifact_registry();
+        let (tx, mut rx) = mpsc::channel(8);
+
+        let ctx = make_ctx(pool.clone(), run_id, si_id, registry, tx);
+        let terminal_meta = json!({"reason": "boom"});
+        ctx.set_status_with_terminal_meta(
+            StageStatus::Failed,
+            None,
+            Some(terminal_meta.clone()),
+        )
+        .await
+        .unwrap();
+
+        let si = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+        assert_eq!(si.status, StageStatus::Failed);
+        assert_eq!(si.terminal_meta, Some(terminal_meta.clone()));
+
+        let summary = ctx.stage_instance_summary();
+        assert_eq!(summary.terminal_meta, Some(terminal_meta.clone()));
+
+        let event = rx.try_recv().expect("expected a StatusChanged event");
+        match event {
+            ExecutorEvent::StatusChanged { status: StageStatus::Failed, terminal_meta: event_meta, .. } => {
+                assert_eq!(event_meta, Some(terminal_meta));
+            }
+            other => panic!("unexpected event: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
     async fn set_status_parked_persists_reason_and_sends_event() {
         let pool = make_pool().await;
         let (run_id, si_id) = setup_run(&pool).await;
@@ -770,9 +857,10 @@ mod tests {
 
         let event = rx.try_recv().expect("expected a StatusChanged event");
         match event {
-            ExecutorEvent::StatusChanged { status, parked_reason, .. } => {
+            ExecutorEvent::StatusChanged { status, parked_reason, terminal_meta, .. } => {
                 assert_eq!(status, StageStatus::Parked);
                 assert_eq!(parked_reason.as_deref(), Some("waiting for gate"));
+                assert!(terminal_meta.is_none());
             }
             other => panic!("unexpected event: {:?}", other),
         }
@@ -943,8 +1031,9 @@ mod tests {
 
         let event = rx.try_recv().expect("expected a StatusChanged event");
         match event {
-            ExecutorEvent::StatusChanged { parked_reason, .. } => {
+            ExecutorEvent::StatusChanged { parked_reason, terminal_meta, .. } => {
                 assert!(parked_reason.is_none(), "event parked_reason must be None for non-Parked status");
+                assert!(terminal_meta.is_none(), "event terminal_meta must be None for non-terminal status");
             }
             other => panic!("unexpected event: {:?}", other),
         }

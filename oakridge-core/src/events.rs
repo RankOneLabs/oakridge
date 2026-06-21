@@ -2,6 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tokio::sync::broadcast;
 
 use crate::types::{ArtifactId, ArtifactTypeId, RunStatus, StageInstanceId, StageStatus, WorkflowRunId};
@@ -22,6 +23,7 @@ pub enum SubstrateEvent {
         stage_instance_id: StageInstanceId,
         status: StageStatus,
         parked_reason: Option<String>,
+        terminal_meta: Option<Value>,
     },
     ArtifactEmitted {
         artifact_id: ArtifactId,
@@ -230,6 +232,7 @@ impl Default for EventBus {
 mod tests {
     use super::*;
     use crate::types::RunStatus;
+    use serde_json::json;
     use uuid::Uuid;
     use std::time::Duration;
 
@@ -309,6 +312,19 @@ mod tests {
         let ev = SubstrateEvent::RunStatusChanged { run_id: r, status: RunStatus::Done };
         let v = serde_json::to_value(&ev).unwrap();
         assert_eq!(v["kind"], "run_status_changed");
+    }
+
+    #[test]
+    fn substrate_stage_status_changed_includes_terminal_meta() {
+        let si_id = crate::types::StageInstanceId(Uuid::new_v4());
+        let ev = SubstrateEvent::StageStatusChanged {
+            stage_instance_id: si_id,
+            status: StageStatus::Failed,
+            parked_reason: None,
+            terminal_meta: Some(json!({"reason": "boom"})),
+        };
+        let v = serde_json::to_value(&ev).unwrap();
+        assert_eq!(v["terminal_meta"], json!({"reason": "boom"}));
     }
 
     #[tokio::test]
