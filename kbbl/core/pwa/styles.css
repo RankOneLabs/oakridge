@@ -4518,6 +4518,10 @@ body {
 .skill-rail--right .skill-rail__groups {
   flex-direction: column;
   width: 100%;
+  /* In a column container, wrapping would spill into extra columns that are
+     unreachable under the right rail's overflow-x: hidden — keep it single-column
+     and let the rail scroll vertically instead. */
+  flex-wrap: nowrap;
 }
 
 .skill-rail__group {
@@ -4532,7 +4536,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
-  min-height: 32px;
+  min-height: 44px;
   padding: 0 0.4rem;
   font: inherit;
   font-size: 0.7rem;
@@ -4571,6 +4575,8 @@ body {
 
 .skill-rail--right .skill-rail__scope {
   flex-direction: column;
+  /* Same rationale as the right-rail groups: no wrapping into hidden columns. */
+  flex-wrap: nowrap;
 }
 
 /* SkillButton */
@@ -4601,6 +4607,7 @@ body {
 /* Keyboard-visible focus for the rail's interactive controls (matches the
    app-wide :focus-visible convention defined near the top of this file). */
 .skill-rail__toggle:focus-visible,
+.skill-rail__group-label:focus-visible,
 .skill-btn:focus-visible,
 .arg-sheet__close:focus-visible,
 .arg-sheet__submit:focus-visible {

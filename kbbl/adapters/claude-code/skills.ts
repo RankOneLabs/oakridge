@@ -283,8 +283,11 @@ function builtinSkills(): Skill[] {
  * built-in commands. Never consults CC's advertised slash-command list (cc
  * issue #43875 hides disable-model-invocation skills from that list).
  *
- * A built-in is dropped when a disk/plugin source already provides a skill of
- * the same name, so a user override always wins. Results are de-duplicated by id.
+ * A built-in is dropped only when an on-disk source (user/project skills or
+ * commands) already provides a skill of the same name, so a user override always
+ * wins. Installed-plugin skills do NOT suppress built-ins — plugins must never
+ * silently mask stable core actions like `init`/`review`; their namespaced ids
+ * let them coexist with a same-named built-in. Results are de-duplicated by id.
  */
 export async function discoverSkills(
   workingDirectory: string,
@@ -299,18 +302,15 @@ export async function discoverSkills(
       discoverFromInstalledPlugins(home),
     ]);
 
-  const disk = [
-    ...projectSkills,
-    ...userSkills,
-    ...projectCmds,
-    ...userCmds,
-    ...pluginSkills,
-  ];
-  const diskNames = new Set(disk.map((skill) => skill.name));
-  const builtins = builtinSkills().filter((b) => !diskNames.has(b.name));
+  const onDisk = [...projectSkills, ...userSkills, ...projectCmds, ...userCmds];
+  // Only on-disk skills suppress a curated built-in; plugins never do.
+  const onDiskNames = new Set(onDisk.map((skill) => skill.name));
+  const builtins = builtinSkills().filter((b) => !onDiskNames.has(b.name));
 
   const byId = new Map<string, Skill>();
-  for (const skill of [...disk, ...builtins]) byId.set(skill.id, skill);
+  for (const skill of [...onDisk, ...pluginSkills, ...builtins]) {
+    byId.set(skill.id, skill);
+  }
   return [...byId.values()];
 }
 

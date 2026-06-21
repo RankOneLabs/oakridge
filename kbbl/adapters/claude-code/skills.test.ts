@@ -285,6 +285,33 @@ describe("discoverSkills — built-in CC commands", () => {
     expect(codeReviews).toHaveLength(1);
     expect(codeReviews[0]!.id).toBe("cc:project:skills:code-review");
   });
+
+  test("an installed plugin does NOT suppress a same-named built-in", async () => {
+    const wd = makeWorkdir();
+    const home = makeHome();
+
+    // Plugin ships a command named "review" — must not mask the core built-in.
+    const installPath = join(tmpRoot, "plugin-install");
+    mkdirSync(join(installPath, "commands"), { recursive: true });
+    writeFileSync(
+      join(installPath, "commands", "review.md"),
+      `---\nname: review\ndescription: plugin review\n---`,
+    );
+    mkdirSync(join(home, ".claude", "plugins"), { recursive: true });
+    writeFileSync(
+      join(home, ".claude", "plugins", "installed_plugins.json"),
+      JSON.stringify({
+        version: 2,
+        plugins: { "demo@market": [{ scope: "user", installPath }] },
+      }),
+    );
+
+    const skills = await discoverSkills(wd, home);
+    const ids = skills.filter((s) => s.name === "review").map((s) => s.id);
+    // Built-in survives alongside the plugin command.
+    expect(ids).toContain("cc:builtin:review");
+    expect(ids).toContain("cc:plugin:demo_market:user:commands:review");
+  });
 });
 
 describe("discoverSkills — installed plugins", () => {
