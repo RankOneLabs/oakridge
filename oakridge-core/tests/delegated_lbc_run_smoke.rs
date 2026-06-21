@@ -24,9 +24,9 @@ fn legit_biz_club_dir() -> PathBuf {
     repo_root().join("legit-biz-club")
 }
 
-#[tokio::test]
+#[test]
 #[ignore = "opt-in real legit-biz-club smoke test"]
-async fn real_legit_biz_club_cli_smoke() {
+fn real_legit_biz_club_cli_smoke() {
     if !smoke_enabled() {
         eprintln!("skipping real legit-biz-club smoke test; set OAKRIDGE_RUN_REAL_LBC_SMOKE=1");
         return;
@@ -54,16 +54,14 @@ async fn real_legit_biz_club_cli_smoke() {
 
     let output = Command::new("uv")
         .current_dir(&legit_biz_club_dir)
-        .args([
-            "run",
-            "python",
-            "-m",
-            "legit_biz_club.run",
-            "--spec",
-            spec_path.to_str().unwrap(),
-            "--output-dir",
-            output_dir.to_str().unwrap(),
-        ])
+        .arg("run")
+        .arg("python")
+        .arg("-m")
+        .arg("legit_biz_club.run")
+        .arg("--spec")
+        .arg(&spec_path)
+        .arg("--output-dir")
+        .arg(&output_dir)
         .output()
         .expect("failed to launch uv");
 
