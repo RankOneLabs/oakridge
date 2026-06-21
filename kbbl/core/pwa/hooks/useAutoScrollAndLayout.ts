@@ -68,9 +68,11 @@ export function useAutoScrollAndLayout({
     const bottom = bottomBarRef.current;
     const update = () => {
       if (top) app.style.setProperty("--top-bar-h", `${top.offsetHeight}px`);
-      if (bottom)
+      if (bottom && bottom.offsetHeight > 0) {
         app.style.setProperty("--bottom-bar-h", `${bottom.offsetHeight}px`);
-      else app.style.removeProperty("--bottom-bar-h");
+      } else {
+        app.style.removeProperty("--bottom-bar-h");
+      }
     };
     update();
     if (typeof ResizeObserver === "undefined") return;

@@ -37,7 +37,10 @@ import {
   parseCodexVersionOutput,
   probeSlashForSkillsSupported,
   discoverSkills,
+  discoverMcpToolSkills,
+  discoverNativeSkills,
   makeSkillInvocationFormatter,
+  mergeCodexSkills,
 } from "./skills";
 
 // === Per-session state ===
@@ -278,7 +281,24 @@ export async function createCodexRuntime(
     async discoverSkills(handle: SessionHandle): Promise<Skill[]> {
       const state = getState(handle.sessionId);
       if (!state) return [];
-      return discoverSkills(state.workingDirectory);
+      const local = discoverSkills(state.workingDirectory);
+      const [native, mcpTools] = await Promise.all([
+        discoverNativeSkills(
+          (method, params) => client.request(method, params),
+          state.workingDirectory,
+        ).catch((err) => {
+          console.warn("kbbl codex: native skill discovery failed:", err);
+          return [];
+        }),
+        discoverMcpToolSkills(
+          (method, params) => client.request(method, params),
+          state.threadId,
+        ).catch((err) => {
+          console.warn("kbbl codex: MCP tool discovery failed:", err);
+          return [];
+        }),
+      ]);
+      return mergeCodexSkills({ local, native, mcpTools });
     },
 
     // --- formatSkillInvocation ---

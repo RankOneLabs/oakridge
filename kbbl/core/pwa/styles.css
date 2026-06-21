@@ -1295,21 +1295,20 @@ body {
   }
 }
 
-.input-bar {
-  /* Fixed to the viewport bottom so it stays in view regardless of scroll
-     position. The previous `position: sticky` approach pinned only while
-     the bar's natural document position was below the viewport — short
-     transcripts and certain Chrome flex-layout interactions broke it.
-     `interactive-widget=resizes-content` in index.html ensures the bar
-     rides above the soft keyboard on mobile (Chrome / iOS 17+).
-     left:0/right:0 + max-width + margin:auto centers within the same
-     800px gutter as .app so it visually aligns with the content column. */
+.bottom-stack {
   position: fixed;
   bottom: 0;
   left: 0;
   right: 0;
   max-width: 800px;
   margin: 0 auto;
+  z-index: 10;
+}
+
+.input-bar {
+  /* .bottom-stack is the fixed viewport anchor. Keeping the input itself in
+     normal flow lets the skill rail sit above it and be included in the same
+     measured --bottom-bar-h clearance. */
   padding: 0.5rem 1rem;
   padding-bottom: calc(env(safe-area-inset-bottom) + 0.5rem);
   background: var(--bg-input-bar);
@@ -1317,7 +1316,6 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
-  z-index: 10;
 }
 .input-bar-row {
   display: flex;
@@ -1668,12 +1666,10 @@ body {
   }
 
   .input-bar {
-    /* Match .app's desktop max-width so the pinned bar visually aligns
-       with the content column. The bar stays `position: fixed` (set in
-       the mobile rule) — keeping the input pinned to the viewport bottom
-       so it doesn't scroll off screen on long transcripts. */
-    max-width: 1200px;
     background: var(--bg-input-bar-desktop);
+  }
+  .bottom-stack {
+    max-width: 1200px;
   }
   .input-bar textarea {
     /* Desktop has room for a multi-line default — less cramped than the
@@ -4432,19 +4428,7 @@ body {
 }
 
 .skill-rail--bottom {
-  position: fixed;
-  bottom: var(--bottom-bar-h, 4rem);
-  left: 0;
-  right: 0;
-  max-width: 800px;
-  margin: 0 auto;
-  z-index: 9;
-}
-
-@media (min-width: 1024px) {
-  .skill-rail--bottom {
-    max-width: 1200px;
-  }
+  width: 100%;
 }
 
 .skill-rail--right {
