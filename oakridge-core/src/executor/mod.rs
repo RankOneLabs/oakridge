@@ -484,6 +484,7 @@ mod tests {
             config: json!({}),
             parked_reason: None,
             parked_meta: None,
+            terminal_meta: None,
             external_ref: None,
             started_at: None,
             ended_at: None,
@@ -604,6 +605,7 @@ mod tests {
             status: StageStatus::Running,
             parked_reason: None,
             parked_meta: None,
+            terminal_meta: None,
             external_ref: None,
         };
         StageContext::new(
