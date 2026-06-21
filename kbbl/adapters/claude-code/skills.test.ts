@@ -267,7 +267,9 @@ describe("discoverSkills — built-in CC commands", () => {
     expect(builtins.length).toBeGreaterThan(0);
     const names = builtins.map((s) => s.name);
     expect(names).toContain("code-review");
-    const cr = builtins.find((s) => s.name === "code-review")!;
+    const cr = builtins.find((s) => s.name === "code-review");
+    expect(cr).toBeDefined();
+    if (!cr) return;
     expect(cr.backend).toBe("claude-code");
     expect(cr.scope).toBe("system");
     expect(cr.user_invocable).toBe(true);
@@ -316,6 +318,42 @@ describe("discoverSkills — installed plugins", () => {
     const names = skills.map((s) => s.name);
     expect(names).toContain("plug-cmd");
     expect(names).toContain("plug-skill");
+    // Plugin IDs are namespaced so they can't collide with disk-source IDs.
+    const plugCmd = skills.find((s) => s.name === "plug-cmd");
+    expect(plugCmd).toBeDefined();
+    if (!plugCmd) return;
+    expect(plugCmd.id).toBe("cc:plugin:demo_market:user:commands:plug-cmd");
+  });
+
+  test("a plugin skill does not overwrite a same-named disk skill", async () => {
+    const wd = makeWorkdir();
+    const home = makeHome();
+    // Disk command named "review" at project scope.
+    writeCommandMd(wd, "review", `---\nname: review\ndescription: disk review\n---`);
+
+    // Plugin also ships a "review" command.
+    const installPath = join(tmpRoot, "plugin-install");
+    mkdirSync(join(installPath, "commands"), { recursive: true });
+    writeFileSync(
+      join(installPath, "commands", "review.md"),
+      `---\nname: review\ndescription: plugin review\n---`,
+    );
+    mkdirSync(join(home, ".claude", "plugins"), { recursive: true });
+    writeFileSync(
+      join(home, ".claude", "plugins", "installed_plugins.json"),
+      JSON.stringify({
+        version: 2,
+        plugins: { "demo@market": [{ scope: "user", installPath }] },
+      }),
+    );
+
+    const skills = await discoverSkills(wd, home);
+    const reviews = skills.filter((s) => s.name === "review");
+    // Both survive as distinct entries — the disk skill is not overwritten.
+    expect(reviews).toHaveLength(2);
+    const ids = reviews.map((s) => s.id);
+    expect(ids).toContain("cc:project:commands:review");
+    expect(ids).toContain("cc:plugin:demo_market:user:commands:review");
   });
 
   test("missing installed_plugins.json is tolerated", async () => {

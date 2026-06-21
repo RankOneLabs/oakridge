@@ -197,8 +197,13 @@ async function discoverFromInstalledPlugins(home: string): Promise<Skill[]> {
   if (!plugins || typeof plugins !== "object") return [];
 
   const skills: Skill[] = [];
-  for (const records of Object.values(plugins as Record<string, unknown>)) {
+  for (const [pluginKey, records] of Object.entries(
+    plugins as Record<string, unknown>,
+  )) {
     if (!Array.isArray(records)) continue;
+    // Namespace IDs by plugin so a plugin command/skill can never collide with
+    // (and overwrite, during id de-dup) a same-named local disk skill.
+    const namespace = pluginKey.replace(/[^a-zA-Z0-9._-]/g, "_");
     for (const rec of records) {
       const installPath =
         rec && typeof rec === "object"
@@ -211,7 +216,16 @@ async function discoverFromInstalledPlugins(home: string): Promise<Skill[]> {
         discoverFromCommandsDir(join(installPath, "commands"), scope),
         discoverFromSkillsDir(join(installPath, "skills"), scope),
       ]);
-      skills.push(...cmds, ...sks);
+      skills.push(
+        ...cmds.map((s) => ({
+          ...s,
+          id: `cc:plugin:${namespace}:${s.scope}:commands:${s.name}`,
+        })),
+        ...sks.map((s) => ({
+          ...s,
+          id: `cc:plugin:${namespace}:${s.scope}:skills:${s.name}`,
+        })),
+      );
     }
   }
   return skills;
