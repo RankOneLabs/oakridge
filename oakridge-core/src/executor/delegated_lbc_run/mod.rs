@@ -3,15 +3,54 @@ pub mod config;
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use tokio::process::{Child, Command};
+use tokio::sync::{oneshot, watch, Mutex};
+use tokio::task::JoinHandle;
+use tokio::{fs, io::AsyncReadExt};
 
 use crate::executor::{StageContext, StageHandle};
 use crate::registry::stage_type::StageType;
-use crate::types::{Artifact, OutputSlot, StageInstanceId};
+use crate::types::{Artifact, OutputSlot, StageInstanceId, StageStatus};
 
 use config::{
     default_result_output_slot, resolve_output_dir, resolve_run_spec, validate_result_output_slot,
     DelegatedLbcRunConfig, DelegatedLbcRunDefConfig,
 };
+
+#[derive(Debug)]
+struct DelegatedLbcRunHandle {
+    cancel_tx: watch::Sender<bool>,
+    completion_rx: Mutex<Option<oneshot::Receiver<()>>>,
+}
+
+#[derive(Debug, Clone)]
+struct BridgeResultPayload {
+    artifact_path: String,
+    eval_scores: Value,
+}
+
+#[derive(Debug, Clone)]
+enum ResultScanError {
+    InvalidJson(String),
+    InvalidPayload(String),
+}
+
+#[derive(Debug, Clone)]
+struct CapturedOutput {
+    stdout: String,
+    stderr: String,
+}
+
+impl CapturedOutput {
+    fn stdout_tail(&self) -> Vec<String> {
+        tail_lines(&self.stdout, 20)
+    }
+
+    fn stderr_tail(&self) -> Vec<String> {
+        tail_lines(&self.stderr, 20)
+    }
+}
 
 pub struct DelegatedLbcRunStage;
 
@@ -67,20 +106,495 @@ impl StageType for DelegatedLbcRunStage {
     }
 
     async fn execute(&self, _ctx: StageContext) -> anyhow::Result<Box<dyn StageHandle>> {
-        anyhow::bail!("delegated_lbc_run execution is not implemented in oakridge-core yet")
+        let config: DelegatedLbcRunConfig = serde_json::from_value(_ctx.config.clone())?;
+        let output_dir = canonicalize_or_original(&config.output_dir).await?;
+        fs::create_dir_all(&output_dir).await?;
+
+        let run_spec_path = output_dir.join("run-spec.json");
+        let run_spec_json = serde_json::to_vec_pretty(&config.run_spec)?;
+        fs::write(&run_spec_path, run_spec_json).await?;
+
+        let spec_arg = run_spec_path.to_string_lossy().to_string();
+        let output_dir_arg = output_dir.to_string_lossy().to_string();
+
+        let mut command = Command::new(&config.bridge_command);
+        command.args(&config.bridge_args);
+        command.arg("--spec");
+        command.arg(&spec_arg);
+        command.arg("--output-dir");
+        command.arg(&output_dir_arg);
+        command.current_dir(&output_dir);
+        command.stdout(std::process::Stdio::piped());
+        command.stderr(std::process::Stdio::piped());
+
+        let child = match command.spawn() {
+            Ok(child) => child,
+            Err(err) => {
+                let terminal_meta = terminal_meta_for_spawn_failure(
+                    &config,
+                    &output_dir,
+                    &run_spec_path,
+                    &err.to_string(),
+                );
+                let _ = _ctx
+                    .set_status_with_terminal_meta(StageStatus::Failed, None, Some(terminal_meta))
+                    .await;
+                return Ok(Box::new(NoopHandle));
+            }
+        };
+
+        let (cancel_tx, cancel_rx) = watch::channel(false);
+        let (completion_tx, completion_rx) = oneshot::channel();
+
+        if let Err(err) = _ctx.set_status(StageStatus::Running, None).await {
+            let _ = kill_and_reap(child).await;
+            return Err(err);
+        }
+
+        let ctx = _ctx.clone();
+        let config_clone = config.clone();
+        let output_dir_clone = output_dir.clone();
+        let run_spec_path_clone = run_spec_path.clone();
+        let join: JoinHandle<()> = tokio::spawn(async move {
+            run_bridge(
+                ctx,
+                config_clone,
+                output_dir_clone,
+                run_spec_path_clone,
+                child,
+                cancel_rx,
+                completion_tx,
+            )
+            .await;
+        });
+
+        drop(join);
+
+        Ok(Box::new(DelegatedLbcRunHandle {
+            cancel_tx,
+            completion_rx: Mutex::new(Some(completion_rx)),
+        }))
     }
+}
+
+#[async_trait]
+impl StageHandle for DelegatedLbcRunHandle {
+    async fn resume(&self, _payload: crate::executor::ResumePayload) -> anyhow::Result<()> {
+        anyhow::bail!("delegated_lbc_run does not support resume")
+    }
+
+    async fn cancel(&self) -> anyhow::Result<()> {
+        self.cancel_tx
+            .send(true)
+            .map_err(|_| anyhow::anyhow!("cancel channel closed"))?;
+        if let Some(rx) = self.completion_rx.lock().await.take() {
+            let _ = rx.await;
+        }
+        Ok(())
+    }
+}
+
+struct NoopHandle;
+
+#[async_trait]
+impl StageHandle for NoopHandle {
+    async fn resume(&self, _payload: crate::executor::ResumePayload) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn cancel(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
+async fn canonicalize_or_original(path: &Path) -> anyhow::Result<PathBuf> {
+    match fs::canonicalize(path).await {
+        Ok(canonical) => Ok(canonical),
+        Err(_) => Ok(path.to_path_buf()),
+    }
+}
+
+async fn kill_and_reap(mut child: Child) -> anyhow::Result<()> {
+    let _ = child.kill().await;
+    let _ = child.wait().await;
+    Ok(())
+}
+
+async fn run_bridge(
+    ctx: StageContext,
+    config: DelegatedLbcRunConfig,
+    output_dir: PathBuf,
+    run_spec_path: PathBuf,
+    mut child: Child,
+    mut cancel_rx: watch::Receiver<bool>,
+    completion_tx: oneshot::Sender<()>,
+) {
+    let command_display = terminal_command(&config.bridge_command, &config.bridge_args);
+    let command_display_for_task = command_display.clone();
+    let result = async {
+        let stdout = child.stdout.take().ok_or_else(|| {
+            anyhow::anyhow!("delegated_lbc_run bridge stdout was not piped")
+        })?;
+        let stderr = child.stderr.take().ok_or_else(|| {
+            anyhow::anyhow!("delegated_lbc_run bridge stderr was not piped")
+        })?;
+
+        let output_task = tokio::spawn(capture_output(stdout, stderr));
+        let pid = child.id();
+        let status = tokio::select! {
+            status = child.wait() => {
+                status.map_err(|err| anyhow::anyhow!("bridge wait failed: {}", err))?
+            }
+            _ = async {
+                if *cancel_rx.borrow() {
+                    return;
+                }
+                let _ = cancel_rx.changed().await;
+            } => {
+                let _ = child.kill().await;
+                child.wait().await.map_err(|err| anyhow::anyhow!("bridge wait after cancel failed: {}", err))?
+            }
+        };
+        let captured = output_task
+            .await
+            .map_err(|err| anyhow::anyhow!("bridge output task failed: {}", err))??;
+
+        let terminal_meta_base = json_terminal_meta_base(
+            &config,
+            &output_dir,
+            &run_spec_path,
+            &command_display_for_task,
+            pid,
+            &captured,
+        );
+
+        if !status.success() {
+            let mut terminal_meta = terminal_meta_base;
+            merge_terminal_meta(
+                &mut terminal_meta,
+                serde_json::json!({
+                    "kind": if *cancel_rx.borrow() { "cancelled" } else { "non_zero_exit" },
+                    "exit_status": format_exit_status(&status),
+                }),
+            );
+            if let Some(code) = status.code() {
+                let _ = code;
+            }
+            ctx.set_status_with_terminal_meta(StageStatus::Failed, None, Some(terminal_meta))
+                .await?;
+            return Ok::<(), anyhow::Error>(());
+        }
+
+        let result_payload = match last_result_payload(&captured.stdout) {
+            Ok(Some(payload)) => payload,
+            Ok(None) => {
+                let mut terminal_meta = terminal_meta_base;
+                merge_terminal_meta(
+                    &mut terminal_meta,
+                    serde_json::json!({
+                        "kind": "missing_result",
+                    }),
+                );
+                ctx.set_status_with_terminal_meta(StageStatus::Failed, None, Some(terminal_meta))
+                    .await?;
+                return Ok::<(), anyhow::Error>(());
+            }
+            Err(ResultScanError::InvalidJson(err)) => {
+                let mut terminal_meta = terminal_meta_base;
+                merge_terminal_meta(
+                    &mut terminal_meta,
+                    serde_json::json!({
+                        "kind": "invalid_result_json",
+                        "error": err.to_string(),
+                    }),
+                );
+                ctx.set_status_with_terminal_meta(StageStatus::Failed, None, Some(terminal_meta))
+                    .await?;
+                return Ok::<(), anyhow::Error>(());
+            }
+            Err(ResultScanError::InvalidPayload(err)) => {
+                let mut terminal_meta = terminal_meta_base;
+                merge_terminal_meta(
+                    &mut terminal_meta,
+                    serde_json::json!({
+                        "kind": "invalid_result_payload",
+                        "error": err.to_string(),
+                    }),
+                );
+                ctx.set_status_with_terminal_meta(StageStatus::Failed, None, Some(terminal_meta))
+                    .await?;
+                return Ok::<(), anyhow::Error>(());
+            }
+        };
+
+        let artifact_path = resolve_artifact_path(&output_dir, &result_payload.artifact_path);
+        let cell_output_dir = artifact_path.parent().ok_or_else(|| {
+            anyhow::anyhow!("artifact_path '{}' has no parent directory", artifact_path.display())
+        })?;
+
+        let sidecars = discover_sidecars(cell_output_dir).await?;
+        let artifact_body = serde_json::json!({
+            "artifact_path": result_payload.artifact_path,
+            "output_dir": output_dir,
+            "run_spec_path": run_spec_path,
+            "run_spec": config.run_spec,
+            "eval_scores": result_payload.eval_scores,
+            "sidecars": sidecars,
+        });
+
+        let artifact = match ctx
+            .emit(crate::executor::EmitArgs {
+                output_name: config.result_output_slot.name.clone(),
+                artifact_type: config.result_output_slot.artifact_type.clone(),
+                body: artifact_body,
+                label: None,
+                parent_artifact_id: None,
+            })
+            .await
+        {
+            Ok(artifact) => artifact,
+            Err(err) => {
+                let mut terminal_meta = terminal_meta_base;
+                merge_terminal_meta(
+                    &mut terminal_meta,
+                    serde_json::json!({
+                        "kind": "artifact_emit_failed",
+                        "error": err.to_string(),
+                        "output_name": config.result_output_slot.name,
+                        "artifact_type": config.result_output_slot.artifact_type,
+                    }),
+                );
+                ctx.set_status_with_terminal_meta(StageStatus::Failed, None, Some(terminal_meta))
+                    .await?;
+                return Ok::<(), anyhow::Error>(());
+            }
+        };
+
+        let mut terminal_meta = terminal_meta_base;
+        merge_terminal_meta(
+            &mut terminal_meta,
+            serde_json::json!({
+                "kind": "completed",
+                "artifact_id": artifact.id,
+                "artifact_path": result_payload.artifact_path,
+            }),
+        );
+        ctx.set_status_with_terminal_meta(StageStatus::Done, None, Some(terminal_meta))
+            .await?;
+
+        Ok::<(), anyhow::Error>(())
+    }
+    .await;
+
+    if let Err(err) = result {
+        let terminal_meta = serde_json::json!({
+            "kind": "runtime_error",
+            "error": err.to_string(),
+            "command": command_display,
+        });
+        let _ = ctx
+            .set_status_with_terminal_meta(StageStatus::Failed, None, Some(terminal_meta))
+            .await;
+    }
+
+    let _ = completion_tx.send(());
+}
+
+fn terminal_command(command: &str, args: &[String]) -> String {
+    let mut parts = vec![command.to_owned()];
+    parts.extend(args.iter().cloned());
+    parts.join(" ")
+}
+
+fn json_terminal_meta_base(
+    config: &DelegatedLbcRunConfig,
+    output_dir: &Path,
+    run_spec_path: &Path,
+    command_display: &str,
+    pid: Option<u32>,
+    captured: &CapturedOutput,
+) -> Value {
+    serde_json::json!({
+        "command": &config.bridge_command,
+        "args": &config.bridge_args,
+        "command_display": command_display,
+        "pid": pid,
+        "output_dir": output_dir,
+        "run_spec_path": run_spec_path,
+        "stdout_tail": captured.stdout_tail(),
+        "stderr_tail": captured.stderr_tail(),
+    })
+}
+
+fn merge_terminal_meta(base: &mut Value, extra: Value) {
+    if let (Some(base_obj), Some(extra_obj)) = (base.as_object_mut(), extra.as_object()) {
+        for (key, value) in extra_obj {
+            base_obj.insert(key.clone(), value.clone());
+        }
+    }
+}
+
+fn resolve_artifact_path(output_dir: &Path, artifact_path: &str) -> PathBuf {
+    let path = PathBuf::from(artifact_path);
+    if path.is_absolute() {
+        path
+    } else {
+        output_dir.join(path)
+    }
+}
+
+async fn discover_sidecars(cell_output_dir: &Path) -> anyhow::Result<Value> {
+    let events_jsonl = maybe_path(cell_output_dir.join("events.jsonl")).await?;
+    let eval_scores_json = maybe_path(cell_output_dir.join("eval_scores.json")).await?;
+    let commits_dir = maybe_dir(cell_output_dir.join("commits")).await?;
+    Ok(serde_json::json!({
+        "cell_output_dir": cell_output_dir,
+        "events_jsonl_path": events_jsonl,
+        "eval_scores_json_path": eval_scores_json,
+        "commits_dir": commits_dir,
+    }))
+}
+
+async fn maybe_path(path: PathBuf) -> anyhow::Result<Option<PathBuf>> {
+    match fs::metadata(&path).await {
+        Ok(meta) if meta.is_file() => Ok(Some(path)),
+        Ok(_) => Ok(None),
+        Err(_) => Ok(None),
+    }
+}
+
+async fn maybe_dir(path: PathBuf) -> anyhow::Result<Option<PathBuf>> {
+    match fs::metadata(&path).await {
+        Ok(meta) if meta.is_dir() => Ok(Some(path)),
+        Ok(_) => Ok(None),
+        Err(_) => Ok(None),
+    }
+}
+
+fn terminal_meta_for_spawn_failure(
+    config: &DelegatedLbcRunConfig,
+    output_dir: &Path,
+    run_spec_path: &Path,
+    error: &str,
+) -> Value {
+    serde_json::json!({
+        "kind": "spawn_failed",
+        "command": &config.bridge_command,
+        "args": &config.bridge_args,
+        "output_dir": output_dir,
+        "run_spec_path": run_spec_path,
+        "error": error,
+    })
+}
+
+fn format_exit_status(status: &std::process::ExitStatus) -> Value {
+    serde_json::json!({
+        "code": status.code(),
+        "success": status.success(),
+    })
+}
+
+fn tail_lines(text: &str, max_lines: usize) -> Vec<String> {
+    let mut lines: Vec<String> = text.lines().map(|line| line.to_owned()).collect();
+    if lines.len() > max_lines {
+        lines.drain(0..lines.len() - max_lines);
+    }
+    lines
+}
+
+async fn capture_output(
+    mut stdout: tokio::process::ChildStdout,
+    mut stderr: tokio::process::ChildStderr,
+) -> anyhow::Result<CapturedOutput> {
+    let stdout_task = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        stdout.read_to_end(&mut buf).await?;
+        Ok::<_, std::io::Error>(String::from_utf8_lossy(&buf).to_string())
+    });
+    let stderr_task = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        stderr.read_to_end(&mut buf).await?;
+        Ok::<_, std::io::Error>(String::from_utf8_lossy(&buf).to_string())
+    });
+
+    let stdout = stdout_task
+        .await
+        .map_err(|err| anyhow::anyhow!("stdout capture task failed: {}", err))??;
+    let stderr = stderr_task
+        .await
+        .map_err(|err| anyhow::anyhow!("stderr capture task failed: {}", err))??;
+
+    Ok(CapturedOutput { stdout, stderr })
+}
+
+fn last_result_payload(stdout: &str) -> Result<Option<BridgeResultPayload>, ResultScanError> {
+    let mut last_valid = None;
+    let mut last_json_error = None;
+    let mut last_payload_error = None;
+    for line in stdout.lines() {
+        if let Some(rest) = line.strip_prefix("RESULT ") {
+            match parse_result_payload(rest) {
+                Ok(payload) => last_valid = Some(payload),
+                Err(ResultScanError::InvalidJson(err)) => last_json_error = Some(err),
+                Err(ResultScanError::InvalidPayload(err)) => last_payload_error = Some(err),
+            }
+        }
+    }
+    if last_valid.is_some() {
+        Ok(last_valid)
+    } else if let Some(err) = last_json_error {
+        Err(ResultScanError::InvalidJson(err))
+    } else if let Some(err) = last_payload_error {
+        Err(ResultScanError::InvalidPayload(err))
+    } else {
+        Ok(None)
+    }
+}
+
+fn parse_result_payload(rest: &str) -> Result<BridgeResultPayload, ResultScanError> {
+    let value: Value =
+        serde_json::from_str(rest).map_err(|err| ResultScanError::InvalidJson(err.to_string()))?;
+    let object = value.as_object().ok_or_else(|| {
+        ResultScanError::InvalidPayload("RESULT payload must be a JSON object".into())
+    })?;
+    let artifact_path = object
+        .get("artifact_path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            ResultScanError::InvalidPayload(
+                "RESULT payload must contain string artifact_path".into(),
+            )
+        })?;
+    let eval_scores = object.get("eval_scores").cloned().ok_or_else(|| {
+        ResultScanError::InvalidPayload("RESULT payload must contain eval_scores".into())
+    })?;
+
+    Ok(BridgeResultPayload {
+        artifact_path: artifact_path.to_owned(),
+        eval_scores,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::queries;
     use crate::executor::delegated_lbc_run::config::{
         DelegatedLbcRunCondition, DelegatedLbcRunConfig, DelegatedLbcRunGraderRef,
     };
-    use crate::types::{ArtifactId, StageInstanceId, WorkflowRunId};
+    use crate::registry::{ArtifactTypeDef, ArtifactTypeRegistry};
+    use crate::types::{ArtifactId, StageInstanceId};
+    use crate::types::{
+        RunStatus, StageInstance, StageInstanceSummary, StageKey, StageStatus, WorkflowDef,
+        WorkflowDefId, WorkflowGraph, WorkflowRun, WorkflowRunId,
+    };
     use chrono::Utc;
     use serde_json::json;
     use std::path::PathBuf;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+    use tokio::sync::mpsc;
+    use tokio::time::Duration;
     use uuid::Uuid;
 
     fn artifact(body: Value) -> Artifact {
@@ -277,5 +791,259 @@ mod tests {
         let cfg: DelegatedLbcRunConfig = serde_json::from_value(config).unwrap();
 
         assert_eq!(cfg.result_output_slot.artifact_type, "markdown");
+    }
+
+    async fn make_pool() -> Arc<sqlx::SqlitePool> {
+        let path = format!("/tmp/oakridge_lbc_run_{}.db", Uuid::new_v4());
+        Arc::new(
+            crate::db::init_pool(&format!("sqlite:{}", path))
+                .await
+                .unwrap(),
+        )
+    }
+
+    fn fixed_dt() -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc)
+    }
+
+    async fn setup_run(
+        pool: &sqlx::SqlitePool,
+        stage_type: &str,
+    ) -> (WorkflowRunId, StageInstanceId) {
+        let def = WorkflowDef {
+            id: WorkflowDefId(Uuid::new_v4()),
+            name: format!("wf-{}", Uuid::new_v4()),
+            version: 1,
+            graph: WorkflowGraph {
+                stages: {
+                    let mut stages = HashMap::new();
+                    stages.insert(
+                        "s1".into(),
+                        crate::types::StageNodeDef {
+                            stage_type: stage_type.into(),
+                            config: json!({}),
+                            inputs: vec![],
+                            outputs: vec![crate::types::OutputSlot {
+                                name: "result".into(),
+                                artifact_type: "artifact".into(),
+                            }],
+                        },
+                    );
+                    stages
+                },
+                edges: vec![],
+            },
+            created_at: fixed_dt(),
+        };
+        queries::insert_workflow_def(pool, &def).await.unwrap();
+
+        let run = WorkflowRun {
+            id: WorkflowRunId(Uuid::new_v4()),
+            workflow_def_id: def.id,
+            project_id: None,
+            status: RunStatus::Running,
+            context: json!({}),
+            version: 1,
+            created_at: fixed_dt(),
+            updated_at: fixed_dt(),
+        };
+        queries::insert_workflow_run(pool, &run).await.unwrap();
+
+        let si = StageInstance {
+            id: StageInstanceId(Uuid::new_v4()),
+            run_id: run.id,
+            stage_key: StageKey::from("s1"),
+            stage_type: stage_type.into(),
+            status: StageStatus::Pending,
+            config: json!({}),
+            parked_reason: None,
+            parked_meta: None,
+            terminal_meta: None,
+            external_ref: None,
+            started_at: None,
+            ended_at: None,
+            created_at: fixed_dt(),
+            updated_at: fixed_dt(),
+        };
+        queries::insert_stage_instance(pool, &si).await.unwrap();
+        (run.id, si.id)
+    }
+
+    fn make_registry() -> Arc<ArtifactTypeRegistry> {
+        let mut registry = ArtifactTypeRegistry::new();
+        registry.register(ArtifactTypeDef {
+            id: "artifact".into(),
+            validate: |_| Ok(()),
+            component_id: "artifact-viewer".into(),
+        });
+        Arc::new(registry)
+    }
+
+    fn make_ctx(
+        pool: Arc<sqlx::SqlitePool>,
+        run_id: WorkflowRunId,
+        si_id: StageInstanceId,
+        registry: Arc<ArtifactTypeRegistry>,
+        config: Value,
+    ) -> (StageContext, mpsc::Receiver<crate::executor::ExecutorEvent>) {
+        let summary = StageInstanceSummary {
+            stage_instance_id: si_id,
+            workflow_run_id: run_id,
+            stage_key: "s1".into(),
+            status: StageStatus::Pending,
+            parked_reason: None,
+            parked_meta: None,
+            terminal_meta: None,
+            external_ref: None,
+        };
+        let (tx, rx) = mpsc::channel(8);
+        (
+            StageContext::new(summary, config, HashMap::new(), tx, pool, registry),
+            rx,
+        )
+    }
+
+    fn fake_bridge_script() -> String {
+        r#"#!/usr/bin/env sh
+set -eu
+spec=""
+output_dir=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --spec)
+      spec="$2"
+      shift 2
+      ;;
+    --output-dir)
+      output_dir="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+mkdir -p "$output_dir/cell-1/commits"
+cat > "$output_dir/cell-1/events.jsonl" <<'EOF'
+{"kind":"event"}
+EOF
+cat > "$output_dir/cell-1/eval_scores.json" <<'EOF'
+{"score": 9}
+EOF
+printf 'noise\n'
+printf 'RESULT {"artifact_path":"cell-1/final.txt","eval_scores":{"score":9}}\n'
+printf 'RESULT {"artifact_path":"cell-1/ignored.txt","eval_scores":{"score":0}}\n'
+printf 'artifact from %s\n' "$spec" > "$output_dir/cell-1/final.txt"
+"#
+        .to_string()
+    }
+
+    #[tokio::test]
+    async fn execute_success_writes_spec_spawns_bridge_and_emits_result() {
+        let pool = make_pool().await;
+        let (run_id, si_id) = setup_run(&pool, "delegated_lbc_run").await;
+        let registry = make_registry();
+        let tempdir = TempDir::new().unwrap();
+        let script_path = tempdir.path().join("fake-bridge.sh");
+        tokio::fs::write(&script_path, fake_bridge_script())
+            .await
+            .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&script_path).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script_path, perms).unwrap();
+        }
+
+        let config = serde_json::to_value(DelegatedLbcRunConfig {
+            run_spec: crate::executor::delegated_lbc_run::config::DelegatedLbcRunSpec {
+                task: "task".into(),
+                model_pool: vec!["model".into()],
+                condition: DelegatedLbcRunCondition {
+                    kind: "single_agent".into(),
+                    n: 1,
+                },
+                grade: true,
+                grader: None,
+                local_task_dir: None,
+                local_grader_config_dir: None,
+            },
+            output_dir: tempdir.path().to_path_buf(),
+            bridge_command: script_path.to_string_lossy().to_string(),
+            bridge_args: vec![],
+            result_output_slot: crate::types::OutputSlot {
+                name: "result".into(),
+                artifact_type: "artifact".into(),
+            },
+        })
+        .unwrap();
+
+        let (ctx, mut rx) = make_ctx(pool.clone(), run_id, si_id, registry.clone(), config);
+        let stage = make_stage();
+        let _handle = stage.execute(ctx.clone()).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let si = queries::get_stage_instance_by_id(&pool, &si_id)
+                    .await
+                    .unwrap();
+                if si.status == StageStatus::Done {
+                    assert!(si.terminal_meta.is_some());
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let mut saw_artifact = false;
+        let mut saw_done = false;
+        while !(saw_artifact && saw_done) {
+            match rx.try_recv() {
+                Ok(crate::executor::ExecutorEvent::ArtifactEmitted { output_name, .. }) => {
+                    assert_eq!(output_name, "result");
+                    saw_artifact = true;
+                }
+                Ok(crate::executor::ExecutorEvent::StatusChanged {
+                    status: StageStatus::Running,
+                    ..
+                }) => {}
+                Ok(crate::executor::ExecutorEvent::StatusChanged {
+                    status: StageStatus::Done,
+                    ..
+                }) => {
+                    saw_done = true;
+                }
+                Ok(other) => panic!("unexpected event: {:?}", other),
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                    panic!("event channel closed before completion")
+                }
+            }
+        }
+
+        let artifacts = queries::list_artifacts_for_run(&pool, &run_id, None)
+            .await
+            .unwrap();
+        let artifacts: Vec<_> = artifacts
+            .into_iter()
+            .filter(|artifact| artifact.stage_instance_id == si_id)
+            .collect();
+        assert_eq!(artifacts.len(), 1);
+        assert_eq!(artifacts[0].output_name.as_deref(), Some("result"));
+        assert_eq!(artifacts[0].artifact_type, "artifact");
+        assert_eq!(
+            artifacts[0].body["artifact_path"],
+            json!("cell-1/ignored.txt")
+        );
+        assert_eq!(artifacts[0].body["eval_scores"], json!({"score": 0}));
+        assert_eq!(
+            artifacts[0].body["sidecars"]["events_jsonl_path"],
+            json!(tempdir.path().join("cell-1/events.jsonl"))
+        );
     }
 }
