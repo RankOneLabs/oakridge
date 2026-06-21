@@ -148,9 +148,7 @@ pub fn resolve_run_spec(
     };
 
     let model_pool: Vec<String> = serde_json::from_value(model_pool_value)?;
-    if model_pool.is_empty() {
-        anyhow::bail!("model_pool must be a non-empty array");
-    }
+    validate_model_pool(&model_pool)?;
 
     let condition = parse_condition(condition_value)?;
     let grade = match grade_value {
@@ -221,6 +219,9 @@ pub fn validate_result_output_slot(
 
 pub fn parse_condition(value: Value) -> anyhow::Result<DelegatedLbcRunCondition> {
     let condition: DelegatedLbcRunCondition = serde_json::from_value(value)?;
+    if condition.n > 16 {
+        anyhow::bail!("condition.n must be in 1..=16, got {}", condition.n);
+    }
     match condition.kind.as_str() {
         "single_agent" if condition.n != 1 => {
             anyhow::bail!("single_agent requires n == 1, got {}", condition.n)
@@ -243,7 +244,52 @@ pub fn parse_condition(value: Value) -> anyhow::Result<DelegatedLbcRunCondition>
 }
 
 pub fn parse_grader_ref(value: Value) -> anyhow::Result<DelegatedLbcRunGraderRef> {
-    Ok(serde_json::from_value(value)?)
+    let grader: DelegatedLbcRunGraderRef = serde_json::from_value(value)?;
+    validate_grader_ref(&grader)?;
+    Ok(grader)
+}
+
+fn validate_model_pool(model_pool: &[String]) -> anyhow::Result<()> {
+    if model_pool.is_empty() {
+        anyhow::bail!("model_pool must be a non-empty array");
+    }
+    if model_pool.iter().any(|entry| entry.is_empty()) {
+        anyhow::bail!("model_pool entries must be non-empty strings");
+    }
+    Ok(())
+}
+
+fn validate_grader_ref(grader: &DelegatedLbcRunGraderRef) -> anyhow::Result<()> {
+    match grader {
+        DelegatedLbcRunGraderRef::Registered { key, config } => {
+            if key.is_empty() {
+                anyhow::bail!("registered grader key must be a non-empty string");
+            }
+            if let Some(config) = config {
+                if !config.is_object() {
+                    anyhow::bail!("registered grader config must be a JSON object");
+                }
+            }
+            Ok(())
+        }
+        DelegatedLbcRunGraderRef::LocalConfig { name } => {
+            if !is_snake_case_name(name) {
+                anyhow::bail!("local grader config name must be snake_case starting with a letter");
+            }
+            Ok(())
+        }
+    }
+}
+
+fn is_snake_case_name(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !first.is_ascii_lowercase() {
+        return false;
+    }
+    chars.all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_')
 }
 
 #[cfg(test)]
@@ -317,6 +363,42 @@ mod tests {
         assert_eq!(condition.kind, "single_agent");
         assert_eq!(condition.n, 1);
         assert!(parse_condition(json!({ "kind": "single_agent", "n": 2 })).is_err());
+        assert!(parse_condition(json!({ "kind": "single_agent", "n": 17 })).is_err());
+    }
+
+    #[test]
+    fn resolve_run_spec_rejects_empty_model_entries() {
+        let def = DelegatedLbcRunDefConfig {
+            task: SlotBinding::Literal {
+                value: "task".into(),
+            },
+            model_pool: JsonBinding::Literal {
+                value: json!(["alpha", ""]),
+            },
+            condition: JsonBinding::Literal {
+                value: json!({"kind": "single_agent", "n": 1}),
+            },
+            grade: None,
+            grader: None,
+            local_task_dir: None,
+            local_grader_config_dir: None,
+            output_dir: None,
+            bridge_command: None,
+            bridge_args: None,
+            result_output_slot: "result".into(),
+        };
+
+        let err = resolve_run_spec(&def, &HashMap::new(), &json!({}))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("model_pool entries must be non-empty strings"));
+    }
+
+    #[test]
+    fn parse_grader_ref_rejects_invalid_values() {
+        assert!(parse_grader_ref(json!({"kind": "registered", "key": ""})).is_err());
+        assert!(parse_grader_ref(json!({"kind": "registered", "key": "k", "config": []})).is_err());
+        assert!(parse_grader_ref(json!({"kind": "local_config", "name": "NotSnake"})).is_err());
     }
 
     #[test]
