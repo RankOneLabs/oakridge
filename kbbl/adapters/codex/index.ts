@@ -286,11 +286,17 @@ export async function createCodexRuntime(
         discoverNativeSkills(
           (method, params) => client.request(method, params),
           state.workingDirectory,
-        ).catch(() => []),
+        ).catch((err) => {
+          console.warn("kbbl codex: native skill discovery failed:", err);
+          return [];
+        }),
         discoverMcpToolSkills(
           (method, params) => client.request(method, params),
           state.threadId,
-        ).catch(() => []),
+        ).catch((err) => {
+          console.warn("kbbl codex: MCP tool discovery failed:", err);
+          return [];
+        }),
       ]);
       return mergeCodexSkills({ local, native, mcpTools });
     },
