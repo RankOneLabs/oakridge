@@ -32,6 +32,14 @@ function writeCommandMd(dir: string, name: string, content: string): void {
   writeFileSync(join(cmdDir, `${name}.md`), content);
 }
 
+/**
+ * discoverSkills always appends the curated CC built-in commands. Disk-source
+ * tests assert on disk discovery only, so they filter those out first.
+ */
+function diskOnly(skills: Skill[]): Skill[] {
+  return skills.filter((s) => !s.id.startsWith("cc:builtin:"));
+}
+
 beforeEach(() => {
   tmpRoot = mkdtempSync(join(tmpdir(), "kbbl-skills-test-"));
 });
@@ -68,7 +76,7 @@ user-invocable: true
 Body text ignored when description present.`,
     );
 
-    const skills = await discoverSkills(wd, home);
+    const skills = diskOnly(await discoverSkills(wd, home));
     expect(skills).toHaveLength(1);
     const s = skills[0]!;
     expect(s.name).toBe("overridden-name");
@@ -179,7 +187,7 @@ describe("discoverSkills — #43875 disk-read path (never queries CC advertised 
     writeCommandMd(wd, "proj-cmd", `---\nname: proj-cmd\ndescription: Project command\n---`);
     writeCommandMd(home, "user-cmd", `---\nname: user-cmd\ndescription: User command\n---`);
 
-    const skills = await discoverSkills(wd, home);
+    const skills = diskOnly(await discoverSkills(wd, home));
     expect(skills).toHaveLength(4);
 
     const ids = skills.map((s) => s.id);
@@ -214,7 +222,7 @@ describe("discoverSkills — #43875 disk-read path (never queries CC advertised 
     mkdirSync(join(wd, ".claude", "skills", "orphan"), { recursive: true });
     writeFileSync(join(wd, ".claude", "skills", "orphan", "README.md"), "nothing");
 
-    const skills = await discoverSkills(wd, home);
+    const skills = diskOnly(await discoverSkills(wd, home));
     expect(skills).toHaveLength(0);
   });
 
@@ -225,7 +233,7 @@ describe("discoverSkills — #43875 disk-read path (never queries CC advertised 
     mkdirSync(cmdDir, { recursive: true });
     writeFileSync(join(cmdDir, "script.sh"), "#!/bin/bash");
 
-    const skills = await discoverSkills(wd, home);
+    const skills = diskOnly(await discoverSkills(wd, home));
     expect(skills).toHaveLength(0);
   });
 
@@ -233,7 +241,7 @@ describe("discoverSkills — #43875 disk-read path (never queries CC advertised 
     const wd = makeWorkdir();
     const home = makeHome();
     // No .claude dirs created
-    const skills = await discoverSkills(wd, home);
+    const skills = diskOnly(await discoverSkills(wd, home));
     expect(skills).toHaveLength(0);
   });
 
@@ -244,6 +252,78 @@ describe("discoverSkills — #43875 disk-read path (never queries CC advertised 
 
     const skills = await discoverSkills(wd, home);
     expect(skills[0]!.id).toBe("cc:project:commands:review");
+  });
+});
+
+// ── built-in commands + installed plugins ────────────────────────────────────
+
+describe("discoverSkills — built-in CC commands", () => {
+  test("curated built-ins are always surfaced even with no disk skills", async () => {
+    const wd = makeWorkdir();
+    const home = makeHome();
+
+    const skills = await discoverSkills(wd, home);
+    const builtins = skills.filter((s) => s.id.startsWith("cc:builtin:"));
+    expect(builtins.length).toBeGreaterThan(0);
+    const names = builtins.map((s) => s.name);
+    expect(names).toContain("code-review");
+    const cr = builtins.find((s) => s.name === "code-review")!;
+    expect(cr.backend).toBe("claude-code");
+    expect(cr.scope).toBe("system");
+    expect(cr.user_invocable).toBe(true);
+  });
+
+  test("a disk skill of the same name overrides (suppresses) the built-in", async () => {
+    const wd = makeWorkdir();
+    const home = makeHome();
+    writeSkillMd(wd, "code-review", `---\nname: code-review\ndescription: custom\n---`);
+
+    const skills = await discoverSkills(wd, home);
+    const codeReviews = skills.filter((s) => s.name === "code-review");
+    expect(codeReviews).toHaveLength(1);
+    expect(codeReviews[0]!.id).toBe("cc:project:skills:code-review");
+  });
+});
+
+describe("discoverSkills — installed plugins", () => {
+  test("discovers commands and skills from an installed plugin's installPath", async () => {
+    const wd = makeWorkdir();
+    const home = makeHome();
+
+    const installPath = join(tmpRoot, "plugin-install");
+    mkdirSync(join(installPath, "commands"), { recursive: true });
+    writeFileSync(
+      join(installPath, "commands", "plug-cmd.md"),
+      `---\nname: plug-cmd\ndescription: A plugin command\n---`,
+    );
+    const skillDir = join(installPath, "skills", "plug-skill");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      `---\nname: plug-skill\ndescription: A plugin skill\n---`,
+    );
+
+    mkdirSync(join(home, ".claude", "plugins"), { recursive: true });
+    writeFileSync(
+      join(home, ".claude", "plugins", "installed_plugins.json"),
+      JSON.stringify({
+        version: 2,
+        plugins: { "demo@market": [{ scope: "user", installPath }] },
+      }),
+    );
+
+    const skills = await discoverSkills(wd, home);
+    const names = skills.map((s) => s.name);
+    expect(names).toContain("plug-cmd");
+    expect(names).toContain("plug-skill");
+  });
+
+  test("missing installed_plugins.json is tolerated", async () => {
+    const wd = makeWorkdir();
+    const home = makeHome();
+    // No plugins dir at all — should not throw, just contribute nothing.
+    const skills = await discoverSkills(wd, home);
+    expect(skills.some((s) => s.id.startsWith("cc:builtin:"))).toBe(true);
   });
 });
 

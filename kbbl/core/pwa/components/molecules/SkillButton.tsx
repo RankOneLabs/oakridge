@@ -6,10 +6,13 @@ export function SkillButton({
   skill,
   state,
   onTap,
+  label,
 }: {
   skill: Skill;
   state: SkillButtonState;
   onTap: () => void;
+  /** Display label; defaults to skill.name (MCP tools pass a de-prefixed name). */
+  label?: string;
 }) {
   return (
     <button
@@ -19,7 +22,7 @@ export function SkillButton({
       disabled={state === "disabled" || state === "dispatching"}
       aria-pressed={state === "collecting" || state === "confirming"}
     >
-      <span className="skill-btn__name">{skill.name}</span>
+      <span className="skill-btn__name">{label ?? skill.name}</span>
       <span className="skill-btn__badge">{skill.backend}</span>
       {skill.args.length > 0 && (
         <span className="skill-btn__arg-affordance" aria-label="requires input">⋯</span>
