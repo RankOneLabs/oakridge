@@ -110,6 +110,12 @@ impl StageType for DelegatedLbcRunStage {
         let output_dir = canonicalize_or_original(&config.output_dir).await?;
         fs::create_dir_all(&output_dir).await?;
 
+        // `run-spec.json` is written directly into `output_dir` and the bridge runs
+        // with that as its `current_dir`. `output_dir` is expected to be scoped per
+        // run by the caller (via `resolve_output_dir`), so concurrent stages do not
+        // share it; we do not add a stage-instance subdir here. If a workflow ever
+        // points multiple delegated_lbc_run stages at the same `output_dir`, scope it
+        // upstream rather than relying on a subdir carved out at this layer.
         let run_spec_path = output_dir.join("run-spec.json");
         let run_spec_json = serde_json::to_vec_pretty(&config.run_spec)?;
         fs::write(&run_spec_path, run_spec_json).await?;
@@ -277,9 +283,6 @@ async fn run_bridge(
                     "exit_status": format_exit_status(&status),
                 }),
             );
-            if let Some(code) = status.code() {
-                let _ = code;
-            }
             ctx.set_status_with_terminal_meta(StageStatus::Failed, None, Some(terminal_meta))
                 .await?;
             return Ok::<(), anyhow::Error>(());
@@ -434,6 +437,11 @@ fn merge_terminal_meta(base: &mut Value, extra: Value) {
     }
 }
 
+// `artifact_path` comes from the bridge's `RESULT` line. The bridge is a
+// first-party process we spawn (legit_biz_club), not untrusted input, so we do
+// not guard against absolute paths or `..` traversal here — a misbehaving bridge
+// is a bug in our own code, not an attacker surface. Add path confinement if the
+// bridge ever becomes a third-party or sandboxed boundary.
 fn resolve_artifact_path(output_dir: &Path, artifact_path: &str) -> PathBuf {
     let path = PathBuf::from(artifact_path);
     if path.is_absolute() {
@@ -502,6 +510,12 @@ fn tail_lines(text: &str, max_lines: usize) -> Vec<String> {
     lines
 }
 
+// Reads the full stdout/stderr into memory. `last_result_payload` needs to scan
+// the entire stdout for the final `RESULT` line, so a bounded tail can't replace
+// the full read without risking dropping the payload behind trailing output. The
+// bridge is expected to be a single delegated run with modest output; if bridges
+// ever become long-lived or chatty, revisit this with a line-streaming scanner
+// that keeps the last RESULT plus a bounded tail rather than the whole buffer.
 async fn capture_output(
     mut stdout: tokio::process::ChildStdout,
     mut stderr: tokio::process::ChildStderr,
@@ -940,6 +954,7 @@ printf 'artifact from %s\n' "$spec" > "$output_dir/cell-1/final.txt"
         .to_string()
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn execute_success_writes_spec_spawns_bridge_and_emits_result() {
         let pool = make_pool().await;
