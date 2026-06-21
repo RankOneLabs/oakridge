@@ -28,7 +28,8 @@ pub struct AppState {
 }
 
 /// Register built-in stage and artifact types.
-/// Reads delegated_session and delegated_lbc_run config from environment variables:
+/// Reads delegated_session config from environment variables:
+///   OAKRIDGE_PROMPTS_DIR – prompt template root (default: "./prompts")
 ///   KBBL_API_BASE_URL    – kbbl HTTP base URL (default: "http://127.0.0.1:8788/")
 pub fn register_types(stage: &mut StageTypeRegistry, _artifact: &mut ArtifactTypeRegistry) {
     let prompts_dir = std::env::var("OAKRIDGE_PROMPTS_DIR")
