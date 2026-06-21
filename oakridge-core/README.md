@@ -82,6 +82,8 @@ kbbl listens on `127.0.0.1:8788` by default. oakridge-core listens on
 `POST /sessions` continue to work; delegated workflow sessions are an additional path
 where oakridge-core creates and tags a kbbl session for a workflow stage.
 
+The runtime split is documented in [docs/runtime_delegation.md](docs/runtime_delegation.md).
+
 Tailnet or homelab exposure:
 
 ```sh
@@ -134,57 +136,9 @@ and resubscribe from `oldest_seq`.
 
 ## Delegated sessions
 
-`delegated_session` is the built-in execution stage for agent-backed workflows. It
-replaces the old direct Claude Code executor inside oakridge-core; it does not replace
-directly launched kbbl sessions. kbbl remains the runtime owner for both paths.
-
-The stage creates a kbbl session through `POST /sessions`, tags it with
-`artifact_id = <stage_instance_id>`, then sends the rendered prompt through
-`POST /:sid/input`. Runtime selection is workflow data:
-
-- `runtime: "claude-code"` starts a Claude Code kbbl session.
-- `runtime: "codex"` starts a Codex kbbl session, if Codex is enabled in kbbl.
-
-Workflow completion is domain-driven, not inferred from kbbl session state. The v1 flow
-is:
-
-1. The delegated agent emits an artifact to
-   `POST /executors/delegated_session/:stage_instance_id/emit/:output_name`.
-2. oakridge-core parks the stage for artifact approval.
-3. A needs-changes `GateDecision` is forwarded to the same live kbbl session with
-   `POST /:sid/input`.
-4. A passing artifact-approval `GateDecision` advances to merge confirmation.
-5. A passing merge-confirmation `GateDecision` marks the stage `done` and tears down
-   the kbbl session with `DELETE /sessions/:sid`.
-
-A workflow node uses the normal `POST /workflow_defs` graph shape with
-`stage_type: "delegated_session"`. The kbbl base URL is process config from
-`KBBL_API_BASE_URL`; it is not a per-stage config field. `prompt_template_path` is
-relative to `OAKRIDGE_PROMPTS_DIR`:
-
-```json
-{
-  "stage_type": "delegated_session",
-  "config": {
-    "runtime": "claude-code",
-    "prompt_template_path": "stage.md",
-    "slot_bindings": {
-      "TASK": { "from": "input", "input_name": "task", "path": "/summary" }
-    },
-    "workdir": { "from": "context", "path": "/workdir" },
-    "session_name": "stage name",
-    "model": null,
-    "pre_authorized_tools": [],
-    "yolo": false
-  },
-  "inputs": [{ "name": "task", "artifact_type": "text", "optional": false }],
-  "outputs": [{ "name": "out", "artifact_type": "text" }]
-}
-```
-
-`pre_authorized_tools` is present in the config schema for future kbbl support, but it
-is inert until kbbl has create-time allowlist support. Use kbbl approvals or `yolo` for
-the current delegated flow.
+See [docs/runtime_delegation.md](docs/runtime_delegation.md) for the full split between
+`delegated_session` and `delegated_lbc_run`, the workflow JSON examples, output
+directory semantics, terminal metadata, and the opt-in real CLI smoke test.
 
 ## Extending the substrate
 
