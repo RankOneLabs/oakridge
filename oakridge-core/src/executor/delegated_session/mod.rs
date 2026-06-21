@@ -238,7 +238,7 @@ impl DelegatedSessionStage {
                                 let _ = ctx
                                     .set_status_with_terminal_meta(
                                         StageStatus::Failed,
-                                        Some(format!("kbbl session {} became unavailable", sid)),
+                                        None,
                                         Some(terminal_meta),
                                     )
                                     .await;
@@ -252,7 +252,7 @@ impl DelegatedSessionStage {
                                 let _ = ctx
                                     .set_status_with_terminal_meta(
                                         StageStatus::Failed,
-                                        Some(reason),
+                                        None,
                                         Some(terminal_meta),
                                     )
                                     .await;
@@ -274,7 +274,7 @@ impl DelegatedSessionStage {
                             let _ = ctx
                                 .set_status_with_terminal_meta(
                                     StageStatus::Failed,
-                                    Some(terminal_reason),
+                                    None,
                                     Some(terminal_meta),
                                 )
                                 .await;

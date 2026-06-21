@@ -231,7 +231,7 @@ impl RunTask {
                     instance_id: si_id,
                     status: StageStatus::Failed,
                     parked_reason: None,
-                    terminal_meta: None,
+                    terminal_meta: Some(serde_json::json!({"error": e.to_string()})),
                 }).await;
             }
         }
