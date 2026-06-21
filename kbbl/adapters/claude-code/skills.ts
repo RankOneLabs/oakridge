@@ -168,25 +168,150 @@ async function discoverFromCommandsDir(
   return skills;
 }
 
+// ── installed plugins ────────────────────────────────────────────────────────
+
+/**
+ * Discover commands and skills contributed by installed CC plugins. The set of
+ * installed plugins is read from ~/.claude/plugins/installed_plugins.json; each
+ * record points at an installPath containing optional `commands/` and `skills/`
+ * dirs in the same layout as the user/project sources.
+ *
+ * Marketplace catalog entries are intentionally NOT scanned — only plugins the
+ * user has actually installed contribute rail buttons.
+ */
+async function discoverFromInstalledPlugins(home: string): Promise<Skill[]> {
+  const jsonPath = join(home, ".claude", "plugins", "installed_plugins.json");
+  const raw = await readFileText(jsonPath);
+  if (raw === null) return [];
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  const plugins =
+    parsed && typeof parsed === "object"
+      ? (parsed as Record<string, unknown>).plugins
+      : null;
+  if (!plugins || typeof plugins !== "object") return [];
+
+  const skills: Skill[] = [];
+  for (const [pluginKey, records] of Object.entries(
+    plugins as Record<string, unknown>,
+  )) {
+    if (!Array.isArray(records)) continue;
+    // Namespace IDs by plugin so a plugin command/skill can never collide with
+    // (and overwrite, during id de-dup) a same-named local disk skill.
+    const namespace = pluginKey.replace(/[^a-zA-Z0-9._-]/g, "_");
+    for (const rec of records) {
+      const installPath =
+        rec && typeof rec === "object"
+          ? (rec as Record<string, unknown>).installPath
+          : null;
+      if (typeof installPath !== "string") continue;
+      const scope: "user" | "project" =
+        (rec as Record<string, unknown>).scope === "project" ? "project" : "user";
+      const [cmds, sks] = await Promise.all([
+        discoverFromCommandsDir(join(installPath, "commands"), scope),
+        discoverFromSkillsDir(join(installPath, "skills"), scope),
+      ]);
+      skills.push(
+        ...cmds.map((s) => ({
+          ...s,
+          id: `cc:plugin:${namespace}:${s.scope}:commands:${s.name}`,
+        })),
+        ...sks.map((s) => ({
+          ...s,
+          id: `cc:plugin:${namespace}:${s.scope}:skills:${s.name}`,
+        })),
+      );
+    }
+  }
+  return skills;
+}
+
+// ── built-in commands ────────────────────────────────────────────────────────
+
+/**
+ * Curated set of stable, user-invocable Claude Code built-in slash commands.
+ *
+ * Built-ins ship inside the CC binary — they are NOT on disk and CC exposes no
+ * programmatic list of them (the interactive slash-command menu is unavailable
+ * over kbbl's PTY transport, and is deliberately avoided regardless per cc issue
+ * #43875). This list is therefore curated by hand: keep it to commands that are
+ * stable across CC versions and safe as a one-tap rail action. Edit freely as
+ * the built-in surface changes; an entry whose command no longer exists merely
+ * produces a "no such command" error in-session when tapped — it does not break
+ * discovery.
+ */
+const CC_BUILTIN_COMMANDS: ReadonlyArray<{
+  name: string;
+  description: string;
+  args?: ArgSpec[];
+}> = [
+  {
+    name: "code-review",
+    description: "Review the current diff for correctness bugs and cleanups.",
+    args: [{ key: "1", required: false, hint: "effort (low|medium|high|max)" }],
+  },
+  { name: "simplify", description: "Clean up the changed code (reuse, simplification, efficiency)." },
+  { name: "review", description: "Review a pull request." },
+  { name: "security-review", description: "Security review of the pending changes on the branch." },
+  { name: "init", description: "Initialize a CLAUDE.md with codebase documentation." },
+];
+
+function builtinSkills(): Skill[] {
+  return CC_BUILTIN_COMMANDS.map((cmd) => ({
+    id: `cc:builtin:${cmd.name}`,
+    name: cmd.name,
+    description: cmd.description,
+    backend: "claude-code" as const,
+    scope: "system" as const,
+    args: cmd.args ?? [],
+    user_invocable: true,
+    model_invocable: false,
+  }));
+}
+
 // ── public API ───────────────────────────────────────────────────────────────
 
 /**
- * Discover skills from disk for the given session working directory. Sources,
- * in order: project .claude/skills, home .claude/skills, project .claude/commands,
- * home .claude/commands. Never consults CC's advertised slash-command list (cc
+ * Discover skills for the given session working directory. Sources, in order:
+ * project .claude/skills, home .claude/skills, project .claude/commands, home
+ * .claude/commands, installed-plugin commands/skills, then the curated CC
+ * built-in commands. Never consults CC's advertised slash-command list (cc
  * issue #43875 hides disable-model-invocation skills from that list).
+ *
+ * A built-in is dropped only when an on-disk source (user/project skills or
+ * commands) already provides a skill of the same name, so a user override always
+ * wins. Installed-plugin skills do NOT suppress built-ins — plugins must never
+ * silently mask stable core actions like `init`/`review`; their namespaced ids
+ * let them coexist with a same-named built-in. Results are de-duplicated by id.
  */
 export async function discoverSkills(
   workingDirectory: string,
   home: string = homedir(),
 ): Promise<Skill[]> {
-  const [projectSkills, userSkills, projectCmds, userCmds] = await Promise.all([
-    discoverFromSkillsDir(join(workingDirectory, ".claude", "skills"), "project"),
-    discoverFromSkillsDir(join(home, ".claude", "skills"), "user"),
-    discoverFromCommandsDir(join(workingDirectory, ".claude", "commands"), "project"),
-    discoverFromCommandsDir(join(home, ".claude", "commands"), "user"),
-  ]);
-  return [...projectSkills, ...userSkills, ...projectCmds, ...userCmds];
+  const [projectSkills, userSkills, projectCmds, userCmds, pluginSkills] =
+    await Promise.all([
+      discoverFromSkillsDir(join(workingDirectory, ".claude", "skills"), "project"),
+      discoverFromSkillsDir(join(home, ".claude", "skills"), "user"),
+      discoverFromCommandsDir(join(workingDirectory, ".claude", "commands"), "project"),
+      discoverFromCommandsDir(join(home, ".claude", "commands"), "user"),
+      discoverFromInstalledPlugins(home),
+    ]);
+
+  const onDisk = [...projectSkills, ...userSkills, ...projectCmds, ...userCmds];
+  // Only on-disk skills suppress a curated built-in; plugins never do.
+  const onDiskNames = new Set(onDisk.map((skill) => skill.name));
+  const builtins = builtinSkills().filter((b) => !onDiskNames.has(b.name));
+
+  const byId = new Map<string, Skill>();
+  for (const skill of [...onDisk, ...pluginSkills, ...builtins]) {
+    byId.set(skill.id, skill);
+  }
+  return [...byId.values()];
 }
 
 /**

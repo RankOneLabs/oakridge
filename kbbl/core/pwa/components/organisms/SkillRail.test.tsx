@@ -182,6 +182,40 @@ describe("SkillRail dispatch in-flight", () => {
   });
 });
 
+describe("SkillRail MCP grouping + collapse", () => {
+  const MCP_SKILL: Skill = {
+    id: "codex:mcp:gated-review:open_pr",
+    name: "mcp:gated-review:open_pr",
+    description: "Open a PR",
+    backend: "codex",
+    scope: "system",
+    args: [],
+    user_invocable: true,
+    model_invocable: true,
+  };
+
+  it("MCP tool sections are collapsed by default", () => {
+    setup([PLAIN_SKILL, MCP_SKILL]);
+    render(<SkillRail sid="test-sid" snapshot={LIVE_SNAPSHOT} />);
+
+    // Non-MCP skill is visible; the MCP tool button is hidden behind its header.
+    expect(screen.getByRole("button", { name: /list-tasks/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /open_pr/ })).toBeNull();
+  });
+
+  it("expanding the MCP section reveals the de-prefixed tool name", () => {
+    setup([MCP_SKILL]);
+    render(<SkillRail sid="test-sid" snapshot={LIVE_SNAPSHOT} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /MCP · gated-review/ }));
+
+    const toolBtn = screen.getByRole("button", { name: /open_pr/ });
+    expect(toolBtn).toBeTruthy();
+    // The verbose mcp:server: prefix is stripped from the visible label.
+    expect(toolBtn.textContent).not.toContain("mcp:gated-review:");
+  });
+});
+
 describe("SkillRail invoke failure", () => {
   it("surfaces an error alert when dispatch fails", async () => {
     vi.mocked(useSkills).mockReturnValue([PLAIN_SKILL]);

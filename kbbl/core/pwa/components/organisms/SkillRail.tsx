@@ -5,6 +5,49 @@ import { useSkills, useInvokeSkill } from "../../hooks/useSkills";
 import { SkillButton } from "../molecules/SkillButton";
 import { ArgSheet } from "./ArgSheet";
 
+interface RailSection {
+  key: string;
+  label: string;
+  /** MCP-tool sections are collapsed by default so they never crowd the rail. */
+  isMcp: boolean;
+  skills: Skill[];
+}
+
+/** True for a Codex MCP-tool pseudo-skill (id shape `codex:mcp:<server>:<tool>`). */
+function isMcpSkill(skill: Skill): boolean {
+  return skill.id.startsWith("codex:mcp:");
+}
+
+function backendLabel(backend: Skill["backend"]): string {
+  return backend === "claude-code" ? "Claude Code" : "Codex";
+}
+
+/**
+ * Group a skill into a rail section. MCP tools cluster per server under their own
+ * "MCP · <server>" header; everything else clusters by backend + scope.
+ */
+function sectionFor(skill: Skill): { key: string; label: string; isMcp: boolean } {
+  if (isMcpSkill(skill)) {
+    const server = skill.id.split(":")[2] ?? "mcp";
+    return { key: `mcp:${server}`, label: `MCP · ${server}`, isMcp: true };
+  }
+  const base = backendLabel(skill.backend);
+  const label = skill.scope === "user" ? base : `${base} · ${skill.scope}`;
+  return { key: `${skill.backend}:${skill.scope}`, label, isMcp: false };
+}
+
+/**
+ * Button label. MCP tools carry a verbose `mcp:<server>:<tool>` name; under the
+ * per-server header only the bare tool name is meaningful.
+ */
+function skillLabel(skill: Skill): string {
+  if (isMcpSkill(skill)) {
+    const parts = skill.name.split(":");
+    return parts.length >= 3 ? parts.slice(2).join(":") : skill.name;
+  }
+  return skill.name;
+}
+
 export function SkillRail({
   sid,
   snapshot,
@@ -22,6 +65,9 @@ export function SkillRail({
   const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [collapsed, setCollapsed] = useState(false);
   const [invokeError, setInvokeError] = useState<string | null>(null);
+  // Per-section open/closed overrides keyed by section key. Absent → use the
+  // section's default (MCP collapsed, everything else expanded).
+  const [sectionOverrides, setSectionOverrides] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     return () => {
@@ -31,25 +77,35 @@ export function SkillRail({
 
   const isSessionLive = snapshot?.status === "live";
 
-  const grouped = useMemo(() => {
-    const map = new Map<string, Map<string, Skill[]>>();
+  const sections = useMemo(() => {
+    const map = new Map<string, RailSection>();
     for (const skill of skills) {
-      let byScope = map.get(skill.backend);
-      if (!byScope) {
-        byScope = new Map();
-        map.set(skill.backend, byScope);
+      const { key, label, isMcp } = sectionFor(skill);
+      let section = map.get(key);
+      if (!section) {
+        section = { key, label, isMcp, skills: [] };
+        map.set(key, section);
       }
-      let list = byScope.get(skill.scope);
-      if (!list) {
-        list = [];
-        byScope.set(skill.scope, list);
-      }
-      list.push(skill);
+      section.skills.push(skill);
     }
-    return map;
+    // Real skills first, MCP tool sections last so they never lead the rail.
+    return [...map.values()].sort((a, b) =>
+      a.isMcp === b.isMcp ? 0 : a.isMcp ? 1 : -1,
+    );
   }, [skills]);
 
   if (skills.length === 0) return null;
+
+  function isSectionOpen(section: RailSection): boolean {
+    return sectionOverrides[section.key] ?? !section.isMcp;
+  }
+
+  function toggleSection(section: RailSection) {
+    setSectionOverrides((prev) => ({
+      ...prev,
+      [section.key]: !(prev[section.key] ?? !section.isMcp),
+    }));
+  }
 
   function getButtonState(skill: Skill) {
     if (!isSessionLive) return "disabled" as const;
@@ -150,23 +206,40 @@ export function SkillRail({
         )}
         {!collapsed && (
           <div className="skill-rail__groups">
-            {[...grouped.entries()].map(([backend, byScope]) => (
-              <div key={backend} className="skill-rail__group">
-                <span className="skill-rail__group-label">{backend}</span>
-                {[...byScope.entries()].map(([scope, scopeSkills]) => (
-                  <div key={scope} className="skill-rail__scope">
-                    {scopeSkills.map((skill) => (
-                      <SkillButton
-                        key={skill.id}
-                        skill={skill}
-                        state={getButtonState(skill)}
-                        onTap={() => handleTap(skill)}
-                      />
-                    ))}
-                  </div>
-                ))}
-              </div>
-            ))}
+            {sections.map((section) => {
+              const open = isSectionOpen(section);
+              return (
+                <div key={section.key} className="skill-rail__group">
+                  <button
+                    type="button"
+                    className="skill-rail__group-label"
+                    onClick={() => toggleSection(section)}
+                    aria-expanded={open}
+                  >
+                    <span className="skill-rail__group-caret" aria-hidden="true">
+                      {open ? "▾" : "▸"}
+                    </span>
+                    {section.label}
+                    <span className="skill-rail__group-count">
+                      {section.skills.length}
+                    </span>
+                  </button>
+                  {open && (
+                    <div className="skill-rail__scope">
+                      {section.skills.map((skill) => (
+                        <SkillButton
+                          key={skill.id}
+                          skill={skill}
+                          label={skillLabel(skill)}
+                          state={getButtonState(skill)}
+                          onTap={() => handleTap(skill)}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
