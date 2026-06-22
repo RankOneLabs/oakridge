@@ -54,6 +54,10 @@ Then create workflow definitions through oakridge-core with
 `stage_type: "delegated_session"`. oakridge-core reads the kbbl base URL from
 `KBBL_API_BASE_URL`.
 
+For the full Oakridge v2 runtime-delegation operator guide, including both
+interactive `delegated_session` and headless `delegated_lbc_run` examples, see
+`docs/oakridge-v2-runbook.md`.
+
 ## Development
 
 ```bash
