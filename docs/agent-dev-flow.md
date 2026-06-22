@@ -1,5 +1,9 @@
 # agent-dev-flow: operator guide
 
+> Current branch note: this is the kbbl-owned task-tracker guide, not the
+> oakridge-core v2 runtime-delegation flow. For the oakridge-core-centered v2
+> runbook, use [`oakridge-v2-runbook.md`](oakridge-v2-runbook.md).
+
 The end-to-end loop lives entirely inside kbbl. A `kbbl-start` server hosts
 the task tracker, the review primitive, the orchestrator state machine, and the
 PWA review surfaces. Work is organized as **Epics** — each Epic carries one spec
