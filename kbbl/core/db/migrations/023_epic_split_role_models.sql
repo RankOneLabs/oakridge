@@ -1,9 +1,9 @@
 -- Persist split model selections on epics.
 -- Each epic stores a planner selection and a worker selection.
 --
--- Backfill existing epics with current defaults:
---   planner.runtime = claude-code
---   worker.runtime  = claude-code
+-- Backfill existing epics from the temporary pre-split runtime source:
+--   planner.runtime = agent_runtime
+--   worker.runtime  = agent_runtime
 --   planner.model   = current planner-grade default for that runtime
 --   worker.model    = current build-grade default for that runtime
 --
@@ -48,10 +48,16 @@ SELECT
   title,
   status,
   current_stage,
-  'claude-code',
-  'claude-opus-4-8',
-  'claude-code',
-  'claude-sonnet-4-6',
+  agent_runtime,
+  CASE agent_runtime
+    WHEN 'codex' THEN 'gpt-5.5'
+    ELSE 'claude-opus-4-8'
+  END,
+  agent_runtime,
+  CASE agent_runtime
+    WHEN 'codex' THEN 'gpt-5.4-mini'
+    ELSE 'claude-sonnet-4-6'
+  END,
   created_at
 FROM epics;
 
