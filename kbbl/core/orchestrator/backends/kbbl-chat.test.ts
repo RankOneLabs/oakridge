@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createKbblChatBackend } from "./kbbl-chat";
+import { NO_ROUTING_ENTRY_ERROR_PREFIX } from "./kbbl-chat";
 import type { InputRef, StageRow } from "./interface";
 import { SessionManager } from "../../session/session-manager";
 import type { KbblConfig } from "../../config";
@@ -137,7 +138,7 @@ describe("KbblChatBackend dispatch routes explicit model selections", () => {
     const { manager, calls } = makeFakeManager();
     const backend = createKbblChatBackend({ manager });
     await expect(backend.dispatch(stage("future-stage"), inputRef, "prompt")).rejects.toThrow(
-      'No routing entry for stage "future-stage". Supported routed stages: spec_analyzer, plan_writer, brief_writer, assessor, build.'
+      `${NO_ROUTING_ENTRY_ERROR_PREFIX}future-stage"`
     );
     expect(calls).toHaveLength(0);
   });

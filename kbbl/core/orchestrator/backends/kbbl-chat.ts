@@ -34,6 +34,8 @@ function supportedRoutedStages(): string {
   return Object.keys(STAGE_ROUTING["claude-code"]).join(", ");
 }
 
+export const NO_ROUTING_ENTRY_ERROR_PREFIX = 'No routing entry for stage "';
+
 export function createKbblChatBackend({
   manager,
   config,
@@ -57,7 +59,7 @@ export function createKbblChatBackend({
       const routing = inputRef.modelSelection ?? stageOverride ?? defaultRouting;
       if (!routing) {
         throw new Error(
-          `No routing entry for stage "${stage.name}". Supported routed stages: ${supportedRoutedStages()}. Add an override via config.runtime.stages or pass modelSelection from the dispatcher.`
+          `${NO_ROUTING_ENTRY_ERROR_PREFIX}${stage.name}". Supported routed stages: ${supportedRoutedStages()}. Add an override via config.runtime.stages or pass modelSelection from the dispatcher.`
         );
       }
 

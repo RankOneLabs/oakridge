@@ -37,6 +37,8 @@ interface ProjectRow {
 
 type StageRole = "planner" | "worker";
 
+export const UNKNOWN_STAGE_ERROR_PREFIX = 'unknown stage "';
+
 const STAGE_ROLE_BY_NAME: Record<string, StageRole> = {
   spec_analyzer: "planner",
   plan_writer: "planner",
@@ -45,11 +47,17 @@ const STAGE_ROLE_BY_NAME: Record<string, StageRole> = {
   build: "worker",
 };
 
+function supportedStageRoleMappings(): string {
+  return Object.entries(STAGE_ROLE_BY_NAME)
+    .map(([stageName, role]) => `${stageName}→${role}`)
+    .join(", ");
+}
+
 function resolveStageRole(stageName: string): StageRole {
   const role = STAGE_ROLE_BY_NAME[stageName];
   if (!role) {
     throw new Error(
-      `unknown stage "${stageName}" for epic-owned dispatch; supported stage-role mappings: spec_analyzer→planner, plan_writer→planner, brief_writer→planner, assessor→planner, build→worker`,
+      `${UNKNOWN_STAGE_ERROR_PREFIX}${stageName}" for epic-owned dispatch; supported stage-role mappings: ${supportedStageRoleMappings()}`,
     );
   }
   return role;
