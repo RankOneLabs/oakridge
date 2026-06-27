@@ -116,12 +116,35 @@ function formatTimestamp(iso: string): string {
 }
 
 function isAssessment(data: unknown): data is Assessment {
-  if (typeof data !== "object" || data === null) return false;
-  const a = data as Record<string, unknown>;
+  if (!isRecord(data)) return false;
   return (
-    typeof a.summary === "string" &&
-    typeof a.gap_analysis === "string" &&
-    typeof a.fix_plan === "string" &&
-    Array.isArray(a.deviations_catalog)
+    typeof data.summary === "string" &&
+    typeof data.gap_analysis === "string" &&
+    typeof data.fix_plan === "string" &&
+    Array.isArray(data.deviations_catalog) &&
+    data.deviations_catalog.every(isCohortEntry)
   );
+}
+
+function isCohortEntry(entry: unknown): entry is DeviationsCatalogEntry {
+  if (!isRecord(entry)) return false;
+  return (
+    typeof entry.cohort_id === "string" &&
+    typeof entry.cohort_title === "string" &&
+    Array.isArray(entry.deviations) &&
+    entry.deviations.every(isDeviation)
+  );
+}
+
+function isDeviation(dev: unknown): boolean {
+  if (!isRecord(dev)) return false;
+  return (
+    typeof dev.from === "string" &&
+    typeof dev.actual === "string" &&
+    typeof dev.downstream_impact === "string"
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
