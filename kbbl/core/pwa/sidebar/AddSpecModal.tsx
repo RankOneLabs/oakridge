@@ -447,7 +447,10 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
                   type="button"
                   aria-pressed={notesSource === "text"}
                   disabled={pending}
-                  onClick={() => setNotesSource("text")}
+                  onClick={() => {
+                    setNotesSource("text");
+                    setFileName(null);
+                  }}
                   style={{ fontSize: 12, opacity: notesSource === "text" ? 1 : 0.6 }}
                 >
                   Write
@@ -473,8 +476,12 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
                 rows={6}
                 placeholder="Optional context, assumptions, or constraints"
                 disabled={pending}
-                aria-label="Notes"
-              />
+                  aria-label="Notes"
+                  onChange={(e) => {
+                    setNotes(e.target.value);
+                    setFileName(null);
+                  }}
+                />
             ) : (
               <>
                 <input

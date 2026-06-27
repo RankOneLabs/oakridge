@@ -294,6 +294,14 @@ describe("AddSpecModal split role selection", () => {
       expect(screen.getByLabelText("Notes preview")).toHaveProperty("value", content);
     });
 
+    fireEvent.click(screen.getByRole("button", { name: "Write" }));
+    fireEvent.change(screen.getByLabelText("Notes"), {
+      target: { value: "manual notes" },
+    });
+    expect(screen.queryByText(/Loaded spec\.md —/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Upload file" }));
+    expect(screen.queryByText(/Loaded spec\.md —/)).toBeNull();
+
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
     await waitFor(() => {

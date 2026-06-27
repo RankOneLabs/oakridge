@@ -49,20 +49,28 @@ function validateModelSelection(
   registry: RuntimeRegistry | undefined,
   selection: RuntimeModelSelection,
   role: "planner" | "worker",
-): string | null {
+): { error: string | null; model: string } {
+  const model = selection.model.trim();
   if (!isRuntimeRegistered(registry, selection.runtime)) {
-    return `runtime "${selection.runtime}" is not registered — registered: ${registry ? [...registry.runtimes.keys()].join(", ") : "claude-code"}`;
+    return {
+      error: `runtime "${selection.runtime}" is not registered — registered: ${registry ? [...registry.runtimes.keys()].join(", ") : "claude-code"}`,
+      model,
+    };
   }
   const runtime = registry?.runtimes.get(selection.runtime);
   if (!runtime?.descriptor.models || runtime.descriptor.models.length === 0) {
-    return selection.model.trim().length > 0
-      ? null
-      : `${role} model must not be empty for runtime "${selection.runtime}"`;
+    return {
+      error: model.length > 0 ? null : `${role} model must not be empty for runtime "${selection.runtime}"`,
+      model,
+    };
   }
-  if (!isAllowedModelForRuntime(runtime, selection.model)) {
-    return `${role} model "${selection.model}" is not allowed for runtime "${selection.runtime}"`;
+  if (!isAllowedModelForRuntime(runtime, model)) {
+    return {
+      error: `${role} model "${model}" is not allowed for runtime "${selection.runtime}"`,
+      model,
+    };
   }
-  return null;
+  return { error: null, model };
 }
 
 export function mountSpecsRoutes(app: Hono, deps: SpecsRouteDeps): void {
@@ -98,10 +106,10 @@ export function mountSpecsRoutes(app: Hono, deps: SpecsRouteDeps): void {
       planner_model_selection,
       worker_model_selection,
     } = result.data;
-    const plannerError = validateModelSelection(registry, planner_model_selection, "planner");
-    if (plannerError) return c.json({ error: plannerError }, 400);
-    const workerError = validateModelSelection(registry, worker_model_selection, "worker");
-    if (workerError) return c.json({ error: workerError }, 400);
+    const plannerSelection = validateModelSelection(registry, planner_model_selection, "planner");
+    if (plannerSelection.error) return c.json({ error: plannerSelection.error }, 400);
+    const workerSelection = validateModelSelection(registry, worker_model_selection, "worker");
+    if (workerSelection.error) return c.json({ error: workerSelection.error }, 400);
 
     const id = crypto.randomUUID();
 
@@ -159,8 +167,8 @@ export function mountSpecsRoutes(app: Hono, deps: SpecsRouteDeps): void {
           title,
           status: "pending",
           current_stage: "spec",
-          planner_model_selection,
-          worker_model_selection,
+          planner_model_selection: { ...planner_model_selection, model: plannerSelection.model },
+          worker_model_selection: { ...worker_model_selection, model: workerSelection.model },
         });
         return { spec: s, epic: e };
       })();
