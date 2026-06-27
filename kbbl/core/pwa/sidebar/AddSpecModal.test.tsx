@@ -307,7 +307,7 @@ describe("AddSpecModal split role selection", () => {
     await waitFor(() => {
       expect(postBody).toMatchObject({
         title: "From a file",
-        notes: "spec from file\nline two",
+        notes: "manual notes",
         planner_model_selection: { runtime: "codex", model: "gpt-5.5" },
         worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini" },
       });

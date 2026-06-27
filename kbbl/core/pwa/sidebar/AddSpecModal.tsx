@@ -461,7 +461,6 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
                   disabled={pending}
                   onClick={() => {
                     setNotesSource("file");
-                    if (fileName === null) setNotes("");
                   }}
                   style={{ fontSize: 12, opacity: notesSource === "file" ? 1 : 0.6 }}
                 >
@@ -472,16 +471,15 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
             {notesSource === "text" ? (
               <textarea
                 value={notes}
-                onChange={(e) => setNotes(e.target.value)}
+                onChange={(e) => {
+                  setNotes(e.target.value);
+                  setFileName(null);
+                }}
                 rows={6}
                 placeholder="Optional context, assumptions, or constraints"
                 disabled={pending}
-                  aria-label="Notes"
-                  onChange={(e) => {
-                    setNotes(e.target.value);
-                    setFileName(null);
-                  }}
-                />
+                aria-label="Notes"
+              />
             ) : (
               <>
                 <input
