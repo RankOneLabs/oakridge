@@ -69,10 +69,24 @@ export function insertEpic(
     worker_model_selection?: RuntimeModelSelection;
   },
 ): Epic {
-  const runtime = agent_runtime ?? "claude-code";
+  const hasPlannerSelection = planner_model_selection !== undefined;
+  const hasWorkerSelection = worker_model_selection !== undefined;
+  if (hasPlannerSelection !== hasWorkerSelection) {
+    throw new Error("insertEpic: planner_model_selection and worker_model_selection must be provided together");
+  }
+
+  const runtime = agent_runtime ?? planner_model_selection?.runtime ?? "claude-code";
   const defaults = defaultEpicModelSelections(runtime);
   const planner = planner_model_selection ?? defaults.planner_model_selection;
   const worker = worker_model_selection ?? defaults.worker_model_selection;
+
+  if (planner.runtime !== worker.runtime) {
+    throw new Error("insertEpic: planner and worker model selections must use the same runtime");
+  }
+  if (agent_runtime !== undefined && agent_runtime !== planner.runtime) {
+    throw new Error("insertEpic: agent_runtime must match split model selection runtime");
+  }
+
   const row = db
     .prepare<EpicRow, [string, string, string, string, EpicStatus, EpicStage, AgentRuntimeChoice, AgentRuntimeChoice, string, AgentRuntimeChoice, string]>(
       `INSERT INTO epics (

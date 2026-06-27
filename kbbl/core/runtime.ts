@@ -56,10 +56,11 @@ export function defaultEpicModelSelections(runtimeId: RuntimeId): {
 }
 
 export function isAllowedModelForRuntime(
-  runtime: Pick<AgentRuntime, "isAllowedModel"> | undefined,
+  runtime: Pick<AgentRuntime, "isAllowedModel" | "descriptor"> | undefined,
   model: string,
 ): boolean {
   if (runtime?.isAllowedModel) return runtime.isAllowedModel(model);
+  if (runtime?.descriptor) return runtime.descriptor.models.some((m) => m.value === model);
   return model.trim().length > 0;
 }
 

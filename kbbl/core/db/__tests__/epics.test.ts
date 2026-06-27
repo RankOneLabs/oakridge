@@ -69,6 +69,52 @@ describe("insertEpic + getEpic", () => {
     expect(getEpic(db, "e-codex")?.agent_runtime).toBe("codex");
   });
 
+  test("rejects partial split selections", () => {
+    expect(() =>
+      insertEpic(db, {
+        id: "e-partial",
+        spec_id: SPEC_ID,
+        project_id: PROJECT_ID,
+        title: "Partial",
+        status: "active",
+        current_stage: "spec",
+        planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
+      }),
+    ).toThrow(/must be provided together/);
+  });
+
+  test("rejects split selections with mismatched runtimes", () => {
+    expect(() =>
+      insertEpic(db, {
+        id: "e-mismatch",
+        spec_id: SPEC_ID,
+        project_id: PROJECT_ID,
+        title: "Mismatch",
+        status: "active",
+        current_stage: "spec",
+        agent_runtime: "claude-code",
+        planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
+        worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini" },
+      }),
+    ).toThrow(/same runtime/);
+  });
+
+  test("rejects split selections that disagree with agent_runtime", () => {
+    expect(() =>
+      insertEpic(db, {
+        id: "e-runtime",
+        spec_id: SPEC_ID,
+        project_id: PROJECT_ID,
+        title: "Runtime",
+        status: "active",
+        current_stage: "spec",
+        agent_runtime: "codex",
+        planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
+        worker_model_selection: { runtime: "claude-code", model: "claude-sonnet-4-6" },
+      }),
+    ).toThrow(/must match split model selection runtime/);
+  });
+
   test("getEpic returns null for unknown id", () => {
     expect(getEpic(db, "nope")).toBeNull();
   });

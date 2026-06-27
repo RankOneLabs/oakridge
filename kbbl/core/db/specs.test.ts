@@ -291,6 +291,42 @@ describe("POST /specs", () => {
     expect(body.error).toContain("not allowed");
   });
 
+  test("uses descriptor models when runtime has no validator", async () => {
+    const registry = makeRegistry(["claude-code"]);
+    const runtime = registry.runtimes.get("claude-code");
+    if (!runtime) throw new Error("missing runtime");
+    delete (runtime as { isAllowedModel?: unknown }).isAllowedModel;
+
+    const descriptorOnlyApp = new Hono();
+    mountSpecsRoutes(descriptorOnlyApp, { db, registry });
+
+    const ok = await descriptorOnlyApp.request("/specs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        project_id: PROJECT_ID,
+        title: "Descriptor ok",
+        planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
+        worker_model_selection: { runtime: "claude-code", model: "claude-sonnet-4-6" },
+      }),
+    });
+    expect(ok.status).toBe(201);
+
+    const bad = await descriptorOnlyApp.request("/specs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        project_id: PROJECT_ID,
+        title: "Descriptor bad",
+        planner_model_selection: { runtime: "claude-code", model: "not-listed" },
+        worker_model_selection: { runtime: "claude-code", model: "claude-sonnet-4-6" },
+      }),
+    });
+    expect(bad.status).toBe(400);
+    const body = (await bad.json()) as { error: string };
+    expect(body.error).toContain("not allowed");
+  });
+
   test("rejects split selections with mismatched runtimes", async () => {
     const res = await app.request("/specs", {
       method: "POST",
