@@ -11,12 +11,13 @@ import { taskTrackerEvents } from "../../db/events";
 import { createDispatcher } from "../backends/dispatcher";
 import { wireDispatchHooks } from "../dispatch-hooks";
 import type { ExecutionBackend, InputRef, StageRow } from "../backends/interface";
+import type { RuntimeModelSelection } from "../../runtime";
 
 interface DispatchCall {
   stageName: string;
   inputType: string;
   inputId: string;
-  agentRuntime: string | undefined;
+  modelSelection: RuntimeModelSelection | undefined;
 }
 
 interface MockBackend extends ExecutionBackend {
@@ -33,7 +34,7 @@ function createMockBackend(): MockBackend {
         stageName: stage.name,
         inputType: inputRef.type,
         inputId: inputRef.id,
-        agentRuntime: inputRef.agentRuntime,
+        modelSelection: inputRef.modelSelection,
       });
       return { session_ref: `mock-${calls.length}` };
     },
@@ -113,7 +114,10 @@ describe("dispatch hooks rewire", () => {
     expect(mockBackend.calls[0]!.stageName).toBe("spec_analyzer");
     expect(mockBackend.calls[0]!.inputId).toBe(SPEC_ID);
     expect(mockBackend.calls[0]!.inputType).toBe("spec");
-    expect(mockBackend.calls[0]!.agentRuntime).toBe("claude-code");
+    expect(mockBackend.calls[0]!.modelSelection).toEqual({
+      runtime: "claude-code",
+      model: "claude-opus-4-8",
+    });
   });
 
   test("spec.created does not fire plan_writer", async () => {
@@ -132,7 +136,10 @@ describe("dispatch hooks rewire", () => {
     expect(mockBackend.calls[0]!.stageName).toBe("plan_writer");
     expect(mockBackend.calls[0]!.inputId).toBe(SPEC_ID);
     expect(mockBackend.calls[0]!.inputType).toBe("spec");
-    expect(mockBackend.calls[0]!.agentRuntime).toBe("claude-code");
+    expect(mockBackend.calls[0]!.modelSelection).toEqual({
+      runtime: "claude-code",
+      model: "claude-opus-4-8",
+    });
   });
 
   test("spec.approved does not fire spec_analyzer", async () => {

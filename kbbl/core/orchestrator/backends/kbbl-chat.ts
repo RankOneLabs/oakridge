@@ -30,6 +30,12 @@ function isRoutedStage(name: string): name is RoutedStage {
   return Object.hasOwn(STAGE_ROUTING["claude-code"], name);
 }
 
+function supportedRoutedStages(): string {
+  return Object.keys(STAGE_ROUTING["claude-code"]).join(", ");
+}
+
+export const NO_ROUTING_ENTRY_ERROR_PREFIX = 'No routing entry for stage "';
+
 export function createKbblChatBackend({
   manager,
   config,
@@ -42,19 +48,18 @@ export function createKbblChatBackend({
 
     async dispatch(stage: StageRow, inputRef: InputRef, renderedPrompt: string): Promise<{ session_ref: string }> {
       const agentRuntime = inputRef.agentRuntime ?? "claude-code";
-      const defaultRouting = isRoutedStage(stage.name)
-        ? STAGE_ROUTING[agentRuntime][stage.name]
-        : null;
+      const defaultRouting = isRoutedStage(stage.name) ? STAGE_ROUTING[agentRuntime][stage.name] : null;
       const stageOverride =
+        inputRef.modelSelection === undefined &&
         inputRef.agentRuntime === undefined &&
         config?.runtime.stages &&
         Object.hasOwn(config.runtime.stages, stage.name)
           ? config.runtime.stages[stage.name]
           : undefined;
-      const routing = stageOverride ?? defaultRouting;
+      const routing = inputRef.modelSelection ?? stageOverride ?? defaultRouting;
       if (!routing) {
         throw new Error(
-          `No routing entry for stage "${stage.name}". Add it to STAGE_ROUTING in kbbl-chat.ts or route it via config.runtime.stages.`
+          `${NO_ROUTING_ENTRY_ERROR_PREFIX}${stage.name}". Supported routed stages: ${supportedRoutedStages()}. Add an override via config.runtime.stages or pass modelSelection from the dispatcher.`
         );
       }
 
