@@ -97,6 +97,7 @@ describe("KbblChatBackend dispatch worktree behavior", () => {
       id: "fake-brief-id",
       workdir: join(tmpRoot, "repo"),
       sessionName: "test-session",
+      modelSelection: { runtime: "claude-code" as const, model: "claude-sonnet-4-6" },
     };
 
     // build stage: worktreePath must be set
@@ -108,7 +109,11 @@ describe("KbblChatBackend dispatch worktree behavior", () => {
     expect(existsSync(buildSession.worktreePath)).toBe(true);
 
     // plan_writer stage: worktreePath must ALSO be set — no opt-out
-    const plannerRef = { ...inputRef, type: "spec" as const };
+    const plannerRef = {
+      ...inputRef,
+      type: "spec" as const,
+      modelSelection: { runtime: "claude-code" as const, model: "claude-opus-4-8" },
+    };
     const plannerResult = await backend.dispatch(plannerStage, plannerRef, "planner prompt");
     const plannerSession = manager.get(plannerResult.session_ref);
     if (!plannerSession) throw new Error("expected planner session to exist");

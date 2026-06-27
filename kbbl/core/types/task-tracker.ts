@@ -130,7 +130,6 @@ export const EpicSchema = z.object({
   title: z.string(),
   status: EpicStatusSchema,
   current_stage: EpicStageSchema,
-  agent_runtime: AgentRuntimeChoiceSchema,
   planner_model_selection: EpicModelSelectionSchema,
   worker_model_selection: EpicModelSelectionSchema,
   created_at: z.string(),

@@ -322,8 +322,7 @@ export class SessionManager {
 
   async create(opts: CreateSessionOpts): Promise<Session> {
     // Reject unknown runtimes before touching disk or the session map so the
-    // error is clearly attributable to a misconfigured stage override (e.g.
-    // operator set runtime.stages.build = codex but runtime.codex.enabled=false).
+    // error is clearly attributable to a misconfigured runtime request.
     // On the legacy (no-registry) path opts.runtime is silently ignored so a
     // session can't be mislabeled with an id that was never used to spawn it.
     if (opts.runtime !== undefined && this.opts.registry) {

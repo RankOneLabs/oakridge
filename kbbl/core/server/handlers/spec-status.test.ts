@@ -13,6 +13,10 @@ import type { Spec } from "../../types/task-tracker";
 const PROJECT_ID = "proj-1";
 const SPEC_ID = "spec-1";
 const EPIC_ID = "epic-1";
+const DEFAULT_SELECTIONS = {
+  planner_model_selection: { runtime: "claude-code" as const, model: "claude-opus-4-8" },
+  worker_model_selection: { runtime: "claude-code" as const, model: "claude-sonnet-4-6" },
+};
 
 let db: Database;
 let app: Hono;
@@ -30,6 +34,7 @@ beforeEach(() => {
   insertProject(db, { id: PROJECT_ID, name: "P", repo_path: "/p" });
   insertSpec(db, { id: SPEC_ID, project_id: PROJECT_ID, title: "S" });
   insertEpic(db, {
+    ...DEFAULT_SELECTIONS,
     id: EPIC_ID,
     spec_id: SPEC_ID,
     project_id: PROJECT_ID,

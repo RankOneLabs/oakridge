@@ -1,14 +1,5 @@
--- Persist split model selections on epics.
--- Each epic stores a planner selection and a worker selection.
---
--- Backfill existing epics from the temporary pre-split runtime source:
---   planner.runtime = agent_runtime
---   worker.runtime  = agent_runtime
---   planner.model   = current planner-grade default for that runtime
---   worker.model    = current build-grade default for that runtime
---
--- SQLite requires a table rebuild to add CHECK constraints and keep the
--- migration deterministic for existing rows.
+-- Remove the pre-split single-runtime column from databases that already
+-- applied migrations 021 and 023 before split-model cleanup.
 
 COMMIT;
 PRAGMA foreign_keys = OFF;
@@ -48,16 +39,10 @@ SELECT
   title,
   status,
   current_stage,
-  agent_runtime,
-  CASE agent_runtime
-    WHEN 'codex' THEN 'gpt-5.5'
-    ELSE 'claude-opus-4-8'
-  END,
-  agent_runtime,
-  CASE agent_runtime
-    WHEN 'codex' THEN 'gpt-5.4-mini'
-    ELSE 'claude-sonnet-4-6'
-  END,
+  planner_runtime,
+  planner_model,
+  worker_runtime,
+  worker_model,
   created_at
 FROM epics;
 

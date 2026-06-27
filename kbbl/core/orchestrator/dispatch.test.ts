@@ -34,7 +34,7 @@ import { mountAssessmentsRoutes } from "../server/handlers/assessments";
 import { mountSpecStatusRoutes } from "../server/handlers/spec-status";
 import { insertSpec } from "../db/specs";
 import { insertSpecDiscrepancy } from "../db/spec-discrepancies";
-import type { RuntimeId, RuntimeModelSelection } from "../runtime";
+import type { RuntimeModelSelection } from "../runtime";
 
 // ---- minimal SessionManager stub for builds route ----
 
@@ -48,7 +48,6 @@ interface DispatchCall {
   stageName: string;
   inputType: string;
   inputId: string;
-  agentRuntime?: RuntimeId;
   modelSelection?: RuntimeModelSelection;
   renderedPrompt: string;
 }
@@ -67,7 +66,6 @@ function createMockBackend(): MockBackend {
         stageName: stage.name,
         inputType: inputRef.type,
         inputId: inputRef.id,
-        ...(inputRef.agentRuntime !== undefined ? { agentRuntime: inputRef.agentRuntime } : {}),
         ...(inputRef.modelSelection !== undefined ? { modelSelection: inputRef.modelSelection } : {}),
         renderedPrompt,
       });
@@ -344,17 +342,22 @@ describe("full dispatch pipeline with MockBackend", () => {
     expect(debriefed.pr_url).toBe("https://github.com/org/repo/pull/99");
   });
 
-  test("legacy default epics keep planner and worker on the same runtime defaults", async () => {
-    const projRes = await post(app, "/projects", { name: "legacy-test", repo_path: testRepoPath });
+  test("default epic selections route planner and worker to role defaults", async () => {
+    const projRes = await post(app, "/projects", { name: "default-selection-test", repo_path: testRepoPath });
     const proj = (await projRes.json()) as { id: string };
 
-    const specRes = await post(app, "/specs", { project_id: proj.id, title: "Legacy Spec" });
+    const specRes = await post(app, "/specs", {
+      project_id: proj.id,
+      title: "Default Selection Spec",
+      planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
+      worker_model_selection: { runtime: "claude-code", model: "claude-sonnet-4-6" },
+    });
     const spec = (await specRes.json()) as { id: string };
     await flushAsync();
 
     const planRes = await post(app, "/plans", { spec_id: spec.id });
     const plan = (await planRes.json()) as { id: string };
-    const cohortRes = await post(app, "/cohorts", { plan_id: plan.id, title: "Legacy Cohort", position: 1 });
+    const cohortRes = await post(app, "/cohorts", { plan_id: plan.id, title: "Default Cohort", position: 1 });
     const cohort = (await cohortRes.json()) as { id: string };
 
     expect((await post(app, `/plans/${plan.id}/submit`, {})).status).toBe(200);
@@ -716,14 +719,14 @@ describe("full dispatch pipeline with MockBackend", () => {
     expect(call?.renderedPrompt).toContain("(none — spec analyzed clean or pre-resolutions spec)");
   });
 
-  test("legacy spec without epic leaves agent runtime unset for config overrides", async () => {
-    const projRes = await post(app, "/projects", { name: "legacy-spec", repo_path: testRepoPath });
+  test("spec without epic cannot dispatch agent-dev stages", async () => {
+    const projRes = await post(app, "/projects", { name: "no-epic-spec", repo_path: testRepoPath });
     const proj = (await projRes.json()) as { id: string };
     const spec = insertSpec(db, {
-      id: "legacy-spec-no-epic",
+      id: "spec-no-epic",
       project_id: proj.id,
-      title: "Legacy spec",
-      notes: "created before epics carried runtime",
+      title: "No epic spec",
+      notes: "created without epic",
     });
 
     const dispatcher = createDispatcher({
@@ -731,12 +734,9 @@ describe("full dispatch pipeline with MockBackend", () => {
       backends: { kbbl_chat: mockBackend },
       kbblUrl: "http://localhost:8788",
     });
-    await dispatcher.dispatch("plan_writer", spec.id);
-
-    const call = mockBackend.calls[mockBackend.calls.length - 1];
-    expect(call?.stageName).toBe("plan_writer");
-    expect(call?.agentRuntime).toBeUndefined();
-    expect(call?.modelSelection).toBeUndefined();
+    await expect(dispatcher.dispatch("plan_writer", spec.id)).rejects.toThrow(
+      `spec ${spec.id}: no epic found`,
+    );
   });
 
   test("plan_writer prompt renders resolved discrepancies as numbered sections", async () => {

@@ -33,6 +33,8 @@ beforeEach(() => {
     title: EPIC_TITLE,
     status: "active",
     current_stage: "build",
+    planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
+    worker_model_selection: { runtime: "claude-code", model: "claude-sonnet-4-6" },
   });
   insertPlan(db, { id: PLAN_ID, spec_id: SPEC_ID });
   insertCohort(db, { id: COHORT_ID, plan_id: PLAN_ID, title: "C", position: 1 });

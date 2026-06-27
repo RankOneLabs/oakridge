@@ -93,7 +93,6 @@ describe("POST /specs split model validation", () => {
     const epic = getEpicBySpec(db, body.id);
     expect(epic).not.toBeNull();
     expect(epic!.id).toBe(body.epic_id);
-    expect(epic!.agent_runtime).toBe("claude-code");
     expect(epic!.planner_model_selection).toEqual({
       runtime: "claude-code",
       model: "claude-opus-4-8",

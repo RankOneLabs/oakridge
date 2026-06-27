@@ -34,6 +34,10 @@ const BRIEF_ID = "brief-1";
 const DEP_ID = "dep-1";
 const COHORT2_ID = "cohort-2";
 const DISC_ID = "disc-1";
+const DEFAULT_SELECTIONS = {
+  planner_model_selection: { runtime: "claude-code" as const, model: "claude-opus-4-8" },
+  worker_model_selection: { runtime: "claude-code" as const, model: "claude-sonnet-4-6" },
+};
 
 let db: Database;
 let app: Hono;
@@ -73,6 +77,7 @@ beforeEach(() => {
   insertProject(db, { id: PROJECT_ID, name: "P", repo_path: "/p" });
   insertSpec(db, { id: SPEC_ID, project_id: PROJECT_ID, title: "S" });
   insertEpic(db, {
+    ...DEFAULT_SELECTIONS,
     id: EPIC_ID,
     spec_id: SPEC_ID,
     project_id: PROJECT_ID,

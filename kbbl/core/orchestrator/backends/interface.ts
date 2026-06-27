@@ -1,4 +1,4 @@
-import type { RuntimeId, RuntimeModelSelection } from "../../runtime";
+import type { RuntimeModelSelection } from "../../runtime";
 
 export interface StageRow {
   name: string;
@@ -39,16 +39,9 @@ export interface InputRef {
   /**
    * Explicit runtime/model pair selected by the dispatcher for epic-owned
    * dispatches. When present, backends should route directly with this pair
-   * instead of inferring a model from `agentRuntime` or config stage routing.
+   * instead of inferring a model from global stage routing.
    */
   modelSelection?: RuntimeModelSelection;
-  /**
-   * Legacy runtime fallback for paths that do not yet resolve an owning Epic.
-   * Stage dispatch should prefer `modelSelection`; this remains only for
-   * transitional and config-driven routes that still route a single runtime
-   * for compatibility.
-   */
-  agentRuntime?: RuntimeId;
 }
 
 export interface ExecutionBackend {
