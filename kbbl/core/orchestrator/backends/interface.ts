@@ -45,7 +45,8 @@ export interface InputRef {
   /**
    * Legacy runtime fallback for paths that do not yet resolve an owning Epic.
    * Stage dispatch should prefer `modelSelection`; this remains only for
-   * transitional and config-driven routes.
+   * transitional and config-driven routes that still route a single runtime
+   * for compatibility.
    */
   agentRuntime?: RuntimeId;
 }

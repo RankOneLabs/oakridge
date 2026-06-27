@@ -8,6 +8,11 @@ through four stages (Spec → Plan → Build → Assess). Dispatched stages
 the existing `SessionManager` + Claude Code adapter; their prompts are templated
 from `kbbl/prompts/{spec_analyzer,plan_writer,brief_writer,build}.md`.
 
+Epics now store split model selections: planner stages use
+`planner_model_selection`, while `build` uses `worker_model_selection`. The
+PWA spec modal reads `/config` runtime descriptors so each role can choose its
+own runtime/model pair.
+
 ## Prerequisites
 
 - kbbl running (e.g. `./kbbl/scripts/kbbl-start /path/to/your/repo --host=0.0.0.0`).
@@ -119,7 +124,7 @@ curl -sX POST "$KBBL/projects" -H 'content-type: application/json' \
 # → { "id":"<project_id>", ... }
 
 curl -sX POST "$KBBL/specs" -H 'content-type: application/json' \
-  -d '{"project_id":"<project_id>","title":"…","notes":"<full spec prose>"}'
+  -d '{"project_id":"<project_id>","title":"…","notes":"<full spec prose>","planner_model_selection":{"runtime":"claude-code","model":"claude-opus-4-8"},"worker_model_selection":{"runtime":"codex","model":"gpt-5.4-mini"}}'
 # → { "id":"<spec_id>", "epic_id":"<epic_id>", ... }
 
 # Or load the prose from a file (mutually exclusive with `notes`). The path
@@ -131,8 +136,10 @@ curl -sX POST "$KBBL/specs" -H 'content-type: application/json' \
 
 Either path creates the Epic, emits `spec.created`, and dispatches spec_analyzer
 (Spec Analysis Agent) against the project's `repo_path`. Watch the session in
-the kbbl PWA inbox. After the Spec stage completes and the operator approves
-(see **Spec stage** above), plan_writer dispatches and the Plan stage begins.
+the kbbl PWA inbox. The API validates the planner and worker selections
+independently against the selected runtime descriptors before anything is
+persisted. After the Spec stage completes and the operator approves (see
+**Spec stage** above), plan_writer dispatches and the Plan stage begins.
 
 ## 2. Review the plan
 
@@ -170,8 +177,10 @@ Open `#brief/<brief_id>`. `StructuredDocEditor` renders the five sections
 
 Click **Run build** in the brief view (or `POST /briefs/:id/build`). The
 dispatcher spawns a build session, stamps `current_session_ref` onto the
-cohort, and the build agent reads its rendered prompt. The agent commits,
-pushes and opens a PR through the gated-review MCP tools
+cohort, and the build agent reads its rendered prompt. Planner stages have
+already used `planner_model_selection`; this dispatch uses
+`worker_model_selection`. The agent commits, pushes and opens a PR through the
+gated-review MCP tools
 (`mcp__gated-review__git_push` / `mcp__gated-review__open_pr` — shell
 `git push` and `gh` are blocked by the review gate), and on
 completion writes back:

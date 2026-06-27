@@ -7,6 +7,7 @@ import type { Database } from "bun:sqlite";
 
 import { KbblConfigSchema, type KbblConfig } from "../config";
 import type { AppRuntime } from "../runtime";
+import type { AgentRuntime, RuntimeRegistry } from "../runtime";
 import type { SessionManager } from "../session/session-manager";
 import type { createDispatcher } from "../orchestrator/backends/dispatcher";
 import { openTestDb } from "../db/test-db";
@@ -16,7 +17,43 @@ let tmpRoot: string;
 let configPath: string;
 let db: Database;
 
-function buildApp(config: KbblConfig, defaultWorkdir: string | null = "/tmp/test-workdir"): Hono {
+function makeRuntime(id: "claude-code" | "codex", models: string[]): AgentRuntime {
+  return {
+    id,
+    descriptor: {
+      id,
+      label: id === "claude-code" ? "Claude Code" : "Codex",
+      models: models.map((value) => ({ value, label: value })),
+      supportsCompaction: id === "claude-code",
+    },
+    isAllowedModel: (model: string) => models.includes(model),
+    async spawn() {
+      return { sessionId: "sid" };
+    },
+    async terminate() {},
+    async *events() {},
+    async send() {},
+    async resolveResumeRef() {
+      return { kind: "unknown" };
+    },
+    reconstructSnapshot() {
+      return {
+        runtimeSid: null,
+        yoloMode: false,
+        allowedTools: [],
+        lastResultUsage: null,
+        initialObservedModel: null,
+        observedModel: null,
+      };
+    },
+  } as AgentRuntime;
+}
+
+function buildApp(
+  config: KbblConfig,
+  defaultWorkdir: string | null = "/tmp/test-workdir",
+  registry?: RuntimeRegistry,
+): Hono {
   const runtime: AppRuntime = {
     id: "test",
     mountRoutes: () => {},
@@ -37,6 +74,7 @@ function buildApp(config: KbblConfig, defaultWorkdir: string | null = "/tmp/test
     configPath,
     db,
     dispatcher,
+    registry,
   });
 }
 
@@ -62,6 +100,51 @@ describe("GET /config", () => {
     const body = (await res.json()) as { defaultWorkdir: string | null; softThresholdTokens: number };
     expect(body.defaultWorkdir).toBe("/tmp/test-workdir");
     expect(body.softThresholdTokens).toBe(config.compact.soft_threshold_tokens);
+  });
+
+  test("returns runtime descriptors when a registry is wired", async () => {
+    const registry = {
+      defaultId: "codex",
+      runtimes: new Map([
+        ["claude-code", makeRuntime("claude-code", ["claude-opus-4-8", "claude-sonnet-4-6"])],
+        ["codex", makeRuntime("codex", ["gpt-5.5", "gpt-5.4-mini"])],
+      ]),
+    } as RuntimeRegistry;
+    const app = buildApp(KbblConfigSchema.parse({}), "/tmp/test-workdir", registry);
+
+    const res = await app.request("/config");
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      defaultRuntimeId: string;
+      runtimes: Array<{
+        id: string;
+        label: string;
+        supportsCompaction: boolean;
+        models: Array<{ value: string; label: string }>;
+      }>;
+    };
+    expect(body.defaultRuntimeId).toBe("codex");
+    expect(body.runtimes).toEqual([
+      {
+        id: "claude-code",
+        label: "Claude Code",
+        supportsCompaction: true,
+        models: [
+          { value: "claude-opus-4-8", label: "claude-opus-4-8" },
+          { value: "claude-sonnet-4-6", label: "claude-sonnet-4-6" },
+        ],
+      },
+      {
+        id: "codex",
+        label: "Codex",
+        supportsCompaction: false,
+        models: [
+          { value: "gpt-5.5", label: "gpt-5.5" },
+          { value: "gpt-5.4-mini", label: "gpt-5.4-mini" },
+        ],
+      },
+    ]);
   });
 
   test("allows a null defaultWorkdir", async () => {

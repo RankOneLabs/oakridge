@@ -3,10 +3,10 @@ import type { RuntimeId } from "../../runtime";
 import type { SessionManager } from "../../session/session-manager";
 import type { ExecutionBackend, InputRef, StageRow } from "./interface";
 
-// Agent-dev flow routing. The runtime comes from the owning Epic, selected in
-// the create-plan UI. Planner stages use the planner model; build uses the
-// builder model. Config stage overrides cover legacy refs that do not carry an
-// Epic-level runtime selection.
+// Agent-dev flow routing. The Epic carries split model selections: planner
+// stages use planner_model_selection and build uses worker_model_selection.
+// Config stage overrides cover legacy refs that do not carry Epic-level model
+// selections yet.
 type RoutedStage = "spec_analyzer" | "plan_writer" | "brief_writer" | "assessor" | "build";
 
 const STAGE_ROUTING: Record<RuntimeId, Record<RoutedStage, { runtime: RuntimeId; model: string }>> = {
