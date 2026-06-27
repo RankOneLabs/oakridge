@@ -4412,6 +4412,113 @@ body {
   color: var(--text-secondary);
 }
 
+.review-drilldown__body {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.review-drilldown__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.review-drilldown__section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.review-drilldown__section-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.review-drilldown__markdown {
+  font-size: 0.875rem;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.review-drilldown__markdown > :first-child {
+  margin-top: 0;
+}
+
+.review-drilldown__markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.review-drilldown__markdown pre {
+  background: var(--bg-code);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 12px;
+  overflow: auto;
+}
+
+.review-drilldown__empty {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.review-drilldown__cohort {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.review-drilldown__cohort + .review-drilldown__cohort {
+  margin-top: 16px;
+}
+
+.review-drilldown__cohort-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.review-drilldown__deviation {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--bg-code);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 12px;
+}
+
+.review-drilldown__deviation + .review-drilldown__deviation {
+  margin-top: 8px;
+}
+
+.review-drilldown__deviation-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.review-drilldown__deviation-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.review-drilldown__deviation-value {
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
 /* =========================================================
    SkillRail + SkillButton + ArgSheet
    ========================================================= */
