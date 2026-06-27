@@ -9,10 +9,12 @@ import { isFrozen } from "../../db/epic-freeze";
 import { getProject } from "../../db/projects";
 import { taskTrackerEvents } from "../../db/events";
 import type { RuntimeId, RuntimeRegistry } from "../../runtime";
-import { EpicModelSelectionSchema } from "../../types/task-tracker";
 import { isAllowedModelForRuntime, type RuntimeModelSelection } from "../../runtime";
 
-const ModelSelectionInputSchema = EpicModelSelectionSchema;
+const ModelSelectionInputSchema = z.object({
+  runtime: z.string().min(1),
+  model: z.string().min(1),
+});
 const CreateSpecSchema = z
   .object({
     project_id: z.string().min(1),
@@ -45,32 +47,46 @@ function isRuntimeRegistered(
   return true;
 }
 
+function registeredRuntimeList(registry: RuntimeRegistry | undefined): string {
+  return registry ? [...registry.runtimes.keys()].join(", ") : "claude-code";
+}
+
 function validateModelSelection(
   registry: RuntimeRegistry | undefined,
-  selection: RuntimeModelSelection,
+  selection: { runtime: string; model: string },
   role: "planner" | "worker",
-): { error: string | null; model: string } {
+): { error: string | null; selection: RuntimeModelSelection | null } {
+  const runtime = selection.runtime.trim();
+  if (runtime.length === 0) {
+    return { error: `${role} runtime must not be empty`, selection: null };
+  }
+  if (runtime !== "claude-code" && runtime !== "codex") {
+    return {
+      error: `runtime "${runtime}" is not registered — registered: ${registeredRuntimeList(registry)}`,
+      selection: null,
+    };
+  }
+  if (!isRuntimeRegistered(registry, runtime)) {
+    return {
+      error: `runtime "${runtime}" is not registered — registered: ${registeredRuntimeList(registry)}`,
+      selection: null,
+    };
+  }
   const model = selection.model.trim();
   if (model.length === 0) {
     return {
       error: `${role} model must not be empty for runtime "${selection.runtime}"`,
-      model,
+      selection: null,
     };
   }
-  if (!isRuntimeRegistered(registry, selection.runtime)) {
-    return {
-      error: `runtime "${selection.runtime}" is not registered — registered: ${registry ? [...registry.runtimes.keys()].join(", ") : "claude-code"}`,
-      model,
-    };
-  }
-  const runtime = registry?.runtimes.get(selection.runtime);
-  if (!isAllowedModelForRuntime(runtime, model)) {
+  const runtimeDescriptor = registry?.runtimes.get(runtime as RuntimeId);
+  if (!isAllowedModelForRuntime(runtimeDescriptor, model)) {
     return {
       error: `${role} model "${model}" is not allowed for runtime "${selection.runtime}"`,
-      model,
+      selection: null,
     };
   }
-  return { error: null, model };
+  return { error: null, selection: { runtime, model } };
 }
 
 export function mountSpecsRoutes(app: Hono, deps: SpecsRouteDeps): void {
@@ -167,8 +183,8 @@ export function mountSpecsRoutes(app: Hono, deps: SpecsRouteDeps): void {
           title,
           status: "pending",
           current_stage: "spec",
-          planner_model_selection: { ...planner_model_selection, model: plannerSelection.model },
-          worker_model_selection: { ...worker_model_selection, model: workerSelection.model },
+          planner_model_selection: plannerSelection.selection!,
+          worker_model_selection: workerSelection.selection!,
         });
         return { spec: s, epic: e };
       })();

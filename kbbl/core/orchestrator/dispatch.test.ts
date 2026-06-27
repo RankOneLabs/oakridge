@@ -344,6 +344,50 @@ describe("full dispatch pipeline with MockBackend", () => {
     expect(debriefed.pr_url).toBe("https://github.com/org/repo/pull/99");
   });
 
+  test("legacy default epics keep planner and worker on the same runtime defaults", async () => {
+    const projRes = await post(app, "/projects", { name: "legacy-test", repo_path: testRepoPath });
+    const proj = (await projRes.json()) as { id: string };
+
+    const specRes = await post(app, "/specs", { project_id: proj.id, title: "Legacy Spec" });
+    const spec = (await specRes.json()) as { id: string };
+    await flushAsync();
+
+    const planRes = await post(app, "/plans", { spec_id: spec.id });
+    const plan = (await planRes.json()) as { id: string };
+    const cohortRes = await post(app, "/cohorts", { plan_id: plan.id, title: "Legacy Cohort", position: 1 });
+    const cohort = (await cohortRes.json()) as { id: string };
+
+    expect((await post(app, `/plans/${plan.id}/submit`, {})).status).toBe(200);
+    expect((await patch(app, `/plans/${plan.id}/status`, { status: "approved" })).status).toBe(200);
+    await flushAsync();
+
+    expect(mockBackend.calls).toHaveLength(2);
+    expect(mockBackend.calls[1]!.stageName).toBe("brief_writer");
+    expect(mockBackend.calls[1]!.modelSelection).toEqual({
+      runtime: "claude-code",
+      model: "claude-opus-4-8",
+    });
+
+    const briefRes = await post(app, "/briefs", {
+      cohort_id: cohort.id,
+      goal: "ship it",
+      files_in_scope: ["src/index.ts"],
+      decisions_made: [{ decision: "use TS", rationale: "types" }],
+      approaches_rejected: [],
+      next_action: "start coding",
+    });
+    const brief = (await briefRes.json()) as { id: string };
+
+    expect((await patch(app, `/briefs/${brief.id}/status`, { status: "approved" })).status).toBe(200);
+    await waitFor(() => mockBackend.calls.length >= 3);
+
+    expect(mockBackend.calls[2]!.stageName).toBe("build");
+    expect(mockBackend.calls[2]!.modelSelection).toEqual({
+      runtime: "claude-code",
+      model: "claude-sonnet-4-6",
+    });
+  });
+
   test("dispatcher.dispatch('brief_writer', plan_id) — toposorted prompt, plan persistence", async () => {
     // 1. Create project + spec + plan
     const projRes = await post(app, "/projects", { name: "batch-test", repo_path: testRepoPath });

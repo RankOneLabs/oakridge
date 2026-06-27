@@ -50,7 +50,7 @@ function post(path: string, body: unknown) {
     path === "/specs"
       ? {
           planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
-          worker_model_selection: { runtime: "claude-code", model: "claude-sonnet-4-6" },
+          worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini" },
           ...(body as Record<string, unknown>),
         }
       : body;
