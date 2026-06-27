@@ -2,10 +2,11 @@ import type { Database } from "bun:sqlite";
 import type { ExecutionBackend, InputRef, StageRow } from "./interface";
 import { loadPrompt, renderPrompt } from "./prompt-loader";
 import { listCohortsByPlan, listDependenciesByPlan } from "../../db/cohorts";
+import type { Epic } from "../../db/epics";
 import { listResolvedDiscrepanciesBySpec } from "../../db/spec-discrepancies";
 import { getEpicBySpec } from "../../db/epics";
 import type { Cohort, CohortDependency } from "../../types/task-tracker";
-import type { RuntimeId } from "../../runtime";
+import type { RuntimeModelSelection } from "../../runtime";
 import { runExclusive } from "./keyed-mutex";
 
 interface DispatcherDeps {
@@ -32,6 +33,26 @@ interface ProjectRow {
   id: string;
   name: string;
   repo_path: string;
+}
+
+type StageRole = "planner" | "worker";
+
+const STAGE_ROLE_BY_NAME: Record<string, StageRole> = {
+  spec_analyzer: "planner",
+  plan_writer: "planner",
+  brief_writer: "planner",
+  assessor: "planner",
+  build: "worker",
+};
+
+function resolveStageRole(stageName: string): StageRole {
+  const role = STAGE_ROLE_BY_NAME[stageName];
+  if (!role) {
+    throw new Error(
+      `unknown stage "${stageName}" for epic-owned dispatch; supported stage-role mappings: spec_analyzer→planner, plan_writer→planner, brief_writer→planner, assessor→planner, build→worker`,
+    );
+  }
+  return role;
 }
 
 function getProjectForSpec(db: Database, spec_id: string): ProjectRow | null {
@@ -92,48 +113,53 @@ function getProjectForPlan(db: Database, plan_id: string): ProjectRow | null {
   );
 }
 
-function resolveAgentRuntimeForSpec(db: Database, spec_id: string): RuntimeId | undefined {
-  const epic = getEpicBySpec(db, spec_id);
-  return epic?.agent_runtime;
+function resolveEpicForSpec(db: Database, spec_id: string): Epic | null {
+  return getEpicBySpec(db, spec_id);
 }
 
-function resolveAgentRuntimeForPlan(db: Database, plan_id: string): RuntimeId | undefined {
+function resolveEpicForPlan(db: Database, plan_id: string): Epic | null {
   const row = db
-    .prepare<{ agent_runtime: RuntimeId }, [string]>(
-      `SELECT e.agent_runtime
-         FROM epics e
-         JOIN plans pl ON pl.spec_id = e.spec_id
+    .prepare<{ spec_id: string }, [string]>(
+      `SELECT pl.spec_id
+         FROM plans pl
         WHERE pl.id = ?`,
     )
     .get(plan_id);
-  return row?.agent_runtime;
+  return row ? getEpicBySpec(db, row.spec_id) : null;
 }
 
-function resolveAgentRuntimeForCohort(db: Database, cohort_id: string): RuntimeId | undefined {
+function resolveEpicForCohort(db: Database, cohort_id: string): Epic | null {
   const row = db
-    .prepare<{ agent_runtime: RuntimeId }, [string]>(
-      `SELECT e.agent_runtime
-         FROM epics e
-         JOIN plans pl ON pl.spec_id = e.spec_id
+    .prepare<{ spec_id: string }, [string]>(
+      `SELECT pl.spec_id
+         FROM plans pl
          JOIN cohorts c ON c.plan_id = pl.id
         WHERE c.id = ?`,
     )
     .get(cohort_id);
-  return row?.agent_runtime;
+  return row ? getEpicBySpec(db, row.spec_id) : null;
 }
 
-function resolveAgentRuntimeForBrief(db: Database, brief_id: string): RuntimeId | undefined {
+function resolveEpicForBrief(db: Database, brief_id: string): Epic | null {
   const row = db
-    .prepare<{ agent_runtime: RuntimeId }, [string]>(
-      `SELECT e.agent_runtime
-         FROM epics e
-         JOIN plans pl ON pl.spec_id = e.spec_id
+    .prepare<{ spec_id: string }, [string]>(
+      `SELECT pl.spec_id
+         FROM plans pl
          JOIN cohorts c ON c.plan_id = pl.id
          JOIN briefs b ON b.cohort_id = c.id
         WHERE b.id = ?`,
     )
     .get(brief_id);
-  return row?.agent_runtime;
+  return row ? getEpicBySpec(db, row.spec_id) : null;
+}
+
+function modelSelectionForEpicStage(epic: Epic, stageName: string): RuntimeModelSelection {
+  switch (resolveStageRole(stageName)) {
+    case "planner":
+      return epic.planner_model_selection;
+    case "worker":
+      return epic.worker_model_selection;
+  }
 }
 
 // ---- Session name builders ----
@@ -714,19 +740,21 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
       let slots: Record<string, string>;
       let inputRef: InputRef;
       let workdir: string;
+      let modelSelection: RuntimeModelSelection | undefined;
 
       switch (stage.input_artifact_type) {
         case "spec": {
           slots = buildSlotsForSpec(db, inputId, kbblUrl);
           workdir = resolveWorkdirForSpec(db, inputId);
           const sessionName = buildSessionNameForSpec(db, inputId, stage.name);
-          const agentRuntime = resolveAgentRuntimeForSpec(db, inputId);
+          const epic = resolveEpicForSpec(db, inputId);
+          if (epic) modelSelection = modelSelectionForEpicStage(epic, stage.name);
           inputRef = {
             type: "spec",
             id: inputId,
             workdir,
             sessionName,
-            ...(agentRuntime !== undefined ? { agentRuntime } : {}),
+            ...(modelSelection !== undefined ? { modelSelection } : {}),
           };
           break;
         }
@@ -734,13 +762,14 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
           slots = buildSlotsForCohort(db, inputId, kbblUrl);
           workdir = resolveWorkdirForCohort(db, inputId);
           const sessionName = buildSessionNameForCohort(db, inputId, stage.name);
-          const agentRuntime = resolveAgentRuntimeForCohort(db, inputId);
+          const epic = resolveEpicForCohort(db, inputId);
+          if (epic) modelSelection = modelSelectionForEpicStage(epic, stage.name);
           inputRef = {
             type: "cohort",
             id: inputId,
             workdir,
             sessionName,
-            ...(agentRuntime !== undefined ? { agentRuntime } : {}),
+            ...(modelSelection !== undefined ? { modelSelection } : {}),
           };
           break;
         }
@@ -752,7 +781,7 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
           const identityCtx = getBriefIdentityContext(db, inputId);
           if (!identityCtx) throw new Error(`brief ${inputId}: could not resolve cohort/spec chain`);
 
-          const epic = getEpicBySpec(db, identityCtx.spec_id);
+          const epic = resolveEpicForBrief(db, inputId) ?? getEpicBySpec(db, identityCtx.spec_id);
           if (!epic) throw new Error(`brief ${inputId}: no epic found for spec ${identityCtx.spec_id}`);
 
           const epicSlug = sanitizeForName(epic.title, epic.id);
@@ -761,13 +790,13 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
 
           await ensureEpicBranchExists(epicBranch, workdir);
 
-          const agentRuntime = resolveAgentRuntimeForBrief(db, inputId);
+          modelSelection = modelSelectionForEpicStage(epic, stage.name);
           inputRef = {
             type: "brief",
             id: inputId,
             workdir,
             sessionName,
-            ...(agentRuntime !== undefined ? { agentRuntime } : {}),
+            ...(modelSelection !== undefined ? { modelSelection } : {}),
             worktreeIdentity: { epicSlug, cohortSlug, epicBranch },
           };
           break;
@@ -778,13 +807,14 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
             : buildSlotsForPlan(db, inputId, kbblUrl);
           workdir = resolveWorkdirForPlan(db, inputId);
           const sessionName = buildSessionNameForPlan(db, inputId, stage.name);
-          const agentRuntime = resolveAgentRuntimeForPlan(db, inputId);
+          const epic = resolveEpicForPlan(db, inputId);
+          if (epic) modelSelection = modelSelectionForEpicStage(epic, stage.name);
           inputRef = {
             type: "plan",
             id: inputId,
             workdir,
             sessionName,
-            ...(agentRuntime !== undefined ? { agentRuntime } : {}),
+            ...(modelSelection !== undefined ? { modelSelection } : {}),
           };
           break;
         }
