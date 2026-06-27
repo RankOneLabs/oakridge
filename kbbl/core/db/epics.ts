@@ -1,13 +1,12 @@
 import { Database } from "bun:sqlite";
 import type {
-  AgentRuntimeChoice,
   Epic,
   EpicStatus,
   EpicStage,
   EpicModelSelection,
 } from "../types/task-tracker";
 import { applyEpicTransition, type EpicEvent } from "../orchestrator/epic-state-machine";
-import { defaultEpicModelSelections, type RuntimeModelSelection } from "../runtime";
+import type { RuntimeId, RuntimeModelSelection } from "../runtime";
 
 export type { Epic };
 
@@ -18,15 +17,14 @@ type EpicRow = {
   title: string;
   status: EpicStatus;
   current_stage: EpicStage;
-  agent_runtime: AgentRuntimeChoice;
-  planner_runtime: AgentRuntimeChoice;
+  planner_runtime: RuntimeId;
   planner_model: string;
-  worker_runtime: AgentRuntimeChoice;
+  worker_runtime: RuntimeId;
   worker_model: string;
   created_at: string;
 };
 
-function toModelSelection(runtime: AgentRuntimeChoice, model: string): EpicModelSelection {
+function toModelSelection(runtime: RuntimeId, model: string): EpicModelSelection {
   return { runtime, model };
 }
 
@@ -38,7 +36,6 @@ function toEpic(row: EpicRow): Epic {
     title: row.title,
     status: row.status,
     current_stage: row.current_stage,
-    agent_runtime: row.agent_runtime,
     planner_model_selection: toModelSelection(row.planner_runtime, row.planner_model),
     worker_model_selection: toModelSelection(row.worker_runtime, row.worker_model),
     created_at: row.created_at,
@@ -63,22 +60,12 @@ export function insertEpic(
     title: string;
     status: EpicStatus;
     current_stage: EpicStage;
-    planner_model_selection?: RuntimeModelSelection;
-    worker_model_selection?: RuntimeModelSelection;
+    planner_model_selection: RuntimeModelSelection;
+    worker_model_selection: RuntimeModelSelection;
   },
 ): Epic {
-  const hasPlannerSelection = planner_model_selection !== undefined;
-  const hasWorkerSelection = worker_model_selection !== undefined;
-  if (hasPlannerSelection !== hasWorkerSelection) {
-    throw new Error("insertEpic: planner_model_selection and worker_model_selection must be provided together");
-  }
-
-  const defaults = defaultEpicModelSelections(planner_model_selection?.runtime ?? "claude-code");
-  const planner = planner_model_selection ?? defaults.planner_model_selection;
-  const worker = worker_model_selection ?? defaults.worker_model_selection;
-
   const row = db
-    .prepare<EpicRow, [string, string, string, string, EpicStatus, EpicStage, AgentRuntimeChoice, AgentRuntimeChoice, string, AgentRuntimeChoice, string]>(
+    .prepare<EpicRow, [string, string, string, string, EpicStatus, EpicStage, RuntimeId, string, RuntimeId, string]>(
       `INSERT INTO epics (
          id,
          spec_id,
@@ -86,13 +73,12 @@ export function insertEpic(
          title,
          status,
          current_stage,
-         agent_runtime,
          planner_runtime,
          planner_model,
          worker_runtime,
          worker_model
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
     )
     .get(
       id,
@@ -101,11 +87,10 @@ export function insertEpic(
       title,
       status,
       current_stage,
-      planner.runtime,
-      planner.runtime,
-      planner.model,
-      worker.runtime,
-      worker.model,
+      planner_model_selection.runtime,
+      planner_model_selection.model,
+      worker_model_selection.runtime,
+      worker_model_selection.model,
     )!;
   return toEpic(row);
 }

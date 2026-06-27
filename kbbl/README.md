@@ -49,7 +49,7 @@ trusted local callers can choose a runtime with `POST /sessions` by passing
 
 When creating a spec, choose planner and worker model selections independently.
 The server validates each selection against the selected runtime descriptor and
-keeps legacy `agent_runtime` data only as a compatibility field.
+stores only the explicit split selections on each Epic.
 
 ### Not in v0
 

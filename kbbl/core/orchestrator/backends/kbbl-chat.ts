@@ -1,65 +1,21 @@
-import type { KbblConfig } from "../../config";
-import type { RuntimeId } from "../../runtime";
 import type { SessionManager } from "../../session/session-manager";
 import type { ExecutionBackend, InputRef, StageRow } from "./interface";
-
-// Agent-dev flow routing. The Epic carries split model selections: planner
-// stages use planner_model_selection and build uses worker_model_selection.
-// Config stage overrides cover legacy refs that do not carry Epic-level model
-// selections yet.
-type RoutedStage = "spec_analyzer" | "plan_writer" | "brief_writer" | "assessor" | "build";
-
-const STAGE_ROUTING: Record<RuntimeId, Record<RoutedStage, { runtime: RuntimeId; model: string }>> = {
-  "claude-code": {
-    spec_analyzer: { runtime: "claude-code", model: "claude-opus-4-8" },
-    plan_writer:   { runtime: "claude-code", model: "claude-opus-4-8" },
-    brief_writer:  { runtime: "claude-code", model: "claude-opus-4-8" },
-    assessor:      { runtime: "claude-code", model: "claude-opus-4-8" },
-    build:         { runtime: "claude-code", model: "claude-sonnet-4-6" },
-  },
-  codex: {
-    spec_analyzer: { runtime: "codex", model: "gpt-5.5" },
-    plan_writer:   { runtime: "codex", model: "gpt-5.5" },
-    brief_writer:  { runtime: "codex", model: "gpt-5.5" },
-    assessor:      { runtime: "codex", model: "gpt-5.5" },
-    build:         { runtime: "codex", model: "gpt-5.4-mini" },
-  },
-};
-
-function isRoutedStage(name: string): name is RoutedStage {
-  return Object.hasOwn(STAGE_ROUTING["claude-code"], name);
-}
-
-function supportedRoutedStages(): string {
-  return Object.keys(STAGE_ROUTING["claude-code"]).join(", ");
-}
 
 export const NO_ROUTING_ENTRY_ERROR_PREFIX = 'No routing entry for stage "';
 
 export function createKbblChatBackend({
   manager,
-  config,
 }: {
   manager: SessionManager;
-  config?: KbblConfig;
 }): ExecutionBackend {
   return {
     id: "kbbl_chat",
 
     async dispatch(stage: StageRow, inputRef: InputRef, renderedPrompt: string): Promise<{ session_ref: string }> {
-      const agentRuntime = inputRef.agentRuntime ?? "claude-code";
-      const defaultRouting = isRoutedStage(stage.name) ? STAGE_ROUTING[agentRuntime][stage.name] : null;
-      const stageOverride =
-        inputRef.modelSelection === undefined &&
-        inputRef.agentRuntime === undefined &&
-        config?.runtime.stages &&
-        Object.hasOwn(config.runtime.stages, stage.name)
-          ? config.runtime.stages[stage.name]
-          : undefined;
-      const routing = inputRef.modelSelection ?? stageOverride ?? defaultRouting;
+      const routing = inputRef.modelSelection;
       if (!routing) {
         throw new Error(
-          `${NO_ROUTING_ENTRY_ERROR_PREFIX}${stage.name}". Supported routed stages: ${supportedRoutedStages()}. Add an override via config.runtime.stages or pass modelSelection from the dispatcher.`
+          `${NO_ROUTING_ENTRY_ERROR_PREFIX}${stage.name}". Dispatcher must pass an explicit modelSelection from the owning Epic.`
         );
       }
 

@@ -1,14 +1,5 @@
--- Persist split model selections on epics.
--- Each epic stores a planner selection and a worker selection.
---
--- Backfill existing epics with current defaults:
---   planner.runtime = claude-code
---   worker.runtime  = claude-code
---   planner.model   = current planner-grade default for that runtime
---   worker.model    = current build-grade default for that runtime
---
--- SQLite requires a table rebuild to add CHECK constraints and keep the
--- migration deterministic for existing rows.
+-- Remove the pre-split single-runtime column from databases that already
+-- applied migrations 021 and 023 before split-model cleanup.
 
 COMMIT;
 PRAGMA foreign_keys = OFF;
@@ -48,10 +39,10 @@ SELECT
   title,
   status,
   current_stage,
-  'claude-code',
-  'claude-opus-4-8',
-  'claude-code',
-  'claude-sonnet-4-6',
+  planner_runtime,
+  planner_model,
+  worker_runtime,
+  worker_model,
   created_at
 FROM epics;
 

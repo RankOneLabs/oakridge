@@ -95,6 +95,7 @@ describe("specs query helpers", () => {
   test("listSpecsByProject includes specs with non-archived epics", () => {
     insertSpec(db, { id: "sa", project_id: PROJECT_ID, title: "A" });
     insertEpic(db, {
+      ...CREATE_SPEC_SELECTIONS,
       id: "ea",
       spec_id: "sa",
       project_id: PROJECT_ID,
@@ -112,6 +113,7 @@ describe("specs query helpers", () => {
   test("listSpecsByProject omits specs whose epic is archived", () => {
     insertSpec(db, { id: "sa", project_id: PROJECT_ID, title: "A" });
     insertEpic(db, {
+      ...CREATE_SPEC_SELECTIONS,
       id: "ea",
       spec_id: "sa",
       project_id: PROJECT_ID,
@@ -136,6 +138,7 @@ describe("specs query helpers", () => {
     insertProject(db, { id: "proj-2", name: "P2", repo_path: "/p2" });
     insertSpec(db, { id: "sa", project_id: PROJECT_ID, title: "A" });
     insertEpic(db, {
+      ...CREATE_SPEC_SELECTIONS,
       id: "ea",
       spec_id: "sa",
       project_id: PROJECT_ID,
@@ -145,6 +148,7 @@ describe("specs query helpers", () => {
     });
     insertSpec(db, { id: "sb", project_id: "proj-2", title: "B" });
     insertEpic(db, {
+      ...CREATE_SPEC_SELECTIONS,
       id: "eb",
       spec_id: "sb",
       project_id: "proj-2",
@@ -255,7 +259,6 @@ describe("POST /specs", () => {
     expect(res.status).toBe(201);
     const body = (await res.json()) as { id: string };
     const epic = getEpicBySpec(db, body.id);
-    expect(epic?.agent_runtime).toBe("claude-code");
     expect(epic?.planner_model_selection).toEqual({
       runtime: "claude-code",
       model: "claude-opus-4-8",
@@ -282,7 +285,6 @@ describe("POST /specs", () => {
     expect(res.status).toBe(201);
     const body = (await res.json()) as { id: string };
     const epic = getEpicBySpec(db, body.id);
-    expect(epic?.agent_runtime).toBe("claude-code");
     expect(epic?.planner_model_selection).toEqual({
       runtime: "claude-code",
       model: "claude-opus-4-8",
@@ -434,7 +436,6 @@ describe("POST /specs", () => {
     expect(res.status).toBe(201);
     const body = (await res.json()) as { id: string };
     const epic = getEpicBySpec(db, body.id);
-    expect(epic?.agent_runtime).toBe("claude-code");
     expect(epic?.planner_model_selection).toEqual({
       runtime: "claude-code",
       model: "custom-planner-model",

@@ -159,7 +159,16 @@ describe("DELETE /epics/:id leaves zero rows in child tables", () => {
     const C2 = crypto.randomUUID();
 
     insertSpec(db, { id: SPEC_ID, project_id: PROJECT_ID, title: "S" });
-    insertEpic(db, { id: EPIC_ID, spec_id: SPEC_ID, project_id: PROJECT_ID, title: "S", status: "active", current_stage: "spec" });
+    insertEpic(db, {
+      id: EPIC_ID,
+      spec_id: SPEC_ID,
+      project_id: PROJECT_ID,
+      title: "S",
+      status: "active",
+      current_stage: "spec",
+      planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
+      worker_model_selection: { runtime: "claude-code", model: "claude-sonnet-4-6" },
+    });
     insertPlan(db, { id: PLAN_ID, spec_id: SPEC_ID });
     insertCohort(db, { id: C1, plan_id: PLAN_ID, title: "C1", position: 0 });
     insertCohort(db, { id: C2, plan_id: PLAN_ID, title: "C2", position: 1 });

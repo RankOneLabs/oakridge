@@ -117,7 +117,12 @@ describe("AddSpecModal split role selection", () => {
         worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini" },
       });
     });
-    expect(postBody).not.toHaveProperty("agent_runtime");
+    expect(Object.keys(postBody as Record<string, unknown>).sort()).toEqual([
+      "planner_model_selection",
+      "project_id",
+      "title",
+      "worker_model_selection",
+    ]);
   });
 
   test("keeps planner and worker model scopes independent when runtimes change", async () => {
