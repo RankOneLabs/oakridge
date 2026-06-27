@@ -20,7 +20,10 @@ export interface ServerConfig {
 export function runtimeDescriptorsForConfig(
   serverConfig: ServerConfig | null,
 ): [RuntimeDescriptor, ...RuntimeDescriptor[]] {
-  return serverConfig?.runtimes ?? [fallbackClaudeDescriptor()];
+  const runtimes = serverConfig?.runtimes ?? [];
+  if (runtimes.length === 0) return [fallbackClaudeDescriptor()];
+  const [first, ...rest] = runtimes;
+  return [first, ...rest];
 }
 
 export function defaultRuntimeIdForConfig(serverConfig: ServerConfig | null): RuntimeId {

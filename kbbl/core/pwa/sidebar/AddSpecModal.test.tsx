@@ -38,8 +38,8 @@ function stubFetch(config: Config, onCreate?: (body: unknown) => void) {
       return new Response(JSON.stringify({ id: "spec-1" }), { status: 201 });
     }
     return new Response("not found", { status: 404 });
-  });
-  globalThis.fetch = fetchMock as typeof fetch;
+  }) as unknown as typeof fetch;
+  globalThis.fetch = fetchMock;
   return fetchMock;
 }
 
