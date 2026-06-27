@@ -124,6 +124,14 @@ describe("GET /epics/:id", () => {
       assessment_present: boolean;
     };
     expect(body.epic.id).toBe(EPIC_ID);
+    expect(body.epic.planner_model_selection).toEqual({
+      runtime: "claude-code",
+      model: "claude-opus-4-8",
+    });
+    expect(body.epic.worker_model_selection).toEqual({
+      runtime: "claude-code",
+      model: "claude-sonnet-4-6",
+    });
     expect(body.spec).not.toBeNull();
     expect(body.plan).toBeNull();
     expect(body.cohorts).toHaveLength(0);
