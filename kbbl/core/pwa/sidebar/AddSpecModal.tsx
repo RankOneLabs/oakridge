@@ -2,7 +2,16 @@ import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { SidebarProject } from "./Sidebar";
 import type { RuntimeId } from "../../runtime-interface";
-import { useServerConfig, type ServerConfig } from "../hooks/useServerConfig";
+import { defaultPlannerModelForRuntime, defaultWorkerModelForRuntime } from "../../runtime";
+import {
+  defaultRuntimeIdForConfig,
+  runtimeDescriptorsForConfig,
+  useServerConfig,
+} from "../hooks/useServerConfig";
+import type {
+  RuntimeDescriptor,
+  RuntimeModelSelection,
+} from "../types";
 
 interface AddSpecModalProps {
   project: SidebarProject;
@@ -13,64 +22,148 @@ interface AddSpecModalProps {
 interface CreateSpecInput {
   title: string;
   notes: string | null;
-  agentRuntime: RuntimeId;
+  plannerModelSelection: RuntimeModelSelection;
+  workerModelSelection: RuntimeModelSelection;
 }
 
-interface AgentRuntimeSelection {
-  runtimeIds: RuntimeId[];
-  hasCodex: boolean;
-  hasClaudeCode: boolean;
-  defaultAgentRuntime: RuntimeId;
+type Role = "planner" | "worker";
+
+function isModelAllowed(runtime: RuntimeDescriptor, model: string): boolean {
+  if (runtime.models.length === 0) return true;
+  return runtime.models.some((option) => option.value === model);
 }
 
-function selectAgentRuntimeDefaults(
-  serverConfig: ServerConfig | null,
-): AgentRuntimeSelection {
-  const runtimeIds = serverConfig?.runtimes.map((runtime) => runtime.id) ?? ["claude-code"];
-  const defaultAgentRuntime =
-    serverConfig?.defaultRuntimeId && runtimeIds.includes(serverConfig.defaultRuntimeId)
-      ? serverConfig.defaultRuntimeId
-      : (runtimeIds[0] ?? "claude-code");
+function getRoleDefaultModel(role: Role, runtime: RuntimeDescriptor): string {
+  const preferred =
+    role === "planner"
+      ? defaultPlannerModelForRuntime(runtime.id)
+      : defaultWorkerModelForRuntime(runtime.id);
+  if (isModelAllowed(runtime, preferred)) return preferred;
+  if (isModelAllowed(runtime, "")) return "";
+  return runtime.models[0]?.value ?? preferred;
+}
+
+function getRuntimeForSelection(
+  runtimeDescriptors: RuntimeDescriptor[],
+  defaultRuntimeId: RuntimeId,
+  runtimeId: RuntimeId,
+): RuntimeDescriptor {
+  return (
+    runtimeDescriptors.find((runtime) => runtime.id === runtimeId) ??
+    runtimeDescriptors.find((runtime) => runtime.id === defaultRuntimeId) ??
+    runtimeDescriptors[0]
+  );
+}
+
+function initialSelectionForRole(
+  role: Role,
+  runtimeDescriptors: RuntimeDescriptor[],
+  defaultRuntimeId: RuntimeId,
+): RuntimeModelSelection {
+  const runtime = getRuntimeForSelection(runtimeDescriptors, defaultRuntimeId, defaultRuntimeId);
   return {
-    runtimeIds,
-    hasCodex: runtimeIds.includes("codex"),
-    hasClaudeCode: runtimeIds.includes("claude-code"),
-    defaultAgentRuntime,
+    runtime: runtime.id,
+    model: getRoleDefaultModel(role, runtime),
   };
+}
+
+function coerceSelection(
+  role: Role,
+  selection: RuntimeModelSelection,
+  runtimeDescriptors: RuntimeDescriptor[],
+  defaultRuntimeId: RuntimeId,
+  runtimeTouched: boolean,
+): RuntimeModelSelection {
+  const nextRuntime = runtimeTouched
+    ? getRuntimeForSelection(runtimeDescriptors, defaultRuntimeId, selection.runtime)
+    : getRuntimeForSelection(runtimeDescriptors, defaultRuntimeId, defaultRuntimeId);
+  const nextModel = isModelAllowed(nextRuntime, selection.model)
+    ? selection.model
+    : getRoleDefaultModel(role, nextRuntime);
+  if (nextRuntime.id === selection.runtime && nextModel === selection.model) {
+    return selection;
+  }
+  return {
+    runtime: nextRuntime.id,
+    model: nextModel,
+  };
+}
+
+function modelOptionsForRuntime(runtime: RuntimeDescriptor): RuntimeDescriptor["models"] {
+  if (runtime.models.length === 0) return [];
+  if (runtime.models.some((option) => option.value === "")) return runtime.models;
+  return [{ value: "", label: "default" }, ...runtime.models];
 }
 
 export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps) {
   const serverConfig = useServerConfig();
-  const { runtimeIds, hasCodex, hasClaudeCode, defaultAgentRuntime } = useMemo(
-    () => selectAgentRuntimeDefaults(serverConfig),
+  const runtimeDescriptors = useMemo(
+    () => runtimeDescriptorsForConfig(serverConfig),
     [serverConfig],
   );
-  const runtimeKey = runtimeIds.join("\0");
+  const defaultRuntimeId = useMemo(
+    () => defaultRuntimeIdForConfig(serverConfig),
+    [serverConfig],
+  );
+  const runtimeKey = useMemo(
+    () =>
+      runtimeDescriptors
+        .map((runtime) => `${runtime.id}:${runtime.models.map((model) => model.value).join(",")}`)
+        .join("\0"),
+    [runtimeDescriptors],
+  );
   const [title, setTitle] = useState("");
   const [notes, setNotes] = useState("");
   const [notesSource, setNotesSource] = useState<"text" | "file">("text");
   const [fileName, setFileName] = useState<string | null>(null);
-  const [agentRuntime, setAgentRuntime] = useState<RuntimeId>(defaultAgentRuntime);
-  const [agentRuntimeTouched, setAgentRuntimeTouched] = useState(false);
+  const [plannerSelection, setPlannerSelection] = useState<RuntimeModelSelection>(() =>
+    initialSelectionForRole("planner", runtimeDescriptors, defaultRuntimeId),
+  );
+  const [workerSelection, setWorkerSelection] = useState<RuntimeModelSelection>(() =>
+    initialSelectionForRole("worker", runtimeDescriptors, defaultRuntimeId),
+  );
+  const [plannerRuntimeTouched, setPlannerRuntimeTouched] = useState(false);
+  const [workerRuntimeTouched, setWorkerRuntimeTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
   useEffect(() => {
-    if (!runtimeIds.includes(agentRuntime)) {
-      setAgentRuntime(defaultAgentRuntime);
-      setAgentRuntimeTouched(false);
-      return;
-    }
-    if (agentRuntimeTouched) return;
-    setAgentRuntime(defaultAgentRuntime);
-  }, [agentRuntime, agentRuntimeTouched, defaultAgentRuntime, runtimeKey]);
+    setPlannerSelection((current) =>
+      coerceSelection(
+        "planner",
+        current,
+        runtimeDescriptors,
+        defaultRuntimeId,
+        plannerRuntimeTouched,
+      ),
+    );
+  }, [defaultRuntimeId, plannerRuntimeTouched, runtimeKey, runtimeDescriptors]);
+
+  useEffect(() => {
+    setWorkerSelection((current) =>
+      coerceSelection(
+        "worker",
+        current,
+        runtimeDescriptors,
+        defaultRuntimeId,
+        workerRuntimeTouched,
+      ),
+    );
+  }, [defaultRuntimeId, runtimeKey, runtimeDescriptors, workerRuntimeTouched]);
 
   const createMutation = useMutation({
     mutationFn: async (vars: CreateSpecInput) => {
-      const body: { project_id: string; title: string; notes?: string; agent_runtime: RuntimeId } = {
+      const body: {
+        project_id: string;
+        title: string;
+        notes?: string;
+        planner_model_selection: RuntimeModelSelection;
+        worker_model_selection: RuntimeModelSelection;
+      } = {
         project_id: project.id,
         title: vars.title,
-        agent_runtime: vars.agentRuntime,
+        planner_model_selection: vars.plannerModelSelection,
+        worker_model_selection: vars.workerModelSelection,
       };
       if (vars.notes !== null) body.notes = vars.notes;
       const res = await fetch("/specs", {
@@ -124,7 +217,8 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
       await createMutation.mutateAsync({
         title: trimmedTitle,
         notes: trimmedNotes === "" ? null : trimmedNotes,
-        agentRuntime,
+        plannerModelSelection: plannerSelection,
+        workerModelSelection: workerSelection,
       });
       onCreated();
     } catch (err) {
@@ -152,12 +246,13 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
         role="dialog"
         aria-modal="true"
         aria-labelledby="add-spec-title"
+        className="add-spec-modal"
         style={{
           background: "var(--bg-surface, #1e1e1e)",
           border: "1px solid var(--border-subtle, #444)",
           borderRadius: 8,
           padding: 24,
-          width: "min(480px, 90vw)",
+          width: "min(560px, 90vw)",
           display: "flex",
           flexDirection: "column",
           gap: 16,
@@ -166,7 +261,7 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
         onClick={(e) => e.stopPropagation()}
       >
         <div id="add-spec-title" style={{ fontWeight: 600, fontSize: 15 }}>
-          New plan / epic — <span style={{ opacity: 0.7 }}>{project.name}</span>
+          New plan / epic -- <span style={{ opacity: 0.7 }}>{project.name}</span>
         </div>
         <form
           onSubmit={(e) => {
@@ -187,21 +282,151 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
               autoFocus
             />
           </label>
-          <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
-            <span style={{ opacity: 0.8 }}>Agent</span>
-            <select
-              value={agentRuntime}
-              onChange={(e) => {
-                setAgentRuntimeTouched(true);
-                setAgentRuntime(e.target.value as RuntimeId);
-              }}
-              disabled={pending}
-              aria-label="Agent"
-            >
-              {hasClaudeCode && <option value="claude-code">Claude Code</option>}
-              {hasCodex && <option value="codex">Codex</option>}
-            </select>
-          </label>
+
+          <div className="add-spec-modal__roles">
+            <section className="add-spec-modal__role">
+              <div className="add-spec-modal__role-title">Planner</div>
+              <label className="add-spec-modal__field">
+                <span>Runtime</span>
+                <select
+                  value={plannerSelection.runtime}
+                  onChange={(e) => {
+                    const nextRuntimeId = e.target.value as RuntimeId;
+                    const nextRuntime = getRuntimeForSelection(
+                      runtimeDescriptors,
+                      defaultRuntimeId,
+                      nextRuntimeId,
+                    );
+                    setPlannerRuntimeTouched(true);
+                    setPlannerSelection({
+                      runtime: nextRuntime.id,
+                      model: getRoleDefaultModel("planner", nextRuntime),
+                    });
+                  }}
+                  disabled={pending}
+                  aria-label="Planner runtime"
+                >
+                  {runtimeDescriptors.map((runtime) => (
+                    <option key={runtime.id} value={runtime.id}>
+                      {runtime.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="add-spec-modal__field">
+                <span>Model</span>
+                {modelOptionsForRuntime(
+                  getRuntimeForSelection(runtimeDescriptors, defaultRuntimeId, plannerSelection.runtime),
+                ).length > 0 ? (
+                  <select
+                    value={plannerSelection.model}
+                    onChange={(e) =>
+                      setPlannerSelection((current) => ({
+                        ...current,
+                        model: e.target.value,
+                      }))
+                    }
+                    disabled={pending}
+                    aria-label="Planner model"
+                  >
+                    {modelOptionsForRuntime(
+                      getRuntimeForSelection(runtimeDescriptors, defaultRuntimeId, plannerSelection.runtime),
+                    ).map((option) => (
+                      <option key={option.value || "default"} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    value={plannerSelection.model}
+                    onChange={(e) =>
+                      setPlannerSelection((current) => ({
+                        ...current,
+                        model: e.target.value,
+                      }))
+                    }
+                    disabled={pending}
+                    aria-label="Planner model"
+                    spellCheck={false}
+                  />
+                )}
+              </label>
+            </section>
+
+            <section className="add-spec-modal__role">
+              <div className="add-spec-modal__role-title">Worker</div>
+              <label className="add-spec-modal__field">
+                <span>Runtime</span>
+                <select
+                  value={workerSelection.runtime}
+                  onChange={(e) => {
+                    const nextRuntimeId = e.target.value as RuntimeId;
+                    const nextRuntime = getRuntimeForSelection(
+                      runtimeDescriptors,
+                      defaultRuntimeId,
+                      nextRuntimeId,
+                    );
+                    setWorkerRuntimeTouched(true);
+                    setWorkerSelection({
+                      runtime: nextRuntime.id,
+                      model: getRoleDefaultModel("worker", nextRuntime),
+                    });
+                  }}
+                  disabled={pending}
+                  aria-label="Worker runtime"
+                >
+                  {runtimeDescriptors.map((runtime) => (
+                    <option key={runtime.id} value={runtime.id}>
+                      {runtime.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="add-spec-modal__field">
+                <span>Model</span>
+                {modelOptionsForRuntime(
+                  getRuntimeForSelection(runtimeDescriptors, defaultRuntimeId, workerSelection.runtime),
+                ).length > 0 ? (
+                  <select
+                    value={workerSelection.model}
+                    onChange={(e) =>
+                      setWorkerSelection((current) => ({
+                        ...current,
+                        model: e.target.value,
+                      }))
+                    }
+                    disabled={pending}
+                    aria-label="Worker model"
+                  >
+                    {modelOptionsForRuntime(
+                      getRuntimeForSelection(runtimeDescriptors, defaultRuntimeId, workerSelection.runtime),
+                    ).map((option) => (
+                      <option key={option.value || "default"} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    value={workerSelection.model}
+                    onChange={(e) =>
+                      setWorkerSelection((current) => ({
+                        ...current,
+                        model: e.target.value,
+                      }))
+                    }
+                    disabled={pending}
+                    aria-label="Worker model"
+                    spellCheck={false}
+                  />
+                )}
+              </label>
+            </section>
+          </div>
+
           <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
             <div
               style={{
@@ -238,61 +463,46 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
             {notesSource === "text" ? (
               <textarea
                 value={notes}
-                onChange={(e) => {
-                  setNotes(e.target.value);
-                  setFileName(null);
-                }}
-                placeholder="Context, constraints, links — anything plan_writer should know."
-                rows={10}
-                style={{ fontSize: 13, resize: "vertical", width: "100%", boxSizing: "border-box" }}
+                onChange={(e) => setNotes(e.target.value)}
+                rows={6}
+                placeholder="Optional context, assumptions, or constraints"
                 disabled={pending}
                 aria-label="Notes"
               />
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <>
                 <input
                   type="file"
-                  accept=".md,.markdown,.txt,text/markdown,text/plain,text/*"
-                  aria-label="Notes file"
-                  disabled={pending}
+                  accept=".md,.txt,.json,.yaml,.yml,.csv,.adoc,.rst,text/plain,text/markdown,application/json"
                   onChange={handleFileChange}
+                  disabled={pending}
+                  aria-label="Notes file"
                 />
-                {fileName && (
-                  <div style={{ opacity: 0.7 }}>
+                {fileName !== null && (
+                  <div style={{ fontSize: 12, opacity: 0.75 }}>
                     Loaded {fileName} — {notes.length} chars
                   </div>
                 )}
-                {notes && (
-                  <textarea
-                    value={notes}
-                    readOnly
-                    rows={8}
-                    style={{
-                      fontSize: 13,
-                      resize: "vertical",
-                      width: "100%",
-                      boxSizing: "border-box",
-                      opacity: 0.8,
-                    }}
-                    aria-label="Notes preview"
-                  />
-                )}
-              </div>
+                <textarea
+                  value={notes}
+                  readOnly
+                  rows={6}
+                  placeholder="Uploaded file contents preview"
+                  aria-label="Notes preview"
+                />
+              </>
             )}
           </div>
           {error && (
-            <div style={{ color: "var(--danger-fg, #e67070)", fontSize: 13 }} role="alert">
+            <div role="alert" style={{ color: "var(--danger-fg)" }}>
               {error}
             </div>
           )}
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
             <button type="button" onClick={onCancel} disabled={pending}>
               Cancel
             </button>
-            <button
-              type="submit"
-              disabled={pending || !title.trim()}
-            >
+            <button type="submit" disabled={pending}>
               {pending ? "Creating…" : "Create"}
             </button>
           </div>
