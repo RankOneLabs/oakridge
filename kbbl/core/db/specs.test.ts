@@ -258,7 +258,7 @@ describe("POST /specs", () => {
         project_id: PROJECT_ID,
         title: "Split flow",
         planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
-        worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini" },
+        worker_model_selection: { runtime: "claude-code", model: "claude-sonnet-4-6" },
       }),
     });
     expect(res.status).toBe(201);
@@ -270,8 +270,8 @@ describe("POST /specs", () => {
       model: "claude-opus-4-8",
     });
     expect(epic?.worker_model_selection).toEqual({
-      runtime: "codex",
-      model: "gpt-5.4-mini",
+      runtime: "claude-code",
+      model: "claude-sonnet-4-6",
     });
   });
 
@@ -289,6 +289,39 @@ describe("POST /specs", () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toContain("not allowed");
+  });
+
+  test("rejects split selections with mismatched runtimes", async () => {
+    const res = await app.request("/specs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        project_id: PROJECT_ID,
+        title: "Bad runtime split",
+        planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
+        worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini" },
+      }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("must match");
+  });
+
+  test("rejects mixed legacy and split selection inputs", async () => {
+    const res = await app.request("/specs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        project_id: PROJECT_ID,
+        title: "Mixed contract",
+        agent_runtime: "claude-code",
+        planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
+        worker_model_selection: { runtime: "claude-code", model: "claude-sonnet-4-6" },
+      }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("either agent_runtime or the split model selections");
   });
 
   test("falls back to claude-code when no runtime registry is mounted", async () => {

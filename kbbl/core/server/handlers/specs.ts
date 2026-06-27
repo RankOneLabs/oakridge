@@ -117,11 +117,24 @@ export function mountSpecsRoutes(app: Hono, deps: SpecsRouteDeps): void {
       );
     }
 
+    if (agent_runtime !== undefined && planner_model_selection !== undefined) {
+      return c.json(
+        { error: "provide either agent_runtime or the split model selections, not both" },
+        400,
+      );
+    }
+
     let plannerSelection: RuntimeModelSelection;
     let workerSelection: RuntimeModelSelection;
     let legacyRuntime: RuntimeId;
 
     if (planner_model_selection && worker_model_selection) {
+      if (planner_model_selection.runtime !== worker_model_selection.runtime) {
+        return c.json(
+          { error: "planner_model_selection.runtime must match worker_model_selection.runtime" },
+          400,
+        );
+      }
       const plannerError = validateModelSelection(registry, planner_model_selection, "planner");
       if (plannerError) return c.json({ error: plannerError }, 400);
       const workerError = validateModelSelection(registry, worker_model_selection, "worker");
