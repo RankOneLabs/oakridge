@@ -17,6 +17,21 @@ export interface ServerConfig {
   runtimes: RuntimeDescriptor[];
 }
 
+export function runtimeDescriptorsForConfig(
+  serverConfig: ServerConfig | null,
+): [RuntimeDescriptor, ...RuntimeDescriptor[]] {
+  const runtimes = serverConfig?.runtimes ?? [];
+  if (runtimes.length === 0) return [fallbackClaudeDescriptor()];
+  const [first, ...rest] = runtimes;
+  return [first, ...rest];
+}
+
+export function defaultRuntimeIdForConfig(serverConfig: ServerConfig | null): RuntimeId {
+  const runtimes = runtimeDescriptorsForConfig(serverConfig);
+  const rawId = serverConfig?.defaultRuntimeId;
+  return rawId && runtimes.some((runtime) => runtime.id === rawId) ? rawId : runtimes[0].id;
+}
+
 function isRuntimeId(value: unknown): value is RuntimeId {
   return value === "claude-code" || value === "codex";
 }
@@ -87,18 +102,21 @@ export function useServerConfig(): ServerConfig | null {
     staleTime: Infinity,
   });
   if (!query.data) return null;
-  const rawId = query.data.defaultRuntimeId;
   const runtimes = coerceRuntimeDescriptors(query.data.runtimes);
-  const defaultRuntimeId = isRuntimeId(rawId) ? rawId : "claude-code";
   return {
     defaultWorkdir: query.data.defaultWorkdir,
     softThresholdTokens:
       typeof query.data.softThresholdTokens === "number"
         ? query.data.softThresholdTokens
         : undefined,
-    defaultRuntimeId: runtimes.some((r) => r.id === defaultRuntimeId)
-      ? defaultRuntimeId
-      : runtimes[0].id,
+    defaultRuntimeId: defaultRuntimeIdForConfig({
+      defaultWorkdir: query.data.defaultWorkdir,
+      softThresholdTokens: query.data.softThresholdTokens,
+      defaultRuntimeId: isRuntimeId(query.data.defaultRuntimeId)
+        ? query.data.defaultRuntimeId
+        : "claude-code",
+      runtimes,
+    }),
     runtimes,
   };
 }

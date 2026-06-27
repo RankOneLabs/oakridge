@@ -28,10 +28,18 @@ let db: Database;
 let app: Hono;
 
 function post(path: string, body: unknown) {
+  const payload =
+    path === "/specs"
+      ? {
+          planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
+          worker_model_selection: { runtime: "claude-code", model: "claude-sonnet-4-6" },
+          ...(body as Record<string, unknown>),
+        }
+      : body;
   return app.request(path, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify(payload),
   });
 }
 

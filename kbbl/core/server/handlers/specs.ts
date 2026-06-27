@@ -9,15 +9,8 @@ import { isFrozen } from "../../db/epic-freeze";
 import { getProject } from "../../db/projects";
 import { taskTrackerEvents } from "../../db/events";
 import type { RuntimeId, RuntimeRegistry } from "../../runtime";
-import {
-  AgentRuntimeChoiceSchema,
-  EpicModelSelectionSchema,
-} from "../../types/task-tracker";
-import {
-  defaultEpicModelSelections,
-  isAllowedModelForRuntime,
-  type RuntimeModelSelection,
-} from "../../runtime";
+import { EpicModelSelectionSchema } from "../../types/task-tracker";
+import { isAllowedModelForRuntime, type RuntimeModelSelection } from "../../runtime";
 
 const ModelSelectionInputSchema = EpicModelSelectionSchema;
 const CreateSpecSchema = z
@@ -26,9 +19,8 @@ const CreateSpecSchema = z
     title: z.string().min(1),
     notes: z.string().optional(),
     notesPath: z.string().min(1).optional(),
-    agent_runtime: AgentRuntimeChoiceSchema.optional(),
-    planner_model_selection: ModelSelectionInputSchema.optional(),
-    worker_model_selection: ModelSelectionInputSchema.optional(),
+    planner_model_selection: ModelSelectionInputSchema,
+    worker_model_selection: ModelSelectionInputSchema,
   })
   .refine((v) => !(v.notes !== undefined && v.notesPath !== undefined), {
     message: "provide either notes or notesPath, not both",
@@ -50,30 +42,39 @@ function isRuntimeRegistered(
   runtimeId: RuntimeId,
 ): boolean {
   if (registry) return registry.runtimes.has(runtimeId);
-  return runtimeId === "claude-code";
+  return true;
 }
 
 function validateModelSelection(
   registry: RuntimeRegistry | undefined,
   selection: RuntimeModelSelection,
   role: "planner" | "worker",
-): string | null {
+): { error: string | null; model: string } {
+  const model = selection.model.trim();
+  if (model.length === 0) {
+    return {
+      error: `${role} model must not be empty for runtime "${selection.runtime}"`,
+      model,
+    };
+  }
   if (!isRuntimeRegistered(registry, selection.runtime)) {
-    return `runtime "${selection.runtime}" is not registered — registered: ${registry ? [...registry.runtimes.keys()].join(", ") : "claude-code"}`;
+    return {
+      error: `runtime "${selection.runtime}" is not registered — registered: ${registry ? [...registry.runtimes.keys()].join(", ") : "claude-code"}`,
+      model,
+    };
   }
   const runtime = registry?.runtimes.get(selection.runtime);
-  if (!isAllowedModelForRuntime(runtime, selection.model)) {
-    return `${role} model "${selection.model}" is not allowed for runtime "${selection.runtime}"`;
+  if (!isAllowedModelForRuntime(runtime, model)) {
+    return {
+      error: `${role} model "${model}" is not allowed for runtime "${selection.runtime}"`,
+      model,
+    };
   }
-  return null;
+  return { error: null, model };
 }
 
 export function mountSpecsRoutes(app: Hono, deps: SpecsRouteDeps): void {
   const { db, registry } = deps;
-
-  function registeredRuntimeList(): string {
-    return registry ? [...registry.runtimes.keys()].join(", ") : "claude-code";
-  }
 
   app.get("/specs", (c) => {
     const project_id = c.req.query("project_id");
@@ -102,61 +103,13 @@ export function mountSpecsRoutes(app: Hono, deps: SpecsRouteDeps): void {
       title,
       notes,
       notesPath,
-      agent_runtime,
       planner_model_selection,
       worker_model_selection,
     } = result.data;
-
-    if ((planner_model_selection === undefined) !== (worker_model_selection === undefined)) {
-      return c.json(
-        {
-          error:
-            "provide both planner_model_selection and worker_model_selection, or fall back to agent_runtime",
-        },
-        400,
-      );
-    }
-
-    if (agent_runtime !== undefined && planner_model_selection !== undefined) {
-      return c.json(
-        { error: "provide either agent_runtime or the split model selections, not both" },
-        400,
-      );
-    }
-
-    let plannerSelection: RuntimeModelSelection;
-    let workerSelection: RuntimeModelSelection;
-    let legacyRuntime: RuntimeId;
-
-    if (planner_model_selection && worker_model_selection) {
-      if (planner_model_selection.runtime !== worker_model_selection.runtime) {
-        return c.json(
-          { error: "planner_model_selection.runtime must match worker_model_selection.runtime" },
-          400,
-        );
-      }
-      const plannerError = validateModelSelection(registry, planner_model_selection, "planner");
-      if (plannerError) return c.json({ error: plannerError }, 400);
-      const workerError = validateModelSelection(registry, worker_model_selection, "worker");
-      if (workerError) return c.json({ error: workerError }, 400);
-      plannerSelection = planner_model_selection;
-      workerSelection = worker_model_selection;
-      legacyRuntime = planner_model_selection.runtime;
-    } else {
-      const runtimeId: RuntimeId = agent_runtime ?? "claude-code";
-      if (!isRuntimeRegistered(registry, runtimeId)) {
-        return c.json(
-          {
-            error: `runtime "${runtimeId}" is not registered — registered: ${registeredRuntimeList()}`,
-          },
-          400,
-        );
-      }
-      const defaults = defaultEpicModelSelections(runtimeId);
-      plannerSelection = defaults.planner_model_selection;
-      workerSelection = defaults.worker_model_selection;
-      legacyRuntime = runtimeId;
-    }
+    const plannerSelection = validateModelSelection(registry, planner_model_selection, "planner");
+    if (plannerSelection.error) return c.json({ error: plannerSelection.error }, 400);
+    const workerSelection = validateModelSelection(registry, worker_model_selection, "worker");
+    if (workerSelection.error) return c.json({ error: workerSelection.error }, 400);
 
     const id = crypto.randomUUID();
 
@@ -214,9 +167,8 @@ export function mountSpecsRoutes(app: Hono, deps: SpecsRouteDeps): void {
           title,
           status: "pending",
           current_stage: "spec",
-          agent_runtime: legacyRuntime,
-          planner_model_selection: plannerSelection,
-          worker_model_selection: workerSelection,
+          planner_model_selection: { ...planner_model_selection, model: plannerSelection.model },
+          worker_model_selection: { ...worker_model_selection, model: workerSelection.model },
         });
         return { spec: s, epic: e };
       })();
