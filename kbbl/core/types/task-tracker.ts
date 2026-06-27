@@ -117,6 +117,12 @@ export type EpicStage = z.infer<typeof EpicStageSchema>;
 export const AgentRuntimeChoiceSchema = z.enum(["claude-code", "codex"]);
 export type AgentRuntimeChoice = z.infer<typeof AgentRuntimeChoiceSchema>;
 
+export const EpicModelSelectionSchema = z.object({
+  runtime: AgentRuntimeChoiceSchema,
+  model: z.string().min(1),
+});
+export type EpicModelSelection = z.infer<typeof EpicModelSelectionSchema>;
+
 export const EpicSchema = z.object({
   id: z.string(),
   spec_id: z.string(),
@@ -125,6 +131,8 @@ export const EpicSchema = z.object({
   status: EpicStatusSchema,
   current_stage: EpicStageSchema,
   agent_runtime: AgentRuntimeChoiceSchema,
+  planner_model_selection: EpicModelSelectionSchema,
+  worker_model_selection: EpicModelSelectionSchema,
   created_at: z.string(),
 });
 export type Epic = z.infer<typeof EpicSchema>;
