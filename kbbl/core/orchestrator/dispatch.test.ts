@@ -34,7 +34,7 @@ import { mountAssessmentsRoutes } from "../server/handlers/assessments";
 import { mountSpecStatusRoutes } from "../server/handlers/spec-status";
 import { insertSpec } from "../db/specs";
 import { insertSpecDiscrepancy } from "../db/spec-discrepancies";
-import type { RuntimeId } from "../runtime";
+import type { RuntimeId, RuntimeModelSelection } from "../runtime";
 
 // ---- minimal SessionManager stub for builds route ----
 
@@ -49,6 +49,7 @@ interface DispatchCall {
   inputType: string;
   inputId: string;
   agentRuntime?: RuntimeId;
+  modelSelection?: RuntimeModelSelection;
   renderedPrompt: string;
 }
 
@@ -67,6 +68,7 @@ function createMockBackend(): MockBackend {
         inputType: inputRef.type,
         inputId: inputRef.id,
         ...(inputRef.agentRuntime !== undefined ? { agentRuntime: inputRef.agentRuntime } : {}),
+        ...(inputRef.modelSelection !== undefined ? { modelSelection: inputRef.modelSelection } : {}),
         renderedPrompt,
       });
       return { session_ref: `mock-${calls.length}` };
@@ -267,6 +269,10 @@ describe("full dispatch pipeline with MockBackend", () => {
     expect(mockBackend.calls).toHaveLength(2);
     expect(mockBackend.calls[1]!.stageName).toBe("brief_writer");
     expect(mockBackend.calls[1]!.inputId).toBe(plan.id);
+    expect(mockBackend.calls[1]!.modelSelection).toEqual({
+      runtime: "claude-code",
+      model: "claude-opus-4-8",
+    });
 
     // all waiting cohorts should have transitioned directly to briefing
     const cohortAfterPlanned = db.prepare<{ status: string }, [string]>("SELECT status FROM cohorts WHERE id = ?").get(cohort.id);
@@ -300,6 +306,10 @@ describe("full dispatch pipeline with MockBackend", () => {
     expect(mockBackend.calls).toHaveLength(3);
     expect(mockBackend.calls[2]!.stageName).toBe("build");
     expect(mockBackend.calls[2]!.inputId).toBe(brief.id);
+    expect(mockBackend.calls[2]!.modelSelection).toEqual({
+      runtime: "claude-code",
+      model: "claude-sonnet-4-6",
+    });
 
     // current_session_ref written onto cohort (build stores on cohort, not brief)
     const cohortRefAfterBuild = db.prepare<{ current_session_ref: string | null }, [string]>("SELECT current_session_ref FROM cohorts WHERE id = ?").get(cohort.id);
@@ -664,6 +674,7 @@ describe("full dispatch pipeline with MockBackend", () => {
     const call = mockBackend.calls[mockBackend.calls.length - 1];
     expect(call?.stageName).toBe("plan_writer");
     expect(call?.agentRuntime).toBeUndefined();
+    expect(call?.modelSelection).toBeUndefined();
   });
 
   test("plan_writer prompt renders resolved discrepancies as numbered sections", async () => {
