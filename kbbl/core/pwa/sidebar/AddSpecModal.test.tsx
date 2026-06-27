@@ -51,6 +51,8 @@ describe("AddSpecModal split role selection", () => {
   afterEach(() => {
     if (originalFetch !== undefined) {
       globalThis.fetch = originalFetch;
+    } else {
+      delete (globalThis as { fetch?: typeof fetch }).fetch;
     }
   });
 
