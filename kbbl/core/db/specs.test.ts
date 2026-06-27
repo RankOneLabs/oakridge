@@ -351,6 +351,57 @@ describe("POST /specs", () => {
     expect(body.error).toContain("not allowed");
   });
 
+  test("respects runtime isAllowedModel even when descriptor models are empty", async () => {
+    const runtime = {
+      id: "claude-code" as const,
+      descriptor: {
+        id: "claude-code" as const,
+        label: "Claude Code",
+        models: [],
+        supportsCompaction: true,
+      },
+      isAllowedModel: (model: string) => model === "adapter-model",
+    } as unknown as AgentRuntime;
+
+    const registry: RuntimeRegistry = {
+      defaultId: "claude-code",
+      runtimes: new Map([["claude-code", runtime]]),
+    };
+
+    const adapterApp = new Hono();
+    mountSpecsRoutes(adapterApp, { db, registry });
+
+    const ok = await adapterApp.request("/specs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(
+        createSpecPayload({
+          project_id: PROJECT_ID,
+          title: "Adapter ok",
+          planner_model_selection: { runtime: "claude-code", model: "adapter-model" },
+          worker_model_selection: { runtime: "claude-code", model: "adapter-model" },
+        }),
+      ),
+    });
+    expect(ok.status).toBe(201);
+
+    const bad = await adapterApp.request("/specs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(
+        createSpecPayload({
+          project_id: PROJECT_ID,
+          title: "Adapter bad",
+          planner_model_selection: { runtime: "claude-code", model: "blocked-model" },
+          worker_model_selection: { runtime: "claude-code", model: "adapter-model" },
+        }),
+      ),
+    });
+    expect(bad.status).toBe(400);
+    const body = (await bad.json()) as { error: string };
+    expect(body.error).toContain("not allowed");
+  });
+
   test("rejects missing split selections", async () => {
     const res = await app.request("/specs", {
       method: "POST",

@@ -51,6 +51,12 @@ function validateModelSelection(
   role: "planner" | "worker",
 ): { error: string | null; model: string } {
   const model = selection.model.trim();
+  if (model.length === 0) {
+    return {
+      error: `${role} model must not be empty for runtime "${selection.runtime}"`,
+      model,
+    };
+  }
   if (!isRuntimeRegistered(registry, selection.runtime)) {
     return {
       error: `runtime "${selection.runtime}" is not registered — registered: ${registry ? [...registry.runtimes.keys()].join(", ") : "claude-code"}`,
@@ -58,12 +64,6 @@ function validateModelSelection(
     };
   }
   const runtime = registry?.runtimes.get(selection.runtime);
-  if (!runtime?.descriptor.models || runtime.descriptor.models.length === 0) {
-    return {
-      error: model.length > 0 ? null : `${role} model must not be empty for runtime "${selection.runtime}"`,
-      model,
-    };
-  }
   if (!isAllowedModelForRuntime(runtime, model)) {
     return {
       error: `${role} model "${model}" is not allowed for runtime "${selection.runtime}"`,
