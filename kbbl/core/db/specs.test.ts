@@ -18,6 +18,11 @@ let repoPath: string;
 
 const PROJECT_ID = "proj-1";
 
+const MODELS_BY_RUNTIME: Record<RuntimeId, string[]> = {
+  "claude-code": ["claude-opus-4-8", "claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001", "opus", "sonnet", "haiku"],
+  codex: ["gpt-5.5", "gpt-5.4-mini"],
+};
+
 function makeRegistry(runtimeIds: RuntimeId[]): RuntimeRegistry {
   return {
     defaultId: runtimeIds[0] ?? "claude-code",
@@ -26,7 +31,13 @@ function makeRegistry(runtimeIds: RuntimeId[]): RuntimeRegistry {
         id,
         {
           id,
-          descriptor: { id, label: id, models: [], supportsCompaction: id === "claude-code" },
+          descriptor: {
+            id,
+            label: id,
+            models: MODELS_BY_RUNTIME[id].map((value) => ({ value, label: value })),
+            supportsCompaction: id === "claude-code",
+          },
+          isAllowedModel: (model: string) => MODELS_BY_RUNTIME[id].includes(model),
         } as unknown as AgentRuntime,
       ]),
     ),
@@ -215,7 +226,7 @@ describe("POST /specs", () => {
     }
   });
 
-  test("stores selected agent runtime on the created epic", async () => {
+  test("stores selected agent runtime on the created epic and backfills split selections", async () => {
     const res = await app.request("/specs", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -227,7 +238,155 @@ describe("POST /specs", () => {
     });
     expect(res.status).toBe(201);
     const body = (await res.json()) as { id: string };
-    expect(getEpicBySpec(db, body.id)?.agent_runtime).toBe("codex");
+    const epic = getEpicBySpec(db, body.id);
+    expect(epic?.agent_runtime).toBe("codex");
+    expect(epic?.planner_model_selection).toEqual({
+      runtime: "codex",
+      model: "gpt-5.5",
+    });
+    expect(epic?.worker_model_selection).toEqual({
+      runtime: "codex",
+      model: "gpt-5.4-mini",
+    });
+  });
+
+  test("accepts explicit planner and worker model selections", async () => {
+    const res = await app.request("/specs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        project_id: PROJECT_ID,
+        title: "Split flow",
+        planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
+        worker_model_selection: { runtime: "claude-code", model: "claude-sonnet-4-6" },
+      }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { id: string };
+    const epic = getEpicBySpec(db, body.id);
+    expect(epic?.agent_runtime).toBe("claude-code");
+    expect(epic?.planner_model_selection).toEqual({
+      runtime: "claude-code",
+      model: "claude-opus-4-8",
+    });
+    expect(epic?.worker_model_selection).toEqual({
+      runtime: "claude-code",
+      model: "claude-sonnet-4-6",
+    });
+  });
+
+  test("rejects a model that the selected runtime does not allow", async () => {
+    const res = await app.request("/specs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        project_id: PROJECT_ID,
+        title: "Bad split",
+        planner_model_selection: { runtime: "codex", model: "not-a-model" },
+        worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini" },
+      }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("not allowed");
+  });
+
+  test("uses descriptor models when runtime has no validator", async () => {
+    const registry = makeRegistry(["claude-code"]);
+    const runtime = registry.runtimes.get("claude-code");
+    if (!runtime) throw new Error("missing runtime");
+    delete (runtime as { isAllowedModel?: unknown }).isAllowedModel;
+
+    const descriptorOnlyApp = new Hono();
+    mountSpecsRoutes(descriptorOnlyApp, { db, registry });
+
+    const ok = await descriptorOnlyApp.request("/specs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        project_id: PROJECT_ID,
+        title: "Descriptor ok",
+        planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
+        worker_model_selection: { runtime: "claude-code", model: "claude-sonnet-4-6" },
+      }),
+    });
+    expect(ok.status).toBe(201);
+
+    const bad = await descriptorOnlyApp.request("/specs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        project_id: PROJECT_ID,
+        title: "Descriptor bad",
+        planner_model_selection: { runtime: "claude-code", model: "not-listed" },
+        worker_model_selection: { runtime: "claude-code", model: "claude-sonnet-4-6" },
+      }),
+    });
+    expect(bad.status).toBe(400);
+    const body = (await bad.json()) as { error: string };
+    expect(body.error).toContain("not allowed");
+  });
+
+  test("rejects split selections with mismatched runtimes", async () => {
+    const res = await app.request("/specs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        project_id: PROJECT_ID,
+        title: "Bad runtime split",
+        planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
+        worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini" },
+      }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("must match");
+  });
+
+  test("rejects mixed legacy and split selection inputs", async () => {
+    const res = await app.request("/specs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        project_id: PROJECT_ID,
+        title: "Mixed contract",
+        agent_runtime: "claude-code",
+        planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
+        worker_model_selection: { runtime: "claude-code", model: "claude-sonnet-4-6" },
+      }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("either agent_runtime or the split model selections");
+  });
+
+  test("falls back to claude-code when no runtime registry is mounted", async () => {
+    const noRegistryApp = new Hono();
+    mountSpecsRoutes(noRegistryApp, { db });
+
+    const res = await noRegistryApp.request("/specs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        project_id: PROJECT_ID,
+        title: "Fallback flow",
+        planner_model_selection: { runtime: "claude-code", model: "custom-planner-model" },
+        worker_model_selection: { runtime: "claude-code", model: "custom-worker-model" },
+      }),
+    });
+
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { id: string };
+    const epic = getEpicBySpec(db, body.id);
+    expect(epic?.agent_runtime).toBe("claude-code");
+    expect(epic?.planner_model_selection).toEqual({
+      runtime: "claude-code",
+      model: "custom-planner-model",
+    });
+    expect(epic?.worker_model_selection).toEqual({
+      runtime: "claude-code",
+      model: "custom-worker-model",
+    });
   });
 
   test("rejects unregistered agent runtime before inserting the spec", async () => {

@@ -16,6 +16,54 @@ export interface RuntimeDescriptor {
   supportsCompaction: boolean;
 }
 
+export type RuntimeModelSelection = {
+  runtime: RuntimeId;
+  model: string;
+};
+
+const DEFAULT_PLANNER_MODEL_BY_RUNTIME: Record<RuntimeId, string> = {
+  "claude-code": "claude-opus-4-8",
+  codex: "gpt-5.5",
+};
+
+const DEFAULT_WORKER_MODEL_BY_RUNTIME: Record<RuntimeId, string> = {
+  "claude-code": "claude-sonnet-4-6",
+  codex: "gpt-5.4-mini",
+};
+
+export function defaultPlannerModelForRuntime(runtimeId: RuntimeId): string {
+  return DEFAULT_PLANNER_MODEL_BY_RUNTIME[runtimeId];
+}
+
+export function defaultWorkerModelForRuntime(runtimeId: RuntimeId): string {
+  return DEFAULT_WORKER_MODEL_BY_RUNTIME[runtimeId];
+}
+
+export function defaultEpicModelSelections(runtimeId: RuntimeId): {
+  planner_model_selection: RuntimeModelSelection;
+  worker_model_selection: RuntimeModelSelection;
+} {
+  return {
+    planner_model_selection: {
+      runtime: runtimeId,
+      model: defaultPlannerModelForRuntime(runtimeId),
+    },
+    worker_model_selection: {
+      runtime: runtimeId,
+      model: defaultWorkerModelForRuntime(runtimeId),
+    },
+  };
+}
+
+export function isAllowedModelForRuntime(
+  runtime: Pick<AgentRuntime, "isAllowedModel" | "descriptor"> | undefined,
+  model: string,
+): boolean {
+  if (runtime?.isAllowedModel) return runtime.isAllowedModel(model);
+  if (runtime?.descriptor) return runtime.descriptor.models.some((m) => m.value === model);
+  return model.trim().length > 0;
+}
+
 // === session handle ===
 
 export type SessionHandle = {
