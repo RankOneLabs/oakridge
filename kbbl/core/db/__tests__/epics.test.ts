@@ -36,7 +36,6 @@ describe("insertEpic + getEpic", () => {
     expect(e.title).toBe("My Epic");
     expect(e.status).toBe("active");
     expect(e.current_stage).toBe("spec");
-    expect(e.agent_runtime).toBe("claude-code");
     expect(e.planner_model_selection).toEqual({
       runtime: "claude-code",
       model: "claude-opus-4-8",
@@ -56,11 +55,9 @@ describe("insertEpic + getEpic", () => {
       title: "Codex Epic",
       status: "active",
       current_stage: "spec",
-      agent_runtime: "claude-code",
       planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
       worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini" },
     });
-    expect(e.agent_runtime).toBe("claude-code");
     expect(e.planner_model_selection).toEqual({
       runtime: "claude-code",
       model: "claude-opus-4-8",
@@ -69,10 +66,9 @@ describe("insertEpic + getEpic", () => {
       runtime: "codex",
       model: "gpt-5.4-mini",
     });
-    expect(getEpic(db, "e-codex")?.agent_runtime).toBe("claude-code");
   });
 
-  test("accepts explicit split selections without agent_runtime", () => {
+  test("accepts explicit split selections without legacy runtime field", () => {
     const e = insertEpic(db, {
       id: "e-split",
       spec_id: SPEC_ID,
@@ -83,13 +79,11 @@ describe("insertEpic + getEpic", () => {
       planner_model_selection: { runtime: "codex", model: "gpt-5.5" },
       worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini" },
     });
-    expect(e.agent_runtime).toBe("codex");
     expect(e.planner_model_selection).toEqual({ runtime: "codex", model: "gpt-5.5" });
     expect(e.worker_model_selection).toEqual({
       runtime: "codex",
       model: "gpt-5.4-mini",
     });
-    expect(getEpic(db, "e-split")?.agent_runtime).toBe("codex");
   });
 
   test("rejects partial split selections", () => {

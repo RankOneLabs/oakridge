@@ -54,6 +54,11 @@ function validateModelSelection(
     return `runtime "${selection.runtime}" is not registered — registered: ${registry ? [...registry.runtimes.keys()].join(", ") : "claude-code"}`;
   }
   const runtime = registry?.runtimes.get(selection.runtime);
+  if (!runtime?.descriptor.models || runtime.descriptor.models.length === 0) {
+    return selection.model.trim().length > 0
+      ? null
+      : `${role} model must not be empty for runtime "${selection.runtime}"`;
+  }
   if (!isAllowedModelForRuntime(runtime, selection.model)) {
     return `${role} model "${selection.model}" is not allowed for runtime "${selection.runtime}"`;
   }
@@ -154,7 +159,6 @@ export function mountSpecsRoutes(app: Hono, deps: SpecsRouteDeps): void {
           title,
           status: "pending",
           current_stage: "spec",
-          agent_runtime: planner_model_selection.runtime,
           planner_model_selection,
           worker_model_selection,
         });
