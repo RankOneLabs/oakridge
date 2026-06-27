@@ -48,7 +48,7 @@ function isRuntimeRegistered(
 }
 
 function registeredRuntimeList(registry: RuntimeRegistry | undefined): string {
-  return registry ? [...registry.runtimes.keys()].join(", ") : "claude-code";
+  return registry ? [...registry.runtimes.keys()].join(", ") : "claude-code, codex";
 }
 
 function validateModelSelection(
@@ -75,14 +75,14 @@ function validateModelSelection(
   const model = selection.model.trim();
   if (model.length === 0) {
     return {
-      error: `${role} model must not be empty for runtime "${selection.runtime}"`,
+      error: `${role} model must not be empty for runtime "${runtime}"`,
       selection: null,
     };
   }
   const runtimeDescriptor = registry?.runtimes.get(runtime as RuntimeId);
   if (!isAllowedModelForRuntime(runtimeDescriptor, model)) {
     return {
-      error: `${role} model "${model}" is not allowed for runtime "${selection.runtime}"`,
+      error: `${role} model "${model}" is not allowed for runtime "${runtime}"`,
       selection: null,
     };
   }
