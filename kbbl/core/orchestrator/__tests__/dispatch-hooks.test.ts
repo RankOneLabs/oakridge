@@ -16,6 +16,7 @@ interface DispatchCall {
   stageName: string;
   inputType: string;
   inputId: string;
+  agentRuntime: string | undefined;
 }
 
 interface MockBackend extends ExecutionBackend {
@@ -28,7 +29,12 @@ function createMockBackend(): MockBackend {
     id: "kbbl_chat",
     calls,
     async dispatch(stage: StageRow, inputRef: InputRef) {
-      calls.push({ stageName: stage.name, inputType: inputRef.type, inputId: inputRef.id });
+      calls.push({
+        stageName: stage.name,
+        inputType: inputRef.type,
+        inputId: inputRef.id,
+        agentRuntime: inputRef.agentRuntime,
+      });
       return { session_ref: `mock-${calls.length}` };
     },
     async status(_session_ref: string) {
@@ -75,6 +81,8 @@ beforeEach(() => {
     title: "My Spec",
     status: "active",
     current_stage: "spec",
+    planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
+    worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini" },
   });
 
   mockBackend = createMockBackend();
@@ -105,6 +113,7 @@ describe("dispatch hooks rewire", () => {
     expect(mockBackend.calls[0]!.stageName).toBe("spec_analyzer");
     expect(mockBackend.calls[0]!.inputId).toBe(SPEC_ID);
     expect(mockBackend.calls[0]!.inputType).toBe("spec");
+    expect(mockBackend.calls[0]!.agentRuntime).toBe("claude-code");
   });
 
   test("spec.created does not fire plan_writer", async () => {
@@ -123,6 +132,7 @@ describe("dispatch hooks rewire", () => {
     expect(mockBackend.calls[0]!.stageName).toBe("plan_writer");
     expect(mockBackend.calls[0]!.inputId).toBe(SPEC_ID);
     expect(mockBackend.calls[0]!.inputType).toBe("spec");
+    expect(mockBackend.calls[0]!.agentRuntime).toBe("claude-code");
   });
 
   test("spec.approved does not fire spec_analyzer", async () => {

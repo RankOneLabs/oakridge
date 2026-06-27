@@ -23,6 +23,11 @@ const MODELS_BY_RUNTIME: Record<RuntimeId, string[]> = {
   codex: ["gpt-5.5", "gpt-5.4-mini"],
 };
 
+const CREATE_SPEC_SELECTIONS = {
+  planner_model_selection: { runtime: "claude-code" as const, model: "claude-opus-4-8" },
+  worker_model_selection: { runtime: "claude-code" as const, model: "claude-sonnet-4-6" },
+};
+
 function makeRegistry(runtimeIds: RuntimeId[]): RuntimeRegistry {
   return {
     defaultId: runtimeIds[0] ?? "claude-code",
@@ -42,6 +47,10 @@ function makeRegistry(runtimeIds: RuntimeId[]): RuntimeRegistry {
       ]),
     ),
   };
+}
+
+function createSpecPayload(body: Record<string, unknown>): Record<string, unknown> {
+  return { ...CREATE_SPEC_SELECTIONS, ...body };
 }
 
 beforeEach(() => {
@@ -198,7 +207,9 @@ describe("POST /specs", () => {
     const res = await app.request("/specs", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ project_id: PROJECT_ID, title: "New spec" }),
+      body: JSON.stringify(
+        createSpecPayload({ project_id: PROJECT_ID, title: "New spec" }),
+      ),
     });
     expect(res.status).toBe(201);
     const body = (await res.json()) as { id: string; internal_status: string };
@@ -216,7 +227,9 @@ describe("POST /specs", () => {
       const res = await app.request("/specs", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ project_id: PROJECT_ID, title: "Emit test" }),
+        body: JSON.stringify(
+          createSpecPayload({ project_id: PROJECT_ID, title: "Emit test" }),
+        ),
       });
       const body = (await res.json()) as { id: string };
       expect(emittedId).not.toBeNull();
@@ -226,23 +239,26 @@ describe("POST /specs", () => {
     }
   });
 
-  test("stores selected agent runtime on the created epic and backfills split selections", async () => {
+  test("stores split selections on the created epic", async () => {
     const res = await app.request("/specs", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        project_id: PROJECT_ID,
-        title: "Codex flow",
-        agent_runtime: "codex",
-      }),
+      body: JSON.stringify(
+        createSpecPayload({
+          project_id: PROJECT_ID,
+          title: "Split flow",
+          planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
+          worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini" },
+        }),
+      ),
     });
     expect(res.status).toBe(201);
     const body = (await res.json()) as { id: string };
     const epic = getEpicBySpec(db, body.id);
-    expect(epic?.agent_runtime).toBe("codex");
+    expect(epic?.agent_runtime).toBe("claude-code");
     expect(epic?.planner_model_selection).toEqual({
-      runtime: "codex",
-      model: "gpt-5.5",
+      runtime: "claude-code",
+      model: "claude-opus-4-8",
     });
     expect(epic?.worker_model_selection).toEqual({
       runtime: "codex",
@@ -254,12 +270,14 @@ describe("POST /specs", () => {
     const res = await app.request("/specs", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        project_id: PROJECT_ID,
-        title: "Split flow",
-        planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
-        worker_model_selection: { runtime: "claude-code", model: "claude-sonnet-4-6" },
-      }),
+      body: JSON.stringify(
+        createSpecPayload({
+          project_id: PROJECT_ID,
+          title: "Split flow",
+          planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
+          worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini" },
+        }),
+      ),
     });
     expect(res.status).toBe(201);
     const body = (await res.json()) as { id: string };
@@ -270,8 +288,8 @@ describe("POST /specs", () => {
       model: "claude-opus-4-8",
     });
     expect(epic?.worker_model_selection).toEqual({
-      runtime: "claude-code",
-      model: "claude-sonnet-4-6",
+      runtime: "codex",
+      model: "gpt-5.4-mini",
     });
   });
 
@@ -279,12 +297,14 @@ describe("POST /specs", () => {
     const res = await app.request("/specs", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        project_id: PROJECT_ID,
-        title: "Bad split",
-        planner_model_selection: { runtime: "codex", model: "not-a-model" },
-        worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini" },
-      }),
+      body: JSON.stringify(
+        createSpecPayload({
+          project_id: PROJECT_ID,
+          title: "Bad split",
+          planner_model_selection: { runtime: "codex", model: "not-a-model" },
+          worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini" },
+        }),
+      ),
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
@@ -303,76 +323,61 @@ describe("POST /specs", () => {
     const ok = await descriptorOnlyApp.request("/specs", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        project_id: PROJECT_ID,
-        title: "Descriptor ok",
-        planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
-        worker_model_selection: { runtime: "claude-code", model: "claude-sonnet-4-6" },
-      }),
+      body: JSON.stringify(
+        createSpecPayload({
+          project_id: PROJECT_ID,
+          title: "Descriptor ok",
+          planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
+          worker_model_selection: { runtime: "claude-code", model: "claude-sonnet-4-6" },
+        }),
+      ),
     });
     expect(ok.status).toBe(201);
 
     const bad = await descriptorOnlyApp.request("/specs", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        project_id: PROJECT_ID,
-        title: "Descriptor bad",
-        planner_model_selection: { runtime: "claude-code", model: "not-listed" },
-        worker_model_selection: { runtime: "claude-code", model: "claude-sonnet-4-6" },
-      }),
+      body: JSON.stringify(
+        createSpecPayload({
+          project_id: PROJECT_ID,
+          title: "Descriptor bad",
+          planner_model_selection: { runtime: "claude-code", model: "not-listed" },
+          worker_model_selection: { runtime: "claude-code", model: "claude-sonnet-4-6" },
+        }),
+      ),
     });
     expect(bad.status).toBe(400);
     const body = (await bad.json()) as { error: string };
     expect(body.error).toContain("not allowed");
   });
 
-  test("rejects split selections with mismatched runtimes", async () => {
+  test("rejects missing split selections", async () => {
     const res = await app.request("/specs", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         project_id: PROJECT_ID,
-        title: "Bad runtime split",
-        planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
-        worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini" },
+        title: "Default split",
       }),
     });
     expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toContain("must match");
   });
 
-  test("rejects mixed legacy and split selection inputs", async () => {
-    const res = await app.request("/specs", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        project_id: PROJECT_ID,
-        title: "Mixed contract",
-        agent_runtime: "claude-code",
-        planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
-        worker_model_selection: { runtime: "claude-code", model: "claude-sonnet-4-6" },
-      }),
-    });
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toContain("either agent_runtime or the split model selections");
-  });
-
-  test("falls back to claude-code when no runtime registry is mounted", async () => {
+  test("accepts split selections when no runtime registry is mounted", async () => {
     const noRegistryApp = new Hono();
     mountSpecsRoutes(noRegistryApp, { db });
 
     const res = await noRegistryApp.request("/specs", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        project_id: PROJECT_ID,
-        title: "Fallback flow",
-        planner_model_selection: { runtime: "claude-code", model: "custom-planner-model" },
-        worker_model_selection: { runtime: "claude-code", model: "custom-worker-model" },
-      }),
+      body: JSON.stringify(
+        createSpecPayload({
+          project_id: PROJECT_ID,
+          title: "Split flow",
+          planner_model_selection: { runtime: "claude-code", model: "custom-planner-model" },
+          worker_model_selection: { runtime: "codex", model: "custom-worker-model" },
+        }),
+      ),
     });
 
     expect(res.status).toBe(201);
@@ -384,36 +389,16 @@ describe("POST /specs", () => {
       model: "custom-planner-model",
     });
     expect(epic?.worker_model_selection).toEqual({
-      runtime: "claude-code",
+      runtime: "codex",
       model: "custom-worker-model",
     });
-  });
-
-  test("rejects unregistered agent runtime before inserting the spec", async () => {
-    const claudeOnlyApp = new Hono();
-    mountSpecsRoutes(claudeOnlyApp, { db, registry: makeRegistry(["claude-code"]) });
-
-    const res = await claudeOnlyApp.request("/specs", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        project_id: PROJECT_ID,
-        title: "Codex flow",
-        agent_runtime: "codex",
-      }),
-    });
-
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toContain('runtime "codex" is not registered');
-    expect(listSpecsByProject(db, PROJECT_ID)).toHaveLength(0);
   });
 
   test("returns 400 for missing title", async () => {
     const res = await app.request("/specs", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ project_id: PROJECT_ID }),
+      body: JSON.stringify(createSpecPayload({ project_id: PROJECT_ID })),
     });
     expect(res.status).toBe(400);
   });
@@ -422,7 +407,9 @@ describe("POST /specs", () => {
     const res = await app.request("/specs", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ project_id: "no-project", title: "T" }),
+      body: JSON.stringify(
+        createSpecPayload({ project_id: "no-project", title: "T" }),
+      ),
     });
     expect(res.status).toBe(404);
   });
@@ -442,7 +429,9 @@ describe("POST /specs", () => {
     const res = await app.request("/specs", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ project_id: PROJECT_ID, title: "From path", notesPath: path }),
+      body: JSON.stringify(
+        createSpecPayload({ project_id: PROJECT_ID, title: "From path", notesPath: path }),
+      ),
     });
     expect(res.status).toBe(201);
     const body = (await res.json()) as { id: string; notes: string | null };
@@ -454,7 +443,13 @@ describe("POST /specs", () => {
     const res = await app.request("/specs", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ project_id: PROJECT_ID, title: "From relative", notesPath: "spec.md" }),
+      body: JSON.stringify(
+        createSpecPayload({
+          project_id: PROJECT_ID,
+          title: "From relative",
+          notesPath: "spec.md",
+        }),
+      ),
     });
     expect(res.status).toBe(201);
     const body = (await res.json()) as { notes: string | null };
@@ -466,7 +461,9 @@ describe("POST /specs", () => {
     const res = await app.request("/specs", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ project_id: PROJECT_ID, title: "Missing", notesPath: missing }),
+      body: JSON.stringify(
+        createSpecPayload({ project_id: PROJECT_ID, title: "Missing", notesPath: missing }),
+      ),
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
@@ -481,7 +478,9 @@ describe("POST /specs", () => {
       const res = await app.request("/specs", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ project_id: PROJECT_ID, title: "Outside", notesPath: path }),
+        body: JSON.stringify(
+          createSpecPayload({ project_id: PROJECT_ID, title: "Outside", notesPath: path }),
+        ),
       });
       expect(res.status).toBe(400);
       const body = (await res.json()) as { error: string };
@@ -501,7 +500,13 @@ describe("POST /specs", () => {
       const res = await app.request("/specs", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ project_id: PROJECT_ID, title: "Symlink escape", notesPath: link }),
+        body: JSON.stringify(
+          createSpecPayload({
+            project_id: PROJECT_ID,
+            title: "Symlink escape",
+            notesPath: link,
+          }),
+        ),
       });
       expect(res.status).toBe(400);
       const body = (await res.json()) as { error: string };
@@ -515,12 +520,14 @@ describe("POST /specs", () => {
     const res = await app.request("/specs", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        project_id: PROJECT_ID,
-        title: "Both",
-        notes: "inline",
-        notesPath: join(repoPath, "whatever.md"),
-      }),
+      body: JSON.stringify(
+        createSpecPayload({
+          project_id: PROJECT_ID,
+          title: "Both",
+          notes: "inline",
+          notesPath: join(repoPath, "whatever.md"),
+        }),
+      ),
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };

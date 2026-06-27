@@ -165,14 +165,12 @@ describe("AddSpecModal split role selection", () => {
     });
     expect(screen.getByLabelText("Planner model")).toHaveProperty("value", "claude-opus-4-8");
     expect(getSelectOptions(screen.getByLabelText("Planner model") as HTMLSelectElement)).toEqual([
-      "",
       "claude-opus-4-8",
       "claude-sonnet-4-6",
     ]);
     expect(screen.getByLabelText("Worker runtime")).toHaveProperty("value", "codex");
     expect(screen.getByLabelText("Worker model")).toHaveProperty("value", "gpt-5.4-mini");
     expect(getSelectOptions(screen.getByLabelText("Worker model") as HTMLSelectElement)).toEqual([
-      "",
       "gpt-5.5",
       "gpt-5.4-mini",
     ]);

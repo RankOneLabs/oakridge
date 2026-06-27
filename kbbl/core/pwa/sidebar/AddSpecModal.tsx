@@ -29,7 +29,6 @@ interface CreateSpecInput {
 type Role = "planner" | "worker";
 
 function isModelAllowed(runtime: RuntimeDescriptor, model: string): boolean {
-  if (runtime.models.length === 0) return true;
   return runtime.models.some((option) => option.value === model);
 }
 
@@ -39,7 +38,6 @@ function getRoleDefaultModel(role: Role, runtime: RuntimeDescriptor): string {
       ? defaultPlannerModelForRuntime(runtime.id)
       : defaultWorkerModelForRuntime(runtime.id);
   if (isModelAllowed(runtime, preferred)) return preferred;
-  if (isModelAllowed(runtime, "")) return "";
   return runtime.models[0]?.value ?? preferred;
 }
 
@@ -77,6 +75,16 @@ function coerceSelection(
   const nextRuntime = runtimeTouched
     ? getRuntimeForSelection(runtimeDescriptors, defaultRuntimeId, selection.runtime)
     : getRuntimeForSelection(runtimeDescriptors, defaultRuntimeId, defaultRuntimeId);
+  if (nextRuntime.models.length === 0) {
+    const nextModel = selection.model.trim().length > 0 ? selection.model : getRoleDefaultModel(role, nextRuntime);
+    if (nextRuntime.id === selection.runtime && nextModel === selection.model) {
+      return selection;
+    }
+    return {
+      runtime: nextRuntime.id,
+      model: nextModel,
+    };
+  }
   const nextModel = isModelAllowed(nextRuntime, selection.model)
     ? selection.model
     : getRoleDefaultModel(role, nextRuntime);
@@ -90,9 +98,7 @@ function coerceSelection(
 }
 
 function modelOptionsForRuntime(runtime: RuntimeDescriptor): RuntimeDescriptor["models"] {
-  if (runtime.models.length === 0) return [];
-  if (runtime.models.some((option) => option.value === "")) return runtime.models;
-  return [{ value: "", label: "default" }, ...runtime.models];
+  return runtime.models;
 }
 
 export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps) {
@@ -261,7 +267,7 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
         onClick={(e) => e.stopPropagation()}
       >
         <div id="add-spec-title" style={{ fontWeight: 600, fontSize: 15 }}>
-          New plan / epic -- <span style={{ opacity: 0.7 }}>{project.name}</span>
+          New plan / epic — <span style={{ opacity: 0.7 }}>{project.name}</span>
         </div>
         <form
           onSubmit={(e) => {

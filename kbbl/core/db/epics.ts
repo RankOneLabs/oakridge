@@ -80,13 +80,6 @@ export function insertEpic(
   const planner = planner_model_selection ?? defaults.planner_model_selection;
   const worker = worker_model_selection ?? defaults.worker_model_selection;
 
-  if (planner.runtime !== worker.runtime) {
-    throw new Error("insertEpic: planner and worker model selections must use the same runtime");
-  }
-  if (agent_runtime !== undefined && agent_runtime !== planner.runtime) {
-    throw new Error("insertEpic: agent_runtime must match split model selection runtime");
-  }
-
   const row = db
     .prepare<EpicRow, [string, string, string, string, EpicStatus, EpicStage, AgentRuntimeChoice, AgentRuntimeChoice, string, AgentRuntimeChoice, string]>(
       `INSERT INTO epics (

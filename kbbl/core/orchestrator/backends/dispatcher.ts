@@ -92,40 +92,40 @@ function getProjectForPlan(db: Database, plan_id: string): ProjectRow | null {
   );
 }
 
-function resolveAgentRuntimeForSpec(db: Database, spec_id: string): RuntimeId | undefined {
+function resolvePlannerRuntimeForSpec(db: Database, spec_id: string): RuntimeId | undefined {
   const epic = getEpicBySpec(db, spec_id);
-  return epic?.agent_runtime;
+  return epic?.planner_model_selection.runtime;
 }
 
-function resolveAgentRuntimeForPlan(db: Database, plan_id: string): RuntimeId | undefined {
+function resolvePlannerRuntimeForPlan(db: Database, plan_id: string): RuntimeId | undefined {
   const row = db
-    .prepare<{ agent_runtime: RuntimeId }, [string]>(
-      `SELECT e.agent_runtime
+    .prepare<{ planner_runtime: RuntimeId }, [string]>(
+      `SELECT e.planner_runtime
          FROM epics e
          JOIN plans pl ON pl.spec_id = e.spec_id
         WHERE pl.id = ?`,
     )
     .get(plan_id);
-  return row?.agent_runtime;
+  return row?.planner_runtime;
 }
 
-function resolveAgentRuntimeForCohort(db: Database, cohort_id: string): RuntimeId | undefined {
+function resolvePlannerRuntimeForCohort(db: Database, cohort_id: string): RuntimeId | undefined {
   const row = db
-    .prepare<{ agent_runtime: RuntimeId }, [string]>(
-      `SELECT e.agent_runtime
+    .prepare<{ planner_runtime: RuntimeId }, [string]>(
+      `SELECT e.planner_runtime
          FROM epics e
          JOIN plans pl ON pl.spec_id = e.spec_id
          JOIN cohorts c ON c.plan_id = pl.id
         WHERE c.id = ?`,
     )
     .get(cohort_id);
-  return row?.agent_runtime;
+  return row?.planner_runtime;
 }
 
-function resolveAgentRuntimeForBrief(db: Database, brief_id: string): RuntimeId | undefined {
+function resolvePlannerRuntimeForBrief(db: Database, brief_id: string): RuntimeId | undefined {
   const row = db
-    .prepare<{ agent_runtime: RuntimeId }, [string]>(
-      `SELECT e.agent_runtime
+    .prepare<{ planner_runtime: RuntimeId }, [string]>(
+      `SELECT e.planner_runtime
          FROM epics e
          JOIN plans pl ON pl.spec_id = e.spec_id
          JOIN cohorts c ON c.plan_id = pl.id
@@ -133,7 +133,21 @@ function resolveAgentRuntimeForBrief(db: Database, brief_id: string): RuntimeId 
         WHERE b.id = ?`,
     )
     .get(brief_id);
-  return row?.agent_runtime;
+  return row?.planner_runtime;
+}
+
+function resolveWorkerRuntimeForBrief(db: Database, brief_id: string): RuntimeId | undefined {
+  const row = db
+    .prepare<{ worker_runtime: RuntimeId }, [string]>(
+      `SELECT e.worker_runtime
+         FROM epics e
+         JOIN plans pl ON pl.spec_id = e.spec_id
+         JOIN cohorts c ON c.plan_id = pl.id
+         JOIN briefs b ON b.cohort_id = c.id
+        WHERE b.id = ?`,
+    )
+    .get(brief_id);
+  return row?.worker_runtime;
 }
 
 // ---- Session name builders ----
@@ -720,7 +734,7 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
           slots = buildSlotsForSpec(db, inputId, kbblUrl);
           workdir = resolveWorkdirForSpec(db, inputId);
           const sessionName = buildSessionNameForSpec(db, inputId, stage.name);
-          const agentRuntime = resolveAgentRuntimeForSpec(db, inputId);
+          const agentRuntime = resolvePlannerRuntimeForSpec(db, inputId);
           inputRef = {
             type: "spec",
             id: inputId,
@@ -734,7 +748,7 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
           slots = buildSlotsForCohort(db, inputId, kbblUrl);
           workdir = resolveWorkdirForCohort(db, inputId);
           const sessionName = buildSessionNameForCohort(db, inputId, stage.name);
-          const agentRuntime = resolveAgentRuntimeForCohort(db, inputId);
+          const agentRuntime = resolvePlannerRuntimeForCohort(db, inputId);
           inputRef = {
             type: "cohort",
             id: inputId,
@@ -761,7 +775,10 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
 
           await ensureEpicBranchExists(epicBranch, workdir);
 
-          const agentRuntime = resolveAgentRuntimeForBrief(db, inputId);
+          const agentRuntime =
+            stage.name === "build"
+              ? resolveWorkerRuntimeForBrief(db, inputId)
+              : resolvePlannerRuntimeForBrief(db, inputId);
           inputRef = {
             type: "brief",
             id: inputId,
@@ -778,7 +795,7 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
             : buildSlotsForPlan(db, inputId, kbblUrl);
           workdir = resolveWorkdirForPlan(db, inputId);
           const sessionName = buildSessionNameForPlan(db, inputId, stage.name);
-          const agentRuntime = resolveAgentRuntimeForPlan(db, inputId);
+          const agentRuntime = resolvePlannerRuntimeForPlan(db, inputId);
           inputRef = {
             type: "plan",
             id: inputId,
