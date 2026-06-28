@@ -44,11 +44,11 @@ function isRuntimeRegistered(
   runtimeId: RuntimeId,
 ): boolean {
   if (registry) return registry.runtimes.has(runtimeId);
-  return true;
+  return runtimeId === "claude-code";
 }
 
 function registeredRuntimeList(registry: RuntimeRegistry | undefined): string {
-  return registry ? [...registry.runtimes.keys()].join(", ") : "claude-code, codex";
+  return registry ? [...registry.runtimes.keys()].join(", ") : "claude-code";
 }
 
 function validateModelSelection(
@@ -62,13 +62,13 @@ function validateModelSelection(
   }
   if (runtime !== "claude-code" && runtime !== "codex") {
     return {
-      error: `runtime "${runtime}" is not registered — registered: ${registeredRuntimeList(registry)}`,
+      error: `${role} runtime "${runtime}" is not registered — registered: ${registeredRuntimeList(registry)}`,
       selection: null,
     };
   }
   if (!isRuntimeRegistered(registry, runtime)) {
     return {
-      error: `runtime "${runtime}" is not registered — registered: ${registeredRuntimeList(registry)}`,
+      error: `${role} runtime "${runtime}" is not registered — registered: ${registeredRuntimeList(registry)}`,
       selection: null,
     };
   }

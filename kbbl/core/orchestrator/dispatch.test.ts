@@ -249,7 +249,7 @@ describe("full dispatch pipeline with MockBackend", () => {
       title: "My spec",
       notes: "build X",
       planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
-      worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini" },
+      worker_model_selection: { runtime: "claude-code", model: "claude-sonnet-4-6" },
     });
     expect(specRes.status).toBe(201);
     const spec = (await specRes.json()) as { id: string };
@@ -323,8 +323,8 @@ describe("full dispatch pipeline with MockBackend", () => {
     expect(mockBackend.calls[2]!.stageName).toBe("build");
     expect(mockBackend.calls[2]!.inputId).toBe(brief.id);
     expect(mockBackend.calls[2]!.modelSelection).toEqual({
-      runtime: "codex",
-      model: "gpt-5.4-mini",
+      runtime: "claude-code",
+      model: "claude-sonnet-4-6",
     });
 
     // current_session_ref written onto cohort (build stores on cohort, not brief)

@@ -416,7 +416,37 @@ describe("POST /specs", () => {
     expect(res.status).toBe(400);
   });
 
-  test("accepts split selections when no runtime registry is mounted", async () => {
+  test("accepts claude-code split selections when no runtime registry is mounted", async () => {
+    const noRegistryApp = new Hono();
+    mountSpecsRoutes(noRegistryApp, { db });
+
+    const res = await noRegistryApp.request("/specs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(
+        createSpecPayload({
+          project_id: PROJECT_ID,
+          title: "Split flow",
+          planner_model_selection: { runtime: "claude-code", model: "custom-planner-model" },
+          worker_model_selection: { runtime: "claude-code", model: "custom-worker-model" },
+        }),
+      ),
+    });
+
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { id: string };
+    const epic = getEpicBySpec(db, body.id);
+    expect(epic?.planner_model_selection).toEqual({
+      runtime: "claude-code",
+      model: "custom-planner-model",
+    });
+    expect(epic?.worker_model_selection).toEqual({
+      runtime: "claude-code",
+      model: "custom-worker-model",
+    });
+  });
+
+  test("rejects codex split selections when no runtime registry is mounted", async () => {
     const noRegistryApp = new Hono();
     mountSpecsRoutes(noRegistryApp, { db });
 
@@ -433,17 +463,9 @@ describe("POST /specs", () => {
       ),
     });
 
-    expect(res.status).toBe(201);
-    const body = (await res.json()) as { id: string };
-    const epic = getEpicBySpec(db, body.id);
-    expect(epic?.planner_model_selection).toEqual({
-      runtime: "claude-code",
-      model: "custom-planner-model",
-    });
-    expect(epic?.worker_model_selection).toEqual({
-      runtime: "codex",
-      model: "custom-worker-model",
-    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('worker runtime "codex" is not registered — registered: claude-code');
   });
 
   test("returns 400 for missing title", async () => {

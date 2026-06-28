@@ -119,7 +119,7 @@ describe("POST /specs split model validation", () => {
 
     expect(res.status).toBe(400);
     expect((await res.json()) as { error: string }).toEqual({
-      error: 'runtime "not-registered" is not registered — registered: claude-code, codex',
+      error: 'planner runtime "not-registered" is not registered — registered: claude-code, codex',
     });
   });
 
