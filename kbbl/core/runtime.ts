@@ -59,9 +59,13 @@ export function isAllowedModelForRuntime(
   runtime: Pick<AgentRuntime, "isAllowedModel" | "descriptor"> | undefined,
   model: string,
 ): boolean {
-  if (runtime?.isAllowedModel) return runtime.isAllowedModel(model);
-  if (runtime?.descriptor) return runtime.descriptor.models.some((m) => m.value === model);
-  return model.trim().length > 0;
+  const trimmedModel = model.trim();
+  if (runtime?.isAllowedModel) return runtime.isAllowedModel(trimmedModel);
+  const declaredModels = runtime?.descriptor.models ?? [];
+  if (declaredModels.length > 0) {
+    return declaredModels.some((m) => m.value === trimmedModel);
+  }
+  return trimmedModel.length > 0;
 }
 
 // === session handle ===

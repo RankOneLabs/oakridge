@@ -38,10 +38,10 @@ export interface InputRef {
   worktreeIdentity?: EpicIdentity;
   /**
    * Explicit runtime/model pair selected by the dispatcher for epic-owned
-   * dispatches. When present, backends should route directly with this pair
-   * instead of inferring a model from global stage routing.
+   * dispatches. Backends route directly with this pair instead of inferring a
+   * model from global stage routing.
    */
-  modelSelection?: RuntimeModelSelection;
+  modelSelection: RuntimeModelSelection;
 }
 
 export interface ExecutionBackend {

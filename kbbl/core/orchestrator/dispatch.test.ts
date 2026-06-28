@@ -48,7 +48,7 @@ interface DispatchCall {
   stageName: string;
   inputType: string;
   inputId: string;
-  modelSelection?: RuntimeModelSelection;
+  modelSelection: RuntimeModelSelection;
   renderedPrompt: string;
 }
 
@@ -66,7 +66,7 @@ function createMockBackend(): MockBackend {
         stageName: stage.name,
         inputType: inputRef.type,
         inputId: inputRef.id,
-        ...(inputRef.modelSelection !== undefined ? { modelSelection: inputRef.modelSelection } : {}),
+        modelSelection: inputRef.modelSelection,
         renderedPrompt,
       });
       return { session_ref: `mock-${calls.length}` };

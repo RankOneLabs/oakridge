@@ -4,14 +4,14 @@ The end-to-end loop lives entirely inside kbbl. A `kbbl-start` server hosts
 the task tracker, the review primitive, the orchestrator state machine, and the
 PWA review surfaces. Work is organized as **Epics** — each Epic carries one spec
 through four stages (Spec → Plan → Build → Assess). Dispatched stages
-(spec_analyzer, plan_writer, brief_writer, build) run as kbbl agent sessions spawned via
+(spec_analyzer, plan_writer, brief_writer, build, assessor) run as kbbl agent sessions spawned via
 the existing `SessionManager` + Claude Code adapter; their prompts are templated
-from `kbbl/prompts/{spec_analyzer,plan_writer,brief_writer,build}.md`.
+from `kbbl/prompts/{spec_analyzer,plan_writer,brief_writer,build,assessor}.md`.
 
-Epics now store split model selections: planner stages use
-`planner_model_selection`, while `build` uses `worker_model_selection`. The
-PWA spec modal reads `/config` runtime descriptors so each role can choose its
-own runtime/model pair.
+Epics now store split model selections: planner stages (`spec_analyzer`,
+`plan_writer`, `brief_writer`, `assessor`) use `planner_model_selection`, while
+`build` uses `worker_model_selection`. The PWA spec modal reads `/config`
+runtime descriptors so each role can choose its own runtime/model pair.
 
 ## Prerequisites
 

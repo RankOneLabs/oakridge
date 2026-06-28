@@ -50,10 +50,7 @@ export interface RuntimeDescriptor {
   supportsCompaction: boolean;
 }
 
-export interface RuntimeModelSelection {
-  runtime: RuntimeId;
-  model: string;
-}
+export type { RuntimeModelSelection } from "../runtime-interface";
 
 export interface PendingPlanCard {
   id: string;

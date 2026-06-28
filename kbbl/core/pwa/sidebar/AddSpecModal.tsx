@@ -27,6 +27,9 @@ interface CreateSpecInput {
 }
 
 type Role = "planner" | "worker";
+type SetSelection = (
+  value: RuntimeModelSelection | ((current: RuntimeModelSelection) => RuntimeModelSelection),
+) => void;
 
 function isModelAllowed(runtime: RuntimeDescriptor, model: string): boolean {
   return runtime.models.some((option) => option.value === model);
@@ -99,6 +102,99 @@ function coerceSelection(
 
 function modelOptionsForRuntime(runtime: RuntimeDescriptor): RuntimeDescriptor["models"] {
   return runtime.models;
+}
+
+interface RoleModelPickerProps {
+  role: Role;
+  selection: RuntimeModelSelection;
+  setSelection: SetSelection;
+  setRuntimeTouched: (touched: boolean) => void;
+  runtimeDescriptors: RuntimeDescriptor[];
+  defaultRuntimeId: RuntimeId;
+  pending: boolean;
+}
+
+function RoleModelPicker({
+  role,
+  selection,
+  setSelection,
+  setRuntimeTouched,
+  runtimeDescriptors,
+  defaultRuntimeId,
+  pending,
+}: RoleModelPickerProps) {
+  const roleLabel = role === "planner" ? "Planner" : "Worker";
+  const runtime = getRuntimeForSelection(runtimeDescriptors, defaultRuntimeId, selection.runtime);
+  const modelOptions = modelOptionsForRuntime(runtime);
+
+  return (
+    <section className="add-spec-modal__role">
+      <div className="add-spec-modal__role-title">{roleLabel}</div>
+      <label className="add-spec-modal__field">
+        <span>Runtime</span>
+        <select
+          value={selection.runtime}
+          onChange={(e) => {
+            const nextRuntimeId = e.target.value as RuntimeId;
+            const nextRuntime = getRuntimeForSelection(
+              runtimeDescriptors,
+              defaultRuntimeId,
+              nextRuntimeId,
+            );
+            setRuntimeTouched(true);
+            setSelection({
+              runtime: nextRuntime.id,
+              model: getRoleDefaultModel(role, nextRuntime),
+            });
+          }}
+          disabled={pending}
+          aria-label={`${roleLabel} runtime`}
+        >
+          {runtimeDescriptors.map((runtimeOption) => (
+            <option key={runtimeOption.id} value={runtimeOption.id}>
+              {runtimeOption.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="add-spec-modal__field">
+        <span>Model</span>
+        {modelOptions.length > 0 ? (
+          <select
+            value={selection.model}
+            onChange={(e) =>
+              setSelection((current) => ({
+                ...current,
+                model: e.target.value,
+              }))
+            }
+            disabled={pending}
+            aria-label={`${roleLabel} model`}
+          >
+            {modelOptions.map((option) => (
+              <option key={option.value || "default"} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <input
+            type="text"
+            value={selection.model}
+            onChange={(e) =>
+              setSelection((current) => ({
+                ...current,
+                model: e.target.value,
+              }))
+            }
+            disabled={pending}
+            aria-label={`${roleLabel} model`}
+            spellCheck={false}
+          />
+        )}
+      </label>
+    </section>
+  );
 }
 
 export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps) {
@@ -290,147 +386,24 @@ export function AddSpecModal({ project, onCreated, onCancel }: AddSpecModalProps
           </label>
 
           <div className="add-spec-modal__roles">
-            <section className="add-spec-modal__role">
-              <div className="add-spec-modal__role-title">Planner</div>
-              <label className="add-spec-modal__field">
-                <span>Runtime</span>
-                <select
-                  value={plannerSelection.runtime}
-                  onChange={(e) => {
-                    const nextRuntimeId = e.target.value as RuntimeId;
-                    const nextRuntime = getRuntimeForSelection(
-                      runtimeDescriptors,
-                      defaultRuntimeId,
-                      nextRuntimeId,
-                    );
-                    setPlannerRuntimeTouched(true);
-                    setPlannerSelection({
-                      runtime: nextRuntime.id,
-                      model: getRoleDefaultModel("planner", nextRuntime),
-                    });
-                  }}
-                  disabled={pending}
-                  aria-label="Planner runtime"
-                >
-                  {runtimeDescriptors.map((runtime) => (
-                    <option key={runtime.id} value={runtime.id}>
-                      {runtime.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="add-spec-modal__field">
-                <span>Model</span>
-                {modelOptionsForRuntime(
-                  getRuntimeForSelection(runtimeDescriptors, defaultRuntimeId, plannerSelection.runtime),
-                ).length > 0 ? (
-                  <select
-                    value={plannerSelection.model}
-                    onChange={(e) =>
-                      setPlannerSelection((current) => ({
-                        ...current,
-                        model: e.target.value,
-                      }))
-                    }
-                    disabled={pending}
-                    aria-label="Planner model"
-                  >
-                    {modelOptionsForRuntime(
-                      getRuntimeForSelection(runtimeDescriptors, defaultRuntimeId, plannerSelection.runtime),
-                    ).map((option) => (
-                      <option key={option.value || "default"} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    type="text"
-                    value={plannerSelection.model}
-                    onChange={(e) =>
-                      setPlannerSelection((current) => ({
-                        ...current,
-                        model: e.target.value,
-                      }))
-                    }
-                    disabled={pending}
-                    aria-label="Planner model"
-                    spellCheck={false}
-                  />
-                )}
-              </label>
-            </section>
-
-            <section className="add-spec-modal__role">
-              <div className="add-spec-modal__role-title">Worker</div>
-              <label className="add-spec-modal__field">
-                <span>Runtime</span>
-                <select
-                  value={workerSelection.runtime}
-                  onChange={(e) => {
-                    const nextRuntimeId = e.target.value as RuntimeId;
-                    const nextRuntime = getRuntimeForSelection(
-                      runtimeDescriptors,
-                      defaultRuntimeId,
-                      nextRuntimeId,
-                    );
-                    setWorkerRuntimeTouched(true);
-                    setWorkerSelection({
-                      runtime: nextRuntime.id,
-                      model: getRoleDefaultModel("worker", nextRuntime),
-                    });
-                  }}
-                  disabled={pending}
-                  aria-label="Worker runtime"
-                >
-                  {runtimeDescriptors.map((runtime) => (
-                    <option key={runtime.id} value={runtime.id}>
-                      {runtime.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="add-spec-modal__field">
-                <span>Model</span>
-                {modelOptionsForRuntime(
-                  getRuntimeForSelection(runtimeDescriptors, defaultRuntimeId, workerSelection.runtime),
-                ).length > 0 ? (
-                  <select
-                    value={workerSelection.model}
-                    onChange={(e) =>
-                      setWorkerSelection((current) => ({
-                        ...current,
-                        model: e.target.value,
-                      }))
-                    }
-                    disabled={pending}
-                    aria-label="Worker model"
-                  >
-                    {modelOptionsForRuntime(
-                      getRuntimeForSelection(runtimeDescriptors, defaultRuntimeId, workerSelection.runtime),
-                    ).map((option) => (
-                      <option key={option.value || "default"} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    type="text"
-                    value={workerSelection.model}
-                    onChange={(e) =>
-                      setWorkerSelection((current) => ({
-                        ...current,
-                        model: e.target.value,
-                      }))
-                    }
-                    disabled={pending}
-                    aria-label="Worker model"
-                    spellCheck={false}
-                  />
-                )}
-              </label>
-            </section>
+            <RoleModelPicker
+              role="planner"
+              selection={plannerSelection}
+              setSelection={setPlannerSelection}
+              setRuntimeTouched={setPlannerRuntimeTouched}
+              runtimeDescriptors={runtimeDescriptors}
+              defaultRuntimeId={defaultRuntimeId}
+              pending={pending}
+            />
+            <RoleModelPicker
+              role="worker"
+              selection={workerSelection}
+              setSelection={setWorkerSelection}
+              setRuntimeTouched={setWorkerRuntimeTouched}
+              runtimeDescriptors={runtimeDescriptors}
+              defaultRuntimeId={defaultRuntimeId}
+              pending={pending}
+            />
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>

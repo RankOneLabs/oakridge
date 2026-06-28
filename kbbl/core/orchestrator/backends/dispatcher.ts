@@ -748,7 +748,6 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
       let slots: Record<string, string>;
       let inputRef: InputRef;
       let workdir: string;
-      let modelSelection: RuntimeModelSelection | undefined;
 
       switch (stage.input_artifact_type) {
         case "spec": {
@@ -757,13 +756,12 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
           const sessionName = buildSessionNameForSpec(db, inputId, stage.name);
           const epic = resolveEpicForSpec(db, inputId);
           if (!epic) throw new Error(`spec ${inputId}: no epic found`);
-          modelSelection = modelSelectionForEpicStage(epic, stage.name);
           inputRef = {
             type: "spec",
             id: inputId,
             workdir,
             sessionName,
-            modelSelection,
+            modelSelection: modelSelectionForEpicStage(epic, stage.name),
           };
           break;
         }
@@ -773,13 +771,12 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
           const sessionName = buildSessionNameForCohort(db, inputId, stage.name);
           const epic = resolveEpicForCohort(db, inputId);
           if (!epic) throw new Error(`cohort ${inputId}: no epic found`);
-          modelSelection = modelSelectionForEpicStage(epic, stage.name);
           inputRef = {
             type: "cohort",
             id: inputId,
             workdir,
             sessionName,
-            modelSelection,
+            modelSelection: modelSelectionForEpicStage(epic, stage.name),
           };
           break;
         }
@@ -800,13 +797,12 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
 
           await ensureEpicBranchExists(epicBranch, workdir);
 
-          modelSelection = modelSelectionForEpicStage(epic, stage.name);
           inputRef = {
             type: "brief",
             id: inputId,
             workdir,
             sessionName,
-            modelSelection,
+            modelSelection: modelSelectionForEpicStage(epic, stage.name),
             worktreeIdentity: { epicSlug, cohortSlug, epicBranch },
           };
           break;
@@ -819,13 +815,12 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
           const sessionName = buildSessionNameForPlan(db, inputId, stage.name);
           const epic = resolveEpicForPlan(db, inputId);
           if (!epic) throw new Error(`plan ${inputId}: no epic found`);
-          modelSelection = modelSelectionForEpicStage(epic, stage.name);
           inputRef = {
             type: "plan",
             id: inputId,
             workdir,
             sessionName,
-            modelSelection,
+            modelSelection: modelSelectionForEpicStage(epic, stage.name),
           };
           break;
         }

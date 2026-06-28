@@ -73,6 +73,27 @@ describe("applyMigrations", () => {
     expect(rows).toHaveLength(0);
   });
 
+  test("foreign-key-disabled migrations still roll back before recording", () => {
+    db.exec("PRAGMA foreign_keys = ON");
+    writeFileSync(
+      join(migrationsDir, "001_bad_rebuild.sql"),
+      `
+        -- kbbl:disable_foreign_keys
+        CREATE TABLE rebuilt (id TEXT PRIMARY KEY);
+        NOT VALID SQL!!!;
+      `,
+    );
+
+    expect(() => applyMigrations(db, migrationsDir)).toThrow();
+
+    const rows = db.query<{ name: string }, []>("SELECT name FROM _migrations").all();
+    expect(rows).toHaveLength(0);
+    const table = db.query<{ name: string }, []>("SELECT name FROM sqlite_schema WHERE name = 'rebuilt'").get();
+    expect(table).toBeNull();
+    const foreignKeys = db.query<{ foreign_keys: number }, []>("PRAGMA foreign_keys").get();
+    expect(foreignKeys?.foreign_keys).toBe(1);
+  });
+
   test("applies only new migrations when some are already recorded", () => {
     writeFileSync(
       join(migrationsDir, "001_first.sql"),
@@ -195,5 +216,63 @@ describe("split model migration", () => {
       .all()
       .map((column) => column.name);
     expect(columns).not.toContain("agent_runtime");
+
+    db.exec("INSERT INTO specs (id, project_id, title) VALUES ('spec-2', 'project-1', 'Spec 2')");
+    expect(() =>
+      db.exec(`
+        INSERT INTO epics (
+          id,
+          spec_id,
+          project_id,
+          title,
+          status,
+          current_stage,
+          planner_runtime,
+          planner_model,
+          worker_runtime,
+          worker_model
+        ) VALUES (
+          'epic-2',
+          'spec-2',
+          'project-1',
+          'Epic 2',
+          'pending',
+          'spec',
+          'claude-code',
+          '',
+          'claude-code',
+          'claude-sonnet-4-6'
+        )
+      `),
+    ).toThrow();
+
+    db.exec("INSERT INTO specs (id, project_id, title) VALUES ('spec-3', 'project-1', 'Spec 3')");
+    expect(() =>
+      db.exec(`
+        INSERT INTO epics (
+          id,
+          spec_id,
+          project_id,
+          title,
+          status,
+          current_stage,
+          planner_runtime,
+          planner_model,
+          worker_runtime,
+          worker_model
+        ) VALUES (
+          'epic-3',
+          'spec-3',
+          'project-1',
+          'Epic 3',
+          'pending',
+          'spec',
+          'claude-code',
+          'claude-opus-4-8',
+          'claude-code',
+          '   '
+        )
+      `),
+    ).toThrow();
   });
 });

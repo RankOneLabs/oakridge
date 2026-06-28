@@ -3,7 +3,6 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createKbblChatBackend } from "./kbbl-chat";
-import { NO_ROUTING_ENTRY_ERROR_PREFIX } from "./kbbl-chat";
 import type { InputRef, StageRow } from "./interface";
 import { SessionManager } from "../../session/session-manager";
 import type { KbblConfig } from "../../config";
@@ -65,6 +64,7 @@ const inputRef: InputRef = {
   id: "spec-1",
   workdir: "/tmp/repo",
   sessionName: "test-session",
+  modelSelection: { runtime: "claude-code", model: "claude-opus-4-8" },
 };
 
 const CLAUDE_PLANNER_SELECTION = { runtime: "claude-code", model: "claude-opus-4-8" } as const;
@@ -132,15 +132,6 @@ describe("KbblChatBackend dispatch routes explicit model selections", () => {
     );
     expect(calls[0]?.model).toBe("gpt-5.4-mini");
     expect(calls[0]?.runtime).toBe("codex");
-  });
-
-  test("missing modelSelection throws with actionable message", async () => {
-    const { manager, calls } = makeFakeManager();
-    const backend = createKbblChatBackend({ manager });
-    await expect(backend.dispatch(stage("build"), inputRef, "prompt")).rejects.toThrow(
-      `${NO_ROUTING_ENTRY_ERROR_PREFIX}build"`
-    );
-    expect(calls).toHaveLength(0);
   });
 
   test("unknown stage still routes when dispatcher passes explicit modelSelection", async () => {

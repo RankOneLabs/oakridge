@@ -125,7 +125,7 @@ describe("GET /config", () => {
       }>;
     };
     expect(body.defaultRuntimeId).toBe("codex");
-    expect(body.runtimes).toEqual([
+    expect(body.runtimes).toEqual(expect.arrayContaining([
       {
         id: "claude-code",
         label: "Claude Code",
@@ -144,7 +144,8 @@ describe("GET /config", () => {
           { value: "gpt-5.4-mini", label: "gpt-5.4-mini" },
         ],
       },
-    ]);
+    ]));
+    expect(body.runtimes).toHaveLength(2);
   });
 
   test("allows a null defaultWorkdir", async () => {

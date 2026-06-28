@@ -91,13 +91,13 @@ describe("POST /specs split model validation", () => {
     expect(res.status).toBe(201);
     const body = (await res.json()) as { id: string; epic_id: string };
     const epic = getEpicBySpec(db, body.id);
-    expect(epic).not.toBeNull();
-    expect(epic!.id).toBe(body.epic_id);
-    expect(epic!.planner_model_selection).toEqual({
+    if (epic === null) throw new Error("expected created spec to have an epic");
+    expect(epic.id).toBe(body.epic_id);
+    expect(epic.planner_model_selection).toEqual({
       runtime: "claude-code",
       model: "claude-opus-4-8",
     });
-    expect(epic!.worker_model_selection).toEqual({
+    expect(epic.worker_model_selection).toEqual({
       runtime: "codex",
       model: "gpt-5.4-mini",
     });

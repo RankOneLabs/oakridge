@@ -353,6 +353,41 @@ describe("POST /specs", () => {
     expect(body.error).toContain("not allowed");
   });
 
+  test("accepts free-form models when runtime has no validator and no model list", async () => {
+    const runtime = {
+      id: "claude-code" as const,
+      descriptor: {
+        id: "claude-code" as const,
+        label: "Claude Code",
+        models: [],
+        supportsCompaction: true,
+      },
+    } as unknown as AgentRuntime;
+
+    const registry: RuntimeRegistry = {
+      defaultId: "claude-code",
+      runtimes: new Map([["claude-code", runtime]]),
+    };
+
+    const freeFormApp = new Hono();
+    mountSpecsRoutes(freeFormApp, { db, registry });
+
+    const res = await freeFormApp.request("/specs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(
+        createSpecPayload({
+          project_id: PROJECT_ID,
+          title: "Free-form descriptor",
+          planner_model_selection: { runtime: "claude-code", model: "manual-planner-model" },
+          worker_model_selection: { runtime: "claude-code", model: "manual-worker-model" },
+        }),
+      ),
+    });
+
+    expect(res.status).toBe(201);
+  });
+
   test("respects runtime isAllowedModel even when descriptor models are empty", async () => {
     const runtime = {
       id: "claude-code" as const,

@@ -17,7 +17,7 @@ interface DispatchCall {
   stageName: string;
   inputType: string;
   inputId: string;
-  modelSelection: RuntimeModelSelection | undefined;
+  modelSelection: RuntimeModelSelection;
 }
 
 interface MockBackend extends ExecutionBackend {
