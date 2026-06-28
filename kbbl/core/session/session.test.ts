@@ -478,6 +478,10 @@ describe("Session input queue (CC PTY mode)", () => {
     // First write goes out and puts the turn in flight; second is queued behind it.
     await session.writeInput("msg1");
     await new Promise((r) => setTimeout(r, 0));
+    // CC produced a transcript line, so the turn is genuinely under way — this
+    // is what gates interrupt recovery (not the bare "busy" state, which is set
+    // before the turn actually starts).
+    session.notifyTurnStarted();
     await session.writeInput("msg2");
     await new Promise((r) => setTimeout(r, 0));
     expect(sent).toEqual(["msg1"]); // msg2 held behind the busy turn
@@ -494,6 +498,47 @@ describe("Session input queue (CC PTY mode)", () => {
     const result = emitted.find((e) => e.type === "result");
     expect(result).toBeDefined();
     expect((result!.payload as { stop_reason: string }).stop_reason).toBe("interrupted");
+    // usage MUST be null, not zeros: a zero-usage result would clobber the last
+    // meaningful lastResultUsage on archived replay (Resume tooltip → ~0 tokens).
+    expect((result!.payload as { usage: unknown }).usage).toBeNull();
+
+    finish();
+    await session.waitForEnd();
+  });
+
+  test("interrupt in the pre-turn window does NOT flush the queue (no turn observed yet)", async () => {
+    // turnState flips to "busy" the moment a message is dispatched, before CC
+    // emits any transcript line. An interrupt landing in that window must not
+    // synthesize a result or flush msg2 — the busy watchdog owns the "sent but
+    // never became a turn" recovery. notifyTurnStarted() is deliberately never
+    // called here, so turnObservedStarted stays false.
+    const emitted: Array<{ type: string; payload: unknown }> = [];
+    const { runtime: base, sent, finish } = makeControllableRuntime();
+    const runtime: AgentRuntime = {
+      ...base,
+      async interrupt(_handle: SessionHandle): Promise<void> {},
+    };
+    const session = makeSession({
+      callbacks: {
+        onEmit: (_s, evt) => emitted.push({ type: evt.type, payload: evt.payload }),
+      },
+    });
+    const handle = await runtime.spawn({ workingDirectory: "/tmp" });
+    await session.attachRuntime(runtime, handle);
+
+    await session.writeInput("msg1");
+    await new Promise((r) => setTimeout(r, 0));
+    await session.writeInput("msg2");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent).toEqual(["msg1"]);
+
+    expect(await session.interrupt()).toEqual({ ok: true });
+    await new Promise((r) => setTimeout(r, 0));
+
+    // No synthetic result, and msg2 stays queued — the watchdog, not interrupt,
+    // is responsible for recovering a turn that never started.
+    expect(emitted.find((e) => e.type === "result")).toBeUndefined();
+    expect(sent).toEqual(["msg1"]);
 
     finish();
     await session.waitForEnd();

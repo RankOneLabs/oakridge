@@ -268,6 +268,15 @@ export class Session {
   // time; the next waits for the Stop hook to call notifyTurnEnd(). Internal
   // writes (compaction, handoff) bypass both fields entirely.
   private turnState: "idle" | "busy" = "idle";
+  // turnState flips to "busy" synchronously in pumpInputQueue, before send()
+  // resolves and before any transcript event proves CC began the turn. This
+  // flag is the stronger signal: it's set only once notifyTurnStarted() fires
+  // (a real transcript line appeared) and cleared at every turn boundary. The
+  // interrupt-recovery path gates on it so an interrupt landing in the pre-turn
+  // window can't synthesize a `result` / flush the queue for a turn that hasn't
+  // actually started — the busy watchdog already owns that "sent but never a
+  // turn" case.
+  private turnObservedStarted = false;
   private pendingInput: string[] = [];
   // Watchdog that recovers the queue if a dispatched message never becomes a
   // turn (e.g. swallowed by a CC startup modal) and so never yields a Stop
@@ -1122,6 +1131,7 @@ export class Session {
     // single-threaded, so this block is atomic with respect to other callers.
     const msg = this.pendingInput.shift() as string; // length > 0 checked above
     this.turnState = "busy";
+    this.turnObservedStarted = false;
     this.lastDispatched = msg;
     if (this.nextDispatchIsRetry) {
       // This dispatch is the one-shot re-delivery of a previously lost
@@ -1174,6 +1184,7 @@ export class Session {
   notifyTurnEnd(): void {
     this.clearBusyWatchdog();
     this.turnState = "idle";
+    this.turnObservedStarted = false;
     this.pumpInputQueue();
   }
 
@@ -1185,6 +1196,7 @@ export class Session {
    */
   notifyTurnStarted(): void {
     this.clearBusyWatchdog();
+    this.turnObservedStarted = true;
   }
 
   /**
@@ -1461,20 +1473,21 @@ export class Session {
       // the `result` the UI waits on and drive the turn back to idle so the next
       // queued message flushes. Gated on the turn-queue path: immediate-send
       // runtimes (Codex) surface their own `turn/interrupted` → markIdle and
-      // would double-count here. Only meaningful mid-turn (turnState "busy").
+      // would double-count here. Gated on turnObservedStarted, not bare
+      // turnState "busy": pumpInputQueue flips to "busy" before the turn really
+      // begins, so an interrupt in that pre-turn window must NOT flush the queue
+      // (the busy watchdog owns that case). `usage` is null, not zeros: this
+      // synthetic result is not a real turn boundary, and a zero-usage result
+      // would clobber the last meaningful lastResultUsage on archived replay
+      // (session-manager's `case "result"` treats any numeric usage as current).
       if (
         this._runtime.sendsWithoutTurnQueue !== true &&
-        this.turnState === "busy"
+        this.turnObservedStarted
       ) {
         await this.emit("result", {
           type: "result",
           stop_reason: "interrupted",
-          usage: {
-            input_tokens: 0,
-            output_tokens: 0,
-            cache_creation_input_tokens: 0,
-            cache_read_input_tokens: 0,
-          },
+          usage: null,
         });
         this.notifyTurnEnd();
       }
