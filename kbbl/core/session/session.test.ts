@@ -452,6 +452,53 @@ describe("Session input queue (CC PTY mode)", () => {
     await session.waitForEnd();
   });
 
+  test("interrupt mid-turn clears the queue and emits a result (CC has no Stop hook on interrupt)", async () => {
+    // Regression: an ESC interrupt fires neither an `end_turn` assistant message
+    // nor CC's Stop hook, so without interrupt() driving the turn back to idle,
+    // turnState stays "busy" forever — every later message is stranded in the
+    // queue (the channel outbox stops being written) and the PWA spinner, which
+    // waits on a `result` event, never clears.
+    const emitted: Array<{ type: string; payload: unknown }> = [];
+    const { runtime: base, sent, finish } = makeControllableRuntime();
+    const runtime: AgentRuntime = {
+      ...base,
+      async interrupt(_handle: SessionHandle): Promise<void> {
+        // CC writes a raw ESC; the side effect on turn/queue state is the
+        // session's responsibility, which is exactly what's under test.
+      },
+    };
+    const session = makeSession({
+      callbacks: {
+        onEmit: (_s, evt) => emitted.push({ type: evt.type, payload: evt.payload }),
+      },
+    });
+    const handle = await runtime.spawn({ workingDirectory: "/tmp" });
+    await session.attachRuntime(runtime, handle);
+
+    // First write goes out and puts the turn in flight; second is queued behind it.
+    await session.writeInput("msg1");
+    await new Promise((r) => setTimeout(r, 0));
+    await session.writeInput("msg2");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent).toEqual(["msg1"]); // msg2 held behind the busy turn
+
+    // Interrupt: no Stop hook will follow, so interrupt() must itself recover the
+    // queue and emit the result the UI waits on.
+    expect(await session.interrupt()).toEqual({ ok: true });
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Queue un-wedged: the stranded message is delivered.
+    expect(sent).toEqual(["msg1", "msg2"]);
+    // Spinner-clearing result emitted, tagged as an interrupt (not end_turn, so
+    // it never triggers compaction).
+    const result = emitted.find((e) => e.type === "result");
+    expect(result).toBeDefined();
+    expect((result!.payload as { stop_reason: string }).stop_reason).toBe("interrupted");
+
+    finish();
+    await session.waitForEnd();
+  });
+
   test("order preserved across three queued messages", async () => {
     const { runtime, sent, finish } = makeControllableRuntime();
     const session = makeSession();

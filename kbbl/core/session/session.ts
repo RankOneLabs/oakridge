@@ -1451,6 +1451,33 @@ export class Session {
     }
     try {
       await this._runtime.interrupt(this._handle);
+      // A turn ended by interrupt produces NEITHER an `end_turn` assistant
+      // message (CC records a `[Request interrupted by user]` user row instead)
+      // NOR a Stop hook. On the turn-queue path (CC) that leaves two things
+      // stranded: the PWA thinking indicator waits on a `result` event that
+      // never comes, and turnState stays "busy" forever because only the Stop
+      // hook calls notifyTurnEnd — so every later operator message is queued in
+      // pendingInput and never written to the channel, wedging the session. Emit
+      // the `result` the UI waits on and drive the turn back to idle so the next
+      // queued message flushes. Gated on the turn-queue path: immediate-send
+      // runtimes (Codex) surface their own `turn/interrupted` → markIdle and
+      // would double-count here. Only meaningful mid-turn (turnState "busy").
+      if (
+        this._runtime.sendsWithoutTurnQueue !== true &&
+        this.turnState === "busy"
+      ) {
+        await this.emit("result", {
+          type: "result",
+          stop_reason: "interrupted",
+          usage: {
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+          },
+        });
+        this.notifyTurnEnd();
+      }
       return { ok: true };
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
