@@ -18,6 +18,16 @@ let repoPath: string;
 
 const PROJECT_ID = "proj-1";
 
+const MODELS_BY_RUNTIME: Record<RuntimeId, string[]> = {
+  "claude-code": ["claude-opus-4-8", "claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001", "opus", "sonnet", "haiku"],
+  codex: ["gpt-5.5", "gpt-5.4-mini"],
+};
+
+const CREATE_SPEC_SELECTIONS = {
+  planner_model_selection: { runtime: "claude-code" as const, model: "claude-opus-4-8" },
+  worker_model_selection: { runtime: "claude-code" as const, model: "claude-sonnet-4-6" },
+};
+
 function makeRegistry(runtimeIds: RuntimeId[]): RuntimeRegistry {
   return {
     defaultId: runtimeIds[0] ?? "claude-code",
@@ -26,11 +36,21 @@ function makeRegistry(runtimeIds: RuntimeId[]): RuntimeRegistry {
         id,
         {
           id,
-          descriptor: { id, label: id, models: [], supportsCompaction: id === "claude-code" },
+          descriptor: {
+            id,
+            label: id,
+            models: MODELS_BY_RUNTIME[id].map((value) => ({ value, label: value })),
+            supportsCompaction: id === "claude-code",
+          },
+          isAllowedModel: (model: string) => MODELS_BY_RUNTIME[id].includes(model),
         } as unknown as AgentRuntime,
       ]),
     ),
   };
+}
+
+function createSpecPayload(body: Record<string, unknown>): Record<string, unknown> {
+  return { ...CREATE_SPEC_SELECTIONS, ...body };
 }
 
 beforeEach(() => {
@@ -75,6 +95,7 @@ describe("specs query helpers", () => {
   test("listSpecsByProject includes specs with non-archived epics", () => {
     insertSpec(db, { id: "sa", project_id: PROJECT_ID, title: "A" });
     insertEpic(db, {
+      ...CREATE_SPEC_SELECTIONS,
       id: "ea",
       spec_id: "sa",
       project_id: PROJECT_ID,
@@ -92,6 +113,7 @@ describe("specs query helpers", () => {
   test("listSpecsByProject omits specs whose epic is archived", () => {
     insertSpec(db, { id: "sa", project_id: PROJECT_ID, title: "A" });
     insertEpic(db, {
+      ...CREATE_SPEC_SELECTIONS,
       id: "ea",
       spec_id: "sa",
       project_id: PROJECT_ID,
@@ -116,6 +138,7 @@ describe("specs query helpers", () => {
     insertProject(db, { id: "proj-2", name: "P2", repo_path: "/p2" });
     insertSpec(db, { id: "sa", project_id: PROJECT_ID, title: "A" });
     insertEpic(db, {
+      ...CREATE_SPEC_SELECTIONS,
       id: "ea",
       spec_id: "sa",
       project_id: PROJECT_ID,
@@ -125,6 +148,7 @@ describe("specs query helpers", () => {
     });
     insertSpec(db, { id: "sb", project_id: "proj-2", title: "B" });
     insertEpic(db, {
+      ...CREATE_SPEC_SELECTIONS,
       id: "eb",
       spec_id: "sb",
       project_id: "proj-2",
@@ -187,7 +211,9 @@ describe("POST /specs", () => {
     const res = await app.request("/specs", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ project_id: PROJECT_ID, title: "New spec" }),
+      body: JSON.stringify(
+        createSpecPayload({ project_id: PROJECT_ID, title: "New spec" }),
+      ),
     });
     expect(res.status).toBe(201);
     const body = (await res.json()) as { id: string; internal_status: string };
@@ -205,7 +231,9 @@ describe("POST /specs", () => {
       const res = await app.request("/specs", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ project_id: PROJECT_ID, title: "Emit test" }),
+        body: JSON.stringify(
+          createSpecPayload({ project_id: PROJECT_ID, title: "Emit test" }),
+        ),
       });
       const body = (await res.json()) as { id: string };
       expect(emittedId).not.toBeNull();
@@ -215,46 +243,271 @@ describe("POST /specs", () => {
     }
   });
 
-  test("stores selected agent runtime on the created epic", async () => {
+  test("stores split selections on the created epic", async () => {
+    const res = await app.request("/specs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(
+        createSpecPayload({
+          project_id: PROJECT_ID,
+          title: "Split flow",
+          planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
+          worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini" },
+        }),
+      ),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { id: string };
+    const epic = getEpicBySpec(db, body.id);
+    expect(epic?.planner_model_selection).toEqual({
+      runtime: "claude-code",
+      model: "claude-opus-4-8",
+    });
+    expect(epic?.worker_model_selection).toEqual({
+      runtime: "codex",
+      model: "gpt-5.4-mini",
+    });
+  });
+
+  test("accepts explicit planner and worker model selections", async () => {
+    const res = await app.request("/specs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(
+        createSpecPayload({
+          project_id: PROJECT_ID,
+          title: "Split flow",
+          planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
+          worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini" },
+        }),
+      ),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { id: string };
+    const epic = getEpicBySpec(db, body.id);
+    expect(epic?.planner_model_selection).toEqual({
+      runtime: "claude-code",
+      model: "claude-opus-4-8",
+    });
+    expect(epic?.worker_model_selection).toEqual({
+      runtime: "codex",
+      model: "gpt-5.4-mini",
+    });
+  });
+
+  test("rejects a model that the selected runtime does not allow", async () => {
+    const res = await app.request("/specs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(
+        createSpecPayload({
+          project_id: PROJECT_ID,
+          title: "Bad split",
+          planner_model_selection: { runtime: "codex", model: "not-a-model" },
+          worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini" },
+        }),
+      ),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("not allowed");
+  });
+
+  test("uses descriptor models when runtime has no validator", async () => {
+    const registry = makeRegistry(["claude-code"]);
+    const runtime = registry.runtimes.get("claude-code");
+    if (!runtime) throw new Error("missing runtime");
+    delete (runtime as { isAllowedModel?: unknown }).isAllowedModel;
+
+    const descriptorOnlyApp = new Hono();
+    mountSpecsRoutes(descriptorOnlyApp, { db, registry });
+
+    const ok = await descriptorOnlyApp.request("/specs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(
+        createSpecPayload({
+          project_id: PROJECT_ID,
+          title: "Descriptor ok",
+          planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
+          worker_model_selection: { runtime: "claude-code", model: "claude-sonnet-4-6" },
+        }),
+      ),
+    });
+    expect(ok.status).toBe(201);
+
+    const bad = await descriptorOnlyApp.request("/specs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(
+        createSpecPayload({
+          project_id: PROJECT_ID,
+          title: "Descriptor bad",
+          planner_model_selection: { runtime: "claude-code", model: "not-listed" },
+          worker_model_selection: { runtime: "claude-code", model: "claude-sonnet-4-6" },
+        }),
+      ),
+    });
+    expect(bad.status).toBe(400);
+    const body = (await bad.json()) as { error: string };
+    expect(body.error).toContain("not allowed");
+  });
+
+  test("accepts free-form models when runtime has no validator and no model list", async () => {
+    const runtime = {
+      id: "claude-code" as const,
+      descriptor: {
+        id: "claude-code" as const,
+        label: "Claude Code",
+        models: [],
+        supportsCompaction: true,
+      },
+    } as unknown as AgentRuntime;
+
+    const registry: RuntimeRegistry = {
+      defaultId: "claude-code",
+      runtimes: new Map([["claude-code", runtime]]),
+    };
+
+    const freeFormApp = new Hono();
+    mountSpecsRoutes(freeFormApp, { db, registry });
+
+    const res = await freeFormApp.request("/specs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(
+        createSpecPayload({
+          project_id: PROJECT_ID,
+          title: "Free-form descriptor",
+          planner_model_selection: { runtime: "claude-code", model: "manual-planner-model" },
+          worker_model_selection: { runtime: "claude-code", model: "manual-worker-model" },
+        }),
+      ),
+    });
+
+    expect(res.status).toBe(201);
+  });
+
+  test("respects runtime isAllowedModel even when descriptor models are empty", async () => {
+    const runtime = {
+      id: "claude-code" as const,
+      descriptor: {
+        id: "claude-code" as const,
+        label: "Claude Code",
+        models: [],
+        supportsCompaction: true,
+      },
+      isAllowedModel: (model: string) => model === "adapter-model",
+    } as unknown as AgentRuntime;
+
+    const registry: RuntimeRegistry = {
+      defaultId: "claude-code",
+      runtimes: new Map([["claude-code", runtime]]),
+    };
+
+    const adapterApp = new Hono();
+    mountSpecsRoutes(adapterApp, { db, registry });
+
+    const ok = await adapterApp.request("/specs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(
+        createSpecPayload({
+          project_id: PROJECT_ID,
+          title: "Adapter ok",
+          planner_model_selection: { runtime: "claude-code", model: "adapter-model" },
+          worker_model_selection: { runtime: "claude-code", model: "adapter-model" },
+        }),
+      ),
+    });
+    expect(ok.status).toBe(201);
+
+    const bad = await adapterApp.request("/specs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(
+        createSpecPayload({
+          project_id: PROJECT_ID,
+          title: "Adapter bad",
+          planner_model_selection: { runtime: "claude-code", model: "blocked-model" },
+          worker_model_selection: { runtime: "claude-code", model: "adapter-model" },
+        }),
+      ),
+    });
+    expect(bad.status).toBe(400);
+    const body = (await bad.json()) as { error: string };
+    expect(body.error).toContain("not allowed");
+  });
+
+  test("rejects missing split selections", async () => {
     const res = await app.request("/specs", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         project_id: PROJECT_ID,
-        title: "Codex flow",
-        agent_runtime: "codex",
+        title: "Default split",
       }),
     });
-    expect(res.status).toBe(201);
-    const body = (await res.json()) as { id: string };
-    expect(getEpicBySpec(db, body.id)?.agent_runtime).toBe("codex");
+    expect(res.status).toBe(400);
   });
 
-  test("rejects unregistered agent runtime before inserting the spec", async () => {
-    const claudeOnlyApp = new Hono();
-    mountSpecsRoutes(claudeOnlyApp, { db, registry: makeRegistry(["claude-code"]) });
+  test("accepts claude-code split selections when no runtime registry is mounted", async () => {
+    const noRegistryApp = new Hono();
+    mountSpecsRoutes(noRegistryApp, { db });
 
-    const res = await claudeOnlyApp.request("/specs", {
+    const res = await noRegistryApp.request("/specs", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        project_id: PROJECT_ID,
-        title: "Codex flow",
-        agent_runtime: "codex",
-      }),
+      body: JSON.stringify(
+        createSpecPayload({
+          project_id: PROJECT_ID,
+          title: "Split flow",
+          planner_model_selection: { runtime: "claude-code", model: "custom-planner-model" },
+          worker_model_selection: { runtime: "claude-code", model: "custom-worker-model" },
+        }),
+      ),
+    });
+
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { id: string };
+    const epic = getEpicBySpec(db, body.id);
+    expect(epic?.planner_model_selection).toEqual({
+      runtime: "claude-code",
+      model: "custom-planner-model",
+    });
+    expect(epic?.worker_model_selection).toEqual({
+      runtime: "claude-code",
+      model: "custom-worker-model",
+    });
+  });
+
+  test("rejects codex split selections when no runtime registry is mounted", async () => {
+    const noRegistryApp = new Hono();
+    mountSpecsRoutes(noRegistryApp, { db });
+
+    const res = await noRegistryApp.request("/specs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(
+        createSpecPayload({
+          project_id: PROJECT_ID,
+          title: "Split flow",
+          planner_model_selection: { runtime: "claude-code", model: "custom-planner-model" },
+          worker_model_selection: { runtime: "codex", model: "custom-worker-model" },
+        }),
+      ),
     });
 
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
-    expect(body.error).toContain('runtime "codex" is not registered');
-    expect(listSpecsByProject(db, PROJECT_ID)).toHaveLength(0);
+    expect(body.error).toBe('worker runtime "codex" is not registered — registered: claude-code');
   });
 
   test("returns 400 for missing title", async () => {
     const res = await app.request("/specs", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ project_id: PROJECT_ID }),
+      body: JSON.stringify(createSpecPayload({ project_id: PROJECT_ID })),
     });
     expect(res.status).toBe(400);
   });
@@ -263,7 +516,9 @@ describe("POST /specs", () => {
     const res = await app.request("/specs", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ project_id: "no-project", title: "T" }),
+      body: JSON.stringify(
+        createSpecPayload({ project_id: "no-project", title: "T" }),
+      ),
     });
     expect(res.status).toBe(404);
   });
@@ -283,7 +538,9 @@ describe("POST /specs", () => {
     const res = await app.request("/specs", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ project_id: PROJECT_ID, title: "From path", notesPath: path }),
+      body: JSON.stringify(
+        createSpecPayload({ project_id: PROJECT_ID, title: "From path", notesPath: path }),
+      ),
     });
     expect(res.status).toBe(201);
     const body = (await res.json()) as { id: string; notes: string | null };
@@ -295,7 +552,13 @@ describe("POST /specs", () => {
     const res = await app.request("/specs", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ project_id: PROJECT_ID, title: "From relative", notesPath: "spec.md" }),
+      body: JSON.stringify(
+        createSpecPayload({
+          project_id: PROJECT_ID,
+          title: "From relative",
+          notesPath: "spec.md",
+        }),
+      ),
     });
     expect(res.status).toBe(201);
     const body = (await res.json()) as { notes: string | null };
@@ -307,7 +570,9 @@ describe("POST /specs", () => {
     const res = await app.request("/specs", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ project_id: PROJECT_ID, title: "Missing", notesPath: missing }),
+      body: JSON.stringify(
+        createSpecPayload({ project_id: PROJECT_ID, title: "Missing", notesPath: missing }),
+      ),
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
@@ -322,7 +587,9 @@ describe("POST /specs", () => {
       const res = await app.request("/specs", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ project_id: PROJECT_ID, title: "Outside", notesPath: path }),
+        body: JSON.stringify(
+          createSpecPayload({ project_id: PROJECT_ID, title: "Outside", notesPath: path }),
+        ),
       });
       expect(res.status).toBe(400);
       const body = (await res.json()) as { error: string };
@@ -342,7 +609,13 @@ describe("POST /specs", () => {
       const res = await app.request("/specs", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ project_id: PROJECT_ID, title: "Symlink escape", notesPath: link }),
+        body: JSON.stringify(
+          createSpecPayload({
+            project_id: PROJECT_ID,
+            title: "Symlink escape",
+            notesPath: link,
+          }),
+        ),
       });
       expect(res.status).toBe(400);
       const body = (await res.json()) as { error: string };
@@ -356,12 +629,14 @@ describe("POST /specs", () => {
     const res = await app.request("/specs", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        project_id: PROJECT_ID,
-        title: "Both",
-        notes: "inline",
-        notesPath: join(repoPath, "whatever.md"),
-      }),
+      body: JSON.stringify(
+        createSpecPayload({
+          project_id: PROJECT_ID,
+          title: "Both",
+          notes: "inline",
+          notesPath: join(repoPath, "whatever.md"),
+        }),
+      ),
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };

@@ -3,6 +3,12 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const MIGRATION_FILENAME = /^\d{3}_[a-z0-9_]+\.sql$/;
+const DISABLE_FOREIGN_KEYS_MARKER = "-- kbbl:disable_foreign_keys";
+
+function isForeignKeysEnabled(db: Database): boolean {
+  const row = db.query<{ foreign_keys: number }, []>("PRAGMA foreign_keys").get();
+  return row?.foreign_keys === 1;
+}
 
 export function applyMigrations(db: Database, migrationsDir: string): { applied: string[] } {
   db.exec(`
@@ -29,10 +35,17 @@ export function applyMigrations(db: Database, migrationsDir: string): { applied:
   for (const file of files) {
     if (seen.has(file)) continue;
     const sql = readFileSync(join(migrationsDir, file), "utf8");
-    db.transaction(() => {
-      db.exec(sql);
-      insertMigration.run(file, new Date().toISOString());
-    })();
+    const shouldDisableForeignKeys = sql.includes(DISABLE_FOREIGN_KEYS_MARKER);
+    const restoreForeignKeys = shouldDisableForeignKeys && isForeignKeysEnabled(db);
+    if (shouldDisableForeignKeys) db.exec("PRAGMA foreign_keys = OFF");
+    try {
+      db.transaction(() => {
+        db.exec(sql);
+        insertMigration.run(file, new Date().toISOString());
+      })();
+    } finally {
+      if (restoreForeignKeys) db.exec("PRAGMA foreign_keys = ON");
+    }
     applied.push(file);
   }
 

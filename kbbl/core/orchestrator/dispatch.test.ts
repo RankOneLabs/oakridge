@@ -34,7 +34,7 @@ import { mountAssessmentsRoutes } from "../server/handlers/assessments";
 import { mountSpecStatusRoutes } from "../server/handlers/spec-status";
 import { insertSpec } from "../db/specs";
 import { insertSpecDiscrepancy } from "../db/spec-discrepancies";
-import type { RuntimeId } from "../runtime";
+import type { RuntimeModelSelection } from "../runtime";
 
 // ---- minimal SessionManager stub for builds route ----
 
@@ -48,7 +48,7 @@ interface DispatchCall {
   stageName: string;
   inputType: string;
   inputId: string;
-  agentRuntime?: RuntimeId;
+  modelSelection: RuntimeModelSelection;
   renderedPrompt: string;
 }
 
@@ -66,7 +66,7 @@ function createMockBackend(): MockBackend {
         stageName: stage.name,
         inputType: inputRef.type,
         inputId: inputRef.id,
-        ...(inputRef.agentRuntime !== undefined ? { agentRuntime: inputRef.agentRuntime } : {}),
+        modelSelection: inputRef.modelSelection,
         renderedPrompt,
       });
       return { session_ref: `mock-${calls.length}` };
@@ -148,10 +148,18 @@ function setupPromptFixtures() {
 // ---- helpers ----
 
 function post(app: Hono, path: string, body: unknown) {
+  const payload =
+    path === "/specs"
+      ? {
+          planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
+          worker_model_selection: { runtime: "claude-code", model: "claude-sonnet-4-6" },
+          ...(body as Record<string, unknown>),
+        }
+      : body;
   return app.request(path, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify(payload),
   });
 }
 
@@ -236,7 +244,13 @@ describe("full dispatch pipeline with MockBackend", () => {
     expect(projRes.status).toBe(201);
     const proj = (await projRes.json()) as { id: string };
 
-    const specRes = await post(app, "/specs", { project_id: proj.id, title: "My spec", notes: "build X" });
+    const specRes = await post(app, "/specs", {
+      project_id: proj.id,
+      title: "My spec",
+      notes: "build X",
+      planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
+      worker_model_selection: { runtime: "claude-code", model: "claude-sonnet-4-6" },
+    });
     expect(specRes.status).toBe(201);
     const spec = (await specRes.json()) as { id: string };
 
@@ -245,6 +259,10 @@ describe("full dispatch pipeline with MockBackend", () => {
     expect(mockBackend.calls).toHaveLength(1);
     expect(mockBackend.calls[0]!.stageName).toBe("spec_analyzer");
     expect(mockBackend.calls[0]!.inputId).toBe(spec.id);
+    expect(mockBackend.calls[0]!.modelSelection).toEqual({
+      runtime: "claude-code",
+      model: "claude-opus-4-8",
+    });
     // current_session_ref written onto spec
     const specRow = db.prepare<{ current_session_ref: string | null }, [string]>("SELECT current_session_ref FROM specs WHERE id = ?").get(spec.id);
     expect(specRow!.current_session_ref).toBe("mock-1");
@@ -267,6 +285,10 @@ describe("full dispatch pipeline with MockBackend", () => {
     expect(mockBackend.calls).toHaveLength(2);
     expect(mockBackend.calls[1]!.stageName).toBe("brief_writer");
     expect(mockBackend.calls[1]!.inputId).toBe(plan.id);
+    expect(mockBackend.calls[1]!.modelSelection).toEqual({
+      runtime: "claude-code",
+      model: "claude-opus-4-8",
+    });
 
     // all waiting cohorts should have transitioned directly to briefing
     const cohortAfterPlanned = db.prepare<{ status: string }, [string]>("SELECT status FROM cohorts WHERE id = ?").get(cohort.id);
@@ -300,6 +322,10 @@ describe("full dispatch pipeline with MockBackend", () => {
     expect(mockBackend.calls).toHaveLength(3);
     expect(mockBackend.calls[2]!.stageName).toBe("build");
     expect(mockBackend.calls[2]!.inputId).toBe(brief.id);
+    expect(mockBackend.calls[2]!.modelSelection).toEqual({
+      runtime: "claude-code",
+      model: "claude-sonnet-4-6",
+    });
 
     // current_session_ref written onto cohort (build stores on cohort, not brief)
     const cohortRefAfterBuild = db.prepare<{ current_session_ref: string | null }, [string]>("SELECT current_session_ref FROM cohorts WHERE id = ?").get(cohort.id);
@@ -314,6 +340,55 @@ describe("full dispatch pipeline with MockBackend", () => {
     const debriefed = (await debriefRes.json()) as { debrief: string | null; pr_url: string | null };
     expect(debriefed.debrief).toBe("# Debrief\n\nAll done.");
     expect(debriefed.pr_url).toBe("https://github.com/org/repo/pull/99");
+  });
+
+  test("default epic selections route planner and worker to role defaults", async () => {
+    const projRes = await post(app, "/projects", { name: "default-selection-test", repo_path: testRepoPath });
+    const proj = (await projRes.json()) as { id: string };
+
+    const specRes = await post(app, "/specs", {
+      project_id: proj.id,
+      title: "Default Selection Spec",
+      planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
+      worker_model_selection: { runtime: "claude-code", model: "claude-sonnet-4-6" },
+    });
+    const spec = (await specRes.json()) as { id: string };
+    await flushAsync();
+
+    const planRes = await post(app, "/plans", { spec_id: spec.id });
+    const plan = (await planRes.json()) as { id: string };
+    const cohortRes = await post(app, "/cohorts", { plan_id: plan.id, title: "Default Cohort", position: 1 });
+    const cohort = (await cohortRes.json()) as { id: string };
+
+    expect((await post(app, `/plans/${plan.id}/submit`, {})).status).toBe(200);
+    expect((await patch(app, `/plans/${plan.id}/status`, { status: "approved" })).status).toBe(200);
+    await flushAsync();
+
+    expect(mockBackend.calls).toHaveLength(2);
+    expect(mockBackend.calls[1]!.stageName).toBe("brief_writer");
+    expect(mockBackend.calls[1]!.modelSelection).toEqual({
+      runtime: "claude-code",
+      model: "claude-opus-4-8",
+    });
+
+    const briefRes = await post(app, "/briefs", {
+      cohort_id: cohort.id,
+      goal: "ship it",
+      files_in_scope: ["src/index.ts"],
+      decisions_made: [{ decision: "use TS", rationale: "types" }],
+      approaches_rejected: [],
+      next_action: "start coding",
+    });
+    const brief = (await briefRes.json()) as { id: string };
+
+    expect((await patch(app, `/briefs/${brief.id}/status`, { status: "approved" })).status).toBe(200);
+    await waitFor(() => mockBackend.calls.length >= 3);
+
+    expect(mockBackend.calls[2]!.stageName).toBe("build");
+    expect(mockBackend.calls[2]!.modelSelection).toEqual({
+      runtime: "claude-code",
+      model: "claude-sonnet-4-6",
+    });
   });
 
   test("dispatcher.dispatch('brief_writer', plan_id) — toposorted prompt, plan persistence", async () => {
@@ -644,14 +719,14 @@ describe("full dispatch pipeline with MockBackend", () => {
     expect(call?.renderedPrompt).toContain("(none — spec analyzed clean or pre-resolutions spec)");
   });
 
-  test("legacy spec without epic leaves agent runtime unset for config overrides", async () => {
-    const projRes = await post(app, "/projects", { name: "legacy-spec", repo_path: testRepoPath });
+  test("spec without epic cannot dispatch agent-dev stages", async () => {
+    const projRes = await post(app, "/projects", { name: "no-epic-spec", repo_path: testRepoPath });
     const proj = (await projRes.json()) as { id: string };
     const spec = insertSpec(db, {
-      id: "legacy-spec-no-epic",
+      id: "spec-no-epic",
       project_id: proj.id,
-      title: "Legacy spec",
-      notes: "created before epics carried runtime",
+      title: "No epic spec",
+      notes: "created without epic",
     });
 
     const dispatcher = createDispatcher({
@@ -659,11 +734,9 @@ describe("full dispatch pipeline with MockBackend", () => {
       backends: { kbbl_chat: mockBackend },
       kbblUrl: "http://localhost:8788",
     });
-    await dispatcher.dispatch("plan_writer", spec.id);
-
-    const call = mockBackend.calls[mockBackend.calls.length - 1];
-    expect(call?.stageName).toBe("plan_writer");
-    expect(call?.agentRuntime).toBeUndefined();
+    await expect(dispatcher.dispatch("plan_writer", spec.id)).rejects.toThrow(
+      `spec ${spec.id}: no epic found`,
+    );
   });
 
   test("plan_writer prompt renders resolved discrepancies as numbered sections", async () => {

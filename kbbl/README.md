@@ -10,6 +10,8 @@ A single Bun + Hono server hosts many sessions. Each session is a runtime-spawne
 
 The PWA opens to a session list backed by a `/inbox` delta stream (snapshot + create/end/status/pending/activity events). New sessions are created from the list view, not by launching another server. Ended sessions linger on disk and can be resumed from their row in the list — the resumed session is a new fork that inherits the parent's context.
 
+Specs create Epics with split model selections. Planner stages (`spec_analyzer`, `plan_writer`, `brief_writer`, `assessor`) use `planner_model_selection`; `build` uses `worker_model_selection`. The spec modal reads `/config` runtime descriptors so each role can pick its own runtime/model pair.
+
 ### Compaction
 
 Each session tracks token usage from runtime events. Two thresholds (`compact.soft_threshold_tokens`, `compact.hard_threshold_tokens` in `config.json`) drive different behaviors:
@@ -44,6 +46,10 @@ Set `runtime.codex.enabled = true` in `kbbl/config.json` and restart the server:
 `default` stays `claude-code`. Direct sessions can be launched from the PWA, and
 trusted local callers can choose a runtime with `POST /sessions` by passing
 `runtime: "claude-code"` or `runtime: "codex"`.
+
+When creating a spec, choose planner and worker model selections independently.
+The server validates each selection against the selected runtime descriptor and
+stores only the explicit split selections on each Epic.
 
 ### Not in v0
 

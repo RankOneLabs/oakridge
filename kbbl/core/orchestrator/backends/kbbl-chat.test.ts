@@ -64,43 +64,49 @@ const inputRef: InputRef = {
   id: "spec-1",
   workdir: "/tmp/repo",
   sessionName: "test-session",
+  modelSelection: { runtime: "claude-code", model: "claude-opus-4-8" },
 };
 
-describe("KbblChatBackend dispatch routes each stage to its intended model", () => {
-  test("spec_analyzer → opus", async () => {
+const CLAUDE_PLANNER_SELECTION = { runtime: "claude-code", model: "claude-opus-4-8" } as const;
+const CLAUDE_WORKER_SELECTION = { runtime: "claude-code", model: "claude-sonnet-4-6" } as const;
+const CODEX_PLANNER_SELECTION = { runtime: "codex", model: "gpt-5.5" } as const;
+const CODEX_WORKER_SELECTION = { runtime: "codex", model: "gpt-5.4-mini" } as const;
+
+describe("KbblChatBackend dispatch routes explicit model selections", () => {
+  test("spec_analyzer → planner selection", async () => {
     const { manager, calls } = makeFakeManager();
     const backend = createKbblChatBackend({ manager });
-    await backend.dispatch(stage("spec_analyzer"), inputRef, "prompt");
+    await backend.dispatch(stage("spec_analyzer"), { ...inputRef, modelSelection: CLAUDE_PLANNER_SELECTION }, "prompt");
     expect(calls[0]?.model).toBe("claude-opus-4-8");
     expect(calls[0]?.runtime).toBe("claude-code");
   });
 
-  test("plan_writer → opus", async () => {
+  test("plan_writer → planner selection", async () => {
     const { manager, calls } = makeFakeManager();
     const backend = createKbblChatBackend({ manager });
-    await backend.dispatch(stage("plan_writer"), inputRef, "prompt");
+    await backend.dispatch(stage("plan_writer"), { ...inputRef, modelSelection: CLAUDE_PLANNER_SELECTION }, "prompt");
     expect(calls[0]?.model).toBe("claude-opus-4-8");
   });
 
-  test("brief_writer → opus", async () => {
+  test("brief_writer → planner selection", async () => {
     const { manager, calls } = makeFakeManager();
     const backend = createKbblChatBackend({ manager });
-    await backend.dispatch(stage("brief_writer"), inputRef, "prompt");
+    await backend.dispatch(stage("brief_writer"), { ...inputRef, modelSelection: CLAUDE_PLANNER_SELECTION }, "prompt");
     expect(calls[0]?.model).toBe("claude-opus-4-8");
   });
 
-  test("assessor → opus", async () => {
+  test("assessor → planner selection", async () => {
     const { manager, calls } = makeFakeManager();
     const backend = createKbblChatBackend({ manager });
-    await backend.dispatch(stage("assessor"), inputRef, "prompt");
+    await backend.dispatch(stage("assessor"), { ...inputRef, modelSelection: CLAUDE_PLANNER_SELECTION }, "prompt");
     expect(calls[0]?.model).toBe("claude-opus-4-8");
     expect(calls[0]?.runtime).toBe("claude-code");
   });
 
-  test("build → sonnet (the rule that got bypassed)", async () => {
+  test("build → worker selection", async () => {
     const { manager, calls } = makeFakeManager();
     const backend = createKbblChatBackend({ manager });
-    await backend.dispatch(stage("build"), inputRef, "prompt");
+    await backend.dispatch(stage("build"), { ...inputRef, modelSelection: CLAUDE_WORKER_SELECTION }, "prompt");
     expect(calls[0]?.model).toBe("claude-sonnet-4-6");
   });
 
@@ -109,7 +115,7 @@ describe("KbblChatBackend dispatch routes each stage to its intended model", () 
     const backend = createKbblChatBackend({ manager });
     await backend.dispatch(
       stage("plan_writer"),
-      { ...inputRef, agentRuntime: "codex" },
+      { ...inputRef, modelSelection: CODEX_PLANNER_SELECTION },
       "prompt",
     );
     expect(calls[0]?.model).toBe("gpt-5.5");
@@ -121,64 +127,19 @@ describe("KbblChatBackend dispatch routes each stage to its intended model", () 
     const backend = createKbblChatBackend({ manager });
     await backend.dispatch(
       stage("build"),
-      { ...inputRef, agentRuntime: "codex" },
+      { ...inputRef, modelSelection: CODEX_WORKER_SELECTION },
       "prompt",
     );
     expect(calls[0]?.model).toBe("gpt-5.4-mini");
     expect(calls[0]?.runtime).toBe("codex");
   });
 
-  test("unknown stage without override → throws with actionable message", async () => {
+  test("unknown stage still routes when dispatcher passes explicit modelSelection", async () => {
     const { manager, calls } = makeFakeManager();
     const backend = createKbblChatBackend({ manager });
-    await expect(backend.dispatch(stage("future-stage"), inputRef, "prompt")).rejects.toThrow(
-      'No routing entry for stage "future-stage"'
-    );
-    expect(calls).toHaveLength(0);
-  });
-});
-
-describe("KbblChatBackend dispatch config.runtime.stages overrides", () => {
-  test("stage override takes precedence over STAGE_ROUTING", async () => {
-    const { manager, calls } = makeFakeManager();
-    const config = KbblConfigSchema.parse({
-      runtime: { stages: { build: { runtime: "codex", model: "codex-model-x" } } },
-    });
-    const backend = createKbblChatBackend({ manager, config });
-    await backend.dispatch(stage("build"), inputRef, "prompt");
-    expect(calls[0]?.model).toBe("codex-model-x");
+    await backend.dispatch(stage("future-stage"), { ...inputRef, modelSelection: CODEX_PLANNER_SELECTION }, "prompt");
+    expect(calls[0]?.model).toBe("gpt-5.5");
     expect(calls[0]?.runtime).toBe("codex");
-  });
-
-  test("epic runtime selection takes precedence over stage override", async () => {
-    const { manager, calls } = makeFakeManager();
-    const config = KbblConfigSchema.parse({
-      runtime: { stages: { build: { runtime: "claude-code", model: "override-model" } } },
-    });
-    const backend = createKbblChatBackend({ manager, config });
-    await backend.dispatch(stage("build"), { ...inputRef, agentRuntime: "codex" }, "prompt");
-    expect(calls[0]?.model).toBe("gpt-5.4-mini");
-    expect(calls[0]?.runtime).toBe("codex");
-  });
-
-  test("override applies to an otherwise-unrouted stage", async () => {
-    const { manager, calls } = makeFakeManager();
-    const config = KbblConfigSchema.parse({
-      runtime: { stages: { "future-stage": { runtime: "claude-code", model: "some-model" } } },
-    });
-    const backend = createKbblChatBackend({ manager, config });
-    await backend.dispatch(stage("future-stage"), inputRef, "prompt");
-    expect(calls[0]?.model).toBe("some-model");
-    expect(calls[0]?.runtime).toBe("claude-code");
-  });
-
-  test("absent stages block leaves STAGE_ROUTING defaults intact", async () => {
-    const { manager, calls } = makeFakeManager();
-    const config = KbblConfigSchema.parse({});
-    const backend = createKbblChatBackend({ manager, config });
-    await backend.dispatch(stage("build"), inputRef, "prompt");
-    expect(calls[0]?.model).toBe("claude-sonnet-4-6");
-    expect(calls[0]?.runtime).toBe("claude-code");
   });
 });
 
@@ -263,6 +224,7 @@ describe("KbblChatBackend worktreeIdentity integration", () => {
       workdir,
       sessionName: "test-session",
       worktreeIdentity: { epicSlug: EPIC_SLUG, cohortSlug: COHORT_SLUG, epicBranch: EPIC_BRANCH },
+      modelSelection: CLAUDE_WORKER_SELECTION,
     };
     const backend = createKbblChatBackend({ manager });
     const { session_ref } = await backend.dispatch(buildStage, ref, "prompt");
@@ -302,6 +264,7 @@ describe("KbblChatBackend worktreeIdentity integration", () => {
       workdir,
       sessionName: "test-session",
       worktreeIdentity: { epicSlug: EPIC_SLUG, cohortSlug: COHORT_SLUG, epicBranch: EPIC_BRANCH },
+      modelSelection: CLAUDE_WORKER_SELECTION,
     };
     const backend = createKbblChatBackend({ manager });
     const { session_ref } = await backend.dispatch(buildStage, ref, "prompt");

@@ -8,16 +8,21 @@ import { insertEpic, getEpicBySpec } from "../../db/epics";
 import { isFrozen } from "../../db/epic-freeze";
 import { getProject } from "../../db/projects";
 import { taskTrackerEvents } from "../../db/events";
-import type { RuntimeRegistry } from "../../runtime";
-import { AgentRuntimeChoiceSchema } from "../../types/task-tracker";
+import type { RuntimeId, RuntimeRegistry } from "../../runtime";
+import { isAllowedModelForRuntime, type RuntimeModelSelection } from "../../runtime";
 
+const ModelSelectionInputSchema = z.object({
+  runtime: z.string().min(1),
+  model: z.string().min(1),
+});
 const CreateSpecSchema = z
   .object({
     project_id: z.string().min(1),
     title: z.string().min(1),
     notes: z.string().optional(),
     notesPath: z.string().min(1).optional(),
-    agent_runtime: AgentRuntimeChoiceSchema.default("claude-code"),
+    planner_model_selection: ModelSelectionInputSchema,
+    worker_model_selection: ModelSelectionInputSchema,
   })
   .refine((v) => !(v.notes !== undefined && v.notesPath !== undefined), {
     message: "provide either notes or notesPath, not both",
@@ -34,12 +39,62 @@ interface SpecsRouteDeps {
   registry?: RuntimeRegistry;
 }
 
+type ModelSelectionValidationResult =
+  | { ok: true; value: RuntimeModelSelection }
+  | { ok: false; error: string };
+
+function isRuntimeRegistered(
+  registry: RuntimeRegistry | undefined,
+  runtimeId: RuntimeId,
+): boolean {
+  if (registry) return registry.runtimes.has(runtimeId);
+  return runtimeId === "claude-code";
+}
+
+function registeredRuntimeList(registry: RuntimeRegistry | undefined): string {
+  return registry ? [...registry.runtimes.keys()].join(", ") : "claude-code";
+}
+
+function validateModelSelection(
+  registry: RuntimeRegistry | undefined,
+  selection: { runtime: string; model: string },
+  role: "planner" | "worker",
+): ModelSelectionValidationResult {
+  const runtime = selection.runtime.trim();
+  if (runtime.length === 0) {
+    return { ok: false, error: `${role} runtime must not be empty` };
+  }
+  if (runtime !== "claude-code" && runtime !== "codex") {
+    return {
+      ok: false,
+      error: `${role} runtime "${runtime}" is not registered — registered: ${registeredRuntimeList(registry)}`,
+    };
+  }
+  if (!isRuntimeRegistered(registry, runtime)) {
+    return {
+      ok: false,
+      error: `${role} runtime "${runtime}" is not registered — registered: ${registeredRuntimeList(registry)}`,
+    };
+  }
+  const model = selection.model.trim();
+  if (model.length === 0) {
+    return {
+      ok: false,
+      error: `${role} model must not be empty for runtime "${runtime}"`,
+    };
+  }
+  const runtimeDescriptor = registry?.runtimes.get(runtime as RuntimeId);
+  if (!isAllowedModelForRuntime(runtimeDescriptor, model)) {
+    return {
+      ok: false,
+      error: `${role} model "${model}" is not allowed for runtime "${runtime}"`,
+    };
+  }
+  return { ok: true, value: { runtime, model } };
+}
+
 export function mountSpecsRoutes(app: Hono, deps: SpecsRouteDeps): void {
   const { db, registry } = deps;
-
-  function registeredRuntimeList(): string {
-    return registry ? [...registry.runtimes.keys()].join(", ") : "claude-code";
-  }
 
   app.get("/specs", (c) => {
     const project_id = c.req.query("project_id");
@@ -63,19 +118,18 @@ export function mountSpecsRoutes(app: Hono, deps: SpecsRouteDeps): void {
       return c.json({ error: msg }, 400);
     }
 
-    const { project_id, title, notes, notesPath, agent_runtime } = result.data;
-    if (registry && !registry.runtimes.has(agent_runtime)) {
-      return c.json(
-        { error: `runtime "${agent_runtime}" is not registered — registered: ${registeredRuntimeList()}` },
-        400,
-      );
-    }
-    if (!registry && agent_runtime !== "claude-code") {
-      return c.json(
-        { error: `runtime "${agent_runtime}" is not registered — registered: claude-code` },
-        400,
-      );
-    }
+    const {
+      project_id,
+      title,
+      notes,
+      notesPath,
+      planner_model_selection,
+      worker_model_selection,
+    } = result.data;
+    const plannerSelection = validateModelSelection(registry, planner_model_selection, "planner");
+    if (!plannerSelection.ok) return c.json({ error: plannerSelection.error }, 400);
+    const workerSelection = validateModelSelection(registry, worker_model_selection, "worker");
+    if (!workerSelection.ok) return c.json({ error: workerSelection.error }, 400);
 
     const id = crypto.randomUUID();
 
@@ -133,7 +187,8 @@ export function mountSpecsRoutes(app: Hono, deps: SpecsRouteDeps): void {
           title,
           status: "pending",
           current_stage: "spec",
-          agent_runtime,
+          planner_model_selection: plannerSelection.value,
+          worker_model_selection: workerSelection.value,
         });
         return { spec: s, epic: e };
       })();

@@ -1,8 +1,46 @@
 import { Database } from "bun:sqlite";
-import type { AgentRuntimeChoice, Epic, EpicStatus, EpicStage } from "../types/task-tracker";
+import type {
+  Epic,
+  EpicStatus,
+  EpicStage,
+  EpicModelSelection,
+} from "../types/task-tracker";
 import { applyEpicTransition, type EpicEvent } from "../orchestrator/epic-state-machine";
+import type { RuntimeId, RuntimeModelSelection } from "../runtime";
 
 export type { Epic };
+
+type EpicRow = {
+  id: string;
+  spec_id: string;
+  project_id: string;
+  title: string;
+  status: EpicStatus;
+  current_stage: EpicStage;
+  planner_runtime: RuntimeId;
+  planner_model: string;
+  worker_runtime: RuntimeId;
+  worker_model: string;
+  created_at: string;
+};
+
+function toModelSelection(runtime: RuntimeId, model: string): EpicModelSelection {
+  return { runtime, model };
+}
+
+function toEpic(row: EpicRow): Epic {
+  return {
+    id: row.id,
+    spec_id: row.spec_id,
+    project_id: row.project_id,
+    title: row.title,
+    status: row.status,
+    current_stage: row.current_stage,
+    planner_model_selection: toModelSelection(row.planner_runtime, row.planner_model),
+    worker_model_selection: toModelSelection(row.worker_runtime, row.worker_model),
+    created_at: row.created_at,
+  };
+}
 
 export function insertEpic(
   db: Database,
@@ -13,7 +51,8 @@ export function insertEpic(
     title,
     status,
     current_stage,
-    agent_runtime,
+    planner_model_selection,
+    worker_model_selection,
   }: {
     id: string;
     spec_id: string;
@@ -21,25 +60,49 @@ export function insertEpic(
     title: string;
     status: EpicStatus;
     current_stage: EpicStage;
-    agent_runtime?: AgentRuntimeChoice;
+    planner_model_selection: RuntimeModelSelection;
+    worker_model_selection: RuntimeModelSelection;
   },
 ): Epic {
-  return db
-    .prepare<Epic, [string, string, string, string, EpicStatus, EpicStage, AgentRuntimeChoice]>(
-      `INSERT INTO epics (id, spec_id, project_id, title, status, current_stage, agent_runtime)
-       VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+  const row = db
+    .prepare<EpicRow, [string, string, string, string, EpicStatus, EpicStage, RuntimeId, string, RuntimeId, string]>(
+      `INSERT INTO epics (
+         id,
+         spec_id,
+         project_id,
+         title,
+         status,
+         current_stage,
+         planner_runtime,
+         planner_model,
+         worker_runtime,
+         worker_model
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
     )
-    .get(id, spec_id, project_id, title, status, current_stage, agent_runtime ?? "claude-code")!;
+    .get(
+      id,
+      spec_id,
+      project_id,
+      title,
+      status,
+      current_stage,
+      planner_model_selection.runtime,
+      planner_model_selection.model,
+      worker_model_selection.runtime,
+      worker_model_selection.model,
+    )!;
+  return toEpic(row);
 }
 
 export function getEpic(db: Database, id: string): Epic | null {
-  return db.prepare<Epic, [string]>("SELECT * FROM epics WHERE id = ?").get(id) ?? null;
+  const row = db.prepare<EpicRow, [string]>("SELECT * FROM epics WHERE id = ?").get(id);
+  return row ? toEpic(row) : null;
 }
 
 export function getEpicBySpec(db: Database, spec_id: string): Epic | null {
-  return (
-    db.prepare<Epic, [string]>("SELECT * FROM epics WHERE spec_id = ?").get(spec_id) ?? null
-  );
+  const row = db.prepare<EpicRow, [string]>("SELECT * FROM epics WHERE spec_id = ?").get(spec_id);
+  return row ? toEpic(row) : null;
 }
 
 export function listEpicsByProject(
@@ -49,16 +112,18 @@ export function listEpicsByProject(
 ): Epic[] {
   if (status !== undefined) {
     return db
-      .prepare<Epic, [string, EpicStatus]>(
+      .prepare<EpicRow, [string, EpicStatus]>(
         "SELECT * FROM epics WHERE project_id = ? AND status = ? ORDER BY created_at, id",
       )
-      .all(project_id, status);
+      .all(project_id, status)
+      .map(toEpic);
   }
   return db
-    .prepare<Epic, [string]>(
+    .prepare<EpicRow, [string]>(
       "SELECT * FROM epics WHERE project_id = ? ORDER BY created_at, id",
     )
-    .all(project_id);
+    .all(project_id)
+    .map(toEpic);
 }
 
 const STAGE_EVENTS = new Set<string>([
@@ -127,5 +192,6 @@ export function updateEpicFields(
 
   params.push(id);
   const sql = `UPDATE epics SET ${sets.join(", ")} WHERE id = ? RETURNING *`;
-  return (db.prepare<Epic, string[]>(sql).get(...params) as Epic | undefined) ?? null;
+  const row = db.prepare<EpicRow, string[]>(sql).get(...params);
+  return row ? toEpic(row) : null;
 }

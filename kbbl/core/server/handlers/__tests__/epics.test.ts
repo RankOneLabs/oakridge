@@ -16,6 +16,10 @@ const PROJECT_ID = "proj-1";
 const SPEC_ID = "spec-1";
 const EPIC_ID = "epic-1";
 const PLAN_ID = "plan-1";
+const DEFAULT_SELECTIONS = {
+  planner_model_selection: { runtime: "claude-code" as const, model: "claude-opus-4-8" },
+  worker_model_selection: { runtime: "claude-code" as const, model: "claude-sonnet-4-6" },
+};
 
 let db: Database;
 let app: Hono;
@@ -41,6 +45,7 @@ beforeEach(() => {
   insertProject(db, { id: PROJECT_ID, name: "P", repo_path: "/p" });
   insertSpec(db, { id: SPEC_ID, project_id: PROJECT_ID, title: "S" });
   insertEpic(db, {
+    ...DEFAULT_SELECTIONS,
     id: EPIC_ID,
     spec_id: SPEC_ID,
     project_id: PROJECT_ID,
@@ -82,6 +87,7 @@ describe("GET /epics", () => {
   test("filters by status", async () => {
     insertSpec(db, { id: "spec-2", project_id: PROJECT_ID, title: "S2" });
     insertEpic(db, {
+      ...DEFAULT_SELECTIONS,
       id: "epic-2",
       spec_id: "spec-2",
       project_id: PROJECT_ID,
@@ -124,6 +130,14 @@ describe("GET /epics/:id", () => {
       assessment_present: boolean;
     };
     expect(body.epic.id).toBe(EPIC_ID);
+    expect(body.epic.planner_model_selection).toEqual({
+      runtime: "claude-code",
+      model: "claude-opus-4-8",
+    });
+    expect(body.epic.worker_model_selection).toEqual({
+      runtime: "claude-code",
+      model: "claude-sonnet-4-6",
+    });
     expect(body.spec).not.toBeNull();
     expect(body.plan).toBeNull();
     expect(body.cohorts).toHaveLength(0);

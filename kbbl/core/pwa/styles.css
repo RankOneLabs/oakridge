@@ -2782,6 +2782,40 @@ body {
   box-sizing: border-box;
 }
 
+.add-spec-modal__roles {
+  display: grid;
+  gap: 12px;
+}
+
+.add-spec-modal__role {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+}
+
+.add-spec-modal__role-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.add-spec-modal__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.add-spec-modal__field select,
+.add-spec-modal__field input {
+  width: 100%;
+}
+
 /* --- sweep-residual: loading + error chrome --- */
 
 .review-load-shell {
