@@ -4,6 +4,13 @@ import { join } from "node:path";
 
 const MIGRATION_FILENAME = /^\d{3}_[a-z0-9_]+\.sql$/;
 
+type ForeignKeyViolation = {
+  table: string;
+  rowid: number;
+  parent: string;
+  fkid: number;
+};
+
 export function applyMigrations(db: Database, migrationsDir: string): { applied: string[] } {
   db.exec(`
     CREATE TABLE IF NOT EXISTS _migrations (
@@ -31,6 +38,12 @@ export function applyMigrations(db: Database, migrationsDir: string): { applied:
     const sql = readFileSync(join(migrationsDir, file), "utf8");
     db.transaction(() => {
       db.exec(sql);
+      const foreignKeyViolations = db
+        .query<ForeignKeyViolation, []>("PRAGMA foreign_key_check")
+        .all();
+      if (foreignKeyViolations.length > 0) {
+        throw new Error(`Migration ${file} failed foreign key check`);
+      }
       insertMigration.run(file, new Date().toISOString());
     })();
     applied.push(file);

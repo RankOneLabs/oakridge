@@ -73,6 +73,27 @@ describe("applyMigrations", () => {
     expect(rows).toHaveLength(0);
   });
 
+  test("throws on foreign key violations and leaves migration unrecorded", () => {
+    writeFileSync(
+      join(migrationsDir, "001_bad_fk.sql"),
+      `
+        PRAGMA foreign_keys = OFF;
+        CREATE TABLE parent (id TEXT PRIMARY KEY);
+        CREATE TABLE child (
+          id TEXT PRIMARY KEY,
+          parent_id TEXT NOT NULL REFERENCES parent(id)
+        );
+        INSERT INTO child (id, parent_id) VALUES ('child-1', 'missing-parent');
+        PRAGMA foreign_keys = ON;
+      `,
+    );
+
+    expect(() => applyMigrations(db, migrationsDir)).toThrow(/foreign key check/);
+
+    const rows = db.query<{ name: string }, []>("SELECT name FROM _migrations").all();
+    expect(rows).toHaveLength(0);
+  });
+
   test("applies only new migrations when some are already recorded", () => {
     writeFileSync(
       join(migrationsDir, "001_first.sql"),
