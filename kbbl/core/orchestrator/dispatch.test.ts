@@ -50,6 +50,7 @@ interface DispatchCall {
   inputId: string;
   modelSelection: RuntimeModelSelection;
   renderedPrompt: string;
+  worktreeIdentity: InputRef["worktreeIdentity"];
 }
 
 interface MockBackend extends ExecutionBackend {
@@ -68,6 +69,7 @@ function createMockBackend(): MockBackend {
         inputId: inputRef.id,
         modelSelection: inputRef.modelSelection,
         renderedPrompt,
+        worktreeIdentity: inputRef.worktreeIdentity,
       });
       return { session_ref: `mock-${calls.length}` };
     },
@@ -139,7 +141,7 @@ function setupPromptFixtures() {
   );
   writeFileSync(
     join(promptsDir, "assessor.md"),
-    "assessor {{PLAN_ID}} {{PLAN_TITLE}} {{SPEC_NOTES}} {{COHORT_RESULTS}} {{KBBL_URL}}",
+    "assessor {{PLAN_ID}} {{PLAN_TITLE}} {{SPEC_NOTES}} {{COHORT_RESULTS}} {{KBBL_URL}} {{EPIC_BRANCH}}",
     "utf8",
   );
   process.env.KBBL_PROMPTS_DIR = promptsDir;
@@ -679,6 +681,17 @@ describe("full dispatch pipeline with MockBackend", () => {
     expect(assessorCall!.stageName).toBe("assessor");
     expect(assessorCall!.inputType).toBe("plan");
     expect(assessorCall!.inputId).toBe(plan.id);
+
+    // The assessor must review the epic branch, not main: it gets a worktree
+    // identity based on origin/<epicBranch> (spec "P3 Spec" → epic/p3_spec) and
+    // the EPIC_BRANCH slot is rendered into its prompt. A regression to
+    // "assessor reviews main" would drop the identity / leave the slot empty.
+    expect(assessorCall!.worktreeIdentity).toEqual({
+      epicSlug: "p3_spec",
+      cohortSlug: "0-assessor",
+      epicBranch: "epic/p3_spec",
+    });
+    expect(assessorCall!.renderedPrompt).toContain("epic/p3_spec");
 
     // plans.current_session_stage === 'assessor' and current_session_ref persisted
     const planRow = db

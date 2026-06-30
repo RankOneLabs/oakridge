@@ -23,6 +23,7 @@ import {
 } from "./hooks/useCellResources";
 import { useCellCleanup } from "./hooks/useCellCleanup";
 import { useCells } from "./hooks/useCells";
+import { useThrottledOrdering } from "./hooks/useThrottledOrdering";
 import { useEvalScores } from "./hooks/useEvalScores";
 import { useGraders } from "./hooks/useGraders";
 import { useHashSelection } from "./hooks/useHashSelection";
@@ -41,6 +42,10 @@ export function App() {
   const [archiveFilter, setArchiveFilter] =
     useState<CellArchiveFilter>("default");
   const { cells, refresh: refreshCells } = useCells(archiveFilter);
+  // The poll keeps each cell's content fresh every 2s, but re-sorting the list
+  // on every poll makes rows jump around while you're reading them. Throttle
+  // the *ordering* to a 10s cadence; content still updates underneath.
+  const orderedCells = useThrottledOrdering(cells);
   const { archive, restore, remove, error: cleanupError } =
     useCellCleanup(refreshCells);
   const { tasks, refresh: refreshTasks } = useTasks();
@@ -130,7 +135,7 @@ export function App() {
           )}
           <div className="flex flex-1 overflow-hidden">
             <CellList
-              cells={cells}
+              cells={orderedCells}
               selectedId={selectedId}
               onSelect={select}
               filter={archiveFilter}
