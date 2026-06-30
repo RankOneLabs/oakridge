@@ -808,20 +808,46 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
           break;
         }
         case "plan": {
-          slots = stage.name === "assessor"
-            ? buildSlotsForPlanResults(db, inputId, kbblUrl)
-            : buildSlotsForPlan(db, inputId, kbblUrl);
           workdir = resolveWorkdirForPlan(db, inputId);
           const sessionName = buildSessionNameForPlan(db, inputId, stage.name);
           const epic = resolveEpicForPlan(db, inputId);
           if (!epic) throw new Error(`plan ${inputId}: no epic found`);
-          inputRef = {
-            type: "plan",
-            id: inputId,
-            workdir,
-            sessionName,
-            modelSelection: modelSelectionForEpicStage(epic, stage.name),
-          };
+
+          if (stage.name === "assessor") {
+            // The assessor reviews the merged cohort work, which lives on the
+            // epic branch — not main. Without an explicit identity the session
+            // worktree would branch off HEAD, so the assessor would inspect
+            // main and miss everything the cohorts shipped. Base the worktree
+            // on origin/<epicBranch> so its checkout holds the full merged
+            // state, and surface the branch name in the prompt. The synthetic
+            // `0-assessor` cohort slug just names a throwaway review worktree
+            // (never pushed); it satisfies the cohort branch-name convention
+            // without colliding with any real positional cohort.
+            const epicSlug = sanitizeForName(epic.title, epic.id);
+            const epicBranch = `epic/${epicSlug}`;
+            await ensureEpicBranchExists(epicBranch, workdir);
+            slots = {
+              ...buildSlotsForPlanResults(db, inputId, kbblUrl),
+              EPIC_BRANCH: epicBranch,
+            };
+            inputRef = {
+              type: "plan",
+              id: inputId,
+              workdir,
+              sessionName,
+              modelSelection: modelSelectionForEpicStage(epic, stage.name),
+              worktreeIdentity: { epicSlug, cohortSlug: "0-assessor", epicBranch },
+            };
+          } else {
+            slots = buildSlotsForPlan(db, inputId, kbblUrl);
+            inputRef = {
+              type: "plan",
+              id: inputId,
+              workdir,
+              sessionName,
+              modelSelection: modelSelectionForEpicStage(epic, stage.name),
+            };
+          }
           break;
         }
         default:
