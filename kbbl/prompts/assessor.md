@@ -6,7 +6,7 @@ Your task is to produce one structured assessment artifact that catalogs deviati
 
 ## Review the epic branch, not main
 
-Your working directory is checked out on the epic branch `{{EPIC_BRANCH}}`, which holds the merged work of every cohort in this plan. Review the real code here — not `main`. To see the full scope of what shipped, diff the epic branch against the base: `git diff origin/main...HEAD`. Ground your deviation and gap analysis in the actual merged code, using the cohort results below as a guide to intent.
+Your working directory is a review worktree based on `origin/{{EPIC_BRANCH}}`, which holds the merged work of every cohort in this plan. Review the real code here — not `main`. To see the full scope of what shipped, refresh the base ref and diff the current checkout against it: `git fetch origin main && git diff origin/main...HEAD`. Ground your deviation and gap analysis in the actual merged code, using the cohort results below as a guide to intent.
 
 ## Original Spec Notes
 

@@ -331,6 +331,27 @@ async function ensureEpicBranchExistsUnlocked(epicBranch: string, workdir: strin
   await fetchEpicBranchLocally(epicBranch, workdir);
 }
 
+/**
+ * Assessor variant of {@link ensureEpicBranchExists}. The epic branch must
+ * already exist on origin — the cohorts pushed to it before the assessor runs.
+ * Unlike the build path we must NOT seed it from origin/main: doing so would
+ * silently base the assessor's review worktree on main and defeat the whole
+ * point of reviewing the merged cohort work. Fail fast if it's absent, then
+ * refresh the local tracking ref so `git rev-parse origin/<epicBranch>`
+ * succeeds in createWorktree.
+ */
+export async function requireEpicBranchExists(epicBranch: string, workdir: string): Promise<void> {
+  return runExclusive(workdir, async () => {
+    const existing = await lsRemoteEpicBranch(epicBranch, workdir);
+    if (existing === "") {
+      throw new Error(
+        `assessor: epic branch ${epicBranch} does not exist on origin — refusing to review against main`,
+      );
+    }
+    await fetchEpicBranchLocally(epicBranch, workdir);
+  });
+}
+
 function getSpecTitleForCohort(db: Database, cohort_id: string): string | null {
   const row = db
     .prepare<{ title: string }, [string]>(
@@ -825,7 +846,7 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
             // without colliding with any real positional cohort.
             const epicSlug = sanitizeForName(epic.title, epic.id);
             const epicBranch = `epic/${epicSlug}`;
-            await ensureEpicBranchExists(epicBranch, workdir);
+            await requireEpicBranchExists(epicBranch, workdir);
             slots = {
               ...buildSlotsForPlanResults(db, inputId, kbblUrl),
               EPIC_BRANCH: epicBranch,
