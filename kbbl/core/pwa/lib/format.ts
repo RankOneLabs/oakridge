@@ -1,4 +1,5 @@
 export const PWA_MODEL_OPTIONS = [
+  { value: "claude-sonnet-5", label: "sonnet 5" },
   { value: "claude-sonnet-4-6", label: "sonnet 4.6" },
   { value: "claude-opus-4-8", label: "opus 4.8" },
   { value: "claude-opus-4-7", label: "opus 4.7" },
