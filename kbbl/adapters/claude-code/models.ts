@@ -25,3 +25,20 @@ export type AllowedModel = (typeof ALLOWED_MODELS)[number];
 export function isAllowedModel(value: string): value is AllowedModel {
   return (ALLOWED_MODELS as readonly string[]).includes(value);
 }
+
+/**
+ * CC-specific effort/reasoning levels, passed through to `claude --effort`.
+ * Mirrors the CLI's own `--effort <level>` choices (low..max), ordered
+ * least→most effort. Surfaced in the CC RuntimeDescriptor.efforts so the PWA
+ * effort picker offers exactly these; a session with no effort selected omits
+ * the flag entirely and runs at CC's default.
+ */
+export const ALLOWED_EFFORTS = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
+
+export type AllowedEffort = (typeof ALLOWED_EFFORTS)[number];

@@ -63,6 +63,10 @@ function makeRuntime(id: RuntimeId, models: string[]): AgentRuntime {
     id,
     label: id === "claude-code" ? "Claude Code" : "Codex",
     models: models.map((model) => ({ value: model, label: model })),
+    efforts:
+      id === "claude-code"
+        ? [{ value: "low", label: "low" }, { value: "high", label: "high" }]
+        : [{ value: "minimal", label: "minimal" }, { value: "medium", label: "medium" }],
     supportsCompaction: id === "claude-code",
   };
   return {
@@ -141,6 +145,7 @@ async function postSessions(app: Hono, body: Record<string, unknown>): Promise<R
 async function writeArchivedParent(opts: {
   sid: string;
   model: string | null;
+  effort?: string | null;
   runtimeId?: RuntimeId;
   ccSid?: string;
 }): Promise<void> {
@@ -164,6 +169,7 @@ async function writeArchivedParent(opts: {
         worktreeBaseRef: null,
         projectWorkdir: null,
         model: opts.model,
+        effort: opts.effort ?? null,
       },
     }),
     JSON.stringify({
@@ -433,5 +439,125 @@ describe("POST /sessions model validation", () => {
     } finally {
       await manager.endAll();
     }
+  });
+});
+
+describe("POST /sessions effort validation", () => {
+  test("valid effort accepted, snapshot.effort matches (legacy path)", async () => {
+    const manager = makeManager();
+    const app = makeApp(manager, undefined, repoDir);
+    const res = await postSessions(app, { effort: "high", workdir: repoDir });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { effort: string | null };
+    expect(body.effort).toBe("high");
+    await manager.endAll();
+  });
+
+  test("unknown effort returns 400", async () => {
+    const manager = makeManager();
+    try {
+      const app = makeApp(manager, undefined, repoDir);
+      const res = await postSessions(app, { effort: "turbo", workdir: repoDir });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { error: string }).error).toBe("unknown effort: turbo");
+    } finally {
+      await manager.endAll();
+    }
+  });
+
+  test("empty string effort returns 400", async () => {
+    const manager = makeManager();
+    try {
+      const app = makeApp(manager, undefined, repoDir);
+      const res = await postSessions(app, { effort: "", workdir: repoDir });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { error: string }).error).toBe(
+        "effort must be non-empty when provided",
+      );
+    } finally {
+      await manager.endAll();
+    }
+  });
+
+  test("non-string effort returns 400", async () => {
+    const manager = makeManager();
+    try {
+      const app = makeApp(manager, undefined, repoDir);
+      const res = await postSessions(app, { effort: 3, workdir: repoDir });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { error: string }).error).toBe("effort must be a string");
+    } finally {
+      await manager.endAll();
+    }
+  });
+
+  test("omitted effort → snapshot.effort is null", async () => {
+    const manager = makeManager();
+    const app = makeApp(manager, undefined, repoDir);
+    const res = await postSessions(app, { workdir: repoDir });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { effort: string | null };
+    expect(body.effort).toBeNull();
+    await manager.endAll();
+  });
+
+  test("resume inherits parent effort when none in body", async () => {
+    const parentSid = randomUUID();
+    await writeArchivedParent({ sid: parentSid, model: null, effort: "high" });
+    const manager = makeManager();
+    const app = makeApp(manager, undefined, repoDir);
+    const res = await postSessions(app, { resume_from: parentSid });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { effort: string | null };
+    expect(body.effort).toBe("high");
+    await manager.endAll();
+  });
+
+  test("resume with explicit effort overrides parent effort", async () => {
+    const parentSid = randomUUID();
+    await writeArchivedParent({ sid: parentSid, model: null, effort: "high" });
+    const manager = makeManager();
+    const app = makeApp(manager, undefined, repoDir);
+    const res = await postSessions(app, { resume_from: parentSid, effort: "low" });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { effort: string | null };
+    expect(body.effort).toBe("low");
+    await manager.endAll();
+  });
+
+  test("effort validated against the selected runtime's declared levels", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    try {
+      const app = makeApp(manager, registry, repoDir);
+      // "high" is a claude-code level but not a codex level.
+      const res = await postSessions(app, {
+        runtime: "codex",
+        effort: "high",
+        workdir: repoDir,
+      });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { error: string }).error).toBe(
+        "unknown effort for codex: high",
+      );
+    } finally {
+      await manager.endAll();
+    }
+  });
+
+  test("accepts a codex effort for the codex runtime", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postSessions(app, {
+      runtime: "codex",
+      effort: "medium",
+      workdir: repoDir,
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { runtimeId: RuntimeId; effort: string | null };
+    expect(body.runtimeId).toBe("codex");
+    expect(body.effort).toBe("medium");
+    await manager.endAll();
   });
 });

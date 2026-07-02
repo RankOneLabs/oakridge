@@ -11,6 +11,24 @@ export function prettyModelLabel(model: string): string {
   return PWA_MODEL_OPTIONS.find((o) => o.value === model)?.label ?? model;
 }
 
+// Union of every runtime's effort levels, used only as the fallback effort
+// list (no server descriptor) and for pretty labels. The live picker reads the
+// selected runtime's descriptor.efforts, so this need not match any single
+// runtime exactly. "" is the "use the runtime default" sentinel.
+export const PWA_EFFORT_OPTIONS = [
+  { value: "minimal", label: "minimal" },
+  { value: "low", label: "low" },
+  { value: "medium", label: "medium" },
+  { value: "high", label: "high" },
+  { value: "xhigh", label: "xhigh" },
+  { value: "max", label: "max" },
+  { value: "", label: "default" },
+] as const;
+
+export function prettyEffortLabel(effort: string): string {
+  return PWA_EFFORT_OPTIONS.find((o) => o.value === effort)?.label ?? effort;
+}
+
 export function formatTokens(n: number): string {
   if (n < 1000) return `${n} tokens`;
   if (n < 1_000_000) return `${Math.round(n / 1000)}k tokens`;

@@ -24,6 +24,7 @@ function makeRuntime(id: "claude-code" | "codex", models: string[]): AgentRuntim
       id,
       label: id === "claude-code" ? "Claude Code" : "Codex",
       models: models.map((value) => ({ value, label: value })),
+      efforts: [],
       supportsCompaction: id === "claude-code",
     },
     isAllowedModel: (model: string) => models.includes(model),
@@ -134,6 +135,7 @@ describe("GET /config", () => {
           { value: "claude-opus-4-8", label: "claude-opus-4-8" },
           { value: "claude-sonnet-4-6", label: "claude-sonnet-4-6" },
         ],
+        efforts: [],
       },
       {
         id: "codex",
@@ -143,6 +145,7 @@ describe("GET /config", () => {
           { value: "gpt-5.5", label: "gpt-5.5" },
           { value: "gpt-5.4-mini", label: "gpt-5.4-mini" },
         ],
+        efforts: [],
       },
     ]));
     expect(body.runtimes).toHaveLength(2);

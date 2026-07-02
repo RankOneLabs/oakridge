@@ -30,12 +30,25 @@ const LEGACY_ALLOWED_MODELS: readonly string[] = [
   "haiku",
 ];
 
+// Fallback effort allowlist for the legacy / no-registry path. Mirrors the CC
+// adapter's ALLOWED_EFFORTS (the default runtime); kept here so core has no
+// adapter import. With a registry wired, validation uses the selected
+// runtime's declared efforts instead.
+const LEGACY_ALLOWED_EFFORTS: readonly string[] = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+];
+
 interface ParentSessionPayload {
   readonly [key: string]: unknown;
   readonly cc_session_id?: unknown;
   readonly workdir?: unknown;
   readonly worktreePath?: unknown;
   readonly model?: unknown;
+  readonly effort?: unknown;
   readonly runtimeId?: unknown;
 }
 
@@ -99,6 +112,13 @@ type ResumeParentResult =
        */
       parentWorktreePath: string | null;
       parentModel: string | null;
+      /**
+       * Parent's effort level, inherited by the resumed session unless the
+       * body overrides it. Recoverable from a live parent (Session.effort) and
+       * from archived session_started JSONL (via both the core resolver and the
+       * adapter resolveResumeRef path).
+       */
+      parentEffort: string | null;
       parentRuntimeId: RuntimeId;
     };
 
@@ -117,6 +137,7 @@ async function resolveResumeParent(
       workdir: live.workdir,
       parentWorktreePath: live.worktreePath,
       parentModel: live.model,
+      parentEffort: live.effort,
       parentRuntimeId: live.runtimeId,
     };
   }
@@ -142,6 +163,7 @@ async function resolveResumeParent(
   let parentWorkdir: string | null = null;
   let parentWorktreePath: string | null = null;
   let parentModel: string | null = null;
+  let parentEffort: string | null = null;
   let parentRuntimeId: RuntimeId = "claude-code";
   for (const line of contents.split("\n")) {
     if (!line.trim()) continue;
@@ -168,6 +190,12 @@ async function resolveResumeParent(
       if (typeof payload.model === "string" && LEGACY_ALLOWED_MODELS.includes(payload.model)) {
         parentModel = payload.model;
       }
+      // Faithful replay: store the archived effort as-is (no allowlist gate),
+      // matching loadArchivedSnapshot. It's re-validated against the resolved
+      // runtime below before spawn.
+      if (typeof payload.effort === "string") {
+        parentEffort = payload.effort;
+      }
       if (payload.runtimeId === "claude-code" || payload.runtimeId === "codex") {
         parentRuntimeId = payload.runtimeId;
       }
@@ -187,6 +215,7 @@ async function resolveResumeParent(
     workdir: parentWorkdir,
     parentWorktreePath,
     parentModel,
+    parentEffort,
     parentRuntimeId,
   };
 }
@@ -270,6 +299,15 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
     return runtime.descriptor.models.some((m) => m.value === value);
   }
 
+  function isAllowedEffortForRuntime(
+    runtime: AgentRuntime | null,
+    value: string,
+  ): boolean {
+    if (!registry) return LEGACY_ALLOWED_EFFORTS.includes(value);
+    if (!runtime) return false;
+    return runtime.descriptor.efforts.some((e) => e.value === value);
+  }
+
   app.get("/sessions", async (c) => {
     const inMemory = manager.listSnapshots();
     const include = c.req.query("include");
@@ -296,6 +334,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
     let bodyName: string | null = null;
     let bodyArtifactId: ArtifactId | null = null;
     let bodyModel: string | null = null;
+    let bodyEffort: string | null = null;
     let bodyRuntime: RuntimeId | null = null;
     // Read raw text first so we can distinguish "no body" (treat as no
     // options, preserves the old POST /sessions behavior) from "bad body"
@@ -319,6 +358,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
           name?: unknown;
           artifact_id?: unknown;
           model?: unknown;
+          effort?: unknown;
           runtime?: unknown;
         };
         if (parsed.runtime !== undefined) {
@@ -424,6 +464,19 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
           }
           bodyModel = trimmedModel;
         }
+        if (parsed.effort !== undefined) {
+          if (typeof parsed.effort !== "string") {
+            return c.json({ error: "effort must be a string" }, 400);
+          }
+          const trimmedEffort = parsed.effort.trim();
+          if (trimmedEffort === "") {
+            return c.json(
+              { error: "effort must be non-empty when provided" },
+              400,
+            );
+          }
+          bodyEffort = trimmedEffort;
+        }
       }
     } catch {
       return c.json({ error: "invalid json" }, 400);
@@ -459,12 +512,23 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
           400,
         );
       }
+      if (bodyEffort !== null && !isAllowedEffortForRuntime(selectedRuntime, bodyEffort)) {
+        return c.json(
+          {
+            error: registry
+              ? `unknown effort for ${selectedRuntimeId}: ${bodyEffort}`
+              : `unknown effort: ${bodyEffort}`,
+          },
+          400,
+        );
+      }
       spawnOpts = {
         workdir: target,
         name: bodyName ?? undefined,
         artifactId: bodyArtifactId ?? undefined,
         runtime: bodyRuntime ?? undefined,
         model: bodyModel ?? undefined,
+        effort: bodyEffort ?? undefined,
       };
     } else {
       if (!isValidSid(resumeFrom)) {
@@ -511,6 +575,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
                   workdir: liveSession.workdir,
                   parentWorktreePath: liveSession.worktreePath,
                   parentModel: liveSession.model,
+                  parentEffort: liveSession.effort,
                   parentRuntimeId: liveSession.runtimeId,
                 };
               }
@@ -528,6 +593,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
               workdir: ref.workdir,
               parentWorktreePath: ref.parentWorktreePath,
               parentModel: ref.model,
+              parentEffort: ref.effort,
               parentRuntimeId,
             };
           } else {
@@ -586,6 +652,17 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
           400,
         );
       }
+      const selectedEffort = bodyEffort ?? parentInfo.parentEffort;
+      if (selectedEffort !== null && !isAllowedEffortForRuntime(selectedRuntime, selectedEffort)) {
+        return c.json(
+          {
+            error: registry
+              ? `unknown effort for ${selectedRuntimeId}: ${selectedEffort}`
+              : `unknown effort: ${selectedEffort}`,
+          },
+          400,
+        );
+      }
       // Validate the inherited workdir before spawn — archived metadata
       // can outlive the directory it points at (e.g. operator deleted the
       // worktree). Without this check, Bun.spawn fails downstream and the
@@ -627,6 +704,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
         artifactId: bodyArtifactId ?? undefined,
         runtime: selectedRuntimeId,
         model: selectedModel ?? undefined,
+        effort: selectedEffort ?? undefined,
       };
     }
 

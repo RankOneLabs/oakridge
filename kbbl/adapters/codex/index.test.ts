@@ -48,6 +48,14 @@ describe("Codex adapter descriptor", () => {
     expect(rt.descriptor.models).toHaveLength(1);
     expect(rt.descriptor.models[0].value).toBe("gpt-5.5");
   });
+
+  test("advertises Codex reasoning-effort levels", () => {
+    const rt = createCodexRuntimeDescriptorOnly();
+    expect(rt.descriptor.efforts.length).toBeGreaterThan(0);
+    const values = rt.descriptor.efforts.map((e) => e.value);
+    // A representative Codex ReasoningEffort level the picker should offer.
+    expect(values).toContain("medium");
+  });
 });
 
 describe("Codex approval policy config", () => {

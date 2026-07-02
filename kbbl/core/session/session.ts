@@ -94,6 +94,13 @@ export interface SessionOpts {
    */
   model?: string | null;
   /**
+   * Per-session reasoning/effort level. null means "no effort override at
+   * spawn" — the runtime uses its default. Adapter-specific opaque string
+   * (CC: low..max via `--effort`; codex: minimal..xhigh per-turn). Persisted
+   * into session_started.payload.effort so resume-from-disk can recover it.
+   */
+  effort?: string | null;
+  /**
    * Per-session git worktree metadata. All four are null when worktrees are
    * off (or when the operator workdir isn't a git repo). When set,
    * `workdir` above equals `worktreePath` and `projectWorkdir` is the
@@ -210,6 +217,7 @@ export class Session {
   readonly worktreeBaseRef: string | null;
   readonly projectWorkdir: string | null;
   readonly model: string | null;
+  readonly effort: string | null;
 
   private _endReason: SessionEndReason | undefined;
   private _successorSid: string | null = null;
@@ -331,6 +339,7 @@ export class Session {
     this.worktreeBaseRef = opts.worktreeBaseRef ?? null;
     this.projectWorkdir = opts.projectWorkdir ?? null;
     this.model = opts.model ?? null;
+    this.effort = opts.effort ?? null;
     this.createdAt = new Date().toISOString();
     this.lastActivityTs = this.createdAt;
     this.lastResultTs = this.createdAt;
@@ -624,6 +633,7 @@ export class Session {
       worktreeBaseRef: this.worktreeBaseRef,
       projectWorkdir: this.projectWorkdir,
       model: this.model,
+      effort: this.effort,
       initialObservedModel: this._initialObservedModel,
       observedModel: this.observedModel,
       endReason: this._endReason ?? null,
@@ -752,6 +762,7 @@ export class Session {
       worktreeBaseRef: this.worktreeBaseRef,
       projectWorkdir: this.projectWorkdir,
       model: this.model,
+      effort: this.effort,
     });
     if (handle.runtimeSid) await this.observeRuntimeSessionId(handle.runtimeSid);
     if (handle.resolvedModel) await this.observeRuntimeModel(handle.resolvedModel);
@@ -857,6 +868,7 @@ export class Session {
       worktreeBaseRef: this.worktreeBaseRef,
       projectWorkdir: this.projectWorkdir,
       model: this.model,
+      effort: this.effort,
     });
 
     try {

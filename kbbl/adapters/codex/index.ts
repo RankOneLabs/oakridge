@@ -18,7 +18,7 @@ import type { EnvelopeEvent, Session } from "../../core/session/session";
 import { extractResultUsage } from "../../core/session/session";
 
 import { startCodexAppServer, type CodexAppServerOpts } from "./app-server";
-import type { CodexModel } from "./models";
+import { CODEX_EFFORTS, type CodexModel } from "./models";
 import {
   normalizeNotification,
   extractTurnUsage,
@@ -48,6 +48,12 @@ import {
 interface CodexSessionState {
   threadId: string;
   resolvedModel: string | null;
+  /**
+   * Reasoning-effort level chosen at spawn, or null for Codex's default.
+   * Codex has no thread-level effort — it's a per-turn override — so we hold
+   * it here and pass it on every `turn/start` (see send()).
+   */
+  effort: string | null;
   activeTurnId: string | null;
   /** kbbl request id → resolver fn (called when operator decides) */
   approvalResolvers: Map<string, (d: "allow" | "deny") => void>;
@@ -74,6 +80,7 @@ export function createCodexRuntimeDescriptorOnly(
     id: "codex",
     label: "Codex",
     models,
+    efforts: CODEX_EFFORTS,
     supportsCompaction: false,
   };
 
@@ -234,6 +241,7 @@ export async function createCodexRuntime(
     id: "codex",
     label: "Codex",
     models,
+    efforts: CODEX_EFFORTS,
     supportsCompaction: false,
   };
 
@@ -315,6 +323,8 @@ export async function createCodexRuntime(
           ? config.runtimeSpecific.projectWorkdir
           : cwd;
       const model = config.runtimeSpecific?.model as string | undefined;
+      const effort =
+        (config.runtimeSpecific?.effort as string | null | undefined) ?? null;
       const parentOakridgeSid =
         config.runtimeSpecific?.parentOakridgeSid as string | undefined;
       const effectiveApprovalPolicy =
@@ -370,6 +380,7 @@ export async function createCodexRuntime(
       const state: CodexSessionState = {
         threadId,
         resolvedModel,
+        effort,
         activeTurnId: null,
         approvalResolvers: new Map(),
         lastTokenUsage: null,
@@ -570,6 +581,9 @@ export async function createCodexRuntime(
       await client.turnStart({
         threadId: state.threadId,
         input: [{ type: "text", text: input }],
+        // Codex has no thread-level effort; `effort` overrides it for this turn
+        // and subsequent turns. Omit when unset so Codex keeps its default.
+        ...(state.effort ? { effort: state.effort } : {}),
       });
     },
 

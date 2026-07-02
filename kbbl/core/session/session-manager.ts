@@ -135,6 +135,7 @@ interface ArchivedSessionStartedPayload extends JsonObjectPayload {
   readonly worktreeBaseRef?: unknown;
   readonly projectWorkdir?: unknown;
   readonly model?: unknown;
+  readonly effort?: unknown;
 }
 
 function payloadObject(payload: unknown): JsonObjectPayload {
@@ -168,6 +169,13 @@ export interface CreateSessionOpts {
    * HTTP route, not here.
    */
   model?: string | null;
+  /**
+   * Runtime reasoning/effort level; passed through to Session and into the
+   * spawn config (CC `--effort` flag; codex per-turn `effort`). null/omitted →
+   * no override, the runtime uses its default. Validation (against the
+   * runtime's declared efforts) happens at the HTTP route, not here.
+   */
+  effort?: string | null;
   /**
    * Runtime to use for this session. When provided, overrides the registry's
    * defaultId. Rejected immediately if the id is not registered (e.g. operator
@@ -436,6 +444,7 @@ export class SessionManager {
       worktreeBaseRef,
       projectWorkdir,
       model: opts.model ?? null,
+      effort: opts.effort ?? null,
       classifyEvent: this.opts.classifyEvent,
       // Prefer the registry runtime's nonPersistedEventTypes so a caller that
       // only wires `registry` (without the legacy opts) still gets the right
@@ -570,6 +579,7 @@ export class SessionManager {
         workingDirectory: session.workdir,
         runtimeSpecific: {
           model: session.model,
+          effort: session.effort,
           parentCcSid: session.parentCcSid,
           parentOakridgeSid: session.parentOakridgeSid,
           oakridgeSid: session.oakridgeSid,
@@ -1142,6 +1152,7 @@ export class SessionManager {
           parentCcSid: oldSession.currentCcSid ?? undefined,
           parentOakridgeSid: oldSession.oakridgeSid,
           model: oldSession.model ?? null,
+          effort: oldSession.effort ?? null,
         });
       } catch (err) {
         await oldSession.emit("compact_completed", {
@@ -1466,6 +1477,7 @@ async function loadArchivedSnapshot(
   let worktreeBaseRef: string | null = null;
   let projectWorkdir: string | null = null;
   let model: string | null = null;
+  let effort: string | null = null;
   // Authoritative source: `model_observed` envelope events (first-wins for
   // initialObservedModel, last-wins for observedModel).
   // Back-compat fallback: scan system+init payload.model (first-wins) and
@@ -1542,6 +1554,11 @@ async function loadArchivedSnapshot(
         // the allowlist at write time.
         if (typeof sessionStartedPayload.model === "string") {
           model = sessionStartedPayload.model;
+        }
+        // Same faithful-replay contract as model: effort is stored as-is
+        // from session_started; no validation on the read side.
+        if (typeof sessionStartedPayload.effort === "string") {
+          effort = sessionStartedPayload.effort;
         }
         break;
       }
@@ -1665,6 +1682,7 @@ async function loadArchivedSnapshot(
     worktreeBaseRef,
     projectWorkdir,
     model,
+    effort,
     initialObservedModel,
     observedModel,
     endReason,

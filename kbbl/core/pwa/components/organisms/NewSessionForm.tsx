@@ -4,7 +4,9 @@ import type { RuntimeId } from "../../../runtime-interface";
 import type { RuntimeDescriptor } from "../../types";
 import { generateSlug } from "../../lib/session";
 import {
+  readStoredNewSessionEffort,
   readStoredNewSessionModel,
+  writeStoredNewSessionEffort,
   writeStoredNewSessionModel,
 } from "../../lib/storage";
 import { DirectoryPicker } from "./DirectoryPicker";
@@ -14,6 +16,7 @@ export interface NewSessionFormValues {
   name: string;
   runtimeId: RuntimeId;
   model: string;
+  effort: string;
 }
 
 export interface NewSessionFormProps {
@@ -57,6 +60,12 @@ export function NewSessionForm({
       runtimes[0];
     return runtime ? readStoredNewSessionModel(runtime) : "";
   });
+  const [effortInput, setEffortInput] = useState<string>(() => {
+    const runtime =
+      runtimes.find((r) => r.id === defaultRuntimeId) ??
+      runtimes[0];
+    return runtime ? readStoredNewSessionEffort(runtime) : "";
+  });
 
   useEffect(() => {
     setRuntimeId(defaultRuntimeId);
@@ -66,6 +75,7 @@ export function NewSessionForm({
     if (!selectedRuntime) return;
     setRuntimeId(selectedRuntime.id);
     setModelInput(readStoredNewSessionModel(selectedRuntime));
+    setEffortInput(readStoredNewSessionEffort(selectedRuntime));
   }, [selectedRuntime?.id]);
 
   // Generated once per mount so the placeholder is stable while the operator
@@ -104,6 +114,7 @@ export function NewSessionForm({
         name: nameInput.trim() || namePlaceholder,
         runtimeId,
         model: modelInput,
+        effort: effortInput,
       });
       onAutostartConsumed();
     }, 100);
@@ -121,6 +132,7 @@ export function NewSessionForm({
             name: nameInput.trim() || namePlaceholder,
             runtimeId,
             model: modelInput,
+            effort: effortInput,
           });
         }}
       >
@@ -160,6 +172,7 @@ export function NewSessionForm({
               setRuntimeId(nextRuntimeId);
               if (nextRuntime) {
                 setModelInput(readStoredNewSessionModel(nextRuntime));
+                setEffortInput(readStoredNewSessionEffort(nextRuntime));
               }
             }}
             disabled={pending}
@@ -192,6 +205,28 @@ export function NewSessionForm({
             </option>
           ))}
         </select>
+        {(selectedRuntime?.efforts.length ?? 0) > 0 && (
+          <select
+            className="new-session-effort"
+            value={effortInput}
+            onChange={(e) => {
+              const nextEffort = e.target.value;
+              if (!selectedRuntime) {
+                setEffortInput(nextEffort);
+                return;
+              }
+              setEffortInput(writeStoredNewSessionEffort(nextEffort, selectedRuntime));
+            }}
+            disabled={pending}
+            aria-label="Effort for new session"
+          >
+            {[{ value: "", label: "default" }, ...(selectedRuntime?.efforts ?? [])].map((opt) => (
+              <option key={opt.value || "default"} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        )}
         <input
           type="text"
           className="new-session-name"

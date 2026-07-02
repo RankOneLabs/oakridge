@@ -278,7 +278,8 @@ body {
   text-overflow: ellipsis;
   max-width: 100%;
 }
-.session-label-model {
+.session-label-model,
+.session-label-effort {
   font-size: 0.7rem;
   color: var(--text-faint);
   background: var(--bg-surface);
@@ -852,7 +853,8 @@ body {
   color: var(--text-fainter);
 }
 .new-session-runtime,
-.new-session-model {
+.new-session-model,
+.new-session-effort {
   flex: 0 0 auto;
   background: var(--bg-surface);
   border: 1px solid var(--border-muted);
@@ -864,7 +866,8 @@ body {
   font-size: 0.85rem;
 }
 .new-session-runtime:focus,
-.new-session-model:focus {
+.new-session-model:focus,
+.new-session-effort:focus {
   outline: none;
   border-color: var(--accent-blue);
 }
@@ -1230,7 +1233,8 @@ body {
   font-weight: 600;
   letter-spacing: 0.04em;
 }
-.session-row-model {
+.session-row-model,
+.session-row-effort {
   font-size: 0.7rem;
   color: var(--text-faint);
   background: var(--bg-surface);

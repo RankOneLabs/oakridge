@@ -20,6 +20,16 @@ import type {
   TurnInterruptParams,
 } from "./generated/types";
 
+/**
+ * `turn/start` gained an `effort` field (the app-server `ReasoningEffort` enum)
+ * in codex-cli after these bindings were last regenerated (0.133.0). Rather
+ * than regenerate the entire protocol for one field, widen this single call's
+ * params here. `effort` overrides the thread's reasoning effort for this turn
+ * and subsequent turns; values are gated against RuntimeDescriptor.efforts
+ * before reaching this layer, so a plain `string` is honest on the wire.
+ */
+export type TurnStartParamsWithEffort = TurnStartParams & { effort?: string };
+
 export interface CodexNotification {
   method: string;
   params: unknown;
@@ -236,7 +246,7 @@ export class CodexAppServerClient {
     });
   }
 
-  async turnStart(params: TurnStartParams): Promise<TurnStartResult> {
+  async turnStart(params: TurnStartParamsWithEffort): Promise<TurnStartResult> {
     return this.request<TurnStartResult>("turn/start", params);
   }
 

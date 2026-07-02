@@ -2,7 +2,7 @@ import { useState, type Ref } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import type { SessionSnapshot, Status, Theme } from "../../types";
-import { prettyModelLabel } from "../../lib/format";
+import { prettyEffortLabel, prettyModelLabel } from "../../lib/format";
 import { responseError } from "../../lib/http";
 import { sessionLabelTitle, workdirBasename } from "../../lib/session";
 
@@ -176,6 +176,11 @@ export function SessionTopBar({
         {shouldShowCurrentModel && currentModel && (
           <span className="session-label-model" title={`current: ${currentModel}`}>
             current {prettyModelLabel(currentModel)}
+          </span>
+        )}
+        {snapshot?.effort && (
+          <span className="session-label-effort" title={`effort: ${snapshot.effort}`}>
+            effort {prettyEffortLabel(snapshot.effort)}
           </span>
         )}
         {snapshot && (() => {

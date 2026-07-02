@@ -57,10 +57,12 @@ describe("insertEpic + getEpic", () => {
     expect(e.planner_model_selection).toEqual({
       runtime: "claude-code",
       model: "claude-opus-4-8",
+      effort: null,
     });
     expect(e.worker_model_selection).toEqual({
       runtime: "claude-code",
       model: "claude-sonnet-4-6",
+      effort: null,
     });
     expect(e.created_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
@@ -79,10 +81,12 @@ describe("insertEpic + getEpic", () => {
     expect(e.planner_model_selection).toEqual({
       runtime: "claude-code",
       model: "claude-opus-4-8",
+      effort: null,
     });
     expect(e.worker_model_selection).toEqual({
       runtime: "codex",
       model: "gpt-5.4-mini",
+      effort: null,
     });
   });
 
@@ -97,11 +101,39 @@ describe("insertEpic + getEpic", () => {
       planner_model_selection: { runtime: "codex", model: "gpt-5.5" },
       worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini" },
     });
-    expect(e.planner_model_selection).toEqual({ runtime: "codex", model: "gpt-5.5" });
+    expect(e.planner_model_selection).toEqual({ runtime: "codex", model: "gpt-5.5", effort: null });
     expect(e.worker_model_selection).toEqual({
       runtime: "codex",
       model: "gpt-5.4-mini",
+      effort: null,
     });
+  });
+
+  test("round-trips per-role effort selections", () => {
+    const e = insertTestEpic({
+      id: "e-effort",
+      spec_id: SPEC_ID,
+      project_id: PROJECT_ID,
+      title: "Effort Epic",
+      status: "active",
+      current_stage: "spec",
+      planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8", effort: "high" },
+      worker_model_selection: { runtime: "claude-code", model: "claude-sonnet-4-6", effort: "low" },
+    });
+    expect(e.planner_model_selection).toEqual({
+      runtime: "claude-code",
+      model: "claude-opus-4-8",
+      effort: "high",
+    });
+    expect(e.worker_model_selection).toEqual({
+      runtime: "claude-code",
+      model: "claude-sonnet-4-6",
+      effort: "low",
+    });
+    // Reloading from disk preserves the effort selections.
+    const reloaded = getEpic(db, "e-effort")!;
+    expect(reloaded.planner_model_selection.effort).toBe("high");
+    expect(reloaded.worker_model_selection.effort).toBe("low");
   });
 
   test("getEpic returns null for unknown id", () => {

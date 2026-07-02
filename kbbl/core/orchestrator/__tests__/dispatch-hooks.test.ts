@@ -117,6 +117,7 @@ describe("dispatch hooks rewire", () => {
     expect(mockBackend.calls[0]!.modelSelection).toEqual({
       runtime: "claude-code",
       model: "claude-opus-4-8",
+      effort: null,
     });
   });
 
@@ -139,6 +140,7 @@ describe("dispatch hooks rewire", () => {
     expect(mockBackend.calls[0]!.modelSelection).toEqual({
       runtime: "claude-code",
       model: "claude-opus-4-8",
+      effort: null,
     });
   });
 

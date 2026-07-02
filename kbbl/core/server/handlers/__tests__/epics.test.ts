@@ -133,10 +133,12 @@ describe("GET /epics/:id", () => {
     expect(body.epic.planner_model_selection).toEqual({
       runtime: "claude-code",
       model: "claude-opus-4-8",
+      effort: null,
     });
     expect(body.epic.worker_model_selection).toEqual({
       runtime: "claude-code",
       model: "claude-sonnet-4-6",
+      effort: null,
     });
     expect(body.spec).not.toBeNull();
     expect(body.plan).toBeNull();

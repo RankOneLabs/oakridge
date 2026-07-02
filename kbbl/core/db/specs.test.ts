@@ -262,10 +262,12 @@ describe("POST /specs", () => {
     expect(epic?.planner_model_selection).toEqual({
       runtime: "claude-code",
       model: "claude-opus-4-8",
+      effort: null,
     });
     expect(epic?.worker_model_selection).toEqual({
       runtime: "codex",
       model: "gpt-5.4-mini",
+      effort: null,
     });
   });
 
@@ -288,10 +290,12 @@ describe("POST /specs", () => {
     expect(epic?.planner_model_selection).toEqual({
       runtime: "claude-code",
       model: "claude-opus-4-8",
+      effort: null,
     });
     expect(epic?.worker_model_selection).toEqual({
       runtime: "codex",
       model: "gpt-5.4-mini",
+      effort: null,
     });
   });
 
@@ -474,10 +478,12 @@ describe("POST /specs", () => {
     expect(epic?.planner_model_selection).toEqual({
       runtime: "claude-code",
       model: "custom-planner-model",
+      effort: null,
     });
     expect(epic?.worker_model_selection).toEqual({
       runtime: "claude-code",
       model: "custom-worker-model",
+      effort: null,
     });
   });
 

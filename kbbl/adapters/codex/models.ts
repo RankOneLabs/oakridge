@@ -12,6 +12,20 @@ const PINNED_CODEX_MODELS: CodexModel[] = [
 ];
 
 /**
+ * Codex reasoning-effort levels (the app-server `ReasoningEffort` enum), passed
+ * per-turn via `turn/start`'s `effort` field. Ordered least→most effort.
+ * Surfaced in the Codex RuntimeDescriptor.efforts; a session with no effort
+ * selected omits the field entirely and runs at Codex's configured default.
+ */
+export const CODEX_EFFORTS: readonly { value: string; label: string }[] = [
+  { value: "minimal", label: "minimal" },
+  { value: "low", label: "low" },
+  { value: "medium", label: "medium" },
+  { value: "high", label: "high" },
+  { value: "xhigh", label: "xhigh" },
+];
+
+/**
  * Normalize the raw result from model/list into CodexModel entries.
  * Accepts null or any non-array value and returns the pinned Codex models.
  */

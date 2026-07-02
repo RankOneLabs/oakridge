@@ -120,6 +120,8 @@ export type AgentRuntimeChoice = z.infer<typeof AgentRuntimeChoiceSchema>;
 export const EpicModelSelectionSchema = z.object({
   runtime: AgentRuntimeChoiceSchema,
   model: z.string().min(1),
+  // Reasoning/effort level; null (or absent) = no override / runtime default.
+  effort: z.string().min(1).nullish(),
 });
 export type EpicModelSelection = z.infer<typeof EpicModelSelectionSchema>;
 

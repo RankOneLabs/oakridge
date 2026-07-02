@@ -44,10 +44,18 @@ function fallbackClaudeDescriptor(): RuntimeDescriptor {
       value: o.value,
       label: o.label,
     })),
+    // No efforts in the pre-/config fallback: PWA_EFFORT_OPTIONS is a
+    // cross-runtime union (includes Codex-only levels like "minimal"), so
+    // advertising it under this claude-code descriptor would offer a level the
+    // backend rejects for CC. Leave empty until /config supplies the real
+    // per-runtime effort set; the picker simply doesn't render meanwhile.
+    efforts: [],
     supportsCompaction: true,
   };
 }
 
+// Coerces a value/label option array from the server response. Shared by the
+// model and effort descriptor fields (identical shape).
 function coerceRuntimeModels(value: unknown): RuntimeModelOption[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((raw) => {
@@ -69,6 +77,7 @@ function coerceRuntimeDescriptors(value: unknown): [RuntimeDescriptor, ...Runtim
       id?: unknown;
       label?: unknown;
       models?: unknown;
+      efforts?: unknown;
       supportsCompaction?: unknown;
     };
     if (!isRuntimeId(runtime.id)) return [];
@@ -76,6 +85,7 @@ function coerceRuntimeDescriptors(value: unknown): [RuntimeDescriptor, ...Runtim
       id: runtime.id,
       label: typeof runtime.label === "string" ? runtime.label : runtime.id,
       models: coerceRuntimeModels(runtime.models),
+      efforts: coerceRuntimeModels(runtime.efforts),
       supportsCompaction: runtime.supportsCompaction === true,
     }];
   });

@@ -20,7 +20,7 @@ import type {
 } from "../../core/runtime";
 import { extractResultUsage } from "../../core/session/session";
 import { readJsonlOrEmpty } from "../../core/session/session";
-import { ALLOWED_MODELS } from "./models";
+import { ALLOWED_EFFORTS, ALLOWED_MODELS } from "./models";
 
 import { classifyCcEvent } from "./event-classifier";
 import {
@@ -178,6 +178,7 @@ const CC_DESCRIPTOR: RuntimeDescriptor = {
     value: m,
     label: m,
   })),
+  efforts: ALLOWED_EFFORTS.map((e) => ({ value: e, label: e })),
   supportsCompaction: true,
 };
 
@@ -353,6 +354,7 @@ export async function createClaudeCodeRuntime(
         (config.runtimeSpecific?.oakridgeSid as string | undefined) ??
         Math.random().toString(36).slice(2);
       const model = config.runtimeSpecific?.model as string | null | undefined;
+      const effort = config.runtimeSpecific?.effort as string | null | undefined;
       const parentCcSid = config.runtimeSpecific?.parentCcSid as
         | string
         | null
@@ -402,6 +404,7 @@ export async function createClaudeCodeRuntime(
         settingsPath,
         mcpConfigPath,
         model,
+        effort,
         parentCcSid,
         sessionId: ccSessionId,
       });
@@ -700,6 +703,7 @@ export async function createClaudeCodeRuntime(
       let workdir: string | null = null;
       let parentWorktreePath: string | null = null;
       let model: string | null = null;
+      let effort: string | null = null;
 
       for (const line of contents.split("\n")) {
         if (!line.trim()) continue;
@@ -732,13 +736,14 @@ export async function createClaudeCodeRuntime(
           if (typeof payload.worktreePath === "string")
             parentWorktreePath = payload.worktreePath;
           if (typeof payload.model === "string") model = payload.model;
+          if (typeof payload.effort === "string") effort = payload.effort;
         }
         if (runtimeSid && workdir) break;
       }
 
       if (!runtimeSid) return { kind: "no_runtime_sid" };
       if (!workdir) return { kind: "no_workdir" };
-      return { kind: "ok", runtimeSid, workdir, parentWorktreePath, model };
+      return { kind: "ok", runtimeSid, workdir, parentWorktreePath, model, effort };
     },
 
     // --- AgentRuntime.reconstructSnapshot ---

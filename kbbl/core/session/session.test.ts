@@ -53,6 +53,7 @@ function makeRuntime(
     id: "claude-code",
     label: "Claude Code",
     models: [{ value: "claude-sonnet-4-6", label: "sonnet 4.6" }],
+    efforts: [],
     supportsCompaction: true,
   };
 
@@ -286,6 +287,7 @@ describe("Session.attachRuntime", () => {
         id: "codex",
         label: "Codex",
         models: [],
+        efforts: [],
         supportsCompaction: false,
       },
       synthesizeUserInputEvents: true,

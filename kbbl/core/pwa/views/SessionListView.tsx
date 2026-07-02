@@ -23,6 +23,7 @@ interface StartSessionBody {
   name?: string;
   runtime?: RuntimeId;
   model?: string;
+  effort?: string;
 }
 
 interface SessionListViewProps {
@@ -107,6 +108,7 @@ export function SessionListView({
       body.name = values.name;
       body.runtime = values.runtimeId;
       if (values.model !== "") body.model = values.model;
+      if (values.effort !== "") body.effort = values.effort;
     } else {
       setPendingError("internal: startSession needs values or resumeFrom");
       return;
