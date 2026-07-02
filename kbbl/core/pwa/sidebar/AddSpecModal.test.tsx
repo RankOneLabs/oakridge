@@ -4,7 +4,8 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type React from "react";
 
-import { AddSpecModal } from "./AddSpecModal";
+import { AddSpecModal, coerceSelection } from "./AddSpecModal";
+import type { RuntimeDescriptor } from "../types";
 
 const originalFetch = globalThis.fetch;
 
@@ -375,5 +376,63 @@ describe("AddSpecModal split role selection", () => {
         worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini" },
       });
     });
+  });
+});
+
+describe("coerceSelection effort handling", () => {
+  const claude: RuntimeDescriptor = {
+    id: "claude-code",
+    label: "Claude Code",
+    models: [{ value: "claude-opus-4-8", label: "opus 4.8" }],
+    efforts: [
+      { value: "medium", label: "medium" },
+      { value: "high", label: "high" },
+    ],
+    supportsCompaction: true,
+  };
+  const codex: RuntimeDescriptor = {
+    id: "codex",
+    label: "Codex",
+    models: [{ value: "gpt-5.5", label: "gpt-5.5" }],
+    efforts: [{ value: "minimal", label: "minimal" }],
+    supportsCompaction: false,
+  };
+  const descriptors = [claude, codex];
+
+  test("preserves an effort still valid for the unchanged runtime", () => {
+    const next = coerceSelection(
+      "planner",
+      { runtime: "claude-code", model: "claude-opus-4-8", effort: "high" },
+      descriptors,
+      "codex", // default differs; runtimeTouched=true keeps the selected runtime
+      true,
+    );
+    expect(next.effort).toBe("high");
+  });
+
+  test("drops an effort the (swapped) descriptor no longer advertises", () => {
+    // Same runtime id, but the descriptor's effort set no longer includes the
+    // stale level (e.g. fallback → server descriptor swap). Force a re-coerce
+    // by changing the model so the early same-selection return is skipped.
+    const next = coerceSelection(
+      "planner",
+      { runtime: "claude-code", model: "stale-model", effort: "minimal" },
+      descriptors,
+      "codex",
+      true,
+    );
+    expect(next.effort).toBeUndefined();
+  });
+
+  test("drops the effort when the runtime changes", () => {
+    const next = coerceSelection(
+      "planner",
+      { runtime: "codex", model: "gpt-5.5", effort: "minimal" },
+      descriptors,
+      "claude-code",
+      false, // not touched → coerces back to the default (claude-code) runtime
+    );
+    expect(next.runtime).toBe("claude-code");
+    expect(next.effort).toBeUndefined();
   });
 });

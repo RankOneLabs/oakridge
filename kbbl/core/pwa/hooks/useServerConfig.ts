@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { RuntimeId } from "../../runtime-interface";
 import type { RuntimeDescriptor, RuntimeModelOption } from "../types";
-import { PWA_EFFORT_OPTIONS, PWA_MODEL_OPTIONS } from "../lib/format";
+import { PWA_MODEL_OPTIONS } from "../lib/format";
 
 interface ServerConfigResponse {
   defaultWorkdir: string | null;
@@ -44,10 +44,12 @@ function fallbackClaudeDescriptor(): RuntimeDescriptor {
       value: o.value,
       label: o.label,
     })),
-    efforts: PWA_EFFORT_OPTIONS.filter((o) => o.value !== "").map((o) => ({
-      value: o.value,
-      label: o.label,
-    })),
+    // No efforts in the pre-/config fallback: PWA_EFFORT_OPTIONS is a
+    // cross-runtime union (includes Codex-only levels like "minimal"), so
+    // advertising it under this claude-code descriptor would offer a level the
+    // backend rejects for CC. Leave empty until /config supplies the real
+    // per-runtime effort set; the picker simply doesn't render meanwhile.
+    efforts: [],
     supportsCompaction: true,
   };
 }

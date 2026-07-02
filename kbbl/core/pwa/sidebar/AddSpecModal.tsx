@@ -68,7 +68,7 @@ function initialSelectionForRole(
   };
 }
 
-function coerceSelection(
+export function coerceSelection(
   role: Role,
   selection: RuntimeModelSelection,
   runtimeDescriptors: RuntimeDescriptor[],
@@ -79,9 +79,17 @@ function coerceSelection(
     ? getRuntimeForSelection(runtimeDescriptors, defaultRuntimeId, selection.runtime)
     : getRuntimeForSelection(runtimeDescriptors, defaultRuntimeId, defaultRuntimeId);
   // Effort levels are per-runtime, so a preserved effort is only valid while
-  // the runtime is unchanged; drop it when the runtime switches so a stale
-  // level can't leak across runtimes.
-  const nextEffort = nextRuntime.id === selection.runtime ? selection.effort : undefined;
+  // the runtime is unchanged AND the (possibly swapped) descriptor still
+  // advertises it. The modal first renders with the pre-/config fallback
+  // descriptor and later swaps to the server one, so re-validate here rather
+  // than assume a same-id runtime carries the same effort set — otherwise a
+  // stale level could be submitted and rejected by the backend.
+  const nextEffort =
+    nextRuntime.id === selection.runtime &&
+    selection.effort != null &&
+    nextRuntime.efforts.some((e) => e.value === selection.effort)
+      ? selection.effort
+      : undefined;
   if (nextRuntime.models.length === 0) {
     const nextModel = selection.model.trim().length > 0 ? selection.model : getRoleDefaultModel(role, nextRuntime);
     if (nextRuntime.id === selection.runtime && nextModel === selection.model) {
