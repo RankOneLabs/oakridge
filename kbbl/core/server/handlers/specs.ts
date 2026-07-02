@@ -9,11 +9,17 @@ import { isFrozen } from "../../db/epic-freeze";
 import { getProject } from "../../db/projects";
 import { taskTrackerEvents } from "../../db/events";
 import type { RuntimeId, RuntimeRegistry } from "../../runtime";
-import { isAllowedModelForRuntime, type RuntimeModelSelection } from "../../runtime";
+import {
+  isAllowedEffortForRuntime,
+  isAllowedModelForRuntime,
+  type RuntimeModelSelection,
+} from "../../runtime";
 
 const ModelSelectionInputSchema = z.object({
   runtime: z.string().min(1),
   model: z.string().min(1),
+  // Optional reasoning-effort level; omitted / null = runtime default.
+  effort: z.string().min(1).nullish(),
 });
 const CreateSpecSchema = z
   .object({
@@ -57,7 +63,7 @@ function registeredRuntimeList(registry: RuntimeRegistry | undefined): string {
 
 function validateModelSelection(
   registry: RuntimeRegistry | undefined,
-  selection: { runtime: string; model: string },
+  selection: { runtime: string; model: string; effort?: string | null },
   role: "planner" | "worker",
 ): ModelSelectionValidationResult {
   const runtime = selection.runtime.trim();
@@ -90,7 +96,14 @@ function validateModelSelection(
       error: `${role} model "${model}" is not allowed for runtime "${runtime}"`,
     };
   }
-  return { ok: true, value: { runtime, model } };
+  const effort = selection.effort?.trim();
+  if (effort && !isAllowedEffortForRuntime(runtimeDescriptor, effort)) {
+    return {
+      ok: false,
+      error: `${role} effort "${effort}" is not allowed for runtime "${runtime}"`,
+    };
+  }
+  return { ok: true, value: { runtime, model, effort: effort || null } };
 }
 
 export function mountSpecsRoutes(app: Hono, deps: SpecsRouteDeps): void {

@@ -15,6 +15,10 @@ const claudeRuntime: RuntimeDescriptor = {
     { value: "claude-sonnet-4-6", label: "sonnet 4.6" },
     { value: "claude-opus-4-7", label: "opus 4.7" },
   ],
+  efforts: [
+    { value: "medium", label: "medium" },
+    { value: "high", label: "high" },
+  ],
 };
 
 const codexRuntime: RuntimeDescriptor = {
@@ -23,6 +27,10 @@ const codexRuntime: RuntimeDescriptor = {
   supportsCompaction: false,
   models: [
     { value: "gpt-5.1-codex", label: "gpt-5.1-codex" },
+  ],
+  efforts: [
+    { value: "low", label: "low" },
+    { value: "high", label: "high" },
   ],
 };
 

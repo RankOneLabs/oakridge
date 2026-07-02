@@ -88,6 +88,59 @@ export function writeStoredNewSessionModel(value: string, runtime: RuntimeDescri
   return normalized;
 }
 
+/**
+ * Returns the localStorage key for per-runtime effort preference.
+ * Format: `kbbl.newSession.effort.<runtimeId>`. No legacy un-namespaced key
+ * exists (effort is a newer control), so there's no migration read path.
+ */
+export function newSessionEffortKey(runtimeId: string): string {
+  return `kbbl.newSession.effort.${runtimeId}`;
+}
+
+export function isValidNewSessionEffortForRuntime(
+  value: string,
+  runtime: RuntimeDescriptor,
+): boolean {
+  if (value === "") return true;
+  return runtime.efforts.some((o) => o.value === value);
+}
+
+/**
+ * Default effort is "" (no override → the runtime's own default). Unlike
+ * model, there's no cost-engineering nudge — effort defaults are the runtime's
+ * concern, and silently forcing one could surprise operators.
+ */
+export function defaultNewSessionEffortForRuntime(runtime: RuntimeDescriptor): string {
+  void runtime;
+  return "";
+}
+
+export function normalizeNewSessionEffortForRuntime(
+  value: string,
+  runtime: RuntimeDescriptor,
+): string {
+  if (isValidNewSessionEffortForRuntime(value, runtime)) return value;
+  return defaultNewSessionEffortForRuntime(runtime);
+}
+
+export function readStoredNewSessionEffort(runtime: RuntimeDescriptor): string {
+  try {
+    const stored = localStorage.getItem(newSessionEffortKey(runtime.id));
+    if (stored !== null && isValidNewSessionEffortForRuntime(stored, runtime)) {
+      return stored;
+    }
+  } catch {}
+  return defaultNewSessionEffortForRuntime(runtime);
+}
+
+export function writeStoredNewSessionEffort(value: string, runtime: RuntimeDescriptor): string {
+  const normalized = normalizeNewSessionEffortForRuntime(value, runtime);
+  try {
+    localStorage.setItem(newSessionEffortKey(runtime.id), normalized);
+  } catch {}
+  return normalized;
+}
+
 export function readStoredTheme(): Theme {
   // SSR-safe guard; also swallows SecurityError from sandboxed localStorage.
   try {

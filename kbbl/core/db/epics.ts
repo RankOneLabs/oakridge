@@ -19,13 +19,19 @@ type EpicRow = {
   current_stage: EpicStage;
   planner_runtime: RuntimeId;
   planner_model: string;
+  planner_effort: string | null;
   worker_runtime: RuntimeId;
   worker_model: string;
+  worker_effort: string | null;
   created_at: string;
 };
 
-function toModelSelection(runtime: RuntimeId, model: string): EpicModelSelection {
-  return { runtime, model };
+function toModelSelection(
+  runtime: RuntimeId,
+  model: string,
+  effort: string | null,
+): EpicModelSelection {
+  return { runtime, model, effort };
 }
 
 function toEpic(row: EpicRow): Epic {
@@ -36,8 +42,16 @@ function toEpic(row: EpicRow): Epic {
     title: row.title,
     status: row.status,
     current_stage: row.current_stage,
-    planner_model_selection: toModelSelection(row.planner_runtime, row.planner_model),
-    worker_model_selection: toModelSelection(row.worker_runtime, row.worker_model),
+    planner_model_selection: toModelSelection(
+      row.planner_runtime,
+      row.planner_model,
+      row.planner_effort,
+    ),
+    worker_model_selection: toModelSelection(
+      row.worker_runtime,
+      row.worker_model,
+      row.worker_effort,
+    ),
     created_at: row.created_at,
   };
 }
@@ -65,7 +79,10 @@ export function insertEpic(
   },
 ): Epic {
   const row = db
-    .prepare<EpicRow, [string, string, string, string, EpicStatus, EpicStage, RuntimeId, string, RuntimeId, string]>(
+    .prepare<
+      EpicRow,
+      [string, string, string, string, EpicStatus, EpicStage, RuntimeId, string, string | null, RuntimeId, string, string | null]
+    >(
       `INSERT INTO epics (
          id,
          spec_id,
@@ -75,10 +92,12 @@ export function insertEpic(
          current_stage,
          planner_runtime,
          planner_model,
+         planner_effort,
          worker_runtime,
-         worker_model
+         worker_model,
+         worker_effort
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
     )
     .get(
       id,
@@ -89,8 +108,10 @@ export function insertEpic(
       current_stage,
       planner_model_selection.runtime,
       planner_model_selection.model,
+      planner_model_selection.effort ?? null,
       worker_model_selection.runtime,
       worker_model_selection.model,
+      worker_model_selection.effort ?? null,
     )!;
   return toEpic(row);
 }

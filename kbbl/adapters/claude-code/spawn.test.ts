@@ -41,6 +41,23 @@ describe("buildCcArgv construction", () => {
     expect(cmd.includes("--model")).toBe(false);
   });
 
+  test("inserts --effort when effort is set", () => {
+    const cmd = buildCcArgv({ ...BASE_ARGV_OPTS, effort: "high" });
+    const effortIdx = cmd.indexOf("--effort");
+    expect(effortIdx).toBeGreaterThanOrEqual(0);
+    expect(cmd[effortIdx + 1]).toBe("high");
+  });
+
+  test("omits --effort entirely when effort is null", () => {
+    const cmd = buildCcArgv({ ...BASE_ARGV_OPTS, effort: null });
+    expect(cmd.includes("--effort")).toBe(false);
+  });
+
+  test("--effort appears after --model when both are set", () => {
+    const cmd = buildCcArgv({ ...BASE_ARGV_OPTS, model: "claude-opus-4-7", effort: "max" });
+    expect(cmd.indexOf("--model")).toBeLessThan(cmd.indexOf("--effort"));
+  });
+
   test("loads the gated-review MCP config via --mcp-config --strict-mcp-config", () => {
     const cmd = buildCcArgv(BASE_ARGV_OPTS);
     const mcpIdx = cmd.indexOf("--mcp-config");

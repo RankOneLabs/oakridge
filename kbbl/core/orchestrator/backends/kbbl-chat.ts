@@ -23,6 +23,7 @@ export function createKbblChatBackend({
         workdir: inputRef.workdir,
         name: inputRef.sessionName,
         model: routing.model,
+        effort: routing.effort ?? undefined,
         runtime: routing.runtime,
         ...(inputRef.worktreeIdentity ? { worktreeIdentity: inputRef.worktreeIdentity } : {}),
       });

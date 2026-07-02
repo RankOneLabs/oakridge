@@ -41,6 +41,7 @@ export async function resolveCodexResumeRef(
   let workdir: string | null = null;
   let parentWorktreePath: string | null = null;
   let model: string | null = null;
+  let effort: string | null = null;
 
   for (const line of contents.split("\n")) {
     if (!line.trim()) continue;
@@ -72,6 +73,7 @@ export async function resolveCodexResumeRef(
       if (typeof payload.worktreePath === "string")
         parentWorktreePath = payload.worktreePath;
       if (typeof payload.model === "string") model = payload.model;
+      if (typeof payload.effort === "string") effort = payload.effort;
     }
 
     if (threadId && workdir) break;
@@ -86,5 +88,6 @@ export async function resolveCodexResumeRef(
     workdir,
     parentWorktreePath,
     model,
+    effort,
   };
 }

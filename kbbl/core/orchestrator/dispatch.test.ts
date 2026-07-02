@@ -264,6 +264,7 @@ describe("full dispatch pipeline with MockBackend", () => {
     expect(mockBackend.calls[0]!.modelSelection).toEqual({
       runtime: "claude-code",
       model: "claude-opus-4-8",
+      effort: null,
     });
     // current_session_ref written onto spec
     const specRow = db.prepare<{ current_session_ref: string | null }, [string]>("SELECT current_session_ref FROM specs WHERE id = ?").get(spec.id);
@@ -290,6 +291,7 @@ describe("full dispatch pipeline with MockBackend", () => {
     expect(mockBackend.calls[1]!.modelSelection).toEqual({
       runtime: "claude-code",
       model: "claude-opus-4-8",
+      effort: null,
     });
 
     // all waiting cohorts should have transitioned directly to briefing
@@ -327,6 +329,7 @@ describe("full dispatch pipeline with MockBackend", () => {
     expect(mockBackend.calls[2]!.modelSelection).toEqual({
       runtime: "claude-code",
       model: "claude-sonnet-4-6",
+      effort: null,
     });
 
     // current_session_ref written onto cohort (build stores on cohort, not brief)
@@ -371,6 +374,7 @@ describe("full dispatch pipeline with MockBackend", () => {
     expect(mockBackend.calls[1]!.modelSelection).toEqual({
       runtime: "claude-code",
       model: "claude-opus-4-8",
+      effort: null,
     });
 
     const briefRes = await post(app, "/briefs", {
@@ -390,6 +394,7 @@ describe("full dispatch pipeline with MockBackend", () => {
     expect(mockBackend.calls[2]!.modelSelection).toEqual({
       runtime: "claude-code",
       model: "claude-sonnet-4-6",
+      effort: null,
     });
   });
 

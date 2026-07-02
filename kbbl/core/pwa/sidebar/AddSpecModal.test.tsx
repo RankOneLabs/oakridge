@@ -23,6 +23,7 @@ type Config = {
     label: string;
     supportsCompaction: boolean;
     models: Array<{ value: string; label: string }>;
+    efforts?: Array<{ value: string; label: string }>;
   }>;
 };
 
@@ -123,6 +124,63 @@ describe("AddSpecModal split role selection", () => {
       "title",
       "worker_model_selection",
     ]);
+  });
+
+  test("submits a selected planner effort when the runtime advertises efforts", async () => {
+    let postBody: unknown = null;
+    stubFetch(
+      {
+        defaultWorkdir: "/tmp/repo",
+        defaultRuntimeId: "claude-code",
+        runtimes: [
+          {
+            id: "claude-code",
+            label: "Claude Code",
+            supportsCompaction: true,
+            models: [{ value: "claude-opus-4-8", label: "opus 4.8" }],
+            efforts: [
+              { value: "medium", label: "medium" },
+              { value: "high", label: "high" },
+            ],
+          },
+        ],
+      },
+      (body) => {
+        postBody = body;
+      },
+    );
+
+    renderWithClient(
+      <AddSpecModal
+        project={{ id: "project-1", name: "Project", repo_path: "/tmp/repo" }}
+        onCreated={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+
+    // Wait until /config resolves and the modal adopts the stub descriptor's
+    // efforts (the pre-config fallback descriptor advertises a different set).
+    await waitFor(() => {
+      expect(
+        getSelectOptions(screen.getByLabelText("Planner effort") as HTMLSelectElement),
+      ).toEqual(["", "medium", "high"]);
+    });
+    // Default is "" (runtime default) until the operator picks a level.
+    expect(screen.getByLabelText("Planner effort")).toHaveProperty("value", "");
+
+    fireEvent.change(screen.getByLabelText("Planner effort"), {
+      target: { value: "high" },
+    });
+    fireEvent.change(screen.getByLabelText("Title"), {
+      target: { value: "Effort thing" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => {
+      expect(postBody).toMatchObject({
+        planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8", effort: "high" },
+      });
+    });
   });
 
   test("keeps planner and worker model scopes independent when runtimes change", async () => {

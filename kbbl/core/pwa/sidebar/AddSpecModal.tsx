@@ -193,6 +193,30 @@ function RoleModelPicker({
           />
         )}
       </label>
+      {runtime.efforts.length > 0 && (
+        <label className="add-spec-modal__field">
+          <span>Effort</span>
+          <select
+            value={selection.effort ?? ""}
+            onChange={(e) =>
+              setSelection((current) => ({
+                ...current,
+                // "" = default (no override) → store null so it round-trips
+                // through the API and DB unchanged.
+                effort: e.target.value || null,
+              }))
+            }
+            disabled={pending}
+            aria-label={`${roleLabel} effort`}
+          >
+            {[{ value: "", label: "default" }, ...runtime.efforts].map((option) => (
+              <option key={option.value || "default"} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
     </section>
   );
 }

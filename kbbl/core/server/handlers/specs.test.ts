@@ -22,6 +22,10 @@ function makeRuntime(
     id,
     label: id === "claude-code" ? "Claude Code" : "Codex",
     models: models.map((model) => ({ value: model, label: model })),
+    efforts:
+      id === "claude-code"
+        ? [{ value: "low", label: "low" }, { value: "high", label: "high" }]
+        : [{ value: "minimal", label: "minimal" }, { value: "medium", label: "medium" }],
     supportsCompaction: id === "claude-code",
   };
   return {
@@ -96,11 +100,54 @@ describe("POST /specs split model validation", () => {
     expect(epic.planner_model_selection).toEqual({
       runtime: "claude-code",
       model: "claude-opus-4-8",
+      effort: null,
     });
     expect(epic.worker_model_selection).toEqual({
       runtime: "codex",
       model: "gpt-5.4-mini",
+      effort: null,
     });
+  });
+
+  test("persists per-role effort selections when valid for the runtime", async () => {
+    const project = insertProject(db, {
+      id: "project-1",
+      name: "Project",
+      repo_path: "/tmp/project",
+    });
+
+    const res = await post({
+      project_id: project.id,
+      title: "Effort spec",
+      planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8", effort: "high" },
+      worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini", effort: "minimal" },
+    });
+
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { id: string };
+    const epic = getEpicBySpec(db, body.id);
+    expect(epic?.planner_model_selection.effort).toBe("high");
+    expect(epic?.worker_model_selection.effort).toBe("minimal");
+  });
+
+  test("rejects an effort the selected runtime does not allow", async () => {
+    const project = insertProject(db, {
+      id: "project-1",
+      name: "Project",
+      repo_path: "/tmp/project",
+    });
+
+    // "high" is a claude-code effort but not a codex effort.
+    const res = await post({
+      project_id: project.id,
+      title: "Bad effort spec",
+      planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
+      worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini", effort: "high" },
+    });
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('worker effort "high" is not allowed for runtime "codex"');
   });
 
   test("rejects an invalid runtime id with a clear error", async () => {

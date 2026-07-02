@@ -258,6 +258,8 @@ export interface CcArgvOpts {
   mcpConfigPath: string;
   /** Pinned model, or null/omitted for CC's default. */
   model?: string | null;
+  /** Reasoning/effort level (`--effort`), or null/omitted for CC's default. */
+  effort?: string | null;
   /** Parent CC session id to fork from (continue-in-place / live fork). */
   parentCcSid?: string | null;
   /**
@@ -274,7 +276,8 @@ export interface CcArgvOpts {
  * Pure and order-stable so it is testable in isolation and shared by the only
  * production launcher (the AgentRuntime PTY `spawn()` path): the static prefix
  * mirrors oakridge-core's build_argv for byte/arg parity, then optional
- * `--session-id`, `--model`, and `--resume`/`--fork-session` in that order.
+ * `--session-id`, `--model`, `--effort`, and `--resume`/`--fork-session` in
+ * that order.
  */
 export function buildCcArgv(opts: CcArgvOpts): string[] {
   const argv = [
@@ -299,6 +302,9 @@ export function buildCcArgv(opts: CcArgvOpts): string[] {
   }
   if (opts.model) {
     argv.push("--model", opts.model);
+  }
+  if (opts.effort) {
+    argv.push("--effort", opts.effort);
   }
   // Resume in a fresh session id so multiple live forks off the same parent
   // don't collide on CC's internal session id.

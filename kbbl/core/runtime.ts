@@ -13,12 +13,27 @@ export interface RuntimeDescriptor {
   id: RuntimeId;
   label: string;
   models: readonly { value: string; label: string }[];
+  /**
+   * Reasoning/effort levels this runtime accepts, most-effort-last. Empty for
+   * runtimes with no effort control. The PWA renders these as an effort picker
+   * (prepending a "default" = unset option) exactly as it does `models`. Values
+   * differ per runtime (CC: low..max; Codex: none..xhigh), so each adapter
+   * advertises its own set rather than sharing a global enum.
+   */
+  efforts: readonly { value: string; label: string }[];
   supportsCompaction: boolean;
 }
 
 export type RuntimeModelSelection = {
   runtime: RuntimeId;
   model: string;
+  /**
+   * Reasoning/effort level for this role's sessions. Omitted / null means "no
+   * override — use the runtime default", mirroring standalone sessions. Not a
+   * pinned default like model (planner=opus, worker=sonnet) because effort has
+   * no cost-tier convention worth forcing.
+   */
+  effort?: string | null;
 };
 
 const DEFAULT_PLANNER_MODEL_BY_RUNTIME: Record<RuntimeId, string> = {
@@ -66,6 +81,23 @@ export function isAllowedModelForRuntime(
     return declaredModels.some((m) => m.value === trimmedModel);
   }
   return trimmedModel.length > 0;
+}
+
+/**
+ * Gate an `effort` string against a runtime's declared effort levels. Validates
+ * strictly against the descriptor: a runtime with no declared efforts rejects
+ * any non-empty effort. Callers only invoke this for a provided, non-empty
+ * effort — an omitted/empty effort means "use the runtime default" and is not
+ * validated. Used by the dev-flow spec handler, mirroring
+ * isAllowedModelForRuntime.
+ */
+export function isAllowedEffortForRuntime(
+  runtime: Pick<AgentRuntime, "descriptor"> | undefined,
+  effort: string,
+): boolean {
+  const trimmedEffort = effort.trim();
+  const declaredEfforts = runtime?.descriptor.efforts ?? [];
+  return declaredEfforts.some((e) => e.value === trimmedEffort);
 }
 
 // === session handle ===
@@ -129,6 +161,7 @@ export type ResumeRef =
       workdir: string;
       parentWorktreePath: string | null;
       model: string | null;
+      effort: string | null;
     }
   | { kind: "unknown" | "no_runtime_sid" | "no_workdir" };
 

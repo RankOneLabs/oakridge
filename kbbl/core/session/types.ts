@@ -36,6 +36,7 @@ export interface SessionSnapshot {
   worktreeBaseRef: string | null;
   projectWorkdir: string | null;
   model: string | null;
+  effort: string | null;
   initialObservedModel: string | null;
   observedModel: string | null;
   endReason: SessionEndReason | null;

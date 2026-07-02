@@ -40,6 +40,7 @@ function snap(over: Partial<SessionSnapshot>): SessionSnapshot {
     worktreeBaseRef: over.worktreeBaseRef ?? null,
     projectWorkdir: over.projectWorkdir ?? null,
     model: over.model ?? null,
+    effort: over.effort ?? null,
     initialObservedModel: over.initialObservedModel ?? null,
     observedModel: over.observedModel ?? null,
     endReason: over.endReason ?? null,

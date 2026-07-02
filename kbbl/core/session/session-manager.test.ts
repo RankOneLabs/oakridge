@@ -68,6 +68,7 @@ function makeNoopRuntime(id: RuntimeId = "claude-code"): AgentRuntime {
     id,
     label: id === "claude-code" ? "Claude Code" : "Codex",
     models: [{ value: "claude-sonnet-4-6", label: "sonnet 4.6" }],
+    efforts: [],
     supportsCompaction: true,
   };
   return {

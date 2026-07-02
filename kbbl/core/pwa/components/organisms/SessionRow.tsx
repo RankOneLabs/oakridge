@@ -3,7 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 
 import type { SessionSnapshot } from "../../types";
 import { useRelativeTime } from "../../hooks/useRelativeTime";
-import { prettyModelLabel } from "../../lib/format";
+import { prettyEffortLabel, prettyModelLabel } from "../../lib/format";
 import { responseError } from "../../lib/http";
 import { resumeTitle } from "../../lib/session";
 
@@ -78,6 +78,11 @@ export function SessionRow({
           {shouldShowCurrentModel && currentModel && (
             <span className="session-row-model" title={`current: ${currentModel}`}>
               current {prettyModelLabel(currentModel)}
+            </span>
+          )}
+          {snapshot.effort && (
+            <span className="session-row-effort" title={`effort: ${snapshot.effort}`}>
+              effort {prettyEffortLabel(snapshot.effort)}
             </span>
           )}
           {snapshot.pendingCount > 0 && (

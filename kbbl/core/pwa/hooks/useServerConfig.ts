@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { RuntimeId } from "../../runtime-interface";
 import type { RuntimeDescriptor, RuntimeModelOption } from "../types";
-import { PWA_MODEL_OPTIONS } from "../lib/format";
+import { PWA_EFFORT_OPTIONS, PWA_MODEL_OPTIONS } from "../lib/format";
 
 interface ServerConfigResponse {
   defaultWorkdir: string | null;
@@ -44,10 +44,16 @@ function fallbackClaudeDescriptor(): RuntimeDescriptor {
       value: o.value,
       label: o.label,
     })),
+    efforts: PWA_EFFORT_OPTIONS.filter((o) => o.value !== "").map((o) => ({
+      value: o.value,
+      label: o.label,
+    })),
     supportsCompaction: true,
   };
 }
 
+// Coerces a value/label option array from the server response. Shared by the
+// model and effort descriptor fields (identical shape).
 function coerceRuntimeModels(value: unknown): RuntimeModelOption[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((raw) => {
@@ -69,6 +75,7 @@ function coerceRuntimeDescriptors(value: unknown): [RuntimeDescriptor, ...Runtim
       id?: unknown;
       label?: unknown;
       models?: unknown;
+      efforts?: unknown;
       supportsCompaction?: unknown;
     };
     if (!isRuntimeId(runtime.id)) return [];
@@ -76,6 +83,7 @@ function coerceRuntimeDescriptors(value: unknown): [RuntimeDescriptor, ...Runtim
       id: runtime.id,
       label: typeof runtime.label === "string" ? runtime.label : runtime.id,
       models: coerceRuntimeModels(runtime.models),
+      efforts: coerceRuntimeModels(runtime.efforts),
       supportsCompaction: runtime.supportsCompaction === true,
     }];
   });

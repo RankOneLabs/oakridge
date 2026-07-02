@@ -47,6 +47,8 @@ export interface RuntimeDescriptor {
   id: RuntimeId;
   label: string;
   models: RuntimeModelOption[];
+  /** Reasoning/effort levels this runtime accepts (value/label like models). */
+  efforts: RuntimeModelOption[];
   supportsCompaction: boolean;
 }
 
