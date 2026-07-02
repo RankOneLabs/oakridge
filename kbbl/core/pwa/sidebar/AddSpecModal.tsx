@@ -78,6 +78,10 @@ function coerceSelection(
   const nextRuntime = runtimeTouched
     ? getRuntimeForSelection(runtimeDescriptors, defaultRuntimeId, selection.runtime)
     : getRuntimeForSelection(runtimeDescriptors, defaultRuntimeId, defaultRuntimeId);
+  // Effort levels are per-runtime, so a preserved effort is only valid while
+  // the runtime is unchanged; drop it when the runtime switches so a stale
+  // level can't leak across runtimes.
+  const nextEffort = nextRuntime.id === selection.runtime ? selection.effort : undefined;
   if (nextRuntime.models.length === 0) {
     const nextModel = selection.model.trim().length > 0 ? selection.model : getRoleDefaultModel(role, nextRuntime);
     if (nextRuntime.id === selection.runtime && nextModel === selection.model) {
@@ -86,6 +90,7 @@ function coerceSelection(
     return {
       runtime: nextRuntime.id,
       model: nextModel,
+      effort: nextEffort,
     };
   }
   const nextModel = isModelAllowed(nextRuntime, selection.model)
@@ -97,6 +102,7 @@ function coerceSelection(
   return {
     runtime: nextRuntime.id,
     model: nextModel,
+    effort: nextEffort,
   };
 }
 

@@ -130,6 +130,25 @@ describe("POST /specs split model validation", () => {
     expect(epic?.worker_model_selection.effort).toBe("minimal");
   });
 
+  test("rejects a provided-but-blank effort", async () => {
+    const project = insertProject(db, {
+      id: "project-1",
+      name: "Project",
+      repo_path: "/tmp/project",
+    });
+
+    const res = await post({
+      project_id: project.id,
+      title: "Blank effort spec",
+      planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8", effort: "   " },
+      worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini" },
+    });
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('planner effort must not be empty for runtime "claude-code"');
+  });
+
   test("rejects an effort the selected runtime does not allow", async () => {
     const project = insertProject(db, {
       id: "project-1",

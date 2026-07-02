@@ -96,14 +96,26 @@ function validateModelSelection(
       error: `${role} model "${model}" is not allowed for runtime "${runtime}"`,
     };
   }
-  const effort = selection.effort?.trim();
-  if (effort && !isAllowedEffortForRuntime(runtimeDescriptor, effort)) {
-    return {
-      ok: false,
-      error: `${role} effort "${effort}" is not allowed for runtime "${runtime}"`,
-    };
+  // Only validate when an effort was actually provided. A provided-but-blank
+  // effort is an error (matches POST /sessions), not a silent "use default";
+  // omitted / null means "runtime default".
+  if (selection.effort != null) {
+    const effort = selection.effort.trim();
+    if (effort.length === 0) {
+      return {
+        ok: false,
+        error: `${role} effort must not be empty for runtime "${runtime}"`,
+      };
+    }
+    if (!isAllowedEffortForRuntime(runtimeDescriptor, effort)) {
+      return {
+        ok: false,
+        error: `${role} effort "${effort}" is not allowed for runtime "${runtime}"`,
+      };
+    }
+    return { ok: true, value: { runtime, model, effort } };
   }
-  return { ok: true, value: { runtime, model, effort: effort || null } };
+  return { ok: true, value: { runtime, model, effort: null } };
 }
 
 export function mountSpecsRoutes(app: Hono, deps: SpecsRouteDeps): void {

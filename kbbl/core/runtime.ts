@@ -17,7 +17,7 @@ export interface RuntimeDescriptor {
    * Reasoning/effort levels this runtime accepts, most-effort-last. Empty for
    * runtimes with no effort control. The PWA renders these as an effort picker
    * (prepending a "default" = unset option) exactly as it does `models`. Values
-   * differ per runtime (CC: low..max; Codex: none..xhigh), so each adapter
+   * differ per runtime (CC: low..max; Codex: minimal..xhigh), so each adapter
    * advertises its own set rather than sharing a global enum.
    */
   efforts: readonly { value: string; label: string }[];
