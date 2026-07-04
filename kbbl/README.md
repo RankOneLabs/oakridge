@@ -25,6 +25,10 @@ Compaction runs the agent's `/compact` prompt, writes a handoff markdown to `dat
 
 kbbl supports two agent runtimes. Configure via `kbbl/config.json`:
 
+> `kbbl/config.json` is git-ignored per-deploy local config. Copy the checked-in
+> `kbbl/config.example.json` to `kbbl/config.json` and edit it locally; a missing
+> `config.json` falls back to built-in schema defaults.
+
 | Runtime | ID | Default | Notes |
 |---|---|---|---|
 | Claude Code | `claude-code` | yes | Drives CC via `--output-format stream-json`. Full feature set: compaction, approval hook, yolo mode. |

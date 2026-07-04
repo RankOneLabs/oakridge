@@ -14,7 +14,7 @@
   "runtime": {
     "default": "claude-code",
     "codex": {
-      "enabled": true,
+      "enabled": false,
       "bin": "codex",
       "listen": "stdio://"
     }

@@ -132,6 +132,8 @@ The run is marked `failed` for the following cases:
 - invalid `RESULT` payload
 - artifact emission failure
 - cancellation, which is mapped to `failed`
+- unexpected internal error — the outer catch-all (`kind: "runtime_error"`) for IO
+  failures, a closed channel, or anything not covered by a structured kind above
 
 On success, `terminal_meta` records the command, args, output directory, run-spec path,
 PID when available, and output tails. `parked_reason` remains the parked-only surface and

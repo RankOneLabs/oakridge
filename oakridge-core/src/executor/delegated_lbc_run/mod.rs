@@ -120,6 +120,13 @@ impl StageType for DelegatedLbcRunStage {
         let run_spec_json = serde_json::to_vec_pretty(&config.run_spec)?;
         fs::write(&run_spec_path, run_spec_json).await?;
 
+        // Trust boundary (intentional): `bridge_command` / `bridge_args` come from
+        // the workflow definition and are executed as-is — this stage can launch any
+        // binary the def names, as the oakridge-core process user. This is by design:
+        // oakridge-core is a single-operator, local-network application, so submitting
+        // a workflow def is already a trusted, authenticated action. We deliberately
+        // do NOT allowlist bridge executables. If oakridge-core is ever exposed to
+        // untrusted def submitters, this must become a strict allowlist.
         let mut command = Command::new(&config.bridge_command);
         command.args(&config.bridge_args);
         command.arg("--spec");
@@ -158,20 +165,38 @@ impl StageType for DelegatedLbcRunStage {
         let config_clone = config.clone();
         let output_dir_clone = output_dir.clone();
         let run_spec_path_clone = run_spec_path.clone();
-        let join: JoinHandle<()> = tokio::spawn(async move {
-            run_bridge(
-                ctx,
-                config_clone,
-                output_dir_clone,
-                run_spec_path_clone,
-                child,
-                cancel_rx,
-                completion_tx,
-            )
-            .await;
+        // Supervise the bridge task. If run_bridge panics before reaching its own
+        // catch-all, dropping the JoinHandle would discard the JoinError and leave
+        // the stage stuck in Running forever with no terminal_meta. The supervisor
+        // awaits the handle and records a Failed terminal status on panic so the run
+        // always reaches quiescence.
+        let supervised_ctx = _ctx.clone();
+        tokio::spawn(async move {
+            let join: JoinHandle<()> = tokio::spawn(async move {
+                run_bridge(
+                    ctx,
+                    config_clone,
+                    output_dir_clone,
+                    run_spec_path_clone,
+                    child,
+                    cancel_rx,
+                    completion_tx,
+                )
+                .await;
+            });
+            if let Err(join_err) = join.await {
+                let _ = supervised_ctx
+                    .set_status_with_terminal_meta(
+                        StageStatus::Failed,
+                        None,
+                        Some(serde_json::json!({
+                            "kind": "task_panic",
+                            "error": join_err.to_string(),
+                        })),
+                    )
+                    .await;
+            }
         });
-
-        drop(join);
 
         Ok(Box::new(DelegatedLbcRunHandle {
             cancel_tx,

@@ -276,7 +276,7 @@ session as follow-up input.
 Use `delegated_lbc_run` for autonomous legit-biz-club work that should not
 become a visible kbbl session. The stage creates an output directory if needed,
 writes `run-spec.json`, invokes the bridge command, scans stdout for the final
-valid `RESULT ` line, and emits one result artifact containing paths and
+valid `RESULT` line, and emits one result artifact containing paths and
 metadata.
 
 Create a workflow definition:

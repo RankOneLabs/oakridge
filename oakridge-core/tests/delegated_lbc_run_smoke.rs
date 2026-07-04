@@ -73,9 +73,12 @@ fn real_legit_biz_club_cli_smoke() {
     );
 
     let stdout = String::from_utf8(output.stdout).unwrap();
+    // Mirror the executor contract: the *last* RESULT line is authoritative, so a
+    // trailing RESULT (e.g. after retries or progress output) wins over earlier ones.
     let result_line = stdout
         .lines()
-        .find(|line| line.starts_with("RESULT "))
+        .filter(|line| line.starts_with("RESULT "))
+        .last()
         .unwrap_or_else(|| panic!("missing RESULT line in stdout:\n{stdout}"));
     let result_json: Value =
         serde_json::from_str(result_line.strip_prefix("RESULT ").unwrap()).unwrap();

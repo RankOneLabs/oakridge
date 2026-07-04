@@ -15,7 +15,7 @@ use crate::executor::{ExecutorEvent, ResumePayload, StageContext, StageHandle};
 use crate::registry::{ArtifactTypeRegistry, StageTypeRegistry};
 use crate::types::{
     Artifact, RunStatus, StageInstance, StageInstanceId, StageInstanceSummary, StageKey,
-    StageStatus, WorkflowDef, WorkflowRunId,
+    StageStatus, StageTypeId, WorkflowDef, WorkflowRunId,
 };
 
 // ── Control messages ──────────────────────────────────────────────────────────
@@ -145,6 +145,8 @@ impl RunTask {
                 self.fail_activation(
                     stage_key,
                     si_id,
+                    node.stage_type.clone(),
+                    node.config.clone(),
                     Some(serde_json::json!({"error": "stage type not registered", "stage_type": node.stage_type})),
                 )
                 .await;
@@ -166,6 +168,8 @@ impl RunTask {
                 self.fail_activation(
                     stage_key,
                     si_id,
+                    node.stage_type.clone(),
+                    node.config.clone(),
                     Some(serde_json::json!({"error": e.to_string()})),
                 )
                 .await;
@@ -194,6 +198,8 @@ impl RunTask {
             self.fail_activation(
                 stage_key,
                 si_id,
+                si.stage_type.clone(),
+                si.config.clone(),
                 Some(serde_json::json!({"error": e.to_string()})),
             )
             .await;
@@ -240,13 +246,41 @@ impl RunTask {
     /// Mark a stage that could not be launched (unregistered type, build_config
     /// failure, or insert failure) as Failed in-memory and emit a StatusChanged so
     /// the run reaches quiescence as Failed instead of hanging in Running forever.
+    ///
+    /// Also persists a minimal Failed stage_instance row (with terminal_meta set)
+    /// before emitting, so a consumer of the event can fetch the instance and read
+    /// terminal_meta — the primary terminal diagnostic surface. Best-effort: when
+    /// the activation failure *is* the insert failure, this persist may fail too, so
+    /// we log and still emit the event.
     async fn fail_activation(
         &mut self,
         stage_key: &StageKey,
         si_id: StageInstanceId,
+        stage_type: StageTypeId,
+        config: Value,
         terminal_meta: Option<Value>,
     ) {
         self.index.insert(stage_key.clone(), (si_id, StageStatus::Failed));
+        let now = Utc::now();
+        let si = StageInstance {
+            id: si_id,
+            run_id: self.run_id,
+            stage_key: stage_key.clone(),
+            stage_type,
+            status: StageStatus::Failed,
+            config,
+            parked_reason: None,
+            parked_meta: None,
+            terminal_meta: terminal_meta.clone(),
+            external_ref: None,
+            started_at: None,
+            ended_at: Some(now),
+            created_at: now,
+            updated_at: now,
+        };
+        if let Err(e) = queries::insert_stage_instance(&self.db, &si).await {
+            tracing::error!(stage_key, "fail_activation: persist Failed stage_instance failed: {}", e);
+        }
         let _ = self.events_tx.send(ExecutorEvent::StatusChanged {
             instance_id: si_id,
             status: StageStatus::Failed,
@@ -779,7 +813,10 @@ impl Coordinator {
                             StageStatus::Failed,
                             None,
                             Some(serde_json::json!({"error": e.to_string()})),
-                            None,
+                            // Preserve the persisted start time: the UPDATE writes
+                            // started_at unconditionally, so None would wipe it for
+                            // recovered Parked/Running instances.
+                            si.started_at,
                             Some(Utc::now()),
                         )
                         .await;
