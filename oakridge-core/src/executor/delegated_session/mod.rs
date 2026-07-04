@@ -233,10 +233,13 @@ impl DelegatedSessionStage {
                     Ok(response) => {
                         if response.session_id != sid {
                             if !cancelled.load(Ordering::SeqCst) {
+                                let terminal_meta =
+                                    serde_json::json!({"reason": format!("kbbl session {} became unavailable", sid)});
                                 let _ = ctx
-                                    .set_status(
+                                    .set_status_with_terminal_meta(
                                         StageStatus::Failed,
-                                        Some(format!("kbbl session {} became unavailable", sid)),
+                                        None,
+                                        Some(terminal_meta),
                                     )
                                     .await;
                             }
@@ -245,7 +248,14 @@ impl DelegatedSessionStage {
 
                         if let Some(reason) = failure_reason_from_events(&sid, &response.events) {
                             if !cancelled.load(Ordering::SeqCst) {
-                                let _ = ctx.set_status(StageStatus::Failed, Some(reason)).await;
+                                let terminal_meta = serde_json::json!({"reason": reason.clone()});
+                                let _ = ctx
+                                    .set_status_with_terminal_meta(
+                                        StageStatus::Failed,
+                                        None,
+                                        Some(terminal_meta),
+                                    )
+                                    .await;
                             }
                             break;
                         }
@@ -256,13 +266,16 @@ impl DelegatedSessionStage {
                     }
                     Err(err) => {
                         if !cancelled.load(Ordering::SeqCst) {
+                            let terminal_reason = format!(
+                                "kbbl session {} became unavailable: {}",
+                                sid, err
+                            );
+                            let terminal_meta = serde_json::json!({"reason": terminal_reason.clone()});
                             let _ = ctx
-                                .set_status(
+                                .set_status_with_terminal_meta(
                                     StageStatus::Failed,
-                                    Some(format!(
-                                        "kbbl session {} became unavailable: {}",
-                                        sid, err
-                                    )),
+                                    None,
+                                    Some(terminal_meta),
                                 )
                                 .await;
                         }
@@ -820,6 +833,7 @@ mod tests {
             config,
             parked_reason: None,
             parked_meta: None,
+            terminal_meta: None,
             external_ref,
             started_at: None,
             ended_at: None,
@@ -1024,6 +1038,7 @@ mod tests {
                 status: crate::types::StageStatus::Pending,
                 parked_reason: None,
                 parked_meta: None,
+                terminal_meta: None,
                 external_ref: None,
             },
             delegated_config_json("hello world", "/workdir", true),
@@ -1108,6 +1123,7 @@ mod tests {
                 status: crate::types::StageStatus::Pending,
                 parked_reason: None,
                 parked_meta: None,
+                terminal_meta: None,
                 external_ref: Some("sid-123".into()),
             },
             delegated_config_json("hello again", "/workdir", false),
@@ -1157,6 +1173,7 @@ mod tests {
                 status: crate::types::StageStatus::Pending,
                 parked_reason: None,
                 parked_meta: None,
+                terminal_meta: None,
                 external_ref: None,
             },
             delegated_config_json("stop me", "/workdir", false),
@@ -1209,6 +1226,7 @@ mod tests {
                 status: crate::types::StageStatus::Pending,
                 parked_reason: None,
                 parked_meta: None,
+                terminal_meta: None,
                 external_ref: None,
             },
             delegated_config_json_with_outputs(
@@ -1304,6 +1322,7 @@ mod tests {
                 status: crate::types::StageStatus::Pending,
                 parked_reason: None,
                 parked_meta: None,
+                terminal_meta: None,
                 external_ref: None,
             },
             delegated_config_json("hello feedback", "/workdir", false),
@@ -1399,6 +1418,7 @@ mod tests {
                 status: crate::types::StageStatus::Pending,
                 parked_reason: None,
                 parked_meta: None,
+                terminal_meta: None,
                 external_ref: None,
             },
             delegated_config_json_with_outputs(

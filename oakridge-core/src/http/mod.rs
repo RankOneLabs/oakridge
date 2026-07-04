@@ -13,6 +13,7 @@ use tower_http::trace::TraceLayer;
 pub use crate::config::Config;
 use crate::db;
 use crate::events::EventBus;
+use crate::executor::delegated_lbc_run::DelegatedLbcRunStage;
 use crate::executor::delegated_session::{kbbl_client::KbblClient, DelegatedSessionStage};
 use crate::registry::{ArtifactTypeRegistry, StageTypeRegistry};
 use crate::scheduler::Coordinator;
@@ -28,6 +29,7 @@ pub struct AppState {
 
 /// Register built-in stage and artifact types.
 /// Reads delegated_session config from environment variables:
+///   OAKRIDGE_PROMPTS_DIR – prompt template root (default: "./prompts")
 ///   KBBL_API_BASE_URL    – kbbl HTTP base URL (default: "http://127.0.0.1:8788/")
 pub fn register_types(stage: &mut StageTypeRegistry, _artifact: &mut ArtifactTypeRegistry) {
     let prompts_dir = std::env::var("OAKRIDGE_PROMPTS_DIR")
@@ -44,8 +46,10 @@ pub fn register_types(stage: &mut StageTypeRegistry, _artifact: &mut ArtifactTyp
         delegated_prompts_dir,
         kbbl_client,
     ));
+    let delegated_lbc_run = Arc::new(DelegatedLbcRunStage::new());
 
     stage.register(delegated);
+    stage.register(delegated_lbc_run);
 }
 
 /// Initialize the substrate: run migrations, build registries via `register_fn`,
@@ -53,7 +57,7 @@ pub fn register_types(stage: &mut StageTypeRegistry, _artifact: &mut ArtifactTyp
 /// with static-serving fallback plus the Coordinator Arc.
 ///
 /// Production code passes `register_types` (registers the built-in
-/// `delegated_session` stage type); tests pass closures that inject dummy
+/// `delegated_session` and `delegated_lbc_run` stage types); tests pass closures that inject dummy
 /// stage/artifact types without modifying production paths.
 pub async fn boot<F>(cfg: Config, register_fn: F) -> anyhow::Result<(Router, Arc<Coordinator>)>
 where

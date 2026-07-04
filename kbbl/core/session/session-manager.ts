@@ -248,7 +248,7 @@ export interface InboxSnapshot {
 
 type InboxSubscriber = (delta: InboxDelta) => void;
 
-const LAST_ACTIVITY_THROTTLE_MS = 1000;
+export const LAST_ACTIVITY_THROTTLE_MS = 5_000;
 
 /**
  * Parse the depth encoded in a worktree branch name. Accepts both the legacy
@@ -277,7 +277,7 @@ export class SessionManager {
   private readonly inboxSubscribers = new Set<InboxSubscriber>();
   /**
    * Tracks the last time we actually emitted a last_activity_changed delta
-   * for a given sid so we can throttle noisy emit() traffic down to ~1/sec
+   * for a given sid so we can throttle noisy emit() traffic down to ~5s
    * per session. Paired with pendingActivityTimers below so an event that
    * arrives mid-window still produces a trailing flush.
    */

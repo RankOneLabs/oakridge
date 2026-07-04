@@ -7,7 +7,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { KbblConfigSchema } from "../config";
-import { SessionManager } from "./session-manager";
+import {
+  LAST_ACTIVITY_THROTTLE_MS,
+  SessionManager,
+} from "./session-manager";
 import type { Session, SpawnCmd } from "./session";
 import type {
   AgentRuntime,
@@ -105,6 +108,10 @@ function makeNoopRuntime(id: RuntimeId = "claude-code"): AgentRuntime {
 }
 
 describe("SessionManager.getByCcSid", () => {
+  test("throttles inbox last-activity deltas to the session-list cadence", () => {
+    expect(LAST_ACTIVITY_THROTTLE_MS).toBe(5_000);
+  });
+
   test("returns undefined when no lookupByCcSid is provided", () => {
     const manager = new SessionManager({
       sessionsDir,

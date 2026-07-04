@@ -420,7 +420,12 @@ mod tests {
 
         async fn execute(&self, ctx: StageContext) -> anyhow::Result<Box<dyn StageHandle>> {
             ctx.set_status(StageStatus::Running, None).await?;
-            ctx.set_status(StageStatus::Done, None).await?;
+            ctx.set_status_with_terminal_meta(
+                StageStatus::Done,
+                None,
+                Some(json!({"result": "immediate"})),
+            )
+            .await?;
             Ok(Box::new(ImmediateHandle))
         }
     }
@@ -769,6 +774,13 @@ mod tests {
         let stage_instances = detail["stage_instances"].as_array().unwrap();
         assert!(!stage_instances.is_empty(), "stage_instances must be inline");
         assert_eq!(stage_instances[0]["stage_key"].as_str().unwrap(), "s1");
+        assert_eq!(stage_instances[0]["terminal_meta"], json!({"result": "immediate"}));
+
+        let app = crate::http::router(state.clone());
+        let (status, stage_instance) =
+            req(app, "GET", &format!("/stage_instances/{}", stage_instances[0]["id"].as_str().unwrap()), None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(stage_instance["terminal_meta"], json!({"result": "immediate"}));
     }
 
     #[tokio::test]
