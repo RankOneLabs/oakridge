@@ -73,3 +73,19 @@ describe("sessions.default_allowlist", () => {
     ).toEqual(["Read"]);
   });
 });
+
+describe("skills.confirm", () => {
+  test("defaults to mutating gated-review MCP tools", () => {
+    const r = KbblConfigSchema.parse({});
+    expect(r.skills.confirm).toEqual([
+      "mcp:gated-review:git_push",
+      "mcp:gated-review:git_pull",
+      "mcp:gated-review:open_pr",
+    ]);
+  });
+
+  test("an explicit list overrides the default", () => {
+    const r = KbblConfigSchema.parse({ skills: { confirm: ["deploy"] } });
+    expect(r.skills.confirm).toEqual(["deploy"]);
+  });
+});

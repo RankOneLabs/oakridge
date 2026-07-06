@@ -433,6 +433,26 @@ describe("discoverSkills", () => {
     expect(skills.some((s) => s.name === "repo-skill")).toBe(true);
   });
 
+  test("includes curated built-in slash commands", () => {
+    const skills = discoverSkills(workDir);
+    const builtins = skills.filter((s) => s.id.startsWith("codex:builtin:"));
+    const names = builtins.map((s) => s.name);
+    expect(names).toContain("clear");
+    expect(names).toContain("compact");
+    expect(builtins.every((s) => s.scope === "system")).toBe(true);
+  });
+
+  test("repo skill suppresses a same-named built-in command", () => {
+    const repoSkillsDir = mkdirp(workDir, ".codex", "skills");
+    writeSkill(repoSkillsDir, "clear");
+
+    const skills = discoverSkills(workDir);
+    const clears = skills.filter((s) => s.name === "clear");
+
+    expect(clears).toHaveLength(1);
+    expect(clears[0]?.id).toBe("codex:clear");
+  });
+
   test("returns skills from workdir .agents/skills", () => {
     const agentsDir = mkdirp(workDir, ".agents", "skills");
     writeSkill(agentsDir, "agents-skill");
@@ -626,11 +646,26 @@ describe("mergeCodexSkills", () => {
 
     const skills = mergeCodexSkills({ local, native, mcpTools });
 
-    expect(skills).toHaveLength(2);
+    expect(skills.length).toBeGreaterThanOrEqual(2);
     expect(skills[0]?.description).toBe("native");
     expect(skills[0]?.args).toEqual(local[0]!.args);
     expect(skills[0]?.model_invocable).toBe(false);
-    expect(skills[1]?.id).toBe("codex:mcp:gated-review:git_push");
+    expect(skills.some((s) => s.id === "codex:mcp:gated-review:git_push")).toBe(
+      true,
+    );
+  });
+
+  test("adds gated-review MCP fallback tools when live discovery is empty", () => {
+    const skills = mergeCodexSkills({ local: [], native: [], mcpTools: [] });
+    const names = skills
+      .filter((s) => s.id.startsWith("codex:mcp:gated-review:"))
+      .map((s) => s.name);
+
+    expect(names).toContain("mcp:gated-review:get_review_round");
+    expect(names).toContain("mcp:gated-review:reply_to_thread");
+    expect(names).toContain("mcp:gated-review:resolve_thread");
+    expect(names).toContain("mcp:gated-review:git_push");
+    expect(names).toContain("mcp:gated-review:open_pr");
   });
 });
 
@@ -691,6 +726,20 @@ describe("makeSkillInvocationFormatter — slash form (supported)", () => {
       ),
     ).toBe("Use the gated-review MCP tool git_push.");
   });
+
+  test("built-in command button sends slash command", () => {
+    expect(
+      formatSkillInvocation(
+        {
+          ...skill,
+          id: "codex:builtin:clear",
+          name: "clear",
+          args: [],
+        },
+        {},
+      ),
+    ).toBe("/clear");
+  });
 });
 
 describe("makeSkillInvocationFormatter — mention form (probe failed)", () => {
@@ -724,6 +773,20 @@ describe("makeSkillInvocationFormatter — mention form (probe failed)", () => {
     const mention = makeSkillInvocationFormatter(false);
     expect(slash(skill, {})).toBe("/ghreview");
     expect(mention(skill, {})).toBe("$ghreview");
+  });
+
+  test("built-in commands still use slash form when skill slash support is absent", () => {
+    expect(
+      formatSkillInvocation(
+        {
+          ...skill,
+          id: "codex:builtin:compact",
+          name: "compact",
+          args: [],
+        },
+        {},
+      ),
+    ).toBe("/compact");
   });
 });
 

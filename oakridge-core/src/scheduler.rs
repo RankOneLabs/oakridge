@@ -851,7 +851,7 @@ impl Coordinator {
 mod tests {
     use super::*;
     use crate::db::queries;
-    use crate::events::{BackfillScope, EventBus};
+    use crate::events::{BackfillScope, EventBus, SeqEvent, SubstrateEvent};
     use crate::executor::{EmitArgs, ResumePayload, StageContext, StageHandle};
     use crate::registry::{ArtifactTypeDef, ArtifactTypeRegistry, StageTypeRegistry};
     use crate::types::*;
@@ -953,6 +953,30 @@ mod tests {
             }
         }
         panic!("run did not reach terminal status");
+    }
+
+    async fn wait_stage_status_event(
+        rx: &mut tokio::sync::broadcast::Receiver<SeqEvent>,
+        stage_instance_id: StageInstanceId,
+        expected_status: StageStatus,
+    ) {
+        tokio::time::timeout(timeout_dur(), async {
+            loop {
+                let ev = rx.recv().await.unwrap();
+                if let SubstrateEvent::StageStatusChanged {
+                    stage_instance_id: observed_id,
+                    status,
+                    ..
+                } = ev.event
+                {
+                    if observed_id == stage_instance_id && status == expected_status {
+                        return;
+                    }
+                }
+            }
+        })
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
@@ -1219,6 +1243,7 @@ mod tests {
         let (ctx_a, mut resume_rx_a) = tokio::time::timeout(timeout_dur(), a_rx.recv())
             .await.unwrap().unwrap();
 
+        let mut run_rx = bus.subscribe_run(run_id);
         ctx_a.set_status(StageStatus::Running, None).await.unwrap();
         let artifact = ctx_a.emit(EmitArgs {
             output_name: "out".into(), artifact_type: "any".into(),
@@ -1227,6 +1252,7 @@ mod tests {
         ctx_a.set_status(StageStatus::Parked, Some("waiting_gate".into())).await.unwrap();
 
         let si_id = ctx_a.stage_instance_id;
+        wait_stage_status_event(&mut run_rx, si_id, StageStatus::Parked).await;
 
         // inject gate decision
         coord.deliver_decision(run_id, si_id, ResumePayload::GateDecision {
