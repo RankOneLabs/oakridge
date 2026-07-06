@@ -33,11 +33,13 @@ function writeCommandMd(dir: string, name: string, content: string): void {
 }
 
 /**
- * discoverSkills always appends the curated CC built-in commands. Disk-source
- * tests assert on disk discovery only, so they filter those out first.
+ * discoverSkills always appends curated CC system skills. Disk-source tests
+ * assert on disk discovery only, so they filter those out first.
  */
 function diskOnly(skills: Skill[]): Skill[] {
-  return skills.filter((s) => !s.id.startsWith("cc:builtin:"));
+  return skills.filter(
+    (s) => !s.id.startsWith("cc:builtin:") && !s.id.startsWith("cc:mcp:"),
+  );
 }
 
 beforeEach(() => {
@@ -266,6 +268,8 @@ describe("discoverSkills — built-in CC commands", () => {
     const builtins = skills.filter((s) => s.id.startsWith("cc:builtin:"));
     expect(builtins.length).toBeGreaterThan(0);
     const names = builtins.map((s) => s.name);
+    expect(names).toContain("clear");
+    expect(names).toContain("compact");
     expect(names).toContain("code-review");
     const cr = builtins.find((s) => s.name === "code-review");
     expect(cr).toBeDefined();
@@ -311,6 +315,24 @@ describe("discoverSkills — built-in CC commands", () => {
     // Built-in survives alongside the plugin command.
     expect(ids).toContain("cc:builtin:review");
     expect(ids).toContain("cc:plugin:demo_market:user:commands:review");
+  });
+});
+
+describe("discoverSkills — gated-review MCP tools", () => {
+  test("surfaces curated gated-review tools as system skills", async () => {
+    const wd = makeWorkdir();
+    const home = makeHome();
+
+    const skills = await discoverSkills(wd, home);
+    const names = skills
+      .filter((s) => s.id.startsWith("cc:mcp:gated-review:"))
+      .map((s) => s.name);
+
+    expect(names).toContain("mcp:gated-review:get_review_round");
+    expect(names).toContain("mcp:gated-review:reply_to_thread");
+    expect(names).toContain("mcp:gated-review:resolve_thread");
+    expect(names).toContain("mcp:gated-review:git_push");
+    expect(names).toContain("mcp:gated-review:open_pr");
   });
 });
 
@@ -517,6 +539,17 @@ describe("formatSkillInvocation — slash serialization", () => {
   test("skill name is used from skill.name, not skill.id", () => {
     const s: Skill = { ...baseSkill, name: "custom-name" };
     expect(formatSkillInvocation(s, {})).toBe("/custom-name");
+  });
+
+  test("MCP tool skills send a tool-use steering prompt", () => {
+    const s: Skill = {
+      ...baseSkill,
+      id: "cc:mcp:gated-review:get_review_round",
+      name: "mcp:gated-review:get_review_round",
+    };
+    expect(formatSkillInvocation(s, {})).toBe(
+      "Use the gated-review MCP tool get_review_round.",
+    );
   });
 
   test("is pure — same inputs produce same output", () => {

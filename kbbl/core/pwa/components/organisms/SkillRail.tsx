@@ -13,9 +13,9 @@ interface RailSection {
   skills: Skill[];
 }
 
-/** True for a Codex MCP-tool pseudo-skill (id shape `codex:mcp:<server>:<tool>`). */
+/** True for an MCP-tool pseudo-skill (id shape `<backend>:mcp:<server>:<tool>`). */
 function isMcpSkill(skill: Skill): boolean {
-  return skill.id.startsWith("codex:mcp:");
+  return skill.id.split(":")[1] === "mcp";
 }
 
 function backendLabel(backend: Skill["backend"]): string {
@@ -63,7 +63,7 @@ export function SkillRail({
   const [collecting, setCollecting] = useState<Skill | null>(null);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
   const [invokeError, setInvokeError] = useState<string | null>(null);
   // Per-section open/closed overrides keyed by section key. Absent → use the
   // section's default (MCP collapsed, everything else expanded).

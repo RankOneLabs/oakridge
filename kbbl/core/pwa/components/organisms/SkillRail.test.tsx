@@ -56,14 +56,33 @@ function setup(skills: Skill[]) {
   } as unknown as ReturnType<typeof useInvokeSkill>);
 }
 
+function renderOpenRail() {
+  render(<SkillRail sid="test-sid" snapshot={LIVE_SNAPSHOT} />);
+  fireEvent.click(screen.getByRole("button", { name: /^Skills$/ }));
+}
+
 afterEach(() => {
   vi.clearAllMocks();
+});
+
+describe("SkillRail collapsed default", () => {
+  it("starts with the skills section closed", () => {
+    setup([PLAIN_SKILL]);
+    render(<SkillRail sid="test-sid" snapshot={LIVE_SNAPSHOT} />);
+
+    expect(
+      screen
+        .getByRole("button", { name: /^Skills$/ })
+        .getAttribute("aria-expanded"),
+    ).toBe("false");
+    expect(screen.queryByRole("button", { name: /list-tasks/ })).toBeNull();
+  });
 });
 
 describe("SkillRail two-tap confirm chain — no args", () => {
   it("first tap on confirm skill enters confirming state (does not dispatch)", () => {
     setup([CONFIRM_SKILL]);
-    render(<SkillRail sid="test-sid" snapshot={LIVE_SNAPSHOT} />);
+    renderOpenRail();
 
     fireEvent.click(screen.getByRole("button", { name: /deploy/ }));
 
@@ -73,7 +92,7 @@ describe("SkillRail two-tap confirm chain — no args", () => {
 
   it("second tap on confirming skill (no args) dispatches", async () => {
     setup([CONFIRM_SKILL]);
-    render(<SkillRail sid="test-sid" snapshot={LIVE_SNAPSHOT} />);
+    renderOpenRail();
 
     const btn = screen.getByRole("button", { name: /deploy/ });
     fireEvent.click(btn); // first tap → confirming
@@ -88,7 +107,7 @@ describe("SkillRail two-tap confirm chain — no args", () => {
 describe("SkillRail two-tap confirm chain — with args", () => {
   it("first tap on confirm skill with args enters confirming state", () => {
     setup([CONFIRM_SKILL_WITH_ARGS]);
-    render(<SkillRail sid="test-sid" snapshot={LIVE_SNAPSHOT} />);
+    renderOpenRail();
 
     fireEvent.click(screen.getByRole("button", { name: /ship/ }));
 
@@ -98,7 +117,7 @@ describe("SkillRail two-tap confirm chain — with args", () => {
 
   it("second tap on confirming skill with args opens ArgSheet, not dispatch", () => {
     setup([CONFIRM_SKILL_WITH_ARGS]);
-    render(<SkillRail sid="test-sid" snapshot={LIVE_SNAPSHOT} />);
+    renderOpenRail();
 
     const btn = screen.getByRole("button", { name: /ship/ });
     fireEvent.click(btn); // first tap → confirming
@@ -120,7 +139,7 @@ describe("SkillRail confirm gate — ArgSheet cleared on gate entry", () => {
       args: [{ key: "query", required: true, hint: "search query" }],
     };
     setup([PLAIN_WITH_ARGS, CONFIRM_SKILL]);
-    render(<SkillRail sid="test-sid" snapshot={LIVE_SNAPSHOT} />);
+    renderOpenRail();
 
     // Open ArgSheet for the plain-with-args skill
     fireEvent.click(screen.getByRole("button", { name: /search/ }));
@@ -138,7 +157,7 @@ describe("SkillRail confirm gate — ArgSheet cleared on gate entry", () => {
 describe("SkillRail confirm gate — non-confirm skills bypass gate", () => {
   it("plain skill dispatches on first tap (no confirm gate)", async () => {
     setup([PLAIN_SKILL]);
-    render(<SkillRail sid="test-sid" snapshot={LIVE_SNAPSHOT} />);
+    renderOpenRail();
 
     fireEvent.click(screen.getByRole("button", { name: /list-tasks/ }));
 
@@ -149,7 +168,7 @@ describe("SkillRail confirm gate — non-confirm skills bypass gate", () => {
 
   it("tapping a different skill cancels in-flight confirm gate", async () => {
     setup([CONFIRM_SKILL, PLAIN_SKILL]);
-    render(<SkillRail sid="test-sid" snapshot={LIVE_SNAPSHOT} />);
+    renderOpenRail();
 
     fireEvent.click(screen.getByRole("button", { name: /deploy/ })); // enter confirming
     expect(screen.getByLabelText("tap to confirm")).toBeTruthy();
@@ -170,7 +189,7 @@ describe("SkillRail dispatch in-flight", () => {
       mutateAsync: vi.fn().mockReturnValue(new Promise(() => {})), // never resolves
       error: null,
     } as unknown as ReturnType<typeof useInvokeSkill>);
-    render(<SkillRail sid="test-sid" snapshot={LIVE_SNAPSHOT} />);
+    renderOpenRail();
 
     fireEvent.click(screen.getByRole("button", { name: /list-tasks/ }));
 
@@ -196,7 +215,7 @@ describe("SkillRail MCP grouping + collapse", () => {
 
   it("MCP tool sections are collapsed by default", () => {
     setup([PLAIN_SKILL, MCP_SKILL]);
-    render(<SkillRail sid="test-sid" snapshot={LIVE_SNAPSHOT} />);
+    renderOpenRail();
 
     // Non-MCP skill is visible; the MCP tool button is hidden behind its header.
     expect(screen.getByRole("button", { name: /list-tasks/ })).toBeTruthy();
@@ -205,7 +224,7 @@ describe("SkillRail MCP grouping + collapse", () => {
 
   it("expanding the MCP section reveals the de-prefixed tool name", () => {
     setup([MCP_SKILL]);
-    render(<SkillRail sid="test-sid" snapshot={LIVE_SNAPSHOT} />);
+    renderOpenRail();
 
     fireEvent.click(screen.getByRole("button", { name: /MCP · gated-review/ }));
 
@@ -223,7 +242,7 @@ describe("SkillRail invoke failure", () => {
       mutateAsync: vi.fn().mockRejectedValue(new Error("transport down")),
       error: null,
     } as unknown as ReturnType<typeof useInvokeSkill>);
-    render(<SkillRail sid="test-sid" snapshot={LIVE_SNAPSHOT} />);
+    renderOpenRail();
 
     fireEvent.click(screen.getByRole("button", { name: /list-tasks/ }));
 
