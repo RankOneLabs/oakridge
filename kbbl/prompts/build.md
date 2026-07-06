@@ -10,15 +10,16 @@ Execute the brief below commit-by-commit. When the work is complete, open a pull
 
 ## Your tasks
 
-1. You're already on the cohort's worktree branch off the epic branch. Implement the brief, committing per logical subgoal — every commit must leave tests passing and typecheck clean.
+1. You're already on the cohort's worktree branch off the epic branch. Implement the brief in the current worktree, committing per logical subgoal — every commit must leave tests passing and typecheck clean. Do not `cd` to the source project checkout for edits, commits, branch detection, or PR push operations.
 2. Read the brief carefully. The `next_action` field is your starting point.
 3. Implement the work described in the brief. Follow the decisions exactly — do not relitigate closed decisions.
 4. Make one commit per logical subgoal. Each commit must leave the tree green (tests pass, typecheck clean).
 5. Push your branch and open a pull request when all subgoals are committed. All remote git operations go through the gated-review MCP server — do **not** use shell `git push`/`fetch`/`pull` or the `gh` CLI, which are blocked by the review gate.
-   a. Determine your repository slug and head branch with local reads (these touch only local git config, not the remote):
-      - Run `git -C {{REPO_PATH}} remote get-url origin` and normalize it to the `owner/name` slug: strip the scheme/host prefix (everything up to and including `github.com/` for an HTTPS URL or `github.com:` for an SSH URL) and any trailing `.git`. Both `https://github.com/owner/name.git` and `git@github.com:owner/name.git` yield `owner/name`.
-      - Run `git -C {{REPO_PATH}} rev-parse --abbrev-ref HEAD` to get your current branch (your PR head).
-   b. Push the branch with the `mcp__gated-review__git_push` tool: `repository` = the slug, `repo_path` = `{{REPO_PATH}}`, `branch` = your head branch.
+   a. Determine your repository slug, current worktree root, and head branch with local reads (these touch only local git config, not the remote):
+      - Run `git rev-parse --show-toplevel` to get the current cohort worktree repository root, then `cd` to that path and run `pwd -P` to resolve it to a physical path. Use this exact resolved root as `repo_path` for gated-review.
+      - Run `git remote get-url origin` and normalize it to the `owner/name` slug: strip the scheme/host prefix (everything up to and including `github.com/` for an HTTPS URL or `github.com:` for an SSH URL) and any trailing `.git`. Both `https://github.com/owner/name.git` and `git@github.com:owner/name.git` yield `owner/name`.
+      - Run `git rev-parse --abbrev-ref HEAD` to get your current branch (your PR head).
+   b. Push the branch with the `mcp__gated-review__git_push` tool: `repository` = the slug, `repo_path` = the resolved current cohort worktree root from `git rev-parse --show-toplevel` plus `pwd -P`, `branch` = your head branch.
    c. Open the PR with the `mcp__gated-review__open_pr` tool: `repository` = the slug, `base` = `{{EPIC_BRANCH}}`, `head` = your head branch, `title` = the brief goal shortened to ≤70 chars, `body` = `Implements brief {{BRIEF_ID}}. <summary of what shipped and any deviations.>`. Use the PR URL it returns for the debrief and status PATCHes below.
 6. Write a debrief back to kbbl using the API base URL from the brief:
    ```http

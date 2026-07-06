@@ -73,4 +73,17 @@ describe("buildSlotsForBrief — EPIC_BRANCH slot", () => {
     expect(rendered).toContain("mcp__gated-review__open_pr");
     expect(rendered).toContain(`\`base\` = \`epic/${EPIC_SLUG}\`, \`head\``);
   });
+
+  test("rendered build prompt uses the cohort worktree for local git and gated-review push", () => {
+    const slots = buildSlotsForBrief(db, BRIEF_ID, "http://kbbl");
+    const template = loadPrompt("build.md");
+    const rendered = renderPrompt(template, slots);
+    expect(rendered).toContain("Run `git rev-parse --show-toplevel`");
+    expect(rendered).toContain("run `pwd -P` to resolve it to a physical path");
+    expect(rendered).toContain("Run `git remote get-url origin`");
+    expect(rendered).toContain("Run `git rev-parse --abbrev-ref HEAD`");
+    expect(rendered).toContain("`repo_path` = the resolved current cohort worktree root");
+    expect(rendered).not.toContain("git -C /tmp/repo");
+    expect(rendered).not.toContain("`repo_path` = `/tmp/repo`");
+  });
 });
