@@ -94,6 +94,12 @@ const RuntimeSchema = z
   })
   .strict();
 
+const DEFAULT_CONFIRM_SKILLS = [
+  "mcp:gated-review:git_push",
+  "mcp:gated-review:git_pull",
+  "mcp:gated-review:open_pr",
+];
+
 const SkillsSchema = z
   .object({
     // Global skill-name denylist applied by filterSkillsForSession before the
@@ -104,9 +110,10 @@ const SkillsSchema = z
     // runtime. Lets cohort-3 frontend develop against real routes with no adapter.
     fixtures: z.boolean().default(false),
     // Skill-name allowlist for the tablet confirm gate (spec 3.4). Skills whose
-    // name matches are annotated confirm=true by the registry. Empty by default
-    // so the gate is fully dormant unless the operator opts in.
-    confirm: z.array(z.string()).default([]),
+    // name matches are annotated confirm=true by the registry. Mutating
+    // gated-review MCP tools are gated by default because they affect remote PR
+    // or git state from a compact rail button.
+    confirm: z.array(z.string()).default(DEFAULT_CONFIRM_SKILLS),
   })
   .strict();
 

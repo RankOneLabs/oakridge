@@ -13,7 +13,7 @@ interface RailSection {
   skills: Skill[];
 }
 
-/** True for an MCP-tool pseudo-skill (id shape `<backend>:mcp:<server>:<tool>`). */
+/** True for an MCP-tool pseudo-skill (e.g. `cc:mcp:<server>:<tool>`). */
 function isMcpSkill(skill: Skill): boolean {
   return skill.id.split(":")[1] === "mcp";
 }

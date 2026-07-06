@@ -273,6 +273,41 @@ describe("buildSkillRegistry aggregate()", () => {
     expect(result.find((s) => s.name === "list-tasks")?.confirm).toBe(false);
   });
 
+  test("confirm annotation: mutating gated-review skills are gated by default", async () => {
+    const skills: Skill[] = [
+      {
+        id: "cc:mcp:gated-review:git_push",
+        name: "mcp:gated-review:git_push",
+        description: "",
+        backend: "claude-code",
+        scope: "system",
+        args: [],
+        user_invocable: true,
+        model_invocable: true,
+      },
+      {
+        id: "cc:mcp:gated-review:get_review_round",
+        name: "mcp:gated-review:get_review_round",
+        description: "",
+        backend: "claude-code",
+        scope: "system",
+        args: [],
+        user_invocable: true,
+        model_invocable: true,
+      },
+    ];
+    const registry = makeRegistry(() => Promise.resolve(skills));
+    const config = KbblConfigSchema.parse({});
+    const agg = buildSkillRegistry({ registry, config });
+    const result = await agg.aggregate(makeSession());
+    expect(result.find((s) => s.name === "mcp:gated-review:git_push")?.confirm).toBe(
+      true,
+    );
+    expect(
+      result.find((s) => s.name === "mcp:gated-review:get_review_round")?.confirm,
+    ).toBe(false);
+  });
+
   test("confirm annotation runs after hidden filter: hidden skills are absent from result", async () => {
     const skills: Skill[] = [
       {

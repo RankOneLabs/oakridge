@@ -343,6 +343,7 @@ export async function discoverSkills(
     ...onDisk,
     ...pluginSkills,
     ...builtins,
+    // Pseudo-skills for the MCP server kbbl injects into every CC session.
     ...gatedReviewMcpSkills(),
   ]) {
     byId.set(skill.id, skill);

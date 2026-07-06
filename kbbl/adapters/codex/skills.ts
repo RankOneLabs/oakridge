@@ -449,6 +449,8 @@ export function discoverSkills(workingDirectory: string): Skill[] {
   for (const [name, skill] of scanSkillsRoot(repoAgentsRoot, "project")) {
     merged.set(name, skill);
   }
+  // Built-in slash commands are not on disk; inject them without overriding
+  // user/project skills of the same name.
   for (const skill of builtinCommandSkills()) {
     if (!merged.has(skill.name)) merged.set(skill.name, skill);
   }
