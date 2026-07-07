@@ -32,7 +32,6 @@ import pytest
 
 from legit_biz_club.run import main
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -115,9 +114,8 @@ async def _run_main_captured(spec_path: Path, output_dir: Path, *, grade: bool =
     """Patch run_cell, call main(), and return captured stdout."""
     captured = io.StringIO()
     fake = _make_fake_run_cell(grade=grade)
-    with patch("legit_biz_club.run.run_cell", new=fake):
-        with contextlib.redirect_stdout(captured):
-            await main(str(spec_path), str(output_dir))
+    with patch("legit_biz_club.run.run_cell", new=fake), contextlib.redirect_stdout(captured):
+        await main(str(spec_path), str(output_dir))
     return captured.getvalue()
 
 
