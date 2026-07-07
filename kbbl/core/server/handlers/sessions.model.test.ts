@@ -263,6 +263,21 @@ describe("POST /sessions model validation", () => {
     }
   });
 
+  test("null model returns 400 (null is not a string; oakridge must omit key when no model override)", async () => {
+    // kbbl distinguishes null (present invalid value) from absent (use runtime default).
+    // The oakridge kbbl_client must serialize model: None as absent, not as null.
+    const manager = makeManager();
+    try {
+      const app = makeApp(manager, undefined, repoDir);
+      const res = await postSessions(app, { model: null, workdir: repoDir });
+      expect(res.status).toBe(400);
+      const body = await res.json() as { error: string };
+      expect(body.error).toBe("model must be a string");
+    } finally {
+      await manager.endAll();
+    }
+  });
+
   test("case 5: omitted model → snapshot.model is null", async () => {
     const manager = makeManager();
     const app = makeApp(manager, undefined, repoDir);
