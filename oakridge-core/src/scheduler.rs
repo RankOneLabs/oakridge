@@ -832,6 +832,62 @@ impl Coordinator {
 
             task.prime_source_stages().await;
 
+            // Evaluate quiescence before entering the event loop.
+            //
+            // Case 1: all stages already terminal and no handles → no event will
+            // ever arrive to drive the run to completion; settle immediately.
+            //
+            // Case 2: non-terminal stages exist but no handles were registered →
+            // their execute() calls were skipped (unknown stage type, missing
+            // graph node), leaving them in a state where no progress is possible.
+            // Failing immediately surfaces a diagnosable terminal state instead of
+            // an operator-invisible hang in Running.
+            let active_count = task.index.values()
+                .filter(|(_, s)| matches!(*s, StageStatus::Pending | StageStatus::Running | StageStatus::Parked))
+                .count();
+
+            if !task.index.is_empty() && task.handles.is_empty() {
+                let final_status = if active_count > 0 {
+                    // Non-terminal stages with no handles: fail so the run is
+                    // diagnosable rather than hanging in Running indefinitely.
+                    let now = Utc::now();
+                    for (stage_key, (si_id, status)) in &task.index {
+                        if matches!(*status, StageStatus::Pending | StageStatus::Running | StageStatus::Parked) {
+                            // Preserve existing started_at so recovery doesn't wipe timing data.
+                            let existing_started_at = queries::get_stage_instance_by_id(&self.db, si_id)
+                                .await
+                                .ok()
+                                .and_then(|si| si.started_at);
+                            let _ = queries::update_stage_instance_status_with_terminal_meta(
+                                &self.db,
+                                si_id,
+                                StageStatus::Failed,
+                                None,
+                                Some(serde_json::json!({"error": "recovery: no live handle for non-terminal stage"})),
+                                existing_started_at,
+                                Some(now),
+                            )
+                            .await;
+                            tracing::warn!(
+                                run_id = %run_id.0,
+                                stage_key = %stage_key,
+                                "recovery quiescence: failing idle non-terminal stage with no handle"
+                            );
+                        }
+                    }
+                    RunStatus::Failed
+                } else if task.index.values().any(|(_, s)| matches!(*s, StageStatus::Failed)) {
+                    RunStatus::Failed
+                } else {
+                    RunStatus::Done
+                };
+
+                let _ = queries::update_workflow_run_status(&self.db, &run_id, final_status).await;
+                self.bus.publish(run_id, SubstrateEvent::RunStatusChanged { run_id, status: final_status });
+                self.bus.cleanup_run(run_id);
+                continue;
+            }
+
             // Acquire the map lock before spawning so self-reaping cannot race
             // ahead of handle registration.
             let mut runs = self.runs.lock().await;
@@ -1619,5 +1675,162 @@ mod tests {
         wait_run_done(&pool, run_id).await;
         let run = queries::get_workflow_run_by_id(&pool, &run_id).await.unwrap();
         assert_eq!(run.status, RunStatus::Failed, "unregistered stage type must fail the run, not hang in Running");
+    }
+
+    // ── (i) recovery quiescence: all-terminal stages settle without entering the event loop
+
+    #[tokio::test]
+    async fn recovery_all_terminal_stages_settle_immediately() {
+        let pool = make_pool().await;
+        let artifact_reg = make_artifact_registry();
+        let bus = EventBus::new();
+        let (sa, mut a_rx) = scripted("st_a");
+        let mut reg = StageTypeRegistry::new();
+        reg.register(sa);
+        let coord = Coordinator::new(pool.clone(), Arc::new(reg), artifact_reg, bus.clone());
+
+        let def = WorkflowDef {
+            id: WorkflowDefId(Uuid::new_v4()),
+            name: format!("wf-{}", Uuid::new_v4()),
+            version: 1,
+            graph: WorkflowGraph {
+                stages: {
+                    let mut m = HashMap::new();
+                    m.insert("A".into(), StageNodeDef {
+                        stage_type: "st_a".into(), config: json!({}),
+                        inputs: vec![], outputs: vec![],
+                    });
+                    m
+                },
+                edges: vec![],
+            },
+            created_at: fixed_dt(),
+        };
+        queries::insert_workflow_def(&pool, &def).await.unwrap();
+
+        let run = WorkflowRun {
+            id: WorkflowRunId(Uuid::new_v4()),
+            workflow_def_id: def.id,
+            project_id: None,
+            status: RunStatus::Running,
+            context: json!({}),
+            version: 1,
+            created_at: fixed_dt(),
+            updated_at: fixed_dt(),
+        };
+        queries::insert_workflow_run(&pool, &run).await.unwrap();
+
+        // Seed a Done stage_instance — simulates a run that completed but whose
+        // RunStatus was never written (e.g. crashed just after the last stage
+        // transitioned but before on_status_changed wrote RunStatus::Done).
+        let si = StageInstance {
+            id: StageInstanceId(Uuid::new_v4()),
+            run_id: run.id,
+            stage_key: "A".into(),
+            stage_type: "st_a".into(),
+            status: StageStatus::Done,
+            config: json!({}),
+            parked_reason: None,
+            parked_meta: None,
+            terminal_meta: None,
+            external_ref: None,
+            started_at: Some(fixed_dt()),
+            ended_at: Some(fixed_dt()),
+            created_at: fixed_dt(),
+            updated_at: fixed_dt(),
+        };
+        queries::insert_stage_instance(&pool, &si).await.unwrap();
+
+        let mut global_rx = bus.subscribe_global();
+        coord.recover().await.unwrap();
+
+        // Stage type must NOT be re-executed (Done stages are terminal).
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(a_rx.try_recv().is_err(), "Done stage must not be re-executed during recovery");
+
+        // Run must be settled to Done without requiring any external event.
+        let run_final = queries::get_workflow_run_by_id(&pool, &run.id).await.unwrap();
+        assert_eq!(run_final.status, RunStatus::Done, "all-terminal recovered run must settle to Done");
+
+        // Confirm RunStatusChanged Done was published.
+        let mut saw_done = false;
+        for _ in 0..20 {
+            match tokio::time::timeout(timeout_dur(), global_rx.recv()).await {
+                Ok(Ok(ev)) => {
+                    if matches!(ev.event, SubstrateEvent::RunStatusChanged { status: RunStatus::Done, .. }) {
+                        saw_done = true;
+                        break;
+                    }
+                }
+                _ => break,
+            }
+        }
+        assert!(saw_done, "recovery must publish RunStatusChanged Done for all-terminal run");
+    }
+
+    // ── (j) recovery quiescence: all-Failed stages settle as Failed ──────────
+
+    #[tokio::test]
+    async fn recovery_all_failed_stages_settle_as_failed() {
+        let pool = make_pool().await;
+        let artifact_reg = make_artifact_registry();
+        let bus = EventBus::new();
+        // Register no stage types so any re-activation also fails, but here the
+        // stage is already Failed so it won't be re-activated.
+        let coord = Coordinator::new(pool.clone(), Arc::new(StageTypeRegistry::new()), artifact_reg, bus.clone());
+
+        let def = WorkflowDef {
+            id: WorkflowDefId(Uuid::new_v4()),
+            name: format!("wf-{}", Uuid::new_v4()),
+            version: 1,
+            graph: WorkflowGraph {
+                stages: {
+                    let mut m = HashMap::new();
+                    m.insert("A".into(), StageNodeDef {
+                        stage_type: "missing_type".into(), config: json!({}),
+                        inputs: vec![], outputs: vec![],
+                    });
+                    m
+                },
+                edges: vec![],
+            },
+            created_at: fixed_dt(),
+        };
+        queries::insert_workflow_def(&pool, &def).await.unwrap();
+
+        let run = WorkflowRun {
+            id: WorkflowRunId(Uuid::new_v4()),
+            workflow_def_id: def.id,
+            project_id: None,
+            status: RunStatus::Running,
+            context: json!({}),
+            version: 1,
+            created_at: fixed_dt(),
+            updated_at: fixed_dt(),
+        };
+        queries::insert_workflow_run(&pool, &run).await.unwrap();
+
+        let si = StageInstance {
+            id: StageInstanceId(Uuid::new_v4()),
+            run_id: run.id,
+            stage_key: "A".into(),
+            stage_type: "missing_type".into(),
+            status: StageStatus::Failed,
+            config: json!({}),
+            parked_reason: None,
+            parked_meta: None,
+            terminal_meta: Some(json!({"error": "stage type not registered"})),
+            external_ref: None,
+            started_at: None,
+            ended_at: Some(fixed_dt()),
+            created_at: fixed_dt(),
+            updated_at: fixed_dt(),
+        };
+        queries::insert_stage_instance(&pool, &si).await.unwrap();
+
+        coord.recover().await.unwrap();
+
+        let run_final = queries::get_workflow_run_by_id(&pool, &run.id).await.unwrap();
+        assert_eq!(run_final.status, RunStatus::Failed, "all-Failed recovered run must settle to Failed");
     }
 }
