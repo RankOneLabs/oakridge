@@ -23,10 +23,18 @@ export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): vo
     const targetUrl = deps.baseUrl.replace(/\/$/, "") + subPath + search;
 
     const method = c.req.method;
+    // Only forward safe, non-sensitive headers. Strip credentials (cookie,
+    // authorization) and hop-by-hop headers (connection, transfer-encoding,
+    // upgrade, keep-alive, proxy-*) so kbbl session material is never leaked
+    // to the oakridge-core upstream.
+    const BLOCKED_HEADERS = new Set([
+      "host", "content-length", "cookie", "authorization",
+      "connection", "transfer-encoding", "upgrade", "keep-alive",
+      "proxy-authorization", "proxy-authenticate", "te", "trailer",
+    ]);
     const forwardHeaders = new Headers();
     for (const [k, v] of Object.entries(c.req.header())) {
-      const lower = k.toLowerCase();
-      if (lower !== "host" && lower !== "content-length") {
+      if (!BLOCKED_HEADERS.has(k.toLowerCase())) {
         forwardHeaders.set(k, v as string);
       }
     }

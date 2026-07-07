@@ -77,7 +77,7 @@ export function GlobalParkedGateList({ onNavigateRun }: { onNavigateRun: (id: st
         <button
           type="button"
           className="or-btn or-btn--secondary"
-          onClick={() => qc.invalidateQueries({ queryKey: ["oakridge", "gates"] })}
+          onClick={() => { void qc.invalidateQueries({ queryKey: ["oakridge", "gates"] }); }}
         >
           Refresh
         </button>

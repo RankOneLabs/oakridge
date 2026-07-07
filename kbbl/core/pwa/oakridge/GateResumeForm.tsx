@@ -14,7 +14,8 @@ export function GateResumeForm({ gate, onDone }: GateResumeFormProps) {
 
   const mutation = useResumeGate(gate.id, gate.run_id);
 
-  const canSubmit = action !== "" && operatorComment.trim() !== "" && !mutation.isPending;
+  const hasActions = gate.resume_actions.length > 0;
+  const canSubmit = hasActions && action !== "" && operatorComment.trim() !== "" && !mutation.isPending;
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -33,6 +34,12 @@ export function GateResumeForm({ gate, onDone }: GateResumeFormProps) {
       aria-label="Resume gate"
     >
       <h3 className="or-resume-form__title">Resume gate</h3>
+
+      {!hasActions && (
+        <div className="or-resume-form__no-actions or-muted" data-testid="or-resume-no-actions">
+          No resume actions are available for this gate.
+        </div>
+      )}
 
       {gate.resume_actions.length > 1 && (
         <div className="or-resume-form__field">

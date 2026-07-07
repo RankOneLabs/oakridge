@@ -71,7 +71,12 @@ export function RunListView({ onSelectRun }: RunListViewProps) {
                 onClick={() => onSelectRun(run.id)}
                 role="button"
                 tabIndex={0}
-                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onSelectRun(run.id); }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onSelectRun(run.id);
+                  }
+                }}
               >
                 <td className="or-run-row__name">{run.workflow_name}</td>
                 <td className="or-run-row__status">

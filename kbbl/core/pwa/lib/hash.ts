@@ -31,6 +31,14 @@ export type HashRoute =
   | { view: "epic"; id: string }
   | { view: "oakridge"; route: OakridgeSubRoute };
 
+function tryDecode(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+}
+
 export function readHashRoute(): HashRoute | null {
   const hash = window.location.hash.slice(1);
   if (hash.startsWith("plan/")) {
@@ -59,12 +67,18 @@ export function readHashRoute(): HashRoute | null {
       return { view: "oakridge", route: { sub: "runs" } };
     }
     if (rest.startsWith("/run/")) {
-      const id = rest.slice("/run/".length);
-      if (id) return { view: "oakridge", route: { sub: "run", id } };
+      const raw = rest.slice("/run/".length);
+      if (raw) {
+        const id = tryDecode(raw);
+        return { view: "oakridge", route: { sub: "run", id } };
+      }
     }
     if (rest.startsWith("/artifact/")) {
-      const id = rest.slice("/artifact/".length);
-      if (id) return { view: "oakridge", route: { sub: "artifact", id } };
+      const raw = rest.slice("/artifact/".length);
+      if (raw) {
+        const id = tryDecode(raw);
+        return { view: "oakridge", route: { sub: "artifact", id } };
+      }
     }
     return { view: "oakridge", route: { sub: "runs" } };
   }
