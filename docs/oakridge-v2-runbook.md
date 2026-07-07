@@ -47,7 +47,7 @@ This runbook includes two workflow examples:
   Log in once with `claude` (the Claude Code CLI) so the subscription OAuth
   token is cached, then start kbbl normally. You can verify the setup is correct
   by spawning a Claude Code session through the kbbl operator path and confirming
-  it reaches `active` without an `A.1` billing-guard error.
+  it reaches `live` without an `A.1` billing-guard error.
 - For `delegated_lbc_run`, `uv` and legit-biz-club dependencies available in
   the environment where oakridge-core runs.
 - Trusted local network access only. These development servers do not provide a
