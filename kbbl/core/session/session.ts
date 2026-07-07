@@ -228,6 +228,7 @@ export class Session {
   // flips to "ended" so a handle that arrives after abort can be terminated
   // immediately without wiring pumps or changing session state.
   private _finalized = false;
+  private _finalizePromise: Promise<void> | null = null;
 
   private readonly callbacks: SessionCallbacks;
   private readonly classifyEvent?: (
@@ -747,8 +748,12 @@ export class Session {
     if (this._finalized) {
       try {
         await runtime.terminate(handle);
-      } catch {
-        // ignore — the runtime may already be done
+      } catch (err) {
+        console.error(
+          `kbbl: failed to terminate late runtime handle for ${this.oakridgeSid}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
       }
       return;
     }
@@ -1009,10 +1014,16 @@ export class Session {
   }
 
   private async finalize(): Promise<void> {
+    if (this._finalizePromise) return this._finalizePromise;
     // Latch _finalized before the status check so attachRuntime() can see the
     // terminal decision even before _status flips to "ended". This prevents a
     // late-arriving runtime handle from wiring pumps after finalization.
     this._finalized = true;
+    this._finalizePromise = this.runFinalize();
+    return this._finalizePromise;
+  }
+
+  private async runFinalize(): Promise<void> {
     // Idempotent: abort() and the exitPromise's finally can both race into
     // finalize; the first one wins and the second is a no-op.
     if (this._status === "ended") return;

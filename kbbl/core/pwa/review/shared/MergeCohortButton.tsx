@@ -4,18 +4,10 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "../../hooks/useToast";
 import { ensureOk } from "../../lib/http";
 import type { ReviewThread } from "./types";
+import type { MergeBody, MergeOutcome } from "../../../shared/cohort-merge-contract";
 import { UnresolvedThreadsModal } from "./UnresolvedThreadsModal";
 import { ClosedWithoutMergeModal } from "./ClosedWithoutMergeModal";
 import { ThreadsUnknownModal } from "./ThreadsUnknownModal";
-
-type MergeOutcome =
-  | { outcome: "already_done" }
-  | { outcome: "merged"; via: "already_merged"; merged_at: string | null }
-  | { outcome: "merged"; via: "merged_now" }
-  | { outcome: "confirm_unresolved"; threads: ReviewThread[] }
-  | { outcome: "confirm_threads_unknown" }
-  | { outcome: "not_mergeable"; reason: "conflicts" | "checks_failing" | "unknown" }
-  | { outcome: "confirm_closed" };
 
 interface MergeCohortButtonProps {
   cohortId: string;
@@ -59,9 +51,7 @@ export function MergeCohortButton({ cohortId, prUrl }: MergeCohortButtonProps) {
   };
 
   const mergeMutation = useMutation({
-    mutationFn: async (
-      body: { confirm_unresolved?: boolean; confirm_closed?: boolean; confirm_threads_unknown?: boolean } | undefined,
-    ): Promise<MergeOutcome> => {
+    mutationFn: async (body: MergeBody | undefined): Promise<MergeOutcome> => {
       const res = await fetch(`/cohorts/${encodeURIComponent(cohortId)}/merge`, {
         method: "POST",
         headers: body ? { "Content-Type": "application/json" } : undefined,

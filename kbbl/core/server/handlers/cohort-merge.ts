@@ -8,9 +8,11 @@ import {
   type PrState,
   type GhError,
   type Result,
-  type ReviewThread,
 } from "../../github/gh-gateway";
 import { applyAwaitingMergeToMerged } from "./cohort-status";
+import type { MergeBody, MergeOutcome } from "../../shared/cohort-merge-contract";
+
+export type { MergeOutcome } from "../../shared/cohort-merge-contract";
 
 export interface GhGateway {
   fetchPrState(prUrl: string): Promise<Result<PrState, GhError>>;
@@ -29,15 +31,6 @@ interface CohortMergeRouteDeps {
   db: Database;
   gh: GhGateway;
 }
-
-export type MergeOutcome =
-  | { outcome: "already_done" }
-  | { outcome: "merged"; via: "already_merged"; merged_at: string | null }
-  | { outcome: "merged"; via: "merged_now" }
-  | { outcome: "confirm_unresolved"; threads: ReviewThread[] }
-  | { outcome: "confirm_threads_unknown" }
-  | { outcome: "not_mergeable"; reason: "conflicts" | "checks_failing" | "unknown" }
-  | { outcome: "confirm_closed" };
 
 /** Returns true when the transition applied, false when the cohort was no longer awaiting_merge. */
 function applyAndEmit(db: Database, cohort_id: string): boolean {
@@ -58,7 +51,7 @@ export function mountCohortMergeRoutes(app: Hono, deps: CohortMergeRouteDeps): v
   const { db, gh } = deps;
 
   app.post("/cohorts/:id/merge", async (c) => {
-    let body: { confirm_unresolved?: boolean; confirm_closed?: boolean; confirm_threads_unknown?: boolean } = {};
+    let body: MergeBody = {};
     const rawText = await c.req.text();
     if (rawText.trim()) {
       let rawJson: unknown;

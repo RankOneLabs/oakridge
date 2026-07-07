@@ -1151,6 +1151,7 @@ mod tests {
         async fn execute(&self, ctx: StageContext) -> anyhow::Result<Box<dyn StageHandle>> {
             ctx.set_status(StageStatus::Running, None).await?;
             ctx.set_status(StageStatus::Parked, Some("waiting_cancel".into())).await?;
+            ctx.set_parked_meta(Some(json!({"kind": "waiting_cancel"}))).await?;
             let _ = self.parked_tx.send(ctx.stage_instance_id).await;
             Ok(Box::new(ParkingHandle))
         }
@@ -1240,6 +1241,8 @@ mod tests {
         }
         let si_final = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
         assert_eq!(si_final.status, StageStatus::Failed, "stage must be Failed after cancel");
+        assert!(si_final.parked_reason.is_none(), "cancel must clear parked_reason");
+        assert!(si_final.parked_meta.is_none(), "cancel must clear parked_meta");
         let meta = si_final.terminal_meta.expect("terminal_meta must be set");
         assert_eq!(meta["kind"], json!("cancelled"));
 

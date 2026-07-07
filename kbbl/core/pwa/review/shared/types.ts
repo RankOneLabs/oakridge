@@ -1,12 +1,6 @@
 import type { ReactNode } from "react";
 
-export type ReviewThread = {
-  id: string;
-  author: string;
-  firstLineSnippet: string;
-  /** Path fragment starting with /pull/<n>#...; prefix with repo base URL to compose the deep-link. */
-  deepLinkPath: string;
-};
+export type { MergeReviewThread as ReviewThread } from "../../../shared/cohort-merge-contract";
 
 export interface AtomEdit {
   id: string;

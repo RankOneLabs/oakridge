@@ -26,6 +26,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import NamedTuple, Protocol
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -127,35 +128,49 @@ def _parse_result(line: str) -> dict[str, object]:
     return json.loads(line[len("RESULT "):])
 
 
+class ContractRunSpec(NamedTuple):
+    task_name: str
+    spec_path: Path
+    output_dir: Path
+
+
+@pytest.fixture
+def make_contract_run_spec(tmp_path: Path) -> ContractRunSpecFactory:
+    def _make(task_name: str, grade: bool = False) -> ContractRunSpec:
+        local_task_dir = tmp_path / "tasks"
+        _write_local_task(local_task_dir, task_name)
+        spec_path = tmp_path / "spec.json"
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        _write_spec(spec_path, task_name, local_task_dir, grade=grade)
+        return ContractRunSpec(task_name, spec_path, output_dir)
+
+    return _make
+
+
+class ContractRunSpecFactory(Protocol):
+    def __call__(self, task_name: str, grade: bool = False) -> ContractRunSpec: ...
+
+
 # ---------------------------------------------------------------------------
 # Success path: grade=False → eval_scores is null
 # ---------------------------------------------------------------------------
 
 
-async def test_success_emits_exactly_one_result_line(tmp_path: Path) -> None:
-    task_name = "contract_task_a"
-    local_task_dir = tmp_path / "tasks"
-    _write_local_task(local_task_dir, task_name)
-    spec_path = tmp_path / "spec.json"
-    output_dir = tmp_path / "output"
-    output_dir.mkdir()
-    _write_spec(spec_path, task_name, local_task_dir)
-
-    output = await _run_main_captured(spec_path, output_dir)
+async def test_success_emits_exactly_one_result_line(
+    make_contract_run_spec: ContractRunSpecFactory,
+) -> None:
+    spec = make_contract_run_spec("contract_task_a")
+    output = await _run_main_captured(spec.spec_path, spec.output_dir)
     lines = _result_lines(output)
     assert len(lines) == 1, f"expected 1 RESULT line, got {len(lines)}: {output!r}"
 
 
-async def test_success_result_json_has_artifact_path(tmp_path: Path) -> None:
-    task_name = "contract_task_b"
-    local_task_dir = tmp_path / "tasks"
-    _write_local_task(local_task_dir, task_name)
-    spec_path = tmp_path / "spec.json"
-    output_dir = tmp_path / "output"
-    output_dir.mkdir()
-    _write_spec(spec_path, task_name, local_task_dir)
-
-    output = await _run_main_captured(spec_path, output_dir)
+async def test_success_result_json_has_artifact_path(
+    make_contract_run_spec: ContractRunSpecFactory,
+) -> None:
+    spec = make_contract_run_spec("contract_task_b")
+    output = await _run_main_captured(spec.spec_path, spec.output_dir)
     payload = _parse_result(_result_lines(output)[0])
     assert "artifact_path" in payload, "RESULT JSON must contain artifact_path"
     assert isinstance(payload["artifact_path"], str) and payload["artifact_path"], (
@@ -163,31 +178,21 @@ async def test_success_result_json_has_artifact_path(tmp_path: Path) -> None:
     )
 
 
-async def test_success_result_artifact_path_file_exists(tmp_path: Path) -> None:
-    task_name = "contract_task_c"
-    local_task_dir = tmp_path / "tasks"
-    _write_local_task(local_task_dir, task_name)
-    spec_path = tmp_path / "spec.json"
-    output_dir = tmp_path / "output"
-    output_dir.mkdir()
-    _write_spec(spec_path, task_name, local_task_dir)
-
-    output = await _run_main_captured(spec_path, output_dir)
+async def test_success_result_artifact_path_file_exists(
+    make_contract_run_spec: ContractRunSpecFactory,
+) -> None:
+    spec = make_contract_run_spec("contract_task_c")
+    output = await _run_main_captured(spec.spec_path, spec.output_dir)
     payload = _parse_result(_result_lines(output)[0])
     artifact_path = Path(str(payload["artifact_path"]))
     assert artifact_path.exists(), f"artifact file must exist at {artifact_path}"
 
 
-async def test_grade_false_emits_eval_scores_null(tmp_path: Path) -> None:
-    task_name = "contract_task_d"
-    local_task_dir = tmp_path / "tasks"
-    _write_local_task(local_task_dir, task_name)
-    spec_path = tmp_path / "spec.json"
-    output_dir = tmp_path / "output"
-    output_dir.mkdir()
-    _write_spec(spec_path, task_name, local_task_dir, grade=False)
-
-    output = await _run_main_captured(spec_path, output_dir, grade=False)
+async def test_grade_false_emits_eval_scores_null(
+    make_contract_run_spec: ContractRunSpecFactory,
+) -> None:
+    spec = make_contract_run_spec("contract_task_d", False)
+    output = await _run_main_captured(spec.spec_path, spec.output_dir, grade=False)
     payload = _parse_result(_result_lines(output)[0])
     assert payload["eval_scores"] is None, (
         "grade: false must produce eval_scores: null in RESULT JSON"
@@ -231,7 +236,9 @@ async def test_grade_true_emits_eval_scores_as_list(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_events_jsonl_sidecar_exists_when_result_emitted(tmp_path: Path) -> None:
+async def test_events_jsonl_sidecar_exists_when_result_emitted(
+    make_contract_run_spec: ContractRunSpecFactory,
+) -> None:
     """events.jsonl must be written before the RESULT line appears on stdout.
 
     The event tee is wired inside main() before run_cell() is called.
@@ -240,20 +247,13 @@ async def test_events_jsonl_sidecar_exists_when_result_emitted(tmp_path: Path) -
     events.jsonl is guaranteed to exist (and contain valid JSONL) when
     oakridge-core reads it.
     """
-    task_name = "contract_task_e"
-    local_task_dir = tmp_path / "tasks"
-    _write_local_task(local_task_dir, task_name)
-    spec_path = tmp_path / "spec.json"
-    output_dir = tmp_path / "output"
-    output_dir.mkdir()
-    _write_spec(spec_path, task_name, local_task_dir)
-
-    await _run_main_captured(spec_path, output_dir)
+    spec = make_contract_run_spec("contract_task_e")
+    await _run_main_captured(spec.spec_path, spec.output_dir)
 
     # cell_dir mirrors what main() computes:
     # Path(output_dir) / target.name / condition.name
     # → output_dir / "contract_task_e" / "single_agent"
-    events_path = output_dir / task_name / "single_agent" / "events.jsonl"
+    events_path = spec.output_dir / spec.task_name / "single_agent" / "events.jsonl"
     assert events_path.exists(), (
         f"events.jsonl sidecar must exist before RESULT emission; not found at {events_path}"
     )
@@ -294,6 +294,7 @@ def test_invalid_spec_exits_nonzero_with_no_result_line(tmp_path: Path) -> None:
         ],
         capture_output=True,
         text=True,
+        timeout=30,
     )
 
     assert result.returncode != 0, (
@@ -324,6 +325,7 @@ def test_missing_spec_file_exits_nonzero_with_no_result_line(tmp_path: Path) -> 
         ],
         capture_output=True,
         text=True,
+        timeout=30,
     )
 
     assert result.returncode != 0

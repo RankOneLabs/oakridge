@@ -8,6 +8,7 @@ import { join } from "node:path";
 
 import {
   Session,
+  type Decision,
   type SessionCallbacks,
   type SessionOpts,
 } from "./session";
@@ -880,34 +881,24 @@ describe("Session late-spawn termination", () => {
     expect(session.status).toBe("ended");
   });
 
-  test("double-finalize: onEnded fires exactly once even when abort races with exitPromise", async () => {
-    // Abort and exitPromise's finally block both call finalize(). The second
-    // finalize must be a no-op (status already ended).
+  test("double-finalize: concurrent aborts share one finalizer and onEnded fires once", async () => {
+    // Two public abort() callers can enter finalize before the first one flips
+    // status to ended. A pending approval makes finalize await while the status
+    // is still non-terminal, so this exercises the real overlap window.
     const onEndedSessions: Session[] = [];
-    let finish!: () => void;
-    const done = new Promise<void>((resolve) => { finish = resolve; });
-
-    const runtime: AgentRuntime = {
-      ...makeRuntime(),
-      async *events(_handle: SessionHandle): AsyncIterable<RuntimeEvent> {
-        await done;
-        yield { type: "completed", result: { code: 0 } };
-      },
-    };
+    const resolvedDecisions: Decision[] = [];
     const session = makeSession({
       callbacks: { onEnded: (s) => onEndedSessions.push(s) },
     });
-    const handle = await runtime.spawn({ workingDirectory: "/tmp" });
-    await session.attachRuntime(runtime, handle);
+    session.registerApproval("approval-1", {
+      toolName: "Bash",
+      resolve: (d) => resolvedDecisions.push(d),
+    });
 
-    // Abort fires finalize() once; the session is now ended.
-    const abortP = session.abort();
-    // Then the runtime's event loop completes, which also calls finalize().
-    finish();
-    await abortP;
-    await session.waitForEnd();
+    await Promise.all([session.abort(), session.abort()]);
 
     expect(session.status).toBe("ended");
     expect(onEndedSessions).toHaveLength(1);
+    expect(resolvedDecisions).toEqual(["deny"]);
   });
 });

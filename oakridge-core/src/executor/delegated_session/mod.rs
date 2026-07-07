@@ -354,6 +354,9 @@ impl DelegatedSessionStage {
                     return;
                 }
             };
+            if cancelled.load(Ordering::SeqCst) {
+                return;
+            }
             live_sessions.lock().unwrap().insert(
                 stage_instance_id,
                 LiveSession {
@@ -465,9 +468,11 @@ async fn observer_loop(
                             Some(serde_json::json!({"kind": "session_ended_without_emit"}))
                         ).await;
                         break;
-                    } else {
+                    } else if matches!(persisted, StageStatus::Parked) {
                         // Parked at gate: stop observing without removing from live_sessions.
                         return;
+                    } else {
+                        break;
                     }
                 }
 

@@ -686,6 +686,16 @@ impl Coordinator {
             "kind": "cancelled",
             "reason": "run cancelled by operator"
         });
+        let cancellable_stages: Vec<_> = queries::list_stage_instances_for_run(&self.db, &run_id)
+            .await?
+            .into_iter()
+            .filter(|stage| {
+                matches!(
+                    stage.status,
+                    StageStatus::Pending | StageStatus::Running | StageStatus::Parked
+                )
+            })
+            .collect();
 
         // Persist cancellation terminal state for all non-terminal stages first so
         // the HTTP response can include the count and recovery treats them as terminal.
@@ -695,6 +705,14 @@ impl Coordinator {
             &cancellation_meta,
         )
         .await?;
+        for stage in cancellable_stages {
+            self.bus.publish(run_id, SubstrateEvent::StageStatusChanged {
+                stage_instance_id: stage.id,
+                status: StageStatus::Failed,
+                parked_reason: None,
+                terminal_meta: Some(cancellation_meta.clone()),
+            });
+        }
 
         // Deliver Cancel to the live run task to stop external processes
         // (kbbl sessions, child process groups). If the channel is already
@@ -709,10 +727,16 @@ impl Coordinator {
         };
 
         if !task_alive {
-            // No live run task (or channel closed) — mark the run Failed directly.
-            if queries::update_workflow_run_status(&self.db, &run_id, RunStatus::Failed)
-                .await
-                .is_ok()
+            // No live run task (or channel closed). The task may have self-reaped
+            // after reaching Done between the initial read and this branch, so the
+            // direct failure write must be conditional.
+            if queries::update_workflow_run_status_if_non_terminal(
+                &self.db,
+                &run_id,
+                RunStatus::Failed,
+            )
+            .await
+            .unwrap_or(false)
             {
                 self.bus.publish(run_id, SubstrateEvent::RunStatusChanged {
                     run_id,
