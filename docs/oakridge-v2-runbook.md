@@ -354,6 +354,64 @@ returns an invalid payload, the stage fails and records structured
 `terminal_meta` on the stage instance. Cancellation kills the bridge process
 best-effort and is also recorded in `terminal_meta`.
 
+## Run The Dev-Flow Workflow
+
+The dev-flow workflow is a four-stage `delegated_session` pipeline:
+`spec_analyzer → plan_writer → build → assessor`. It lives in
+`oakridge-core/examples/dev_flow.json`.
+
+### Prerequisites
+
+- kbbl and oakridge-core running (see earlier sections).
+- A git worktree already checked out where the agent should work.
+- `OAKRIDGE_PROMPTS_DIR` pointed at `oakridge-core/prompts` (or started from the
+  `oakridge-core/` directory where `./prompts` is the default).
+
+### Create the workflow definition
+
+```bash
+CORE=http://127.0.0.1:8790
+
+curl -sX POST "$CORE/workflow_defs" \
+  -H 'content-type: application/json' \
+  -d "$(jq '{name,version,graph}' oakridge-core/examples/dev_flow.json)"
+```
+
+Save the returned `id` as `DEV_FLOW_DEF_ID`.
+
+### Start a run
+
+```bash
+curl -sX POST "$CORE/workflow_runs" \
+  -H 'content-type: application/json' \
+  -d "{
+    \"workflow_def_id\": \"$DEV_FLOW_DEF_ID\",
+    \"context\": {
+      \"brief_notes\": \"Implement the feature described in <brief here>.\",
+      \"worktree_path\": \"/abs/path/to/worktree\",
+      \"oakridge_url\": \"http://127.0.0.1:8790/\"
+    }
+  }"
+```
+
+`brief_notes` is passed verbatim into the `spec_analyzer` prompt.
+
+### Gate decisions
+
+Each stage parks for artifact approval after emitting its output. The gate
+cycle is the same as any other `delegated_session` stage:
+
+1. `POST /stage_instances/<id>/resume` with `outcome: "pass"` after review.
+2. A second pass moves from artifact approval to merge confirmation and then to `done`.
+3. A `fail` or `rerun` decision sends feedback into the live kbbl session so the
+   agent can revise its output.
+
+### Tool approval
+
+All dev-flow stages use `yolo: true`. Per-tool approval (Phase 2) is not
+yet wired. `pre_authorized_tools` must be empty in the workflow definition —
+oakridge-core rejects any non-empty value at stage-creation time.
+
 ## Optional Real LBC Smoke Test
 
 The real legit-biz-club bridge smoke test is ignored by default because it may
