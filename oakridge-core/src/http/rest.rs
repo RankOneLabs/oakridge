@@ -117,6 +117,13 @@ pub struct RunDetail {
     pub stage_instances: Vec<StageInstance>,
 }
 
+#[derive(Serialize)]
+pub struct CancelRunResponse {
+    pub run_id: Uuid,
+    pub accepted: bool,
+    pub stages_cancelled: u64,
+}
+
 // ── Query param structs ───────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -290,6 +297,30 @@ pub async fn get_workflow_run(
     let run = queries::get_workflow_run_by_id(&state.pool, &run_id).await?;
     let stage_instances = queries::list_stage_instances_for_run(&state.pool, &run_id).await?;
     Ok(Json(RunDetail { run, stage_instances }))
+}
+
+pub async fn cancel_workflow_run(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<(StatusCode, Json<CancelRunResponse>), AppError> {
+    let run_id = WorkflowRunId(id);
+
+    // Validate existence — propagates 404 if missing.
+    let run = queries::get_workflow_run_by_id(&state.pool, &run_id).await?;
+
+    if matches!(run.status, RunStatus::Done | RunStatus::Failed) {
+        return Ok((
+            StatusCode::OK,
+            Json(CancelRunResponse { run_id: id, accepted: false, stages_cancelled: 0 }),
+        ));
+    }
+
+    let stages_cancelled = state.coordinator.cancel_run(run_id).await?;
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(CancelRunResponse { run_id: id, accepted: true, stages_cancelled }),
+    ))
 }
 
 pub async fn list_run_artifacts(
@@ -1079,6 +1110,168 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::CONFLICT);
         assert!(body["error"].as_str().is_some(), "inactive runs should return a conflict message");
+    }
+
+    // ── ParkingStage: parks immediately, never resumes on its own ────────────
+
+    struct ParkingHandle;
+
+    #[async_trait]
+    impl StageHandle for ParkingHandle {
+        async fn resume(&self, _: ResumePayload) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn cancel(&self) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct ParkingStage {
+        type_id: String,
+        parked_tx: mpsc::Sender<StageInstanceId>,
+    }
+
+    #[async_trait]
+    impl crate::registry::stage_type::StageType for ParkingStage {
+        fn id(&self) -> &str {
+            &self.type_id
+        }
+
+        async fn build_config(
+            &self,
+            def_config: &Value,
+            _: &HashMap<String, crate::types::Artifact>,
+            _: &[crate::types::OutputSlot],
+            _: crate::types::StageInstanceId,
+            _: &Value,
+        ) -> anyhow::Result<Value> {
+            Ok(def_config.clone())
+        }
+
+        async fn execute(&self, ctx: StageContext) -> anyhow::Result<Box<dyn StageHandle>> {
+            ctx.set_status(StageStatus::Running, None).await?;
+            ctx.set_status(StageStatus::Parked, Some("waiting_cancel".into())).await?;
+            let _ = self.parked_tx.send(ctx.stage_instance_id).await;
+            Ok(Box::new(ParkingHandle))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cancel_run_transitions_parked_stage_to_failed_cancelled() {
+        let (parked_tx, mut parked_rx) = mpsc::channel::<crate::types::StageInstanceId>(4);
+        let parking = Arc::new(ParkingStage {
+            type_id: "parking_stage".into(),
+            parked_tx,
+        });
+        let state = make_state(vec![parking as Arc<dyn crate::registry::stage_type::StageType>]).await;
+        let pool = state.pool.clone();
+
+        let app = crate::http::router(state.clone());
+        let (_, def) = req(
+            app,
+            "POST",
+            "/workflow_defs",
+            Some(json!({"name": "cancel-wf", "version": 1, "graph": minimal_graph("parking_stage")})),
+        )
+        .await;
+        let def_id = def["id"].as_str().unwrap().to_string();
+
+        let app = crate::http::router(state.clone());
+        let (status, run) = req(
+            app,
+            "POST",
+            "/workflow_runs",
+            Some(json!({"workflow_def_id": def_id})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        let run_id_str = run["id"].as_str().unwrap().to_string();
+        let run_id = WorkflowRunId(Uuid::parse_str(&run_id_str).unwrap());
+
+        // Wait for stage to park.
+        let si_id = tokio::time::timeout(Duration::from_secs(5), parked_rx.recv())
+            .await
+            .expect("stage must park within 5s")
+            .unwrap();
+
+        // GET /parked should show the stage.
+        let mut parked_count = 0usize;
+        for _ in 0..50 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            let app = crate::http::router(state.clone());
+            let (_, body) = req(app, "GET", "/parked", None).await;
+            parked_count = body.as_array().unwrap().len();
+            if parked_count > 0 {
+                break;
+            }
+        }
+        assert!(parked_count > 0, "parked stage must appear in GET /parked before cancel");
+
+        // POST /workflow_runs/:id/cancel
+        let app = crate::http::router(state.clone());
+        let (status, body) = req(
+            app,
+            "POST",
+            &format!("/workflow_runs/{}/cancel", run_id_str),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED, "cancel body: {body}");
+        assert_eq!(body["accepted"], json!(true));
+        assert_eq!(body["run_id"], json!(run_id_str));
+        assert!(
+            body["stages_cancelled"].as_u64().unwrap() >= 1,
+            "at least one stage must have been cancelled"
+        );
+
+        // Poll until stage is Failed with kind=cancelled.
+        for _ in 0..100 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            let si = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+            if si.status == StageStatus::Failed {
+                let meta = si.terminal_meta.as_ref().expect("terminal_meta must be set on Failed cancelled stage");
+                assert_eq!(
+                    meta.get("kind").and_then(|v| v.as_str()),
+                    Some("cancelled"),
+                    "terminal_meta.kind must be 'cancelled'"
+                );
+                break;
+            }
+        }
+        let si_final = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+        assert_eq!(si_final.status, StageStatus::Failed, "stage must be Failed after cancel");
+        let meta = si_final.terminal_meta.expect("terminal_meta must be set");
+        assert_eq!(meta["kind"], json!("cancelled"));
+
+        // GET /parked must be empty after cancel.
+        let app = crate::http::router(state.clone());
+        let (status, body) = req(app, "GET", "/parked", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            body.as_array().unwrap().len(),
+            0,
+            "cancelled parked stage must not appear in GET /parked"
+        );
+
+        // Second cancel on the same run returns accepted=false (run is already terminal or stages gone).
+        // Wait for run to reach terminal first.
+        for _ in 0..100 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            let run = queries::get_workflow_run_by_id(&pool, &run_id).await.unwrap();
+            if matches!(run.status, RunStatus::Done | RunStatus::Failed) {
+                break;
+            }
+        }
+        let app = crate::http::router(state.clone());
+        let (status, body) = req(
+            app,
+            "POST",
+            &format!("/workflow_runs/{}/cancel", run_id_str),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "second cancel body: {body}");
+        assert_eq!(body["accepted"], json!(false));
     }
 
     #[test]

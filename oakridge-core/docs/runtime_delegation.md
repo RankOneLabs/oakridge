@@ -219,6 +219,62 @@ still matches the executor contract.
 
 Set `OAKRIDGE_RUN_REAL_LBC_SMOKE=1` to enable the test body when running ignored tests.
 
+## Run cancellation
+
+`POST /workflow_runs/:id/cancel` requests cancellation of an active run.
+
+### Response
+
+| Field | Type | Description |
+|---|---|---|
+| `run_id` | UUID | The run that was targeted |
+| `accepted` | bool | `true` if cancellation was initiated; `false` if the run was already terminal |
+| `stages_cancelled` | u64 | Count of stage instances transitioned to `Failed` by this request |
+
+Returns `202 Accepted` when `accepted = true`, `200 OK` when `accepted = false`.
+Returns `404` if the run ID does not exist.
+
+### Stage transitions
+
+All stage instances in `pending`, `running`, or `parked` status are transitioned to
+`Failed` synchronously before the response is returned. The transitioned stages receive:
+
+```json
+{
+  "kind": "cancelled",
+  "reason": "run cancelled by operator"
+}
+```
+
+as their `terminal_meta`. Parked stages are removed from the `GET /parked` listing
+immediately upon cancellation.
+
+### External process propagation
+
+After persisting the DB state, a `ControlMsg::Cancel` is delivered to the active run
+task (if one is still running). Each executor type handles cancellation:
+
+- `delegated_session`: calls `DELETE /sessions/:sid` on kbbl and removes the session
+  from the live-sessions map.
+- `delegated_lbc_run`: signals the bridge monitor to kill the child process group and
+  writes `terminal_meta` with `kind: "cancelled"`. Because the bridge also writes
+  cancellation metadata, its write arrives after the bulk DB update but is idempotent
+  on `kind`.
+
+If no active run task is found but the run's DB status is still non-terminal, the run
+status is updated to `Failed` directly.
+
+### Recovery behaviour
+
+`Failed` stage instances — including those with `kind: "cancelled"` — are treated as
+terminal by `recover()`. They are never re-executed after a restart. No additional code
+is required; the recovery path already skips `Done` and `Failed` stages.
+
+### Idempotency
+
+A second `POST /workflow_runs/:id/cancel` on an already-terminal run returns
+`200 OK` with `accepted: false` and `stages_cancelled: 0`.
+
 ## Out of scope
 
 This cohort does not add callback-based kbbl delegation, `POST /execution/sessions`, or
