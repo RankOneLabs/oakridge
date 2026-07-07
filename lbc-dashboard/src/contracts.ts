@@ -108,7 +108,7 @@ export const CellSummarySchema = z.strictObject({
     .string()
     .transform((s): ConditionName => s as ConditionName),
   cell_dir: z.string(),
-  status: z.enum(["active", "ended"]),
+  status: z.enum(["active", "ended", "failed", "unknown"]),
   last_activity_ms: z.number(),
   event_count: z.number(),
   archived: z.boolean(),

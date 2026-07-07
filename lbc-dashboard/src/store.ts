@@ -160,8 +160,9 @@ async function writeArchivedCellsIndex(ids: Set<string>): Promise<void> {
   );
 }
 
-// A cell is cleanable when EITHER it has ended OR it has no live run entry
-// AND its last activity is older than STALE_MS (handles crashed/abandoned runs).
+// Live process ownership is the authoritative delete safety gate and must be
+// consulted before event-derived status. Terminal coordination events (including
+// ended/failed) can arrive while the child grading process is still running.
 function computeCleanable(
   status: RawSummary["status"],
   cellId: string,
@@ -169,8 +170,10 @@ function computeCleanable(
   liveCellIds: Set<string>,
   nowMs: number,
 ): boolean {
-  if (status === "ended") return true;
-  return !liveCellIds.has(cellId) && nowMs - lastActivityMs > STALE_MS;
+  if (liveCellIds.has(cellId)) return false;
+  if (status === "ended" || status === "failed") return true;
+  // active/unknown: only cleanable once stale (handles crashed/abandoned runs).
+  return nowMs - lastActivityMs > STALE_MS;
 }
 
 /**
@@ -306,23 +309,26 @@ async function summarize(
 }
 
 /**
- * Decide whether a cell is `ended` from the parsed event kinds in
- * order. A cell ends with one of two terminal patterns:
+ * Classify a cell's lifecycle status from its parsed event kinds.
  *
- * - INCREMENTAL_ONLY → the very last event is `incremental_terminated`.
- * - INCREMENTAL_THEN_CONVERGE → the last event is `proposal_applied`
- *   AND it's preceded by `proposal_picked` (the consensus pick was
- *   applied; PR #26 made this the final emission).
+ * Terminal patterns:
+ * - INCREMENTAL_ONLY: last event is `incremental_terminated` → ended.
+ * - INCREMENTAL_THEN_CONVERGE: last event is `proposal_applied` preceded
+ *   by `proposal_picked` → ended.
+ * - CELL_FAILED: last event is `cell_failed` → failed.
+ * - CONSENSUS_REJECTED: last event is `consensus_rejected` or
+ *   `proposal_rejected` → failed (consensus rejection is terminal
+ *   failure; leaving it as active causes incorrect display and cleanup).
  *
- * Naive substring matching is wrong: `proposal_applied` ALSO fires
- * for every commit during the incremental phase, so a mid-run cell
- * would be misclassified as ended. Look at the last kind specifically
- * and require the picked-then-applied pair for the consensus case.
+ * `proposal_applied` during the incremental phase is NOT terminal — it
+ * fires for every commit. Only the picked-then-applied pair is terminal.
  */
 function classifyStatusFromKinds(kinds: string[]): RawSummary["status"] {
   if (kinds.length === 0) return "active";
   const last = kinds[kinds.length - 1];
   if (last === "incremental_terminated") return "ended";
+  if (last === "cell_failed") return "failed";
+  if (last === "consensus_rejected" || last === "proposal_rejected") return "failed";
   if (last === "proposal_applied" && kinds.length > 1) {
     if (kinds[kinds.length - 2] === "proposal_picked") return "ended";
   }

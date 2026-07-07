@@ -165,6 +165,61 @@ describe("listCells", () => {
     const cells = await listCells();
     expect(cells[0].status).toBe("active");
   });
+
+  test("classifies cell_failed event as failed terminal status", async () => {
+    await makeCell("2026-05-06T21-30-00Z", "prose", "single_agent", [
+      eventLine("incremental_started"),
+      eventLine("proposal_applied"),
+      eventLine("cell_failed"),
+    ]);
+    const cells = await listCells();
+    const cell = cells.find((c) => c.condition_name === "single_agent");
+    expect(cell?.status).toBe("failed");
+    // failed cells with no live process are cleanable
+    expect(cell?.cleanable).toBe(true);
+  });
+
+  test("classifies consensus_rejected as failed terminal status", async () => {
+    await makeCell("2026-05-06T22-00-00Z", "prose", "multi_round_n3", [
+      eventLine("incremental_started"),
+      eventLine("proposal_applied"),
+      eventLine("incremental_terminated"),
+      eventLine("convergence_started"),
+      eventLine("round_completed"),
+      eventLine("consensus_rejected"),
+    ]);
+    const cells = await listCells();
+    const cell = cells.find((c) => c.condition_name === "multi_round_n3");
+    expect(cell?.status).toBe("failed");
+    expect(cell?.cleanable).toBe(true);
+  });
+
+  test("classifies proposal_rejected as failed terminal status", async () => {
+    await makeCell("2026-05-06T22-30-00Z", "prose", "multi_round_n2", [
+      eventLine("incremental_started"),
+      eventLine("convergence_started"),
+      eventLine("proposal_rejected"),
+    ]);
+    const cells = await listCells();
+    const cell = cells.find((c) => c.condition_name === "multi_round_n2");
+    expect(cell?.status).toBe("failed");
+    expect(cell?.cleanable).toBe(true);
+  });
+
+  test("failed cell with live process is NOT cleanable", async () => {
+    await makeCell("2026-05-06T23-00-00Z", "prose", "single_agent_live", [
+      eventLine("incremental_started"),
+      eventLine("cell_failed"),
+    ]);
+    const cells = await listCells();
+    const cell = cells.find((c) => c.condition_name === "single_agent_live");
+    expect(cell?.status).toBe("failed");
+    const cellId = cell!.cell_id;
+
+    const liveCells = await listCells(new Set([cellId]));
+    const liveCell = liveCells.find((c) => c.condition_name === "single_agent_live");
+    expect(liveCell?.cleanable).toBe(false);
+  });
 });
 
 describe("getCellDetail", () => {
@@ -946,6 +1001,95 @@ describe("archive index and cleanable predicate", () => {
     const cells = await listCells();
     expect(cells[0].status).toBe("ended");
     expect(cells[0].cleanable).toBe(true);
+  });
+
+  test("live-ownership gate: ended cell is NOT cleanable when still in liveCellIds", async () => {
+    // Regression: terminal coordination events (e.g. proposal_applied following
+    // proposal_picked) can arrive while the child grading process is still running.
+    // computeCleanable must consult liveCellIds BEFORE event-derived status.
+    await makeCell("2026-06-01T10-18-00Z", "task", "cond", [
+      eventLine("incremental_started"),
+      eventLine("proposal_applied"),
+      eventLine("incremental_terminated"),
+    ]);
+    const cells = await listCells();
+    expect(cells[0].status).toBe("ended");
+    const cellId = cells[0].cell_id;
+
+    const liveCellIds = new Set([cellId]);
+    const liveEndedCells = await listCells(liveCellIds);
+    expect(liveEndedCells[0].cleanable).toBe(false);
+  });
+
+  test("DELETE /api/cells/:cellId returns 409 when live process owns an ended cell", async () => {
+    // The server DELETE handler must enforce the live-ownership gate even when the
+    // event-derived status is ended — stale tabs or direct API calls may attempt
+    // DELETE while the process is still grading.
+    //
+    // Cell target and condition are chosen so they match what RunRegistry.launch()
+    // derives via cellIdFor(runTs, spec.task, conditionName(kind, n)):
+    //   spec.task = "prose_substrate_thesis"
+    //   conditionName("single_agent", 1) = "single_agent"
+    const RUN_TS = "2026-06-01T10-19-00Z";
+    await makeCell(RUN_TS, "prose_substrate_thesis", "single_agent", [
+      eventLine("incremental_started"),
+      eventLine("incremental_terminated"),
+    ]);
+    const cells = await listCells();
+    const cell = cells.find((c) => c.run_ts === RUN_TS);
+    expect(cell?.status).toBe("ended");
+    const cellId = cell!.cell_id;
+
+    // Seed the registry with a "running" record for this cell so the server
+    // handler's liveCellIds set contains cellId.
+    const registry = new RunRegistry(noopLauncher);
+    registry.launch({
+      runTs: RUN_TS,
+      spec: {
+        task: "prose_substrate_thesis",
+        model_pool: ["claude-sonnet-4-6"],
+        condition: { kind: "single_agent", n: 1 },
+        grade: false,
+      },
+      specPath: "/tmp/fake-spec.json",
+      outputDir: "/tmp/fake-output",
+    });
+    // Confirm the registry reports the cell as running
+    const liveIds = new Set(
+      registry.list().filter((r) => r.status === "running").map((r) => r.cell_id),
+    );
+    expect(liveIds.has(cellId)).toBe(true);
+
+    const app = createApp({ registry });
+    const resp = await app.request(`/api/cells/${cellId}`, { method: "DELETE" });
+    expect(resp.status).toBe(409);
+    const body = (await resp.json()) as { error: string };
+    expect(body.error).toBe("Run still in progress");
+  });
+
+  test("incremental-to-consensus transition: live process blocks DELETE even when status is ended", async () => {
+    // Pin the specific race: proposal_picked → proposal_applied fires (status="ended")
+    // while the child grading process is still in liveCellIds. DELETE must return 409.
+    await makeCell("2026-06-01T10-20-00Z", "task", "cond", [
+      eventLine("incremental_started"),
+      eventLine("proposal_applied"),
+      eventLine("incremental_terminated"),
+      eventLine("convergence_started"),
+      eventLine("proposal_picked"),
+      eventLine("proposal_applied"),
+    ]);
+    const cells = await listCells();
+    const cellId = cells[0].cell_id;
+    expect(cells[0].status).toBe("ended");
+
+    // With live ownership, cleanable must be false
+    const liveEndedCells = await listCells(new Set([cellId]));
+    expect(liveEndedCells[0].status).toBe("ended");
+    expect(liveEndedCells[0].cleanable).toBe(false);
+
+    // getCellSummary path also returns cleanable=false
+    const summary = await getCellSummary(cellId, new Set([cellId]));
+    expect(summary?.cleanable).toBe(false);
   });
 
   test("cleanable branch (b): active cell with no live run is cleanable after STALE_MS", async () => {
