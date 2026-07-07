@@ -28,6 +28,19 @@ use kbbl_client::{
 
 const STAGE_INSTANCE_ID_SENTINEL: &str = "{{STAGE_INSTANCE_ID}}";
 
+/// Number of consecutive retryable poll errors before the observer gives up.
+const MAX_OBSERVER_POLL_ERRORS: u32 = 5;
+/// Poll interval and backoff constants are shortened under test to keep suites fast.
+#[cfg(not(test))]
+const OBSERVER_POLL_INTERVAL_MS: u64 = 5000;
+#[cfg(test)]
+const OBSERVER_POLL_INTERVAL_MS: u64 = 20;
+/// Base backoff in milliseconds for the first retry; doubles each attempt (capped at 4×).
+#[cfg(not(test))]
+const OBSERVER_BACKOFF_BASE_MS: u64 = 500;
+#[cfg(test)]
+const OBSERVER_BACKOFF_BASE_MS: u64 = 5;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DelegatedGate {
@@ -223,14 +236,16 @@ impl DelegatedSessionStage {
         let client = self.kbbl_client.clone();
         let live_sessions = self.live_sessions.clone();
         tokio::spawn(async move {
+            let mut poll_error_count: u32 = 0;
             loop {
-                sleep(Duration::from_secs(5)).await;
+                sleep(Duration::from_millis(OBSERVER_POLL_INTERVAL_MS)).await;
                 if cancelled.load(Ordering::SeqCst) {
                     break;
                 }
 
                 match client.read_events_since(&sid, last_seen).await {
                     Ok(response) => {
+                        poll_error_count = 0;
                         if response.session_id != sid {
                             if !cancelled.load(Ordering::SeqCst) {
                                 let terminal_meta =
@@ -265,19 +280,52 @@ impl DelegatedSessionStage {
                         }
                     }
                     Err(err) => {
-                        if !cancelled.load(Ordering::SeqCst) {
-                            let terminal_reason = format!(
-                                "kbbl session {} became unavailable: {}",
-                                sid, err
-                            );
-                            let terminal_meta = serde_json::json!({"reason": terminal_reason.clone()});
-                            let _ = ctx
-                                .set_status_with_terminal_meta(
-                                    StageStatus::Failed,
-                                    None,
-                                    Some(terminal_meta),
-                                )
-                                .await;
+                        if is_retryable_observer_error(&err) {
+                            poll_error_count += 1;
+                            if poll_error_count < MAX_OBSERVER_POLL_ERRORS {
+                                let backoff_ms = OBSERVER_BACKOFF_BASE_MS
+                                    * (1u64 << (poll_error_count - 1).min(4));
+                                sleep(Duration::from_millis(backoff_ms)).await;
+                                continue;
+                            }
+                            // Budget exhausted: try to stop the kbbl session so it
+                            // doesn't continue running unobserved, then fail the stage.
+                            if !cancelled.load(Ordering::SeqCst) {
+                                let stop_result = client.stop_session(&sid).await;
+                                let stop_ok = matches!(&stop_result, Ok(r) if r.ok);
+                                let terminal_meta = serde_json::json!({
+                                    "reason": format!(
+                                        "observer poll budget exhausted after {} errors for kbbl session {}",
+                                        MAX_OBSERVER_POLL_ERRORS, sid
+                                    ),
+                                    "last_error_class": "transport",
+                                    "last_error": err.to_string(),
+                                    "poll_error_count": poll_error_count,
+                                    "stop_outcome": if stop_ok { "stopped" } else { "stop_failed" }
+                                });
+                                let _ = ctx
+                                    .set_status_with_terminal_meta(
+                                        StageStatus::Failed,
+                                        None,
+                                        Some(terminal_meta),
+                                    )
+                                    .await;
+                            }
+                        } else {
+                            if !cancelled.load(Ordering::SeqCst) {
+                                let terminal_reason = format!(
+                                    "kbbl session {} became unavailable: {}",
+                                    sid, err
+                                );
+                                let terminal_meta = serde_json::json!({"reason": terminal_reason});
+                                let _ = ctx
+                                    .set_status_with_terminal_meta(
+                                        StageStatus::Failed,
+                                        None,
+                                        Some(terminal_meta),
+                                    )
+                                    .await;
+                            }
                         }
                         break;
                     }
@@ -286,6 +334,17 @@ impl DelegatedSessionStage {
 
             live_sessions.lock().unwrap().remove(&stage_instance_id);
         });
+    }
+}
+
+/// Returns true for transport errors and 5xx responses that should be retried.
+/// 4xx and definitive terminal responses (e.g. session-not-found 404) are not retryable.
+fn is_retryable_observer_error(err: &kbbl_client::KbblClientError) -> bool {
+    use kbbl_client::KbblClientError;
+    match err {
+        KbblClientError::Request(e) => e.is_connect() || e.is_timeout() || e.is_request(),
+        KbblClientError::Rejected { status, .. } => status.is_server_error(),
+        _ => false,
     }
 }
 
@@ -1566,6 +1625,307 @@ mod tests {
                     body: None,
                 },
             ]
+        );
+
+        join.abort();
+    }
+
+    // ── Observer retry tests ─────────────────────────────────────────────────
+
+    /// Build a mock kbbl server whose /events endpoint returns a 503 for the
+    /// first `fail_count` calls, then succeeds. Captures all requests.
+    async fn spawn_retry_mock(
+        fail_count: u32,
+    ) -> (
+        String,
+        Arc<std::sync::atomic::AtomicU32>,
+        Arc<Mutex<VecDeque<RecordedRequest>>>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        use std::sync::atomic::AtomicU32;
+        use axum::http::StatusCode;
+
+        let call_counter = Arc::new(AtomicU32::new(0));
+        let capture = Arc::new(Mutex::new(VecDeque::new()));
+
+        #[derive(Clone)]
+        struct RetryState {
+            call_counter: Arc<AtomicU32>,
+            fail_count: u32,
+            capture: Arc<Mutex<VecDeque<RecordedRequest>>>,
+        }
+
+        async fn create_handler(
+            axum::extract::State(state): axum::extract::State<RetryState>,
+            OriginalUri(uri): OriginalUri,
+            Json(body): Json<serde_json::Value>,
+        ) -> impl IntoResponse {
+            state.capture.lock().unwrap().push_back(RecordedRequest {
+                method: Method::POST,
+                path: uri.path().to_string(),
+                body: Some(body),
+            });
+            (StatusCode::CREATED, Json(serde_json::json!({ "sid": "sid-retry" })))
+        }
+
+        async fn events_handler(
+            axum::extract::State(state): axum::extract::State<RetryState>,
+            OriginalUri(uri): OriginalUri,
+        ) -> impl IntoResponse {
+            let n = state.call_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            state.capture.lock().unwrap().push_back(RecordedRequest {
+                method: Method::GET,
+                path: uri.to_string(),
+                body: None,
+            });
+            if n < state.fail_count {
+                return (StatusCode::SERVICE_UNAVAILABLE, "server busy").into_response();
+            }
+            Json(serde_json::json!({
+                "session_id": "sid-retry",
+                "events": []
+            }))
+            .into_response()
+        }
+
+        async fn delete_handler(
+            axum::extract::State(state): axum::extract::State<RetryState>,
+            OriginalUri(uri): OriginalUri,
+        ) -> impl IntoResponse {
+            state.capture.lock().unwrap().push_back(RecordedRequest {
+                method: Method::DELETE,
+                path: uri.path().to_string(),
+                body: None,
+            });
+            Json(serde_json::json!({ "ok": true, "removed": true }))
+        }
+
+        async fn input_handler(
+            axum::extract::State(state): axum::extract::State<RetryState>,
+            OriginalUri(uri): OriginalUri,
+            Json(body): Json<serde_json::Value>,
+        ) -> impl IntoResponse {
+            state.capture.lock().unwrap().push_back(RecordedRequest {
+                method: Method::POST,
+                path: uri.path().to_string(),
+                body: Some(body),
+            });
+            Json(serde_json::json!({ "ok": true }))
+        }
+
+        let state = RetryState {
+            call_counter: call_counter.clone(),
+            fail_count,
+            capture: capture.clone(),
+        };
+
+        let app = axum::Router::new()
+            .route("/sessions", axum::routing::post(create_handler))
+            .route("/:sid/input", axum::routing::post(input_handler))
+            .route("/sessions/:sid", axum::routing::delete(delete_handler))
+            .route("/:sid/events", axum::routing::get(events_handler))
+            .with_state(state);
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let join = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (format!("http://{addr}/"), call_counter, capture, join)
+    }
+
+    #[tokio::test]
+    async fn observer_one_transient_error_retries_and_stage_stays_running() {
+        let (base_url, _counter, _capture, join) = spawn_retry_mock(1).await;
+        let pool = make_pool().await;
+        let (run_id, si_id) = setup_stage_instance(
+            &pool,
+            delegated_config_json("hello retry", "/workdir", false),
+            None,
+        )
+        .await;
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let stage =
+            DelegatedSessionStage::new(PathBuf::from("/tmp"), KbblClient::new(base_url).unwrap());
+        let ctx = StageContext::new(
+            crate::types::StageInstanceSummary {
+                stage_instance_id: si_id,
+                workflow_run_id: run_id,
+                stage_key: "delegate".into(),
+                status: crate::types::StageStatus::Pending,
+                parked_reason: None,
+                parked_meta: None,
+                terminal_meta: None,
+                external_ref: None,
+            },
+            delegated_config_json("hello retry", "/workdir", false),
+            HashMap::new(),
+            tx,
+            pool.clone(),
+            Arc::new(ArtifactTypeRegistry::new()),
+        );
+
+        let handle = stage.execute(ctx).await.unwrap();
+
+        // Wait for the Running StatusChanged event.
+        let event = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            event,
+            ExecutorEvent::StatusChanged { status: crate::types::StageStatus::Running, .. }
+        ));
+
+        // Wait long enough for:
+        //   poll interval (20ms) + 503 + backoff (5ms) + poll interval (20ms) + 200
+        // Using a generous 2s timeout.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // No Failed event must have arrived (transient 503 did NOT kill the stage).
+        assert!(rx.try_recv().is_err(), "stage must not fail on a single transient 503");
+
+        // Stage must still be Running.
+        let si = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+        assert_eq!(si.status, crate::types::StageStatus::Running);
+
+        handle.cancel().await.unwrap();
+        join.abort();
+    }
+
+    #[tokio::test]
+    async fn observer_budget_exhaustion_fails_stage_with_terminal_meta() {
+        // Return 503 for every events call so budget exhausts.
+        let (base_url, _counter, capture, join) =
+            spawn_retry_mock(MAX_OBSERVER_POLL_ERRORS + 10).await;
+        let pool = make_pool().await;
+        let (run_id, si_id) = setup_stage_instance(
+            &pool,
+            delegated_config_json("hello budget", "/workdir", false),
+            None,
+        )
+        .await;
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let stage =
+            DelegatedSessionStage::new(PathBuf::from("/tmp"), KbblClient::new(base_url).unwrap());
+        let ctx = StageContext::new(
+            crate::types::StageInstanceSummary {
+                stage_instance_id: si_id,
+                workflow_run_id: run_id,
+                stage_key: "delegate".into(),
+                status: crate::types::StageStatus::Pending,
+                parked_reason: None,
+                parked_meta: None,
+                terminal_meta: None,
+                external_ref: None,
+            },
+            delegated_config_json("hello budget", "/workdir", false),
+            HashMap::new(),
+            tx,
+            pool.clone(),
+            Arc::new(ArtifactTypeRegistry::new()),
+        );
+
+        stage.execute(ctx).await.unwrap();
+
+        // Consume Running event.
+        tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Wait for budget to exhaust. With test constants:
+        // 5 polls × 20ms + backoffs (5+10+20+40+80=155ms) ≈ 255ms total.
+        // Use a generous 5s timeout for the Failed event.
+        let event = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("timed out waiting for Failed event")
+            .unwrap();
+        match event {
+            ExecutorEvent::StatusChanged { status, terminal_meta, .. } => {
+                assert_eq!(status, crate::types::StageStatus::Failed);
+                let meta = terminal_meta.unwrap();
+                let count = meta["poll_error_count"].as_u64().unwrap();
+                assert_eq!(count, MAX_OBSERVER_POLL_ERRORS as u64);
+                assert!(meta["reason"].as_str().unwrap().contains("budget exhausted"));
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+
+        // stop_session must have been called (DELETE /sessions/sid-retry).
+        let requests: Vec<_> = capture.lock().unwrap().iter().cloned().collect();
+        assert!(
+            requests.iter().any(|r| r.method == Method::DELETE && r.path.contains("sid-retry")),
+            "stop_session must be called when budget exhausted; requests: {requests:?}"
+        );
+
+        join.abort();
+    }
+
+    #[tokio::test]
+    async fn observer_budget_exhaustion_attempts_stop_session_on_reachable_kbbl() {
+        // Same as above but focuses specifically on the stop_session call being
+        // made and its outcome recorded in terminal_meta.
+        let (base_url, _counter, capture, join) =
+            spawn_retry_mock(MAX_OBSERVER_POLL_ERRORS + 10).await;
+        let pool = make_pool().await;
+        let (run_id, si_id) = setup_stage_instance(
+            &pool,
+            delegated_config_json("hello stop", "/workdir", false),
+            None,
+        )
+        .await;
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let stage =
+            DelegatedSessionStage::new(PathBuf::from("/tmp"), KbblClient::new(base_url).unwrap());
+        let ctx = StageContext::new(
+            crate::types::StageInstanceSummary {
+                stage_instance_id: si_id,
+                workflow_run_id: run_id,
+                stage_key: "delegate".into(),
+                status: crate::types::StageStatus::Pending,
+                parked_reason: None,
+                parked_meta: None,
+                terminal_meta: None,
+                external_ref: None,
+            },
+            delegated_config_json("hello stop", "/workdir", false),
+            HashMap::new(),
+            tx,
+            pool.clone(),
+            Arc::new(ArtifactTypeRegistry::new()),
+        );
+
+        stage.execute(ctx).await.unwrap();
+        // Consume Running event.
+        tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+
+        let event = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("timed out waiting for Failed event")
+            .unwrap();
+        let terminal_meta = match event {
+            ExecutorEvent::StatusChanged { terminal_meta, .. } => terminal_meta.unwrap(),
+            other => panic!("unexpected event: {other:?}"),
+        };
+
+        // stop_outcome must be recorded in terminal_meta.
+        let stop_outcome = terminal_meta["stop_outcome"].as_str().unwrap();
+        assert!(
+            stop_outcome == "stopped" || stop_outcome == "stop_failed",
+            "stop_outcome must be 'stopped' or 'stop_failed', got: {stop_outcome}"
+        );
+        // The mock's DELETE handler returns ok:true, so we expect "stopped".
+        assert_eq!(stop_outcome, "stopped");
+
+        // Also confirm the DELETE request landed on the mock.
+        let reqs: Vec<_> = capture.lock().unwrap().iter().cloned().collect();
+        assert!(
+            reqs.iter().any(|r| r.method == Method::DELETE && r.path.contains("sid-retry")),
+            "DELETE /sessions/sid-retry must appear in captured requests"
         );
 
         join.abort();
