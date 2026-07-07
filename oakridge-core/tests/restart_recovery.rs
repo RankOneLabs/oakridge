@@ -541,20 +541,14 @@ async fn cancelled_stage_is_not_rehydrated_by_recovery() {
     let def = simple_def("scripted_cancel");
     queries::insert_workflow_def(&pool, &def).await.unwrap();
 
-    // Insert the run in Failed state (cancellation sets both run + stages to Failed).
-    let run = WorkflowRun {
-        id: WorkflowRunId(Uuid::new_v4()),
-        workflow_def_id: def.id,
-        project_id: None,
-        status: RunStatus::Failed,
-        context: json!({}),
-        version: 1,
-        created_at: fixed_dt(),
-        updated_at: fixed_dt(),
-    };
+    // Insert the run in Running state so that recover() (which queries
+    // list_active_runs — pending + running) actually picks it up. A Failed run
+    // is ignored by recover() and would make the test vacuously true.
+    let run = running_run(def.id);
     queries::insert_workflow_run(&pool, &run).await.unwrap();
 
     // Insert a stage instance that is already Failed with cancellation terminal_meta.
+    // recover() must treat it as terminal and not re-execute it.
     let cancelled_stage = StageInstance {
         id: StageInstanceId(Uuid::new_v4()),
         run_id: run.id,
@@ -597,9 +591,11 @@ async fn cancelled_stage_is_not_rehydrated_by_recovery() {
     .await
     .unwrap();
 
-    // Give the runtime a moment — if recover() re-executed the stage it would
-    // send on ctx_rx almost immediately.
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // The run is Running, so recover() picks it up. Stage "A" is already
+    // Failed — recover() must treat it as terminal and not re-execute it.
+    // The run then quiesces to Failed (all stages terminal, no source stage
+    // can be primed). Wait for quiescence before asserting.
+    wait_run_failed(&pool, run.id).await;
 
     // No stage execution should have been triggered.
     assert!(
