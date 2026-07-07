@@ -21,8 +21,11 @@ runtime descriptors so each role can choose its own runtime/model pair.
 
 - kbbl running (e.g. `./kbbl/scripts/kbbl-start /path/to/your/repo --host=0.0.0.0`).
   Confirm with `curl -sI http://<host>:8788/ | head -1`.
-- `ANTHROPIC_API_KEY` exported in the kbbl process environment — spawned CC
-  subprocesses inherit it.
+- `ANTHROPIC_API_KEY` **must not be set** in the kbbl process environment. The
+  Claude Code adapter requires subscription OAuth and hard-rejects an API key.
+  Run `unset ANTHROPIC_API_KEY` before starting kbbl, and log in once with the
+  `claude` CLI so the OAuth token is cached. Spawned CC subprocesses inherit the
+  cleaned environment.
 - Optional: `KBBL_PROMPTS_DIR` to override the prompt-template directory
   (defaults to `<kbbl-root>/prompts`).
 - The repo you're dispatching against is on a branch you're willing to let the

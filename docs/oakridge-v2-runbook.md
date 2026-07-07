@@ -36,7 +36,18 @@ This runbook includes two workflow examples:
 - Rust and Cargo installed for oakridge-core.
 - A local Git checkout for the target workdir the agent will operate in.
 - Runtime credentials available to the kbbl process. For the default Claude
-  Code runtime, export `ANTHROPIC_API_KEY` before starting kbbl.
+  Code runtime, **do not export `ANTHROPIC_API_KEY`** — the Claude Code adapter
+  requires subscription OAuth and hard-rejects any API key. Ensure the variable
+  is absent from your shell before starting kbbl:
+
+  ```bash
+  unset ANTHROPIC_API_KEY
+  ```
+
+  Log in once with `claude` (the Claude Code CLI) so the subscription OAuth
+  token is cached, then start kbbl normally. You can verify the setup is correct
+  by spawning a Claude Code session through the kbbl operator path and confirming
+  it reaches `live` without an `A.1` billing-guard error.
 - For `delegated_lbc_run`, `uv` and legit-biz-club dependencies available in
   the environment where oakridge-core runs.
 - Trusted local network access only. These development servers do not provide a
