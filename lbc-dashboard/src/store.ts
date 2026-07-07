@@ -171,7 +171,7 @@ function computeCleanable(
   nowMs: number,
 ): boolean {
   if (liveCellIds.has(cellId)) return false;
-  if (status === "ended" || status === "failed") return true;
+  if (status === "ended" || status === "failed" || status === "cancelled") return true;
   // active/unknown: only cleanable once stale (handles crashed/abandoned runs).
   return nowMs - lastActivityMs > STALE_MS;
 }
@@ -316,6 +316,7 @@ async function summarize(
  * - INCREMENTAL_THEN_CONVERGE: last event is `proposal_applied` preceded
  *   by `proposal_picked` → ended.
  * - CELL_FAILED: last event is `cell_failed` → failed.
+ * - CANCELLED: last event is `cell_cancelled` or `run_cancelled` → cancelled.
  * - CONSENSUS_REJECTED: last event is `consensus_rejected` or
  *   `proposal_rejected` → failed (consensus rejection is terminal
  *   failure; leaving it as active causes incorrect display and cleanup).
@@ -327,6 +328,7 @@ function classifyStatusFromKinds(kinds: string[]): RawSummary["status"] {
   if (kinds.length === 0) return "active";
   const last = kinds[kinds.length - 1];
   if (last === "incremental_terminated") return "ended";
+  if (last === "cell_cancelled" || last === "run_cancelled") return "cancelled";
   if (last === "cell_failed") return "failed";
   if (last === "consensus_rejected" || last === "proposal_rejected") return "failed";
   if (last === "proposal_applied" && kinds.length > 1) {

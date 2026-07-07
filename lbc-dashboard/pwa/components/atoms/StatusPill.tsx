@@ -9,6 +9,7 @@ const VARIANTS: Record<CellSummary["status"], string> = {
   active: "bg-emerald-600",
   ended: "bg-stone-400",
   failed: "bg-red-600",
+  cancelled: "bg-orange-600",
   unknown: "bg-amber-500",
 };
 

@@ -192,6 +192,18 @@ async fn wait_for_path(path: &PathBuf) {
     panic!("path did not appear in time: {}", path.display());
 }
 
+async fn assert_path_absent_for(path: &PathBuf, duration: Duration) {
+    let deadline = tokio::time::Instant::now() + duration;
+    while tokio::time::Instant::now() < deadline {
+        assert!(
+            !path.exists(),
+            "path appeared unexpectedly: {}",
+            path.display()
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
 fn success_script() -> &'static str {
     r#"#!/usr/bin/env sh
 set -eu
@@ -276,6 +288,32 @@ printf 'started\n' > "$output_dir/started.txt"
 while :; do
   sleep 1
 done
+"#
+}
+
+fn cancellation_child_script() -> &'static str {
+    r#"#!/usr/bin/env sh
+set -eu
+output_dir=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --output-dir)
+      output_dir="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+mkdir -p "$output_dir/cell-1"
+(
+  printf 'child started\n' > "$output_dir/child-started.txt"
+  sleep 2
+  printf 'child survived\n' > "$output_dir/child-survived.txt"
+) &
+printf 'parent started\n' > "$output_dir/started.txt"
+wait
 "#
 }
 
@@ -639,4 +677,58 @@ async fn cancellation_kills_bridge_and_records_cancelled_meta() {
         json!("cancelled")
     );
     assert!(tempdir.path().join("started.txt").exists());
+}
+
+#[tokio::test]
+async fn cancellation_kills_bridge_process_group_children() {
+    let pool = make_pool().await;
+    let (run_id, si_id) = setup_run(&pool, "artifact").await;
+    let registry = make_registry(false);
+    let tempdir = TempDir::new().unwrap();
+    let script_path = write_script(
+        &tempdir,
+        "fake-cancel-child.sh",
+        cancellation_child_script(),
+    )
+    .await;
+
+    let config = serde_json::to_value(DelegatedLbcRunConfig {
+        run_spec: DelegatedLbcRunSpec {
+            task: "task".into(),
+            model_pool: vec!["model".into()],
+            condition: DelegatedLbcRunCondition {
+                kind: "single_agent".into(),
+                n: 1,
+            },
+            grade: true,
+            grader: None,
+            local_task_dir: None,
+            local_grader_config_dir: None,
+        },
+        output_dir: tempdir.path().to_path_buf(),
+        bridge_command: script_path.to_string_lossy().to_string(),
+        bridge_args: vec![],
+        result_output_slot: oakridge_core::types::OutputSlot {
+            name: "result".into(),
+            artifact_type: "artifact".into(),
+        },
+    })
+    .unwrap();
+
+    let (ctx, _rx) = make_ctx(pool.clone(), run_id, si_id, registry, config);
+    let stage = DelegatedLbcRunStage::new();
+    let handle = stage.execute(ctx).await.unwrap();
+    wait_for_path(&tempdir.path().join("child-started.txt")).await;
+    handle.cancel().await.unwrap();
+
+    let si = wait_for_status(&pool, si_id, StageStatus::Failed).await;
+    assert_eq!(
+        si.terminal_meta.as_ref().unwrap()["kind"],
+        json!("cancelled")
+    );
+    assert_path_absent_for(
+        &tempdir.path().join("child-survived.txt"),
+        Duration::from_millis(2500),
+    )
+    .await;
 }
