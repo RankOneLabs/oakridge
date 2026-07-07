@@ -632,8 +632,7 @@ impl StageType for DelegatedSessionStage {
 
         if !def.pre_authorized_tools.is_empty() {
             anyhow::bail!(
-                "pre_authorized_tools is not supported: per-tool approval is managed by the kbbl PWA (Phase 2). \
-                 Remove pre_authorized_tools from the workflow definition or set it to an empty array."
+                "pre_authorized_tools is not supported: per-tool approval is managed by the kbbl PWA (Phase 2). Remove pre_authorized_tools from the workflow definition or set it to an empty array."
             );
         }
 

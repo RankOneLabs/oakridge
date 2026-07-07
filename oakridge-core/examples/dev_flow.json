@@ -87,7 +87,7 @@
         },
         "inputs": [
           { "name": "build_result", "artifact_type": "dev.build_result" },
-          { "name": "plan",         "artifact_type": "dev.plan",         "optional": true }
+          { "name": "plan",         "artifact_type": "dev.plan" }
         ],
         "outputs": [
           { "name": "assessment", "artifact_type": "dev.assessment" }

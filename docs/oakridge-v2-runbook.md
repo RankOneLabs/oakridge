@@ -410,7 +410,8 @@ cycle is the same as any other `delegated_session` stage:
 
 All dev-flow stages use `yolo: true`. Per-tool approval (Phase 2) is not
 yet wired. `pre_authorized_tools` must be empty in the workflow definition —
-oakridge-core rejects any non-empty value at stage-creation time.
+oakridge-core rejects any non-empty value during `build_config` (before the
+delegated session is created).
 
 ## Optional Real LBC Smoke Test
 

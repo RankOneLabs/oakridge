@@ -79,7 +79,7 @@ fn dev_flow_workflow_json_deserializes_as_workflow_def() {
     assert!(build_result_input.is_some(), "assessor must have build_result input");
     assert!(!build_result_input.unwrap().optional, "build_result input must be required");
     assert!(plan_input.is_some(), "assessor must have plan input");
-    assert!(plan_input.unwrap().optional, "assessor plan input must be optional");
+    assert!(!plan_input.unwrap().optional, "assessor plan input must be required (PLAN slot binding needs it)");
 
     // Verify pr_summary is NOT in the workflow graph (registered but not wired yet).
     for (_, stage) in stages {
