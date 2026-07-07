@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 
-import type { SessionId } from "../../session/session";
+import type { EnvelopeEvent, SessionId } from "../../session/session";
 import { inboxHandler, type InboxStreamManager } from "../../stream/inbox";
 import { streamForSession, type SessionStreamSource } from "../../stream/sse";
 
@@ -144,6 +144,109 @@ describe("SSE readiness", () => {
       await readUntil(reader, (b) => b.includes(": ready"));
     } finally {
       resolveHistory("");
+      endedController.abort();
+      controller.abort();
+      await reader.cancel().catch(() => {});
+    }
+  });
+
+  test("session stream replays event made durable by immediate flush", async () => {
+    const app = new Hono();
+    const endedController = new AbortController();
+    const persisted = {
+      id: 1,
+      type: "session_started",
+      ts: "2026-01-01T00:00:00.000Z",
+      payload: { phase: "persisted" },
+    } satisfies EnvelopeEvent;
+    const buffered = {
+      id: 2,
+      type: "assistant_delta",
+      ts: "2026-01-01T00:00:00.001Z",
+      payload: { text: "buffered" },
+    } satisfies EnvelopeEvent;
+    let contents = `${JSON.stringify(persisted)}\n`;
+    const session = {
+      oakridgeSid: "sid-buffered" as SessionId,
+      endedSignal: endedController.signal,
+      subscribe: () => () => {},
+      flushTranscript: async () => {
+        contents += `${JSON.stringify(buffered)}\n`;
+      },
+      readJsonl: async () => contents,
+    } satisfies SessionStreamSource;
+    const controller = new AbortController();
+
+    app.get("/sessions/:sid/stream-buffered", (c) =>
+      streamForSession(session, c),
+    );
+
+    const res = await app.fetch(
+      new Request("http://kbbl.test/sessions/sid-buffered/stream-buffered", {
+        signal: controller.signal,
+      }),
+    );
+    expect(res.status).toBe(200);
+
+    const reader = res.body!.getReader();
+    try {
+      const buf = await readUntil(reader, (b) => b.includes("id: 2"));
+      expect(buf).toContain("id: 1");
+      expect(buf).toContain("id: 2");
+      expect(buf).toContain("buffered");
+    } finally {
+      endedController.abort();
+      controller.abort();
+      await reader.cancel().catch(() => {});
+    }
+  });
+
+  test("Last-Event-Id replay flushes before filtering missed events", async () => {
+    const app = new Hono();
+    const endedController = new AbortController();
+    const alreadySeen = {
+      id: 7,
+      type: "assistant_delta",
+      ts: "2026-01-01T00:00:00.000Z",
+      payload: { text: "seen" },
+    } satisfies EnvelopeEvent;
+    const missed = {
+      id: 8,
+      type: "assistant_delta",
+      ts: "2026-01-01T00:00:00.001Z",
+      payload: { text: "missed buffered" },
+    } satisfies EnvelopeEvent;
+    let contents = `${JSON.stringify(alreadySeen)}\n`;
+    const session = {
+      oakridgeSid: "sid-resume-buffered" as SessionId,
+      endedSignal: endedController.signal,
+      subscribe: () => () => {},
+      flushTranscript: async () => {
+        contents += `${JSON.stringify(missed)}\n`;
+      },
+      readJsonl: async () => contents,
+    } satisfies SessionStreamSource;
+    const controller = new AbortController();
+
+    app.get("/sessions/:sid/stream-resume", (c) =>
+      streamForSession(session, c),
+    );
+
+    const res = await app.fetch(
+      new Request("http://kbbl.test/sessions/sid-resume-buffered/stream-resume", {
+        headers: { "Last-Event-Id": "7" },
+        signal: controller.signal,
+      }),
+    );
+    expect(res.status).toBe(200);
+
+    const reader = res.body!.getReader();
+    try {
+      const buf = await readUntil(reader, (b) => b.includes("id: 8"));
+      expect(buf).not.toContain("id: 7");
+      expect(buf).toContain("id: 8");
+      expect(buf).toContain("missed buffered");
+    } finally {
       endedController.abort();
       controller.abort();
       await reader.cancel().catch(() => {});

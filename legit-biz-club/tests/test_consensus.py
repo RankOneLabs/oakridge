@@ -28,9 +28,11 @@ from legit_biz_club import (
     Project,
     Proposal,
     ProposalResult,
+    Proposer,
 )
 from legit_biz_club.coordination.consensus import (
     ConsensusResult,
+    ConsensusRoundFailed,
     MultiRoundConsensus,
     SingleRoundConsensus,
 )
@@ -637,7 +639,7 @@ async def test_consensus_preserves_sibling_outputs_when_one_proposer_fails(
     agents = _make_agents(tmp_path, 3)
     project = _make_project(tmp_path, agents)
     # agents[0] fails; agents[1] and agents[2] succeed
-    proposers: dict = {
+    proposers: dict[str, Proposer] = {
         agents[0].id: _FailingProposer(),
         agents[1].id: _IdenticalProposer("sibling output"),
         agents[2].id: _IdenticalProposer("sibling output"),
@@ -664,6 +666,48 @@ async def test_consensus_preserves_sibling_outputs_when_one_proposer_fails(
     successful_ids = {p.agent_id for p in round_outcome.proposals}
     assert agents[1].id in successful_ids
     assert agents[2].id in successful_ids
+
+
+async def test_consensus_all_proposers_failed_raises_structured_error(
+    tmp_path: Path,
+) -> None:
+    class _FailingProposer:
+        async def propose(
+            self,
+            *,
+            agent: Agent,
+            brief: Brief,
+            artifact: Artifact,
+            current_content: str,
+            current_version: str,
+            peer_proposals: list[Proposal] | None = None,
+        ) -> Proposal:
+            raise RuntimeError(f"provider unavailable for {agent.id}")
+
+    agents = _make_agents(tmp_path, 2)
+    project = _make_project(tmp_path, agents)
+    proposers: dict[str, Proposer] = {
+        agent.id: _FailingProposer() for agent in agents
+    }
+    mediator = Mediator(project.artifact, [a.id for a in agents])
+    mechanism = MultiRoundConsensus(
+        project=project,
+        agents=agents,
+        proposers=proposers,
+        mediator=mediator,
+        round_budget_policy=StringEqualConvergence(max_rounds=1),
+        disagreement_surface=StableOrderingByAgentId(),
+        tracer=StdoutTracer(color=False),
+    )
+
+    with pytest.raises(ConsensusRoundFailed) as exc_info:
+        await mechanism.execute()
+
+    err = exc_info.value
+    assert err.round_index == 1
+    assert {f.agent_id for f in err.failures} == {a.id for a in agents}
+    assert all(f.error_class == "RuntimeError" for f in err.failures)
+    assert all("provider unavailable" in f.error_message for f in err.failures)
 
 
 async def test_emit_failures_do_not_abort_consensus(tmp_path: Path) -> None:

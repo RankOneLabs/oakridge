@@ -10,10 +10,12 @@ import type { RunSummary } from "../lib/types";
 
 export function useRuns(): {
   runs: RunSummary[];
+  hasLoaded: boolean;
   refresh: () => Promise<void>;
   cancel: (runId: string) => Promise<void>;
 } {
   const [runs, setRuns] = useState<RunSummary[]>([]);
+  const [hasLoaded, setHasLoaded] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -21,6 +23,7 @@ export function useRuns(): {
       if (!r.ok) return;
       const data = RunsResponseSchema.parse(await r.json());
       setRuns(data.runs);
+      setHasLoaded(true);
     } catch {
       // Network or parse failure — keep stale state, retry next tick.
     }
@@ -46,5 +49,5 @@ export function useRuns(): {
     return () => clearInterval(t);
   }, [refresh]);
 
-  return { runs, refresh, cancel };
+  return { runs, hasLoaded, refresh, cancel };
 }

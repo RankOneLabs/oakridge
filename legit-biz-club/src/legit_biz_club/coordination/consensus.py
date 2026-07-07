@@ -76,21 +76,50 @@ async def _no_op_emitter(
 
 
 @dataclass
+class ProposerFailure:
+    """Structured record for one proposer failure in a consensus round."""
+
+    agent_id: str
+    error_class: str
+    error_message: str
+
+
+class ConsensusRoundFailed(RuntimeError):
+    """Raised when a consensus round has no usable proposer output."""
+
+    def __init__(
+        self, *, round_index: int, failures: list[ProposerFailure]
+    ) -> None:
+        self.round_index = round_index
+        self.failures = failures
+        summary = ", ".join(
+            f"{f.agent_id}={f.error_class}: {f.error_message}"
+            for f in failures
+        )
+        super().__init__(
+            f"consensus round {round_index} failed: all proposers failed "
+            f"({summary})"
+        )
+
+
+@dataclass
 class RoundOutcome:
     """One round's record: which round (1-indexed), the proposals it
     produced, and whether the round-budget policy declared convergence.
 
     ``failed_agents`` lists agent ids whose proposers raised during this
-    round. When non-empty, ``proposals`` contains only the successful
-    sibling outputs — convergence detection runs on the partial set and
-    the escalation step picks from it. The failed agents' errors were
-    logged as warnings at the time of failure.
+    round. ``failed_agent_errors`` carries the structured error details.
+    When non-empty, ``proposals`` contains only the successful sibling
+    outputs — convergence detection runs on the partial set and the
+    escalation step picks from it. If every proposer fails, the round
+    raises ``ConsensusRoundFailed`` instead of escalating an empty set.
     """
 
     round_index: int
     proposals: list[Proposal]
     converged: bool
     failed_agents: list[str] = field(default_factory=list)
+    failed_agent_errors: list[ProposerFailure] = field(default_factory=list)
 
 
 @dataclass
@@ -306,6 +335,7 @@ class ConsensusMechanism(ABC):
             )
             proposals: list[Proposal] = []
             failed_agents: list[str] = []
+            failed_agent_errors: list[ProposerFailure] = []
             for agent, result in zip(self.agents, raw_results, strict=True):
                 if isinstance(result, BaseException):
                     logger.warning(
@@ -316,8 +346,20 @@ class ConsensusMechanism(ABC):
                         result,
                     )
                     failed_agents.append(agent.id)
+                    failed_agent_errors.append(
+                        ProposerFailure(
+                            agent_id=agent.id,
+                            error_class=type(result).__name__,
+                            error_message=str(result),
+                        )
+                    )
                 else:
                     proposals.append(result)
+            if not proposals and failed_agent_errors:
+                raise ConsensusRoundFailed(
+                    round_index=round_index,
+                    failures=failed_agent_errors,
+                )
             if not failed_agents:
                 self._validate_proposals_match_agents(proposals)
 
@@ -327,6 +369,7 @@ class ConsensusMechanism(ABC):
                 proposals=proposals,
                 converged=converged,
                 failed_agents=failed_agents,
+                failed_agent_errors=failed_agent_errors,
             )
             await self._safe_emit(
                 "round_completed",
