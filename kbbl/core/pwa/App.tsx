@@ -14,6 +14,7 @@ import { BriefReviewView } from "./review/brief/BriefReviewView";
 import { CohortReviewView } from "./review/cohort/CohortReviewView";
 import { RepoDashboardView } from "./dashboard/RepoDashboardView";
 import { EpicDetailView } from "./epic/EpicDetailView";
+import { OakridgeShell } from "./oakridge/OakridgeShell";
 
 import { SessionListView } from "./views/SessionListView";
 import { SessionView } from "./views/SessionView";
@@ -102,6 +103,13 @@ export function App() {
     );
   } else if (route?.view === "epic") {
     view = <EpicDetailView key={route.id} epic_id={route.id} />;
+  } else if (route?.view === "oakridge") {
+    view = (
+      <OakridgeShell
+        route={route.route}
+        onBack={() => { window.location.hash = ""; }}
+      />
+    );
   } else if (sid !== null) {
     view = (
       <SessionView
