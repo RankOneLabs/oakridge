@@ -58,12 +58,13 @@ const GhPrViewSchema = z.object({
   // string (not enum) to survive new GitHub status values without schema breakage
   mergeStateStatus: z.string(),
   reviewDecision: z.string().nullable(),
-  // reviewThreads was removed from gh's JSON fields in newer gh versions; treat
-  // as optional so the field's absence doesn't break the merge flow.
+  // reviewThreads is requested explicitly in PR_VIEW_FIELDS. When the field is
+  // absent from the response (older gh builds, network truncation), we cannot
+  // assume the thread list is empty — treat it as unknown so the merge gate
+  // can require operator confirmation instead of silently proceeding.
   reviewThreads: z
     .object({ nodes: z.array(GhReviewThreadSchema) })
-    .optional()
-    .default({ nodes: [] }),
+    .optional(),
   url: z.string(),
 });
 
@@ -83,6 +84,12 @@ export type PrState =
   | { kind: "already_merged"; mergedAt: string | null; url: string }
   | { kind: "open_mergeable_clean"; url: string }
   | { kind: "open_mergeable_unresolved"; threads: ReviewThread[]; url: string }
+  /**
+   * Returned when the PR is mergeable but review-thread state could not be
+   * fetched (e.g., reviewThreads absent from gh response). Unresolved threads
+   * may exist; the merge gate must require explicit operator confirmation.
+   */
+  | { kind: "open_mergeable_threads_unknown"; url: string }
   | { kind: "open_not_mergeable"; reason: "conflicts" | "checks_failing" | "unknown"; url: string }
   | { kind: "closed_unmerged"; url: string };
 
@@ -127,6 +134,11 @@ function classifyPrView(pr: GhPrView): PrState {
     return { kind: "open_not_mergeable", reason, url: pr.url };
   }
   // mergeable === "MERGEABLE" && mergeStateStatus === "CLEAN"
+  // When reviewThreads is absent, we cannot assume the thread list is empty —
+  // return threads_unknown so the caller requires explicit confirmation.
+  if (pr.reviewThreads === undefined) {
+    return { kind: "open_mergeable_threads_unknown", url: pr.url };
+  }
   const prNumber = extractPrNumber(pr.url) ?? 0;
   const unresolved = pr.reviewThreads.nodes
     .filter((t) => !t.isResolved)
@@ -238,8 +250,9 @@ async function runGh(
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-const PR_VIEW_FIELDS =
-  "state,mergedAt,mergeable,mergeStateStatus,reviewDecision,url";
+// Exported so tests can assert reviewThreads is always requested.
+export const PR_VIEW_FIELDS =
+  "state,mergedAt,mergeable,mergeStateStatus,reviewDecision,reviewThreads,url";
 
 export async function fetchPrState(prUrl: string): Promise<Result<PrState, GhError>> {
   const run = await runGh(
