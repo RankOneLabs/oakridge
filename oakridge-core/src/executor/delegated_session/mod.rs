@@ -293,12 +293,16 @@ impl DelegatedSessionStage {
                             if !cancelled.load(Ordering::SeqCst) {
                                 let stop_result = client.stop_session(&sid).await;
                                 let stop_ok = matches!(&stop_result, Ok(r) if r.ok);
+                                let error_class = match &err {
+                                    kbbl_client::KbblClientError::Rejected { .. } => "server_error",
+                                    _ => "transport",
+                                };
                                 let terminal_meta = serde_json::json!({
                                     "reason": format!(
                                         "observer poll budget exhausted after {} errors for kbbl session {}",
                                         MAX_OBSERVER_POLL_ERRORS, sid
                                     ),
-                                    "last_error_class": "transport",
+                                    "last_error_class": error_class,
                                     "last_error": err.to_string(),
                                     "poll_error_count": poll_error_count,
                                     "stop_outcome": if stop_ok { "stopped" } else { "stop_failed" }

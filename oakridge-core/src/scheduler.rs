@@ -843,7 +843,7 @@ impl Coordinator {
             // Failing immediately surfaces a diagnosable terminal state instead of
             // an operator-invisible hang in Running.
             let active_count = task.index.values()
-                .filter(|(_, s)| matches!(s, StageStatus::Pending | StageStatus::Running | StageStatus::Parked))
+                .filter(|(_, s)| matches!(*s, StageStatus::Pending | StageStatus::Running | StageStatus::Parked))
                 .count();
 
             if !task.index.is_empty() && task.handles.is_empty() {
@@ -852,14 +852,19 @@ impl Coordinator {
                     // diagnosable rather than hanging in Running indefinitely.
                     let now = Utc::now();
                     for (stage_key, (si_id, status)) in &task.index {
-                        if matches!(status, StageStatus::Pending | StageStatus::Running | StageStatus::Parked) {
+                        if matches!(*status, StageStatus::Pending | StageStatus::Running | StageStatus::Parked) {
+                            // Preserve existing started_at so recovery doesn't wipe timing data.
+                            let existing_started_at = queries::get_stage_instance_by_id(&self.db, si_id)
+                                .await
+                                .ok()
+                                .and_then(|si| si.started_at);
                             let _ = queries::update_stage_instance_status_with_terminal_meta(
                                 &self.db,
                                 si_id,
                                 StageStatus::Failed,
                                 None,
                                 Some(serde_json::json!({"error": "recovery: no live handle for non-terminal stage"})),
-                                None,
+                                existing_started_at,
                                 Some(now),
                             )
                             .await;
@@ -871,7 +876,7 @@ impl Coordinator {
                         }
                     }
                     RunStatus::Failed
-                } else if task.index.values().any(|(_, s)| matches!(s, StageStatus::Failed)) {
+                } else if task.index.values().any(|(_, s)| matches!(*s, StageStatus::Failed)) {
                     RunStatus::Failed
                 } else {
                     RunStatus::Done
