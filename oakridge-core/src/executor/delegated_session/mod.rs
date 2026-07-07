@@ -630,6 +630,13 @@ impl StageType for DelegatedSessionStage {
             stage_instance_id.0.to_string(),
         );
 
+        if !def.pre_authorized_tools.is_empty() {
+            anyhow::bail!(
+                "pre_authorized_tools is not supported: per-tool approval is managed by the kbbl PWA (Phase 2). \
+                 Remove pre_authorized_tools from the workflow definition or set it to an empty array."
+            );
+        }
+
         if let Some(ref e) = def.effort {
             if !validate_effort(e) {
                 anyhow::bail!(
@@ -1375,7 +1382,7 @@ mod tests {
             "workdir": {"from": "literal", "value": "/work/{{STAGE_INSTANCE_ID}}"},
             "session_name": "session-{{STAGE_INSTANCE_ID}}",
             "model": "gpt-4.1",
-            "pre_authorized_tools": ["Bash"],
+            "pre_authorized_tools": [],
             "yolo": true
         });
         let stage_instance_id =
@@ -1411,8 +1418,46 @@ mod tests {
             "session-00000000-0000-0000-0000-000000000042"
         );
         assert_eq!(cfg.output_slots, output_slots);
-        assert_eq!(cfg.pre_authorized_tools, vec!["Bash".to_string()]);
+        assert!(cfg.pre_authorized_tools.is_empty());
         assert!(cfg.yolo);
+    }
+
+    #[tokio::test]
+    async fn build_config_rejects_nonempty_pre_authorized_tools() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("t.md"), "hello").unwrap();
+
+        let stage = DelegatedSessionStage::new(
+            dir.path().to_path_buf(),
+            KbblClient::new("http://127.0.0.1:8080/").unwrap(),
+        );
+
+        let def_config = json!({
+            "runtime": "codex",
+            "prompt_template_path": "t.md",
+            "slot_bindings": {},
+            "workdir": {"from": "literal", "value": "/work"},
+            "session_name": "s",
+            "pre_authorized_tools": ["Bash", "Edit"],
+            "yolo": false
+        });
+        let stage_instance_id =
+            StageInstanceId(uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000099").unwrap());
+
+        let err = stage
+            .build_config(&def_config, &HashMap::new(), &[], stage_instance_id, &json!({}))
+            .await
+            .unwrap_err();
+
+        let msg = err.to_string();
+        assert!(
+            msg.contains("pre_authorized_tools is not supported"),
+            "expected rejection message, got: {msg}"
+        );
+        assert!(
+            msg.contains("Phase 2"),
+            "expected Phase 2 reference in message, got: {msg}"
+        );
     }
 
     #[tokio::test]
