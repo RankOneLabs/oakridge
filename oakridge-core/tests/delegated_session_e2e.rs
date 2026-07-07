@@ -46,6 +46,8 @@ struct FakeKbblState {
     requests: Arc<Mutex<VecDeque<RecordedRequest>>>,
     emit_terminal_event: Arc<AtomicBool>,
     event_poll_count: Arc<AtomicUsize>,
+    /// When true, the events endpoint returns 503 (simulates kbbl being unreachable).
+    return_503: Arc<AtomicBool>,
 }
 
 impl FakeKbblState {
@@ -54,6 +56,7 @@ impl FakeKbblState {
             requests: Arc::new(Mutex::new(VecDeque::new())),
             emit_terminal_event: Arc::new(AtomicBool::new(false)),
             event_poll_count: Arc::new(AtomicUsize::new(0)),
+            return_503: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -109,6 +112,11 @@ async fn fake_read_events(
 ) -> impl IntoResponse {
     state.record(Method::GET, uri.to_string(), None);
     state.event_poll_count.fetch_add(1, Ordering::SeqCst);
+
+    if state.return_503.load(Ordering::SeqCst) {
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({}))).into_response();
+    }
+
     let events = if state.emit_terminal_event.load(Ordering::SeqCst) {
         vec![json!({
             "id": 1,
@@ -122,7 +130,7 @@ async fn fake_read_events(
     Json(json!({
         "session_id": sid,
         "events": events,
-    }))
+    })).into_response()
 }
 
 async fn fake_delete_session(
@@ -589,6 +597,255 @@ async fn delegated_session_e2e_gate_driven_completion() {
 
     let final_run = queries::get_workflow_run_by_id(&pool, &run.id).await.unwrap();
     assert_eq!(final_run.status, RunStatus::Done);
+
+    kbbl_join.abort();
+}
+
+/// A recovered delegated_session stage with an external_ref must be parked as
+/// `waiting_for_kbbl` when kbbl is unreachable at boot, then reattach and
+/// return to Running once kbbl becomes available.
+#[tokio::test(flavor = "multi_thread")]
+async fn waiting_for_kbbl_parks_and_reattaches() {
+    let tmp = tempfile::tempdir().unwrap();
+    let prompts_dir = tmp.path().join("prompts");
+    let workdir = tmp.path().join("work");
+    std::fs::create_dir_all(&prompts_dir).unwrap();
+    std::fs::create_dir_all(&workdir).unwrap();
+    std::fs::write(
+        prompts_dir.join("delegated_prompt.md"),
+        "Task: {{TASK}}\nStage: {{STAGE_INSTANCE_ID}}",
+    )
+    .unwrap();
+
+    let (kbbl_base_url, fake_kbbl, kbbl_join) = spawn_fake_kbbl().await;
+    // Start with kbbl "unreachable" (events endpoint returns 503).
+    fake_kbbl.return_503.store(true, Ordering::SeqCst);
+
+    let db_url = format!("sqlite://{}", tmp.path().join("wfk.db").to_str().unwrap());
+    let pool = db::init_pool(&db_url).await.unwrap();
+
+    // Seed a workflow def and a Running run with a stage instance that already
+    // has external_ref set (simulating a crash-recovery scenario).
+    let (def, _) = delegated_workflow_def(&prompts_dir, &workdir);
+    queries::insert_workflow_def(&pool, &def).await.unwrap();
+
+    let run = WorkflowRun {
+        id: WorkflowRunId(uuid::Uuid::new_v4()),
+        workflow_def_id: def.id,
+        project_id: None,
+        status: RunStatus::Running,
+        context: serde_json::json!({}),
+        version: 1,
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+    };
+    queries::insert_workflow_run(&pool, &run).await.unwrap();
+
+    let si_id = StageInstanceId(uuid::Uuid::new_v4());
+    let config_val: serde_json::Value = {
+        use oakridge_core::executor::prompt_config::SlotBinding;
+        use oakridge_core::executor::delegated_session::config::{DelegatedRuntime, DelegatedSessionConfig};
+        let cfg = DelegatedSessionConfig {
+            runtime: DelegatedRuntime::ClaudeCode,
+            rendered_prompt: "Task: test\nStage: placeholder".into(),
+            workdir: workdir.clone(),
+            session_name: format!("delegated-{}", si_id.0),
+            model: Some("claude-sonnet-4-6".into()),
+            pre_authorized_tools: vec![],
+            yolo: false,
+            output_slots: vec![OutputSlot {
+                name: "out".into(),
+                artifact_type: "text".into(),
+            }],
+        };
+        serde_json::to_value(cfg).unwrap()
+    };
+    let si = StageInstance {
+        id: si_id,
+        run_id: run.id,
+        stage_key: "delegate".into(),
+        stage_type: "delegated_session".into(),
+        status: StageStatus::Running,
+        config: config_val,
+        parked_reason: None,
+        parked_meta: None,
+        terminal_meta: None,
+        external_ref: Some("sid-123".into()),
+        started_at: Some(chrono::Utc::now()),
+        ended_at: None,
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+    };
+    queries::insert_stage_instance(&pool, &si).await.unwrap();
+
+    let db_url2 = db_url.clone();
+    let prompts_dir2 = prompts_dir.clone();
+    let kbbl_url2 = kbbl_base_url.clone();
+
+    let (_app, _coord) = boot(
+        Config {
+            port: 0,
+            bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+            db_url: db_url2,
+            pwa_dir: PathBuf::from("/tmp"),
+            cors_origins: vec![],
+        },
+        move |stage_types, artifact_types| {
+            artifact_types.register(ArtifactTypeDef {
+                id: "text".into(),
+                validate: |_| Ok(()),
+                component_id: "text-viewer".into(),
+            });
+            stage_types.register(Arc::new(DelegatedSessionStage::new(
+                prompts_dir2,
+                KbblClient::new(kbbl_url2).unwrap(),
+            )));
+        },
+    )
+    .await
+    .unwrap();
+
+    let timeout = Duration::from_secs(5);
+
+    // Stage must be parked as waiting_for_kbbl while kbbl is unavailable.
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        let s = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+        if s.parked_reason.as_deref() == Some("waiting_for_kbbl") {
+            let meta = s.parked_meta.expect("parked_meta must be set");
+            assert_eq!(
+                meta.get("kind").and_then(|v| v.as_str()),
+                Some("waiting_for_kbbl"),
+                "parked_meta.kind must be waiting_for_kbbl"
+            );
+            break;
+        }
+        assert!(
+            s.status != StageStatus::Failed,
+            "stage must not fail while waiting for kbbl: {:?}",
+            s.terminal_meta
+        );
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "stage did not reach waiting_for_kbbl within timeout, current: {:?}",
+            s.parked_reason
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    // Make kbbl available. The retry task must reattach and set stage to Running.
+    fake_kbbl.return_503.store(false, Ordering::SeqCst);
+
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        let s = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+        if s.status == StageStatus::Running {
+            assert!(
+                s.parked_reason.is_none(),
+                "parked_reason must be cleared after reattachment"
+            );
+            break;
+        }
+        // Waiting for kbbl parked is still acceptable while the retry is in flight.
+        assert!(
+            s.status != StageStatus::Failed,
+            "stage must not fail after kbbl becomes available: {:?}",
+            s.terminal_meta
+        );
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "stage did not return to Running within timeout after kbbl became available"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    kbbl_join.abort();
+}
+
+/// A Running delegated_session stage must be parked as `session_ended_without_emit`
+/// when kbbl exits cleanly (code 0) before any artifact has been emitted.
+#[tokio::test(flavor = "multi_thread")]
+async fn session_ended_without_emit_parks_running_stage() {
+    let tmp = tempfile::tempdir().unwrap();
+    let prompts_dir = tmp.path().join("prompts");
+    let workdir = tmp.path().join("work");
+    std::fs::create_dir_all(&prompts_dir).unwrap();
+    std::fs::create_dir_all(&workdir).unwrap();
+    std::fs::write(
+        prompts_dir.join("delegated_prompt.md"),
+        "Task: {{TASK}}\nStage: {{STAGE_INSTANCE_ID}}",
+    )
+    .unwrap();
+
+    let (kbbl_base_url, fake_kbbl, kbbl_join) = spawn_fake_kbbl().await;
+    let db_url = format!("sqlite://{}", tmp.path().join("sewoe.db").to_str().unwrap());
+    let db_url2 = db_url.clone();
+    let prompts_dir2 = prompts_dir.clone();
+    let kbbl_url2 = kbbl_base_url.clone();
+
+    let (app, _coord) = boot(
+        Config {
+            port: 0,
+            bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+            db_url: db_url.clone(),
+            pwa_dir: PathBuf::from("/tmp"),
+            cors_origins: vec![],
+        },
+        move |stage_types, artifact_types| {
+            artifact_types.register(ArtifactTypeDef {
+                id: "text".into(),
+                validate: |_| Ok(()),
+                component_id: "text-viewer".into(),
+            });
+            stage_types.register(Arc::new(DelegatedSessionStage::new(
+                prompts_dir2,
+                KbblClient::new(kbbl_url2).unwrap(),
+            )));
+        },
+    )
+    .await
+    .unwrap();
+
+    let pool = db::init_pool(&db_url2).await.unwrap();
+    let (_, workflow_payload) = delegated_workflow_def(&prompts_dir, &workdir);
+    let def = create_workflow_def(&app, workflow_payload).await;
+    let run = create_workflow_run(&app, def.id).await;
+
+    let timeout = Duration::from_secs(10);
+    let si_id = poll_for_any_stage(&pool, run.id, timeout).await;
+    poll_until_status(&pool, si_id, StageStatus::Running, timeout).await;
+
+    // Emit clean code-0 exit from kbbl before the stage has emitted any artifact.
+    fake_kbbl.emit_terminal_event.store(true, Ordering::SeqCst);
+
+    // Stage must become Parked with parked_reason = "session_ended_without_emit".
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        let s = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+        if s.status == StageStatus::Parked
+            && s.parked_reason.as_deref() == Some("session_ended_without_emit")
+        {
+            let meta = s.parked_meta.expect("parked_meta must be set");
+            assert_eq!(
+                meta.get("kind").and_then(|v| v.as_str()),
+                Some("session_ended_without_emit"),
+                "parked_meta.kind must be session_ended_without_emit"
+            );
+            break;
+        }
+        assert!(
+            s.status != StageStatus::Failed,
+            "stage must not fail on clean code-0 exit: {:?}",
+            s.terminal_meta
+        );
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "stage did not reach session_ended_without_emit within timeout, current: {:?} {:?}",
+            s.status,
+            s.parked_reason,
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 
     kbbl_join.abort();
 }
