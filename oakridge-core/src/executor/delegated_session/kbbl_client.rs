@@ -157,10 +157,7 @@ impl KbblClient {
             .timeout(Duration::from_secs(30))
             .build()
             .map_err(KbblClientError::Request)?;
-        Ok(Self {
-            base_url,
-            http,
-        })
+        Ok(Self { base_url, http })
     }
 
     pub async fn create_session(
@@ -238,10 +235,7 @@ impl KbblClient {
         Self::decode_response(response, method, path.to_string()).await
     }
 
-    async fn get_json<TResp>(
-        &self,
-        path: &str,
-    ) -> Result<TResp, KbblClientError>
+    async fn get_json<TResp>(&self, path: &str) -> Result<TResp, KbblClientError>
     where
         TResp: DeserializeOwned,
     {
@@ -253,10 +247,7 @@ impl KbblClient {
         Self::decode_response(response, reqwest::Method::GET, path.to_string()).await
     }
 
-    async fn delete_json<TResp>(
-        &self,
-        path: &str,
-    ) -> Result<TResp, KbblClientError>
+    async fn delete_json<TResp>(&self, path: &str) -> Result<TResp, KbblClientError>
     where
         TResp: DeserializeOwned,
     {
@@ -357,7 +348,10 @@ mod tests {
         path: String,
         body: Option<serde_json::Value>,
     ) {
-        capture.lock().unwrap().push_back(RecordedRequest { method, path, body });
+        capture
+            .lock()
+            .unwrap()
+            .push_back(RecordedRequest { method, path, body });
     }
 
     async fn capture_create(
@@ -431,12 +425,7 @@ mod tests {
         State(state): State<TestState>,
         OriginalUri(uri): OriginalUri,
     ) -> impl IntoResponse {
-        capture_request(
-            &state.capture,
-            Method::GET,
-            uri.to_string(),
-            None,
-        );
+        capture_request(&state.capture, Method::GET, uri.to_string(), None);
         Json(serde_json::json!({
             "session_id": "sid-123",
             "events": [
@@ -681,7 +670,10 @@ mod tests {
         let app = Router::new().route(
             "/sessions",
             post(|| async {
-                (StatusCode::BAD_GATEWAY, Json(serde_json::json!({"error": "kbbl down"})))
+                (
+                    StatusCode::BAD_GATEWAY,
+                    Json(serde_json::json!({"error": "kbbl down"})),
+                )
             }),
         );
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -705,9 +697,7 @@ mod tests {
             .unwrap_err();
 
         match err {
-            KbblClientError::Rejected {
-                status, detail, ..
-            } => {
+            KbblClientError::Rejected { status, detail, .. } => {
                 assert_eq!(status, StatusCode::BAD_GATEWAY);
                 assert_eq!(detail.as_deref(), Some("kbbl down"));
             }

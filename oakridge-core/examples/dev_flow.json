@@ -18,7 +18,7 @@
           "workdir":       { "from": "context", "path": "/worktree_path" },
           "session_name":  "spec-analyzer-{{STAGE_INSTANCE_ID}}",
           "pre_authorized_tools": [],
-          "yolo": true
+          "yolo": false
         },
         "inputs": [],
         "outputs": [
@@ -38,7 +38,7 @@
           "workdir":      { "from": "context", "path": "/worktree_path" },
           "session_name": "plan-writer-{{STAGE_INSTANCE_ID}}",
           "pre_authorized_tools": [],
-          "yolo": true
+          "yolo": false
         },
         "inputs": [
           { "name": "spec_analysis", "artifact_type": "dev.spec_analysis" }
@@ -60,7 +60,7 @@
           "workdir":      { "from": "context", "path": "/worktree_path" },
           "session_name": "build-{{STAGE_INSTANCE_ID}}",
           "pre_authorized_tools": [],
-          "yolo": true
+          "yolo": false
         },
         "inputs": [
           { "name": "plan", "artifact_type": "dev.plan" }
@@ -83,7 +83,7 @@
           "workdir":      { "from": "context", "path": "/worktree_path" },
           "session_name": "assessor-{{STAGE_INSTANCE_ID}}",
           "pre_authorized_tools": [],
-          "yolo": true
+          "yolo": false
         },
         "inputs": [
           { "name": "build_result", "artifact_type": "dev.build_result" },

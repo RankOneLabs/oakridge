@@ -27,11 +27,17 @@ export interface WorktreeMetadata {
 
 export type StageStatus = "pending" | "running" | "complete" | "failed" | "parked";
 
+export interface StageArtifact {
+  id: string;
+  type_id: string;
+  version: number;
+}
+
 export interface StageDetail {
   name: string;
   type: string;
   status: StageStatus;
-  artifact_types: string[];
+  artifacts: StageArtifact[];
   delegated_kbbl_sid: string | null;
   worktree: WorktreeMetadata | null;
 }

@@ -4,14 +4,14 @@
 //     cargo sqlx prepare
 // Run from the oakridge-core directory.
 
-use sqlx::SqlitePool;
-use uuid::Uuid;
+use crate::types::{
+    Artifact, ArtifactId, Project, ProjectId, RunStatus, StageInstance, StageInstanceId,
+    StageStatus, WorkflowDef, WorkflowDefId, WorkflowRun, WorkflowRunId,
+};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use crate::types::{
-    Artifact, ArtifactId, Project, ProjectId, RunStatus, StageInstance,
-    StageInstanceId, StageStatus, WorkflowDef, WorkflowDefId, WorkflowRun, WorkflowRunId,
-};
+use sqlx::SqlitePool;
+use uuid::Uuid;
 
 // ── Row structs (SQLite-native primitives) ────────────────────────────────────
 
@@ -96,8 +96,7 @@ fn parse_dt(s: &str) -> crate::Result<DateTime<Utc>> {
 }
 
 fn parse_uuid(s: &str) -> crate::Result<Uuid> {
-    Uuid::parse_str(s)
-        .map_err(|e| crate::Error::Validation(format!("invalid uuid '{}': {}", s, e)))
+    Uuid::parse_str(s).map_err(|e| crate::Error::Validation(format!("invalid uuid '{}': {}", s, e)))
 }
 
 fn opt_dt(s: Option<String>) -> crate::Result<Option<DateTime<Utc>>> {
@@ -136,7 +135,12 @@ fn row_to_workflow_run(r: WorkflowRunRow) -> crate::Result<WorkflowRun> {
     Ok(WorkflowRun {
         id: WorkflowRunId(parse_uuid(&r.id)?),
         workflow_def_id: WorkflowDefId(parse_uuid(&r.workflow_def_id)?),
-        project_id: r.project_id.as_deref().map(parse_uuid).transpose()?.map(ProjectId),
+        project_id: r
+            .project_id
+            .as_deref()
+            .map(parse_uuid)
+            .transpose()?
+            .map(ProjectId),
         status: str_to_enum(r.status)?,
         context: opt_json(r.context)?,
         version: r.version as i32,
@@ -154,8 +158,14 @@ fn row_to_stage_instance(r: StageInstanceRow) -> crate::Result<StageInstance> {
         status: str_to_enum(r.status)?,
         config: serde_json::from_str(&r.config)?,
         parked_reason: r.parked_reason,
-        parked_meta: r.parked_meta.map(|s| serde_json::from_str(&s)).transpose()?,
-        terminal_meta: r.terminal_meta.map(|s| serde_json::from_str(&s)).transpose()?,
+        parked_meta: r
+            .parked_meta
+            .map(|s| serde_json::from_str(&s))
+            .transpose()?,
+        terminal_meta: r
+            .terminal_meta
+            .map(|s| serde_json::from_str(&s))
+            .transpose()?,
         external_ref: r.external_ref,
         started_at: opt_dt(r.started_at)?,
         ended_at: opt_dt(r.ended_at)?,
@@ -174,7 +184,12 @@ fn row_to_artifact(r: ArtifactRow) -> crate::Result<Artifact> {
         label: r.label,
         body: serde_json::from_str(&r.body)?,
         version: r.version as i32,
-        parent_artifact_id: r.parent_artifact_id.as_deref().map(parse_uuid).transpose()?.map(ArtifactId),
+        parent_artifact_id: r
+            .parent_artifact_id
+            .as_deref()
+            .map(parse_uuid)
+            .transpose()?
+            .map(ArtifactId),
         created_at: parse_dt(&r.created_at)?,
     })
 }
@@ -183,9 +198,13 @@ fn row_to_artifact(r: ArtifactRow) -> crate::Result<Artifact> {
 
 pub async fn insert_project(pool: &SqlitePool, p: &Project) -> crate::Result<()> {
     let id = p.id.0.to_string();
-    let repo_dir = p.repo_dir.to_str().ok_or_else(|| {
-        crate::Error::Validation(format!("repo_dir is not valid UTF-8: {:?}", p.repo_dir))
-    })?.to_string();
+    let repo_dir = p
+        .repo_dir
+        .to_str()
+        .ok_or_else(|| {
+            crate::Error::Validation(format!("repo_dir is not valid UTF-8: {:?}", p.repo_dir))
+        })?
+        .to_string();
     let created_at = p.created_at.to_rfc3339();
     sqlx::query!(
         "INSERT INTO project (id, name, repo_dir, created_at) VALUES (?, ?, ?, ?)",
@@ -396,13 +415,17 @@ pub async fn list_workflow_runs(
         qb.push(" AND status = ").push_bind(s_str);
     }
     if let Some(d) = def_id {
-        qb.push(" AND workflow_def_id = ").push_bind(d.0.to_string());
+        qb.push(" AND workflow_def_id = ")
+            .push_bind(d.0.to_string());
     }
     if let Some(p) = project_id {
         qb.push(" AND project_id = ").push_bind(p.0.to_string());
     }
     qb.push(" ORDER BY created_at, id");
-    let rows = qb.build_query_as::<WorkflowRunRow>().fetch_all(pool).await?;
+    let rows = qb
+        .build_query_as::<WorkflowRunRow>()
+        .fetch_all(pool)
+        .await?;
     rows.into_iter().map(row_to_workflow_run).collect()
 }
 
@@ -424,8 +447,16 @@ pub async fn insert_stage_instance(pool: &SqlitePool, s: &StageInstance) -> crat
     let run_id = s.run_id.0.to_string();
     let status = enum_to_str(&s.status)?;
     let config = serde_json::to_string(&s.config)?;
-    let parked_meta = s.parked_meta.as_ref().map(serde_json::to_string).transpose()?;
-    let terminal_meta = s.terminal_meta.as_ref().map(serde_json::to_string).transpose()?;
+    let parked_meta = s
+        .parked_meta
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()?;
+    let terminal_meta = s
+        .terminal_meta
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()?;
     let started_at = s.started_at.map(|t| t.to_rfc3339());
     let ended_at = s.ended_at.map(|t| t.to_rfc3339());
     let created_at = s.created_at.to_rfc3339();
@@ -510,7 +541,10 @@ pub async fn update_stage_instance_status_with_terminal_meta(
     let updated_at = Utc::now().to_rfc3339();
     let started_at_str = started_at.map(|t| t.to_rfc3339());
     let ended_at_str = ended_at.map(|t| t.to_rfc3339());
-    let terminal_meta = terminal_meta.as_ref().map(serde_json::to_string).transpose()?;
+    let terminal_meta = terminal_meta
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()?;
     let result = sqlx::query(
         "UPDATE stage_instance \
          SET status = ?, parked_reason = ?, terminal_meta = ?, started_at = ?, ended_at = ?, updated_at = ? \
@@ -543,7 +577,10 @@ pub async fn set_stage_instance_parked_meta(
     parked_meta: Option<Value>,
 ) -> crate::Result<()> {
     let id_str = id.0.to_string();
-    let parked_meta = parked_meta.as_ref().map(serde_json::to_string).transpose()?;
+    let parked_meta = parked_meta
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()?;
     let updated_at = Utc::now().to_rfc3339();
     let result = sqlx::query!(
         "UPDATE stage_instance SET parked_meta = ?, updated_at = ? WHERE id = ?",
@@ -572,14 +609,13 @@ pub async fn set_stage_instance_external_ref(
 ) -> crate::Result<()> {
     let id_str = id.0.to_string();
     let updated_at = Utc::now().to_rfc3339();
-    let result = sqlx::query(
-        "UPDATE stage_instance SET external_ref = ?, updated_at = ? WHERE id = ?",
-    )
-    .bind(external_ref)
-    .bind(updated_at)
-    .bind(&id_str)
-    .execute(pool)
-    .await?;
+    let result =
+        sqlx::query("UPDATE stage_instance SET external_ref = ?, updated_at = ? WHERE id = ?")
+            .bind(external_ref)
+            .bind(updated_at)
+            .bind(&id_str)
+            .execute(pool)
+            .await?;
     if result.rows_affected() == 0 {
         return Err(crate::Error::NotFound {
             entity: "stage_instance".into(),
@@ -628,7 +664,10 @@ pub async fn update_stage_instance_status_if_current_status_with_terminal_meta(
     let updated_at = Utc::now().to_rfc3339();
     let started_at_str = started_at.map(|t| t.to_rfc3339());
     let ended_at_str = ended_at.map(|t| t.to_rfc3339());
-    let terminal_meta = terminal_meta.as_ref().map(serde_json::to_string).transpose()?;
+    let terminal_meta = terminal_meta
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()?;
     let result = sqlx::query(
         "UPDATE stage_instance \
          SET status = ?, parked_reason = ?, terminal_meta = ?, started_at = ?, ended_at = ?, updated_at = ? \
@@ -755,9 +794,10 @@ pub async fn get_artifact_chain(
     let mut current_id = Some(*id);
     while let Some(aid) = current_id {
         if !seen.insert(aid) {
-            return Err(crate::Error::Validation(
-                format!("artifact chain contains a cycle at {}", aid.0),
-            ));
+            return Err(crate::Error::Validation(format!(
+                "artifact chain contains a cycle at {}",
+                aid.0
+            )));
         }
         let artifact = get_artifact_by_id(pool, &aid).await?;
         current_id = artifact.parent_artifact_id;
@@ -803,8 +843,8 @@ pub async fn list_artifacts_for_run(
 mod tests {
     use super::*;
     use crate::types::{StageNodeDef, WorkflowGraph};
-    use std::collections::HashMap;
     use serde_json::json;
+    use std::collections::HashMap;
 
     fn fixed_dt() -> DateTime<Utc> {
         DateTime::parse_from_rfc3339("2026-01-01T00:00:00.000Z")
@@ -814,7 +854,9 @@ mod tests {
 
     async fn make_test_pool() -> SqlitePool {
         let path = format!("/tmp/oakridge_test_{}.db", Uuid::new_v4());
-        crate::db::init_pool(&format!("sqlite:{}", path)).await.unwrap()
+        crate::db::init_pool(&format!("sqlite:{}", path))
+            .await
+            .unwrap()
     }
 
     fn test_project() -> Project {
@@ -831,7 +873,10 @@ mod tests {
             id: WorkflowDefId(Uuid::new_v4()),
             name: format!("wf-{}", Uuid::new_v4()),
             version: 1,
-            graph: WorkflowGraph { stages: HashMap::new(), edges: vec![] },
+            graph: WorkflowGraph {
+                stages: HashMap::new(),
+                edges: vec![],
+            },
             created_at: fixed_dt(),
         }
     }
@@ -904,12 +949,15 @@ mod tests {
             graph: WorkflowGraph {
                 stages: {
                     let mut m = HashMap::new();
-                    m.insert("s1".into(), StageNodeDef {
-                        stage_type: "llm".into(),
-                        config: json!({"model": "gpt-4"}),
-                        inputs: vec![],
-                        outputs: vec![],
-                    });
+                    m.insert(
+                        "s1".into(),
+                        StageNodeDef {
+                            stage_type: "llm".into(),
+                            config: json!({"model": "gpt-4"}),
+                            inputs: vec![],
+                            outputs: vec![],
+                        },
+                    );
                     m
                 },
                 edges: vec![],
@@ -1035,7 +1083,10 @@ mod tests {
         .bind(def_id)
         .execute(&pool)
         .await;
-        assert!(result.is_err(), "invalid workflow_run.status must be rejected");
+        assert!(
+            result.is_err(),
+            "invalid workflow_run.status must be rejected"
+        );
     }
 
     #[tokio::test]
@@ -1056,7 +1107,10 @@ mod tests {
         .bind(run_id)
         .execute(&pool)
         .await;
-        assert!(result.is_err(), "invalid stage_instance.status must be rejected");
+        assert!(
+            result.is_err(),
+            "invalid stage_instance.status must be rejected"
+        );
     }
 
     #[tokio::test]
@@ -1075,7 +1129,10 @@ mod tests {
 
         insert_stage_instance(&pool, &first).await.unwrap();
         let duplicate = insert_stage_instance(&pool, &second).await;
-        assert!(duplicate.is_err(), "duplicate (run_id, stage_key) must be rejected");
+        assert!(
+            duplicate.is_err(),
+            "duplicate (run_id, stage_key) must be rejected"
+        );
     }
 
     #[tokio::test]
@@ -1195,13 +1252,19 @@ mod tests {
             .bind(proj.id.0.to_string())
             .execute(&pool)
             .await;
-        assert!(delete_project.is_err(), "project deletion must be restricted while referenced");
+        assert!(
+            delete_project.is_err(),
+            "project deletion must be restricted while referenced"
+        );
 
         let delete_def = sqlx::query("DELETE FROM workflow_def WHERE id = ?")
             .bind(def.id.0.to_string())
             .execute(&pool)
             .await;
-        assert!(delete_def.is_err(), "workflow_def deletion must be restricted while referenced");
+        assert!(
+            delete_def.is_err(),
+            "workflow_def deletion must be restricted while referenced"
+        );
 
         sqlx::query("DELETE FROM workflow_run WHERE id = ?")
             .bind(run.id.0.to_string())
@@ -1288,14 +1351,20 @@ mod tests {
         };
         insert_workflow_run(&pool, &run_running).await.unwrap();
 
-        let pending = list_workflow_runs(&pool, Some(RunStatus::Pending), None, None).await.unwrap();
+        let pending = list_workflow_runs(&pool, Some(RunStatus::Pending), None, None)
+            .await
+            .unwrap();
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].id, run_pending.id);
 
-        let by_def = list_workflow_runs(&pool, None, Some(&def.id), None).await.unwrap();
+        let by_def = list_workflow_runs(&pool, None, Some(&def.id), None)
+            .await
+            .unwrap();
         assert_eq!(by_def.len(), 2);
 
-        let by_proj = list_workflow_runs(&pool, None, None, Some(&proj.id)).await.unwrap();
+        let by_proj = list_workflow_runs(&pool, None, None, Some(&proj.id))
+            .await
+            .unwrap();
         assert_eq!(by_proj.len(), 1);
         assert_eq!(by_proj[0].id, run_pending.id);
 
@@ -1315,14 +1384,21 @@ mod tests {
         let run = test_run(def.id);
         insert_workflow_run(&pool, &run).await.unwrap();
 
-        let updated = mark_workflow_run_failed_if_pending(&pool, &run.id).await.unwrap();
+        let updated = mark_workflow_run_failed_if_pending(&pool, &run.id)
+            .await
+            .unwrap();
         assert!(updated, "pending row should be marked failed");
 
         let stored = get_workflow_run_by_id(&pool, &run.id).await.unwrap();
         assert_eq!(stored.status, RunStatus::Failed);
 
-        let updated_again = mark_workflow_run_failed_if_pending(&pool, &run.id).await.unwrap();
-        assert!(!updated_again, "non-pending row should not be touched twice");
+        let updated_again = mark_workflow_run_failed_if_pending(&pool, &run.id)
+            .await
+            .unwrap();
+        assert!(
+            !updated_again,
+            "non-pending row should not be touched twice"
+        );
     }
 
     #[tokio::test]
@@ -1354,7 +1430,9 @@ mod tests {
         insert_artifact(&pool, &a1).await.unwrap();
         insert_artifact(&pool, &a2).await.unwrap();
 
-        let text = list_artifacts_for_run(&pool, &run.id, Some("text")).await.unwrap();
+        let text = list_artifacts_for_run(&pool, &run.id, Some("text"))
+            .await
+            .unwrap();
         assert_eq!(text.len(), 1);
         assert_eq!(text[0].id, a1.id);
 
@@ -1416,7 +1494,9 @@ mod tests {
         let run = test_run(def.id);
         insert_workflow_run(&pool, &run).await.unwrap();
 
-        update_workflow_run_status(&pool, &run.id, RunStatus::Done).await.unwrap();
+        update_workflow_run_status(&pool, &run.id, RunStatus::Done)
+            .await
+            .unwrap();
         let got = get_workflow_run_by_id(&pool, &run.id).await.unwrap();
         assert_eq!(got.status, RunStatus::Done);
     }

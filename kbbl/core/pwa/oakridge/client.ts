@@ -60,7 +60,7 @@ export function fetchGates(): Promise<ParkedGate[]> {
 }
 
 export function fetchArtifact(id: string): Promise<ArtifactDetail> {
-  return oakridgeGet<ArtifactDetail>(`/artifacts/${encodeURIComponent(id)}`);
+  return oakridgeGet<ArtifactDetail>(`/artifact_details/${encodeURIComponent(id)}`);
 }
 
 export function resumeGate(gateId: string, req: GateResumeRequest): Promise<GateResumeResponse> {

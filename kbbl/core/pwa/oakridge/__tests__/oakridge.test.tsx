@@ -79,7 +79,7 @@ const RUN_DETAIL_FIXTURE: RunDetail = {
       name: "spec",
       type: "spec_generation",
       status: "complete",
-      artifact_types: ["spec_v2"],
+      artifacts: [{ id: "art-spec-1", type_id: "spec_v2", version: 1 }],
       delegated_kbbl_sid: null,
       worktree: null,
     },
@@ -87,7 +87,7 @@ const RUN_DETAIL_FIXTURE: RunDetail = {
       name: "build",
       type: "build_agent",
       status: "running",
-      artifact_types: ["build_output"],
+      artifacts: [{ id: "art-build-1", type_id: "build_output", version: 1 }],
       delegated_kbbl_sid: "aaaabbbbccccdddd",
       worktree: {
         branch: "cohort/v2_readiness/3-minimum_v2",

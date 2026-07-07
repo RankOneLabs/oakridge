@@ -130,7 +130,8 @@ async fn fake_read_events(
     Json(json!({
         "session_id": sid,
         "events": events,
-    })).into_response()
+    }))
+    .into_response()
 }
 
 async fn fake_delete_session(
@@ -213,11 +214,7 @@ async fn poll_until_status(
     }
 }
 
-async fn poll_until_done(
-    pool: &sqlx::SqlitePool,
-    si_id: StageInstanceId,
-    timeout: Duration,
-) {
+async fn poll_until_done(pool: &sqlx::SqlitePool, si_id: StageInstanceId, timeout: Duration) {
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
         let si = queries::get_stage_instance_by_id(pool, &si_id)
@@ -240,7 +237,9 @@ async fn poll_until_done(
 async fn wait_run_done(pool: &sqlx::SqlitePool, run_id: WorkflowRunId) {
     for _ in 0..600 {
         tokio::time::sleep(Duration::from_millis(50)).await;
-        let run = queries::get_workflow_run_by_id(pool, &run_id).await.unwrap();
+        let run = queries::get_workflow_run_by_id(pool, &run_id)
+            .await
+            .unwrap();
         if matches!(run.status, RunStatus::Done | RunStatus::Failed) {
             return;
         }
@@ -362,7 +361,11 @@ async fn create_workflow_run(app: &Router, workflow_def_id: WorkflowDefId) -> Wo
     serde_json::from_slice(&body).unwrap()
 }
 
-async fn resume_stage(app: &Router, stage_instance_id: StageInstanceId, payload: Value) -> StageInstance {
+async fn resume_stage(
+    app: &Router,
+    stage_instance_id: StageInstanceId,
+    payload: Value,
+) -> StageInstance {
     let response = app
         .clone()
         .oneshot(
@@ -458,18 +461,18 @@ async fn delegated_session_e2e_gate_driven_completion() {
     let si_id = poll_for_any_stage(&pool, run.id, timeout).await;
     poll_until_status(&pool, si_id, StageStatus::Running, timeout).await;
 
-    let stage_instance = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+    let stage_instance = queries::get_stage_instance_by_id(&pool, &si_id)
+        .await
+        .unwrap();
     // external_ref is now a JSON-serialized DelegatedExternalRef (sid + worktree fields)
-    let ext_ref = oakridge_core::executor::delegated_session::kbbl_client::DelegatedExternalRef::parse(
-        stage_instance.external_ref.as_deref().unwrap(),
-    );
+    let ext_ref =
+        oakridge_core::executor::delegated_session::kbbl_client::DelegatedExternalRef::parse(
+            stage_instance.external_ref.as_deref().unwrap(),
+        );
     assert_eq!(ext_ref.sid, "sid-123");
 
     let workdir_request = format!("{}/{}", workdir.display(), si_id.0);
-    let prompt_text = format!(
-        "Task: cut over delegated session data\nStage: {}",
-        si_id.0
-    );
+    let prompt_text = format!("Task: cut over delegated session data\nStage: {}", si_id.0);
 
     let create_artifact = emit_artifact(
         &app,
@@ -479,11 +482,14 @@ async fn delegated_session_e2e_gate_driven_completion() {
         }),
     )
     .await;
-    let artifact_id = ArtifactId(Uuid::parse_str(create_artifact["artifact_id"].as_str().unwrap()).unwrap());
+    let artifact_id =
+        ArtifactId(Uuid::parse_str(create_artifact["artifact_id"].as_str().unwrap()).unwrap());
 
     poll_until_status(&pool, si_id, StageStatus::Parked, timeout).await;
 
-    let parked = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+    let parked = queries::get_stage_instance_by_id(&pool, &si_id)
+        .await
+        .unwrap();
     assert_eq!(parked.status, StageStatus::Parked);
     assert_eq!(parked.parked_reason.as_deref(), Some("waiting_gate"));
     let gate_state: DelegatedGateState =
@@ -601,7 +607,9 @@ async fn delegated_session_e2e_gate_driven_completion() {
         ]
     );
 
-    let final_run = queries::get_workflow_run_by_id(&pool, &run.id).await.unwrap();
+    let final_run = queries::get_workflow_run_by_id(&pool, &run.id)
+        .await
+        .unwrap();
     assert_eq!(final_run.status, RunStatus::Done);
 
     kbbl_join.abort();
@@ -649,8 +657,10 @@ async fn waiting_for_kbbl_parks_and_reattaches() {
 
     let si_id = StageInstanceId(uuid::Uuid::new_v4());
     let config_val: serde_json::Value = {
+        use oakridge_core::executor::delegated_session::config::{
+            DelegatedRuntime, DelegatedSessionConfig,
+        };
         use oakridge_core::executor::prompt_config::SlotBinding;
-        use oakridge_core::executor::delegated_session::config::{DelegatedRuntime, DelegatedSessionConfig};
         let cfg = DelegatedSessionConfig {
             runtime: DelegatedRuntime::ClaudeCode,
             rendered_prompt: "Task: test\nStage: placeholder".into(),
@@ -720,10 +730,10 @@ async fn waiting_for_kbbl_parks_and_reattaches() {
     // two separate DB calls and reading between them would see parked_meta=None.
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
-        let s = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
-        if s.parked_reason.as_deref() == Some("waiting_for_kbbl")
-            && s.parked_meta.is_some()
-        {
+        let s = queries::get_stage_instance_by_id(&pool, &si_id)
+            .await
+            .unwrap();
+        if s.parked_reason.as_deref() == Some("waiting_for_kbbl") && s.parked_meta.is_some() {
             let meta = s.parked_meta.unwrap();
             assert_eq!(
                 meta.get("kind").and_then(|v| v.as_str()),
@@ -750,7 +760,9 @@ async fn waiting_for_kbbl_parks_and_reattaches() {
 
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
-        let s = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+        let s = queries::get_stage_instance_by_id(&pool, &si_id)
+            .await
+            .unwrap();
         if s.status == StageStatus::Running {
             assert!(
                 s.parked_reason.is_none(),
@@ -835,7 +847,9 @@ async fn session_ended_without_emit_parks_running_stage() {
     // two separate DB calls and reading between them would see parked_meta=None.
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
-        let s = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+        let s = queries::get_stage_instance_by_id(&pool, &si_id)
+            .await
+            .unwrap();
         if s.status == StageStatus::Parked
             && s.parked_reason.as_deref() == Some("session_ended_without_emit")
             && s.parked_meta.is_some()

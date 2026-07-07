@@ -276,7 +276,7 @@ config alongside `model` and `yolo`:
     "runtime": "claude-code",
     "prompt_template_path": "dev-flow/build.md",
     "effort": "medium",
-    "yolo": true,
+    "yolo": false,
     "pre_authorized_tools": []
   }
 }
@@ -593,13 +593,14 @@ pre_authorized_tools is not supported: per-tool approval is managed by the kbbl 
 All first-party workflow definitions (including `examples/dev_flow.json`) use:
 
 ```json
-"pre_authorized_tools": []
+"pre_authorized_tools": [],
+"yolo": false
 ```
 
-All dev-flow stages use `yolo: true` for unblocked execution inside the worktree.
-For per-tool control today, use the kbbl PWA's per-session approval cards or the
-session-scoped "Always {tool}" button. A standalone tool-approval surface in
-oakridge-core is out of scope for Phase 2.
+All dev-flow stages keep `yolo: false` so per-tool control stays in the kbbl
+PWA. Use the kbbl PWA's per-session approval cards or the session-scoped
+"Always {tool}" button when a delegated session parks on a tool request. A
+standalone tool-approval surface in oakridge-core is out of scope for Phase 2.
 
 ## kbbl PWA Oakridge Entry Point
 
