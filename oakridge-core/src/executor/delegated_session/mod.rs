@@ -1577,26 +1577,30 @@ mod tests {
         assert_eq!(meta.revision_count, 1);
         assert_eq!(meta.artifact_id.0.to_string(), artifact_id);
 
+        // Verify the two requests execute() makes regardless of how many poll requests
+        // the background observer has issued since (observer polls are correct behaviour).
         let requests: Vec<_> = capture.lock().unwrap().iter().cloned().collect();
+        assert!(requests.len() >= 2, "expected at least CREATE + INPUT requests, got {}", requests.len());
         assert_eq!(
-            requests,
-            vec![
-                RecordedRequest {
-                    method: Method::POST,
-                    path: "/sessions".into(),
-                    body: Some(json!({
-                        "workdir": "/workdir",
-                        "name": "delegate",
-                        "artifact_id": si_id.0.to_string(),
-                        "runtime": "codex"
-                    })),
-                },
-                RecordedRequest {
-                    method: Method::POST,
-                    path: "/sid-123/input".into(),
-                    body: Some(json!({ "text": "hello artifact" })),
-                },
-            ]
+            requests[0],
+            RecordedRequest {
+                method: Method::POST,
+                path: "/sessions".into(),
+                body: Some(json!({
+                    "workdir": "/workdir",
+                    "name": "delegate",
+                    "artifact_id": si_id.0.to_string(),
+                    "runtime": "codex"
+                })),
+            }
+        );
+        assert_eq!(
+            requests[1],
+            RecordedRequest {
+                method: Method::POST,
+                path: "/sid-123/input".into(),
+                body: Some(json!({ "text": "hello artifact" })),
+            }
         );
 
         join.abort();
