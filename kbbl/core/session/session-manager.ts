@@ -2,7 +2,19 @@ import { mkdir, readdir, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { KbblConfig } from "../config";
-import type { EpicIdentity } from "../orchestrator/backends/interface";
+
+/**
+ * Generic worktree identity for managed per-session branch/subdir creation.
+ * Callers that know about dev-flow concepts (EpicIdentity, cohort slugs) must
+ * derive these fields at their boundary rather than leaking domain vocabulary
+ * into the session runtime.
+ */
+export interface WorktreeCreateIdentity {
+  branchName: string;
+  worktreeSubdir: string;
+  /** When provided, the worktree is branched from this ref. */
+  baseRef?: string;
+}
 
 export class NonGitWorkdirError extends Error {
   constructor(workdir: string) {
@@ -183,12 +195,13 @@ export interface CreateSessionOpts {
    */
   runtime?: RuntimeId;
   /**
-   * Optional cohort/epic identity used for worktree + branch naming and
-   * base-ref selection. Set by the dispatcher for cohort-bound sessions;
-   * omitted for non-build stages, ad-hoc sessions, and direct POST /sessions
-   * calls — those fall back to sid-based naming against HEAD.
+   * Generic worktree identity for managed branch/subdir naming. Set by the
+   * dispatcher (after converting dev-flow EpicIdentity at the boundary) and
+   * by the HTTP handler (from the optional `worktree` body field). Omitted
+   * for ad-hoc sessions and non-build stages — those fall back to sid-based
+   * naming against HEAD.
    */
-  worktreeIdentity?: EpicIdentity;
+  worktreeIdentity?: WorktreeCreateIdentity;
 }
 
 /**
@@ -397,10 +410,10 @@ export class SessionManager {
         ...(worktreeIdentity
           ? {
               identity: {
-                branchName: `cohort/${worktreeIdentity.epicSlug}/${worktreeIdentity.cohortSlug}`,
-                worktreeSubdir: `${worktreeIdentity.epicSlug}/${worktreeIdentity.cohortSlug}`,
+                branchName: worktreeIdentity.branchName,
+                worktreeSubdir: worktreeIdentity.worktreeSubdir,
               },
-              baseRef: `origin/${worktreeIdentity.epicBranch}`,
+              baseRef: worktreeIdentity.baseRef,
             }
           : {}),
       });
