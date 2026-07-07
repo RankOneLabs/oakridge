@@ -34,6 +34,7 @@ from jig.tracing.stdout import StdoutTracer
 
 from legit_biz_club.coordination.consensus import WorkspaceEventEmitter
 from legit_biz_club.coordination.coordinator import IncrementalRunResult
+from legit_biz_club.coordination.events import GradingFailedPayload
 from legit_biz_club.coordination.mediator import Mediator
 from legit_biz_club.coordination.project_coordinator import (
     ProjectCoordinator,
@@ -132,8 +133,13 @@ class CellResult:
     """Outcome of one (target × condition) cell.
 
     ``eval_scores`` is populated when ``run_cell`` is given a
-    ``grader_factory``; empty list when no grader was supplied (e.g.,
-    smoke-tests of the runner itself).
+    ``grader_factory`` and grading succeeds; empty list when no grader
+    was supplied or when grader construction/execution fails.
+
+    ``grading_error`` is non-None when a grader_factory was supplied but
+    grader construction or execution raised. It carries a short
+    ``<ExceptionClass>: <message>`` string for operator diagnostics.
+    The artifact is preserved exactly as produced; only grading was lost.
     """
 
     target_name: str
@@ -143,6 +149,7 @@ class CellResult:
     run_result: ProjectRunResult
     metrics: CellMetrics
     eval_scores: list[Score]
+    grading_error: str | None = None
 
 
 async def run_cell(
@@ -311,14 +318,41 @@ async def run_cell(
     final_content = artifact_path.read_text(encoding="utf-8")
     metrics = _summarize_metrics(run_result)
     eval_scores: list[Score] = []
+    grading_error: str | None = None
     if grader_factory is not None:
-        grader = grader_factory(target)
-        eval_scores = list(
-            await grader.grade(
-                input=target.brief.target_spec, output=final_content
+        try:
+            grader = grader_factory(target)
+            eval_scores = list(
+                await grader.grade(
+                    input=target.brief.target_spec, output=final_content
+                )
             )
-        )
-        _write_eval_scores_sidecar(cell_dir, eval_scores)
+            _write_eval_scores_sidecar(cell_dir, eval_scores)
+        except Exception as exc:
+            grading_error = f"{type(exc).__name__}: {exc}"
+            logger.warning(
+                "grader failed for cell %s/%s — artifact preserved, "
+                "eval_scores omitted: %s",
+                target.name,
+                condition.name,
+                grading_error,
+            )
+            if emit is not None:
+                try:
+                    await emit(
+                        "grading_failed",
+                        GradingFailedPayload(
+                            target=target.name,
+                            condition=condition.name,
+                            error_class=type(exc).__name__,
+                            error_message=str(exc),
+                            artifact_path=str(artifact_path),
+                        ),
+                    )
+                except Exception as emit_exc:
+                    logger.warning(
+                        "failed to emit grading_failed event: %s", emit_exc
+                    )
     return CellResult(
         target_name=target.name,
         condition_name=condition.name,
@@ -327,6 +361,7 @@ async def run_cell(
         run_result=run_result,
         metrics=metrics,
         eval_scores=eval_scores,
+        grading_error=grading_error,
     )
 
 

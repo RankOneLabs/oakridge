@@ -505,7 +505,9 @@ async def main(spec_path: str, output_dir: str) -> None:
     )
 
     eval_scores: list[dict[str, object]] | None
-    if spec.grade:
+    if not spec.grade or result.grading_error is not None:
+        eval_scores = None
+    else:
         eval_scores = [
             {
                 "dimension": s.dimension,
@@ -514,8 +516,6 @@ async def main(spec_path: str, output_dir: str) -> None:
             }
             for s in result.eval_scores
         ]
-    else:
-        eval_scores = None
 
     print(
         "RESULT "

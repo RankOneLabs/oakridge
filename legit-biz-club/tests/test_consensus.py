@@ -612,6 +612,60 @@ async def test_duplicate_enrolled_agent_id_proposer_raises(
         await mechanism.execute()
 
 
+async def test_consensus_preserves_sibling_outputs_when_one_proposer_fails(
+    tmp_path: Path,
+) -> None:
+    """When one proposer raises (e.g. exhausted IO retries), the other
+    agents' successful proposals must be preserved in the round outcome
+    rather than being discarded. The failed agent's id is recorded in
+    RoundOutcome.failed_agents. Consensus degrades with explicit
+    per-agent failure, not a total abort."""
+
+    class _FailingProposer:
+        async def propose(
+            self,
+            *,
+            agent: Agent,
+            brief: Brief,
+            artifact: Artifact,
+            current_content: str,
+            current_version: str,
+            peer_proposals: list[Proposal] | None = None,
+        ) -> Proposal:
+            raise RuntimeError("provider IO failed")
+
+    agents = _make_agents(tmp_path, 3)
+    project = _make_project(tmp_path, agents)
+    # agents[0] fails; agents[1] and agents[2] succeed
+    proposers: dict = {
+        agents[0].id: _FailingProposer(),
+        agents[1].id: _IdenticalProposer("sibling output"),
+        agents[2].id: _IdenticalProposer("sibling output"),
+    }
+    mediator = Mediator(project.artifact, [a.id for a in agents])
+    mechanism = MultiRoundConsensus(
+        project=project,
+        agents=agents,
+        proposers=proposers,
+        mediator=mediator,
+        round_budget_policy=StringEqualConvergence(max_rounds=1),
+        disagreement_surface=StableOrderingByAgentId(),
+        tracer=StdoutTracer(color=False),
+    )
+    result = await mechanism.execute()
+    # Mechanism completed despite the failure.
+    assert result.apply_outcome.result == ProposalResult.APPLIED
+    # The round recorded which agent failed.
+    assert len(result.rounds) == 1
+    round_outcome = result.rounds[0]
+    assert agents[0].id in round_outcome.failed_agents
+    # The two successful siblings' proposals are preserved.
+    assert len(round_outcome.proposals) == 2
+    successful_ids = {p.agent_id for p in round_outcome.proposals}
+    assert agents[1].id in successful_ids
+    assert agents[2].id in successful_ids
+
+
 async def test_emit_failures_do_not_abort_consensus(tmp_path: Path) -> None:
     """Same safe-emit pattern as the incremental coordinator — a flaky
     HTTP emit shouldn't kill a consensus run."""

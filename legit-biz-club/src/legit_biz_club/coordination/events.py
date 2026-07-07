@@ -16,6 +16,7 @@ WorkspaceEventKind = Literal[
     "round_completed",
     "escalation_triggered",
     "proposal_picked",
+    "grading_failed",
 ]
 
 class IncrementalStartedPayload(TypedDict):
@@ -57,6 +58,15 @@ class ProposalPickedPayload(TypedDict):
     rationale: str
     converged_at_round: int | None
 
+
+class GradingFailedPayload(TypedDict):
+    target: str
+    condition: str
+    error_class: str
+    error_message: str
+    artifact_path: str
+
+
 type WorkspaceEventPayload = (
     IncrementalStartedPayload
     | IncrementalTerminatedPayload
@@ -65,6 +75,7 @@ type WorkspaceEventPayload = (
     | RoundCompletedPayload
     | EscalationTriggeredPayload
     | ProposalPickedPayload
+    | GradingFailedPayload
 )
 
 
@@ -121,5 +132,12 @@ class WorkspaceEventEmitter(Protocol):
         self,
         kind: Literal["proposal_picked"],
         payload: ProposalPickedPayload,
+    ) -> Awaitable[None]: ...
+
+    @overload
+    def __call__(
+        self,
+        kind: Literal["grading_failed"],
+        payload: GradingFailedPayload,
     ) -> Awaitable[None]: ...
 
