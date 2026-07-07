@@ -20,14 +20,13 @@ import os
 from pathlib import Path
 
 import pytest
+from jig.core.errors import JigLLMError
 from jig.core.types import (
     CompletionParams,
     LLMClient,
     LLMResponse,
     Usage,
 )
-
-from jig.core.errors import JigLLMError
 
 from legit_biz_club import Artifact, ArtifactType, Brief
 from legit_biz_club.coordination.jig_proposer import (

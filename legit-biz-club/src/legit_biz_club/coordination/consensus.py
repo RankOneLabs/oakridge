@@ -306,7 +306,7 @@ class ConsensusMechanism(ABC):
             )
             proposals: list[Proposal] = []
             failed_agents: list[str] = []
-            for agent, result in zip(self.agents, raw_results):
+            for agent, result in zip(self.agents, raw_results, strict=True):
                 if isinstance(result, BaseException):
                     logger.warning(
                         "proposer for agent %s failed in round %d: %s: %s",

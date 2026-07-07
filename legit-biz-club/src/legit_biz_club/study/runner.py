@@ -33,8 +33,8 @@ from jig.core.types import Grader, Score, TracingLogger
 from jig.tracing.stdout import StdoutTracer
 
 from legit_biz_club.coordination.consensus import WorkspaceEventEmitter
-from legit_biz_club.coordination.events import GradingFailedPayload
 from legit_biz_club.coordination.coordinator import IncrementalRunResult
+from legit_biz_club.coordination.events import GradingFailedPayload
 from legit_biz_club.coordination.mediator import Mediator
 from legit_biz_club.coordination.project_coordinator import (
     ProjectCoordinator,
