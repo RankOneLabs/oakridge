@@ -13,6 +13,7 @@ import {
   RemoveFailedError,
   SessionManager,
   type CreateSessionOpts,
+  type WorktreeCreateIdentity,
 } from "../../session/session-manager";
 import type { AgentRuntime, RuntimeId, RuntimeRegistry } from "../../runtime";
 import { isValidSid } from "./per-sid";
@@ -260,6 +261,51 @@ async function resolveParentRuntimeId(
   return null;
 }
 
+/**
+ * Validate a git ref-name component. Returns a human-readable error string or
+ * null. Applies a strict subset of git-check-ref-format rules sufficient to
+ * prevent ambiguous refs, traversal, and shell-injection via the branch name.
+ */
+export function validateGitRefName(name: string, field: string): string | null {
+  if (!name) return `${field} must not be empty`;
+  // Disallow whitespace, NUL, DEL, and git-special chars
+  if (/[\x00-\x20\x7f ~^:?*[\\\]]/.test(name))
+    return `${field} contains invalid characters`;
+  if (name.includes("..")) return `${field} must not contain '..'`;
+  if (name.includes("@{")) return `${field} must not contain '@{'`;
+  if (name.includes("//")) return `${field} must not contain empty path segments ('//')`;
+  if (name.startsWith("/")) return `${field} must not start with '/'`;
+  if (name.startsWith(".")) return `${field} must not start with '.'`;
+  if (name.endsWith(".")) return `${field} must not end with '.'`;
+  if (name.endsWith("/")) return `${field} must not end with '/'`;
+  if (name.endsWith(".lock")) return `${field} must not end with '.lock'`;
+  if (name.startsWith("-")) return `${field} must not start with '-'`;
+  // Path components must not start with '.'
+  if (name.split("/").some((seg) => seg.startsWith(".")))
+    return `${field} path components must not start with '.'`;
+  return null;
+}
+
+/**
+ * Validate a worktree subdirectory: must be a relative path with no traversal,
+ * no empty segments, no absolute-path prefix, and no shell-significant chars.
+ */
+export function validateWorktreeSubdir(subdir: string): string | null {
+  if (!subdir) return "worktreeSubdir must not be empty";
+  if (isAbsolute(subdir)) return "worktreeSubdir must not be an absolute path";
+  if (subdir.startsWith("~")) return "worktreeSubdir must not start with '~'";
+  if (subdir.startsWith("/")) return "worktreeSubdir must not be an absolute path";
+  const segments = subdir.split("/");
+  for (const seg of segments) {
+    if (seg === "") return "worktreeSubdir must not have empty path segments";
+    if (seg === "..") return "worktreeSubdir must not contain traversal segments (..)";
+    if (seg === ".") return "worktreeSubdir must not contain '.' segments";
+    if (/[$`(){}<>|;&!#]/.test(seg))
+      return "worktreeSubdir contains shell-significant characters";
+  }
+  return null;
+}
+
 export interface SessionsRouteDeps {
   manager: SessionManager;
   /** Optional server default workdir (from --workdir CLI arg). */
@@ -336,6 +382,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
     let bodyModel: string | null = null;
     let bodyEffort: string | null = null;
     let bodyRuntime: RuntimeId | null = null;
+    let bodyWorktree: WorktreeCreateIdentity | null = null;
     // Read raw text first so we can distinguish "no body" (treat as no
     // options, preserves the old POST /sessions behavior) from "bad body"
     // (400). Using c.req.json() with an inner .catch() would silently
@@ -360,6 +407,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
           model?: unknown;
           effort?: unknown;
           runtime?: unknown;
+          worktree?: unknown;
         };
         if (parsed.runtime !== undefined) {
           if (typeof parsed.runtime !== "string") {
@@ -477,6 +525,34 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
           }
           bodyEffort = trimmedEffort;
         }
+        if (parsed.worktree !== undefined) {
+          if (typeof parsed.worktree !== "object" || parsed.worktree === null || Array.isArray(parsed.worktree)) {
+            return c.json({ error: "worktree must be an object" }, 400);
+          }
+          const wt = parsed.worktree as { branchName?: unknown; worktreeSubdir?: unknown; baseRef?: unknown };
+          if (typeof wt.branchName !== "string") {
+            return c.json({ error: "worktree.branchName must be a string" }, 400);
+          }
+          if (typeof wt.worktreeSubdir !== "string") {
+            return c.json({ error: "worktree.worktreeSubdir must be a string" }, 400);
+          }
+          const branchErr = validateGitRefName(wt.branchName, "worktree.branchName");
+          if (branchErr) return c.json({ error: branchErr }, 400);
+          const subdirErr = validateWorktreeSubdir(wt.worktreeSubdir);
+          if (subdirErr) return c.json({ error: subdirErr }, 400);
+          if (wt.baseRef !== undefined) {
+            if (typeof wt.baseRef !== "string") {
+              return c.json({ error: "worktree.baseRef must be a string when provided" }, 400);
+            }
+            const baseRefErr = validateGitRefName(wt.baseRef, "worktree.baseRef");
+            if (baseRefErr) return c.json({ error: baseRefErr }, 400);
+          }
+          bodyWorktree = {
+            branchName: wt.branchName,
+            worktreeSubdir: wt.worktreeSubdir,
+            ...(typeof wt.baseRef === "string" ? { baseRef: wt.baseRef } : {}),
+          };
+        }
       }
     } catch {
       return c.json({ error: "invalid json" }, 400);
@@ -529,6 +605,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
         runtime: bodyRuntime ?? undefined,
         model: bodyModel ?? undefined,
         effort: bodyEffort ?? undefined,
+        ...(bodyWorktree ? { worktreeIdentity: bodyWorktree } : {}),
       };
     } else {
       if (!isValidSid(resumeFrom)) {

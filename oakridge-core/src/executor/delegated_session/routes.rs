@@ -125,6 +125,9 @@ async fn emit_handler(
         live_session.sid.clone(),
         artifact.id,
         revision_count,
+        live_session.worktree_path.clone(),
+        live_session.worktree_branch.clone(),
+        live_session.worktree_base_ref.clone(),
     );
 
     if live_session
