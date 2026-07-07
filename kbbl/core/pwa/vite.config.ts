@@ -25,6 +25,8 @@ export default defineConfig({
       "/threads": { target: backendTarget, changeOrigin: true },
       "/atoms": { target: backendTarget, changeOrigin: true },
       "/review": { target: backendTarget, changeOrigin: true },
+      // Oakridge-core proxy and availability config.
+      "/oakridge": { target: backendTarget, changeOrigin: true },
       // Per-sid routes. Keyed by regex so any sid prefix gets proxied.
       // Must start with ^ for vite to treat the key as a RegExp.
       "^/[^/]+/(stream|events|input|approval|yolo)(\\?.*)?$": {
