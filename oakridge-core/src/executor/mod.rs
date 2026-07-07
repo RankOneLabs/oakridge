@@ -137,6 +137,16 @@ impl StageContext {
         self.stage_instance_summary_mut().clone()
     }
 
+    /// Read the stage status directly from the database.
+    ///
+    /// Unlike `stage_instance_summary`, this always reflects the persisted value and
+    /// is not subject to scheduler-owned writes that have not yet propagated to the
+    /// in-memory cache.
+    pub async fn persisted_status(&self) -> anyhow::Result<StageStatus> {
+        let si = queries::get_stage_instance_by_id(&self.db, &self.stage_instance_id).await?;
+        Ok(si.status)
+    }
+
     /// Emit an artifact.
     ///
     /// Validates the body against the artifact type's schema, persists the artifact

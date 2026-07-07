@@ -120,6 +120,70 @@ The LBC CLI prints a single authoritative `RESULT ...` line on stdout when it fi
 This keeps `output_dir` as the study root while still attaching per-cell sidecar paths to
 the emitted artifact.
 
+## Recovery states for `delegated_session`
+
+When `oakridge-core` recovers a `delegated_session` stage on boot, several
+situations can leave it in a non-normal park or failure state.
+
+### `waiting_for_kbbl`
+
+**When**: a recovered stage has an `external_ref` (kbbl session ID from a prior
+process lifetime), but kbbl is unreachable at boot time — connect failure, timeout,
+or a 5xx response.
+
+**State**: stage status `parked`, `parked_reason = "waiting_for_kbbl"`,
+`parked_meta = {"kind": "waiting_for_kbbl"}`.
+
+**Behaviour**: a background retry task polls kbbl at the scheduler cadence (5 s
+in production). When kbbl becomes reachable:
+
+- If the stage was `Running` before the park: status returns to `Running`,
+  `parked_reason` and `parked_meta` are cleared, and the normal observer loop
+  starts.
+- If the stage was `Parked` at a gate before the park: status returns to `Parked`
+  with the original `parked_reason` and `parked_meta` restored, and the observer
+  loop starts.
+
+If kbbl responds with a terminal error (4xx, non-retryable) during retries, the
+stage is failed with `terminal_meta = {"reason": "..."}`.
+
+**Operator action**: none required — the substrate reattaches automatically. If
+the stage stays in `waiting_for_kbbl` for an extended period, check kbbl health.
+
+### `session_ended_without_emit`
+
+**When**: the kbbl observer detects `subprocess_exited` with `code: 0` while the
+stage is still `Running` (no artifact has been emitted yet). This happens when the
+delegated agent exits cleanly without calling the emit route.
+
+**State**: stage status `parked`, `parked_reason = "session_ended_without_emit"`,
+`parked_meta = {"kind": "session_ended_without_emit"}`.
+
+**Behaviour**: the stage is not completed and not failed. The operator must decide
+what to do: restart the session (future operator action), fail the stage manually,
+or supply an artifact out-of-band.
+
+If the stage is already `Parked` at a gate (artifact already emitted) when the
+clean exit arrives, the exit is expected — the observer stops but the live session
+remains intact so the pending gate decision can still be delivered.
+
+**Operator action**: inspect the kbbl session transcript to determine why the
+agent exited without emitting an artifact.
+
+### Recovery failures: structured `terminal_meta`
+
+Two failure kinds can appear on stages recovered from DB:
+
+| `terminal_meta.kind` | Cause |
+|---|---|
+| `recovery_unregistered_stage_type` | The stage's `stage_type` is not registered in the runtime's stage-type registry. The stage cannot be re-executed. |
+| `recovery_missing_stage_key` | The stage's `stage_key` does not appear in the current workflow graph definition. The stage row is orphaned. |
+
+Both result in `StageStatus::Failed` with `terminal_meta` containing `kind`,
+`stage_key`, and (for unregistered type) `stage_type`. The run is also marked
+`Failed`. No operator intervention can recover these — they indicate a
+misconfiguration or a schema mismatch between the DB and the deployed code.
+
 ## Terminal metadata
 
 `delegated_lbc_run` uses `terminal_meta` as the failure and terminal context surface.

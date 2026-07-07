@@ -780,11 +780,95 @@ impl Coordinator {
             for si in non_terminal {
                 let node = match def.graph.stages.get(&si.stage_key) {
                     Some(n) => n.clone(),
-                    None => continue,
+                    None => {
+                        tracing::error!(
+                            stage_key = si.stage_key,
+                            "recovery: stage_key not found in workflow graph — failing stage"
+                        );
+                        let terminal_meta = serde_json::json!({
+                            "kind": "recovery_missing_stage_key",
+                            "stage_key": si.stage_key,
+                        });
+                        if let Some((_, ref mut s)) = task.index.get_mut(&si.stage_key) {
+                            *s = StageStatus::Failed;
+                        }
+                        match queries::update_stage_instance_status_with_terminal_meta(
+                            &self.db,
+                            &si.id,
+                            StageStatus::Failed,
+                            None,
+                            Some(terminal_meta.clone()),
+                            si.started_at,
+                            Some(Utc::now()),
+                        )
+                        .await
+                        {
+                            Ok(_) => {
+                                self.bus.publish(run_id, SubstrateEvent::StageStatusChanged {
+                                    stage_instance_id: si.id,
+                                    status: StageStatus::Failed,
+                                    parked_reason: None,
+                                    terminal_meta: Some(terminal_meta),
+                                });
+                            }
+                            Err(err) => {
+                                tracing::error!(
+                                    stage_instance_id = %si.id.0,
+                                    stage_key = si.stage_key,
+                                    "recovery: failed to persist missing_stage_key failure: {}",
+                                    err
+                                );
+                            }
+                        }
+                        continue;
+                    }
                 };
                 let st = match self.stage_types.get(&node.stage_type) {
                     Some(st) => st,
-                    None => continue,
+                    None => {
+                        tracing::error!(
+                            stage_key = si.stage_key,
+                            stage_type = node.stage_type,
+                            "recovery: stage_type not registered — failing stage"
+                        );
+                        let terminal_meta = serde_json::json!({
+                            "kind": "recovery_unregistered_stage_type",
+                            "stage_key": si.stage_key,
+                            "stage_type": node.stage_type,
+                        });
+                        if let Some((_, ref mut s)) = task.index.get_mut(&si.stage_key) {
+                            *s = StageStatus::Failed;
+                        }
+                        match queries::update_stage_instance_status_with_terminal_meta(
+                            &self.db,
+                            &si.id,
+                            StageStatus::Failed,
+                            None,
+                            Some(terminal_meta.clone()),
+                            si.started_at,
+                            Some(Utc::now()),
+                        )
+                        .await
+                        {
+                            Ok(_) => {
+                                self.bus.publish(run_id, SubstrateEvent::StageStatusChanged {
+                                    stage_instance_id: si.id,
+                                    status: StageStatus::Failed,
+                                    parked_reason: None,
+                                    terminal_meta: Some(terminal_meta),
+                                });
+                            }
+                            Err(err) => {
+                                tracing::error!(
+                                    stage_instance_id = %si.id.0,
+                                    stage_key = si.stage_key,
+                                    "recovery: failed to persist unregistered_stage_type failure: {}",
+                                    err
+                                );
+                            }
+                        }
+                        continue;
+                    }
                 };
                 let inputs: HashMap<String, Artifact> = node.inputs.iter()
                     .filter_map(|slot| {
@@ -1914,9 +1998,11 @@ mod tests {
                         terminal_meta,
                         ..
                     } if stage_instance_id == si.id && status == StageStatus::Failed => {
+                        let meta = terminal_meta.expect("terminal_meta must be set");
                         assert_eq!(
-                            terminal_meta,
-                            Some(json!({"error": "recovery: no live handle for non-terminal stage"}))
+                            meta.get("kind").and_then(|v| v.as_str()),
+                            Some("recovery_unregistered_stage_type"),
+                            "terminal_meta.kind must be recovery_unregistered_stage_type"
                         );
                         saw_stage_failed = true;
                     }
