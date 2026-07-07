@@ -105,7 +105,9 @@ Ctrl-C stops the server; all live agent subprocesses die with it. Ended sessions
 oakridge-core can also create kbbl sessions as workflow execution substrates. Those
 sessions use the same runtime adapters and operator approval UI as directly launched
 sessions, but oakridge-core supplies `artifact_id = <stage_instance_id>` so the session
-can be correlated with a workflow stage.
+can be correlated with a workflow stage. For the full v2 operator runbook — including
+the worktree contract, effort setting, tool approval policy, and migration map — see
+`docs/oakridge-v2-runbook.md`.
 
 This does not replace direct kbbl usage. The two supported launch paths are:
 
