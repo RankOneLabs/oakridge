@@ -20,10 +20,10 @@ use crate::executor::{StageContext, StageHandle};
 use crate::registry::stage_type::StageType;
 use crate::types::{Artifact, OutputSlot, StageInstanceId, StageStatus};
 
-use config::{DelegatedSessionConfig, DelegatedSessionDefConfig};
+use config::{validate_effort, DelegatedSessionConfig, DelegatedSessionDefConfig};
 use kbbl_client::{
-    AckResponse, CreateSessionRequest, EventsSinceResponse, KbblClient, SendInputRequest,
-    SetYoloRequest,
+    AckResponse, CreateSessionRequest, DelegatedExternalRef, EventsSinceResponse, KbblClient,
+    SendInputRequest, SessionSnapshot, SetYoloRequest,
 };
 
 const STAGE_INSTANCE_ID_SENTINEL: &str = "{{STAGE_INSTANCE_ID}}";
@@ -67,6 +67,12 @@ pub struct DelegatedGateState {
     pub gate: DelegatedGate,
     pub artifact_id: crate::types::ArtifactId,
     pub revision_count: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree_branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree_base_ref: Option<String>,
 }
 
 impl DelegatedGateState {
@@ -74,6 +80,9 @@ impl DelegatedGateState {
         kbbl_sid: String,
         artifact_id: crate::types::ArtifactId,
         revision_count: u32,
+        worktree_path: Option<String>,
+        worktree_branch: Option<String>,
+        worktree_base_ref: Option<String>,
     ) -> Self {
         Self {
             executor: DelegatedExecutor::DelegatedSession,
@@ -81,6 +90,9 @@ impl DelegatedGateState {
             gate: DelegatedGate::ArtifactApproval,
             artifact_id,
             revision_count,
+            worktree_path,
+            worktree_branch,
+            worktree_base_ref,
         }
     }
 }
@@ -113,6 +125,9 @@ pub(crate) struct LiveSession {
     pub ctx: StageContext,
     pub sid: String,
     pub config: DelegatedSessionConfig,
+    pub worktree_path: Option<String>,
+    pub worktree_branch: Option<String>,
+    pub worktree_base_ref: Option<String>,
 }
 
 pub(crate) type LiveSessions = Arc<Mutex<HashMap<StageInstanceId, LiveSession>>>;
@@ -129,7 +144,7 @@ impl DelegatedSessionStage {
         &self,
         config: &DelegatedSessionConfig,
         ctx: &StageContext,
-    ) -> anyhow::Result<String> {
+    ) -> anyhow::Result<SessionSnapshot> {
         let snapshot = self
             .kbbl_client
             .create_session(CreateSessionRequest {
@@ -138,15 +153,25 @@ impl DelegatedSessionStage {
                 artifact_id: ctx.stage_instance_id.0.to_string(),
                 runtime: config.runtime.clone(),
                 model: config.model.clone(),
+                effort: config.effort.clone(),
+                worktree: config.worktree.clone(),
             })
             .await?;
 
-        if let Err(err) = ctx.set_external_ref(Some(snapshot.sid.clone())).await {
+        let ext_ref = DelegatedExternalRef {
+            sid: snapshot.sid.clone(),
+            worktree_path: snapshot.worktree_path.clone(),
+            worktree_branch: snapshot.worktree_branch.clone(),
+            worktree_base_ref: snapshot.worktree_base_ref.clone(),
+        };
+        let ext_ref_json = serde_json::to_string(&ext_ref)?;
+
+        if let Err(err) = ctx.set_external_ref(Some(ext_ref_json)).await {
             self.cleanup_live_session(ctx.stage_instance_id, &snapshot.sid, None)
                 .await;
             return Err(err);
         }
-        Ok(snapshot.sid)
+        Ok(snapshot)
     }
 
     async fn probe_live_session(&self, sid: &str) -> anyhow::Result<Option<i64>> {
@@ -223,6 +248,9 @@ impl DelegatedSessionStage {
         ctx: StageContext,
         sid: String,
         config: DelegatedSessionConfig,
+        worktree_path: Option<String>,
+        worktree_branch: Option<String>,
+        worktree_base_ref: Option<String>,
     ) -> Arc<AtomicBool> {
         let cancelled = Arc::new(AtomicBool::new(false));
         self.live_sessions.lock().unwrap().insert(
@@ -232,6 +260,9 @@ impl DelegatedSessionStage {
                 ctx,
                 sid,
                 config,
+                worktree_path,
+                worktree_branch,
+                worktree_base_ref,
             },
         );
         cancelled
@@ -279,6 +310,9 @@ impl DelegatedSessionStage {
         pre_park_status: StageStatus,
         pre_park_parked_reason: Option<String>,
         pre_park_parked_meta: Option<Value>,
+        worktree_path: Option<String>,
+        worktree_branch: Option<String>,
+        worktree_base_ref: Option<String>,
     ) {
         let client = self.kbbl_client.clone();
         let live_sessions = self.live_sessions.clone();
@@ -364,6 +398,9 @@ impl DelegatedSessionStage {
                     ctx: ctx.clone(),
                     sid: sid.clone(),
                     config,
+                    worktree_path,
+                    worktree_branch,
+                    worktree_base_ref,
                 },
             );
 
@@ -593,6 +630,15 @@ impl StageType for DelegatedSessionStage {
             stage_instance_id.0.to_string(),
         );
 
+        if let Some(ref e) = def.effort {
+            if !validate_effort(e) {
+                anyhow::bail!(
+                    "invalid effort {:?}: must be one of [minimal, low, medium, high]",
+                    e
+                );
+            }
+        }
+
         let rendered_prompt = render_template(&template, &slot_values)?;
         let sid_str = stage_instance_id.0.to_string();
         let workdir_str = resolve_binding(&def.workdir, inputs, run_context)?
@@ -606,6 +652,8 @@ impl StageType for DelegatedSessionStage {
                 .session_name
                 .replace(STAGE_INSTANCE_ID_SENTINEL, &sid_str),
             model: def.model,
+            effort: def.effort,
+            worktree: def.worktree,
             pre_authorized_tools: def.pre_authorized_tools,
             yolo: def.yolo,
             output_slots: output_slots.to_vec(),
@@ -630,8 +678,17 @@ impl StageType for DelegatedSessionStage {
         let mut created_session = false;
 
         let mut recovery_last_seen = -1;
+        let mut live_worktree_path: Option<String> = None;
+        let mut live_worktree_branch: Option<String> = None;
+        let mut live_worktree_base_ref: Option<String> = None;
+
         let sid = match summary.external_ref.clone() {
-            Some(existing_sid) => {
+            Some(ext_ref_str) => {
+                let ext_ref = DelegatedExternalRef::parse(&ext_ref_str);
+                live_worktree_path = ext_ref.worktree_path.clone();
+                live_worktree_branch = ext_ref.worktree_branch.clone();
+                live_worktree_base_ref = ext_ref.worktree_base_ref.clone();
+                let existing_sid = ext_ref.sid.clone();
                 match self.probe_session_for_recovery(&existing_sid).await {
                     ProbeOutcome::Reachable(maybe_last_seen) => {
                         if let Some(last_seen) = maybe_last_seen {
@@ -659,6 +716,9 @@ impl StageType for DelegatedSessionStage {
                             summary.status,
                             summary.parked_reason.clone(),
                             summary.parked_meta.clone(),
+                            live_worktree_path,
+                            live_worktree_branch,
+                            live_worktree_base_ref,
                         );
                         return Ok(Box::new(WaitingForKbblHandle {
                             stage_instance_id,
@@ -674,7 +734,11 @@ impl StageType for DelegatedSessionStage {
             }
             None => {
                 created_session = true;
-                self.create_session(&config, &ctx).await?
+                let snapshot = self.create_session(&config, &ctx).await?;
+                live_worktree_path = snapshot.worktree_path.clone();
+                live_worktree_branch = snapshot.worktree_branch.clone();
+                live_worktree_base_ref = snapshot.worktree_base_ref.clone();
+                snapshot.sid
             }
         };
 
@@ -683,6 +747,9 @@ impl StageType for DelegatedSessionStage {
             ctx.clone(),
             sid.clone(),
             config.clone(),
+            live_worktree_path,
+            live_worktree_branch,
+            live_worktree_base_ref,
         );
 
         if !recovered_parked {
@@ -1212,11 +1279,32 @@ mod tests {
             gate: DelegatedGate::ArtifactApproval,
             artifact_id: crate::types::ArtifactId(Uuid::new_v4()),
             revision_count: 3,
+            worktree_path: Some("/work/wt/abc".into()),
+            worktree_branch: Some("cohort/e/1-foo".into()),
+            worktree_base_ref: Some("abc123".into()),
         };
 
         let value = serde_json::to_value(&state).unwrap();
         let back: DelegatedGateState = serde_json::from_value(value).unwrap();
         assert_eq!(state, back);
+    }
+
+    #[test]
+    fn delegated_gate_state_omits_null_worktree_fields() {
+        let state = DelegatedGateState {
+            executor: DelegatedExecutor::DelegatedSession,
+            kbbl_sid: "sid-000".into(),
+            gate: DelegatedGate::MergeConfirmation,
+            artifact_id: crate::types::ArtifactId(Uuid::new_v4()),
+            revision_count: 1,
+            worktree_path: None,
+            worktree_branch: None,
+            worktree_base_ref: None,
+        };
+        let value = serde_json::to_value(&state).unwrap();
+        assert!(value.get("worktree_path").is_none());
+        assert!(value.get("worktree_branch").is_none());
+        assert!(value.get("worktree_base_ref").is_none());
     }
 
     #[test]
@@ -1374,7 +1462,10 @@ mod tests {
         let si = queries::get_stage_instance_by_id(&pool, &si_id)
             .await
             .unwrap();
-        assert_eq!(si.external_ref.as_deref(), Some("sid-123"));
+        // external_ref is now a JSON-serialized DelegatedExternalRef
+        let ext_ref = kbbl_client::DelegatedExternalRef::parse(si.external_ref.as_deref().unwrap());
+        assert_eq!(ext_ref.sid, "sid-123");
+        assert!(ext_ref.worktree_path.is_none());
         assert_eq!(si.status, crate::types::StageStatus::Running);
 
         let requests: Vec<_> = capture.lock().unwrap().iter().cloned().collect();

@@ -275,6 +275,8 @@ fn delegated_workflow_def(
         },
         session_name: "delegated-{{STAGE_INSTANCE_ID}}".into(),
         model: Some("claude-sonnet-4-6".into()),
+        effort: None,
+        worktree: None,
         pre_authorized_tools: vec![],
         yolo: true,
     };
@@ -457,7 +459,11 @@ async fn delegated_session_e2e_gate_driven_completion() {
     poll_until_status(&pool, si_id, StageStatus::Running, timeout).await;
 
     let stage_instance = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
-    assert_eq!(stage_instance.external_ref.as_deref(), Some("sid-123"));
+    // external_ref is now a JSON-serialized DelegatedExternalRef (sid + worktree fields)
+    let ext_ref = oakridge_core::executor::delegated_session::kbbl_client::DelegatedExternalRef::parse(
+        stage_instance.external_ref.as_deref().unwrap(),
+    );
+    assert_eq!(ext_ref.sid, "sid-123");
 
     let workdir_request = format!("{}/{}", workdir.display(), si_id.0);
     let prompt_text = format!(
@@ -651,6 +657,8 @@ async fn waiting_for_kbbl_parks_and_reattaches() {
             workdir: workdir.clone(),
             session_name: format!("delegated-{}", si_id.0),
             model: Some("claude-sonnet-4-6".into()),
+            effort: None,
+            worktree: None,
             pre_authorized_tools: vec![],
             yolo: false,
             output_slots: vec![OutputSlot {

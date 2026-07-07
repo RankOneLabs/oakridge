@@ -1,7 +1,7 @@
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::time::Duration;
 
-use super::config::DelegatedRuntime;
+use super::config::{DelegatedRuntime, WorktreeIdentity};
 
 #[derive(Debug, thiserror::Error)]
 pub enum KbblClientError {
@@ -34,11 +34,53 @@ pub struct CreateSessionRequest {
     /// kbbl distinguishes `null` (present invalid value → 400) from omitted (use runtime default).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Effort level forwarded to kbbl. Omitted when None so the runtime default applies.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    /// Managed worktree identity. When present kbbl creates a branch-isolated
+    /// worktree; when omitted kbbl uses sid-based naming against HEAD.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<WorktreeIdentity>,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+/// Typed external reference persisted in stage.external_ref. Wraps the kbbl
+/// sid alongside the worktree metadata returned by create-session so the
+/// operator can see branch/path even when kbbl is unavailable.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DelegatedExternalRef {
+    pub sid: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree_branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree_base_ref: Option<String>,
+}
+
+impl DelegatedExternalRef {
+    /// Parse an external_ref string: try JSON first (typed), fall back to a
+    /// plain sid string for backwards compat with pre-typed records.
+    pub fn parse(s: &str) -> Self {
+        if let Ok(typed) = serde_json::from_str::<Self>(s) {
+            return typed;
+        }
+        Self {
+            sid: s.to_owned(),
+            worktree_path: None,
+            worktree_branch: None,
+            worktree_base_ref: None,
+        }
+    }
+}
+
+/// kbbl POST /sessions response. Uses camelCase to match the TypeScript snapshot shape.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct SessionSnapshot {
     pub sid: String,
+    pub worktree_path: Option<String>,
+    pub worktree_branch: Option<String>,
+    pub worktree_base_ref: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -416,6 +458,8 @@ mod tests {
             artifact_id: "a".into(),
             runtime: DelegatedRuntime::Codex,
             model: None,
+            effort: None,
+            worktree: None,
         };
         let value = serde_json::to_value(&req).unwrap();
         assert!(
@@ -432,6 +476,8 @@ mod tests {
             artifact_id: "a".into(),
             runtime: DelegatedRuntime::Codex,
             model: Some("gpt-4.1".into()),
+            effort: None,
+            worktree: None,
         };
         let value = serde_json::to_value(&req).unwrap();
         assert_eq!(
@@ -464,16 +510,13 @@ mod tests {
                 artifact_id: "artifact-9".into(),
                 runtime: DelegatedRuntime::Codex,
                 model: Some("gpt-4.1".into()),
+                effort: None,
+                worktree: None,
             })
             .await
             .unwrap();
 
-        assert_eq!(
-            snapshot,
-            SessionSnapshot {
-                sid: "sid-123".into()
-            }
-        );
+        assert_eq!(snapshot.sid, "sid-123");
 
         let mut capture = capture.lock().unwrap();
         let request = capture.pop_front().unwrap();
@@ -521,6 +564,8 @@ mod tests {
                 artifact_id: "artifact-9".into(),
                 runtime: DelegatedRuntime::Codex,
                 model: Some("gpt-4.1".into()),
+                effort: None,
+                worktree: None,
             })
             .await
             .unwrap();
@@ -653,6 +698,8 @@ mod tests {
                 artifact_id: "artifact-9".into(),
                 runtime: DelegatedRuntime::Codex,
                 model: None,
+                effort: None,
+                worktree: None,
             })
             .await
             .unwrap_err();
@@ -693,6 +740,8 @@ mod tests {
                 artifact_id: "artifact-9".into(),
                 runtime: DelegatedRuntime::Codex,
                 model: None,
+                effort: None,
+                worktree: None,
             })
             .await
             .unwrap();
@@ -725,6 +774,8 @@ mod tests {
                 artifact_id: "artifact-9".into(),
                 runtime: DelegatedRuntime::Codex,
                 model: None,
+                effort: None,
+                worktree: None,
             })
             .await
             .unwrap_err();
