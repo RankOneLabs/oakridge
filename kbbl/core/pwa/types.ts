@@ -34,7 +34,7 @@ export type InboxDelta =
       observedModel: string;
     };
 
-export type Status = "connecting" | "connected" | "disconnected";
+export type Status = "connecting" | "connected" | "disconnected" | "stale";
 export type Theme = "dark" | "light";
 export type ResolutionMap = Map<string, "allow" | "deny">;
 
