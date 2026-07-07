@@ -205,7 +205,7 @@ in the `POST /sessions` body:
 | Field | Required | Meaning |
 | --- | --- | --- |
 | `branchName` | yes | New branch created for the worktree. Must be a valid git ref name. |
-| `worktreeSubdir` | yes | Relative subdirectory under kbbl's worktree root where the tree is checked out. Must be non-empty, non-absolute, and contain no traversal segments (`..`). |
+| `worktreeSubdir` | yes | Relative subdirectory under kbbl's worktree root where the tree is checked out. Must be non-empty, non-absolute (no leading `/`), must not start with `~`, must not contain traversal segments (`..`), must not contain empty or `.` path segments, and must not contain shell-significant characters. |
 | `baseRef` | no | Ref to use as the worktree base. When provided, must resolve in the target repository — `git worktree add` fails if the ref does not exist yet. When absent, kbbl uses the repository's current `HEAD`. |
 
 **Failure mode**: if `baseRef` is supplied and does not resolve, the session
@@ -218,9 +218,11 @@ session instead.
 
 ## Session Metadata
 
-After a session is created (either directly or via a delegated workflow stage),
-the session snapshot and oakridge stage detail expose the following worktree
-fields:
+Two shapes expose worktree metadata — the kbbl session snapshot and the oakridge
+stage detail:
+
+**kbbl session snapshot** (returned by `POST /sessions`, `GET /sessions`, and
+inbox events):
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -229,9 +231,20 @@ fields:
 | `worktreeBranch` | string \| null | Branch name the worktree is on |
 | `worktreeBaseRef` | string \| null | Base ref that was used when the worktree was created |
 
-In the kbbl PWA oakridge surface, each stage row shows `worktreeBranch` and
-`worktreePath` when available. The merge-confirmation gate also surfaces these
-fields so the operator can confirm the correct branch and path before approving.
+**Oakridge stage detail** (returned by `GET /workflow_runs/:id` in the
+`stage_instances` array and surfaced in the kbbl PWA oakridge run detail):
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `worktree` | object \| null | Present when the delegated session has worktree metadata |
+| `worktree.branch` | string | Branch name |
+| `worktree.path` | string | Absolute path to the worktree |
+| `worktree.base_ref` | string | Base ref used at creation |
+
+In the kbbl PWA oakridge surface, each stage row shows `worktree.branch` and
+`worktree.path` when available. The parked gate panel also surfaces these fields
+so the operator can confirm the correct branch and path before approving a
+merge-confirmation gate.
 
 **Blind merge confirmation is explicitly out of bounds.** When a stage reaches
 the merge-confirmation gate, the branch and path must be visible before the
@@ -574,8 +587,7 @@ contract stability, but any non-empty value is **rejected at `build_config` time
 with:
 
 ```
-pre_authorized_tools is not supported: per-tool approval is managed by the kbbl PWA (Phase 2).
-Remove pre_authorized_tools from the workflow definition or set it to an empty array.
+pre_authorized_tools is not supported: per-tool approval is managed by the kbbl PWA (Phase 2). Remove pre_authorized_tools from the workflow definition or set it to an empty array.
 ```
 
 All first-party workflow definitions (including `examples/dev_flow.json`) use:
