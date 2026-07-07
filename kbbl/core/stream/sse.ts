@@ -8,6 +8,14 @@ export interface SessionStreamSource {
   endedSignal: AbortSignal;
   subscribe(cb: (evt: EnvelopeEvent) => void): () => void;
   readJsonl(): Promise<string>;
+  /**
+   * Optional: flush any buffered JSONL writes to disk before the caller reads
+   * via readJsonl(). The 100 ms interval flush can leave the tail of a live
+   * session's transcript un-flushed, so a client that reconnects immediately
+   * after the last write would miss those events in the replay. Awaiting this
+   * before readJsonl() closes that gap without changing write-path behaviour.
+   */
+  flushTranscript?(): Promise<void>;
 }
 
 /**
@@ -56,6 +64,11 @@ export async function streamForSession(session: SessionStreamSource, c: Context)
       // Initial flush so EventSource.onopen transitions before JSONL replay
       // or idle waits.
       await stream.write(": ready\n\n");
+
+      // Flush any buffered transcript writes before reading JSONL. The write
+      // path batches flushes every 100 ms; a client that reconnects immediately
+      // after the last write would otherwise miss the un-flushed tail.
+      await session.flushTranscript?.();
 
       const contents = await session.readJsonl();
       for (const line of contents.split("\n")) {
