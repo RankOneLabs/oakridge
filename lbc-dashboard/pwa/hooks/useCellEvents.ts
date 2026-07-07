@@ -27,6 +27,16 @@ import { createCellStreamRetry } from "./cellStreamRetry";
 import type { EventSourceLike } from "./cellStreamRetry";
 import { useRuns } from "./useRuns";
 import type { CellEvent } from "../lib/types";
+import type { RunSummary } from "../lib/types";
+
+export function isCellRunActiveForRetry(
+  runs: RunSummary[],
+  cellId: string,
+  hasLoadedRuns: boolean,
+): boolean {
+  if (!hasLoadedRuns) return true;
+  return runs.some((r) => r.cell_id === cellId && r.status === "running");
+}
 
 export function useCellEvents(cellId: string | null): {
   events: CellEvent[];
@@ -35,9 +45,11 @@ export function useCellEvents(cellId: string | null): {
   const [events, setEvents] = useState<CellEvent[]>([]);
   const [retryError, setRetryError] = useState<string | null>(null);
 
-  const { runs } = useRuns();
+  const { runs, hasLoaded } = useRuns();
   const runsRef = useRef(runs);
+  const hasLoadedRunsRef = useRef(hasLoaded);
   runsRef.current = runs;
+  hasLoadedRunsRef.current = hasLoaded;
 
   useEffect(() => {
     if (cellId === null) {
@@ -56,8 +68,10 @@ export function useCellEvents(cellId: string | null): {
     const manager = createCellStreamRetry({
       url: `/api/cells/${encodeURIComponent(cellId)}/events`,
       isRunActive: () =>
-        runsRef.current.some(
-          (r) => r.cell_id === cellId && r.status === "running",
+        isCellRunActiveForRetry(
+          runsRef.current,
+          cellId,
+          hasLoadedRunsRef.current,
         ),
       onEvent: (evt) => {
         pendingBuffer.push(evt);

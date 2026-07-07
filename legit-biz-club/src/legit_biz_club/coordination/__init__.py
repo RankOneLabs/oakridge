@@ -27,7 +27,9 @@ avoid real API calls.
 from legit_biz_club.coordination.consensus import (
     ConsensusMechanism,
     ConsensusResult,
+    ConsensusRoundFailed,
     MultiRoundConsensus,
+    ProposerFailure,
     RoundOutcome,
     SingleRoundConsensus,
 )
@@ -74,6 +76,7 @@ from legit_biz_club.coordination.version import compute_version
 
 __all__ = [
     "ConsensusMechanism",
+    "ConsensusRoundFailed",
     "ConsensusResult",
     "DisagreementSurface",
     "IncrementalCoordinator",
@@ -89,6 +92,7 @@ __all__ = [
     "Proposal",
     "ProposalOutcome",
     "ProposalResult",
+    "ProposerFailure",
     "Proposer",
     "ProposerOutputParseError",
     "RoundBudgetPolicy",

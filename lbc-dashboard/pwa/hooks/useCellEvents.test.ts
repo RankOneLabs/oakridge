@@ -11,7 +11,9 @@ import {
   MAX_RETRY_DELAY_MS,
 } from "./cellStreamRetry";
 import type { CellStreamRetryOptions } from "./cellStreamRetry";
+import { isCellRunActiveForRetry } from "./useCellEvents";
 import type { CellEvent } from "../lib/types";
+import type { RunSummary } from "../lib/types";
 
 // ---------------------------------------------------------------------------
 // Fake EventSource
@@ -112,6 +114,23 @@ const SAMPLE_EVENT: CellEvent = {
   kind: "cell_started",
   payload: {},
 };
+
+function runSummary(
+  cellId: string,
+  status: RunSummary["status"],
+): RunSummary {
+  return {
+    runId: `run-${cellId}`,
+    run_ts: "2026-01-01T00-00-00",
+    cell_id: cellId as RunSummary["cell_id"],
+    task: "task" as RunSummary["task"],
+    condition: { kind: "single_agent", n: 1 },
+    status,
+    started_ms: 0,
+    exit_code: null,
+    stderr_tail: "",
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -443,5 +462,23 @@ describe("createCellStreamRetry", () => {
     expect(harness.receivedEvents).toHaveLength(1);
 
     manager.stop();
+  });
+});
+
+describe("isCellRunActiveForRetry", () => {
+  test("keeps retrying before /api/runs has loaded", () => {
+    expect(isCellRunActiveForRetry([], "cell-a", false)).toBe(true);
+  });
+
+  test("retries while the selected cell has a running record", () => {
+    expect(
+      isCellRunActiveForRetry([runSummary("cell-a", "running")], "cell-a", true),
+    ).toBe(true);
+  });
+
+  test("stops retrying after loaded run state has no active selected cell", () => {
+    expect(
+      isCellRunActiveForRetry([runSummary("cell-a", "exited")], "cell-a", true),
+    ).toBe(false);
   });
 });
