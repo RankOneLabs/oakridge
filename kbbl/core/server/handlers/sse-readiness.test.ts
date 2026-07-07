@@ -98,9 +98,14 @@ describe("SSE readiness", () => {
       // flush is called but not yet resolved; read must not have been called
       expect(order).toEqual(["flush"]);
 
-      // Now resolve the flush — readJsonl should be called next.
+      // Now resolve the flush — readJsonl should be called next. Poll until
+      // the observable condition is met rather than sleeping a fixed interval,
+      // which is flaky under load.
       resolveFlush();
-      await new Promise((r) => setTimeout(r, 50));
+      const deadline = Date.now() + 1000;
+      while (order.length < 2 && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 5));
+      }
       expect(order).toEqual(["flush", "read"]);
     } finally {
       resolveHistory("");

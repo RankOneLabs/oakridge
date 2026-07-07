@@ -67,8 +67,16 @@ export async function streamForSession(session: SessionStreamSource, c: Context)
 
       // Flush any buffered transcript writes before reading JSONL. The write
       // path batches flushes every 100 ms; a client that reconnects immediately
-      // after the last write would otherwise miss the un-flushed tail.
-      await session.flushTranscript?.();
+      // after the last write would otherwise miss the un-flushed tail. Best-
+      // effort: a transient FS error must not abort the SSE stream — clients
+      // can still read the (possibly slightly stale) JSONL and reconnect.
+      await session.flushTranscript?.().catch((err: unknown) => {
+        console.error(
+          `kbbl: flushTranscript failed for ${session.oakridgeSid}, continuing with readJsonl: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      });
 
       const contents = await session.readJsonl();
       for (const line of contents.split("\n")) {

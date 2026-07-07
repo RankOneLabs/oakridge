@@ -284,13 +284,18 @@ for (const sig of ["SIGINT", "SIGTERM"] as const) {
       const worstCode = await manager.endAll();
       await manager.drainLifecycle();
       // Stop any optional app-servers (e.g. Codex). Capability-based: only
-      // runtimes that expose stopAppServer need to be stopped. Failure is
-      // logged but does not block process exit — a stuck teardown would be a
-      // worse outcome than leaking a socket.
+      // runtimes that expose stopAppServer (as a function) need to be stopped.
+      // A 5 s timeout per runtime prevents a stuck teardown from hanging
+      // shutdown indefinitely. Failure is logged but never blocks process exit.
       for (const r of runtimes) {
-        const stopAppServer = (r as unknown as { stopAppServer?: () => Promise<void> }).stopAppServer;
-        if (stopAppServer) {
-          await stopAppServer().catch((err: unknown) => {
+        const stopAppServer = (r as unknown as { stopAppServer?: unknown }).stopAppServer;
+        if (typeof stopAppServer === "function") {
+          await Promise.race([
+            (stopAppServer as () => Promise<void>)(),
+            new Promise<void>((_, reject) =>
+              setTimeout(() => reject(new Error("stopAppServer timed out")), 5_000),
+            ),
+          ]).catch((err: unknown) => {
             console.error(
               `kbbl: ${r.id} stopAppServer error: ${err instanceof Error ? err.message : String(err)}`,
             );
