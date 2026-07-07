@@ -23,6 +23,7 @@ import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
+import { validateGitRefName, validateWorktreeSubdir } from "./sessions";
 
 import { KbblConfigSchema } from "../../config";
 import { SessionManager } from "../../session/session-manager";
@@ -353,5 +354,312 @@ describe("POST /sessions oakridge-core create-session contract", () => {
     } finally {
       await manager.endAll();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Worktree identity validation unit tests
+// ---------------------------------------------------------------------------
+
+describe("validateGitRefName", () => {
+  test("accepts simple branch names", () => {
+    expect(validateGitRefName("main", "f")).toBeNull();
+    expect(validateGitRefName("cohort/v2_readiness/1-foo", "f")).toBeNull();
+    expect(validateGitRefName("feature/my-branch", "f")).toBeNull();
+    expect(validateGitRefName("origin/epic/foo_bar", "f")).toBeNull();
+  });
+
+  test("rejects names with invalid characters", () => {
+    expect(validateGitRefName("branch name", "f")).not.toBeNull();
+    expect(validateGitRefName("branch~name", "f")).not.toBeNull();
+    expect(validateGitRefName("branch^name", "f")).not.toBeNull();
+    expect(validateGitRefName("branch:name", "f")).not.toBeNull();
+    expect(validateGitRefName("branch?name", "f")).not.toBeNull();
+    expect(validateGitRefName("branch*name", "f")).not.toBeNull();
+  });
+
+  test("rejects names with double dots", () => {
+    expect(validateGitRefName("branch..name", "f")).not.toBeNull();
+  });
+
+  test("rejects names starting with dot", () => {
+    expect(validateGitRefName(".hidden", "f")).not.toBeNull();
+  });
+
+  test("rejects names ending with .lock", () => {
+    expect(validateGitRefName("branch.lock", "f")).not.toBeNull();
+  });
+
+  test("rejects empty names", () => {
+    expect(validateGitRefName("", "f")).not.toBeNull();
+  });
+
+  test("rejects names starting with dash", () => {
+    expect(validateGitRefName("-branch", "f")).not.toBeNull();
+  });
+});
+
+describe("validateWorktreeSubdir", () => {
+  test("accepts normalized relative paths", () => {
+    expect(validateWorktreeSubdir("epic_x/1-foo")).toBeNull();
+    expect(validateWorktreeSubdir("v2_readiness/1-session")).toBeNull();
+    expect(validateWorktreeSubdir("single")).toBeNull();
+  });
+
+  test("rejects absolute paths", () => {
+    expect(validateWorktreeSubdir("/absolute/path")).not.toBeNull();
+  });
+
+  test("rejects tilde prefix", () => {
+    expect(validateWorktreeSubdir("~/relative")).not.toBeNull();
+  });
+
+  test("rejects traversal segments", () => {
+    expect(validateWorktreeSubdir("foo/../bar")).not.toBeNull();
+    expect(validateWorktreeSubdir("../escape")).not.toBeNull();
+  });
+
+  test("rejects empty segments", () => {
+    expect(validateWorktreeSubdir("foo//bar")).not.toBeNull();
+  });
+
+  test("rejects shell-significant characters", () => {
+    expect(validateWorktreeSubdir("foo/$BAR")).not.toBeNull();
+    expect(validateWorktreeSubdir("foo;rm -rf")).not.toBeNull();
+  });
+
+  test("rejects empty string", () => {
+    expect(validateWorktreeSubdir("")).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /sessions worktree body contract
+// ---------------------------------------------------------------------------
+
+describe("POST /sessions worktree identity contract", () => {
+  test("legacy workdir-only session returns null worktree metadata", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postSessions(app, {
+      workdir: repoDir,
+      runtime: "claude-code",
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      sid: string;
+      worktreePath: string | null;
+      worktreeBranch: string | null;
+      worktreeBaseRef: string | null;
+    };
+    expect(body.sid).toBeDefined();
+    expect(body.worktreeBaseRef).not.toBeNull();
+    expect(body.worktreeBranch).toMatch(/^kbbl\//);
+    expect(body.worktreePath).not.toBeNull();
+    await manager.endAll();
+  });
+
+  test("managed worktree session returns worktree branch and path", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postSessions(app, {
+      workdir: repoDir,
+      runtime: "claude-code",
+      worktree: {
+        branchName: "cohort/test_epic/1-feature",
+        worktreeSubdir: "test_epic/1-feature",
+      },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      sid: string;
+      worktreePath: string | null;
+      worktreeBranch: string | null;
+      worktreeBaseRef: string | null;
+    };
+    expect(body.worktreeBranch).toBe("cohort/test_epic/1-feature");
+    expect(body.worktreePath).toContain("test_epic/1-feature");
+    expect(body.worktreeBaseRef).not.toBeNull();
+    await manager.endAll();
+  });
+
+  test("invalid branchName returns 400", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    try {
+      const app = makeApp(manager, registry, repoDir);
+      const res = await postSessions(app, {
+        workdir: repoDir,
+        worktree: {
+          branchName: "branch with spaces",
+          worktreeSubdir: "epic/1-cohort",
+        },
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toContain("worktree.branchName");
+    } finally {
+      await manager.endAll();
+    }
+  });
+
+  test("invalid worktreeSubdir (traversal) returns 400", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    try {
+      const app = makeApp(manager, registry, repoDir);
+      const res = await postSessions(app, {
+        workdir: repoDir,
+        worktree: {
+          branchName: "cohort/epic/1-foo",
+          worktreeSubdir: "../escape",
+        },
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toContain("worktreeSubdir");
+    } finally {
+      await manager.endAll();
+    }
+  });
+
+  test("absolute worktreeSubdir returns 400", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    try {
+      const app = makeApp(manager, registry, repoDir);
+      const res = await postSessions(app, {
+        workdir: repoDir,
+        worktree: {
+          branchName: "cohort/epic/1-foo",
+          worktreeSubdir: "/absolute/path",
+        },
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toContain("worktreeSubdir");
+    } finally {
+      await manager.endAll();
+    }
+  });
+
+  test("invalid baseRef returns 400", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    try {
+      const app = makeApp(manager, registry, repoDir);
+      const res = await postSessions(app, {
+        workdir: repoDir,
+        worktree: {
+          branchName: "cohort/epic/1-foo",
+          worktreeSubdir: "epic/1-foo",
+          baseRef: "bad ref with spaces",
+        },
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toContain("worktree.baseRef");
+    } finally {
+      await manager.endAll();
+    }
+  });
+
+  test("worktree without branchName returns 400", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    try {
+      const app = makeApp(manager, registry, repoDir);
+      const res = await postSessions(app, {
+        workdir: repoDir,
+        worktree: { worktreeSubdir: "epic/1-foo" },
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toContain("worktree.branchName");
+    } finally {
+      await manager.endAll();
+    }
+  });
+
+  test("worktree as non-object returns 400", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    try {
+      const app = makeApp(manager, registry, repoDir);
+      const res = await postSessions(app, {
+        workdir: repoDir,
+        worktree: "not-an-object",
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toContain("worktree must be an object");
+    } finally {
+      await manager.endAll();
+    }
+  });
+
+  test("absent effort is accepted and returns null effort in snapshot", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postSessions(app, {
+      workdir: repoDir,
+      runtime: "claude-code",
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { effort: string | null };
+    expect(body.effort).toBeNull();
+    await manager.endAll();
+  });
+
+  test("valid effort low is accepted for claude-code", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postSessions(app, {
+      workdir: repoDir,
+      runtime: "claude-code",
+      effort: "low",
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { effort: string | null };
+    expect(body.effort).toBe("low");
+    await manager.endAll();
+  });
+
+  test("invalid effort returns 400", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    try {
+      const app = makeApp(manager, registry, repoDir);
+      const res = await postSessions(app, {
+        workdir: repoDir,
+        runtime: "claude-code",
+        effort: "turbo-max",
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toContain("turbo-max");
+    } finally {
+      await manager.endAll();
+    }
+  });
+
+  test("create-session response includes worktreePath, worktreeBranch, worktreeBaseRef", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    const app = makeApp(manager, registry, repoDir);
+    const res = await postSessions(app, {
+      workdir: repoDir,
+      runtime: "claude-code",
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect("worktreePath" in body).toBe(true);
+    expect("worktreeBranch" in body).toBe(true);
+    expect("worktreeBaseRef" in body).toBe(true);
+    await manager.endAll();
   });
 });
