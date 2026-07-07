@@ -1,0 +1,116 @@
+{
+  "id": "00000000-0000-0000-0000-000000000001",
+  "name": "dev-flow",
+  "version": 1,
+  "created_at": "2026-01-01T00:00:00Z",
+  "graph": {
+    "stages": {
+      "spec_analyzer": {
+        "stage_type": "delegated_session",
+        "config": {
+          "runtime": "claude-code",
+          "prompt_template_path": "dev-flow/spec_analyzer.md",
+          "slot_bindings": {
+            "BRIEF_NOTES":    { "from": "context", "path": "/brief_notes" },
+            "WORKTREE_PATH":  { "from": "context", "path": "/worktree_path" },
+            "OAKRIDGE_URL":   { "from": "context", "path": "/oakridge_url" }
+          },
+          "workdir":       { "from": "context", "path": "/worktree_path" },
+          "session_name":  "spec-analyzer-{{STAGE_INSTANCE_ID}}",
+          "pre_authorized_tools": [],
+          "yolo": true
+        },
+        "inputs": [],
+        "outputs": [
+          { "name": "spec_analysis", "artifact_type": "dev.spec_analysis" }
+        ]
+      },
+      "plan_writer": {
+        "stage_type": "delegated_session",
+        "config": {
+          "runtime": "claude-code",
+          "prompt_template_path": "dev-flow/plan_writer.md",
+          "slot_bindings": {
+            "SPEC_ANALYSIS": { "from": "input", "input_name": "spec_analysis", "path": null },
+            "WORKTREE_PATH": { "from": "context", "path": "/worktree_path" },
+            "OAKRIDGE_URL":  { "from": "context", "path": "/oakridge_url" }
+          },
+          "workdir":      { "from": "context", "path": "/worktree_path" },
+          "session_name": "plan-writer-{{STAGE_INSTANCE_ID}}",
+          "pre_authorized_tools": [],
+          "yolo": true
+        },
+        "inputs": [
+          { "name": "spec_analysis", "artifact_type": "dev.spec_analysis" }
+        ],
+        "outputs": [
+          { "name": "plan", "artifact_type": "dev.plan" }
+        ]
+      },
+      "build": {
+        "stage_type": "delegated_session",
+        "config": {
+          "runtime": "claude-code",
+          "prompt_template_path": "dev-flow/build.md",
+          "slot_bindings": {
+            "PLAN":          { "from": "input", "input_name": "plan", "path": null },
+            "WORKTREE_PATH": { "from": "context", "path": "/worktree_path" },
+            "OAKRIDGE_URL":  { "from": "context", "path": "/oakridge_url" }
+          },
+          "workdir":      { "from": "context", "path": "/worktree_path" },
+          "session_name": "build-{{STAGE_INSTANCE_ID}}",
+          "pre_authorized_tools": [],
+          "yolo": true
+        },
+        "inputs": [
+          { "name": "plan", "artifact_type": "dev.plan" }
+        ],
+        "outputs": [
+          { "name": "build_result", "artifact_type": "dev.build_result" }
+        ]
+      },
+      "assessor": {
+        "stage_type": "delegated_session",
+        "config": {
+          "runtime": "claude-code",
+          "prompt_template_path": "dev-flow/assessor.md",
+          "slot_bindings": {
+            "BUILD_RESULT": { "from": "input", "input_name": "build_result", "path": null },
+            "PLAN":         { "from": "input", "input_name": "plan",         "path": null },
+            "WORKTREE_PATH": { "from": "context", "path": "/worktree_path" },
+            "OAKRIDGE_URL":  { "from": "context", "path": "/oakridge_url" }
+          },
+          "workdir":      { "from": "context", "path": "/worktree_path" },
+          "session_name": "assessor-{{STAGE_INSTANCE_ID}}",
+          "pre_authorized_tools": [],
+          "yolo": true
+        },
+        "inputs": [
+          { "name": "build_result", "artifact_type": "dev.build_result" },
+          { "name": "plan",         "artifact_type": "dev.plan",         "optional": true }
+        ],
+        "outputs": [
+          { "name": "assessment", "artifact_type": "dev.assessment" }
+        ]
+      }
+    },
+    "edges": [
+      {
+        "from": { "stage": "spec_analyzer", "slot": "spec_analysis" },
+        "to":   { "stage": "plan_writer",   "slot": "spec_analysis" }
+      },
+      {
+        "from": { "stage": "plan_writer", "slot": "plan" },
+        "to":   { "stage": "build",       "slot": "plan" }
+      },
+      {
+        "from": { "stage": "plan_writer", "slot": "plan" },
+        "to":   { "stage": "assessor",    "slot": "plan" }
+      },
+      {
+        "from": { "stage": "build",    "slot": "build_result" },
+        "to":   { "stage": "assessor", "slot": "build_result" }
+      }
+    ]
+  }
+}
