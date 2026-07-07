@@ -671,6 +671,59 @@ impl Coordinator {
         }
     }
 
+    /// Cancel a run. Bulk-transitions all non-terminal stage instances to Failed
+    /// with `terminal_meta.kind = "cancelled"`, stops active external processes
+    /// (via ControlMsg::Cancel), and returns the count of stages that were
+    /// transitioned. Returns 0 if the run is already terminal.
+    pub async fn cancel_run(&self, run_id: WorkflowRunId) -> anyhow::Result<u64> {
+        let run = queries::get_workflow_run_by_id(&self.db, &run_id).await?;
+
+        if matches!(run.status, RunStatus::Done | RunStatus::Failed) {
+            return Ok(0);
+        }
+
+        let cancellation_meta = serde_json::json!({
+            "kind": "cancelled",
+            "reason": "run cancelled by operator"
+        });
+
+        // Persist cancellation terminal state for all non-terminal stages first so
+        // the HTTP response can include the count and recovery treats them as terminal.
+        let stages_cancelled = queries::cancel_non_terminal_stage_instances_for_run(
+            &self.db,
+            &run_id,
+            &cancellation_meta,
+        )
+        .await?;
+
+        // Deliver Cancel to the live run task to stop external processes
+        // (kbbl sessions, child process groups). If the channel is already
+        // closed the run task is gone; fall through to the direct DB update.
+        let sent = {
+            let runs = self.runs.lock().await;
+            runs.get(&run_id).map(|h| h.control_tx.clone())
+        };
+        let task_alive = match sent {
+            Some(tx) => tx.send(ControlMsg::Cancel).await.is_ok(),
+            None => false,
+        };
+
+        if !task_alive {
+            // No live run task (or channel closed) — mark the run Failed directly.
+            if queries::update_workflow_run_status(&self.db, &run_id, RunStatus::Failed)
+                .await
+                .is_ok()
+            {
+                self.bus.publish(run_id, SubstrateEvent::RunStatusChanged {
+                    run_id,
+                    status: RunStatus::Failed,
+                });
+            }
+        }
+
+        Ok(stages_cancelled)
+    }
+
     pub async fn deliver_decision(
         &self,
         run_id: WorkflowRunId,

@@ -644,6 +644,30 @@ pub async fn list_stage_instances_for_run(
     rows.into_iter().map(row_to_stage_instance).collect()
 }
 
+/// Bulk-transition all Pending, Running, and Parked stage instances for a run to
+/// Failed with the given terminal_meta. Returns the number of rows updated.
+pub async fn cancel_non_terminal_stage_instances_for_run(
+    pool: &SqlitePool,
+    run_id: &WorkflowRunId,
+    terminal_meta: &serde_json::Value,
+) -> crate::Result<u64> {
+    let run_id_str = run_id.0.to_string();
+    let terminal_meta_str = serde_json::to_string(terminal_meta)?;
+    let now = Utc::now().to_rfc3339();
+    let result = sqlx::query(
+        "UPDATE stage_instance \
+         SET status = 'failed', terminal_meta = ?, ended_at = ?, updated_at = ?, parked_reason = NULL \
+         WHERE run_id = ? AND status IN ('pending', 'running', 'parked')",
+    )
+    .bind(&terminal_meta_str)
+    .bind(&now)
+    .bind(&now)
+    .bind(&run_id_str)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
 pub async fn list_parked_stage_instances(pool: &SqlitePool) -> crate::Result<Vec<StageInstance>> {
     let rows = sqlx::query_as::<_, StageInstanceRow>(
         "SELECT id, run_id, stage_key, stage_type, status, config, parked_reason, parked_meta, terminal_meta, external_ref, \

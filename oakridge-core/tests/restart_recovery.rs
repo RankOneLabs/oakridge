@@ -526,6 +526,90 @@ async fn recovery_missing_stage_key_fails_with_structured_meta() {
     }
 }
 
+// ── test: Failed(cancelled) stages are not rehydrated during recovery ─────────
+
+/// Seeds a stage_instance in Failed status with `terminal_meta.kind = "cancelled"`.
+/// After boot(), recover() must treat it as terminal and not re-execute it.
+#[tokio::test]
+async fn cancelled_stage_is_not_rehydrated_by_recovery() {
+    let db_path = format!("/tmp/oakridge_recovery_cancel_{}.db", Uuid::new_v4());
+    let db_url = format!("sqlite://{db_path}");
+    let pwa_dir = PathBuf::from("/tmp");
+
+    let pool = db::init_pool(&db_url).await.unwrap();
+
+    let def = simple_def("scripted_cancel");
+    queries::insert_workflow_def(&pool, &def).await.unwrap();
+
+    // Insert the run in Running state so that recover() (which queries
+    // list_active_runs — pending + running) actually picks it up. A Failed run
+    // is ignored by recover() and would make the test vacuously true.
+    let run = running_run(def.id);
+    queries::insert_workflow_run(&pool, &run).await.unwrap();
+
+    // Insert a stage instance that is already Failed with cancellation terminal_meta.
+    // recover() must treat it as terminal and not re-execute it.
+    let cancelled_stage = StageInstance {
+        id: StageInstanceId(Uuid::new_v4()),
+        run_id: run.id,
+        stage_key: "A".to_string(),
+        stage_type: "scripted_cancel".to_string(),
+        status: StageStatus::Failed,
+        config: json!({}),
+        parked_reason: None,
+        parked_meta: None,
+        terminal_meta: Some(json!({"kind": "cancelled", "reason": "run cancelled by operator"})),
+        external_ref: None,
+        started_at: Some(fixed_dt()),
+        ended_at: Some(fixed_dt()),
+        created_at: fixed_dt(),
+        updated_at: fixed_dt(),
+    };
+    let si_id = cancelled_stage.id;
+    queries::insert_stage_instance(&pool, &cancelled_stage).await.unwrap();
+
+    // Boot — recover() runs inside boot(). The scripted_cancel stage type IS
+    // registered, so if recover() wrongly re-executes it the channel will fire.
+    let (scripted_stage, mut ctx_rx) = scripted("scripted_cancel");
+    let (_router, _coord) = boot(
+        Config {
+            port: 0,
+            bind_addr: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            db_url: db_url.clone(),
+            pwa_dir: pwa_dir.clone(),
+            cors_origins: vec![],
+        },
+        move |stage, art| {
+            art.register(ArtifactTypeDef {
+                id: "any".into(),
+                validate: |_| Ok(()),
+                component_id: "v".into(),
+            });
+            stage.register(scripted_stage);
+        },
+    )
+    .await
+    .unwrap();
+
+    // The run is Running, so recover() picks it up. Stage "A" is already
+    // Failed — recover() must treat it as terminal and not re-execute it.
+    // The run then quiesces to Failed (all stages terminal, no source stage
+    // can be primed). Wait for quiescence before asserting.
+    wait_run_failed(&pool, run.id).await;
+
+    // No stage execution should have been triggered.
+    assert!(
+        ctx_rx.try_recv().is_err(),
+        "Failed(cancelled) stage must not be re-executed by recovery"
+    );
+
+    // Stage must still be Failed with the original cancellation terminal_meta.
+    let stage = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+    assert_eq!(stage.status, StageStatus::Failed);
+    let meta = stage.terminal_meta.expect("terminal_meta must be preserved");
+    assert_eq!(meta["kind"], json!("cancelled"));
+}
+
 // ── test: static serving via boot() ──────────────────────────────────────────
 
 /// Verifies that boot() wires ServeDir correctly: GET / returns index.html and
