@@ -9,15 +9,12 @@
  * Rust serialization notes:
  *   - DelegatedRuntime::ClaudeCode  → "claude-code"  (#[serde(rename_all = "kebab-case")])
  *   - DelegatedRuntime::Codex       → "codex"
- *   - model: None                   → "model": null  (no skip_serializing_if on that field)
+ *   - model: None                   → model key omitted
  *   - model: Some("...")            → "model": "..."
  *
- * The H1 null model failure: when oakridge-core sends model: None the
- * serialized payload contains "model": null. The kbbl handler currently
- * rejects that with 400 "model must be a string" because it checks
- * `typeof parsed.model !== "string"` and null fails that guard.
- * Tests in this file pin that rejection as the known contract so any
- * fix or drift is caught immediately.
+ * The H1 null model failure was fixed on the Rust side by omitting model
+ * when no override is configured. These tests pin both sides of that boundary:
+ * omitted model is accepted, while an explicitly sent JSON null is rejected.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -195,17 +192,12 @@ describe("POST /sessions oakridge-core create-session contract", () => {
    * Case: no model override (oakridge-core model: None)
    *
    * Rust serializes CreateSessionRequest { model: None } as:
-   *   {"workdir":"...","name":"...","artifact_id":"...","runtime":"claude-code","model":null}
+   *   {"workdir":"...","name":"...","artifact_id":"...","runtime":"claude-code"}
    *
-   * The null is not omitted because CreateSessionRequest has no
+   * The model field is omitted because CreateSessionRequest has
    * #[serde(skip_serializing_if = "Option::is_none")] on the model field.
-   *
-   * H1 failure: kbbl rejects "model": null with 400 because null fails the
-   * `typeof parsed.model !== "string"` guard. This test pins that rejection
-   * as the current contract so any handler change that accidentally accepts
-   * null, or any Rust change that starts omitting the field, becomes visible.
    */
-  test("null model (Rust None) is rejected — H1 null model failure", async () => {
+  test("no model override (Rust None, omitted field) is accepted for claude-code runtime", async () => {
     const registry = makeRegistry();
     const manager = makeRegistryManager(registry);
     try {
@@ -215,11 +207,11 @@ describe("POST /sessions oakridge-core create-session contract", () => {
         name: "delegate-1",
         artifact_id: "artifact-9",
         runtime: "claude-code",
-        model: null,
       });
-      expect(res.status).toBe(400);
-      const body = (await res.json()) as { error: string };
-      expect(body.error).toBe("model must be a string");
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { runtimeId: RuntimeId; model: string | null };
+      expect(body.runtimeId).toBe("claude-code");
+      expect(body.model).toBeNull();
     } finally {
       await manager.endAll();
     }
@@ -250,15 +242,12 @@ describe("POST /sessions oakridge-core create-session contract", () => {
   });
 
   /**
-   * Case: runtime codex, null model (oakridge-core DelegatedRuntime::Codex, model: None)
+   * Case: runtime codex, no model override (oakridge-core DelegatedRuntime::Codex, model: None)
    *
    * Rust serializes as:
-   *   {"workdir":"...","name":"...","artifact_id":"...","runtime":"codex","model":null}
-   *
-   * Null is still rejected for codex runtime — the handler checks model type
-   * before runtime-specific validation.
+   *   {"workdir":"...","name":"...","artifact_id":"...","runtime":"codex"}
    */
-  test("null model (Rust None) is rejected for codex runtime", async () => {
+  test("no model override (Rust None, omitted field) is accepted for codex runtime", async () => {
     const registry = makeRegistry();
     const manager = makeRegistryManager(registry);
     try {
@@ -268,11 +257,11 @@ describe("POST /sessions oakridge-core create-session contract", () => {
         name: "delegate-2",
         artifact_id: "artifact-10",
         runtime: "codex",
-        model: null,
       });
-      expect(res.status).toBe(400);
-      const body = (await res.json()) as { error: string };
-      expect(body.error).toBe("model must be a string");
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { runtimeId: RuntimeId; model: string | null };
+      expect(body.runtimeId).toBe("codex");
+      expect(body.model).toBeNull();
     } finally {
       await manager.endAll();
     }

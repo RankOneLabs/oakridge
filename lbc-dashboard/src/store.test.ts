@@ -206,6 +206,28 @@ describe("listCells", () => {
     expect(cell?.cleanable).toBe(true);
   });
 
+  test("classifies cell_cancelled as cancelled terminal status", async () => {
+    await makeCell("2026-05-06T22-40-00Z", "prose", "cancelled_cell", [
+      eventLine("incremental_started"),
+      eventLine("cell_cancelled"),
+    ]);
+    const cells = await listCells();
+    const cell = cells.find((c) => c.condition_name === "cancelled_cell");
+    expect(cell?.status).toBe("cancelled");
+    expect(cell?.cleanable).toBe(true);
+  });
+
+  test("classifies run_cancelled as cancelled terminal status", async () => {
+    await makeCell("2026-05-06T22-50-00Z", "prose", "cancelled_run", [
+      eventLine("incremental_started"),
+      eventLine("run_cancelled"),
+    ]);
+    const cells = await listCells();
+    const cell = cells.find((c) => c.condition_name === "cancelled_run");
+    expect(cell?.status).toBe("cancelled");
+    expect(cell?.cleanable).toBe(true);
+  });
+
   test("failed cell with live process is NOT cleanable", async () => {
     await makeCell("2026-05-06T23-00-00Z", "prose", "single_agent_live", [
       eventLine("incremental_started"),
