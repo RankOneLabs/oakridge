@@ -30,7 +30,7 @@ import asyncio
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, cast
 
 from jig.core.pipeline import PipelineConfig, Step, run_pipeline
@@ -78,11 +78,19 @@ async def _no_op_emitter(
 @dataclass
 class RoundOutcome:
     """One round's record: which round (1-indexed), the proposals it
-    produced, and whether the round-budget policy declared convergence."""
+    produced, and whether the round-budget policy declared convergence.
+
+    ``failed_agents`` lists agent ids whose proposers raised during this
+    round. When non-empty, ``proposals`` contains only the successful
+    sibling outputs — convergence detection runs on the partial set and
+    the escalation step picks from it. The failed agents' errors were
+    logged as warnings at the time of failure.
+    """
 
     round_index: int
     proposals: list[Proposal]
     converged: bool
+    failed_agents: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -274,7 +282,7 @@ class ConsensusMechanism(ABC):
                 prior: RoundOutcome = ctx[f"round_{round_index - 1}"]
                 prior_proposals = list(prior.proposals)
 
-            proposals = await asyncio.gather(
+            raw_results = await asyncio.gather(
                 *[
                     self.proposers[agent.id].propose(
                         agent=agent,
@@ -293,15 +301,32 @@ class ConsensusMechanism(ABC):
                         ),
                     )
                     for agent in self.agents
-                ]
+                ],
+                return_exceptions=True,
             )
-            self._validate_proposals_match_agents(proposals)
+            proposals: list[Proposal] = []
+            failed_agents: list[str] = []
+            for agent, result in zip(self.agents, raw_results):
+                if isinstance(result, BaseException):
+                    logger.warning(
+                        "proposer for agent %s failed in round %d: %s: %s",
+                        agent.id,
+                        round_index,
+                        type(result).__name__,
+                        result,
+                    )
+                    failed_agents.append(agent.id)
+                else:
+                    proposals.append(result)
+            if not failed_agents:
+                self._validate_proposals_match_agents(proposals)
 
             converged = self.round_budget_policy.is_converged(proposals)
             outcome = RoundOutcome(
                 round_index=round_index,
-                proposals=list(proposals),
+                proposals=proposals,
                 converged=converged,
+                failed_agents=failed_agents,
             )
             await self._safe_emit(
                 "round_completed",
