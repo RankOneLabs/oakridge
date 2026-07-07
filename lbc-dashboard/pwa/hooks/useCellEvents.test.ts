@@ -387,6 +387,45 @@ describe("createCellStreamRetry", () => {
     manager.stop();
   });
 
+  test("deadline resets on successful open so a later drop can reconnect", () => {
+    const { harness, buildOpts } = makeHarness({ maxRetryMs: 1_000 });
+    const manager = createCellStreamRetry(buildOpts());
+    manager.start();
+
+    // Connect succeeds at t=0 — resets deadline to now+1000 = 1000
+    harness.sources[0]!.fireOpen();
+    expect(harness.connectedCount).toBe(1);
+
+    // Advance time to 900 ms (within the new deadline of 1000)
+    harness.nowMs = 900;
+
+    // Connection drops; error fires
+    harness.sources[0]!.fireError();
+
+    // Should retry (within new deadline), not report timeout
+    expect(harness.retries).toHaveLength(1);
+    expect(harness.receivedErrors).toHaveLength(0);
+
+    manager.stop();
+  });
+
+  test("duplicate onerror fires do not schedule multiple retries", () => {
+    const { harness, buildOpts } = makeHarness();
+    const manager = createCellStreamRetry(buildOpts());
+    manager.start();
+
+    // Fire onerror twice in a row before any retry timer fires
+    harness.sources[0]!.fireError();
+    harness.sources[0]!.fireError();
+    harness.sources[0]!.fireError();
+
+    // Only one retry should be scheduled
+    expect(harness.retries).toHaveLength(1);
+    expect(harness.receivedErrors).toHaveLength(0);
+
+    manager.stop();
+  });
+
   test("malformed JSON in message is silently dropped", () => {
     const { harness, buildOpts } = makeHarness();
     const manager = createCellStreamRetry(buildOpts());

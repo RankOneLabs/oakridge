@@ -8,8 +8,9 @@
  * Retry logic:
  *   - On error: retry only while the matching run is active.
  *   - Backoff: 500 ms → 1 s → 2 s → 4 s (capped).
- *   - Deadline: stop after DEFAULT_MAX_RETRY_MS total elapsed.
- *   - On successful open: clear error, reset attempt counter.
+ *   - Deadline: reset to now+maxRetryMs on each successful open, so a
+ *     long-lived stream that later drops can recover rather than timing out.
+ *   - On successful open: clear error, reset attempt counter and deadline.
  *   - On stop(): cancel pending timer, close current EventSource.
  */
 import type { CellEvent } from "../lib/types";
@@ -62,9 +63,10 @@ export function createCellStreamRetry(
   let currentEs: EventSourceLike | null = null;
   let cancelRetry: (() => void) | null = null;
   let attempt = 0;
-  const deadline = now() + maxRetryMs;
+  let deadline = now() + maxRetryMs;
 
   function connect() {
+    cancelRetry = null; // timer has fired (or this is the initial call); slot is free
     if (stopped) return;
 
     const es = createEventSource(url);
@@ -84,11 +86,15 @@ export function createCellStreamRetry(
     es.onopen = () => {
       if (stopped) return;
       attempt = 0;
+      deadline = now() + maxRetryMs;
       onConnected();
     };
 
     es.onerror = () => {
       if (stopped) return;
+      // Guard: if a retry is already scheduled (onerror can fire multiple
+      // times before the timer fires), don't stack another one.
+      if (cancelRetry !== null) return;
       es.close();
       currentEs = null;
 

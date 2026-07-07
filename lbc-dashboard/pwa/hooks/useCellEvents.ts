@@ -19,6 +19,9 @@
  * diagnosable message instead of silent staleness.
  */
 import { useEffect, useRef, useState } from "react";
+// useRef is intentionally updated during render (not in an effect) so
+// isRunActive() always sees the latest runs value, even mid-render before
+// effects have flushed.
 
 import { createCellStreamRetry } from "./cellStreamRetry";
 import type { EventSourceLike } from "./cellStreamRetry";
@@ -34,9 +37,7 @@ export function useCellEvents(cellId: string | null): {
 
   const { runs } = useRuns();
   const runsRef = useRef(runs);
-  useEffect(() => {
-    runsRef.current = runs;
-  });
+  runsRef.current = runs;
 
   useEffect(() => {
     if (cellId === null) {
