@@ -149,6 +149,55 @@ fn pending_run(def_id: WorkflowDefId) -> WorkflowRun {
     }
 }
 
+fn running_run(def_id: WorkflowDefId) -> WorkflowRun {
+    WorkflowRun {
+        id: WorkflowRunId(Uuid::new_v4()),
+        workflow_def_id: def_id,
+        project_id: None,
+        status: RunStatus::Running,
+        context: json!({}),
+        version: 1,
+        created_at: fixed_dt(),
+        updated_at: fixed_dt(),
+    }
+}
+
+fn running_stage_instance(
+    run_id: WorkflowRunId,
+    stage_key: &str,
+    stage_type: &str,
+) -> StageInstance {
+    StageInstance {
+        id: StageInstanceId(Uuid::new_v4()),
+        run_id,
+        stage_key: stage_key.to_string(),
+        stage_type: stage_type.to_string(),
+        status: StageStatus::Running,
+        config: json!({}),
+        parked_reason: None,
+        parked_meta: None,
+        terminal_meta: None,
+        external_ref: None,
+        started_at: Some(fixed_dt()),
+        ended_at: None,
+        created_at: fixed_dt(),
+        updated_at: fixed_dt(),
+    }
+}
+
+async fn wait_run_failed(pool: &sqlx::SqlitePool, run_id: WorkflowRunId) {
+    for _ in 0..250 {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let run = queries::get_workflow_run_by_id(pool, &run_id)
+            .await
+            .unwrap();
+        if matches!(run.status, RunStatus::Failed) {
+            return;
+        }
+    }
+    panic!("run did not reach Failed status");
+}
+
 // ── test: process-restart recovery via boot() ─────────────────────────────────
 
 /// Calls boot() twice against the same SQLite file. The first boot drives a
@@ -295,6 +344,270 @@ async fn boot_twice_restart_recovery() {
         .await
         .unwrap();
     assert_eq!(run_final.status, RunStatus::Done);
+}
+
+// ── test: recovery fails stage with unregistered stage_type ──────────────────
+
+/// A Running stage instance whose `stage_type` is not registered in the stage
+/// registry must be failed during recover() with a structured terminal_meta
+/// containing `kind: "recovery_unregistered_stage_type"`. The run must reach
+/// Failed, and no non-terminal stage may remain after recovery.
+#[tokio::test]
+async fn recovery_unregistered_stage_type_fails_with_structured_meta() {
+    let db_path = format!("/tmp/oakridge_recovery_ust_{}.db", Uuid::new_v4());
+    let db_url = format!("sqlite://{db_path}");
+    let pwa_dir = std::path::PathBuf::from("/tmp");
+
+    let pool = db::init_pool(&db_url).await.unwrap();
+
+    // Def has stage "A" with type "ghost_stage_type" — will NOT be registered.
+    let def = simple_def("ghost_stage_type");
+    queries::insert_workflow_def(&pool, &def).await.unwrap();
+
+    let run = running_run(def.id);
+    queries::insert_workflow_run(&pool, &run).await.unwrap();
+
+    let si = running_stage_instance(run.id, "A", "ghost_stage_type");
+    let si_id = si.id;
+    queries::insert_stage_instance(&pool, &si).await.unwrap();
+
+    // Boot with an unrelated registered type — "ghost_stage_type" is absent.
+    let (scripted_other, _rx) = scripted("other_type");
+    let (_router, _coord) = boot(
+        Config {
+            port: 0,
+            bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+            db_url: db_url.clone(),
+            pwa_dir: pwa_dir.clone(),
+            cors_origins: vec![],
+        },
+        move |stage, art| {
+            art.register(ArtifactTypeDef {
+                id: "any".into(),
+                validate: |_| Ok(()),
+                component_id: "v".into(),
+            });
+            stage.register(scripted_other);
+        },
+    )
+    .await
+    .unwrap();
+
+    wait_run_failed(&pool, run.id).await;
+
+    let stage = queries::get_stage_instance_by_id(&pool, &si_id)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        stage.status,
+        StageStatus::Failed,
+        "stage with unregistered stage_type must be Failed after recovery"
+    );
+
+    let meta = stage.terminal_meta.expect("terminal_meta must be set");
+    assert_eq!(
+        meta.get("kind").and_then(|v| v.as_str()),
+        Some("recovery_unregistered_stage_type"),
+        "terminal_meta.kind must be recovery_unregistered_stage_type, got: {meta}"
+    );
+
+    let run_final = queries::get_workflow_run_by_id(&pool, &run.id)
+        .await
+        .unwrap();
+    assert_eq!(run_final.status, RunStatus::Failed, "run must be Failed");
+
+    // No non-terminal stage may remain.
+    let all_stages = queries::list_stage_instances_for_run(&pool, &run.id)
+        .await
+        .unwrap();
+    for s in &all_stages {
+        assert!(
+            matches!(s.status, StageStatus::Done | StageStatus::Failed),
+            "non-terminal stage {} found after recovery: {:?}",
+            s.stage_key,
+            s.status
+        );
+    }
+}
+
+// ── test: recovery fails stage with missing stage key ─────────────────────────
+
+/// A Running stage instance whose `stage_key` does not appear in the workflow
+/// graph must be failed during recover() with terminal_meta containing
+/// `kind: "recovery_missing_stage_key"`. The run must reach Failed, and no
+/// non-terminal stage may remain after recovery.
+#[tokio::test]
+async fn recovery_missing_stage_key_fails_with_structured_meta() {
+    let db_path = format!("/tmp/oakridge_recovery_msk_{}.db", Uuid::new_v4());
+    let db_url = format!("sqlite://{db_path}");
+    let pwa_dir = std::path::PathBuf::from("/tmp");
+
+    let pool = db::init_pool(&db_url).await.unwrap();
+
+    // Def has stage "A" with type "st_known" AND a required input that cannot
+    // be satisfied — this prevents prime_source_stages from activating "A"
+    // after GHOST_KEY is failed, so the run reaches Failed via quiescence.
+    let def = {
+        let mut d = simple_def("st_known");
+        let node = d.graph.stages.get_mut("A").unwrap();
+        node.inputs.push(InputSlot {
+            name: "dep".into(),
+            artifact_type: "any".into(),
+            optional: false,
+        });
+        d
+    };
+    queries::insert_workflow_def(&pool, &def).await.unwrap();
+
+    let run = running_run(def.id);
+    queries::insert_workflow_run(&pool, &run).await.unwrap();
+
+    let si = running_stage_instance(run.id, "GHOST_KEY", "st_known");
+    let si_id = si.id;
+    queries::insert_stage_instance(&pool, &si).await.unwrap();
+
+    let (scripted_known, _rx) = scripted("st_known");
+    let (_router, _coord) = boot(
+        Config {
+            port: 0,
+            bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+            db_url: db_url.clone(),
+            pwa_dir: pwa_dir.clone(),
+            cors_origins: vec![],
+        },
+        move |stage, art| {
+            art.register(ArtifactTypeDef {
+                id: "any".into(),
+                validate: |_| Ok(()),
+                component_id: "v".into(),
+            });
+            stage.register(scripted_known);
+        },
+    )
+    .await
+    .unwrap();
+
+    wait_run_failed(&pool, run.id).await;
+
+    let stage = queries::get_stage_instance_by_id(&pool, &si_id)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        stage.status,
+        StageStatus::Failed,
+        "stage with missing stage_key must be Failed after recovery"
+    );
+
+    let meta = stage.terminal_meta.expect("terminal_meta must be set");
+    assert_eq!(
+        meta.get("kind").and_then(|v| v.as_str()),
+        Some("recovery_missing_stage_key"),
+        "terminal_meta.kind must be recovery_missing_stage_key, got: {meta}"
+    );
+
+    let run_final = queries::get_workflow_run_by_id(&pool, &run.id)
+        .await
+        .unwrap();
+    assert_eq!(run_final.status, RunStatus::Failed, "run must be Failed");
+
+    // No non-terminal stage may remain.
+    let all_stages = queries::list_stage_instances_for_run(&pool, &run.id)
+        .await
+        .unwrap();
+    for s in &all_stages {
+        assert!(
+            matches!(s.status, StageStatus::Done | StageStatus::Failed),
+            "non-terminal stage {} found after recovery: {:?}",
+            s.stage_key,
+            s.status
+        );
+    }
+}
+
+// ── test: Failed(cancelled) stages are not rehydrated during recovery ─────────
+
+/// Seeds a stage_instance in Failed status with `terminal_meta.kind = "cancelled"`.
+/// After boot(), recover() must treat it as terminal and not re-execute it.
+#[tokio::test]
+async fn cancelled_stage_is_not_rehydrated_by_recovery() {
+    let db_path = format!("/tmp/oakridge_recovery_cancel_{}.db", Uuid::new_v4());
+    let db_url = format!("sqlite://{db_path}");
+    let pwa_dir = PathBuf::from("/tmp");
+
+    let pool = db::init_pool(&db_url).await.unwrap();
+
+    let def = simple_def("scripted_cancel");
+    queries::insert_workflow_def(&pool, &def).await.unwrap();
+
+    // Insert the run in Running state so that recover() (which queries
+    // list_active_runs — pending + running) actually picks it up. A Failed run
+    // is ignored by recover() and would make the test vacuously true.
+    let run = running_run(def.id);
+    queries::insert_workflow_run(&pool, &run).await.unwrap();
+
+    // Insert a stage instance that is already Failed with cancellation terminal_meta.
+    // recover() must treat it as terminal and not re-execute it.
+    let cancelled_stage = StageInstance {
+        id: StageInstanceId(Uuid::new_v4()),
+        run_id: run.id,
+        stage_key: "A".to_string(),
+        stage_type: "scripted_cancel".to_string(),
+        status: StageStatus::Failed,
+        config: json!({}),
+        parked_reason: None,
+        parked_meta: None,
+        terminal_meta: Some(json!({"kind": "cancelled", "reason": "run cancelled by operator"})),
+        external_ref: None,
+        started_at: Some(fixed_dt()),
+        ended_at: Some(fixed_dt()),
+        created_at: fixed_dt(),
+        updated_at: fixed_dt(),
+    };
+    let si_id = cancelled_stage.id;
+    queries::insert_stage_instance(&pool, &cancelled_stage).await.unwrap();
+
+    // Boot — recover() runs inside boot(). The scripted_cancel stage type IS
+    // registered, so if recover() wrongly re-executes it the channel will fire.
+    let (scripted_stage, mut ctx_rx) = scripted("scripted_cancel");
+    let (_router, _coord) = boot(
+        Config {
+            port: 0,
+            bind_addr: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            db_url: db_url.clone(),
+            pwa_dir: pwa_dir.clone(),
+            cors_origins: vec![],
+        },
+        move |stage, art| {
+            art.register(ArtifactTypeDef {
+                id: "any".into(),
+                validate: |_| Ok(()),
+                component_id: "v".into(),
+            });
+            stage.register(scripted_stage);
+        },
+    )
+    .await
+    .unwrap();
+
+    // The run is Running, so recover() picks it up. Stage "A" is already
+    // Failed — recover() must treat it as terminal and not re-execute it.
+    // The run then quiesces to Failed (all stages terminal, no source stage
+    // can be primed). Wait for quiescence before asserting.
+    wait_run_failed(&pool, run.id).await;
+
+    // No stage execution should have been triggered.
+    assert!(
+        ctx_rx.try_recv().is_err(),
+        "Failed(cancelled) stage must not be re-executed by recovery"
+    );
+
+    // Stage must still be Failed with the original cancellation terminal_meta.
+    let stage = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+    assert_eq!(stage.status, StageStatus::Failed);
+    let meta = stage.terminal_meta.expect("terminal_meta must be preserved");
+    assert_eq!(meta["kind"], json!("cancelled"));
 }
 
 // ── test: static serving via boot() ──────────────────────────────────────────

@@ -121,6 +121,22 @@ describe("CellSummarySchema", () => {
       }),
     ).toThrow();
   });
+
+  test("accepts cancelled status", () => {
+    const parsed = CellSummarySchema.parse({
+      cell_id: "x:y:z",
+      run_ts: "x",
+      target_name: "y",
+      condition_name: "z",
+      cell_dir: "x/y/z",
+      status: "cancelled",
+      last_activity_ms: 0,
+      event_count: 1,
+      archived: false,
+      cleanable: true,
+    });
+    expect(parsed.status).toBe("cancelled");
+  });
 });
 
 describe("CellDetailSchema", () => {

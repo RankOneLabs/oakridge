@@ -346,6 +346,25 @@ pub async fn update_workflow_run_status(
     Ok(())
 }
 
+pub async fn update_workflow_run_status_if_non_terminal(
+    pool: &SqlitePool,
+    id: &WorkflowRunId,
+    status: RunStatus,
+) -> crate::Result<bool> {
+    let id_str = id.0.to_string();
+    let status_str = enum_to_str(&status)?;
+    let updated_at = Utc::now().to_rfc3339();
+    let result = sqlx::query(
+        "UPDATE workflow_run SET status = ?, updated_at = ? WHERE id = ? AND status NOT IN ('done', 'failed')",
+    )
+    .bind(status_str)
+    .bind(updated_at)
+    .bind(id_str)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
+}
+
 pub async fn mark_workflow_run_failed_if_pending(
     pool: &SqlitePool,
     id: &WorkflowRunId,
@@ -642,6 +661,30 @@ pub async fn list_stage_instances_for_run(
     .fetch_all(pool)
     .await?;
     rows.into_iter().map(row_to_stage_instance).collect()
+}
+
+/// Bulk-transition all Pending, Running, and Parked stage instances for a run to
+/// Failed with the given terminal_meta. Returns the number of rows updated.
+pub async fn cancel_non_terminal_stage_instances_for_run(
+    pool: &SqlitePool,
+    run_id: &WorkflowRunId,
+    terminal_meta: &serde_json::Value,
+) -> crate::Result<u64> {
+    let run_id_str = run_id.0.to_string();
+    let terminal_meta_str = serde_json::to_string(terminal_meta)?;
+    let now = Utc::now().to_rfc3339();
+    let result = sqlx::query(
+        "UPDATE stage_instance \
+         SET status = 'failed', terminal_meta = ?, ended_at = ?, updated_at = ?, parked_reason = NULL, parked_meta = NULL \
+         WHERE run_id = ? AND status IN ('pending', 'running', 'parked')",
+    )
+    .bind(&terminal_meta_str)
+    .bind(&now)
+    .bind(&now)
+    .bind(&run_id_str)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
 }
 
 pub async fn list_parked_stage_instances(pool: &SqlitePool) -> crate::Result<Vec<StageInstance>> {

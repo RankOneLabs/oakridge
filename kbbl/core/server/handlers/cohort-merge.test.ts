@@ -444,3 +444,42 @@ describe("POST /cohorts/:id/merge — event emission", () => {
     }
   });
 });
+
+describe("POST /cohorts/:id/merge — threads_unknown gate", () => {
+  test("open_mergeable_threads_unknown without confirm → outcome=confirm_threads_unknown, no state change", async () => {
+    setupAwaitingMerge();
+    setupApp(makeFakeGh({ kind: "open_mergeable_threads_unknown", url: PR_URL }));
+    const res = await post(COHORT_ID);
+    expect(res.status).toBe(200);
+    const body = await res.json() as MergeOutcome;
+    expect(body.outcome).toBe("confirm_threads_unknown");
+    expect(getCohort(db, COHORT_ID)!.status).toBe("awaiting_merge");
+  });
+
+  test("open_mergeable_threads_unknown + confirm_threads_unknown=true → merged via merged_now", async () => {
+    setupAwaitingMerge();
+    let mergeCalled = false;
+    setupApp({
+      fetchPrState: async () => ({ ok: true, value: { kind: "open_mergeable_threads_unknown", url: PR_URL } }),
+      mergePr: async () => { mergeCalled = true; return { ok: true, value: undefined }; },
+    });
+    const res = await post(COHORT_ID, { confirm_threads_unknown: true });
+    expect(res.status).toBe(200);
+    const body = await res.json() as MergeOutcome;
+    expect(body.outcome).toBe("merged");
+    expect((body as Extract<MergeOutcome, { outcome: "merged" }>).via).toBe("merged_now");
+    expect(mergeCalled).toBe(true);
+    expect(getCohort(db, COHORT_ID)!.status).toBe("done");
+  });
+
+  test("open_mergeable_threads_unknown exposes threads_unknown as the confirmation reason (not unresolved_threads)", async () => {
+    // The outcome discriminant distinguishes a known unresolved-threads block
+    // from an unknown-state confirmation so the UI can show the right copy.
+    setupAwaitingMerge();
+    setupApp(makeFakeGh({ kind: "open_mergeable_threads_unknown", url: PR_URL }));
+    const res = await post(COHORT_ID);
+    const body = await res.json() as MergeOutcome;
+    expect(body.outcome).toBe("confirm_threads_unknown");
+    expect(body.outcome).not.toBe("confirm_unresolved");
+  });
+});

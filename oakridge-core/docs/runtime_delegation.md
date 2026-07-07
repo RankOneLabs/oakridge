@@ -120,6 +120,70 @@ The LBC CLI prints a single authoritative `RESULT ...` line on stdout when it fi
 This keeps `output_dir` as the study root while still attaching per-cell sidecar paths to
 the emitted artifact.
 
+## Recovery states for `delegated_session`
+
+When `oakridge-core` recovers a `delegated_session` stage on boot, several
+situations can leave it in a non-normal park or failure state.
+
+### `waiting_for_kbbl`
+
+**When**: a recovered stage has an `external_ref` (kbbl session ID from a prior
+process lifetime), but kbbl is unreachable at boot time — connect failure, timeout,
+or a 5xx response.
+
+**State**: stage status `parked`, `parked_reason = "waiting_for_kbbl"`,
+`parked_meta = {"kind": "waiting_for_kbbl"}`.
+
+**Behaviour**: a background retry task polls kbbl at the scheduler cadence (5 s
+in production). When kbbl becomes reachable:
+
+- If the stage was `Running` before the park: status returns to `Running`,
+  `parked_reason` and `parked_meta` are cleared, and the normal observer loop
+  starts.
+- If the stage was `Parked` at a gate before the park: status returns to `Parked`
+  with the original `parked_reason` and `parked_meta` restored, and the observer
+  loop starts.
+
+If kbbl responds with a terminal error (4xx, non-retryable) during retries, the
+stage is failed with `terminal_meta = {"reason": "..."}`.
+
+**Operator action**: none required — the substrate reattaches automatically. If
+the stage stays in `waiting_for_kbbl` for an extended period, check kbbl health.
+
+### `session_ended_without_emit`
+
+**When**: the kbbl observer detects `subprocess_exited` with `code: 0` while the
+stage is still `Running` (no artifact has been emitted yet). This happens when the
+delegated agent exits cleanly without calling the emit route.
+
+**State**: stage status `parked`, `parked_reason = "session_ended_without_emit"`,
+`parked_meta = {"kind": "session_ended_without_emit"}`.
+
+**Behaviour**: the stage is not completed and not failed. The operator must decide
+what to do: restart the session (future operator action), fail the stage manually,
+or supply an artifact out-of-band.
+
+If the stage is already `Parked` at a gate (artifact already emitted) when the
+clean exit arrives, the exit is expected — the observer stops but the live session
+remains intact so the pending gate decision can still be delivered.
+
+**Operator action**: inspect the kbbl session transcript to determine why the
+agent exited without emitting an artifact.
+
+### Recovery failures: structured `terminal_meta`
+
+Two failure kinds can appear on stages recovered from DB:
+
+| `terminal_meta.kind` | Cause |
+|---|---|
+| `recovery_unregistered_stage_type` | The stage's `stage_type` is not registered in the runtime's stage-type registry. The stage cannot be re-executed. |
+| `recovery_missing_stage_key` | The stage's `stage_key` does not appear in the current workflow graph definition. The stage row is orphaned. |
+
+Both result in `StageStatus::Failed` with `terminal_meta` containing `kind`,
+`stage_key`, and (for unregistered type) `stage_type`. The run is also marked
+`Failed`. No operator intervention can recover these — they indicate a
+misconfiguration or a schema mismatch between the DB and the deployed code.
+
 ## Terminal metadata
 
 `delegated_lbc_run` uses `terminal_meta` as the failure and terminal context surface.
@@ -154,6 +218,62 @@ It then checks that stdout contains a valid `RESULT` line and that the parsed pa
 still matches the executor contract.
 
 Set `OAKRIDGE_RUN_REAL_LBC_SMOKE=1` to enable the test body when running ignored tests.
+
+## Run cancellation
+
+`POST /workflow_runs/:id/cancel` requests cancellation of an active run.
+
+### Response
+
+| Field | Type | Description |
+|---|---|---|
+| `run_id` | UUID | The run that was targeted |
+| `accepted` | bool | `true` if cancellation was initiated; `false` if the run was already terminal |
+| `stages_cancelled` | u64 | Count of stage instances transitioned to `Failed` by this request |
+
+Returns `202 Accepted` when `accepted = true`, `200 OK` when `accepted = false`.
+Returns `404` if the run ID does not exist.
+
+### Stage transitions
+
+All stage instances in `pending`, `running`, or `parked` status are transitioned to
+`Failed` synchronously before the response is returned. The transitioned stages receive:
+
+```json
+{
+  "kind": "cancelled",
+  "reason": "run cancelled by operator"
+}
+```
+
+as their `terminal_meta`. Parked stages are removed from the `GET /parked` listing
+immediately upon cancellation.
+
+### External process propagation
+
+After persisting the DB state, a `ControlMsg::Cancel` is delivered to the active run
+task (if one is still running). Each executor type handles cancellation:
+
+- `delegated_session`: calls `DELETE /sessions/:sid` on kbbl and removes the session
+  from the live-sessions map.
+- `delegated_lbc_run`: signals the bridge monitor to kill the child process group and
+  writes `terminal_meta` with `kind: "cancelled"`. Because the bridge also writes
+  cancellation metadata, its write arrives after the bulk DB update but is idempotent
+  on `kind`.
+
+If no active run task is found but the run's DB status is still non-terminal, the run
+status is updated to `Failed` directly.
+
+### Recovery behaviour
+
+`Failed` stage instances — including those with `kind: "cancelled"` — are treated as
+terminal by `recover()`. They are never re-executed after a restart. No additional code
+is required; the recovery path already skips `Done` and `Failed` stages.
+
+### Idempotency
+
+A second `POST /workflow_runs/:id/cancel` on an already-terminal run returns
+`200 OK` with `accepted: false` and `stages_cancelled: 0`.
 
 ## Out of scope
 

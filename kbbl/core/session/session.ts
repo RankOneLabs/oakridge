@@ -224,6 +224,11 @@ export class Session {
   private _compactor: Compactor | null = null;
   private _runtime: AgentRuntime | null = null;
   private _handle: SessionHandle | null = null;
+  // Latched when finalize() runs — visible to attachRuntime() before _status
+  // flips to "ended" so a handle that arrives after abort can be terminated
+  // immediately without wiring pumps or changing session state.
+  private _finalized = false;
+  private _finalizePromise: Promise<void> | null = null;
 
   private readonly callbacks: SessionCallbacks;
   private readonly classifyEvent?: (
@@ -579,6 +584,8 @@ export class Session {
 
   private setStatus(status: SessionStatus): void {
     if (this._status === status) return;
+    // Terminal state is monotonic: once ended, no transition back to any live state.
+    if (this._status === "ended") return;
     this._status = status;
     try {
       this.callbacks.onStatusChanged?.(this, status);
@@ -736,6 +743,20 @@ export class Session {
    */
   async attachRuntime(runtime: AgentRuntime, handle: SessionHandle): Promise<void> {
     if (this._spawnPromise) return this._spawnPromise;
+    // If the session was aborted or finalized before this handle arrived, terminate
+    // the handle immediately and do not wire pumps, listeners, or live status.
+    if (this._finalized) {
+      try {
+        await runtime.terminate(handle);
+      } catch (err) {
+        console.error(
+          `kbbl: failed to terminate late runtime handle for ${this.oakridgeSid}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+      return;
+    }
     this._runtime = runtime;
     this._handle = handle;
     // _spawnPromise resolves once wiring is complete (session_started emitted,
@@ -993,6 +1014,16 @@ export class Session {
   }
 
   private async finalize(): Promise<void> {
+    if (this._finalizePromise) return this._finalizePromise;
+    // Latch _finalized before the status check so attachRuntime() can see the
+    // terminal decision even before _status flips to "ended". This prevents a
+    // late-arriving runtime handle from wiring pumps after finalization.
+    this._finalized = true;
+    this._finalizePromise = this.runFinalize();
+    return this._finalizePromise;
+  }
+
+  private async runFinalize(): Promise<void> {
     // Idempotent: abort() and the exitPromise's finally can both race into
     // finalize; the first one wins and the second is a no-op.
     if (this._status === "ended") return;

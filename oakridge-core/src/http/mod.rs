@@ -129,6 +129,7 @@ pub fn router(state: AppState) -> Router {
             post(rest::create_workflow_run).get(rest::list_workflow_runs),
         )
         .route("/workflow_runs/:id", get(rest::get_workflow_run))
+        .route("/workflow_runs/:id/cancel", post(rest::cancel_workflow_run))
         .route(
             "/workflow_runs/:id/artifacts",
             get(rest::list_run_artifacts),

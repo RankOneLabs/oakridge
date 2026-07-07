@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use tokio::process::{Child, Command};
 use tokio::sync::{oneshot, watch, Mutex};
 use tokio::task::JoinHandle;
@@ -136,6 +137,7 @@ impl StageType for DelegatedLbcRunStage {
         command.current_dir(&output_dir);
         command.stdout(std::process::Stdio::piped());
         command.stderr(std::process::Stdio::piped());
+        configure_process_group(&mut command);
 
         let child = match command.spawn() {
             Ok(child) => child,
@@ -243,9 +245,50 @@ async fn canonicalize_or_original(path: &Path) -> anyhow::Result<PathBuf> {
 }
 
 async fn kill_and_reap(mut child: Child) -> anyhow::Result<()> {
-    let _ = child.kill().await;
+    terminate_process_group_or_child(&mut child).await;
     let _ = child.wait().await;
     Ok(())
+}
+
+#[cfg(unix)]
+fn configure_process_group(command: &mut Command) {
+    command.process_group(0);
+}
+
+#[cfg(not(unix))]
+fn configure_process_group(_command: &mut Command) {}
+
+#[cfg(unix)]
+async fn terminate_process_group_or_child(child: &mut Child) {
+    if let Some(pid) = child.id() {
+        signal_process_group(pid, SIGTERM);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        signal_process_group(pid, SIGKILL);
+    } else {
+        let _ = child.kill().await;
+    }
+}
+
+#[cfg(unix)]
+const SIGTERM: i32 = 15;
+
+#[cfg(unix)]
+const SIGKILL: i32 = 9;
+
+#[cfg(unix)]
+fn signal_process_group(pid: u32, signal: i32) {
+    unsafe extern "C" {
+        fn kill(pid: i32, sig: i32) -> i32;
+    }
+    let pgid = -(pid as i32);
+    unsafe {
+        let _ = kill(pgid, signal);
+    }
+}
+
+#[cfg(not(unix))]
+async fn terminate_process_group_or_child(child: &mut Child) {
+    let _ = child.kill().await;
 }
 
 async fn run_bridge(
@@ -284,7 +327,7 @@ async fn run_bridge(
                 }
                 let _ = cancel_rx.changed().await;
             } => {
-                let _ = child.kill().await;
+                terminate_process_group_or_child(&mut child).await;
                 child.wait().await.map_err(|err| anyhow::anyhow!("bridge wait after cancel failed: {}", err))?
             }
         };

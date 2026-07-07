@@ -40,6 +40,11 @@ const OBSERVER_POLL_INTERVAL_MS: u64 = 20;
 const OBSERVER_BACKOFF_BASE_MS: u64 = 500;
 #[cfg(test)]
 const OBSERVER_BACKOFF_BASE_MS: u64 = 5;
+/// Retry interval for waiting_for_kbbl reattachment attempts.
+#[cfg(not(test))]
+const WAITING_FOR_KBBL_RETRY_MS: u64 = 5000;
+#[cfg(test)]
+const WAITING_FOR_KBBL_RETRY_MS: u64 = 20;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -150,6 +155,31 @@ impl DelegatedSessionStage {
         Ok(latest_event_id(&response.events))
     }
 
+    /// Like `probe_live_session` but classifies transport errors as retryable vs terminal,
+    /// so the caller can park as `waiting_for_kbbl` instead of propagating an error.
+    async fn probe_session_for_recovery(&self, sid: &str) -> ProbeOutcome {
+        match self.kbbl_client.read_events_since(sid, -1).await {
+            Ok(response) => {
+                if response.session_id != sid {
+                    return ProbeOutcome::Terminal(anyhow::anyhow!(
+                        "substrate recovery error: kbbl responded for session '{}' instead of '{}'",
+                        response.session_id,
+                        sid
+                    ));
+                }
+                if let Some(reason) = failure_reason_from_events(sid, &response.events) {
+                    return ProbeOutcome::Terminal(anyhow::anyhow!(
+                        "substrate recovery error: {}",
+                        reason
+                    ));
+                }
+                ProbeOutcome::Reachable(latest_event_id(&response.events))
+            }
+            Err(e) if is_retryable_observer_error(&e) => ProbeOutcome::Retryable,
+            Err(e) => ProbeOutcome::Terminal(e.into()),
+        }
+    }
+
     fn ensure_observable(&self, sid: &str, response: &EventsSinceResponse) -> anyhow::Result<()> {
         if response.session_id != sid {
             anyhow::bail!(
@@ -231,112 +261,114 @@ impl DelegatedSessionStage {
         stage_instance_id: StageInstanceId,
         sid: String,
         cancelled: Arc<AtomicBool>,
-        mut last_seen: i64,
+        last_seen: i64,
     ) {
         let client = self.kbbl_client.clone();
         let live_sessions = self.live_sessions.clone();
         tokio::spawn(async move {
-            let mut poll_error_count: u32 = 0;
-            loop {
-                sleep(Duration::from_millis(OBSERVER_POLL_INTERVAL_MS)).await;
-                if cancelled.load(Ordering::SeqCst) {
-                    break;
-                }
+            observer_loop(&ctx, stage_instance_id, &sid, &cancelled, last_seen, &client, &live_sessions).await;
+        });
+    }
 
-                match client.read_events_since(&sid, last_seen).await {
+    fn spawn_waiting_for_kbbl(
+        &self,
+        ctx: StageContext,
+        stage_instance_id: StageInstanceId,
+        sid: String,
+        cancelled: Arc<AtomicBool>,
+        pre_park_status: StageStatus,
+        pre_park_parked_reason: Option<String>,
+        pre_park_parked_meta: Option<Value>,
+    ) {
+        let client = self.kbbl_client.clone();
+        let live_sessions = self.live_sessions.clone();
+        tokio::spawn(async move {
+            // Phase 1: retry until kbbl is reachable.
+            let last_seen = loop {
+                sleep(Duration::from_millis(WAITING_FOR_KBBL_RETRY_MS)).await;
+                if cancelled.load(Ordering::SeqCst) {
+                    return;
+                }
+                match client.read_events_since(&sid, -1).await {
                     Ok(response) => {
-                        poll_error_count = 0;
                         if response.session_id != sid {
                             if !cancelled.load(Ordering::SeqCst) {
-                                let terminal_meta =
-                                    serde_json::json!({"reason": format!("kbbl session {} became unavailable", sid)});
-                                let _ = ctx
-                                    .set_status_with_terminal_meta(
-                                        StageStatus::Failed,
-                                        None,
-                                        Some(terminal_meta),
-                                    )
-                                    .await;
+                                let _ = ctx.set_status_with_terminal_meta(
+                                    StageStatus::Failed,
+                                    None,
+                                    Some(serde_json::json!({"reason": format!("kbbl session {} became unavailable", sid)})),
+                                ).await;
+                                live_sessions.lock().unwrap().remove(&stage_instance_id);
                             }
-                            break;
+                            return;
                         }
-
                         if let Some(reason) = failure_reason_from_events(&sid, &response.events) {
                             if !cancelled.load(Ordering::SeqCst) {
-                                let terminal_meta = serde_json::json!({"reason": reason.clone()});
-                                let _ = ctx
-                                    .set_status_with_terminal_meta(
-                                        StageStatus::Failed,
-                                        None,
-                                        Some(terminal_meta),
-                                    )
-                                    .await;
+                                let _ = ctx.set_status_with_terminal_meta(
+                                    StageStatus::Failed,
+                                    None,
+                                    Some(serde_json::json!({"reason": reason})),
+                                ).await;
+                                live_sessions.lock().unwrap().remove(&stage_instance_id);
                             }
-                            break;
+                            return;
                         }
-
-                        if let Some(new_last_seen) = latest_event_id(&response.events) {
-                            last_seen = new_last_seen;
-                        }
+                        break latest_event_id(&response.events).unwrap_or(-1);
                     }
-                    Err(err) => {
-                        if is_retryable_observer_error(&err) {
-                            poll_error_count += 1;
-                            if poll_error_count < MAX_OBSERVER_POLL_ERRORS {
-                                let backoff_ms = OBSERVER_BACKOFF_BASE_MS
-                                    * (1u64 << (poll_error_count - 1).min(2));
-                                sleep(Duration::from_millis(backoff_ms)).await;
-                                continue;
-                            }
-                            // Budget exhausted: try to stop the kbbl session so it
-                            // doesn't continue running unobserved, then fail the stage.
-                            if !cancelled.load(Ordering::SeqCst) {
-                                let stop_result = client.stop_session(&sid).await;
-                                let stop_ok = matches!(&stop_result, Ok(r) if r.ok);
-                                let error_class = match &err {
-                                    kbbl_client::KbblClientError::Rejected { .. } => "server_error",
-                                    _ => "transport",
-                                };
-                                let terminal_meta = serde_json::json!({
-                                    "reason": format!(
-                                        "observer poll budget exhausted after {} errors for kbbl session {}",
-                                        MAX_OBSERVER_POLL_ERRORS, sid
-                                    ),
-                                    "last_error_class": error_class,
-                                    "last_error": err.to_string(),
-                                    "poll_error_count": poll_error_count,
-                                    "stop_outcome": if stop_ok { "stopped" } else { "stop_failed" }
-                                });
-                                let _ = ctx
-                                    .set_status_with_terminal_meta(
-                                        StageStatus::Failed,
-                                        None,
-                                        Some(terminal_meta),
-                                    )
-                                    .await;
-                            }
-                        } else {
-                            if !cancelled.load(Ordering::SeqCst) {
-                                let terminal_reason = format!(
-                                    "kbbl session {} became unavailable: {}",
-                                    sid, err
-                                );
-                                let terminal_meta = serde_json::json!({"reason": terminal_reason});
-                                let _ = ctx
-                                    .set_status_with_terminal_meta(
-                                        StageStatus::Failed,
-                                        None,
-                                        Some(terminal_meta),
-                                    )
-                                    .await;
-                            }
+                    Err(e) if is_retryable_observer_error(&e) => continue,
+                    Err(e) => {
+                        if !cancelled.load(Ordering::SeqCst) {
+                            let _ = ctx.set_status_with_terminal_meta(
+                                StageStatus::Failed,
+                                None,
+                                Some(serde_json::json!({"reason": e.to_string()})),
+                            ).await;
+                            live_sessions.lock().unwrap().remove(&stage_instance_id);
                         }
-                        break;
+                        return;
                     }
                 }
+            };
+
+            if cancelled.load(Ordering::SeqCst) {
+                return;
             }
 
-            live_sessions.lock().unwrap().remove(&stage_instance_id);
+            // Phase 2: kbbl is reachable — restore pre-park state and register in live_sessions.
+            if matches!(pre_park_status, StageStatus::Parked) {
+                let _ = ctx.set_status(StageStatus::Parked, pre_park_parked_reason).await;
+                let _ = ctx.set_parked_meta(pre_park_parked_meta).await;
+            } else {
+                let _ = ctx.set_status(StageStatus::Running, None).await;
+                let _ = ctx.set_parked_meta(None).await;
+            }
+
+            let config: DelegatedSessionConfig = match serde_json::from_value(ctx.config.clone()) {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = ctx.set_status_with_terminal_meta(
+                        StageStatus::Failed,
+                        None,
+                        Some(serde_json::json!({"reason": e.to_string()})),
+                    ).await;
+                    return;
+                }
+            };
+            if cancelled.load(Ordering::SeqCst) {
+                return;
+            }
+            live_sessions.lock().unwrap().insert(
+                stage_instance_id,
+                LiveSession {
+                    cancelled: cancelled.clone(),
+                    ctx: ctx.clone(),
+                    sid: sid.clone(),
+                    config,
+                },
+            );
+
+            // Phase 3: observe normally. observer_loop handles live_sessions removal.
+            observer_loop(&ctx, stage_instance_id, &sid, &cancelled, last_seen, &client, &live_sessions).await;
         });
     }
 }
@@ -349,6 +381,186 @@ fn is_retryable_observer_error(err: &kbbl_client::KbblClientError) -> bool {
         KbblClientError::Request(e) => e.is_connect() || e.is_timeout() || e.is_request(),
         KbblClientError::Rejected { status, .. } => status.is_server_error(),
         _ => false,
+    }
+}
+
+/// Result of probing a live kbbl session during recovery.
+enum ProbeOutcome {
+    /// kbbl is reachable and the session is observable; carries the last event id.
+    Reachable(Option<i64>),
+    /// kbbl returned a retryable error (connect failure, timeout, or 5xx).
+    Retryable,
+    /// The session is terminally gone or already failed; the stage should fail.
+    Terminal(anyhow::Error),
+}
+
+/// Returns true if `events` contains a clean subprocess exit (code 0).
+fn has_clean_exit(events: &[kbbl_client::SessionEvent]) -> bool {
+    events.iter().any(|e| {
+        e.event_type == "subprocess_exited"
+            && e.payload.get("code").and_then(|c| c.as_i64()) == Some(0)
+    })
+}
+
+/// Core observer polling loop, shared by the normal and waiting_for_kbbl paths.
+///
+/// Removes `stage_instance_id` from `live_sessions` on all exit paths EXCEPT
+/// when a clean subprocess exit (code 0) is observed while the stage is already
+/// Parked at a gate. In that case the gate is still pending and the live session
+/// must remain so the resume route can reach it; the observer just stops polling.
+async fn observer_loop(
+    ctx: &StageContext,
+    stage_instance_id: StageInstanceId,
+    sid: &str,
+    cancelled: &Arc<AtomicBool>,
+    mut last_seen: i64,
+    client: &Arc<KbblClient>,
+    live_sessions: &LiveSessions,
+) {
+    let mut poll_error_count: u32 = 0;
+    loop {
+        sleep(Duration::from_millis(OBSERVER_POLL_INTERVAL_MS)).await;
+        if cancelled.load(Ordering::SeqCst) {
+            break;
+        }
+
+        match client.read_events_since(sid, last_seen).await {
+            Ok(response) => {
+                poll_error_count = 0;
+                if response.session_id != sid {
+                    if !cancelled.load(Ordering::SeqCst) {
+                        let _ = ctx.set_status_with_terminal_meta(
+                            StageStatus::Failed,
+                            None,
+                            Some(serde_json::json!({"reason": format!("kbbl session {} became unavailable", sid)})),
+                        ).await;
+                    }
+                    break;
+                }
+
+                if let Some(reason) = failure_reason_from_events(sid, &response.events) {
+                    if !cancelled.load(Ordering::SeqCst) {
+                        let _ = ctx.set_status_with_terminal_meta(
+                            StageStatus::Failed,
+                            None,
+                            Some(serde_json::json!({"reason": reason.clone()})),
+                        ).await;
+                    }
+                    break;
+                }
+
+                if has_clean_exit(&response.events) && !cancelled.load(Ordering::SeqCst) {
+                    // Session exited cleanly. If the stage is still Running (no artifact
+                    // emitted yet), park it as session_ended_without_emit so the operator
+                    // can see the clean exit and decide what to do next.
+                    // If the stage is already Parked (artifact emitted, waiting at gate),
+                    // the clean exit is expected — stop observing but keep the live session
+                    // entry intact so the pending gate decision can still be delivered.
+                    // Read from DB rather than the in-memory cache, which can be stale when
+                    // the scheduler has written a Parked status that has not yet propagated.
+                    let persisted = ctx.persisted_status().await.unwrap_or(StageStatus::Running);
+                    if matches!(persisted, StageStatus::Running) {
+                        let _ = ctx.set_status(
+                            StageStatus::Parked,
+                            Some("session_ended_without_emit".to_string()),
+                        ).await;
+                        let _ = ctx.set_parked_meta(
+                            Some(serde_json::json!({"kind": "session_ended_without_emit"}))
+                        ).await;
+                        break;
+                    } else if matches!(persisted, StageStatus::Parked) {
+                        // Parked at gate: stop observing without removing from live_sessions.
+                        return;
+                    } else {
+                        break;
+                    }
+                }
+
+                if let Some(new_last_seen) = latest_event_id(&response.events) {
+                    last_seen = new_last_seen;
+                }
+            }
+            Err(err) => {
+                if is_retryable_observer_error(&err) {
+                    poll_error_count += 1;
+                    if poll_error_count < MAX_OBSERVER_POLL_ERRORS {
+                        let backoff_ms =
+                            OBSERVER_BACKOFF_BASE_MS * (1u64 << (poll_error_count - 1).min(2));
+                        sleep(Duration::from_millis(backoff_ms)).await;
+                        continue;
+                    }
+                    // Budget exhausted: try to stop the kbbl session so it
+                    // doesn't continue running unobserved, then fail the stage.
+                    if !cancelled.load(Ordering::SeqCst) {
+                        let stop_result = client.stop_session(sid).await;
+                        let stop_ok = matches!(&stop_result, Ok(r) if r.ok);
+                        let error_class = match &err {
+                            kbbl_client::KbblClientError::Rejected { .. } => "server_error",
+                            _ => "transport",
+                        };
+                        let _ = ctx.set_status_with_terminal_meta(
+                            StageStatus::Failed,
+                            None,
+                            Some(serde_json::json!({
+                                "reason": format!(
+                                    "observer poll budget exhausted after {} errors for kbbl session {}",
+                                    MAX_OBSERVER_POLL_ERRORS, sid
+                                ),
+                                "last_error_class": error_class,
+                                "last_error": err.to_string(),
+                                "poll_error_count": poll_error_count,
+                                "stop_outcome": if stop_ok { "stopped" } else { "stop_failed" }
+                            })),
+                        ).await;
+                    }
+                } else if !cancelled.load(Ordering::SeqCst) {
+                    let _ = ctx.set_status_with_terminal_meta(
+                        StageStatus::Failed,
+                        None,
+                        Some(serde_json::json!({"reason": format!("kbbl session {} became unavailable: {}", sid, err)})),
+                    ).await;
+                }
+                break;
+            }
+        }
+    }
+    live_sessions.lock().unwrap().remove(&stage_instance_id);
+}
+
+struct WaitingForKbblHandle {
+    stage_instance_id: StageInstanceId,
+    sid: String,
+    kbbl_client: Arc<KbblClient>,
+    live_sessions: LiveSessions,
+    cancelled: Arc<AtomicBool>,
+}
+
+#[async_trait]
+impl StageHandle for WaitingForKbblHandle {
+    async fn resume(&self, payload: crate::executor::ResumePayload) -> anyhow::Result<()> {
+        // If the retry task has already reattached (kbbl came back), delegate to the
+        // live session exactly as DelegatedSessionHandle would.
+        let session = self.live_sessions.lock().unwrap().get(&self.stage_instance_id).cloned();
+        if session.is_some() {
+            let delegate = DelegatedSessionHandle {
+                stage_instance_id: self.stage_instance_id,
+                sid: self.sid.clone(),
+                kbbl_client: self.kbbl_client.clone(),
+                live_sessions: self.live_sessions.clone(),
+            };
+            return delegate.resume(payload).await;
+        }
+        anyhow::bail!("cannot resume a stage that is waiting for kbbl to become available")
+    }
+
+    async fn cancel(&self) -> anyhow::Result<()> {
+        self.cancelled.store(true, Ordering::SeqCst);
+        self.live_sessions
+            .lock()
+            .unwrap()
+            .remove(&self.stage_instance_id);
+        let _ = self.kbbl_client.stop_session(&self.sid).await;
+        Ok(())
     }
 }
 
@@ -420,8 +632,43 @@ impl StageType for DelegatedSessionStage {
         let mut recovery_last_seen = -1;
         let sid = match summary.external_ref.clone() {
             Some(existing_sid) => {
-                if let Some(last_seen) = self.probe_live_session(&existing_sid).await? {
-                    recovery_last_seen = last_seen;
+                match self.probe_session_for_recovery(&existing_sid).await {
+                    ProbeOutcome::Reachable(maybe_last_seen) => {
+                        if let Some(last_seen) = maybe_last_seen {
+                            recovery_last_seen = last_seen;
+                        }
+                    }
+                    ProbeOutcome::Retryable => {
+                        // kbbl is temporarily unreachable — park the stage and spawn a
+                        // retry task that reattaches when kbbl becomes available.
+                        ctx.set_status(
+                            StageStatus::Parked,
+                            Some("waiting_for_kbbl".to_string()),
+                        )
+                        .await?;
+                        ctx.set_parked_meta(Some(
+                            serde_json::json!({"kind": "waiting_for_kbbl"}),
+                        ))
+                        .await?;
+                        let cancelled = Arc::new(AtomicBool::new(false));
+                        self.spawn_waiting_for_kbbl(
+                            ctx.clone(),
+                            stage_instance_id,
+                            existing_sid.clone(),
+                            cancelled.clone(),
+                            summary.status,
+                            summary.parked_reason.clone(),
+                            summary.parked_meta.clone(),
+                        );
+                        return Ok(Box::new(WaitingForKbblHandle {
+                            stage_instance_id,
+                            sid: existing_sid,
+                            kbbl_client: self.kbbl_client.clone(),
+                            live_sessions: self.live_sessions.clone(),
+                            cancelled,
+                        }));
+                    }
+                    ProbeOutcome::Terminal(e) => return Err(e),
                 }
                 existing_sid
             }
@@ -1335,26 +1582,30 @@ mod tests {
         assert_eq!(meta.revision_count, 1);
         assert_eq!(meta.artifact_id.0.to_string(), artifact_id);
 
+        // Verify the two requests execute() makes regardless of how many poll requests
+        // the background observer has issued since (observer polls are correct behaviour).
         let requests: Vec<_> = capture.lock().unwrap().iter().cloned().collect();
+        assert!(requests.len() >= 2, "expected at least CREATE + INPUT requests, got {}", requests.len());
         assert_eq!(
-            requests,
-            vec![
-                RecordedRequest {
-                    method: Method::POST,
-                    path: "/sessions".into(),
-                    body: Some(json!({
-                        "workdir": "/workdir",
-                        "name": "delegate",
-                        "artifact_id": si_id.0.to_string(),
-                        "runtime": "codex"
-                    })),
-                },
-                RecordedRequest {
-                    method: Method::POST,
-                    path: "/sid-123/input".into(),
-                    body: Some(json!({ "text": "hello artifact" })),
-                },
-            ]
+            requests[0],
+            RecordedRequest {
+                method: Method::POST,
+                path: "/sessions".into(),
+                body: Some(json!({
+                    "workdir": "/workdir",
+                    "name": "delegate",
+                    "artifact_id": si_id.0.to_string(),
+                    "runtime": "codex"
+                })),
+            }
+        );
+        assert_eq!(
+            requests[1],
+            RecordedRequest {
+                method: Method::POST,
+                path: "/sid-123/input".into(),
+                body: Some(json!({ "text": "hello artifact" })),
+            }
         );
 
         join.abort();

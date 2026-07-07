@@ -137,6 +137,16 @@ impl StageContext {
         self.stage_instance_summary_mut().clone()
     }
 
+    /// Read the stage status directly from the database.
+    ///
+    /// Unlike `stage_instance_summary`, this always reflects the persisted value and
+    /// is not subject to scheduler-owned writes that have not yet propagated to the
+    /// in-memory cache.
+    pub async fn persisted_status(&self) -> anyhow::Result<StageStatus> {
+        let si = queries::get_stage_instance_by_id(&self.db, &self.stage_instance_id).await?;
+        Ok(si.status)
+    }
+
     /// Emit an artifact.
     ///
     /// Validates the body against the artifact type's schema, persists the artifact
@@ -313,6 +323,9 @@ impl StageContext {
         let is_terminal = matches!(status, StageStatus::Done | StageStatus::Failed);
 
         let current = queries::get_stage_instance_by_id(&self.db, &self.stage_instance_id).await?;
+        if is_cancelled_terminal(&current) {
+            return Ok(());
+        }
 
         let started_at = if matches!(status, StageStatus::Running) && current.started_at.is_none() {
             Some(now)
@@ -396,6 +409,16 @@ impl StageContext {
         self.stage_instance_summary_mut().external_ref = external_ref;
         Ok(())
     }
+}
+
+fn is_cancelled_terminal(stage: &crate::types::StageInstance) -> bool {
+    matches!(stage.status, StageStatus::Done | StageStatus::Failed)
+        && stage
+            .terminal_meta
+            .as_ref()
+            .and_then(|meta| meta.get("kind"))
+            .and_then(Value::as_str)
+            == Some("cancelled")
 }
 
 // ── StageHandle ───────────────────────────────────────────────────────────────
@@ -868,6 +891,35 @@ mod tests {
             }
             other => panic!("unexpected event: {:?}", other),
         }
+    }
+
+    #[tokio::test]
+    async fn cancelled_terminal_stage_ignores_late_executor_status_write() {
+        let pool = make_pool().await;
+        let (run_id, si_id) = setup_run(&pool).await;
+        let registry = make_artifact_registry();
+        let (tx, mut rx) = mpsc::channel(8);
+        let cancelled_meta = json!({"kind": "cancelled"});
+
+        queries::update_stage_instance_status_with_terminal_meta(
+            &pool,
+            &si_id,
+            StageStatus::Failed,
+            None,
+            Some(cancelled_meta.clone()),
+            None,
+            Some(Utc::now()),
+        )
+        .await
+        .unwrap();
+
+        let ctx = make_ctx(pool.clone(), run_id, si_id, registry, tx);
+        ctx.set_status(StageStatus::Running, None).await.unwrap();
+
+        let si = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+        assert_eq!(si.status, StageStatus::Failed);
+        assert_eq!(si.terminal_meta, Some(cancelled_meta));
+        assert!(rx.try_recv().is_err(), "late write must not emit a status event");
     }
 
     #[tokio::test]
