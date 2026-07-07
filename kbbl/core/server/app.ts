@@ -35,6 +35,7 @@ import { mountWorkspaceEventsRoutes } from "./handlers/workspace-events";
 import { mountArtifactStreamRoutes } from "./handlers/artifact-stream";
 import { artifactEventBus } from "../stream/artifact-event-bus";
 import { mountSkillsRoutes } from "../skills/routes";
+import { mountOakridgeProxyRoutes } from "./handlers/oakridge-proxy";
 
 export interface CreateAppDeps {
   manager: SessionManager;
@@ -236,6 +237,12 @@ export function createApp(deps: CreateAppDeps): Hono {
   // so this route carries atom edits, thread activity, and freeze transitions
   // to the PWA.
   mountArtifactStreamRoutes(app, { bus: artifactEventBus });
+
+  // ---- oakridge-core proxy ----
+  //
+  // GET /oakridge/config → { available: boolean } (PWA availability check)
+  // ALL /oakridge/api/* → proxied to OAKRIDGE_CORE_BASE_URL (same-origin CORS avoidance)
+  mountOakridgeProxyRoutes(app, { baseUrl: process.env.OAKRIDGE_CORE_BASE_URL });
 
   // ---- /inbox (always-on delta stream) ----
   app.get("/inbox", inboxHandler(manager));
