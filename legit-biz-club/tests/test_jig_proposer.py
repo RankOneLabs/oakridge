@@ -27,10 +27,13 @@ from jig.core.types import (
     Usage,
 )
 
+from jig.core.errors import JigLLMError
+
 from legit_biz_club import Artifact, ArtifactType, Brief
 from legit_biz_club.coordination.jig_proposer import (
     JigProposer,
     ProposerOutputParseError,
+    ProviderIORetryExhausted,
     make_proposers,
 )
 from legit_biz_club.coordination.proposal import Proposal
@@ -652,6 +655,150 @@ async def test_user_message_omits_peer_section_when_no_peers(
     assert stub.last_params is not None
     user_msg = stub.last_params.messages[0].content
     assert "Peer proposals" not in user_msg
+
+
+# --- IO retry (provider transport failures) --------------------------------
+
+
+class _FaultSequencedLLM(LLMClient):
+    """Returns errors or canned responses per call in sequence. Each
+    entry in ``sequence`` is either a string (canned response content)
+    or a ``JigLLMError`` instance to raise."""
+
+    def __init__(self, sequence: list[str | JigLLMError]) -> None:
+        self._sequence = list(sequence)
+        self.call_count = 0
+
+    async def complete(self, params: CompletionParams) -> LLMResponse:
+        if self.call_count >= len(self._sequence):
+            raise AssertionError(
+                f"_FaultSequencedLLM exhausted after {self.call_count} calls"
+            )
+        item = self._sequence[self.call_count]
+        self.call_count += 1
+        if isinstance(item, JigLLMError):
+            raise item
+        return LLMResponse(
+            content=item,
+            tool_calls=None,
+            usage=Usage(input_tokens=10, output_tokens=20),
+            latency_ms=42.0,
+            model="stub",
+        )
+
+
+async def _instant_sleep(_: float) -> None:
+    """Stub for asyncio.sleep that returns immediately."""
+
+
+async def test_io_retry_recovers_after_retryable_provider_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A retryable JigLLMError on the first attempt is silently retried.
+    The second attempt succeeds and produce() returns the Proposal.
+    Two LLM calls were made; no error propagates."""
+    monkeypatch.setattr(
+        "legit_biz_club.coordination.jig_proposer.asyncio.sleep",
+        _instant_sleep,
+    )
+    agent = _agent(tmp_path)
+    retryable_err = JigLLMError(
+        "service unavailable", provider="anthropic", status_code=503, retryable=True
+    )
+    stub = _FaultSequencedLLM([retryable_err, _tagged("recovered proposal", rationale="ok")])
+    proposer = JigProposer(agent, llm=stub)
+    proposal = await proposer.propose(
+        agent=agent,
+        brief=_brief(),
+        artifact=_artifact(tmp_path),
+        current_content="seed",
+        current_version="v0",
+    )
+    assert proposal.new_content == "recovered proposal"
+    assert stub.call_count == 2
+
+
+async def test_io_retry_exhausted_raises_provider_io_retry_exhausted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When all IO attempts fail with retryable errors, ProviderIORetryExhausted
+    is raised with structured fields (attempt count, error class/message,
+    operation, agent_id). The retry budget has a finite ceiling."""
+    monkeypatch.setattr(
+        "legit_biz_club.coordination.jig_proposer.asyncio.sleep",
+        _instant_sleep,
+    )
+    agent = _agent(tmp_path)
+    retryable_err = JigLLMError(
+        "rate limited", provider="anthropic", status_code=429, retryable=True
+    )
+    stub = _FaultSequencedLLM([retryable_err, retryable_err, retryable_err])
+    proposer = JigProposer(agent, llm=stub)
+    with pytest.raises(ProviderIORetryExhausted) as exc_info:
+        await proposer.propose(
+            agent=agent,
+            brief=_brief(),
+            artifact=_artifact(tmp_path),
+            current_content="seed",
+            current_version="v0",
+        )
+    err = exc_info.value
+    assert err.attempts == 2  # _IO_RETRY_MAX_ATTEMPTS = 2
+    assert err.last_error_class == "JigLLMError"
+    assert "rate limited" in err.last_error_message
+    assert err.operation == "llm_complete"
+    assert err.agent_id == agent.id
+    assert stub.call_count == 2  # only used _IO_RETRY_MAX_ATTEMPTS attempts
+
+
+async def test_io_retry_does_not_retry_non_retryable_provider_error(
+    tmp_path: Path,
+) -> None:
+    """A JigLLMError with retryable=False is a permanent failure (auth,
+    bad request). It must propagate immediately without any retries."""
+    agent = _agent(tmp_path)
+    perm_err = JigLLMError(
+        "invalid api key", provider="anthropic", status_code=401, retryable=False
+    )
+    stub = _FaultSequencedLLM([perm_err, _tagged("would succeed")])
+    proposer = JigProposer(agent, llm=stub)
+    with pytest.raises(JigLLMError, match="invalid api key"):
+        await proposer.propose(
+            agent=agent,
+            brief=_brief(),
+            artifact=_artifact(tmp_path),
+            current_content="seed",
+            current_version="v0",
+        )
+    assert stub.call_count == 1  # no retry
+
+
+async def test_parse_error_is_not_retried_as_io_error(
+    tmp_path: Path,
+) -> None:
+    """Parse failures (missing sentinel tags) must not trigger IO
+    retries. IO retries are only for transient transport failures;
+    retrying a parse error would repeat the same invalid model output
+    and mask a deterministic contract violation."""
+    agent = _agent(tmp_path)
+    stub = _SequencedStubLLM(
+        [
+            "no tags — this is a parse failure",
+            _tagged("valid response that would succeed if IO-retried"),
+        ]
+    )
+    # max_parse_retries=0 to isolate: ONE attempt, parse fails → error.
+    # If IO retry fired on parse failure we'd consume two calls.
+    proposer = JigProposer(agent, llm=stub, max_parse_retries=0)
+    with pytest.raises(ProposerOutputParseError):
+        await proposer.propose(
+            agent=agent,
+            brief=_brief(),
+            artifact=_artifact(tmp_path),
+            current_content="seed",
+            current_version="v0",
+        )
+    assert stub.call_count == 1  # IO retry must not have fired
 
 
 # --- factory helper -----------------------------------------------------
