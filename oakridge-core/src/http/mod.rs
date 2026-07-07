@@ -15,7 +15,7 @@ use crate::db;
 use crate::events::EventBus;
 use crate::executor::delegated_lbc_run::DelegatedLbcRunStage;
 use crate::executor::delegated_session::{kbbl_client::KbblClient, DelegatedSessionStage};
-use crate::registry::{ArtifactTypeRegistry, StageTypeRegistry};
+use crate::registry::{register_dev_flow_types, ArtifactTypeRegistry, StageTypeRegistry};
 use crate::scheduler::Coordinator;
 
 #[derive(Clone)]
@@ -31,7 +31,8 @@ pub struct AppState {
 /// Reads delegated_session config from environment variables:
 ///   OAKRIDGE_PROMPTS_DIR – prompt template root (default: "./prompts")
 ///   KBBL_API_BASE_URL    – kbbl HTTP base URL (default: "http://127.0.0.1:8788/")
-pub fn register_types(stage: &mut StageTypeRegistry, _artifact: &mut ArtifactTypeRegistry) {
+pub fn register_types(stage: &mut StageTypeRegistry, artifact: &mut ArtifactTypeRegistry) {
+    register_dev_flow_types(artifact);
     let prompts_dir = std::env::var("OAKRIDGE_PROMPTS_DIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| std::path::PathBuf::from("./prompts"));
