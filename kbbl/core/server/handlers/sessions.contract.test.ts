@@ -397,6 +397,21 @@ describe("validateGitRefName", () => {
   test("rejects names starting with dash", () => {
     expect(validateGitRefName("-branch", "f")).not.toBeNull();
   });
+
+  test("rejects names starting with '/'", () => {
+    expect(validateGitRefName("/bad", "f")).not.toBeNull();
+    expect(validateGitRefName("/cohort/x/1-foo", "f")).not.toBeNull();
+  });
+
+  test("rejects names with empty path segments ('//')", () => {
+    expect(validateGitRefName("a//b", "f")).not.toBeNull();
+    expect(validateGitRefName("cohort//x/1-foo", "f")).not.toBeNull();
+  });
+
+  test("rejects names whose path components start with '.'", () => {
+    expect(validateGitRefName("a/.hidden", "f")).not.toBeNull();
+    expect(validateGitRefName("cohort/v2/.branch", "f")).not.toBeNull();
+  });
 });
 
 describe("validateWorktreeSubdir", () => {
@@ -438,7 +453,7 @@ describe("validateWorktreeSubdir", () => {
 // ---------------------------------------------------------------------------
 
 describe("POST /sessions worktree identity contract", () => {
-  test("legacy workdir-only session returns null worktree metadata", async () => {
+  test("workdir-only session returns non-null worktree metadata (kbbl always creates a worktree)", async () => {
     const registry = makeRegistry();
     const manager = makeRegistryManager(registry);
     const app = makeApp(manager, registry, repoDir);

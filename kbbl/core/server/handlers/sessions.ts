@@ -273,11 +273,16 @@ export function validateGitRefName(name: string, field: string): string | null {
     return `${field} contains invalid characters`;
   if (name.includes("..")) return `${field} must not contain '..'`;
   if (name.includes("@{")) return `${field} must not contain '@{'`;
+  if (name.includes("//")) return `${field} must not contain empty path segments ('//')`;
+  if (name.startsWith("/")) return `${field} must not start with '/'`;
   if (name.startsWith(".")) return `${field} must not start with '.'`;
   if (name.endsWith(".")) return `${field} must not end with '.'`;
   if (name.endsWith("/")) return `${field} must not end with '/'`;
   if (name.endsWith(".lock")) return `${field} must not end with '.lock'`;
   if (name.startsWith("-")) return `${field} must not start with '-'`;
+  // Path components must not start with '.'
+  if (name.split("/").some((seg) => seg.startsWith(".")))
+    return `${field} path components must not start with '.'`;
   return null;
 }
 
