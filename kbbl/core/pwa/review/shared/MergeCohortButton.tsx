@@ -6,12 +6,14 @@ import { ensureOk } from "../../lib/http";
 import type { ReviewThread } from "./types";
 import { UnresolvedThreadsModal } from "./UnresolvedThreadsModal";
 import { ClosedWithoutMergeModal } from "./ClosedWithoutMergeModal";
+import { ThreadsUnknownModal } from "./ThreadsUnknownModal";
 
 type MergeOutcome =
   | { outcome: "already_done" }
   | { outcome: "merged"; via: "already_merged"; merged_at: string | null }
   | { outcome: "merged"; via: "merged_now" }
   | { outcome: "confirm_unresolved"; threads: ReviewThread[] }
+  | { outcome: "confirm_threads_unknown" }
   | { outcome: "not_mergeable"; reason: "conflicts" | "checks_failing" | "unknown" }
   | { outcome: "confirm_closed" };
 
@@ -25,6 +27,7 @@ export function MergeCohortButton({ cohortId, prUrl }: MergeCohortButtonProps) {
   const { pushToast } = useToast();
   const [unresolvedThreads, setUnresolvedThreads] = useState<ReviewThread[] | null>(null);
   const [showClosedModal, setShowClosedModal] = useState(false);
+  const [showThreadsUnknownModal, setShowThreadsUnknownModal] = useState(false);
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ["cohorts", { id: cohortId }] });
@@ -46,6 +49,8 @@ export function MergeCohortButton({ cohortId, prUrl }: MergeCohortButtonProps) {
       invalidate();
     } else if (data.outcome === "confirm_unresolved") {
       setUnresolvedThreads(data.threads);
+    } else if (data.outcome === "confirm_threads_unknown") {
+      setShowThreadsUnknownModal(true);
     } else if (data.outcome === "confirm_closed") {
       setShowClosedModal(true);
     } else if (data.outcome === "not_mergeable") {
@@ -55,7 +60,7 @@ export function MergeCohortButton({ cohortId, prUrl }: MergeCohortButtonProps) {
 
   const mergeMutation = useMutation({
     mutationFn: async (
-      body: { confirm_unresolved?: boolean; confirm_closed?: boolean } | undefined,
+      body: { confirm_unresolved?: boolean; confirm_closed?: boolean; confirm_threads_unknown?: boolean } | undefined,
     ): Promise<MergeOutcome> => {
       const res = await fetch(`/cohorts/${encodeURIComponent(cohortId)}/merge`, {
         method: "POST",
@@ -86,6 +91,11 @@ export function MergeCohortButton({ cohortId, prUrl }: MergeCohortButtonProps) {
     mergeMutation.mutate({ confirm_closed: true });
   };
 
+  const handleConfirmThreadsUnknown = () => {
+    setShowThreadsUnknownModal(false);
+    mergeMutation.mutate({ confirm_threads_unknown: true });
+  };
+
   return (
     <>
       <button
@@ -112,6 +122,14 @@ export function MergeCohortButton({ cohortId, prUrl }: MergeCohortButtonProps) {
           pending={mergeMutation.isPending}
           onConfirm={handleConfirmClosed}
           onCancel={() => setShowClosedModal(false)}
+        />
+      )}
+
+      {showThreadsUnknownModal && (
+        <ThreadsUnknownModal
+          pending={mergeMutation.isPending}
+          onConfirm={handleConfirmThreadsUnknown}
+          onCancel={() => setShowThreadsUnknownModal(false)}
         />
       )}
     </>

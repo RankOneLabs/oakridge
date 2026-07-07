@@ -821,3 +821,93 @@ describe("Session input queue (CC PTY mode)", () => {
     await session.waitForEnd();
   });
 });
+
+describe("Session late-spawn termination", () => {
+  test("handle returned after abort is terminated, session stays ended, onEnded fires once, no new events", async () => {
+    const terminated: SessionHandle[] = [];
+    const onEndedSessions: Session[] = [];
+    const emittedTypes: string[] = [];
+
+    const session = makeSession({
+      callbacks: {
+        onEnded: (s) => onEndedSessions.push(s),
+        onEmit: (_s, evt) => emittedTypes.push(evt.type),
+      },
+    });
+
+    // Abort before any runtime is attached — finalize() runs synchronously.
+    await session.abort();
+    expect(session.status).toBe("ended");
+    expect(onEndedSessions).toHaveLength(1);
+
+    const emittedCountAtAbort = emittedTypes.length;
+
+    // Simulate the late-arriving spawn result: as if session-manager's
+    // runtime.spawn() returned a handle after the session was already finalized.
+    const runtime: AgentRuntime = {
+      ...makeRuntime(),
+      async terminate(h: SessionHandle): Promise<void> {
+        terminated.push(h);
+      },
+    };
+    const handle = await runtime.spawn({ workingDirectory: "/tmp" });
+
+    await session.attachRuntime(runtime, handle);
+
+    // The returned handle must be terminated immediately.
+    expect(terminated).toEqual([handle]);
+    // Session must remain ended (no resurrection to "live").
+    expect(session.status).toBe("ended");
+    // No new events emitted after finalization.
+    expect(emittedTypes.length).toBe(emittedCountAtAbort);
+    // onEnded must fire exactly once (no double-notify).
+    expect(onEndedSessions).toHaveLength(1);
+  });
+
+  test("setStatus live cannot occur after a terminal ended state", async () => {
+    // After a session ends, markLive() (the only public path to setStatus("live")
+    // outside _wireAttached) must be a no-op. This proves the terminal-monotonic
+    // invariant holds for all observable paths — the deeper regression (direct
+    // _wireAttached resurrection) is proven by the late-spawn test above.
+    const session = makeSession();
+    const runtime = makeRuntime([{ type: "completed", result: { code: 0 } }]);
+    const handle = await runtime.spawn({ workingDirectory: "/tmp" });
+    await session.attachRuntime(runtime, handle);
+    await session.waitForEnd();
+    expect(session.status).toBe("ended");
+
+    session.markLive(); // must be no-op from "ended"
+    expect(session.status).toBe("ended");
+  });
+
+  test("double-finalize: onEnded fires exactly once even when abort races with exitPromise", async () => {
+    // Abort and exitPromise's finally block both call finalize(). The second
+    // finalize must be a no-op (status already ended).
+    const onEndedSessions: Session[] = [];
+    let finish!: () => void;
+    const done = new Promise<void>((resolve) => { finish = resolve; });
+
+    const runtime: AgentRuntime = {
+      ...makeRuntime(),
+      async *events(_handle: SessionHandle): AsyncIterable<RuntimeEvent> {
+        await done;
+        yield { type: "completed", result: { code: 0 } };
+      },
+    };
+    const session = makeSession({
+      callbacks: { onEnded: (s) => onEndedSessions.push(s) },
+    });
+    const handle = await runtime.spawn({ workingDirectory: "/tmp" });
+    await session.attachRuntime(runtime, handle);
+
+    // Abort fires finalize() once; the session is now ended.
+    const abortP = session.abort();
+    // Then the runtime's event loop completes, which also calls finalize().
+    finish();
+    await abortP;
+    await session.waitForEnd();
+
+    expect(session.status).toBe("ended");
+    expect(onEndedSessions).toHaveLength(1);
+  });
+});

@@ -3,6 +3,7 @@ import {
   parsePrUrl,
   parsePrViewJson,
   narrowGhStderr,
+  PR_VIEW_FIELDS,
   type PrState,
   type ReviewThread,
 } from "./gh-gateway";
@@ -318,5 +319,62 @@ describe("narrowGhStderr", () => {
     const f = e as Extract<typeof e, { kind: "gh_failed" }>;
     expect(f.exitCode).toBe(1);
     expect(f.stderr).toBe("API error 500");
+  });
+});
+
+// ── PR_VIEW_FIELDS includes reviewThreads ─────────────────────────────────────
+
+describe("PR_VIEW_FIELDS", () => {
+  test("includes reviewThreads so the gateway always requests real thread state", () => {
+    expect(PR_VIEW_FIELDS.split(",")).toContain("reviewThreads");
+  });
+});
+
+// ── parsePrViewJson — open_mergeable_threads_unknown ──────────────────────────
+
+describe("parsePrViewJson — open_mergeable_threads_unknown", () => {
+  test("absent reviewThreads field on a clean-mergeable PR → threads_unknown", () => {
+    // This is the real gh CLI path: older builds omit reviewThreads entirely.
+    // The gateway must not treat absence as 'no threads' (which would be clean).
+    const json = JSON.stringify({
+      state: "OPEN",
+      mergedAt: null,
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN",
+      reviewDecision: null,
+      url: "https://github.com/acme/widget/pull/42",
+      // reviewThreads deliberately absent
+    });
+    const r = parsePrViewJson(json);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.kind).toBe("open_mergeable_threads_unknown");
+    const v = r.value as Extract<PrState, { kind: "open_mergeable_threads_unknown" }>;
+    expect(v.url).toBe("https://github.com/acme/widget/pull/42");
+  });
+
+  test("reviewThreads present but empty → open_mergeable_clean (not threads_unknown)", () => {
+    // Empty nodes array is explicit knowledge that there are no threads.
+    const json = makeGolden({ reviewThreads: { nodes: [] } });
+    const r = parsePrViewJson(json);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.kind).toBe("open_mergeable_clean");
+  });
+
+  test("absent reviewThreads on a non-mergeable PR → open_not_mergeable (mergeability checked first)", () => {
+    const json = JSON.stringify({
+      state: "OPEN",
+      mergedAt: null,
+      mergeable: "CONFLICTING",
+      mergeStateStatus: "DIRTY",
+      reviewDecision: null,
+      url: "https://github.com/acme/widget/pull/42",
+      // reviewThreads absent, but conflicts take priority
+    });
+    const r = parsePrViewJson(json);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.kind).toBe("open_not_mergeable");
   });
 });

@@ -21,6 +21,7 @@ const MergeBodySchema = z
   .object({
     confirm_unresolved: z.boolean().optional(),
     confirm_closed: z.boolean().optional(),
+    confirm_threads_unknown: z.boolean().optional(),
   })
   .optional();
 
@@ -34,6 +35,7 @@ export type MergeOutcome =
   | { outcome: "merged"; via: "already_merged"; merged_at: string | null }
   | { outcome: "merged"; via: "merged_now" }
   | { outcome: "confirm_unresolved"; threads: ReviewThread[] }
+  | { outcome: "confirm_threads_unknown" }
   | { outcome: "not_mergeable"; reason: "conflicts" | "checks_failing" | "unknown" }
   | { outcome: "confirm_closed" };
 
@@ -56,7 +58,7 @@ export function mountCohortMergeRoutes(app: Hono, deps: CohortMergeRouteDeps): v
   const { db, gh } = deps;
 
   app.post("/cohorts/:id/merge", async (c) => {
-    let body: { confirm_unresolved?: boolean; confirm_closed?: boolean } = {};
+    let body: { confirm_unresolved?: boolean; confirm_closed?: boolean; confirm_threads_unknown?: boolean } = {};
     const rawText = await c.req.text();
     if (rawText.trim()) {
       let rawJson: unknown;
@@ -121,7 +123,7 @@ export function mountCohortMergeRoutes(app: Hono, deps: CohortMergeRouteDeps): v
     }
 
     const prState = prStateResult.value;
-    const { confirm_unresolved, confirm_closed } = body;
+    const { confirm_unresolved, confirm_closed, confirm_threads_unknown } = body;
 
     console.log(
       JSON.stringify({
@@ -131,6 +133,7 @@ export function mountCohortMergeRoutes(app: Hono, deps: CohortMergeRouteDeps): v
         prState_kind: prState.kind,
         confirm_unresolved: confirm_unresolved ?? false,
         confirm_closed: confirm_closed ?? false,
+        confirm_threads_unknown: confirm_threads_unknown ?? false,
       }),
     );
 
@@ -168,6 +171,23 @@ export function mountCohortMergeRoutes(app: Hono, deps: CohortMergeRouteDeps): v
         } satisfies MergeOutcome);
       }
       // Operator confirmed → proceed to merge
+      const mergeResult = await gh.mergePr(prUrl);
+      if (!mergeResult.ok) {
+        return c.json({ error: "gh failed", detail: mergeResult.error }, 502);
+      }
+      if (!applyAndEmit(db, cohort_id)) {
+        const cur = getCohort(db, cohort_id);
+        if (cur?.status === "done") return c.json({ outcome: "already_done" } satisfies MergeOutcome);
+        return c.json({ error: "cohort status changed during merge" }, 409);
+      }
+      return c.json({ outcome: "merged", via: "merged_now" } satisfies MergeOutcome);
+    }
+
+    if (prState.kind === "open_mergeable_threads_unknown") {
+      if (!confirm_threads_unknown) {
+        return c.json({ outcome: "confirm_threads_unknown" } satisfies MergeOutcome);
+      }
+      // Operator confirmed despite unknown thread state → proceed to merge.
       const mergeResult = await gh.mergePr(prUrl);
       if (!mergeResult.ok) {
         return c.json({ error: "gh failed", detail: mergeResult.error }, 502);
