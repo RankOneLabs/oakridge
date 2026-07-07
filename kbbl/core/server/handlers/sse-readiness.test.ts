@@ -58,6 +58,98 @@ describe("SSE readiness", () => {
     }
   });
 
+  test("session stream awaits flushTranscript before reading JSONL replay", async () => {
+    const app = new Hono();
+    const endedController = new AbortController();
+    const order: string[] = [];
+    let resolveFlush: () => void = () => {};
+    let resolveHistory: (contents: string) => void = () => {};
+    const flushPromise = new Promise<void>((r) => { resolveFlush = r; });
+    const historyPromise = new Promise<string>((r) => { resolveHistory = r; });
+    const session = {
+      oakridgeSid: "sid-flush" as SessionId,
+      endedSignal: endedController.signal,
+      subscribe: () => () => {},
+      flushTranscript: () => {
+        order.push("flush");
+        return flushPromise;
+      },
+      readJsonl: () => {
+        order.push("read");
+        return historyPromise;
+      },
+    } satisfies SessionStreamSource;
+    const controller = new AbortController();
+
+    app.get("/sessions/:sid/stream", (c) => streamForSession(session, c));
+
+    const res = await app.fetch(
+      new Request("http://kbbl.test/sessions/sid-flush/stream", {
+        signal: controller.signal,
+      }),
+    );
+    expect(res.status).toBe(200);
+
+    const reader = res.body!.getReader();
+    try {
+      // Wait for the ready comment — flush hasn't resolved yet so readJsonl
+      // must not have been called.
+      await readUntil(reader, (b) => b.includes(": ready"));
+      // flush is called but not yet resolved; read must not have been called
+      expect(order).toEqual(["flush"]);
+
+      // Now resolve the flush — readJsonl should be called next. Poll until
+      // the observable condition is met rather than sleeping a fixed interval,
+      // which is flaky under load.
+      resolveFlush();
+      const deadline = Date.now() + 1000;
+      while (order.length < 2 && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 5));
+      }
+      expect(order).toEqual(["flush", "read"]);
+    } finally {
+      resolveHistory("");
+      endedController.abort();
+      controller.abort();
+      await reader.cancel().catch(() => {});
+    }
+  });
+
+  test("session stream with no flushTranscript still replays history", async () => {
+    const app = new Hono();
+    const endedController = new AbortController();
+    let resolveHistory: (contents: string) => void = () => {};
+    const history = new Promise<string>((resolve) => {
+      resolveHistory = resolve;
+    });
+    const session = {
+      oakridgeSid: "sid-noflush" as SessionId,
+      endedSignal: endedController.signal,
+      subscribe: () => () => {},
+      readJsonl: () => history,
+    } satisfies SessionStreamSource;
+    const controller = new AbortController();
+
+    app.get("/sessions/:sid/stream2", (c) => streamForSession(session, c));
+
+    const res = await app.fetch(
+      new Request("http://kbbl.test/sessions/sid-noflush/stream2", {
+        signal: controller.signal,
+      }),
+    );
+    expect(res.status).toBe(200);
+
+    const reader = res.body!.getReader();
+    try {
+      await readUntil(reader, (b) => b.includes(": ready"));
+    } finally {
+      resolveHistory("");
+      endedController.abort();
+      controller.abort();
+      await reader.cancel().catch(() => {});
+    }
+  });
+
   test("session stream writes ready before reading replay history", async () => {
     const app = new Hono();
     const endedController = new AbortController();
