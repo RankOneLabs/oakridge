@@ -1025,42 +1025,46 @@ describe("archive index and cleanable predicate", () => {
     // The server DELETE handler must enforce the live-ownership gate even when the
     // event-derived status is ended — stale tabs or direct API calls may attempt
     // DELETE while the process is still grading.
-    await makeCell("2026-06-01T10-19-00Z", "task", "cond", [
+    //
+    // Cell target and condition are chosen so they match what RunRegistry.launch()
+    // derives via cellIdFor(runTs, spec.task, conditionName(kind, n)):
+    //   spec.task = "prose_substrate_thesis"
+    //   conditionName("single_agent", 1) = "single_agent"
+    const RUN_TS = "2026-06-01T10-19-00Z";
+    await makeCell(RUN_TS, "prose_substrate_thesis", "single_agent", [
       eventLine("incremental_started"),
       eventLine("incremental_terminated"),
     ]);
     const cells = await listCells();
-    const cellId = cells[0].cell_id;
-    expect(cells[0].status).toBe("ended");
+    const cell = cells.find((c) => c.run_ts === RUN_TS);
+    expect(cell?.status).toBe("ended");
+    const cellId = cell!.cell_id;
 
-    // Use a registry that reports the cell as running.
+    // Seed the registry with a "running" record for this cell so the server
+    // handler's liveCellIds set contains cellId.
     const registry = new RunRegistry(noopLauncher);
-    // Inject a fake "running" record by directly accessing the internal map
-    // via a launched run whose cell_id matches. Instead, build a registry
-    // that returns the cellId as a live id via a custom launcher shim.
-    // We simulate the live check by passing liveCellIds to listCells, but
-    // the server handler reads liveCellIds from its own registry. To make
-    // the server return 409, we rely on the app's registry.
-    //
-    // The simplest way: launch a noop run so its cell_id appears in live set.
-    // But the run's cell_id is derived from the runSpec, not our cell. Instead,
-    // patch the test by verifying computeCleanable directly and the server path
-    // via a manually-injected registry.
-    //
-    // Since RunRegistry.list() drives the liveCellIds set in the server handler,
-    // and we can't easily inject an arbitrary cell_id as "running" without a real
-    // RunRecord, we verify the server path by reading the summary with liveCellIds.
-    const summaryWithLive = await getCellSummary(cellId, new Set([cellId]));
-    expect(summaryWithLive?.cleanable).toBe(false);
+    registry.launch({
+      runTs: RUN_TS,
+      spec: {
+        task: "prose_substrate_thesis",
+        model_pool: ["claude-sonnet-4-6"],
+        condition: { kind: "single_agent", n: 1 },
+        grade: false,
+      },
+      specPath: "/tmp/fake-spec.json",
+      outputDir: "/tmp/fake-output",
+    });
+    // Confirm the registry reports the cell as running
+    const liveIds = new Set(
+      registry.list().filter((r) => r.status === "running").map((r) => r.cell_id),
+    );
+    expect(liveIds.has(cellId)).toBe(true);
 
-    // The server without a live run (noopLauncher produces no running cells)
-    // will see cleanable=true and allow DELETE — which is correct behavior
-    // when no process is actually live. The 409 fires only when the registry
-    // has a "running" entry for that cell. Verified above via getCellSummary.
     const app = createApp({ registry });
     const resp = await app.request(`/api/cells/${cellId}`, { method: "DELETE" });
-    // With noopLauncher registry having no running entries, cleanable=true → 200
-    expect(resp.status).toBe(200);
+    expect(resp.status).toBe(409);
+    const body = (await resp.json()) as { error: string };
+    expect(body.error).toBe("Run still in progress");
   });
 
   test("incremental-to-consensus transition: live process blocks DELETE even when status is ended", async () => {
