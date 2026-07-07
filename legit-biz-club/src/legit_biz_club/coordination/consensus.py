@@ -360,7 +360,11 @@ class ConsensusMechanism(ABC):
                     round_index=round_index,
                     failures=failed_agent_errors,
                 )
-            if not failed_agents:
+            if failed_agents:
+                self._validate_successful_proposals_match_live_agents(
+                    proposals, failed_agents
+                )
+            else:
                 self._validate_proposals_match_agents(proposals)
 
             converged = self.round_budget_policy.is_converged(proposals)
@@ -516,6 +520,36 @@ class ConsensusMechanism(ABC):
                 f"expected {expected}, got {actual} — "
                 "programmer error in one of the Proposers"
             )
+
+    def _validate_successful_proposals_match_live_agents(
+        self, proposals: list[Proposal], failed_agents: list[str]
+    ) -> None:
+        """Validate partial-round proposal ids after some proposers fail.
+
+        A partial round cannot require a full multiset match against all
+        enrolled agents, but successful outputs still must be unique,
+        enrolled, and not claim an agent id whose proposer failed.
+        """
+        enrolled_agent_ids = {agent.id for agent in self.agents}
+        failed_agent_ids = set(failed_agents)
+        seen_agent_ids: set[str] = set()
+        for proposal in proposals:
+            if proposal.agent_id not in enrolled_agent_ids:
+                raise ValueError(
+                    "successful proposal agent_id is not enrolled — "
+                    f"got {proposal.agent_id!r}; enrolled={sorted(enrolled_agent_ids)}"
+                )
+            if proposal.agent_id in failed_agent_ids:
+                raise ValueError(
+                    "successful proposal agent_id claims a failed agent — "
+                    f"got {proposal.agent_id!r}; failed={sorted(failed_agent_ids)}"
+                )
+            if proposal.agent_id in seen_agent_ids:
+                raise ValueError(
+                    "duplicate successful proposal agent_id in partial round — "
+                    f"got {proposal.agent_id!r}"
+                )
+            seen_agent_ids.add(proposal.agent_id)
 
     async def _safe_emit(
         self, kind: WorkspaceEventKind, payload: WorkspaceEventPayload

@@ -853,6 +853,7 @@ impl Coordinator {
                     let now = Utc::now();
                     for (stage_key, (si_id, status)) in &task.index {
                         if matches!(*status, StageStatus::Pending | StageStatus::Running | StageStatus::Parked) {
+                            let terminal_meta = serde_json::json!({"error": "recovery: no live handle for non-terminal stage"});
                             // Preserve existing started_at so recovery doesn't wipe timing data.
                             let existing_started_at = queries::get_stage_instance_by_id(&self.db, si_id)
                                 .await
@@ -863,11 +864,17 @@ impl Coordinator {
                                 si_id,
                                 StageStatus::Failed,
                                 None,
-                                Some(serde_json::json!({"error": "recovery: no live handle for non-terminal stage"})),
+                                Some(terminal_meta.clone()),
                                 existing_started_at,
                                 Some(now),
                             )
                             .await;
+                            self.bus.publish(run_id, SubstrateEvent::StageStatusChanged {
+                                stage_instance_id: *si_id,
+                                status: StageStatus::Failed,
+                                parked_reason: None,
+                                terminal_meta: Some(terminal_meta),
+                            });
                             tracing::warn!(
                                 run_id = %run_id.0,
                                 stage_key = %stage_key,
@@ -1832,5 +1839,99 @@ mod tests {
 
         let run_final = queries::get_workflow_run_by_id(&pool, &run.id).await.unwrap();
         assert_eq!(run_final.status, RunStatus::Failed, "all-Failed recovered run must settle to Failed");
+    }
+
+    #[tokio::test]
+    async fn recovery_idle_non_terminal_stage_publishes_failed_stage_event() {
+        let pool = make_pool().await;
+        let artifact_reg = make_artifact_registry();
+        let bus = EventBus::new();
+        let coord = Coordinator::new(pool.clone(), Arc::new(StageTypeRegistry::new()), artifact_reg, bus.clone());
+
+        let def = WorkflowDef {
+            id: WorkflowDefId(Uuid::new_v4()),
+            name: format!("wf-{}", Uuid::new_v4()),
+            version: 1,
+            graph: WorkflowGraph {
+                stages: {
+                    let mut m = HashMap::new();
+                    m.insert("A".into(), StageNodeDef {
+                        stage_type: "missing_type".into(), config: json!({}),
+                        inputs: vec![], outputs: vec![],
+                    });
+                    m
+                },
+                edges: vec![],
+            },
+            created_at: fixed_dt(),
+        };
+        queries::insert_workflow_def(&pool, &def).await.unwrap();
+
+        let run = WorkflowRun {
+            id: WorkflowRunId(Uuid::new_v4()),
+            workflow_def_id: def.id,
+            project_id: None,
+            status: RunStatus::Running,
+            context: json!({}),
+            version: 1,
+            created_at: fixed_dt(),
+            updated_at: fixed_dt(),
+        };
+        queries::insert_workflow_run(&pool, &run).await.unwrap();
+
+        let si = StageInstance {
+            id: StageInstanceId(Uuid::new_v4()),
+            run_id: run.id,
+            stage_key: "A".into(),
+            stage_type: "missing_type".into(),
+            status: StageStatus::Pending,
+            config: json!({}),
+            parked_reason: None,
+            parked_meta: None,
+            terminal_meta: None,
+            external_ref: None,
+            started_at: None,
+            ended_at: None,
+            created_at: fixed_dt(),
+            updated_at: fixed_dt(),
+        };
+        queries::insert_stage_instance(&pool, &si).await.unwrap();
+
+        let mut global_rx = bus.subscribe_global();
+        coord.recover().await.unwrap();
+
+        let persisted = queries::get_stage_instance_by_id(&pool, &si.id).await.unwrap();
+        assert_eq!(persisted.status, StageStatus::Failed);
+
+        let mut saw_stage_failed = false;
+        let mut saw_run_failed = false;
+        for _ in 0..20 {
+            match tokio::time::timeout(timeout_dur(), global_rx.recv()).await {
+                Ok(Ok(ev)) => match ev.event {
+                    SubstrateEvent::StageStatusChanged {
+                        stage_instance_id,
+                        status,
+                        terminal_meta,
+                        ..
+                    } if stage_instance_id == si.id && status == StageStatus::Failed => {
+                        assert_eq!(
+                            terminal_meta,
+                            Some(json!({"error": "recovery: no live handle for non-terminal stage"}))
+                        );
+                        saw_stage_failed = true;
+                    }
+                    SubstrateEvent::RunStatusChanged { status: RunStatus::Failed, .. } => {
+                        saw_run_failed = true;
+                    }
+                    _ => {}
+                },
+                _ => break,
+            }
+            if saw_stage_failed && saw_run_failed {
+                break;
+            }
+        }
+        assert!(saw_stage_failed, "recovery must publish StageStatusChanged Failed");
+        assert!(saw_run_failed, "recovery must publish RunStatusChanged Failed");
     }
 }

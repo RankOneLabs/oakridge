@@ -290,16 +290,21 @@ for (const sig of ["SIGINT", "SIGTERM"] as const) {
       for (const r of runtimes) {
         const stopAppServer = (r as unknown as { stopAppServer?: unknown }).stopAppServer;
         if (typeof stopAppServer === "function") {
+          let timeoutId: ReturnType<typeof setTimeout> | undefined;
           await Promise.race([
             (stopAppServer as () => Promise<void>)(),
-            new Promise<void>((_, reject) =>
-              setTimeout(() => reject(new Error("stopAppServer timed out")), 5_000),
-            ),
-          ]).catch((err: unknown) => {
-            console.error(
-              `kbbl: ${r.id} stopAppServer error: ${err instanceof Error ? err.message : String(err)}`,
-            );
-          });
+            new Promise<void>((_, reject) => {
+              timeoutId = setTimeout(() => reject(new Error("stopAppServer timed out")), 5_000);
+            }),
+          ])
+            .finally(() => {
+              if (timeoutId !== undefined) clearTimeout(timeoutId);
+            })
+            .catch((err: unknown) => {
+              console.error(
+                `kbbl: ${r.id} stopAppServer error: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            });
         }
       }
       server.stop();

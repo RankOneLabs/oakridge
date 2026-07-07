@@ -59,6 +59,7 @@ describe("useInbox EventSource revival and parse guards", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -91,6 +92,7 @@ describe("useInbox EventSource revival and parse guards", () => {
   });
 
   it("sets inboxStatus=stale and does not throw on a malformed snapshot frame", () => {
+    vi.useFakeTimers();
     renderHook(() => useInbox(), { wrapper: makeWrapper() });
 
     act(() => {
@@ -103,10 +105,17 @@ describe("useInbox EventSource revival and parse guards", () => {
     });
 
     expect(useStore.getState().inboxStatus).toBe("stale");
-    expect(MockEventSource.last!.closed).toBe(false);
+    expect(MockEventSource.instances[0]!.closed).toBe(true);
+
+    act(() => {
+      vi.runOnlyPendingTimers();
+    });
+
+    expect(MockEventSource.instances).toHaveLength(2);
   });
 
   it("sets inboxStatus=stale and does not throw on a malformed delta frame", () => {
+    vi.useFakeTimers();
     renderHook(() => useInbox(), { wrapper: makeWrapper() });
 
     act(() => {
@@ -119,6 +128,12 @@ describe("useInbox EventSource revival and parse guards", () => {
     });
 
     expect(useStore.getState().inboxStatus).toBe("stale");
-    expect(MockEventSource.last!.closed).toBe(false);
+    expect(MockEventSource.instances[0]!.closed).toBe(true);
+
+    act(() => {
+      vi.runOnlyPendingTimers();
+    });
+
+    expect(MockEventSource.instances).toHaveLength(2);
   });
 });

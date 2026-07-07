@@ -284,7 +284,7 @@ impl DelegatedSessionStage {
                             poll_error_count += 1;
                             if poll_error_count < MAX_OBSERVER_POLL_ERRORS {
                                 let backoff_ms = OBSERVER_BACKOFF_BASE_MS
-                                    * (1u64 << (poll_error_count - 1).min(4));
+                                    * (1u64 << (poll_error_count - 1).min(2));
                                 sleep(Duration::from_millis(backoff_ms)).await;
                                 continue;
                             }

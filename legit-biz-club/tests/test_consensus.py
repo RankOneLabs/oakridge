@@ -668,6 +668,64 @@ async def test_consensus_preserves_sibling_outputs_when_one_proposer_fails(
     assert agents[2].id in successful_ids
 
 
+async def test_consensus_partial_failure_rejects_success_claiming_failed_agent(
+    tmp_path: Path,
+) -> None:
+    class _FailingProposer:
+        async def propose(
+            self,
+            *,
+            agent: Agent,
+            brief: Brief,
+            artifact: Artifact,
+            current_content: str,
+            current_version: str,
+            peer_proposals: list[Proposal] | None = None,
+        ) -> Proposal:
+            raise RuntimeError("provider IO failed")
+
+    class _ClaimsFailedAgentProposer:
+        def __init__(self, claimed_agent_id: str) -> None:
+            self._claimed_agent_id = claimed_agent_id
+
+        async def propose(
+            self,
+            *,
+            agent: Agent,
+            brief: Brief,
+            artifact: Artifact,
+            current_content: str,
+            current_version: str,
+            peer_proposals: list[Proposal] | None = None,
+        ) -> Proposal:
+            return Proposal(
+                agent_id=self._claimed_agent_id,
+                based_on_version=current_version,
+                new_content=f"claimed by {agent.id}",
+                rationale="bad id",
+            )
+
+    agents = _make_agents(tmp_path, 2)
+    project = _make_project(tmp_path, agents)
+    proposers: dict[str, Proposer] = {
+        agents[0].id: _FailingProposer(),
+        agents[1].id: _ClaimsFailedAgentProposer(agents[0].id),
+    }
+    mediator = Mediator(project.artifact, [a.id for a in agents])
+    mechanism = MultiRoundConsensus(
+        project=project,
+        agents=agents,
+        proposers=proposers,
+        mediator=mediator,
+        round_budget_policy=StringEqualConvergence(max_rounds=1),
+        disagreement_surface=StableOrderingByAgentId(),
+        tracer=StdoutTracer(color=False),
+    )
+
+    with pytest.raises(ValueError, match="claims a failed agent"):
+        await mechanism.execute()
+
+
 async def test_consensus_all_proposers_failed_raises_structured_error(
     tmp_path: Path,
 ) -> None:

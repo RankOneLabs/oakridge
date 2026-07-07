@@ -56,9 +56,14 @@ export function useInbox(opts: { onSessionRemoved?: (sid: string) => void } = {}
   useEffect(() => {
     let current: EventSource | null = null;
     let stopped = false;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
     const connect = () => {
       if (stopped) return;
+      if (reconnectTimer !== null) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
       current?.close();
       setInboxStatus("connecting");
       const es = new EventSource("/inbox");
@@ -72,7 +77,7 @@ export function useInbox(opts: { onSessionRemoved?: (sid: string) => void } = {}
           const data = JSON.parse((e as MessageEvent).data) as SessionsListResponse;
           applySnapshot(data.sessions);
         } catch {
-          setInboxStatus("stale");
+          markStaleAndReconnect();
         }
       });
 
@@ -86,10 +91,21 @@ export function useInbox(opts: { onSessionRemoved?: (sid: string) => void } = {}
             onSessionRemovedRef.current?.(delta.sid);
           }
         } catch {
-          setInboxStatus("stale");
+          markStaleAndReconnect();
         }
       });
     };
+
+    function markStaleAndReconnect() {
+      if (stopped) return;
+      setInboxStatus("stale");
+      current?.close();
+      if (reconnectTimer !== null) return;
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        connect();
+      }, 0);
+    }
 
     const reviveIfStale = () => {
       if (document.visibilityState !== "visible") return;
@@ -108,6 +124,7 @@ export function useInbox(opts: { onSessionRemoved?: (sid: string) => void } = {}
       stopped = true;
       document.removeEventListener("visibilitychange", reviveIfStale);
       window.removeEventListener("focus", reviveIfStale);
+      if (reconnectTimer !== null) clearTimeout(reconnectTimer);
       current?.close();
     };
   }, [applyInboxDelta, applySnapshot, setInboxStatus]);

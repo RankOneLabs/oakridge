@@ -70,13 +70,28 @@ export async function streamForSession(session: SessionStreamSource, c: Context)
       // after the last write would otherwise miss the un-flushed tail. Best-
       // effort: a transient FS error must not abort the SSE stream — clients
       // can still read the (possibly slightly stale) JSONL and reconnect.
-      await session.flushTranscript?.().catch((err: unknown) => {
-        console.error(
-          `kbbl: flushTranscript failed for ${session.oakridgeSid}, continuing with readJsonl: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-      });
+      if (session.flushTranscript !== undefined) {
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([
+          session.flushTranscript(),
+          new Promise<void>((_, reject) => {
+            timeoutId = setTimeout(
+              () => reject(new Error("flushTranscript timed out")),
+              5_000,
+            );
+          }),
+        ])
+          .finally(() => {
+            if (timeoutId !== undefined) clearTimeout(timeoutId);
+          })
+          .catch((err: unknown) => {
+            console.error(
+              `kbbl: flushTranscript failed for ${session.oakridgeSid}, continuing with readJsonl: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            );
+          });
+      }
 
       const contents = await session.readJsonl();
       for (const line of contents.split("\n")) {
