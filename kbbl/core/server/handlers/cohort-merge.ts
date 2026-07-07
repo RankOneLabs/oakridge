@@ -133,6 +133,7 @@ export function mountCohortMergeRoutes(app: Hono, deps: CohortMergeRouteDeps): v
         prState_kind: prState.kind,
         confirm_unresolved: confirm_unresolved ?? false,
         confirm_closed: confirm_closed ?? false,
+        confirm_threads_unknown: confirm_threads_unknown ?? false,
       }),
     );
 
