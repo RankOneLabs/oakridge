@@ -283,6 +283,20 @@ for (const sig of ["SIGINT", "SIGTERM"] as const) {
     void (async () => {
       const worstCode = await manager.endAll();
       await manager.drainLifecycle();
+      // Stop any optional app-servers (e.g. Codex). Capability-based: only
+      // runtimes that expose stopAppServer need to be stopped. Failure is
+      // logged but does not block process exit — a stuck teardown would be a
+      // worse outcome than leaking a socket.
+      for (const r of runtimes) {
+        const stopAppServer = (r as unknown as { stopAppServer?: () => Promise<void> }).stopAppServer;
+        if (stopAppServer) {
+          await stopAppServer().catch((err: unknown) => {
+            console.error(
+              `kbbl: ${r.id} stopAppServer error: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          });
+        }
+      }
       server.stop();
       process.exit(worstCode);
     })();

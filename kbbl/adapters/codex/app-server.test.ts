@@ -62,3 +62,56 @@ describe("Codex runtime descriptor", () => {
     expect(rt.descriptor.id).toBe("codex");
   });
 });
+
+describe("Codex app-server shutdown", () => {
+  test("descriptor-only runtime has no stopAppServer (never-started case is safe)", async () => {
+    const { createCodexRuntimeDescriptorOnly } = await import("./index");
+    const rt = createCodexRuntimeDescriptorOnly();
+    // The server shutdown path checks for optional stopAppServer via casting.
+    // When Codex was never started, it must be absent so the path skips it cleanly.
+    const stop = (rt as unknown as { stopAppServer?: () => Promise<void> }).stopAppServer;
+    expect(stop).toBeUndefined();
+  });
+
+  test("stop() is idempotent: repeated calls return the same promise and side-effects run once", async () => {
+    // Unit-test the idempotency contract for the stop() closure pattern used in
+    // startCodexAppServer without needing a live Codex process.
+    let sideEffectCount = 0;
+    let stopPromise: Promise<void> | null = null;
+
+    function stop(): Promise<void> {
+      if (stopPromise !== null) return stopPromise;
+      stopPromise = (async () => {
+        sideEffectCount++;
+      })();
+      return stopPromise;
+    }
+
+    const p1 = stop();
+    const p2 = stop();
+    expect(p1).toBe(p2);      // same promise object
+    await p1;
+    await p2;
+    expect(sideEffectCount).toBe(1);  // side-effect ran exactly once
+  });
+
+  test("stop() in progress: a second call while the first is pending returns the same promise", async () => {
+    let resolveStop!: () => void;
+    const innerDone = new Promise<void>((r) => { resolveStop = r; });
+    let stopPromise: Promise<void> | null = null;
+
+    function stop(): Promise<void> {
+      if (stopPromise !== null) return stopPromise;
+      stopPromise = innerDone;
+      return stopPromise;
+    }
+
+    const p1 = stop();
+    const p2 = stop();
+    expect(p1).toBe(p2);
+
+    resolveStop();
+    await p1;
+    await p2;
+  });
+});
