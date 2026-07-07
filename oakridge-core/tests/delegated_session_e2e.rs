@@ -705,14 +705,18 @@ async fn waiting_for_kbbl_parks_and_reattaches() {
     .await
     .unwrap();
 
-    let timeout = Duration::from_secs(5);
+    let timeout = Duration::from_secs(15);
 
     // Stage must be parked as waiting_for_kbbl while kbbl is unavailable.
+    // Poll until both parked_reason AND parked_meta are written — they are
+    // two separate DB calls and reading between them would see parked_meta=None.
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
         let s = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
-        if s.parked_reason.as_deref() == Some("waiting_for_kbbl") {
-            let meta = s.parked_meta.expect("parked_meta must be set");
+        if s.parked_reason.as_deref() == Some("waiting_for_kbbl")
+            && s.parked_meta.is_some()
+        {
+            let meta = s.parked_meta.unwrap();
             assert_eq!(
                 meta.get("kind").and_then(|v| v.as_str()),
                 Some("waiting_for_kbbl"),
@@ -819,13 +823,16 @@ async fn session_ended_without_emit_parks_running_stage() {
     fake_kbbl.emit_terminal_event.store(true, Ordering::SeqCst);
 
     // Stage must become Parked with parked_reason = "session_ended_without_emit".
+    // Poll until both parked_reason AND parked_meta are written — they are
+    // two separate DB calls and reading between them would see parked_meta=None.
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
         let s = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
         if s.status == StageStatus::Parked
             && s.parked_reason.as_deref() == Some("session_ended_without_emit")
+            && s.parked_meta.is_some()
         {
-            let meta = s.parked_meta.expect("parked_meta must be set");
+            let meta = s.parked_meta.unwrap();
             assert_eq!(
                 meta.get("kind").and_then(|v| v.as_str()),
                 Some("session_ended_without_emit"),
