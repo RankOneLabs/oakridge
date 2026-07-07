@@ -453,7 +453,10 @@ async fn observer_loop(
                     // If the stage is already Parked (artifact emitted, waiting at gate),
                     // the clean exit is expected — stop observing but keep the live session
                     // entry intact so the pending gate decision can still be delivered.
-                    if matches!(ctx.stage_instance_summary().status, StageStatus::Running) {
+                    // Read from DB rather than the in-memory cache, which can be stale when
+                    // the scheduler has written a Parked status that has not yet propagated.
+                    let persisted = ctx.persisted_status().await.unwrap_or(StageStatus::Running);
+                    if matches!(persisted, StageStatus::Running) {
                         let _ = ctx.set_status(
                             StageStatus::Parked,
                             Some("session_ended_without_emit".to_string()),
@@ -529,7 +532,19 @@ struct WaitingForKbblHandle {
 
 #[async_trait]
 impl StageHandle for WaitingForKbblHandle {
-    async fn resume(&self, _payload: crate::executor::ResumePayload) -> anyhow::Result<()> {
+    async fn resume(&self, payload: crate::executor::ResumePayload) -> anyhow::Result<()> {
+        // If the retry task has already reattached (kbbl came back), delegate to the
+        // live session exactly as DelegatedSessionHandle would.
+        let session = self.live_sessions.lock().unwrap().get(&self.stage_instance_id).cloned();
+        if session.is_some() {
+            let delegate = DelegatedSessionHandle {
+                stage_instance_id: self.stage_instance_id,
+                sid: self.sid.clone(),
+                kbbl_client: self.kbbl_client.clone(),
+                live_sessions: self.live_sessions.clone(),
+            };
+            return delegate.resume(payload).await;
+        }
         anyhow::bail!("cannot resume a stage that is waiting for kbbl to become available")
     }
 

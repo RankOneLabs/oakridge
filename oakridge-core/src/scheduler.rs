@@ -792,7 +792,7 @@ impl Coordinator {
                         if let Some((_, ref mut s)) = task.index.get_mut(&si.stage_key) {
                             *s = StageStatus::Failed;
                         }
-                        let _ = queries::update_stage_instance_status_with_terminal_meta(
+                        match queries::update_stage_instance_status_with_terminal_meta(
                             &self.db,
                             &si.id,
                             StageStatus::Failed,
@@ -801,13 +801,25 @@ impl Coordinator {
                             si.started_at,
                             Some(Utc::now()),
                         )
-                        .await;
-                        self.bus.publish(run_id, SubstrateEvent::StageStatusChanged {
-                            stage_instance_id: si.id,
-                            status: StageStatus::Failed,
-                            parked_reason: None,
-                            terminal_meta: Some(terminal_meta),
-                        });
+                        .await
+                        {
+                            Ok(_) => {
+                                self.bus.publish(run_id, SubstrateEvent::StageStatusChanged {
+                                    stage_instance_id: si.id,
+                                    status: StageStatus::Failed,
+                                    parked_reason: None,
+                                    terminal_meta: Some(terminal_meta),
+                                });
+                            }
+                            Err(err) => {
+                                tracing::error!(
+                                    stage_instance_id = %si.id.0,
+                                    stage_key = si.stage_key,
+                                    "recovery: failed to persist missing_stage_key failure: {}",
+                                    err
+                                );
+                            }
+                        }
                         continue;
                     }
                 };
@@ -827,7 +839,7 @@ impl Coordinator {
                         if let Some((_, ref mut s)) = task.index.get_mut(&si.stage_key) {
                             *s = StageStatus::Failed;
                         }
-                        let _ = queries::update_stage_instance_status_with_terminal_meta(
+                        match queries::update_stage_instance_status_with_terminal_meta(
                             &self.db,
                             &si.id,
                             StageStatus::Failed,
@@ -836,13 +848,25 @@ impl Coordinator {
                             si.started_at,
                             Some(Utc::now()),
                         )
-                        .await;
-                        self.bus.publish(run_id, SubstrateEvent::StageStatusChanged {
-                            stage_instance_id: si.id,
-                            status: StageStatus::Failed,
-                            parked_reason: None,
-                            terminal_meta: Some(terminal_meta),
-                        });
+                        .await
+                        {
+                            Ok(_) => {
+                                self.bus.publish(run_id, SubstrateEvent::StageStatusChanged {
+                                    stage_instance_id: si.id,
+                                    status: StageStatus::Failed,
+                                    parked_reason: None,
+                                    terminal_meta: Some(terminal_meta),
+                                });
+                            }
+                            Err(err) => {
+                                tracing::error!(
+                                    stage_instance_id = %si.id.0,
+                                    stage_key = si.stage_key,
+                                    "recovery: failed to persist unregistered_stage_type failure: {}",
+                                    err
+                                );
+                            }
+                        }
                         continue;
                     }
                 };
