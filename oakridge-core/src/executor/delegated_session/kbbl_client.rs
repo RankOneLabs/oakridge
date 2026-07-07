@@ -30,6 +30,9 @@ pub struct CreateSessionRequest {
     pub name: String,
     pub artifact_id: String,
     pub runtime: DelegatedRuntime,
+    /// Omitted entirely when None so kbbl treats the field as absent (not null).
+    /// kbbl distinguishes `null` (present invalid value → 400) from omitted (use runtime default).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
 }
 
@@ -403,6 +406,39 @@ mod tests {
                 }
             ]
         }))
+    }
+
+    #[test]
+    fn create_session_request_model_none_omits_key() {
+        let req = CreateSessionRequest {
+            workdir: "/work".into(),
+            name: "s".into(),
+            artifact_id: "a".into(),
+            runtime: DelegatedRuntime::Codex,
+            model: None,
+        };
+        let value = serde_json::to_value(&req).unwrap();
+        assert!(
+            !value.as_object().unwrap().contains_key("model"),
+            "model key must be absent when None, not serialized as null"
+        );
+    }
+
+    #[test]
+    fn create_session_request_model_some_serializes_as_string() {
+        let req = CreateSessionRequest {
+            workdir: "/work".into(),
+            name: "s".into(),
+            artifact_id: "a".into(),
+            runtime: DelegatedRuntime::Codex,
+            model: Some("gpt-4.1".into()),
+        };
+        let value = serde_json::to_value(&req).unwrap();
+        assert_eq!(
+            value.get("model").and_then(|v| v.as_str()),
+            Some("gpt-4.1"),
+            "model key must be present with string value when Some"
+        );
     }
 
     #[tokio::test]

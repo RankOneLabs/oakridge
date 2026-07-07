@@ -1078,8 +1078,7 @@ mod tests {
                         "workdir": "/workdir",
                         "name": "delegate",
                         "artifact_id": si_id.0.to_string(),
-                        "runtime": "codex",
-                        "model": null
+                        "runtime": "codex"
                     })),
                 },
                 RecordedRequest {
@@ -1284,8 +1283,7 @@ mod tests {
                         "workdir": "/workdir",
                         "name": "delegate",
                         "artifact_id": si_id.0.to_string(),
-                        "runtime": "codex",
-                        "model": null
+                        "runtime": "codex"
                     })),
                 },
                 RecordedRequest {
@@ -1365,8 +1363,7 @@ mod tests {
                         "workdir": "/workdir",
                         "name": "delegate",
                         "artifact_id": si_id.0.to_string(),
-                        "runtime": "codex",
-                        "model": null
+                        "runtime": "codex"
                     })),
                 },
                 RecordedRequest {
@@ -1550,8 +1547,7 @@ mod tests {
                         "workdir": "/workdir",
                         "name": "delegate",
                         "artifact_id": si_id.0.to_string(),
-                        "runtime": "codex",
-                        "model": null
+                        "runtime": "codex"
                     })),
                 },
                 RecordedRequest {
