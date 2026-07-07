@@ -726,6 +726,137 @@ async def test_run_cell_clears_stale_eval_scores_sidecar_on_rerun(
     assert not sidecar.exists()
 
 
+# --- grader failure containment --------------------------------------------
+
+
+async def test_run_cell_grader_constructor_exception_yields_partial_success(
+    tmp_path: Path,
+) -> None:
+    """When grader_factory raises during grader construction, run_cell
+    must return partial success: exit with a CellResult whose
+    artifact_path exists, eval_scores is empty, and grading_error is
+    set. The artifact must not be overwritten."""
+    target = prose_task(seed_content="seed")
+    condition = single_agent_baseline()
+    proposer_factory = stub_proposer_factory(_AppendingProposer)
+
+    class _BoomOnConstruct(Grader):  # type: ignore[misc]
+        async def grade(self, input: str, output: str, context=None) -> list[Score]:  # noqa: A002
+            return []  # never reached
+
+    def grader_factory(t):  # type: ignore[no-untyped-def]
+        raise RuntimeError("grader constructor exploded")
+
+    result = await run_cell(
+        target=target,
+        condition=condition,
+        proposer_factory=proposer_factory,
+        output_dir=tmp_path,
+        grader_factory=grader_factory,
+        tracer=StdoutTracer(color=False),
+    )
+    assert isinstance(result, CellResult)
+    assert result.artifact_path.exists()
+    assert result.eval_scores == []
+    assert result.grading_error is not None
+    assert "RuntimeError" in result.grading_error
+    assert "grader constructor exploded" in result.grading_error
+
+
+async def test_run_cell_grader_execution_exception_yields_partial_success(
+    tmp_path: Path,
+) -> None:
+    """When grader.grade() raises after the artifact is written, the
+    artifact survives and the cell returns partial success with
+    grading_error set and eval_scores empty."""
+    target = prose_task(seed_content="seed")
+    condition = single_agent_baseline()
+    proposer_factory = stub_proposer_factory(_AppendingProposer)
+
+    class _BoomOnGrade(Grader):  # type: ignore[misc]
+        async def grade(self, input: str, output: str, context=None) -> list[Score]:  # noqa: A002
+            raise ValueError("judge service timed out")
+
+    def grader_factory(t):  # type: ignore[no-untyped-def]
+        return _BoomOnGrade()
+
+    result = await run_cell(
+        target=target,
+        condition=condition,
+        proposer_factory=proposer_factory,
+        output_dir=tmp_path,
+        grader_factory=grader_factory,
+        tracer=StdoutTracer(color=False),
+    )
+    assert isinstance(result, CellResult)
+    assert result.artifact_path.exists()
+    assert result.final_artifact_content.startswith("seed")
+    assert result.eval_scores == []
+    assert result.grading_error is not None
+    assert "ValueError" in result.grading_error
+    assert "judge service timed out" in result.grading_error
+
+
+async def test_run_cell_grader_failure_does_not_write_eval_scores_sidecar(
+    tmp_path: Path,
+) -> None:
+    """A failed grade must not leave a stale eval_scores.json — the
+    absent-file contract has to hold even when the grader raises."""
+    target = prose_task(seed_content="seed")
+    condition = single_agent_baseline()
+    proposer_factory = stub_proposer_factory(_AppendingProposer)
+
+    def grader_factory(t):  # type: ignore[no-untyped-def]
+        raise OSError("disk error during grader init")
+
+    result = await run_cell(
+        target=target,
+        condition=condition,
+        proposer_factory=proposer_factory,
+        output_dir=tmp_path,
+        grader_factory=grader_factory,
+        tracer=StdoutTracer(color=False),
+    )
+    assert result.grading_error is not None
+    sidecar = tmp_path / target.name / condition.name / "eval_scores.json"
+    assert not sidecar.exists()
+
+
+async def test_run_cell_grader_failure_emits_grading_failed_event(
+    tmp_path: Path,
+) -> None:
+    """A failed grade must emit a grading_failed workspace event so
+    operators can diagnose the failure from events.jsonl without losing
+    the artifact."""
+    target = prose_task(seed_content="seed")
+    condition = single_agent_baseline()
+    proposer_factory = stub_proposer_factory(_AppendingProposer)
+
+    emitted: list[tuple[str, dict]] = []
+
+    async def _emit(kind: str, payload: dict) -> None:
+        emitted.append((kind, payload))
+
+    def grader_factory(t):  # type: ignore[no-untyped-def]
+        raise RuntimeError("network unreachable")
+
+    await run_cell(
+        target=target,
+        condition=condition,
+        proposer_factory=proposer_factory,
+        output_dir=tmp_path,
+        grader_factory=grader_factory,
+        emit=_emit,
+        tracer=StdoutTracer(color=False),
+    )
+    grading_events = [k for k, _ in emitted if k == "grading_failed"]
+    assert len(grading_events) == 1
+    payload = emitted[next(i for i, (k, _) in enumerate(emitted) if k == "grading_failed")][1]
+    assert payload["error_class"] == "RuntimeError"
+    assert "network unreachable" in payload["error_message"]
+    assert "artifact_path" in payload
+
+
 # --- run_study -------------------------------------------------------------
 
 

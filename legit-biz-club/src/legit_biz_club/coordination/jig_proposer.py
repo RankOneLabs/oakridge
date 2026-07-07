@@ -22,14 +22,17 @@ agent in a list and returns the dict the coordinator wants.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import random
 import re
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
-from jig.core.types import CompletionParams, LLMClient, Message, Role
+from jig.core.errors import JigLLMError
+from jig.core.types import CompletionParams, LLMClient, LLMResponse, Message, Role
 from jig.llm.factory import from_model
 
 from legit_biz_club.coordination.proposal import Proposal
@@ -110,6 +113,15 @@ boundary so one survives the strip.
 """
 
 
+# Bounded IO retry policy for LLMClient.complete calls. One retry after
+# the initial attempt is the minimum that satisfies Phase 0 acceptance
+# (one retryable error followed by success). Conservative defaults avoid
+# surprise runtime expansion in long multi-call cells.
+_IO_RETRY_MAX_ATTEMPTS: int = 2  # initial attempt + 1 retry
+_IO_RETRY_BASE_DELAY_SECS: float = 0.5
+_IO_RETRY_JITTER_SECS: float = 0.25
+
+
 class ProposerOutputParseError(ValueError):
     """The agent's response did not contain the expected sentinel tags.
 
@@ -119,6 +131,34 @@ class ProposerOutputParseError(ValueError):
     model that consistently refuses the protocol (or a genuinely
     broken prompt) bubbles this up.
     """
+
+
+class ProviderIORetryExhausted(RuntimeError):
+    """Raised when all IO retry attempts for a single LLM call fail.
+
+    Carries structured fields so bridge code and operator surfaces can
+    distinguish a permanent provider transport failure from a parse or
+    coordination error without string matching.
+    """
+
+    def __init__(
+        self,
+        *,
+        attempts: int,
+        last_error_class: str,
+        last_error_message: str,
+        operation: str,
+        agent_id: str,
+    ) -> None:
+        super().__init__(
+            f"LLM IO failed after {attempts} attempt(s) for agent {agent_id!r} "
+            f"during {operation!r}: {last_error_class}: {last_error_message}"
+        )
+        self.attempts = attempts
+        self.last_error_class = last_error_class
+        self.last_error_message = last_error_message
+        self.operation = operation
+        self.agent_id = agent_id
 
 
 class JigProposer:
@@ -222,7 +262,7 @@ class JigProposer:
         # event (per the run_v1_study driver).
         last_error: ProposerOutputParseError | None = None
         for attempt in range(self._max_parse_retries + 1):
-            response = await self._llm.complete(params)
+            response = await self._complete_with_io_retry(params)
             try:
                 parsed = _parse_response(response.content)
                 break
@@ -315,6 +355,53 @@ class JigProposer:
         )
 
         return "\n".join(sections)
+
+    async def _complete_with_io_retry(
+        self, params: CompletionParams
+    ) -> LLMResponse:
+        """Call self._llm.complete with bounded retry on retryable IO errors.
+
+        Only ``JigLLMError`` with ``retryable=True`` triggers a retry —
+        these represent transient provider transport failures (rate limits,
+        temporary unavailability). Parse errors (``ProposerOutputParseError``)
+        and non-retryable LLM errors propagate immediately so they aren't
+        hidden by retry loops that would repeat the same invalid shape.
+
+        On exhaustion raises ``ProviderIORetryExhausted`` with structured
+        fields for operator and bridge diagnostics.
+        """
+        last_io_error: JigLLMError | None = None
+        for io_attempt in range(_IO_RETRY_MAX_ATTEMPTS):
+            try:
+                return await self._llm.complete(params)
+            except JigLLMError as exc:
+                if not exc.retryable:
+                    raise
+                last_io_error = exc
+                remaining = _IO_RETRY_MAX_ATTEMPTS - io_attempt - 1
+                if remaining > 0:
+                    delay = (
+                        _IO_RETRY_BASE_DELAY_SECS
+                        + random.uniform(0, _IO_RETRY_JITTER_SECS)
+                    )
+                    logger.warning(
+                        "retryable LLM IO error for agent %s "
+                        "(attempt %d/%d, retrying in %.2fs): %s",
+                        self.agent.id,
+                        io_attempt + 1,
+                        _IO_RETRY_MAX_ATTEMPTS,
+                        delay,
+                        exc,
+                    )
+                    await asyncio.sleep(delay)
+        assert last_io_error is not None
+        raise ProviderIORetryExhausted(
+            attempts=_IO_RETRY_MAX_ATTEMPTS,
+            last_error_class=type(last_io_error).__name__,
+            last_error_message=str(last_io_error),
+            operation="llm_complete",
+            agent_id=self.agent.id,
+        )
 
 
 def make_proposers(

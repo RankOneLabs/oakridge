@@ -53,7 +53,7 @@ export function App() {
   const [section, setSection] = useState<DashboardSection>("launch");
   const [selectedTaskName, setSelectedTaskName] = useState<string | null>(null);
   const [selectedId, select] = useHashSelection();
-  const events = useCellEvents(selectedId);
+  const { events, retryError } = useCellEvents(selectedId);
   // Debounce the artifact / commits / detail re-fetch. Without this,
   // selecting a cell with a long backlog turns one SSE replay into a
   // request burst — events.length increments per replayed message, so
@@ -131,6 +131,11 @@ export function App() {
           {cleanupError !== null && (
             <div className="shrink-0 border-b border-red-200 bg-red-50 px-4 py-2 text-[12px] text-red-700">
               Cleanup error: {cleanupError}
+            </div>
+          )}
+          {retryError !== null && (
+            <div className="shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-2 text-[12px] text-amber-800">
+              Cell stream: {retryError}
             </div>
           )}
           <div className="flex flex-1 overflow-hidden">

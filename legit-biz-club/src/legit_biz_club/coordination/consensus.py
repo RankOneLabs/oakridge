@@ -30,7 +30,7 @@ import asyncio
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, cast
 
 from jig.core.pipeline import PipelineConfig, Step, run_pipeline
@@ -76,13 +76,50 @@ async def _no_op_emitter(
 
 
 @dataclass
+class ProposerFailure:
+    """Structured record for one proposer failure in a consensus round."""
+
+    agent_id: str
+    error_class: str
+    error_message: str
+
+
+class ConsensusRoundFailed(RuntimeError):
+    """Raised when a consensus round has no usable proposer output."""
+
+    def __init__(
+        self, *, round_index: int, failures: list[ProposerFailure]
+    ) -> None:
+        self.round_index = round_index
+        self.failures = failures
+        summary = ", ".join(
+            f"{f.agent_id}={f.error_class}: {f.error_message}"
+            for f in failures
+        )
+        super().__init__(
+            f"consensus round {round_index} failed: all proposers failed "
+            f"({summary})"
+        )
+
+
+@dataclass
 class RoundOutcome:
     """One round's record: which round (1-indexed), the proposals it
-    produced, and whether the round-budget policy declared convergence."""
+    produced, and whether the round-budget policy declared convergence.
+
+    ``failed_agents`` lists agent ids whose proposers raised during this
+    round. ``failed_agent_errors`` carries the structured error details.
+    When non-empty, ``proposals`` contains only the successful sibling
+    outputs — convergence detection runs on the partial set and the
+    escalation step picks from it. If every proposer fails, the round
+    raises ``ConsensusRoundFailed`` instead of escalating an empty set.
+    """
 
     round_index: int
     proposals: list[Proposal]
     converged: bool
+    failed_agents: list[str] = field(default_factory=list)
+    failed_agent_errors: list[ProposerFailure] = field(default_factory=list)
 
 
 @dataclass
@@ -274,7 +311,7 @@ class ConsensusMechanism(ABC):
                 prior: RoundOutcome = ctx[f"round_{round_index - 1}"]
                 prior_proposals = list(prior.proposals)
 
-            proposals = await asyncio.gather(
+            raw_results = await asyncio.gather(
                 *[
                     self.proposers[agent.id].propose(
                         agent=agent,
@@ -293,15 +330,50 @@ class ConsensusMechanism(ABC):
                         ),
                     )
                     for agent in self.agents
-                ]
+                ],
+                return_exceptions=True,
             )
-            self._validate_proposals_match_agents(proposals)
+            proposals: list[Proposal] = []
+            failed_agents: list[str] = []
+            failed_agent_errors: list[ProposerFailure] = []
+            for agent, result in zip(self.agents, raw_results, strict=True):
+                if isinstance(result, BaseException):
+                    logger.warning(
+                        "proposer for agent %s failed in round %d: %s: %s",
+                        agent.id,
+                        round_index,
+                        type(result).__name__,
+                        result,
+                    )
+                    failed_agents.append(agent.id)
+                    failed_agent_errors.append(
+                        ProposerFailure(
+                            agent_id=agent.id,
+                            error_class=type(result).__name__,
+                            error_message=str(result),
+                        )
+                    )
+                else:
+                    proposals.append(result)
+            if not proposals and failed_agent_errors:
+                raise ConsensusRoundFailed(
+                    round_index=round_index,
+                    failures=failed_agent_errors,
+                )
+            if failed_agents:
+                self._validate_successful_proposals_match_live_agents(
+                    proposals, failed_agents
+                )
+            else:
+                self._validate_proposals_match_agents(proposals)
 
             converged = self.round_budget_policy.is_converged(proposals)
             outcome = RoundOutcome(
                 round_index=round_index,
-                proposals=list(proposals),
+                proposals=proposals,
                 converged=converged,
+                failed_agents=failed_agents,
+                failed_agent_errors=failed_agent_errors,
             )
             await self._safe_emit(
                 "round_completed",
@@ -448,6 +520,36 @@ class ConsensusMechanism(ABC):
                 f"expected {expected}, got {actual} — "
                 "programmer error in one of the Proposers"
             )
+
+    def _validate_successful_proposals_match_live_agents(
+        self, proposals: list[Proposal], failed_agents: list[str]
+    ) -> None:
+        """Validate partial-round proposal ids after some proposers fail.
+
+        A partial round cannot require a full multiset match against all
+        enrolled agents, but successful outputs still must be unique,
+        enrolled, and not claim an agent id whose proposer failed.
+        """
+        enrolled_agent_ids = {agent.id for agent in self.agents}
+        failed_agent_ids = set(failed_agents)
+        seen_agent_ids: set[str] = set()
+        for proposal in proposals:
+            if proposal.agent_id not in enrolled_agent_ids:
+                raise ValueError(
+                    "successful proposal agent_id is not enrolled — "
+                    f"got {proposal.agent_id!r}; enrolled={sorted(enrolled_agent_ids)}"
+                )
+            if proposal.agent_id in failed_agent_ids:
+                raise ValueError(
+                    "successful proposal agent_id claims a failed agent — "
+                    f"got {proposal.agent_id!r}; failed={sorted(failed_agent_ids)}"
+                )
+            if proposal.agent_id in seen_agent_ids:
+                raise ValueError(
+                    "duplicate successful proposal agent_id in partial round — "
+                    f"got {proposal.agent_id!r}"
+                )
+            seen_agent_ids.add(proposal.agent_id)
 
     async def _safe_emit(
         self, kind: WorkspaceEventKind, payload: WorkspaceEventPayload

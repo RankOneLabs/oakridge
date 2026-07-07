@@ -168,18 +168,26 @@ export async function startCodexAppServer(
     client = new CodexAppServerClient(transport);
   }
 
-  async function stop(): Promise<void> {
-    if (stdioTransport) {
-      try { await stdioTransport.close(); } catch { /* already dead */ }
-    }
-    if (proc) {
-      try {
-        proc.kill();
-        await proc.exited;
-      } catch {
-        // already dead
+  // Idempotency guard: signal handlers can fire more than once; a second call
+  // must be a no-op once the first stop attempt is in progress or completed.
+  let stopPromise: Promise<void> | null = null;
+
+  function stop(): Promise<void> {
+    if (stopPromise !== null) return stopPromise;
+    stopPromise = (async () => {
+      if (stdioTransport) {
+        try { await stdioTransport.close(); } catch { /* already dead */ }
       }
-    }
+      if (proc) {
+        try {
+          proc.kill();
+          await proc.exited;
+        } catch {
+          // already dead
+        }
+      }
+    })();
+    return stopPromise;
   }
 
   let models: CodexModel[] = normalizeModelList(null);

@@ -28,9 +28,11 @@ from legit_biz_club import (
     Project,
     Proposal,
     ProposalResult,
+    Proposer,
 )
 from legit_biz_club.coordination.consensus import (
     ConsensusResult,
+    ConsensusRoundFailed,
     MultiRoundConsensus,
     SingleRoundConsensus,
 )
@@ -610,6 +612,160 @@ async def test_duplicate_enrolled_agent_id_proposer_raises(
     )
     with pytest.raises(ValueError, match="don't match enrolled agents"):
         await mechanism.execute()
+
+
+async def test_consensus_preserves_sibling_outputs_when_one_proposer_fails(
+    tmp_path: Path,
+) -> None:
+    """When one proposer raises (e.g. exhausted IO retries), the other
+    agents' successful proposals must be preserved in the round outcome
+    rather than being discarded. The failed agent's id is recorded in
+    RoundOutcome.failed_agents. Consensus degrades with explicit
+    per-agent failure, not a total abort."""
+
+    class _FailingProposer:
+        async def propose(
+            self,
+            *,
+            agent: Agent,
+            brief: Brief,
+            artifact: Artifact,
+            current_content: str,
+            current_version: str,
+            peer_proposals: list[Proposal] | None = None,
+        ) -> Proposal:
+            raise RuntimeError("provider IO failed")
+
+    agents = _make_agents(tmp_path, 3)
+    project = _make_project(tmp_path, agents)
+    # agents[0] fails; agents[1] and agents[2] succeed
+    proposers: dict[str, Proposer] = {
+        agents[0].id: _FailingProposer(),
+        agents[1].id: _IdenticalProposer("sibling output"),
+        agents[2].id: _IdenticalProposer("sibling output"),
+    }
+    mediator = Mediator(project.artifact, [a.id for a in agents])
+    mechanism = MultiRoundConsensus(
+        project=project,
+        agents=agents,
+        proposers=proposers,
+        mediator=mediator,
+        round_budget_policy=StringEqualConvergence(max_rounds=1),
+        disagreement_surface=StableOrderingByAgentId(),
+        tracer=StdoutTracer(color=False),
+    )
+    result = await mechanism.execute()
+    # Mechanism completed despite the failure.
+    assert result.apply_outcome.result == ProposalResult.APPLIED
+    # The round recorded which agent failed.
+    assert len(result.rounds) == 1
+    round_outcome = result.rounds[0]
+    assert agents[0].id in round_outcome.failed_agents
+    # The two successful siblings' proposals are preserved.
+    assert len(round_outcome.proposals) == 2
+    successful_ids = {p.agent_id for p in round_outcome.proposals}
+    assert agents[1].id in successful_ids
+    assert agents[2].id in successful_ids
+
+
+async def test_consensus_partial_failure_rejects_success_claiming_failed_agent(
+    tmp_path: Path,
+) -> None:
+    class _FailingProposer:
+        async def propose(
+            self,
+            *,
+            agent: Agent,
+            brief: Brief,
+            artifact: Artifact,
+            current_content: str,
+            current_version: str,
+            peer_proposals: list[Proposal] | None = None,
+        ) -> Proposal:
+            raise RuntimeError("provider IO failed")
+
+    class _ClaimsFailedAgentProposer:
+        def __init__(self, claimed_agent_id: str) -> None:
+            self._claimed_agent_id = claimed_agent_id
+
+        async def propose(
+            self,
+            *,
+            agent: Agent,
+            brief: Brief,
+            artifact: Artifact,
+            current_content: str,
+            current_version: str,
+            peer_proposals: list[Proposal] | None = None,
+        ) -> Proposal:
+            return Proposal(
+                agent_id=self._claimed_agent_id,
+                based_on_version=current_version,
+                new_content=f"claimed by {agent.id}",
+                rationale="bad id",
+            )
+
+    agents = _make_agents(tmp_path, 2)
+    project = _make_project(tmp_path, agents)
+    proposers: dict[str, Proposer] = {
+        agents[0].id: _FailingProposer(),
+        agents[1].id: _ClaimsFailedAgentProposer(agents[0].id),
+    }
+    mediator = Mediator(project.artifact, [a.id for a in agents])
+    mechanism = MultiRoundConsensus(
+        project=project,
+        agents=agents,
+        proposers=proposers,
+        mediator=mediator,
+        round_budget_policy=StringEqualConvergence(max_rounds=1),
+        disagreement_surface=StableOrderingByAgentId(),
+        tracer=StdoutTracer(color=False),
+    )
+
+    with pytest.raises(ValueError, match="claims a failed agent"):
+        await mechanism.execute()
+
+
+async def test_consensus_all_proposers_failed_raises_structured_error(
+    tmp_path: Path,
+) -> None:
+    class _FailingProposer:
+        async def propose(
+            self,
+            *,
+            agent: Agent,
+            brief: Brief,
+            artifact: Artifact,
+            current_content: str,
+            current_version: str,
+            peer_proposals: list[Proposal] | None = None,
+        ) -> Proposal:
+            raise RuntimeError(f"provider unavailable for {agent.id}")
+
+    agents = _make_agents(tmp_path, 2)
+    project = _make_project(tmp_path, agents)
+    proposers: dict[str, Proposer] = {
+        agent.id: _FailingProposer() for agent in agents
+    }
+    mediator = Mediator(project.artifact, [a.id for a in agents])
+    mechanism = MultiRoundConsensus(
+        project=project,
+        agents=agents,
+        proposers=proposers,
+        mediator=mediator,
+        round_budget_policy=StringEqualConvergence(max_rounds=1),
+        disagreement_surface=StableOrderingByAgentId(),
+        tracer=StdoutTracer(color=False),
+    )
+
+    with pytest.raises(ConsensusRoundFailed) as exc_info:
+        await mechanism.execute()
+
+    err = exc_info.value
+    assert err.round_index == 1
+    assert {f.agent_id for f in err.failures} == {a.id for a in agents}
+    assert all(f.error_class == "RuntimeError" for f in err.failures)
+    assert all("provider unavailable" in f.error_message for f in err.failures)
 
 
 async def test_emit_failures_do_not_abort_consensus(tmp_path: Path) -> None:

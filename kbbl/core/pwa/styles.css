@@ -38,6 +38,8 @@
   --status-connected-fg: #7dd890;
   --status-disconnected-bg: #3a2020;
   --status-disconnected-fg: #e67070;
+  --status-stale-bg: #3a3420;
+  --status-stale-fg: #e6c670;
 
   --amber-bg: #3a2a0a;
   --amber-fg: #f5b050;
@@ -98,6 +100,8 @@
   --status-connected-fg: #065f46;
   --status-disconnected-bg: #fee2e2;
   --status-disconnected-fg: #991b1b;
+  --status-stale-bg: #fef3c7;
+  --status-stale-fg: #92400e;
 
   --amber-bg: #fef3c7;
   --amber-fg: #92400e;
@@ -199,6 +203,10 @@ body {
 .status-disconnected {
   background: var(--status-disconnected-bg);
   color: var(--status-disconnected-fg);
+}
+.status-stale {
+  background: var(--status-stale-bg);
+  color: var(--status-stale-fg);
 }
 
 .event-count {

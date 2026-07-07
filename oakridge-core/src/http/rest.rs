@@ -757,11 +757,16 @@ mod tests {
         let run_id_str = run["id"].as_str().unwrap().to_string();
         let run_id = WorkflowRunId(Uuid::parse_str(&run_id_str).unwrap());
 
-        // Wait for stage instance to be created
+        // Wait for the immediate stage to finish. Creation happens before
+        // execute(), so merely seeing the row can observe Pending with no
+        // terminal_meta yet.
         for _ in 0..50 {
             tokio::time::sleep(Duration::from_millis(20)).await;
             let sis = queries::list_stage_instances_for_run(&pool, &run_id).await.unwrap();
-            if !sis.is_empty() {
+            if sis.iter().any(|si| {
+                si.status == StageStatus::Done
+                    && si.terminal_meta == Some(json!({"result": "immediate"}))
+            }) {
                 break;
             }
         }
