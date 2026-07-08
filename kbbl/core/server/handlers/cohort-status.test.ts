@@ -116,8 +116,9 @@ describe("PATCH /cohorts/:id/status — blocked / unblocked (existing paths)", (
     db.prepare("UPDATE cohorts SET pre_block_status = 'building' WHERE id = ?").run(COHORT_ID);
     const res = await patch(COHORT_ID, { status: "blocked" });
     expect(res.status).toBe(409);
-    const body = await res.json() as { error: string };
-    expect(body.error).toMatch(/already blocked/);
+    const body = await res.json() as { error: string; current_status: string; requested: string };
+    expect(body.current_status).toBe("blocked");
+    expect(body.requested).toBe("blocked");
   });
 
   test("unblocked: 200 restores pre_block_status", async () => {
@@ -140,10 +141,12 @@ describe("PATCH /cohorts/:id/status — blocked / unblocked (existing paths)", (
 
 describe("PATCH /cohorts/:id/status done (legacy override from building)", () => {
   test("409 if not in building status", async () => {
+    // cohort starts in 'waiting'; build_completed event is not valid from 'waiting'
     const res = await patch(COHORT_ID, { status: "done" });
     expect(res.status).toBe(409);
-    const body = await res.json() as { error: string };
-    expect(body.error).toMatch(/building/);
+    const body = await res.json() as { error: string; current_status: string; requested: string };
+    expect(body.current_status).toBe("waiting");
+    expect(body.requested).toBe("done");
   });
 
   test("200 from building, sets status to done, emits cohort.done", async () => {
@@ -166,10 +169,12 @@ describe("PATCH /cohorts/:id/status awaiting_merge (new)", () => {
   const PR_URL = "https://github.com/org/repo/pull/42";
 
   test("409 if not in building status", async () => {
+    // cohort starts in 'waiting'; pr_opened event is not valid from 'waiting'
     const res = await patch(COHORT_ID, { status: "awaiting_merge", pr_url: PR_URL });
     expect(res.status).toBe(409);
-    const body = await res.json() as { error: string };
-    expect(body.error).toBe("awaiting_merge transition only allowed from building");
+    const body = await res.json() as { error: string; current_status: string; requested: string };
+    expect(body.current_status).toBe("waiting");
+    expect(body.requested).toBe("awaiting_merge");
   });
 
   test("200 from building, sets status to awaiting_merge", async () => {
@@ -232,12 +237,14 @@ describe("PATCH /cohorts/:id/status awaiting_merge (new)", () => {
 });
 
 describe("PATCH /cohorts/:id/status merged (new)", () => {
-  test("409 if not in awaiting_merge status", async () => {
-    setStatus(COHORT_ID, "building");
+  test("409 if pr_merged event has no valid transition from current state", async () => {
+    // 'waiting' has no pr_merged transition in the state machine
+    // (note: 'building' allows pr_merged directly per state machine, so use 'waiting' to test the guard)
     const res = await patch(COHORT_ID, { status: "merged" });
     expect(res.status).toBe(409);
-    const body = await res.json() as { error: string };
-    expect(body.error).toMatch(/awaiting_merge/);
+    const body = await res.json() as { error: string; current_status: string; requested: string };
+    expect(body.current_status).toBe("waiting");
+    expect(body.requested).toBe("merged");
   });
 
   test("200 from awaiting_merge, sets status to done", async () => {

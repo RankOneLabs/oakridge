@@ -4,6 +4,8 @@ import type { SessionManager } from "../../session/session-manager";
 import type { createDispatcher } from "../../orchestrator/backends/dispatcher";
 import { DispatchConflictError } from "../../orchestrator/backends/dispatcher";
 import { countUnmetDependencies } from "../../db/cohorts";
+import { getEpicBySpec } from "../../db/epics";
+import { isFrozen } from "../../db/epic-freeze";
 
 type Dispatcher = ReturnType<typeof createDispatcher>;
 
@@ -22,6 +24,21 @@ export function mountBuildsRoutes(app: Hono, { db, dispatcher }: BuildsRouteDeps
       .prepare<BriefStatusRow, [string]>("SELECT status, cohort_id FROM briefs WHERE id = ?")
       .get(brief_id);
     if (!brief) return c.json({ error: "not found" }, 404);
+
+    // Archive guard: resolve epic via brief → cohort → plan → spec and reject if archived.
+    // Must run before acquiring the dispatch claim so archived epics produce no attempt records.
+    const epicRow = db
+      .prepare<{ spec_id: string }, [string]>(
+        "SELECT p.spec_id FROM cohorts c JOIN plans p ON p.id = c.plan_id WHERE c.id = ?",
+      )
+      .get(brief.cohort_id);
+    if (epicRow) {
+      const epic = getEpicBySpec(db, epicRow.spec_id);
+      if (epic && isFrozen(db, epic.id)) {
+        return c.json({ error: "epic is archived" }, 409);
+      }
+    }
+
     if (brief.status !== "approved") {
       return c.json({ error: "brief must be in approved status to run a build" }, 409);
     }
