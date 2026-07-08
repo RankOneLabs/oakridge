@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { Hono } from "hono";
 import type { Database } from "bun:sqlite";
 import { freeze, isFrozen, unfreeze } from "../../review/freeze";
+import { emitFreezeEvents } from "../../review/events";
 
 const FreezeBodySchema = z.object({
   target_type: z.string().min(1),
@@ -39,7 +40,7 @@ export function mountReviewFreezeRoutes(app: Hono, deps: ReviewFreezeRouteDeps):
     }
 
     const { target_type, target_id } = result.data;
-    freeze(db, target_type, target_id);
+    emitFreezeEvents(freeze(db, target_type, target_id));
     return c.json({ target_type, target_id, frozen: true });
   });
 
@@ -58,7 +59,7 @@ export function mountReviewFreezeRoutes(app: Hono, deps: ReviewFreezeRouteDeps):
     }
 
     const { target_type, target_id } = result.data;
-    unfreeze(db, target_type, target_id);
+    emitFreezeEvents(unfreeze(db, target_type, target_id));
     return c.json({ target_type, target_id, frozen: false });
   });
 }

@@ -3,6 +3,7 @@ import type { Hono } from "hono";
 import type { Database } from "bun:sqlite";
 import { getPlan, insertPlan } from "../../db/plans";
 import { unfreeze } from "../../review/freeze";
+import { emitFreezeEvents, type ReviewFreezeEvent } from "../../review/events";
 import type { Plan } from "../../types/task-tracker";
 import { getEpicBySpec } from "../../db/epics";
 import { isFrozen } from "../../db/epic-freeze";
@@ -48,6 +49,7 @@ export function mountPlanReopenRoutes(app: Hono, deps: PlanReopenRouteDeps): voi
     }
 
     let newPlan: Plan | null = null;
+    let pendingFreezeEvents: ReviewFreezeEvent[] = [];
 
     try {
       const error = db.transaction((): string | null => {
@@ -70,7 +72,7 @@ export function mountPlanReopenRoutes(app: Hono, deps: PlanReopenRouteDeps): voi
         db.prepare("UPDATE plans SET status = 'pending_approval' WHERE id = ?").run(new_id);
         newPlan = getPlan(db, new_id);
 
-        unfreeze(db, "plan", old_id);
+        pendingFreezeEvents = unfreeze(db, "plan", old_id);
         db.prepare("UPDATE plans SET status = 'superseded' WHERE id = ?").run(old_id);
         // specs.status dropped in migration 016; Epic.status + internal_status cover lifecycle.
 
@@ -80,10 +82,12 @@ export function mountPlanReopenRoutes(app: Hono, deps: PlanReopenRouteDeps): voi
       if (error === "not_found") return c.json({ error: "not found" }, 404);
       if (error === "not_reopenable") return c.json({ error: "plan must be in approved or rejected to reopen" }, 409);
     } catch (err) {
+      pendingFreezeEvents = [];
       console.error("plan-reopen:post failed", err);
       return c.json({ error: "internal server error" }, 500);
     }
 
+    emitFreezeEvents(pendingFreezeEvents);
     return c.json(newPlan, 201);
   });
 }

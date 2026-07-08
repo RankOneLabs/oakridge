@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { reviewEvents } from "./events";
+import type { ReviewFreezeEvent } from "./events";
 
 export function isFrozen(db: Database, target_type: string, target_id: string): boolean {
   return db
@@ -9,24 +9,26 @@ export function isFrozen(db: Database, target_type: string, target_id: string): 
     .get(target_type, target_id) != null;
 }
 
-export function freeze(db: Database, target_type: string, target_id: string): void {
+export function freeze(db: Database, target_type: string, target_id: string): ReviewFreezeEvent[] {
   const row = db
     .prepare<{ target_type: string; target_id: string }, [string, string]>(
       "INSERT OR IGNORE INTO frozen_artifacts (target_type, target_id) VALUES (?, ?) RETURNING target_type, target_id",
     )
     .get(target_type, target_id);
   if (row != null) {
-    reviewEvents.emit("artifact.frozen", { target_type, target_id });
+    return [{ event: "artifact.frozen", payload: { target_type, target_id } }];
   }
+  return [];
 }
 
-export function unfreeze(db: Database, target_type: string, target_id: string): void {
+export function unfreeze(db: Database, target_type: string, target_id: string): ReviewFreezeEvent[] {
   const row = db
     .prepare<{ target_type: string; target_id: string }, [string, string]>(
       "DELETE FROM frozen_artifacts WHERE target_type = ? AND target_id = ? RETURNING target_type, target_id",
     )
     .get(target_type, target_id);
   if (row != null) {
-    reviewEvents.emit("artifact.reopened", { target_type, target_id });
+    return [{ event: "artifact.reopened", payload: { target_type, target_id } }];
   }
+  return [];
 }
