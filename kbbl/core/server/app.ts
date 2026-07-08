@@ -7,6 +7,11 @@ import type { AppRuntime, RuntimeRegistry } from "../runtime";
 import type { KbblConfig } from "../config";
 import type { SessionManager } from "../session/session-manager";
 import type { createDispatcher } from "../orchestrator/backends/dispatcher";
+import {
+  makeControlAuthMiddleware,
+  makeCookieHandler,
+  type AuthPolicy,
+} from "./auth";
 import { inboxHandler } from "../stream/inbox";
 import { mountHandoffRoutes } from "./handlers/handoff";
 import { mountPerSidRoutes } from "./handlers/per-sid";
@@ -75,6 +80,18 @@ export interface CreateAppDeps {
   db: Database;
   /** Dispatcher for stage-based agent dispatch; mounts POST /briefs/:id/build. */
   dispatcher: ReturnType<typeof createDispatcher>;
+  /**
+   * Startup auth policy resolved from host + OAKRIDGE_CONTROL_TOKEN +
+   * ALLOW_INSECURE_NON_LOOPBACK_CONTROL. Defaults to loopback when absent
+   * (keeps the test helper buildApp() signature backward-compatible).
+   */
+  authPolicy?: AuthPolicy;
+  /**
+   * Token injected into proxied oakridge-core write requests.
+   * Falls back to OAKRIDGE_CONTROL_TOKEN when OAKRIDGE_CORE_CONTROL_TOKEN
+   * is not set. Undefined when no token is configured.
+   */
+  coreControlToken?: string;
 }
 
 /**
@@ -97,8 +114,26 @@ export function createApp(deps: CreateAppDeps): Hono {
     configPath,
     db,
     dispatcher,
+    authPolicy = { mode: "loopback" },
+    coreControlToken,
   } = deps;
   const app = new Hono();
+
+  // ---- control auth middleware ----
+  //
+  // Applied globally before any route so every non-GET/HEAD request other
+  // than /hook/* adapter routes requires authentication when the server is
+  // bound to a non-loopback address. In loopback or insecure mode this is
+  // a no-op pass-through so local development stays frictionless.
+  app.use("/*", makeControlAuthMiddleware(authPolicy));
+
+  // ---- cookie establishment endpoint ----
+  //
+  // POST /auth/cookie validates a Bearer token and sets an HttpOnly
+  // SameSite=Lax cookie so the browser PWA can make subsequent control
+  // calls without re-sending the token as a header (which would require
+  // storing it in JS-accessible state).
+  app.post("/auth/cookie", makeCookieHandler(authPolicy));
 
   // ---- runtime routes (loopback-only adapter endpoints) ----
   //
@@ -242,7 +277,13 @@ export function createApp(deps: CreateAppDeps): Hono {
   //
   // GET /oakridge/config → { available: boolean } (PWA availability check)
   // ALL /oakridge/api/* → proxied to OAKRIDGE_CORE_BASE_URL (same-origin CORS avoidance)
-  mountOakridgeProxyRoutes(app, { baseUrl: process.env.OAKRIDGE_CORE_BASE_URL });
+  // Write requests are validated against kbbl auth (via the global middleware
+  // above) before reaching this handler; the handler then injects the core
+  // control token so oakridge-core's own auth gate is satisfied.
+  mountOakridgeProxyRoutes(app, {
+    baseUrl: process.env.OAKRIDGE_CORE_BASE_URL,
+    coreControlToken,
+  });
 
   // ---- /inbox (always-on delta stream) ----
   app.get("/inbox", inboxHandler(manager));
