@@ -16,11 +16,12 @@
  */
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Hono } from "hono";
 import type { Database } from "bun:sqlite";
+import { KbblConfigSchema } from "../config";
 import { openTestDb } from "../db/test-db";
 import { reviewRegistry } from "../review/registry";
 import { reviewEvents } from "../review/events";
@@ -59,7 +60,7 @@ import { insertEpic } from "../db/epics";
 import { insertPlan } from "../db/plans";
 import { insertCohort } from "../db/cohorts";
 import { insertBrief } from "../db/briefs";
-import type { SessionManager } from "../session/session-manager";
+import { SessionManager } from "../session/session-manager";
 import type { RuntimeModelSelection } from "../runtime";
 
 // ---- stub manager ----
@@ -481,6 +482,60 @@ describe("4a. Session lifecycle closes dispatch attempts", () => {
     expect(closed?.id).toBe(r.attempt.id);
     expect(closed?.status).toBe("succeeded");
     expect(getActiveAttempt(db, "brief", brief.id, "build")).toBeNull();
+  });
+
+  test("SessionManager onRuntimeSessionEnded closes the matching dispatch attempt", async () => {
+    const { brief } = await seedBuildChain();
+    const managerRoot = mkdtempSync(join(tmpdir(), "kbbl-dispatch-manager-"));
+    const sessionsDir = join(managerRoot, "sessions");
+    const handoffsDir = join(managerRoot, "handoffs");
+    const worktreesDir = join(managerRoot, "worktrees");
+    mkdirSync(sessionsDir, { recursive: true });
+    mkdirSync(handoffsDir, { recursive: true });
+    mkdirSync(worktreesDir, { recursive: true });
+
+    const manager = new SessionManager({
+      sessionsDir,
+      handoffsDir,
+      worktreesDir,
+      buildSpawnCmd: async () => ({ cmd: ["sleep", "60"], cwd: "/tmp", env: {} }),
+      onRuntimeSessionEnded: (session) => {
+        markRunningAttemptSucceededBySessionRef(db, session.oakridgeSid);
+      },
+      config: KbblConfigSchema.parse({}),
+    });
+
+    try {
+      const session = await manager.create({ workdir: testRepoPath });
+      const r = claimDispatch(db, {
+        id: crypto.randomUUID(),
+        entity_kind: "brief",
+        entity_id: brief.id,
+        stage: "build",
+        cohort_id: brief.cohort_id,
+      });
+      expect(r.claimed).toBe(true);
+      if (!r.claimed) throw new Error("expected claim");
+      markAttemptRunning(db, r.attempt.id, session.oakridgeSid);
+      db.prepare(
+        "UPDATE cohorts SET current_session_ref = ?, current_session_stage = 'build' WHERE id = ?",
+      ).run(session.oakridgeSid, brief.cohort_id);
+
+      await manager.endAll();
+
+      const closed = getAttempt(db, r.attempt.id);
+      const cohortSession = db
+        .prepare<{ current_session_ref: string | null; current_session_stage: string | null }, [string]>(
+          "SELECT current_session_ref, current_session_stage FROM cohorts WHERE id = ?",
+        )
+        .get(brief.cohort_id);
+      expect(closed?.status).toBe("succeeded");
+      expect(getActiveAttempt(db, "brief", brief.id, "build")).toBeNull();
+      expect(cohortSession).toEqual({ current_session_ref: null, current_session_stage: null });
+    } finally {
+      await manager.endAll();
+      rmSync(managerRoot, { recursive: true, force: true });
+    }
   });
 });
 

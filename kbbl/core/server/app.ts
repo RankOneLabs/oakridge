@@ -10,6 +10,7 @@ import type { createDispatcher } from "../orchestrator/backends/dispatcher";
 import {
   makeControlAuthMiddleware,
   makeCookieHandler,
+  makeRequiredControlAuthMiddleware,
   type AuthPolicy,
 } from "./auth";
 import { inboxHandler } from "../stream/inbox";
@@ -258,6 +259,8 @@ export function createApp(deps: CreateAppDeps): Hono {
   mountBriefsRoutes(app, { db });
   mountBriefStatusRoutes(app, { db });
   mountBuildsRoutes(app, { db, dispatcher, manager });
+  app.use("/dispatch-attempts", makeRequiredControlAuthMiddleware(authPolicy));
+  app.use("/dispatch-attempts/*", makeRequiredControlAuthMiddleware(authPolicy));
   mountDispatchAttemptsRoutes(app, { db, dispatcher });
   mountAssessmentsRoutes(app, { db });
   mountEpicsRoutes(app, { db });

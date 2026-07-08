@@ -80,6 +80,44 @@ function parseCookieToken(cookieHeader: string): string | null {
 
 // ---- request auth middleware -----------------------------------------------
 
+function verifyControlCredentials(c: Context, token: string): Response | null {
+  const authHeader = c.req.header("authorization");
+  if (authHeader !== undefined) {
+    const space = authHeader.indexOf(" ");
+    if (space === -1 || authHeader.slice(0, space).toLowerCase() !== "bearer") {
+      return c.json(
+        { error: "malformed Authorization header, expected: Bearer <token>" },
+        401,
+        { "www-authenticate": 'Bearer realm="kbbl"' },
+      ) as Response;
+    }
+    const presented = authHeader.slice(space + 1);
+    if (tokenEquals(presented, token)) {
+      return null;
+    }
+    return c.json({ error: "forbidden" }, 403, {
+      "www-authenticate": 'Bearer realm="kbbl"',
+    }) as Response;
+  }
+
+  const cookieHeader = c.req.header("cookie");
+  if (cookieHeader !== undefined) {
+    const cookieToken = parseCookieToken(cookieHeader);
+    if (cookieToken !== null) {
+      if (tokenEquals(cookieToken, token)) {
+        return null;
+      }
+      return c.json({ error: "forbidden" }, 403, {
+        "www-authenticate": 'Bearer realm="kbbl"',
+      }) as Response;
+    }
+  }
+
+  return c.json({ error: "unauthorized" }, 401, {
+    "www-authenticate": 'Bearer realm="kbbl"',
+  }) as Response;
+}
+
 /**
  * Returns a Hono middleware that enforces Bearer/cookie auth on all
  * non-GET/HEAD requests except /hook/* adapter routes (which are
@@ -111,43 +149,28 @@ export function makeControlAuthMiddleware(policy: AuthPolicy): MiddlewareHandler
       return;
     }
 
-    const authHeader = c.req.header("authorization");
-    if (authHeader !== undefined) {
-      const space = authHeader.indexOf(" ");
-      if (space === -1 || authHeader.slice(0, space).toLowerCase() !== "bearer") {
-        return c.json(
-          { error: "malformed Authorization header, expected: Bearer <token>" },
-          401,
-          { "www-authenticate": 'Bearer realm="kbbl"' },
-        );
-      }
-      const presented = authHeader.slice(space + 1);
-      if (tokenEquals(presented, token)) {
-        await next();
-        return;
-      }
-      return c.json({ error: "forbidden" }, 403, {
-        "www-authenticate": 'Bearer realm="kbbl"',
-      });
-    }
+    const rejection = verifyControlCredentials(c, token);
+    if (rejection) return rejection;
+    await next();
+  };
+}
 
-    const cookieHeader = c.req.header("cookie");
-    if (cookieHeader !== undefined) {
-      const cookieToken = parseCookieToken(cookieHeader);
-      if (cookieToken !== null) {
-        if (tokenEquals(cookieToken, token)) {
-          await next();
-          return;
-        }
-        return c.json({ error: "forbidden" }, 403, {
-          "www-authenticate": 'Bearer realm="kbbl"',
-        });
-      }
-    }
+/**
+ * Returns a Hono middleware that enforces the same token/cookie auth even for
+ * GET/HEAD routes. Use this for read endpoints that disclose control-plane
+ * internals such as dispatch attempts.
+ */
+export function makeRequiredControlAuthMiddleware(policy: AuthPolicy): MiddlewareHandler {
+  if (policy.mode === "loopback" || policy.mode === "insecure-non-loopback") {
+    return async (_c: Context, next: Next) => { await next(); };
+  }
 
-    return c.json({ error: "unauthorized" }, 401, {
-      "www-authenticate": 'Bearer realm="kbbl"',
-    });
+  const { token } = policy;
+
+  return async (c: Context, next: Next) => {
+    const rejection = verifyControlCredentials(c, token);
+    if (rejection) return rejection;
+    await next();
   };
 }
 

@@ -20,10 +20,7 @@ use oakridge_core::registry::{ArtifactTypeRegistry, StageTypeRegistry};
 use oakridge_core::types::*;
 
 fn temp_db_url() -> String {
-    format!(
-        "sqlite:///tmp/oakridge-stuck-sweeper-{}.db",
-        Uuid::new_v4()
-    )
+    format!("sqlite:///tmp/oakridge-stuck-sweeper-{}.db", Uuid::new_v4())
 }
 
 fn fixed_dt() -> chrono::DateTime<chrono::Utc> {
@@ -118,9 +115,12 @@ async fn stuck_sweep_and_retry_via_http() {
     };
 
     let (retry_tx, mut retry_rx) = mpsc::channel(8);
-    let (app, coordinator) = boot(cfg, move |stage: &mut StageTypeRegistry, _art: &mut ArtifactTypeRegistry| {
-        stage.register(Arc::new(RetryObservedStage { tx: retry_tx }));
-    })
+    let (app, coordinator) = boot(
+        cfg,
+        move |stage: &mut StageTypeRegistry, _art: &mut ArtifactTypeRegistry| {
+            stage.register(Arc::new(RetryObservedStage { tx: retry_tx }));
+        },
+    )
     .await
     .unwrap();
 
@@ -208,13 +208,10 @@ async fn stuck_sweep_and_retry_via_http() {
         Some("running"),
         "retry response must show status=running"
     );
-    let retried_stage_id = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        retry_rx.recv(),
-    )
-    .await
-    .unwrap()
-    .expect("retry must execute the stage type");
+    let retried_stage_id = tokio::time::timeout(std::time::Duration::from_secs(5), retry_rx.recv())
+        .await
+        .unwrap()
+        .expect("retry must execute the stage type");
     assert_eq!(retried_stage_id, si.id);
 
     // /runs must now report is_stuck=false.
@@ -248,9 +245,12 @@ async fn retry_stuck_on_running_stage_returns_409() {
         stuck_sweep_interval_secs: 3600,
     };
 
-    let (app, _coordinator) = boot(cfg, |_stage: &mut StageTypeRegistry, _art: &mut ArtifactTypeRegistry| {})
-        .await
-        .unwrap();
+    let (app, _coordinator) = boot(
+        cfg,
+        |_stage: &mut StageTypeRegistry, _art: &mut ArtifactTypeRegistry| {},
+    )
+    .await
+    .unwrap();
 
     let pool = db::init_pool(&db_url).await.unwrap();
 
