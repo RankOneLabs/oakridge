@@ -859,7 +859,7 @@ impl Coordinator {
         })
     }
 
-    async fn sweep_stuck_stages(&self) -> anyhow::Result<()> {
+    pub async fn sweep_stuck_stages(&self) -> anyhow::Result<()> {
         let timeout_chrono =
             chrono::Duration::from_std(self.stage_timeout).unwrap_or(chrono::Duration::seconds(3600));
         let cutoff = Utc::now() - timeout_chrono;
