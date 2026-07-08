@@ -74,7 +74,8 @@ def _render(tasks: list, graders: list) -> str:  # type: ignore[type-arg]
         "// AUTO-GENERATED — do not edit.\n"
         "// Source: legit-biz-club/scripts/generate_dashboard_metadata.py\n"
         "// Regenerate: cd legit-biz-club && uv run python scripts/generate_dashboard_metadata.py\n"
-        "// CI drift: regenerate then `git diff --exit-code lbc-dashboard/src/generated/task_catalog.ts`.\n"
+        "// CI drift: regenerate then"
+        " `git diff --exit-code lbc-dashboard/src/generated/task_catalog.ts`.\n"
         'import type { TaskBuiltinDetail, GraderSummary } from "../contracts";\n'
         "\n"
         f"export const BUILTIN_TASK_DETAILS: readonly TaskBuiltinDetail[] = {tasks_json}"
