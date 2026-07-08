@@ -3,6 +3,7 @@ import type { Hono } from "hono";
 import type { Database } from "bun:sqlite";
 import { getPlan } from "../../db/plans";
 import { freeze } from "../../review/freeze";
+import { emitFreezeEvents, type ReviewFreezeEvent } from "../../review/events";
 import { taskTrackerEvents } from "../../db/events";
 import { PLAN_TRANSITIONS } from "../../orchestrator/state-machine";
 import { getEpicBySpec, advanceEpicByEvent } from "../../db/epics";
@@ -111,6 +112,7 @@ export function mountPlanStatusRoutes(app: Hono, deps: PlanStatusRouteDeps): voi
     let emitApproved: { plan_id: string; spec_id: string } | null = null;
     let emitRejected: { plan_id: string; spec_id: string } | null = null;
     const emitBriefingStarted: { cohort_id: string }[] = [];
+    let pendingFreezeEvents: ReviewFreezeEvent[] = [];
 
     try {
       const error = db.transaction((): string | null => {
@@ -126,7 +128,7 @@ export function mountPlanStatusRoutes(app: Hono, deps: PlanStatusRouteDeps): voi
           db.prepare<Plan, [string, string]>(
             "UPDATE plans SET status = ? WHERE id = ? RETURNING *",
           ).get(nextStatus, plan_id);
-          freeze(db, "plan", plan_id);
+          pendingFreezeEvents = freeze(db, "plan", plan_id);
 
           // Advance Epic stage: plan → build
           const epic = getEpicBySpec(db, plan.spec_id);
@@ -171,6 +173,7 @@ export function mountPlanStatusRoutes(app: Hono, deps: PlanStatusRouteDeps): voi
       if (error === "not_pending") return c.json({ error: "plan is not in pending_approval" }, 409);
       if (error === "no_transition") return c.json({ error: "transition not defined" }, 409);
     } catch (err) {
+      pendingFreezeEvents = [];
       console.error("plan-status:patch failed", err);
       return c.json({ error: "internal server error" }, 500);
     }
@@ -179,6 +182,7 @@ export function mountPlanStatusRoutes(app: Hono, deps: PlanStatusRouteDeps): voi
     // never emit events or respond 200 with a null body.
     if (!updated) return c.json({ error: "internal server error" }, 500);
 
+    emitFreezeEvents(pendingFreezeEvents);
     if (emitApproved) {
       taskTrackerEvents.emit("plan.approved", emitApproved);
       for (const p of emitBriefingStarted) {
