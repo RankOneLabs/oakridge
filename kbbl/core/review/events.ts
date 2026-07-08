@@ -6,6 +6,16 @@ export type ReviewEventMap = ArtifactEventPayloadByName;
 
 export const reviewEvents = new EventBus<ReviewEventMap>();
 
+export type ReviewFreezeEvent =
+  | { event: "artifact.frozen"; payload: ReviewEventMap["artifact.frozen"] }
+  | { event: "artifact.reopened"; payload: ReviewEventMap["artifact.reopened"] };
+
+export function emitFreezeEvents(events: ReviewFreezeEvent[]): void {
+  for (const e of events) {
+    reviewEvents.emit(e.event, e.payload);
+  }
+}
+
 function nowTs(): string {
   return new Date().toISOString();
 }
