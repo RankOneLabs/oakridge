@@ -160,7 +160,7 @@ describe("server-request routing by thread id", () => {
 
   test("sends cancel when no handler found", async () => {
     const { transport, inject, sent } = makeFakeTransport();
-    const client = new CodexAppServerClient(transport);
+    new CodexAppServerClient(transport);
 
     inject(JSON.stringify({ id: 42, method: "item/fileChange/requestApproval", params: { threadId: "unknown-thread" } }));
 

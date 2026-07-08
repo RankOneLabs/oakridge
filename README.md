@@ -10,10 +10,11 @@ delegate agent execution to kbbl).
 ```text
 oakridge/
 ├── kbbl/                  # operator surface for CLI coding agents
+├── lbc-dashboard/         # read-only dashboard for legit-biz-club study runs
 ├── oakridge-core/         # workflow substrate with kbbl delegated execution
 ├── legit-biz-club/        # workspace layer (v1, complete)
-├── docs/                  # public-facing documentation (placeholder)
-└── comms/                 # internal architecture memos and specs (gitignored)
+├── docs/                  # reference documentation
+└── phase0/                # archived: legacy multi-agent proof-of-concept (not active)
 ```
 
 ## Sub-packages
@@ -22,10 +23,16 @@ oakridge/
   (`claude-code` by default, `codex` opt-in) from a tablet- or phone-friendly PWA
   over Tailscale. Standalone; works without the workflow layer. See
   `kbbl/README.md`.
+- **lbc-dashboard** — read-only dashboard for `legit-biz-club` study runs.
+  Bun + Hono + React + Tailwind. Reads `.run/` sidecars written by legit-biz-club.
+  See `lbc-dashboard/README.md`.
 - **oakridge-core** — the workflow substrate. Its bundled `delegated_session` stage
   starts and controls kbbl sessions for workflow runs while preserving direct kbbl
   session launching. See `oakridge-core/README.md`.
 - **legit-biz-club** — the workspace layer (multi-agent collaboration over a shared artifact). v1 build complete — all five phases (foundation, incremental coordination, convergence, evals + memory commit, study harness) shipped on `main`. Python library; no CLI. See `legit-biz-club/README.md`.
+- **phase0** — archived legacy reference material. An early proof-of-concept
+  multi-agent experiment; not an active write surface. Kept for historical reference
+  only.
 
 ## Quick start
 
