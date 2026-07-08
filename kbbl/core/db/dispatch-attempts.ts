@@ -155,7 +155,7 @@ export function markAttemptFailed(
             recovery_hint = ?,
             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
       WHERE id = ?`,
-  ).run(opts.last_error, opts.recovery_hint ?? "Retry dispatch manually via the build or assessor route.", id);
+  ).run(opts.last_error, opts.recovery_hint ?? "Retry dispatch manually.", id);
 }
 
 /**

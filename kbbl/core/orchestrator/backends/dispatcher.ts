@@ -11,8 +11,10 @@ import { runExclusive } from "./keyed-mutex";
 import {
   claimDispatch,
   formatAttemptSuffix,
+  getActiveAttempt,
   markAttemptRunning,
   markAttemptFailed,
+  markAttemptSucceeded,
   updateAttemptBranchInfo,
   type DispatchAttempt,
 } from "../../db/dispatch-attempts";
@@ -830,6 +832,24 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
           break;
         default:
           throw new Error(`unsupported input_artifact_type: ${stage.input_artifact_type}`);
+      }
+
+      // Lazily close any running attempt whose underlying session has already
+      // ended. Without this, a successfully completed session leaves its attempt
+      // in status='running' permanently, blocking all future dispatches for the
+      // same entity/stage via the active-claim unique index. Boot reconciliation
+      // catches the restart case; this catches the normal-completion case.
+      const staleActive = getActiveAttempt(db, claimEntityKind, inputId, stage.name);
+      if (staleActive?.status === "running" && staleActive.actual_session_ref) {
+        const sessionStatus = await backend.status(staleActive.actual_session_ref);
+        if (sessionStatus === "completed") {
+          markAttemptSucceeded(db, staleActive.id);
+        } else if (sessionStatus === "failed") {
+          markAttemptFailed(db, staleActive.id, {
+            last_error: "session ended with failure status (detected at next dispatch attempt)",
+          });
+        }
+        // If still 'running', leave it — the claim is valid and the session is live.
       }
 
       // Acquire the dispatch claim before any awaited work. This is the critical

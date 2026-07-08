@@ -71,7 +71,9 @@ const stubManager = {
 type DispatchResult = { session_ref: string };
 type DispatchFn = (stage: StageRow, inputRef: InputRef, renderedPrompt: string) => Promise<DispatchResult>;
 
-function createMockBackend(dispatchFn?: DispatchFn): ExecutionBackend & { calls: number } {
+type StatusFn = (ref: string) => Promise<"running" | "completed" | "failed">;
+
+function createMockBackend(dispatchFn?: DispatchFn, statusFn?: StatusFn): ExecutionBackend & { calls: number } {
   let calls = 0;
   return {
     id: "kbbl_chat",
@@ -81,7 +83,8 @@ function createMockBackend(dispatchFn?: DispatchFn): ExecutionBackend & { calls:
       if (dispatchFn) return dispatchFn(stage, inputRef, renderedPrompt);
       return { session_ref: `mock-${calls}` };
     },
-    async status(_session_ref: string) {
+    async status(session_ref: string) {
+      if (statusFn) return statusFn(session_ref);
       return "completed" as const;
     },
   };
@@ -329,7 +332,11 @@ describe("2. Double build POST", () => {
     if (!r.claimed) throw new Error("expected claim");
     markAttemptRunning(db, r.attempt.id, "active-session-ref-42");
 
-    const backend = createMockBackend();
+    // The status function must report the active session as still running so the
+    // lazy-close in dispatcher does not prematurely close the claim.
+    const backend = createMockBackend(undefined, async (ref) =>
+      ref === "active-session-ref-42" ? "running" : "completed",
+    );
     const { app: a } = makeApp(backend);
     const res = await a.request(`/briefs/${brief.id}/build`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     expect(res.status).toBe(409);
