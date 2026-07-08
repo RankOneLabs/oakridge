@@ -151,13 +151,20 @@ where
     let bus = EventBus::new();
     let stage_reg = Arc::new(stage_reg);
     let artifact_reg = Arc::new(artifact_reg);
-    let coordinator = Arc::new(Coordinator::new(
-        pool.clone(),
-        stage_reg.clone(),
-        artifact_reg.clone(),
-        bus.clone(),
-    ));
+    let coordinator = Arc::new(
+        Coordinator::new(
+            pool.clone(),
+            stage_reg.clone(),
+            artifact_reg.clone(),
+            bus.clone(),
+        )
+        .with_liveness_config(
+            std::time::Duration::from_secs(cfg.stage_timeout_secs),
+            std::time::Duration::from_secs(cfg.stuck_sweep_interval_secs),
+        ),
+    );
     coordinator.recover().await?;
+    let _sweeper = coordinator.spawn_stuck_sweeper();
 
     let state = AppState {
         pool,
