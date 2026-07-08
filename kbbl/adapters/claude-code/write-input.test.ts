@@ -82,6 +82,7 @@ function makeMockRuntime(channelOutbox: string): {
       id: "claude-code",
       label: "Claude Code (mock)",
       models: [],
+      efforts: [],
       supportsCompaction: false,
     },
     // CC opts into synthesis (channel transport doesn't echo input back), but

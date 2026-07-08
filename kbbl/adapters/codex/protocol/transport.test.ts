@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { createStdioTransport, type CodexTransport } from "./transport";
+import { createStdioTransport } from "./transport";
 
 describe("StdioTransport", () => {
   test("creates transport with correct interface", () => {
