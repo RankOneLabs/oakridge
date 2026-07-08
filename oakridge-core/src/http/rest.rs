@@ -7,16 +7,20 @@ use axum::{
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use uuid::Uuid;
 
 use crate::db::queries;
+use crate::executor::delegated_session::{
+    kbbl_client::DelegatedExternalRef, DelegatedGate, DelegatedGateState,
+};
 use crate::executor::ResumePayload;
 use crate::scheduler::DecisionError;
 use crate::types::{
-    Artifact, ArtifactId, Project, ProjectId, RunStatus, StageInstance,
-    StageInstanceId, WorkflowDef, WorkflowDefId, WorkflowGraph, WorkflowRun,
-    WorkflowRunId,
+    Artifact, ArtifactId, GateDecision, GateOutcome, InputSlot, OutputSlot, Project, ProjectId,
+    RunStatus, StageInstance, StageInstanceId, StageStatus, WorkflowDef, WorkflowDefId,
+    WorkflowGraph, WorkflowRun, WorkflowRunId,
 };
 
 use super::AppState;
@@ -124,6 +128,95 @@ pub struct CancelRunResponse {
     pub stages_cancelled: u64,
 }
 
+#[derive(Serialize, Clone)]
+pub struct OperatorWorktreeMetadata {
+    pub branch: String,
+    pub path: String,
+    pub base_ref: String,
+}
+
+#[derive(Serialize, Clone)]
+pub struct OperatorStageArtifact {
+    pub id: String,
+    pub type_id: String,
+    pub version: i32,
+}
+
+#[derive(Serialize)]
+pub struct OperatorRunSummary {
+    pub id: String,
+    pub workflow_name: String,
+    pub status: String,
+    pub current_stage: Option<String>,
+    pub parked_count: usize,
+    pub updated_at: String,
+    pub is_stuck: bool,
+    pub is_failed: bool,
+}
+
+#[derive(Serialize)]
+pub struct OperatorStageDetail {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub stage_type: String,
+    pub status: String,
+    pub artifacts: Vec<OperatorStageArtifact>,
+    pub delegated_kbbl_sid: Option<String>,
+    pub worktree: Option<OperatorWorktreeMetadata>,
+}
+
+#[derive(Serialize)]
+pub struct OperatorRunDetail {
+    pub id: String,
+    pub workflow_name: String,
+    pub status: String,
+    pub stages: Vec<OperatorStageDetail>,
+    pub parked_count: usize,
+    pub updated_at: String,
+}
+
+#[derive(Serialize)]
+pub struct OperatorParkedGate {
+    pub id: String,
+    pub gate_type: String,
+    pub run_id: String,
+    pub stage_name: String,
+    pub artifact_revision_id: Option<String>,
+    pub worktree: Option<OperatorWorktreeMetadata>,
+    pub resume_actions: Vec<String>,
+}
+
+#[derive(Deserialize)]
+pub struct OperatorGateResumeRequest {
+    pub action: String,
+    pub operator_comment: String,
+    pub feedback: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct OperatorGateResumeResponse {
+    pub gate_id: String,
+    pub resumed: bool,
+}
+
+#[derive(Serialize)]
+pub struct OperatorArtifactRevision {
+    pub id: String,
+    pub status: String,
+    pub created_at: String,
+    pub body: Value,
+    pub validation: Value,
+}
+
+#[derive(Serialize)]
+pub struct OperatorArtifactDetail {
+    pub id: String,
+    pub type_id: String,
+    pub run_id: String,
+    pub producing_stage: String,
+    pub revisions: Vec<OperatorArtifactRevision>,
+}
+
 // ── Query param structs ───────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -136,6 +229,94 @@ pub struct ListRunsQuery {
 #[derive(Deserialize)]
 pub struct ListArtifactsQuery {
     pub artifact_type: Option<String>,
+}
+
+// ── Workflow definition validation ───────────────────────────────────────────
+
+fn validation_error(message: impl Into<String>) -> AppError {
+    AppError::Domain(crate::Error::Validation(message.into()))
+}
+
+fn find_input<'a>(inputs: &'a [InputSlot], name: &str) -> Option<&'a InputSlot> {
+    inputs.iter().find(|slot| slot.name == name)
+}
+
+fn find_output<'a>(outputs: &'a [OutputSlot], name: &str) -> Option<&'a OutputSlot> {
+    outputs.iter().find(|slot| slot.name == name)
+}
+
+fn validate_workflow_graph(state: &AppState, graph: &WorkflowGraph) -> Result<(), AppError> {
+    for (stage_key, node) in &graph.stages {
+        let stage_type = state.stage_registry.get(&node.stage_type).ok_or_else(|| {
+            validation_error(format!(
+                "stage '{}' references unknown stage type '{}'",
+                stage_key, node.stage_type
+            ))
+        })?;
+
+        for input in &node.inputs {
+            if state.artifact_registry.get(&input.artifact_type).is_none() {
+                return Err(validation_error(format!(
+                    "stage '{}' input '{}' references unknown artifact type '{}'",
+                    stage_key, input.name, input.artifact_type
+                )));
+            }
+        }
+        for output in &node.outputs {
+            if state.artifact_registry.get(&output.artifact_type).is_none() {
+                return Err(validation_error(format!(
+                    "stage '{}' output '{}' references unknown artifact type '{}'",
+                    stage_key, output.name, output.artifact_type
+                )));
+            }
+        }
+
+        stage_type
+            .validate_def_config(&node.config, &node.inputs, &node.outputs)
+            .map_err(|err| {
+                validation_error(format!("stage '{}' config invalid: {}", stage_key, err))
+            })?;
+    }
+
+    for edge in &graph.edges {
+        let producer = graph.stages.get(&edge.from.stage).ok_or_else(|| {
+            validation_error(format!(
+                "edge source stage '{}' does not exist",
+                edge.from.stage
+            ))
+        })?;
+        let consumer = graph.stages.get(&edge.to.stage).ok_or_else(|| {
+            validation_error(format!(
+                "edge target stage '{}' does not exist",
+                edge.to.stage
+            ))
+        })?;
+        let output = find_output(&producer.outputs, &edge.from.slot).ok_or_else(|| {
+            validation_error(format!(
+                "edge source '{}.{}' does not match any output slot",
+                edge.from.stage, edge.from.slot
+            ))
+        })?;
+        let input = find_input(&consumer.inputs, &edge.to.slot).ok_or_else(|| {
+            validation_error(format!(
+                "edge target '{}.{}' does not match any input slot",
+                edge.to.stage, edge.to.slot
+            ))
+        })?;
+        if output.artifact_type != input.artifact_type {
+            return Err(validation_error(format!(
+                "edge '{}.{}' -> '{}.{}' connects artifact type '{}' to '{}'",
+                edge.from.stage,
+                edge.from.slot,
+                edge.to.stage,
+                edge.to.slot,
+                output.artifact_type,
+                input.artifact_type
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 // ── Project handlers ──────────────────────────────────────────────────────────
@@ -154,9 +335,7 @@ pub async fn create_project(
     Ok((StatusCode::CREATED, Json(project)))
 }
 
-pub async fn list_projects(
-    State(state): State<AppState>,
-) -> Result<Json<Vec<Project>>, AppError> {
+pub async fn list_projects(State(state): State<AppState>) -> Result<Json<Vec<Project>>, AppError> {
     let projects = queries::list_projects(&state.pool).await?;
     Ok(Json(projects))
 }
@@ -175,6 +354,7 @@ pub async fn create_workflow_def(
     State(state): State<AppState>,
     Json(body): Json<CreateWorkflowDef>,
 ) -> Result<(StatusCode, Json<WorkflowDef>), AppError> {
+    validate_workflow_graph(&state, &body.graph)?;
     let def = WorkflowDef {
         id: WorkflowDefId(Uuid::new_v4()),
         name: body.name,
@@ -207,7 +387,12 @@ pub async fn create_workflow_run(
     State(state): State<AppState>,
     Json(body): Json<CreateWorkflowRun>,
 ) -> Result<(StatusCode, Json<WorkflowRun>), AppError> {
-    let caller_context = body.context.unwrap_or_else(|| Value::Object(Default::default()));
+    let def = queries::get_workflow_def_by_id(&state.pool, &body.workflow_def_id).await?;
+    validate_workflow_graph(&state, &def.graph)?;
+
+    let caller_context = body
+        .context
+        .unwrap_or_else(|| Value::Object(Default::default()));
 
     let merged_context = if let Some(project_id) = body.project_id {
         let project = queries::get_project_by_id(&state.pool, &project_id).await?;
@@ -296,7 +481,10 @@ pub async fn get_workflow_run(
     let run_id = WorkflowRunId(id);
     let run = queries::get_workflow_run_by_id(&state.pool, &run_id).await?;
     let stage_instances = queries::list_stage_instances_for_run(&state.pool, &run_id).await?;
-    Ok(Json(RunDetail { run, stage_instances }))
+    Ok(Json(RunDetail {
+        run,
+        stage_instances,
+    }))
 }
 
 pub async fn cancel_workflow_run(
@@ -311,7 +499,11 @@ pub async fn cancel_workflow_run(
     if matches!(run.status, RunStatus::Done | RunStatus::Failed) {
         return Ok((
             StatusCode::OK,
-            Json(CancelRunResponse { run_id: id, accepted: false, stages_cancelled: 0 }),
+            Json(CancelRunResponse {
+                run_id: id,
+                accepted: false,
+                stages_cancelled: 0,
+            }),
         ));
     }
 
@@ -319,7 +511,11 @@ pub async fn cancel_workflow_run(
 
     Ok((
         StatusCode::ACCEPTED,
-        Json(CancelRunResponse { run_id: id, accepted: true, stages_cancelled }),
+        Json(CancelRunResponse {
+            run_id: id,
+            accepted: true,
+            stages_cancelled,
+        }),
     ))
 }
 
@@ -329,12 +525,9 @@ pub async fn list_run_artifacts(
     Query(params): Query<ListArtifactsQuery>,
 ) -> Result<Json<Vec<Artifact>>, AppError> {
     let run_id = WorkflowRunId(id);
-    let artifacts = queries::list_artifacts_for_run(
-        &state.pool,
-        &run_id,
-        params.artifact_type.as_deref(),
-    )
-    .await?;
+    let artifacts =
+        queries::list_artifacts_for_run(&state.pool, &run_id, params.artifact_type.as_deref())
+            .await?;
     Ok(Json(artifacts))
 }
 
@@ -393,6 +586,329 @@ pub async fn list_parked(
     Ok(Json(parked))
 }
 
+// ── Operator/PWA read-model handlers ─────────────────────────────────────────
+
+fn operator_run_status(run: &WorkflowRun, parked_count: usize) -> String {
+    operator_run_status_from_parts(run.status, parked_count)
+}
+
+fn operator_run_status_from_parts(status: RunStatus, parked_count: usize) -> String {
+    match status {
+        RunStatus::Done => "complete".to_owned(),
+        RunStatus::Failed => "failed".to_owned(),
+        RunStatus::Pending | RunStatus::Running if parked_count > 0 => "parked".to_owned(),
+        RunStatus::Pending | RunStatus::Running => "running".to_owned(),
+    }
+}
+
+fn operator_stage_status(status: StageStatus) -> String {
+    match status {
+        StageStatus::Pending => "pending",
+        StageStatus::Running => "running",
+        StageStatus::Parked => "parked",
+        StageStatus::Done => "complete",
+        StageStatus::Failed => "failed",
+    }
+    .to_owned()
+}
+
+fn delegated_external_ref(stage: &StageInstance) -> Option<DelegatedExternalRef> {
+    stage
+        .external_ref
+        .as_deref()
+        .map(DelegatedExternalRef::parse)
+}
+
+fn delegated_gate_state(stage: &StageInstance) -> Option<DelegatedGateState> {
+    stage
+        .parked_meta
+        .as_ref()
+        .and_then(|meta| serde_json::from_value::<DelegatedGateState>(meta.clone()).ok())
+}
+
+fn worktree_from_parts(
+    path: Option<String>,
+    branch: Option<String>,
+    base_ref: Option<String>,
+) -> Option<OperatorWorktreeMetadata> {
+    Some(OperatorWorktreeMetadata {
+        branch: branch?,
+        path: path?,
+        base_ref: base_ref?,
+    })
+}
+
+fn operator_worktree(stage: &StageInstance) -> Option<OperatorWorktreeMetadata> {
+    if let Some(gate) = delegated_gate_state(stage) {
+        if let Some(worktree) = worktree_from_parts(
+            gate.worktree_path,
+            gate.worktree_branch,
+            gate.worktree_base_ref,
+        ) {
+            return Some(worktree);
+        }
+    }
+    delegated_external_ref(stage).and_then(|external| {
+        worktree_from_parts(
+            external.worktree_path,
+            external.worktree_branch,
+            external.worktree_base_ref,
+        )
+    })
+}
+
+fn operator_gate_type(stage: &StageInstance, gate: Option<&DelegatedGateState>) -> String {
+    match gate.map(|gate| &gate.gate) {
+        Some(DelegatedGate::ArtifactApproval) => "artifact_approval".to_owned(),
+        Some(DelegatedGate::MergeConfirmation) => "merge_confirmation".to_owned(),
+        None => stage
+            .parked_reason
+            .clone()
+            .unwrap_or_else(|| "parked".to_owned()),
+    }
+}
+
+fn operator_resume_actions(gate: Option<&DelegatedGateState>) -> Vec<String> {
+    match gate.map(|gate| &gate.gate) {
+        Some(DelegatedGate::ArtifactApproval) => {
+            vec!["pass".to_owned(), "fail".to_owned(), "rerun".to_owned()]
+        }
+        Some(DelegatedGate::MergeConfirmation) => vec!["pass".to_owned()],
+        None => vec![],
+    }
+}
+
+fn operator_gate(stage: &StageInstance) -> OperatorParkedGate {
+    let gate = delegated_gate_state(stage);
+    OperatorParkedGate {
+        id: stage.id.0.to_string(),
+        gate_type: operator_gate_type(stage, gate.as_ref()),
+        run_id: stage.run_id.0.to_string(),
+        stage_name: stage.stage_key.clone(),
+        artifact_revision_id: gate.as_ref().map(|gate| gate.artifact_id.0.to_string()),
+        worktree: operator_worktree(stage),
+        resume_actions: operator_resume_actions(gate.as_ref()),
+    }
+}
+
+fn artifacts_by_stage(
+    artifacts: Vec<Artifact>,
+) -> HashMap<StageInstanceId, Vec<OperatorStageArtifact>> {
+    let mut by_stage: HashMap<StageInstanceId, Vec<OperatorStageArtifact>> = HashMap::new();
+    for artifact in artifacts {
+        by_stage
+            .entry(artifact.stage_instance_id)
+            .or_default()
+            .push(OperatorStageArtifact {
+                id: artifact.id.0.to_string(),
+                type_id: artifact.artifact_type,
+                version: artifact.version,
+            });
+    }
+    by_stage
+}
+
+fn operator_stage(
+    stage: StageInstance,
+    artifacts_by_stage: &HashMap<StageInstanceId, Vec<OperatorStageArtifact>>,
+) -> OperatorStageDetail {
+    let external = delegated_external_ref(&stage);
+    OperatorStageDetail {
+        name: stage.stage_key.clone(),
+        stage_type: stage.stage_type.clone(),
+        status: operator_stage_status(stage.status),
+        artifacts: artifacts_by_stage
+            .get(&stage.id)
+            .cloned()
+            .unwrap_or_default(),
+        delegated_kbbl_sid: external.map(|external| external.sid),
+        worktree: operator_worktree(&stage),
+    }
+}
+
+fn operator_run_summary(row: queries::OperatorRunSummary) -> OperatorRunSummary {
+    OperatorRunSummary {
+        id: row.run_id.0.to_string(),
+        workflow_name: row.workflow_name,
+        status: operator_run_status_from_parts(row.status, row.parked_count),
+        current_stage: row.current_stage,
+        parked_count: row.parked_count,
+        updated_at: row.updated_at.to_rfc3339(),
+        is_stuck: false,
+        is_failed: matches!(row.status, RunStatus::Failed),
+    }
+}
+
+pub async fn list_operator_runs(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<OperatorRunSummary>>, AppError> {
+    let summaries = queries::list_operator_run_summaries(&state.pool)
+        .await?
+        .into_iter()
+        .map(operator_run_summary)
+        .collect();
+    Ok(Json(summaries))
+}
+
+pub async fn get_operator_run(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<OperatorRunDetail>, AppError> {
+    let run_id = WorkflowRunId(id);
+    let run = queries::get_workflow_run_by_id(&state.pool, &run_id).await?;
+    let def = queries::get_workflow_def_by_id(&state.pool, &run.workflow_def_id).await?;
+    let stages = queries::list_stage_instances_for_run(&state.pool, &run_id).await?;
+    let artifacts = queries::list_artifacts_for_run(&state.pool, &run_id, None).await?;
+    let artifacts_by_stage = artifacts_by_stage(artifacts);
+    let parked_count = stages
+        .iter()
+        .filter(|stage| matches!(stage.status, StageStatus::Parked))
+        .count();
+    let current_status = operator_run_status(&run, parked_count);
+    let stage_details = stages
+        .into_iter()
+        .map(|stage| operator_stage(stage, &artifacts_by_stage))
+        .collect();
+    Ok(Json(OperatorRunDetail {
+        id: run.id.0.to_string(),
+        workflow_name: def.name,
+        status: current_status,
+        stages: stage_details,
+        parked_count,
+        updated_at: run.updated_at.to_rfc3339(),
+    }))
+}
+
+pub async fn list_operator_gates(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<OperatorParkedGate>>, AppError> {
+    let parked = queries::list_parked_stage_instances(&state.pool).await?;
+    Ok(Json(parked.iter().map(operator_gate).collect()))
+}
+
+pub async fn list_operator_run_gates(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<OperatorParkedGate>>, AppError> {
+    let run_id = WorkflowRunId(id);
+    queries::get_workflow_run_by_id(&state.pool, &run_id).await?;
+    let stages = queries::list_stage_instances_for_run(&state.pool, &run_id).await?;
+    let parked = stages
+        .iter()
+        .filter(|stage| matches!(stage.status, StageStatus::Parked))
+        .map(operator_gate)
+        .collect();
+    Ok(Json(parked))
+}
+
+fn gate_outcome(action: &str) -> Option<GateOutcome> {
+    match action {
+        "pass" | "approve" => Some(GateOutcome::Pass),
+        "fail" | "reject" => Some(GateOutcome::Fail),
+        "rerun" => Some(GateOutcome::Rerun),
+        _ => None,
+    }
+}
+
+pub async fn resume_operator_gate(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<OperatorGateResumeRequest>,
+) -> Result<(StatusCode, Json<OperatorGateResumeResponse>), AppError> {
+    let stage_instance_id = StageInstanceId(id);
+    let stage = queries::get_stage_instance_by_id(&state.pool, &stage_instance_id).await?;
+    let gate = delegated_gate_state(&stage).ok_or_else(|| {
+        validation_error(format!(
+            "stage instance {} has no resumable delegated gate metadata",
+            stage_instance_id.0
+        ))
+    })?;
+    let outcome = gate_outcome(body.action.as_str())
+        .ok_or_else(|| validation_error(format!("unknown gate action '{}'", body.action)))?;
+    let comment = body.operator_comment.trim();
+    if comment.is_empty() {
+        return Err(validation_error("operator_comment is required"));
+    }
+    let feedback = body
+        .feedback
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+
+    state
+        .coordinator
+        .resume_parked_stage_if_active(
+            stage.run_id,
+            stage_instance_id,
+            ResumePayload::GateDecision {
+                decision: GateDecision {
+                    outcome,
+                    comment: Some(comment.to_owned()),
+                    feedback,
+                },
+                against_artifact_id: gate.artifact_id,
+            },
+        )
+        .await
+        .map_err(|e| match e {
+            DecisionError::Conflict(msg) => AppError::Conflict(msg),
+            DecisionError::Internal(err) => AppError::Internal(err.to_string()),
+        })?;
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(OperatorGateResumeResponse {
+            gate_id: stage_instance_id.0.to_string(),
+            resumed: true,
+        }),
+    ))
+}
+
+pub async fn get_operator_artifact_detail(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<OperatorArtifactDetail>, AppError> {
+    let artifact_id = ArtifactId(id);
+    let mut chain = queries::get_artifact_chain(&state.pool, &artifact_id).await?;
+    chain.reverse();
+    let requested = chain
+        .last()
+        .cloned()
+        .ok_or_else(|| crate::Error::NotFound {
+            entity: "artifact".into(),
+            id: id.to_string(),
+        })?;
+    let producing_stage =
+        queries::get_stage_instance_by_id(&state.pool, &requested.stage_instance_id).await?;
+    let revision_status = if matches!(producing_stage.status, StageStatus::Done) {
+        "approved"
+    } else {
+        "draft"
+    };
+    let revisions = chain
+        .into_iter()
+        .map(|artifact| OperatorArtifactRevision {
+            id: artifact.id.0.to_string(),
+            status: revision_status.to_owned(),
+            created_at: artifact.created_at.to_rfc3339(),
+            body: artifact.body,
+            validation: json!({
+                "valid": true,
+                "artifact_type": artifact.artifact_type,
+            }),
+        })
+        .collect();
+
+    Ok(Json(OperatorArtifactDetail {
+        id: requested.id.0.to_string(),
+        type_id: requested.artifact_type,
+        run_id: requested.run_id.0.to_string(),
+        producing_stage: producing_stage.stage_key,
+        revisions,
+    }))
+}
+
 // ── Integration tests ─────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -400,6 +916,7 @@ mod tests {
     use super::*;
     use crate::db;
     use crate::events::EventBus;
+    use crate::executor::delegated_session::DelegatedExecutor;
     use crate::executor::{EmitArgs, ResumePayload, StageContext, StageHandle};
     use crate::registry::{ArtifactTypeDef, ArtifactTypeRegistry, StageTypeRegistry};
     use crate::scheduler::Coordinator;
@@ -553,7 +1070,13 @@ mod tests {
             bus.clone(),
         ));
 
-        AppState { pool, stage_registry, artifact_registry, coordinator, bus }
+        AppState {
+            pool,
+            stage_registry,
+            artifact_registry,
+            coordinator,
+            bus,
+        }
     }
 
     async fn make_state(
@@ -603,6 +1126,156 @@ mod tests {
     }
 
     // ── Tests ─────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_workflow_def_validation_rejects_unknown_stage_type() {
+        let state = make_state(vec![]).await;
+        let app = crate::http::router(state);
+        let (status, body) = req(
+            app,
+            "POST",
+            "/workflow_defs",
+            Some(json!({
+                "name": "bad-wf",
+                "version": 1,
+                "graph": minimal_graph("missing_stage_type")
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            body["error"]
+                .as_str()
+                .unwrap()
+                .contains("unknown stage type"),
+            "unexpected body: {body:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_operator_read_models_expose_delegated_metadata_and_artifact_detail() {
+        let state = make_state(vec![]).await;
+        let now = Utc::now();
+        let def = WorkflowDef {
+            id: WorkflowDefId(Uuid::new_v4()),
+            name: "operator-wf".into(),
+            version: 1,
+            graph: WorkflowGraph {
+                stages: HashMap::new(),
+                edges: vec![],
+            },
+            created_at: now,
+        };
+        queries::insert_workflow_def(&state.pool, &def)
+            .await
+            .unwrap();
+        let run = WorkflowRun {
+            id: WorkflowRunId(Uuid::new_v4()),
+            workflow_def_id: def.id,
+            project_id: None,
+            status: RunStatus::Running,
+            context: json!({}),
+            version: 1,
+            created_at: now,
+            updated_at: now,
+        };
+        queries::insert_workflow_run(&state.pool, &run)
+            .await
+            .unwrap();
+
+        let stage_id = StageInstanceId(Uuid::new_v4());
+        let artifact_id = ArtifactId(Uuid::new_v4());
+        let external_ref = DelegatedExternalRef {
+            sid: "sid-123".into(),
+            worktree_path: Some("/worktrees/v2/build".into()),
+            worktree_branch: Some("cohort/v2/1-build".into()),
+            worktree_base_ref: Some("abc123".into()),
+        };
+        let gate_state = DelegatedGateState {
+            executor: DelegatedExecutor::DelegatedSession,
+            kbbl_sid: "sid-123".into(),
+            gate: DelegatedGate::ArtifactApproval,
+            artifact_id,
+            revision_count: 1,
+            worktree_path: Some("/worktrees/v2/build".into()),
+            worktree_branch: Some("cohort/v2/1-build".into()),
+            worktree_base_ref: Some("abc123".into()),
+        };
+        let stage = StageInstance {
+            id: stage_id,
+            run_id: run.id,
+            stage_key: "build".into(),
+            stage_type: "delegated_session".into(),
+            status: StageStatus::Parked,
+            config: json!({}),
+            parked_reason: Some("waiting_gate".into()),
+            parked_meta: Some(serde_json::to_value(&gate_state).unwrap()),
+            terminal_meta: None,
+            external_ref: Some(serde_json::to_string(&external_ref).unwrap()),
+            started_at: Some(now),
+            ended_at: None,
+            created_at: now,
+            updated_at: now,
+        };
+        queries::insert_stage_instance(&state.pool, &stage)
+            .await
+            .unwrap();
+        let artifact = Artifact {
+            id: artifact_id,
+            run_id: run.id,
+            stage_instance_id: stage_id,
+            artifact_type: "any".into(),
+            output_name: Some("out".into()),
+            label: None,
+            body: json!({"summary": "done"}),
+            version: 1,
+            parent_artifact_id: None,
+            created_at: now,
+        };
+        queries::insert_artifact(&state.pool, &artifact)
+            .await
+            .unwrap();
+
+        let app = crate::http::router(state.clone());
+        let (status, run_detail) = req(app, "GET", &format!("/runs/{}", run.id.0), None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(run_detail["workflow_name"], json!("operator-wf"));
+        assert_eq!(
+            run_detail["stages"][0]["delegated_kbbl_sid"],
+            json!("sid-123")
+        );
+        assert_eq!(
+            run_detail["stages"][0]["worktree"]["branch"],
+            json!("cohort/v2/1-build")
+        );
+        assert_eq!(
+            run_detail["stages"][0]["artifacts"][0]["id"],
+            json!(artifact_id.0.to_string())
+        );
+
+        let app = crate::http::router(state.clone());
+        let (status, gates) = req(app, "GET", "/gates", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(gates[0]["gate_type"], json!("artifact_approval"));
+        assert_eq!(gates[0]["resume_actions"], json!(["pass", "fail", "rerun"]));
+        assert_eq!(gates[0]["worktree"]["path"], json!("/worktrees/v2/build"));
+
+        let app = crate::http::router(state.clone());
+        let (status, artifact_detail) = req(
+            app,
+            "GET",
+            &format!("/artifact_details/{}", artifact_id.0),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(artifact_detail["type_id"], json!("any"));
+        assert_eq!(artifact_detail["producing_stage"], json!("build"));
+        assert_eq!(
+            artifact_detail["revisions"][0]["validation"]["valid"],
+            json!(true)
+        );
+    }
 
     #[tokio::test]
     async fn test_context_merge_project_injected_and_caller_wins() {
@@ -655,7 +1328,11 @@ mod tests {
         assert_eq!(ctx_a["project"]["id"], json!(project_id));
         assert_eq!(ctx_a["project"]["name"], json!("my-project"));
         assert_eq!(ctx_a["project"]["repo_dir"], json!("/repos/my-project"));
-        assert_eq!(ctx_a["workdir"], json!("/caller/override"), "caller workdir must win");
+        assert_eq!(
+            ctx_a["workdir"],
+            json!("/caller/override"),
+            "caller workdir must win"
+        );
         assert_eq!(ctx_a["extra"], json!("field"), "caller extra key preserved");
 
         // Case B: no caller context => injected workdir used
@@ -672,19 +1349,28 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::CREATED, "run B: {}", run_b);
         let ctx_b = &run_b["context"];
-        assert_eq!(ctx_b["workdir"], json!("/repos/my-project"), "injected workdir when no caller");
+        assert_eq!(
+            ctx_b["workdir"],
+            json!("/repos/my-project"),
+            "injected workdir when no caller"
+        );
         assert_eq!(ctx_b["project"]["id"], json!(project_id));
 
         // Verify both runs persisted with correct context
         let run_a_id = WorkflowRunId(Uuid::parse_str(run_a["id"].as_str().unwrap()).unwrap());
-        let stored_a = queries::get_workflow_run_by_id(&pool, &run_a_id).await.unwrap();
+        let stored_a = queries::get_workflow_run_by_id(&pool, &run_a_id)
+            .await
+            .unwrap();
         assert_eq!(stored_a.context["workdir"], json!("/caller/override"));
     }
 
     #[tokio::test]
-    async fn test_start_failure_rolls_back_pending_run_and_retry_stays_single_active() {
+    async fn test_invalid_saved_workflow_def_does_not_insert_run_and_retry_stays_single_active() {
         let (stage, _ctx_rx) = scripted("retry_stage");
-        let state = make_state(vec![stage.clone() as Arc<dyn crate::registry::stage_type::StageType>]).await;
+        let state = make_state(vec![
+            stage.clone() as Arc<dyn crate::registry::stage_type::StageType>
+        ])
+        .await;
         let pool = state.pool.clone();
 
         let def_id = WorkflowDefId(Uuid::new_v4());
@@ -726,17 +1412,25 @@ mod tests {
             Some(json!({"workflow_def_id": def_id})),
         )
         .await;
-        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "error body: {err_body}");
+        assert_eq!(
+            status,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "error body: {err_body}"
+        );
 
         let runs = queries::list_workflow_runs(&pool, None, Some(&def_id), None)
             .await
             .unwrap();
-        assert_eq!(runs.len(), 1, "runs after failed create: {runs:?}");
-        assert_eq!(runs[0].status, RunStatus::Failed, "failed row should not remain pending");
-        assert_eq!(runs[0].workflow_def_id, def_id);
+        assert!(
+            runs.is_empty(),
+            "definition validation failure must not insert a run row: {runs:?}"
+        );
 
         let active_after_failure = queries::list_active_runs(&pool).await.unwrap();
-        assert!(active_after_failure.is_empty(), "failed create must not leave active work behind");
+        assert!(
+            active_after_failure.is_empty(),
+            "failed create must not leave active work behind"
+        );
 
         sqlx::query("UPDATE workflow_def SET graph = ? WHERE id = ?")
             .bind(serde_json::to_string(&def.graph).unwrap())
@@ -757,7 +1451,11 @@ mod tests {
         let retry_run_id = WorkflowRunId(Uuid::parse_str(run["id"].as_str().unwrap()).unwrap());
 
         let active_after_retry = queries::list_active_runs(&pool).await.unwrap();
-        assert_eq!(active_after_retry.len(), 1, "retry should create only one active run");
+        assert_eq!(
+            active_after_retry.len(),
+            1,
+            "retry should create only one active run"
+        );
         assert_eq!(active_after_retry[0].id, retry_run_id);
     }
 
@@ -793,7 +1491,9 @@ mod tests {
         // terminal_meta yet.
         for _ in 0..50 {
             tokio::time::sleep(Duration::from_millis(20)).await;
-            let sis = queries::list_stage_instances_for_run(&pool, &run_id).await.unwrap();
+            let sis = queries::list_stage_instances_for_run(&pool, &run_id)
+                .await
+                .unwrap();
             if sis.iter().any(|si| {
                 si.status == StageStatus::Done
                     && si.terminal_meta == Some(json!({"result": "immediate"}))
@@ -808,21 +1508,41 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(detail["id"].as_str().unwrap(), run_id_str);
         let stage_instances = detail["stage_instances"].as_array().unwrap();
-        assert!(!stage_instances.is_empty(), "stage_instances must be inline");
+        assert!(
+            !stage_instances.is_empty(),
+            "stage_instances must be inline"
+        );
         assert_eq!(stage_instances[0]["stage_key"].as_str().unwrap(), "s1");
-        assert_eq!(stage_instances[0]["terminal_meta"], json!({"result": "immediate"}));
+        assert_eq!(
+            stage_instances[0]["terminal_meta"],
+            json!({"result": "immediate"})
+        );
 
         let app = crate::http::router(state.clone());
-        let (status, stage_instance) =
-            req(app, "GET", &format!("/stage_instances/{}", stage_instances[0]["id"].as_str().unwrap()), None).await;
+        let (status, stage_instance) = req(
+            app,
+            "GET",
+            &format!(
+                "/stage_instances/{}",
+                stage_instances[0]["id"].as_str().unwrap()
+            ),
+            None,
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(stage_instance["terminal_meta"], json!({"result": "immediate"}));
+        assert_eq!(
+            stage_instance["terminal_meta"],
+            json!({"result": "immediate"})
+        );
     }
 
     #[tokio::test]
     async fn test_park_verb_results_drives_run_to_done() {
         let (scripted_stage, mut ctx_rx) = scripted("gate_stage");
-        let state = make_state(vec![scripted_stage as Arc<dyn crate::registry::stage_type::StageType>]).await;
+        let state = make_state(vec![
+            scripted_stage as Arc<dyn crate::registry::stage_type::StageType>,
+        ])
+        .await;
         let pool = state.pool.clone();
 
         // workflow_def: one gate_stage with an output artifact
@@ -861,11 +1581,10 @@ mod tests {
         let run_id = WorkflowRunId(Uuid::parse_str(&run_id_str).unwrap());
 
         // Script the stage: emit artifact, park
-        let (ctx, mut resume_rx) =
-            tokio::time::timeout(Duration::from_secs(5), ctx_rx.recv())
-                .await
-                .unwrap()
-                .unwrap();
+        let (ctx, mut resume_rx) = tokio::time::timeout(Duration::from_secs(5), ctx_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
 
         ctx.set_status(StageStatus::Running, None).await.unwrap();
         let artifact = ctx
@@ -913,33 +1632,43 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::ACCEPTED);
-        assert_eq!(body["status"], json!("running"), "accepted resume should return the resumed running stage");
+        assert_eq!(
+            body["status"],
+            json!("running"),
+            "accepted resume should return the resumed running stage"
+        );
 
         // Wait for resume signal, then mark stage done
-        let resume =
-            tokio::time::timeout(Duration::from_secs(5), resume_rx.recv())
-                .await
-                .unwrap()
-                .unwrap();
+        let resume = tokio::time::timeout(Duration::from_secs(5), resume_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
         assert!(matches!(resume, ResumePayload::GateDecision { .. }));
         ctx.set_status(StageStatus::Done, None).await.unwrap();
 
         // Poll until run reaches done
         for _ in 0..50 {
             tokio::time::sleep(Duration::from_millis(20)).await;
-            let run = queries::get_workflow_run_by_id(&pool, &run_id).await.unwrap();
+            let run = queries::get_workflow_run_by_id(&pool, &run_id)
+                .await
+                .unwrap();
             if matches!(run.status, RunStatus::Done | RunStatus::Failed) {
                 break;
             }
         }
-        let final_run = queries::get_workflow_run_by_id(&pool, &run_id).await.unwrap();
+        let final_run = queries::get_workflow_run_by_id(&pool, &run_id)
+            .await
+            .unwrap();
         assert_eq!(final_run.status, RunStatus::Done);
     }
 
     #[tokio::test]
     async fn test_park_verb_results_conflicts_on_duplicate_resume() {
         let (scripted_stage, mut ctx_rx) = scripted("gate_stage");
-        let state = make_state(vec![scripted_stage as Arc<dyn crate::registry::stage_type::StageType>]).await;
+        let state = make_state(vec![
+            scripted_stage as Arc<dyn crate::registry::stage_type::StageType>,
+        ])
+        .await;
         let pool = state.pool.clone();
 
         let gate_graph = json!({
@@ -976,11 +1705,10 @@ mod tests {
         let run_id_str = run["id"].as_str().unwrap().to_string();
         let run_id = WorkflowRunId(Uuid::parse_str(&run_id_str).unwrap());
 
-        let (ctx, mut resume_rx) =
-            tokio::time::timeout(Duration::from_secs(5), ctx_rx.recv())
-                .await
-                .unwrap()
-                .unwrap();
+        let (ctx, mut resume_rx) = tokio::time::timeout(Duration::from_secs(5), ctx_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
 
         ctx.set_status(StageStatus::Running, None).await.unwrap();
         let artifact = ctx
@@ -1013,31 +1741,40 @@ mod tests {
         let app = crate::http::router(state.clone());
         let (status, body) = req(app, "POST", &resume_url, Some(payload)).await;
         assert_eq!(status, StatusCode::CONFLICT);
-        assert!(body["error"].as_str().is_some(), "duplicate resume should return a conflict message");
+        assert!(
+            body["error"].as_str().is_some(),
+            "duplicate resume should return a conflict message"
+        );
 
-        let resume =
-            tokio::time::timeout(Duration::from_secs(5), resume_rx.recv())
-                .await
-                .unwrap()
-                .unwrap();
+        let resume = tokio::time::timeout(Duration::from_secs(5), resume_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
         assert!(matches!(resume, ResumePayload::GateDecision { .. }));
         ctx.set_status(StageStatus::Done, None).await.unwrap();
 
         for _ in 0..50 {
             tokio::time::sleep(Duration::from_millis(20)).await;
-            let run = queries::get_workflow_run_by_id(&pool, &run_id).await.unwrap();
+            let run = queries::get_workflow_run_by_id(&pool, &run_id)
+                .await
+                .unwrap();
             if matches!(run.status, RunStatus::Done | RunStatus::Failed) {
                 break;
             }
         }
-        let final_run = queries::get_workflow_run_by_id(&pool, &run_id).await.unwrap();
+        let final_run = queries::get_workflow_run_by_id(&pool, &run_id)
+            .await
+            .unwrap();
         assert_eq!(final_run.status, RunStatus::Done);
     }
 
     #[tokio::test]
     async fn test_park_verb_results_conflicts_on_inactive_run() {
         let (scripted_stage, mut ctx_rx) = scripted("gate_stage");
-        let state = make_state(vec![scripted_stage as Arc<dyn crate::registry::stage_type::StageType>]).await;
+        let state = make_state(vec![
+            scripted_stage as Arc<dyn crate::registry::stage_type::StageType>,
+        ])
+        .await;
         let pool = state.pool.clone();
 
         let gate_graph = json!({
@@ -1094,7 +1831,9 @@ mod tests {
             .await
             .unwrap();
 
-        queries::update_workflow_run_status(&pool, &run_id, RunStatus::Done).await.unwrap();
+        queries::update_workflow_run_status(&pool, &run_id, RunStatus::Done)
+            .await
+            .unwrap();
 
         let app = crate::http::router(state.clone());
         let (status, body) = req(
@@ -1109,7 +1848,10 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::CONFLICT);
-        assert!(body["error"].as_str().is_some(), "inactive runs should return a conflict message");
+        assert!(
+            body["error"].as_str().is_some(),
+            "inactive runs should return a conflict message"
+        );
     }
 
     // ── ParkingStage: parks immediately, never resumes on its own ────────────
@@ -1150,8 +1892,10 @@ mod tests {
 
         async fn execute(&self, ctx: StageContext) -> anyhow::Result<Box<dyn StageHandle>> {
             ctx.set_status(StageStatus::Running, None).await?;
-            ctx.set_status(StageStatus::Parked, Some("waiting_cancel".into())).await?;
-            ctx.set_parked_meta(Some(json!({"kind": "waiting_cancel"}))).await?;
+            ctx.set_status(StageStatus::Parked, Some("waiting_cancel".into()))
+                .await?;
+            ctx.set_parked_meta(Some(json!({"kind": "waiting_cancel"})))
+                .await?;
             let _ = self.parked_tx.send(ctx.stage_instance_id).await;
             Ok(Box::new(ParkingHandle))
         }
@@ -1164,7 +1908,10 @@ mod tests {
             type_id: "parking_stage".into(),
             parked_tx,
         });
-        let state = make_state(vec![parking as Arc<dyn crate::registry::stage_type::StageType>]).await;
+        let state = make_state(vec![
+            parking as Arc<dyn crate::registry::stage_type::StageType>,
+        ])
+        .await;
         let pool = state.pool.clone();
 
         let app = crate::http::router(state.clone());
@@ -1172,7 +1919,9 @@ mod tests {
             app,
             "POST",
             "/workflow_defs",
-            Some(json!({"name": "cancel-wf", "version": 1, "graph": minimal_graph("parking_stage")})),
+            Some(
+                json!({"name": "cancel-wf", "version": 1, "graph": minimal_graph("parking_stage")}),
+            ),
         )
         .await;
         let def_id = def["id"].as_str().unwrap().to_string();
@@ -1206,7 +1955,10 @@ mod tests {
                 break;
             }
         }
-        assert!(parked_count > 0, "parked stage must appear in GET /parked before cancel");
+        assert!(
+            parked_count > 0,
+            "parked stage must appear in GET /parked before cancel"
+        );
 
         // POST /workflow_runs/:id/cancel
         let app = crate::http::router(state.clone());
@@ -1228,9 +1980,14 @@ mod tests {
         // Poll until stage is Failed with kind=cancelled.
         for _ in 0..100 {
             tokio::time::sleep(Duration::from_millis(20)).await;
-            let si = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+            let si = queries::get_stage_instance_by_id(&pool, &si_id)
+                .await
+                .unwrap();
             if si.status == StageStatus::Failed {
-                let meta = si.terminal_meta.as_ref().expect("terminal_meta must be set on Failed cancelled stage");
+                let meta = si
+                    .terminal_meta
+                    .as_ref()
+                    .expect("terminal_meta must be set on Failed cancelled stage");
                 assert_eq!(
                     meta.get("kind").and_then(|v| v.as_str()),
                     Some("cancelled"),
@@ -1239,10 +1996,22 @@ mod tests {
                 break;
             }
         }
-        let si_final = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
-        assert_eq!(si_final.status, StageStatus::Failed, "stage must be Failed after cancel");
-        assert!(si_final.parked_reason.is_none(), "cancel must clear parked_reason");
-        assert!(si_final.parked_meta.is_none(), "cancel must clear parked_meta");
+        let si_final = queries::get_stage_instance_by_id(&pool, &si_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            si_final.status,
+            StageStatus::Failed,
+            "stage must be Failed after cancel"
+        );
+        assert!(
+            si_final.parked_reason.is_none(),
+            "cancel must clear parked_reason"
+        );
+        assert!(
+            si_final.parked_meta.is_none(),
+            "cancel must clear parked_meta"
+        );
         let meta = si_final.terminal_meta.expect("terminal_meta must be set");
         assert_eq!(meta["kind"], json!("cancelled"));
 
@@ -1260,7 +2029,9 @@ mod tests {
         // Wait for run to reach terminal first.
         for _ in 0..100 {
             tokio::time::sleep(Duration::from_millis(20)).await;
-            let run = queries::get_workflow_run_by_id(&pool, &run_id).await.unwrap();
+            let run = queries::get_workflow_run_by_id(&pool, &run_id)
+                .await
+                .unwrap();
             if matches!(run.status, RunStatus::Done | RunStatus::Failed) {
                 break;
             }
@@ -1286,7 +2057,10 @@ mod tests {
         assert_eq!(serialized["kind"], json!("executor"));
         assert_eq!(serialized["payload"], json!({"op": "permit", "id": 42}));
         let deserialized: ResumePayload = serde_json::from_value(serialized).unwrap();
-        let ResumePayload::Executor { payload: deserialized_payload } = deserialized else {
+        let ResumePayload::Executor {
+            payload: deserialized_payload,
+        } = deserialized
+        else {
             panic!("expected Executor variant");
         };
         assert_eq!(deserialized_payload, json!({"op": "permit", "id": 42}));
@@ -1306,7 +2080,13 @@ mod tests {
         ] {
             let app = crate::http::router(state.clone());
             let (status, _) = req(app, method, &uri, None).await;
-            assert_eq!(status, StatusCode::NOT_FOUND, "expected 404 for {} {}", method, uri);
+            assert_eq!(
+                status,
+                StatusCode::NOT_FOUND,
+                "expected 404 for {} {}",
+                method,
+                uri
+            );
         }
     }
 
@@ -1327,6 +2107,9 @@ mod tests {
         let app = crate::http::router(state.clone());
         let (status, body) = req(app, "POST", "/workflow_defs", Some(payload)).await;
         assert_eq!(status, StatusCode::CONFLICT);
-        assert!(body["error"].as_str().is_some(), "error field must be present");
+        assert!(
+            body["error"].as_str().is_some(),
+            "error field must be present"
+        );
     }
 }

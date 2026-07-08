@@ -134,7 +134,9 @@ mod tests {
             runtime: DelegatedRuntime::ClaudeCode,
             prompt_template_path: "build.md".into(),
             slot_bindings,
-            workdir: SlotBinding::Literal { value: "/work".into() },
+            workdir: SlotBinding::Literal {
+                value: "/work".into(),
+            },
             session_name: "delegate-1".into(),
             model: Some("claude-sonnet-4-6".into()),
             effort: None,

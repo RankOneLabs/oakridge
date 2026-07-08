@@ -42,11 +42,7 @@ pub fn resolve_binding(
             let v = match path {
                 None => &artifact.body,
                 Some(ptr) => artifact.body.pointer(ptr).ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "JSON pointer '{}' not found in input '{}'",
-                        ptr,
-                        input_name
-                    )
+                    anyhow::anyhow!("JSON pointer '{}' not found in input '{}'", ptr, input_name)
                 })?,
             };
             value_to_string(v)
@@ -85,13 +81,13 @@ pub fn render_template(
     while let Some(open) = remaining.find("{{") {
         result.push_str(&remaining[..open]);
         let after_open = &remaining[open + 2..];
-        let close = after_open.find("}}").ok_or_else(|| {
-            anyhow::anyhow!("unclosed '{{{{' in prompt template")
-        })?;
+        let close = after_open
+            .find("}}")
+            .ok_or_else(|| anyhow::anyhow!("unclosed '{{{{' in prompt template"))?;
         let key = &after_open[..close];
-        let value = slot_values.get(key).ok_or_else(|| {
-            anyhow::anyhow!("template slot '{{{{{}}}}}' has no binding", key)
-        })?;
+        let value = slot_values
+            .get(key)
+            .ok_or_else(|| anyhow::anyhow!("template slot '{{{{{}}}}}' has no binding", key))?;
         result.push_str(value);
         remaining = &after_open[close + 2..];
     }
@@ -112,9 +108,8 @@ pub fn load_template(prompts_dir: &Path, rel_path: &str) -> anyhow::Result<Strin
         )
     })?;
     let path = prompts_dir.join(rel_path);
-    let canonical_path = std::fs::canonicalize(&path).map_err(|e| {
-        anyhow::anyhow!("failed to load template '{}': {}", path.display(), e)
-    })?;
+    let canonical_path = std::fs::canonicalize(&path)
+        .map_err(|e| anyhow::anyhow!("failed to load template '{}': {}", path.display(), e))?;
     if !canonical_path.starts_with(&canonical_prompts_dir) {
         return Err(anyhow::anyhow!(
             "template path '{}' escapes prompts directory '{}'",
@@ -196,7 +191,10 @@ mod tests {
 
     #[test]
     fn slot_binding_input_no_path_roundtrip() {
-        let b = SlotBinding::Input { input_name: "doc".into(), path: None };
+        let b = SlotBinding::Input {
+            input_name: "doc".into(),
+            path: None,
+        };
         let v = serde_json::to_value(&b).unwrap();
         assert_eq!(v["from"], "input");
         assert!(v.get("path").is_none() || v["path"].is_null());
@@ -206,7 +204,9 @@ mod tests {
 
     #[test]
     fn slot_binding_context_roundtrip() {
-        let b = SlotBinding::Context { path: "/project_id".into() };
+        let b = SlotBinding::Context {
+            path: "/project_id".into(),
+        };
         let v = serde_json::to_value(&b).unwrap();
         assert_eq!(v["from"], "context");
         assert_eq!(v["path"], "/project_id");
@@ -216,7 +216,9 @@ mod tests {
 
     #[test]
     fn slot_binding_literal_roundtrip() {
-        let b = SlotBinding::Literal { value: "hello world".into() };
+        let b = SlotBinding::Literal {
+            value: "hello world".into(),
+        };
         let v = serde_json::to_value(&b).unwrap();
         assert_eq!(v["from"], "literal");
         assert_eq!(v["value"], "hello world");
@@ -228,7 +230,9 @@ mod tests {
 
     #[test]
     fn resolve_literal() {
-        let b = SlotBinding::Literal { value: "abc".into() };
+        let b = SlotBinding::Literal {
+            value: "abc".into(),
+        };
         let res = resolve_binding(&b, &HashMap::new(), &json!({})).unwrap();
         assert_eq!(res, "abc");
     }
@@ -238,7 +242,10 @@ mod tests {
         let artifact = make_artifact(json!("the content"));
         let mut inputs = HashMap::new();
         inputs.insert("doc".into(), artifact);
-        let b = SlotBinding::Input { input_name: "doc".into(), path: None };
+        let b = SlotBinding::Input {
+            input_name: "doc".into(),
+            path: None,
+        };
         let res = resolve_binding(&b, &inputs, &json!({})).unwrap();
         assert_eq!(res, "the content");
     }
@@ -248,14 +255,20 @@ mod tests {
         let artifact = make_artifact(json!({"notes": "my notes"}));
         let mut inputs = HashMap::new();
         inputs.insert("spec".into(), artifact);
-        let b = SlotBinding::Input { input_name: "spec".into(), path: Some("/notes".into()) };
+        let b = SlotBinding::Input {
+            input_name: "spec".into(),
+            path: Some("/notes".into()),
+        };
         let res = resolve_binding(&b, &inputs, &json!({})).unwrap();
         assert_eq!(res, "my notes");
     }
 
     #[test]
     fn resolve_input_missing_returns_err() {
-        let b = SlotBinding::Input { input_name: "missing".into(), path: None };
+        let b = SlotBinding::Input {
+            input_name: "missing".into(),
+            path: None,
+        };
         assert!(resolve_binding(&b, &HashMap::new(), &json!({})).is_err());
     }
 
@@ -264,21 +277,28 @@ mod tests {
         let artifact = make_artifact(json!({"x": 1}));
         let mut inputs = HashMap::new();
         inputs.insert("a".into(), artifact);
-        let b = SlotBinding::Input { input_name: "a".into(), path: Some("/missing_field".into()) };
+        let b = SlotBinding::Input {
+            input_name: "a".into(),
+            path: Some("/missing_field".into()),
+        };
         assert!(resolve_binding(&b, &inputs, &json!({})).is_err());
     }
 
     #[test]
     fn resolve_context_pointer() {
         let ctx = json!({"project_id": "proj-123"});
-        let b = SlotBinding::Context { path: "/project_id".into() };
+        let b = SlotBinding::Context {
+            path: "/project_id".into(),
+        };
         let res = resolve_binding(&b, &HashMap::new(), &ctx).unwrap();
         assert_eq!(res, "proj-123");
     }
 
     #[test]
     fn resolve_context_bad_pointer_returns_err() {
-        let b = SlotBinding::Context { path: "/missing".into() };
+        let b = SlotBinding::Context {
+            path: "/missing".into(),
+        };
         assert!(resolve_binding(&b, &HashMap::new(), &json!({})).is_err());
     }
 
@@ -372,6 +392,9 @@ mod tests {
 
         let res = load_template(&prompts_dir, "leak.md");
         assert!(res.is_err());
-        assert!(res.unwrap_err().to_string().contains("escapes prompts directory"));
+        assert!(res
+            .unwrap_err()
+            .to_string()
+            .contains("escapes prompts directory"));
     }
 }

@@ -1,4 +1,7 @@
-use sqlx::{SqlitePool, sqlite::{SqliteConnectOptions, SqliteJournalMode}};
+use sqlx::{
+    sqlite::{SqliteConnectOptions, SqliteJournalMode},
+    SqlitePool,
+};
 use std::str::FromStr;
 use std::time::Duration;
 

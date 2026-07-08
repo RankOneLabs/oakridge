@@ -1,9 +1,9 @@
-use serde::{Serialize, Deserialize};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
-use serde_json::Value;
 
 // --- Newtype UUID identifiers ---
 
@@ -234,7 +234,13 @@ mod tests {
         ];
         for (variant, expected) in &variants {
             let s = serde_json::to_value(variant).unwrap();
-            assert_eq!(s, json!(expected), "StageStatus::{:?} should serialize as {:?}", variant, expected);
+            assert_eq!(
+                s,
+                json!(expected),
+                "StageStatus::{:?} should serialize as {:?}",
+                variant,
+                expected
+            );
         }
     }
 
@@ -248,7 +254,13 @@ mod tests {
         ];
         for (variant, expected) in &variants {
             let s = serde_json::to_value(variant).unwrap();
-            assert_eq!(s, json!(expected), "RunStatus::{:?} should serialize as {:?}", variant, expected);
+            assert_eq!(
+                s,
+                json!(expected),
+                "RunStatus::{:?} should serialize as {:?}",
+                variant,
+                expected
+            );
         }
     }
 
@@ -261,7 +273,13 @@ mod tests {
         ];
         for (variant, expected) in &variants {
             let s = serde_json::to_value(variant).unwrap();
-            assert_eq!(s, json!(expected), "GateOutcome::{:?} should serialize as {:?}", variant, expected);
+            assert_eq!(
+                s,
+                json!(expected),
+                "GateOutcome::{:?} should serialize as {:?}",
+                variant,
+                expected
+            );
         }
     }
 
@@ -273,31 +291,46 @@ mod tests {
 
         let id = WorkflowDefId(test_uuid());
         let v = serde_json::to_value(&id).unwrap();
-        assert_eq!(v, expected_str, "WorkflowDefId must serialize as bare UUID string");
+        assert_eq!(
+            v, expected_str,
+            "WorkflowDefId must serialize as bare UUID string"
+        );
         let back: WorkflowDefId = serde_json::from_value(v).unwrap();
         assert_eq!(id, back);
 
         let id = WorkflowRunId(test_uuid());
         let v = serde_json::to_value(&id).unwrap();
-        assert_eq!(v, expected_str, "WorkflowRunId must serialize as bare UUID string");
+        assert_eq!(
+            v, expected_str,
+            "WorkflowRunId must serialize as bare UUID string"
+        );
         let back: WorkflowRunId = serde_json::from_value(v).unwrap();
         assert_eq!(id, back);
 
         let id = StageInstanceId(test_uuid());
         let v = serde_json::to_value(&id).unwrap();
-        assert_eq!(v, expected_str, "StageInstanceId must serialize as bare UUID string");
+        assert_eq!(
+            v, expected_str,
+            "StageInstanceId must serialize as bare UUID string"
+        );
         let back: StageInstanceId = serde_json::from_value(v).unwrap();
         assert_eq!(id, back);
 
         let id = ArtifactId(test_uuid());
         let v = serde_json::to_value(&id).unwrap();
-        assert_eq!(v, expected_str, "ArtifactId must serialize as bare UUID string");
+        assert_eq!(
+            v, expected_str,
+            "ArtifactId must serialize as bare UUID string"
+        );
         let back: ArtifactId = serde_json::from_value(v).unwrap();
         assert_eq!(id, back);
 
         let id = ProjectId(test_uuid());
         let v = serde_json::to_value(&id).unwrap();
-        assert_eq!(v, expected_str, "ProjectId must serialize as bare UUID string");
+        assert_eq!(
+            v, expected_str,
+            "ProjectId must serialize as bare UUID string"
+        );
         let back: ProjectId = serde_json::from_value(v).unwrap();
         assert_eq!(id, back);
     }
@@ -318,19 +351,22 @@ mod tests {
             graph: WorkflowGraph {
                 stages: {
                     let mut m = HashMap::new();
-                    m.insert("stage1".to_string(), StageNodeDef {
-                        stage_type: "llm".to_string(),
-                        config: json!({"model": "gpt-4"}),
-                        inputs: vec![InputSlot {
-                            name: "prompt".to_string(),
-                            artifact_type: "text".to_string(),
-                            optional: false,
-                        }],
-                        outputs: vec![OutputSlot {
-                            name: "response".to_string(),
-                            artifact_type: "text".to_string(),
-                        }],
-                    });
+                    m.insert(
+                        "stage1".to_string(),
+                        StageNodeDef {
+                            stage_type: "llm".to_string(),
+                            config: json!({"model": "gpt-4"}),
+                            inputs: vec![InputSlot {
+                                name: "prompt".to_string(),
+                                artifact_type: "text".to_string(),
+                                optional: false,
+                            }],
+                            outputs: vec![OutputSlot {
+                                name: "response".to_string(),
+                                artifact_type: "text".to_string(),
+                            }],
+                        },
+                    );
                     m
                 },
                 edges: vec![],

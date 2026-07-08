@@ -1,13 +1,13 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
-use tokio::sync::oneshot;
-use tokio::task::JoinHandle;
-use tokio::time::{timeout, Duration};
-use uuid::Uuid;
 use chrono::Utc;
 use serde_json::Value;
 use sqlx::SqlitePool;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::oneshot;
+use tokio::sync::{mpsc, Mutex};
+use tokio::task::JoinHandle;
+use tokio::time::{timeout, Duration};
+use uuid::Uuid;
 
 use crate::db::queries;
 use crate::events::{EventBus, SubstrateEvent};
@@ -108,7 +108,11 @@ impl RunTask {
     }
 
     async fn prime_source_stages(&mut self) {
-        let sources: Vec<StageKey> = self.def.graph.stages.keys()
+        let sources: Vec<StageKey> = self
+            .def
+            .graph
+            .stages
+            .keys()
             .filter(|k| self.all_required_inputs_satisfied(k))
             .cloned()
             .collect();
@@ -122,9 +126,13 @@ impl RunTask {
             Some(n) => n,
             None => return false,
         };
-        node.inputs.iter()
+        node.inputs
+            .iter()
             .filter(|slot| !slot.optional)
-            .all(|slot| self.resolved.contains_key(&(stage_key.clone(), slot.name.clone())))
+            .all(|slot| {
+                self.resolved
+                    .contains_key(&(stage_key.clone(), slot.name.clone()))
+            })
     }
 
     async fn activate_stage(&mut self, stage_key: &StageKey) {
@@ -141,7 +149,11 @@ impl RunTask {
         let st = match self.stage_types.get(&node.stage_type) {
             Some(st) => st,
             None => {
-                tracing::error!(stage_key, stage_type = node.stage_type, "stage type not registered");
+                tracing::error!(
+                    stage_key,
+                    stage_type = node.stage_type,
+                    "stage type not registered"
+                );
                 self.fail_activation(
                     stage_key,
                     si_id,
@@ -154,14 +166,26 @@ impl RunTask {
             }
         };
 
-        let inputs: HashMap<String, Artifact> = node.inputs.iter()
+        let inputs: HashMap<String, Artifact> = node
+            .inputs
+            .iter()
             .filter_map(|slot| {
-                self.resolved.get(&(stage_key.clone(), slot.name.clone()))
+                self.resolved
+                    .get(&(stage_key.clone(), slot.name.clone()))
                     .map(|a| (slot.name.clone(), a.clone()))
             })
             .collect();
 
-        let config = match st.build_config(&node.config, &inputs, &node.outputs, si_id, &self.run_context).await {
+        let config = match st
+            .build_config(
+                &node.config,
+                &inputs,
+                &node.outputs,
+                si_id,
+                &self.run_context,
+            )
+            .await
+        {
             Ok(c) => c,
             Err(e) => {
                 tracing::error!(stage_key, "build_config failed: {}", e);
@@ -205,7 +229,8 @@ impl RunTask {
             .await;
             return;
         }
-        self.index.insert(stage_key.clone(), (si_id, StageStatus::Pending));
+        self.index
+            .insert(stage_key.clone(), (si_id, StageStatus::Pending));
 
         let ctx = StageContext::new(
             StageInstanceSummary::from(&si),
@@ -216,7 +241,9 @@ impl RunTask {
             self.artifact_types.clone(),
         );
         match st.execute(ctx).await {
-            Ok(handle) => { self.handles.insert(si_id, handle); }
+            Ok(handle) => {
+                self.handles.insert(si_id, handle);
+            }
             Err(e) => {
                 tracing::error!(stage_key, "execute failed: {}", e);
                 // Mark Failed so quiescence fires and the run is terminated.
@@ -233,12 +260,15 @@ impl RunTask {
                     Some(Utc::now()),
                 )
                 .await;
-                let _ = self.events_tx.send(ExecutorEvent::StatusChanged {
-                    instance_id: si_id,
-                    status: StageStatus::Failed,
-                    parked_reason: None,
-                    terminal_meta: Some(serde_json::json!({"error": e.to_string()})),
-                }).await;
+                let _ = self
+                    .events_tx
+                    .send(ExecutorEvent::StatusChanged {
+                        instance_id: si_id,
+                        status: StageStatus::Failed,
+                        parked_reason: None,
+                        terminal_meta: Some(serde_json::json!({"error": e.to_string()})),
+                    })
+                    .await;
             }
         }
     }
@@ -260,7 +290,8 @@ impl RunTask {
         config: Value,
         terminal_meta: Option<Value>,
     ) {
-        self.index.insert(stage_key.clone(), (si_id, StageStatus::Failed));
+        self.index
+            .insert(stage_key.clone(), (si_id, StageStatus::Failed));
         let now = Utc::now();
         let si = StageInstance {
             id: si_id,
@@ -279,25 +310,37 @@ impl RunTask {
             updated_at: now,
         };
         if let Err(e) = queries::insert_stage_instance(&self.db, &si).await {
-            tracing::error!(stage_key, "fail_activation: persist Failed stage_instance failed: {}", e);
+            tracing::error!(
+                stage_key,
+                "fail_activation: persist Failed stage_instance failed: {}",
+                e
+            );
         }
-        let _ = self.events_tx.send(ExecutorEvent::StatusChanged {
-            instance_id: si_id,
-            status: StageStatus::Failed,
-            parked_reason: None,
-            terminal_meta,
-        }).await;
+        let _ = self
+            .events_tx
+            .send(ExecutorEvent::StatusChanged {
+                instance_id: si_id,
+                status: StageStatus::Failed,
+                parked_reason: None,
+                terminal_meta,
+            })
+            .await;
     }
 
     async fn on_artifact_emitted(&mut self, artifact: Artifact, output_name: String) {
-        self.bus.publish(self.run_id, SubstrateEvent::ArtifactEmitted {
-            artifact_id: artifact.id,
-            artifact_type: artifact.artifact_type.clone(),
-            producer_stage_id: artifact.stage_instance_id,
-            parent_artifact_id: artifact.parent_artifact_id,
-        });
+        self.bus.publish(
+            self.run_id,
+            SubstrateEvent::ArtifactEmitted {
+                artifact_id: artifact.id,
+                artifact_type: artifact.artifact_type.clone(),
+                producer_stage_id: artifact.stage_instance_id,
+                parent_artifact_id: artifact.parent_artifact_id,
+            },
+        );
 
-        let producer_key = self.index.iter()
+        let producer_key = self
+            .index
+            .iter()
             .find(|(_, (id, _))| *id == artifact.stage_instance_id)
             .map(|(k, _)| k.clone());
         let producer_key = match producer_key {
@@ -305,7 +348,29 @@ impl RunTask {
             None => return,
         };
 
-        let edges: Vec<_> = self.def.graph.edges.iter()
+        let producer_node = match self.def.graph.stages.get(&producer_key) {
+            Some(node) => node,
+            None => return,
+        };
+        if producer_node.stage_type == "delegated_session" {
+            return;
+        }
+
+        self.propagate_artifact(producer_key, artifact, output_name)
+            .await;
+    }
+
+    async fn propagate_artifact(
+        &mut self,
+        producer_key: StageKey,
+        artifact: Artifact,
+        output_name: String,
+    ) {
+        let edges: Vec<_> = self
+            .def
+            .graph
+            .edges
+            .iter()
             .filter(|e| e.from.stage == producer_key && e.from.slot == output_name)
             .cloned()
             .collect();
@@ -313,20 +378,29 @@ impl RunTask {
         for edge in edges {
             let consumer_key = edge.to.stage.clone();
             let slot_name = edge.to.slot.clone();
-            self.resolved.insert((consumer_key.clone(), slot_name), artifact.clone());
+            self.resolved
+                .insert((consumer_key.clone(), slot_name), artifact.clone());
 
             if let Some((si_id, status)) = self.index.get(&consumer_key).cloned() {
                 // Pending stages have a handle but haven't emitted Running yet; treat
                 // them as live so feedback artifacts are not silently dropped.
-                if matches!(status, StageStatus::Pending | StageStatus::Running | StageStatus::Parked) {
+                if matches!(
+                    status,
+                    StageStatus::Pending | StageStatus::Running | StageStatus::Parked
+                ) {
                     if let Some(handle) = self.handles.get(&si_id) {
-                        let _ = handle.resume(ResumePayload::FeedbackArtifact {
-                            artifact: artifact.clone(),
-                        }).await;
-                        self.bus.publish(self.run_id, SubstrateEvent::StageResumed {
-                            stage_instance_id: si_id,
-                            resume_kind: "feedback_artifact".to_string(),
-                        });
+                        let _ = handle
+                            .resume(ResumePayload::FeedbackArtifact {
+                                artifact: artifact.clone(),
+                            })
+                            .await;
+                        self.bus.publish(
+                            self.run_id,
+                            SubstrateEvent::StageResumed {
+                                stage_instance_id: si_id,
+                                resume_kind: "feedback_artifact".to_string(),
+                            },
+                        );
                     }
                     continue;
                 }
@@ -337,6 +411,63 @@ impl RunTask {
             if self.all_required_inputs_satisfied(&consumer_key) {
                 self.activate_stage(&consumer_key).await;
             }
+        }
+    }
+
+    async fn release_completed_delegated_outputs(
+        &mut self,
+        stage_key: StageKey,
+        stage_instance_id: StageInstanceId,
+    ) {
+        let node = match self.def.graph.stages.get(&stage_key) {
+            Some(node) if node.stage_type == "delegated_session" => node.clone(),
+            _ => return,
+        };
+        let artifacts = match queries::list_artifacts_for_run(&self.db, &self.run_id, None).await {
+            Ok(artifacts) => artifacts,
+            Err(err) => {
+                tracing::error!(
+                    stage_key,
+                    stage_instance_id = %stage_instance_id.0,
+                    "failed to list artifacts for completed delegated stage: {}",
+                    err
+                );
+                return;
+            }
+        };
+        let known_outputs: std::collections::HashMap<String, String> = node
+            .outputs
+            .iter()
+            .map(|slot| (slot.name.clone(), slot.artifact_type.clone()))
+            .collect();
+        let mut latest_by_output: std::collections::HashMap<String, Artifact> =
+            std::collections::HashMap::new();
+        for artifact in artifacts
+            .into_iter()
+            .filter(|artifact| artifact.stage_instance_id == stage_instance_id)
+        {
+            let Some(output_name) = artifact.output_name.clone() else {
+                continue;
+            };
+            if known_outputs.get(&output_name) != Some(&artifact.artifact_type) {
+                continue;
+            }
+            let should_use = latest_by_output
+                .get(&output_name)
+                .map(|current| {
+                    artifact.version > current.version
+                        || (artifact.version == current.version
+                            && artifact.created_at > current.created_at)
+                })
+                .unwrap_or(true);
+            if should_use {
+                latest_by_output.insert(output_name, artifact);
+            }
+        }
+
+        for (output_name, artifact) in latest_by_output {
+            self.propagate_artifact(stage_key.clone(), artifact, output_name)
+                .await;
         }
     }
 
@@ -357,32 +488,57 @@ impl RunTask {
         if matches!(status, StageStatus::Done | StageStatus::Failed) {
             self.handles.remove(&instance_id);
         }
+        if matches!(status, StageStatus::Done) {
+            let completed_stage_key = self
+                .index
+                .iter()
+                .find(|(_, (id, _))| *id == instance_id)
+                .map(|(stage_key, _)| stage_key.clone());
+            if let Some(stage_key) = completed_stage_key {
+                self.release_completed_delegated_outputs(stage_key, instance_id)
+                    .await;
+            }
+        }
 
-        self.bus.publish(self.run_id, SubstrateEvent::StageStatusChanged {
-            stage_instance_id: instance_id,
-            status,
-            parked_reason,
-            terminal_meta,
-        });
+        self.bus.publish(
+            self.run_id,
+            SubstrateEvent::StageStatusChanged {
+                stage_instance_id: instance_id,
+                status,
+                parked_reason,
+                terminal_meta,
+            },
+        );
 
         // quiescence: no stage is pending|running|parked
-        let active = self.index.values()
-            .any(|(_, s)| matches!(s, StageStatus::Pending | StageStatus::Running | StageStatus::Parked));
+        let active = self.index.values().any(|(_, s)| {
+            matches!(
+                s,
+                StageStatus::Pending | StageStatus::Running | StageStatus::Parked
+            )
+        });
         if active || self.index.is_empty() {
             return false;
         }
 
-        let final_status = if self.index.values().any(|(_, s)| matches!(s, StageStatus::Failed)) {
+        let final_status = if self
+            .index
+            .values()
+            .any(|(_, s)| matches!(s, StageStatus::Failed))
+        {
             RunStatus::Failed
         } else {
             RunStatus::Done
         };
 
         let _ = queries::update_workflow_run_status(&self.db, &self.run_id, final_status).await;
-        self.bus.publish(self.run_id, SubstrateEvent::RunStatusChanged {
-            run_id: self.run_id,
-            status: final_status,
-        });
+        self.bus.publish(
+            self.run_id,
+            SubstrateEvent::RunStatusChanged {
+                run_id: self.run_id,
+                status: final_status,
+            },
+        );
         true
     }
 
@@ -409,8 +565,7 @@ impl RunTask {
         if current.run_id != self.run_id {
             return Err(DecisionError::Conflict(format!(
                 "stage instance {} does not belong to run {}",
-                stage_instance_id.0,
-                self.run_id.0
+                stage_instance_id.0, self.run_id.0
             )));
         }
 
@@ -434,9 +589,7 @@ impl RunTask {
         if indexed_id != stage_instance_id {
             return Err(DecisionError::Conflict(format!(
                 "stage instance {} is stale for stage {}; active instance is {}",
-                stage_instance_id.0,
-                stage_key,
-                indexed_id.0
+                stage_instance_id.0, stage_key, indexed_id.0
             )));
         }
 
@@ -457,7 +610,10 @@ impl RunTask {
             }
         };
 
-        handle.resume(payload).await.map_err(|e| DecisionError::Internal(e.into()))?;
+        handle
+            .resume(payload)
+            .await
+            .map_err(|e| DecisionError::Internal(e.into()))?;
 
         let after_resume = queries::get_stage_instance_by_id(&self.db, &stage_instance_id)
             .await
@@ -471,15 +627,15 @@ impl RunTask {
 
         // Delegated sessions use a two-step gate: artifact approval keeps the
         // stage parked until the explicit merge-confirmation decision arrives.
-        let keep_parked_for_merge_confirmation = after_resume
-            .stage_type
-            == "delegated_session"
+        let keep_parked_for_merge_confirmation = after_resume.stage_type == "delegated_session"
             && after_resume
                 .parked_meta
                 .as_ref()
-                .and_then(|meta| serde_json::from_value::<
+                .and_then(|meta| {
+                    serde_json::from_value::<
                     crate::executor::delegated_session::DelegatedGateState,
-                >(meta.clone()).ok())
+                >(meta.clone()).ok()
+                })
                 .map(|gate_state| {
                     matches!(
                         gate_state.gate,
@@ -488,38 +644,46 @@ impl RunTask {
                 })
                 .unwrap_or(false);
 
-        if matches!(after_resume.status, StageStatus::Parked) && !keep_parked_for_merge_confirmation {
+        if matches!(after_resume.status, StageStatus::Parked) && !keep_parked_for_merge_confirmation
+        {
             let started_at = after_resume.started_at.or(Some(Utc::now()));
-            let updated = queries::update_stage_instance_status_if_current_status_with_terminal_meta(
-                &self.db,
-                &stage_instance_id,
-                StageStatus::Parked,
-                StageStatus::Running,
-                None,
-                None,
-                started_at,
-                None,
-            )
-            .await
-            .map_err(|e| DecisionError::Internal(anyhow::Error::new(e)))?;
+            let updated =
+                queries::update_stage_instance_status_if_current_status_with_terminal_meta(
+                    &self.db,
+                    &stage_instance_id,
+                    StageStatus::Parked,
+                    StageStatus::Running,
+                    None,
+                    None,
+                    started_at,
+                    None,
+                )
+                .await
+                .map_err(|e| DecisionError::Internal(anyhow::Error::new(e)))?;
 
             if updated {
                 if let Some((_, s)) = self.index.get_mut(&stage_key) {
                     *s = StageStatus::Running;
                 }
-                self.bus.publish(self.run_id, SubstrateEvent::StageStatusChanged {
-                    stage_instance_id,
-                    status: StageStatus::Running,
-                    parked_reason: None,
-                    terminal_meta: None,
-                });
+                self.bus.publish(
+                    self.run_id,
+                    SubstrateEvent::StageStatusChanged {
+                        stage_instance_id,
+                        status: StageStatus::Running,
+                        parked_reason: None,
+                        terminal_meta: None,
+                    },
+                );
             }
         }
 
-        self.bus.publish(self.run_id, SubstrateEvent::StageResumed {
-            stage_instance_id,
-            resume_kind: resume_kind.to_string(),
-        });
+        self.bus.publish(
+            self.run_id,
+            SubstrateEvent::StageResumed {
+                stage_instance_id,
+                resume_kind: resume_kind.to_string(),
+            },
+        );
         Ok(())
     }
 
@@ -528,11 +692,15 @@ impl RunTask {
             let _ = handle.cancel().await;
         }
         self.handles.clear();
-        let _ = queries::update_workflow_run_status(&self.db, &self.run_id, RunStatus::Failed).await;
-        self.bus.publish(self.run_id, SubstrateEvent::RunStatusChanged {
-            run_id: self.run_id,
-            status: RunStatus::Failed,
-        });
+        let _ =
+            queries::update_workflow_run_status(&self.db, &self.run_id, RunStatus::Failed).await;
+        self.bus.publish(
+            self.run_id,
+            SubstrateEvent::RunStatusChanged {
+                run_id: self.run_id,
+                status: RunStatus::Failed,
+            },
+        );
     }
 }
 
@@ -553,7 +721,13 @@ impl Coordinator {
         artifact_types: Arc<ArtifactTypeRegistry>,
         bus: Arc<EventBus>,
     ) -> Self {
-        Self { db, stage_types, artifact_types, bus, runs: Arc::new(Mutex::new(HashMap::new())) }
+        Self {
+            db,
+            stage_types,
+            artifact_types,
+            bus,
+            runs: Arc::new(Mutex::new(HashMap::new())),
+        }
     }
 
     pub async fn start_run(&self, run_id: WorkflowRunId) -> anyhow::Result<()> {
@@ -570,19 +744,25 @@ impl Coordinator {
         // Running forever with no handle to reap it. Short-circuit to Done.
         if def.graph.stages.is_empty() {
             queries::update_workflow_run_status(&self.db, &run_id, RunStatus::Done).await?;
-            self.bus.publish(run_id, SubstrateEvent::RunStatusChanged {
+            self.bus.publish(
                 run_id,
-                status: RunStatus::Done,
-            });
+                SubstrateEvent::RunStatusChanged {
+                    run_id,
+                    status: RunStatus::Done,
+                },
+            );
             return Ok(());
         }
 
         // Transition run to Running before the scheduler begins executing stages.
         queries::update_workflow_run_status(&self.db, &run_id, RunStatus::Running).await?;
-        self.bus.publish(run_id, SubstrateEvent::RunStatusChanged {
+        self.bus.publish(
             run_id,
-            status: RunStatus::Running,
-        });
+            SubstrateEvent::RunStatusChanged {
+                run_id,
+                status: RunStatus::Running,
+            },
+        );
 
         let (events_tx, events_rx) = mpsc::channel(256);
         let (control_tx, control_rx) = mpsc::channel(64);
@@ -642,8 +822,7 @@ impl Coordinator {
 
         let tx = {
             let runs = self.runs.lock().await;
-            runs
-                .get(&run_id)
+            runs.get(&run_id)
                 .ok_or_else(|| DecisionError::Conflict(format!("run {} not active", run_id.0)))?
                 .control_tx
                 .clone()
@@ -656,7 +835,9 @@ impl Coordinator {
             reply_tx,
         })
         .await
-        .map_err(|_| DecisionError::Conflict(format!("control channel closed for run {}", run_id.0)))?;
+        .map_err(|_| {
+            DecisionError::Conflict(format!("control channel closed for run {}", run_id.0))
+        })?;
 
         match timeout(Duration::from_secs(5), reply_rx).await {
             Err(_) => Err(DecisionError::Internal(anyhow::anyhow!(
@@ -706,12 +887,15 @@ impl Coordinator {
         )
         .await?;
         for stage in cancellable_stages {
-            self.bus.publish(run_id, SubstrateEvent::StageStatusChanged {
-                stage_instance_id: stage.id,
-                status: StageStatus::Failed,
-                parked_reason: None,
-                terminal_meta: Some(cancellation_meta.clone()),
-            });
+            self.bus.publish(
+                run_id,
+                SubstrateEvent::StageStatusChanged {
+                    stage_instance_id: stage.id,
+                    status: StageStatus::Failed,
+                    parked_reason: None,
+                    terminal_meta: Some(cancellation_meta.clone()),
+                },
+            );
         }
 
         // Deliver Cancel to the live run task to stop external processes
@@ -738,10 +922,13 @@ impl Coordinator {
             .await
             .unwrap_or(false)
             {
-                self.bus.publish(run_id, SubstrateEvent::RunStatusChanged {
+                self.bus.publish(
                     run_id,
-                    status: RunStatus::Failed,
-                });
+                    SubstrateEvent::RunStatusChanged {
+                        run_id,
+                        status: RunStatus::Failed,
+                    },
+                );
             }
         }
 
@@ -754,7 +941,8 @@ impl Coordinator {
         stage_instance_id: StageInstanceId,
         payload: ResumePayload,
     ) -> Result<(), DecisionError> {
-        self.resume_parked_stage_if_active(run_id, stage_instance_id, payload).await
+        self.resume_parked_stage_if_active(run_id, stage_instance_id, payload)
+            .await
     }
 
     /// Recover in-flight runs on boot. Spawns scheduler tasks in recovery mode
@@ -767,20 +955,26 @@ impl Coordinator {
 
             if def.graph.stages.is_empty() {
                 queries::update_workflow_run_status(&self.db, &run_id, RunStatus::Done).await?;
-                self.bus.publish(run_id, SubstrateEvent::RunStatusChanged {
+                self.bus.publish(
                     run_id,
-                    status: RunStatus::Done,
-                });
+                    SubstrateEvent::RunStatusChanged {
+                        run_id,
+                        status: RunStatus::Done,
+                    },
+                );
                 self.bus.cleanup_run(run_id);
                 continue;
             }
 
             if matches!(run.status, RunStatus::Pending) {
                 queries::update_workflow_run_status(&self.db, &run_id, RunStatus::Running).await?;
-                self.bus.publish(run_id, SubstrateEvent::RunStatusChanged {
+                self.bus.publish(
                     run_id,
-                    status: RunStatus::Running,
-                });
+                    SubstrateEvent::RunStatusChanged {
+                        run_id,
+                        status: RunStatus::Running,
+                    },
+                );
             }
 
             let instances = queries::list_stage_instances_for_run(&self.db, &run_id).await?;
@@ -788,10 +982,14 @@ impl Coordinator {
 
             let mut resolved: HashMap<(StageKey, String), Artifact> = HashMap::new();
             for artifact in &artifacts {
-                let producer_key = instances.iter()
+                let producer_key = instances
+                    .iter()
                     .find(|si| si.id == artifact.stage_instance_id)
                     .map(|si| si.stage_key.clone());
-                let producer_key = match producer_key { Some(k) => k, None => continue };
+                let producer_key = match producer_key {
+                    Some(k) => k,
+                    None => continue,
+                };
 
                 let producer_node = match def.graph.stages.get(&producer_key) {
                     Some(n) => n,
@@ -803,16 +1001,22 @@ impl Coordinator {
                 // for pre-migration artifacts where output_name is NULL.
                 let output_name: Option<String> = match &artifact.output_name {
                     Some(name) => Some(name.clone()),
-                    None => producer_node.outputs.iter()
+                    None => producer_node
+                        .outputs
+                        .iter()
                         .find(|o| o.artifact_type == artifact.artifact_type)
                         .map(|o| o.name.clone()),
                 };
-                let output_name = match output_name { Some(n) => n, None => continue };
+                let output_name = match output_name {
+                    Some(n) => n,
+                    None => continue,
+                };
 
                 for edge in &def.graph.edges {
                     if edge.from.stage == producer_key && edge.from.slot == output_name {
                         let key = (edge.to.stage.clone(), edge.to.slot.clone());
-                        let should_use = resolved.get(&key)
+                        let should_use = resolved
+                            .get(&key)
                             .map(|e| artifact.created_at > e.created_at)
                             .unwrap_or(true);
                         if should_use {
@@ -850,8 +1054,14 @@ impl Coordinator {
             // re-execute non-terminal stage instances; skip Done/Failed
             // Pending is included: a crash between insert_stage_instance and
             // execute left the instance with no handle; re-executing gives it one.
-            let non_terminal: Vec<StageInstance> = instances.into_iter()
-                .filter(|si| matches!(si.status, StageStatus::Pending | StageStatus::Running | StageStatus::Parked))
+            let non_terminal: Vec<StageInstance> = instances
+                .into_iter()
+                .filter(|si| {
+                    matches!(
+                        si.status,
+                        StageStatus::Pending | StageStatus::Running | StageStatus::Parked
+                    )
+                })
                 .collect();
 
             for si in non_terminal {
@@ -881,12 +1091,15 @@ impl Coordinator {
                         .await
                         {
                             Ok(_) => {
-                                self.bus.publish(run_id, SubstrateEvent::StageStatusChanged {
-                                    stage_instance_id: si.id,
-                                    status: StageStatus::Failed,
-                                    parked_reason: None,
-                                    terminal_meta: Some(terminal_meta),
-                                });
+                                self.bus.publish(
+                                    run_id,
+                                    SubstrateEvent::StageStatusChanged {
+                                        stage_instance_id: si.id,
+                                        status: StageStatus::Failed,
+                                        parked_reason: None,
+                                        terminal_meta: Some(terminal_meta),
+                                    },
+                                );
                             }
                             Err(err) => {
                                 tracing::error!(
@@ -928,12 +1141,15 @@ impl Coordinator {
                         .await
                         {
                             Ok(_) => {
-                                self.bus.publish(run_id, SubstrateEvent::StageStatusChanged {
-                                    stage_instance_id: si.id,
-                                    status: StageStatus::Failed,
-                                    parked_reason: None,
-                                    terminal_meta: Some(terminal_meta),
-                                });
+                                self.bus.publish(
+                                    run_id,
+                                    SubstrateEvent::StageStatusChanged {
+                                        stage_instance_id: si.id,
+                                        status: StageStatus::Failed,
+                                        parked_reason: None,
+                                        terminal_meta: Some(terminal_meta),
+                                    },
+                                );
                             }
                             Err(err) => {
                                 tracing::error!(
@@ -947,9 +1163,12 @@ impl Coordinator {
                         continue;
                     }
                 };
-                let inputs: HashMap<String, Artifact> = node.inputs.iter()
+                let inputs: HashMap<String, Artifact> = node
+                    .inputs
+                    .iter()
                     .filter_map(|slot| {
-                        task.resolved.get(&(si.stage_key.clone(), slot.name.clone()))
+                        task.resolved
+                            .get(&(si.stage_key.clone(), slot.name.clone()))
                             .map(|a| (slot.name.clone(), a.clone()))
                     })
                     .collect();
@@ -962,7 +1181,9 @@ impl Coordinator {
                     self.artifact_types.clone(),
                 );
                 match st.execute(ctx).await {
-                    Ok(handle) => { task.handles.insert(si.id, handle); }
+                    Ok(handle) => {
+                        task.handles.insert(si.id, handle);
+                    }
                     Err(e) => {
                         tracing::error!(stage_key = si.stage_key, "recovery execute failed: {}", e);
                         if let Some((_, ref mut s)) = task.index.get_mut(&si.stage_key) {
@@ -981,12 +1202,14 @@ impl Coordinator {
                             Some(Utc::now()),
                         )
                         .await;
-                        let _ = events_tx.send(ExecutorEvent::StatusChanged {
-                            instance_id: si.id,
-                            status: StageStatus::Failed,
-                            parked_reason: None,
-                            terminal_meta: Some(serde_json::json!({"error": e.to_string()})),
-                        }).await;
+                        let _ = events_tx
+                            .send(ExecutorEvent::StatusChanged {
+                                instance_id: si.id,
+                                status: StageStatus::Failed,
+                                parked_reason: None,
+                                terminal_meta: Some(serde_json::json!({"error": e.to_string()})),
+                            })
+                            .await;
                     }
                 }
             }
@@ -1003,8 +1226,15 @@ impl Coordinator {
             // graph node), leaving them in a state where no progress is possible.
             // Failing immediately surfaces a diagnosable terminal state instead of
             // an operator-invisible hang in Running.
-            let active_count = task.index.values()
-                .filter(|(_, s)| matches!(*s, StageStatus::Pending | StageStatus::Running | StageStatus::Parked))
+            let active_count = task
+                .index
+                .values()
+                .filter(|(_, s)| {
+                    matches!(
+                        *s,
+                        StageStatus::Pending | StageStatus::Running | StageStatus::Parked
+                    )
+                })
                 .count();
 
             if !task.index.is_empty() && task.handles.is_empty() {
@@ -1013,13 +1243,17 @@ impl Coordinator {
                     // diagnosable rather than hanging in Running indefinitely.
                     let now = Utc::now();
                     for (stage_key, (si_id, status)) in &task.index {
-                        if matches!(*status, StageStatus::Pending | StageStatus::Running | StageStatus::Parked) {
+                        if matches!(
+                            *status,
+                            StageStatus::Pending | StageStatus::Running | StageStatus::Parked
+                        ) {
                             let terminal_meta = serde_json::json!({"error": "recovery: no live handle for non-terminal stage"});
                             // Preserve existing started_at so recovery doesn't wipe timing data.
-                            let existing_started_at = queries::get_stage_instance_by_id(&self.db, si_id)
-                                .await
-                                .ok()
-                                .and_then(|si| si.started_at);
+                            let existing_started_at =
+                                queries::get_stage_instance_by_id(&self.db, si_id)
+                                    .await
+                                    .ok()
+                                    .and_then(|si| si.started_at);
                             let _ = queries::update_stage_instance_status_with_terminal_meta(
                                 &self.db,
                                 si_id,
@@ -1030,12 +1264,15 @@ impl Coordinator {
                                 Some(now),
                             )
                             .await;
-                            self.bus.publish(run_id, SubstrateEvent::StageStatusChanged {
-                                stage_instance_id: *si_id,
-                                status: StageStatus::Failed,
-                                parked_reason: None,
-                                terminal_meta: Some(terminal_meta),
-                            });
+                            self.bus.publish(
+                                run_id,
+                                SubstrateEvent::StageStatusChanged {
+                                    stage_instance_id: *si_id,
+                                    status: StageStatus::Failed,
+                                    parked_reason: None,
+                                    terminal_meta: Some(terminal_meta),
+                                },
+                            );
                             tracing::warn!(
                                 run_id = %run_id.0,
                                 stage_key = %stage_key,
@@ -1044,14 +1281,24 @@ impl Coordinator {
                         }
                     }
                     RunStatus::Failed
-                } else if task.index.values().any(|(_, s)| matches!(*s, StageStatus::Failed)) {
+                } else if task
+                    .index
+                    .values()
+                    .any(|(_, s)| matches!(*s, StageStatus::Failed))
+                {
                     RunStatus::Failed
                 } else {
                     RunStatus::Done
                 };
 
                 let _ = queries::update_workflow_run_status(&self.db, &run_id, final_status).await;
-                self.bus.publish(run_id, SubstrateEvent::RunStatusChanged { run_id, status: final_status });
+                self.bus.publish(
+                    run_id,
+                    SubstrateEvent::RunStatusChanged {
+                        run_id,
+                        status: final_status,
+                    },
+                );
                 self.bus.cleanup_run(run_id);
                 continue;
             }
@@ -1088,12 +1335,20 @@ mod tests {
 
     async fn make_pool() -> Arc<SqlitePool> {
         let path = format!("/tmp/oakridge_sched_test_{}.db", Uuid::new_v4());
-        Arc::new(crate::db::init_pool(&format!("sqlite:{}", path)).await.unwrap())
+        Arc::new(
+            crate::db::init_pool(&format!("sqlite:{}", path))
+                .await
+                .unwrap(),
+        )
     }
 
     fn make_artifact_registry() -> Arc<ArtifactTypeRegistry> {
         let mut reg = ArtifactTypeRegistry::new();
-        reg.register(ArtifactTypeDef { id: "any".into(), validate: |_| Ok(()), component_id: "v".into() });
+        reg.register(ArtifactTypeDef {
+            id: "any".into(),
+            validate: |_| Ok(()),
+            component_id: "v".into(),
+        });
         Arc::new(reg)
     }
 
@@ -1131,7 +1386,9 @@ mod tests {
             let _ = self.resume_tx.send(payload).await;
             Ok(())
         }
-        async fn cancel(&self) -> anyhow::Result<()> { Ok(()) }
+        async fn cancel(&self) -> anyhow::Result<()> {
+            Ok(())
+        }
     }
 
     struct ScriptedStageType {
@@ -1141,13 +1398,20 @@ mod tests {
 
     #[async_trait]
     impl crate::registry::stage_type::StageType for ScriptedStageType {
-        fn id(&self) -> &str { &self.type_id }
+        fn id(&self) -> &str {
+            &self.type_id
+        }
 
         async fn build_config(
-            &self, def_config: &Value, _inputs: &HashMap<String, Artifact>,
-            _output_slots: &[crate::types::OutputSlot], _stage_instance_id: crate::types::StageInstanceId,
+            &self,
+            def_config: &Value,
+            _inputs: &HashMap<String, Artifact>,
+            _output_slots: &[crate::types::OutputSlot],
+            _stage_instance_id: crate::types::StageInstanceId,
             _run_context: &Value,
-        ) -> anyhow::Result<Value> { Ok(def_config.clone()) }
+        ) -> anyhow::Result<Value> {
+            Ok(def_config.clone())
+        }
 
         async fn execute(&self, ctx: StageContext) -> anyhow::Result<Box<dyn StageHandle>> {
             let (resume_tx, resume_rx) = mpsc::channel(8);
@@ -1156,12 +1420,20 @@ mod tests {
         }
     }
 
-    fn scripted(type_id: &str) -> (
+    fn scripted(
+        type_id: &str,
+    ) -> (
         Arc<ScriptedStageType>,
         mpsc::Receiver<(StageContext, mpsc::Receiver<ResumePayload>)>,
     ) {
         let (tx, rx) = mpsc::channel(8);
-        (Arc::new(ScriptedStageType { type_id: type_id.to_string(), ctx_tx: tx }), rx)
+        (
+            Arc::new(ScriptedStageType {
+                type_id: type_id.to_string(),
+                ctx_tx: tx,
+            }),
+            rx,
+        )
     }
 
     fn timeout_dur() -> std::time::Duration {
@@ -1171,7 +1443,9 @@ mod tests {
     async fn wait_run_done(pool: &SqlitePool, run_id: WorkflowRunId) {
         for _ in 0..50 {
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-            let run = queries::get_workflow_run_by_id(pool, &run_id).await.unwrap();
+            let run = queries::get_workflow_run_by_id(pool, &run_id)
+                .await
+                .unwrap();
             if matches!(run.status, RunStatus::Done | RunStatus::Failed) {
                 return;
             }
@@ -1220,12 +1494,15 @@ mod tests {
             graph: WorkflowGraph {
                 stages: {
                     let mut m = HashMap::new();
-                    m.insert("A".into(), StageNodeDef {
-                        stage_type: "st_a".into(),
-                        config: json!({ "mode": "fresh" }),
-                        inputs: vec![],
-                        outputs: vec![],
-                    });
+                    m.insert(
+                        "A".into(),
+                        StageNodeDef {
+                            stage_type: "st_a".into(),
+                            config: json!({ "mode": "fresh" }),
+                            inputs: vec![],
+                            outputs: vec![],
+                        },
+                    );
                     m
                 },
                 edges: vec![],
@@ -1273,21 +1550,42 @@ mod tests {
             graph: WorkflowGraph {
                 stages: {
                     let mut m = HashMap::new();
-                    m.insert("A".into(), StageNodeDef {
-                        stage_type: "st_a".into(), config: json!({}),
-                        inputs: vec![],
-                        outputs: vec![OutputSlot { name: "out".into(), artifact_type: "any".into() }],
-                    });
-                    m.insert("B".into(), StageNodeDef {
-                        stage_type: "st_b".into(), config: json!({}),
-                        inputs: vec![InputSlot { name: "in".into(), artifact_type: "any".into(), optional: false }],
-                        outputs: vec![],
-                    });
+                    m.insert(
+                        "A".into(),
+                        StageNodeDef {
+                            stage_type: "st_a".into(),
+                            config: json!({}),
+                            inputs: vec![],
+                            outputs: vec![OutputSlot {
+                                name: "out".into(),
+                                artifact_type: "any".into(),
+                            }],
+                        },
+                    );
+                    m.insert(
+                        "B".into(),
+                        StageNodeDef {
+                            stage_type: "st_b".into(),
+                            config: json!({}),
+                            inputs: vec![InputSlot {
+                                name: "in".into(),
+                                artifact_type: "any".into(),
+                                optional: false,
+                            }],
+                            outputs: vec![],
+                        },
+                    );
                     m
                 },
                 edges: vec![Edge {
-                    from: EdgeEndpoint { stage: "A".into(), slot: "out".into() },
-                    to: EdgeEndpoint { stage: "B".into(), slot: "in".into() },
+                    from: EdgeEndpoint {
+                        stage: "A".into(),
+                        slot: "out".into(),
+                    },
+                    to: EdgeEndpoint {
+                        stage: "B".into(),
+                        slot: "in".into(),
+                    },
                 }],
             },
             created_at: fixed_dt(),
@@ -1299,17 +1597,27 @@ mod tests {
         coord.start_run(run_id).await.unwrap();
 
         let (ctx_a, _) = tokio::time::timeout(timeout_dur(), a_rx.recv())
-            .await.unwrap().unwrap();
+            .await
+            .unwrap()
+            .unwrap();
 
         ctx_a.set_status(StageStatus::Running, None).await.unwrap();
-        ctx_a.emit(EmitArgs {
-            output_name: "out".into(), artifact_type: "any".into(),
-            body: json!({"v": 1}), label: None, parent_artifact_id: None,
-        }).await.unwrap();
+        ctx_a
+            .emit(EmitArgs {
+                output_name: "out".into(),
+                artifact_type: "any".into(),
+                body: json!({"v": 1}),
+                label: None,
+                parent_artifact_id: None,
+            })
+            .await
+            .unwrap();
         ctx_a.set_status(StageStatus::Done, None).await.unwrap();
 
         let (ctx_b, _) = tokio::time::timeout(timeout_dur(), b_rx.recv())
-            .await.unwrap().unwrap();
+            .await
+            .unwrap()
+            .unwrap();
         ctx_b.set_status(StageStatus::Running, None).await.unwrap();
         ctx_b.set_status(StageStatus::Done, None).await.unwrap();
 
@@ -1318,7 +1626,13 @@ mod tests {
         for _ in 0..30 {
             match tokio::time::timeout(timeout_dur(), global_rx.recv()).await {
                 Ok(Ok(ev)) => {
-                    if matches!(ev.event, SubstrateEvent::RunStatusChanged { status: RunStatus::Done, .. }) {
+                    if matches!(
+                        ev.event,
+                        SubstrateEvent::RunStatusChanged {
+                            status: RunStatus::Done,
+                            ..
+                        }
+                    ) {
                         saw_run_done = true;
                         break;
                     }
@@ -1328,12 +1642,17 @@ mod tests {
         }
         assert!(saw_run_done, "run must publish RunStatusChanged Done");
 
-        let run = queries::get_workflow_run_by_id(&pool, &run_id).await.unwrap();
+        let run = queries::get_workflow_run_by_id(&pool, &run_id)
+            .await
+            .unwrap();
         assert_eq!(run.status, RunStatus::Done);
 
         // Global ring persists after run cleanup; verify events were published.
         let (events, _) = bus.backfill(BackfillScope::Global, 0);
-        assert!(!events.is_empty(), "global backfill must contain events from the run");
+        assert!(
+            !events.is_empty(),
+            "global backfill must contain events from the run"
+        );
     }
 
     // ── (b) cycle A->B->A feedback ────────────────────────────────────────────
@@ -1361,26 +1680,60 @@ mod tests {
             graph: WorkflowGraph {
                 stages: {
                     let mut m = HashMap::new();
-                    m.insert("A".into(), StageNodeDef {
-                        stage_type: "st_a".into(), config: json!({}),
-                        inputs: vec![InputSlot { name: "in_a".into(), artifact_type: "any".into(), optional: true }],
-                        outputs: vec![OutputSlot { name: "out_a".into(), artifact_type: "any".into() }],
-                    });
-                    m.insert("B".into(), StageNodeDef {
-                        stage_type: "st_b".into(), config: json!({}),
-                        inputs: vec![InputSlot { name: "in_b".into(), artifact_type: "any".into(), optional: false }],
-                        outputs: vec![OutputSlot { name: "out_b".into(), artifact_type: "any".into() }],
-                    });
+                    m.insert(
+                        "A".into(),
+                        StageNodeDef {
+                            stage_type: "st_a".into(),
+                            config: json!({}),
+                            inputs: vec![InputSlot {
+                                name: "in_a".into(),
+                                artifact_type: "any".into(),
+                                optional: true,
+                            }],
+                            outputs: vec![OutputSlot {
+                                name: "out_a".into(),
+                                artifact_type: "any".into(),
+                            }],
+                        },
+                    );
+                    m.insert(
+                        "B".into(),
+                        StageNodeDef {
+                            stage_type: "st_b".into(),
+                            config: json!({}),
+                            inputs: vec![InputSlot {
+                                name: "in_b".into(),
+                                artifact_type: "any".into(),
+                                optional: false,
+                            }],
+                            outputs: vec![OutputSlot {
+                                name: "out_b".into(),
+                                artifact_type: "any".into(),
+                            }],
+                        },
+                    );
                     m
                 },
                 edges: vec![
                     Edge {
-                        from: EdgeEndpoint { stage: "A".into(), slot: "out_a".into() },
-                        to: EdgeEndpoint { stage: "B".into(), slot: "in_b".into() },
+                        from: EdgeEndpoint {
+                            stage: "A".into(),
+                            slot: "out_a".into(),
+                        },
+                        to: EdgeEndpoint {
+                            stage: "B".into(),
+                            slot: "in_b".into(),
+                        },
                     },
                     Edge {
-                        from: EdgeEndpoint { stage: "B".into(), slot: "out_b".into() },
-                        to: EdgeEndpoint { stage: "A".into(), slot: "in_a".into() },
+                        from: EdgeEndpoint {
+                            stage: "B".into(),
+                            slot: "out_b".into(),
+                        },
+                        to: EdgeEndpoint {
+                            stage: "A".into(),
+                            slot: "in_a".into(),
+                        },
                     },
                 ],
             },
@@ -1392,27 +1745,48 @@ mod tests {
 
         // A is source (optional in_a satisfied trivially)
         let (ctx_a, mut resume_rx_a) = tokio::time::timeout(timeout_dur(), a_rx.recv())
-            .await.unwrap().unwrap();
+            .await
+            .unwrap()
+            .unwrap();
 
         ctx_a.set_status(StageStatus::Running, None).await.unwrap();
-        ctx_a.emit(EmitArgs {
-            output_name: "out_a".into(), artifact_type: "any".into(),
-            body: json!({"round": 1}), label: None, parent_artifact_id: None,
-        }).await.unwrap();
+        ctx_a
+            .emit(EmitArgs {
+                output_name: "out_a".into(),
+                artifact_type: "any".into(),
+                body: json!({"round": 1}),
+                label: None,
+                parent_artifact_id: None,
+            })
+            .await
+            .unwrap();
 
         // B activates after receiving A's artifact
         let (ctx_b, _) = tokio::time::timeout(timeout_dur(), b_rx.recv())
-            .await.unwrap().unwrap();
+            .await
+            .unwrap()
+            .unwrap();
         ctx_b.set_status(StageStatus::Running, None).await.unwrap();
-        ctx_b.emit(EmitArgs {
-            output_name: "out_b".into(), artifact_type: "any".into(),
-            body: json!({"round": 1}), label: None, parent_artifact_id: None,
-        }).await.unwrap();
+        ctx_b
+            .emit(EmitArgs {
+                output_name: "out_b".into(),
+                artifact_type: "any".into(),
+                body: json!({"round": 1}),
+                label: None,
+                parent_artifact_id: None,
+            })
+            .await
+            .unwrap();
 
         // B's emit triggers FeedbackArtifact to A (A is still Running)
         let fb = tokio::time::timeout(timeout_dur(), resume_rx_a.recv())
-            .await.unwrap().unwrap();
-        assert!(matches!(fb, ResumePayload::FeedbackArtifact { .. }), "expected FeedbackArtifact on A");
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(fb, ResumePayload::FeedbackArtifact { .. }),
+            "expected FeedbackArtifact on A"
+        );
 
         // stop condition: both mark Done
         ctx_a.set_status(StageStatus::Done, None).await.unwrap();
@@ -1423,7 +1797,9 @@ mod tests {
         assert!(b_rx.try_recv().is_err(), "B must not be spawned again");
 
         wait_run_done(&pool, run_id).await;
-        let run = queries::get_workflow_run_by_id(&pool, &run_id).await.unwrap();
+        let run = queries::get_workflow_run_by_id(&pool, &run_id)
+            .await
+            .unwrap();
         assert_eq!(run.status, RunStatus::Done);
     }
 
@@ -1439,7 +1815,12 @@ mod tests {
         let mut reg = StageTypeRegistry::new();
         reg.register(sa);
 
-        let coord = Coordinator::new(pool.clone(), Arc::new(reg), artifact_reg.clone(), bus.clone());
+        let coord = Coordinator::new(
+            pool.clone(),
+            Arc::new(reg),
+            artifact_reg.clone(),
+            bus.clone(),
+        );
 
         let def = WorkflowDef {
             id: WorkflowDefId(Uuid::new_v4()),
@@ -1448,12 +1829,18 @@ mod tests {
             graph: WorkflowGraph {
                 stages: {
                     let mut m = HashMap::new();
-                    m.insert("A".into(), StageNodeDef {
-                        stage_type: "st_a".into(), config: json!({}),
-                        inputs: vec![], outputs: vec![
-                            OutputSlot { name: "out".into(), artifact_type: "any".into() },
-                        ],
-                    });
+                    m.insert(
+                        "A".into(),
+                        StageNodeDef {
+                            stage_type: "st_a".into(),
+                            config: json!({}),
+                            inputs: vec![],
+                            outputs: vec![OutputSlot {
+                                name: "out".into(),
+                                artifact_type: "any".into(),
+                            }],
+                        },
+                    );
                     m
                 },
                 edges: vec![],
@@ -1465,33 +1852,59 @@ mod tests {
         coord.start_run(run_id).await.unwrap();
 
         let (ctx_a, mut resume_rx_a) = tokio::time::timeout(timeout_dur(), a_rx.recv())
-            .await.unwrap().unwrap();
+            .await
+            .unwrap()
+            .unwrap();
 
         let mut run_rx = bus.subscribe_run(run_id);
         ctx_a.set_status(StageStatus::Running, None).await.unwrap();
-        let artifact = ctx_a.emit(EmitArgs {
-            output_name: "out".into(), artifact_type: "any".into(),
-            body: json!({"content": "review"}), label: None, parent_artifact_id: None,
-        }).await.unwrap();
-        ctx_a.set_status(StageStatus::Parked, Some("waiting_gate".into())).await.unwrap();
+        let artifact = ctx_a
+            .emit(EmitArgs {
+                output_name: "out".into(),
+                artifact_type: "any".into(),
+                body: json!({"content": "review"}),
+                label: None,
+                parent_artifact_id: None,
+            })
+            .await
+            .unwrap();
+        ctx_a
+            .set_status(StageStatus::Parked, Some("waiting_gate".into()))
+            .await
+            .unwrap();
 
         let si_id = ctx_a.stage_instance_id;
         wait_stage_status_event(&mut run_rx, si_id, StageStatus::Parked).await;
 
         // inject gate decision
-        coord.deliver_decision(run_id, si_id, ResumePayload::GateDecision {
-            decision: GateDecision { outcome: GateOutcome::Pass, comment: None, feedback: None },
-            against_artifact_id: artifact.id,
-        }).await.unwrap();
+        coord
+            .deliver_decision(
+                run_id,
+                si_id,
+                ResumePayload::GateDecision {
+                    decision: GateDecision {
+                        outcome: GateOutcome::Pass,
+                        comment: None,
+                        feedback: None,
+                    },
+                    against_artifact_id: artifact.id,
+                },
+            )
+            .await
+            .unwrap();
 
         let resume = tokio::time::timeout(timeout_dur(), resume_rx_a.recv())
-            .await.unwrap().unwrap();
+            .await
+            .unwrap()
+            .unwrap();
         assert!(matches!(resume, ResumePayload::GateDecision { .. }));
 
         ctx_a.set_status(StageStatus::Done, None).await.unwrap();
 
         wait_run_done(&pool, run_id).await;
-        let run = queries::get_workflow_run_by_id(&pool, &run_id).await.unwrap();
+        let run = queries::get_workflow_run_by_id(&pool, &run_id)
+            .await
+            .unwrap();
         assert_eq!(run.status, RunStatus::Done);
     }
 
@@ -1507,7 +1920,12 @@ mod tests {
         let mut reg = StageTypeRegistry::new();
         reg.register(sa);
 
-        let coord = Coordinator::new(pool.clone(), Arc::new(reg), artifact_reg.clone(), bus.clone());
+        let coord = Coordinator::new(
+            pool.clone(),
+            Arc::new(reg),
+            artifact_reg.clone(),
+            bus.clone(),
+        );
 
         // Seed DB directly (simulating a crashed run)
         let def = WorkflowDef {
@@ -1517,10 +1935,15 @@ mod tests {
             graph: WorkflowGraph {
                 stages: {
                     let mut m = HashMap::new();
-                    m.insert("A".into(), StageNodeDef {
-                        stage_type: "st_a".into(), config: json!({}),
-                        inputs: vec![], outputs: vec![],
-                    });
+                    m.insert(
+                        "A".into(),
+                        StageNodeDef {
+                            stage_type: "st_a".into(),
+                            config: json!({}),
+                            inputs: vec![],
+                            outputs: vec![],
+                        },
+                    );
                     m
                 },
                 edges: vec![],
@@ -1577,23 +2000,43 @@ mod tests {
         coord.recover().await.unwrap();
 
         let (ctx_a, mut resume_rx_a) = tokio::time::timeout(timeout_dur(), a_rx.recv())
-            .await.unwrap().unwrap();
-        assert_eq!(ctx_a.stage_instance_id, si.id, "recovered stage must use existing instance id");
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            ctx_a.stage_instance_id, si.id,
+            "recovered stage must use existing instance id"
+        );
 
         // inject decision
-        coord.deliver_decision(run.id, si.id, ResumePayload::GateDecision {
-            decision: GateDecision { outcome: GateOutcome::Pass, comment: None, feedback: None },
-            against_artifact_id: artifact.id,
-        }).await.unwrap();
+        coord
+            .deliver_decision(
+                run.id,
+                si.id,
+                ResumePayload::GateDecision {
+                    decision: GateDecision {
+                        outcome: GateOutcome::Pass,
+                        comment: None,
+                        feedback: None,
+                    },
+                    against_artifact_id: artifact.id,
+                },
+            )
+            .await
+            .unwrap();
 
         let resume = tokio::time::timeout(timeout_dur(), resume_rx_a.recv())
-            .await.unwrap().unwrap();
+            .await
+            .unwrap()
+            .unwrap();
         assert!(matches!(resume, ResumePayload::GateDecision { .. }));
 
         ctx_a.set_status(StageStatus::Done, None).await.unwrap();
 
         wait_run_done(&pool, run.id).await;
-        let run_final = queries::get_workflow_run_by_id(&pool, &run.id).await.unwrap();
+        let run_final = queries::get_workflow_run_by_id(&pool, &run.id)
+            .await
+            .unwrap();
         assert_eq!(run_final.status, RunStatus::Done);
     }
 
@@ -1618,10 +2061,15 @@ mod tests {
             graph: WorkflowGraph {
                 stages: {
                     let mut m = HashMap::new();
-                    m.insert("A".into(), StageNodeDef {
-                        stage_type: "st_a".into(), config: json!({}),
-                        inputs: vec![], outputs: vec![],
-                    });
+                    m.insert(
+                        "A".into(),
+                        StageNodeDef {
+                            stage_type: "st_a".into(),
+                            config: json!({}),
+                            inputs: vec![],
+                            outputs: vec![],
+                        },
+                    );
                     m
                 },
                 edges: vec![],
@@ -1646,8 +2094,14 @@ mod tests {
 
         coord.recover().await.unwrap();
 
-        let run_after = queries::get_workflow_run_by_id(&pool, &run.id).await.unwrap();
-        assert_eq!(run_after.status, RunStatus::Running, "recovered pending run must be promoted to Running");
+        let run_after = queries::get_workflow_run_by_id(&pool, &run.id)
+            .await
+            .unwrap();
+        assert_eq!(
+            run_after.status,
+            RunStatus::Running,
+            "recovered pending run must be promoted to Running"
+        );
 
         let first_event = tokio::time::timeout(timeout_dur(), global_rx.recv())
             .await
@@ -1655,11 +2109,20 @@ mod tests {
             .unwrap();
         assert!(matches!(
             first_event.event,
-            SubstrateEvent::RunStatusChanged { status: RunStatus::Running, .. }
+            SubstrateEvent::RunStatusChanged {
+                status: RunStatus::Running,
+                ..
+            }
         ));
 
-        let stage_instances = queries::list_stage_instances_for_run(&pool, &run.id).await.unwrap();
-        assert_eq!(stage_instances.len(), 1, "recover must prime the missing source stage once");
+        let stage_instances = queries::list_stage_instances_for_run(&pool, &run.id)
+            .await
+            .unwrap();
+        assert_eq!(
+            stage_instances.len(),
+            1,
+            "recover must prime the missing source stage once"
+        );
 
         let (ctx_a, _) = tokio::time::timeout(timeout_dur(), a_rx.recv())
             .await
@@ -1672,7 +2135,9 @@ mod tests {
         ctx_a.set_status(StageStatus::Done, None).await.unwrap();
 
         wait_run_done(&pool, run.id).await;
-        let run_final = queries::get_workflow_run_by_id(&pool, &run.id).await.unwrap();
+        let run_final = queries::get_workflow_run_by_id(&pool, &run.id)
+            .await
+            .unwrap();
         assert_eq!(run_final.status, RunStatus::Done);
     }
 
@@ -1697,14 +2162,24 @@ mod tests {
             graph: WorkflowGraph {
                 stages: {
                     let mut m = HashMap::new();
-                    m.insert("A".into(), StageNodeDef {
-                        stage_type: "st_a".into(), config: json!({}),
-                        inputs: vec![], outputs: vec![],
-                    });
-                    m.insert("B".into(), StageNodeDef {
-                        stage_type: "st_a".into(), config: json!({}),
-                        inputs: vec![], outputs: vec![],
-                    });
+                    m.insert(
+                        "A".into(),
+                        StageNodeDef {
+                            stage_type: "st_a".into(),
+                            config: json!({}),
+                            inputs: vec![],
+                            outputs: vec![],
+                        },
+                    );
+                    m.insert(
+                        "B".into(),
+                        StageNodeDef {
+                            stage_type: "st_a".into(),
+                            config: json!({}),
+                            inputs: vec![],
+                            outputs: vec![],
+                        },
+                    );
                     m
                 },
                 edges: vec![],
@@ -1741,7 +2216,9 @@ mod tests {
             created_at: fixed_dt(),
             updated_at: fixed_dt(),
         };
-        queries::insert_stage_instance(&pool, &persisted_a).await.unwrap();
+        queries::insert_stage_instance(&pool, &persisted_a)
+            .await
+            .unwrap();
 
         coord.recover().await.unwrap();
 
@@ -1755,9 +2232,15 @@ mod tests {
         }
 
         let ids: Vec<_> = contexts.iter().map(|ctx| ctx.stage_instance_id).collect();
-        assert!(ids.contains(&persisted_a.id), "recover must reuse the persisted stage instance");
+        assert!(
+            ids.contains(&persisted_a.id),
+            "recover must reuse the persisted stage instance"
+        );
         assert_eq!(ids.len(), 2);
-        assert_ne!(ids[0], ids[1], "recover must prime exactly one missing stage instance");
+        assert_ne!(
+            ids[0], ids[1],
+            "recover must prime exactly one missing stage instance"
+        );
 
         let recovered = contexts
             .iter()
@@ -1772,8 +2255,14 @@ mod tests {
         assert_eq!(summary.parked_meta, Some(json!({"request_id": "req-1"})));
         assert_eq!(summary.external_ref.as_deref(), Some("ext-123"));
 
-        let stage_instances = queries::list_stage_instances_for_run(&pool, &run.id).await.unwrap();
-        assert_eq!(stage_instances.len(), 2, "recover must not duplicate persisted stage instances");
+        let stage_instances = queries::list_stage_instances_for_run(&pool, &run.id)
+            .await
+            .unwrap();
+        assert_eq!(
+            stage_instances.len(),
+            2,
+            "recover must not duplicate persisted stage instances"
+        );
 
         for ctx in contexts {
             ctx.set_status(StageStatus::Running, None).await.unwrap();
@@ -1781,7 +2270,9 @@ mod tests {
         }
 
         wait_run_done(&pool, run.id).await;
-        let run_final = queries::get_workflow_run_by_id(&pool, &run.id).await.unwrap();
+        let run_final = queries::get_workflow_run_by_id(&pool, &run.id)
+            .await
+            .unwrap();
         assert_eq!(run_final.status, RunStatus::Done);
     }
 
@@ -1792,13 +2283,21 @@ mod tests {
         let pool = make_pool().await;
         let artifact_reg = make_artifact_registry();
         let bus = EventBus::new();
-        let coord = Coordinator::new(pool.clone(), Arc::new(StageTypeRegistry::new()), artifact_reg, bus);
+        let coord = Coordinator::new(
+            pool.clone(),
+            Arc::new(StageTypeRegistry::new()),
+            artifact_reg,
+            bus,
+        );
 
         let def = WorkflowDef {
             id: WorkflowDefId(Uuid::new_v4()),
             name: format!("wf-{}", Uuid::new_v4()),
             version: 1,
-            graph: WorkflowGraph { stages: HashMap::new(), edges: vec![] },
+            graph: WorkflowGraph {
+                stages: HashMap::new(),
+                edges: vec![],
+            },
             created_at: fixed_dt(),
         };
         let run_id = insert_run_for_def(&pool, &def).await;
@@ -1806,8 +2305,14 @@ mod tests {
         // start_run handles an empty graph synchronously, so the run is terminal on return.
         coord.start_run(run_id).await.unwrap();
 
-        let run = queries::get_workflow_run_by_id(&pool, &run_id).await.unwrap();
-        assert_eq!(run.status, RunStatus::Done, "empty-graph run must short-circuit to Done, not hang");
+        let run = queries::get_workflow_run_by_id(&pool, &run_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            run.status,
+            RunStatus::Done,
+            "empty-graph run must short-circuit to Done, not hang"
+        );
     }
 
     // ── (h) unregistered stage type fails the run ─────────────────────────────
@@ -1818,7 +2323,12 @@ mod tests {
         let artifact_reg = make_artifact_registry();
         let bus = EventBus::new();
         // Register no stage types: the source stage's type is unresolved at activation.
-        let coord = Coordinator::new(pool.clone(), Arc::new(StageTypeRegistry::new()), artifact_reg, bus);
+        let coord = Coordinator::new(
+            pool.clone(),
+            Arc::new(StageTypeRegistry::new()),
+            artifact_reg,
+            bus,
+        );
 
         let def = WorkflowDef {
             id: WorkflowDefId(Uuid::new_v4()),
@@ -1827,10 +2337,15 @@ mod tests {
             graph: WorkflowGraph {
                 stages: {
                     let mut m = HashMap::new();
-                    m.insert("A".into(), StageNodeDef {
-                        stage_type: "missing_type".into(), config: json!({}),
-                        inputs: vec![], outputs: vec![],
-                    });
+                    m.insert(
+                        "A".into(),
+                        StageNodeDef {
+                            stage_type: "missing_type".into(),
+                            config: json!({}),
+                            inputs: vec![],
+                            outputs: vec![],
+                        },
+                    );
                     m
                 },
                 edges: vec![],
@@ -1841,8 +2356,14 @@ mod tests {
         coord.start_run(run_id).await.unwrap();
 
         wait_run_done(&pool, run_id).await;
-        let run = queries::get_workflow_run_by_id(&pool, &run_id).await.unwrap();
-        assert_eq!(run.status, RunStatus::Failed, "unregistered stage type must fail the run, not hang in Running");
+        let run = queries::get_workflow_run_by_id(&pool, &run_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            run.status,
+            RunStatus::Failed,
+            "unregistered stage type must fail the run, not hang in Running"
+        );
     }
 
     // ── (i) recovery quiescence: all-terminal stages settle without entering the event loop
@@ -1864,10 +2385,15 @@ mod tests {
             graph: WorkflowGraph {
                 stages: {
                     let mut m = HashMap::new();
-                    m.insert("A".into(), StageNodeDef {
-                        stage_type: "st_a".into(), config: json!({}),
-                        inputs: vec![], outputs: vec![],
-                    });
+                    m.insert(
+                        "A".into(),
+                        StageNodeDef {
+                            stage_type: "st_a".into(),
+                            config: json!({}),
+                            inputs: vec![],
+                            outputs: vec![],
+                        },
+                    );
                     m
                 },
                 edges: vec![],
@@ -1914,18 +2440,33 @@ mod tests {
 
         // Stage type must NOT be re-executed (Done stages are terminal).
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        assert!(a_rx.try_recv().is_err(), "Done stage must not be re-executed during recovery");
+        assert!(
+            a_rx.try_recv().is_err(),
+            "Done stage must not be re-executed during recovery"
+        );
 
         // Run must be settled to Done without requiring any external event.
-        let run_final = queries::get_workflow_run_by_id(&pool, &run.id).await.unwrap();
-        assert_eq!(run_final.status, RunStatus::Done, "all-terminal recovered run must settle to Done");
+        let run_final = queries::get_workflow_run_by_id(&pool, &run.id)
+            .await
+            .unwrap();
+        assert_eq!(
+            run_final.status,
+            RunStatus::Done,
+            "all-terminal recovered run must settle to Done"
+        );
 
         // Confirm RunStatusChanged Done was published.
         let mut saw_done = false;
         for _ in 0..20 {
             match tokio::time::timeout(timeout_dur(), global_rx.recv()).await {
                 Ok(Ok(ev)) => {
-                    if matches!(ev.event, SubstrateEvent::RunStatusChanged { status: RunStatus::Done, .. }) {
+                    if matches!(
+                        ev.event,
+                        SubstrateEvent::RunStatusChanged {
+                            status: RunStatus::Done,
+                            ..
+                        }
+                    ) {
                         saw_done = true;
                         break;
                     }
@@ -1933,7 +2474,10 @@ mod tests {
                 _ => break,
             }
         }
-        assert!(saw_done, "recovery must publish RunStatusChanged Done for all-terminal run");
+        assert!(
+            saw_done,
+            "recovery must publish RunStatusChanged Done for all-terminal run"
+        );
     }
 
     // ── (j) recovery quiescence: all-Failed stages settle as Failed ──────────
@@ -1945,7 +2489,12 @@ mod tests {
         let bus = EventBus::new();
         // Register no stage types so any re-activation also fails, but here the
         // stage is already Failed so it won't be re-activated.
-        let coord = Coordinator::new(pool.clone(), Arc::new(StageTypeRegistry::new()), artifact_reg, bus.clone());
+        let coord = Coordinator::new(
+            pool.clone(),
+            Arc::new(StageTypeRegistry::new()),
+            artifact_reg,
+            bus.clone(),
+        );
 
         let def = WorkflowDef {
             id: WorkflowDefId(Uuid::new_v4()),
@@ -1954,10 +2503,15 @@ mod tests {
             graph: WorkflowGraph {
                 stages: {
                     let mut m = HashMap::new();
-                    m.insert("A".into(), StageNodeDef {
-                        stage_type: "missing_type".into(), config: json!({}),
-                        inputs: vec![], outputs: vec![],
-                    });
+                    m.insert(
+                        "A".into(),
+                        StageNodeDef {
+                            stage_type: "missing_type".into(),
+                            config: json!({}),
+                            inputs: vec![],
+                            outputs: vec![],
+                        },
+                    );
                     m
                 },
                 edges: vec![],
@@ -1998,8 +2552,14 @@ mod tests {
 
         coord.recover().await.unwrap();
 
-        let run_final = queries::get_workflow_run_by_id(&pool, &run.id).await.unwrap();
-        assert_eq!(run_final.status, RunStatus::Failed, "all-Failed recovered run must settle to Failed");
+        let run_final = queries::get_workflow_run_by_id(&pool, &run.id)
+            .await
+            .unwrap();
+        assert_eq!(
+            run_final.status,
+            RunStatus::Failed,
+            "all-Failed recovered run must settle to Failed"
+        );
     }
 
     #[tokio::test]
@@ -2007,7 +2567,12 @@ mod tests {
         let pool = make_pool().await;
         let artifact_reg = make_artifact_registry();
         let bus = EventBus::new();
-        let coord = Coordinator::new(pool.clone(), Arc::new(StageTypeRegistry::new()), artifact_reg, bus.clone());
+        let coord = Coordinator::new(
+            pool.clone(),
+            Arc::new(StageTypeRegistry::new()),
+            artifact_reg,
+            bus.clone(),
+        );
 
         let def = WorkflowDef {
             id: WorkflowDefId(Uuid::new_v4()),
@@ -2016,10 +2581,15 @@ mod tests {
             graph: WorkflowGraph {
                 stages: {
                     let mut m = HashMap::new();
-                    m.insert("A".into(), StageNodeDef {
-                        stage_type: "missing_type".into(), config: json!({}),
-                        inputs: vec![], outputs: vec![],
-                    });
+                    m.insert(
+                        "A".into(),
+                        StageNodeDef {
+                            stage_type: "missing_type".into(),
+                            config: json!({}),
+                            inputs: vec![],
+                            outputs: vec![],
+                        },
+                    );
                     m
                 },
                 edges: vec![],
@@ -2061,7 +2631,9 @@ mod tests {
         let mut global_rx = bus.subscribe_global();
         coord.recover().await.unwrap();
 
-        let persisted = queries::get_stage_instance_by_id(&pool, &si.id).await.unwrap();
+        let persisted = queries::get_stage_instance_by_id(&pool, &si.id)
+            .await
+            .unwrap();
         assert_eq!(persisted.status, StageStatus::Failed);
 
         let mut saw_stage_failed = false;
@@ -2083,7 +2655,10 @@ mod tests {
                         );
                         saw_stage_failed = true;
                     }
-                    SubstrateEvent::RunStatusChanged { status: RunStatus::Failed, .. } => {
+                    SubstrateEvent::RunStatusChanged {
+                        status: RunStatus::Failed,
+                        ..
+                    } => {
                         saw_run_failed = true;
                     }
                     _ => {}
@@ -2094,7 +2669,13 @@ mod tests {
                 break;
             }
         }
-        assert!(saw_stage_failed, "recovery must publish StageStatusChanged Failed");
-        assert!(saw_run_failed, "recovery must publish RunStatusChanged Failed");
+        assert!(
+            saw_stage_failed,
+            "recovery must publish StageStatusChanged Failed"
+        );
+        assert!(
+            saw_run_failed,
+            "recovery must publish RunStatusChanged Failed"
+        );
     }
 }

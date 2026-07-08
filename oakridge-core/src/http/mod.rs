@@ -141,7 +141,16 @@ pub fn router(state: AppState) -> Router {
             post(rest::resume_stage_instance),
         )
         .route("/artifacts/:id", get(rest::get_artifact))
+        .route(
+            "/artifact_details/:id",
+            get(rest::get_operator_artifact_detail),
+        )
         .route("/parked", get(rest::list_parked))
+        .route("/runs", get(rest::list_operator_runs))
+        .route("/runs/:id", get(rest::get_operator_run))
+        .route("/runs/:id/gates", get(rest::list_operator_run_gates))
+        .route("/gates", get(rest::list_operator_gates))
+        .route("/gates/:id/resume", post(rest::resume_operator_gate))
         .merge(sse::sse_routes());
 
     for st in stage_registry.all() {

@@ -13,7 +13,9 @@ use uuid::Uuid;
 use crate::executor::EmitArgs;
 use crate::types::{StageInstanceId, StageStatus};
 
-use super::{revision_count_from_meta, DelegatedGate, DelegatedGateState, KbblClient, LiveSessions};
+use super::{
+    revision_count_from_meta, DelegatedGate, DelegatedGateState, KbblClient, LiveSessions,
+};
 
 #[derive(Clone)]
 struct RouteState {

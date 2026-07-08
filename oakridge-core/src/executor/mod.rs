@@ -309,7 +309,8 @@ impl StageContext {
         status: StageStatus,
         parked_reason: Option<String>,
     ) -> anyhow::Result<()> {
-        self.set_status_with_terminal_meta(status, parked_reason, None).await
+        self.set_status_with_terminal_meta(status, parked_reason, None)
+            .await
     }
 
     /// Transition this stage instance to a new status with structured terminal metadata.
@@ -836,15 +837,13 @@ mod tests {
 
         let ctx = make_ctx(pool.clone(), run_id, si_id, registry, tx);
         let terminal_meta = json!({"result": "complete"});
-        ctx.set_status_with_terminal_meta(
-            StageStatus::Done,
-            None,
-            Some(terminal_meta.clone()),
-        )
-        .await
-        .unwrap();
+        ctx.set_status_with_terminal_meta(StageStatus::Done, None, Some(terminal_meta.clone()))
+            .await
+            .unwrap();
 
-        let si = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+        let si = queries::get_stage_instance_by_id(&pool, &si_id)
+            .await
+            .unwrap();
         assert_eq!(si.status, StageStatus::Done);
         assert_eq!(si.terminal_meta, Some(terminal_meta.clone()));
 
@@ -853,7 +852,11 @@ mod tests {
 
         let event = rx.try_recv().expect("expected a StatusChanged event");
         match event {
-            ExecutorEvent::StatusChanged { status: StageStatus::Done, terminal_meta: event_meta, .. } => {
+            ExecutorEvent::StatusChanged {
+                status: StageStatus::Done,
+                terminal_meta: event_meta,
+                ..
+            } => {
                 assert_eq!(event_meta, Some(terminal_meta));
             }
             other => panic!("unexpected event: {:?}", other),
@@ -869,15 +872,13 @@ mod tests {
 
         let ctx = make_ctx(pool.clone(), run_id, si_id, registry, tx);
         let terminal_meta = json!({"reason": "boom"});
-        ctx.set_status_with_terminal_meta(
-            StageStatus::Failed,
-            None,
-            Some(terminal_meta.clone()),
-        )
-        .await
-        .unwrap();
+        ctx.set_status_with_terminal_meta(StageStatus::Failed, None, Some(terminal_meta.clone()))
+            .await
+            .unwrap();
 
-        let si = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+        let si = queries::get_stage_instance_by_id(&pool, &si_id)
+            .await
+            .unwrap();
         assert_eq!(si.status, StageStatus::Failed);
         assert_eq!(si.terminal_meta, Some(terminal_meta.clone()));
 
@@ -886,7 +887,11 @@ mod tests {
 
         let event = rx.try_recv().expect("expected a StatusChanged event");
         match event {
-            ExecutorEvent::StatusChanged { status: StageStatus::Failed, terminal_meta: event_meta, .. } => {
+            ExecutorEvent::StatusChanged {
+                status: StageStatus::Failed,
+                terminal_meta: event_meta,
+                ..
+            } => {
                 assert_eq!(event_meta, Some(terminal_meta));
             }
             other => panic!("unexpected event: {:?}", other),
@@ -916,10 +921,15 @@ mod tests {
         let ctx = make_ctx(pool.clone(), run_id, si_id, registry, tx);
         ctx.set_status(StageStatus::Running, None).await.unwrap();
 
-        let si = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+        let si = queries::get_stage_instance_by_id(&pool, &si_id)
+            .await
+            .unwrap();
         assert_eq!(si.status, StageStatus::Failed);
         assert_eq!(si.terminal_meta, Some(cancelled_meta));
-        assert!(rx.try_recv().is_err(), "late write must not emit a status event");
+        assert!(
+            rx.try_recv().is_err(),
+            "late write must not emit a status event"
+        );
     }
 
     #[tokio::test]

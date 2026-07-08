@@ -21,15 +21,15 @@ function StageRow({ stage, onSelectArtifact }: StageRowProps) {
         <span className={`or-chip or-chip--${stage.status}`}>{stage.status}</span>
       </td>
       <td className="or-stage-row__artifacts">
-        {stage.artifact_types.length === 0 && <span className="or-muted">—</span>}
-        {stage.artifact_types.map((t) => (
+        {stage.artifacts.length === 0 && <span className="or-muted">—</span>}
+        {stage.artifacts.map((artifact) => (
           <button
-            key={t}
+            key={artifact.id}
             type="button"
             className="or-chip or-chip--artifact or-link"
-            onClick={() => onSelectArtifact?.(t)}
+            onClick={() => onSelectArtifact?.(artifact.id)}
           >
-            {t}
+            {artifact.type_id}
           </button>
         ))}
       </td>
