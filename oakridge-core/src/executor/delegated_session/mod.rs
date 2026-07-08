@@ -15,15 +15,17 @@ use serde_json::Value;
 use tokio::time::{sleep, Duration};
 use tracing::{debug, warn};
 
-use crate::executor::prompt_config::{load_template, render_template, resolve_binding};
+use crate::executor::prompt_config::{
+    load_template, render_template, resolve_binding, SlotBinding,
+};
 use crate::executor::{StageContext, StageHandle};
 use crate::registry::stage_type::StageType;
-use crate::types::{Artifact, OutputSlot, StageInstanceId, StageStatus};
+use crate::types::{Artifact, InputSlot, OutputSlot, StageInstanceId, StageStatus};
 
-use config::{DelegatedSessionConfig, DelegatedSessionDefConfig};
+use config::{validate_effort, DelegatedSessionConfig, DelegatedSessionDefConfig};
 use kbbl_client::{
-    AckResponse, CreateSessionRequest, EventsSinceResponse, KbblClient, SendInputRequest,
-    SetYoloRequest,
+    AckResponse, CreateSessionRequest, DelegatedExternalRef, EventsSinceResponse, KbblClient,
+    SendInputRequest, SessionSnapshot, SetYoloRequest,
 };
 
 const STAGE_INSTANCE_ID_SENTINEL: &str = "{{STAGE_INSTANCE_ID}}";
@@ -67,6 +69,12 @@ pub struct DelegatedGateState {
     pub gate: DelegatedGate,
     pub artifact_id: crate::types::ArtifactId,
     pub revision_count: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree_branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree_base_ref: Option<String>,
 }
 
 impl DelegatedGateState {
@@ -74,6 +82,9 @@ impl DelegatedGateState {
         kbbl_sid: String,
         artifact_id: crate::types::ArtifactId,
         revision_count: u32,
+        worktree_path: Option<String>,
+        worktree_branch: Option<String>,
+        worktree_base_ref: Option<String>,
     ) -> Self {
         Self {
             executor: DelegatedExecutor::DelegatedSession,
@@ -81,6 +92,9 @@ impl DelegatedGateState {
             gate: DelegatedGate::ArtifactApproval,
             artifact_id,
             revision_count,
+            worktree_path,
+            worktree_branch,
+            worktree_base_ref,
         }
     }
 }
@@ -89,6 +103,25 @@ fn revision_count_from_meta(meta: Option<&Value>) -> u32 {
     meta.and_then(|meta| serde_json::from_value::<DelegatedGateState>(meta.clone()).ok())
         .map(|state| state.revision_count)
         .unwrap_or(1)
+}
+
+fn validate_delegated_def(def: &DelegatedSessionDefConfig) -> anyhow::Result<()> {
+    if !def.pre_authorized_tools.is_empty() {
+        anyhow::bail!(
+            "pre_authorized_tools is not supported: per-tool approval is managed by the kbbl PWA (Phase 2). Remove pre_authorized_tools from the workflow definition or set it to an empty array."
+        );
+    }
+
+    if let Some(ref e) = def.effort {
+        if !validate_effort(e) {
+            anyhow::bail!(
+                "invalid effort {:?}: must be one of [minimal, low, medium, high]",
+                e
+            );
+        }
+    }
+
+    Ok(())
 }
 
 pub struct DelegatedSessionStage {
@@ -113,6 +146,9 @@ pub(crate) struct LiveSession {
     pub ctx: StageContext,
     pub sid: String,
     pub config: DelegatedSessionConfig,
+    pub worktree_path: Option<String>,
+    pub worktree_branch: Option<String>,
+    pub worktree_base_ref: Option<String>,
 }
 
 pub(crate) type LiveSessions = Arc<Mutex<HashMap<StageInstanceId, LiveSession>>>;
@@ -129,7 +165,7 @@ impl DelegatedSessionStage {
         &self,
         config: &DelegatedSessionConfig,
         ctx: &StageContext,
-    ) -> anyhow::Result<String> {
+    ) -> anyhow::Result<SessionSnapshot> {
         let snapshot = self
             .kbbl_client
             .create_session(CreateSessionRequest {
@@ -138,15 +174,25 @@ impl DelegatedSessionStage {
                 artifact_id: ctx.stage_instance_id.0.to_string(),
                 runtime: config.runtime.clone(),
                 model: config.model.clone(),
+                effort: config.effort.clone(),
+                worktree: config.worktree.clone(),
             })
             .await?;
 
-        if let Err(err) = ctx.set_external_ref(Some(snapshot.sid.clone())).await {
+        let ext_ref = DelegatedExternalRef {
+            sid: snapshot.sid.clone(),
+            worktree_path: snapshot.worktree_path.clone(),
+            worktree_branch: snapshot.worktree_branch.clone(),
+            worktree_base_ref: snapshot.worktree_base_ref.clone(),
+        };
+        let ext_ref_json = serde_json::to_string(&ext_ref)?;
+
+        if let Err(err) = ctx.set_external_ref(Some(ext_ref_json)).await {
             self.cleanup_live_session(ctx.stage_instance_id, &snapshot.sid, None)
                 .await;
             return Err(err);
         }
-        Ok(snapshot.sid)
+        Ok(snapshot)
     }
 
     async fn probe_live_session(&self, sid: &str) -> anyhow::Result<Option<i64>> {
@@ -223,6 +269,9 @@ impl DelegatedSessionStage {
         ctx: StageContext,
         sid: String,
         config: DelegatedSessionConfig,
+        worktree_path: Option<String>,
+        worktree_branch: Option<String>,
+        worktree_base_ref: Option<String>,
     ) -> Arc<AtomicBool> {
         let cancelled = Arc::new(AtomicBool::new(false));
         self.live_sessions.lock().unwrap().insert(
@@ -232,6 +281,9 @@ impl DelegatedSessionStage {
                 ctx,
                 sid,
                 config,
+                worktree_path,
+                worktree_branch,
+                worktree_base_ref,
             },
         );
         cancelled
@@ -266,7 +318,16 @@ impl DelegatedSessionStage {
         let client = self.kbbl_client.clone();
         let live_sessions = self.live_sessions.clone();
         tokio::spawn(async move {
-            observer_loop(&ctx, stage_instance_id, &sid, &cancelled, last_seen, &client, &live_sessions).await;
+            observer_loop(
+                &ctx,
+                stage_instance_id,
+                &sid,
+                &cancelled,
+                last_seen,
+                &client,
+                &live_sessions,
+            )
+            .await;
         });
     }
 
@@ -279,6 +340,9 @@ impl DelegatedSessionStage {
         pre_park_status: StageStatus,
         pre_park_parked_reason: Option<String>,
         pre_park_parked_meta: Option<Value>,
+        worktree_path: Option<String>,
+        worktree_branch: Option<String>,
+        worktree_base_ref: Option<String>,
     ) {
         let client = self.kbbl_client.clone();
         let live_sessions = self.live_sessions.clone();
@@ -304,11 +368,13 @@ impl DelegatedSessionStage {
                         }
                         if let Some(reason) = failure_reason_from_events(&sid, &response.events) {
                             if !cancelled.load(Ordering::SeqCst) {
-                                let _ = ctx.set_status_with_terminal_meta(
-                                    StageStatus::Failed,
-                                    None,
-                                    Some(serde_json::json!({"reason": reason})),
-                                ).await;
+                                let _ = ctx
+                                    .set_status_with_terminal_meta(
+                                        StageStatus::Failed,
+                                        None,
+                                        Some(serde_json::json!({"reason": reason})),
+                                    )
+                                    .await;
                                 live_sessions.lock().unwrap().remove(&stage_instance_id);
                             }
                             return;
@@ -318,11 +384,13 @@ impl DelegatedSessionStage {
                     Err(e) if is_retryable_observer_error(&e) => continue,
                     Err(e) => {
                         if !cancelled.load(Ordering::SeqCst) {
-                            let _ = ctx.set_status_with_terminal_meta(
-                                StageStatus::Failed,
-                                None,
-                                Some(serde_json::json!({"reason": e.to_string()})),
-                            ).await;
+                            let _ = ctx
+                                .set_status_with_terminal_meta(
+                                    StageStatus::Failed,
+                                    None,
+                                    Some(serde_json::json!({"reason": e.to_string()})),
+                                )
+                                .await;
                             live_sessions.lock().unwrap().remove(&stage_instance_id);
                         }
                         return;
@@ -336,7 +404,9 @@ impl DelegatedSessionStage {
 
             // Phase 2: kbbl is reachable — restore pre-park state and register in live_sessions.
             if matches!(pre_park_status, StageStatus::Parked) {
-                let _ = ctx.set_status(StageStatus::Parked, pre_park_parked_reason).await;
+                let _ = ctx
+                    .set_status(StageStatus::Parked, pre_park_parked_reason)
+                    .await;
                 let _ = ctx.set_parked_meta(pre_park_parked_meta).await;
             } else {
                 let _ = ctx.set_status(StageStatus::Running, None).await;
@@ -346,11 +416,13 @@ impl DelegatedSessionStage {
             let config: DelegatedSessionConfig = match serde_json::from_value(ctx.config.clone()) {
                 Ok(c) => c,
                 Err(e) => {
-                    let _ = ctx.set_status_with_terminal_meta(
-                        StageStatus::Failed,
-                        None,
-                        Some(serde_json::json!({"reason": e.to_string()})),
-                    ).await;
+                    let _ = ctx
+                        .set_status_with_terminal_meta(
+                            StageStatus::Failed,
+                            None,
+                            Some(serde_json::json!({"reason": e.to_string()})),
+                        )
+                        .await;
                     return;
                 }
             };
@@ -364,11 +436,23 @@ impl DelegatedSessionStage {
                     ctx: ctx.clone(),
                     sid: sid.clone(),
                     config,
+                    worktree_path,
+                    worktree_branch,
+                    worktree_base_ref,
                 },
             );
 
             // Phase 3: observe normally. observer_loop handles live_sessions removal.
-            observer_loop(&ctx, stage_instance_id, &sid, &cancelled, last_seen, &client, &live_sessions).await;
+            observer_loop(
+                &ctx,
+                stage_instance_id,
+                &sid,
+                &cancelled,
+                last_seen,
+                &client,
+                &live_sessions,
+            )
+            .await;
         });
     }
 }
@@ -440,11 +524,13 @@ async fn observer_loop(
 
                 if let Some(reason) = failure_reason_from_events(sid, &response.events) {
                     if !cancelled.load(Ordering::SeqCst) {
-                        let _ = ctx.set_status_with_terminal_meta(
-                            StageStatus::Failed,
-                            None,
-                            Some(serde_json::json!({"reason": reason.clone()})),
-                        ).await;
+                        let _ = ctx
+                            .set_status_with_terminal_meta(
+                                StageStatus::Failed,
+                                None,
+                                Some(serde_json::json!({"reason": reason.clone()})),
+                            )
+                            .await;
                     }
                     break;
                 }
@@ -460,13 +546,17 @@ async fn observer_loop(
                     // the scheduler has written a Parked status that has not yet propagated.
                     let persisted = ctx.persisted_status().await.unwrap_or(StageStatus::Running);
                     if matches!(persisted, StageStatus::Running) {
-                        let _ = ctx.set_status(
-                            StageStatus::Parked,
-                            Some("session_ended_without_emit".to_string()),
-                        ).await;
-                        let _ = ctx.set_parked_meta(
-                            Some(serde_json::json!({"kind": "session_ended_without_emit"}))
-                        ).await;
+                        let _ = ctx
+                            .set_status(
+                                StageStatus::Parked,
+                                Some("session_ended_without_emit".to_string()),
+                            )
+                            .await;
+                        let _ = ctx
+                            .set_parked_meta(Some(
+                                serde_json::json!({"kind": "session_ended_without_emit"}),
+                            ))
+                            .await;
                         break;
                     } else if matches!(persisted, StageStatus::Parked) {
                         // Parked at gate: stop observing without removing from live_sessions.
@@ -540,7 +630,12 @@ impl StageHandle for WaitingForKbblHandle {
     async fn resume(&self, payload: crate::executor::ResumePayload) -> anyhow::Result<()> {
         // If the retry task has already reattached (kbbl came back), delegate to the
         // live session exactly as DelegatedSessionHandle would.
-        let session = self.live_sessions.lock().unwrap().get(&self.stage_instance_id).cloned();
+        let session = self
+            .live_sessions
+            .lock()
+            .unwrap()
+            .get(&self.stage_instance_id)
+            .cloned();
         if session.is_some() {
             let delegate = DelegatedSessionHandle {
                 stage_instance_id: self.stage_instance_id,
@@ -570,6 +665,38 @@ impl StageType for DelegatedSessionStage {
         "delegated_session"
     }
 
+    fn validate_def_config(
+        &self,
+        def_config: &Value,
+        input_slots: &[InputSlot],
+        _output_slots: &[OutputSlot],
+    ) -> anyhow::Result<()> {
+        let def: DelegatedSessionDefConfig = serde_json::from_value(def_config.clone())?;
+        load_template(&self.prompts_dir, &def.prompt_template_path)?;
+        validate_delegated_def(&def)?;
+
+        let input_names: std::collections::HashSet<&str> =
+            input_slots.iter().map(|slot| slot.name.as_str()).collect();
+        for (slot_name, binding) in &def.slot_bindings {
+            if let SlotBinding::Input { input_name, .. } = binding {
+                if !input_names.contains(input_name.as_str()) {
+                    anyhow::bail!(
+                        "slot binding '{}' references unknown input '{}'",
+                        slot_name,
+                        input_name
+                    );
+                }
+            }
+        }
+        if let SlotBinding::Input { input_name, .. } = &def.workdir {
+            if !input_names.contains(input_name.as_str()) {
+                anyhow::bail!("workdir binding references unknown input '{}'", input_name);
+            }
+        }
+
+        Ok(())
+    }
+
     async fn build_config(
         &self,
         def_config: &Value,
@@ -592,6 +719,7 @@ impl StageType for DelegatedSessionStage {
             "STAGE_INSTANCE_ID".to_owned(),
             stage_instance_id.0.to_string(),
         );
+        validate_delegated_def(&def)?;
 
         let rendered_prompt = render_template(&template, &slot_values)?;
         let sid_str = stage_instance_id.0.to_string();
@@ -606,6 +734,8 @@ impl StageType for DelegatedSessionStage {
                 .session_name
                 .replace(STAGE_INSTANCE_ID_SENTINEL, &sid_str),
             model: def.model,
+            effort: def.effort,
+            worktree: def.worktree,
             pre_authorized_tools: def.pre_authorized_tools,
             yolo: def.yolo,
             output_slots: output_slots.to_vec(),
@@ -630,8 +760,17 @@ impl StageType for DelegatedSessionStage {
         let mut created_session = false;
 
         let mut recovery_last_seen = -1;
+        let mut live_worktree_path: Option<String> = None;
+        let mut live_worktree_branch: Option<String> = None;
+        let mut live_worktree_base_ref: Option<String> = None;
+
         let sid = match summary.external_ref.clone() {
-            Some(existing_sid) => {
+            Some(ext_ref_str) => {
+                let ext_ref = DelegatedExternalRef::parse(&ext_ref_str);
+                live_worktree_path = ext_ref.worktree_path.clone();
+                live_worktree_branch = ext_ref.worktree_branch.clone();
+                live_worktree_base_ref = ext_ref.worktree_base_ref.clone();
+                let existing_sid = ext_ref.sid.clone();
                 match self.probe_session_for_recovery(&existing_sid).await {
                     ProbeOutcome::Reachable(maybe_last_seen) => {
                         if let Some(last_seen) = maybe_last_seen {
@@ -641,15 +780,10 @@ impl StageType for DelegatedSessionStage {
                     ProbeOutcome::Retryable => {
                         // kbbl is temporarily unreachable — park the stage and spawn a
                         // retry task that reattaches when kbbl becomes available.
-                        ctx.set_status(
-                            StageStatus::Parked,
-                            Some("waiting_for_kbbl".to_string()),
-                        )
-                        .await?;
-                        ctx.set_parked_meta(Some(
-                            serde_json::json!({"kind": "waiting_for_kbbl"}),
-                        ))
-                        .await?;
+                        ctx.set_status(StageStatus::Parked, Some("waiting_for_kbbl".to_string()))
+                            .await?;
+                        ctx.set_parked_meta(Some(serde_json::json!({"kind": "waiting_for_kbbl"})))
+                            .await?;
                         let cancelled = Arc::new(AtomicBool::new(false));
                         self.spawn_waiting_for_kbbl(
                             ctx.clone(),
@@ -659,6 +793,9 @@ impl StageType for DelegatedSessionStage {
                             summary.status,
                             summary.parked_reason.clone(),
                             summary.parked_meta.clone(),
+                            live_worktree_path,
+                            live_worktree_branch,
+                            live_worktree_base_ref,
                         );
                         return Ok(Box::new(WaitingForKbblHandle {
                             stage_instance_id,
@@ -674,7 +811,11 @@ impl StageType for DelegatedSessionStage {
             }
             None => {
                 created_session = true;
-                self.create_session(&config, &ctx).await?
+                let snapshot = self.create_session(&config, &ctx).await?;
+                live_worktree_path = snapshot.worktree_path.clone();
+                live_worktree_branch = snapshot.worktree_branch.clone();
+                live_worktree_base_ref = snapshot.worktree_base_ref.clone();
+                snapshot.sid
             }
         };
 
@@ -683,6 +824,9 @@ impl StageType for DelegatedSessionStage {
             ctx.clone(),
             sid.clone(),
             config.clone(),
+            live_worktree_path,
+            live_worktree_branch,
+            live_worktree_base_ref,
         );
 
         if !recovered_parked {
@@ -755,9 +899,7 @@ impl StageHandle for DelegatedSessionHandle {
                 self.resume_feedback_artifact(artifact).await
             }
             crate::executor::ResumePayload::Executor { .. } => {
-                anyhow::bail!(
-                    "delegated approval forwarding is not enabled until K1 exists"
-                )
+                anyhow::bail!("delegated approval forwarding is not enabled until K1 exists")
             }
         }
     }
@@ -839,8 +981,8 @@ impl DelegatedSessionHandle {
 
     async fn resume_feedback_artifact(&self, artifact: Artifact) -> anyhow::Result<()> {
         let session = self.live_session()?;
-        let pretty_body =
-            serde_json::to_string_pretty(&artifact.body).unwrap_or_else(|_| artifact.body.to_string());
+        let pretty_body = serde_json::to_string_pretty(&artifact.body)
+            .unwrap_or_else(|_| artifact.body.to_string());
         let text = format!(
             "Feedback artifact {} (type {}):\n{}",
             artifact.id.0, artifact.artifact_type, pretty_body
@@ -1212,11 +1354,32 @@ mod tests {
             gate: DelegatedGate::ArtifactApproval,
             artifact_id: crate::types::ArtifactId(Uuid::new_v4()),
             revision_count: 3,
+            worktree_path: Some("/work/wt/abc".into()),
+            worktree_branch: Some("cohort/e/1-foo".into()),
+            worktree_base_ref: Some("abc123".into()),
         };
 
         let value = serde_json::to_value(&state).unwrap();
         let back: DelegatedGateState = serde_json::from_value(value).unwrap();
         assert_eq!(state, back);
+    }
+
+    #[test]
+    fn delegated_gate_state_omits_null_worktree_fields() {
+        let state = DelegatedGateState {
+            executor: DelegatedExecutor::DelegatedSession,
+            kbbl_sid: "sid-000".into(),
+            gate: DelegatedGate::MergeConfirmation,
+            artifact_id: crate::types::ArtifactId(Uuid::new_v4()),
+            revision_count: 1,
+            worktree_path: None,
+            worktree_branch: None,
+            worktree_base_ref: None,
+        };
+        let value = serde_json::to_value(&state).unwrap();
+        assert!(value.get("worktree_path").is_none());
+        assert!(value.get("worktree_branch").is_none());
+        assert!(value.get("worktree_base_ref").is_none());
     }
 
     #[test]
@@ -1287,7 +1450,7 @@ mod tests {
             "workdir": {"from": "literal", "value": "/work/{{STAGE_INSTANCE_ID}}"},
             "session_name": "session-{{STAGE_INSTANCE_ID}}",
             "model": "gpt-4.1",
-            "pre_authorized_tools": ["Bash"],
+            "pre_authorized_tools": [],
             "yolo": true
         });
         let stage_instance_id =
@@ -1323,8 +1486,52 @@ mod tests {
             "session-00000000-0000-0000-0000-000000000042"
         );
         assert_eq!(cfg.output_slots, output_slots);
-        assert_eq!(cfg.pre_authorized_tools, vec!["Bash".to_string()]);
+        assert!(cfg.pre_authorized_tools.is_empty());
         assert!(cfg.yolo);
+    }
+
+    #[tokio::test]
+    async fn build_config_rejects_nonempty_pre_authorized_tools() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("t.md"), "hello").unwrap();
+
+        let stage = DelegatedSessionStage::new(
+            dir.path().to_path_buf(),
+            KbblClient::new("http://127.0.0.1:8080/").unwrap(),
+        );
+
+        let def_config = json!({
+            "runtime": "codex",
+            "prompt_template_path": "t.md",
+            "slot_bindings": {},
+            "workdir": {"from": "literal", "value": "/work"},
+            "session_name": "s",
+            "pre_authorized_tools": ["Bash", "Edit"],
+            "yolo": false
+        });
+        let stage_instance_id =
+            StageInstanceId(uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000099").unwrap());
+
+        let err = stage
+            .build_config(
+                &def_config,
+                &HashMap::new(),
+                &[],
+                stage_instance_id,
+                &json!({}),
+            )
+            .await
+            .unwrap_err();
+
+        let msg = err.to_string();
+        assert!(
+            msg.contains("pre_authorized_tools is not supported"),
+            "expected rejection message, got: {msg}"
+        );
+        assert!(
+            msg.contains("Phase 2"),
+            "expected Phase 2 reference in message, got: {msg}"
+        );
     }
 
     #[tokio::test]
@@ -1374,7 +1581,10 @@ mod tests {
         let si = queries::get_stage_instance_by_id(&pool, &si_id)
             .await
             .unwrap();
-        assert_eq!(si.external_ref.as_deref(), Some("sid-123"));
+        // external_ref is now a JSON-serialized DelegatedExternalRef
+        let ext_ref = kbbl_client::DelegatedExternalRef::parse(si.external_ref.as_deref().unwrap());
+        assert_eq!(ext_ref.sid, "sid-123");
+        assert!(ext_ref.worktree_path.is_none());
         assert_eq!(si.status, crate::types::StageStatus::Running);
 
         let requests: Vec<_> = capture.lock().unwrap().iter().cloned().collect();
@@ -1522,10 +1732,8 @@ mod tests {
         )
         .await;
         let (tx, _rx) = tokio::sync::mpsc::channel(8);
-        let stage = DelegatedSessionStage::new(
-            PathBuf::from("/tmp"),
-            KbblClient::new(base_url).unwrap(),
-        );
+        let stage =
+            DelegatedSessionStage::new(PathBuf::from("/tmp"), KbblClient::new(base_url).unwrap());
         let artifact_types = make_text_artifact_registry();
         let ctx = StageContext::new(
             crate::types::StageInstanceSummary {
@@ -1571,11 +1779,13 @@ mod tests {
         let artifact_id = payload["artifact_id"].as_str().unwrap().to_string();
         assert!(!artifact_id.is_empty());
 
-        let si = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+        let si = queries::get_stage_instance_by_id(&pool, &si_id)
+            .await
+            .unwrap();
         assert_eq!(si.status, crate::types::StageStatus::Parked);
         assert_eq!(si.parked_reason.as_deref(), Some("waiting_gate"));
-        let meta: DelegatedGateState = serde_json::from_value(si.parked_meta.clone().unwrap())
-            .unwrap();
+        let meta: DelegatedGateState =
+            serde_json::from_value(si.parked_meta.clone().unwrap()).unwrap();
         assert_eq!(meta.executor, DelegatedExecutor::DelegatedSession);
         assert_eq!(meta.kbbl_sid, "sid-123");
         assert_eq!(meta.gate, DelegatedGate::ArtifactApproval);
@@ -1585,7 +1795,11 @@ mod tests {
         // Verify the two requests execute() makes regardless of how many poll requests
         // the background observer has issued since (observer polls are correct behaviour).
         let requests: Vec<_> = capture.lock().unwrap().iter().cloned().collect();
-        assert!(requests.len() >= 2, "expected at least CREATE + INPUT requests, got {}", requests.len());
+        assert!(
+            requests.len() >= 2,
+            "expected at least CREATE + INPUT requests, got {}",
+            requests.len()
+        );
         assert_eq!(
             requests[0],
             RecordedRequest {
@@ -1622,10 +1836,8 @@ mod tests {
         )
         .await;
         let (tx, _rx) = tokio::sync::mpsc::channel(8);
-        let stage = DelegatedSessionStage::new(
-            PathBuf::from("/tmp"),
-            KbblClient::new(base_url).unwrap(),
-        );
+        let stage =
+            DelegatedSessionStage::new(PathBuf::from("/tmp"), KbblClient::new(base_url).unwrap());
         let ctx = StageContext::new(
             crate::types::StageInstanceSummary {
                 stage_instance_id: si_id,
@@ -1716,10 +1928,8 @@ mod tests {
         )
         .await;
         let (tx, _rx) = tokio::sync::mpsc::channel(8);
-        let stage = DelegatedSessionStage::new(
-            PathBuf::from("/tmp"),
-            KbblClient::new(base_url).unwrap(),
-        );
+        let stage =
+            DelegatedSessionStage::new(PathBuf::from("/tmp"), KbblClient::new(base_url).unwrap());
         let artifact_types = make_text_artifact_registry();
         let ctx = StageContext::new(
             crate::types::StageInstanceSummary {
@@ -1761,9 +1971,8 @@ mod tests {
             .await
             .unwrap();
         let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        let artifact_id = ArtifactId(
-            Uuid::parse_str(payload["artifact_id"].as_str().unwrap()).unwrap(),
-        );
+        let artifact_id =
+            ArtifactId(Uuid::parse_str(payload["artifact_id"].as_str().unwrap()).unwrap());
 
         handle
             .resume(ResumePayload::GateDecision {
@@ -1777,9 +1986,11 @@ mod tests {
             .await
             .unwrap();
 
-        let si = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
-        let meta: DelegatedGateState = serde_json::from_value(si.parked_meta.clone().unwrap())
+        let si = queries::get_stage_instance_by_id(&pool, &si_id)
+            .await
             .unwrap();
+        let meta: DelegatedGateState =
+            serde_json::from_value(si.parked_meta.clone().unwrap()).unwrap();
         assert_eq!(meta.gate, DelegatedGate::ArtifactApproval);
         assert_eq!(meta.revision_count, 2);
         assert_eq!(si.status, crate::types::StageStatus::Running);
@@ -1797,9 +2008,8 @@ mod tests {
             .await
             .unwrap();
         let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        let artifact_id = ArtifactId(
-            Uuid::parse_str(payload["artifact_id"].as_str().unwrap()).unwrap(),
-        );
+        let artifact_id =
+            ArtifactId(Uuid::parse_str(payload["artifact_id"].as_str().unwrap()).unwrap());
 
         handle
             .resume(ResumePayload::GateDecision {
@@ -1813,9 +2023,11 @@ mod tests {
             .await
             .unwrap();
 
-        let si = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
-        let meta: DelegatedGateState = serde_json::from_value(si.parked_meta.clone().unwrap())
+        let si = queries::get_stage_instance_by_id(&pool, &si_id)
+            .await
             .unwrap();
+        let meta: DelegatedGateState =
+            serde_json::from_value(si.parked_meta.clone().unwrap()).unwrap();
         assert_eq!(meta.gate, DelegatedGate::MergeConfirmation);
         assert_eq!(si.status, crate::types::StageStatus::Parked);
 
@@ -1828,7 +2040,9 @@ mod tests {
             .unwrap();
         let response = app.oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::CONFLICT);
-        let si = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+        let si = queries::get_stage_instance_by_id(&pool, &si_id)
+            .await
+            .unwrap();
         let unchanged_meta: DelegatedGateState =
             serde_json::from_value(si.parked_meta.clone().unwrap()).unwrap();
         assert_eq!(unchanged_meta.gate, DelegatedGate::MergeConfirmation);
@@ -1846,7 +2060,9 @@ mod tests {
             .await
             .unwrap();
 
-        let si = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+        let si = queries::get_stage_instance_by_id(&pool, &si_id)
+            .await
+            .unwrap();
         assert_eq!(si.status, crate::types::StageStatus::Done);
         assert!(si.parked_meta.is_none());
 
@@ -1897,8 +2113,8 @@ mod tests {
         Arc<Mutex<VecDeque<RecordedRequest>>>,
         tokio::task::JoinHandle<()>,
     ) {
-        use std::sync::atomic::AtomicU32;
         use axum::http::StatusCode;
+        use std::sync::atomic::AtomicU32;
 
         let call_counter = Arc::new(AtomicU32::new(0));
         let capture = Arc::new(Mutex::new(VecDeque::new()));
@@ -1920,14 +2136,19 @@ mod tests {
                 path: uri.path().to_string(),
                 body: Some(body),
             });
-            (StatusCode::CREATED, Json(serde_json::json!({ "sid": "sid-retry" })))
+            (
+                StatusCode::CREATED,
+                Json(serde_json::json!({ "sid": "sid-retry" })),
+            )
         }
 
         async fn events_handler(
             axum::extract::State(state): axum::extract::State<RetryState>,
             OriginalUri(uri): OriginalUri,
         ) -> impl IntoResponse {
-            let n = state.call_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let n = state
+                .call_counter
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             state.capture.lock().unwrap().push_back(RecordedRequest {
                 method: Method::GET,
                 path: uri.to_string(),
@@ -2029,7 +2250,10 @@ mod tests {
             .unwrap();
         assert!(matches!(
             event,
-            ExecutorEvent::StatusChanged { status: crate::types::StageStatus::Running, .. }
+            ExecutorEvent::StatusChanged {
+                status: crate::types::StageStatus::Running,
+                ..
+            }
         ));
 
         // Wait long enough for:
@@ -2038,10 +2262,15 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         // No Failed event must have arrived (transient 503 did NOT kill the stage).
-        assert!(rx.try_recv().is_err(), "stage must not fail on a single transient 503");
+        assert!(
+            rx.try_recv().is_err(),
+            "stage must not fail on a single transient 503"
+        );
 
         // Stage must still be Running.
-        let si = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+        let si = queries::get_stage_instance_by_id(&pool, &si_id)
+            .await
+            .unwrap();
         assert_eq!(si.status, crate::types::StageStatus::Running);
 
         handle.cancel().await.unwrap();
@@ -2097,12 +2326,19 @@ mod tests {
             .expect("timed out waiting for Failed event")
             .unwrap();
         match event {
-            ExecutorEvent::StatusChanged { status, terminal_meta, .. } => {
+            ExecutorEvent::StatusChanged {
+                status,
+                terminal_meta,
+                ..
+            } => {
                 assert_eq!(status, crate::types::StageStatus::Failed);
                 let meta = terminal_meta.unwrap();
                 let count = meta["poll_error_count"].as_u64().unwrap();
                 assert_eq!(count, MAX_OBSERVER_POLL_ERRORS as u64);
-                assert!(meta["reason"].as_str().unwrap().contains("budget exhausted"));
+                assert!(meta["reason"]
+                    .as_str()
+                    .unwrap()
+                    .contains("budget exhausted"));
             }
             other => panic!("unexpected event: {other:?}"),
         }
@@ -2110,7 +2346,9 @@ mod tests {
         // stop_session must have been called (DELETE /sessions/sid-retry).
         let requests: Vec<_> = capture.lock().unwrap().iter().cloned().collect();
         assert!(
-            requests.iter().any(|r| r.method == Method::DELETE && r.path.contains("sid-retry")),
+            requests
+                .iter()
+                .any(|r| r.method == Method::DELETE && r.path.contains("sid-retry")),
             "stop_session must be called when budget exhausted; requests: {requests:?}"
         );
 
@@ -2179,7 +2417,8 @@ mod tests {
         // Also confirm the DELETE request landed on the mock.
         let reqs: Vec<_> = capture.lock().unwrap().iter().cloned().collect();
         assert!(
-            reqs.iter().any(|r| r.method == Method::DELETE && r.path.contains("sid-retry")),
+            reqs.iter()
+                .any(|r| r.method == Method::DELETE && r.path.contains("sid-retry")),
             "DELETE /sessions/sid-retry must appear in captured requests"
         );
 

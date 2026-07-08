@@ -53,8 +53,28 @@ The workflow node stays in the regular graph shape:
 ```
 
 `KBBL_API_BASE_URL` is process config, not per-stage config. `prompt_template_path` is
-resolved relative to `OAKRIDGE_PROMPTS_DIR`. `pre_authorized_tools` is present for the
-future kbbl allowlist contract, but it is inert today.
+resolved relative to `OAKRIDGE_PROMPTS_DIR`.
+
+### `pre_authorized_tools` policy
+
+`pre_authorized_tools` is present in `DelegatedSessionDefConfig` for contract stability,
+but any non-empty value is **rejected at `build_config` time** with:
+
+```
+pre_authorized_tools is not supported: per-tool approval is managed by the kbbl PWA (Phase 2).
+Remove pre_authorized_tools from the workflow definition or set it to an empty array.
+```
+
+This rejection is deliberate. Tool preauthorization is a **Phase 2** feature: the kbbl
+PWA owns per-tool approvals interactively. Baking a tool allowlist into the workflow
+definition would bypass the PWA approval surface before that surface is built. All
+first-party workflow definitions (including `examples/dev_flow.json`) use:
+
+```json
+"pre_authorized_tools": []
+```
+
+If you need unblocked execution for a stage today, set `"yolo": true` instead.
 
 ## `delegated_lbc_run`
 

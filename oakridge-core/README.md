@@ -171,6 +171,50 @@ Delegated agents receive their runtime MCP server configuration from kbbl or a
 workdir-local `.mcp.json`, not from oakridge-core generating per-instance Claude
 config.
 
+## Dev-flow package
+
+`oakridge-core` ships a ready-to-use dev-flow workflow under `examples/dev_flow.json`
+and `prompts/dev-flow/`. The workflow runs four sequential stages, each a
+`delegated_session`:
+
+| Stage | Output artifact | Description |
+| --- | --- | --- |
+| `spec_analyzer` | `dev.spec_analysis` | Reads the codebase and the brief; catalogs requirements, findings, and risks. |
+| `plan_writer` | `dev.plan` | Converts the spec analysis into an ordered, cohort-based implementation plan. |
+| `build` | `dev.build_result` | Implements the plan commit-by-commit and emits a build result. |
+| `assessor` | `dev.assessment` | Evaluates the build result against the plan's acceptance criteria. |
+
+The workflow also registers `dev.pr_summary` as a known artifact type for future
+PR-ownership wiring, but it is not connected to any stage in the first graph.
+
+### Required run context
+
+| Key | Type | Purpose |
+| --- | --- | --- |
+| `brief_notes` | string | The brief or spec content forwarded to `spec_analyzer`. |
+| `worktree_path` | string | Absolute path to the git worktree the agent operates in. |
+| `oakridge_url` | string | `http://host:port/` of the running oakridge-core process; agents POST artifacts here. |
+
+### Load the workflow
+
+```bash
+CORE=http://127.0.0.1:8790
+
+curl -sX POST "$CORE/workflow_defs" \
+  -H 'content-type: application/json' \
+  -d "$(jq '{name,version,graph}' oakridge-core/examples/dev_flow.json)"
+```
+
+See `docs/oakridge-v2-runbook.md` for a full walkthrough.
+
+### Tool approval policy
+
+`pre_authorized_tools` is kept on the config struct for contract stability, but
+any non-empty value is rejected at `build_config` time with an "unsupported"
+error. Per-tool approval is the kbbl PWA's responsibility (Phase 2). All
+dev-flow stages keep `yolo: false` so tool approvals remain visible in the kbbl
+PWA while oakridge-core owns only workflow gates.
+
 ## Persistence & migrations
 
 Schema lives in `src/db/migrations/` (a single consolidated `0001_initial`) and is

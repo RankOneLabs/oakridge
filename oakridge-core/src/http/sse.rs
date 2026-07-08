@@ -130,7 +130,11 @@ fn build_run_sse_stream(
         if gap_flag && since > 0 {
             let oldest = backfill_events.first().map_or(0, |e| e.seq);
             let data = json!({"oldest_seq": oldest}).to_string();
-            if tx.send(Ok(Event::default().event("gap").data(data))).await.is_err() {
+            if tx
+                .send(Ok(Event::default().event("gap").data(data)))
+                .await
+                .is_err()
+            {
                 return;
             }
         }
@@ -181,7 +185,10 @@ fn build_run_sse_stream(
         }
     });
 
-    SseStream { inner: rx, _cancel: cancel_tx }
+    SseStream {
+        inner: rx,
+        _cancel: cancel_tx,
+    }
 }
 
 fn to_sse_frame(ev: &SeqEvent) -> Event {
@@ -205,8 +212,13 @@ pub async fn stream_global_events(
     headers: HeaderMap,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let since = resolve_since(params.since, &headers);
-    Sse::new(build_run_sse_stream(state.bus, ScopeKey::Global, since, false))
-        .keep_alive(KeepAlive::default())
+    Sse::new(build_run_sse_stream(
+        state.bus,
+        ScopeKey::Global,
+        since,
+        false,
+    ))
+    .keep_alive(KeepAlive::default())
 }
 
 pub async fn stream_run_events(
@@ -220,8 +232,13 @@ pub async fn stream_run_events(
     crate::db::queries::get_workflow_run_by_id(&state.pool, &run_id).await?;
 
     let since = resolve_since(params.since, &headers);
-    Ok(Sse::new(build_run_sse_stream(state.bus, ScopeKey::Run(run_id), since, false))
-        .keep_alive(KeepAlive::default()))
+    Ok(Sse::new(build_run_sse_stream(
+        state.bus,
+        ScopeKey::Run(run_id),
+        since,
+        false,
+    ))
+    .keep_alive(KeepAlive::default()))
 }
 
 /// Resolve the backfill cursor from `?since` (explicit) or `Last-Event-ID` header
@@ -341,8 +358,8 @@ fn build_terminal_seq_stream_for_test(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use futures::StreamExt;
+    use std::sync::Arc;
     use uuid::Uuid;
 
     use crate::events::{EventBus, SubstrateEvent};
@@ -353,7 +370,10 @@ mod tests {
     }
 
     fn running_event(rid: WorkflowRunId) -> SubstrateEvent {
-        SubstrateEvent::RunStatusChanged { run_id: rid, status: RunStatus::Running }
+        SubstrateEvent::RunStatusChanged {
+            run_id: rid,
+            status: RunStatus::Running,
+        }
     }
 
     // ── (a) unit test: stream construction yields events in seq order ──────────
@@ -364,7 +384,13 @@ mod tests {
         let rid = run_id();
 
         bus.publish(rid, running_event(rid));
-        bus.publish(rid, SubstrateEvent::RunStatusChanged { run_id: rid, status: RunStatus::Done });
+        bus.publish(
+            rid,
+            SubstrateEvent::RunStatusChanged {
+                run_id: rid,
+                status: RunStatus::Done,
+            },
+        );
         bus.publish(rid, running_event(rid));
 
         let seqs: Vec<u64> = build_seq_stream_for_test(Arc::clone(&bus), ScopeKey::Run(rid), 0)
@@ -402,17 +428,31 @@ mod tests {
         let rid = run_id();
 
         bus.publish(rid, running_event(rid));
-        bus.publish(rid, SubstrateEvent::RunStatusChanged { run_id: rid, status: RunStatus::Done });
+        bus.publish(
+            rid,
+            SubstrateEvent::RunStatusChanged {
+                run_id: rid,
+                status: RunStatus::Done,
+            },
+        );
         bus.cleanup_run(rid);
 
-        let seqs: Vec<u64> = build_terminal_seq_stream_for_test(Arc::clone(&bus), ScopeKey::Run(rid), 0)
-            .collect()
-            .await;
-        assert_eq!(seqs, vec![1, 2], "terminal replay should include the final run events");
+        let seqs: Vec<u64> =
+            build_terminal_seq_stream_for_test(Arc::clone(&bus), ScopeKey::Run(rid), 0)
+                .collect()
+                .await;
+        assert_eq!(
+            seqs,
+            vec![1, 2],
+            "terminal replay should include the final run events"
+        );
 
         tokio::time::sleep(std::time::Duration::from_millis(40)).await;
         let (events, gap) = bus.backfill(BackfillScope::Run(&rid), 0);
-        assert!(events.is_empty(), "terminal history should be evicted after TTL");
+        assert!(
+            events.is_empty(),
+            "terminal history should be evicted after TTL"
+        );
         assert!(!gap);
     }
 
@@ -420,8 +460,8 @@ mod tests {
 
     async fn test_state() -> AppState {
         use crate::db;
-        use crate::registry::{ArtifactTypeRegistry, StageTypeRegistry};
         use crate::registry::artifact_type::ArtifactTypeDef;
+        use crate::registry::{ArtifactTypeRegistry, StageTypeRegistry};
         use crate::scheduler::Coordinator;
 
         let path = format!("/tmp/oakridge_sse_{}.db", Uuid::new_v4());
@@ -445,7 +485,13 @@ mod tests {
             bus.clone(),
         ));
 
-        AppState { pool, stage_registry, artifact_registry, coordinator, bus }
+        AppState {
+            pool,
+            stage_registry,
+            artifact_registry,
+            coordinator,
+            bus,
+        }
     }
 
     #[tokio::test]
@@ -462,7 +508,13 @@ mod tests {
         // Publish 2 events before connecting — they will be served from backfill.
         let rid = run_id();
         bus.publish(rid, running_event(rid));
-        bus.publish(rid, SubstrateEvent::RunStatusChanged { run_id: rid, status: RunStatus::Done });
+        bus.publish(
+            rid,
+            SubstrateEvent::RunStatusChanged {
+                run_id: rid,
+                status: RunStatus::Done,
+            },
+        );
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();

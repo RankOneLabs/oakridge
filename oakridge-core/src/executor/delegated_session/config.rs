@@ -6,6 +6,32 @@ use serde::{Deserialize, Serialize};
 use crate::executor::prompt_config::SlotBinding;
 use crate::types::OutputSlot;
 
+// ── Valid effort levels accepted by oakridge-core ─────────────────────────────
+
+/// Canonical effort values that workflow definitions may specify for a
+/// delegated session. kbbl validates the value against the chosen runtime's
+/// declared effort levels; oakridge-core only enforces that a workflow author
+/// hasn't used an unsupported string. Values map across runtimes (e.g.
+/// "medium" is valid for both codex and claude-code).
+pub const VALID_EFFORT_VALUES: &[&str] = &["minimal", "low", "medium", "high"];
+
+pub fn validate_effort(effort: &str) -> bool {
+    VALID_EFFORT_VALUES.contains(&effort)
+}
+
+// ── WorktreeIdentity ──────────────────────────────────────────────────────────
+
+/// Managed worktree parameters forwarded verbatim to kbbl POST /sessions.
+/// Matches the kbbl worktree body shape so serde produces the correct JSON.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeIdentity {
+    pub branch_name: String,
+    pub worktree_subdir: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_ref: Option<String>,
+}
+
 // ── DelegatedRuntime ──────────────────────────────────────────────────────────
 
 /// Runtime target for delegated session execution.
@@ -32,6 +58,15 @@ pub struct DelegatedSessionDefConfig {
     pub workdir: SlotBinding,
     pub session_name: String,
     pub model: Option<String>,
+    /// Reasoning effort level forwarded to kbbl. Accepted values: minimal, low,
+    /// medium, high. Omit to use the runtime default. Invalid values are rejected
+    /// during build_config so failures surface before a delegated session starts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    /// Managed worktree parameters forwarded to kbbl POST /sessions. When set,
+    /// kbbl creates a branch-isolated worktree instead of running under workdir.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<WorktreeIdentity>,
     #[serde(default)]
     pub pre_authorized_tools: Vec<String>,
     #[serde(default)]
@@ -51,6 +86,10 @@ pub struct DelegatedSessionConfig {
     pub workdir: PathBuf,
     pub session_name: String,
     pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<WorktreeIdentity>,
     #[serde(default)]
     pub pre_authorized_tools: Vec<String>,
     #[serde(default)]
@@ -95,9 +134,13 @@ mod tests {
             runtime: DelegatedRuntime::ClaudeCode,
             prompt_template_path: "build.md".into(),
             slot_bindings,
-            workdir: SlotBinding::Literal { value: "/work".into() },
+            workdir: SlotBinding::Literal {
+                value: "/work".into(),
+            },
             session_name: "delegate-1".into(),
             model: Some("claude-sonnet-4-6".into()),
+            effort: None,
+            worktree: None,
             pre_authorized_tools: vec!["Bash".into()],
             yolo: false,
         };
@@ -115,6 +158,8 @@ mod tests {
             workdir: PathBuf::from("/workspace/abc"),
             session_name: "s1".into(),
             model: None,
+            effort: None,
+            worktree: None,
             pre_authorized_tools: vec![],
             yolo: true,
             output_slots: vec![OutputSlot {

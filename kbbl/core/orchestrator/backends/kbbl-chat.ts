@@ -1,4 +1,4 @@
-import type { SessionManager } from "../../session/session-manager";
+import type { SessionManager, WorktreeCreateIdentity } from "../../session/session-manager";
 import type { ExecutionBackend, InputRef, StageRow } from "./interface";
 
 export const NO_ROUTING_ENTRY_ERROR_PREFIX = 'No routing entry for stage "';
@@ -19,13 +19,22 @@ export function createKbblChatBackend({
         );
       }
 
+      // Convert dev-flow EpicIdentity to generic WorktreeCreateIdentity at this
+      // boundary so session-manager stays free of orchestrator domain knowledge.
+      const worktreeIdentity: WorktreeCreateIdentity | undefined = inputRef.worktreeIdentity
+        ? {
+            branchName: `cohort/${inputRef.worktreeIdentity.epicSlug}/${inputRef.worktreeIdentity.cohortSlug}`,
+            worktreeSubdir: `${inputRef.worktreeIdentity.epicSlug}/${inputRef.worktreeIdentity.cohortSlug}`,
+            baseRef: `origin/${inputRef.worktreeIdentity.epicBranch}`,
+          }
+        : undefined;
       const session = await manager.create({
         workdir: inputRef.workdir,
         name: inputRef.sessionName,
         model: routing.model,
         effort: routing.effort ?? undefined,
         runtime: routing.runtime,
-        ...(inputRef.worktreeIdentity ? { worktreeIdentity: inputRef.worktreeIdentity } : {}),
+        ...(worktreeIdentity ? { worktreeIdentity } : {}),
       });
       await session.writeInput(renderedPrompt);
       return { session_ref: session.oakridgeSid };

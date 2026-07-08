@@ -350,9 +350,9 @@ describe("SessionManager.create — worktreeIdentity plumbing", () => {
     const session = await mgr.create({
       workdir: epicWorkdir,
       worktreeIdentity: {
-        epicSlug: "epic_x",
-        cohortSlug: "1-foo",
-        epicBranch: "epic/epic_x",
+        branchName: "cohort/epic_x/1-foo",
+        worktreeSubdir: "epic_x/1-foo",
+        baseRef: "origin/epic/epic_x",
       },
     });
 

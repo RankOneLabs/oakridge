@@ -566,7 +566,9 @@ async fn cancelled_stage_is_not_rehydrated_by_recovery() {
         updated_at: fixed_dt(),
     };
     let si_id = cancelled_stage.id;
-    queries::insert_stage_instance(&pool, &cancelled_stage).await.unwrap();
+    queries::insert_stage_instance(&pool, &cancelled_stage)
+        .await
+        .unwrap();
 
     // Boot — recover() runs inside boot(). The scripted_cancel stage type IS
     // registered, so if recover() wrongly re-executes it the channel will fire.
@@ -604,9 +606,13 @@ async fn cancelled_stage_is_not_rehydrated_by_recovery() {
     );
 
     // Stage must still be Failed with the original cancellation terminal_meta.
-    let stage = queries::get_stage_instance_by_id(&pool, &si_id).await.unwrap();
+    let stage = queries::get_stage_instance_by_id(&pool, &si_id)
+        .await
+        .unwrap();
     assert_eq!(stage.status, StageStatus::Failed);
-    let meta = stage.terminal_meta.expect("terminal_meta must be preserved");
+    let meta = stage
+        .terminal_meta
+        .expect("terminal_meta must be preserved");
     assert_eq!(meta["kind"], json!("cancelled"));
 }
 

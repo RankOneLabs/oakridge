@@ -1,17 +1,35 @@
-# Oakridge v2 Runtime Delegation Runbook
+# Oakridge v2 Readiness Runbook
 
-This guide shows how to run an Oakridge v2 workflow locally. Oakridge v2 uses
-`oakridge-core` as the workflow orchestrator and delegates runtime execution to
-the subsystem that owns that runtime.
+This is the canonical Phase 2 operator runbook for Oakridge v2. It covers how to
+run the first real dev-flow workflow, what the worktree and effort contracts look
+like, where tool approvals live, and what v1 behavior is not yet covered.
 
-The current implementation includes both delegated execution paths:
+Oakridge v2 uses `oakridge-core` as the workflow orchestrator and delegates
+runtime execution to the subsystem that owns that runtime:
 
 - `delegated_session` delegates interactive work to kbbl sessions.
 - `delegated_lbc_run` delegates headless autonomous work to the legit-biz-club
   CLI bridge.
 
-Use this guide when you want oakridge-core to create and run workflow stages.
-For direct operator-created kbbl sessions, see `kbbl/README.md`.
+Use this guide when you want oakridge-core to create and run workflow stages. For
+direct operator-created kbbl sessions, see `kbbl/README.md`. For the v1
+kbbl-owned dev-flow (Epic → Spec → Plan → Build → Assess), see
+`docs/agent-dev-flow.md`.
+
+## v1-to-v2 Migration Map
+
+> **Maintenance note**: update this table in the same PR whenever v2 parity
+> changes. A stale map is worse than no map.
+
+| v1 Concept | v2 Mapping | Phase 2 Status |
+| --- | --- | --- |
+| **Epic** | project + workflow context (run carries repo and task metadata) | partial — v2 has no named Epic entity; project ties a repo to runs |
+| **Spec** | input artifact (brief notes in run context) + `dev.spec_analysis` stage output | partial — spec analysis runs; no persistent Spec record or discrepancy workflow |
+| **Plan** | `dev.plan` artifact emitted by `plan_writer` stage + artifact-approval gate | partial — plan artifact exists and gates; no DAG editor or cohort-dependency graph |
+| **Cohort** | generic stage/run worktree identity supplied by kbbl `POST /sessions` | partial — worktree identity is tracked; no named Cohort entity in v2 |
+| **Brief** | prompt templates (`oakridge-core/prompts/dev-flow/`) + scoped stage inputs bound at run time | partial — templates drive each stage; no standalone Brief artifact or review surface |
+| **Assessment** | `dev.assessment` artifact emitted by `assessor` stage | partial — assessor runs and emits; no Assessment inbox or accept/reject lifecycle |
+| **PR merge** | external worktree/branch confirmation gate (operator confirms outside v2) | partial — v2 exposes branch and path at merge-confirmation gate; does not own PR creation or merge |
 
 ## What You Will Run
 
@@ -99,12 +117,45 @@ curl -s http://127.0.0.1:8790/workflow_defs
 `KBBL_API_BASE_URL` tells oakridge-core where to create delegated kbbl sessions.
 It is service configuration, not workflow JSON.
 
-## Add A Prompt Template
+## Packaged Prompt Templates
 
-`delegated_session` reads prompt templates from oakridge-core's prompts
-directory. Keep the template path relative to that prompts directory.
+`delegated_session` reads prompt templates from a prompts directory. The bundled
+dev-flow workflow ships its templates at `oakridge-core/prompts/dev-flow/`.
 
-Example template `stage.md`:
+### Prompt root configuration
+
+oakridge-core resolves `prompt_template_path` relative to `OAKRIDGE_PROMPTS_DIR`.
+The default is `./prompts` relative to the directory where `cargo run` is invoked
+(i.e., `oakridge-core/prompts` when started from `oakridge-core/`).
+
+To use a different root:
+
+```bash
+OAKRIDGE_PROMPTS_DIR=/abs/path/to/my/prompts cargo run
+```
+
+**Important**: every `prompt_template_path` in a workflow definition must resolve
+to a path **inside** `OAKRIDGE_PROMPTS_DIR`. Paths that escape the prompt root
+are rejected at config-build time.
+
+### Required templates for the dev-flow package
+
+The bundled `oakridge-core/examples/dev_flow.json` references these template IDs
+under `prompts/dev-flow/`:
+
+| Template file | Stage |
+| --- | --- |
+| `dev-flow/spec_analyzer.md` | `spec_analyzer` |
+| `dev-flow/plan_writer.md` | `plan_writer` |
+| `dev-flow/build.md` | `build` |
+| `dev-flow/assessor.md` | `assessor` |
+
+All four must be present before the workflow starts. A missing template fails
+during workflow config validation/build before a kbbl session is created.
+
+### Custom prompt templates
+
+Example template `stage.md` (placed under `OAKRIDGE_PROMPTS_DIR/`):
 
 ```markdown
 Implement this task:
@@ -134,6 +185,102 @@ curl -sX POST "$CORE/projects" \
 ```
 
 Save the returned `id` as `PROJECT_ID`.
+
+## Worktree Contract
+
+When kbbl creates a managed worktree for a session, it takes a `worktree` object
+in the `POST /sessions` body:
+
+```json
+{
+  "workdir": "/abs/path/to/target/repo",
+  "worktree": {
+    "branchName": "cohort/myepic/1-myslug",
+    "worktreeSubdir": "myepic/1-myslug",
+    "baseRef": "main"
+  }
+}
+```
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `branchName` | yes | New branch created for the worktree. Must be a valid git ref name. |
+| `worktreeSubdir` | yes | Relative subdirectory under kbbl's worktree root where the tree is checked out. Must be non-empty, non-absolute (no leading `/`), must not start with `~`, must not contain traversal segments (`..`), must not contain empty or `.` path segments, and must not contain shell-significant characters. |
+| `baseRef` | no | Ref to use as the worktree base. When provided, must resolve in the target repository — `git worktree add` fails if the ref does not exist yet. When absent, kbbl uses the repository's current `HEAD`. |
+
+**Failure mode**: if `baseRef` is supplied and does not resolve, the session
+creation fails with a worktree setup error before any agent subprocess is spawned.
+Verify the ref exists in the local clone before submitting.
+
+The worktree identity is the primary v1/v2 topology gap. v1 kbbl cohorts carry
+a named cohort identity; v2 stages use generic branch + path metadata from the
+session instead.
+
+## Session Metadata
+
+Two shapes expose worktree metadata — the kbbl session snapshot and the oakridge
+stage detail:
+
+**kbbl session snapshot** (returned by `POST /sessions`, `GET /sessions`, and
+inbox events):
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `sid` | string | kbbl session identifier |
+| `worktreePath` | string \| null | Absolute path to the checked-out worktree |
+| `worktreeBranch` | string \| null | Branch name the worktree is on |
+| `worktreeBaseRef` | string \| null | Base ref that was used when the worktree was created |
+
+**Oakridge stage detail** (returned by `GET /workflow_runs/:id` in the
+`stage_instances` array and surfaced in the kbbl PWA oakridge run detail):
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `worktree` | object \| null | Present when the delegated session has worktree metadata |
+| `worktree.branch` | string | Branch name |
+| `worktree.path` | string | Absolute path to the worktree |
+| `worktree.base_ref` | string | Base ref used at creation |
+
+In the kbbl PWA oakridge surface, each stage row shows `worktree.branch` and
+`worktree.path` when available. The parked gate panel also surfaces these fields
+so the operator can confirm the correct branch and path before approving a
+merge-confirmation gate.
+
+**Blind merge confirmation is explicitly out of bounds.** When a stage reaches
+the merge-confirmation gate, the branch and path must be visible before the
+operator clicks pass. If the operator cannot see the branch and path, do not
+approve the gate.
+
+## Effort Setting
+
+Each delegated session can optionally carry a reasoning-effort level:
+
+| Value | Notes |
+| --- | --- |
+| `minimal` | Lowest effort; fastest and cheapest. |
+| `low` | Light reasoning pass. |
+| `medium` | Balanced default for most tasks. |
+| `high` | Deep reasoning; more thorough but slower. |
+
+Omitting `effort` (or setting it to `null`) uses the runtime's default effort
+for that model tier. The `effort` field is forwarded to the kbbl session and
+passed to the agent subprocess at spawn time.
+
+In a workflow definition, `effort` is an optional field on the `delegated_session`
+config alongside `model` and `yolo`:
+
+```json
+{
+  "stage_type": "delegated_session",
+  "config": {
+    "runtime": "claude-code",
+    "prompt_template_path": "dev-flow/build.md",
+    "effort": "medium",
+    "yolo": false,
+    "pre_authorized_tools": []
+  }
+}
+```
 
 ## Run An Interactive delegated_session Workflow
 
@@ -202,7 +349,8 @@ Save the returned `id` as `RUN_ID`.
 
 oakridge-core creates a stage instance, starts a kbbl session, stores the kbbl
 session id in `stage_instance.external_ref`, sends the prompt through kbbl, and
-polls kbbl events. The session is visible in the kbbl PWA.
+polls kbbl events. The session is visible in the kbbl PWA and in the oakridge
+surface at `#oakridge`.
 
 ## Observe The Run
 
@@ -258,8 +406,10 @@ curl -sX POST "$CORE/stage_instances/<stage_instance_id>/resume" \
   }'
 ```
 
-The first pass moves the stage to merge confirmation. Approve again after the
-operator confirms the change is merged or otherwise accepted:
+The first pass moves the stage to merge confirmation. At the merge-confirmation
+gate, verify that the displayed branch and worktree path match what you expect
+before approving. Approve after the operator confirms the change is merged or
+otherwise accepted:
 
 ```bash
 curl -sX POST "$CORE/stage_instances/<stage_instance_id>/resume" \
@@ -353,6 +503,178 @@ If the bridge exits non-zero, omits `RESULT`, prints invalid `RESULT` JSON, or
 returns an invalid payload, the stage fails and records structured
 `terminal_meta` on the stage instance. Cancellation kills the bridge process
 best-effort and is also recorded in `terminal_meta`.
+
+## Run The Dev-Flow Workflow
+
+The dev-flow workflow is a four-stage `delegated_session` pipeline. It lives in
+`oakridge-core/examples/dev_flow.json`.
+
+### Workflow graph
+
+```
+spec_analyzer → plan_writer → build → assessor
+```
+
+| Stage | Output artifact | Description |
+| --- | --- | --- |
+| `spec_analyzer` | `dev.spec_analysis` | Reads the codebase and the brief; catalogs requirements, findings, and risks. |
+| `plan_writer` | `dev.plan` | Converts the spec analysis into an ordered implementation plan. |
+| `build` | `dev.build_result` | Implements the plan commit-by-commit and emits a build result. |
+| `assessor` | `dev.assessment` | Evaluates the build result against the plan's acceptance criteria. |
+
+Each stage is a `delegated_session` with typed artifacts, artifact-approval
+and merge-confirmation gates, and generic worktree identity supplied by the run
+context or artifact data. The `build` stage produces and commits work on a
+branch; the merge-confirmation gate is where the operator confirms that branch
+externally and signals v2 to advance.
+
+### Prerequisites
+
+- kbbl and oakridge-core running (see earlier sections).
+- A git worktree already checked out where the agent should work.
+- `OAKRIDGE_PROMPTS_DIR` pointed at `oakridge-core/prompts` (or started from the
+  `oakridge-core/` directory where `./prompts` is the default).
+
+### Create the workflow definition
+
+```bash
+CORE=http://127.0.0.1:8790
+
+curl -sX POST "$CORE/workflow_defs" \
+  -H 'content-type: application/json' \
+  -d "$(jq '{name,version,graph}' oakridge-core/examples/dev_flow.json)"
+```
+
+Save the returned `id` as `DEV_FLOW_DEF_ID`.
+
+### Start a run
+
+```bash
+curl -sX POST "$CORE/workflow_runs" \
+  -H 'content-type: application/json' \
+  -d "{
+    \"workflow_def_id\": \"$DEV_FLOW_DEF_ID\",
+    \"context\": {
+      \"brief_notes\": \"Implement the feature described in <brief here>.\",
+      \"worktree_path\": \"/abs/path/to/worktree\",
+      \"oakridge_url\": \"http://127.0.0.1:8790/\"
+    }
+  }"
+```
+
+`brief_notes` is passed verbatim into the `spec_analyzer` prompt.
+
+### Gate decisions
+
+Each stage parks for artifact approval after emitting its output. The gate
+cycle is the same as any other `delegated_session` stage:
+
+1. `POST /stage_instances/<id>/resume` with `outcome: "pass"` after review.
+2. A second pass moves from artifact approval to merge confirmation and then to
+   `done`. At merge confirmation, the operator must verify the displayed branch
+   and path before approving — blind approval is not acceptable.
+3. A `fail` or `rerun` decision sends feedback into the live kbbl session so the
+   agent can revise its output.
+
+## Tool Approval Policy
+
+Tool approvals are the **kbbl PWA's responsibility** for Phase 2. oakridge-core
+workflow gates are separate from per-tool approvals and operate at the artifact
+level, not the tool-call level.
+
+`pre_authorized_tools` is present in the `delegated_session` config struct for
+contract stability, but any non-empty value is **rejected at `build_config` time**
+with:
+
+```
+pre_authorized_tools is not supported: per-tool approval is managed by the kbbl PWA (Phase 2). Remove pre_authorized_tools from the workflow definition or set it to an empty array.
+```
+
+All first-party workflow definitions (including `examples/dev_flow.json`) use:
+
+```json
+"pre_authorized_tools": [],
+"yolo": false
+```
+
+All dev-flow stages keep `yolo: false` so per-tool control stays in the kbbl
+PWA. Use the kbbl PWA's per-session approval cards or the session-scoped
+"Always {tool}" button when a delegated session parks on a tool request. A
+standalone tool-approval surface in oakridge-core is out of scope for Phase 2.
+
+## kbbl PWA Oakridge Entry Point
+
+The kbbl PWA exposes a dedicated oakridge surface at:
+
+```
+http://127.0.0.1:8788/#oakridge
+```
+
+This surface requires `OAKRIDGE_CORE_BASE_URL` to be configured on the kbbl
+server process. When unset, the shell displays an "oakridge-core not configured"
+message in place of the run list.
+
+### Run list (`#oakridge`)
+
+Lists all workflow runs with status, current stage, parked count, and
+last-updated time. Click any run to open the run detail view.
+
+### Run detail (`#oakridge/run/<id>`)
+
+Shows the stage timeline table with per-stage columns:
+- **Stage** — stage key from the workflow definition
+- **Type** — stage type (e.g., `delegated_session`)
+- **Status** — current stage status with status chip
+- **Artifacts** — clickable chips for each emitted artifact type
+- **Session** — link to the delegated kbbl session when present (navigates to
+  `#sid=<sid>` in the kbbl inbox)
+- **Worktree** — branch name and path when the session has worktree metadata
+
+The run detail also shows a **Refresh** button and the parked gate panel (see
+below).
+
+### Parked gate panel
+
+When any stage in the run is parked, the gate panel renders below the stage
+table. Each parked gate shows:
+- Gate type (artifact approval vs. merge confirmation)
+- Stage name and artifact revision id
+- Worktree branch and path (when present) — **read before approving a
+  merge-confirmation gate**
+- Pass / Fail / Rerun action buttons
+
+### Artifact inspection (`#oakridge/artifact/<id>`)
+
+Shows the artifact revision chain with body, status, and created-at timestamp
+for each revision. Navigate here from the artifact chips in the stage table.
+
+### Delegated session links
+
+Each stage row links to the kbbl session that executed the stage. Clicking the
+link navigates to `#sid=<sid>`, opening the full session transcript in the kbbl
+inbox. This is the primary path for inspecting what the delegated agent did,
+reviewing its transcript, and sending follow-up input after a gate rejection.
+
+## Not Covered in Phase 2
+
+The following v1 behaviors are explicitly outside the Phase 2 scope:
+
+- **PR creation and merge** — v2 does not own opening pull requests or merging
+  branches. The build stage emits a build result and surfaces branch/path at the
+  merge-confirmation gate, but the operator completes the PR lifecycle externally.
+- **Review-thread workflows** — comment threads, ping-responder, and
+  reviewer-facing review surfaces exist only in the v1 kbbl dev-flow. There is
+  no equivalent in the v2 workflow surface.
+- **Full epic lifecycle management** — v1 Epics carry archive, delete, and status
+  transitions across Spec/Plan/Build/Assess. v2 has no named Epic entity; runs do
+  not carry Epic-level status.
+- **Automatic cancellation and recovery beyond existing delegated-session
+  recovery** — the existing `waiting_for_kbbl` and `session_ended_without_emit`
+  recovery paths are supported. Broader automatic recovery (e.g., restarting a
+  failed build stage) is not.
+- **Standalone v2 tool approval UI** — there is no tool-approval surface in
+  oakridge-core or the oakridge kbbl shell for Phase 2. Use the kbbl session
+  approval cards directly.
 
 ## Optional Real LBC Smoke Test
 

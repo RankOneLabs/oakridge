@@ -18,12 +18,26 @@ export function writeHashSid(sid: string | null): void {
   }
 }
 
+export type OakridgeSubRoute =
+  | { sub: "runs" }
+  | { sub: "run"; id: string }
+  | { sub: "artifact"; id: string };
+
 export type HashRoute =
   | { view: "plan"; id: string }
   | { view: "brief"; id: string }
   | { view: "cohort"; id: string }
   | { view: "repo"; id: string }
-  | { view: "epic"; id: string };
+  | { view: "epic"; id: string }
+  | { view: "oakridge"; route: OakridgeSubRoute };
+
+function tryDecode(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+}
 
 export function readHashRoute(): HashRoute | null {
   const hash = window.location.hash.slice(1);
@@ -46,6 +60,27 @@ export function readHashRoute(): HashRoute | null {
   if (hash.startsWith("epic/")) {
     const id = hash.slice(5);
     if (id) return { view: "epic", id };
+  }
+  if (hash === "oakridge" || hash.startsWith("oakridge/")) {
+    const rest = hash.slice("oakridge".length);
+    if (rest === "" || rest === "/") {
+      return { view: "oakridge", route: { sub: "runs" } };
+    }
+    if (rest.startsWith("/run/")) {
+      const raw = rest.slice("/run/".length);
+      if (raw) {
+        const id = tryDecode(raw);
+        return { view: "oakridge", route: { sub: "run", id } };
+      }
+    }
+    if (rest.startsWith("/artifact/")) {
+      const raw = rest.slice("/artifact/".length);
+      if (raw) {
+        const id = tryDecode(raw);
+        return { view: "oakridge", route: { sub: "artifact", id } };
+      }
+    }
+    return { view: "oakridge", route: { sub: "runs" } };
   }
   return null;
 }

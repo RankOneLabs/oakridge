@@ -1,9 +1,9 @@
-use std::collections::HashMap;
-use std::sync::Arc;
+use crate::executor::{StageContext, StageHandle};
+use crate::types::{Artifact, InputSlot, OutputSlot, StageInstanceId};
 use async_trait::async_trait;
 use serde_json::Value;
-use crate::types::{Artifact, OutputSlot, StageInstanceId};
-use crate::executor::{StageContext, StageHandle};
+use std::collections::HashMap;
+use std::sync::Arc;
 
 /// The interface that all stage-type implementations must satisfy.
 ///
@@ -24,6 +24,21 @@ pub trait StageType: Send + Sync {
         stage_instance_id: StageInstanceId,
         run_context: &Value,
     ) -> anyhow::Result<Value>;
+
+    /// Validate definition-time config before a workflow definition is accepted.
+    ///
+    /// Implementations should use this for checks that do not require concrete
+    /// run inputs, such as template existence, unsupported fields, and local
+    /// config enums. The scheduler still calls `build_config` at activation
+    /// time for run-context-dependent validation.
+    fn validate_def_config(
+        &self,
+        _def_config: &Value,
+        _input_slots: &[InputSlot],
+        _output_slots: &[OutputSlot],
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
 
     /// Optionally contribute an HTTP callback surface nested under /executors/<id>.
     ///
@@ -47,7 +62,9 @@ pub struct StageTypeRegistry {
 impl StageTypeRegistry {
     /// Create an empty registry.
     pub fn new() -> Self {
-        Self { types: HashMap::new() }
+        Self {
+            types: HashMap::new(),
+        }
     }
 
     /// Register a stage type; keyed by `stage_type.id()`.

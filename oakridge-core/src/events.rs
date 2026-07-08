@@ -1,11 +1,13 @@
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use tokio::sync::broadcast;
 
-use crate::types::{ArtifactId, ArtifactTypeId, RunStatus, StageInstanceId, StageStatus, WorkflowRunId};
+use crate::types::{
+    ArtifactId, ArtifactTypeId, RunStatus, StageInstanceId, StageStatus, WorkflowRunId,
+};
 
 const RING_CAP: usize = 1024;
 pub(crate) const BROADCAST_CAP: usize = 256;
@@ -108,7 +110,8 @@ impl EventBus {
         }
         g.global_ring.push_back(se.clone());
 
-        let tx = g.per_run_tx
+        let tx = g
+            .per_run_tx
             .entry(run_id)
             .or_insert_with(|| broadcast::channel(BROADCAST_CAP).0);
         let _ = tx.send(se.clone());
@@ -128,7 +131,8 @@ impl EventBus {
             drop(tx);
             return rx;
         }
-        let tx = g.per_run_tx
+        let tx = g
+            .per_run_tx
             .entry(run_id)
             .or_insert_with(|| broadcast::channel(BROADCAST_CAP).0);
         tx.subscribe()
@@ -145,12 +149,10 @@ impl EventBus {
         self.evict_expired_terminal_runs_locked(&mut g, Instant::now());
         match scope {
             BackfillScope::Global => Self::drain_ring(&g.global_ring, since),
-            BackfillScope::Run(run_id) => {
-                match g.per_run_ring.get(run_id) {
-                    None => (vec![], false),
-                    Some(ring) => Self::drain_ring(ring, since),
-                }
-            }
+            BackfillScope::Run(run_id) => match g.per_run_ring.get(run_id) {
+                None => (vec![], false),
+                Some(ring) => Self::drain_ring(ring, since),
+            },
         }
     }
 
@@ -233,8 +235,8 @@ mod tests {
     use super::*;
     use crate::types::RunStatus;
     use serde_json::json;
-    use uuid::Uuid;
     use std::time::Duration;
+    use uuid::Uuid;
 
     fn run_id() -> WorkflowRunId {
         WorkflowRunId(Uuid::new_v4())
@@ -244,8 +246,20 @@ mod tests {
     fn publish_assigns_monotonic_seqs() {
         let bus = EventBus::new();
         let r = run_id();
-        bus.publish(r, SubstrateEvent::RunStatusChanged { run_id: r, status: RunStatus::Running });
-        bus.publish(r, SubstrateEvent::RunStatusChanged { run_id: r, status: RunStatus::Done });
+        bus.publish(
+            r,
+            SubstrateEvent::RunStatusChanged {
+                run_id: r,
+                status: RunStatus::Running,
+            },
+        );
+        bus.publish(
+            r,
+            SubstrateEvent::RunStatusChanged {
+                run_id: r,
+                status: RunStatus::Done,
+            },
+        );
         // seqs 1 and 2 — since=u64::MAX returns nothing, since=0 returns both
         let (events, _) = bus.backfill(BackfillScope::Global, u64::MAX);
         assert!(events.is_empty());
@@ -260,7 +274,13 @@ mod tests {
         let bus = EventBus::new();
         let r = run_id();
         for _ in 0..5 {
-            bus.publish(r, SubstrateEvent::RunStatusChanged { run_id: r, status: RunStatus::Running });
+            bus.publish(
+                r,
+                SubstrateEvent::RunStatusChanged {
+                    run_id: r,
+                    status: RunStatus::Running,
+                },
+            );
         }
         // seqs 1..=5; since=2 returns seqs 3, 4, 5
         let (events, gap) = bus.backfill(BackfillScope::Global, 2);
@@ -276,7 +296,13 @@ mod tests {
         let bus = EventBus::new();
         let r = run_id();
         for _ in 0..RING_CAP + 10 {
-            bus.publish(r, SubstrateEvent::RunStatusChanged { run_id: r, status: RunStatus::Running });
+            bus.publish(
+                r,
+                SubstrateEvent::RunStatusChanged {
+                    run_id: r,
+                    status: RunStatus::Running,
+                },
+            );
         }
         let (_, gap) = bus.backfill(BackfillScope::Global, 0);
         assert!(gap, "gap flag must be set when since < oldest retained seq");
@@ -287,9 +313,21 @@ mod tests {
         let bus = EventBus::new();
         let r = run_id();
         let mut rx = bus.subscribe_run(r);
-        bus.publish(r, SubstrateEvent::RunStatusChanged { run_id: r, status: RunStatus::Done });
+        bus.publish(
+            r,
+            SubstrateEvent::RunStatusChanged {
+                run_id: r,
+                status: RunStatus::Done,
+            },
+        );
         let ev = rx.recv().await.unwrap();
-        assert!(matches!(ev.event, SubstrateEvent::RunStatusChanged { status: RunStatus::Done, .. }));
+        assert!(matches!(
+            ev.event,
+            SubstrateEvent::RunStatusChanged {
+                status: RunStatus::Done,
+                ..
+            }
+        ));
     }
 
     #[tokio::test]
@@ -298,8 +336,20 @@ mod tests {
         let r1 = run_id();
         let r2 = run_id();
         let mut rx = bus.subscribe_global();
-        bus.publish(r1, SubstrateEvent::RunStatusChanged { run_id: r1, status: RunStatus::Running });
-        bus.publish(r2, SubstrateEvent::RunStatusChanged { run_id: r2, status: RunStatus::Done });
+        bus.publish(
+            r1,
+            SubstrateEvent::RunStatusChanged {
+                run_id: r1,
+                status: RunStatus::Running,
+            },
+        );
+        bus.publish(
+            r2,
+            SubstrateEvent::RunStatusChanged {
+                run_id: r2,
+                status: RunStatus::Done,
+            },
+        );
         let e1 = rx.recv().await.unwrap();
         let e2 = rx.recv().await.unwrap();
         assert_eq!(e1.seq, 1);
@@ -309,7 +359,10 @@ mod tests {
     #[test]
     fn substrate_event_kind_tag() {
         let r = run_id();
-        let ev = SubstrateEvent::RunStatusChanged { run_id: r, status: RunStatus::Done };
+        let ev = SubstrateEvent::RunStatusChanged {
+            run_id: r,
+            status: RunStatus::Done,
+        };
         let v = serde_json::to_value(&ev).unwrap();
         assert_eq!(v["kind"], "run_status_changed");
     }
@@ -332,8 +385,20 @@ mod tests {
         let bus = EventBus::with_terminal_retention(Duration::from_millis(25));
         let r = run_id();
 
-        bus.publish(r, SubstrateEvent::RunStatusChanged { run_id: r, status: RunStatus::Running });
-        bus.publish(r, SubstrateEvent::RunStatusChanged { run_id: r, status: RunStatus::Done });
+        bus.publish(
+            r,
+            SubstrateEvent::RunStatusChanged {
+                run_id: r,
+                status: RunStatus::Running,
+            },
+        );
+        bus.publish(
+            r,
+            SubstrateEvent::RunStatusChanged {
+                run_id: r,
+                status: RunStatus::Done,
+            },
+        );
         bus.cleanup_run(r);
 
         let (events, gap) = bus.backfill(BackfillScope::Run(&r), 0);

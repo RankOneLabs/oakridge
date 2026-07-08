@@ -1,6 +1,6 @@
-use std::collections::HashMap;
-use serde_json::Value;
 use crate::types::ArtifactTypeId;
+use serde_json::Value;
+use std::collections::HashMap;
 
 /// Definition of a registered artifact type: its ID, body validator, and PWA mount hint.
 pub struct ArtifactTypeDef {
@@ -21,7 +21,9 @@ pub struct ArtifactTypeRegistry {
 impl ArtifactTypeRegistry {
     /// Create an empty registry.
     pub fn new() -> Self {
-        Self { types: HashMap::new() }
+        Self {
+            types: HashMap::new(),
+        }
     }
 
     /// Register an artifact type definition; keyed by its `id`.

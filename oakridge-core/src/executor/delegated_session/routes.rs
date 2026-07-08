@@ -13,7 +13,9 @@ use uuid::Uuid;
 use crate::executor::EmitArgs;
 use crate::types::{StageInstanceId, StageStatus};
 
-use super::{revision_count_from_meta, DelegatedGate, DelegatedGateState, KbblClient, LiveSessions};
+use super::{
+    revision_count_from_meta, DelegatedGate, DelegatedGateState, KbblClient, LiveSessions,
+};
 
 #[derive(Clone)]
 struct RouteState {
@@ -125,6 +127,9 @@ async fn emit_handler(
         live_session.sid.clone(),
         artifact.id,
         revision_count,
+        live_session.worktree_path.clone(),
+        live_session.worktree_branch.clone(),
+        live_session.worktree_base_ref.clone(),
     );
 
     if live_session
