@@ -2,6 +2,13 @@ import type { Hono } from "hono";
 
 export interface OakridgeProxyDeps {
   baseUrl: string | undefined;
+  /**
+   * Token injected as Authorization: Bearer <token> into proxied write
+   * requests to oakridge-core. Falls back to OAKRIDGE_CONTROL_TOKEN when
+   * OAKRIDGE_CORE_CONTROL_TOKEN is not set. Undefined when no token is
+   * configured (core runs without auth, typically on a loopback bind).
+   */
+  coreControlToken?: string;
 }
 
 const OAKRIDGE_PROXY_TIMEOUT_MS = 30_000;
@@ -28,7 +35,9 @@ export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): vo
     // Only forward safe, non-sensitive headers. Strip credentials (cookie,
     // authorization) and hop-by-hop headers (connection, transfer-encoding,
     // upgrade, keep-alive, proxy-*) so kbbl session material is never leaked
-    // to the oakridge-core upstream.
+    // to the oakridge-core upstream. The core control token is then injected
+    // server-side for write requests so oakridge-core's own auth gate is
+    // satisfied without the browser ever seeing the core secret.
     const BLOCKED_HEADERS = new Set([
       "host", "content-length", "cookie", "authorization",
       "connection", "transfer-encoding", "upgrade", "keep-alive",
@@ -39,6 +48,16 @@ export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): vo
       if (!BLOCKED_HEADERS.has(k.toLowerCase())) {
         forwardHeaders.set(k, v as string);
       }
+    }
+
+    // Inject core control token for write requests. The browser Authorization
+    // header was stripped above; this is the server-side injection point.
+    if (
+      deps.coreControlToken &&
+      method !== "GET" &&
+      method !== "HEAD"
+    ) {
+      forwardHeaders.set("authorization", `Bearer ${deps.coreControlToken}`);
     }
 
     let body: ArrayBuffer | undefined;

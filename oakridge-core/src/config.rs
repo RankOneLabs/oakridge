@@ -4,6 +4,43 @@ use std::str::FromStr;
 
 use axum::http::{HeaderValue, Uri};
 
+/// Startup auth policy derived from bind address + env vars.
+#[derive(Clone, Debug)]
+pub enum AuthPolicy {
+    /// Loopback bind: no auth required.
+    Loopback,
+    /// Non-loopback with a configured token: Bearer auth required on writes.
+    Token(String),
+    /// Non-loopback with ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1: no auth, warned at startup.
+    InsecureNonLoopback,
+}
+
+fn is_loopback(addr: IpAddr) -> bool {
+    addr.is_loopback()
+}
+
+/// Resolve the startup auth policy from bind address, optional token, and
+/// insecure flag. Returns `Err` when the bind is non-loopback and neither a
+/// token nor the insecure flag is configured.
+pub fn resolve_auth_policy(
+    bind_addr: IpAddr,
+    control_token: Option<&str>,
+    allow_insecure: bool,
+) -> anyhow::Result<AuthPolicy> {
+    if is_loopback(bind_addr) {
+        return Ok(AuthPolicy::Loopback);
+    }
+    if let Some(token) = control_token.map(str::trim).filter(|s| !s.is_empty()) {
+        return Ok(AuthPolicy::Token(token.to_owned()));
+    }
+    if allow_insecure {
+        return Ok(AuthPolicy::InsecureNonLoopback);
+    }
+    anyhow::bail!(
+        "oakridge-core: non-loopback bind ({bind_addr}) requires OAKRIDGE_CONTROL_TOKEN or ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1"
+    );
+}
+
 #[derive(Clone, Debug)]
 pub struct Config {
     pub port: u16,
@@ -11,6 +48,7 @@ pub struct Config {
     pub db_url: String,
     pub pwa_dir: PathBuf,
     pub cors_origins: Vec<HeaderValue>,
+    pub auth_policy: AuthPolicy,
 }
 
 impl Config {
@@ -31,12 +69,20 @@ impl Config {
             .unwrap_or_else(|_| PathBuf::from("./pwa"));
         let cors_origins =
             parse_cors_origins(std::env::var("OAKRIDGE_CORE_CORS_ORIGINS").ok().as_deref())?;
+        let control_token = std::env::var("OAKRIDGE_CONTROL_TOKEN").ok();
+        let allow_insecure = std::env::var("ALLOW_INSECURE_NON_LOOPBACK_CONTROL")
+            .ok()
+            .as_deref()
+            == Some("1");
+        let auth_policy =
+            resolve_auth_policy(bind_addr, control_token.as_deref(), allow_insecure)?;
         Ok(Self {
             port,
             bind_addr,
             db_url,
             pwa_dir,
             cors_origins,
+            auth_policy,
         })
     }
 }
@@ -102,7 +148,7 @@ fn parse_origin(raw: &str) -> anyhow::Result<HeaderValue> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::{IpAddr, Ipv4Addr};
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
     #[test]
     fn default_bind_addr_is_local_only() {
@@ -118,6 +164,74 @@ mod tests {
             parse_bind_addr(Some("0.0.0.0")).unwrap(),
             IpAddr::V4(Ipv4Addr::UNSPECIFIED)
         );
+    }
+
+    // --- resolve_auth_policy -----------------------------------------------
+
+    #[test]
+    fn loopback_ipv4_without_token_is_allowed() {
+        let policy = resolve_auth_policy(
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            None,
+            false,
+        )
+        .unwrap();
+        assert!(matches!(policy, AuthPolicy::Loopback));
+    }
+
+    #[test]
+    fn loopback_ipv6_without_token_is_allowed() {
+        let policy = resolve_auth_policy(
+            IpAddr::V6(Ipv6Addr::LOCALHOST),
+            None,
+            false,
+        )
+        .unwrap();
+        assert!(matches!(policy, AuthPolicy::Loopback));
+    }
+
+    #[test]
+    fn non_loopback_without_token_fails() {
+        let err = resolve_auth_policy(
+            IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            None,
+            false,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("OAKRIDGE_CONTROL_TOKEN"));
+    }
+
+    #[test]
+    fn non_loopback_with_token_succeeds() {
+        let policy = resolve_auth_policy(
+            IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            Some("my-secret"),
+            false,
+        )
+        .unwrap();
+        assert!(matches!(policy, AuthPolicy::Token(ref t) if t == "my-secret"));
+    }
+
+    #[test]
+    fn non_loopback_with_insecure_flag_succeeds() {
+        let policy = resolve_auth_policy(
+            IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            None,
+            true,
+        )
+        .unwrap();
+        assert!(matches!(policy, AuthPolicy::InsecureNonLoopback));
+    }
+
+    #[test]
+    fn whitespace_only_token_treated_as_absent() {
+        let err = resolve_auth_policy(
+            IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            Some("   "),
+            false,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("OAKRIDGE_CONTROL_TOKEN"));
     }
 
     #[test]
