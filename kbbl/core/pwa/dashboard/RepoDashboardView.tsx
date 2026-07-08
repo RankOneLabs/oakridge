@@ -1,9 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { formatRelative } from "../lib/time";
-
-type EpicStatus = "pending" | "active" | "complete" | "archived";
-type EpicStage = "spec" | "plan" | "build" | "assess";
+import type { EpicStatus, EpicStage } from "../../types/task-tracker";
 
 interface Epic {
   id: string;

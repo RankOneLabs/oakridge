@@ -1,6 +1,6 @@
 import { useRef, type KeyboardEvent } from "react";
+import type { EpicStage } from "../../types/task-tracker";
 
-type EpicStage = "spec" | "plan" | "build" | "assess";
 type SpecInternalStatus = "analyzing" | "discrepancies" | "review" | "approved";
 type PlanStatus = "draft" | "pending_approval" | "approved" | "rejected" | "superseded";
 
