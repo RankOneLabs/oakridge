@@ -5,6 +5,7 @@ import type { ReviewEventMap } from "../review/events";
 import type { TaskTrackerEventMap } from "../db/events";
 import { getPlan } from "../db/plans";
 import { getBrief } from "../db/briefs";
+import { transitionCohort } from "../db/cohort-transitions";
 
 interface BootstrapDeps {
   db: Database;
@@ -51,22 +52,16 @@ export function bootstrap({ db, registry, reviewEvents, taskTrackerEvents }: Boo
     } else if (target_type === "build_brief") {
       const brief = getBrief(db, target_id);
       if (!brief) return;
-      db.prepare(
-        "UPDATE cohorts SET status = 'briefing' WHERE id = ? AND status = 'brief_review'",
-      ).run(brief.cohort_id);
+      transitionCohort(db, brief.cohort_id, "brief_reopened");
     }
   });
 
   const unsubBriefSubmitted = taskTrackerEvents.subscribe("brief.submitted", ({ cohort_id }) => {
-    db.prepare(
-      "UPDATE cohorts SET status = 'brief_review' WHERE id = ? AND status = 'briefing'",
-    ).run(cohort_id);
+    transitionCohort(db, cohort_id, "brief_submitted");
   });
 
   const unsubBriefingStarted = taskTrackerEvents.subscribe("cohort.briefing_started", ({ cohort_id }) => {
-    db.prepare(
-      "UPDATE cohorts SET status = 'briefing' WHERE id = ? AND status = 'planned'",
-    ).run(cohort_id);
+    transitionCohort(db, cohort_id, "briefing_started");
   });
 
   return () => {

@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { Hono } from "hono";
 import type { Database } from "bun:sqlite";
 import { getPlan } from "../../db/plans";
+import { transitionCohort } from "../../db/cohort-transitions";
 import { freeze } from "../../review/freeze";
 import { emitFreezeEvents, type ReviewFreezeEvent } from "../../review/events";
 import { taskTrackerEvents } from "../../db/events";
@@ -152,7 +153,20 @@ export function mountPlanStatusRoutes(app: Hono, deps: PlanStatusRouteDeps): voi
             .all(plan_id);
 
           for (const cohort of waitingCohorts) {
-            db.prepare("UPDATE cohorts SET status = 'briefing' WHERE id = ?").run(cohort.id);
+            const transition = transitionCohort(db, cohort.id, "plan_approved");
+            if (!transition.ok) {
+              if (transition.reason === "invalid_transition") {
+                console.error(
+                  JSON.stringify({
+                    kbbl: "plan-status",
+                    warn: "plan_approved transition rejected",
+                    cohort_id: cohort.id,
+                    detail: transition.detail,
+                  }),
+                );
+              }
+              continue;
+            }
             emitBriefingStarted.push({ cohort_id: cohort.id });
           }
 

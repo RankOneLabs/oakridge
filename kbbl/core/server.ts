@@ -20,6 +20,7 @@ import { createKbblChatBackend } from "./orchestrator/backends/kbbl-chat";
 import { createDispatcher } from "./orchestrator/backends/dispatcher";
 import { wireDispatchHooks } from "./orchestrator/dispatch-hooks";
 import { reconcileDispatchAttempts } from "./orchestrator/dispatch-reconciler";
+import { markRunningAttemptSucceededBySessionRef } from "./db/dispatch-attempts";
 import { wireResponderSpawn } from "./orchestrator/responders/spawn";
 import { reviewRegistry } from "./review/registry";
 import { reviewEvents } from "./review/events";
@@ -244,6 +245,7 @@ const manager = new SessionManager({
   },
   onRuntimeSessionEnded: (session) => {
     ccRuntime.unregisterBySid(session);
+    markRunningAttemptSucceededBySessionRef(db, session.oakridgeSid);
   },
   config,
 });

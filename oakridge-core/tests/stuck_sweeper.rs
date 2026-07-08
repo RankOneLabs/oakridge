@@ -1,15 +1,21 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
+use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use serde_json::Value;
+use tokio::sync::mpsc;
 use tower::ServiceExt;
 use uuid::Uuid;
 
 use oakridge_core::config::AuthPolicy;
 use oakridge_core::db::{self, queries};
+use oakridge_core::executor::{StageContext, StageHandle};
 use oakridge_core::http::{boot, Config};
+use oakridge_core::registry::stage_type::StageType;
 use oakridge_core::registry::{ArtifactTypeRegistry, StageTypeRegistry};
 use oakridge_core::types::*;
 
@@ -50,6 +56,46 @@ async fn req(
     (status, json)
 }
 
+struct RetryObservedStage {
+    tx: mpsc::Sender<StageInstanceId>,
+}
+
+struct RetryObservedHandle;
+
+#[async_trait]
+impl StageHandle for RetryObservedHandle {
+    async fn resume(&self, _payload: oakridge_core::executor::ResumePayload) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn cancel(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl StageType for RetryObservedStage {
+    fn id(&self) -> &str {
+        "retry_observed"
+    }
+
+    async fn build_config(
+        &self,
+        def_config: &Value,
+        _inputs: &HashMap<String, Artifact>,
+        _output_slots: &[OutputSlot],
+        _stage_instance_id: StageInstanceId,
+        _run_context: &Value,
+    ) -> anyhow::Result<Value> {
+        Ok(def_config.clone())
+    }
+
+    async fn execute(&self, ctx: StageContext) -> anyhow::Result<Box<dyn StageHandle>> {
+        let _ = self.tx.send(ctx.stage_instance_id).await;
+        Ok(Box::new(RetryObservedHandle))
+    }
+}
+
 // ── Sweeper integration: parked stage appears as is_stuck in /runs ─────────────
 
 /// Seeds a Running stage instance with a stale updated_at and calls
@@ -71,8 +117,9 @@ async fn stuck_sweep_and_retry_via_http() {
         stuck_sweep_interval_secs: 3600,
     };
 
-    let (app, coordinator) = boot(cfg, |_stage: &mut StageTypeRegistry, _art: &mut ArtifactTypeRegistry| {
-        // no stage types needed; we insert DB state directly
+    let (retry_tx, mut retry_rx) = mpsc::channel(8);
+    let (app, coordinator) = boot(cfg, move |stage: &mut StageTypeRegistry, _art: &mut ArtifactTypeRegistry| {
+        stage.register(Arc::new(RetryObservedStage { tx: retry_tx }));
     })
     .await
     .unwrap();
@@ -91,7 +138,7 @@ async fn stuck_sweep_and_retry_via_http() {
                 m.insert(
                     "A".into(),
                     StageNodeDef {
-                        stage_type: "noop".into(),
+                        stage_type: "retry_observed".into(),
                         config: serde_json::json!({}),
                         inputs: vec![],
                         outputs: vec![],
@@ -121,7 +168,7 @@ async fn stuck_sweep_and_retry_via_http() {
         id: StageInstanceId(Uuid::new_v4()),
         run_id: run.id,
         stage_key: "A".into(),
-        stage_type: "noop".into(),
+        stage_type: "retry_observed".into(),
         status: StageStatus::Running,
         config: serde_json::json!({}),
         parked_reason: None,
@@ -161,6 +208,14 @@ async fn stuck_sweep_and_retry_via_http() {
         Some("running"),
         "retry response must show status=running"
     );
+    let retried_stage_id = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        retry_rx.recv(),
+    )
+    .await
+    .unwrap()
+    .expect("retry must execute the stage type");
+    assert_eq!(retried_stage_id, si.id);
 
     // /runs must now report is_stuck=false.
     let (status2, runs_json2) = req(app, "GET", "/runs", None).await;

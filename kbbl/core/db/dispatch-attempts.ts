@@ -148,6 +148,7 @@ export function markAttemptFailed(
   id: string,
   opts: { last_error: string; recovery_hint?: string },
 ): void {
+  const attempt = getAttempt(db, id);
   db.prepare(
     `UPDATE dispatch_attempts
         SET status = 'dispatch_failed',
@@ -156,6 +157,9 @@ export function markAttemptFailed(
             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
       WHERE id = ?`,
   ).run(opts.last_error, opts.recovery_hint ?? "Retry dispatch manually.", id);
+  if (attempt?.actual_session_ref) {
+    clearOwnerSessionRef(db, attempt);
+  }
 }
 
 /**
@@ -169,6 +173,24 @@ export function markAttemptSucceeded(db: Database, id: string): void {
         SET status = 'succeeded', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
       WHERE id = ?`,
   ).run(id);
+}
+
+export function markRunningAttemptSucceededBySessionRef(
+  db: Database,
+  session_ref: string,
+): DispatchAttempt | null {
+  const attempt = db
+    .prepare<DispatchAttempt, [string]>(
+      `UPDATE dispatch_attempts
+          SET status = 'succeeded', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+        WHERE actual_session_ref = ? AND status = 'running'
+        RETURNING *`,
+    )
+    .get(session_ref) ?? null;
+  if (attempt?.actual_session_ref) {
+    clearOwnerSessionRef(db, attempt);
+  }
+  return attempt;
 }
 
 /**
@@ -217,4 +239,74 @@ export function getAttempt(db: Database, id: string): DispatchAttempt | null {
       .prepare<DispatchAttempt, [string]>("SELECT * FROM dispatch_attempts WHERE id = ?")
       .get(id) ?? null
   );
+}
+
+export function listDispatchAttempts(
+  db: Database,
+  filters: {
+    status?: DispatchAttemptStatus;
+    entity_kind?: DispatchEntityKind;
+    entity_id?: string;
+    stage?: string;
+  } = {},
+): DispatchAttempt[] {
+  const clauses: string[] = [];
+  const params: string[] = [];
+  if (filters.status) {
+    clauses.push("status = ?");
+    params.push(filters.status);
+  }
+  if (filters.entity_kind) {
+    clauses.push("entity_kind = ?");
+    params.push(filters.entity_kind);
+  }
+  if (filters.entity_id) {
+    clauses.push("entity_id = ?");
+    params.push(filters.entity_id);
+  }
+  if (filters.stage) {
+    clauses.push("stage = ?");
+    params.push(filters.stage);
+  }
+
+  const where = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";
+  return db
+    .prepare<DispatchAttempt, string[]>(
+      `SELECT * FROM dispatch_attempts${where} ORDER BY created_at DESC, attempt_number DESC`,
+    )
+    .all(...params);
+}
+
+function clearOwnerSessionRef(db: Database, attempt: DispatchAttempt): void {
+  const sessionRef = attempt.actual_session_ref;
+  if (!sessionRef) return;
+
+  const clearEntity = (table: "specs" | "cohorts" | "plans", id: string) => {
+    db.prepare(
+      `UPDATE ${table}
+          SET current_session_ref = NULL, current_session_stage = NULL
+        WHERE id = ?
+          AND current_session_stage = ?
+          AND current_session_ref = ?`,
+    ).run(id, attempt.stage, sessionRef);
+  };
+
+  switch (attempt.entity_kind) {
+    case "spec":
+      clearEntity("specs", attempt.entity_id);
+      break;
+    case "cohort":
+      clearEntity("cohorts", attempt.entity_id);
+      break;
+    case "plan":
+      clearEntity("plans", attempt.entity_id);
+      break;
+    case "brief": {
+      const cohortId = attempt.cohort_id ?? db
+        .prepare<{ cohort_id: string }, [string]>("SELECT cohort_id FROM briefs WHERE id = ?")
+        .get(attempt.entity_id)?.cohort_id;
+      if (cohortId) clearEntity("cohorts", cohortId);
+      break;
+    }
+  }
 }
