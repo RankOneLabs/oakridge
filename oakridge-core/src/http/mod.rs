@@ -28,7 +28,10 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }
-    a.iter().zip(b.iter()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+    a.iter()
+        .zip(b.iter())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
 }
 
 fn unauthorized() -> Response<Body> {
@@ -49,15 +52,13 @@ fn forbidden() -> Response<Body> {
         .unwrap()
 }
 
-async fn control_auth_middleware(
-    req: Request<Body>,
-    next: Next,
-) -> Response<Body> {
-    // Extension carries the token for token-mode; absent = pass-through.
+async fn control_auth_middleware(req: Request<Body>, next: Next) -> Response<Body> {
+    // The middleware is installed only in token mode. If the token extension is
+    // missing, the app is miswired; fail closed instead of passing writes.
     let token: Option<Arc<String>> = req.extensions().get::<Arc<String>>().cloned();
     let token = match token {
         Some(t) => t,
-        None => return next.run(req).await,
+        None => return forbidden(),
     };
 
     // Safe methods pass through without auth.
@@ -199,6 +200,7 @@ where
                 .allow_methods([Method::GET, Method::POST])
                 .allow_headers([
                     header::CONTENT_TYPE,
+                    header::AUTHORIZATION,
                     HeaderName::from_static("last-event-id"),
                 ]),
         )

@@ -893,36 +893,21 @@ impl RunTask {
             ))),
         };
 
-        let updated =
-            match queries::update_stage_instance_status_if_current_status_with_terminal_meta(
-                &self.db,
-                &stage_instance_id,
-                StageStatus::Parked,
-                StageStatus::Running,
-                None,
-                None,
-                current.started_at,
-                None,
-            )
-            .await
-            {
-                Ok(updated) => updated,
-                Err(e) => reject_retry!(DecisionError::Internal(anyhow::Error::new(e))),
-            };
+        let updated = match queries::retry_stuck_stage_instance(
+            &self.db,
+            &stage_instance_id,
+            current.started_at,
+        )
+        .await
+        {
+            Ok(updated) => updated,
+            Err(e) => reject_retry!(DecisionError::Internal(anyhow::Error::new(e))),
+        };
         if !updated {
             reject_retry!(DecisionError::Conflict(format!(
                 "stage instance {} was no longer stuck-parked when retry was applied",
                 stage_instance_id.0
             )));
-        }
-        if let Err(e) = sqlx::query(
-            "UPDATE stage_instance SET parked_meta = NULL, parked_reason = NULL, external_ref = NULL WHERE id = ?",
-        )
-        .bind(stage_instance_id.0.to_string())
-        .execute(self.db.as_ref())
-        .await
-        {
-            reject_retry!(DecisionError::Internal(anyhow::Error::new(e)));
         }
 
         let refreshed = match queries::get_stage_instance_by_id(&self.db, &stage_instance_id).await
@@ -1109,7 +1094,11 @@ impl Coordinator {
                 }
             }
 
-            // No live task (or timed out): park directly in DB.
+            // No live task (or timed out): park directly in DB. If a live
+            // RunTask exists but fails to acknowledge before the timeout, this
+            // fallback favors operator visibility but can leave that task's
+            // in-memory index stale until recovery/restart; retry may reject
+            // while the old task still believes the stage is Running.
             let mut parked_meta = parked_meta_template;
             if let Some(obj) = parked_meta.as_object_mut() {
                 obj.insert(

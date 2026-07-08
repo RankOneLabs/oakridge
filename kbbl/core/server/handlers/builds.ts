@@ -1,18 +1,15 @@
 import type { Hono } from "hono";
 import type { Database } from "bun:sqlite";
-import type { SessionManager } from "../../session/session-manager";
 import type { createDispatcher } from "../../orchestrator/backends/dispatcher";
 import { DispatchConflictError } from "../../orchestrator/backends/dispatcher";
 import { countUnmetDependencies } from "../../db/cohorts";
-import { getEpicBySpec } from "../../db/epics";
-import { isFrozen } from "../../db/epic-freeze";
+import { isBriefEpicArchived } from "../../db/archive-guards";
 
 type Dispatcher = ReturnType<typeof createDispatcher>;
 
 interface BuildsRouteDeps {
   db: Database;
   dispatcher: Dispatcher;
-  manager: SessionManager;
 }
 
 export function mountBuildsRoutes(app: Hono, { db, dispatcher }: BuildsRouteDeps): void {
@@ -25,18 +22,8 @@ export function mountBuildsRoutes(app: Hono, { db, dispatcher }: BuildsRouteDeps
       .get(brief_id);
     if (!brief) return c.json({ error: "not found" }, 404);
 
-    // Archive guard: resolve epic via brief → cohort → plan → spec and reject if archived.
-    // Must run before acquiring the dispatch claim so archived epics produce no attempt records.
-    const epicRow = db
-      .prepare<{ spec_id: string }, [string]>(
-        "SELECT p.spec_id FROM cohorts c JOIN plans p ON p.id = c.plan_id WHERE c.id = ?",
-      )
-      .get(brief.cohort_id);
-    if (epicRow) {
-      const epic = getEpicBySpec(db, epicRow.spec_id);
-      if (epic && isFrozen(db, epic.id)) {
-        return c.json({ error: "epic is archived" }, 409);
-      }
+    if (isBriefEpicArchived(db, brief_id)) {
+      return c.json({ error: "epic is archived" }, 409);
     }
 
     if (brief.status !== "approved") {
@@ -63,7 +50,7 @@ export function mountBuildsRoutes(app: Hono, { db, dispatcher }: BuildsRouteDeps
           {
             error: "a build dispatch is already active for this brief",
             active_attempt_id: a.id,
-            current_session_ref: a.actual_session_ref,
+            current_session_ref: a.actual_session_ref ?? a.intended_session_ref,
             status: a.status,
           },
           409,

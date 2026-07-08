@@ -258,7 +258,7 @@ export function createApp(deps: CreateAppDeps): Hono {
   mountCohortMergeRoutes(app, { db, gh: ghGateway });
   mountBriefsRoutes(app, { db });
   mountBriefStatusRoutes(app, { db });
-  mountBuildsRoutes(app, { db, dispatcher, manager });
+  mountBuildsRoutes(app, { db, dispatcher });
   app.use("/dispatch-attempts", makeRequiredControlAuthMiddleware(authPolicy));
   app.use("/dispatch-attempts/*", makeRequiredControlAuthMiddleware(authPolicy));
   mountDispatchAttemptsRoutes(app, { db, dispatcher });

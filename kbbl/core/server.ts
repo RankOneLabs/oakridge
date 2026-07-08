@@ -273,7 +273,9 @@ wireResponderSpawn({ reviewEvents, kbblUrl });
 
 let bunServer: ReturnType<typeof Bun.serve> | null = null;
 const coreControlToken =
-  process.env.OAKRIDGE_CORE_CONTROL_TOKEN ?? process.env.OAKRIDGE_CONTROL_TOKEN;
+  process.env.OAKRIDGE_CORE_CONTROL_TOKEN?.trim() ||
+  process.env.OAKRIDGE_CONTROL_TOKEN?.trim() ||
+  undefined;
 
 const app = createApp({
   manager,

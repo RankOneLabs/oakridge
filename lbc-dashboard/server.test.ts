@@ -42,6 +42,11 @@ describe("lbcResolveAuthPolicy — startup guard", () => {
     const p = lbcResolveAuthPolicy({ host: "0.0.0.0", controlToken: "secret", allowInsecure: false });
     expect(p).toEqual({ mode: "token", token: "secret" });
   });
+
+  test("[::1] without token is loopback mode", () => {
+    const p = lbcResolveAuthPolicy({ host: "[::1]", controlToken: undefined, allowInsecure: false });
+    expect(p.mode).toBe("loopback");
+  });
 });
 
 // ---- middleware: loopback mode -------------------------------------------
@@ -170,11 +175,24 @@ describe("token mode — write routes require auth", () => {
       headers: {
         "content-type": "application/json",
         cookie: `lbc_ctrl=${TOKEN}`,
+        origin: "http://localhost",
       },
       body: JSON.stringify({ task: "x", models: [], frames: 1 }),
     });
     expect(res.status).not.toBe(401);
     expect(res.status).not.toBe(403);
+  });
+
+  test("write with correct cookie token but no same-origin header returns 403", async () => {
+    const res = await app.request("/api/runs", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie: `lbc_ctrl=${TOKEN}`,
+      },
+      body: JSON.stringify({ task: "x", models: [], frames: 1 }),
+    });
+    expect(res.status).toBe(403);
   });
 
   test("write with malformed Authorization header returns 401", async () => {

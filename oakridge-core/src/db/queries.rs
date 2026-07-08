@@ -802,19 +802,14 @@ pub async fn list_parked_stage_instances(pool: &SqlitePool) -> crate::Result<Vec
 /// Bump updated_at on a stage instance without changing its status.
 /// Used by StageContext::heartbeat and after successful artifact emits to
 /// signal liveness to the stuck-stage sweeper.
-pub async fn touch_stage_instance(
-    pool: &SqlitePool,
-    id: &StageInstanceId,
-) -> crate::Result<()> {
+pub async fn touch_stage_instance(pool: &SqlitePool, id: &StageInstanceId) -> crate::Result<()> {
     let id_str = id.0.to_string();
     let updated_at = Utc::now().to_rfc3339();
-    let result = sqlx::query(
-        "UPDATE stage_instance SET updated_at = ? WHERE id = ?",
-    )
-    .bind(updated_at)
-    .bind(&id_str)
-    .execute(pool)
-    .await?;
+    let result = sqlx::query("UPDATE stage_instance SET updated_at = ? WHERE id = ?")
+        .bind(updated_at)
+        .bind(&id_str)
+        .execute(pool)
+        .await?;
     if result.rows_affected() == 0 {
         return Err(crate::Error::NotFound {
             entity: "stage_instance".into(),
@@ -860,6 +855,32 @@ pub async fn park_stage_instance_as_stuck(
          WHERE id = ? AND status = 'running'",
     )
     .bind(parked_meta_str)
+    .bind(updated_at)
+    .bind(id_str)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+/// Atomically transition a stuck-parked stage instance back to Running and
+/// clear parked metadata. Returns false if the row is no longer parked as
+/// stuck_timeout.
+pub async fn retry_stuck_stage_instance(
+    pool: &SqlitePool,
+    id: &StageInstanceId,
+    started_at: Option<DateTime<Utc>>,
+) -> crate::Result<bool> {
+    let id_str = id.0.to_string();
+    let updated_at = Utc::now().to_rfc3339();
+    let started_at_str = started_at.map(|t| t.to_rfc3339());
+    let result = sqlx::query(
+        "UPDATE stage_instance \
+         SET status = 'running', parked_reason = NULL, parked_meta = NULL, \
+             terminal_meta = NULL, external_ref = NULL, started_at = ?, \
+             ended_at = NULL, updated_at = ? \
+         WHERE id = ? AND status = 'parked' AND parked_reason = 'stuck_timeout'",
+    )
+    .bind(started_at_str)
     .bind(updated_at)
     .bind(id_str)
     .execute(pool)
@@ -1785,7 +1806,10 @@ mod tests {
         let parked_again = park_stage_instance_as_stuck(&pool, &si.id, &meta)
             .await
             .unwrap();
-        assert!(!parked_again, "second CAS must be a no-op when stage is already parked");
+        assert!(
+            !parked_again,
+            "second CAS must be a no-op when stage is already parked"
+        );
     }
 
     #[tokio::test]

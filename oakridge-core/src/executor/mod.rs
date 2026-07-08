@@ -273,10 +273,20 @@ impl StageContext {
             .await;
 
             match attempt {
-                Ok(EmitAttempt::Inserted(artifact)) => {
-                    txn.commit().await?;
-                    break artifact;
-                }
+                Ok(EmitAttempt::Inserted(artifact)) => match txn.commit().await {
+                    Ok(()) => break artifact,
+                    Err(err) if is_sqlite_busy(&err) => {
+                        if attempts >= MAX_ARTIFACT_EMIT_RETRIES {
+                            return Err(anyhow::anyhow!(
+                                "artifact emit exceeded {} retries (sqlite busy at commit)",
+                                MAX_ARTIFACT_EMIT_RETRIES
+                            ));
+                        }
+                        attempts += 1;
+                        continue;
+                    }
+                    Err(err) => return Err(err.into()),
+                },
                 Ok(EmitAttempt::Retry) => {
                     // Drop txn: sqlx Transaction rolls back on drop.
                     drop(txn);

@@ -201,15 +201,31 @@ describe("makeControlAuthMiddleware — token mode", () => {
   test("POST with correct cookie token succeeds", async () => {
     const res = await app.request("/write", {
       method: "POST",
-      headers: { cookie: `kbbl_ctrl=${TOKEN}; other=val` },
+      headers: { cookie: `kbbl_ctrl=${TOKEN}; other=val`, origin: "http://localhost" },
     });
     expect(res.status).toBe(200);
+  });
+
+  test("POST with correct cookie token but no same-origin header returns 403", async () => {
+    const res = await app.request("/write", {
+      method: "POST",
+      headers: { cookie: `kbbl_ctrl=${TOKEN}` },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  test("POST with correct cookie token from another origin returns 403", async () => {
+    const res = await app.request("/write", {
+      method: "POST",
+      headers: { cookie: `kbbl_ctrl=${TOKEN}`, origin: "https://example.invalid" },
+    });
+    expect(res.status).toBe(403);
   });
 
   test("POST with wrong cookie token returns 403", async () => {
     const res = await app.request("/write", {
       method: "POST",
-      headers: { cookie: "kbbl_ctrl=wrong-token" },
+      headers: { cookie: "kbbl_ctrl=wrong-token", origin: "http://localhost" },
     });
     expect(res.status).toBe(403);
     const body = await res.json() as { error: string };

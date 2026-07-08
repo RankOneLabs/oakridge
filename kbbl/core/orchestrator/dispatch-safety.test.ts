@@ -168,7 +168,7 @@ function makeApp(backend: ExecutionBackend) {
   mountCohortStatusRoutes(a, { db });
   mountBriefsRoutes(a, { db });
   mountBriefStatusRoutes(a, { db });
-  mountBuildsRoutes(a, { db, dispatcher, manager: stubManager });
+  mountBuildsRoutes(a, { db, dispatcher });
   mountDispatchAttemptsRoutes(a, { db, dispatcher });
   mountAssessmentsRoutes(a, { db });
   mountSpecStatusRoutes(a, { db });
@@ -197,6 +197,7 @@ async function seedBuildChain(repoPath = testRepoPath) {
 }
 
 beforeEach(() => {
+  cleanupHooks = undefined;
   setupPromptFixtures();
   db = openTestDb();
   cleanupBootstrap = bootstrap({ db, registry: reviewRegistry, reviewEvents, taskTrackerEvents });
@@ -204,6 +205,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanupHooks?.();
+  cleanupHooks = undefined;
   cleanupBootstrap();
   db.close();
   if (origPromptsDir === undefined) {

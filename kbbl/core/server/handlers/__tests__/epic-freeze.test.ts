@@ -130,7 +130,7 @@ beforeEach(() => {
   mountCohortMergeRoutes(app, { db, gh: panicGh });
   mountBriefsRoutes(app, { db });
   mountBriefStatusRoutes(app, { db });
-  mountBuildsRoutes(app, { db, dispatcher: panicDispatcher, manager: stubManager });
+  mountBuildsRoutes(app, { db, dispatcher: panicDispatcher });
   mountAssessmentsRoutes(app, { db });
   mountEpicsRoutes(app, { db });
 });

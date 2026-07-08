@@ -168,11 +168,15 @@ export function markAttemptFailed(
  * close out completed attempts; dispatch safety does not depend on it.
  */
 export function markAttemptSucceeded(db: Database, id: string): void {
+  const attempt = getAttempt(db, id);
   db.prepare(
     `UPDATE dispatch_attempts
         SET status = 'succeeded', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
       WHERE id = ?`,
   ).run(id);
+  if (attempt?.actual_session_ref) {
+    clearOwnerSessionRef(db, attempt);
+  }
 }
 
 export function markRunningAttemptSucceededBySessionRef(

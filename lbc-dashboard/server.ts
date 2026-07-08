@@ -85,7 +85,7 @@ export type LbcAuthPolicy =
   | { mode: "insecure-non-loopback" };
 
 const LBC_LOOPBACK_HOSTS = new Set([
-  "127.0.0.1", "::1", "localhost", "0:0:0:0:0:0:0:1",
+  "127.0.0.1", "::1", "[::1]", "localhost", "0:0:0:0:0:0:0:1",
 ]);
 
 export function lbcResolveAuthPolicy(opts: {
@@ -132,6 +132,22 @@ function lbcParseCookieToken(cookieHeader: string): string | null {
   return null;
 }
 
+function lbcSameOriginFromHeader(headerValue: string | undefined, requestUrl: string): boolean {
+  if (!headerValue) return false;
+  try {
+    return new URL(headerValue).origin === new URL(requestUrl).origin;
+  } catch {
+    return false;
+  }
+}
+
+function lbcHasSameOriginBrowserHeader(c: Context): boolean {
+  return (
+    lbcSameOriginFromHeader(c.req.header("origin"), c.req.url) ||
+    lbcSameOriginFromHeader(c.req.header("referer"), c.req.url)
+  );
+}
+
 function lbcMakeControlAuthMiddleware(policy: LbcAuthPolicy): MiddlewareHandler {
   if (policy.mode === "loopback" || policy.mode === "insecure-non-loopback") {
     return async (_c: Context, next: Next) => { await next(); };
@@ -161,6 +177,11 @@ function lbcMakeControlAuthMiddleware(policy: LbcAuthPolicy): MiddlewareHandler 
     if (cookieHeader !== undefined) {
       const cookieToken = lbcParseCookieToken(cookieHeader);
       if (cookieToken !== null) {
+        if (!lbcHasSameOriginBrowserHeader(c)) {
+          return c.json({ error: "forbidden" }, 403, {
+            "www-authenticate": 'Bearer realm="lbc-dashboard"',
+          });
+        }
         if (lbcTokenEquals(cookieToken, token)) { await next(); return; }
         return c.json({ error: "forbidden" }, 403, {
           "www-authenticate": 'Bearer realm="lbc-dashboard"',

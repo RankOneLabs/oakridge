@@ -1,11 +1,12 @@
 use std::net::IpAddr;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::{env, fmt};
 
 use axum::http::{HeaderValue, Uri};
 
 /// Startup auth policy derived from bind address + env vars.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum AuthPolicy {
     /// Loopback bind: no auth required.
     Loopback,
@@ -13,6 +14,16 @@ pub enum AuthPolicy {
     Token(String),
     /// Non-loopback with ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1: no auth, warned at startup.
     InsecureNonLoopback,
+}
+
+impl fmt::Debug for AuthPolicy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AuthPolicy::Loopback => f.write_str("Loopback"),
+            AuthPolicy::Token(_) => f.debug_tuple("Token").field(&"<redacted>").finish(),
+            AuthPolicy::InsecureNonLoopback => f.write_str("InsecureNonLoopback"),
+        }
+    }
 }
 
 fn is_loopback(addr: IpAddr) -> bool {
@@ -79,16 +90,17 @@ impl Config {
             .ok()
             .as_deref()
             == Some("1");
-        let auth_policy =
-            resolve_auth_policy(bind_addr, control_token.as_deref(), allow_insecure)?;
-        let stage_timeout_secs: u64 = std::env::var("OAKRIDGE_STAGE_TIMEOUT_SECS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(3600);
-        let stuck_sweep_interval_secs: u64 = std::env::var("OAKRIDGE_STUCK_SWEEP_INTERVAL_SECS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(60);
+        let auth_policy = resolve_auth_policy(bind_addr, control_token.as_deref(), allow_insecure)?;
+        let stage_timeout_secs = parse_positive_secs_env(
+            "OAKRIDGE_STAGE_TIMEOUT_SECS",
+            env::var("OAKRIDGE_STAGE_TIMEOUT_SECS").ok(),
+            3600,
+        )?;
+        let stuck_sweep_interval_secs = parse_positive_secs_env(
+            "OAKRIDGE_STUCK_SWEEP_INTERVAL_SECS",
+            env::var("OAKRIDGE_STUCK_SWEEP_INTERVAL_SECS").ok(),
+            60,
+        )?;
         Ok(Self {
             port,
             bind_addr,
@@ -107,6 +119,19 @@ fn parse_port(raw: Option<String>) -> anyhow::Result<u16> {
         Some(raw) => Ok(raw.parse()?),
         None => Ok(8790),
     }
+}
+
+fn parse_positive_secs_env(name: &str, raw: Option<String>, default: u64) -> anyhow::Result<u64> {
+    let Some(raw) = raw else {
+        return Ok(default);
+    };
+    let value: u64 = raw
+        .parse()
+        .map_err(|_| anyhow::anyhow!("{name} must be a positive integer"))?;
+    if value == 0 {
+        anyhow::bail!("{name} must be greater than 0");
+    }
+    Ok(value)
 }
 
 fn parse_bind_addr(raw: Option<&str>) -> anyhow::Result<IpAddr> {
@@ -185,68 +210,67 @@ mod tests {
 
     #[test]
     fn loopback_ipv4_without_token_is_allowed() {
-        let policy = resolve_auth_policy(
-            IpAddr::V4(Ipv4Addr::LOCALHOST),
-            None,
-            false,
-        )
-        .unwrap();
+        let policy = resolve_auth_policy(IpAddr::V4(Ipv4Addr::LOCALHOST), None, false).unwrap();
         assert!(matches!(policy, AuthPolicy::Loopback));
     }
 
     #[test]
     fn loopback_ipv6_without_token_is_allowed() {
-        let policy = resolve_auth_policy(
-            IpAddr::V6(Ipv6Addr::LOCALHOST),
-            None,
-            false,
-        )
-        .unwrap();
+        let policy = resolve_auth_policy(IpAddr::V6(Ipv6Addr::LOCALHOST), None, false).unwrap();
         assert!(matches!(policy, AuthPolicy::Loopback));
     }
 
     #[test]
     fn non_loopback_without_token_fails() {
-        let err = resolve_auth_policy(
-            IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-            None,
-            false,
-        )
-        .unwrap_err();
+        let err = resolve_auth_policy(IpAddr::V4(Ipv4Addr::UNSPECIFIED), None, false).unwrap_err();
         assert!(err.to_string().contains("OAKRIDGE_CONTROL_TOKEN"));
     }
 
     #[test]
     fn non_loopback_with_token_succeeds() {
-        let policy = resolve_auth_policy(
-            IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-            Some("my-secret"),
-            false,
-        )
-        .unwrap();
+        let policy =
+            resolve_auth_policy(IpAddr::V4(Ipv4Addr::UNSPECIFIED), Some("my-secret"), false)
+                .unwrap();
         assert!(matches!(policy, AuthPolicy::Token(ref t) if t == "my-secret"));
     }
 
     #[test]
     fn non_loopback_with_insecure_flag_succeeds() {
-        let policy = resolve_auth_policy(
-            IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-            None,
-            true,
-        )
-        .unwrap();
+        let policy = resolve_auth_policy(IpAddr::V4(Ipv4Addr::UNSPECIFIED), None, true).unwrap();
         assert!(matches!(policy, AuthPolicy::InsecureNonLoopback));
     }
 
     #[test]
     fn whitespace_only_token_treated_as_absent() {
-        let err = resolve_auth_policy(
-            IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-            Some("   "),
-            false,
+        let err =
+            resolve_auth_policy(IpAddr::V4(Ipv4Addr::UNSPECIFIED), Some("   "), false).unwrap_err();
+        assert!(err.to_string().contains("OAKRIDGE_CONTROL_TOKEN"));
+    }
+
+    #[test]
+    fn auth_policy_debug_redacts_token() {
+        let rendered = format!("{:?}", AuthPolicy::Token("super-secret".to_string()));
+        assert!(rendered.contains("<redacted>"));
+        assert!(!rendered.contains("super-secret"));
+    }
+
+    #[test]
+    fn timeout_env_values_must_be_positive() {
+        let err =
+            parse_positive_secs_env("OAKRIDGE_STAGE_TIMEOUT_SECS", Some("0".to_string()), 3600)
+                .unwrap_err();
+        assert!(err.to_string().contains("greater than 0"));
+    }
+
+    #[test]
+    fn timeout_env_values_reject_invalid_numbers() {
+        let err = parse_positive_secs_env(
+            "OAKRIDGE_STUCK_SWEEP_INTERVAL_SECS",
+            Some("not-a-number".to_string()),
+            60,
         )
         .unwrap_err();
-        assert!(err.to_string().contains("OAKRIDGE_CONTROL_TOKEN"));
+        assert!(err.to_string().contains("positive integer"));
     }
 
     #[test]

@@ -223,7 +223,7 @@ beforeEach(() => {
   mountCohortStatusRoutes(app, { db });
   mountBriefsRoutes(app, { db });
   mountBriefStatusRoutes(app, { db });
-  mountBuildsRoutes(app, { db, dispatcher, manager: stubManager });
+  mountBuildsRoutes(app, { db, dispatcher });
   mountAssessmentsRoutes(app, { db });
   mountSpecStatusRoutes(app, { db });
 });

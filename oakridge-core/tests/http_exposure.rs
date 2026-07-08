@@ -5,8 +5,8 @@ use axum::http::{header, HeaderValue, Request, StatusCode};
 use tower::ServiceExt;
 use uuid::Uuid;
 
-use oakridge_core::{boot, register_types, Config};
 use oakridge_core::config::AuthPolicy;
+use oakridge_core::{boot, register_types, Config};
 
 fn temp_db_url() -> String {
     format!("sqlite:///tmp/oakridge-http-exposure-{}.db", Uuid::new_v4())
@@ -93,6 +93,39 @@ async fn allow_list_accepts_only_listed_origins() {
         .is_none());
 }
 
+#[tokio::test]
+async fn cors_preflight_allows_authorization_header() {
+    let allowed = HeaderValue::from_static("https://dashboard.example");
+    let app = app_with(vec![allowed.clone()]).await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("OPTIONS")
+                .uri("/projects")
+                .header(header::ORIGIN, allowed)
+                .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+                .header(
+                    header::ACCESS_CONTROL_REQUEST_HEADERS,
+                    "authorization,content-type",
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let allow_headers = response
+        .headers()
+        .get(header::ACCESS_CONTROL_ALLOW_HEADERS)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_ascii_lowercase();
+    assert!(allow_headers.contains("authorization"));
+}
+
 // ---- control auth middleware tests ----------------------------------------
 
 async fn app_with_token(token: &str) -> axum::Router {
@@ -160,7 +193,12 @@ async fn token_mode_post_without_auth_returns_401() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
-    let www_auth = res.headers().get("www-authenticate").unwrap().to_str().unwrap();
+    let www_auth = res
+        .headers()
+        .get("www-authenticate")
+        .unwrap()
+        .to_str()
+        .unwrap();
     assert!(www_auth.contains("Bearer"));
 }
 

@@ -78,6 +78,49 @@ function parseCookieToken(cookieHeader: string): string | null {
   return null;
 }
 
+function sameOriginFromHeader(headerValue: string | undefined, requestUrl: string): boolean {
+  if (!headerValue) return false;
+  try {
+    return new URL(headerValue).origin === new URL(requestUrl).origin;
+  } catch {
+    return false;
+  }
+}
+
+function hasSameOriginBrowserHeader(c: Context): boolean {
+  return (
+    sameOriginFromHeader(c.req.header("origin"), c.req.url) ||
+    sameOriginFromHeader(c.req.header("referer"), c.req.url)
+  );
+}
+
+function auditAuthRejection(c: Context, status: 401 | 403, reason: string): void {
+  console.warn(
+    JSON.stringify({
+      kbbl: "control-auth",
+      event: "rejected",
+      status,
+      reason,
+      method: c.req.method,
+      path: c.req.path,
+    }),
+  );
+}
+
+function unauthorized(c: Context, reason: string, error = "unauthorized"): Response {
+  auditAuthRejection(c, 401, reason);
+  return c.json({ error }, 401, {
+    "www-authenticate": 'Bearer realm="kbbl"',
+  }) as Response;
+}
+
+function forbidden(c: Context, reason: string): Response {
+  auditAuthRejection(c, 403, reason);
+  return c.json({ error: "forbidden" }, 403, {
+    "www-authenticate": 'Bearer realm="kbbl"',
+  }) as Response;
+}
+
 // ---- request auth middleware -----------------------------------------------
 
 function verifyControlCredentials(c: Context, token: string): Response | null {
@@ -85,37 +128,34 @@ function verifyControlCredentials(c: Context, token: string): Response | null {
   if (authHeader !== undefined) {
     const space = authHeader.indexOf(" ");
     if (space === -1 || authHeader.slice(0, space).toLowerCase() !== "bearer") {
-      return c.json(
-        { error: "malformed Authorization header, expected: Bearer <token>" },
-        401,
-        { "www-authenticate": 'Bearer realm="kbbl"' },
-      ) as Response;
+      return unauthorized(
+        c,
+        "malformed_authorization",
+        "malformed Authorization header, expected: Bearer <token>",
+      );
     }
     const presented = authHeader.slice(space + 1);
     if (tokenEquals(presented, token)) {
       return null;
     }
-    return c.json({ error: "forbidden" }, 403, {
-      "www-authenticate": 'Bearer realm="kbbl"',
-    }) as Response;
+    return forbidden(c, "bearer_token_mismatch");
   }
 
   const cookieHeader = c.req.header("cookie");
   if (cookieHeader !== undefined) {
     const cookieToken = parseCookieToken(cookieHeader);
     if (cookieToken !== null) {
+      if (!hasSameOriginBrowserHeader(c)) {
+        return forbidden(c, "cookie_missing_same_origin_header");
+      }
       if (tokenEquals(cookieToken, token)) {
         return null;
       }
-      return c.json({ error: "forbidden" }, 403, {
-        "www-authenticate": 'Bearer realm="kbbl"',
-      }) as Response;
+      return forbidden(c, "cookie_token_mismatch");
     }
   }
 
-  return c.json({ error: "unauthorized" }, 401, {
-    "www-authenticate": 'Bearer realm="kbbl"',
-  }) as Response;
+  return unauthorized(c, "missing_credentials");
 }
 
 /**

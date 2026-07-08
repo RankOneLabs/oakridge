@@ -58,12 +58,13 @@ function runDoneFanout(db: Database, cohort_id: string): DoneFanoutResult {
         const transition = transitionCohort(db, to_cohort_id, "dependencies_met");
         if (transition.ok) {
           buildReady.push({ cohort_id: to_cohort_id, brief_id: brief.id });
-        } else if (transition.reason === "invalid_transition") {
+        } else {
           console.error(
             JSON.stringify({
               kbbl: "cohort-status",
               warn: "dependencies_met transition rejected",
               cohort_id: to_cohort_id,
+              reason: transition.reason,
               detail: transition.detail,
             }),
           );
@@ -187,7 +188,7 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
     let emitPrOpened: { cohort_id: string; pr_url: string } | null = null;
     let emitPlanCompleted: { plan_id: string } | null = null;
     const emitBuildReady: { cohort_id: string; brief_id: string }[] = [];
-    let invalidTransition: InvalidTransitionInfo | null = null;
+    let invalidTransition = undefined as InvalidTransitionInfo | undefined;
 
     try {
       const error = db.transaction((): string | null => {
@@ -262,7 +263,10 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
 
       if (error === "not_found") return c.json({ error: "not found" }, 404);
       if (error === "invalid_transition") {
-        const it = invalidTransition!;
+        if (!invalidTransition) {
+          return c.json({ error: "transition rejected without detail" }, 409);
+        }
+        const it = invalidTransition;
         return c.json({
           error: it.detail,
           current_status: it.current,
