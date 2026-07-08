@@ -52,33 +52,10 @@ from legit_biz_club.core.models import (
 )
 from legit_biz_club.memory import PeerContextLoader
 from legit_biz_club.study.conditions import ConditionConfig
+from legit_biz_club.study.layout import cell_dir_path, is_reserved_sidecar_name
 from legit_biz_club.study.targets import TaskConfig
 
 logger = logging.getLogger(__name__)
-
-
-# Names that v1's harness colocates with the artifact inside the cell
-# directory. Reserving these as artifact_filename values keeps a
-# foot-shooting target spec from clobbering (or being clobbered by) a
-# sidecar — `commits/` would crash rmtree/mkdir, `agent_memory/`
-# would mix into per-agent SqliteStore files, `events.jsonl` would
-# get appended to by the driver's tee callback. The shared driver
-# script (`scripts/run_one_project.py`) writes events.jsonl, so the
-# reserved set covers script-level conventions too rather than just
-# lib-internal sidecars — operators inheriting that script don't have
-# to re-discover the collision.
-_RESERVED_CELL_DIR_NAMES: frozenset[str] = frozenset(
-    {"commits", "agent_memory", "events.jsonl", "eval_scores.json"}
-)
-# Casefolded copy for the membership check. The harness runs on
-# operator machines that may use case-insensitive filesystems
-# (macOS APFS by default, Windows NTFS), where ``Eval_Scores.json``
-# and ``eval_scores.json`` resolve to the same on-disk file. The
-# reserved-name guard has to reject both shapes or the foot-shoot
-# leaks back in on those filesystems.
-_RESERVED_CELL_DIR_NAMES_CASEFOLDED: frozenset[str] = frozenset(
-    n.casefold() for n in _RESERVED_CELL_DIR_NAMES
-)
 
 
 class ProposerFactory(Protocol):
@@ -177,7 +154,7 @@ async def run_cell(
     factory receives via the ``context`` kwarg. Default ``None``
     passes empty context — agents start the project fresh.
     """
-    cell_dir = output_dir / target.name / condition.name
+    cell_dir = cell_dir_path(output_dir, target.name, condition.name)
     cell_dir.mkdir(parents=True, exist_ok=True)
     # The runner only handles file-based artifacts (PROSE markdown or
     # single-file CODE). artifact_filename must be a bare filename
@@ -209,7 +186,7 @@ async def run_cell(
             "v1 supports single-file artifacts only — directory-based "
             "CODE artifacts are v1.x"
         )
-    if stripped.casefold() in _RESERVED_CELL_DIR_NAMES_CASEFOLDED:
+    if is_reserved_sidecar_name(stripped):
         raise ValueError(
             f"target {target.name!r} artifact_filename "
             f"{target.artifact_filename!r} collides with a reserved "

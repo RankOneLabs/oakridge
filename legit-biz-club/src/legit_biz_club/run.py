@@ -26,16 +26,11 @@ from jig.tracing.stdout import StdoutTracer
 from legit_biz_club import JigProposer, WorkspaceEventEmitter
 from legit_biz_club.core.models import ArtifactType, Brief
 from legit_biz_club.study import registry
+from legit_biz_club.study.layout import cell_dir_path, is_reserved_sidecar_name
 from legit_biz_club.study.runner import GraderFactory, run_cell
 from legit_biz_club.study.targets import TaskConfig, code_task, prose_task
 
 _SNAKE_CASE_RE = re.compile(r"^[a-z][a-z0-9_]*$")
-_RESERVED_CELL_DIR_NAMES: frozenset[str] = frozenset(
-    {"commits", "agent_memory", "events.jsonl", "eval_scores.json"}
-)
-_RESERVED_CELL_DIR_NAMES_CASEFOLDED: frozenset[str] = frozenset(
-    name.casefold() for name in _RESERVED_CELL_DIR_NAMES
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -279,7 +274,7 @@ def _validate_artifact_filename(
         raise ValueError(
             f"task {task_name!r} artifact_filename {artifact_filename!r} must be a bare filename"
         )
-    if stripped.casefold() in _RESERVED_CELL_DIR_NAMES_CASEFOLDED:
+    if is_reserved_sidecar_name(stripped):
         raise ValueError(
             f"task {task_name!r} artifact_filename {artifact_filename!r} "
             "collides with a reserved sidecar name"
@@ -491,7 +486,7 @@ async def main(spec_path: str, output_dir: str) -> None:
     condition = registry.CONDITION_FACTORIES[spec.condition.kind](n=spec.condition.n)
     grader = spec.resolve_grader(target)
 
-    cell_dir = Path(output_dir) / target.name / condition.name
+    cell_dir = cell_dir_path(Path(output_dir), target.name, condition.name)
     tee = _build_event_tee(cell_dir / "events.jsonl")
 
     result = await run_cell(
