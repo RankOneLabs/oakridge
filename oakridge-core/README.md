@@ -57,12 +57,16 @@ Configuration is read from the environment (`Config::from_env`):
 | `OAKRIDGE_CORE_CORS_ORIGINS` | unset | Comma-separated list of allowed browser origins. Empty or unset means same-origin only. |
 | `OAKRIDGE_CONTROL_TOKEN` | unset | Bearer token required on all write requests when binding a non-loopback address. Generate with `openssl rand -hex 32`. |
 | `ALLOW_INSECURE_NON_LOOPBACK_CONTROL` | unset | Set to `1` to allow non-loopback binds without a token (development escape hatch — emits a startup warning). |
+| `OAKRIDGE_STAGE_TIMEOUT_SECS` | `3600` | Seconds a running stage may go without an `updated_at` bump before the stuck-stage sweeper parks it. Must be greater than `0`. |
+| `OAKRIDGE_STUCK_SWEEP_INTERVAL_SECS` | `60` | Seconds between stuck-stage sweeper passes. Must be greater than `0`. |
 
 The binary binds `127.0.0.1:<port>` by default and does not require authentication.
 Non-loopback binds (`OAKRIDGE_CORE_BIND=0.0.0.0` or a concrete tailnet address) require
 `OAKRIDGE_CONTROL_TOKEN` or `ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1`; the process exits at
 startup if neither is configured. Token mode enforces Bearer auth on all write routes
-(GET/HEAD pass through). The loopback address and `::1`/`localhost` remain frictionless.
+(GET/HEAD pass through). `OAKRIDGE_CORE_BIND` must be an IP address; loopback IPs such
+as `127.0.0.1` and `::1` remain frictionless, but hostnames such as `localhost` are not
+accepted as bind values.
 
 Local development:
 
