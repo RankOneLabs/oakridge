@@ -17,8 +17,9 @@ Per the design memo's v1 test design:
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
+from legit_biz_club.composition import CompositionPolicy
 from legit_biz_club.coordination.consensus import (
     ConsensusMechanism,
     MultiRoundConsensus,
@@ -45,6 +46,12 @@ class ConditionConfig:
     ``lambda: KCommitsPerAgent(k=5)`` for a fixed call budget when
     cross-condition cost comparison matters more than artifact-
     stability cost-saving.
+
+    ``composition_policy`` governs heterogeneity enforcement during
+    enrollment. Defaults to :class:`CompositionPolicy` (HETEROGENEOUS
+    mode, MODEL_IDENTITY + SYSTEM_PROMPT_FRAME axes enforced for n>=3).
+    Pass a custom policy to opt into homogeneous mode or restrict which
+    axes are checked.
     """
 
     name: str
@@ -52,6 +59,7 @@ class ConditionConfig:
     coordination_protocol: CoordinationProtocol
     consensus_mechanism_factory: type[ConsensusMechanism] | None = None
     termination_policy_factory: Callable[[], TerminationPolicy] | None = None
+    composition_policy: CompositionPolicy = field(default_factory=CompositionPolicy)
 
 
 def single_agent_baseline() -> ConditionConfig:

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from jig.core.types import (
     Grader,
     Score,
@@ -21,10 +22,12 @@ from jig.core.types import (
 )
 from jig.tracing.stdout import StdoutTracer
 
+from legit_biz_club.composition import HeterogeneityCheckFailed
 from legit_biz_club.coordination.proposal import Proposal
 from legit_biz_club.coordination.proposer import Proposer
-from legit_biz_club.core.models import Agent, Artifact, Brief
+from legit_biz_club.core.models import Agent, Artifact, Brief, ProjectState
 from legit_biz_club.study.conditions import (
+    ConditionConfig,
     ensemble_incremental_only,
     ensemble_with_multi_round,
     ensemble_with_single_round,
@@ -909,3 +912,65 @@ async def test_run_study_isolates_cells_via_subdirectories(
     # Same filename, different parent directories.
     assert paths[0].name == paths[1].name
     assert paths[0].parent != paths[1].parent
+
+
+# --- lifecycle production-path tests ----------------------------------------
+
+
+async def test_run_cell_returns_project_in_shipped_state(
+    tmp_path: Path,
+) -> None:
+    """A successful run_cell must return a Project in SHIPPED state with
+    shipped_at set — the coordinator is the production execution boundary
+    and owns the ACTIVE → SHIPPED transition for all callers."""
+    target = prose_task(seed_content="seed")
+    condition = single_agent_baseline()
+
+    proposer_factory = stub_proposer_factory(_AppendingProposer)
+
+    result = await run_cell(
+        target=target,
+        condition=condition,
+        proposer_factory=proposer_factory,
+        output_dir=tmp_path,
+        tracer=StdoutTracer(color=False),
+    )
+    project = result.run_result.project
+    assert project.state == ProjectState.SHIPPED
+    assert project.shipped_at is not None
+
+
+async def test_run_cell_raises_heterogeneity_failed_for_duplicate_models(
+    tmp_path: Path,
+) -> None:
+    """When n=3 with the default composition policy (HETEROGENEOUS, MODEL_IDENTITY
+    enforced) and all agents share the same model, run_cell must raise
+    HeterogeneityCheckFailed before coordinator execution — invalid composition
+    must not become an active project."""
+    from legit_biz_club.core.models import CoordinationProtocol
+
+    target = prose_task(
+        seed_content="seed",
+        model_pool=["model-alpha"],  # only one model → all n=3 agents share it
+    )
+    condition = ConditionConfig(
+        name="homogeneous_models",
+        n=3,
+        coordination_protocol=CoordinationProtocol.INCREMENTAL_ONLY,
+        # default composition_policy: HETEROGENEOUS + MODEL_IDENTITY enforced
+    )
+
+    proposer_factory = stub_proposer_factory(_AppendingProposer)
+
+    with pytest.raises(HeterogeneityCheckFailed) as exc_info:
+        await run_cell(
+            target=target,
+            condition=condition,
+            proposer_factory=proposer_factory,
+            output_dir=tmp_path,
+            tracer=StdoutTracer(color=False),
+        )
+    assert len(exc_info.value.violations) >= 1
+    assert any(
+        v.duplicate_value == "model-alpha" for v in exc_info.value.violations
+    )
