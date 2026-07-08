@@ -243,13 +243,31 @@ async function safeReaddir(dir: string): Promise<string[]> {
  * with every commit — at study scale this becomes O(total log
  * bytes) per poll. Caching by mtime turns that into O(1) on the
  * steady state and only re-reads when the file actually changes.
+ *
+ * firstIncrementalStartedPayload is cached alongside status/count so
+ * deriveRunMetadata can read agent_ids without a second events.jsonl
+ * read in getCellDetail.
  */
 interface SummaryCacheEntry {
   mtimeMs: number;
   eventCount: number;
   status: CellSummary["status"];
+  firstIncrementalStartedPayload: Record<string, unknown> | null;
 }
 const summaryCache = new Map<string, SummaryCacheEntry>();
+
+function parseEventFull(
+  line: string,
+): { kind: string; payload: unknown } | null {
+  try {
+    const obj = JSON.parse(line) as { kind?: unknown; payload?: unknown };
+    return typeof obj.kind === "string"
+      ? { kind: obj.kind, payload: obj.payload }
+      : null;
+  } catch {
+    return null;
+  }
+}
 
 async function summarize(
   runTs: string,
@@ -261,6 +279,7 @@ async function summarize(
   let mtimeMs = 0;
   let eventCount = 0;
   let status: RawSummary["status"] = "active";
+  let firstIncrementalStartedPayload: Record<string, unknown> | null = null;
   try {
     const st = await stat(eventsPath);
     mtimeMs = st.mtimeMs;
@@ -268,20 +287,46 @@ async function summarize(
     if (cached !== undefined && cached.mtimeMs === mtimeMs) {
       eventCount = cached.eventCount;
       status = cached.status;
+      firstIncrementalStartedPayload = cached.firstIncrementalStartedPayload;
     } else {
       const contents = await readFile(eventsPath, "utf-8");
       // Parse once. eventCount counts what's actually parseable so
       // the sidebar matches the timeline (readEvents skips malformed
       // lines, and showing "10 events" while the UI renders 9 is
       // exactly the kind of inconsistency that ages into a real bug).
-      const parsedKinds = contents
+      // We also capture the first incremental_started payload so
+      // deriveRunMetadata can attribute agents without a second read.
+      const parsedEvents = contents
         .split("\n")
         .filter((l) => l.trim())
-        .map(parseEventKind)
-        .filter((k): k is string => k !== null);
+        .flatMap((l) => {
+          const e = parseEventFull(l);
+          return e !== null ? [e] : [];
+        });
+      const parsedKinds = parsedEvents.map((e) => e.kind);
       eventCount = parsedKinds.length;
       status = classifyStatusFromKinds(parsedKinds);
-      summaryCache.set(eventsPath, { mtimeMs, eventCount, status });
+      for (const e of parsedEvents) {
+        if (e.kind === "incremental_started") {
+          if (
+            typeof e.payload === "object" &&
+            e.payload !== null &&
+            !Array.isArray(e.payload)
+          ) {
+            firstIncrementalStartedPayload = e.payload as Record<
+              string,
+              unknown
+            >;
+          }
+          break;
+        }
+      }
+      summaryCache.set(eventsPath, {
+        mtimeMs,
+        eventCount,
+        status,
+        firstIncrementalStartedPayload,
+      });
     }
   } catch {
     // No events.jsonl yet — cell directory exists but the run hasn't
@@ -337,15 +382,6 @@ function classifyStatusFromKinds(kinds: string[]): RawSummary["status"] {
   return "active";
 }
 
-function parseEventKind(line: string): string | null {
-  try {
-    const obj = JSON.parse(line) as { kind?: unknown };
-    return typeof obj.kind === "string" ? obj.kind : null;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Annotate a raw disk summary with server-computed archived/cleanable fields.
  */
@@ -386,9 +422,11 @@ export async function getCellSummary(
 }
 
 /**
- * Read full detail for one cell — events + artifact filename +
- * commit count. The artifact's content is fetched separately so
- * a large artifact doesn't bloat list responses.
+ * Read detail for one cell — artifact filename, commit count, and
+ * run metadata. Events are excluded: the cell event timeline is
+ * served exclusively through /api/cells/:cellId/events (SSE), which
+ * avoids the O(N) events.jsonl read that detail polling previously
+ * triggered on every refresh.
  */
 export async function getCellDetail(
   cellId: string,
@@ -398,19 +436,19 @@ export async function getCellDetail(
   const parts = parseCellId(cellId);
   if (parts === null) return null;
   const cellDir = join(resolveRunRoot(), parts.runTs, parts.target, parts.condition);
+  // summarize() populates summaryCache, which deriveRunMetadata reads
+  // for agent attribution — no second events.jsonl open needed.
   const raw = await summarize(parts.runTs, parts.target, parts.condition, cellDir);
   if (raw === null) return null;
-  const [archivedIds, events, artifactFilename, commitCount] = await Promise.all([
+  const [archivedIds, artifactFilename, commitCount] = await Promise.all([
     readArchivedCellsIndex(),
-    readEvents(cellDir),
     detectArtifactFilename(cellDir),
     countCommits(cellDir),
   ]);
   const summary = await annotate(raw, archivedIds, liveCellIds, nowMs);
-  const run_metadata = await deriveRunMetadata(resolveRunRoot(), parts.runTs, events);
+  const run_metadata = await deriveRunMetadata(resolveRunRoot(), parts.runTs, cellDir);
   return {
     ...summary,
-    events,
     artifact_filename: artifactFilename,
     commit_count: commitCount,
     run_metadata,
@@ -530,7 +568,7 @@ export function modelLabel(id: string): string {
 async function deriveRunMetadata(
   runRoot: string,
   runTs: string,
-  events: CellEvent[],
+  cellDir: string,
 ): Promise<CellRunMetadata | null> {
   // Step 1: Read run-spec.json
   const specPath = join(runRoot, runTs, "run-spec.json");
@@ -559,17 +597,18 @@ async function deriveRunMetadata(
     return null;
   }
 
-  // Step 3: Find first incremental_started event with agent_ids
-  const firstStarted = events.find((e) => e.kind === "incremental_started");
-  if (firstStarted === undefined) {
+  // Step 3: Read agent_ids from the summary cache populated by summarize().
+  // getCellDetail calls summarize() before this function, so the cache entry
+  // for this cell is guaranteed to be warm — no second events.jsonl open.
+  const eventsPath = join(cellDir, "events.jsonl");
+  const cached = summaryCache.get(eventsPath);
+  const firstStartedPayload = cached?.firstIncrementalStartedPayload ?? null;
+
+  if (firstStartedPayload === null) {
     return { model_pool: modelPool, agents: [], attribution_source: "missing" };
   }
 
-  const payload = firstStarted.payload;
-  const agentIds =
-    typeof payload === "object" && payload !== null
-      ? (payload as { agent_ids?: unknown }).agent_ids
-      : undefined;
+  const agentIds = firstStartedPayload.agent_ids;
   // Require every id to be a non-empty string. AgentModelSummarySchema
   // enforces agent_id.min(1), so an empty id would throw at the API
   // boundary (500) — treat malformed ids as missing attribution instead.
