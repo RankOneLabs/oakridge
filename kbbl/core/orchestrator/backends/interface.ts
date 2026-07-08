@@ -15,6 +15,13 @@ export interface EpicIdentity {
   /** Shape: `<position>-<title-slug>`, e.g. `1-my_feature`. Combined with epicSlug to form `cohort/<epicSlug>/<cohortSlug>`. */
   cohortSlug: string;
   epicBranch: string;
+  /**
+   * Durable attempt suffix derived from the dispatch_attempts.attempt_number,
+   * e.g. "attempt-001". When set, the backend appends it to the branch and
+   * worktree subdir names so each retry gets a unique, human-readable path.
+   * Omitted by direct backend callers that bypass the dispatcher (tests, etc.).
+   */
+  attemptSuffix?: string;
 }
 
 export interface InputRef {

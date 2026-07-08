@@ -8,6 +8,29 @@ import { getEpicBySpec } from "../../db/epics";
 import type { Cohort, CohortDependency } from "../../types/task-tracker";
 import type { RuntimeModelSelection } from "../../runtime";
 import { runExclusive } from "./keyed-mutex";
+import {
+  claimDispatch,
+  formatAttemptSuffix,
+  markAttemptRunning,
+  markAttemptFailed,
+  updateAttemptBranchInfo,
+  type DispatchAttempt,
+} from "../../db/dispatch-attempts";
+
+/**
+ * Thrown by dispatcher.dispatch() when another attempt is already
+ * dispatching or running for the same entity/stage. Callers can catch this
+ * to surface the conflict to the operator (HTTP 409) or log it and return
+ * without spawning a duplicate session (event hooks).
+ */
+export class DispatchConflictError extends Error {
+  constructor(public readonly activeAttempt: DispatchAttempt) {
+    super(
+      `dispatch conflict: attempt ${activeAttempt.id} is already ${activeAttempt.status} for ${activeAttempt.entity_kind}/${activeAttempt.entity_id} stage=${activeAttempt.stage}`,
+    );
+    this.name = "DispatchConflictError";
+  }
+}
 
 interface DispatcherDeps {
   db: Database;
@@ -766,6 +789,71 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
 
       const template = loadPrompt(stage.prompt_template_path);
 
+      // Resolve artifact-specific context for the claim and for slot building.
+      // We need entity_kind, entity_id, epic_id, and cohort_id (where applicable)
+      // before we acquire the dispatch claim.
+      let epic: Epic | null = null;
+      let claimEntityKind: "spec" | "cohort" | "brief" | "plan";
+      let claimCohortId: string | null = null;
+
+      switch (stage.input_artifact_type) {
+        case "spec":
+          claimEntityKind = "spec";
+          epic = resolveEpicForSpec(db, inputId);
+          if (!epic) throw new Error(`spec ${inputId}: no epic found`);
+          break;
+        case "cohort":
+          claimEntityKind = "cohort";
+          epic = resolveEpicForCohort(db, inputId);
+          if (!epic) throw new Error(`cohort ${inputId}: no epic found`);
+          claimCohortId = inputId;
+          break;
+        case "brief": {
+          claimEntityKind = "brief";
+          const briefCohortRow = db
+            .prepare<{ cohort_id: string }, [string]>("SELECT cohort_id FROM briefs WHERE id = ?")
+            .get(inputId);
+          if (!briefCohortRow) throw new Error(`brief not found: ${inputId}`);
+          claimCohortId = briefCohortRow.cohort_id;
+          epic = resolveEpicForBrief(db, inputId);
+          if (!epic) {
+            const identityCtx = getBriefIdentityContext(db, inputId);
+            if (identityCtx) epic = getEpicBySpec(db, identityCtx.spec_id);
+          }
+          if (!epic) throw new Error(`brief ${inputId}: no epic found`);
+          break;
+        }
+        case "plan":
+          claimEntityKind = "plan";
+          epic = resolveEpicForPlan(db, inputId);
+          if (!epic) throw new Error(`plan ${inputId}: no epic found`);
+          break;
+        default:
+          throw new Error(`unsupported input_artifact_type: ${stage.input_artifact_type}`);
+      }
+
+      // Acquire the dispatch claim before any awaited work. This is the critical
+      // section: inserting the attempt record with status='dispatching' makes the
+      // claim visible to concurrent callers (hook + POST race, double POST) before
+      // any git or session spawn begins. The partial unique index on
+      // (entity_kind, entity_id, stage) WHERE status IN ('dispatching','running')
+      // makes the claim atomic inside the SQLite transaction.
+      const claimResult = claimDispatch(db, {
+        id: crypto.randomUUID(),
+        entity_kind: claimEntityKind,
+        entity_id: inputId,
+        stage: stage.name,
+        epic_id: epic.id,
+        cohort_id: claimCohortId,
+      });
+
+      if (!claimResult.claimed) {
+        throw new DispatchConflictError(claimResult.active);
+      }
+
+      const attempt = claimResult.attempt;
+      const attemptSuffix = formatAttemptSuffix(attempt.attempt_number);
+
       let slots: Record<string, string>;
       let inputRef: InputRef;
       let workdir: string;
@@ -775,8 +863,6 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
           slots = buildSlotsForSpec(db, inputId, kbblUrl);
           workdir = resolveWorkdirForSpec(db, inputId);
           const sessionName = buildSessionNameForSpec(db, inputId, stage.name);
-          const epic = resolveEpicForSpec(db, inputId);
-          if (!epic) throw new Error(`spec ${inputId}: no epic found`);
           inputRef = {
             type: "spec",
             id: inputId,
@@ -790,8 +876,6 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
           slots = buildSlotsForCohort(db, inputId, kbblUrl);
           workdir = resolveWorkdirForCohort(db, inputId);
           const sessionName = buildSessionNameForCohort(db, inputId, stage.name);
-          const epic = resolveEpicForCohort(db, inputId);
-          if (!epic) throw new Error(`cohort ${inputId}: no epic found`);
           inputRef = {
             type: "cohort",
             id: inputId,
@@ -809,14 +893,23 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
           const identityCtx = getBriefIdentityContext(db, inputId);
           if (!identityCtx) throw new Error(`brief ${inputId}: could not resolve cohort/spec chain`);
 
-          const epic = resolveEpicForBrief(db, inputId) ?? getEpicBySpec(db, identityCtx.spec_id);
-          if (!epic) throw new Error(`brief ${inputId}: no epic found for spec ${identityCtx.spec_id}`);
-
           const epicSlug = sanitizeForName(epic.title, epic.id);
           const cohortSlug = `${identityCtx.cohort_position}-${sanitizeForName(identityCtx.cohort_title, identityCtx.cohort_id)}`;
           const epicBranch = `epic/${epicSlug}`;
+          const branchName = `cohort/${epicSlug}/${cohortSlug}/${attemptSuffix}`;
+          const worktreePath = `${epicSlug}/${cohortSlug}/${attemptSuffix}`;
 
-          await ensureEpicBranchExists(epicBranch, workdir);
+          updateAttemptBranchInfo(db, attempt.id, { branch_name: branchName, worktree_path: worktreePath });
+
+          try {
+            await ensureEpicBranchExists(epicBranch, workdir);
+          } catch (gitErr) {
+            markAttemptFailed(db, attempt.id, {
+              last_error: String(gitErr),
+              recovery_hint: "Retry dispatch manually via POST /briefs/:id/build.",
+            });
+            throw gitErr;
+          }
 
           inputRef = {
             type: "brief",
@@ -824,29 +917,32 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
             workdir,
             sessionName,
             modelSelection: modelSelectionForEpicStage(epic, stage.name),
-            worktreeIdentity: { epicSlug, cohortSlug, epicBranch },
+            worktreeIdentity: { epicSlug, cohortSlug, epicBranch, attemptSuffix },
           };
           break;
         }
         case "plan": {
           workdir = resolveWorkdirForPlan(db, inputId);
           const sessionName = buildSessionNameForPlan(db, inputId, stage.name);
-          const epic = resolveEpicForPlan(db, inputId);
-          if (!epic) throw new Error(`plan ${inputId}: no epic found`);
 
           if (stage.name === "assessor") {
-            // The assessor reviews the merged cohort work, which lives on the
-            // epic branch — not main. Without an explicit identity the session
-            // worktree would branch off HEAD, so the assessor would inspect
-            // main and miss everything the cohorts shipped. Base the worktree
-            // on origin/<epicBranch> so its checkout holds the full merged
-            // state, and surface the branch name in the prompt. The synthetic
-            // `0-assessor` cohort slug just names a throwaway review worktree
-            // (never pushed); it satisfies the cohort branch-name convention
-            // without colliding with any real positional cohort.
             const epicSlug = sanitizeForName(epic.title, epic.id);
             const epicBranch = `epic/${epicSlug}`;
-            await requireEpicBranchExists(epicBranch, workdir);
+            const branchName = `cohort/${epicSlug}/0-assessor/${attemptSuffix}`;
+            const worktreePath = `${epicSlug}/0-assessor/${attemptSuffix}`;
+
+            updateAttemptBranchInfo(db, attempt.id, { branch_name: branchName, worktree_path: worktreePath });
+
+            try {
+              await requireEpicBranchExists(epicBranch, workdir);
+            } catch (gitErr) {
+              markAttemptFailed(db, attempt.id, {
+                last_error: String(gitErr),
+                recovery_hint: "Retry assessor dispatch manually.",
+              });
+              throw gitErr;
+            }
+
             slots = {
               ...buildSlotsForPlanResults(db, inputId, kbblUrl),
               EPIC_BRANCH: epicBranch,
@@ -857,7 +953,7 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
               workdir,
               sessionName,
               modelSelection: modelSelectionForEpicStage(epic, stage.name),
-              worktreeIdentity: { epicSlug, cohortSlug: "0-assessor", epicBranch },
+              worktreeIdentity: { epicSlug, cohortSlug: "0-assessor", epicBranch, attemptSuffix },
             };
           } else {
             slots = buildSlotsForPlan(db, inputId, kbblUrl);
@@ -876,7 +972,20 @@ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dis
       }
 
       const renderedPrompt = renderPrompt(template, slots);
-      const { session_ref } = await backend.dispatch(stage, inputRef, renderedPrompt);
+
+      let session_ref: string;
+      try {
+        ({ session_ref } = await backend.dispatch(stage, inputRef, renderedPrompt));
+      } catch (spawnErr) {
+        markAttemptFailed(db, attempt.id, {
+          last_error: String(spawnErr),
+          recovery_hint: "Retry dispatch manually.",
+        });
+        throw spawnErr;
+      }
+
+      // Transition the attempt to running now that we have an actual session ref.
+      markAttemptRunning(db, attempt.id, session_ref);
 
       // Persist current_session_ref + current_session_stage on the appropriate
       // artifact. build stage: input is brief, but session_ref lives on the parent cohort.
