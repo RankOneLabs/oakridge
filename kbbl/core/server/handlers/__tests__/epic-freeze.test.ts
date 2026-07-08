@@ -18,12 +18,16 @@ import { mountSpecStatusRoutes } from "../spec-status";
 import { mountSpecDiscrepanciesRoutes } from "../spec-discrepancies";
 import { mountPlansRoutes } from "../plans";
 import { mountPlanStatusRoutes } from "../plan-status";
+import { mountPlanReopenRoutes } from "../plan-reopen";
 import { mountCohortsRoutes } from "../cohorts";
 import { mountCohortStatusRoutes } from "../cohort-status";
+import { mountCohortMergeRoutes, type GhGateway } from "../cohort-merge";
 import { mountBriefsRoutes } from "../briefs";
 import { mountBriefStatusRoutes } from "../brief-status";
+import { mountBuildsRoutes } from "../builds";
 import { mountAssessmentsRoutes } from "../assessments";
 import { mountEpicsRoutes } from "../epics";
+import type { createDispatcher } from "../../../orchestrator/backends/dispatcher";
 
 const PROJECT_ID = "proj-1";
 const SPEC_ID = "spec-1";
@@ -31,6 +35,7 @@ const EPIC_ID = "epic-1";
 const PLAN_ID = "plan-1";
 const COHORT_ID = "cohort-1";
 const BRIEF_ID = "brief-1";
+const APPROVED_BRIEF_ID = "brief-approved-1";
 const DEP_ID = "dep-1";
 const COHORT2_ID = "cohort-2";
 const DISC_ID = "disc-1";
@@ -43,6 +48,17 @@ let db: Database;
 let app: Hono;
 
 const stubManager = { get: (_sid: string) => undefined } as unknown as import("../../../session/session-manager").SessionManager;
+
+// Panics if dispatch is ever called — ensures archive guard runs before dispatch claim
+const panicDispatcher = {
+  dispatch: async () => { throw new Error("dispatch must not be called on an archived epic"); },
+} as unknown as ReturnType<typeof createDispatcher>;
+
+// Panics if gh is ever called — ensures archive guard runs before merge operations
+const panicGh: GhGateway = {
+  fetchPrState: async () => { throw new Error("gh must not be called on an archived epic"); },
+  mergePr: async () => { throw new Error("gh must not be called on an archived epic"); },
+};
 
 function patch(path: string, body: unknown) {
   return app.request(path, {
@@ -94,6 +110,10 @@ beforeEach(() => {
   db.prepare(
     "INSERT INTO briefs (id, cohort_id, status, goal, files_in_scope, decisions_made, approaches_rejected, next_action) VALUES (?,?,?,?,?,?,?,?)",
   ).run(BRIEF_ID, COHORT_ID, "pending_approval", "G", "[]", "[]", "[]", "NA");
+  // Approved brief for build-launch tests
+  db.prepare(
+    "INSERT INTO briefs (id, cohort_id, status, goal, files_in_scope, decisions_made, approaches_rejected, next_action) VALUES (?,?,?,?,?,?,?,?)",
+  ).run(APPROVED_BRIEF_ID, COHORT_ID, "approved", "G", "[]", "[]", "[]", "NA");
   db.prepare(
     "INSERT INTO spec_discrepancies (id, spec_id, spec_assumption, code_reality, status) VALUES (?,?,?,?,?)",
   ).run(DISC_ID, SPEC_ID, "A", "B", "open");
@@ -104,10 +124,13 @@ beforeEach(() => {
   mountSpecDiscrepanciesRoutes(app, { db });
   mountPlansRoutes(app, { db });
   mountPlanStatusRoutes(app, { db });
+  mountPlanReopenRoutes(app, { db });
   mountCohortsRoutes(app, { db, manager: stubManager });
   mountCohortStatusRoutes(app, { db });
+  mountCohortMergeRoutes(app, { db, gh: panicGh });
   mountBriefsRoutes(app, { db });
   mountBriefStatusRoutes(app, { db });
+  mountBuildsRoutes(app, { db, dispatcher: panicDispatcher });
   mountAssessmentsRoutes(app, { db });
   mountEpicsRoutes(app, { db });
 });
@@ -240,6 +263,31 @@ describe("freeze: 409 'epic is archived' on all mutating routes", () => {
       gap_analysis: "none",
       fix_plan: "none",
     });
+    expect(res.status).toBe(409);
+    expect((await res.json() as { error: string }).error).toBe("epic is archived");
+  });
+
+  test("POST /briefs/:id/build → 409, no dispatch or session created", async () => {
+    const res = await post(`/briefs/${APPROVED_BRIEF_ID}/build`, {});
+    expect(res.status).toBe(409);
+    expect((await res.json() as { error: string }).error).toBe("epic is archived");
+  });
+
+  test("POST /cohorts/:id/merge → 409", async () => {
+    // Cohort status doesn't matter — archive check runs before status check
+    const res = await post(`/cohorts/${COHORT_ID}/merge`, {});
+    expect(res.status).toBe(409);
+    expect((await res.json() as { error: string }).error).toBe("epic is archived");
+  });
+
+  test("POST /plans/:id/reopen → 409", async () => {
+    const res = await post(`/plans/${PLAN_ID}/reopen`, {});
+    expect(res.status).toBe(409);
+    expect((await res.json() as { error: string }).error).toBe("epic is archived");
+  });
+
+  test("POST /briefs/:id/reopen → 409", async () => {
+    const res = await post(`/briefs/${BRIEF_ID}/reopen`, {});
     expect(res.status).toBe(409);
     expect((await res.json() as { error: string }).error).toBe("epic is archived");
   });

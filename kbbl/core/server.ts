@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { loadConfig, type KbblConfig } from "./config";
+import { resolveStartupAuthPolicy, type AuthPolicy } from "./server/auth";
 import { SessionManager } from "./session/session-manager";
 import type { Session } from "./session/session";
 import { isGitRepo, isPathInside, resolveRepoTopLevel } from "./session/worktree";
@@ -18,6 +19,8 @@ import { bootstrap as bootstrapOrchestrator } from "./orchestrator/bootstrap";
 import { createKbblChatBackend } from "./orchestrator/backends/kbbl-chat";
 import { createDispatcher } from "./orchestrator/backends/dispatcher";
 import { wireDispatchHooks } from "./orchestrator/dispatch-hooks";
+import { reconcileDispatchAttempts } from "./orchestrator/dispatch-reconciler";
+import { markRunningAttemptSucceededBySessionRef } from "./db/dispatch-attempts";
 import { wireResponderSpawn } from "./orchestrator/responders/spawn";
 import { reviewRegistry } from "./review/registry";
 import { reviewEvents } from "./review/events";
@@ -61,6 +64,31 @@ if (!Number.isInteger(port) || port <= 0 || port > 65535) {
 }
 const host = values.host ?? "127.0.0.1";
 const claudeBin = values.claudeBin ?? "claude";
+
+// === auth policy ===
+// Resolved before any other startup work so a misconfigured non-loopback
+// bind fails fast with a clear message rather than opening an unprotected
+// port and only surfacing the problem at the first control request.
+let authPolicy: AuthPolicy;
+try {
+  authPolicy = resolveStartupAuthPolicy({
+    host,
+    controlToken: process.env.OAKRIDGE_CONTROL_TOKEN,
+    allowInsecure: process.env.ALLOW_INSECURE_NON_LOOPBACK_CONTROL === "1",
+  });
+} catch (err) {
+  console.error(err instanceof Error ? err.message : String(err));
+  console.error(
+    "kbbl: Set OAKRIDGE_CONTROL_TOKEN or ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1 to bind on non-loopback interfaces.",
+  );
+  process.exit(1);
+}
+if (authPolicy.mode === "insecure-non-loopback") {
+  console.error(
+    "kbbl: WARNING: running without authentication on a non-loopback bind (ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1). " +
+    "Set OAKRIDGE_CONTROL_TOKEN to protect control routes.",
+  );
+}
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 // server.ts lives at kbbl/core/server.ts. From its directory, `..` is the kbbl package root;
@@ -217,9 +245,16 @@ const manager = new SessionManager({
   },
   onRuntimeSessionEnded: (session) => {
     ccRuntime.unregisterBySid(session);
+    markRunningAttemptSucceededBySessionRef(db, session.oakridgeSid);
   },
   config,
 });
+
+// === Boot reconciliation — must run before dispatch hooks accept new work ===
+// Any dispatch_attempts left in dispatching or running status survived a prior
+// process death. Reconcile them to dispatch_failed so the active-claim slots
+// are freed and operators have a clear recovery path before new dispatches fire.
+reconcileDispatchAttempts(db, manager);
 
 // === Dispatcher + dispatch hooks + responder spawn ===
 
@@ -237,6 +272,11 @@ wireResponderSpawn({ reviewEvents, kbblUrl });
 // === Hono app ===
 
 let bunServer: ReturnType<typeof Bun.serve> | null = null;
+const coreControlToken =
+  process.env.OAKRIDGE_CORE_CONTROL_TOKEN?.trim() ||
+  process.env.OAKRIDGE_CONTROL_TOKEN?.trim() ||
+  undefined;
+
 const app = createApp({
   manager,
   runtime,
@@ -250,6 +290,8 @@ const app = createApp({
   configPath,
   db,
   dispatcher,
+  authPolicy,
+  coreControlToken,
 });
 
 // === bind port ===

@@ -2066,7 +2066,15 @@ mod tests {
         assert_eq!(si.status, crate::types::StageStatus::Done);
         assert!(si.parked_meta.is_none());
 
-        let requests: Vec<_> = capture.lock().unwrap().iter().cloned().collect();
+        // Filter out observer polls (GET /events) — they are timing-dependent and
+        // not what this test is verifying.
+        let requests: Vec<_> = capture
+            .lock()
+            .unwrap()
+            .iter()
+            .cloned()
+            .filter(|r| !(r.method == Method::GET && r.path.contains("/events")))
+            .collect();
         assert_eq!(
             requests,
             vec![

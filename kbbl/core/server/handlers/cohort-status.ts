@@ -3,9 +3,11 @@ import type { Hono } from "hono";
 import type { Database } from "bun:sqlite";
 import { getCohort, countUnmetDependencies } from "../../db/cohorts";
 import { getLatestApprovedBriefByCohort } from "../../db/briefs";
+import { transitionCohort } from "../../db/cohort-transitions";
 import { taskTrackerEvents } from "../../db/events";
 import { getEpicBySpec, advanceEpicByEvent } from "../../db/epics";
 import { isFrozen } from "../../db/epic-freeze";
+import { applyCohortTransition, type CohortStatus } from "../../orchestrator/state-machine";
 import type { Cohort } from "../../types/task-tracker";
 
 const PatchCohortStatusSchema = z.discriminatedUnion("status", [
@@ -53,8 +55,20 @@ function runDoneFanout(db: Database, cohort_id: string): DoneFanoutResult {
           JSON.stringify({ kbbl: "cohort-status", warn: "ready_to_build cohort has no approved brief", cohort_id: to_cohort_id }),
         );
       } else {
-        db.prepare("UPDATE cohorts SET status = 'building' WHERE id = ?").run(to_cohort_id);
-        buildReady.push({ cohort_id: to_cohort_id, brief_id: brief.id });
+        const transition = transitionCohort(db, to_cohort_id, "dependencies_met");
+        if (transition.ok) {
+          buildReady.push({ cohort_id: to_cohort_id, brief_id: brief.id });
+        } else {
+          console.error(
+            JSON.stringify({
+              kbbl: "cohort-status",
+              warn: "dependencies_met transition rejected",
+              cohort_id: to_cohort_id,
+              reason: transition.reason,
+              detail: transition.detail,
+            }),
+          );
+        }
       }
     }
   }
@@ -84,14 +98,13 @@ export function applyAwaitingMergeToMerged(
   db: Database,
   cohort_id: string,
 ): ApplyAwaitingMergeResult {
-  const { changes } = db
-    .prepare("UPDATE cohorts SET status = 'done' WHERE id = ? AND status = 'awaiting_merge'")
-    .run(cohort_id);
-  const updated = getCohort(db, cohort_id);
-  if (!updated) throw new Error(`cohort ${cohort_id} not found after awaiting_merge transition`);
-  if (changes === 0) {
+  const transition = transitionCohort(db, cohort_id, "pr_merged");
+  if (!transition.ok) {
+    const updated = getCohort(db, cohort_id);
+    if (!updated) throw new Error(`cohort ${cohort_id} not found after awaiting_merge transition`);
     return { updated, emits: null };
   }
+  const updated = transition.cohort;
   const fanout = runDoneFanout(db, cohort_id);
   const remaining = db
     .prepare<{ cnt: number }, [string]>(
@@ -163,12 +176,19 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
       }
     }
 
+    type InvalidTransitionInfo = {
+      current: CohortStatus;
+      requested: string;
+      detail: string;
+    };
+
     let updated: Cohort | null = null;
     let emitDone: { cohort_id: string } | null = null;
     let emitPrMerged: { cohort_id: string } | null = null;
     let emitPrOpened: { cohort_id: string; pr_url: string } | null = null;
     let emitPlanCompleted: { plan_id: string } | null = null;
     const emitBuildReady: { cohort_id: string; brief_id: string }[] = [];
+    let invalidTransition = undefined as InvalidTransitionInfo | undefined;
 
     try {
       const error = db.transaction((): string | null => {
@@ -176,22 +196,29 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
         if (!cohort) return "not_found";
 
         if (parsed.status === "blocked") {
-          if (cohort.status === "blocked") return "already_blocked";
-          db.prepare(
-            "UPDATE cohorts SET status = 'blocked', pre_block_status = ? WHERE id = ?",
-          ).run(cohort.status, cohort_id);
-          updated = getCohort(db, cohort_id);
+          const transition = transitionCohort(db, cohort_id, "block");
+          if (!transition.ok) {
+            if (transition.reason === "not_found") return "not_found";
+            invalidTransition = { current: transition.current, requested: "blocked", detail: transition.detail };
+            return "invalid_transition";
+          }
+          updated = transition.cohort;
         } else if (parsed.status === "unblocked") {
-          if (cohort.status !== "blocked") return "not_blocked";
-          if (!cohort.pre_block_status) return "no_pre_block";
-          db.prepare(
-            "UPDATE cohorts SET status = ?, pre_block_status = NULL WHERE id = ?",
-          ).run(cohort.pre_block_status, cohort_id);
-          updated = getCohort(db, cohort_id);
+          const transition = transitionCohort(db, cohort_id, "unblock");
+          if (!transition.ok) {
+            if (transition.reason === "not_found") return "not_found";
+            invalidTransition = { current: transition.current, requested: "unblocked", detail: transition.detail };
+            return "invalid_transition";
+          }
+          updated = transition.cohort;
         } else if (parsed.status === "done") {
-          if (cohort.status !== "building") return "not_building";
-          db.prepare("UPDATE cohorts SET status = 'done' WHERE id = ?").run(cohort_id);
-          updated = getCohort(db, cohort_id);
+          const transition = transitionCohort(db, cohort_id, "build_completed");
+          if (!transition.ok) {
+            if (transition.reason === "not_found") return "not_found";
+            invalidTransition = { current: transition.current, requested: "done", detail: transition.detail };
+            return "invalid_transition";
+          }
+          updated = transition.cohort;
           emitDone = { cohort_id };
           const fanout = runDoneFanout(db, cohort_id);
           emitBuildReady.push(...fanout.buildReady);
@@ -202,17 +229,25 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
             .get(cohort.plan_id);
           if (remaining && remaining.cnt === 0) emitPlanCompleted = { plan_id: cohort.plan_id };
         } else if (parsed.status === "awaiting_merge") {
-          if (cohort.status !== "building") return "not_building_for_await";
-          db.prepare("UPDATE cohorts SET status = 'awaiting_merge' WHERE id = ?").run(cohort_id);
+          const transition = transitionCohort(db, cohort_id, "pr_opened");
+          if (!transition.ok) {
+            if (transition.reason === "not_found") return "not_found";
+            invalidTransition = { current: transition.current, requested: "awaiting_merge", detail: transition.detail };
+            return "invalid_transition";
+          }
           db.prepare(
             `UPDATE briefs SET pr_url = COALESCE(pr_url, ?)
              WHERE id = (SELECT id FROM briefs WHERE cohort_id = ? ORDER BY created_at DESC, id DESC LIMIT 1)`,
           ).run(parsed.pr_url, cohort_id);
-          updated = getCohort(db, cohort_id);
+          updated = transition.cohort;
           emitPrOpened = { cohort_id, pr_url: parsed.pr_url };
         } else {
           // merged
-          if (cohort.status !== "awaiting_merge") return "not_awaiting_merge";
+          const next = applyCohortTransition(cohort.status, "pr_merged");
+          if (typeof next === "object") {
+            invalidTransition = { current: cohort.status, requested: "merged", detail: next.error };
+            return "invalid_transition";
+          }
           const result = applyAwaitingMergeToMerged(db, cohort_id);
           updated = result.updated;
           if (result.emits) {
@@ -227,12 +262,17 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
       })();
 
       if (error === "not_found") return c.json({ error: "not found" }, 404);
-      if (error === "already_blocked") return c.json({ error: "cohort is already blocked" }, 409);
-      if (error === "not_blocked") return c.json({ error: "cohort is not blocked" }, 409);
-      if (error === "no_pre_block") return c.json({ error: "no pre_block_status recorded" }, 409);
-      if (error === "not_building") return c.json({ error: "done transition only allowed from building" }, 409);
-      if (error === "not_building_for_await") return c.json({ error: "awaiting_merge transition only allowed from building" }, 409);
-      if (error === "not_awaiting_merge") return c.json({ error: "merged transition only allowed from awaiting_merge" }, 409);
+      if (error === "invalid_transition") {
+        if (!invalidTransition) {
+          return c.json({ error: "transition rejected without detail" }, 409);
+        }
+        const it = invalidTransition;
+        return c.json({
+          error: it.detail,
+          current_status: it.current,
+          requested: it.requested,
+        }, 409);
+      }
     } catch (err) {
       console.error("cohort-status:patch failed", err);
       return c.json({ error: "internal server error" }, 500);

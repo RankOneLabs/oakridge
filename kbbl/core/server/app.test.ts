@@ -12,6 +12,7 @@ import type { SessionManager } from "../session/session-manager";
 import type { createDispatcher } from "../orchestrator/backends/dispatcher";
 import { openTestDb } from "../db/test-db";
 import { createApp } from "./app";
+import type { AuthPolicy } from "./auth";
 
 let tmpRoot: string;
 let configPath: string;
@@ -54,6 +55,7 @@ function buildApp(
   config: KbblConfig,
   defaultWorkdir: string | null = "/tmp/test-workdir",
   registry?: RuntimeRegistry,
+  authPolicy?: AuthPolicy,
 ): Hono {
   const runtime: AppRuntime = {
     id: "test",
@@ -76,6 +78,7 @@ function buildApp(
     db,
     dispatcher,
     registry,
+    authPolicy,
   });
 }
 
@@ -159,6 +162,31 @@ describe("GET /config", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { defaultWorkdir: string | null };
     expect(body.defaultWorkdir).toBeNull();
+  });
+});
+
+describe("GET /dispatch-attempts auth", () => {
+  test("requires token auth in token mode despite being a GET route", async () => {
+    const app = buildApp(
+      KbblConfigSchema.parse({}),
+      "/tmp/test-workdir",
+      undefined,
+      { mode: "token", token: "secret" },
+    );
+
+    const missing = await app.request("/dispatch-attempts");
+    expect(missing.status).toBe(401);
+
+    const wrong = await app.request("/dispatch-attempts", {
+      headers: { authorization: "Bearer wrong" },
+    });
+    expect(wrong.status).toBe(403);
+
+    const ok = await app.request("/dispatch-attempts", {
+      headers: { authorization: "Bearer secret" },
+    });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ attempts: [] });
   });
 });
 

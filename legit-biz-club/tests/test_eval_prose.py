@@ -4,6 +4,7 @@ Light coverage — heavy LLMJudge logic is jig's responsibility (and
 covered there). Here we verify the wrapper builds a jig LLMJudge with
 the right dimensions and rubric assembled from a Brief.
 """
+
 from __future__ import annotations
 
 import json
@@ -21,18 +22,20 @@ from legit_biz_club import Brief
 from legit_biz_club.eval.prose import make_brief_judge
 
 
+def _scores_response(*dimensions: str) -> str:
+    return json.dumps(
+        {"scores": [{"dimension": dimension, "value": 1.0} for dimension in dimensions]}
+    )
+
+
 class _StubJudgeLLM(LLMClient):
     """Captures the system prompt + messages it received."""
 
     def __init__(self, response_content: str | None = None) -> None:
-        # Default to a single-dimension all-1.0 response so callers
-        # don't have to construct one for every test.
+        # Default is enough for tests that only check construction.
+        # Tests that call grade() pass dimensions matching the brief.
         self._response = (
-            response_content
-            if response_content is not None
-            else json.dumps(
-                {"scores": [{"dimension": "stub", "value": 1.0}]}
-            )
+            response_content if response_content is not None else _scores_response("stub")
         )
         self.last_params: CompletionParams | None = None
 
@@ -69,7 +72,7 @@ async def test_rubric_includes_target_spec_and_constraints() -> None:
         success_criteria=["under 100 words", "uses plain language"],
         constraints=["no marketing speak"],
     )
-    llm = _StubJudgeLLM()
+    llm = _StubJudgeLLM(response_content=_scores_response("under 100 words", "uses plain language"))
     judge = make_brief_judge(brief, llm)
     await judge.grade(input="brief", output="some draft")
     assert llm.last_params is not None
@@ -84,10 +87,8 @@ async def test_rubric_includes_target_spec_and_constraints() -> None:
 
 async def test_extra_rubric_appended() -> None:
     brief = Brief(target_spec="x", success_criteria=["dim"])
-    llm = _StubJudgeLLM()
-    judge = make_brief_judge(
-        brief, llm, extra_rubric="Be strict about citations."
-    )
+    llm = _StubJudgeLLM(response_content=_scores_response("dim"))
+    judge = make_brief_judge(brief, llm, extra_rubric="Be strict about citations.")
     await judge.grade(input="x", output="y")
     assert llm.last_params is not None
     assert "Be strict about citations." in (llm.last_params.system or "")

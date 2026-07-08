@@ -55,10 +55,18 @@ Configuration is read from the environment (`Config::from_env`):
 | `OAKRIDGE_CORE_DB` | `sqlite://oakridge-core.db` | SQLite URL (bare paths are prefixed with `sqlite://`). |
 | `OAKRIDGE_CORE_PWA_DIR` | `./pwa` | Directory served as the static fallback. |
 | `OAKRIDGE_CORE_CORS_ORIGINS` | unset | Comma-separated list of allowed browser origins. Empty or unset means same-origin only. |
+| `OAKRIDGE_CONTROL_TOKEN` | unset | Bearer token required on all write requests when binding a non-loopback address. Generate with `openssl rand -hex 32`. |
+| `ALLOW_INSECURE_NON_LOOPBACK_CONTROL` | unset | Set to `1` to allow non-loopback binds without a token (development escape hatch — emits a startup warning). |
+| `OAKRIDGE_STAGE_TIMEOUT_SECS` | `3600` | Seconds a running stage may go without an `updated_at` bump before the stuck-stage sweeper parks it. Must be greater than `0`. |
+| `OAKRIDGE_STUCK_SWEEP_INTERVAL_SECS` | `60` | Seconds between stuck-stage sweeper passes. Must be greater than `0`. |
 
-The binary binds `127.0.0.1:<port>` by default and does not add a CORS layer unless
-`OAKRIDGE_CORE_CORS_ORIGINS` is set. That keeps local development local-first while
-still allowing explicit tailnet or homelab exposure when you opt in.
+The binary binds `127.0.0.1:<port>` by default and does not require authentication.
+Non-loopback binds (`OAKRIDGE_CORE_BIND=0.0.0.0` or a concrete tailnet address) require
+`OAKRIDGE_CONTROL_TOKEN` or `ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1`; the process exits at
+startup if neither is configured. Token mode enforces Bearer auth on all write routes
+(GET/HEAD pass through). `OAKRIDGE_CORE_BIND` must be an IP address; loopback IPs such
+as `127.0.0.1` and `::1` remain frictionless, but hostnames such as `localhost` are not
+accepted as bind values.
 
 Local development:
 
@@ -87,10 +95,15 @@ The runtime split is documented in [docs/runtime_delegation.md](docs/runtime_del
 Tailnet or homelab exposure:
 
 ```sh
+OAKRIDGE_CONTROL_TOKEN=$(openssl rand -hex 32) \
 OAKRIDGE_CORE_BIND=0.0.0.0 \
 OAKRIDGE_CORE_CORS_ORIGINS=https://oakridge.tailnet.example \
 cargo run
 ```
+
+kbbl proxies core write requests and injects the configured token automatically
+(see `OAKRIDGE_CORE_CONTROL_TOKEN` in the kbbl README when you want separate
+per-service tokens).
 
 ## HTTP API
 
@@ -107,7 +120,7 @@ cargo run
 | `GET /workflow_runs/:id` | `200` | Run fields flattened with inline `stage_instances`. |
 | `GET /workflow_runs/:id/artifacts` | `200` | Filter: `?artifact_type=`. |
 | `GET /stage_instances/:id` | `200` | `404` when missing. |
-| `POST /stage_instances/:id/resume` | `202` | Body tagged `ResumePayload` (`{"kind":"gate_decision",...}`, `{"kind":"feedback_artifact",...}`, or `{"kind":"executor","payload":...}`); resumes a parked stage. **Expose only on a trusted network or behind an auth gateway — the server has no built-in authentication.** |
+| `POST /stage_instances/:id/resume` | `202` | Body tagged `ResumePayload` (`{"kind":"gate_decision",...}`, `{"kind":"feedback_artifact",...}`, or `{"kind":"executor","payload":...}`); resumes a parked stage. Requires `Authorization: Bearer <token>` on non-loopback binds. |
 | `POST /executors/delegated_session/:stage_instance_id/emit/:output_name` | `200` | Delegated agents emit declared output artifacts directly to oakridge-core. Returns `{ "artifact_id": "..." }`. |
 | `GET /artifacts/:id` | `200` | Returns the revision chain, root-first. |
 | `GET /parked` | `200` | All currently parked stage instances. |

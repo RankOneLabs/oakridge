@@ -11,6 +11,7 @@ import {
 } from "../../github/gh-gateway";
 import { applyAwaitingMergeToMerged } from "./cohort-status";
 import type { MergeBody, MergeOutcome } from "../../shared/cohort-merge-contract";
+import { isCohortEpicArchived } from "../../db/archive-guards";
 
 export type { MergeOutcome } from "../../shared/cohort-merge-contract";
 
@@ -72,6 +73,10 @@ export function mountCohortMergeRoutes(app: Hono, deps: CohortMergeRouteDeps): v
     // Load cohort → 404
     const cohort = getCohort(db, cohort_id);
     if (!cohort) return c.json({ error: "not found" }, 404);
+
+    if (isCohortEpicArchived(db, cohort_id)) {
+      return c.json({ error: "epic is archived" }, 409);
+    }
 
     // Idempotency: already done → already_done (no re-run of fanout)
     if (cohort.status === "done") {

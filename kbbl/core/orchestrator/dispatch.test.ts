@@ -223,7 +223,7 @@ beforeEach(() => {
   mountCohortStatusRoutes(app, { db });
   mountBriefsRoutes(app, { db });
   mountBriefStatusRoutes(app, { db });
-  mountBuildsRoutes(app, { db, dispatcher, manager: stubManager });
+  mountBuildsRoutes(app, { db, dispatcher });
   mountAssessmentsRoutes(app, { db });
   mountSpecStatusRoutes(app, { db });
 });
@@ -695,6 +695,7 @@ describe("full dispatch pipeline with MockBackend", () => {
       epicSlug: "p3_spec",
       cohortSlug: "0-assessor",
       epicBranch: "epic/p3_spec",
+      attemptSuffix: "attempt-001",
     });
     expect(assessorCall!.renderedPrompt).toContain("epic/p3_spec");
 

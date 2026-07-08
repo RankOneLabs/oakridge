@@ -435,6 +435,9 @@ async fn delegated_session_e2e_gate_driven_completion() {
             db_url: db_url.clone(),
             pwa_dir: PathBuf::from("/tmp"),
             cors_origins: vec![],
+            auth_policy: oakridge_core::config::AuthPolicy::Loopback,
+            stage_timeout_secs: 3600,
+            stuck_sweep_interval_secs: 60,
         },
         move |stage_types: &mut StageTypeRegistry, artifact_types: &mut ArtifactTypeRegistry| {
             artifact_types.register(ArtifactTypeDef {
@@ -707,6 +710,9 @@ async fn waiting_for_kbbl_parks_and_reattaches() {
             db_url: db_url2,
             pwa_dir: PathBuf::from("/tmp"),
             cors_origins: vec![],
+            auth_policy: oakridge_core::config::AuthPolicy::Loopback,
+            stage_timeout_secs: 3600,
+            stuck_sweep_interval_secs: 60,
         },
         move |stage_types, artifact_types| {
             artifact_types.register(ArtifactTypeDef {
@@ -814,6 +820,9 @@ async fn session_ended_without_emit_parks_running_stage() {
             db_url: db_url.clone(),
             pwa_dir: PathBuf::from("/tmp"),
             cors_origins: vec![],
+            auth_policy: oakridge_core::config::AuthPolicy::Loopback,
+            stage_timeout_secs: 3600,
+            stuck_sweep_interval_secs: 60,
         },
         move |stage_types, artifact_types| {
             artifact_types.register(ArtifactTypeDef {

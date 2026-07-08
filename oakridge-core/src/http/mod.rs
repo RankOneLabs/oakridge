@@ -1,22 +1,94 @@
 pub mod rest;
 pub mod sse;
 
-use axum::http::{header, HeaderName, Method};
+use axum::body::Body;
+use axum::http::{header, HeaderName, Method, Request, Response, StatusCode};
+use axum::middleware::{self, Next};
 use axum::routing::{get, post};
 use axum::Router;
+use serde_json::json;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 
-pub use crate::config::Config;
+pub use crate::config::{AuthPolicy, Config};
 use crate::db;
 use crate::events::EventBus;
 use crate::executor::delegated_lbc_run::DelegatedLbcRunStage;
 use crate::executor::delegated_session::{kbbl_client::KbblClient, DelegatedSessionStage};
 use crate::registry::{register_dev_flow_types, ArtifactTypeRegistry, StageTypeRegistry};
 use crate::scheduler::Coordinator;
+
+// ---- control auth middleware -----------------------------------------------
+
+/// Constant-time byte-slice equality to avoid timing oracles on the token.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter()
+        .zip(b.iter())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
+}
+
+fn unauthorized() -> Response<Body> {
+    Response::builder()
+        .status(StatusCode::UNAUTHORIZED)
+        .header("content-type", "application/json")
+        .header("www-authenticate", r#"Bearer realm="oakridge-core""#)
+        .body(Body::from(json!({"error": "unauthorized"}).to_string()))
+        .unwrap()
+}
+
+fn forbidden() -> Response<Body> {
+    Response::builder()
+        .status(StatusCode::FORBIDDEN)
+        .header("content-type", "application/json")
+        .header("www-authenticate", r#"Bearer realm="oakridge-core""#)
+        .body(Body::from(json!({"error": "forbidden"}).to_string()))
+        .unwrap()
+}
+
+async fn control_auth_middleware(req: Request<Body>, next: Next) -> Response<Body> {
+    // The middleware is installed only in token mode. If the token extension is
+    // missing, the app is miswired; fail closed instead of passing writes.
+    let token: Option<Arc<String>> = req.extensions().get::<Arc<String>>().cloned();
+    let token = match token {
+        Some(t) => t,
+        None => return forbidden(),
+    };
+
+    // Safe methods pass through without auth.
+    if matches!(
+        req.method(),
+        &Method::GET | &Method::HEAD | &Method::OPTIONS
+    ) {
+        return next.run(req).await;
+    }
+
+    let auth = req.headers().get(header::AUTHORIZATION);
+    match auth {
+        None => unauthorized(),
+        Some(val) => {
+            let raw = match val.to_str() {
+                Ok(s) => s,
+                Err(_) => return unauthorized(),
+            };
+            if raw.len() < 8 || !raw[..7].eq_ignore_ascii_case("bearer ") {
+                return unauthorized();
+            }
+            let presented = &raw[7..];
+            if constant_time_eq(presented.as_bytes(), token.as_bytes()) {
+                next.run(req).await
+            } else {
+                forbidden()
+            }
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -64,6 +136,13 @@ pub async fn boot<F>(cfg: Config, register_fn: F) -> anyhow::Result<(Router, Arc
 where
     F: FnOnce(&mut StageTypeRegistry, &mut ArtifactTypeRegistry),
 {
+    if matches!(cfg.auth_policy, AuthPolicy::InsecureNonLoopback) {
+        tracing::warn!(
+            "oakridge-core: running without authentication on a non-loopback bind \
+             (ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1). Set OAKRIDGE_CONTROL_TOKEN to protect control routes."
+        );
+    }
+
     let pool = Arc::new(db::init_pool(&cfg.db_url).await?);
 
     let mut stage_reg = StageTypeRegistry::new();
@@ -73,13 +152,20 @@ where
     let bus = EventBus::new();
     let stage_reg = Arc::new(stage_reg);
     let artifact_reg = Arc::new(artifact_reg);
-    let coordinator = Arc::new(Coordinator::new(
-        pool.clone(),
-        stage_reg.clone(),
-        artifact_reg.clone(),
-        bus.clone(),
-    ));
+    let coordinator = Arc::new(
+        Coordinator::new(
+            pool.clone(),
+            stage_reg.clone(),
+            artifact_reg.clone(),
+            bus.clone(),
+        )
+        .with_liveness_config(
+            std::time::Duration::from_secs(cfg.stage_timeout_secs),
+            std::time::Duration::from_secs(cfg.stuck_sweep_interval_secs),
+        ),
+    );
     coordinator.recover().await?;
+    let _sweeper = coordinator.spawn_stuck_sweeper();
 
     let state = AppState {
         pool,
@@ -93,6 +179,18 @@ where
         ServeDir::new(&cfg.pwa_dir).fallback(ServeFile::new(cfg.pwa_dir.join("index.html")));
 
     let app = router(state).fallback_service(static_fallback);
+
+    // In token mode, inject the token as a request extension and apply the
+    // control auth middleware. In loopback or insecure mode the middleware
+    // is not added, keeping local development frictionless.
+    let app = if let AuthPolicy::Token(ref token) = cfg.auth_policy {
+        let token_arc = Arc::new(token.clone());
+        app.layer(middleware::from_fn(control_auth_middleware))
+            .layer(axum::Extension(token_arc))
+    } else {
+        app
+    };
+
     let app = if cfg.cors_origins.is_empty() {
         app
     } else {
@@ -102,6 +200,7 @@ where
                 .allow_methods([Method::GET, Method::POST])
                 .allow_headers([
                     header::CONTENT_TYPE,
+                    header::AUTHORIZATION,
                     HeaderName::from_static("last-event-id"),
                 ]),
         )
@@ -139,6 +238,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/stage_instances/:id/resume",
             post(rest::resume_stage_instance),
+        )
+        .route(
+            "/stage_instances/:id/retry_stuck",
+            post(rest::retry_stuck_stage_instance),
         )
         .route("/artifacts/:id", get(rest::get_artifact))
         .route(

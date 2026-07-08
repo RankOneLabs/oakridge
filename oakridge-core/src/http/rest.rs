@@ -577,6 +577,25 @@ pub async fn resume_stage_instance(
     Ok((StatusCode::ACCEPTED, Json(updated)))
 }
 
+pub async fn retry_stuck_stage_instance(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<(StatusCode, Json<StageInstance>), AppError> {
+    let si_id = StageInstanceId(id);
+
+    state
+        .coordinator
+        .retry_stuck_stage(si_id)
+        .await
+        .map_err(|e| match e {
+            DecisionError::Conflict(msg) => AppError::Conflict(msg),
+            DecisionError::Internal(err) => AppError::Internal(err.to_string()),
+        })?;
+
+    let updated = queries::get_stage_instance_by_id(&state.pool, &si_id).await?;
+    Ok((StatusCode::ACCEPTED, Json(updated)))
+}
+
 // ── Parked handler ────────────────────────────────────────────────────────────
 
 pub async fn list_parked(
@@ -743,7 +762,7 @@ fn operator_run_summary(row: queries::OperatorRunSummary) -> OperatorRunSummary 
         current_stage: row.current_stage,
         parked_count: row.parked_count,
         updated_at: row.updated_at.to_rfc3339(),
-        is_stuck: false,
+        is_stuck: row.is_stuck,
         is_failed: matches!(row.status, RunStatus::Failed),
     }
 }

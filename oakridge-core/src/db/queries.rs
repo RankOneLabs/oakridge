@@ -51,6 +51,7 @@ struct OperatorRunSummaryRow {
     status: String,
     current_stage: Option<String>,
     parked_count: i64,
+    is_stuck: i64,
     updated_at: String,
 }
 
@@ -166,6 +167,8 @@ pub struct OperatorRunSummary {
     pub status: RunStatus,
     pub current_stage: Option<String>,
     pub parked_count: usize,
+    /// True when any stage in this run is parked with parked_reason = 'stuck_timeout'.
+    pub is_stuck: bool,
     pub updated_at: DateTime<Utc>,
 }
 
@@ -176,6 +179,7 @@ fn row_to_operator_run_summary(r: OperatorRunSummaryRow) -> crate::Result<Operat
         status: str_to_enum(r.status)?,
         current_stage: r.current_stage,
         parked_count: r.parked_count as usize,
+        is_stuck: r.is_stuck != 0,
         updated_at: parse_dt(&r.updated_at)?,
     })
 }
@@ -474,6 +478,7 @@ pub async fn list_operator_run_summaries(
                  MIN(CASE WHEN si.status = 'pending' THEN si.stage_key END) \
              ) AS current_stage, \
              COALESCE(SUM(CASE WHEN si.status = 'parked' THEN 1 ELSE 0 END), 0) AS parked_count, \
+             COALESCE(MAX(CASE WHEN si.status = 'parked' AND si.parked_reason = 'stuck_timeout' THEN 1 ELSE 0 END), 0) AS is_stuck, \
              wr.updated_at AS updated_at \
          FROM workflow_run wr \
          INNER JOIN workflow_def wd ON wd.id = wr.workflow_def_id \
@@ -792,6 +797,95 @@ pub async fn list_parked_stage_instances(pool: &SqlitePool) -> crate::Result<Vec
     .fetch_all(pool)
     .await?;
     rows.into_iter().map(row_to_stage_instance).collect()
+}
+
+/// Bump updated_at on a stage instance without changing its status.
+/// Used by StageContext::heartbeat and after successful artifact emits to
+/// signal liveness to the stuck-stage sweeper.
+pub async fn touch_stage_instance(pool: &SqlitePool, id: &StageInstanceId) -> crate::Result<()> {
+    let id_str = id.0.to_string();
+    let updated_at = Utc::now().to_rfc3339();
+    let result = sqlx::query("UPDATE stage_instance SET updated_at = ? WHERE id = ?")
+        .bind(updated_at)
+        .bind(&id_str)
+        .execute(pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(crate::Error::NotFound {
+            entity: "stage_instance".into(),
+            id: id_str,
+        });
+    }
+    Ok(())
+}
+
+/// List Running stage instances whose updated_at is strictly older than cutoff.
+/// Used by the stuck-stage sweeper to find candidates for parking.
+pub async fn list_running_stage_instances_older_than(
+    pool: &SqlitePool,
+    cutoff: DateTime<Utc>,
+) -> crate::Result<Vec<StageInstance>> {
+    let cutoff_str = cutoff.to_rfc3339();
+    let rows = sqlx::query_as::<_, StageInstanceRow>(
+        "SELECT id, run_id, stage_key, stage_type, status, config, parked_reason, parked_meta, \
+         terminal_meta, external_ref, started_at, ended_at, created_at, updated_at \
+         FROM stage_instance WHERE status = 'running' AND updated_at < ?",
+    )
+    .bind(cutoff_str)
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter().map(row_to_stage_instance).collect()
+}
+
+/// Conditionally transition a Running stage instance to Parked with
+/// parked_reason = 'stuck_timeout'. Returns true when the CAS update succeeded
+/// (stage was still Running), false when it had already moved on.
+pub async fn park_stage_instance_as_stuck(
+    pool: &SqlitePool,
+    id: &StageInstanceId,
+    parked_meta: &serde_json::Value,
+) -> crate::Result<bool> {
+    let id_str = id.0.to_string();
+    let parked_meta_str = serde_json::to_string(parked_meta)?;
+    let updated_at = Utc::now().to_rfc3339();
+    let result = sqlx::query(
+        "UPDATE stage_instance \
+         SET status = 'parked', parked_reason = 'stuck_timeout', parked_meta = ?, \
+             updated_at = ? \
+         WHERE id = ? AND status = 'running'",
+    )
+    .bind(parked_meta_str)
+    .bind(updated_at)
+    .bind(id_str)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+/// Atomically transition a stuck-parked stage instance back to Running and
+/// clear parked metadata. Returns false if the row is no longer parked as
+/// stuck_timeout.
+pub async fn retry_stuck_stage_instance(
+    pool: &SqlitePool,
+    id: &StageInstanceId,
+    started_at: Option<DateTime<Utc>>,
+) -> crate::Result<bool> {
+    let id_str = id.0.to_string();
+    let updated_at = Utc::now().to_rfc3339();
+    let started_at_str = started_at.map(|t| t.to_rfc3339());
+    let result = sqlx::query(
+        "UPDATE stage_instance \
+         SET status = 'running', parked_reason = NULL, parked_meta = NULL, \
+             terminal_meta = NULL, external_ref = NULL, started_at = ?, \
+             ended_at = NULL, updated_at = ? \
+         WHERE id = ? AND status = 'parked' AND parked_reason = 'stuck_timeout'",
+    )
+    .bind(started_at_str)
+    .bind(updated_at)
+    .bind(id_str)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
 }
 
 // ── Artifact ──────────────────────────────────────────────────────────────────
@@ -1679,5 +1773,135 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(busy_timeout_ms, 5_000);
+    }
+
+    #[tokio::test]
+    async fn park_stage_instance_as_stuck_cas() {
+        let pool = make_test_pool().await;
+        let def = test_workflow_def();
+        insert_workflow_def(&pool, &def).await.unwrap();
+        let run = test_run(def.id);
+        insert_workflow_run(&pool, &run).await.unwrap();
+
+        let si = StageInstance {
+            status: StageStatus::Running,
+            ..test_stage(run.id)
+        };
+        insert_stage_instance(&pool, &si).await.unwrap();
+
+        let meta = json!({"kind": "stuck_timeout", "timeout_seconds": 3600});
+
+        // First attempt: stage is Running → should park.
+        let parked = park_stage_instance_as_stuck(&pool, &si.id, &meta)
+            .await
+            .unwrap();
+        assert!(parked, "first CAS must succeed when stage is running");
+
+        let got = get_stage_instance_by_id(&pool, &si.id).await.unwrap();
+        assert_eq!(got.status, StageStatus::Parked);
+        assert_eq!(got.parked_reason.as_deref(), Some("stuck_timeout"));
+        assert_eq!(got.parked_meta, Some(meta.clone()));
+
+        // Second attempt: stage is now Parked → CAS must fail.
+        let parked_again = park_stage_instance_as_stuck(&pool, &si.id, &meta)
+            .await
+            .unwrap();
+        assert!(
+            !parked_again,
+            "second CAS must be a no-op when stage is already parked"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_running_stage_instances_older_than_filters_correctly() {
+        let pool = make_test_pool().await;
+        let def = test_workflow_def();
+        insert_workflow_def(&pool, &def).await.unwrap();
+        let run = test_run(def.id);
+        insert_workflow_run(&pool, &run).await.unwrap();
+
+        let past = DateTime::parse_from_rfc3339("2020-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let future = DateTime::parse_from_rfc3339("2099-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        let old_running = StageInstance {
+            id: StageInstanceId(Uuid::new_v4()),
+            stage_key: "old_running".into(),
+            status: StageStatus::Running,
+            updated_at: past,
+            ..test_stage(run.id)
+        };
+        let new_running = StageInstance {
+            id: StageInstanceId(Uuid::new_v4()),
+            stage_key: "new_running".into(),
+            status: StageStatus::Running,
+            updated_at: future,
+            ..test_stage(run.id)
+        };
+        let parked_old = StageInstance {
+            id: StageInstanceId(Uuid::new_v4()),
+            stage_key: "parked_old".into(),
+            status: StageStatus::Parked,
+            updated_at: past,
+            ..test_stage(run.id)
+        };
+        insert_stage_instance(&pool, &old_running).await.unwrap();
+        insert_stage_instance(&pool, &new_running).await.unwrap();
+        insert_stage_instance(&pool, &parked_old).await.unwrap();
+
+        let cutoff = DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        let stale = list_running_stage_instances_older_than(&pool, cutoff)
+            .await
+            .unwrap();
+
+        assert_eq!(stale.len(), 1);
+        assert_eq!(stale[0].id, old_running.id);
+    }
+
+    #[tokio::test]
+    async fn operator_run_summaries_is_stuck_reflects_stuck_timeout_parked_reason() {
+        let pool = make_test_pool().await;
+        let def = test_workflow_def();
+        insert_workflow_def(&pool, &def).await.unwrap();
+
+        let run = WorkflowRun {
+            status: RunStatus::Running,
+            ..test_run(def.id)
+        };
+        insert_workflow_run(&pool, &run).await.unwrap();
+
+        // Normal parked stage: is_stuck must be false.
+        let normal_parked = StageInstance {
+            id: StageInstanceId(Uuid::new_v4()),
+            stage_key: "gate".into(),
+            status: StageStatus::Parked,
+            parked_reason: Some("waiting_gate".into()),
+            ..test_stage(run.id)
+        };
+        insert_stage_instance(&pool, &normal_parked).await.unwrap();
+
+        let summaries = list_operator_run_summaries(&pool).await.unwrap();
+        let s = summaries.iter().find(|s| s.run_id == run.id).unwrap();
+        assert!(!s.is_stuck, "normal park must not set is_stuck");
+
+        // Add a stuck-parked stage: is_stuck must flip to true.
+        let stuck_parked = StageInstance {
+            id: StageInstanceId(Uuid::new_v4()),
+            stage_key: "long_running".into(),
+            status: StageStatus::Parked,
+            parked_reason: Some("stuck_timeout".into()),
+            ..test_stage(run.id)
+        };
+        insert_stage_instance(&pool, &stuck_parked).await.unwrap();
+
+        let summaries2 = list_operator_run_summaries(&pool).await.unwrap();
+        let s2 = summaries2.iter().find(|s| s.run_id == run.id).unwrap();
+        assert!(s2.is_stuck, "stuck_timeout parked stage must set is_stuck");
     }
 }

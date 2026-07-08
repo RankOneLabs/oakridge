@@ -2,11 +2,12 @@ import { z } from "zod";
 import type { Hono } from "hono";
 import type { Database } from "bun:sqlite";
 import { getBrief, insertBrief } from "../../db/briefs";
+import { transitionCohort, type CohortTransitionResult } from "../../db/cohort-transitions";
 import { freeze, unfreeze } from "../../review/freeze";
+import { emitFreezeEvents, type ReviewFreezeEvent } from "../../review/events";
 import { taskTrackerEvents } from "../../db/events";
 import { BRIEF_TRANSITIONS } from "../../orchestrator/state-machine";
-import { getEpicBySpec } from "../../db/epics";
-import { isFrozen } from "../../db/epic-freeze";
+import { isBriefEpicArchived } from "../../db/archive-guards";
 import { countUnmetDependencies } from "../../db/cohorts";
 import type { Brief } from "../../types/task-tracker";
 
@@ -22,6 +23,8 @@ const BriefReopenSchema = z.object({
 interface BriefStatusRouteDeps {
   db: Database;
 }
+
+type FailedCohortTransition = Extract<CohortTransitionResult, { ok: false }>;
 
 export function mountBriefStatusRoutes(app: Hono, deps: BriefStatusRouteDeps): void {
   const { db } = deps;
@@ -46,25 +49,16 @@ export function mountBriefStatusRoutes(app: Hono, deps: BriefStatusRouteDeps): v
     }
     const brief_id = c.req.param("id");
 
-    const briefForFreeze = getBrief(db, brief_id);
-    if (briefForFreeze) {
-      const epicRow = db
-        .prepare<{ spec_id: string }, [string]>(
-          "SELECT p.spec_id FROM cohorts c JOIN plans p ON p.id = c.plan_id WHERE c.id = ?",
-        )
-        .get(briefForFreeze.cohort_id);
-      if (epicRow) {
-        const epic = getEpicBySpec(db, epicRow.spec_id);
-        if (epic && isFrozen(db, epic.id)) {
-          return c.json({ error: "epic is archived" }, 409);
-        }
-      }
+    if (isBriefEpicArchived(db, brief_id)) {
+      return c.json({ error: "epic is archived" }, 409);
     }
 
     let updated: Brief | null = null;
     let emitApproved: { brief_id: string; cohort_id: string } | null = null;
     let emitRejected: { brief_id: string; cohort_id: string } | null = null;
     let depsMet = false;
+    let pendingFreezeEvents: ReviewFreezeEvent[] = [];
+    let cohortTransitionError = undefined as FailedCohortTransition | undefined;
 
     try {
       const error = db.transaction((): string | null => {
@@ -80,20 +74,23 @@ export function mountBriefStatusRoutes(app: Hono, deps: BriefStatusRouteDeps): v
           const nextCohortStatus =
             countUnmetDependencies(db, brief.cohort_id) > 0 ? "ready_to_build" : "building";
           depsMet = nextCohortStatus === "building";
+          const cohortEvent = depsMet ? "brief_approved_deps_met" : "brief_approved_deps_pending";
 
-          const cohortResult = db.prepare(
-            "UPDATE cohorts SET status = ? WHERE id = ? AND status = 'brief_review'",
-          ).run(nextCohortStatus, brief.cohort_id);
-          if (cohortResult.changes === 0) return "cohort_not_in_brief_review";
+          const cohortTransition = transitionCohort(db, brief.cohort_id, cohortEvent);
+          if (!cohortTransition.ok) {
+            cohortTransitionError = cohortTransition;
+            return "cohort_transition_failed";
+          }
           db.prepare("UPDATE briefs SET status = ? WHERE id = ?").run(nextStatus, brief_id);
-          freeze(db, "build_brief", brief_id);
+          pendingFreezeEvents = freeze(db, "build_brief", brief_id);
           updated = getBrief(db, brief_id);
           emitApproved = { brief_id, cohort_id: brief.cohort_id };
         } else {
-          const cohortResult = db.prepare(
-            "UPDATE cohorts SET status = 'briefing' WHERE id = ? AND status = 'brief_review'",
-          ).run(brief.cohort_id);
-          if (cohortResult.changes === 0) return "cohort_not_in_brief_review";
+          const cohortTransition = transitionCohort(db, brief.cohort_id, "brief_rejected");
+          if (!cohortTransition.ok) {
+            cohortTransitionError = cohortTransition;
+            return "cohort_transition_failed";
+          }
           db.prepare(
             "UPDATE briefs SET status = ?, rejection_reason = ? WHERE id = ?",
           ).run(nextStatus, reason ?? null, brief_id);
@@ -107,12 +104,26 @@ export function mountBriefStatusRoutes(app: Hono, deps: BriefStatusRouteDeps): v
       if (error === "not_found") return c.json({ error: "not found" }, 404);
       if (error === "not_pending") return c.json({ error: "brief is not in pending_approval" }, 409);
       if (error === "no_transition") return c.json({ error: "transition not defined" }, 409);
-      if (error === "cohort_not_in_brief_review") return c.json({ error: "cohort is not in brief_review" }, 409);
+      if (error === "cohort_transition_failed") {
+        if (cohortTransitionError?.reason === "not_found") {
+          return c.json({ error: "cohort not found", detail: cohortTransitionError.detail }, 404);
+        }
+        if (cohortTransitionError?.reason === "invalid_transition") {
+          return c.json({
+            error: cohortTransitionError.detail,
+            current_status: cohortTransitionError.current,
+            requested: cohortTransitionError.event,
+          }, 409);
+        }
+        return c.json({ error: "cohort transition failed" }, 409);
+      }
     } catch (err) {
+      pendingFreezeEvents = [];
       console.error("brief-status:patch failed", err);
       return c.json({ error: "internal server error" }, 500);
     }
 
+    emitFreezeEvents(pendingFreezeEvents);
     if (emitApproved) {
       const { cohort_id: approvedCohortId } = emitApproved;
       taskTrackerEvents.emit("brief.approved", emitApproved);
@@ -143,7 +154,12 @@ export function mountBriefStatusRoutes(app: Hono, deps: BriefStatusRouteDeps): v
     const { model } = result.data;
     const old_id = c.req.param("id");
 
+    if (isBriefEpicArchived(db, old_id)) {
+      return c.json({ error: "epic is archived" }, 409);
+    }
+
     let newBrief: Brief | null = null;
+    let pendingReopenEvents: ReviewFreezeEvent[] = [];
 
     try {
       const error = db.transaction((): string | null => {
@@ -164,7 +180,7 @@ export function mountBriefStatusRoutes(app: Hono, deps: BriefStatusRouteDeps): v
           next_action: oldBrief.next_action,
         });
 
-        unfreeze(db, "build_brief", old_id);
+        pendingReopenEvents = unfreeze(db, "build_brief", old_id);
         db.prepare("UPDATE briefs SET status = 'superseded' WHERE id = ?").run(old_id);
         // Cohort status intentionally unchanged (operator drives re-trigger)
 
@@ -174,10 +190,12 @@ export function mountBriefStatusRoutes(app: Hono, deps: BriefStatusRouteDeps): v
       if (error === "not_found") return c.json({ error: "not found" }, 404);
       if (error === "not_reopenable") return c.json({ error: "brief must be in approved or rejected to reopen" }, 409);
     } catch (err) {
+      pendingReopenEvents = [];
       console.error("brief-reopen:post failed", err);
       return c.json({ error: "internal server error" }, 500);
     }
 
+    emitFreezeEvents(pendingReopenEvents);
     if (newBrief) {
       taskTrackerEvents.emit("brief.submitted", {
         brief_id: (newBrief as Brief).id,

@@ -2,11 +2,13 @@ import { z } from "zod";
 import type { Hono } from "hono";
 import type { Database } from "bun:sqlite";
 import { getPlan } from "../../db/plans";
+import { transitionCohort } from "../../db/cohort-transitions";
 import { freeze } from "../../review/freeze";
+import { emitFreezeEvents, type ReviewFreezeEvent } from "../../review/events";
 import { taskTrackerEvents } from "../../db/events";
 import { PLAN_TRANSITIONS } from "../../orchestrator/state-machine";
 import { getEpicBySpec, advanceEpicByEvent } from "../../db/epics";
-import { isFrozen } from "../../db/epic-freeze";
+import { isPlanEpicArchived } from "../../db/archive-guards";
 import type { Plan } from "../../types/task-tracker";
 
 const PatchPlanStatusSchema = z.object({
@@ -29,14 +31,8 @@ export function mountPlanStatusRoutes(app: Hono, deps: PlanStatusRouteDeps): voi
   app.post("/plans/:id/submit", async (c) => {
     const plan_id = c.req.param("id");
 
-    const planForFreeze = db
-      .prepare<{ spec_id: string }, [string]>("SELECT spec_id FROM plans WHERE id = ?")
-      .get(plan_id);
-    if (planForFreeze) {
-      const epic = getEpicBySpec(db, planForFreeze.spec_id);
-      if (epic && isFrozen(db, epic.id)) {
-        return c.json({ error: "epic is archived" }, 409);
-      }
+    if (isPlanEpicArchived(db, plan_id)) {
+      return c.json({ error: "epic is archived" }, 409);
     }
 
     let updated: Plan | null = null;
@@ -97,20 +93,15 @@ export function mountPlanStatusRoutes(app: Hono, deps: PlanStatusRouteDeps): voi
     }
     const plan_id = c.req.param("id");
 
-    const planForFreeze = db
-      .prepare<{ spec_id: string }, [string]>("SELECT spec_id FROM plans WHERE id = ?")
-      .get(plan_id);
-    if (planForFreeze) {
-      const epic = getEpicBySpec(db, planForFreeze.spec_id);
-      if (epic && isFrozen(db, epic.id)) {
-        return c.json({ error: "epic is archived" }, 409);
-      }
+    if (isPlanEpicArchived(db, plan_id)) {
+      return c.json({ error: "epic is archived" }, 409);
     }
 
     let updated: Plan | null = null;
     let emitApproved: { plan_id: string; spec_id: string } | null = null;
     let emitRejected: { plan_id: string; spec_id: string } | null = null;
     const emitBriefingStarted: { cohort_id: string }[] = [];
+    let pendingFreezeEvents: ReviewFreezeEvent[] = [];
 
     try {
       const error = db.transaction((): string | null => {
@@ -126,7 +117,7 @@ export function mountPlanStatusRoutes(app: Hono, deps: PlanStatusRouteDeps): voi
           db.prepare<Plan, [string, string]>(
             "UPDATE plans SET status = ? WHERE id = ? RETURNING *",
           ).get(nextStatus, plan_id);
-          freeze(db, "plan", plan_id);
+          pendingFreezeEvents = freeze(db, "plan", plan_id);
 
           // Advance Epic stage: plan → build
           const epic = getEpicBySpec(db, plan.spec_id);
@@ -150,7 +141,20 @@ export function mountPlanStatusRoutes(app: Hono, deps: PlanStatusRouteDeps): voi
             .all(plan_id);
 
           for (const cohort of waitingCohorts) {
-            db.prepare("UPDATE cohorts SET status = 'briefing' WHERE id = ?").run(cohort.id);
+            const transition = transitionCohort(db, cohort.id, "plan_approved");
+            if (!transition.ok) {
+              if (transition.reason === "invalid_transition") {
+                console.error(
+                  JSON.stringify({
+                    kbbl: "plan-status",
+                    warn: "plan_approved transition rejected",
+                    cohort_id: cohort.id,
+                    detail: transition.detail,
+                  }),
+                );
+              }
+              continue;
+            }
             emitBriefingStarted.push({ cohort_id: cohort.id });
           }
 
@@ -171,6 +175,7 @@ export function mountPlanStatusRoutes(app: Hono, deps: PlanStatusRouteDeps): voi
       if (error === "not_pending") return c.json({ error: "plan is not in pending_approval" }, 409);
       if (error === "no_transition") return c.json({ error: "transition not defined" }, 409);
     } catch (err) {
+      pendingFreezeEvents = [];
       console.error("plan-status:patch failed", err);
       return c.json({ error: "internal server error" }, 500);
     }
@@ -179,6 +184,7 @@ export function mountPlanStatusRoutes(app: Hono, deps: PlanStatusRouteDeps): voi
     // never emit events or respond 200 with a null body.
     if (!updated) return c.json({ error: "internal server error" }, 500);
 
+    emitFreezeEvents(pendingFreezeEvents);
     if (emitApproved) {
       taskTrackerEvents.emit("plan.approved", emitApproved);
       for (const p of emitBriefingStarted) {

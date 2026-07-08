@@ -21,12 +21,17 @@ export function createKbblChatBackend({
 
       // Convert dev-flow EpicIdentity to generic WorktreeCreateIdentity at this
       // boundary so session-manager stays free of orchestrator domain knowledge.
-      const worktreeIdentity: WorktreeCreateIdentity | undefined = inputRef.worktreeIdentity
-        ? {
-            branchName: `cohort/${inputRef.worktreeIdentity.epicSlug}/${inputRef.worktreeIdentity.cohortSlug}`,
-            worktreeSubdir: `${inputRef.worktreeIdentity.epicSlug}/${inputRef.worktreeIdentity.cohortSlug}`,
-            baseRef: `origin/${inputRef.worktreeIdentity.epicBranch}`,
-          }
+      const epicIdentity = inputRef.worktreeIdentity;
+      const worktreeIdentity: WorktreeCreateIdentity | undefined = epicIdentity
+        ? (() => {
+            const { epicSlug, cohortSlug, epicBranch, attemptSuffix } = epicIdentity;
+            const suffix = attemptSuffix ? `/${attemptSuffix}` : "";
+            return {
+              branchName: `cohort/${epicSlug}/${cohortSlug}${suffix}`,
+              worktreeSubdir: `${epicSlug}/${cohortSlug}${suffix}`,
+              baseRef: `origin/${epicBranch}`,
+            };
+          })()
         : undefined;
       const session = await manager.create({
         workdir: inputRef.workdir,
