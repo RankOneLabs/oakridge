@@ -1,14 +1,9 @@
+import { LBC_STUDY_MODEL_CATALOG } from "../../../src/generated/model_catalog";
 import { RunSpecSchema } from "../../lib/types";
 import type { ConditionSpec, RunSpec, TaskSummary } from "../../lib/types";
 
-export const KNOWN_MODELS = [
-  "claude-sonnet-4-5",
-  "claude-opus-4-8",
-  "claude-opus-4-7",
-  "claude-haiku-4-5",
-  "gpt-5",
-  "gpt-5-mini",
-] as const;
+/** Models offered as quick-pick checkboxes in the launch form, in display order. */
+export const FORM_MODELS = LBC_STUDY_MODEL_CATALOG.filter((m) => m.inForm);
 
 export interface FormState {
   selectedTaskName: string;
@@ -39,11 +34,10 @@ export function selectedTaskLoadError(
   return resolveSelectedTask(tasks, selectedTaskName).error;
 }
 
-// Known models are ordered by KNOWN_MODELS position; extras are appended
-// in the order they were added.
+// Form models appear in catalog order; extras are appended in add order.
 export function buildRunSpec(state: FormState): BuildResult {
   const modelPool = [
-    ...KNOWN_MODELS.filter((model) => state.checkedModels.has(model)),
+    ...FORM_MODELS.filter((m) => state.checkedModels.has(m.id)).map((m) => m.id),
     ...state.extraModels,
   ];
   const result = RunSpecSchema.safeParse({

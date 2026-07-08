@@ -43,6 +43,11 @@ import {
   TaskDraftSchema,
   TaskSummarySchema,
 } from "./contracts";
+import {
+  BUILTIN_GRADER_SUMMARIES,
+  BUILTIN_TASK_DETAILS,
+} from "./generated/task_catalog";
+import { modelLabelFromCatalog } from "./generated/model_catalog";
 
 export type { CellDetail, CellEvent, CellSummary, CommitSnapshot, EvalScore };
 
@@ -543,19 +548,8 @@ async function countCommits(cellDir: string): Promise<number> {
 // Run-metadata derivation
 // ---------------------------------------------------------------------------
 
-const MODEL_LABELS: Record<string, string> = {
-  "claude-sonnet-4-6": "Claude Sonnet 4.6",
-  "claude-sonnet-4-5": "Claude Sonnet 4.5",
-  "claude-opus-4-7": "Claude Opus 4.7",
-  "claude-haiku-4-5": "Claude Haiku 4.5",
-  "gpt-5": "GPT-5",
-  "gpt-5-mini": "GPT-5 mini",
-  "gemini-2.5-pro": "Gemini 2.5 Pro",
-  "gemini-2.5-flash": "Gemini 2.5 Flash",
-};
-
 export function modelLabel(id: string): string {
-  return MODEL_LABELS[id] ?? id;
+  return modelLabelFromCatalog(id);
 }
 
 async function deriveRunMetadata(
@@ -754,219 +748,9 @@ export async function resolveCellDir(cellId: string): Promise<string | null> {
 // Built-in task + grader catalog
 // ---------------------------------------------------------------------------
 
-const BUILTIN_TASK_DETAILS: readonly TaskBuiltinDetail[] = [
-  {
-    name: "prose_substrate_thesis",
-    artifact_type: "prose",
-    artifact_filename: "thesis.md",
-    seed_content: "",
-    brief: {
-      target_spec:
-        "Draft a technical blog post explaining oakridge's substrate-mediated coordination architecture to senior software engineers.",
-      success_criteria: [
-        "explains the substrate-mediated coordination thesis clearly",
-        "names the three coordination modes accurately",
-        "includes at least one concrete example",
-        "cites the blackboard ancestor and the Yunkaporta paper",
-        "reads as a technical blog post, not marketing copy",
-      ],
-      constraints: [
-        "no marketing language",
-        "no invented coordination modes",
-        "no fictional code APIs",
-      ],
-    },
-    model_pool: [
-      "claude-sonnet-4-5",
-      "gpt-5-mini",
-      "gemini-2.5-pro",
-      "claude-opus-4-7",
-      "gpt-5",
-      "gemini-2.5-flash",
-      "claude-haiku-4-5",
-    ],
-    frame_pool: [
-      "precision",
-      "skepticism",
-      "synthesis",
-      "user-empathy",
-      "first-principles",
-      "concision",
-      "voice",
-    ],
-    has_grader: true,
-    grader_key: "prose_substrate_thesis",
-    source: "builtin",
-  },
-  {
-    name: "code_leetcode_longest_substring",
-    artifact_type: "code",
-    artifact_filename: "solution.py",
-    seed_content:
-      "def length_of_longest_substring(s: str) -> int:\n" +
-      "    raise NotImplementedError\n",
-    brief: {
-      target_spec:
-        "Implement length_of_longest_substring(s: str) -> int in solution.py.",
-      success_criteria: [
-        "passes the canonical example test cases",
-        "type-checks under strict mypy",
-      ],
-      constraints: [
-        "single file, single function",
-        "no third-party imports",
-      ],
-    },
-    model_pool: [
-      "claude-sonnet-4-5",
-      "gpt-5",
-      "claude-opus-4-7",
-      "gemini-2.5-pro",
-      "gpt-5-mini",
-      "claude-haiku-4-5",
-      "gemini-2.5-flash",
-    ],
-    frame_pool: [
-      "type-safety",
-      "test-coverage",
-      "minimalism",
-      "defensive-programming",
-      "performance",
-      "readability",
-      "explicit-errors",
-    ],
-    has_grader: true,
-    grader_key: "code_leetcode_longest_substring",
-    source: "builtin",
-  },
-  {
-    name: "code_leetcode_trapping_rain_water",
-    artifact_type: "code",
-    artifact_filename: "solution.py",
-    seed_content:
-      "def trap(height: list[int]) -> int:\n" +
-      "    raise NotImplementedError\n",
-    brief: {
-      target_spec:
-        "Implement trap(height: list[int]) -> int in solution.py.",
-      success_criteria: [
-        "passes the canonical example test cases",
-        "type-checks under strict mypy",
-      ],
-      constraints: [
-        "single file, single function",
-        "no third-party imports",
-      ],
-    },
-    model_pool: [
-      "claude-sonnet-4-5",
-      "gpt-5",
-      "claude-opus-4-7",
-      "gemini-2.5-pro",
-      "gpt-5-mini",
-      "claude-haiku-4-5",
-      "gemini-2.5-flash",
-    ],
-    frame_pool: [
-      "type-safety",
-      "test-coverage",
-      "minimalism",
-      "defensive-programming",
-      "performance",
-      "readability",
-      "explicit-errors",
-    ],
-    has_grader: true,
-    grader_key: "code_leetcode_trapping_rain_water",
-    source: "builtin",
-  },
-  {
-    name: "code_leetcode_regex_matching",
-    artifact_type: "code",
-    artifact_filename: "solution.py",
-    seed_content:
-      "def is_match(s: str, p: str) -> bool:\n" +
-      "    raise NotImplementedError\n",
-    brief: {
-      target_spec:
-        "Implement is_match(s: str, p: str) -> bool in solution.py.",
-      success_criteria: [
-        "passes the canonical example test cases",
-        "type-checks under strict mypy",
-      ],
-      constraints: [
-        "single file, single function",
-        "no third-party imports",
-      ],
-    },
-    model_pool: [
-      "claude-sonnet-4-5",
-      "gpt-5",
-      "claude-opus-4-7",
-      "gemini-2.5-pro",
-      "gpt-5-mini",
-      "claude-haiku-4-5",
-      "gemini-2.5-flash",
-    ],
-    frame_pool: [
-      "type-safety",
-      "test-coverage",
-      "minimalism",
-      "defensive-programming",
-      "performance",
-      "readability",
-      "explicit-errors",
-    ],
-    has_grader: true,
-    grader_key: "code_leetcode_regex_matching",
-    source: "builtin",
-  },
-  {
-    name: "code_leetcode_median_two_sorted_arrays",
-    artifact_type: "code",
-    artifact_filename: "solution.py",
-    seed_content:
-      "def find_median_sorted_arrays(\n" +
-      "    nums1: list[int], nums2: list[int]\n" +
-      ") -> float:\n" +
-      "    raise NotImplementedError\n",
-    brief: {
-      target_spec:
-        "Implement find_median_sorted_arrays(nums1: list[int], nums2: list[int]) -> float in solution.py.",
-      success_criteria: [
-        "passes the canonical correctness test cases",
-        "type-checks under strict mypy",
-        "meets the perf budget",
-      ],
-      constraints: [
-        "single file, single function",
-        "no imports needed",
-        "do not sort the input arrays",
-      ],
-    },
-    model_pool: [
-      "claude-sonnet-4-5",
-      "gpt-5",
-      "claude-opus-4-7",
-      "gemini-2.5-pro",
-      "gpt-5-mini",
-      "claude-haiku-4-5",
-      "gemini-2.5-flash",
-    ],
-    frame_pool: [
-      "type-safety",
-      "test-coverage",
-      "minimalism",
-      "defensive-programming",
-      "performance",
-      "readability",
-      "explicit-errors",
-    ],
-    has_grader: true,
-    grader_key: "code_leetcode_median_two_sorted_arrays",
-    source: "builtin",
-  },
-] as const satisfies readonly TaskBuiltinDetail[];
+// BUILTIN_TASK_DETAILS and BUILTIN_GRADER_SUMMARIES come from the generated
+// artifact imported at the top. To regenerate:
+//   cd legit-biz-club && uv run python scripts/generate_dashboard_metadata.py
 
 const BUILTIN_TASK_DETAILS_BY_NAME = new Map(
   BUILTIN_TASK_DETAILS.map((task) => [task.name, task]),
@@ -987,54 +771,6 @@ const BUILTIN_TASK_SUMMARIES: readonly TaskSummary[] = BUILTIN_TASK_DETAILS.map(
 const BUILTIN_TASK_SUMMARIES_BY_NAME = new Map(
   BUILTIN_TASK_SUMMARIES.map((task) => [task.name, task]),
 );
-
-const BUILTIN_GRADER_SUMMARIES: readonly GraderSummary[] = [
-  {
-    key: "prose_substrate_thesis",
-    label: "Brief judge",
-    supported_artifact_types: ["prose"],
-    capabilities: ["brief-criteria", "llm-judge"],
-    source: "builtin",
-    config_required: false,
-    config_schema: null,
-  },
-  {
-    key: "code_leetcode_longest_substring",
-    label: "LeetCode #3 mechanical grader",
-    supported_artifact_types: ["code"],
-    capabilities: ["pytest", "mypy"],
-    source: "builtin",
-    config_required: false,
-    config_schema: null,
-  },
-  {
-    key: "code_leetcode_trapping_rain_water",
-    label: "LeetCode #42 mechanical grader",
-    supported_artifact_types: ["code"],
-    capabilities: ["pytest", "mypy"],
-    source: "builtin",
-    config_required: false,
-    config_schema: null,
-  },
-  {
-    key: "code_leetcode_regex_matching",
-    label: "LeetCode #10 mechanical grader",
-    supported_artifact_types: ["code"],
-    capabilities: ["pytest", "mypy"],
-    source: "builtin",
-    config_required: false,
-    config_schema: null,
-  },
-  {
-    key: "code_leetcode_median_two_sorted_arrays",
-    label: "LeetCode #4 mechanical grader",
-    supported_artifact_types: ["code"],
-    capabilities: ["pytest", "mypy", "perf"],
-    source: "builtin",
-    config_required: false,
-    config_schema: null,
-  },
-] as const satisfies readonly GraderSummary[];
 
 const BUILTIN_GRADER_SUMMARIES_BY_KEY = new Map(
   BUILTIN_GRADER_SUMMARIES.map((grader) => [grader.key, grader]),
