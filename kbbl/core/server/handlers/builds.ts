@@ -2,6 +2,7 @@ import type { Hono } from "hono";
 import type { Database } from "bun:sqlite";
 import type { SessionManager } from "../../session/session-manager";
 import type { createDispatcher } from "../../orchestrator/backends/dispatcher";
+import { DispatchConflictError } from "../../orchestrator/backends/dispatcher";
 import { countUnmetDependencies } from "../../db/cohorts";
 
 type Dispatcher = ReturnType<typeof createDispatcher>;
@@ -12,7 +13,7 @@ interface BuildsRouteDeps {
   manager: SessionManager;
 }
 
-export function mountBuildsRoutes(app: Hono, { db, dispatcher, manager }: BuildsRouteDeps): void {
+export function mountBuildsRoutes(app: Hono, { db, dispatcher }: BuildsRouteDeps): void {
   app.post("/briefs/:id/build", async (c) => {
     const brief_id = c.req.param("id");
 
@@ -32,28 +33,25 @@ export function mountBuildsRoutes(app: Hono, { db, dispatcher, manager }: Builds
       return c.json({ error: "cohort has unmet dependencies" }, 409);
     }
 
-    // Guard against double-dispatch while a build session is still live.
-    // Only treat current_session_ref as an in-flight build when the stage matches.
-    interface CohortRefRow {
-      current_session_ref: string | null;
-      current_session_stage: string | null;
-    }
-    const cohort = db
-      .prepare<CohortRefRow, [string]>(
-        "SELECT current_session_ref, current_session_stage FROM cohorts WHERE id = ?",
-      )
-      .get(brief.cohort_id);
-    if (cohort?.current_session_ref && cohort.current_session_stage === "build") {
-      const existingSession = manager.get(cohort.current_session_ref);
-      if (existingSession && existingSession.status !== "ended") {
-        return c.json({ error: "a build session is already running for this cohort" }, 409);
-      }
-    }
-
     try {
       const session_ref = await dispatcher.dispatch("build", brief_id);
       return c.json({ session_ref });
     } catch (err) {
+      if (err instanceof DispatchConflictError) {
+        // The dispatch claim is already held by another attempt (hook-vs-click
+        // race or double-POST). Return the active attempt metadata so the
+        // operator or client can render the in-flight state.
+        const a = err.activeAttempt;
+        return c.json(
+          {
+            error: "a build dispatch is already active for this brief",
+            active_attempt_id: a.id,
+            current_session_ref: a.actual_session_ref,
+            status: a.status,
+          },
+          409,
+        );
+      }
       const msg = err instanceof Error ? err.message : String(err);
       console.error("builds:post failed", err);
       return c.json({ error: `dispatch failed: ${msg}` }, 500);

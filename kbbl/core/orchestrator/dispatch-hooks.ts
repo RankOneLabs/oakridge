@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import type { EventBus } from "../stream/event-bus";
 import type { TaskTrackerEventMap } from "../db/events";
 import type { createDispatcher } from "./backends/dispatcher";
+import { DispatchConflictError } from "./backends/dispatcher";
 import { advanceEpicByEvent } from "../db/epics";
 
 type Dispatcher = ReturnType<typeof createDispatcher>;
@@ -13,16 +14,33 @@ interface DispatchHookDeps {
 }
 
 export function wireDispatchHooks({ taskTrackerEvents, dispatcher, db }: DispatchHookDeps): () => void {
-  const unsubSpecCreated = taskTrackerEvents.subscribe("spec.created", ({ spec_id }) => {
+  function hookDispatch(event: string, stageName: string, inputId: string, extra?: Record<string, string>) {
     void (async () => {
       try {
-        await dispatcher.dispatch("spec_analyzer", spec_id);
+        await dispatcher.dispatch(stageName, inputId);
       } catch (err) {
+        if (err instanceof DispatchConflictError) {
+          console.log(
+            JSON.stringify({
+              kbbl: "dispatch-hooks",
+              event,
+              info: "dispatch already active — race resolved, no duplicate spawned",
+              active_attempt_id: err.activeAttempt.id,
+              status: err.activeAttempt.status,
+              ...extra,
+            }),
+          );
+          return;
+        }
         console.error(
-          JSON.stringify({ kbbl: "dispatch-hooks", event: "spec.created", error: String(err), spec_id }),
+          JSON.stringify({ kbbl: "dispatch-hooks", event, error: String(err), ...extra }),
         );
       }
     })();
+  }
+
+  const unsubSpecCreated = taskTrackerEvents.subscribe("spec.created", ({ spec_id }) => {
+    hookDispatch("spec.created", "spec_analyzer", spec_id, { spec_id });
   });
 
   const unsubSpecApproved = taskTrackerEvents.subscribe("spec.approved", ({ spec_id, epic_id }) => {
@@ -35,51 +53,19 @@ export function wireDispatchHooks({ taskTrackerEvents, dispatcher, db }: Dispatc
       );
     }
 
-    void (async () => {
-      try {
-        await dispatcher.dispatch("plan_writer", spec_id);
-      } catch (err) {
-        console.error(
-          JSON.stringify({ kbbl: "dispatch-hooks", event: "spec.approved", error: String(err), spec_id }),
-        );
-      }
-    })();
+    hookDispatch("spec.approved", "plan_writer", spec_id, { spec_id });
   });
 
   const unsubPlanApproved = taskTrackerEvents.subscribe("plan.approved", ({ plan_id }) => {
-    void (async () => {
-      try {
-        await dispatcher.dispatch("brief_writer", plan_id);
-      } catch (err) {
-        console.error(
-          JSON.stringify({ kbbl: "dispatch-hooks", event: "plan.approved", error: String(err), plan_id }),
-        );
-      }
-    })();
+    hookDispatch("plan.approved", "brief_writer", plan_id, { plan_id });
   });
 
   const unsubCohortBuildReady = taskTrackerEvents.subscribe("cohort.build_ready", ({ brief_id, cohort_id }) => {
-    void (async () => {
-      try {
-        await dispatcher.dispatch("build", brief_id);
-      } catch (err) {
-        console.error(
-          JSON.stringify({ kbbl: "dispatch-hooks", event: "cohort.build_ready", error: String(err), cohort_id, brief_id }),
-        );
-      }
-    })();
+    hookDispatch("cohort.build_ready", "build", brief_id, { cohort_id, brief_id });
   });
 
   const unsubPlanCompleted = taskTrackerEvents.subscribe("plan.completed", ({ plan_id }) => {
-    void (async () => {
-      try {
-        await dispatcher.dispatch("assessor", plan_id);
-      } catch (err) {
-        console.error(
-          JSON.stringify({ kbbl: "dispatch-hooks", event: "plan.completed", error: String(err), plan_id }),
-        );
-      }
-    })();
+    hookDispatch("plan.completed", "assessor", plan_id, { plan_id });
   });
 
   return () => {
