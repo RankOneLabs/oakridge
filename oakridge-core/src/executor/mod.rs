@@ -186,15 +186,16 @@ impl StageContext {
 
         let mut attempts = 0usize;
         let artifact = loop {
-            let mut conn = self.db.acquire().await?;
-            sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await?;
+            // Use a sqlx-managed transaction: rolls back automatically on drop,
+            // making this loop safe to cancel between begin and commit.
+            let mut txn = self.db.begin().await?;
 
             let attempt: anyhow::Result<EmitAttempt> = async {
                 let version = if let Some(parent_id) = parent_artifact_id {
                     let parent_id_str = parent_id.0.to_string();
                     let parent = sqlx::query("SELECT run_id, version FROM artifact WHERE id = ?")
                         .bind(parent_id_str.clone())
-                        .fetch_optional(&mut *conn)
+                        .fetch_optional(&mut *txn)
                         .await?
                         .ok_or_else(|| crate::Error::NotFound {
                             entity: "artifact".into(),
@@ -213,7 +214,7 @@ impl StageContext {
                     )
                     .bind(parent_version)
                     .bind(parent_id_str)
-                    .fetch_one(&mut *conn)
+                    .fetch_one(&mut *txn)
                     .await?
                 } else {
                     1
@@ -247,7 +248,7 @@ impl StageContext {
                 .bind(artifact.version as i64)
                 .bind(artifact.parent_artifact_id.map(|parent| parent.0.to_string()))
                 .bind(artifact.created_at.to_rfc3339())
-                .execute(&mut *conn)
+                .execute(&mut *txn)
                 .await;
 
                 match insert_result {
@@ -260,14 +261,12 @@ impl StageContext {
 
             match attempt {
                 Ok(EmitAttempt::Inserted(artifact)) => {
-                    if let Err(err) = sqlx::query("COMMIT").execute(&mut *conn).await {
-                        let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
-                        return Err(err.into());
-                    }
+                    txn.commit().await?;
                     break artifact;
                 }
                 Ok(EmitAttempt::Retry) => {
-                    let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                    // Drop txn: sqlx Transaction rolls back on drop.
+                    drop(txn);
                     if attempts >= MAX_ARTIFACT_EMIT_RETRIES {
                         return Err(anyhow::anyhow!(
                             "artifact emit exceeded {} retries on unique conflict",
@@ -278,7 +277,8 @@ impl StageContext {
                     continue;
                 }
                 Err(err) => {
-                    let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                    // Drop txn: sqlx Transaction rolls back on drop.
+                    drop(txn);
                     return Err(err);
                 }
             }
@@ -757,6 +757,71 @@ mod tests {
             rx.try_recv().is_err(),
             "no event expected on validation failure"
         );
+    }
+
+    // ── emit cancellation safety test ─────────────────────────────────────────
+
+    #[tokio::test]
+    async fn dropped_emit_transaction_does_not_poison_pool() {
+        let pool = make_pool().await;
+        let (run_id, si_id) = setup_run(&pool).await;
+        let registry = make_artifact_registry();
+        let (tx, _rx) = mpsc::channel(8);
+
+        // Open a transaction that mirrors what emit does internally, do work inside
+        // it, then drop it without committing. This simulates StageContext::emit
+        // being dropped mid-transaction (e.g. by tokio::spawn + abort).
+        {
+            let mut txn = pool.begin().await.unwrap();
+            let id = Uuid::new_v4().to_string();
+            let run_id_str = run_id.0.to_string();
+            let si_id_str = si_id.0.to_string();
+            let now = Utc::now().to_rfc3339();
+            sqlx::query(
+                "INSERT INTO artifact (id, run_id, stage_instance_id, artifact_type, \
+                 output_name, label, body, version, parent_artifact_id, created_at) \
+                 VALUES (?, ?, ?, 'any', 'out', NULL, '{}', 1, NULL, ?)",
+            )
+            .bind(&id)
+            .bind(&run_id_str)
+            .bind(&si_id_str)
+            .bind(&now)
+            .execute(&mut *txn)
+            .await
+            .unwrap();
+            // Drop txn without commit: sqlx Transaction rolls back on drop,
+            // returning the connection to the pool in a clean state.
+        }
+
+        // The pool must be fully usable: the rolled-back insert is gone and
+        // a new emit on the same pool must succeed without a nested-transaction error.
+        let ctx = make_ctx(pool.clone(), run_id, si_id, registry, tx);
+        let result = ctx
+            .emit(EmitArgs {
+                output_name: "out".into(),
+                artifact_type: "any".into(),
+                body: json!({"after_drop": true}),
+                label: None,
+                parent_artifact_id: None,
+            })
+            .await;
+
+        assert!(
+            result.is_ok(),
+            "emit after dropped transaction must succeed without nested-transaction error: {:?}",
+            result.err()
+        );
+
+        // The rolled-back insert must not be visible; only the successful emit.
+        let artifacts = queries::list_artifacts_for_run(&pool, &run_id, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            artifacts.len(),
+            1,
+            "only the post-drop emit should be persisted"
+        );
+        assert_eq!(artifacts[0].body, json!({"after_drop": true}));
     }
 
     // ── set_status tests ──────────────────────────────────────────────────────
