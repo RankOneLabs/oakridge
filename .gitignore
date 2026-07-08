@@ -1,6 +1,5 @@
 node_modules/
 comms/
-.catagents/
 kbbl/data/
 kbbl/config.json
 kbbl/core/pwa/dist/
