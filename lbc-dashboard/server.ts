@@ -70,6 +70,7 @@ import {
   resolveCellDirPath,
   resolveRunRoot,
   resolveDashboardDataRoot,
+  warmSummaryCacheFromEventLines,
   upsertGraderConfigDraft,
   upsertTaskDraft,
   validateGraderConfigDraftJson,
@@ -617,18 +618,16 @@ export function createApp(deps?: {
             lastSizeBytes,
             leftover,
           );
+          const cacheMode =
+            result.didReset || lastSizeBytes === 0 ? "replace" : "append";
           lastSizeBytes = result.nextOffset;
           leftover = result.nextLeftover;
-          for (const line of result.newLines) {
-            let evt: unknown;
-            try {
-              evt = JSON.parse(line);
-            } catch {
-              // Skip malformed line; don't bump sentCount. The
-              // sidebar's event_count uses the same parsed-only
-              // accounting (see store.ts::summarize).
-              continue;
-            }
+          const events = await warmSummaryCacheFromEventLines(
+            eventsPath,
+            result.newLines,
+            { mode: cacheMode },
+          );
+          for (const evt of events) {
             if (sentCount > resumeAfter) {
               await stream.writeSSE({
                 event: "message",
@@ -851,23 +850,40 @@ async function readNewLines(
   path: string,
   fromBytes: number,
   leftover: string,
-): Promise<{ newLines: string[]; nextOffset: number; nextLeftover: string }> {
+): Promise<{
+  newLines: string[];
+  nextOffset: number;
+  nextLeftover: string;
+  didReset: boolean;
+}> {
   let st;
   try {
     st = await stat(path);
   } catch {
     // File doesn't exist yet — brand new cell. Nothing to read.
-    return { newLines: [], nextOffset: fromBytes, nextLeftover: leftover };
+    return {
+      newLines: [],
+      nextOffset: fromBytes,
+      nextLeftover: leftover,
+      didReset: false,
+    };
   }
   let startOffset = fromBytes;
   let carry = leftover;
+  let didReset = false;
   if (st.size < startOffset) {
     // Truncated/replaced. Re-read from the beginning.
     startOffset = 0;
     carry = "";
+    didReset = true;
   }
   if (st.size === startOffset) {
-    return { newLines: [], nextOffset: startOffset, nextLeftover: carry };
+    return {
+      newLines: [],
+      nextOffset: startOffset,
+      nextLeftover: carry,
+      didReset,
+    };
   }
   const len = st.size - startOffset;
   const fh = await open(path, "r");
@@ -878,12 +894,17 @@ async function readNewLines(
     const lastNewline = text.lastIndexOf("\n");
     if (lastNewline === -1) {
       // No complete line yet; carry everything to the next tick.
-      return { newLines: [], nextOffset: st.size, nextLeftover: text };
+      return {
+        newLines: [],
+        nextOffset: st.size,
+        nextLeftover: text,
+        didReset,
+      };
     }
     const consumed = text.slice(0, lastNewline);
     const nextLeftover = text.slice(lastNewline + 1);
     const newLines = consumed.split("\n").filter((l) => l.trim());
-    return { newLines, nextOffset: st.size, nextLeftover };
+    return { newLines, nextOffset: st.size, nextLeftover, didReset };
   } finally {
     await fh.close();
   }
