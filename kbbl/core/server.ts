@@ -18,6 +18,7 @@ import { bootstrap as bootstrapOrchestrator } from "./orchestrator/bootstrap";
 import { createKbblChatBackend } from "./orchestrator/backends/kbbl-chat";
 import { createDispatcher } from "./orchestrator/backends/dispatcher";
 import { wireDispatchHooks } from "./orchestrator/dispatch-hooks";
+import { reconcileDispatchAttempts } from "./orchestrator/dispatch-reconciler";
 import { wireResponderSpawn } from "./orchestrator/responders/spawn";
 import { reviewRegistry } from "./review/registry";
 import { reviewEvents } from "./review/events";
@@ -220,6 +221,12 @@ const manager = new SessionManager({
   },
   config,
 });
+
+// === Boot reconciliation — must run before dispatch hooks accept new work ===
+// Any dispatch_attempts left in dispatching or running status survived a prior
+// process death. Reconcile them to dispatch_failed so the active-claim slots
+// are freed and operators have a clear recovery path before new dispatches fire.
+reconcileDispatchAttempts(db, manager);
 
 // === Dispatcher + dispatch hooks + responder spawn ===
 
