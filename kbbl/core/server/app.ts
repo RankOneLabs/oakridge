@@ -10,6 +10,7 @@ import type { createDispatcher } from "../orchestrator/backends/dispatcher";
 import {
   makeControlAuthMiddleware,
   makeCookieHandler,
+  makeRequiredControlAuthMiddleware,
   type AuthPolicy,
 } from "./auth";
 import { inboxHandler } from "../stream/inbox";
@@ -22,6 +23,7 @@ import { mountPlanStatusRoutes } from "./handlers/plan-status";
 import { mountPlanReopenRoutes } from "./handlers/plan-reopen";
 import { mountBriefStatusRoutes } from "./handlers/brief-status";
 import { mountBuildsRoutes } from "./handlers/builds";
+import { mountDispatchAttemptsRoutes } from "./handlers/dispatch-attempts";
 import { mountCohortsRoutes } from "./handlers/cohorts";
 import { mountCohortStatusRoutes } from "./handlers/cohort-status";
 import { mountCohortMergeRoutes } from "./handlers/cohort-merge";
@@ -257,6 +259,9 @@ export function createApp(deps: CreateAppDeps): Hono {
   mountBriefsRoutes(app, { db });
   mountBriefStatusRoutes(app, { db });
   mountBuildsRoutes(app, { db, dispatcher, manager });
+  app.use("/dispatch-attempts", makeRequiredControlAuthMiddleware(authPolicy));
+  app.use("/dispatch-attempts/*", makeRequiredControlAuthMiddleware(authPolicy));
+  mountDispatchAttemptsRoutes(app, { db, dispatcher });
   mountAssessmentsRoutes(app, { db });
   mountEpicsRoutes(app, { db });
 

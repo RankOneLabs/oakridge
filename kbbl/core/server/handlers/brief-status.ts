@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { Hono } from "hono";
 import type { Database } from "bun:sqlite";
 import { getBrief, insertBrief } from "../../db/briefs";
+import { transitionCohort } from "../../db/cohort-transitions";
 import { freeze, unfreeze } from "../../review/freeze";
 import { emitFreezeEvents, type ReviewFreezeEvent } from "../../review/events";
 import { taskTrackerEvents } from "../../db/events";
@@ -82,20 +83,17 @@ export function mountBriefStatusRoutes(app: Hono, deps: BriefStatusRouteDeps): v
           const nextCohortStatus =
             countUnmetDependencies(db, brief.cohort_id) > 0 ? "ready_to_build" : "building";
           depsMet = nextCohortStatus === "building";
+          const cohortEvent = depsMet ? "brief_approved_deps_met" : "brief_approved_deps_pending";
 
-          const cohortResult = db.prepare(
-            "UPDATE cohorts SET status = ? WHERE id = ? AND status = 'brief_review'",
-          ).run(nextCohortStatus, brief.cohort_id);
-          if (cohortResult.changes === 0) return "cohort_not_in_brief_review";
+          const cohortTransition = transitionCohort(db, brief.cohort_id, cohortEvent);
+          if (!cohortTransition.ok) return "cohort_not_in_brief_review";
           db.prepare("UPDATE briefs SET status = ? WHERE id = ?").run(nextStatus, brief_id);
           pendingFreezeEvents = freeze(db, "build_brief", brief_id);
           updated = getBrief(db, brief_id);
           emitApproved = { brief_id, cohort_id: brief.cohort_id };
         } else {
-          const cohortResult = db.prepare(
-            "UPDATE cohorts SET status = 'briefing' WHERE id = ? AND status = 'brief_review'",
-          ).run(brief.cohort_id);
-          if (cohortResult.changes === 0) return "cohort_not_in_brief_review";
+          const cohortTransition = transitionCohort(db, brief.cohort_id, "brief_rejected");
+          if (!cohortTransition.ok) return "cohort_not_in_brief_review";
           db.prepare(
             "UPDATE briefs SET status = ?, rejection_reason = ? WHERE id = ?",
           ).run(nextStatus, reason ?? null, brief_id);

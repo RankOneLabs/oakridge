@@ -3,6 +3,7 @@ import type { Hono } from "hono";
 import type { Database } from "bun:sqlite";
 import { getCohort, countUnmetDependencies } from "../../db/cohorts";
 import { getLatestApprovedBriefByCohort } from "../../db/briefs";
+import { transitionCohort } from "../../db/cohort-transitions";
 import { taskTrackerEvents } from "../../db/events";
 import { getEpicBySpec, advanceEpicByEvent } from "../../db/epics";
 import { isFrozen } from "../../db/epic-freeze";
@@ -54,8 +55,19 @@ function runDoneFanout(db: Database, cohort_id: string): DoneFanoutResult {
           JSON.stringify({ kbbl: "cohort-status", warn: "ready_to_build cohort has no approved brief", cohort_id: to_cohort_id }),
         );
       } else {
-        db.prepare("UPDATE cohorts SET status = 'building' WHERE id = ?").run(to_cohort_id);
-        buildReady.push({ cohort_id: to_cohort_id, brief_id: brief.id });
+        const transition = transitionCohort(db, to_cohort_id, "dependencies_met");
+        if (transition.ok) {
+          buildReady.push({ cohort_id: to_cohort_id, brief_id: brief.id });
+        } else if (transition.reason === "invalid_transition") {
+          console.error(
+            JSON.stringify({
+              kbbl: "cohort-status",
+              warn: "dependencies_met transition rejected",
+              cohort_id: to_cohort_id,
+              detail: transition.detail,
+            }),
+          );
+        }
       }
     }
   }
@@ -85,14 +97,13 @@ export function applyAwaitingMergeToMerged(
   db: Database,
   cohort_id: string,
 ): ApplyAwaitingMergeResult {
-  const { changes } = db
-    .prepare("UPDATE cohorts SET status = 'done' WHERE id = ? AND status = 'awaiting_merge'")
-    .run(cohort_id);
-  const updated = getCohort(db, cohort_id);
-  if (!updated) throw new Error(`cohort ${cohort_id} not found after awaiting_merge transition`);
-  if (changes === 0) {
+  const transition = transitionCohort(db, cohort_id, "pr_merged");
+  if (!transition.ok) {
+    const updated = getCohort(db, cohort_id);
+    if (!updated) throw new Error(`cohort ${cohort_id} not found after awaiting_merge transition`);
     return { updated, emits: null };
   }
+  const updated = transition.cohort;
   const fanout = runDoneFanout(db, cohort_id);
   const remaining = db
     .prepare<{ cnt: number }, [string]>(
@@ -184,33 +195,29 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
         if (!cohort) return "not_found";
 
         if (parsed.status === "blocked") {
-          const next = applyCohortTransition(cohort.status, "block");
-          if (typeof next === "object") {
-            invalidTransition = { current: cohort.status, requested: "blocked", detail: next.error };
+          const transition = transitionCohort(db, cohort_id, "block");
+          if (!transition.ok) {
+            if (transition.reason === "not_found") return "not_found";
+            invalidTransition = { current: transition.current, requested: "blocked", detail: transition.detail };
             return "invalid_transition";
           }
-          db.prepare(
-            "UPDATE cohorts SET status = 'blocked', pre_block_status = ? WHERE id = ?",
-          ).run(cohort.status, cohort_id);
-          updated = getCohort(db, cohort_id);
+          updated = transition.cohort;
         } else if (parsed.status === "unblocked") {
-          const next = applyCohortTransition(cohort.status, "unblock", cohort.pre_block_status);
-          if (typeof next === "object") {
-            invalidTransition = { current: cohort.status, requested: "unblocked", detail: next.error };
+          const transition = transitionCohort(db, cohort_id, "unblock");
+          if (!transition.ok) {
+            if (transition.reason === "not_found") return "not_found";
+            invalidTransition = { current: transition.current, requested: "unblocked", detail: transition.detail };
             return "invalid_transition";
           }
-          db.prepare(
-            "UPDATE cohorts SET status = ?, pre_block_status = NULL WHERE id = ?",
-          ).run(next, cohort_id);
-          updated = getCohort(db, cohort_id);
+          updated = transition.cohort;
         } else if (parsed.status === "done") {
-          const next = applyCohortTransition(cohort.status, "build_completed");
-          if (typeof next === "object") {
-            invalidTransition = { current: cohort.status, requested: "done", detail: next.error };
+          const transition = transitionCohort(db, cohort_id, "build_completed");
+          if (!transition.ok) {
+            if (transition.reason === "not_found") return "not_found";
+            invalidTransition = { current: transition.current, requested: "done", detail: transition.detail };
             return "invalid_transition";
           }
-          db.prepare("UPDATE cohorts SET status = 'done' WHERE id = ?").run(cohort_id);
-          updated = getCohort(db, cohort_id);
+          updated = transition.cohort;
           emitDone = { cohort_id };
           const fanout = runDoneFanout(db, cohort_id);
           emitBuildReady.push(...fanout.buildReady);
@@ -221,17 +228,17 @@ export function mountCohortStatusRoutes(app: Hono, deps: CohortStatusRouteDeps):
             .get(cohort.plan_id);
           if (remaining && remaining.cnt === 0) emitPlanCompleted = { plan_id: cohort.plan_id };
         } else if (parsed.status === "awaiting_merge") {
-          const next = applyCohortTransition(cohort.status, "pr_opened");
-          if (typeof next === "object") {
-            invalidTransition = { current: cohort.status, requested: "awaiting_merge", detail: next.error };
+          const transition = transitionCohort(db, cohort_id, "pr_opened");
+          if (!transition.ok) {
+            if (transition.reason === "not_found") return "not_found";
+            invalidTransition = { current: transition.current, requested: "awaiting_merge", detail: transition.detail };
             return "invalid_transition";
           }
-          db.prepare("UPDATE cohorts SET status = 'awaiting_merge' WHERE id = ?").run(cohort_id);
           db.prepare(
             `UPDATE briefs SET pr_url = COALESCE(pr_url, ?)
              WHERE id = (SELECT id FROM briefs WHERE cohort_id = ? ORDER BY created_at DESC, id DESC LIMIT 1)`,
           ).run(parsed.pr_url, cohort_id);
-          updated = getCohort(db, cohort_id);
+          updated = transition.cohort;
           emitPrOpened = { cohort_id, pr_url: parsed.pr_url };
         } else {
           // merged

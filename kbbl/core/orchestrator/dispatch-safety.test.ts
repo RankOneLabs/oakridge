@@ -16,11 +16,12 @@
  */
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Hono } from "hono";
 import type { Database } from "bun:sqlite";
+import { KbblConfigSchema } from "../config";
 import { openTestDb } from "../db/test-db";
 import { reviewRegistry } from "../review/registry";
 import { reviewEvents } from "../review/events";
@@ -39,12 +40,14 @@ import { mountCohortStatusRoutes } from "../server/handlers/cohort-status";
 import { mountBriefsRoutes } from "../server/handlers/briefs";
 import { mountBriefStatusRoutes } from "../server/handlers/brief-status";
 import { mountBuildsRoutes } from "../server/handlers/builds";
+import { mountDispatchAttemptsRoutes } from "../server/handlers/dispatch-attempts";
 import { mountAssessmentsRoutes } from "../server/handlers/assessments";
 import { mountSpecStatusRoutes } from "../server/handlers/spec-status";
 import {
   claimDispatch,
   markAttemptFailed,
   markAttemptRunning,
+  markRunningAttemptSucceededBySessionRef,
   getActiveAttempt,
   listActiveAttempts,
   getAttempt,
@@ -57,7 +60,7 @@ import { insertEpic } from "../db/epics";
 import { insertPlan } from "../db/plans";
 import { insertCohort } from "../db/cohorts";
 import { insertBrief } from "../db/briefs";
-import type { SessionManager } from "../session/session-manager";
+import { SessionManager } from "../session/session-manager";
 import type { RuntimeModelSelection } from "../runtime";
 
 // ---- stub manager ----
@@ -166,6 +169,7 @@ function makeApp(backend: ExecutionBackend) {
   mountBriefsRoutes(a, { db });
   mountBriefStatusRoutes(a, { db });
   mountBuildsRoutes(a, { db, dispatcher, manager: stubManager });
+  mountDispatchAttemptsRoutes(a, { db, dispatcher });
   mountAssessmentsRoutes(a, { db });
   mountSpecStatusRoutes(a, { db });
   return { app: a, dispatcher };
@@ -268,6 +272,9 @@ describe("1. Boot reconciliation — stranded dispatching attempts", () => {
     // the attempt: the attempt is marked running (session was handed off) but
     // the session is not in the post-restart manager.
     markAttemptRunning(db, r.attempt.id, "ghost-session-ref");
+    db.prepare(
+      "UPDATE cohorts SET current_session_ref = ?, current_session_stage = 'build' WHERE id = ?",
+    ).run("ghost-session-ref", cohort.id);
 
     reconcileDispatchAttempts(db, stubManager);
 
@@ -276,6 +283,13 @@ describe("1. Boot reconciliation — stranded dispatching attempts", () => {
     expect(afterRecon.last_error).toContain("ghost-session-ref");
 
     expect(getActiveAttempt(db, "brief", brief.id, "build")).toBeNull();
+    const cohortSession = db
+      .prepare<{ current_session_ref: string | null; current_session_stage: string | null }, [string]>(
+        "SELECT current_session_ref, current_session_stage FROM cohorts WHERE id = ?",
+      )
+      .get(cohort.id)!;
+    expect(cohortSession.current_session_ref).toBeNull();
+    expect(cohortSession.current_session_stage).toBeNull();
   });
 
   test("reconciliation is a no-op when there are no active attempts", () => {
@@ -445,6 +459,172 @@ describe("4. Failed dispatch cleanup", () => {
       .get();
     expect(row?.status).toBe("dispatch_failed");
     // Backend must NOT have been called since git failed first.
+    expect(backend.calls).toBe(0);
+  });
+});
+
+describe("4a. Session lifecycle closes dispatch attempts", () => {
+  test("ended session marks its running attempt succeeded and clears the active claim", async () => {
+    const { brief } = await seedBuildChain();
+    const r = claimDispatch(db, {
+      id: crypto.randomUUID(),
+      entity_kind: "brief",
+      entity_id: brief.id,
+      stage: "build",
+      cohort_id: brief.cohort_id,
+    });
+    expect(r.claimed).toBe(true);
+    if (!r.claimed) throw new Error("expected claim");
+    markAttemptRunning(db, r.attempt.id, "ended-session-ref");
+
+    const closed = markRunningAttemptSucceededBySessionRef(db, "ended-session-ref");
+
+    expect(closed?.id).toBe(r.attempt.id);
+    expect(closed?.status).toBe("succeeded");
+    expect(getActiveAttempt(db, "brief", brief.id, "build")).toBeNull();
+  });
+
+  test("SessionManager onRuntimeSessionEnded closes the matching dispatch attempt", async () => {
+    const { brief } = await seedBuildChain();
+    const managerRoot = mkdtempSync(join(tmpdir(), "kbbl-dispatch-manager-"));
+    const sessionsDir = join(managerRoot, "sessions");
+    const handoffsDir = join(managerRoot, "handoffs");
+    const worktreesDir = join(managerRoot, "worktrees");
+    mkdirSync(sessionsDir, { recursive: true });
+    mkdirSync(handoffsDir, { recursive: true });
+    mkdirSync(worktreesDir, { recursive: true });
+
+    const manager = new SessionManager({
+      sessionsDir,
+      handoffsDir,
+      worktreesDir,
+      buildSpawnCmd: async () => ({ cmd: ["sleep", "60"], cwd: "/tmp", env: {} }),
+      onRuntimeSessionEnded: (session) => {
+        markRunningAttemptSucceededBySessionRef(db, session.oakridgeSid);
+      },
+      config: KbblConfigSchema.parse({}),
+    });
+
+    try {
+      const session = await manager.create({ workdir: testRepoPath });
+      const r = claimDispatch(db, {
+        id: crypto.randomUUID(),
+        entity_kind: "brief",
+        entity_id: brief.id,
+        stage: "build",
+        cohort_id: brief.cohort_id,
+      });
+      expect(r.claimed).toBe(true);
+      if (!r.claimed) throw new Error("expected claim");
+      markAttemptRunning(db, r.attempt.id, session.oakridgeSid);
+      db.prepare(
+        "UPDATE cohorts SET current_session_ref = ?, current_session_stage = 'build' WHERE id = ?",
+      ).run(session.oakridgeSid, brief.cohort_id);
+
+      await manager.endAll();
+
+      const closed = getAttempt(db, r.attempt.id);
+      const cohortSession = db
+        .prepare<{ current_session_ref: string | null; current_session_stage: string | null }, [string]>(
+          "SELECT current_session_ref, current_session_stage FROM cohorts WHERE id = ?",
+        )
+        .get(brief.cohort_id);
+      expect(closed?.status).toBe("succeeded");
+      expect(getActiveAttempt(db, "brief", brief.id, "build")).toBeNull();
+      expect(cohortSession).toEqual({ current_session_ref: null, current_session_stage: null });
+    } finally {
+      await manager.endAll();
+      rmSync(managerRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4b. Manual dispatch recovery API
+// ---------------------------------------------------------------------------
+
+describe("4b. Manual dispatch recovery API", () => {
+  test("GET /dispatch-attempts surfaces failed attempts with recovery metadata", async () => {
+    const { brief } = await seedBuildChain();
+    const r = claimDispatch(db, {
+      id: crypto.randomUUID(),
+      entity_kind: "brief",
+      entity_id: brief.id,
+      stage: "build",
+      cohort_id: brief.cohort_id,
+    });
+    expect(r.claimed).toBe(true);
+    if (!r.claimed) throw new Error();
+    markAttemptFailed(db, r.attempt.id, {
+      last_error: "first attempt failed",
+      recovery_hint: "retry from the dispatch attempts panel",
+    });
+
+    const backend = createMockBackend();
+    const { app: a } = makeApp(backend);
+    const res = await a.request("/dispatch-attempts?status=dispatch_failed");
+    expect(res.status).toBe(200);
+    const body = await res.json() as { attempts: Array<{ id: string; recovery_hint: string | null }> };
+    expect(body.attempts.map((attempt) => attempt.id)).toContain(r.attempt.id);
+    expect(body.attempts.find((attempt) => attempt.id === r.attempt.id)?.recovery_hint)
+      .toBe("retry from the dispatch attempts panel");
+  });
+
+  test("POST /dispatch-attempts/:id/retry creates a linked retry for non-build stages", async () => {
+    const { spec } = await seedBuildChain();
+    const r = claimDispatch(db, {
+      id: crypto.randomUUID(),
+      entity_kind: "spec",
+      entity_id: spec.id,
+      stage: "plan_writer",
+    });
+    expect(r.claimed).toBe(true);
+    if (!r.claimed) throw new Error();
+    markAttemptFailed(db, r.attempt.id, { last_error: "previous plan_writer spawn failed" });
+
+    const backend = createMockBackend(async () => ({ session_ref: "retry-plan-writer-session" }));
+    const { app: a } = makeApp(backend);
+    const res = await a.request(`/dispatch-attempts/${r.attempt.id}/retry`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+
+    expect(res.status).toBe(202);
+    const body = await res.json() as {
+      session_ref: string;
+      attempt: { attempt_number: number; predecessor_attempt_id: string | null; status: string } | null;
+    };
+    expect(body.session_ref).toBe("retry-plan-writer-session");
+    expect(body.attempt?.attempt_number).toBe(2);
+    expect(body.attempt?.predecessor_attempt_id).toBe(r.attempt.id);
+    expect(body.attempt?.status).toBe("running");
+    expect(backend.calls).toBe(1);
+  });
+
+  test("POST /dispatch-attempts/:id/retry rejects archived epics before dispatch", async () => {
+    const { spec } = await seedBuildChain();
+    const r = claimDispatch(db, {
+      id: crypto.randomUUID(),
+      entity_kind: "spec",
+      entity_id: spec.id,
+      stage: "plan_writer",
+    });
+    expect(r.claimed).toBe(true);
+    if (!r.claimed) throw new Error();
+    markAttemptFailed(db, r.attempt.id, { last_error: "previous plan_writer spawn failed" });
+    db.prepare("UPDATE epics SET status = 'archived' WHERE spec_id = ?").run(spec.id);
+
+    const backend = createMockBackend();
+    const { app: a } = makeApp(backend);
+    const res = await a.request(`/dispatch-attempts/${r.attempt.id}/retry`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+
+    expect(res.status).toBe(409);
+    expect((await res.json() as { error: string }).error).toBe("epic is archived");
     expect(backend.calls).toBe(0);
   });
 });
@@ -635,4 +815,3 @@ describe("7. Archived epic guard on build launch", () => {
     expect(backend.calls).toBe(1);
   });
 });
-

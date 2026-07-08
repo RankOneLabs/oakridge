@@ -37,6 +37,10 @@ pub enum ControlMsg {
         parked_meta_template: serde_json::Value,
         reply_tx: oneshot::Sender<bool>,
     },
+    RetryStuckStage {
+        stage_instance_id: StageInstanceId,
+        reply_tx: oneshot::Sender<Result<(), DecisionError>>,
+    },
 }
 
 #[derive(Debug)]
@@ -115,6 +119,9 @@ impl RunTask {
                         if terminal {
                             break;
                         }
+                    }
+                    Some(ControlMsg::RetryStuckStage { stage_instance_id, reply_tx }) => {
+                        self.on_retry_stuck(stage_instance_id, reply_tx).await;
                     }
                     None => break,
                 },
@@ -745,9 +752,10 @@ impl RunTask {
         }
 
         // CAS-park in DB: only proceeds if still Running.
-        let parked = queries::park_stage_instance_as_stuck(&self.db, &stage_instance_id, &parked_meta)
-            .await
-            .unwrap_or(false);
+        let parked =
+            queries::park_stage_instance_as_stuck(&self.db, &stage_instance_id, &parked_meta)
+                .await
+                .unwrap_or(false);
 
         if !parked {
             return false;
@@ -773,7 +781,10 @@ impl RunTask {
 
         // Check quiescence: no stage is pending|running.
         let active = self.index.values().any(|(_, s)| {
-            matches!(s, StageStatus::Pending | StageStatus::Running | StageStatus::Parked)
+            matches!(
+                s,
+                StageStatus::Pending | StageStatus::Running | StageStatus::Parked
+            )
         });
         if active || self.index.is_empty() {
             return false;
@@ -798,6 +809,193 @@ impl RunTask {
             },
         );
         true
+    }
+
+    async fn on_retry_stuck(
+        &mut self,
+        stage_instance_id: StageInstanceId,
+        reply_tx: oneshot::Sender<Result<(), DecisionError>>,
+    ) {
+        let mut reply_tx = Some(reply_tx);
+        macro_rules! reject_retry {
+            ($err:expr) => {{
+                if let Some(tx) = reply_tx.take() {
+                    let _ = tx.send(Err($err));
+                }
+                return;
+            }};
+        }
+
+        let current = match queries::get_stage_instance_by_id(&self.db, &stage_instance_id).await {
+            Ok(current) => current,
+            Err(e) => reject_retry!(match e {
+                crate::Error::NotFound { .. } => DecisionError::Conflict(format!(
+                    "stage instance {} not found",
+                    stage_instance_id.0
+                )),
+                other => DecisionError::Internal(anyhow::Error::new(other)),
+            }),
+        };
+
+        if current.run_id != self.run_id {
+            reject_retry!(DecisionError::Conflict(format!(
+                "stage instance {} does not belong to run {}",
+                stage_instance_id.0, self.run_id.0
+            )));
+        }
+        if !matches!(current.status, StageStatus::Parked)
+            || current.parked_reason.as_deref() != Some("stuck_timeout")
+        {
+            reject_retry!(DecisionError::Conflict(format!(
+                "stage instance {} is not parked as stuck_timeout (status: {:?}, parked_reason: {:?})",
+                stage_instance_id.0, current.status, current.parked_reason
+            )));
+        }
+
+        let (indexed_id, indexed_status) = match self.index.get(&current.stage_key).copied() {
+            Some(indexed) => indexed,
+            None => {
+                reject_retry!(DecisionError::Conflict(format!(
+                    "stage instance {} is not known to this run",
+                    stage_instance_id.0
+                )));
+            }
+        };
+        if indexed_id != stage_instance_id {
+            reject_retry!(DecisionError::Conflict(format!(
+                "stage instance {} is stale for stage {}; active instance is {}",
+                stage_instance_id.0, current.stage_key, indexed_id.0
+            )));
+        }
+        if !matches!(indexed_status, StageStatus::Parked) {
+            reject_retry!(DecisionError::Conflict(format!(
+                "stage instance {} is not parked in scheduler memory (status: {:?})",
+                stage_instance_id.0, indexed_status
+            )));
+        }
+
+        if let Some(handle) = self.handles.remove(&stage_instance_id) {
+            let _ = handle.cancel().await;
+        }
+
+        let node = match self.def.graph.stages.get(&current.stage_key).cloned() {
+            Some(node) => node,
+            None => reject_retry!(DecisionError::Conflict(format!(
+                "stage '{}' is missing from workflow graph",
+                current.stage_key
+            ))),
+        };
+        let st = match self.stage_types.get(&node.stage_type) {
+            Some(st) => st,
+            None => reject_retry!(DecisionError::Conflict(format!(
+                "stage type '{}' is not registered",
+                node.stage_type
+            ))),
+        };
+
+        let updated =
+            match queries::update_stage_instance_status_if_current_status_with_terminal_meta(
+                &self.db,
+                &stage_instance_id,
+                StageStatus::Parked,
+                StageStatus::Running,
+                None,
+                None,
+                current.started_at,
+                None,
+            )
+            .await
+            {
+                Ok(updated) => updated,
+                Err(e) => reject_retry!(DecisionError::Internal(anyhow::Error::new(e))),
+            };
+        if !updated {
+            reject_retry!(DecisionError::Conflict(format!(
+                "stage instance {} was no longer stuck-parked when retry was applied",
+                stage_instance_id.0
+            )));
+        }
+        if let Err(e) = sqlx::query(
+            "UPDATE stage_instance SET parked_meta = NULL, parked_reason = NULL, external_ref = NULL WHERE id = ?",
+        )
+        .bind(stage_instance_id.0.to_string())
+        .execute(self.db.as_ref())
+        .await
+        {
+            reject_retry!(DecisionError::Internal(anyhow::Error::new(e)));
+        }
+
+        let refreshed = match queries::get_stage_instance_by_id(&self.db, &stage_instance_id).await
+        {
+            Ok(refreshed) => refreshed,
+            Err(e) => reject_retry!(DecisionError::Internal(anyhow::Error::new(e))),
+        };
+        let inputs: HashMap<String, Artifact> = node
+            .inputs
+            .iter()
+            .filter_map(|slot| {
+                self.resolved
+                    .get(&(current.stage_key.clone(), slot.name.clone()))
+                    .map(|artifact| (slot.name.clone(), artifact.clone()))
+            })
+            .collect();
+        let ctx = StageContext::new(
+            StageInstanceSummary::from(&refreshed),
+            refreshed.config.clone(),
+            inputs,
+            self.events_tx.clone(),
+            self.db.clone(),
+            self.artifact_types.clone(),
+        );
+        if let Some(tx) = reply_tx.take() {
+            let _ = tx.send(Ok(()));
+        }
+
+        match st.execute(ctx).await {
+            Ok(handle) => {
+                self.handles.insert(stage_instance_id, handle);
+                if let Some((_, status)) = self.index.get_mut(&current.stage_key) {
+                    *status = StageStatus::Running;
+                }
+                self.bus.publish(
+                    self.run_id,
+                    SubstrateEvent::StageStatusChanged {
+                        stage_instance_id,
+                        status: StageStatus::Running,
+                        parked_reason: None,
+                        terminal_meta: None,
+                    },
+                );
+            }
+            Err(err) => {
+                if let Some((_, status)) = self.index.get_mut(&current.stage_key) {
+                    *status = StageStatus::Failed;
+                }
+                let terminal_meta = serde_json::json!({
+                    "kind": "retry_stuck_execute_failed",
+                    "error": err.to_string(),
+                });
+                let _ = queries::update_stage_instance_status_with_terminal_meta(
+                    &self.db,
+                    &stage_instance_id,
+                    StageStatus::Failed,
+                    None,
+                    Some(terminal_meta.clone()),
+                    refreshed.started_at,
+                    Some(Utc::now()),
+                )
+                .await;
+                let _ = self
+                    .events_tx
+                    .send(ExecutorEvent::StatusChanged {
+                        instance_id: stage_instance_id,
+                        status: StageStatus::Failed,
+                        parked_reason: None,
+                        terminal_meta: Some(terminal_meta),
+                    })
+                    .await;
+            }
+        }
     }
 }
 
@@ -860,8 +1058,8 @@ impl Coordinator {
     }
 
     pub async fn sweep_stuck_stages(&self) -> anyhow::Result<()> {
-        let timeout_chrono =
-            chrono::Duration::from_std(self.stage_timeout).unwrap_or(chrono::Duration::seconds(3600));
+        let timeout_chrono = chrono::Duration::from_std(self.stage_timeout)
+            .unwrap_or(chrono::Duration::seconds(3600));
         let cutoff = Utc::now() - timeout_chrono;
 
         let stuck = queries::list_running_stage_instances_older_than(&self.db, cutoff).await?;
@@ -939,6 +1137,88 @@ impl Coordinator {
     /// Transition a stuck-parked stage back to Running so its stage type can
     /// re-execute it. Returns Err(DecisionError::Conflict) when the stage is
     /// not currently parked as stuck_timeout or the run is terminal.
+    async fn recover_run_task_for_retry(&self, run_id: WorkflowRunId) -> anyhow::Result<()> {
+        {
+            let runs = self.runs.lock().await;
+            if runs.contains_key(&run_id) {
+                return Ok(());
+            }
+        }
+
+        let run = queries::get_workflow_run_by_id(&self.db, &run_id).await?;
+        let def = queries::get_workflow_def_by_id(&self.db, &run.workflow_def_id).await?;
+        let instances = queries::list_stage_instances_for_run(&self.db, &run_id).await?;
+        let artifacts = queries::list_artifacts_for_run(&self.db, &run_id, None).await?;
+
+        let mut resolved: HashMap<(StageKey, String), Artifact> = HashMap::new();
+        for artifact in &artifacts {
+            let producer_key = instances
+                .iter()
+                .find(|si| si.id == artifact.stage_instance_id)
+                .map(|si| si.stage_key.clone());
+            let Some(producer_key) = producer_key else {
+                continue;
+            };
+            let Some(producer_node) = def.graph.stages.get(&producer_key) else {
+                continue;
+            };
+            let output_name = match &artifact.output_name {
+                Some(name) => Some(name.clone()),
+                None => producer_node
+                    .outputs
+                    .iter()
+                    .find(|slot| slot.artifact_type == artifact.artifact_type)
+                    .map(|slot| slot.name.clone()),
+            };
+            let Some(output_name) = output_name else {
+                continue;
+            };
+            for edge in &def.graph.edges {
+                if edge.from.stage == producer_key && edge.from.slot == output_name {
+                    let key = (edge.to.stage.clone(), edge.to.slot.clone());
+                    let should_use = resolved
+                        .get(&key)
+                        .map(|current| artifact.created_at > current.created_at)
+                        .unwrap_or(true);
+                    if should_use {
+                        resolved.insert(key, artifact.clone());
+                    }
+                }
+            }
+        }
+
+        let index = instances
+            .iter()
+            .map(|si| (si.stage_key.clone(), (si.id, si.status)))
+            .collect();
+        let (events_tx, events_rx) = mpsc::channel(256);
+        let (control_tx, control_rx) = mpsc::channel(64);
+        let task = RunTask {
+            run_id,
+            run_context: run.context,
+            def,
+            events_rx,
+            events_tx,
+            control_rx,
+            handles: HashMap::new(),
+            index,
+            resolved,
+            db: self.db.clone(),
+            stage_types: self.stage_types.clone(),
+            artifact_types: self.artifact_types.clone(),
+            bus: self.bus.clone(),
+            run_map: self.runs.clone(),
+        };
+
+        let mut runs = self.runs.lock().await;
+        if runs.contains_key(&run_id) {
+            return Ok(());
+        }
+        let join = tokio::spawn(async move { task.run().await });
+        runs.insert(run_id, RunHandle { control_tx, join });
+        Ok(())
+    }
+
     pub async fn retry_stuck_stage(
         &self,
         stage_instance_id: StageInstanceId,
@@ -973,52 +1253,47 @@ impl Coordinator {
             )));
         }
 
-        // CAS: Parked → Running, clearing parked fields.
-        let updated =
-            queries::update_stage_instance_status_if_current_status_with_terminal_meta(
-                &self.db,
-                &stage_instance_id,
-                StageStatus::Parked,
-                StageStatus::Running,
-                None,
-                None,
-                si.started_at,
-                None,
-            )
-            .await
-            .map_err(|e| DecisionError::Internal(anyhow::Error::new(e)))?;
-
-        if !updated {
-            return Err(DecisionError::Conflict(format!(
-                "stage instance {} was no longer stuck-parked when retry was applied",
-                stage_instance_id.0
-            )));
+        let mut tx = {
+            let runs = self.runs.lock().await;
+            runs.get(&si.run_id).map(|handle| handle.control_tx.clone())
+        };
+        if tx.is_none() {
+            self.recover_run_task_for_retry(si.run_id)
+                .await
+                .map_err(DecisionError::Internal)?;
+            tx = {
+                let runs = self.runs.lock().await;
+                runs.get(&si.run_id).map(|handle| handle.control_tx.clone())
+            };
         }
+        let tx = tx.ok_or_else(|| {
+            DecisionError::Conflict(format!(
+                "run {} is not active; cannot retry stuck stage",
+                si.run_id.0
+            ))
+        })?;
 
-        // Clear parked_meta in a separate update now that the status CAS succeeded.
-        let _ = sqlx::query(
-            "UPDATE stage_instance SET parked_meta = NULL, parked_reason = NULL WHERE id = ?",
-        )
-        .bind(si.id.0.to_string())
-        .execute(self.db.as_ref())
-        .await;
+        let (reply_tx, reply_rx) = oneshot::channel();
+        tx.send(ControlMsg::RetryStuckStage {
+            stage_instance_id,
+            reply_tx,
+        })
+        .await
+        .map_err(|_| {
+            DecisionError::Conflict(format!("control channel closed for run {}", si.run_id.0))
+        })?;
 
-        // Notify via bus so SSE consumers see the transition.
-        self.bus.publish(
-            si.run_id,
-            SubstrateEvent::StageStatusChanged {
-                stage_instance_id,
-                status: StageStatus::Running,
-                parked_reason: None,
-                terminal_meta: None,
-            },
-        );
-
-        // The in-memory index in the RunTask still reflects Running (since the
-        // sweeper parked it in DB but the RunTask's memory was updated by
-        // ParkStuckStage). No additional message is needed.
-
-        Ok(())
+        match timeout(Duration::from_secs(5), reply_rx).await {
+            Err(_) => Err(DecisionError::Internal(anyhow::anyhow!(
+                "scheduler task did not acknowledge stuck retry for run {} in time",
+                si.run_id.0
+            ))),
+            Ok(Err(_)) => Err(DecisionError::Conflict(format!(
+                "scheduler task ended before acknowledging stuck retry for run {}",
+                si.run_id.0
+            ))),
+            Ok(Ok(result)) => result,
+        }
     }
 
     pub async fn start_run(&self, run_id: WorkflowRunId) -> anyhow::Result<()> {
@@ -1727,6 +2002,60 @@ mod tests {
         )
     }
 
+    struct SlowExecuteStageType {
+        type_id: String,
+    }
+
+    #[async_trait]
+    impl crate::registry::stage_type::StageType for SlowExecuteStageType {
+        fn id(&self) -> &str {
+            &self.type_id
+        }
+
+        async fn build_config(
+            &self,
+            def_config: &Value,
+            _inputs: &HashMap<String, Artifact>,
+            _output_slots: &[crate::types::OutputSlot],
+            _stage_instance_id: crate::types::StageInstanceId,
+            _run_context: &Value,
+        ) -> anyhow::Result<Value> {
+            Ok(def_config.clone())
+        }
+
+        async fn execute(&self, _ctx: StageContext) -> anyhow::Result<Box<dyn StageHandle>> {
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            let (resume_tx, _resume_rx) = mpsc::channel(1);
+            Ok(Box::new(DummyHandle { resume_tx }))
+        }
+    }
+
+    struct FailingExecuteStageType {
+        type_id: String,
+    }
+
+    #[async_trait]
+    impl crate::registry::stage_type::StageType for FailingExecuteStageType {
+        fn id(&self) -> &str {
+            &self.type_id
+        }
+
+        async fn build_config(
+            &self,
+            def_config: &Value,
+            _inputs: &HashMap<String, Artifact>,
+            _output_slots: &[crate::types::OutputSlot],
+            _stage_instance_id: crate::types::StageInstanceId,
+            _run_context: &Value,
+        ) -> anyhow::Result<Value> {
+            Ok(def_config.clone())
+        }
+
+        async fn execute(&self, _ctx: StageContext) -> anyhow::Result<Box<dyn StageHandle>> {
+            Err(anyhow::anyhow!("retry execute failed"))
+        }
+    }
+
     fn timeout_dur() -> std::time::Duration {
         std::time::Duration::from_secs(5)
     }
@@ -1742,6 +2071,71 @@ mod tests {
             }
         }
         panic!("run did not reach terminal status");
+    }
+
+    async fn seed_stuck_retry_stage(
+        pool: &SqlitePool,
+        stage_type: &str,
+    ) -> (WorkflowRun, StageInstance) {
+        let def = WorkflowDef {
+            id: WorkflowDefId(Uuid::new_v4()),
+            name: format!("wf-{}", Uuid::new_v4()),
+            version: 1,
+            graph: WorkflowGraph {
+                stages: {
+                    let mut m = HashMap::new();
+                    m.insert(
+                        "A".into(),
+                        StageNodeDef {
+                            stage_type: stage_type.into(),
+                            config: json!({}),
+                            inputs: vec![],
+                            outputs: vec![],
+                        },
+                    );
+                    m
+                },
+                edges: vec![],
+            },
+            created_at: fixed_dt(),
+        };
+        queries::insert_workflow_def(pool, &def).await.unwrap();
+
+        let run = WorkflowRun {
+            id: WorkflowRunId(Uuid::new_v4()),
+            workflow_def_id: def.id,
+            project_id: None,
+            status: RunStatus::Running,
+            context: json!({}),
+            version: 1,
+            created_at: fixed_dt(),
+            updated_at: fixed_dt(),
+        };
+        queries::insert_workflow_run(pool, &run).await.unwrap();
+
+        let si = StageInstance {
+            id: StageInstanceId(Uuid::new_v4()),
+            run_id: run.id,
+            stage_key: "A".into(),
+            stage_type: stage_type.into(),
+            status: StageStatus::Parked,
+            config: json!({}),
+            parked_reason: Some("stuck_timeout".into()),
+            parked_meta: Some(json!({
+                "kind": "stuck_timeout",
+                "timed_out_at": "2026-01-02T00:00:00Z",
+                "timeout_seconds": 3600,
+                "cancellation_delivered": false,
+            })),
+            terminal_meta: None,
+            external_ref: None,
+            started_at: Some(fixed_dt()),
+            ended_at: None,
+            created_at: fixed_dt(),
+            updated_at: fixed_dt(),
+        };
+        queries::insert_stage_instance(pool, &si).await.unwrap();
+        (run, si)
     }
 
     async fn wait_stage_status_event(
@@ -3161,13 +3555,11 @@ mod tests {
     async fn retry_stuck_stage_transitions_to_running() {
         let pool = make_pool().await;
         let artifact_reg = make_artifact_registry();
+        let (stage, mut ctx_rx) = scripted("retry_stage");
+        let mut stage_reg = StageTypeRegistry::new();
+        stage_reg.register(stage);
         let bus = EventBus::new();
-        let coord = Coordinator::new(
-            pool.clone(),
-            Arc::new(StageTypeRegistry::new()),
-            artifact_reg,
-            bus.clone(),
-        );
+        let coord = Coordinator::new(pool.clone(), Arc::new(stage_reg), artifact_reg, bus.clone());
 
         let def = WorkflowDef {
             id: WorkflowDefId(Uuid::new_v4()),
@@ -3179,7 +3571,7 @@ mod tests {
                     m.insert(
                         "A".into(),
                         StageNodeDef {
-                            stage_type: "noop".into(),
+                            stage_type: "retry_stage".into(),
                             config: json!({}),
                             inputs: vec![],
                             outputs: vec![],
@@ -3209,7 +3601,7 @@ mod tests {
             id: StageInstanceId(Uuid::new_v4()),
             run_id: run.id,
             stage_key: "A".into(),
-            stage_type: "noop".into(),
+            stage_type: "retry_stage".into(),
             status: StageStatus::Parked,
             config: json!({}),
             parked_reason: Some("stuck_timeout".into()),
@@ -3229,6 +3621,15 @@ mod tests {
         queries::insert_stage_instance(&pool, &si).await.unwrap();
 
         coord.retry_stuck_stage(si.id).await.unwrap();
+        let (retry_ctx, _resume_rx) = tokio::time::timeout(timeout_dur(), ctx_rx.recv())
+            .await
+            .unwrap()
+            .expect("retry must re-execute the stage type");
+        assert_eq!(retry_ctx.stage_instance_id, si.id);
+        assert_eq!(
+            retry_ctx.stage_instance_summary().status,
+            StageStatus::Running
+        );
 
         let persisted = queries::get_stage_instance_by_id(&pool, &si.id)
             .await
@@ -3246,6 +3647,74 @@ mod tests {
             persisted.parked_meta.is_none(),
             "parked_meta must be cleared after retry"
         );
+    }
+
+    #[tokio::test]
+    async fn retry_stuck_stage_acknowledges_before_slow_execute_finishes() {
+        let pool = make_pool().await;
+        let artifact_reg = make_artifact_registry();
+        let mut stage_reg = StageTypeRegistry::new();
+        stage_reg.register(Arc::new(SlowExecuteStageType {
+            type_id: "slow_retry".into(),
+        }));
+        let coord = Coordinator::new(
+            pool.clone(),
+            Arc::new(stage_reg),
+            artifact_reg,
+            EventBus::new(),
+        );
+        let (run, si) = seed_stuck_retry_stage(&pool, "slow_retry").await;
+
+        let accepted = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            coord.retry_stuck_stage(si.id),
+        )
+        .await
+        .expect("retry should be acknowledged before slow execute completes");
+        accepted.unwrap();
+
+        let persisted = queries::get_stage_instance_by_id(&pool, &si.id)
+            .await
+            .unwrap();
+        assert_eq!(persisted.status, StageStatus::Running);
+        let _ = coord.cancel_run(run.id).await;
+    }
+
+    #[tokio::test]
+    async fn retry_stuck_stage_execute_failure_recomputes_run_status() {
+        let pool = make_pool().await;
+        let artifact_reg = make_artifact_registry();
+        let mut stage_reg = StageTypeRegistry::new();
+        stage_reg.register(Arc::new(FailingExecuteStageType {
+            type_id: "failing_retry".into(),
+        }));
+        let coord = Coordinator::new(
+            pool.clone(),
+            Arc::new(stage_reg),
+            artifact_reg,
+            EventBus::new(),
+        );
+        let (run, si) = seed_stuck_retry_stage(&pool, "failing_retry").await;
+
+        coord.retry_stuck_stage(si.id).await.unwrap();
+        wait_run_done(&pool, run.id).await;
+
+        let persisted = queries::get_stage_instance_by_id(&pool, &si.id)
+            .await
+            .unwrap();
+        assert_eq!(persisted.status, StageStatus::Failed);
+        assert_eq!(
+            persisted
+                .terminal_meta
+                .as_ref()
+                .and_then(|meta| meta.get("kind"))
+                .and_then(|kind| kind.as_str()),
+            Some("retry_stuck_execute_failed")
+        );
+        let run_after = queries::get_workflow_run_by_id(&pool, &run.id)
+            .await
+            .unwrap();
+        assert_eq!(run_after.status, RunStatus::Failed);
     }
 
     // ── (n) retry_stuck_stage rejects non-stuck-parked stage ─────────────────
