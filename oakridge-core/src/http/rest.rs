@@ -589,7 +589,11 @@ pub async fn list_parked(
 // ── Operator/PWA read-model handlers ─────────────────────────────────────────
 
 fn operator_run_status(run: &WorkflowRun, parked_count: usize) -> String {
-    match run.status {
+    operator_run_status_from_parts(run.status, parked_count)
+}
+
+fn operator_run_status_from_parts(status: RunStatus, parked_count: usize) -> String {
+    match status {
         RunStatus::Done => "complete".to_owned(),
         RunStatus::Failed => "failed".to_owned(),
         RunStatus::Pending | RunStatus::Running if parked_count > 0 => "parked".to_owned(),
@@ -606,23 +610,6 @@ fn operator_stage_status(status: StageStatus) -> String {
         StageStatus::Failed => "failed",
     }
     .to_owned()
-}
-
-fn current_stage(stages: &[StageInstance]) -> Option<String> {
-    stages
-        .iter()
-        .find(|stage| matches!(stage.status, StageStatus::Parked))
-        .or_else(|| {
-            stages
-                .iter()
-                .find(|stage| matches!(stage.status, StageStatus::Running))
-        })
-        .or_else(|| {
-            stages
-                .iter()
-                .find(|stage| matches!(stage.status, StageStatus::Pending))
-        })
-        .map(|stage| stage.stage_key.clone())
 }
 
 fn delegated_external_ref(stage: &StageInstance) -> Option<DelegatedExternalRef> {
@@ -739,36 +726,27 @@ fn operator_stage(
     }
 }
 
-async fn build_operator_run_summary(
-    state: &AppState,
-    run: WorkflowRun,
-) -> Result<OperatorRunSummary, AppError> {
-    let def = queries::get_workflow_def_by_id(&state.pool, &run.workflow_def_id).await?;
-    let stages = queries::list_stage_instances_for_run(&state.pool, &run.id).await?;
-    let parked_count = stages
-        .iter()
-        .filter(|stage| matches!(stage.status, StageStatus::Parked))
-        .count();
-    Ok(OperatorRunSummary {
-        id: run.id.0.to_string(),
-        workflow_name: def.name,
-        status: operator_run_status(&run, parked_count),
-        current_stage: current_stage(&stages),
-        parked_count,
-        updated_at: run.updated_at.to_rfc3339(),
+fn operator_run_summary(row: queries::OperatorRunSummary) -> OperatorRunSummary {
+    OperatorRunSummary {
+        id: row.run_id.0.to_string(),
+        workflow_name: row.workflow_name,
+        status: operator_run_status_from_parts(row.status, row.parked_count),
+        current_stage: row.current_stage,
+        parked_count: row.parked_count,
+        updated_at: row.updated_at.to_rfc3339(),
         is_stuck: false,
-        is_failed: matches!(run.status, RunStatus::Failed),
-    })
+        is_failed: matches!(row.status, RunStatus::Failed),
+    }
 }
 
 pub async fn list_operator_runs(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<OperatorRunSummary>>, AppError> {
-    let runs = queries::list_workflow_runs(&state.pool, None, None, None).await?;
-    let mut summaries = Vec::with_capacity(runs.len());
-    for run in runs {
-        summaries.push(build_operator_run_summary(&state, run).await?);
-    }
+    let summaries = queries::list_operator_run_summaries(&state.pool)
+        .await?
+        .into_iter()
+        .map(operator_run_summary)
+        .collect();
     Ok(Json(summaries))
 }
 

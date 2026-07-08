@@ -45,6 +45,16 @@ struct WorkflowRunRow {
 }
 
 #[derive(sqlx::FromRow)]
+struct OperatorRunSummaryRow {
+    run_id: String,
+    workflow_name: String,
+    status: String,
+    current_stage: Option<String>,
+    parked_count: i64,
+    updated_at: String,
+}
+
+#[derive(sqlx::FromRow)]
 struct StageInstanceRow {
     id: String,
     run_id: String,
@@ -145,6 +155,27 @@ fn row_to_workflow_run(r: WorkflowRunRow) -> crate::Result<WorkflowRun> {
         context: opt_json(r.context)?,
         version: r.version as i32,
         created_at: parse_dt(&r.created_at)?,
+        updated_at: parse_dt(&r.updated_at)?,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct OperatorRunSummary {
+    pub run_id: WorkflowRunId,
+    pub workflow_name: String,
+    pub status: RunStatus,
+    pub current_stage: Option<String>,
+    pub parked_count: usize,
+    pub updated_at: DateTime<Utc>,
+}
+
+fn row_to_operator_run_summary(r: OperatorRunSummaryRow) -> crate::Result<OperatorRunSummary> {
+    Ok(OperatorRunSummary {
+        run_id: WorkflowRunId(parse_uuid(&r.run_id)?),
+        workflow_name: r.workflow_name,
+        status: str_to_enum(r.status)?,
+        current_stage: r.current_stage,
+        parked_count: r.parked_count as usize,
         updated_at: parse_dt(&r.updated_at)?,
     })
 }
@@ -427,6 +458,32 @@ pub async fn list_workflow_runs(
         .fetch_all(pool)
         .await?;
     rows.into_iter().map(row_to_workflow_run).collect()
+}
+
+pub async fn list_operator_run_summaries(
+    pool: &SqlitePool,
+) -> crate::Result<Vec<OperatorRunSummary>> {
+    let rows = sqlx::query_as::<_, OperatorRunSummaryRow>(
+        "SELECT \
+             wr.id AS run_id, \
+             wd.name AS workflow_name, \
+             wr.status AS status, \
+             COALESCE( \
+                 MIN(CASE WHEN si.status = 'parked' THEN si.stage_key END), \
+                 MIN(CASE WHEN si.status = 'running' THEN si.stage_key END), \
+                 MIN(CASE WHEN si.status = 'pending' THEN si.stage_key END) \
+             ) AS current_stage, \
+             COALESCE(SUM(CASE WHEN si.status = 'parked' THEN 1 ELSE 0 END), 0) AS parked_count, \
+             wr.updated_at AS updated_at \
+         FROM workflow_run wr \
+         INNER JOIN workflow_def wd ON wd.id = wr.workflow_def_id \
+         LEFT JOIN stage_instance si ON si.run_id = wr.id \
+         GROUP BY wr.id, wd.name, wr.status, wr.updated_at, wr.created_at \
+         ORDER BY wr.created_at, wr.id",
+    )
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter().map(row_to_operator_run_summary).collect()
 }
 
 pub async fn list_active_runs(pool: &SqlitePool) -> crate::Result<Vec<WorkflowRun>> {
@@ -1373,6 +1430,63 @@ mod tests {
 
         let active = list_active_runs(&pool).await.unwrap();
         assert_eq!(active.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_list_operator_run_summaries_aggregates_stage_state() {
+        let pool = make_test_pool().await;
+        let def = test_workflow_def();
+        insert_workflow_def(&pool, &def).await.unwrap();
+        let empty_def = test_workflow_def();
+        insert_workflow_def(&pool, &empty_def).await.unwrap();
+
+        let run = WorkflowRun {
+            status: RunStatus::Running,
+            ..test_run(def.id)
+        };
+        insert_workflow_run(&pool, &run).await.unwrap();
+        let empty_run = WorkflowRun {
+            workflow_def_id: empty_def.id,
+            status: RunStatus::Done,
+            ..test_run(empty_def.id)
+        };
+        insert_workflow_run(&pool, &empty_run).await.unwrap();
+
+        let running_stage = StageInstance {
+            stage_key: "build".into(),
+            status: StageStatus::Running,
+            ..test_stage(run.id)
+        };
+        insert_stage_instance(&pool, &running_stage).await.unwrap();
+        let parked_stage = StageInstance {
+            id: StageInstanceId(Uuid::new_v4()),
+            stage_key: "review".into(),
+            status: StageStatus::Parked,
+            ..test_stage(run.id)
+        };
+        insert_stage_instance(&pool, &parked_stage).await.unwrap();
+
+        let summaries = list_operator_run_summaries(&pool).await.unwrap();
+        assert_eq!(summaries.len(), 2);
+
+        let run_summary = summaries
+            .iter()
+            .find(|summary| summary.run_id == run.id)
+            .unwrap();
+        assert_eq!(run_summary.workflow_name, def.name);
+        assert_eq!(run_summary.status, RunStatus::Running);
+        assert_eq!(run_summary.current_stage.as_deref(), Some("review"));
+        assert_eq!(run_summary.parked_count, 1);
+        assert_eq!(run_summary.updated_at, run.updated_at);
+
+        let empty_summary = summaries
+            .iter()
+            .find(|summary| summary.run_id == empty_run.id)
+            .unwrap();
+        assert_eq!(empty_summary.workflow_name, empty_def.name);
+        assert_eq!(empty_summary.status, RunStatus::Done);
+        assert_eq!(empty_summary.current_stage, None);
+        assert_eq!(empty_summary.parked_count, 0);
     }
 
     #[tokio::test]
