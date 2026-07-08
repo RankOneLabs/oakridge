@@ -261,6 +261,30 @@ interface SummaryCacheEntry {
 }
 const summaryCache = new Map<string, SummaryCacheEntry>();
 
+function rawSummaryFromFields(input: {
+  runTs: string;
+  target: string;
+  condition: string;
+  cellDir: string;
+  status: RawSummary["status"];
+  lastActivityMs: number;
+  eventCount: number;
+}): RawSummary {
+  return {
+    cell_id: cellIdFor(input.runTs, input.target, input.condition),
+    run_ts: input.runTs,
+    // Filesystem directory names cross the brand boundary here.
+    // From this point on the values carry ``TargetName`` / ``ConditionName``
+    // so consumers can't accidentally swap them for unrelated strings.
+    target_name: input.target as TargetName,
+    condition_name: input.condition as ConditionName,
+    cell_dir: relative(resolveRunRoot(), input.cellDir),
+    status: input.status,
+    last_activity_ms: input.lastActivityMs,
+    event_count: input.eventCount,
+  };
+}
+
 function parseEventFull(
   line: string,
 ): { kind: string; payload: unknown } | null {
@@ -336,19 +360,58 @@ async function summarize(
       return null;
     }
   }
-  return {
-    cell_id: cellIdFor(runTs, target, condition),
-    run_ts: runTs,
-    // Filesystem directory names cross the brand boundary here.
-    // From this point on the values carry ``TargetName`` / ``ConditionName``
-    // so consumers can't accidentally swap them for unrelated strings.
-    target_name: target as TargetName,
-    condition_name: condition as ConditionName,
-    cell_dir: relative(resolveRunRoot(), cellDir),
+  return rawSummaryFromFields({
+    runTs,
+    target,
+    condition,
+    cellDir,
     status,
-    last_activity_ms: mtimeMs,
-    event_count: eventCount,
-  };
+    lastActivityMs: mtimeMs,
+    eventCount,
+  });
+}
+
+/**
+ * Build the summary fields needed by CellDetail without reading
+ * events.jsonl. listCells() and readEvents() are the event-log readers that
+ * keep summaryCache warm; detail polling consumes that cache so SSE bursts do
+ * not trigger repeated O(N) event-log parses.
+ */
+async function cachedSummaryForDetail(
+  runTs: string,
+  target: string,
+  condition: string,
+  cellDir: string,
+): Promise<RawSummary | null> {
+  const eventsPath = join(cellDir, "events.jsonl");
+  try {
+    const st = await stat(eventsPath);
+    const cached = summaryCache.get(eventsPath);
+    return rawSummaryFromFields({
+      runTs,
+      target,
+      condition,
+      cellDir,
+      status: cached?.status ?? "unknown",
+      lastActivityMs: st.mtimeMs,
+      eventCount: cached?.eventCount ?? 0,
+    });
+  } catch {
+    try {
+      const st = await stat(cellDir);
+      return rawSummaryFromFields({
+        runTs,
+        target,
+        condition,
+        cellDir,
+        status: "active",
+        lastActivityMs: st.mtimeMs,
+        eventCount: 0,
+      });
+    } catch {
+      return null;
+    }
+  }
 }
 
 /**
@@ -423,8 +486,10 @@ export async function getCellSummary(
  * Read detail for one cell — artifact filename, commit count, and
  * run metadata. Events are excluded: the cell event timeline is
  * served exclusively through /api/cells/:cellId/events (SSE), which
- * avoids the O(N) events.jsonl read that detail polling previously
- * triggered on every refresh.
+ * avoids the O(N) events.jsonl read/parse that detail polling previously
+ * triggered on every refresh. Summary fields in this response come from
+ * summaryCache when available; listCells() and readEvents() are responsible for
+ * warming that cache from the event log.
  */
 export async function getCellDetail(
   cellId: string,
@@ -434,9 +499,12 @@ export async function getCellDetail(
   const parts = parseCellId(cellId);
   if (parts === null) return null;
   const cellDir = join(resolveRunRoot(), parts.runTs, parts.target, parts.condition);
-  // summarize() populates summaryCache, which deriveRunMetadata reads
-  // for agent attribution — no second events.jsonl open needed.
-  const raw = await summarize(parts.runTs, parts.target, parts.condition, cellDir);
+  const raw = await cachedSummaryForDetail(
+    parts.runTs,
+    parts.target,
+    parts.condition,
+    cellDir,
+  );
   if (raw === null) return null;
   const [archivedIds, artifactFilename, commitCount] = await Promise.all([
     readArchivedCellsIndex(),
@@ -486,16 +554,44 @@ export function resolveCellDirPath(cellId: string): string | null {
 }
 
 export async function readEvents(cellDir: string): Promise<CellEvent[]> {
+  const eventsPath = join(cellDir, "events.jsonl");
   try {
-    const contents = await readFile(join(cellDir, "events.jsonl"), "utf-8");
+    const contents = await readFile(eventsPath, "utf-8");
     const events: CellEvent[] = [];
+    const parsedKinds: string[] = [];
+    let firstIncrementalStartedPayload: Record<string, unknown> | null = null;
     for (const line of contents.split("\n")) {
       if (!line.trim()) continue;
       try {
-        events.push(JSON.parse(line) as CellEvent);
+        const event = JSON.parse(line) as CellEvent;
+        events.push(event);
+        if (typeof event.kind === "string") {
+          parsedKinds.push(event.kind);
+          if (
+            firstIncrementalStartedPayload === null &&
+            event.kind === "incremental_started" &&
+            typeof event.payload === "object" &&
+            event.payload !== null &&
+            !Array.isArray(event.payload)
+          ) {
+            firstIncrementalStartedPayload = event.payload as Record<string, unknown>;
+          }
+        }
       } catch {
         // Skip malformed lines — don't break the whole stream.
       }
+    }
+    try {
+      const st = await stat(eventsPath);
+      summaryCache.set(eventsPath, {
+        mtimeMs: st.mtimeMs,
+        eventCount: parsedKinds.length,
+        status: classifyStatusFromKinds(parsedKinds),
+        firstIncrementalStartedPayload,
+      });
+    } catch {
+      // The SSE caller can still use the parsed replay if the file disappears
+      // between read and stat.
     }
     return events;
   } catch {
@@ -584,12 +680,9 @@ async function deriveRunMetadata(
     return null;
   }
 
-  // Step 3: Read from the summary cache populated by summarize().
-  // getCellDetail calls summarize() before this function. If events.jsonl was
-  // readable, the cache entry is warm and firstIncrementalStartedPayload is
-  // set. If events.jsonl was absent or unreadable, summarize() took the catch
-  // path and wrote nothing to summaryCache — the ?? null fallback below handles
-  // that correctly without a second open.
+  // Step 3: Read from the summary cache populated by listCells() or readEvents().
+  // Detail refreshes intentionally do not open events.jsonl; if the cache is
+  // cold, attribution is reported as missing until the list/SSE path warms it.
   const eventsPath = join(cellDir, "events.jsonl");
   const cached = summaryCache.get(eventsPath);
   const firstStartedPayload = cached?.firstIncrementalStartedPayload ?? null;

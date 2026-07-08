@@ -7,7 +7,15 @@
  * the harness's writers and the dashboard's readers.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  appendFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -296,6 +304,34 @@ describe("getCellDetail", () => {
     // Summary metadata is still present and accurate
     expect(detail!.event_count).toBe(3);
     expect(detail!.status).toBe("ended");
+  });
+
+  test("getCellDetail does not reparse events.jsonl after cache is warm", async () => {
+    const cellDir = await makeCell(
+      "2026-07-01T10-30-00Z",
+      "prose",
+      "cache_only_detail",
+      [eventLine("incremental_started")],
+    );
+    const cells = await listCells();
+    const cellId = cells.find(
+      (c) => c.condition_name === "cache_only_detail",
+    )?.cell_id;
+    expect(cellId).toBeDefined();
+
+    const eventsPath = join(cellDir, "events.jsonl");
+    await appendFile(
+      eventsPath,
+      eventLine("incremental_terminated", "2026-07-01T10:31:00Z") + "\n",
+      "utf-8",
+    );
+    const future = new Date(Date.now() + 1000);
+    await utimes(eventsPath, future, future);
+
+    const detail = await getCellDetail(cellId!);
+    expect(detail).not.toBeNull();
+    expect(detail!.event_count).toBe(1);
+    expect(detail!.status).toBe("active");
   });
 
   test("ignores eval_scores.json when detecting the artifact filename", async () => {
