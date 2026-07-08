@@ -47,6 +47,7 @@ import {
   BUILTIN_GRADER_SUMMARIES,
   BUILTIN_TASK_DETAILS,
 } from "./generated/task_catalog";
+import { modelLabelFromCatalog } from "./generated/model_catalog";
 
 export type { CellDetail, CellEvent, CellSummary, CommitSnapshot, EvalScore };
 
@@ -547,19 +548,8 @@ async function countCommits(cellDir: string): Promise<number> {
 // Run-metadata derivation
 // ---------------------------------------------------------------------------
 
-const MODEL_LABELS: Record<string, string> = {
-  "claude-sonnet-4-6": "Claude Sonnet 4.6",
-  "claude-sonnet-4-5": "Claude Sonnet 4.5",
-  "claude-opus-4-7": "Claude Opus 4.7",
-  "claude-haiku-4-5": "Claude Haiku 4.5",
-  "gpt-5": "GPT-5",
-  "gpt-5-mini": "GPT-5 mini",
-  "gemini-2.5-pro": "Gemini 2.5 Pro",
-  "gemini-2.5-flash": "Gemini 2.5 Flash",
-};
-
 export function modelLabel(id: string): string {
-  return MODEL_LABELS[id] ?? id;
+  return modelLabelFromCatalog(id);
 }
 
 async function deriveRunMetadata(

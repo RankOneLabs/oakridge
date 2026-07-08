@@ -15,9 +15,9 @@ import {
   buildRunSpec,
   coerceFormStateForSelectedTask,
   createInitialFormState,
+  FORM_MODELS,
   formatTaskGraderState,
   formatTaskSource,
-  KNOWN_MODELS,
   minNFor,
   resolveSelectedTask,
   selectedTaskLoadError,
@@ -222,14 +222,14 @@ export function LaunchForm({
           Models
         </label>
         <div className="flex flex-col gap-0.5">
-          {KNOWN_MODELS.map((model) => (
-            <label key={model} className="flex items-center gap-1.5 text-sm">
+          {FORM_MODELS.map((entry) => (
+            <label key={entry.id} className="flex items-center gap-1.5 text-sm">
               <input
                 type="checkbox"
-                checked={state.checkedModels.has(model)}
-                onChange={() => toggleModel(model)}
+                checked={state.checkedModels.has(entry.id)}
+                onChange={() => toggleModel(entry.id)}
               />
-              {model}
+              {entry.label}
             </label>
           ))}
         </div>
