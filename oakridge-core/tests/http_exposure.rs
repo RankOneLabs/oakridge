@@ -20,6 +20,8 @@ async fn app_with(cors_origins: Vec<HeaderValue>) -> axum::Router {
         pwa_dir: PathBuf::from("/tmp"),
         cors_origins,
         auth_policy: AuthPolicy::Loopback,
+        stage_timeout_secs: 3600,
+        stuck_sweep_interval_secs: 60,
     };
     let (app, _coordinator) = boot(cfg, register_types).await.unwrap();
     app
@@ -101,6 +103,8 @@ async fn app_with_token(token: &str) -> axum::Router {
         pwa_dir: PathBuf::from("/tmp"),
         cors_origins: vec![],
         auth_policy: AuthPolicy::Token(token.to_owned()),
+        stage_timeout_secs: 3600,
+        stuck_sweep_interval_secs: 60,
     };
     let (app, _coordinator) = boot(cfg, register_types).await.unwrap();
     app

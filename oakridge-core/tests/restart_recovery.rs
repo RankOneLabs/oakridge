@@ -228,6 +228,8 @@ async fn boot_twice_restart_recovery() {
             pwa_dir: pwa_dir.clone(),
             cors_origins: vec![],
             auth_policy: oakridge_core::config::AuthPolicy::Loopback,
+            stage_timeout_secs: 3600,
+            stuck_sweep_interval_secs: 60,
         },
         move |stage, art| {
             art.register(ArtifactTypeDef {
@@ -293,6 +295,8 @@ async fn boot_twice_restart_recovery() {
             pwa_dir: pwa_dir.clone(),
             cors_origins: vec![],
             auth_policy: oakridge_core::config::AuthPolicy::Loopback,
+            stage_timeout_secs: 3600,
+            stuck_sweep_interval_secs: 60,
         },
         move |stage, art| {
             art.register(ArtifactTypeDef {
@@ -383,6 +387,8 @@ async fn recovery_unregistered_stage_type_fails_with_structured_meta() {
             pwa_dir: pwa_dir.clone(),
             cors_origins: vec![],
             auth_policy: oakridge_core::config::AuthPolicy::Loopback,
+            stage_timeout_secs: 3600,
+            stuck_sweep_interval_secs: 60,
         },
         move |stage, art| {
             art.register(ArtifactTypeDef {
@@ -479,6 +485,8 @@ async fn recovery_missing_stage_key_fails_with_structured_meta() {
             pwa_dir: pwa_dir.clone(),
             cors_origins: vec![],
             auth_policy: oakridge_core::config::AuthPolicy::Loopback,
+            stage_timeout_secs: 3600,
+            stuck_sweep_interval_secs: 60,
         },
         move |stage, art| {
             art.register(ArtifactTypeDef {
@@ -585,6 +593,8 @@ async fn cancelled_stage_is_not_rehydrated_by_recovery() {
             pwa_dir: pwa_dir.clone(),
             cors_origins: vec![],
             auth_policy: oakridge_core::config::AuthPolicy::Loopback,
+            stage_timeout_secs: 3600,
+            stuck_sweep_interval_secs: 60,
         },
         move |stage, art| {
             art.register(ArtifactTypeDef {
@@ -642,6 +652,8 @@ async fn static_serving() {
             pwa_dir: pwa_dir.clone(),
             cors_origins: vec![],
             auth_policy: oakridge_core::config::AuthPolicy::Loopback,
+            stage_timeout_secs: 3600,
+            stuck_sweep_interval_secs: 60,
         },
         register_types,
     )

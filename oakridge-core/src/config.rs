@@ -49,6 +49,11 @@ pub struct Config {
     pub pwa_dir: PathBuf,
     pub cors_origins: Vec<HeaderValue>,
     pub auth_policy: AuthPolicy,
+    /// Seconds a Running stage may go without an updated_at bump before the
+    /// stuck sweeper parks it. Default: 3600 (1 hour).
+    pub stage_timeout_secs: u64,
+    /// Interval between stuck-stage sweep passes. Default: 60 seconds.
+    pub stuck_sweep_interval_secs: u64,
 }
 
 impl Config {
@@ -76,6 +81,14 @@ impl Config {
             == Some("1");
         let auth_policy =
             resolve_auth_policy(bind_addr, control_token.as_deref(), allow_insecure)?;
+        let stage_timeout_secs: u64 = std::env::var("OAKRIDGE_STAGE_TIMEOUT_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(3600);
+        let stuck_sweep_interval_secs: u64 = std::env::var("OAKRIDGE_STUCK_SWEEP_INTERVAL_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(60);
         Ok(Self {
             port,
             bind_addr,
@@ -83,6 +96,8 @@ impl Config {
             pwa_dir,
             cors_origins,
             auth_policy,
+            stage_timeout_secs,
+            stuck_sweep_interval_secs,
         })
     }
 }
