@@ -32,12 +32,13 @@ class TaskConfig:
     """One study domain's template.
 
     ``model_pool`` is the rotation the runner picks from when
-    constructing the ensemble. With ``len(model_pool) >= n``, every
-    agent in the ensemble has a distinct model, satisfying the
-    MODEL_IDENTITY heterogeneity check for n>=3. With
-    ``len(model_pool) < n``, the runner cycles — models repeat, so
-    the condition's :class:`CompositionPolicy` must explicitly opt out
-    (HOMOGENEOUS mode or empty ``enforced_axes``) or enrollment raises
+    constructing the ensemble. With ``len(model_pool) >= n`` and no
+    duplicate entries in the pool, every agent in the ensemble has a
+    distinct model, satisfying the MODEL_IDENTITY heterogeneity check
+    for n>=3. With ``len(model_pool) < n``, or when the pool itself
+    contains duplicates, models repeat; the condition's
+    :class:`CompositionPolicy` must explicitly opt out (HOMOGENEOUS
+    mode or empty ``enforced_axes``) or enrollment raises
     :class:`HeterogeneityCheckFailed`.
     """
 
