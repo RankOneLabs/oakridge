@@ -743,7 +743,7 @@ fn operator_run_summary(row: queries::OperatorRunSummary) -> OperatorRunSummary 
         current_stage: row.current_stage,
         parked_count: row.parked_count,
         updated_at: row.updated_at.to_rfc3339(),
-        is_stuck: false,
+        is_stuck: row.is_stuck,
         is_failed: matches!(row.status, RunStatus::Failed),
     }
 }
