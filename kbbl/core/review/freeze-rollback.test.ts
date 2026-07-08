@@ -20,17 +20,20 @@ describe("freeze rollback safety", () => {
     const unsub = reviewEvents.subscribe("artifact.frozen", (p) => emitted.push(p));
 
     try {
-      db.transaction(() => {
-        freeze(db, "plan", "plan-1");
-        throw new Error("injected failure after freeze write");
-      })();
-    } catch {
-      // expected rollback
-    }
+      try {
+        db.transaction(() => {
+          freeze(db, "plan", "plan-1");
+          throw new Error("injected failure after freeze write");
+        })();
+      } catch {
+        // expected rollback
+      }
 
-    expect(isFrozen(db, "plan", "plan-1")).toBe(false);
-    expect(emitted).toHaveLength(0);
-    unsub();
+      expect(isFrozen(db, "plan", "plan-1")).toBe(false);
+      expect(emitted).toHaveLength(0);
+    } finally {
+      unsub();
+    }
   });
 
   test("unfreeze inside a rolled-back transaction emits no artifact.reopened event", () => {
@@ -40,17 +43,20 @@ describe("freeze rollback safety", () => {
     const unsub = reviewEvents.subscribe("artifact.reopened", (p) => emitted.push(p));
 
     try {
-      db.transaction(() => {
-        unfreeze(db, "plan", "plan-2");
-        throw new Error("injected failure after unfreeze write");
-      })();
-    } catch {
-      // expected rollback
-    }
+      try {
+        db.transaction(() => {
+          unfreeze(db, "plan", "plan-2");
+          throw new Error("injected failure after unfreeze write");
+        })();
+      } catch {
+        // expected rollback
+      }
 
-    expect(isFrozen(db, "plan", "plan-2")).toBe(true);
-    expect(emitted).toHaveLength(0);
-    unsub();
+      expect(isFrozen(db, "plan", "plan-2")).toBe(true);
+      expect(emitted).toHaveLength(0);
+    } finally {
+      unsub();
+    }
   });
 
   test("freeze returns payload describing the frozen artifact", () => {
