@@ -3,57 +3,88 @@ import { useRun } from "./hooks";
 import type { StageDetail } from "./types";
 import { RunParkedGateList } from "./ParkedGateList";
 
-function stageStatusClass(status: string): string {
-  return `or-stage-row--${status}`;
+const secondaryButtonClass =
+  "inline-flex items-center gap-1.5 rounded-md border border-[var(--border-muted)] bg-transparent px-3 py-1.5 text-sm text-[var(--text-secondary)] hover:border-[var(--border-hover)]";
+const tableHeaderClass =
+  "border-b border-[var(--border-subtle)] px-3 py-2 text-left text-xs font-semibold uppercase text-[var(--text-muted)]";
+const tableCellClass =
+  "border-b border-[var(--border-subtle)] px-3 py-2.5 align-middle";
+const chipBaseClass =
+  "inline-block rounded border bg-[var(--bg-surface)] px-2 py-0.5 text-xs font-medium";
+const codeClass =
+  "rounded bg-[var(--bg-code)] px-1.5 py-0.5 font-mono text-xs text-[var(--text-secondary)]";
+const mutedClass = "text-sm text-[var(--text-muted)]";
+
+function statusChipClass(status: string): string {
+  if (status === "failed") return `${chipBaseClass} border-red-500 text-red-500`;
+  if (status === "parked") return `${chipBaseClass} border-amber-500 text-amber-500`;
+  if (status === "complete") return `${chipBaseClass} border-emerald-500 text-emerald-500`;
+  if (status === "running") return `${chipBaseClass} border-blue-500 text-blue-500`;
+  return `${chipBaseClass} border-[var(--border-muted)] text-[var(--text-muted)]`;
+}
+
+function stageRowClass(status: string): string {
+  const base = "transition-colors hover:bg-[var(--bg-elevated)]";
+  if (status === "failed") return `${base} opacity-80`;
+  if (status === "parked") return `${base} border-l-2 border-l-amber-500`;
+  return base;
 }
 
 interface StageRowProps {
   stage: StageDetail;
-  onSelectArtifact?: (typeId: string) => void;
+  onSelectArtifact?: (artifactId: string) => void;
 }
 
 function StageRow({ stage, onSelectArtifact }: StageRowProps) {
   return (
-    <tr className={`or-stage-row ${stageStatusClass(stage.status)}`} data-testid="or-stage-row">
-      <td className="or-stage-row__name" data-testid="or-stage-name">{stage.name}</td>
-      <td className="or-stage-row__type">{stage.type}</td>
-      <td className="or-stage-row__status">
-        <span className={`or-chip or-chip--${stage.status}`}>{stage.status}</span>
+    <tr className={stageRowClass(stage.status)} data-testid="or-stage-row">
+      <td className={`${tableCellClass} font-medium text-[var(--text-primary)]`} data-testid="or-stage-name">
+        {stage.name}
       </td>
-      <td className="or-stage-row__artifacts">
-        {stage.artifacts.length === 0 && <span className="or-muted">—</span>}
-        {stage.artifacts.map((artifact) => (
-          <button
-            key={artifact.id}
-            type="button"
-            className="or-chip or-chip--artifact or-link"
-            onClick={() => onSelectArtifact?.(artifact.id)}
-          >
-            {artifact.type_id}
-          </button>
-        ))}
+      <td className={`${tableCellClass} text-[var(--text-secondary)]`}>{stage.type}</td>
+      <td className={tableCellClass}>
+        <span className={statusChipClass(stage.status)}>{stage.status}</span>
       </td>
-      <td className="or-stage-row__session" data-testid="or-stage-session">
+      <td className={tableCellClass}>
+        {stage.artifacts.length === 0 && <span className={mutedClass}>-</span>}
+        <div className="flex flex-wrap gap-1.5">
+          {stage.artifacts.map((artifact) => (
+            <button
+              key={artifact.id}
+              type="button"
+              className={`${chipBaseClass} border-[var(--accent-blue)] text-[var(--accent-blue)] underline`}
+              onClick={() => onSelectArtifact?.(artifact.id)}
+            >
+              {artifact.type_id}
+            </button>
+          ))}
+        </div>
+      </td>
+      <td className={tableCellClass} data-testid="or-stage-session">
         {stage.delegated_kbbl_sid ? (
           <a
             href={`#sid=${encodeURIComponent(stage.delegated_kbbl_sid)}`}
-            className="or-link"
+            className="text-[var(--accent-blue)] underline"
             data-testid="or-delegated-session-link"
           >
             {stage.delegated_kbbl_sid.slice(0, 8)}
           </a>
         ) : (
-          <span className="or-muted">—</span>
+          <span className={mutedClass}>-</span>
         )}
       </td>
-      <td className="or-stage-row__worktree" data-testid="or-stage-worktree">
+      <td className={tableCellClass} data-testid="or-stage-worktree">
         {stage.worktree ? (
-          <div className="or-worktree-meta">
-            <code className="or-code" data-testid="or-stage-branch">{stage.worktree.branch}</code>
-            <code className="or-code" data-testid="or-stage-path">{stage.worktree.path}</code>
+          <div className="flex flex-col gap-1">
+            <code className={codeClass} data-testid="or-stage-branch">
+              {stage.worktree.branch}
+            </code>
+            <code className={codeClass} data-testid="or-stage-path">
+              {stage.worktree.path}
+            </code>
           </div>
         ) : (
-          <span className="or-muted">—</span>
+          <span className={mutedClass}>-</span>
         )}
       </td>
     </tr>
@@ -77,9 +108,13 @@ export function RunDetailView({ runId, onBack, onSelectArtifact }: RunDetailView
 
   if (query.isError) {
     return (
-      <div className="or-run-detail" data-testid="or-run-detail">
-        <button type="button" className="or-btn or-btn--secondary" onClick={onBack}>← Back</button>
-        <div className="or-error" role="alert" data-testid="or-run-detail-error">
+      <div className="flex flex-col gap-5" data-testid="or-run-detail">
+        <button type="button" className={secondaryButtonClass} onClick={onBack}>Back</button>
+        <div
+          className="rounded-md border border-[var(--danger-card-border)] bg-[var(--danger-bg)] px-4 py-3 text-sm text-[var(--danger-fg)]"
+          role="alert"
+          data-testid="or-run-detail-error"
+        >
           {query.error instanceof Error ? query.error.message : "Failed to load run"}
         </div>
       </div>
@@ -88,9 +123,9 @@ export function RunDetailView({ runId, onBack, onSelectArtifact }: RunDetailView
 
   if (query.isPending || !query.data) {
     return (
-      <div className="or-run-detail" data-testid="or-run-detail">
-        <button type="button" className="or-btn or-btn--secondary" onClick={onBack}>← Back</button>
-        <div className="or-loading">Loading run…</div>
+      <div className="flex flex-col gap-5" data-testid="or-run-detail">
+        <button type="button" className={secondaryButtonClass} onClick={onBack}>Back</button>
+        <div className="py-6 text-sm text-[var(--text-muted)]">Loading run…</div>
       </div>
     );
   }
@@ -98,41 +133,44 @@ export function RunDetailView({ runId, onBack, onSelectArtifact }: RunDetailView
   const run = query.data;
 
   return (
-    <div className="or-run-detail" data-testid="or-run-detail">
-      <header className="or-run-detail__header">
-        <button type="button" className="or-btn or-btn--secondary" onClick={onBack}>← Back</button>
-        <div className="or-run-detail__title-block">
-          <h2 className="or-run-detail__title" data-testid="or-run-detail-title">
+    <div className="flex flex-col gap-5" data-testid="or-run-detail">
+      <header className="flex items-start gap-4">
+        <button type="button" className={secondaryButtonClass} onClick={onBack}>Back</button>
+        <div className="flex-1">
+          <h2 className="mb-1.5 mt-0 text-lg font-semibold text-[var(--text-primary)]" data-testid="or-run-detail-title">
             {run.workflow_name}
           </h2>
-          <div className="or-run-detail__chips">
-            <span className={`or-chip or-chip--${run.status}`} data-testid="or-run-detail-status">
+          <div className="flex flex-wrap gap-2">
+            <span className={statusChipClass(run.status)} data-testid="or-run-detail-status">
               {run.status}
             </span>
             {run.parked_count > 0 && (
-              <span className="or-badge or-badge--parked" data-testid="or-run-detail-parked">
+              <span
+                className="inline-flex h-5 items-center rounded-full bg-amber-500 px-2 text-[11px] font-semibold text-black"
+                data-testid="or-run-detail-parked"
+              >
                 {run.parked_count} parked
               </span>
             )}
           </div>
         </div>
-        <button type="button" className="or-btn or-btn--secondary" onClick={onRefresh}>
+        <button type="button" className={secondaryButtonClass} onClick={onRefresh}>
           Refresh
         </button>
       </header>
 
-      <section className="or-run-detail__stages">
-        <h3 className="or-section-title">Stages</h3>
-        <div className="or-table-wrap">
-          <table className="or-table or-stage-table" aria-label="Stage timeline">
+      <section className="flex flex-col">
+        <h3 className="mb-3 mt-0 text-sm font-semibold text-[var(--text-secondary)]">Stages</h3>
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-sm" aria-label="Stage timeline">
             <thead>
               <tr>
-                <th>Stage</th>
-                <th>Type</th>
-                <th>Status</th>
-                <th>Artifacts</th>
-                <th>Session</th>
-                <th>Worktree</th>
+                <th className={tableHeaderClass}>Stage</th>
+                <th className={tableHeaderClass}>Type</th>
+                <th className={tableHeaderClass}>Status</th>
+                <th className={tableHeaderClass}>Artifacts</th>
+                <th className={tableHeaderClass}>Session</th>
+                <th className={tableHeaderClass}>Worktree</th>
               </tr>
             </thead>
             <tbody>

@@ -526,6 +526,9 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
           bodyEffort = trimmedEffort;
         }
         if (parsed.worktree !== undefined) {
+          if (parsed.resume_from !== undefined) {
+            return c.json({ error: "worktree cannot be combined with resume_from" }, 400);
+          }
           if (typeof parsed.worktree !== "object" || parsed.worktree === null || Array.isArray(parsed.worktree)) {
             return c.json({ error: "worktree must be an object" }, 400);
           }

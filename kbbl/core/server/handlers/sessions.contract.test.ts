@@ -615,6 +615,26 @@ describe("POST /sessions worktree identity contract", () => {
     }
   });
 
+  test("worktree cannot be combined with resume_from", async () => {
+    const registry = makeRegistry();
+    const manager = makeRegistryManager(registry);
+    try {
+      const app = makeApp(manager, registry, repoDir);
+      const res = await postSessions(app, {
+        resume_from: "parent-session",
+        worktree: {
+          branchName: "cohort/epic/1-foo",
+          worktreeSubdir: "epic/1-foo",
+        },
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toBe("worktree cannot be combined with resume_from");
+    } finally {
+      await manager.endAll();
+    }
+  });
+
   test("absent effort is accepted and returns null effort in snapshot", async () => {
     const registry = makeRegistry();
     const manager = makeRegistryManager(registry);

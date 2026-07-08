@@ -212,8 +212,8 @@ See `docs/oakridge-v2-runbook.md` for a full walkthrough.
 `pre_authorized_tools` is kept on the config struct for contract stability, but
 any non-empty value is rejected at `build_config` time with an "unsupported"
 error. Per-tool approval is the kbbl PWA's responsibility (Phase 2). All
-dev-flow stages use `yolo: true` to allow unblocked execution inside the
-worktree.
+dev-flow stages keep `yolo: false` so tool approvals remain visible in the kbbl
+PWA while oakridge-core owns only workflow gates.
 
 ## Persistence & migrations
 

@@ -145,6 +145,14 @@ describe("RunListView", () => {
     expect(badge.textContent).toBe("2");
   });
 
+  it("uses one status precedence for the visible run state", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      json([{ ...PARKED_RUN_SUMMARY, is_stuck: true }]),
+    );
+    wrap(<RunListView onSelectRun={() => {}} />);
+    expect(await screen.findByText("stuck")).toBeTruthy();
+  });
+
   it("shows empty state when no runs", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json([]));
     wrap(<RunListView onSelectRun={() => {}} />);

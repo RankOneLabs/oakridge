@@ -4,6 +4,16 @@ import { useGates, useRunGates } from "./hooks";
 import type { ParkedGate } from "./types";
 import { GateResumeForm } from "./GateResumeForm";
 
+const primaryButtonClass =
+  "inline-flex items-center gap-1.5 rounded-md border border-[var(--accent-blue)] bg-[var(--accent-blue)] px-3 py-1.5 text-sm text-white disabled:cursor-not-allowed disabled:border-[var(--border-muted)] disabled:bg-[var(--border-muted)] disabled:text-[var(--text-fainter)]";
+const secondaryButtonClass =
+  "inline-flex items-center gap-1.5 rounded-md border border-[var(--border-muted)] bg-transparent px-3 py-1.5 text-sm text-[var(--text-secondary)] hover:border-[var(--border-hover)]";
+const chipClass =
+  "inline-block rounded border border-[var(--border-muted)] bg-[var(--bg-surface)] px-2 py-0.5 text-xs font-medium text-[var(--text-secondary)]";
+const labelClass = "text-[11px] font-semibold uppercase tracking-wide text-[var(--text-muted)]";
+const codeClass =
+  "rounded bg-[var(--bg-code)] px-1.5 py-0.5 font-mono text-xs text-[var(--text-secondary)]";
+
 interface GateCardProps {
   gate: ParkedGate;
   onNavigateRun?: (runId: string) => void;
@@ -13,14 +23,19 @@ function GateCard({ gate, onNavigateRun }: GateCardProps) {
   const [showResume, setShowResume] = useState(false);
 
   return (
-    <div className="or-gate-card" data-testid="or-gate-card">
-      <div className="or-gate-card__meta">
-        <span className="or-chip or-chip--gate-type" data-testid="or-gate-type">{gate.gate_type}</span>
-        <span className="or-gate-card__stage" data-testid="or-gate-stage">{gate.stage_name}</span>
+    <div
+      className="flex flex-col gap-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-4"
+      data-testid="or-gate-card"
+    >
+      <div className="flex flex-wrap items-center gap-2.5">
+        <span className={chipClass} data-testid="or-gate-type">{gate.gate_type}</span>
+        <span className="text-sm text-[var(--text-secondary)]" data-testid="or-gate-stage">
+          {gate.stage_name}
+        </span>
         {onNavigateRun && (
           <button
             type="button"
-            className="or-link"
+            className="border-0 bg-transparent p-0 text-sm text-[var(--accent-blue)] underline"
             onClick={() => onNavigateRun(gate.run_id)}
             data-testid="or-gate-run-link"
           >
@@ -30,27 +45,27 @@ function GateCard({ gate, onNavigateRun }: GateCardProps) {
       </div>
 
       {gate.worktree && (
-        <div className="or-gate-card__worktree" data-testid="or-gate-worktree">
-          <span className="or-label">Branch</span>
-          <code className="or-code" data-testid="or-gate-branch">{gate.worktree.branch}</code>
-          <span className="or-label">Path</span>
-          <code className="or-code" data-testid="or-gate-path">{gate.worktree.path}</code>
-          <span className="or-label">Base</span>
-          <code className="or-code">{gate.worktree.base_ref}</code>
+        <div className="flex flex-wrap items-center gap-2" data-testid="or-gate-worktree">
+          <span className={labelClass}>Branch</span>
+          <code className={codeClass} data-testid="or-gate-branch">{gate.worktree.branch}</code>
+          <span className={labelClass}>Path</span>
+          <code className={codeClass} data-testid="or-gate-path">{gate.worktree.path}</code>
+          <span className={labelClass}>Base</span>
+          <code className={codeClass}>{gate.worktree.base_ref}</code>
         </div>
       )}
 
       {gate.artifact_revision_id && (
-        <div className="or-gate-card__revision">
-          <span className="or-label">Revision</span>
-          <code className="or-code">{gate.artifact_revision_id}</code>
+        <div className="flex items-center gap-2">
+          <span className={labelClass}>Revision</span>
+          <code className={codeClass}>{gate.artifact_revision_id}</code>
         </div>
       )}
 
       {!showResume && (
         <button
           type="button"
-          className="or-btn or-btn--primary or-gate-card__resume-btn"
+          className={primaryButtonClass}
           onClick={() => setShowResume(true)}
           data-testid="or-gate-resume-btn"
         >
@@ -65,18 +80,17 @@ function GateCard({ gate, onNavigateRun }: GateCardProps) {
   );
 }
 
-// Global parked gate list
 export function GlobalParkedGateList({ onNavigateRun }: { onNavigateRun: (id: string) => void }) {
   const qc = useQueryClient();
   const query = useGates();
 
   return (
-    <div className="or-gate-list" data-testid="or-global-gate-list">
-      <div className="or-gate-list__header">
-        <h2 className="or-gate-list__title">Parked Gates</h2>
+    <div className="flex flex-col gap-3" data-testid="or-global-gate-list">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="m-0 text-lg font-semibold text-[var(--text-primary)]">Parked Gates</h2>
         <button
           type="button"
-          className="or-btn or-btn--secondary"
+          className={secondaryButtonClass}
           onClick={() => { void qc.invalidateQueries({ queryKey: ["oakridge", "gates"] }); }}
         >
           Refresh
@@ -84,17 +98,23 @@ export function GlobalParkedGateList({ onNavigateRun }: { onNavigateRun: (id: st
       </div>
 
       {query.isError && (
-        <div className="or-error" role="alert" data-testid="or-gate-list-error">
+        <div
+          className="rounded-md border border-[var(--danger-card-border)] bg-[var(--danger-bg)] px-4 py-3 text-sm text-[var(--danger-fg)]"
+          role="alert"
+          data-testid="or-gate-list-error"
+        >
           {query.error instanceof Error ? query.error.message : "Failed to load gates"}
         </div>
       )}
 
       {query.isPending && !query.data && (
-        <div className="or-loading">Loading gates…</div>
+        <div className="py-6 text-sm text-[var(--text-muted)]">Loading gates…</div>
       )}
 
       {query.data && query.data.length === 0 && (
-        <div className="or-empty" data-testid="or-gate-list-empty">No parked gates.</div>
+        <div className="py-6 text-sm text-[var(--text-muted)]" data-testid="or-gate-list-empty">
+          No parked gates.
+        </div>
       )}
 
       {query.data && query.data.map((gate: ParkedGate) => (
@@ -104,7 +124,6 @@ export function GlobalParkedGateList({ onNavigateRun }: { onNavigateRun: (id: st
   );
 }
 
-// Per-run parked gate list (used inside RunDetailView)
 export function RunParkedGateList({ runId }: { runId: string }) {
   const query = useRunGates(runId);
 
@@ -112,8 +131,8 @@ export function RunParkedGateList({ runId }: { runId: string }) {
   if (!query.data || query.data.length === 0) return null;
 
   return (
-    <div className="or-gate-list or-gate-list--inline" data-testid="or-run-gate-list">
-      <h3 className="or-gate-list__subtitle">Parked Gates</h3>
+    <div className="mt-6 flex flex-col gap-3" data-testid="or-run-gate-list">
+      <h3 className="mb-2 mt-0 text-sm font-semibold text-[var(--text-secondary)]">Parked Gates</h3>
       {query.data.map((gate: ParkedGate) => (
         <GateCard key={gate.id} gate={gate} />
       ))}

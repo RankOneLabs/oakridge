@@ -105,6 +105,25 @@ fn revision_count_from_meta(meta: Option<&Value>) -> u32 {
         .unwrap_or(1)
 }
 
+fn validate_delegated_def(def: &DelegatedSessionDefConfig) -> anyhow::Result<()> {
+    if !def.pre_authorized_tools.is_empty() {
+        anyhow::bail!(
+            "pre_authorized_tools is not supported: per-tool approval is managed by the kbbl PWA (Phase 2). Remove pre_authorized_tools from the workflow definition or set it to an empty array."
+        );
+    }
+
+    if let Some(ref e) = def.effort {
+        if !validate_effort(e) {
+            anyhow::bail!(
+                "invalid effort {:?}: must be one of [minimal, low, medium, high]",
+                e
+            );
+        }
+    }
+
+    Ok(())
+}
+
 pub struct DelegatedSessionStage {
     pub prompts_dir: PathBuf,
     pub kbbl_client: Arc<KbblClient>,
@@ -654,21 +673,7 @@ impl StageType for DelegatedSessionStage {
     ) -> anyhow::Result<()> {
         let def: DelegatedSessionDefConfig = serde_json::from_value(def_config.clone())?;
         load_template(&self.prompts_dir, &def.prompt_template_path)?;
-
-        if !def.pre_authorized_tools.is_empty() {
-            anyhow::bail!(
-                "pre_authorized_tools is not supported: per-tool approval is managed by the kbbl PWA (Phase 2). Remove pre_authorized_tools from the workflow definition or set it to an empty array."
-            );
-        }
-
-        if let Some(ref e) = def.effort {
-            if !validate_effort(e) {
-                anyhow::bail!(
-                    "invalid effort {:?}: must be one of [minimal, low, medium, high]",
-                    e
-                );
-            }
-        }
+        validate_delegated_def(&def)?;
 
         let input_names: std::collections::HashSet<&str> =
             input_slots.iter().map(|slot| slot.name.as_str()).collect();
@@ -714,21 +719,7 @@ impl StageType for DelegatedSessionStage {
             "STAGE_INSTANCE_ID".to_owned(),
             stage_instance_id.0.to_string(),
         );
-
-        if !def.pre_authorized_tools.is_empty() {
-            anyhow::bail!(
-                "pre_authorized_tools is not supported: per-tool approval is managed by the kbbl PWA (Phase 2). Remove pre_authorized_tools from the workflow definition or set it to an empty array."
-            );
-        }
-
-        if let Some(ref e) = def.effort {
-            if !validate_effort(e) {
-                anyhow::bail!(
-                    "invalid effort {:?}: must be one of [minimal, low, medium, high]",
-                    e
-                );
-            }
-        }
+        validate_delegated_def(&def)?;
 
         let rendered_prompt = render_template(&template, &slot_values)?;
         let sid_str = stage_instance_id.0.to_string();

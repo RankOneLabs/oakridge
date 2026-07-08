@@ -4,6 +4,8 @@ export interface OakridgeProxyDeps {
   baseUrl: string | undefined;
 }
 
+const OAKRIDGE_PROXY_TIMEOUT_MS = 30_000;
+
 export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): void {
   // Config: tells the PWA whether oakridge-core is reachable without
   // attempting a proxy request that would block the page.
@@ -45,7 +47,12 @@ export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): vo
     }
 
     try {
-      const upstream = await fetch(targetUrl, { method, headers: forwardHeaders, body });
+      const upstream = await fetch(targetUrl, {
+        method,
+        headers: forwardHeaders,
+        body,
+        signal: AbortSignal.timeout(OAKRIDGE_PROXY_TIMEOUT_MS),
+      });
       const ct = upstream.headers.get("content-type") ?? "application/json";
       return new Response(upstream.body, {
         status: upstream.status,

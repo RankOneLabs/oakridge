@@ -612,6 +612,15 @@ fn operator_stage_status(status: StageStatus) -> String {
     .to_owned()
 }
 
+fn operator_artifact_revision_status(status: StageStatus) -> String {
+    if matches!(status, StageStatus::Done) {
+        "approved"
+    } else {
+        "draft"
+    }
+    .to_owned()
+}
+
 fn delegated_external_ref(stage: &StageInstance) -> Option<DelegatedExternalRef> {
     stage
         .external_ref
@@ -881,16 +890,25 @@ pub async fn get_operator_artifact_detail(
         })?;
     let producing_stage =
         queries::get_stage_instance_by_id(&state.pool, &requested.stage_instance_id).await?;
-    let revision_status = if matches!(producing_stage.status, StageStatus::Done) {
-        "approved"
-    } else {
-        "draft"
-    };
+    let mut status_by_stage: HashMap<StageInstanceId, String> = HashMap::new();
+    for artifact in &chain {
+        if !status_by_stage.contains_key(&artifact.stage_instance_id) {
+            let stage =
+                queries::get_stage_instance_by_id(&state.pool, &artifact.stage_instance_id).await?;
+            status_by_stage.insert(
+                artifact.stage_instance_id,
+                operator_artifact_revision_status(stage.status),
+            );
+        }
+    }
     let revisions = chain
         .into_iter()
         .map(|artifact| OperatorArtifactRevision {
             id: artifact.id.0.to_string(),
-            status: revision_status.to_owned(),
+            status: status_by_stage
+                .get(&artifact.stage_instance_id)
+                .cloned()
+                .unwrap_or_else(|| "draft".to_owned()),
             created_at: artifact.created_at.to_rfc3339(),
             body: artifact.body,
             validation: json!({
@@ -1275,6 +1293,122 @@ mod tests {
             artifact_detail["revisions"][0]["validation"]["valid"],
             json!(true)
         );
+    }
+
+    #[tokio::test]
+    async fn test_operator_artifact_detail_uses_per_revision_stage_status() {
+        let state = make_state(vec![]).await;
+        let now = Utc::now();
+        let def = WorkflowDef {
+            id: WorkflowDefId(Uuid::new_v4()),
+            name: "artifact-revisions".into(),
+            version: 1,
+            graph: WorkflowGraph {
+                stages: HashMap::new(),
+                edges: vec![],
+            },
+            created_at: now,
+        };
+        queries::insert_workflow_def(&state.pool, &def)
+            .await
+            .unwrap();
+        let run = WorkflowRun {
+            id: WorkflowRunId(Uuid::new_v4()),
+            workflow_def_id: def.id,
+            project_id: None,
+            status: RunStatus::Running,
+            context: json!({}),
+            version: 1,
+            created_at: now,
+            updated_at: now,
+        };
+        queries::insert_workflow_run(&state.pool, &run)
+            .await
+            .unwrap();
+
+        let root_stage = StageInstance {
+            id: StageInstanceId(Uuid::new_v4()),
+            run_id: run.id,
+            stage_key: "plan".into(),
+            stage_type: "delegated_session".into(),
+            status: StageStatus::Done,
+            config: json!({}),
+            parked_reason: None,
+            parked_meta: None,
+            terminal_meta: None,
+            external_ref: None,
+            started_at: Some(now),
+            ended_at: Some(now),
+            created_at: now,
+            updated_at: now,
+        };
+        let child_stage = StageInstance {
+            id: StageInstanceId(Uuid::new_v4()),
+            run_id: run.id,
+            stage_key: "build".into(),
+            stage_type: "delegated_session".into(),
+            status: StageStatus::Parked,
+            config: json!({}),
+            parked_reason: Some("waiting_gate".into()),
+            parked_meta: None,
+            terminal_meta: None,
+            external_ref: None,
+            started_at: Some(now),
+            ended_at: None,
+            created_at: now,
+            updated_at: now,
+        };
+        queries::insert_stage_instance(&state.pool, &root_stage)
+            .await
+            .unwrap();
+        queries::insert_stage_instance(&state.pool, &child_stage)
+            .await
+            .unwrap();
+
+        let root_artifact = Artifact {
+            id: ArtifactId(Uuid::new_v4()),
+            run_id: run.id,
+            stage_instance_id: root_stage.id,
+            artifact_type: "any".into(),
+            output_name: Some("out".into()),
+            label: None,
+            body: json!({"version": 1}),
+            version: 1,
+            parent_artifact_id: None,
+            created_at: now,
+        };
+        let child_artifact = Artifact {
+            id: ArtifactId(Uuid::new_v4()),
+            run_id: run.id,
+            stage_instance_id: child_stage.id,
+            artifact_type: "any".into(),
+            output_name: Some("out".into()),
+            label: None,
+            body: json!({"version": 2}),
+            version: 2,
+            parent_artifact_id: Some(root_artifact.id),
+            created_at: now,
+        };
+        queries::insert_artifact(&state.pool, &root_artifact)
+            .await
+            .unwrap();
+        queries::insert_artifact(&state.pool, &child_artifact)
+            .await
+            .unwrap();
+
+        let app = crate::http::router(state.clone());
+        let (status, artifact_detail) = req(
+            app,
+            "GET",
+            &format!("/artifact_details/{}", child_artifact.id.0),
+            None,
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(artifact_detail["producing_stage"], json!("build"));
+        assert_eq!(artifact_detail["revisions"][0]["status"], json!("approved"));
+        assert_eq!(artifact_detail["revisions"][1]["status"], json!("draft"));
     }
 
     #[tokio::test]

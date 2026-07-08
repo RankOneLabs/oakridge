@@ -195,7 +195,7 @@ fn dev_flow_workflow_json_deserializes_as_workflow_def() {
         "missing edge build → assessor"
     );
 
-    // Verify the assessor has a required build_result input and an optional plan input.
+    // Verify the assessor has required build_result and plan inputs.
     let assessor = stages.get("assessor").unwrap();
     let build_result_input = assessor.inputs.iter().find(|i| i.name == "build_result");
     let plan_input = assessor.inputs.iter().find(|i| i.name == "plan");

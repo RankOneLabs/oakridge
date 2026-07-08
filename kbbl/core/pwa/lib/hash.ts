@@ -61,7 +61,7 @@ export function readHashRoute(): HashRoute | null {
     const id = hash.slice(5);
     if (id) return { view: "epic", id };
   }
-  if (hash.startsWith("oakridge")) {
+  if (hash === "oakridge" || hash.startsWith("oakridge/")) {
     const rest = hash.slice("oakridge".length);
     if (rest === "" || rest === "/") {
       return { view: "oakridge", route: { sub: "runs" } };

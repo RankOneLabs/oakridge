@@ -150,8 +150,8 @@ under `prompts/dev-flow/`:
 | `dev-flow/build.md` | `build` |
 | `dev-flow/assessor.md` | `assessor` |
 
-All four must be present before the workflow starts. A missing template fails the
-stage at runtime before a kbbl session is created.
+All four must be present before the workflow starts. A missing template fails
+during workflow config validation/build before a kbbl session is created.
 
 ### Custom prompt templates
 
