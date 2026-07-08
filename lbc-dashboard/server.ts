@@ -13,9 +13,15 @@
  *
  * Default port 8765 (mnemonic: "lbc" loosely keyed). Override with
  * LBC_DASHBOARD_PORT.
+ *
+ * Auth: when LBC_DASHBOARD_HOST is a non-loopback address, OAKRIDGE_CONTROL_TOKEN
+ * must be set or ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1 must be set. All write
+ * routes (POST, DELETE) require a Bearer token or control cookie.
  */
 import { serveStatic } from "hono/bun";
 import { Hono } from "hono";
+import { timingSafeEqual } from "node:crypto";
+import type { Context, MiddlewareHandler, Next } from "hono";
 import { streamSSE } from "hono/streaming";
 import { mkdir, open, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -70,6 +76,131 @@ import {
   validateTaskDraftJson,
 } from "./src/store";
 import { RunRegistry, newRunTs, runRegistry } from "./src/runs";
+
+// --- control auth ----------------------------------------------------------
+
+export type LbcAuthPolicy =
+  | { mode: "loopback" }
+  | { mode: "token"; token: string }
+  | { mode: "insecure-non-loopback" };
+
+const LBC_LOOPBACK_HOSTS = new Set([
+  "127.0.0.1", "::1", "localhost", "0:0:0:0:0:0:0:1",
+]);
+
+export function lbcResolveAuthPolicy(opts: {
+  host: string;
+  controlToken: string | undefined;
+  allowInsecure: boolean;
+}): LbcAuthPolicy {
+  const { host, allowInsecure } = opts;
+  const controlToken = opts.controlToken?.trim() || undefined;
+
+  if (LBC_LOOPBACK_HOSTS.has(host)) {
+    return { mode: "loopback" };
+  }
+  if (controlToken) {
+    return { mode: "token", token: controlToken };
+  }
+  if (allowInsecure) {
+    return { mode: "insecure-non-loopback" };
+  }
+  throw new Error(
+    `lbc-dashboard: non-loopback bind host=${host} requires OAKRIDGE_CONTROL_TOKEN or ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1`,
+  );
+}
+
+function lbcTokenEquals(a: string, b: string): boolean {
+  const aBuf = Buffer.from(a, "utf8");
+  const bBuf = Buffer.from(b, "utf8");
+  if (aBuf.length !== bBuf.length) return false;
+  return timingSafeEqual(aBuf, bBuf);
+}
+
+const LBC_COOKIE_NAME = "lbc_ctrl";
+
+function lbcParseCookieToken(cookieHeader: string): string | null {
+  for (const part of cookieHeader.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq === -1) continue;
+    if (part.slice(0, eq).trim() === LBC_COOKIE_NAME) {
+      return part.slice(eq + 1).trim();
+    }
+  }
+  return null;
+}
+
+function lbcMakeControlAuthMiddleware(policy: LbcAuthPolicy): MiddlewareHandler {
+  if (policy.mode === "loopback" || policy.mode === "insecure-non-loopback") {
+    return async (_c: Context, next: Next) => { await next(); };
+  }
+  const { token } = policy;
+  return async (c: Context, next: Next) => {
+    const method = c.req.method;
+    if (method === "GET" || method === "HEAD") {
+      await next();
+      return;
+    }
+    const authHeader = c.req.header("authorization");
+    if (authHeader !== undefined) {
+      const space = authHeader.indexOf(" ");
+      if (space === -1 || authHeader.slice(0, space).toLowerCase() !== "bearer") {
+        return c.json({ error: "malformed Authorization header" }, 401, {
+          "www-authenticate": 'Bearer realm="lbc-dashboard"',
+        });
+      }
+      const presented = authHeader.slice(space + 1);
+      if (lbcTokenEquals(presented, token)) { await next(); return; }
+      return c.json({ error: "forbidden" }, 403, {
+        "www-authenticate": 'Bearer realm="lbc-dashboard"',
+      });
+    }
+    const cookieHeader = c.req.header("cookie");
+    if (cookieHeader !== undefined) {
+      const cookieToken = lbcParseCookieToken(cookieHeader);
+      if (cookieToken !== null) {
+        if (lbcTokenEquals(cookieToken, token)) { await next(); return; }
+        return c.json({ error: "forbidden" }, 403, {
+          "www-authenticate": 'Bearer realm="lbc-dashboard"',
+        });
+      }
+    }
+    return c.json({ error: "unauthorized" }, 401, {
+      "www-authenticate": 'Bearer realm="lbc-dashboard"',
+    });
+  };
+}
+
+function lbcMakeCookieHandler(
+  policy: LbcAuthPolicy,
+): (c: Context) => Response | Promise<Response> {
+  if (policy.mode === "loopback" || policy.mode === "insecure-non-loopback") {
+    return (c: Context) => c.json({ ok: true });
+  }
+  const { token } = policy;
+  return (c: Context) => {
+    const authHeader = c.req.header("authorization");
+    if (!authHeader) {
+      return c.json({ error: "unauthorized" }, 401, {
+        "www-authenticate": 'Bearer realm="lbc-dashboard"',
+      }) as Response;
+    }
+    const space = authHeader.indexOf(" ");
+    if (space === -1 || authHeader.slice(0, space).toLowerCase() !== "bearer") {
+      return c.json({ error: "malformed Authorization header" }, 401, {
+        "www-authenticate": 'Bearer realm="lbc-dashboard"',
+      }) as Response;
+    }
+    const presented = authHeader.slice(space + 1);
+    if (!lbcTokenEquals(presented, token)) {
+      return c.json({ error: "forbidden" }, 403, {
+        "www-authenticate": 'Bearer realm="lbc-dashboard"',
+      }) as Response;
+    }
+    const cookieValue = `${LBC_COOKIE_NAME}=${token}; HttpOnly; SameSite=Lax; Path=/`;
+    return c.json({ ok: true }, 200, { "set-cookie": cookieValue }) as Response;
+  };
+}
 
 // --- app factory -----------------------------------------------------------
 //
@@ -131,9 +262,20 @@ async function validateGraderConfigForTask(
   );
 }
 
-export function createApp(deps?: { registry?: RunRegistry }): Hono {
+export function createApp(deps?: {
+  registry?: RunRegistry;
+  authPolicy?: LbcAuthPolicy;
+}): Hono {
   const registry = deps?.registry ?? runRegistry;
+  const authPolicy = deps?.authPolicy ?? { mode: "loopback" as const };
   const app = new Hono();
+
+  // Control auth — protects all write routes when bound to non-loopback.
+  app.use("/*", lbcMakeControlAuthMiddleware(authPolicy));
+
+  // Cookie establishment — POST /auth/cookie validates a Bearer token and
+  // sets an HttpOnly SameSite=Lax cookie for subsequent browser requests.
+  app.post("/auth/cookie", lbcMakeCookieHandler(authPolicy));
 
   // --- API ---------------------------------------------------------------
   //
@@ -738,21 +880,40 @@ function parsePort(raw: string | undefined): number {
   return n;
 }
 
-const app = createApp();
 const port = parsePort(process.env.LBC_DASHBOARD_PORT);
+const lbcHost = process.env.LBC_DASHBOARD_HOST ?? "127.0.0.1";
+
+let lbcAuthPolicy: LbcAuthPolicy;
+try {
+  lbcAuthPolicy = lbcResolveAuthPolicy({
+    host: lbcHost,
+    controlToken: process.env.OAKRIDGE_CONTROL_TOKEN,
+    allowInsecure: process.env.ALLOW_INSECURE_NON_LOOPBACK_CONTROL === "1",
+  });
+} catch (err) {
+  console.error(err instanceof Error ? err.message : String(err));
+  console.error(
+    "[lbc-dashboard] Set OAKRIDGE_CONTROL_TOKEN or ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1 to bind on non-loopback interfaces.",
+  );
+  process.exit(1);
+}
+if (lbcAuthPolicy.mode === "insecure-non-loopback") {
+  console.warn(
+    "[lbc-dashboard] WARNING: running without authentication on a non-loopback bind (ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1). " +
+    "Set OAKRIDGE_CONTROL_TOKEN to protect write routes.",
+  );
+}
+
+const app = createApp({ authPolicy: lbcAuthPolicy });
 
 console.log(`[lbc-dashboard] run root: ${resolveRunRoot()}`);
-console.log(`[lbc-dashboard] listening on http://127.0.0.1:${port}`);
+console.log(`[lbc-dashboard] listening on http://${lbcHost}:${port}`);
 
-// Bind to loopback by default — the dashboard has no auth and is
-// intended for the operator's own machine. Bun's default would bind
-// to 0.0.0.0 and expose the port on any LAN interface; that's a
-// trust-model leak the README explicitly avoids by saying
-// "localhost-only by design." Override LBC_DASHBOARD_HOST to bind
-// elsewhere (e.g., "0.0.0.0" on a Tailnet-only host where
-// every interface is trusted).
+// Bind to loopback by default — override LBC_DASHBOARD_HOST to bind on a
+// non-loopback interface (requires OAKRIDGE_CONTROL_TOKEN or
+// ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1 to pass the startup guard above).
 export default {
   port,
-  hostname: process.env.LBC_DASHBOARD_HOST ?? "127.0.0.1",
+  hostname: lbcHost,
   fetch: app.fetch,
 };
