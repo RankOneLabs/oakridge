@@ -17,6 +17,13 @@ combination of :class:`IncrementalCoordinator` and
 Per the design memo, ``ProjectCoordinator`` is the only orchestrator
 external callers should reach for. ``IncrementalCoordinator`` and
 the consensus mechanisms are the building blocks it composes.
+
+Lifecycle: :meth:`run` requires the project to be in ENROLLING state
+with at least one enrollment. It transitions ENROLLING → ACTIVE before
+execution and ACTIVE → SHIPPED (setting ``Project.shipped_at``) on
+successful completion. If execution raises, the project is left in
+ACTIVE and the exception propagates — SHIPPED is only set when all
+protocol phases complete cleanly.
 """
 from __future__ import annotations
 

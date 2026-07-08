@@ -428,10 +428,12 @@ def _build_agents(
     """Build n agents from the target's model + frame pools.
 
     Agents cycle through both pools — for ``n <= len(model_pool)``
-    every agent has a distinct model, satisfying the
-    heterogeneity-by-model-identity check at enrollment. Beyond
-    that the operator opted out of mechanical heterogeneity by
-    sizing n above the pool.
+    every agent has a distinct model, satisfying the MODEL_IDENTITY
+    heterogeneity check for n>=3. When the pool is shorter than n,
+    models repeat; the condition's :class:`CompositionPolicy` must
+    explicitly opt out (HOMOGENEOUS mode or empty ``enforced_axes``)
+    or enrollment in :func:`run_cell` raises
+    :class:`HeterogeneityCheckFailed`.
     """
     if n <= 0:
         raise ValueError(f"n must be positive, got {n}")
