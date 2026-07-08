@@ -1,10 +1,10 @@
 """Tests for legit_biz_club.study.layout.
 
 Verifies:
-- reserved_sidecar_names contains the expected canonical names.
-- is_reserved_sidecar_name rejects canonical names and differently-cased
+- RESERVED_SIDECAR_NAMES contains the expected canonical names.
+- is_reserved_sidecar_name returns True for canonical names and differently-cased
   variants (catches platform / casing gaps).
-- is_reserved_sidecar_name allows a normal artifact filename.
+- is_reserved_sidecar_name returns False for a normal artifact filename.
 - cell_dir_path derives the expected path from its three components.
 - cell_dir_name returns the expected relative string.
 - runner.py and run.py validation surfaces reject reserved names (and
