@@ -73,13 +73,34 @@ bun run build:pwa
 
 Defaults to `127.0.0.1:8788` — open `http://localhost:8788/` in a browser on the same machine. From the session list, click **+ New session**, choose a directory, and start the session in the workdir of your choice.
 
-For phone/tablet access over Tailscale, bind all interfaces:
+For phone/tablet access over Tailscale, bind all interfaces with a control token:
 
 ```bash
+# Generate a token (do this once and store it somewhere safe):
+export OAKRIDGE_CONTROL_TOKEN=$(openssl rand -hex 32)
+
+# Start kbbl bound to all interfaces:
 ./scripts/kbbl-start --host=0.0.0.0
 ```
 
-Then open `http://<machine>:8788/` on your phone. Add to Home Screen for a full-screen standalone app. Only do this on networks where every reachable peer is trusted (Tailscale-only, or a LAN you control) — control endpoints are unauthenticated in v0.
+Then open `http://<machine>:8788/` on your phone. The browser prompts for the token on first visit and stores it as an HttpOnly cookie. Add to Home Screen for a full-screen standalone app.
+
+If oakridge-core uses the same token, set it once and both services pick it up:
+```bash
+export OAKRIDGE_CONTROL_TOKEN=<your-token>
+```
+
+If oakridge-core uses a **different** secret, set the proxy override so kbbl can inject the right token into forwarded core write requests:
+```bash
+export OAKRIDGE_CONTROL_TOKEN=<kbbl-token>
+export OAKRIDGE_CORE_CONTROL_TOKEN=<core-token>
+```
+
+**Development without a token (escape hatch):** If you need non-loopback access without authentication during development, set:
+```bash
+export ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1
+```
+This emits a warning at startup and skips all auth checks. Do not use in production.
 
 You can still pass a workdir to `kbbl-start`; it becomes the default path shown in the **+ New session** form. If omitted, the form starts empty and the directory picker opens at the server user's home directory.
 
@@ -208,8 +229,10 @@ The `core/` ↔ `adapters/` boundary is enforced by import direction: only `core
 
 ## Security posture
 
-- **Network:** binds to `127.0.0.1` by default. Operator opts into wider exposure with `--host=0.0.0.0` for tailnet/phone access, and is responsible for ensuring only trusted peers can reach the port (Tailscale-only, LAN firewall, etc.). Control endpoints are unauthenticated in v0 — token-based auth is planned follow-up work.
-- **Hook endpoint:** `/hook/approval` is filtered to `127.0.0.1` at the route handler — only the in-process gate script can park approval requests, not a tailnet peer.
+- **Network:** binds to `127.0.0.1` by default. Operator opts into wider exposure with `--host=0.0.0.0` for tailnet/phone access. Non-loopback binds require `OAKRIDGE_CONTROL_TOKEN` or the explicit `ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1` escape hatch — the server exits at startup if neither is set.
+- **Control auth:** on non-loopback binds, all write routes (POST/PATCH/DELETE) require `Authorization: Bearer <token>`. The browser PWA can also authenticate via an HttpOnly SameSite=Lax cookie established by `POST /auth/cookie` with a valid Bearer token. Tokens are compared with a constant-time helper. Missing credentials → 401; wrong token → 403.
+- **Proxy auth:** oakridge-core write requests are forwarded with the core token injected server-side (`OAKRIDGE_CORE_CONTROL_TOKEN`, falling back to `OAKRIDGE_CONTROL_TOKEN`). The browser Authorization header is stripped before forwarding so browser credentials never reach the core upstream.
+- **Hook endpoint:** `/hook/approval` is filtered to `127.0.0.1` at the route handler — only the in-process gate script can park approval requests, not a tailnet peer. Hook routes are excluded from the control auth middleware.
 - **Path-traversal guard:** `:sid` route params are validated against a strict v4 UUID regex before any filesystem access.
 - **Markdown:** assistant text is rendered with `react-markdown` + `rehype-sanitize`; no `dangerouslySetInnerHTML`, so prompt-injected HTML from web-fetched content can't execute.
 - **Agent user settings (Claude Code adapter):** the server spawns CC with `--setting-sources user` so your user-level skills and slash commands are available inside the spawned subprocess. Tradeoff: user-level allowlists and permission settings in `~/.claude/settings.json` can bypass kbbl's approval gate — if you've globally approved a tool there, the PreToolUse hook won't fire for it. The operator-controlled escape hatches below (YOLO, "Always {tool}") are the intended path for short-circuiting the gate; don't rely on the gate to stop things you've already auto-approved at the user level.
