@@ -14,14 +14,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from jig.core.types import (
     Grader,
     Score,
     ScoreSource,
 )
 from jig.tracing.stdout import StdoutTracer
-
-import pytest
 
 from legit_biz_club.composition import HeterogeneityCheckFailed
 from legit_biz_club.coordination.proposal import Proposal
