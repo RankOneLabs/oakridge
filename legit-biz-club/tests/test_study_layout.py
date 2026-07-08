@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from legit_biz_club.core.models import Brief
 from legit_biz_club.run import RunSpec
 from legit_biz_club.study.layout import (
     RESERVED_SIDECAR_NAMES,
@@ -26,8 +27,6 @@ from legit_biz_club.study.layout import (
 )
 from legit_biz_club.study.runner import run_cell
 from legit_biz_club.study.targets import prose_task
-from legit_biz_club.core.models import Brief
-
 
 # ---------------------------------------------------------------------------
 # is_reserved_sidecar_name
@@ -76,9 +75,9 @@ def test_normal_artifact_names_allowed(name: str) -> None:
 
 
 def test_reserved_sidecar_names_contains_expected_entries() -> None:
-    assert RESERVED_SIDECAR_NAMES == frozenset(
+    assert frozenset(
         {"commits", "agent_memory", "events.jsonl", "eval_scores.json"}
-    )
+    ) == RESERVED_SIDECAR_NAMES
 
 
 # ---------------------------------------------------------------------------
