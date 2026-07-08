@@ -1,10 +1,12 @@
+import type { CohortStatus } from "../../../types/task-tracker";
+
 export interface Cohort {
   id: string;
   plan_id: string;
   title: string;
   notes: string | null;
   position: number;
-  status: string;
+  status: CohortStatus;
   created_at: string;
 }
 

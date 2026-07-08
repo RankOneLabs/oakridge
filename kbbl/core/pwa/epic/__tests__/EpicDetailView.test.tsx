@@ -2,10 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement } from "react";
+import type { EpicStage } from "../../../types/task-tracker";
 
 import { EpicDetailView } from "../EpicDetailView";
-
-type EpicStage = "spec" | "plan" | "build" | "assess";
 type FetchHandler = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 function makeFixture(current_stage: EpicStage) {
