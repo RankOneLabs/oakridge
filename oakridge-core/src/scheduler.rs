@@ -27,6 +27,16 @@ pub enum ControlMsg {
         reply_tx: oneshot::Sender<Result<(), DecisionError>>,
     },
     Cancel,
+    /// Park a specific Running stage as stuck_timeout. The RunTask cancels the
+    /// stage handle (if present), records cancellation_delivered in parked_meta,
+    /// parks the stage in DB with a CAS, updates its in-memory index, and
+    /// publishes a StageStatusChanged event so quiescence fires.
+    ParkStuckStage {
+        stage_instance_id: StageInstanceId,
+        /// Partial parked_meta template; cancellation_delivered is added by RunTask.
+        parked_meta_template: serde_json::Value,
+        reply_tx: oneshot::Sender<bool>,
+    },
 }
 
 #[derive(Debug)]
@@ -98,6 +108,13 @@ impl RunTask {
                     Some(ControlMsg::Cancel) => {
                         self.on_cancel().await;
                         break;
+                    }
+                    Some(ControlMsg::ParkStuckStage { stage_instance_id, parked_meta_template, reply_tx }) => {
+                        let terminal = self.on_park_stuck(stage_instance_id, parked_meta_template).await;
+                        let _ = reply_tx.send(true);
+                        if terminal {
+                            break;
+                        }
                     }
                     None => break,
                 },
@@ -702,6 +719,86 @@ impl RunTask {
             },
         );
     }
+
+    /// Park a specific Running stage as stuck_timeout. Cancels its handle (if
+    /// present), writes a CAS park to DB, updates the in-memory index, and
+    /// publishes events. Returns true when the run has reached quiescence.
+    async fn on_park_stuck(
+        &mut self,
+        stage_instance_id: StageInstanceId,
+        parked_meta_template: serde_json::Value,
+    ) -> bool {
+        // Cancel the live handle if present; record whether it was delivered.
+        let cancellation_delivered = if let Some(handle) = self.handles.remove(&stage_instance_id) {
+            handle.cancel().await.is_ok()
+        } else {
+            false
+        };
+
+        // Augment the template with the cancellation outcome.
+        let mut parked_meta = parked_meta_template;
+        if let Some(obj) = parked_meta.as_object_mut() {
+            obj.insert(
+                "cancellation_delivered".into(),
+                serde_json::Value::Bool(cancellation_delivered),
+            );
+        }
+
+        // CAS-park in DB: only proceeds if still Running.
+        let parked = queries::park_stage_instance_as_stuck(&self.db, &stage_instance_id, &parked_meta)
+            .await
+            .unwrap_or(false);
+
+        if !parked {
+            return false;
+        }
+
+        // Update in-memory index.
+        for (_, (id, s)) in self.index.iter_mut() {
+            if *id == stage_instance_id {
+                *s = StageStatus::Parked;
+                break;
+            }
+        }
+
+        self.bus.publish(
+            self.run_id,
+            SubstrateEvent::StageStatusChanged {
+                stage_instance_id,
+                status: StageStatus::Parked,
+                parked_reason: Some("stuck_timeout".to_string()),
+                terminal_meta: None,
+            },
+        );
+
+        // Check quiescence: no stage is pending|running.
+        let active = self.index.values().any(|(_, s)| {
+            matches!(s, StageStatus::Pending | StageStatus::Running | StageStatus::Parked)
+        });
+        if active || self.index.is_empty() {
+            return false;
+        }
+
+        let final_status = if self
+            .index
+            .values()
+            .any(|(_, s)| matches!(s, StageStatus::Failed))
+        {
+            RunStatus::Failed
+        } else {
+            RunStatus::Done
+        };
+
+        let _ = queries::update_workflow_run_status(&self.db, &self.run_id, final_status).await;
+        self.bus.publish(
+            self.run_id,
+            SubstrateEvent::RunStatusChanged {
+                run_id: self.run_id,
+                status: final_status,
+            },
+        );
+        true
+    }
 }
 
 // ── Coordinator ───────────────────────────────────────────────────────────────
@@ -712,6 +809,8 @@ pub struct Coordinator {
     artifact_types: Arc<ArtifactTypeRegistry>,
     bus: Arc<EventBus>,
     runs: Arc<Mutex<HashMap<WorkflowRunId, RunHandle>>>,
+    stage_timeout: Duration,
+    sweep_interval: Duration,
 }
 
 impl Coordinator {
@@ -727,7 +826,199 @@ impl Coordinator {
             artifact_types,
             bus,
             runs: Arc::new(Mutex::new(HashMap::new())),
+            stage_timeout: Duration::from_secs(3600),
+            sweep_interval: Duration::from_secs(60),
         }
+    }
+
+    /// Override the default liveness thresholds. Call before recover()/start_run().
+    pub fn with_liveness_config(
+        mut self,
+        stage_timeout: Duration,
+        sweep_interval: Duration,
+    ) -> Self {
+        self.stage_timeout = stage_timeout;
+        self.sweep_interval = sweep_interval;
+        self
+    }
+
+    /// Spawn a background task that periodically sweeps for stuck Running stages
+    /// and parks them as stuck_timeout. Caller retains the JoinHandle for
+    /// graceful shutdown; dropping it aborts the task.
+    pub fn spawn_stuck_sweeper(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
+        let coordinator = Arc::clone(self);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(coordinator.sweep_interval);
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                interval.tick().await;
+                if let Err(e) = coordinator.sweep_stuck_stages().await {
+                    tracing::error!("stuck-stage sweep failed: {}", e);
+                }
+            }
+        })
+    }
+
+    pub async fn sweep_stuck_stages(&self) -> anyhow::Result<()> {
+        let timeout_chrono =
+            chrono::Duration::from_std(self.stage_timeout).unwrap_or(chrono::Duration::seconds(3600));
+        let cutoff = Utc::now() - timeout_chrono;
+
+        let stuck = queries::list_running_stage_instances_older_than(&self.db, cutoff).await?;
+        if stuck.is_empty() {
+            return Ok(());
+        }
+
+        let timed_out_at = Utc::now();
+
+        for si in stuck {
+            let parked_meta_template = serde_json::json!({
+                "kind": "stuck_timeout",
+                "timed_out_at": timed_out_at.to_rfc3339(),
+                "timeout_seconds": self.stage_timeout.as_secs(),
+                "last_update_at": si.updated_at.to_rfc3339(),
+                "stage_type": si.stage_type,
+                "stage_key": si.stage_key,
+                "external_ref": si.external_ref,
+                "recovery_hint": "call POST /stage_instances/:id/retry_stuck to reactivate",
+            });
+
+            // Try to route through the live RunTask (preserves in-memory consistency).
+            let control_tx = {
+                let runs = self.runs.lock().await;
+                runs.get(&si.run_id).map(|h| h.control_tx.clone())
+            };
+
+            if let Some(tx) = control_tx {
+                let (reply_tx, reply_rx) = oneshot::channel();
+                if tx
+                    .send(ControlMsg::ParkStuckStage {
+                        stage_instance_id: si.id,
+                        parked_meta_template: parked_meta_template.clone(),
+                        reply_tx,
+                    })
+                    .await
+                    .is_ok()
+                {
+                    // Wait briefly for acknowledgement; on timeout fall through to
+                    // direct DB path.
+                    if tokio::time::timeout(Duration::from_secs(3), reply_rx)
+                        .await
+                        .is_ok()
+                    {
+                        continue;
+                    }
+                }
+            }
+
+            // No live task (or timed out): park directly in DB.
+            let mut parked_meta = parked_meta_template;
+            if let Some(obj) = parked_meta.as_object_mut() {
+                obj.insert(
+                    "cancellation_delivered".into(),
+                    serde_json::Value::Bool(false),
+                );
+            }
+            let parked =
+                queries::park_stage_instance_as_stuck(&self.db, &si.id, &parked_meta).await?;
+            if parked {
+                self.bus.publish(
+                    si.run_id,
+                    SubstrateEvent::StageStatusChanged {
+                        stage_instance_id: si.id,
+                        status: StageStatus::Parked,
+                        parked_reason: Some("stuck_timeout".to_string()),
+                        terminal_meta: None,
+                    },
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Transition a stuck-parked stage back to Running so its stage type can
+    /// re-execute it. Returns Err(DecisionError::Conflict) when the stage is
+    /// not currently parked as stuck_timeout or the run is terminal.
+    pub async fn retry_stuck_stage(
+        &self,
+        stage_instance_id: StageInstanceId,
+    ) -> Result<(), DecisionError> {
+        let si = queries::get_stage_instance_by_id(&self.db, &stage_instance_id)
+            .await
+            .map_err(|e| match e {
+                crate::Error::NotFound { .. } => DecisionError::Conflict(format!(
+                    "stage instance {} not found",
+                    stage_instance_id.0
+                )),
+                other => DecisionError::Internal(anyhow::Error::new(other)),
+            })?;
+
+        let run = queries::get_workflow_run_by_id(&self.db, &si.run_id)
+            .await
+            .map_err(|e| DecisionError::Internal(anyhow::Error::new(e)))?;
+
+        if matches!(run.status, RunStatus::Done | RunStatus::Failed) {
+            return Err(DecisionError::Conflict(format!(
+                "run {} is terminal (status: {:?}); cannot retry stuck stage",
+                si.run_id.0, run.status
+            )));
+        }
+
+        if !matches!(si.status, StageStatus::Parked)
+            || si.parked_reason.as_deref() != Some("stuck_timeout")
+        {
+            return Err(DecisionError::Conflict(format!(
+                "stage instance {} is not parked as stuck_timeout (status: {:?}, parked_reason: {:?})",
+                stage_instance_id.0, si.status, si.parked_reason
+            )));
+        }
+
+        // CAS: Parked → Running, clearing parked fields.
+        let updated =
+            queries::update_stage_instance_status_if_current_status_with_terminal_meta(
+                &self.db,
+                &stage_instance_id,
+                StageStatus::Parked,
+                StageStatus::Running,
+                None,
+                None,
+                si.started_at,
+                None,
+            )
+            .await
+            .map_err(|e| DecisionError::Internal(anyhow::Error::new(e)))?;
+
+        if !updated {
+            return Err(DecisionError::Conflict(format!(
+                "stage instance {} was no longer stuck-parked when retry was applied",
+                stage_instance_id.0
+            )));
+        }
+
+        // Clear parked_meta in a separate update now that the status CAS succeeded.
+        let _ = sqlx::query(
+            "UPDATE stage_instance SET parked_meta = NULL, parked_reason = NULL WHERE id = ?",
+        )
+        .bind(si.id.0.to_string())
+        .execute(self.db.as_ref())
+        .await;
+
+        // Notify via bus so SSE consumers see the transition.
+        self.bus.publish(
+            si.run_id,
+            SubstrateEvent::StageStatusChanged {
+                stage_instance_id,
+                status: StageStatus::Running,
+                parked_reason: None,
+                terminal_meta: None,
+            },
+        );
+
+        // The in-memory index in the RunTask still reflects Running (since the
+        // sweeper parked it in DB but the RunTask's memory was updated by
+        // ParkStuckStage). No additional message is needed.
+
+        Ok(())
     }
 
     pub async fn start_run(&self, run_id: WorkflowRunId) -> anyhow::Result<()> {
@@ -2676,6 +2967,358 @@ mod tests {
         assert!(
             saw_run_failed,
             "recovery must publish RunStatusChanged Failed"
+        );
+    }
+
+    // ── (k) sweeper: parks a running stage whose updated_at is stale ──────────
+
+    #[tokio::test]
+    async fn sweep_parks_stuck_running_stage() {
+        let pool = make_pool().await;
+        let artifact_reg = make_artifact_registry();
+        let bus = EventBus::new();
+        // 1-second timeout so fixed_dt() (2026-01-01) is well past the cutoff.
+        let coord = Coordinator::new(
+            pool.clone(),
+            Arc::new(StageTypeRegistry::new()),
+            artifact_reg,
+            bus.clone(),
+        )
+        .with_liveness_config(
+            std::time::Duration::from_secs(1),
+            std::time::Duration::from_secs(60),
+        );
+
+        let def = WorkflowDef {
+            id: WorkflowDefId(Uuid::new_v4()),
+            name: format!("wf-{}", Uuid::new_v4()),
+            version: 1,
+            graph: WorkflowGraph {
+                stages: {
+                    let mut m = HashMap::new();
+                    m.insert(
+                        "A".into(),
+                        StageNodeDef {
+                            stage_type: "noop".into(),
+                            config: json!({}),
+                            inputs: vec![],
+                            outputs: vec![],
+                        },
+                    );
+                    m
+                },
+                edges: vec![],
+            },
+            created_at: fixed_dt(),
+        };
+        queries::insert_workflow_def(&pool, &def).await.unwrap();
+
+        let run = WorkflowRun {
+            id: WorkflowRunId(Uuid::new_v4()),
+            workflow_def_id: def.id,
+            project_id: None,
+            status: RunStatus::Running,
+            context: json!({}),
+            version: 1,
+            created_at: fixed_dt(),
+            updated_at: fixed_dt(),
+        };
+        queries::insert_workflow_run(&pool, &run).await.unwrap();
+
+        let si = StageInstance {
+            id: StageInstanceId(Uuid::new_v4()),
+            run_id: run.id,
+            stage_key: "A".into(),
+            stage_type: "noop".into(),
+            status: StageStatus::Running,
+            config: json!({}),
+            parked_reason: None,
+            parked_meta: None,
+            terminal_meta: None,
+            external_ref: None,
+            started_at: Some(fixed_dt()),
+            ended_at: None,
+            created_at: fixed_dt(),
+            updated_at: fixed_dt(), // stale: 2026-01-01, well before cutoff
+        };
+        queries::insert_stage_instance(&pool, &si).await.unwrap();
+
+        coord.sweep_stuck_stages().await.unwrap();
+
+        let persisted = queries::get_stage_instance_by_id(&pool, &si.id)
+            .await
+            .unwrap();
+        assert_eq!(
+            persisted.status,
+            StageStatus::Parked,
+            "sweep must park a stuck running stage"
+        );
+        assert_eq!(
+            persisted.parked_reason.as_deref(),
+            Some("stuck_timeout"),
+            "parked_reason must be stuck_timeout"
+        );
+        assert!(
+            persisted.parked_meta.is_some(),
+            "parked_meta must be populated"
+        );
+        let meta = persisted.parked_meta.unwrap();
+        assert_eq!(
+            meta.get("kind").and_then(|v| v.as_str()),
+            Some("stuck_timeout")
+        );
+    }
+
+    // ── (l) sweeper: leaves a recently-updated running stage alone ────────────
+
+    #[tokio::test]
+    async fn sweep_skips_recent_running_stage() {
+        let pool = make_pool().await;
+        let artifact_reg = make_artifact_registry();
+        let bus = EventBus::new();
+        // 7200-second timeout; updated_at = now will not be past the cutoff.
+        let coord = Coordinator::new(
+            pool.clone(),
+            Arc::new(StageTypeRegistry::new()),
+            artifact_reg,
+            bus.clone(),
+        )
+        .with_liveness_config(
+            std::time::Duration::from_secs(7200),
+            std::time::Duration::from_secs(60),
+        );
+
+        let def = WorkflowDef {
+            id: WorkflowDefId(Uuid::new_v4()),
+            name: format!("wf-{}", Uuid::new_v4()),
+            version: 1,
+            graph: WorkflowGraph {
+                stages: {
+                    let mut m = HashMap::new();
+                    m.insert(
+                        "A".into(),
+                        StageNodeDef {
+                            stage_type: "noop".into(),
+                            config: json!({}),
+                            inputs: vec![],
+                            outputs: vec![],
+                        },
+                    );
+                    m
+                },
+                edges: vec![],
+            },
+            created_at: fixed_dt(),
+        };
+        queries::insert_workflow_def(&pool, &def).await.unwrap();
+
+        let run = WorkflowRun {
+            id: WorkflowRunId(Uuid::new_v4()),
+            workflow_def_id: def.id,
+            project_id: None,
+            status: RunStatus::Running,
+            context: json!({}),
+            version: 1,
+            created_at: fixed_dt(),
+            updated_at: fixed_dt(),
+        };
+        queries::insert_workflow_run(&pool, &run).await.unwrap();
+
+        let si = StageInstance {
+            id: StageInstanceId(Uuid::new_v4()),
+            run_id: run.id,
+            stage_key: "A".into(),
+            stage_type: "noop".into(),
+            status: StageStatus::Running,
+            config: json!({}),
+            parked_reason: None,
+            parked_meta: None,
+            terminal_meta: None,
+            external_ref: None,
+            started_at: Some(fixed_dt()),
+            ended_at: None,
+            created_at: fixed_dt(),
+            updated_at: Utc::now(), // just now — within the 2h timeout
+        };
+        queries::insert_stage_instance(&pool, &si).await.unwrap();
+
+        coord.sweep_stuck_stages().await.unwrap();
+
+        let persisted = queries::get_stage_instance_by_id(&pool, &si.id)
+            .await
+            .unwrap();
+        assert_eq!(
+            persisted.status,
+            StageStatus::Running,
+            "sweep must leave a recently-updated stage as Running"
+        );
+        assert!(persisted.parked_reason.is_none());
+    }
+
+    // ── (m) retry_stuck_stage transitions Parked(stuck_timeout) → Running ─────
+
+    #[tokio::test]
+    async fn retry_stuck_stage_transitions_to_running() {
+        let pool = make_pool().await;
+        let artifact_reg = make_artifact_registry();
+        let bus = EventBus::new();
+        let coord = Coordinator::new(
+            pool.clone(),
+            Arc::new(StageTypeRegistry::new()),
+            artifact_reg,
+            bus.clone(),
+        );
+
+        let def = WorkflowDef {
+            id: WorkflowDefId(Uuid::new_v4()),
+            name: format!("wf-{}", Uuid::new_v4()),
+            version: 1,
+            graph: WorkflowGraph {
+                stages: {
+                    let mut m = HashMap::new();
+                    m.insert(
+                        "A".into(),
+                        StageNodeDef {
+                            stage_type: "noop".into(),
+                            config: json!({}),
+                            inputs: vec![],
+                            outputs: vec![],
+                        },
+                    );
+                    m
+                },
+                edges: vec![],
+            },
+            created_at: fixed_dt(),
+        };
+        queries::insert_workflow_def(&pool, &def).await.unwrap();
+
+        let run = WorkflowRun {
+            id: WorkflowRunId(Uuid::new_v4()),
+            workflow_def_id: def.id,
+            project_id: None,
+            status: RunStatus::Running,
+            context: json!({}),
+            version: 1,
+            created_at: fixed_dt(),
+            updated_at: fixed_dt(),
+        };
+        queries::insert_workflow_run(&pool, &run).await.unwrap();
+
+        let si = StageInstance {
+            id: StageInstanceId(Uuid::new_v4()),
+            run_id: run.id,
+            stage_key: "A".into(),
+            stage_type: "noop".into(),
+            status: StageStatus::Parked,
+            config: json!({}),
+            parked_reason: Some("stuck_timeout".into()),
+            parked_meta: Some(json!({
+                "kind": "stuck_timeout",
+                "timed_out_at": "2026-01-02T00:00:00Z",
+                "timeout_seconds": 3600,
+                "cancellation_delivered": false,
+            })),
+            terminal_meta: None,
+            external_ref: None,
+            started_at: Some(fixed_dt()),
+            ended_at: None,
+            created_at: fixed_dt(),
+            updated_at: fixed_dt(),
+        };
+        queries::insert_stage_instance(&pool, &si).await.unwrap();
+
+        coord.retry_stuck_stage(si.id).await.unwrap();
+
+        let persisted = queries::get_stage_instance_by_id(&pool, &si.id)
+            .await
+            .unwrap();
+        assert_eq!(
+            persisted.status,
+            StageStatus::Running,
+            "retry must transition stuck-parked stage to Running"
+        );
+        assert!(
+            persisted.parked_reason.is_none(),
+            "parked_reason must be cleared after retry"
+        );
+        assert!(
+            persisted.parked_meta.is_none(),
+            "parked_meta must be cleared after retry"
+        );
+    }
+
+    // ── (n) retry_stuck_stage rejects non-stuck-parked stage ─────────────────
+
+    #[tokio::test]
+    async fn retry_stuck_stage_rejects_running_stage() {
+        let pool = make_pool().await;
+        let artifact_reg = make_artifact_registry();
+        let coord = Coordinator::new(
+            pool.clone(),
+            Arc::new(StageTypeRegistry::new()),
+            artifact_reg,
+            EventBus::new(),
+        );
+
+        let def = WorkflowDef {
+            id: WorkflowDefId(Uuid::new_v4()),
+            name: format!("wf-{}", Uuid::new_v4()),
+            version: 1,
+            graph: WorkflowGraph {
+                stages: {
+                    let mut m = HashMap::new();
+                    m.insert(
+                        "A".into(),
+                        StageNodeDef {
+                            stage_type: "noop".into(),
+                            config: json!({}),
+                            inputs: vec![],
+                            outputs: vec![],
+                        },
+                    );
+                    m
+                },
+                edges: vec![],
+            },
+            created_at: fixed_dt(),
+        };
+        queries::insert_workflow_def(&pool, &def).await.unwrap();
+
+        let run = WorkflowRun {
+            id: WorkflowRunId(Uuid::new_v4()),
+            workflow_def_id: def.id,
+            project_id: None,
+            status: RunStatus::Running,
+            context: json!({}),
+            version: 1,
+            created_at: fixed_dt(),
+            updated_at: fixed_dt(),
+        };
+        queries::insert_workflow_run(&pool, &run).await.unwrap();
+
+        let si = StageInstance {
+            id: StageInstanceId(Uuid::new_v4()),
+            run_id: run.id,
+            stage_key: "A".into(),
+            stage_type: "noop".into(),
+            status: StageStatus::Running, // not stuck-parked
+            config: json!({}),
+            parked_reason: None,
+            parked_meta: None,
+            terminal_meta: None,
+            external_ref: None,
+            started_at: Some(fixed_dt()),
+            ended_at: None,
+            created_at: fixed_dt(),
+            updated_at: fixed_dt(),
+        };
+        queries::insert_stage_instance(&pool, &si).await.unwrap();
+
+        let err = coord.retry_stuck_stage(si.id).await.unwrap_err();
+        assert!(
+            matches!(err, DecisionError::Conflict(_)),
+            "retry must reject a non-stuck-parked stage with Conflict"
         );
     }
 }

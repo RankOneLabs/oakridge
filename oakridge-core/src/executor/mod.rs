@@ -72,6 +72,18 @@ fn is_unique_violation(err: &sqlx::Error) -> bool {
     matches!(err, sqlx::Error::Database(dbe) if dbe.kind() == sqlx::error::ErrorKind::UniqueViolation)
 }
 
+// SQLITE_BUSY (5) or SQLITE_BUSY_SNAPSHOT (517 = SQLITE_BUSY | (2 << 8)).
+// pool.begin() uses BEGIN DEFERRED, so a concurrent writer can cause a
+// BUSY_SNAPSHOT when this transaction tries to upgrade from reader to writer;
+// busy_timeout only covers SQLITE_BUSY, not BUSY_SNAPSHOT. Both are transient
+// — dropping the transaction and retrying with a fresh snapshot resolves it.
+fn is_sqlite_busy(err: &sqlx::Error) -> bool {
+    matches!(
+        err,
+        sqlx::Error::Database(dbe) if matches!(dbe.code().as_deref(), Some("5") | Some("517"))
+    )
+}
+
 const MAX_ARTIFACT_EMIT_RETRIES: usize = 8;
 
 // ── StageContext ──────────────────────────────────────────────────────────────
@@ -186,15 +198,16 @@ impl StageContext {
 
         let mut attempts = 0usize;
         let artifact = loop {
-            let mut conn = self.db.acquire().await?;
-            sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await?;
+            // Use a sqlx-managed transaction: rolls back automatically on drop,
+            // making this loop safe to cancel between begin and commit.
+            let mut txn = self.db.begin().await?;
 
             let attempt: anyhow::Result<EmitAttempt> = async {
                 let version = if let Some(parent_id) = parent_artifact_id {
                     let parent_id_str = parent_id.0.to_string();
                     let parent = sqlx::query("SELECT run_id, version FROM artifact WHERE id = ?")
                         .bind(parent_id_str.clone())
-                        .fetch_optional(&mut *conn)
+                        .fetch_optional(&mut *txn)
                         .await?
                         .ok_or_else(|| crate::Error::NotFound {
                             entity: "artifact".into(),
@@ -213,7 +226,7 @@ impl StageContext {
                     )
                     .bind(parent_version)
                     .bind(parent_id_str)
-                    .fetch_one(&mut *conn)
+                    .fetch_one(&mut *txn)
                     .await?
                 } else {
                     1
@@ -247,12 +260,13 @@ impl StageContext {
                 .bind(artifact.version as i64)
                 .bind(artifact.parent_artifact_id.map(|parent| parent.0.to_string()))
                 .bind(artifact.created_at.to_rfc3339())
-                .execute(&mut *conn)
+                .execute(&mut *txn)
                 .await;
 
                 match insert_result {
                     Ok(_) => Ok(EmitAttempt::Inserted(artifact)),
                     Err(err) if is_unique_violation(&err) => Ok(EmitAttempt::Retry),
+                    Err(err) if is_sqlite_busy(&err) => Ok(EmitAttempt::Retry),
                     Err(err) => Err(err.into()),
                 }
             }
@@ -260,17 +274,15 @@ impl StageContext {
 
             match attempt {
                 Ok(EmitAttempt::Inserted(artifact)) => {
-                    if let Err(err) = sqlx::query("COMMIT").execute(&mut *conn).await {
-                        let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
-                        return Err(err.into());
-                    }
+                    txn.commit().await?;
                     break artifact;
                 }
                 Ok(EmitAttempt::Retry) => {
-                    let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                    // Drop txn: sqlx Transaction rolls back on drop.
+                    drop(txn);
                     if attempts >= MAX_ARTIFACT_EMIT_RETRIES {
                         return Err(anyhow::anyhow!(
-                            "artifact emit exceeded {} retries on unique conflict",
+                            "artifact emit exceeded {} retries (revision conflict or sqlite busy)",
                             MAX_ARTIFACT_EMIT_RETRIES
                         ));
                     }
@@ -278,7 +290,8 @@ impl StageContext {
                     continue;
                 }
                 Err(err) => {
-                    let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                    // Drop txn: sqlx Transaction rolls back on drop.
+                    drop(txn);
                     return Err(err);
                 }
             }
@@ -292,7 +305,21 @@ impl StageContext {
             .await
             .map_err(|_| anyhow::anyhow!("executor event channel closed"))?;
 
+        // Bump updated_at to signal liveness after a successful emit.
+        // Best-effort: the artifact is already committed and the event sent.
+        let _ = queries::touch_stage_instance(&self.db, &self.stage_instance_id).await;
+
         Ok(artifact)
+    }
+
+    /// Bump this stage instance's `updated_at` without changing its status.
+    ///
+    /// Call periodically from long-running executors that are making progress
+    /// but not emitting artifacts or changing status. Signals liveness to the
+    /// stuck-stage sweeper and prevents the stage from being parked as timed-out.
+    pub async fn heartbeat(&self) -> anyhow::Result<()> {
+        queries::touch_stage_instance(&self.db, &self.stage_instance_id).await?;
+        Ok(())
     }
 
     /// Transition this stage instance to a new status.
@@ -759,6 +786,71 @@ mod tests {
         );
     }
 
+    // ── emit cancellation safety test ─────────────────────────────────────────
+
+    #[tokio::test]
+    async fn dropped_emit_transaction_does_not_poison_pool() {
+        let pool = make_pool().await;
+        let (run_id, si_id) = setup_run(&pool).await;
+        let registry = make_artifact_registry();
+        let (tx, _rx) = mpsc::channel(8);
+
+        // Open a transaction that mirrors what emit does internally, do work inside
+        // it, then drop it without committing. This simulates StageContext::emit
+        // being dropped mid-transaction (e.g. by tokio::spawn + abort).
+        {
+            let mut txn = pool.begin().await.unwrap();
+            let id = Uuid::new_v4().to_string();
+            let run_id_str = run_id.0.to_string();
+            let si_id_str = si_id.0.to_string();
+            let now = Utc::now().to_rfc3339();
+            sqlx::query(
+                "INSERT INTO artifact (id, run_id, stage_instance_id, artifact_type, \
+                 output_name, label, body, version, parent_artifact_id, created_at) \
+                 VALUES (?, ?, ?, 'any', 'out', NULL, '{}', 1, NULL, ?)",
+            )
+            .bind(&id)
+            .bind(&run_id_str)
+            .bind(&si_id_str)
+            .bind(&now)
+            .execute(&mut *txn)
+            .await
+            .unwrap();
+            // Drop txn without commit: sqlx Transaction rolls back on drop,
+            // returning the connection to the pool in a clean state.
+        }
+
+        // The pool must be fully usable: the rolled-back insert is gone and
+        // a new emit on the same pool must succeed without a nested-transaction error.
+        let ctx = make_ctx(pool.clone(), run_id, si_id, registry, tx);
+        let result = ctx
+            .emit(EmitArgs {
+                output_name: "out".into(),
+                artifact_type: "any".into(),
+                body: json!({"after_drop": true}),
+                label: None,
+                parent_artifact_id: None,
+            })
+            .await;
+
+        assert!(
+            result.is_ok(),
+            "emit after dropped transaction must succeed without nested-transaction error: {:?}",
+            result.err()
+        );
+
+        // The rolled-back insert must not be visible; only the successful emit.
+        let artifacts = queries::list_artifacts_for_run(&pool, &run_id, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            artifacts.len(),
+            1,
+            "only the post-drop emit should be persisted"
+        );
+        assert_eq!(artifacts[0].body, json!({"after_drop": true}));
+    }
+
     // ── set_status tests ──────────────────────────────────────────────────────
 
     #[tokio::test]
@@ -1160,5 +1252,72 @@ mod tests {
             }
             other => panic!("unexpected event: {:?}", other),
         }
+    }
+
+    // ── heartbeat tests ───────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn heartbeat_bumps_updated_at() {
+        let pool = make_pool().await;
+        let (run_id, si_id) = setup_run(&pool).await;
+        let registry = make_artifact_registry();
+        let (tx, _rx) = mpsc::channel(8);
+
+        let before = queries::get_stage_instance_by_id(&pool, &si_id)
+            .await
+            .unwrap()
+            .updated_at;
+
+        // Ensure at least 1 ms passes so the new timestamp is strictly later.
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+
+        let ctx = make_ctx(pool.clone(), run_id, si_id, registry, tx);
+        ctx.heartbeat().await.unwrap();
+
+        let after = queries::get_stage_instance_by_id(&pool, &si_id)
+            .await
+            .unwrap()
+            .updated_at;
+
+        assert!(
+            after > before,
+            "heartbeat must advance updated_at (before={before:?}, after={after:?})"
+        );
+    }
+
+    #[tokio::test]
+    async fn emit_bumps_updated_at() {
+        let pool = make_pool().await;
+        let (run_id, si_id) = setup_run(&pool).await;
+        let registry = make_artifact_registry();
+        let (tx, _rx) = mpsc::channel(8);
+
+        let before = queries::get_stage_instance_by_id(&pool, &si_id)
+            .await
+            .unwrap()
+            .updated_at;
+
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+
+        let ctx = make_ctx(pool.clone(), run_id, si_id, registry, tx);
+        ctx.emit(EmitArgs {
+            output_name: "out".into(),
+            artifact_type: "any".into(),
+            body: json!({"x": 1}),
+            label: None,
+            parent_artifact_id: None,
+        })
+        .await
+        .unwrap();
+
+        let after = queries::get_stage_instance_by_id(&pool, &si_id)
+            .await
+            .unwrap()
+            .updated_at;
+
+        assert!(
+            after > before,
+            "emit must advance updated_at (before={before:?}, after={after:?})"
+        );
     }
 }
