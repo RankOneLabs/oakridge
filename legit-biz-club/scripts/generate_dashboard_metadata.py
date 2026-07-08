@@ -34,7 +34,7 @@ def main() -> None:
     print(f"wrote {OUTPUT_PATH.relative_to(REPO_ROOT)}")
 
 
-def _build_task_detail(task_key: str) -> dict:
+def _build_task_detail(task_key: str) -> dict[str, object]:
     config = TASK_FACTORIES[task_key]()
     summary = TASK_CATALOG_BY_NAME[task_key]
     return {
@@ -55,7 +55,7 @@ def _build_task_detail(task_key: str) -> dict:
     }
 
 
-def _build_grader_summary(grader_meta) -> dict:  # type: ignore[type-arg]
+def _build_grader_summary(grader_meta) -> dict[str, object]:
     return {
         "key": grader_meta.key,
         "label": grader_meta.label,
@@ -67,7 +67,7 @@ def _build_grader_summary(grader_meta) -> dict:  # type: ignore[type-arg]
     }
 
 
-def _render(tasks: list, graders: list) -> str:  # type: ignore[type-arg]
+def _render(tasks: list[dict[str, object]], graders: list[dict[str, object]]) -> str:
     tasks_json = json.dumps(tasks, indent=2)
     graders_json = json.dumps(graders, indent=2)
     return (
@@ -75,7 +75,7 @@ def _render(tasks: list, graders: list) -> str:  # type: ignore[type-arg]
         "// Source: legit-biz-club/scripts/generate_dashboard_metadata.py\n"
         "// Regenerate: cd legit-biz-club && uv run python scripts/generate_dashboard_metadata.py\n"
         "// CI drift: regenerate then"
-        " `git diff --exit-code lbc-dashboard/src/generated/task_catalog.ts`.\n"
+        " `git diff --exit-code ../lbc-dashboard/src/generated/task_catalog.ts`.\n"
         'import type { TaskBuiltinDetail, GraderSummary } from "../contracts";\n'
         "\n"
         f"export const BUILTIN_TASK_DETAILS: readonly TaskBuiltinDetail[] = {tasks_json}"

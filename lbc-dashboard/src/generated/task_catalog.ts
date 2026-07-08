@@ -1,7 +1,7 @@
 // AUTO-GENERATED — do not edit.
 // Source: legit-biz-club/scripts/generate_dashboard_metadata.py
 // Regenerate: cd legit-biz-club && uv run python scripts/generate_dashboard_metadata.py
-// CI drift: regenerate then `git diff --exit-code lbc-dashboard/src/generated/task_catalog.ts`.
+// CI drift: regenerate then `git diff --exit-code ../lbc-dashboard/src/generated/task_catalog.ts`.
 import type { TaskBuiltinDetail, GraderSummary } from "../contracts";
 
 export const BUILTIN_TASK_DETAILS: readonly TaskBuiltinDetail[] = [
