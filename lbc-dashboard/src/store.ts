@@ -296,31 +296,24 @@ async function summarize(
       // exactly the kind of inconsistency that ages into a real bug).
       // We also capture the first incremental_started payload so
       // deriveRunMetadata can attribute agents without a second read.
-      const parsedEvents = contents
-        .split("\n")
-        .filter((l) => l.trim())
-        .flatMap((l) => {
-          const e = parseEventFull(l);
-          return e !== null ? [e] : [];
-        });
-      const parsedKinds = parsedEvents.map((e) => e.kind);
-      eventCount = parsedKinds.length;
-      status = classifyStatusFromKinds(parsedKinds);
-      for (const e of parsedEvents) {
-        if (e.kind === "incremental_started") {
-          if (
-            typeof e.payload === "object" &&
-            e.payload !== null &&
-            !Array.isArray(e.payload)
-          ) {
-            firstIncrementalStartedPayload = e.payload as Record<
-              string,
-              unknown
-            >;
-          }
-          break;
+      const parsedKinds: string[] = [];
+      for (const l of contents.split("\n")) {
+        if (!l.trim()) continue;
+        const e = parseEventFull(l);
+        if (e === null) continue;
+        parsedKinds.push(e.kind);
+        if (
+          firstIncrementalStartedPayload === null &&
+          e.kind === "incremental_started" &&
+          typeof e.payload === "object" &&
+          e.payload !== null &&
+          !Array.isArray(e.payload)
+        ) {
+          firstIncrementalStartedPayload = e.payload as Record<string, unknown>;
         }
       }
+      eventCount = parsedKinds.length;
+      status = classifyStatusFromKinds(parsedKinds);
       summaryCache.set(eventsPath, {
         mtimeMs,
         eventCount,
@@ -597,9 +590,12 @@ async function deriveRunMetadata(
     return null;
   }
 
-  // Step 3: Read agent_ids from the summary cache populated by summarize().
-  // getCellDetail calls summarize() before this function, so the cache entry
-  // for this cell is guaranteed to be warm — no second events.jsonl open.
+  // Step 3: Read from the summary cache populated by summarize().
+  // getCellDetail calls summarize() before this function. If events.jsonl was
+  // readable, the cache entry is warm and firstIncrementalStartedPayload is
+  // set. If events.jsonl was absent or unreadable, summarize() took the catch
+  // path and wrote nothing to summaryCache — the ?? null fallback below handles
+  // that correctly without a second open.
   const eventsPath = join(cellDir, "events.jsonl");
   const cached = summaryCache.get(eventsPath);
   const firstStartedPayload = cached?.firstIncrementalStartedPayload ?? null;
