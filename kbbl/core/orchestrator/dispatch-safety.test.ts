@@ -584,3 +584,55 @@ describe("6. Second assessor attempt", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// 7. Archived epic guard — build launch must be rejected before dispatch claim
+// ---------------------------------------------------------------------------
+
+describe("7. Archived epic guard on build launch", () => {
+  test("POST /briefs/:id/build on archived epic → 409, no dispatch_attempt created, backend not called", async () => {
+    const { brief, spec } = await seedBuildChain();
+
+    // Archive the epic
+    db.prepare("UPDATE epics SET status = 'archived' WHERE spec_id = ?").run(spec.id);
+
+    const backend = createMockBackend();
+    const { app: a } = makeApp(backend);
+    const res = await a.request(`/briefs/${brief.id}/build`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("epic is archived");
+
+    // No dispatch_attempt records should exist — the archive guard fires before claim
+    const attempts = db
+      .prepare<{ id: string }, [string]>(
+        "SELECT id FROM dispatch_attempts WHERE entity_id = ?",
+      )
+      .all(brief.id);
+    expect(attempts).toHaveLength(0);
+
+    // Backend must not have been called
+    expect(backend.calls).toBe(0);
+  });
+
+  test("POST /briefs/:id/build on active epic still dispatches normally", async () => {
+    const { brief } = await seedBuildChain();
+    // Epic is active (seedBuildChain sets status: "active")
+
+    const backend = createMockBackend();
+    const { app: a } = makeApp(backend);
+    const res = await a.request(`/briefs/${brief.id}/build`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+
+    expect(res.status).toBe(200);
+    expect(backend.calls).toBe(1);
+  });
+});
+

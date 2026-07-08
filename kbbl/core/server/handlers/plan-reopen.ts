@@ -4,6 +4,8 @@ import type { Database } from "bun:sqlite";
 import { getPlan, insertPlan } from "../../db/plans";
 import { unfreeze } from "../../review/freeze";
 import type { Plan } from "../../types/task-tracker";
+import { getEpicBySpec } from "../../db/epics";
+import { isFrozen } from "../../db/epic-freeze";
 
 const PlanReopenSchema = z.object({
   model: z.string().optional(),
@@ -33,6 +35,17 @@ export function mountPlanReopenRoutes(app: Hono, deps: PlanReopenRouteDeps): voi
 
     const { model } = result.data;
     const old_id = c.req.param("id");
+
+    // Archive guard: resolve epic via plan → spec and reject if archived.
+    const planForFreeze = db
+      .prepare<{ spec_id: string }, [string]>("SELECT spec_id FROM plans WHERE id = ?")
+      .get(old_id);
+    if (planForFreeze) {
+      const epic = getEpicBySpec(db, planForFreeze.spec_id);
+      if (epic && isFrozen(db, epic.id)) {
+        return c.json({ error: "epic is archived" }, 409);
+      }
+    }
 
     let newPlan: Plan | null = null;
 

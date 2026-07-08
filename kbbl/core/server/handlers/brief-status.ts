@@ -143,6 +143,22 @@ export function mountBriefStatusRoutes(app: Hono, deps: BriefStatusRouteDeps): v
     const { model } = result.data;
     const old_id = c.req.param("id");
 
+    // Archive guard: resolve epic via brief → cohort → plan → spec and reject if archived.
+    const briefForFreeze = getBrief(db, old_id);
+    if (briefForFreeze) {
+      const epicRow = db
+        .prepare<{ spec_id: string }, [string]>(
+          "SELECT p.spec_id FROM cohorts c JOIN plans p ON p.id = c.plan_id WHERE c.id = ?",
+        )
+        .get(briefForFreeze.cohort_id);
+      if (epicRow) {
+        const epic = getEpicBySpec(db, epicRow.spec_id);
+        if (epic && isFrozen(db, epic.id)) {
+          return c.json({ error: "epic is archived" }, 409);
+        }
+      }
+    }
+
     let newBrief: Brief | null = null;
 
     try {

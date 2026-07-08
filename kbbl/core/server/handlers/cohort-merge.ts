@@ -11,6 +11,8 @@ import {
 } from "../../github/gh-gateway";
 import { applyAwaitingMergeToMerged } from "./cohort-status";
 import type { MergeBody, MergeOutcome } from "../../shared/cohort-merge-contract";
+import { getEpicBySpec } from "../../db/epics";
+import { isFrozen } from "../../db/epic-freeze";
 
 export type { MergeOutcome } from "../../shared/cohort-merge-contract";
 
@@ -72,6 +74,19 @@ export function mountCohortMergeRoutes(app: Hono, deps: CohortMergeRouteDeps): v
     // Load cohort → 404
     const cohort = getCohort(db, cohort_id);
     if (!cohort) return c.json({ error: "not found" }, 404);
+
+    // Archive guard: resolve epic via cohort → plan → spec and reject if archived.
+    const epicRow = db
+      .prepare<{ spec_id: string }, [string]>(
+        "SELECT p.spec_id FROM cohorts c JOIN plans p ON p.id = c.plan_id WHERE c.id = ?",
+      )
+      .get(cohort_id);
+    if (epicRow) {
+      const epic = getEpicBySpec(db, epicRow.spec_id);
+      if (epic && isFrozen(db, epic.id)) {
+        return c.json({ error: "epic is archived" }, 409);
+      }
+    }
 
     // Idempotency: already done → already_done (no re-run of fanout)
     if (cohort.status === "done") {
