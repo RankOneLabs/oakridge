@@ -245,7 +245,7 @@ describe("listCells", () => {
 });
 
 describe("getCellDetail", () => {
-  test("surfaces artifact filename + commit count", async () => {
+  test("surfaces artifact filename + commit count without events payload", async () => {
     await makeCell(
       "2026-05-06T19-00-00Z",
       "prose_substrate_thesis",
@@ -268,7 +268,34 @@ describe("getCellDetail", () => {
     expect(detail).not.toBeNull();
     expect(detail!.artifact_filename).toBe("draft.md");
     expect(detail!.commit_count).toBe(4);
-    expect(detail!.events.length).toBe(2);
+    // events must not appear in the detail response
+    expect("events" in detail!).toBe(false);
+    // event_count in the summary fields is still accurate
+    expect(detail!.event_count).toBe(2);
+  });
+
+  test("getCellDetail result has no events field even when events.jsonl is present", async () => {
+    await makeCell(
+      "2026-07-01T10-00-00Z",
+      "prose",
+      "single_agent",
+      [
+        eventLine("incremental_started"),
+        eventLine("proposal_applied"),
+        eventLine("incremental_terminated"),
+      ],
+    );
+    const cells = await listCells();
+    const cellId = cells.find((c) => c.condition_name === "single_agent")?.cell_id;
+    expect(cellId).toBeDefined();
+
+    const detail = await getCellDetail(cellId!);
+    expect(detail).not.toBeNull();
+    // The detail payload must not carry the events list
+    expect("events" in detail!).toBe(false);
+    // Summary metadata is still present and accurate
+    expect(detail!.event_count).toBe(3);
+    expect(detail!.status).toBe("ended");
   });
 
   test("ignores eval_scores.json when detecting the artifact filename", async () => {
