@@ -237,6 +237,10 @@ pub fn router(state: AppState) -> Router {
             "/stage_instances/:id/resume",
             post(rest::resume_stage_instance),
         )
+        .route(
+            "/stage_instances/:id/retry_stuck",
+            post(rest::retry_stuck_stage_instance),
+        )
         .route("/artifacts/:id", get(rest::get_artifact))
         .route(
             "/artifact_details/:id",
