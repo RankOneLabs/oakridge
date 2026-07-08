@@ -794,6 +794,31 @@ pub async fn list_parked_stage_instances(pool: &SqlitePool) -> crate::Result<Vec
     rows.into_iter().map(row_to_stage_instance).collect()
 }
 
+/// Bump updated_at on a stage instance without changing its status.
+/// Used by StageContext::heartbeat and after successful artifact emits to
+/// signal liveness to the stuck-stage sweeper.
+pub async fn touch_stage_instance(
+    pool: &SqlitePool,
+    id: &StageInstanceId,
+) -> crate::Result<()> {
+    let id_str = id.0.to_string();
+    let updated_at = Utc::now().to_rfc3339();
+    let result = sqlx::query(
+        "UPDATE stage_instance SET updated_at = ? WHERE id = ?",
+    )
+    .bind(updated_at)
+    .bind(&id_str)
+    .execute(pool)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(crate::Error::NotFound {
+            entity: "stage_instance".into(),
+            id: id_str,
+        });
+    }
+    Ok(())
+}
+
 // ── Artifact ──────────────────────────────────────────────────────────────────
 
 pub async fn insert_artifact(pool: &SqlitePool, a: &Artifact) -> crate::Result<()> {

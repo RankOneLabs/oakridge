@@ -292,7 +292,21 @@ impl StageContext {
             .await
             .map_err(|_| anyhow::anyhow!("executor event channel closed"))?;
 
+        // Bump updated_at to signal liveness after a successful emit.
+        // Best-effort: the artifact is already committed and the event sent.
+        let _ = queries::touch_stage_instance(&self.db, &self.stage_instance_id).await;
+
         Ok(artifact)
+    }
+
+    /// Bump this stage instance's `updated_at` without changing its status.
+    ///
+    /// Call periodically from long-running executors that are making progress
+    /// but not emitting artifacts or changing status. Signals liveness to the
+    /// stuck-stage sweeper and prevents the stage from being parked as timed-out.
+    pub async fn heartbeat(&self) -> anyhow::Result<()> {
+        queries::touch_stage_instance(&self.db, &self.stage_instance_id).await?;
+        Ok(())
     }
 
     /// Transition this stage instance to a new status.
@@ -1225,5 +1239,72 @@ mod tests {
             }
             other => panic!("unexpected event: {:?}", other),
         }
+    }
+
+    // ── heartbeat tests ───────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn heartbeat_bumps_updated_at() {
+        let pool = make_pool().await;
+        let (run_id, si_id) = setup_run(&pool).await;
+        let registry = make_artifact_registry();
+        let (tx, _rx) = mpsc::channel(8);
+
+        let before = queries::get_stage_instance_by_id(&pool, &si_id)
+            .await
+            .unwrap()
+            .updated_at;
+
+        // Ensure at least 1 ms passes so the new timestamp is strictly later.
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+
+        let ctx = make_ctx(pool.clone(), run_id, si_id, registry, tx);
+        ctx.heartbeat().await.unwrap();
+
+        let after = queries::get_stage_instance_by_id(&pool, &si_id)
+            .await
+            .unwrap()
+            .updated_at;
+
+        assert!(
+            after > before,
+            "heartbeat must advance updated_at (before={before:?}, after={after:?})"
+        );
+    }
+
+    #[tokio::test]
+    async fn emit_bumps_updated_at() {
+        let pool = make_pool().await;
+        let (run_id, si_id) = setup_run(&pool).await;
+        let registry = make_artifact_registry();
+        let (tx, _rx) = mpsc::channel(8);
+
+        let before = queries::get_stage_instance_by_id(&pool, &si_id)
+            .await
+            .unwrap()
+            .updated_at;
+
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+
+        let ctx = make_ctx(pool.clone(), run_id, si_id, registry, tx);
+        ctx.emit(EmitArgs {
+            output_name: "out".into(),
+            artifact_type: "any".into(),
+            body: json!({"x": 1}),
+            label: None,
+            parent_artifact_id: None,
+        })
+        .await
+        .unwrap();
+
+        let after = queries::get_stage_instance_by_id(&pool, &si_id)
+            .await
+            .unwrap()
+            .updated_at;
+
+        assert!(
+            after > before,
+            "emit must advance updated_at (before={before:?}, after={after:?})"
+        );
     }
 }
