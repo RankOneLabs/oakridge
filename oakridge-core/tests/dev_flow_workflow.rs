@@ -367,6 +367,7 @@ async fn dev_flow_smoke_run_starts_first_delegated_session() {
         db_url: format!("sqlite:{}", db_path.display()),
         pwa_dir: std::env::temp_dir(),
         cors_origins: vec![],
+        auth_policy: oakridge_core::config::AuthPolicy::Loopback,
     };
     let prompts_dir = manifest_dir().join("prompts");
     let (app, _coord) = boot(cfg, |stage_types, artifact_types| {
