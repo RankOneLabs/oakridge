@@ -96,7 +96,9 @@ export function lbcResolveAuthPolicy(opts: {
   const { host, allowInsecure } = opts;
   const controlToken = opts.controlToken?.trim() || undefined;
 
-  if (LBC_LOOPBACK_HOSTS.has(host)) {
+  const parts = host.split(".");
+  const isLoopback = LBC_LOOPBACK_HOSTS.has(host) || (parts.length === 4 && parts[0] === "127");
+  if (isLoopback) {
     return { mode: "loopback" };
   }
   if (controlToken) {
@@ -907,7 +909,8 @@ if (lbcAuthPolicy.mode === "insecure-non-loopback") {
 const app = createApp({ authPolicy: lbcAuthPolicy });
 
 console.log(`[lbc-dashboard] run root: ${resolveRunRoot()}`);
-console.log(`[lbc-dashboard] listening on http://${lbcHost}:${port}`);
+const displayHost = lbcHost.includes(":") ? `[${lbcHost}]` : lbcHost;
+console.log(`[lbc-dashboard] listening on http://${displayHost}:${port}`);
 
 // Bind to loopback by default — override LBC_DASHBOARD_HOST to bind on a
 // non-loopback interface (requires OAKRIDGE_CONTROL_TOKEN or

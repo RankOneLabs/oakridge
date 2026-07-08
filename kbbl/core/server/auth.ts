@@ -17,7 +17,10 @@ const LOOPBACK_HOSTS = new Set([
 ]);
 
 export function isLoopbackHost(host: string): boolean {
-  return LOOPBACK_HOSTS.has(host);
+  if (LOOPBACK_HOSTS.has(host)) return true;
+  // Full 127.0.0.0/8 loopback range.
+  const parts = host.split(".");
+  return parts.length === 4 && parts[0] === "127";
 }
 
 /**
