@@ -32,6 +32,7 @@ from typing import Protocol
 from jig.core.types import Grader, Score, TracingLogger
 from jig.tracing.stdout import StdoutTracer
 
+from legit_biz_club.composition import HeterogeneityCheckFailed, check_heterogeneity
 from legit_biz_club.coordination.consensus import WorkspaceEventEmitter
 from legit_biz_club.coordination.coordinator import IncrementalRunResult
 from legit_biz_club.coordination.events import GradingFailedPayload
@@ -42,6 +43,7 @@ from legit_biz_club.coordination.project_coordinator import (
 )
 from legit_biz_club.coordination.proposal import ProposalResult
 from legit_biz_club.coordination.proposer import Proposer
+from legit_biz_club.core.lifecycle import ProjectState, transition_to
 from legit_biz_club.core.models import (
     Agent,
     Artifact,
@@ -236,16 +238,23 @@ async def run_cell(
     # see a consistent reference. Also gives Workstream D a
     # human-readable handle for cross-cell aggregation.
     cell_project_id = f"{target.name}-{condition.name}"
+    # Create in INITIALIZED with no enrollments, then drive the lifecycle:
+    # INITIALIZED → ENROLLING → (heterogeneity gate) → attach enrollments.
     project = Project(
         id=cell_project_id,
         artifact=Artifact(type=target.artifact_type, path=artifact_path),
         brief=target.brief,
-        enrollments=[
-            Enrollment(agent_id=a.id, project_id=cell_project_id)
-            for a in agents
-        ],
+        enrollments=[],
         coordination_protocol=condition.coordination_protocol,
     )
+    project.state = transition_to(project.state, ProjectState.ENROLLING)
+    proposed_enrollments = [
+        Enrollment(agent_id=a.id, project_id=cell_project_id) for a in agents
+    ]
+    violations = check_heterogeneity(agents, proposed_enrollments, condition.composition_policy)
+    if violations:
+        raise HeterogeneityCheckFailed(violations)
+    project.enrollments = proposed_enrollments
     # Load peer context per agent if a loader was provided. The factory
     # always receives a ``context`` kwarg — empty string when no loader
     # is wired (or when a loader returned ""). Calling factories

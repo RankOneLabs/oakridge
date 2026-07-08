@@ -21,6 +21,7 @@ the consensus mechanisms are the building blocks it composes.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from jig.core.types import TracingLogger
 
@@ -48,6 +49,7 @@ from legit_biz_club.coordination.termination import (
     KCommitsOrStable,
     TerminationPolicy,
 )
+from legit_biz_club.core.lifecycle import ProjectState, transition_to
 from legit_biz_club.core.models import Agent, CoordinationProtocol, Project
 
 
@@ -117,28 +119,45 @@ class ProjectCoordinator:
         self.emit = emit
 
     async def run(self) -> ProjectRunResult:
+        if not self.project.enrollments:
+            raise ValueError(
+                "project must have at least one enrollment before coordinator.run()"
+            )
+        # ENROLLING → ACTIVE: validates the project is in the expected state.
+        # transition_to raises InvalidTransitionError for any other source state,
+        # so this is both the guard and the transition.
+        self.project.state = transition_to(self.project.state, ProjectState.ACTIVE)
+
         protocol = self.project.coordination_protocol
         incremental_result: IncrementalRunResult | None = None
         consensus_result: ConsensusResult | None = None
 
-        if protocol in (
-            CoordinationProtocol.INCREMENTAL_ONLY,
-            CoordinationProtocol.INCREMENTAL_THEN_CONVERGE,
-        ):
-            incremental_result = await self._run_incremental()
+        try:
+            if protocol in (
+                CoordinationProtocol.INCREMENTAL_ONLY,
+                CoordinationProtocol.INCREMENTAL_THEN_CONVERGE,
+            ):
+                incremental_result = await self._run_incremental()
 
-        if protocol in (
-            CoordinationProtocol.INCREMENTAL_THEN_CONVERGE,
-            CoordinationProtocol.MULTI_ROUND_FROM_START,
-        ):
-            if protocol == CoordinationProtocol.INCREMENTAL_THEN_CONVERGE:
-                # Agents that burned their retry budget during
-                # incremental should still be eligible to land a
-                # converged / escalation-picked proposal — consensus
-                # has no retry semantics, so the budget check is
-                # meaningless for a one-shot apply.
-                await self.mediator.reset_retry_budgets()
-            consensus_result = await self._run_consensus()
+            if protocol in (
+                CoordinationProtocol.INCREMENTAL_THEN_CONVERGE,
+                CoordinationProtocol.MULTI_ROUND_FROM_START,
+            ):
+                if protocol == CoordinationProtocol.INCREMENTAL_THEN_CONVERGE:
+                    # Agents that burned their retry budget during
+                    # incremental should still be eligible to land a
+                    # converged / escalation-picked proposal — consensus
+                    # has no retry semantics, so the budget check is
+                    # meaningless for a one-shot apply.
+                    await self.mediator.reset_retry_budgets()
+                consensus_result = await self._run_consensus()
+        except Exception:
+            # Leave the project in ACTIVE; the caller sees the exception and
+            # the incomplete run state. SHIPPED is only set on clean completion.
+            raise
+
+        self.project.state = transition_to(self.project.state, ProjectState.SHIPPED)
+        self.project.shipped_at = datetime.now(UTC)
 
         return ProjectRunResult(
             project=self.project,

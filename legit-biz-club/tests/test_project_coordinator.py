@@ -24,7 +24,9 @@ from legit_biz_club import (
     KCommitsPerAgent,
     Mediator,
     Project,
+    ProjectState,
     Proposal,
+    transition_to,
 )
 from legit_biz_club.coordination.disagreement import StableOrderingByAgentId
 from legit_biz_club.coordination.project_coordinator import (
@@ -54,7 +56,7 @@ def _make_project(
     tmp_path.mkdir(parents=True, exist_ok=True)
     artifact_path = tmp_path / "draft.md"
     artifact_path.write_text("seed", encoding="utf-8")
-    return Project(
+    project = Project(
         artifact=Artifact(type=ArtifactType.PROSE, path=artifact_path),
         brief=Brief(target_spec="x", success_criteria=["y"]),
         enrollments=[
@@ -62,6 +64,9 @@ def _make_project(
         ],
         coordination_protocol=protocol,
     )
+    # ProjectCoordinator.run requires ENROLLING state.
+    project.state = transition_to(project.state, ProjectState.ENROLLING)
+    return project
 
 
 class _IdenticalProposer:

@@ -27,10 +27,12 @@ from legit_biz_club import (
     MultiRoundConsensus,
     Project,
     ProjectCoordinator,
+    ProjectState,
     ProposalResult,
     StableOrderingByAgentId,
     StringEqualConvergence,
     make_proposers,
+    transition_to,
 )
 
 
@@ -80,6 +82,8 @@ async def test_full_path_multi_round_from_start(tmp_path: Path) -> None:
         ],
         coordination_protocol=CoordinationProtocol.MULTI_ROUND_FROM_START,
     )
+    # ProjectCoordinator.run requires ENROLLING state.
+    project.state = transition_to(project.state, ProjectState.ENROLLING)
 
     target_output = "the consensus paragraph"
     overrides = {a.id: _CannedLLM(target_output) for a in agents}
