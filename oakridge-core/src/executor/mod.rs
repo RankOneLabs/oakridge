@@ -72,6 +72,18 @@ fn is_unique_violation(err: &sqlx::Error) -> bool {
     matches!(err, sqlx::Error::Database(dbe) if dbe.kind() == sqlx::error::ErrorKind::UniqueViolation)
 }
 
+// SQLITE_BUSY (5) or SQLITE_BUSY_SNAPSHOT (517 = SQLITE_BUSY | (2 << 8)).
+// pool.begin() uses BEGIN DEFERRED, so a concurrent writer can cause a
+// BUSY_SNAPSHOT when this transaction tries to upgrade from reader to writer;
+// busy_timeout only covers SQLITE_BUSY, not BUSY_SNAPSHOT. Both are transient
+// — dropping the transaction and retrying with a fresh snapshot resolves it.
+fn is_sqlite_busy(err: &sqlx::Error) -> bool {
+    matches!(
+        err,
+        sqlx::Error::Database(dbe) if matches!(dbe.code().as_deref(), Some("5") | Some("517"))
+    )
+}
+
 const MAX_ARTIFACT_EMIT_RETRIES: usize = 8;
 
 // ── StageContext ──────────────────────────────────────────────────────────────
@@ -254,6 +266,7 @@ impl StageContext {
                 match insert_result {
                     Ok(_) => Ok(EmitAttempt::Inserted(artifact)),
                     Err(err) if is_unique_violation(&err) => Ok(EmitAttempt::Retry),
+                    Err(err) if is_sqlite_busy(&err) => Ok(EmitAttempt::Retry),
                     Err(err) => Err(err.into()),
                 }
             }
@@ -269,7 +282,7 @@ impl StageContext {
                     drop(txn);
                     if attempts >= MAX_ARTIFACT_EMIT_RETRIES {
                         return Err(anyhow::anyhow!(
-                            "artifact emit exceeded {} retries on unique conflict",
+                            "artifact emit exceeded {} retries (revision conflict or sqlite busy)",
                             MAX_ARTIFACT_EMIT_RETRIES
                         ));
                     }
