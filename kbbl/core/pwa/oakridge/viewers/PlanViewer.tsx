@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { DagEditor } from "../../review/plan/DagEditor";
-import type { Cohort, CohortDependency } from "../../review/plan/types";
+import type { Cohort } from "../../review/plan/types";
 
 // dev.plan body shape (subset used for display)
 interface PlanBody {
@@ -28,23 +28,6 @@ function adaptCohorts(raw: unknown[]): Cohort[] {
   });
 }
 
-// Adapt plan.body.dependency_order → DagEditor's CohortDependency[]
-// dependency_order is an array of cohort IDs in topological order;
-// we derive edges from consecutive pairs.
-function adaptDeps(cohorts: Cohort[], order: unknown[]): CohortDependency[] {
-  const ids = order.map(String);
-  const cohortIds = new Set(cohorts.map((c) => c.id));
-  const deps: CohortDependency[] = [];
-  for (let i = 0; i < ids.length - 1; i++) {
-    const from = ids[i];
-    const to = ids[i + 1];
-    if (cohortIds.has(from) && cohortIds.has(to)) {
-      deps.push({ id: `${from}->${to}`, from_cohort_id: from, to_cohort_id: to });
-    }
-  }
-  return deps;
-}
-
 interface Props {
   body: unknown;
 }
@@ -57,7 +40,9 @@ export function PlanViewer({ body }: Props) {
   const rawOrder = Array.isArray(data.dependency_order) ? data.dependency_order : [];
 
   const cohorts = adaptCohorts(rawCohorts);
-  const deps = adaptDeps(cohorts, rawOrder);
+  // dependency_order is a topological sort of IDs, not an explicit edge list;
+  // passing empty deps avoids rendering a false linear chain. Explicit edges
+  // will be wired when the artifact body carries them (cohort 5+).
 
   return (
     <div className="or-viewer or-viewer--plan">
@@ -74,7 +59,7 @@ export function PlanViewer({ body }: Props) {
           <div style={{ height: 400 }}>
             <DagEditor
               cohorts={cohorts}
-              deps={deps}
+              deps={[]}
               threads={[]}
               mode="review"
               frozen={true}
@@ -86,6 +71,19 @@ export function PlanViewer({ body }: Props) {
               onUpdatePosition={() => Promise.resolve()}
             />
           </div>
+        </section>
+      )}
+
+      {rawOrder.length > 0 && (
+        <section className="or-viewer__section">
+          <h3 className="or-viewer__section-title">Dependency Order</h3>
+          <ol className="or-viewer__list">
+            {rawOrder.map((id, i) => (
+              <li key={i} className="or-viewer__list-item">
+                <code>{String(id)}</code>
+              </li>
+            ))}
+          </ol>
         </section>
       )}
 

@@ -2316,4 +2316,33 @@ mod tests {
             "error field must be present"
         );
     }
+
+    #[tokio::test]
+    async fn test_get_artifact_types_returns_registered_types_with_capabilities() {
+        let state = make_state(vec![]).await;
+        let app = crate::http::router(state);
+
+        let (status, body) = req(app, "GET", "/artifact_types", None).await;
+        assert_eq!(status, StatusCode::OK);
+
+        let types = body.as_array().expect("response must be an array");
+        assert_eq!(types.len(), 1, "one artifact type registered in test state");
+
+        let entry = &types[0];
+        assert_eq!(entry["id"], "any");
+        assert_eq!(entry["component_id"], "v");
+
+        let caps = &entry["capabilities"];
+        assert!(caps.is_object(), "capabilities must be an object");
+        assert!(caps["reviewable"].is_boolean());
+        assert!(caps["commentable"].is_boolean());
+        assert!(caps["atom_editable"].is_boolean());
+        assert!(caps["review_items"].is_boolean());
+
+        // anchor_schema is present (may be null for types without one)
+        assert!(
+            entry.get("anchor_schema").is_some(),
+            "anchor_schema field must be present"
+        );
+    }
 }
