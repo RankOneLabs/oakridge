@@ -962,6 +962,8 @@ mod tests {
             id: "artifact".into(),
             validate: |_| Ok(()),
             component_id: "artifact-viewer".into(),
+            capabilities: Default::default(),
+            anchor_schema: None,
         });
         Arc::new(registry)
     }

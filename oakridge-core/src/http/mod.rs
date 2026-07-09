@@ -246,6 +246,7 @@ pub fn router(state: AppState) -> Router {
             post(rest::retry_stuck_stage_instance),
         )
         .route("/artifacts/:id", get(rest::get_artifact))
+        .route("/artifact_types", get(rest::get_artifact_types))
         .route(
             "/artifact_details/:id",
             get(rest::get_operator_artifact_detail),

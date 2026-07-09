@@ -1,9 +1,30 @@
 use crate::executor::{StageContext, StageHandle};
 use crate::types::{Artifact, InputSlot, OutputSlot, StageInstanceId};
 use async_trait::async_trait;
+use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
+
+/// Describes one step in a stage's gate flow.
+#[derive(Serialize, Clone)]
+pub struct GateStep {
+    /// Gate type identifier (e.g. "artifact_approval", "merge_confirmation").
+    pub gate_type: String,
+}
+
+/// Descriptor for the full gate flow a stage type produces when it parks.
+///
+/// Declared here and exposed via HTTP in this cohort; the scheduler consumes
+/// `requires_zero_open_review_items` starting in cohort 5.
+#[derive(Serialize, Clone)]
+pub struct GateFlowDescriptor {
+    /// Ordered gate steps the stage progresses through before completing.
+    pub steps: Vec<GateStep>,
+    /// When true, the final gate step will not advance until all review items
+    /// are resolved. Declared now; wired in cohort 5.
+    pub requires_zero_open_review_items: bool,
+}
 
 /// The interface that all stage-type implementations must satisfy.
 ///
@@ -48,6 +69,20 @@ pub trait StageType: Send + Sync {
     /// back can be nested directly.
     fn http_routes(&self) -> Option<axum::Router> {
         None
+    }
+
+    /// Describe the gate flow this stage type uses when it parks.
+    ///
+    /// The default is a single artifact-approval step (the historic one-step behaviour).
+    /// Stage types that produce a two-step flow override this method.
+    /// Declared in this cohort; `requires_zero_open_review_items` is wired in cohort 5.
+    fn gate_flow(&self) -> GateFlowDescriptor {
+        GateFlowDescriptor {
+            steps: vec![GateStep {
+                gate_type: "artifact_approval".into(),
+            }],
+            requires_zero_open_review_items: false,
+        }
     }
 
     /// Launch the stage. Returns a handle the scheduler can use to resume or cancel the stage.

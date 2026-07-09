@@ -607,11 +607,15 @@ mod tests {
             id: "any".into(),
             validate: validate_always_ok,
             component_id: "any-viewer".into(),
+            capabilities: Default::default(),
+            anchor_schema: None,
         });
         reg.register(ArtifactTypeDef {
             id: "strict".into(),
             validate: validate_requires_field,
             component_id: "strict-viewer".into(),
+            capabilities: Default::default(),
+            anchor_schema: None,
         });
         Arc::new(reg)
     }

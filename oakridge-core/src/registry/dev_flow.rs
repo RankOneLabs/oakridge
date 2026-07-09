@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::registry::artifact_type::{ArtifactTypeDef, ArtifactTypeRegistry};
+use crate::registry::artifact_type::{ArtifactCapabilities, ArtifactTypeDef, ArtifactTypeRegistry};
 
 // ── Body structs for schema validation ───────────────────────────────────────
 //
@@ -99,30 +99,78 @@ fn validate_pr_summary(v: &Value) -> crate::Result<()> {
 /// `dev.pr_summary` is registered but not required by the first workflow graph;
 /// it becomes a gate artifact once PR ownership is decided.
 pub fn register_dev_flow_types(registry: &mut ArtifactTypeRegistry) {
+    // dev.spec_analysis: reviewable, commentable, review_items; no atom editing.
     registry.register(ArtifactTypeDef {
         id: "dev.spec_analysis".into(),
         validate: validate_spec_analysis,
         component_id: "dev-spec-analysis-viewer".into(),
+        capabilities: ArtifactCapabilities {
+            reviewable: true,
+            commentable: true,
+            atom_editable: false,
+            review_items: true,
+        },
+        anchor_schema: None,
     });
+    // dev.plan: fully interactive (cohort 5); anchor_schema covers cohort/dependency atoms.
     registry.register(ArtifactTypeDef {
         id: "dev.plan".into(),
         validate: validate_plan,
         component_id: "dev-plan-viewer".into(),
+        capabilities: ArtifactCapabilities {
+            reviewable: true,
+            commentable: true,
+            atom_editable: true,
+            review_items: false,
+        },
+        anchor_schema: Some(vec![
+            "/cohorts".into(),
+            "/dependency_order".into(),
+        ]),
     });
+    // dev.build_result: reviewable, commentable, atom_editable; anchor_schema covers top-level sections.
     registry.register(ArtifactTypeDef {
         id: "dev.build_result".into(),
         validate: validate_build_result,
         component_id: "dev-build-result-viewer".into(),
+        capabilities: ArtifactCapabilities {
+            reviewable: true,
+            commentable: true,
+            atom_editable: true,
+            review_items: false,
+        },
+        anchor_schema: Some(vec![
+            "/summary".into(),
+            "/changed_files".into(),
+            "/tests".into(),
+            "/known_issues".into(),
+        ]),
     });
+    // dev.assessment: reviewable, commentable; no atom editing or review_items.
     registry.register(ArtifactTypeDef {
         id: "dev.assessment".into(),
         validate: validate_assessment,
         component_id: "dev-assessment-viewer".into(),
+        capabilities: ArtifactCapabilities {
+            reviewable: true,
+            commentable: true,
+            atom_editable: false,
+            review_items: false,
+        },
+        anchor_schema: None,
     });
+    // dev.pr_summary: reviewable only.
     registry.register(ArtifactTypeDef {
         id: "dev.pr_summary".into(),
         validate: validate_pr_summary,
         component_id: "dev-pr-summary-viewer".into(),
+        capabilities: ArtifactCapabilities {
+            reviewable: true,
+            commentable: false,
+            atom_editable: false,
+            review_items: false,
+        },
+        anchor_schema: None,
     });
 }
 

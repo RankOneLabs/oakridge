@@ -909,6 +909,17 @@ impl StageType for DelegatedSessionStage {
             self.live_sessions.clone(),
         ))
     }
+
+    fn gate_flow(&self) -> crate::registry::stage_type::GateFlowDescriptor {
+        use crate::registry::stage_type::{GateFlowDescriptor, GateStep};
+        GateFlowDescriptor {
+            steps: vec![
+                GateStep { gate_type: "artifact_approval".into() },
+                GateStep { gate_type: "merge_confirmation".into() },
+            ],
+            requires_zero_open_review_items: false,
+        }
+    }
 }
 
 #[async_trait]
@@ -1360,6 +1371,8 @@ mod tests {
             id: "text".into(),
             validate: |_| Ok(()),
             component_id: "text-viewer".into(),
+            capabilities: Default::default(),
+            anchor_schema: None,
         });
         Arc::new(registry)
     }
