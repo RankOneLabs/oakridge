@@ -5,7 +5,7 @@ import type { ReactElement } from "react";
 
 import { RunListView } from "../RunListView";
 import { RunDetailView } from "../RunDetailView";
-import { ArtifactDetailView } from "../ArtifactDetailView";
+import { ArtifactReviewView } from "../ArtifactReviewView";
 import { GateResumeForm } from "../GateResumeForm";
 import { GlobalParkedGateList } from "../ParkedGateList";
 import type { RunSummary, RunDetail, ArtifactDetail, ParkedGate } from "../types";
@@ -106,6 +106,9 @@ const RUN_DETAIL_FIXTURE: RunDetail = {
 const ARTIFACT_FIXTURE: ArtifactDetail = {
   id: "art-1",
   type_id: "spec_v2",
+  component_id: null,
+  capabilities: null,
+  anchor_schema: null,
   run_id: "run-1",
   producing_stage: "spec",
   revisions: [
@@ -316,10 +319,10 @@ describe("GateResumeForm", () => {
 // Artifact detail view
 // ──────────────────────────────────────────────────────────────────────────────
 
-describe("ArtifactDetailView", () => {
+describe("ArtifactReviewView", () => {
   it("renders artifact type, producing stage, and revision body", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json(ARTIFACT_FIXTURE));
-    wrap(<ArtifactDetailView artifactId="art-1" onBack={() => {}} />);
+    wrap(<ArtifactReviewView artifactId="art-1" onBack={() => {}} />);
 
     expect(await screen.findByTestId("or-artifact-type")).toBeTruthy();
     expect(screen.getByTestId("or-artifact-type").textContent).toBe("spec_v2");
@@ -334,14 +337,14 @@ describe("ArtifactDetailView", () => {
 
   it("shows revision status chip", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json(ARTIFACT_FIXTURE));
-    wrap(<ArtifactDetailView artifactId="art-1" onBack={() => {}} />);
+    wrap(<ArtifactReviewView artifactId="art-1" onBack={() => {}} />);
     const status = await screen.findByTestId("or-revision-status");
     expect(status.textContent).toBe("approved");
   });
 
   it("shows error state when artifact fetch fails", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ error: "not found" }, 404));
-    wrap(<ArtifactDetailView artifactId="bad-id" onBack={() => {}} />);
+    wrap(<ArtifactReviewView artifactId="bad-id" onBack={() => {}} />);
     expect(await screen.findByTestId("or-artifact-detail-error")).toBeTruthy();
   });
 });

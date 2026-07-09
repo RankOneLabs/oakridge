@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useOakridgeConfig } from "./hooks";
 import { RunListView } from "./RunListView";
 import { RunDetailView } from "./RunDetailView";
-import { ArtifactDetailView } from "./ArtifactDetailView";
+import { ArtifactReviewView } from "./ArtifactReviewView";
 import { NewRunForm } from "./NewRunForm";
 import { CreateProjectModal } from "./CreateProjectModal";
 import type { OakridgeSubRoute } from "../lib/hash";
@@ -72,7 +72,7 @@ function OakridgeShellInner({ route, onBack, onNavigate }: OakridgeShellInnerPro
       );
       break;
     case "artifact":
-      content = <ArtifactDetailView artifactId={route.id} onBack={navigateToRuns} />;
+      content = <ArtifactReviewView artifactId={route.id} onBack={navigateToRuns} />;
       break;
     case "new-run":
       content = (

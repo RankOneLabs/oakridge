@@ -90,9 +90,26 @@ export interface ArtifactRevision {
   validation: unknown;
 }
 
+export interface ArtifactCapabilities {
+  reviewable: boolean;
+  commentable: boolean;
+  atom_editable: boolean;
+  review_items: boolean;
+}
+
+export interface ArtifactTypeDescriptor {
+  id: string;
+  component_id: string;
+  capabilities: ArtifactCapabilities;
+  anchor_schema: string[] | null;
+}
+
 export interface ArtifactDetail {
   id: string;
   type_id: string;
+  component_id: string | null;
+  capabilities: ArtifactCapabilities | null;
+  anchor_schema: string[] | null;
   run_id: string;
   producing_stage: string;
   revisions: ArtifactRevision[];
