@@ -393,7 +393,7 @@ async fn emit_artifact(app: &Router, stage_instance_id: StageInstanceId, body: V
             Request::builder()
                 .method("POST")
                 .uri(format!(
-                    "/executors/delegated_session/{}/emit/out",
+                    "/executors/delegated_session/{}/units/0/emit/out",
                     stage_instance_id.0
                 ))
                 .header("content-type", "application/json")

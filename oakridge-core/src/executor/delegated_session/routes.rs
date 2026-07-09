@@ -10,6 +10,7 @@ use axum::{
 };
 use uuid::Uuid;
 
+use crate::db::queries;
 use crate::executor::EmitArgs;
 use crate::types::{StageInstanceId, StageStatus};
 
@@ -25,7 +26,10 @@ struct RouteState {
 
 pub(crate) fn emit_routes(kbbl_client: Arc<KbblClient>, live_sessions: LiveSessions) -> Router {
     Router::new()
-        .route("/:stage_instance_id/emit/:output_name", post(emit_handler))
+        .route(
+            "/:stage_instance_id/units/:unit_id/emit/:output_name",
+            post(emit_handler),
+        )
         .with_state(RouteState {
             _kbbl_client: kbbl_client,
             live_sessions,
@@ -34,7 +38,7 @@ pub(crate) fn emit_routes(kbbl_client: Arc<KbblClient>, live_sessions: LiveSessi
 
 async fn emit_handler(
     State(state): State<RouteState>,
-    Path((stage_instance_id_str, output_name)): Path<(String, String)>,
+    Path((stage_instance_id_str, unit_id, output_name)): Path<(String, String, String)>,
     body: Bytes,
 ) -> impl IntoResponse {
     let stage_instance_id = match Uuid::parse_str(&stage_instance_id_str) {
@@ -44,7 +48,7 @@ async fn emit_handler(
 
     let live_session = {
         let live_sessions = state.live_sessions.lock().unwrap();
-        match live_sessions.get(&stage_instance_id) {
+        match live_sessions.get(&(stage_instance_id, unit_id.clone())) {
             Some(session) => session.clone(),
             None => return not_found(),
         }
@@ -122,6 +126,15 @@ async fn emit_handler(
         }
     };
 
+    // Write artifact_id to the unit row (best-effort; unit CRUD errors don't fail the emit).
+    let _ = queries::set_session_unit_artifact_id(
+        live_session.ctx.pool(),
+        &stage_instance_id,
+        &unit_id,
+        artifact.id,
+    )
+    .await;
+
     let revision_count = revision_count_from_meta(summary.parked_meta.as_ref());
     let gate_state = DelegatedGateState::artifact_approval(
         live_session.sid.clone(),
@@ -132,12 +145,23 @@ async fn emit_handler(
         live_session.worktree_base_ref.clone(),
     );
 
+    let gate_state_value = match serde_json::to_value(&gate_state) {
+        Ok(value) => value,
+        Err(_) => return internal_error(),
+    };
+
+    // Write gate_state to the unit row (best-effort).
+    let _ = queries::set_session_unit_gate_state(
+        live_session.ctx.pool(),
+        &stage_instance_id,
+        &unit_id,
+        Some(gate_state_value.clone()),
+    )
+    .await;
+
     if live_session
         .ctx
-        .set_parked_meta(Some(match serde_json::to_value(&gate_state) {
-            Ok(value) => value,
-            Err(_) => return internal_error(),
-        }))
+        .set_parked_meta(Some(gate_state_value))
         .await
         .is_err()
     {
