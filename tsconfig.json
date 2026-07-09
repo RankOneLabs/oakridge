@@ -24,6 +24,7 @@
   "include": [
     "kbbl/core/**/*.ts",
     "kbbl/core/**/*.tsx",
+    "kbbl/adapters/**/*.ts",
     "lbc-dashboard/**/*.ts",
     "lbc-dashboard/**/*.tsx"
   ],

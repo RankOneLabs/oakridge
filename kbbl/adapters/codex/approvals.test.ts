@@ -60,6 +60,7 @@ describe("normalizeApprovalByMethod", () => {
 describe("normalizeFileChangeApproval", () => {
   test("includes reason in toolInput", () => {
     const result = normalizeFileChangeApproval(fileChangeParams);
+    if (result.toolInput.type !== "ApplyPatch") throw new Error("unexpected type");
     expect(result.toolInput.reason).toBe("Creating test file");
   });
 
@@ -77,12 +78,14 @@ describe("normalizeFileChangeApproval", () => {
 describe("normalizeCommandExecutionApproval", () => {
   test("includes command and cwd in toolInput", () => {
     const result = normalizeCommandExecutionApproval(commandParams);
+    if (result.toolInput.type !== "Exec") throw new Error("unexpected type");
     expect(result.toolInput.command).toBe("/bin/bash -lc 'echo hello'");
     expect(result.toolInput.cwd).toBe("/tmp");
   });
 
   test("includes commandActions in toolInput", () => {
     const result = normalizeCommandExecutionApproval(commandParams);
+    if (result.toolInput.type !== "Exec") throw new Error("unexpected type");
     expect(Array.isArray(result.toolInput.commandActions)).toBe(true);
   });
 

@@ -7,7 +7,15 @@
  * the harness's writers and the dashboard's readers.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  appendFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -37,6 +45,7 @@ import {
   upsertTaskDraft,
   validateGraderConfigDraftJson,
   validateTaskDraftJson,
+  warmSummaryCacheFromEventLines,
 } from "./store";
 import { RunRegistry, type Launcher } from "./runs";
 import { createApp } from "../server";
@@ -245,7 +254,7 @@ describe("listCells", () => {
 });
 
 describe("getCellDetail", () => {
-  test("surfaces artifact filename + commit count", async () => {
+  test("surfaces artifact filename + commit count without events payload", async () => {
     await makeCell(
       "2026-05-06T19-00-00Z",
       "prose_substrate_thesis",
@@ -268,7 +277,102 @@ describe("getCellDetail", () => {
     expect(detail).not.toBeNull();
     expect(detail!.artifact_filename).toBe("draft.md");
     expect(detail!.commit_count).toBe(4);
-    expect(detail!.events.length).toBe(2);
+    // events must not appear in the detail response
+    expect("events" in detail!).toBe(false);
+    // event_count in the summary fields is still accurate
+    expect(detail!.event_count).toBe(2);
+  });
+
+  test("getCellDetail result has no events field even when events.jsonl is present", async () => {
+    await makeCell(
+      "2026-07-01T10-00-00Z",
+      "prose",
+      "single_agent",
+      [
+        eventLine("incremental_started"),
+        eventLine("proposal_applied"),
+        eventLine("incremental_terminated"),
+      ],
+    );
+    const cells = await listCells();
+    const cellId = cells.find((c) => c.condition_name === "single_agent")?.cell_id;
+    expect(cellId).toBeDefined();
+
+    const detail = await getCellDetail(cellId!);
+    expect(detail).not.toBeNull();
+    // The detail payload must not carry the events list
+    expect("events" in detail!).toBe(false);
+    // Summary metadata is still present and accurate
+    expect(detail!.event_count).toBe(3);
+    expect(detail!.status).toBe("ended");
+  });
+
+  test("getCellDetail warms cold cache for direct detail loads", async () => {
+    const runTs = "2026-07-01T10-15-00Z";
+    await makeCell(runTs, "prose", "direct_detail", [
+      eventLine("incremental_started"),
+      eventLine("proposal_applied"),
+      eventLine("incremental_terminated"),
+    ]);
+
+    const detail = await getCellDetail(`${runTs}:prose:direct_detail`);
+    expect(detail).not.toBeNull();
+    expect(detail!.event_count).toBe(3);
+    expect(detail!.status).toBe("ended");
+  });
+
+  test("getCellDetail avoids stale cache after events.jsonl changes", async () => {
+    const cellDir = await makeCell(
+      "2026-07-01T10-30-00Z",
+      "prose",
+      "cache_only_detail",
+      [eventLine("incremental_started")],
+    );
+    const cells = await listCells();
+    const cellId = cells.find(
+      (c) => c.condition_name === "cache_only_detail",
+    )?.cell_id;
+    expect(cellId).toBeDefined();
+
+    const eventsPath = join(cellDir, "events.jsonl");
+    await appendFile(
+      eventsPath,
+      eventLine("incremental_terminated", "2026-07-01T10:31:00Z") + "\n",
+      "utf-8",
+    );
+    const future = new Date(Date.now() + 1000);
+    await utimes(eventsPath, future, future);
+
+    const detail = await getCellDetail(cellId!);
+    expect(detail).not.toBeNull();
+    expect(detail!.event_count).toBe(0);
+    expect(detail!.status).toBe("unknown");
+  });
+
+  test("malformed append updates cache mtime without changing parsed summary", async () => {
+    const cellDir = await makeCell(
+      "2026-07-01T10-45-00Z",
+      "prose",
+      "malformed_append",
+      [eventLine("incremental_started")],
+    );
+    const cells = await listCells();
+    const cellId = cells.find((c) => c.condition_name === "malformed_append")
+      ?.cell_id;
+    expect(cellId).toBeDefined();
+
+    const eventsPath = join(cellDir, "events.jsonl");
+    await appendFile(eventsPath, "{not valid json}\n", "utf-8");
+    const future = new Date(Date.now() + 1000);
+    await utimes(eventsPath, future, future);
+    await warmSummaryCacheFromEventLines(eventsPath, ["{not valid json}"], {
+      mode: "append",
+    });
+
+    const detail = await getCellDetail(cellId!);
+    expect(detail).not.toBeNull();
+    expect(detail!.event_count).toBe(1);
+    expect(detail!.status).toBe("active");
   });
 
   test("ignores eval_scores.json when detecting the artifact filename", async () => {
@@ -752,6 +856,30 @@ describe("getCellDetail run_metadata", () => {
     expect(rm!.agents).toHaveLength(2);
     expect(rm!.agents[0]).toEqual({ agent_id: "agent-0", model_id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" });
     expect(rm!.agents[1]).toEqual({ agent_id: "agent-1", model_id: "claude-opus-4-7", label: "Claude Opus 4.7" });
+  });
+
+  test("uses SSE-warmed summary cache for run_metadata without listCells", async () => {
+    const runTs = "2026-06-04T10-30-00Z";
+    const modelPool = ["claude-sonnet-4-6", "gpt-5"];
+    const started = incrementalStartedLine(["agent-0", "agent-1"]);
+    await makeRunSpec(runTs, modelPool);
+    const cellDir = await makeCell(runTs, "task", "cond", [started]);
+
+    await warmSummaryCacheFromEventLines(
+      join(cellDir, "events.jsonl"),
+      [started],
+      { mode: "replace" },
+    );
+
+    const detail = await getCellDetail(`${runTs}:task:cond`);
+    expect(detail).not.toBeNull();
+    const rm = detail!.run_metadata;
+    expect(rm).not.toBeNull();
+    expect(rm!.attribution_source).toBe("run_spec_derived");
+    expect(rm!.agents).toEqual([
+      { agent_id: "agent-0", model_id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+      { agent_id: "agent-1", model_id: "gpt-5", label: "GPT-5" },
+    ]);
   });
 
   test("returns run_metadata null when run-spec.json is absent", async () => {

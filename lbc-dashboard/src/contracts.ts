@@ -131,9 +131,12 @@ export const CellRunMetadataSchema = z.strictObject({
 // resulting schema is unambiguously a fresh strict object — no
 // dependence on whether ``.extend`` preserves strictness across Zod
 // versions.
+//
+// events is intentionally excluded: the cell event timeline is served
+// exclusively through /api/cells/:cellId/events (SSE). Including events
+// here forced an O(N) events.jsonl read on every detail refresh.
 export const CellDetailSchema = z.strictObject({
   ...CellSummarySchema.shape,
-  events: z.array(CellEventSchema),
   artifact_filename: z.string().nullable(),
   commit_count: z.number(),
   run_metadata: CellRunMetadataSchema.nullable(),

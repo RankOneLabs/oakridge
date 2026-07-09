@@ -1,6 +1,6 @@
-import type { Cohort } from "../types/task-tracker";
+import type { CohortStatus } from "../types/task-tracker";
 
-export type CohortStatus = Cohort["status"];
+export type { CohortStatus };
 
 export type CohortEvent =
   | "dependencies_met"

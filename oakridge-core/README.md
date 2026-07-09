@@ -230,9 +230,20 @@ PWA while oakridge-core owns only workflow gates.
 
 ## Persistence & migrations
 
-Schema lives in `src/db/migrations/` (a single consolidated `0001_initial`) and is
-applied automatically on boot. Add schema changes as new additive migrations — never
-edit shipped ones.
+Schema lives in `src/db/migrations/` and is applied automatically on boot via sqlx.
+The applied sequence is:
+
+| File | Contents |
+| --- | --- |
+| `0001_initial.sql` | Full base schema — projects, workflow defs, runs, stage instances, artifacts, gate decisions, events. |
+| `0002_add_terminal_meta.sql` | Adds `terminal_meta` to `stage_instances` for delegated-session exit codes and output paths. |
+
+**Migration policy:** add schema changes as new additive migrations — never edit
+a migration that has been applied to any database. Because oakridge-core has not
+shipped a stable release, the migration history may still be consolidated before
+1.0 if needed, but individual files in the current sequence should not be edited
+in place (they are checksummed by sqlx). Consolidation, if it happens, will land
+as a new single migration replacing the sequence, not as edits to existing files.
 
 Run-owned rows cascade when a `workflow_run` is deleted. Artifact revision trees are
 also cascade-owned: deleting a parent artifact deletes its descendant revisions. If a

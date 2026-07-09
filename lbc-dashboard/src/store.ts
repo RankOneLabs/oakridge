@@ -43,6 +43,11 @@ import {
   TaskDraftSchema,
   TaskSummarySchema,
 } from "./contracts";
+import {
+  BUILTIN_GRADER_SUMMARIES,
+  BUILTIN_TASK_DETAILS,
+} from "./generated/task_catalog";
+import { modelLabelFromCatalog } from "./generated/model_catalog";
 
 export type { CellDetail, CellEvent, CellSummary, CommitSnapshot, EvalScore };
 
@@ -243,13 +248,156 @@ async function safeReaddir(dir: string): Promise<string[]> {
  * with every commit — at study scale this becomes O(total log
  * bytes) per poll. Caching by mtime turns that into O(1) on the
  * steady state and only re-reads when the file actually changes.
+ *
+ * firstIncrementalStartedPayload is cached alongside status/count so
+ * deriveRunMetadata can read agent_ids without a second events.jsonl
+ * read in getCellDetail.
  */
 interface SummaryCacheEntry {
   mtimeMs: number;
   eventCount: number;
   status: CellSummary["status"];
+  firstIncrementalStartedPayload: Record<string, unknown> | null;
+  tailKinds: string[];
 }
 const summaryCache = new Map<string, SummaryCacheEntry>();
+
+function rawSummaryFromFields(input: {
+  runTs: string;
+  target: string;
+  condition: string;
+  cellDir: string;
+  status: RawSummary["status"];
+  lastActivityMs: number;
+  eventCount: number;
+}): RawSummary {
+  return {
+    cell_id: cellIdFor(input.runTs, input.target, input.condition),
+    run_ts: input.runTs,
+    // Filesystem directory names cross the brand boundary here.
+    // From this point on the values carry ``TargetName`` / ``ConditionName``
+    // so consumers can't accidentally swap them for unrelated strings.
+    target_name: input.target as TargetName,
+    condition_name: input.condition as ConditionName,
+    cell_dir: relative(resolveRunRoot(), input.cellDir),
+    status: input.status,
+    last_activity_ms: input.lastActivityMs,
+    event_count: input.eventCount,
+  };
+}
+
+function parseEventFull(
+  line: string,
+): { kind: string; payload: unknown } | null {
+  try {
+    const obj = JSON.parse(line) as { kind?: unknown; payload?: unknown };
+    return typeof obj.kind === "string"
+      ? { kind: obj.kind, payload: obj.payload }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function tailKindsFrom(kinds: string[]): string[] {
+  return kinds.slice(-2);
+}
+
+function firstIncrementalStartedPayloadFrom(
+  event: CellEvent,
+): Record<string, unknown> | null {
+  return (
+    event.kind === "incremental_started" &&
+      typeof event.payload === "object" &&
+      event.payload !== null &&
+      !Array.isArray(event.payload)
+  )
+    ? event.payload as Record<string, unknown>
+    : null;
+}
+
+function parseCellEventLine(line: string): CellEvent | null {
+  try {
+    const event = JSON.parse(line) as CellEvent;
+    return typeof event.kind === "string" ? event : null;
+  } catch {
+    return null;
+  }
+}
+
+function summaryPartsFromEvents(events: CellEvent[]): {
+  eventCount: number;
+  status: CellSummary["status"];
+  firstIncrementalStartedPayload: Record<string, unknown> | null;
+  tailKinds: string[];
+} {
+  const kinds: string[] = [];
+  let firstIncrementalStartedPayload: Record<string, unknown> | null = null;
+  for (const event of events) {
+    kinds.push(event.kind);
+    if (firstIncrementalStartedPayload === null) {
+      firstIncrementalStartedPayload = firstIncrementalStartedPayloadFrom(event);
+    }
+  }
+  return {
+    eventCount: kinds.length,
+    status: classifyStatusFromKinds(kinds),
+    firstIncrementalStartedPayload,
+    tailKinds: tailKindsFrom(kinds),
+  };
+}
+
+async function eventsMtimeMs(eventsPath: string): Promise<number> {
+  try {
+    return (await stat(eventsPath)).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+async function freshSummaryCacheEntry(
+  eventsPath: string,
+): Promise<SummaryCacheEntry | null> {
+  const cached = summaryCache.get(eventsPath);
+  if (cached === undefined) return null;
+  try {
+    const st = await stat(eventsPath);
+    return cached.mtimeMs === st.mtimeMs ? cached : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function warmSummaryCacheFromEventLines(
+  eventsPath: string,
+  lines: string[],
+  opts: { mode: "replace" | "append" },
+): Promise<CellEvent[]> {
+  const events = lines.flatMap((line) => {
+    const event = parseCellEventLine(line);
+    return event === null ? [] : [event];
+  });
+  const mtimeMs = await eventsMtimeMs(eventsPath);
+  if (opts.mode === "replace") {
+    const parts = summaryPartsFromEvents(events);
+    summaryCache.set(eventsPath, { mtimeMs, ...parts });
+    return events;
+  }
+
+  const cached = summaryCache.get(eventsPath);
+  const parts = summaryPartsFromEvents(events);
+  const tailKinds = tailKindsFrom([...(cached?.tailKinds ?? []), ...parts.tailKinds]);
+  summaryCache.set(eventsPath, {
+    mtimeMs,
+    eventCount: (cached?.eventCount ?? 0) + parts.eventCount,
+    status: classifyStatusFromKinds(tailKinds),
+    firstIncrementalStartedPayload:
+      cached?.firstIncrementalStartedPayload ??
+      parts.firstIncrementalStartedPayload,
+    tailKinds,
+  });
+  return events;
+}
 
 async function summarize(
   runTs: string,
@@ -261,6 +409,7 @@ async function summarize(
   let mtimeMs = 0;
   let eventCount = 0;
   let status: RawSummary["status"] = "active";
+  let firstIncrementalStartedPayload: Record<string, unknown> | null = null;
   try {
     const st = await stat(eventsPath);
     mtimeMs = st.mtimeMs;
@@ -268,20 +417,40 @@ async function summarize(
     if (cached !== undefined && cached.mtimeMs === mtimeMs) {
       eventCount = cached.eventCount;
       status = cached.status;
+      firstIncrementalStartedPayload = cached.firstIncrementalStartedPayload;
     } else {
       const contents = await readFile(eventsPath, "utf-8");
       // Parse once. eventCount counts what's actually parseable so
       // the sidebar matches the timeline (readEvents skips malformed
       // lines, and showing "10 events" while the UI renders 9 is
       // exactly the kind of inconsistency that ages into a real bug).
-      const parsedKinds = contents
-        .split("\n")
-        .filter((l) => l.trim())
-        .map(parseEventKind)
-        .filter((k): k is string => k !== null);
+      // We also capture the first incremental_started payload so
+      // deriveRunMetadata can attribute agents without a second read.
+      const parsedKinds: string[] = [];
+      for (const l of contents.split("\n")) {
+        if (!l.trim()) continue;
+        const e = parseEventFull(l);
+        if (e === null) continue;
+        parsedKinds.push(e.kind);
+        if (
+          firstIncrementalStartedPayload === null &&
+          e.kind === "incremental_started" &&
+          typeof e.payload === "object" &&
+          e.payload !== null &&
+          !Array.isArray(e.payload)
+        ) {
+          firstIncrementalStartedPayload = e.payload as Record<string, unknown>;
+        }
+      }
       eventCount = parsedKinds.length;
       status = classifyStatusFromKinds(parsedKinds);
-      summaryCache.set(eventsPath, { mtimeMs, eventCount, status });
+      summaryCache.set(eventsPath, {
+        mtimeMs,
+        eventCount,
+        status,
+        firstIncrementalStartedPayload,
+        tailKinds: tailKindsFrom(parsedKinds),
+      });
     }
   } catch {
     // No events.jsonl yet — cell directory exists but the run hasn't
@@ -293,19 +462,62 @@ async function summarize(
       return null;
     }
   }
-  return {
-    cell_id: cellIdFor(runTs, target, condition),
-    run_ts: runTs,
-    // Filesystem directory names cross the brand boundary here.
-    // From this point on the values carry ``TargetName`` / ``ConditionName``
-    // so consumers can't accidentally swap them for unrelated strings.
-    target_name: target as TargetName,
-    condition_name: condition as ConditionName,
-    cell_dir: relative(resolveRunRoot(), cellDir),
+  return rawSummaryFromFields({
+    runTs,
+    target,
+    condition,
+    cellDir,
     status,
-    last_activity_ms: mtimeMs,
-    event_count: eventCount,
-  };
+    lastActivityMs: mtimeMs,
+    eventCount,
+  });
+}
+
+/**
+ * Build the summary fields needed by CellDetail without repeatedly reading
+ * events.jsonl. A cold cache gets one summarize() read so direct deep-link
+ * detail loads stay accurate; warm detail polling consumes summaryCache so SSE
+ * bursts do not trigger repeated O(N) event-log parses.
+ */
+async function cachedSummaryForDetail(
+  runTs: string,
+  target: string,
+  condition: string,
+  cellDir: string,
+): Promise<RawSummary | null> {
+  const eventsPath = join(cellDir, "events.jsonl");
+  try {
+    const st = await stat(eventsPath);
+    const cached = summaryCache.get(eventsPath);
+    if (cached === undefined) {
+      return await summarize(runTs, target, condition, cellDir);
+    }
+    const isCacheFresh = cached.mtimeMs === st.mtimeMs;
+    return rawSummaryFromFields({
+      runTs,
+      target,
+      condition,
+      cellDir,
+      status: isCacheFresh ? cached.status : "unknown",
+      lastActivityMs: st.mtimeMs,
+      eventCount: isCacheFresh ? cached.eventCount : 0,
+    });
+  } catch {
+    try {
+      const st = await stat(cellDir);
+      return rawSummaryFromFields({
+        runTs,
+        target,
+        condition,
+        cellDir,
+        status: "active",
+        lastActivityMs: st.mtimeMs,
+        eventCount: 0,
+      });
+    } catch {
+      return null;
+    }
+  }
 }
 
 /**
@@ -335,15 +547,6 @@ function classifyStatusFromKinds(kinds: string[]): RawSummary["status"] {
     if (kinds[kinds.length - 2] === "proposal_picked") return "ended";
   }
   return "active";
-}
-
-function parseEventKind(line: string): string | null {
-  try {
-    const obj = JSON.parse(line) as { kind?: unknown };
-    return typeof obj.kind === "string" ? obj.kind : null;
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -386,9 +589,13 @@ export async function getCellSummary(
 }
 
 /**
- * Read full detail for one cell — events + artifact filename +
- * commit count. The artifact's content is fetched separately so
- * a large artifact doesn't bloat list responses.
+ * Read detail for one cell — artifact filename, commit count, and
+ * run metadata. Events are excluded: the cell event timeline is
+ * served exclusively through /api/cells/:cellId/events (SSE), which
+ * avoids the O(N) events.jsonl read/parse that detail polling previously
+ * triggered on every refresh. Summary fields in this response come from
+ * summaryCache when available; listCells() and readEvents() are responsible for
+ * warming that cache from the event log.
  */
 export async function getCellDetail(
   cellId: string,
@@ -398,19 +605,22 @@ export async function getCellDetail(
   const parts = parseCellId(cellId);
   if (parts === null) return null;
   const cellDir = join(resolveRunRoot(), parts.runTs, parts.target, parts.condition);
-  const raw = await summarize(parts.runTs, parts.target, parts.condition, cellDir);
+  const raw = await cachedSummaryForDetail(
+    parts.runTs,
+    parts.target,
+    parts.condition,
+    cellDir,
+  );
   if (raw === null) return null;
-  const [archivedIds, events, artifactFilename, commitCount] = await Promise.all([
+  const [archivedIds, artifactFilename, commitCount] = await Promise.all([
     readArchivedCellsIndex(),
-    readEvents(cellDir),
     detectArtifactFilename(cellDir),
     countCommits(cellDir),
   ]);
   const summary = await annotate(raw, archivedIds, liveCellIds, nowMs);
-  const run_metadata = await deriveRunMetadata(resolveRunRoot(), parts.runTs, events);
+  const run_metadata = await deriveRunMetadata(resolveRunRoot(), parts.runTs, cellDir);
   return {
     ...summary,
-    events,
     artifact_filename: artifactFilename,
     commit_count: commitCount,
     run_metadata,
@@ -450,18 +660,14 @@ export function resolveCellDirPath(cellId: string): string | null {
 }
 
 export async function readEvents(cellDir: string): Promise<CellEvent[]> {
+  const eventsPath = join(cellDir, "events.jsonl");
   try {
-    const contents = await readFile(join(cellDir, "events.jsonl"), "utf-8");
-    const events: CellEvent[] = [];
-    for (const line of contents.split("\n")) {
-      if (!line.trim()) continue;
-      try {
-        events.push(JSON.parse(line) as CellEvent);
-      } catch {
-        // Skip malformed lines — don't break the whole stream.
-      }
-    }
-    return events;
+    const contents = await readFile(eventsPath, "utf-8");
+    return await warmSummaryCacheFromEventLines(
+      eventsPath,
+      contents.split("\n").filter((line) => line.trim()),
+      { mode: "replace" },
+    );
   } catch {
     return [];
   }
@@ -512,25 +718,14 @@ async function countCommits(cellDir: string): Promise<number> {
 // Run-metadata derivation
 // ---------------------------------------------------------------------------
 
-const MODEL_LABELS: Record<string, string> = {
-  "claude-sonnet-4-6": "Claude Sonnet 4.6",
-  "claude-sonnet-4-5": "Claude Sonnet 4.5",
-  "claude-opus-4-7": "Claude Opus 4.7",
-  "claude-haiku-4-5": "Claude Haiku 4.5",
-  "gpt-5": "GPT-5",
-  "gpt-5-mini": "GPT-5 mini",
-  "gemini-2.5-pro": "Gemini 2.5 Pro",
-  "gemini-2.5-flash": "Gemini 2.5 Flash",
-};
-
 export function modelLabel(id: string): string {
-  return MODEL_LABELS[id] ?? id;
+  return modelLabelFromCatalog(id);
 }
 
 async function deriveRunMetadata(
   runRoot: string,
   runTs: string,
-  events: CellEvent[],
+  cellDir: string,
 ): Promise<CellRunMetadata | null> {
   // Step 1: Read run-spec.json
   const specPath = join(runRoot, runTs, "run-spec.json");
@@ -559,17 +754,19 @@ async function deriveRunMetadata(
     return null;
   }
 
-  // Step 3: Find first incremental_started event with agent_ids
-  const firstStarted = events.find((e) => e.kind === "incremental_started");
-  if (firstStarted === undefined) {
+  // Step 3: Read from the summary cache populated by listCells(), readEvents(),
+  // or the SSE route. Detail refreshes intentionally do not open events.jsonl;
+  // if the cache is cold, attribution is reported as missing until the
+  // list/SSE path warms it.
+  const eventsPath = join(cellDir, "events.jsonl");
+  const cached = await freshSummaryCacheEntry(eventsPath);
+  const firstStartedPayload = cached?.firstIncrementalStartedPayload ?? null;
+
+  if (firstStartedPayload === null) {
     return { model_pool: modelPool, agents: [], attribution_source: "missing" };
   }
 
-  const payload = firstStarted.payload;
-  const agentIds =
-    typeof payload === "object" && payload !== null
-      ? (payload as { agent_ids?: unknown }).agent_ids
-      : undefined;
+  const agentIds = firstStartedPayload.agent_ids;
   // Require every id to be a non-empty string. AgentModelSummarySchema
   // enforces agent_id.min(1), so an empty id would throw at the API
   // boundary (500) — treat malformed ids as missing attribution instead.
@@ -719,219 +916,9 @@ export async function resolveCellDir(cellId: string): Promise<string | null> {
 // Built-in task + grader catalog
 // ---------------------------------------------------------------------------
 
-const BUILTIN_TASK_DETAILS: readonly TaskBuiltinDetail[] = [
-  {
-    name: "prose_substrate_thesis",
-    artifact_type: "prose",
-    artifact_filename: "thesis.md",
-    seed_content: "",
-    brief: {
-      target_spec:
-        "Draft a technical blog post explaining oakridge's substrate-mediated coordination architecture to senior software engineers.",
-      success_criteria: [
-        "explains the substrate-mediated coordination thesis clearly",
-        "names the three coordination modes accurately",
-        "includes at least one concrete example",
-        "cites the blackboard ancestor and the Yunkaporta paper",
-        "reads as a technical blog post, not marketing copy",
-      ],
-      constraints: [
-        "no marketing language",
-        "no invented coordination modes",
-        "no fictional code APIs",
-      ],
-    },
-    model_pool: [
-      "claude-sonnet-4-5",
-      "gpt-5-mini",
-      "gemini-2.5-pro",
-      "claude-opus-4-7",
-      "gpt-5",
-      "gemini-2.5-flash",
-      "claude-haiku-4-5",
-    ],
-    frame_pool: [
-      "precision",
-      "skepticism",
-      "synthesis",
-      "user-empathy",
-      "first-principles",
-      "concision",
-      "voice",
-    ],
-    has_grader: true,
-    grader_key: "prose_substrate_thesis",
-    source: "builtin",
-  },
-  {
-    name: "code_leetcode_longest_substring",
-    artifact_type: "code",
-    artifact_filename: "solution.py",
-    seed_content:
-      "def length_of_longest_substring(s: str) -> int:\n" +
-      "    raise NotImplementedError\n",
-    brief: {
-      target_spec:
-        "Implement length_of_longest_substring(s: str) -> int in solution.py.",
-      success_criteria: [
-        "passes the canonical example test cases",
-        "type-checks under strict mypy",
-      ],
-      constraints: [
-        "single file, single function",
-        "no third-party imports",
-      ],
-    },
-    model_pool: [
-      "claude-sonnet-4-5",
-      "gpt-5",
-      "claude-opus-4-7",
-      "gemini-2.5-pro",
-      "gpt-5-mini",
-      "claude-haiku-4-5",
-      "gemini-2.5-flash",
-    ],
-    frame_pool: [
-      "type-safety",
-      "test-coverage",
-      "minimalism",
-      "defensive-programming",
-      "performance",
-      "readability",
-      "explicit-errors",
-    ],
-    has_grader: true,
-    grader_key: "code_leetcode_longest_substring",
-    source: "builtin",
-  },
-  {
-    name: "code_leetcode_trapping_rain_water",
-    artifact_type: "code",
-    artifact_filename: "solution.py",
-    seed_content:
-      "def trap(height: list[int]) -> int:\n" +
-      "    raise NotImplementedError\n",
-    brief: {
-      target_spec:
-        "Implement trap(height: list[int]) -> int in solution.py.",
-      success_criteria: [
-        "passes the canonical example test cases",
-        "type-checks under strict mypy",
-      ],
-      constraints: [
-        "single file, single function",
-        "no third-party imports",
-      ],
-    },
-    model_pool: [
-      "claude-sonnet-4-5",
-      "gpt-5",
-      "claude-opus-4-7",
-      "gemini-2.5-pro",
-      "gpt-5-mini",
-      "claude-haiku-4-5",
-      "gemini-2.5-flash",
-    ],
-    frame_pool: [
-      "type-safety",
-      "test-coverage",
-      "minimalism",
-      "defensive-programming",
-      "performance",
-      "readability",
-      "explicit-errors",
-    ],
-    has_grader: true,
-    grader_key: "code_leetcode_trapping_rain_water",
-    source: "builtin",
-  },
-  {
-    name: "code_leetcode_regex_matching",
-    artifact_type: "code",
-    artifact_filename: "solution.py",
-    seed_content:
-      "def is_match(s: str, p: str) -> bool:\n" +
-      "    raise NotImplementedError\n",
-    brief: {
-      target_spec:
-        "Implement is_match(s: str, p: str) -> bool in solution.py.",
-      success_criteria: [
-        "passes the canonical example test cases",
-        "type-checks under strict mypy",
-      ],
-      constraints: [
-        "single file, single function",
-        "no third-party imports",
-      ],
-    },
-    model_pool: [
-      "claude-sonnet-4-5",
-      "gpt-5",
-      "claude-opus-4-7",
-      "gemini-2.5-pro",
-      "gpt-5-mini",
-      "claude-haiku-4-5",
-      "gemini-2.5-flash",
-    ],
-    frame_pool: [
-      "type-safety",
-      "test-coverage",
-      "minimalism",
-      "defensive-programming",
-      "performance",
-      "readability",
-      "explicit-errors",
-    ],
-    has_grader: true,
-    grader_key: "code_leetcode_regex_matching",
-    source: "builtin",
-  },
-  {
-    name: "code_leetcode_median_two_sorted_arrays",
-    artifact_type: "code",
-    artifact_filename: "solution.py",
-    seed_content:
-      "def find_median_sorted_arrays(\n" +
-      "    nums1: list[int], nums2: list[int]\n" +
-      ") -> float:\n" +
-      "    raise NotImplementedError\n",
-    brief: {
-      target_spec:
-        "Implement find_median_sorted_arrays(nums1: list[int], nums2: list[int]) -> float in solution.py.",
-      success_criteria: [
-        "passes the canonical correctness test cases",
-        "type-checks under strict mypy",
-        "meets the perf budget",
-      ],
-      constraints: [
-        "single file, single function",
-        "no imports needed",
-        "do not sort the input arrays",
-      ],
-    },
-    model_pool: [
-      "claude-sonnet-4-5",
-      "gpt-5",
-      "claude-opus-4-7",
-      "gemini-2.5-pro",
-      "gpt-5-mini",
-      "claude-haiku-4-5",
-      "gemini-2.5-flash",
-    ],
-    frame_pool: [
-      "type-safety",
-      "test-coverage",
-      "minimalism",
-      "defensive-programming",
-      "performance",
-      "readability",
-      "explicit-errors",
-    ],
-    has_grader: true,
-    grader_key: "code_leetcode_median_two_sorted_arrays",
-    source: "builtin",
-  },
-] as const satisfies readonly TaskBuiltinDetail[];
+// BUILTIN_TASK_DETAILS and BUILTIN_GRADER_SUMMARIES come from the generated
+// artifact imported at the top. To regenerate:
+//   cd legit-biz-club && uv run python scripts/generate_dashboard_metadata.py
 
 const BUILTIN_TASK_DETAILS_BY_NAME = new Map(
   BUILTIN_TASK_DETAILS.map((task) => [task.name, task]),
@@ -952,54 +939,6 @@ const BUILTIN_TASK_SUMMARIES: readonly TaskSummary[] = BUILTIN_TASK_DETAILS.map(
 const BUILTIN_TASK_SUMMARIES_BY_NAME = new Map(
   BUILTIN_TASK_SUMMARIES.map((task) => [task.name, task]),
 );
-
-const BUILTIN_GRADER_SUMMARIES: readonly GraderSummary[] = [
-  {
-    key: "prose_substrate_thesis",
-    label: "Brief judge",
-    supported_artifact_types: ["prose"],
-    capabilities: ["brief-criteria", "llm-judge"],
-    source: "builtin",
-    config_required: false,
-    config_schema: null,
-  },
-  {
-    key: "code_leetcode_longest_substring",
-    label: "LeetCode #3 mechanical grader",
-    supported_artifact_types: ["code"],
-    capabilities: ["pytest", "mypy"],
-    source: "builtin",
-    config_required: false,
-    config_schema: null,
-  },
-  {
-    key: "code_leetcode_trapping_rain_water",
-    label: "LeetCode #42 mechanical grader",
-    supported_artifact_types: ["code"],
-    capabilities: ["pytest", "mypy"],
-    source: "builtin",
-    config_required: false,
-    config_schema: null,
-  },
-  {
-    key: "code_leetcode_regex_matching",
-    label: "LeetCode #10 mechanical grader",
-    supported_artifact_types: ["code"],
-    capabilities: ["pytest", "mypy"],
-    source: "builtin",
-    config_required: false,
-    config_schema: null,
-  },
-  {
-    key: "code_leetcode_median_two_sorted_arrays",
-    label: "LeetCode #4 mechanical grader",
-    supported_artifact_types: ["code"],
-    capabilities: ["pytest", "mypy", "perf"],
-    source: "builtin",
-    config_required: false,
-    config_schema: null,
-  },
-] as const satisfies readonly GraderSummary[];
 
 const BUILTIN_GRADER_SUMMARIES_BY_KEY = new Map(
   BUILTIN_GRADER_SUMMARIES.map((grader) => [grader.key, grader]),

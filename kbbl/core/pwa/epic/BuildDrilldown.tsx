@@ -1,4 +1,4 @@
-type CohortStatus = "waiting" | "planned" | "briefing" | "brief_review" | "building" | "ready_to_build" | "awaiting_merge" | "done" | "blocked";
+import type { CohortStatus } from "../../types/task-tracker";
 
 interface Cohort {
   id: string;

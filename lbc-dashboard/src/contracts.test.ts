@@ -140,7 +140,7 @@ describe("CellSummarySchema", () => {
 });
 
 describe("CellDetailSchema", () => {
-  test("accepts the summary shape plus detail fields", () => {
+  test("accepts the summary shape plus detail fields without events", () => {
     const parsed = CellDetailSchema.parse({
       cell_id: "x:y:z",
       run_ts: "x",
@@ -152,20 +152,16 @@ describe("CellDetailSchema", () => {
       event_count: 2,
       archived: false,
       cleanable: true,
-      events: [
-        { ts: "t", kind: "proposal_picked", payload: {} },
-        { ts: "t", kind: "proposal_applied", payload: {} },
-      ],
       artifact_filename: "draft.md",
       commit_count: 1,
       run_metadata: null,
     });
-    expect(parsed.events).toHaveLength(2);
     expect(parsed.artifact_filename).toBe("draft.md");
     expect(parsed.run_metadata).toBeNull();
+    expect("events" in parsed).toBe(false);
   });
 
-  test("rejects when events array is missing", () => {
+  test("rejects when events field is present (strictObject, events removed from schema)", () => {
     expect(() =>
       CellDetailSchema.parse({
         cell_id: "x:y:z",
@@ -178,8 +174,28 @@ describe("CellDetailSchema", () => {
         event_count: 2,
         archived: false,
         cleanable: true,
+        events: [],
         artifact_filename: null,
         commit_count: 0,
+        run_metadata: null,
+      }),
+    ).toThrow();
+  });
+
+  test("rejects when required detail fields are missing", () => {
+    expect(() =>
+      CellDetailSchema.parse({
+        cell_id: "x:y:z",
+        run_ts: "x",
+        target_name: "y",
+        condition_name: "z",
+        cell_dir: "x/y/z",
+        status: "ended",
+        last_activity_ms: 1,
+        event_count: 2,
+        archived: false,
+        cleanable: true,
+        // artifact_filename and commit_count missing
       }),
     ).toThrow();
   });

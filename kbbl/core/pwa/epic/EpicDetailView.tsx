@@ -1,6 +1,7 @@
 import { type ReactNode, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { responseError } from "../lib/http";
+import type { EpicStatus, EpicStage, CohortStatus } from "../../types/task-tracker";
 
 import { StageStrip } from "./StageStrip";
 import { DiscrepanciesEditor } from "./DiscrepanciesEditor";
@@ -8,11 +9,8 @@ import { PlanDrilldown } from "./PlanDrilldown";
 import { BuildDrilldown } from "./BuildDrilldown";
 import { ReviewDrilldown } from "./ReviewDrilldown";
 
-type EpicStatus = "pending" | "active" | "complete" | "archived";
-type EpicStage = "spec" | "plan" | "build" | "assess";
 type SpecInternalStatus = "analyzing" | "discrepancies" | "review" | "approved";
 type PlanStatus = "draft" | "pending_approval" | "approved" | "rejected" | "superseded";
-type CohortStatus = "waiting" | "planned" | "briefing" | "brief_review" | "building" | "ready_to_build" | "awaiting_merge" | "done" | "blocked";
 
 interface EpicDetailData {
   epic: {

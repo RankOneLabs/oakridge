@@ -36,13 +36,16 @@ export const PlanSchema = z.object({
 });
 export type Plan = z.infer<typeof PlanSchema>;
 
+export const CohortStatusSchema = z.enum(["waiting", "planned", "briefing", "brief_review", "building", "ready_to_build", "awaiting_merge", "done", "blocked"]);
+export type CohortStatus = z.infer<typeof CohortStatusSchema>;
+
 export const CohortSchema = z.object({
   id: z.string(),
   plan_id: z.string(),
   title: z.string(),
   notes: z.string().nullable(),
   position: z.number().int(),
-  status: z.enum(["waiting", "planned", "briefing", "brief_review", "building", "ready_to_build", "awaiting_merge", "done", "blocked"]),
+  status: CohortStatusSchema,
   pre_block_status: z.enum(["waiting", "planned", "briefing", "brief_review", "building", "ready_to_build", "awaiting_merge", "done"]).nullable(),
   current_session_ref: z.string().nullable(),
   current_session_stage: SessionStageSchema.nullable(),

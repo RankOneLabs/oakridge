@@ -104,7 +104,7 @@ describe("buildRunSpec", () => {
     }
   });
 
-  test("known models appear in KNOWN_MODELS order regardless of check order", () => {
+  test("known models appear in catalog order regardless of check order", () => {
     const r = buildRunSpec({
       ...base,
       checkedModels: new Set(["gpt-5", "claude-haiku-4-5"]),

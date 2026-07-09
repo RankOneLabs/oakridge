@@ -2,17 +2,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { SessionStatus } from "../../types";
-
-type CohortStatus =
-  | "waiting"
-  | "planned"
-  | "briefing"
-  | "brief_review"
-  | "building"
-  | "ready_to_build"
-  | "awaiting_merge"
-  | "done"
-  | "blocked";
+import type { CohortStatus } from "../../../types/task-tracker";
 
 interface RunBuildButtonProps {
   briefId: string;
