@@ -3,6 +3,8 @@ import { useOakridgeConfig } from "./hooks";
 import { RunListView } from "./RunListView";
 import { RunDetailView } from "./RunDetailView";
 import { ArtifactDetailView } from "./ArtifactDetailView";
+import { NewRunForm } from "./NewRunForm";
+import { CreateProjectModal } from "./CreateProjectModal";
 import type { OakridgeSubRoute } from "../lib/hash";
 
 // The oakridge shell gets its own QueryClient so it doesn't collide with the
@@ -46,11 +48,19 @@ function OakridgeShellInner({ route, onBack, onNavigate }: OakridgeShellInnerPro
   const navigateToRun = (id: string) => onNavigate(`oakridge/run/${encodeURIComponent(id)}`);
   const navigateToArtifact = (id: string) => onNavigate(`oakridge/artifact/${encodeURIComponent(id)}`);
   const navigateToRuns = () => onNavigate("oakridge");
+  const navigateToNewRun = () => onNavigate("oakridge/new-run");
+  const navigateToCreateProject = () => onNavigate("oakridge/create-project");
 
   let content: React.ReactNode;
   switch (route.sub) {
     case "runs":
-      content = <RunListView onSelectRun={navigateToRun} />;
+      content = (
+        <RunListView
+          onSelectRun={navigateToRun}
+          onNewRun={navigateToNewRun}
+          onNewProject={navigateToCreateProject}
+        />
+      );
       break;
     case "run":
       content = (
@@ -63,6 +73,22 @@ function OakridgeShellInner({ route, onBack, onNavigate }: OakridgeShellInnerPro
       break;
     case "artifact":
       content = <ArtifactDetailView artifactId={route.id} onBack={navigateToRuns} />;
+      break;
+    case "new-run":
+      content = (
+        <NewRunForm
+          onBack={navigateToRuns}
+          onCreated={(id) => navigateToRun(id)}
+        />
+      );
+      break;
+    case "create-project":
+      content = (
+        <CreateProjectModal
+          onBack={navigateToRuns}
+          onCreated={navigateToRuns}
+        />
+      );
       break;
   }
 

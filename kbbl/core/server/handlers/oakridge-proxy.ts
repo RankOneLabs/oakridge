@@ -17,7 +17,8 @@ export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): vo
   // Config: tells the PWA whether oakridge-core is reachable without
   // attempting a proxy request that would block the page.
   app.get("/oakridge/config", (c) => {
-    return c.json({ available: typeof deps.baseUrl === "string" && deps.baseUrl.length > 0 });
+    const available = typeof deps.baseUrl === "string" && deps.baseUrl.length > 0;
+    return c.json({ available, core_url: available ? deps.baseUrl : null });
   });
 
   // Proxy: forwards /oakridge/api/* to OAKRIDGE_CORE_BASE_URL/*

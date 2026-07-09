@@ -3,6 +3,9 @@
 
 import type {
   OakridgeConfig,
+  Project,
+  WorkflowDefSummary,
+  CreateRunRequest,
   RunSummary,
   RunDetail,
   ParkedGate,
@@ -65,4 +68,28 @@ export function fetchArtifact(id: string): Promise<ArtifactDetail> {
 
 export function resumeGate(gateId: string, req: GateResumeRequest): Promise<GateResumeResponse> {
   return oakridgePost<GateResumeResponse>(`/gates/${encodeURIComponent(gateId)}/resume`, req);
+}
+
+export function fetchProjects(): Promise<Project[]> {
+  return oakridgeGet<Project[]>("/projects");
+}
+
+export function createProject(body: { name: string; repo_dir: string }): Promise<Project> {
+  return oakridgePost<Project>("/projects", body);
+}
+
+export function fetchWorkflowDefs(): Promise<WorkflowDefSummary[]> {
+  return oakridgeGet<WorkflowDefSummary[]>("/workflow_defs");
+}
+
+export function createRun(body: CreateRunRequest): Promise<RunSummary> {
+  return oakridgePost<RunSummary>("/workflow_runs", body);
+}
+
+export function cancelRun(runId: string): Promise<unknown> {
+  return oakridgePost<unknown>(`/workflow_runs/${encodeURIComponent(runId)}/cancel`, {});
+}
+
+export function retryStuckStage(stageInstanceId: string): Promise<unknown> {
+  return oakridgePost<unknown>(`/stage_instances/${encodeURIComponent(stageInstanceId)}/retry_stuck`, {});
 }

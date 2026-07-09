@@ -4,6 +4,35 @@
 
 export interface OakridgeConfig {
   available: boolean;
+  core_url?: string | null;
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  repo_dir: string;
+  created_at: string;
+}
+
+export interface WorkflowDefSummary {
+  id: string;
+  name: string;
+  version: number;
+}
+
+export interface CreateRunContext {
+  brief_notes: string;
+  worktree_path: string;
+  oakridge_url: string;
+  planner_model: string;
+  worker_model: string;
+  worker_effort?: string;
+}
+
+export interface CreateRunRequest {
+  workflow_def_id: string;
+  project_id: string | null;
+  context: CreateRunContext;
 }
 
 export type RunStatus = "running" | "parked" | "failed" | "complete" | "cancelled";
@@ -34,6 +63,7 @@ export interface StageArtifact {
 }
 
 export interface StageDetail {
+  stage_instance_id: string;
   name: string;
   type: string;
   status: StageStatus;
@@ -49,6 +79,7 @@ export interface RunDetail {
   stages: StageDetail[];
   parked_count: number;
   updated_at: string;
+  is_stuck: boolean;
 }
 
 export interface ArtifactRevision {

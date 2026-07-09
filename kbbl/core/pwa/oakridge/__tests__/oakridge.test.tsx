@@ -74,8 +74,10 @@ const RUN_DETAIL_FIXTURE: RunDetail = {
   id: "run-1",
   workflow_name: "v2_spec_to_ship",
   status: "running",
+  is_stuck: false,
   stages: [
     {
+      stage_instance_id: "si-1",
       name: "spec",
       type: "spec_generation",
       status: "complete",
@@ -84,6 +86,7 @@ const RUN_DETAIL_FIXTURE: RunDetail = {
       worktree: null,
     },
     {
+      stage_instance_id: "si-2",
       name: "build",
       type: "build_agent",
       status: "running",
@@ -123,7 +126,7 @@ const ARTIFACT_FIXTURE: ArtifactDetail = {
 describe("RunListView", () => {
   it("shows loading state while runs are pending", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise(() => {}));
-    wrap(<RunListView onSelectRun={() => {}} />);
+    wrap(<RunListView onSelectRun={() => {}} onNewRun={() => {}} onNewProject={() => {}} />);
     expect(screen.getByTestId("or-run-list-loading")).toBeTruthy();
   });
 
@@ -131,7 +134,7 @@ describe("RunListView", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       json([RUN_SUMMARY_FIXTURE, PARKED_RUN_SUMMARY]),
     );
-    wrap(<RunListView onSelectRun={() => {}} />);
+    wrap(<RunListView onSelectRun={() => {}} onNewRun={() => {}} onNewProject={() => {}} />);
     const rows = await screen.findAllByTestId("or-run-row");
     expect(rows).toHaveLength(2);
   });
@@ -140,7 +143,7 @@ describe("RunListView", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       json([PARKED_RUN_SUMMARY]),
     );
-    wrap(<RunListView onSelectRun={() => {}} />);
+    wrap(<RunListView onSelectRun={() => {}} onNewRun={() => {}} onNewProject={() => {}} />);
     const badge = await screen.findByTestId("or-parked-count");
     expect(badge.textContent).toBe("2");
   });
@@ -149,20 +152,20 @@ describe("RunListView", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       json([{ ...PARKED_RUN_SUMMARY, is_stuck: true }]),
     );
-    wrap(<RunListView onSelectRun={() => {}} />);
+    wrap(<RunListView onSelectRun={() => {}} onNewRun={() => {}} onNewProject={() => {}} />);
     expect(await screen.findByText("stuck")).toBeTruthy();
   });
 
   it("shows empty state when no runs", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json([]));
-    wrap(<RunListView onSelectRun={() => {}} />);
+    wrap(<RunListView onSelectRun={() => {}} onNewRun={() => {}} onNewProject={() => {}} />);
     expect(await screen.findByTestId("or-run-list-empty")).toBeTruthy();
   });
 
   it("calls onSelectRun when a row is clicked", async () => {
     const onSelectRun = vi.fn();
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json([RUN_SUMMARY_FIXTURE]));
-    wrap(<RunListView onSelectRun={onSelectRun} />);
+    wrap(<RunListView onSelectRun={onSelectRun} onNewRun={() => {}} onNewProject={() => {}} />);
     const row = await screen.findByTestId("or-run-row");
     fireEvent.click(row);
     expect(onSelectRun).toHaveBeenCalledWith("run-1");
@@ -172,7 +175,7 @@ describe("RunListView", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       json({ error: "server down" }, 500),
     );
-    wrap(<RunListView onSelectRun={() => {}} />);
+    wrap(<RunListView onSelectRun={() => {}} onNewRun={() => {}} onNewProject={() => {}} />);
     expect(await screen.findByTestId("or-run-list-error")).toBeTruthy();
   });
 });

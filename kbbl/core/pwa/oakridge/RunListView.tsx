@@ -40,9 +40,11 @@ function statusChipClass(status: RunDisplayStatus): string {
 
 interface RunListViewProps {
   onSelectRun: (id: string) => void;
+  onNewRun: () => void;
+  onNewProject: () => void;
 }
 
-export function RunListView({ onSelectRun }: RunListViewProps) {
+export function RunListView({ onSelectRun, onNewRun, onNewProject }: RunListViewProps) {
   const qc = useQueryClient();
   const query = useRuns();
 
@@ -54,14 +56,32 @@ export function RunListView({ onSelectRun }: RunListViewProps) {
     <div data-testid="or-run-list">
       <div className="mb-4 flex items-center justify-between gap-3">
         <h2 className="m-0 text-lg font-semibold text-[var(--text-primary)]">Workflow Runs</h2>
-        <button
-          type="button"
-          className={secondaryButtonClass}
-          onClick={onRefresh}
-          aria-label="Refresh runs"
-        >
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className={secondaryButtonClass}
+            onClick={onNewProject}
+            data-testid="or-new-project-btn"
+          >
+            + Project
+          </button>
+          <button
+            type="button"
+            className={secondaryButtonClass}
+            onClick={onNewRun}
+            data-testid="or-new-run-btn"
+          >
+            + New Run
+          </button>
+          <button
+            type="button"
+            className={secondaryButtonClass}
+            onClick={onRefresh}
+            aria-label="Refresh runs"
+          >
+            Refresh
+          </button>
+        </div>
       </div>
 
       {query.isError && (
