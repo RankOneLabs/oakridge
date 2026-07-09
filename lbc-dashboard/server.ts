@@ -622,11 +622,13 @@ export function createApp(deps?: {
             result.didReset || lastSizeBytes === 0 ? "replace" : "append";
           lastSizeBytes = result.nextOffset;
           leftover = result.nextLeftover;
-          const events = await warmSummaryCacheFromEventLines(
-            eventsPath,
-            result.newLines,
-            { mode: cacheMode },
-          );
+          const events = result.didReset || result.newLines.length > 0
+            ? await warmSummaryCacheFromEventLines(
+                eventsPath,
+                result.newLines,
+                { mode: cacheMode },
+              )
+            : [];
           for (const evt of events) {
             if (sentCount > resumeAfter) {
               await stream.writeSSE({
