@@ -10,7 +10,8 @@ Tracked items deferred from the Cohort 3 / rollout PR. Each item has a brief mot
 
 **When:** After a retention window in which all archived sessions have been migrated or expired (`retention.session_events_full_days` from the date of migration). At that point, remove the fields from `SessionSnapshot`, `session.ts`, and the snapshot-reconstruction path in `claude-code/index.ts`.
 
-**Spec reference:** `comms/kbbl-codex-support.md` §"Backward-compat alias"
+**Decision context:** Kept during the Codex rollout so old archived transcripts
+could still hydrate after the runtime-id migration.
 
 ---
 
@@ -18,7 +19,8 @@ Tracked items deferred from the Cohort 3 / rollout PR. Each item has a brief mot
 
 **What:** Codex has a `thread/compact/start` protocol method that may serve the same role as kbbl's `/compact` flow (token reduction + handoff). Evaluate whether it can be wired to `POST /:sid/compact` and integrated with the CompactedBanner UX.
 
-**Blocked on:** Codex CLI version that stabilizes `thread/compact/start` semantics. See `comms/codex-probe-findings.md` for current protocol limitations.
+**Blocked on:** Codex CLI version that stabilizes `thread/compact/start` semantics.
+Current adapter conformance notes live in `kbbl/adapters/codex/README.md`.
 
 **When:** After the Codex app-server protocol reaches a stable release with documented compaction semantics.
 
@@ -49,13 +51,3 @@ Tracked items deferred from the Cohort 3 / rollout PR. Each item has a brief mot
 **If pursued:** The handoff markdown (from CC compaction) is a natural bridge — it's plain text the operator controls. A cross-runtime resume could read the handoff doc and use it as the initial prompt for a new Codex session. The harder part is making the PWA's "resume" flow runtime-aware (currently it forks via the source session's adapter).
 
 **Decision to revisit:** Only if operators express a concrete need. The complexity is non-trivial; the current per-runtime-silo behavior is intentional.
-
----
-
-## 6. Runtime selector in the PWA new-session form
-
-**What:** The `+ New session` form always creates a CC session. Codex sessions must be created via `POST /sessions { "runtime": "codex" }`. The `/config` endpoint already exposes `defaultRuntimeId` and the registered runtime list; the PWA just doesn't render a dropdown yet.
-
-**What it takes:** Add a `<select>` to `NewSessionForm.tsx` populated from `GET /config`. Default to `config.defaultRuntimeId`. Pass selected runtime to the `POST /sessions` body.
-
-**Blocked on:** Design decision — do we want per-runtime session names, or is the workdir sufficient disambiguation? Spec note: `comms/kbbl-codex-support.md` §"PWA runtime selector".
