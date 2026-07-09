@@ -10,6 +10,7 @@ import type {
   RunDetail,
   ParkedGate,
   ArtifactDetail,
+  ArtifactTypeDescriptor,
   GateResumeRequest,
   GateResumeResponse,
 } from "./types";
@@ -92,4 +93,8 @@ export function cancelRun(runId: string): Promise<unknown> {
 
 export function retryStuckStage(stageInstanceId: string): Promise<unknown> {
   return oakridgePost<unknown>(`/stage_instances/${encodeURIComponent(stageInstanceId)}/retry_stuck`, {});
+}
+
+export function fetchArtifactTypes(): Promise<ArtifactTypeDescriptor[]> {
+  return oakridgeGet<ArtifactTypeDescriptor[]>("/artifact_types");
 }

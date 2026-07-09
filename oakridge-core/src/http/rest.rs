@@ -16,6 +16,7 @@ use crate::executor::delegated_session::{
     kbbl_client::DelegatedExternalRef, DelegatedGate, DelegatedGateState,
 };
 use crate::executor::ResumePayload;
+use crate::registry::artifact_type::ArtifactCapabilities;
 use crate::scheduler::DecisionError;
 use crate::types::{
     Artifact, ArtifactId, GateDecision, GateOutcome, InputSlot, OutputSlot, Project, ProjectId,
@@ -214,9 +215,20 @@ pub struct OperatorArtifactRevision {
 pub struct OperatorArtifactDetail {
     pub id: String,
     pub type_id: String,
+    pub component_id: Option<String>,
+    pub capabilities: Option<ArtifactCapabilities>,
+    pub anchor_schema: Option<Vec<String>>,
     pub run_id: String,
     pub producing_stage: String,
     pub revisions: Vec<OperatorArtifactRevision>,
+}
+
+#[derive(Serialize)]
+pub struct ArtifactTypeResponse {
+    pub id: String,
+    pub component_id: String,
+    pub capabilities: ArtifactCapabilities,
+    pub anchor_schema: Option<Vec<String>>,
 }
 
 // ── Query param structs ───────────────────────────────────────────────────────
@@ -944,13 +956,38 @@ pub async fn get_operator_artifact_detail(
         })
         .collect();
 
+    let type_def = state.artifact_registry.get(&requested.artifact_type);
+    let component_id = type_def.map(|d| d.component_id.clone());
+    let capabilities = type_def.map(|d| d.capabilities.clone());
+    let anchor_schema = type_def.and_then(|d| d.anchor_schema.clone());
+
     Ok(Json(OperatorArtifactDetail {
         id: requested.id.0.to_string(),
         type_id: requested.artifact_type,
+        component_id,
+        capabilities,
+        anchor_schema,
         run_id: requested.run_id.0.to_string(),
         producing_stage: producing_stage.stage_key,
         revisions,
     }))
+}
+
+pub async fn get_artifact_types(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<ArtifactTypeResponse>>, AppError> {
+    let mut types: Vec<ArtifactTypeResponse> = state
+        .artifact_registry
+        .all()
+        .map(|def| ArtifactTypeResponse {
+            id: def.id.clone(),
+            component_id: def.component_id.clone(),
+            capabilities: def.capabilities.clone(),
+            anchor_schema: def.anchor_schema.clone(),
+        })
+        .collect();
+    types.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(Json(types))
 }
 
 // ── Integration tests ─────────────────────────────────────────────────────────
@@ -1103,6 +1140,13 @@ mod tests {
             id: "any".into(),
             validate: |_| Ok(()),
             component_id: "v".into(),
+            capabilities: crate::registry::artifact_type::ArtifactCapabilities {
+                reviewable: false,
+                commentable: false,
+                atom_editable: false,
+                review_items: false,
+            },
+            anchor_schema: None,
         });
         let artifact_registry = Arc::new(art_reg);
 
@@ -2270,6 +2314,35 @@ mod tests {
         assert!(
             body["error"].as_str().is_some(),
             "error field must be present"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_artifact_types_returns_registered_types_with_capabilities() {
+        let state = make_state(vec![]).await;
+        let app = crate::http::router(state);
+
+        let (status, body) = req(app, "GET", "/artifact_types", None).await;
+        assert_eq!(status, StatusCode::OK);
+
+        let types = body.as_array().expect("response must be an array");
+        assert_eq!(types.len(), 1, "one artifact type registered in test state");
+
+        let entry = &types[0];
+        assert_eq!(entry["id"], "any");
+        assert_eq!(entry["component_id"], "v");
+
+        let caps = &entry["capabilities"];
+        assert!(caps.is_object(), "capabilities must be an object");
+        assert!(caps["reviewable"].is_boolean());
+        assert!(caps["commentable"].is_boolean());
+        assert!(caps["atom_editable"].is_boolean());
+        assert!(caps["review_items"].is_boolean());
+
+        // anchor_schema is present (may be null for types without one)
+        assert!(
+            entry.get("anchor_schema").is_some(),
+            "anchor_schema field must be present"
         );
     }
 }

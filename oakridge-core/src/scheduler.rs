@@ -1903,6 +1903,8 @@ mod tests {
             id: "any".into(),
             validate: |_| Ok(()),
             component_id: "v".into(),
+            capabilities: Default::default(),
+            anchor_schema: None,
         });
         Arc::new(reg)
     }

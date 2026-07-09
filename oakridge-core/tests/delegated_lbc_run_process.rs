@@ -44,6 +44,8 @@ fn make_registry(strict: bool) -> Arc<ArtifactTypeRegistry> {
         id: "artifact".into(),
         validate: |_| Ok(()),
         component_id: "artifact-viewer".into(),
+        capabilities: Default::default(),
+        anchor_schema: None,
     });
     if strict {
         #[derive(serde::Deserialize)]
@@ -60,6 +62,8 @@ fn make_registry(strict: bool) -> Arc<ArtifactTypeRegistry> {
                     .map_err(Into::into)
             },
             component_id: "strict-viewer".into(),
+            capabilities: Default::default(),
+            anchor_schema: None,
         });
     }
     Arc::new(registry)

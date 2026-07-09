@@ -12,6 +12,7 @@ import {
   fetchRunGates,
   fetchGates,
   fetchArtifact,
+  fetchArtifactTypes,
   resumeGate,
 } from "./client";
 import type { CreateRunRequest, GateResumeRequest } from "./types";
@@ -62,6 +63,14 @@ export function useArtifact(id: string) {
   return useQuery({
     queryKey: ["oakridge", "artifact", id],
     queryFn: () => fetchArtifact(id),
+  });
+}
+
+export function useArtifactTypes() {
+  return useQuery({
+    queryKey: ["oakridge", "artifact_types"],
+    queryFn: fetchArtifactTypes,
+    staleTime: 60_000,
   });
 }
 
