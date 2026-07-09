@@ -1,6 +1,12 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   fetchOakridgeConfig,
+  fetchProjects,
+  createProject,
+  fetchWorkflowDefs,
+  createRun,
+  cancelRun,
+  retryStuckStage,
   fetchRuns,
   fetchRun,
   fetchRunGates,
@@ -8,7 +14,7 @@ import {
   fetchArtifact,
   resumeGate,
 } from "./client";
-import type { GateResumeRequest } from "./types";
+import type { CreateRunRequest, GateResumeRequest } from "./types";
 
 const POLL_MS = 10_000;
 
@@ -69,6 +75,61 @@ export function useResumeGate(gateId: string, runId: string | null) {
         void qc.invalidateQueries({ queryKey: ["oakridge", "run", runId] });
         void qc.invalidateQueries({ queryKey: ["oakridge", "run", runId, "gates"] });
       }
+    },
+  });
+}
+
+export function useProjects() {
+  return useQuery({
+    queryKey: ["oakridge", "projects"],
+    queryFn: fetchProjects,
+  });
+}
+
+export function useWorkflowDefs() {
+  return useQuery({
+    queryKey: ["oakridge", "workflow_defs"],
+    queryFn: fetchWorkflowDefs,
+  });
+}
+
+export function useCreateProject() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: createProject,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["oakridge", "projects"] });
+    },
+  });
+}
+
+export function useCreateRun() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (req: CreateRunRequest) => createRun(req),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["oakridge", "runs"] });
+    },
+  });
+}
+
+export function useCancelRun(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => cancelRun(runId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["oakridge", "run", runId] });
+      void qc.invalidateQueries({ queryKey: ["oakridge", "runs"] });
+    },
+  });
+}
+
+export function useRetryStuck(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (stageInstanceId: string) => retryStuckStage(stageInstanceId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["oakridge", "run", runId] });
     },
   });
 }

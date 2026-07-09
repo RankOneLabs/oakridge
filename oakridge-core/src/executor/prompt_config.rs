@@ -66,6 +66,23 @@ fn value_to_string(v: &Value) -> anyhow::Result<String> {
     }
 }
 
+/// Resolve a slot binding for optional model/effort fields, yielding None when
+/// the bound context key is absent or null instead of erroring (lenient path).
+/// Input bindings are not valid for model/effort and return None.
+pub fn resolve_optional_binding(binding: &SlotBinding, run_context: &Value) -> Option<String> {
+    match binding {
+        SlotBinding::Literal { value } => Some(value.clone()),
+        SlotBinding::Context { path } => {
+            let v = run_context.pointer(path)?;
+            if v.is_null() {
+                return None;
+            }
+            value_to_string(v).ok()
+        }
+        SlotBinding::Input { .. } => None,
+    }
+}
+
 // ── render_template ───────────────────────────────────────────────────────────
 
 /// Replace every `{{KEY}}` in `template` with the corresponding value from

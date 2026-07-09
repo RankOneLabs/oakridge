@@ -21,7 +21,9 @@ export function writeHashSid(sid: string | null): void {
 export type OakridgeSubRoute =
   | { sub: "runs" }
   | { sub: "run"; id: string }
-  | { sub: "artifact"; id: string };
+  | { sub: "artifact"; id: string }
+  | { sub: "new-run" }
+  | { sub: "create-project" };
 
 export type HashRoute =
   | { view: "plan"; id: string }
@@ -79,6 +81,12 @@ export function readHashRoute(): HashRoute | null {
         const id = tryDecode(raw);
         return { view: "oakridge", route: { sub: "artifact", id } };
       }
+    }
+    if (rest === "/new-run") {
+      return { view: "oakridge", route: { sub: "new-run" } };
+    }
+    if (rest === "/create-project") {
+      return { view: "oakridge", route: { sub: "create-project" } };
     }
     return { view: "oakridge", route: { sub: "runs" } };
   }

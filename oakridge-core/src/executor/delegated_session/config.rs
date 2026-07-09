@@ -6,6 +6,18 @@ use serde::{Deserialize, Serialize};
 use crate::executor::prompt_config::SlotBinding;
 use crate::types::OutputSlot;
 
+// ── Bindable ──────────────────────────────────────────────────────────────────
+
+/// A field that may be either a bare string literal or a SlotBinding resolved
+/// at build_config time. Untagged so that existing literal JSON strings remain
+/// valid without a wrapper object.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(untagged)]
+pub enum Bindable {
+    Literal(String),
+    Bound(SlotBinding),
+}
+
 // ── Valid effort levels accepted by oakridge-core ─────────────────────────────
 
 /// Canonical effort values that workflow definitions may specify for a
@@ -57,12 +69,16 @@ pub struct DelegatedSessionDefConfig {
     pub slot_bindings: HashMap<String, SlotBinding>,
     pub workdir: SlotBinding,
     pub session_name: String,
-    pub model: Option<String>,
-    /// Reasoning effort level forwarded to kbbl. Accepted values: minimal, low,
-    /// medium, high. Omit to use the runtime default. Invalid values are rejected
-    /// during build_config so failures surface before a delegated session starts.
+    /// Model identifier or a SlotBinding resolved from run context at build time.
+    /// Omit to use the runtime default.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub effort: Option<String>,
+    pub model: Option<Bindable>,
+    /// Reasoning effort level or a SlotBinding resolved from run context at build
+    /// time. Accepted literal values: minimal, low, medium, high. Omit to use the
+    /// runtime default. Literal values are validated at def creation; bound values
+    /// are validated at build_config time against the resolved string.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<Bindable>,
     /// Managed worktree parameters forwarded to kbbl POST /sessions. When set,
     /// kbbl creates a branch-isolated worktree instead of running under workdir.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -138,7 +154,7 @@ mod tests {
                 value: "/work".into(),
             },
             session_name: "delegate-1".into(),
-            model: Some("claude-sonnet-4-6".into()),
+            model: Some(Bindable::Literal("claude-sonnet-4-6".into())),
             effort: None,
             worktree: None,
             pre_authorized_tools: vec!["Bash".into()],
@@ -148,6 +164,43 @@ mod tests {
         let value = serde_json::to_value(&def).unwrap();
         let back: DelegatedSessionDefConfig = serde_json::from_value(value).unwrap();
         assert_eq!(def, back);
+    }
+
+    #[test]
+    fn bindable_literal_serde_is_plain_string() {
+        let b = Bindable::Literal("claude-sonnet-4-6".into());
+        let v = serde_json::to_value(&b).unwrap();
+        assert_eq!(v, serde_json::json!("claude-sonnet-4-6"));
+        let back: Bindable = serde_json::from_value(v).unwrap();
+        assert_eq!(b, back);
+    }
+
+    #[test]
+    fn bindable_bound_serde_is_slot_binding() {
+        let b = Bindable::Bound(SlotBinding::Context {
+            path: "/planner_model".into(),
+        });
+        let v = serde_json::to_value(&b).unwrap();
+        assert_eq!(v["from"], "context");
+        assert_eq!(v["path"], "/planner_model");
+        let back: Bindable = serde_json::from_value(v).unwrap();
+        assert_eq!(b, back);
+    }
+
+    #[test]
+    fn bindable_null_model_parses_as_none() {
+        let json = serde_json::json!({
+            "runtime": "codex",
+            "prompt_template_path": "t.md",
+            "slot_bindings": {},
+            "workdir": {"from": "literal", "value": "/w"},
+            "session_name": "s",
+            "model": null,
+            "pre_authorized_tools": [],
+            "yolo": false
+        });
+        let def: DelegatedSessionDefConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(def.model, None);
     }
 
     #[test]

@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useRun } from "./hooks";
+import { useRun, useCancelRun, useRetryStuck } from "./hooks";
 import type { StageDetail } from "./types";
 import { RunParkedGateList } from "./ParkedGateList";
 
@@ -32,10 +32,13 @@ function stageRowClass(status: string): string {
 
 interface StageRowProps {
   stage: StageDetail;
+  canRetry: boolean;
+  onRetry: (stageInstanceId: string) => void;
+  retrying: boolean;
   onSelectArtifact?: (artifactId: string) => void;
 }
 
-function StageRow({ stage, onSelectArtifact }: StageRowProps) {
+function StageRow({ stage, canRetry, onRetry, retrying, onSelectArtifact }: StageRowProps) {
   return (
     <tr className={stageRowClass(stage.status)} data-testid="or-stage-row">
       <td className={`${tableCellClass} font-medium text-[var(--text-primary)]`} data-testid="or-stage-name">
@@ -43,7 +46,20 @@ function StageRow({ stage, onSelectArtifact }: StageRowProps) {
       </td>
       <td className={`${tableCellClass} text-[var(--text-secondary)]`}>{stage.type}</td>
       <td className={tableCellClass}>
-        <span className={statusChipClass(stage.status)}>{stage.status}</span>
+        <div className="flex items-center gap-2">
+          <span className={statusChipClass(stage.status)}>{stage.status}</span>
+          {canRetry && stage.status === "parked" && (
+            <button
+              type="button"
+              className="rounded border border-amber-400 px-2 py-0.5 text-xs text-amber-400 hover:bg-amber-400 hover:text-black disabled:opacity-50"
+              onClick={() => onRetry(stage.stage_instance_id)}
+              disabled={retrying}
+              data-testid="or-retry-stuck-btn"
+            >
+              {retrying ? "…" : "Retry"}
+            </button>
+          )}
+        </div>
       </td>
       <td className={tableCellClass}>
         {stage.artifacts.length === 0 && <span className={mutedClass}>-</span>}
@@ -100,6 +116,8 @@ interface RunDetailViewProps {
 export function RunDetailView({ runId, onBack, onSelectArtifact }: RunDetailViewProps) {
   const qc = useQueryClient();
   const query = useRun(runId);
+  const cancelMutation = useCancelRun(runId);
+  const retryMutation = useRetryStuck(runId);
 
   const onRefresh = () => {
     void qc.invalidateQueries({ queryKey: ["oakridge", "run", runId] });
@@ -132,6 +150,8 @@ export function RunDetailView({ runId, onBack, onSelectArtifact }: RunDetailView
 
   const run = query.data;
 
+  const canCancel = run.status === "running" || run.status === "parked";
+
   return (
     <div className="flex flex-col gap-5" data-testid="or-run-detail">
       <header className="flex items-start gap-4">
@@ -154,9 +174,22 @@ export function RunDetailView({ runId, onBack, onSelectArtifact }: RunDetailView
             )}
           </div>
         </div>
-        <button type="button" className={secondaryButtonClass} onClick={onRefresh}>
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          {canCancel && (
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 rounded-md border border-red-500 px-3 py-1.5 text-sm text-red-500 hover:bg-red-500 hover:text-white disabled:opacity-50"
+              onClick={() => void cancelMutation.mutate()}
+              disabled={cancelMutation.isPending}
+              data-testid="or-cancel-run-btn"
+            >
+              {cancelMutation.isPending ? "Cancelling…" : "Cancel Run"}
+            </button>
+          )}
+          <button type="button" className={secondaryButtonClass} onClick={onRefresh}>
+            Refresh
+          </button>
+        </div>
       </header>
 
       <section className="flex flex-col">
@@ -178,6 +211,9 @@ export function RunDetailView({ runId, onBack, onSelectArtifact }: RunDetailView
                 <StageRow
                   key={stage.name}
                   stage={stage}
+                  canRetry={run.is_stuck}
+                  onRetry={(sid) => void retryMutation.mutate(sid)}
+                  retrying={retryMutation.isPending}
                   onSelectArtifact={onSelectArtifact}
                 />
               ))}

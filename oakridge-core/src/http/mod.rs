@@ -16,6 +16,7 @@ use tower_http::trace::TraceLayer;
 pub use crate::config::{AuthPolicy, Config};
 use crate::db;
 use crate::events::EventBus;
+use crate::seed;
 use crate::executor::delegated_lbc_run::DelegatedLbcRunStage;
 use crate::executor::delegated_session::{kbbl_client::KbblClient, DelegatedSessionStage};
 use crate::registry::{register_dev_flow_types, ArtifactTypeRegistry, StageTypeRegistry};
@@ -144,6 +145,7 @@ where
     }
 
     let pool = Arc::new(db::init_pool(&cfg.db_url).await?);
+    seed::seed_builtin_workflow_defs(&pool).await?;
 
     let mut stage_reg = StageTypeRegistry::new();
     let mut artifact_reg = ArtifactTypeRegistry::new();

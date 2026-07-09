@@ -25,7 +25,7 @@ use uuid::Uuid;
 
 use oakridge_core::db::{self, queries};
 use oakridge_core::executor::delegated_session::{
-    config::{DelegatedRuntime, DelegatedSessionDefConfig},
+    config::{Bindable, DelegatedRuntime, DelegatedSessionDefConfig},
     kbbl_client::KbblClient,
     DelegatedExecutor, DelegatedGate, DelegatedGateState, DelegatedSessionStage,
 };
@@ -273,7 +273,7 @@ fn delegated_workflow_def(
             value: format!("{}/{{{{STAGE_INSTANCE_ID}}}}", workdir.display()),
         },
         session_name: "delegated-{{STAGE_INSTANCE_ID}}".into(),
-        model: Some("claude-sonnet-4-6".into()),
+        model: Some(Bindable::Literal("claude-sonnet-4-6".into())),
         effort: None,
         worktree: None,
         pre_authorized_tools: vec![],
