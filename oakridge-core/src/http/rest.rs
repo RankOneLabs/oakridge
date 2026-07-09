@@ -156,6 +156,7 @@ pub struct OperatorRunSummary {
 
 #[derive(Serialize)]
 pub struct OperatorStageDetail {
+    pub stage_instance_id: String,
     pub name: String,
     #[serde(rename = "type")]
     pub stage_type: String,
@@ -173,6 +174,7 @@ pub struct OperatorRunDetail {
     pub stages: Vec<OperatorStageDetail>,
     pub parked_count: usize,
     pub updated_at: String,
+    pub is_stuck: bool,
 }
 
 #[derive(Serialize)]
@@ -742,6 +744,7 @@ fn operator_stage(
 ) -> OperatorStageDetail {
     let external = delegated_external_ref(&stage);
     OperatorStageDetail {
+        stage_instance_id: stage.id.0.to_string(),
         name: stage.stage_key.clone(),
         stage_type: stage.stage_type.clone(),
         status: operator_stage_status(stage.status),
@@ -792,6 +795,9 @@ pub async fn get_operator_run(
         .iter()
         .filter(|stage| matches!(stage.status, StageStatus::Parked))
         .count();
+    let is_stuck = stages
+        .iter()
+        .any(|s| s.parked_reason.as_deref() == Some("stuck_timeout"));
     let current_status = operator_run_status(&run, parked_count);
     let stage_details = stages
         .into_iter()
@@ -804,6 +810,7 @@ pub async fn get_operator_run(
         stages: stage_details,
         parked_count,
         updated_at: run.updated_at.to_rfc3339(),
+        is_stuck,
     }))
 }
 

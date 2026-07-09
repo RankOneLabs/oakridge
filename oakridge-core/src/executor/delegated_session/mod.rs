@@ -16,13 +16,13 @@ use tokio::time::{sleep, Duration};
 use tracing::{debug, warn};
 
 use crate::executor::prompt_config::{
-    load_template, render_template, resolve_binding, SlotBinding,
+    load_template, render_template, resolve_binding, resolve_optional_binding, SlotBinding,
 };
 use crate::executor::{StageContext, StageHandle};
 use crate::registry::stage_type::StageType;
 use crate::types::{Artifact, InputSlot, OutputSlot, StageInstanceId, StageStatus};
 
-use config::{validate_effort, DelegatedSessionConfig, DelegatedSessionDefConfig};
+use config::{validate_effort, Bindable, DelegatedSessionConfig, DelegatedSessionDefConfig};
 use kbbl_client::{
     AckResponse, CreateSessionRequest, DelegatedExternalRef, EventsSinceResponse, KbblClient,
     SendInputRequest, SessionSnapshot, SetYoloRequest,
@@ -112,7 +112,9 @@ fn validate_delegated_def(def: &DelegatedSessionDefConfig) -> anyhow::Result<()>
         );
     }
 
-    if let Some(ref e) = def.effort {
+    // Only validate effort when it is a literal string; bound effort is deferred
+    // to build_config time when the resolved value is available.
+    if let Some(Bindable::Literal(ref e)) = def.effort {
         if !validate_effort(e) {
             anyhow::bail!(
                 "invalid effort {:?}: must be one of [minimal, low, medium, high]",
@@ -726,6 +728,31 @@ impl StageType for DelegatedSessionStage {
         let workdir_str = resolve_binding(&def.workdir, inputs, run_context)?
             .replace(STAGE_INSTANCE_ID_SENTINEL, &sid_str);
 
+        let model = match def.model {
+            None => None,
+            Some(Bindable::Literal(s)) => Some(s),
+            Some(Bindable::Bound(ref binding)) => {
+                resolve_optional_binding(binding, run_context)
+            }
+        };
+
+        let effort = match def.effort {
+            None => None,
+            Some(Bindable::Literal(s)) => Some(s),
+            Some(Bindable::Bound(ref binding)) => {
+                let resolved = resolve_optional_binding(binding, run_context);
+                if let Some(ref e) = resolved {
+                    if !validate_effort(e) {
+                        anyhow::bail!(
+                            "invalid effort {:?} resolved from binding: must be one of [minimal, low, medium, high]",
+                            e
+                        );
+                    }
+                }
+                resolved
+            }
+        };
+
         let config = DelegatedSessionConfig {
             runtime: def.runtime,
             rendered_prompt,
@@ -733,8 +760,8 @@ impl StageType for DelegatedSessionStage {
             session_name: def
                 .session_name
                 .replace(STAGE_INSTANCE_ID_SENTINEL, &sid_str),
-            model: def.model,
-            effort: def.effort,
+            model,
+            effort,
             worktree: def.worktree,
             pre_authorized_tools: def.pre_authorized_tools,
             yolo: def.yolo,

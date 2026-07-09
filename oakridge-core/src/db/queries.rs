@@ -326,6 +326,22 @@ pub async fn get_workflow_def_by_id(
     row_to_workflow_def(row)
 }
 
+pub async fn get_workflow_def_by_name_version(
+    pool: &SqlitePool,
+    name: &str,
+    version: i32,
+) -> crate::Result<Option<WorkflowDef>> {
+    let version_i64 = version as i64;
+    let row = sqlx::query_as::<_, WorkflowDefRow>(
+        "SELECT id, name, version, graph, created_at FROM workflow_def WHERE name = ? AND version = ?",
+    )
+    .bind(name)
+    .bind(version_i64)
+    .fetch_optional(pool)
+    .await?;
+    row.map(row_to_workflow_def).transpose()
+}
+
 // ── WorkflowRun ───────────────────────────────────────────────────────────────
 
 pub async fn insert_workflow_run(pool: &SqlitePool, r: &WorkflowRun) -> crate::Result<()> {

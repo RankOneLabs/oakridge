@@ -383,14 +383,8 @@ async fn dev_flow_smoke_run_starts_first_delegated_session() {
     .unwrap();
 
     let raw = load_dev_flow_json();
-    let create_def = json!({
-        "name": raw["name"],
-        "version": raw["version"],
-        "graph": raw["graph"]
-    });
-    let (status, def) = request_json(app.clone(), "POST", "/workflow_defs", create_def).await;
-    assert_eq!(status, StatusCode::CREATED, "workflow def body: {def}");
-    let workflow_def_id = def["id"].clone();
+    // boot() seeds the built-in dev-flow def, so it already exists — use its fixed id.
+    let workflow_def_id = raw["id"].clone();
 
     let create_run = json!({
         "workflow_def_id": workflow_def_id,
