@@ -307,6 +307,20 @@ describe("getCellDetail", () => {
     expect(detail!.status).toBe("ended");
   });
 
+  test("getCellDetail warms cold cache for direct detail loads", async () => {
+    const runTs = "2026-07-01T10-15-00Z";
+    await makeCell(runTs, "prose", "direct_detail", [
+      eventLine("incremental_started"),
+      eventLine("proposal_applied"),
+      eventLine("incremental_terminated"),
+    ]);
+
+    const detail = await getCellDetail(`${runTs}:prose:direct_detail`);
+    expect(detail).not.toBeNull();
+    expect(detail!.event_count).toBe(3);
+    expect(detail!.status).toBe("ended");
+  });
+
   test("getCellDetail avoids stale cache after events.jsonl changes", async () => {
     const cellDir = await makeCell(
       "2026-07-01T10-30-00Z",

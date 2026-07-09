@@ -474,11 +474,10 @@ async function summarize(
 }
 
 /**
- * Build the summary fields needed by CellDetail without reading
- * events.jsonl. listCells(), readEvents(), and the SSE route's
- * warmSummaryCacheFromEventLines() call are the event-log readers that keep
- * summaryCache warm; detail polling consumes that cache so SSE bursts do not
- * trigger repeated O(N) event-log parses.
+ * Build the summary fields needed by CellDetail without repeatedly reading
+ * events.jsonl. A cold cache gets one summarize() read so direct deep-link
+ * detail loads stay accurate; warm detail polling consumes summaryCache so SSE
+ * bursts do not trigger repeated O(N) event-log parses.
  */
 async function cachedSummaryForDetail(
   runTs: string,
@@ -490,7 +489,10 @@ async function cachedSummaryForDetail(
   try {
     const st = await stat(eventsPath);
     const cached = summaryCache.get(eventsPath);
-    const isCacheFresh = cached !== undefined && cached.mtimeMs === st.mtimeMs;
+    if (cached === undefined) {
+      return await summarize(runTs, target, condition, cellDir);
+    }
+    const isCacheFresh = cached.mtimeMs === st.mtimeMs;
     return rawSummaryFromFields({
       runTs,
       target,
