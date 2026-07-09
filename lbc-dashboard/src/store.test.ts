@@ -307,7 +307,7 @@ describe("getCellDetail", () => {
     expect(detail!.status).toBe("ended");
   });
 
-  test("getCellDetail does not reparse events.jsonl after cache is warm", async () => {
+  test("getCellDetail avoids stale cache after events.jsonl changes", async () => {
     const cellDir = await makeCell(
       "2026-07-01T10-30-00Z",
       "prose",
@@ -328,6 +328,32 @@ describe("getCellDetail", () => {
     );
     const future = new Date(Date.now() + 1000);
     await utimes(eventsPath, future, future);
+
+    const detail = await getCellDetail(cellId!);
+    expect(detail).not.toBeNull();
+    expect(detail!.event_count).toBe(0);
+    expect(detail!.status).toBe("unknown");
+  });
+
+  test("malformed append updates cache mtime without changing parsed summary", async () => {
+    const cellDir = await makeCell(
+      "2026-07-01T10-45-00Z",
+      "prose",
+      "malformed_append",
+      [eventLine("incremental_started")],
+    );
+    const cells = await listCells();
+    const cellId = cells.find((c) => c.condition_name === "malformed_append")
+      ?.cell_id;
+    expect(cellId).toBeDefined();
+
+    const eventsPath = join(cellDir, "events.jsonl");
+    await appendFile(eventsPath, "{not valid json}\n", "utf-8");
+    const future = new Date(Date.now() + 1000);
+    await utimes(eventsPath, future, future);
+    await warmSummaryCacheFromEventLines(eventsPath, ["{not valid json}"], {
+      mode: "append",
+    });
 
     const detail = await getCellDetail(cellId!);
     expect(detail).not.toBeNull();

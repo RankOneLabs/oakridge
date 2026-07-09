@@ -21,9 +21,10 @@ conflate.
 - **Markdown**: `react-markdown` with `rehype-sanitize`
 - **Styling**: `core/pwa/styles.css` + inline `style={{}}` props (current).
   **Tailwind CSS v4 is not yet installed** — it is the target convention; a
-  follow-up refactor pass will add it and migrate existing styles. New
-  components and changed files should use Tailwind utility classes per the
-  imported frontend standard so they are migration-ready. Exception:
+  follow-up refactor pass will add it and migrate existing styles. Until then,
+  new components and changed files should use the existing `styles.css` /
+  `className` vocabulary or inline `style={{}}`; do not add Tailwind utility
+  classNames that will not be applied. Exception:
   `core/pwa/review/**` is mid-flight on its own `.review-shell__*` /
   `.brief-*` / `.cohort-detail__*` / `.cohort-node__*` className vocabulary
   in `styles.css`; new components inside `review/**` use existing classes or

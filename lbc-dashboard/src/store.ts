@@ -355,6 +355,19 @@ async function eventsMtimeMs(eventsPath: string): Promise<number> {
   }
 }
 
+async function freshSummaryCacheEntry(
+  eventsPath: string,
+): Promise<SummaryCacheEntry | null> {
+  const cached = summaryCache.get(eventsPath);
+  if (cached === undefined) return null;
+  try {
+    const st = await stat(eventsPath);
+    return cached.mtimeMs === st.mtimeMs ? cached : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function warmSummaryCacheFromEventLines(
   eventsPath: string,
   lines: string[],
@@ -364,10 +377,6 @@ export async function warmSummaryCacheFromEventLines(
     const event = parseCellEventLine(line);
     return event === null ? [] : [event];
   });
-  if (events.length === 0 && opts.mode === "append") {
-    return events;
-  }
-
   const mtimeMs = await eventsMtimeMs(eventsPath);
   if (opts.mode === "replace") {
     const parts = summaryPartsFromEvents(events);
@@ -481,14 +490,15 @@ async function cachedSummaryForDetail(
   try {
     const st = await stat(eventsPath);
     const cached = summaryCache.get(eventsPath);
+    const isCacheFresh = cached !== undefined && cached.mtimeMs === st.mtimeMs;
     return rawSummaryFromFields({
       runTs,
       target,
       condition,
       cellDir,
-      status: cached?.status ?? "unknown",
+      status: isCacheFresh ? cached.status : "unknown",
       lastActivityMs: st.mtimeMs,
-      eventCount: cached?.eventCount ?? 0,
+      eventCount: isCacheFresh ? cached.eventCount : 0,
     });
   } catch {
     try {
@@ -747,7 +757,7 @@ async function deriveRunMetadata(
   // if the cache is cold, attribution is reported as missing until the
   // list/SSE path warms it.
   const eventsPath = join(cellDir, "events.jsonl");
-  const cached = summaryCache.get(eventsPath);
+  const cached = await freshSummaryCacheEntry(eventsPath);
   const firstStartedPayload = cached?.firstIncrementalStartedPayload ?? null;
 
   if (firstStartedPayload === null) {

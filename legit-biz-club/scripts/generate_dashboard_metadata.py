@@ -30,7 +30,7 @@ def main() -> None:
     tasks = [_build_task_detail(key) for key in TASK_FACTORIES]
     graders = [_build_grader_summary(g) for g in GRADER_CATALOG]
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT_PATH.write_text(_render(tasks, graders))
+    OUTPUT_PATH.write_text(_render(tasks, graders), encoding="utf-8")
     print(f"wrote {OUTPUT_PATH.relative_to(REPO_ROOT)}")
 
 
