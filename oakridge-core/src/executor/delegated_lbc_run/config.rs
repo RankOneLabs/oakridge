@@ -135,7 +135,7 @@ pub fn resolve_run_spec(
     inputs: &HashMap<String, crate::types::Artifact>,
     run_context: &Value,
 ) -> anyhow::Result<DelegatedLbcRunSpec> {
-    let task = resolve_binding(&def.task, inputs, run_context)?;
+    let task = resolve_binding(&def.task, inputs, run_context, None)?;
     let model_pool_value = resolve_json_binding(&def.model_pool, inputs, run_context)?;
     let condition_value = resolve_json_binding(&def.condition, inputs, run_context)?;
     let grade_value = match &def.grade {
@@ -163,12 +163,12 @@ pub fn resolve_run_spec(
     let local_task_dir = def
         .local_task_dir
         .as_ref()
-        .map(|binding| resolve_binding(binding, inputs, run_context).map(PathBuf::from))
+        .map(|binding| resolve_binding(binding, inputs, run_context, None).map(PathBuf::from))
         .transpose()?;
     let local_grader_config_dir = def
         .local_grader_config_dir
         .as_ref()
-        .map(|binding| resolve_binding(binding, inputs, run_context).map(PathBuf::from))
+        .map(|binding| resolve_binding(binding, inputs, run_context, None).map(PathBuf::from))
         .transpose()?;
 
     Ok(DelegatedLbcRunSpec {
@@ -188,13 +188,14 @@ pub fn resolve_output_dir(
     run_context: &Value,
 ) -> anyhow::Result<PathBuf> {
     let output_dir = match &def.output_dir {
-        Some(binding) => resolve_binding(binding, inputs, run_context)?,
+        Some(binding) => resolve_binding(binding, inputs, run_context, None)?,
         None => resolve_binding(
             &SlotBinding::Context {
                 path: "/workdir".to_owned(),
             },
             inputs,
             run_context,
+            None,
         )?,
     };
 

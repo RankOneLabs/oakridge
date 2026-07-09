@@ -714,7 +714,7 @@ impl StageType for DelegatedSessionStage {
         for (slot_name, binding) in &def.slot_bindings {
             slot_values.insert(
                 slot_name.clone(),
-                resolve_binding(binding, inputs, run_context)?,
+                resolve_binding(binding, inputs, run_context, None)?,
             );
         }
         slot_values.insert(
@@ -725,7 +725,7 @@ impl StageType for DelegatedSessionStage {
 
         let rendered_prompt = render_template(&template, &slot_values)?;
         let sid_str = stage_instance_id.0.to_string();
-        let workdir_str = resolve_binding(&def.workdir, inputs, run_context)?
+        let workdir_str = resolve_binding(&def.workdir, inputs, run_context, None)?
             .replace(STAGE_INSTANCE_ID_SENTINEL, &sid_str);
 
         let model = match def.model {

@@ -278,6 +278,7 @@ fn delegated_workflow_def(
         worktree: None,
         pre_authorized_tools: vec![],
         yolo: true,
+        fan_out: None,
     };
 
     stages.insert(
