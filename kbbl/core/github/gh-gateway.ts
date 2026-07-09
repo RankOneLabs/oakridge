@@ -253,6 +253,16 @@ async function runGh(
 // Exported so tests can assert reviewThreads is always requested.
 export const PR_VIEW_FIELDS =
   "state,mergedAt,mergeable,mergeStateStatus,reviewDecision,reviewThreads,url";
+const PR_VIEW_FIELDS_WITHOUT_REVIEW_THREADS =
+  "state,mergedAt,mergeable,mergeStateStatus,reviewDecision,url";
+
+export function isUnsupportedReviewThreadsError(error: GhError): boolean {
+  return (
+    error.kind === "gh_failed" &&
+    error.operation === "fetchPrState" &&
+    /Unknown JSON field:\s*"reviewThreads"/i.test(error.stderr)
+  );
+}
 
 export async function fetchPrState(prUrl: string): Promise<Result<PrState, GhError>> {
   const run = await runGh(
@@ -260,7 +270,20 @@ export async function fetchPrState(prUrl: string): Promise<Result<PrState, GhErr
     "fetchPrState",
     prUrl,
   );
-  if (!run.ok) return run;
+  if (!run.ok) {
+    if (!isUnsupportedReviewThreadsError(run.error)) return run;
+    const fallbackRun = await runGh(
+      ["pr", "view", prUrl, "--json", PR_VIEW_FIELDS_WITHOUT_REVIEW_THREADS],
+      "fetchPrState",
+      prUrl,
+    );
+    if (!fallbackRun.ok) return fallbackRun;
+    const fallbackParsed = parsePrViewJson(fallbackRun.value.stdout);
+    if (!fallbackParsed.ok) {
+      return { ok: false, error: { ...fallbackParsed.error, operation: "fetchPrState", prUrl } };
+    }
+    return fallbackParsed;
+  }
   const parsed = parsePrViewJson(run.value.stdout);
   // Patch parser errors with the caller's prUrl/operation so callers always
   // see a fully-populated GhError regardless of where in the pipeline it failed.

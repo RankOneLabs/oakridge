@@ -3,6 +3,7 @@ import {
   parsePrUrl,
   parsePrViewJson,
   narrowGhStderr,
+  isUnsupportedReviewThreadsError,
   PR_VIEW_FIELDS,
   type PrState,
   type ReviewThread,
@@ -327,6 +328,32 @@ describe("narrowGhStderr", () => {
 describe("PR_VIEW_FIELDS", () => {
   test("includes reviewThreads so the gateway always requests real thread state", () => {
     expect(PR_VIEW_FIELDS.split(",")).toContain("reviewThreads");
+  });
+});
+
+describe("isUnsupportedReviewThreadsError", () => {
+  test("matches older gh builds that reject the reviewThreads JSON field", () => {
+    expect(
+      isUnsupportedReviewThreadsError({
+        kind: "gh_failed",
+        operation: "fetchPrState",
+        prUrl: "https://github.com/acme/widget/pull/42",
+        exitCode: 1,
+        stderr: 'Unknown JSON field: "reviewThreads"\nAvailable fields:\n  state\n',
+      }),
+    ).toBe(true);
+  });
+
+  test("does not match unrelated gh failures", () => {
+    expect(
+      isUnsupportedReviewThreadsError({
+        kind: "gh_failed",
+        operation: "fetchPrState",
+        prUrl: "https://github.com/acme/widget/pull/42",
+        exitCode: 1,
+        stderr: "API error 500",
+      }),
+    ).toBe(false);
   });
 });
 
