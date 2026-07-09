@@ -1,6 +1,6 @@
 # lbc-dashboard
 
-Localhost dashboard for `legit-biz-club` study runs. Project-shaped (ensemble + artifact + per-commit history; eval scores are a planned addition). Separate workspace from `kbbl` because lbc's UX is project-shaped while kbbl's is session-shaped — they're different operator surfaces and forcing them into one UI would warp both.
+Localhost dashboard for `legit-biz-club` study runs. Project-shaped (ensemble + artifact + per-commit history + eval scores). Separate workspace from `kbbl` because lbc's UX is project-shaped while kbbl's is session-shaped — they're different operator surfaces and forcing them into one UI would warp both.
 
 The dashboard is the v0 of the lbc operator surface. Future iterations grow into a richer SPA (multi-cell comparison, n-sweep aggregation, eval-score deltas) on the same Bun + Hono + React stack.
 
@@ -10,7 +10,7 @@ The dashboard is the v0 of the lbc operator surface. Future iterations grow into
 - Tails each cell's `events.jsonl` over SSE so the page updates as the harness runs
 - Renders the current artifact (markdown), per-commit snapshots, and the workspace-event timeline
 - Eval scores tab: when `eval_scores.json` is present for the cell, shows per-dimension scores (with a value bar) and the average
-- Status pill: `active` / `ended` (heuristic on the events.jsonl tail)
+- Status pill: `active` / `ended` / `failed` / `cancelled` / `unknown` (derived from the events.jsonl tail and cache state)
 - Run-detail panel renders **typed, model-aware event cards** (proposal applies, rounds, convergence, escalation, picks, termination, failures) instead of raw JSON, with the raw payload available behind a per-card disclosure; the detail header shows **model chips** (`Readable Name · agent-id suffix`) derived from the run's model pool
 - **Rounds tab** groups a cell's incremental updates, consensus rounds, escalation, and the final pick/apply into a readable timeline. Current logs do not persist full per-round proposal bodies, so the tab shows that rounds happened and which proposal was finally applied — not every round's full output (an inline note states this)
 

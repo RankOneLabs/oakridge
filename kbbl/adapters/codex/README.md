@@ -86,7 +86,8 @@ The Codex app-server protocol deviates from strict JSON-RPC 2.0 in several ways 
 3. **`thread/fork` does not emit `thread/started` for the child** — the child thread id is read directly from the fork response.
 4. **`thread/unsubscribe` confirmed** — used for session termination; returns `{status:"unsubscribed"}`.
 
-These findings are documented in `comms/codex-probe-findings.md`.
+Keep this section updated when upgrading the Codex CLI protocol; it is the
+checked-in record of adapter-visible protocol deviations.
 
 ## Limitations (v0)
 
@@ -97,4 +98,3 @@ These findings are documented in `comms/codex-probe-findings.md`.
 - **No worktree restore on resume** — Every session's working directory is a per-session git worktree. Codex resume currently does not restore the worktree, so session state is recoverable at the thread level but the filesystem context may differ.
 - **Token usage** — Extracted from `thread/tokenUsage/updated` notifications using Codex's `last` (per-turn delta) bucket. Does not map 1:1 to CC's `result.usage` shape; cost fields are not populated.
 - **Startup readiness** — Unix-socket mode polls for the socket file via `access()`. WebSocket mode uses a fixed 500ms delay. Both can race on a very slow or loaded machine.
-- **PWA runtime selector** — The new-session form always creates a CC session. `POST /sessions` does not currently accept a `runtime` field — runtime selection is a planned follow-up (`docs/codex-followups.md` §6).
