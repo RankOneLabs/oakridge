@@ -1,7 +1,7 @@
 use chrono::Utc;
 use serde_json::Value;
 use sqlx::SqlitePool;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::oneshot;
 use tokio::sync::{mpsc, Mutex};
@@ -88,6 +88,9 @@ struct RunTask {
     // (consumer_stage_key, input_slot_name) -> {unit_id -> latest artifact}
     // N=1 implicit unit uses unit_id="0"; N>1 fan-out populates one entry per unit.
     resolved: HashMap<(StageKey, String), std::collections::BTreeMap<String, Artifact>>,
+    // Parsed once from the immutable workflow definition so collection checks
+    // on the artifact propagation path are O(1).
+    fan_out_producers: HashSet<StageKey>,
     db: Arc<SqlitePool>,
     stage_types: Arc<StageTypeRegistry>,
     artifact_types: Arc<ArtifactTypeRegistry>,
@@ -120,6 +123,22 @@ fn resolved_unit_id(
     } else {
         unit_id.to_owned()
     }
+}
+
+fn fan_out_producer_stages(def: &WorkflowDef) -> HashSet<StageKey> {
+    def.graph
+        .stages
+        .iter()
+        .filter_map(|(stage_key, node)| {
+            if node.stage_type != "delegated_session" {
+                return None;
+            }
+            serde_json::from_value::<DelegatedSessionDefConfig>(node.config.clone())
+                .ok()
+                .and_then(|config| config.fan_out)
+                .map(|_| stage_key.clone())
+        })
+        .collect()
 }
 
 impl RunTask {
@@ -234,16 +253,7 @@ impl RunTask {
             if edge.to.stage != *stage_key || edge.to.slot != slot_name {
                 return false;
             }
-            let Some(producer) = self.def.graph.stages.get(&edge.from.stage) else {
-                return false;
-            };
-            if producer.stage_type != "delegated_session" {
-                return false;
-            }
-            serde_json::from_value::<DelegatedSessionDefConfig>(producer.config.clone())
-                .ok()
-                .and_then(|config| config.fan_out)
-                .is_some()
+            self.fan_out_producers.contains(&edge.from.stage)
         })
     }
 
@@ -1382,6 +1392,7 @@ impl Coordinator {
             .iter()
             .map(|si| (si.stage_key.clone(), (si.id, si.status)))
             .collect();
+        let fan_out_producers = fan_out_producer_stages(&def);
         let (events_tx, events_rx) = mpsc::channel(256);
         let (control_tx, control_rx) = mpsc::channel(64);
         let task = RunTask {
@@ -1394,6 +1405,7 @@ impl Coordinator {
             handles: HashMap::new(),
             index,
             resolved,
+            fan_out_producers,
             db: self.db.clone(),
             stage_types: self.stage_types.clone(),
             artifact_types: self.artifact_types.clone(),
@@ -1583,6 +1595,7 @@ impl Coordinator {
 
         let (events_tx, events_rx) = mpsc::channel(256);
         let (control_tx, control_rx) = mpsc::channel(64);
+        let fan_out_producers = fan_out_producer_stages(&def);
 
         let task = RunTask {
             run_id,
@@ -1594,6 +1607,7 @@ impl Coordinator {
             handles: HashMap::new(),
             index: HashMap::new(),
             resolved: HashMap::new(),
+            fan_out_producers,
             db: self.db.clone(),
             stage_types: self.stage_types.clone(),
             artifact_types: self.artifact_types.clone(),
@@ -1861,6 +1875,7 @@ impl Coordinator {
 
             let (events_tx, events_rx) = mpsc::channel(256);
             let (control_tx, control_rx) = mpsc::channel(64);
+            let fan_out_producers = fan_out_producer_stages(&def);
 
             let mut task = RunTask {
                 run_id,
@@ -1872,6 +1887,7 @@ impl Coordinator {
                 handles: HashMap::new(),
                 index,
                 resolved,
+                fan_out_producers,
                 db: self.db.clone(),
                 stage_types: self.stage_types.clone(),
                 artifact_types: self.artifact_types.clone(),

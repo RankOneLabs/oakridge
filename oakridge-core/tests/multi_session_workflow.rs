@@ -180,7 +180,7 @@ async fn stage_for_key(
         {
             return stage;
         }
-        tokio::task::yield_now().await;
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
     panic!("stage '{stage_key}' was not activated");
 }
