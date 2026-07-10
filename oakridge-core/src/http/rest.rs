@@ -1049,6 +1049,10 @@ fn gate_outcome(action: &str) -> Option<GateOutcome> {
     }
 }
 
+fn is_known_operator_gate_unit(units: &[crate::types::SessionUnit], unit_id: &str) -> bool {
+    (units.is_empty() && unit_id == "0") || units.iter().any(|unit| unit.unit_id == unit_id)
+}
+
 pub async fn resume_operator_gate(
     State(state): State<AppState>,
     Path(composite_id): Path<String>,
@@ -1066,10 +1070,10 @@ pub async fn resume_operator_gate(
     })?;
     let stage_instance_id = StageInstanceId(stage_uuid);
     let stage = queries::get_stage_instance_by_id(&state.pool, &stage_instance_id).await?;
-    // Validate unit_id against the known units for this stage (rejects stale or
-    // client-side bugs where a wrong unit is targeted — e.g. "uuid:1" when only "0" exists).
+    // Validate against persisted units when present. Legacy N=1 stages may have
+    // no unit rows, in which case only the implicit unit "0" is valid.
     let units = queries::list_session_units_for_stage(&state.pool, &stage_instance_id).await?;
-    if !units.iter().any(|u| u.unit_id == unit_id) {
+    if !is_known_operator_gate_unit(&units, unit_id) {
         return Err(validation_error(format!(
             "unit '{}' not found on stage instance '{}'",
             unit_id, stage_instance_id.0
@@ -2241,6 +2245,14 @@ mod tests {
             gates[1].pr_url.as_deref(),
             Some("https://github.com/acme/repo/pull/cohort-b")
         );
+    }
+
+    #[test]
+    fn legacy_operator_gate_accepts_only_implicit_unit_when_rows_are_absent() {
+        let units = Vec::<SessionUnit>::new();
+
+        assert!(is_known_operator_gate_unit(&units, "0"));
+        assert!(!is_known_operator_gate_unit(&units, "cohort-a"));
     }
 
     #[tokio::test]

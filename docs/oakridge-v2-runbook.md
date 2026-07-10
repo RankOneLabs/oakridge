@@ -600,7 +600,11 @@ curl -sX POST "$CORE/workflow_runs" \
 Each stage or fan-out unit parks for artifact approval after emitting its gate
 output. The gate cycle is the same as any other `delegated_session` stage:
 
-1. `POST /stage_instances/<id>/resume` with `outcome: "pass"` after review.
+1. For a stage without `fan_out`, call
+   `POST /stage_instances/<id>/resume` with a passing gate-decision payload. For
+   a fan-out unit, call `POST /gates/<stage_instance_uuid>:<unit_id>/resume`
+   with the composite gate id returned by `GET /parked` or
+   `GET /runs/:id/gates`.
 2. A second pass moves from artifact approval to merge confirmation and then to
    `done`. At merge confirmation, the operator must verify the displayed PR URL,
    branch, and path when present before approving — blind approval is not
@@ -682,8 +686,9 @@ table. Each parked gate shows:
 
 The `id` field on each gate returned by `GET /parked` and `GET /runs/:id/gates` is a
 **composite gate id** with the form `"{stage_instance_uuid}:{unit_id}"`. For a
-single-unit (N=1) stage this is `"{uuid}:0"`; for a fanned stage the suffix is
-the materialized unit id. Pass this composite id when calling
+stage without `fan_out` this is `"{uuid}:0"`; for a fanned stage — including a
+fan-out containing one item — the suffix is the materialized unit id. Pass this
+composite id when calling
 `POST /gates/:id/resume` directly via curl:
 
 ```bash
@@ -691,10 +696,9 @@ the materialized unit id. Pass this composite id when calling
 curl -sX POST "$CORE/gates/<composite_id>/resume" \
   -H 'content-type: application/json' \
   -d '{
-    "outcome": "pass",
-    "comment": null,
-    "feedback": null,
-    "against_artifact_id": "<artifact_id>"
+    "action": "pass",
+    "operator_comment": "Reviewed the artifact and worktree",
+    "feedback": null
   }'
 ```
 
@@ -753,9 +757,11 @@ section for the curl form.
 
 ### Composite gate id
 
-Gates returned by `GET /parked` and `GET /runs/:id/gates` now carry a composite `id` of the
-form `"{stage_uuid}:{unit_id}"`. For N=1 this is `"{uuid}:0"`. The `POST /gates/:id/resume`
-route parses this composite id to route the decision. See the "Parked gate panel" section.
+Gates returned by `GET /parked` and `GET /runs/:id/gates` carry a composite `id`
+of the form `"{stage_uuid}:{unit_id}"`. A stage without `fan_out` uses
+`"{uuid}:0"`; any fanned stage uses its materialized unit id, even when it has
+only one item. The `POST /gates/:id/resume` route parses this composite id to
+route the decision. See the "Parked gate panel" section.
 
 ### Targeted retry
 

@@ -1788,6 +1788,9 @@ impl StageHandle for DelegatedSessionHandle {
         if let Some(cancelled) = cancelled {
             cancelled.store(true, Ordering::SeqCst);
         }
+        if self.sid.is_empty() {
+            return Ok(());
+        }
         if let Err(err) = self.kbbl_client.stop_session(&self.sid).await {
             debug!(
                 stage_instance_id = %self.stage_instance_id.0,
@@ -3285,6 +3288,48 @@ mod tests {
             .iter()
             .any(|req| req.method == Method::DELETE && req.path == "/sessions/sid-123"));
 
+        join.abort();
+    }
+
+    #[tokio::test]
+    async fn cancel_zero_unit_fan_out_does_not_stop_an_empty_session_id() {
+        let (base_url, capture, join) = spawn_kbbl_mock().await;
+        let pool = make_pool().await;
+        let config = fan_out_config(json!([]), None);
+        let (run_id, si_id) = setup_stage_instance(
+            &pool,
+            serde_json::to_value(config).unwrap(),
+            None,
+        )
+        .await;
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        let stage =
+            DelegatedSessionStage::new(PathBuf::from("/tmp"), KbblClient::new(base_url).unwrap());
+        let ctx = StageContext::new(
+            crate::types::StageInstanceSummary {
+                stage_instance_id: si_id,
+                workflow_run_id: run_id,
+                stage_key: "delegate".into(),
+                status: crate::types::StageStatus::Pending,
+                parked_reason: None,
+                parked_meta: None,
+                terminal_meta: None,
+                external_ref: None,
+            },
+            queries::get_stage_instance_by_id(&pool, &si_id)
+                .await
+                .unwrap()
+                .config,
+            HashMap::new(),
+            tx,
+            pool.clone(),
+            Arc::new(ArtifactTypeRegistry::new()),
+        );
+
+        let handle = stage.execute(ctx).await.unwrap();
+        handle.cancel().await.unwrap();
+
+        assert!(capture.lock().unwrap().is_empty());
         join.abort();
     }
 
