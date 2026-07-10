@@ -788,6 +788,9 @@ impl StageType for DelegatedSessionStage {
             pre_authorized_tools: def.pre_authorized_tools,
             yolo: def.yolo,
             output_slots: output_slots.to_vec(),
+            // Thread fan_out through to the built config so execute() can detect
+            // N>1 and reject until Phase 2b implements the per-unit scheduler.
+            fan_out: def.fan_out,
         };
 
         Ok(serde_json::to_value(config)?)
@@ -795,6 +798,19 @@ impl StageType for DelegatedSessionStage {
 
     async fn execute(&self, ctx: StageContext) -> anyhow::Result<Box<dyn StageHandle>> {
         let config: DelegatedSessionConfig = serde_json::from_value(ctx.config.clone())?;
+
+        // N>1 fan-out execution stub: reject early with a clear message.
+        // The substrate (stage_session_units table, per-unit emit route /:id/units/:unit_id/emit/:name,
+        // composite gate id, FanOut config struct) is in place (Phase 2a). The per-unit session
+        // scheduler, intra-stage DAG, and worktree-per-unit launch are Phase 2b.
+        if config.fan_out.is_some() {
+            anyhow::bail!(
+                "fan_out multi-unit execution is not yet implemented; \
+                 the substrate (stage_session_units schema, per-unit emit route, composite gate id) \
+                 is in place but the N>1 session scheduler and per-unit launch are pending (Phase 2b)"
+            );
+        }
+
         if !config.pre_authorized_tools.is_empty() {
             warn!(
                 stage_instance_id = %ctx.stage_instance_id.0,
@@ -1634,6 +1650,81 @@ mod tests {
             msg.contains("Phase 2"),
             "expected Phase 2 reference in message, got: {msg}"
         );
+    }
+
+    #[tokio::test]
+    async fn execute_rejects_fan_out_config_not_yet_implemented() {
+        let pool = make_pool().await;
+        let (run_id, si_id) = setup_stage_instance(
+            &pool,
+            // Provide a fan_out in the built config — execute must reject it immediately.
+            json!({
+                "runtime": "codex",
+                "rendered_prompt": "do the thing",
+                "workdir": "/w",
+                "session_name": "s",
+                "pre_authorized_tools": [],
+                "yolo": false,
+                "output_slots": [],
+                "fan_out": {
+                    "over": {"from": "literal", "value": "[]"},
+                    "unit_id_path": "/id"
+                }
+            }),
+            None,
+        )
+        .await;
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        let stage = DelegatedSessionStage::new(
+            PathBuf::from("/tmp"),
+            KbblClient::new("http://127.0.0.1:1/").unwrap(), // unreachable — must not be called
+        );
+        let ctx = StageContext::new(
+            crate::types::StageInstanceSummary {
+                stage_instance_id: si_id,
+                workflow_run_id: run_id,
+                stage_key: "delegate".into(),
+                status: crate::types::StageStatus::Pending,
+                parked_reason: None,
+                parked_meta: None,
+                terminal_meta: None,
+                external_ref: None,
+            },
+            json!({
+                "runtime": "codex",
+                "rendered_prompt": "do the thing",
+                "workdir": "/w",
+                "session_name": "s",
+                "pre_authorized_tools": [],
+                "yolo": false,
+                "output_slots": [],
+                "fan_out": {
+                    "over": {"from": "literal", "value": "[]"},
+                    "unit_id_path": "/id"
+                }
+            }),
+            HashMap::new(),
+            tx,
+            pool,
+            Arc::new(ArtifactTypeRegistry::new()),
+        );
+
+        // execute returns Box<dyn StageHandle> which is not Debug, so we cannot
+        // call unwrap_err(); use a manual match instead.
+        match stage.execute(ctx).await {
+            Err(err) => {
+                let msg = err.to_string();
+                assert!(
+                    msg.contains("fan_out"),
+                    "expected 'fan_out' in rejection message, got: {msg}"
+                );
+                assert!(
+                    msg.contains("not yet implemented"),
+                    "expected 'not yet implemented' in rejection message, got: {msg}"
+                );
+            }
+            Ok(_) => panic!("execute must fail when fan_out is set (N>1 not yet implemented)"),
+        }
     }
 
     #[tokio::test]

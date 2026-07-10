@@ -681,6 +681,7 @@ async fn waiting_for_kbbl_parks_and_reattaches() {
                 name: "out".into(),
                 artifact_type: "text".into(),
             }],
+            fan_out: None,
         };
         serde_json::to_value(cfg).unwrap()
     };
