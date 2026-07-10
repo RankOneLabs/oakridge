@@ -27,9 +27,25 @@ fn validate_spec_analysis(v: &Value) -> crate::Result<()> {
 }
 
 #[derive(Deserialize)]
+struct Cohort {
+    id: String,
+    title: String,
+    scope: String,
+    depends_on: Vec<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    files_in_scope: Vec<Value>,
+    #[serde(default)]
+    decisions: Vec<Value>,
+    #[serde(default)]
+    acceptance_criteria: Vec<Value>,
+}
+
+#[derive(Deserialize)]
 struct PlanBody {
     summary: String,
-    cohorts: Vec<Value>,
+    cohorts: Vec<Cohort>,
     dependency_order: Vec<Value>,
     scope: Value,
     acceptance_criteria: Vec<Value>,
@@ -271,13 +287,102 @@ mod tests {
         let def = reg.get("dev.plan").unwrap();
         let body = json!({
             "summary": "Plan for adding feature X.",
-            "cohorts": [{"id": "c1", "title": "Cohort 1"}],
+            "cohorts": [{
+                "id": "c1",
+                "title": "Cohort 1",
+                "scope": "Add the feature.",
+                "depends_on": []
+            }],
             "dependency_order": ["c1"],
             "scope": {"files": ["src/lib.rs"]},
             "acceptance_criteria": ["Tests pass", "Typecheck clean"],
             "risks": []
         });
         assert!((def.validate)(&body).is_ok());
+    }
+
+    #[test]
+    fn plan_cohort_with_all_optional_fields_passes() {
+        let reg = make_registry();
+        let def = reg.get("dev.plan").unwrap();
+        let body = json!({
+            "summary": "Plan.",
+            "cohorts": [{
+                "id": "c1",
+                "title": "Cohort 1",
+                "scope": "Build the thing.",
+                "depends_on": ["c0"],
+                "description": "Extended description.",
+                "files_in_scope": ["src/lib.rs"],
+                "decisions": ["Use serde"],
+                "acceptance_criteria": ["Tests pass"]
+            }],
+            "dependency_order": ["c0", "c1"],
+            "scope": {},
+            "acceptance_criteria": [],
+            "risks": []
+        });
+        assert!((def.validate)(&body).is_ok());
+    }
+
+    #[test]
+    fn plan_cohort_missing_id_fails() {
+        let reg = make_registry();
+        let def = reg.get("dev.plan").unwrap();
+        let body = json!({
+            "summary": "Plan",
+            "cohorts": [{"title": "Cohort 1", "scope": "Do X.", "depends_on": []}],
+            "dependency_order": [],
+            "scope": {},
+            "acceptance_criteria": [],
+            "risks": []
+        });
+        assert!((def.validate)(&body).is_err());
+    }
+
+    #[test]
+    fn plan_cohort_missing_title_fails() {
+        let reg = make_registry();
+        let def = reg.get("dev.plan").unwrap();
+        let body = json!({
+            "summary": "Plan",
+            "cohorts": [{"id": "c1", "scope": "Do X.", "depends_on": []}],
+            "dependency_order": [],
+            "scope": {},
+            "acceptance_criteria": [],
+            "risks": []
+        });
+        assert!((def.validate)(&body).is_err());
+    }
+
+    #[test]
+    fn plan_cohort_missing_scope_fails() {
+        let reg = make_registry();
+        let def = reg.get("dev.plan").unwrap();
+        let body = json!({
+            "summary": "Plan",
+            "cohorts": [{"id": "c1", "title": "Cohort 1", "depends_on": []}],
+            "dependency_order": [],
+            "scope": {},
+            "acceptance_criteria": [],
+            "risks": []
+        });
+        assert!((def.validate)(&body).is_err());
+    }
+
+    #[test]
+    fn plan_cohort_missing_depends_on_fails() {
+        let reg = make_registry();
+        let def = reg.get("dev.plan").unwrap();
+        let body = json!({
+            "summary": "Plan",
+            "cohorts": [{"id": "c1", "title": "Cohort 1", "scope": "Do X."}],
+            "dependency_order": [],
+            "scope": {},
+            "acceptance_criteria": [],
+            "risks": []
+        });
+        assert!((def.validate)(&body).is_err());
     }
 
     #[test]
