@@ -2,7 +2,7 @@ pub mod config;
 pub mod kbbl_client;
 pub mod routes;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -24,7 +24,10 @@ use crate::registry::stage_type::StageType;
 use crate::types::{Artifact, InputSlot, OutputSlot, ResolvedInput, StageInstanceId, StageStatus};
 use crate::types::{UnitStatus};
 
-use config::{validate_effort, Bindable, DelegatedSessionConfig, DelegatedSessionDefConfig, FanOutPromptPlan};
+use config::{
+    validate_effort, Bindable, DelegatedSessionConfig, DelegatedSessionDefConfig, FanOut,
+    FanOutPromptPlan, WorktreeIdentity,
+};
 use kbbl_client::{
     AckResponse, CreateSessionRequest, DelegatedExternalRef, EventsSinceResponse, KbblClient,
     SendInputRequest, SessionSnapshot, SetYoloRequest,
@@ -34,6 +37,144 @@ const STAGE_INSTANCE_ID_SENTINEL: &str = "{{STAGE_INSTANCE_ID}}";
 
 /// unit_id used when no fan_out config is present: single implicit unit.
 const IMPLICIT_UNIT_ID: &str = "0";
+
+/// A completely validated unit, ready to be persisted before session admission.
+/// Keeping this separate from `SessionUnit` prevents partially valid graph data
+/// from reaching the database.
+#[derive(Debug, Clone, PartialEq)]
+struct MaterializedFanOutUnit {
+    unit_id: String,
+    params: Value,
+    depends_on: Vec<String>,
+    rendered_prompt: String,
+    worktree: Option<WorktreeIdentity>,
+}
+
+fn substitute_unit_template(template: &str, unit_id: &str, stage_instance_id: StageInstanceId) -> String {
+    template
+        .replace("{{UNIT_ID}}", unit_id)
+        .replace(STAGE_INSTANCE_ID_SENTINEL, &stage_instance_id.0.to_string())
+}
+
+/// Validate and render the entire fan-out DAG without side effects.  This must
+/// finish successfully before unit rows are written or kbbl sessions are made.
+fn materialize_fan_out_units(
+    config: &DelegatedSessionConfig,
+    fan_out: &FanOut,
+    stage_instance_id: StageInstanceId,
+) -> anyhow::Result<Vec<MaterializedFanOutUnit>> {
+    let over = config
+        .resolved_fan_out_over
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("fan_out resolved input is missing from stage config"))?;
+    let items = over
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("fan_out.over must resolve to a JSON array"))?;
+    let prompt_plan = config
+        .fan_out_prompt_plan
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("fan_out prompt plan is missing from stage config"))?;
+
+    let mut units = Vec::with_capacity(items.len());
+    let mut unit_ids = HashSet::with_capacity(items.len());
+    for item in items {
+        let unit_id = item
+            .pointer(&fan_out.unit_id_path)
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("fan_out unit_id at '{}' must be a non-empty string", fan_out.unit_id_path))?
+            .to_owned();
+        if !unit_ids.insert(unit_id.clone()) {
+            anyhow::bail!("fan_out unit_id '{}' is duplicated", unit_id);
+        }
+
+        let depends_on = match &fan_out.depends_on_path {
+            None => Vec::new(),
+            Some(path) => item
+                .pointer(path)
+                .and_then(Value::as_array)
+                .ok_or_else(|| anyhow::anyhow!("fan_out depends_on at '{}' must be an array", path))?
+                .iter()
+                .map(|value| {
+                    value.as_str().filter(|id| !id.is_empty()).map(str::to_owned).ok_or_else(|| {
+                        anyhow::anyhow!("fan_out dependency for unit '{}' must be a non-empty string", unit_id)
+                    })
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?,
+        };
+
+        let mut seen_dependencies = HashSet::<String>::new();
+        for dependency in &depends_on {
+            if dependency == &unit_id {
+                anyhow::bail!("fan_out unit '{}' cannot depend on itself", unit_id);
+            }
+            if !seen_dependencies.insert(dependency.clone()) {
+                anyhow::bail!("fan_out unit '{}' repeats dependency '{}'", unit_id, dependency);
+            }
+        }
+
+        let mut slot_values = prompt_plan.base_slot_values.clone();
+        for (slot_name, binding) in &fan_out.item_bindings {
+            slot_values.insert(
+                slot_name.clone(),
+                resolve_binding(binding, &HashMap::new(), &Value::Null, Some(item))?,
+            );
+        }
+        slot_values.insert("UNIT_ID".into(), unit_id.clone());
+        slot_values.insert("STAGE_INSTANCE_ID".into(), stage_instance_id.0.to_string());
+        let rendered_prompt = render_template(&prompt_plan.raw_template, &slot_values)?;
+
+        let worktree = match &fan_out.worktree {
+            Some(template) => Some(WorktreeIdentity {
+                branch_name: substitute_unit_template(&template.branch_name, &unit_id, stage_instance_id),
+                worktree_subdir: substitute_unit_template(&template.worktree_subdir, &unit_id, stage_instance_id),
+                base_ref: template.base_ref.as_ref().map(|base| substitute_unit_template(base, &unit_id, stage_instance_id)),
+            }),
+            None => config.worktree.clone(),
+        };
+        units.push(MaterializedFanOutUnit {
+            unit_id,
+            params: item.clone(),
+            depends_on,
+            rendered_prompt,
+            worktree,
+        });
+    }
+
+    for unit in &units {
+        for dependency in &unit.depends_on {
+            if !unit_ids.contains(dependency) {
+                anyhow::bail!("fan_out unit '{}' depends on unknown unit '{}'", unit.unit_id, dependency);
+            }
+        }
+    }
+    // Kahn's algorithm: a closed graph that cannot consume all nodes has a cycle.
+    let mut remaining: HashMap<&str, usize> = units
+        .iter()
+        .map(|unit| (unit.unit_id.as_str(), unit.depends_on.len()))
+        .collect();
+    let mut ready: Vec<&str> = remaining
+        .iter()
+        .filter_map(|(id, count)| (*count == 0).then_some(*id))
+        .collect();
+    let mut consumed = 0usize;
+    while let Some(done) = ready.pop() {
+        consumed += 1;
+        for unit in &units {
+            if unit.depends_on.iter().any(|dependency| dependency == done) {
+                let count = remaining.get_mut(unit.unit_id.as_str()).expect("known unit");
+                *count -= 1;
+                if *count == 0 {
+                    ready.push(unit.unit_id.as_str());
+                }
+            }
+        }
+    }
+    if consumed != units.len() {
+        anyhow::bail!("fan_out dependency graph contains a cycle");
+    }
+    Ok(units)
+}
 
 /// Number of consecutive retryable poll errors before the observer gives up.
 const MAX_OBSERVER_POLL_ERRORS: u32 = 5;
@@ -775,6 +916,16 @@ impl StageType for DelegatedSessionStage {
             raw_template: template.clone(),
             base_slot_values: slot_values.clone(),
         });
+        let resolved_fan_out_over = def
+            .fan_out
+            .as_ref()
+            .map(|fan_out| {
+                let value = resolve_binding(&fan_out.over, inputs, run_context, None)?;
+                serde_json::from_str::<Value>(&value).map_err(|err| {
+                    anyhow::anyhow!("fan_out.over did not resolve to JSON: {}", err)
+                })
+            })
+            .transpose()?;
         let sid_str = stage_instance_id.0.to_string();
         let workdir_str = resolve_binding(&def.workdir, inputs, run_context, None)?
             .replace(STAGE_INSTANCE_ID_SENTINEL, &sid_str);
@@ -808,6 +959,7 @@ impl StageType for DelegatedSessionStage {
             runtime: def.runtime,
             rendered_prompt,
             fan_out_prompt_plan,
+            resolved_fan_out_over,
             workdir: PathBuf::from(workdir_str),
             session_name: def
                 .session_name
@@ -1511,6 +1663,42 @@ mod tests {
         })
     }
 
+    fn fan_out_config(over: Value, depends_on_path: Option<&str>) -> DelegatedSessionConfig {
+        DelegatedSessionConfig {
+            runtime: config::DelegatedRuntime::Codex,
+            rendered_prompt: "legacy prompt".into(),
+            fan_out_prompt_plan: Some(FanOutPromptPlan {
+                raw_template: "unit={{UNIT_ID}} stage={{STAGE_INSTANCE_ID}} item={{ITEM}} base={{BASE}}".into(),
+                base_slot_values: HashMap::from([("BASE".into(), "base-value".into())]),
+            }),
+            resolved_fan_out_over: Some(over),
+            workdir: PathBuf::from("/work"),
+            session_name: "session".into(),
+            model: None,
+            effort: None,
+            worktree: None,
+            pre_authorized_tools: vec![],
+            yolo: false,
+            output_slots: vec![],
+            fan_out: Some(FanOut {
+                over: SlotBinding::Literal { value: "[]".into() },
+                unit_id_path: "/id".into(),
+                depends_on_path: depends_on_path.map(str::to_owned),
+                max_parallel: 2,
+                item_bindings: HashMap::from([(
+                    "ITEM".into(),
+                    SlotBinding::Item { path: "/name".into() },
+                )]),
+                worktree: Some(config::WorktreeTemplate {
+                    branch_name: "run/{{STAGE_INSTANCE_ID}}/{{UNIT_ID}}".into(),
+                    worktree_subdir: "units/{{UNIT_ID}}".into(),
+                    base_ref: Some("base/{{STAGE_INSTANCE_ID}}".into()),
+                }),
+            }),
+            gate_output: None,
+        }
+    }
+
     fn make_text_artifact_registry() -> Arc<ArtifactTypeRegistry> {
         let mut registry = ArtifactTypeRegistry::new();
         registry.register(ArtifactTypeDef {
@@ -1550,6 +1738,53 @@ mod tests {
         let value = serde_json::to_value(&state).unwrap();
         let back: DelegatedGateState = serde_json::from_value(value).unwrap();
         assert_eq!(state, back);
+    }
+
+    #[test]
+    fn materialize_fan_out_renders_prompt_and_worktree_per_unit() {
+        let stage_id = StageInstanceId(Uuid::new_v4());
+        let config = fan_out_config(json!([
+            {"id": "a", "name": "alpha", "depends_on": []},
+            {"id": "b", "name": "beta", "depends_on": ["a"]}
+        ]), Some("/depends_on"));
+        let units = materialize_fan_out_units(&config, config.fan_out.as_ref().unwrap(), stage_id).unwrap();
+
+        assert_eq!(units.len(), 2);
+        assert_eq!(units[1].depends_on, vec!["a"]);
+        assert_eq!(units[0].rendered_prompt, format!("unit=a stage={} item=alpha base=base-value", stage_id.0));
+        assert_eq!(units[1].worktree.as_ref().unwrap().branch_name, format!("run/{}/b", stage_id.0));
+        assert_eq!(units[1].worktree.as_ref().unwrap().worktree_subdir, "units/b");
+    }
+
+    #[test]
+    fn materialize_fan_out_rejects_invalid_identity_and_dependencies() {
+        let stage_id = StageInstanceId(Uuid::new_v4());
+        for (over, expected) in [
+            (json!([{"id": "", "depends_on": []}]), "non-empty string"),
+            (json!([{"id": "a", "name": "a", "depends_on": []}, {"id": "a", "name": "b", "depends_on": []}]), "duplicated"),
+            (json!([{"id": "a", "name": "a", "depends_on": ["missing"]}]), "unknown"),
+            (json!([{"id": "a", "name": "a", "depends_on": ["a"]}]), "itself"),
+            (json!([{"id": "a", "name": "a", "depends_on": ["b", "b"]}, {"id": "b", "name": "b", "depends_on": []}]), "repeats"),
+        ] {
+            let config = fan_out_config(over, Some("/depends_on"));
+            let err = materialize_fan_out_units(&config, config.fan_out.as_ref().unwrap(), stage_id).unwrap_err();
+            assert!(err.to_string().contains(expected), "unexpected error: {err}");
+        }
+    }
+
+    #[test]
+    fn materialize_fan_out_rejects_cycles_and_non_array_values() {
+        let stage_id = StageInstanceId(Uuid::new_v4());
+        let cycle = fan_out_config(json!([
+            {"id": "a", "name": "a", "depends_on": ["b"]},
+            {"id": "b", "name": "b", "depends_on": ["a"]}
+        ]), Some("/depends_on"));
+        assert!(materialize_fan_out_units(&cycle, cycle.fan_out.as_ref().unwrap(), stage_id)
+            .unwrap_err().to_string().contains("cycle"));
+
+        let scalar = fan_out_config(json!({"id": "not-an-array"}), None);
+        assert!(materialize_fan_out_units(&scalar, scalar.fan_out.as_ref().unwrap(), stage_id)
+            .unwrap_err().to_string().contains("JSON array"));
     }
 
     #[test]
