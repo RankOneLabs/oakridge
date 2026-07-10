@@ -152,7 +152,7 @@ async fn pass_gate(app: &Router, stage_id: StageInstanceId, artifact_id: Artifac
                 break;
             }
             assert_eq!(response.status(), StatusCode::CONFLICT);
-            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+            tokio::task::yield_now().await;
         }
         assert!(accepted, "gate did not become routable");
     }
