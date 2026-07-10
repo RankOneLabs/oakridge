@@ -407,6 +407,17 @@ impl UnitScheduler {
         let _ = self.recompute_aggregate().await;
     }
 
+    async fn mark_session_ended_without_emit(self: &Arc<Self>, unit_id: &str) {
+        let _ = queries::set_session_unit_status(
+            self.ctx.pool(),
+            &self.ctx.stage_instance_id,
+            unit_id,
+            UnitStatus::Failed,
+            Some(serde_json::json!({"kind": "session_ended_without_emit"})),
+        ).await;
+        let _ = self.recompute_aggregate().await;
+    }
+
     async fn admit(self: &Arc<Self>) -> anyhow::Result<()> {
         let _guard = self.admission_lock.lock().await;
         let units = queries::list_session_units_for_stage(self.ctx.pool(), &self.ctx.stage_instance_id).await?;
@@ -476,53 +487,146 @@ impl UnitScheduler {
             let external = DelegatedExternalRef::parse(unit.external_ref.as_deref().expect("filtered"));
             match self.kbbl_client.read_events_since(&external.sid, -1).await {
                 Ok(response) if response.session_id == external.sid => {
-                    if failure_reason_from_events(&external.sid, &response.events).is_some()
-                        || (matches!(unit.status, UnitStatus::Running) && has_clean_exit(&response.events))
-                    {
-                        queries::set_session_unit_status(
-                            self.ctx.pool(), &self.ctx.stage_instance_id, &unit.unit_id,
-                            UnitStatus::Failed,
-                            Some(serde_json::json!({"kind": "session_ended_without_emit"})),
-                        ).await?;
+                    if let Some(reason) = failure_reason_from_events(&external.sid, &response.events) {
+                        self.mark_failed(&unit.unit_id, reason).await;
                         continue;
                     }
-                    let materialized = materialize_persisted_unit(&self.config, &unit)?;
-                    let mut unit_config = self.config.clone();
-                    unit_config.rendered_prompt = materialized.rendered_prompt;
-                    unit_config.worktree = materialized.worktree;
-                    let cancelled = Arc::new(AtomicBool::new(false));
-                    self.live_sessions.lock().unwrap().insert(key, LiveSession {
-                        cancelled: cancelled.clone(),
-                        ctx: self.ctx.clone(),
-                        unit_id: unit.unit_id.clone(),
-                        sid: external.sid.clone(),
-                        config: unit_config,
-                        worktree_path: external.worktree_path.or(unit.worktree_path.clone()),
-                        worktree_branch: external.worktree_branch.or(unit.worktree_branch.clone()),
-                        worktree_base_ref: external.worktree_base_ref.or(unit.worktree_base_ref.clone()),
-                        unit_scheduler: Some(self.clone()),
-                    });
-                    self.spawn_unit_observer(
-                        unit.unit_id.clone(),
-                        external.sid,
-                        cancelled,
-                    );
+                    // A parked unit with gate state has a valid operator path; a
+                    // clean process exit does not invalidate that durable gate.
+                    if has_clean_exit(&response.events) && unit.gate_state.is_none() {
+                        self.mark_session_ended_without_emit(&unit.unit_id).await;
+                        continue;
+                    }
+                    self.attach_recovered_unit(unit, external)?;
                 }
-                Ok(_) | Err(_) => {
-                    // A transport delay or a terminal missing session remains scoped
-                    // to this unit. Leave its durable row intact; the operator can
-                    // retry a classified failure without disturbing siblings.
-                    if !matches!(unit.status, UnitStatus::Parked) {
+                Err(err) if is_retryable_observer_error(&err) => {
+                    let pre_wait_status = unit.status;
+                    let pre_wait_gate_state = unit.gate_state.clone();
+                    if matches!(unit.status, UnitStatus::Running) {
                         queries::set_session_unit_status(
                             self.ctx.pool(), &self.ctx.stage_instance_id, &unit.unit_id,
-                            UnitStatus::Parked,
+                            UnitStatus::Parked, None,
+                        ).await?;
+                        queries::set_session_unit_gate_state(
+                            self.ctx.pool(), &self.ctx.stage_instance_id, &unit.unit_id,
                             Some(serde_json::json!({"kind": "waiting_for_kbbl"})),
                         ).await?;
                     }
+                    self.spawn_unit_waiting_for_kbbl(unit, external, pre_wait_status, pre_wait_gate_state);
+                }
+                Ok(_) => {
+                    self.mark_failed(&unit.unit_id, format!(
+                        "kbbl responded for a different session than '{}'", external.sid
+                    )).await;
+                }
+                Err(err) => {
+                    self.mark_failed(&unit.unit_id, err.to_string()).await;
                 }
             }
         }
         self.recompute_aggregate().await
+    }
+
+    fn attach_recovered_unit(
+        self: &Arc<Self>,
+        unit: crate::types::SessionUnit,
+        external: DelegatedExternalRef,
+    ) -> anyhow::Result<()> {
+        let materialized = materialize_persisted_unit(&self.config, &unit)?;
+        let mut unit_config = self.config.clone();
+        unit_config.rendered_prompt = materialized.rendered_prompt;
+        unit_config.worktree = materialized.worktree;
+        let key = (self.ctx.stage_instance_id, unit.unit_id.clone());
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let inserted = {
+            let mut sessions = self.live_sessions.lock().unwrap();
+            if sessions.contains_key(&key) {
+                false
+            } else {
+                sessions.insert(key, LiveSession {
+                    cancelled: cancelled.clone(), ctx: self.ctx.clone(), unit_id: unit.unit_id.clone(),
+                    sid: external.sid.clone(), config: unit_config,
+                    worktree_path: external.worktree_path.or(unit.worktree_path),
+                    worktree_branch: external.worktree_branch.or(unit.worktree_branch),
+                    worktree_base_ref: external.worktree_base_ref.or(unit.worktree_base_ref),
+                    unit_scheduler: Some(self.clone()),
+                });
+                true
+            }
+        };
+        if inserted {
+            self.spawn_unit_observer(unit.unit_id, external.sid, cancelled);
+        }
+        Ok(())
+    }
+
+    fn spawn_unit_waiting_for_kbbl(
+        self: &Arc<Self>,
+        unit: crate::types::SessionUnit,
+        external: DelegatedExternalRef,
+        pre_wait_status: UnitStatus,
+        pre_wait_gate_state: Option<Value>,
+    ) {
+        let scheduler = self.clone();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let key = (self.ctx.stage_instance_id, unit.unit_id.clone());
+        {
+            let mut sessions = self.live_sessions.lock().unwrap();
+            if sessions.contains_key(&key) { return; }
+            sessions.insert(key.clone(), LiveSession {
+                cancelled: cancelled.clone(), ctx: self.ctx.clone(), unit_id: unit.unit_id.clone(),
+                sid: external.sid.clone(), config: self.config.clone(),
+                worktree_path: external.worktree_path.clone().or(unit.worktree_path.clone()),
+                worktree_branch: external.worktree_branch.clone().or(unit.worktree_branch.clone()),
+                worktree_base_ref: external.worktree_base_ref.clone().or(unit.worktree_base_ref.clone()),
+                unit_scheduler: Some(self.clone()),
+            });
+        }
+        tokio::spawn(async move {
+            loop {
+                sleep(Duration::from_millis(WAITING_FOR_KBBL_RETRY_MS)).await;
+                if cancelled.load(Ordering::SeqCst) { return; }
+                match scheduler.kbbl_client.read_events_since(&external.sid, -1).await {
+                    Ok(response) if response.session_id == external.sid => {
+                        if let Some(reason) = failure_reason_from_events(&external.sid, &response.events) {
+                            scheduler.live_sessions.lock().unwrap().remove(&key);
+                            scheduler.mark_failed(&unit.unit_id, reason).await;
+                            return;
+                        }
+                        if has_clean_exit(&response.events) && pre_wait_gate_state.is_none() {
+                            scheduler.live_sessions.lock().unwrap().remove(&key);
+                            scheduler.mark_session_ended_without_emit(&unit.unit_id).await;
+                            return;
+                        }
+                        let _ = queries::set_session_unit_status(
+                            scheduler.ctx.pool(), &scheduler.ctx.stage_instance_id, &unit.unit_id,
+                            pre_wait_status, None,
+                        ).await;
+                        let _ = queries::set_session_unit_gate_state(
+                            scheduler.ctx.pool(), &scheduler.ctx.stage_instance_id, &unit.unit_id,
+                            pre_wait_gate_state,
+                        ).await;
+                        scheduler.live_sessions.lock().unwrap().remove(&key);
+                        if scheduler.attach_recovered_unit(unit, external).is_err() {
+                            scheduler.mark_failed(&key.1, "failed to rebuild recovered unit".into()).await;
+                        }
+                        let _ = scheduler.recompute_aggregate().await;
+                        return;
+                    }
+                    Ok(_) => {
+                        scheduler.live_sessions.lock().unwrap().remove(&key);
+                        scheduler.mark_failed(&unit.unit_id, "kbbl returned a mismatched session id".into()).await;
+                        return;
+                    }
+                    Err(err) if is_retryable_observer_error(&err) => continue,
+                    Err(err) => {
+                        scheduler.live_sessions.lock().unwrap().remove(&key);
+                        scheduler.mark_failed(&unit.unit_id, err.to_string()).await;
+                        return;
+                    }
+                }
+            }
+        });
     }
 
     async fn launch_unit(self: &Arc<Self>, unit: &MaterializedFanOutUnit) -> anyhow::Result<()> {
