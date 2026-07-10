@@ -53,7 +53,7 @@
         "stage_type": "delegated_session",
         "config": {
           "runtime": "claude-code",
-          "prompt_template_path": "dev-flow/build.md",
+          "prompt_template_path": "dev-flow/build_v1.md",
           "slot_bindings": {
             "PLAN":          { "from": "input", "input_name": "plan", "path": null },
             "WORKTREE_PATH": { "from": "context", "path": "/worktree_path" },
@@ -82,7 +82,8 @@
             "BUILD_RESULT": { "from": "input", "input_name": "build_result", "path": null },
             "PLAN":         { "from": "input", "input_name": "plan",         "path": null },
             "WORKTREE_PATH": { "from": "context", "path": "/worktree_path" },
-            "OAKRIDGE_URL":  { "from": "context", "path": "/oakridge_url" }
+            "OAKRIDGE_URL":  { "from": "context", "path": "/oakridge_url" },
+            "UNIT_ID":       { "from": "literal", "value": "0" }
           },
           "workdir":      { "from": "context", "path": "/worktree_path" },
           "session_name": "assessor-{{STAGE_INSTANCE_ID}}",
