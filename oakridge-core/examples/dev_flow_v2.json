@@ -55,7 +55,14 @@
           "runtime": "claude-code",
           "prompt_template_path": "dev-flow/build.md",
           "slot_bindings": {
-            "OAKRIDGE_URL": { "from": "context", "path": "/oakridge_url" }
+            "OAKRIDGE_URL":       { "from": "context", "path": "/oakridge_url" },
+            "UNIT_ID":            { "from": "literal", "value": "0" },
+            "COHORT_ID":          { "from": "literal", "value": "" },
+            "COHORT_TITLE":       { "from": "literal", "value": "" },
+            "COHORT_SCOPE":       { "from": "literal", "value": "" },
+            "COHORT_DESCRIPTION": { "from": "literal", "value": "" },
+            "COHORT_DECISIONS":   { "from": "literal", "value": "" },
+            "COHORT_ACCEPTANCE":  { "from": "literal", "value": "" }
           },
           "workdir":      { "from": "literal", "value": "/" },
           "session_name": "build-{{STAGE_INSTANCE_ID}}-{{UNIT_ID}}",
@@ -99,7 +106,8 @@
             "BUILD_RESULT":  { "from": "input", "input_name": "build_result", "path": null },
             "PLAN":          { "from": "input", "input_name": "plan",         "path": null },
             "WORKTREE_PATH": { "from": "context", "path": "/worktree_path" },
-            "OAKRIDGE_URL":  { "from": "context", "path": "/oakridge_url" }
+            "OAKRIDGE_URL":  { "from": "context", "path": "/oakridge_url" },
+            "UNIT_ID":       { "from": "literal", "value": "0" }
           },
           "workdir":      { "from": "context", "path": "/worktree_path" },
           "session_name": "assessor-{{STAGE_INSTANCE_ID}}-{{UNIT_ID}}",

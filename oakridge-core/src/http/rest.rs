@@ -145,8 +145,8 @@ pub struct OperatorStageArtifact {
     pub label: Option<String>,
 }
 
-/// Per-unit row within a fanned stage. For N=1 stages there is exactly one unit
-/// with unit_id="0".
+/// Per-unit row within a fanned stage. Empty until the stage activates; once
+/// started, N=1 stages have exactly one row with unit_id="0".
 #[derive(Serialize, Clone)]
 pub struct OperatorStageUnit {
     pub unit_id: String,
