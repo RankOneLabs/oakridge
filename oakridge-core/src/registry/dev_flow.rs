@@ -1,6 +1,7 @@
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::collab::ReviewItemCandidate;
 use crate::registry::artifact_type::{ArtifactCapabilities, ArtifactTypeDef, ArtifactTypeRegistry};
 
 // ── Body structs for schema validation ───────────────────────────────────────
@@ -101,6 +102,37 @@ fn validate_pr_summary(v: &Value) -> crate::Result<()> {
         .map_err(Into::into)
 }
 
+// ── dev.spec_analysis extractor ───────────────────────────────────────────────
+
+/// Map each finding in a spec_analysis body to a ReviewItemCandidate.
+/// Findings are free-form JSON; we extract `description` as the claim and `id` as the reality key.
+fn extract_spec_analysis_review_items(body: &Value) -> Vec<ReviewItemCandidate> {
+    let Some(findings) = body.get("findings").and_then(Value::as_array) else {
+        return vec![];
+    };
+    findings
+        .iter()
+        .enumerate()
+        .map(|(i, finding)| {
+            let claim = finding
+                .get("description")
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| finding.get("id").and_then(Value::as_str).unwrap_or("(finding)"))
+                .to_string();
+            let reality = finding
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+                .to_string();
+            ReviewItemCandidate {
+                anchor: format!("/findings/{i}"),
+                claim,
+                reality,
+            }
+        })
+        .collect()
+}
+
 // ── Registration ──────────────────────────────────────────────────────────────
 
 /// Register the five dev-flow artifact types in the given registry.
@@ -127,6 +159,7 @@ pub fn register_dev_flow_types(registry: &mut ArtifactTypeRegistry) {
             review_items: true,
         },
         anchor_schema: None,
+        review_items_extractor: Some(extract_spec_analysis_review_items),
     });
     // dev.plan: fully interactive (cohort 5); anchor_schema covers cohort/dependency atoms.
     registry.register(ArtifactTypeDef {
@@ -143,6 +176,7 @@ pub fn register_dev_flow_types(registry: &mut ArtifactTypeRegistry) {
             "/cohorts".into(),
             "/dependency_order".into(),
         ]),
+        review_items_extractor: None,
     });
     // dev.build_result: reviewable, commentable, atom_editable; anchor_schema covers top-level sections.
     registry.register(ArtifactTypeDef {
@@ -161,6 +195,7 @@ pub fn register_dev_flow_types(registry: &mut ArtifactTypeRegistry) {
             "/tests".into(),
             "/known_issues".into(),
         ]),
+        review_items_extractor: None,
     });
     // dev.assessment: reviewable, commentable; no atom editing or review_items.
     registry.register(ArtifactTypeDef {
@@ -174,6 +209,7 @@ pub fn register_dev_flow_types(registry: &mut ArtifactTypeRegistry) {
             review_items: false,
         },
         anchor_schema: None,
+        review_items_extractor: None,
     });
     // dev.pr_summary: reviewable only.
     registry.register(ArtifactTypeDef {
@@ -187,6 +223,7 @@ pub fn register_dev_flow_types(registry: &mut ArtifactTypeRegistry) {
             review_items: false,
         },
         anchor_schema: None,
+        review_items_extractor: None,
     });
 }
 

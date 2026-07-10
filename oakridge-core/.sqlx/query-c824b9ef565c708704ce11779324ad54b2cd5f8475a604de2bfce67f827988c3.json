@@ -1,0 +1,68 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id, artifact_id, revision_id, anchor, claim, reality, status, resolution, created_at FROM review_items WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "artifact_id",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "revision_id",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "anchor",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "claim",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "reality",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "status",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "resolution",
+        "ordinal": 7,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 8,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "c824b9ef565c708704ce11779324ad54b2cd5f8475a604de2bfce67f827988c3"
+}

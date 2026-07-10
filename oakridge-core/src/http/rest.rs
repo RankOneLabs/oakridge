@@ -1111,6 +1111,540 @@ pub async fn get_artifact_types(
     Ok(Json(types))
 }
 
+// ── Collab DTOs ───────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct PostThreadRequest {
+    pub anchor: Option<String>,
+    pub body: String,
+    pub author: String,
+}
+
+#[derive(Serialize)]
+pub struct PostThreadResponse {
+    pub thread_id: String,
+    pub message_id: String,
+}
+
+#[derive(Deserialize)]
+pub struct PostMessageRequest {
+    pub body: String,
+    pub author: String,
+}
+
+#[derive(Serialize)]
+pub struct PostMessageResponse {
+    pub message_id: String,
+}
+
+#[derive(Deserialize)]
+pub struct PatchThreadRequest {
+    pub status: String,
+}
+
+#[derive(Serialize)]
+pub struct ThreadWithMessages {
+    pub id: String,
+    pub artifact_id: String,
+    pub revision_id: String,
+    pub anchor: Option<String>,
+    pub status: String,
+    pub created_at: String,
+    pub messages: Vec<MessageDto>,
+}
+
+#[derive(Serialize)]
+pub struct MessageDto {
+    pub id: String,
+    pub thread_id: String,
+    pub body: String,
+    pub author: String,
+    pub created_at: String,
+}
+
+#[derive(Deserialize)]
+pub struct PostAtomEditRequest {
+    pub anchor: String,
+    pub prev_value: Value,
+    pub new_value: Value,
+    pub author: String,
+}
+
+#[derive(Serialize)]
+pub struct PostAtomEditResponse {
+    pub artifact_id: String,
+}
+
+#[derive(Deserialize)]
+pub struct PostReviewItemRequest {
+    pub anchor: String,
+    pub claim: String,
+    pub reality: String,
+}
+
+#[derive(Serialize)]
+pub struct ReviewItemDto {
+    pub id: String,
+    pub artifact_id: String,
+    pub revision_id: String,
+    pub anchor: String,
+    pub claim: String,
+    pub reality: String,
+    pub status: String,
+    pub resolution: Option<String>,
+    pub created_at: String,
+}
+
+impl From<crate::collab::ReviewItem> for ReviewItemDto {
+    fn from(ri: crate::collab::ReviewItem) -> Self {
+        ReviewItemDto {
+            id: ri.id.to_string(),
+            artifact_id: ri.artifact_id.to_string(),
+            revision_id: ri.revision_id,
+            anchor: ri.anchor,
+            claim: ri.claim,
+            reality: ri.reality,
+            status: ri.status.as_str().to_string(),
+            resolution: ri.resolution,
+            created_at: ri.created_at.to_rfc3339(),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct PatchReviewItemRequest {
+    pub status: String,
+    pub resolution: Option<String>,
+}
+
+// ── Collab helpers ────────────────────────────────────────────────────────────
+
+/// Require that the artifact type supports the given capability flag.
+fn require_cap(
+    state: &super::AppState,
+    artifact_type: &str,
+    getter: impl Fn(&crate::registry::artifact_type::ArtifactCapabilities) -> bool,
+    cap_name: &str,
+) -> Result<(), AppError> {
+    let def = state
+        .artifact_registry
+        .get(artifact_type)
+        .ok_or_else(|| crate::Error::RegistryMiss(artifact_type.to_string()))?;
+    if !getter(&def.capabilities) {
+        return Err(AppError::Domain(crate::Error::Validation(format!(
+            "artifact type '{artifact_type}' does not support '{cap_name}'"
+        ))));
+    }
+    Ok(())
+}
+
+/// Walk the parent chain to find the chain-root artifact id.
+async fn chain_root_id(
+    pool: &sqlx::SqlitePool,
+    artifact_id: &crate::types::ArtifactId,
+) -> crate::Result<String> {
+    let chain = queries::get_artifact_chain(pool, artifact_id).await?;
+    let root = chain
+        .last()
+        .ok_or_else(|| crate::Error::Validation("empty artifact chain".into()))?;
+    Ok(root.id.0.to_string())
+}
+
+// ── POST /artifacts/:id/threads ───────────────────────────────────────────────
+
+pub async fn post_thread(
+    State(state): State<super::AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<PostThreadRequest>,
+) -> Result<(StatusCode, Json<PostThreadResponse>), AppError> {
+    let artifact_id = crate::types::ArtifactId(id);
+    let artifact = queries::get_artifact_by_id(&state.pool, &artifact_id).await?;
+    require_cap(&state, &artifact.artifact_type, |c| c.commentable, "commentable")?;
+
+    let revision_id = chain_root_id(&state.pool, &artifact_id).await?;
+    let now = chrono::Utc::now();
+    let thread_id = Uuid::new_v4();
+    let message_id = Uuid::new_v4();
+
+    // Insert thread + first message atomically so a failed message insert cannot
+    // leave an orphaned thread row.
+    let mut txn = state.pool.begin().await.map_err(|e| AppError::Domain(e.into()))?;
+    sqlx::query(
+        "INSERT INTO threads (id, artifact_id, revision_id, anchor, status, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(thread_id.to_string())
+    .bind(id.to_string())
+    .bind(&revision_id)
+    .bind(&req.anchor)
+    .bind("open")
+    .bind(now.to_rfc3339())
+    .execute(&mut *txn)
+    .await
+    .map_err(|e| AppError::Domain(e.into()))?;
+
+    sqlx::query(
+        "INSERT INTO messages (id, thread_id, body, author, created_at) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(message_id.to_string())
+    .bind(thread_id.to_string())
+    .bind(&req.body)
+    .bind(&req.author)
+    .bind(now.to_rfc3339())
+    .execute(&mut *txn)
+    .await
+    .map_err(|e| AppError::Domain(e.into()))?;
+
+    txn.commit().await.map_err(|e| AppError::Domain(e.into()))?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(PostThreadResponse {
+            thread_id: thread_id.to_string(),
+            message_id: message_id.to_string(),
+        }),
+    ))
+}
+
+// ── GET /artifacts/:id/threads ────────────────────────────────────────────────
+
+pub async fn list_threads(
+    State(state): State<super::AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<ThreadWithMessages>>, AppError> {
+    let artifact_id = crate::types::ArtifactId(id);
+    let artifact = queries::get_artifact_by_id(&state.pool, &artifact_id).await?;
+    require_cap(&state, &artifact.artifact_type, |c| c.commentable, "commentable")?;
+
+    // Query by chain-root (revision_id) so threads survive atom-edits that
+    // create new artifact revisions.
+    // Known: N+1 message loads per thread; acceptable for now given SQLite's
+    // single-writer model and expected small thread counts. Replace with a
+    // JOIN + client-side grouping if this becomes a bottleneck.
+    let revision_id = chain_root_id(&state.pool, &artifact_id).await?;
+    let threads = queries::list_threads_for_artifact(&state.pool, &revision_id).await?;
+    let mut result = Vec::with_capacity(threads.len());
+    for t in threads {
+        let messages = queries::list_messages_for_thread(&state.pool, &t.id).await?;
+        result.push(ThreadWithMessages {
+            id: t.id.to_string(),
+            artifact_id: t.artifact_id.to_string(),
+            revision_id: t.revision_id,
+            anchor: t.anchor,
+            status: t.status.as_str().to_string(),
+            created_at: t.created_at.to_rfc3339(),
+            messages: messages
+                .into_iter()
+                .map(|m| MessageDto {
+                    id: m.id.to_string(),
+                    thread_id: m.thread_id.to_string(),
+                    body: m.body,
+                    author: m.author,
+                    created_at: m.created_at.to_rfc3339(),
+                })
+                .collect(),
+        });
+    }
+    Ok(Json(result))
+}
+
+// ── POST /threads/:id/messages ────────────────────────────────────────────────
+
+pub async fn post_message(
+    State(state): State<super::AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<PostMessageRequest>,
+) -> Result<(StatusCode, Json<PostMessageResponse>), AppError> {
+    let thread = queries::get_thread_by_id(&state.pool, &id).await?;
+    if thread.status != crate::collab::ThreadStatus::Open {
+        return Err(AppError::Domain(crate::Error::Validation(
+            "cannot post to a resolved thread".into(),
+        )));
+    }
+    let message_id = Uuid::new_v4();
+    let message = crate::collab::CollabMessage {
+        id: message_id,
+        thread_id: id,
+        body: req.body,
+        author: req.author,
+        created_at: chrono::Utc::now(),
+    };
+    queries::insert_message(&state.pool, &message).await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(PostMessageResponse {
+            message_id: message_id.to_string(),
+        }),
+    ))
+}
+
+// ── POST /threads/:id/ping ────────────────────────────────────────────────────
+
+pub async fn post_ping(
+    State(state): State<super::AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Value>, AppError> {
+    let thread = queries::get_thread_by_id(&state.pool, &id).await?;
+    if thread.status != crate::collab::ThreadStatus::Open {
+        return Err(AppError::Domain(crate::Error::Validation(
+            "cannot ping a resolved thread".into(),
+        )));
+    }
+    let artifact_id = crate::types::ArtifactId(thread.artifact_id);
+    let artifact = queries::get_artifact_by_id(&state.pool, &artifact_id).await?;
+    let messages = queries::list_messages_for_thread(&state.pool, &id).await?;
+
+    let thread_id_str = id.to_string();
+    let anchor_str = thread.anchor.clone().unwrap_or_else(|| "entire artifact".into());
+    let artifact_body_pretty =
+        serde_json::to_string_pretty(&artifact.body).unwrap_or_else(|_| artifact.body.to_string());
+
+    let messages_text = messages
+        .iter()
+        .map(|m| format!("{} ({}): {}", m.author, m.created_at.to_rfc3339(), m.body))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+
+    let oakridge_base = std::env::var("OAKRIDGE_CORE_SELF_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:8790".into());
+
+    // Load ping-responder prompt template from prompts_dir.
+    let prompts_dir = std::env::var("OAKRIDGE_PROMPTS_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("./prompts"));
+    let template_path = prompts_dir.join("collab").join("ping_responder.md");
+    let template = match tokio::fs::read_to_string(&template_path).await {
+        Ok(t) => t,
+        Err(_) => {
+            return Err(AppError::Internal(format!(
+                "ping_responder.md not found at {:?}",
+                template_path
+            )))
+        }
+    };
+
+    let prompt = template
+        .replace("{{ARTIFACT_ID}}", &artifact.id.0.to_string())
+        .replace("{{ARTIFACT_BODY}}", &artifact_body_pretty)
+        .replace("{{THREAD_ID}}", &thread_id_str)
+        .replace("{{ANCHOR}}", &anchor_str)
+        .replace("{{MESSAGES}}", &messages_text)
+        .replace("{{OAKRIDGE_API_BASE}}", &format!("{oakridge_base}"));
+
+    // Spawn fire-and-forget kbbl session for the responder.
+    // SECURITY NOTE: artifact_body and thread messages are included verbatim in the
+    // prompt. A JSON fence is not sufficient to prevent instruction-following content
+    // from steering the responder. Acceptable in a controlled homelab context where
+    // all content is operator-authored; revisit with a data-isolation wrapper
+    // (<data>…</data> + explicit non-instructional framing) if the surface becomes
+    // publicly writable.
+    let kbbl_url = std::env::var("KBBL_API_BASE_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:8788/".into());
+    let artifact_id_str = thread.artifact_id.to_string();
+    match crate::executor::delegated_session::kbbl_client::KbblClient::new(&kbbl_url) {
+        Ok(kbbl) => {
+            tokio::spawn(async move {
+                use crate::executor::delegated_session::kbbl_client::{
+                    CreateSessionRequest, SendInputRequest,
+                };
+                use crate::executor::delegated_session::config::DelegatedRuntime;
+                let req = CreateSessionRequest {
+                    workdir: "/tmp".into(),
+                    name: format!("ping-responder-{}", thread_id_str),
+                    artifact_id: artifact_id_str,
+                    runtime: DelegatedRuntime::ClaudeCode,
+                    model: None,
+                    effort: None,
+                    worktree: None,
+                };
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(30),
+                    kbbl.create_session(req),
+                )
+                .await
+                {
+                    Ok(Ok(snap)) => {
+                        let _ = tokio::time::timeout(
+                            std::time::Duration::from_secs(30),
+                            kbbl.send_input(&snap.sid, SendInputRequest { text: prompt }),
+                        )
+                        .await;
+                    }
+                    Ok(Err(e)) => {
+                        tracing::warn!("ping-responder session failed: {e}");
+                    }
+                    Err(_) => {
+                        tracing::warn!("ping-responder: create_session timed out");
+                    }
+                }
+            });
+        }
+        Err(e) => {
+            tracing::warn!("ping-responder: invalid KBBL_API_BASE_URL: {e}");
+        }
+    }
+
+    Ok(Json(json!({ "ok": true })))
+}
+
+// ── PATCH /threads/:id ────────────────────────────────────────────────────────
+
+pub async fn patch_thread(
+    State(state): State<super::AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<PatchThreadRequest>,
+) -> Result<Json<Value>, AppError> {
+    let status = crate::collab::ThreadStatus::from_str(&req.status)?;
+    queries::update_thread_status(&state.pool, &id, &status).await?;
+    Ok(Json(json!({ "thread_id": id.to_string(), "status": req.status })))
+}
+
+// ── POST /artifacts/:id/edits ─────────────────────────────────────────────────
+
+pub async fn post_atom_edit(
+    State(state): State<super::AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<PostAtomEditRequest>,
+) -> Result<(StatusCode, Json<PostAtomEditResponse>), AppError> {
+    let artifact_id = crate::types::ArtifactId(id);
+    let artifact = queries::get_artifact_by_id(&state.pool, &artifact_id).await?;
+    require_cap(&state, &artifact.artifact_type, |c| c.atom_editable, "atom_editable")?;
+
+    // Reject anchors not declared in the type's anchor_schema.
+    if let Some(def) = state.artifact_registry.get(&artifact.artifact_type) {
+        if let Some(schema) = &def.anchor_schema {
+            if !schema.iter().any(|a| a == &req.anchor) {
+                return Err(AppError::Domain(crate::Error::Validation(format!(
+                    "anchor '{}' is not in the anchor_schema for type '{}'",
+                    req.anchor, artifact.artifact_type
+                ))));
+            }
+        }
+    }
+
+    // Verify prev_value matches current value at anchor (OCC check).
+    let current_at_anchor = artifact.body.pointer(&req.anchor);
+    let prev_matches = match current_at_anchor {
+        Some(v) => v == &req.prev_value,
+        None => req.prev_value.is_null(),
+    };
+    if !prev_matches {
+        return Err(AppError::Conflict(format!(
+            "prev_value mismatch at anchor '{}': optimistic lock failed",
+            req.anchor
+        )));
+    }
+
+    // Apply edit to a clone of the body.
+    let mut new_body = artifact.body.clone();
+    let target = new_body
+        .pointer_mut(&req.anchor)
+        .ok_or_else(|| crate::Error::Validation(format!("anchor '{}' not found in body", req.anchor)))?;
+    *target = req.new_value;
+
+    // Validate the new body against the artifact type's schema.
+    if let Some(def) = state.artifact_registry.get(&artifact.artifact_type) {
+        (def.validate)(&new_body)?;
+    }
+
+    // Create a new artifact revision.
+    let new_id = crate::types::ArtifactId(Uuid::new_v4());
+    let new_artifact = crate::types::Artifact {
+        id: new_id,
+        run_id: artifact.run_id,
+        stage_instance_id: artifact.stage_instance_id,
+        artifact_type: artifact.artifact_type,
+        output_name: artifact.output_name,
+        label: artifact.label,
+        body: new_body,
+        version: artifact.version + 1,
+        parent_artifact_id: Some(artifact_id),
+        created_at: chrono::Utc::now(),
+    };
+    // The unique index on artifact(parent_artifact_id) enforces the OCC guarantee
+    // at the DB level: if two concurrent edits both pass the in-memory prev_value
+    // check, only the first commit succeeds; the second gets a unique violation → 409.
+    match queries::insert_artifact(&state.pool, &new_artifact).await {
+        Ok(()) => {}
+        Err(crate::Error::Db(sqlx::Error::Database(dbe)))
+            if dbe.kind() == sqlx::error::ErrorKind::UniqueViolation =>
+        {
+            return Err(AppError::Conflict(
+                "concurrent edit: another revision already exists for this artifact".into(),
+            ));
+        }
+        Err(e) => return Err(AppError::Domain(e)),
+    }
+
+    Ok((
+        StatusCode::CREATED,
+        Json(PostAtomEditResponse {
+            artifact_id: new_id.0.to_string(),
+        }),
+    ))
+}
+
+// ── POST /artifacts/:id/review_items ─────────────────────────────────────────
+
+pub async fn post_review_item(
+    State(state): State<super::AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<PostReviewItemRequest>,
+) -> Result<(StatusCode, Json<ReviewItemDto>), AppError> {
+    let artifact_id = crate::types::ArtifactId(id);
+    let artifact = queries::get_artifact_by_id(&state.pool, &artifact_id).await?;
+    require_cap(&state, &artifact.artifact_type, |c| c.review_items, "review_items")?;
+
+    let revision_id = chain_root_id(&state.pool, &artifact_id).await?;
+    let ri = crate::collab::ReviewItem {
+        id: Uuid::new_v4(),
+        artifact_id: id,
+        revision_id,
+        anchor: req.anchor,
+        claim: req.claim,
+        reality: req.reality,
+        status: crate::collab::ReviewItemStatus::Open,
+        resolution: None,
+        created_at: chrono::Utc::now(),
+    };
+    queries::insert_review_item(&state.pool, &ri).await?;
+    Ok((StatusCode::CREATED, Json(ri.into())))
+}
+
+// ── GET /artifacts/:id/review_items ──────────────────────────────────────────
+
+pub async fn list_review_items(
+    State(state): State<super::AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<ReviewItemDto>>, AppError> {
+    let artifact_id = crate::types::ArtifactId(id);
+    let artifact = queries::get_artifact_by_id(&state.pool, &artifact_id).await?;
+    require_cap(&state, &artifact.artifact_type, |c| c.review_items, "review_items")?;
+
+    let revision_id = chain_root_id(&state.pool, &artifact_id).await?;
+    let items = queries::list_review_items_for_artifact(&state.pool, &revision_id).await?;
+    Ok(Json(items.into_iter().map(ReviewItemDto::from).collect()))
+}
+
+// ── PATCH /review_items/:id ───────────────────────────────────────────────────
+
+pub async fn patch_review_item_status(
+    State(state): State<super::AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<PatchReviewItemRequest>,
+) -> Result<Json<ReviewItemDto>, AppError> {
+    let status = crate::collab::ReviewItemStatus::from_str(&req.status)?;
+    queries::patch_review_item(
+        &state.pool,
+        &id,
+        &status,
+        req.resolution.as_deref(),
+    )
+    .await?;
+    let updated = queries::get_review_item_by_id(&state.pool, &id).await?;
+    Ok(Json(updated.into()))
+}
+
 // ── Integration tests ─────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1268,6 +1802,7 @@ mod tests {
                 review_items: false,
             },
             anchor_schema: None,
+            review_items_extractor: None,
         });
         let artifact_registry = Arc::new(art_reg);
 
@@ -2436,6 +2971,382 @@ mod tests {
             body["error"].as_str().is_some(),
             "error field must be present"
         );
+    }
+
+    // ── Collab test helpers ───────────────────────────────────────────────────
+
+    fn extract_title_review_items(body: &Value) -> Vec<crate::collab::ReviewItemCandidate> {
+        if let Some(title) = body.get("title").and_then(|v| v.as_str()) {
+            vec![crate::collab::ReviewItemCandidate {
+                anchor: "/title".into(),
+                claim: "title must be non-empty".into(),
+                reality: title.to_string(),
+            }]
+        } else {
+            vec![]
+        }
+    }
+
+    async fn make_state_with_collab(
+        stage_types: Vec<Arc<dyn crate::registry::stage_type::StageType>>,
+    ) -> AppState {
+        let path = format!("/tmp/oakridge_http_collab_{}.db", Uuid::new_v4());
+        let pool = Arc::new(db::init_pool(&format!("sqlite:{}", path)).await.unwrap());
+
+        let mut stage_reg = StageTypeRegistry::new();
+        for st in stage_types {
+            stage_reg.register(st);
+        }
+
+        let mut art_reg = ArtifactTypeRegistry::new();
+        // Collab-capable type used by collab tests.
+        art_reg.register(ArtifactTypeDef {
+            id: "collab".into(),
+            validate: |_| Ok(()),
+            component_id: "collab-viewer".into(),
+            capabilities: crate::registry::artifact_type::ArtifactCapabilities {
+                reviewable: true,
+                commentable: true,
+                atom_editable: true,
+                review_items: true,
+            },
+            anchor_schema: Some(vec!["/title".into()]),
+            review_items_extractor: Some(extract_title_review_items),
+        });
+        // Non-collab type for capability-gating tests.
+        art_reg.register(ArtifactTypeDef {
+            id: "any".into(),
+            validate: |_| Ok(()),
+            component_id: "v".into(),
+            capabilities: Default::default(),
+            anchor_schema: None,
+            review_items_extractor: None,
+        });
+
+        let bus = EventBus::new();
+        let stage_registry = Arc::new(stage_reg);
+        let artifact_registry = Arc::new(art_reg);
+        let coordinator = Arc::new(Coordinator::new(
+            pool.clone(),
+            stage_registry.clone(),
+            artifact_registry.clone(),
+            bus.clone(),
+        ));
+        AppState { pool, stage_registry, artifact_registry, coordinator, bus }
+    }
+
+    /// Inserts the minimal DB rows needed for collab tests and returns the artifact id.
+    async fn seed_collab_artifact(state: &AppState, artifact_type: &str) -> (Uuid, Uuid) {
+        use crate::types::{
+            Artifact, ArtifactId, RunStatus, StageInstance, StageInstanceId, WorkflowDef,
+            WorkflowDefId, WorkflowGraph, WorkflowRun, WorkflowRunId,
+        };
+        let now = chrono::Utc::now();
+        let def = WorkflowDef {
+            id: WorkflowDefId(Uuid::new_v4()),
+            name: format!("collab-wf-{}", Uuid::new_v4()),
+            version: 1,
+            graph: WorkflowGraph { stages: HashMap::new(), edges: vec![] },
+            created_at: now,
+        };
+        queries::insert_workflow_def(&state.pool, &def).await.unwrap();
+        let run = WorkflowRun {
+            id: WorkflowRunId(Uuid::new_v4()),
+            workflow_def_id: def.id,
+            project_id: None,
+            status: RunStatus::Running,
+            context: json!({}),
+            version: 1,
+            created_at: now,
+            updated_at: now,
+        };
+        queries::insert_workflow_run(&state.pool, &run).await.unwrap();
+        let si_id = StageInstanceId(Uuid::new_v4());
+        let si = StageInstance {
+            id: si_id,
+            run_id: run.id,
+            stage_key: "s1".into(),
+            stage_type: "dummy".into(),
+            status: crate::types::StageStatus::Running,
+            config: json!({}),
+            parked_reason: None,
+            parked_meta: None,
+            terminal_meta: None,
+            external_ref: None,
+            started_at: None,
+            ended_at: None,
+            created_at: now,
+            updated_at: now,
+        };
+        queries::insert_stage_instance(&state.pool, &si).await.unwrap();
+        let artifact_id = ArtifactId(Uuid::new_v4());
+        let artifact = Artifact {
+            id: artifact_id,
+            run_id: run.id,
+            stage_instance_id: si_id,
+            artifact_type: artifact_type.into(),
+            output_name: Some("out".into()),
+            label: None,
+            body: json!({"title": "hello"}),
+            version: 1,
+            parent_artifact_id: None,
+            created_at: now,
+        };
+        queries::insert_artifact(&state.pool, &artifact).await.unwrap();
+        (artifact_id.0, si_id.0)
+    }
+
+    // ── Collab: thread tests ──────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_collab_post_thread_and_list_happy_path() {
+        let state = make_state_with_collab(vec![]).await;
+        let (art_id, _) = seed_collab_artifact(&state, "collab").await;
+
+        let app = crate::http::router(state.clone());
+        let (status, body) = req(
+            app,
+            "POST",
+            &format!("/artifacts/{}/threads", art_id),
+            Some(json!({"anchor": "/title", "body": "looks wrong", "author": "reviewer"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "post_thread: {body:?}");
+        let thread_id = body["thread_id"].as_str().unwrap().to_string();
+
+        let app = crate::http::router(state.clone());
+        let (status, list) = req(
+            app,
+            "GET",
+            &format!("/artifacts/{}/threads", art_id),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let threads = list.as_array().unwrap();
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0]["id"], json!(thread_id));
+        assert_eq!(threads[0]["messages"].as_array().unwrap().len(), 1);
+        assert_eq!(threads[0]["messages"][0]["body"], json!("looks wrong"));
+    }
+
+    #[tokio::test]
+    async fn test_collab_thread_survives_atom_edit_chain_root_query() {
+        let state = make_state_with_collab(vec![]).await;
+        let (art_id, _) = seed_collab_artifact(&state, "collab").await;
+
+        // Open a thread on the original revision.
+        let app = crate::http::router(state.clone());
+        let (status, _) = req(
+            app,
+            "POST",
+            &format!("/artifacts/{}/threads", art_id),
+            Some(json!({"body": "original comment", "author": "a"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+
+        // Atom-edit creates a child revision.
+        let app = crate::http::router(state.clone());
+        let (status, edit_body) = req(
+            app,
+            "POST",
+            &format!("/artifacts/{}/edits", art_id),
+            Some(json!({"anchor": "/title", "prev_value": "hello", "new_value": "world", "author": "a"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "atom-edit: {edit_body:?}");
+        let child_id = edit_body["artifact_id"].as_str().unwrap().to_string();
+
+        // GET threads on the child revision should still return the original thread
+        // because both share the same revision_id (chain root = original artifact).
+        let app = crate::http::router(state.clone());
+        let (status, list) = req(
+            app,
+            "GET",
+            &format!("/artifacts/{}/threads", child_id),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            list.as_array().unwrap().len(),
+            1,
+            "thread must be visible on child revision: {list:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_collab_thread_capability_gating() {
+        let state = make_state_with_collab(vec![]).await;
+        let (art_id, _) = seed_collab_artifact(&state, "any").await;
+
+        let app = crate::http::router(state);
+        let (status, body) = req(
+            app,
+            "POST",
+            &format!("/artifacts/{}/threads", art_id),
+            Some(json!({"body": "x", "author": "a"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "expected 400: {body:?}");
+        assert!(
+            body["error"].as_str().unwrap().contains("commentable"),
+            "error must mention capability: {body:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_collab_post_message_to_resolved_thread_rejected() {
+        let state = make_state_with_collab(vec![]).await;
+        let (art_id, _) = seed_collab_artifact(&state, "collab").await;
+
+        // Create thread.
+        let app = crate::http::router(state.clone());
+        let (_, body) = req(
+            app,
+            "POST",
+            &format!("/artifacts/{}/threads", art_id),
+            Some(json!({"body": "hi", "author": "a"})),
+        )
+        .await;
+        let thread_id = body["thread_id"].as_str().unwrap().to_string();
+
+        // Resolve the thread.
+        let app = crate::http::router(state.clone());
+        let (status, _) = req(
+            app,
+            "PATCH",
+            &format!("/threads/{}", thread_id),
+            Some(json!({"status": "resolved"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        // Now try to post a message → 400.
+        let app = crate::http::router(state.clone());
+        let (status, body) = req(
+            app,
+            "POST",
+            &format!("/threads/{}/messages", thread_id),
+            Some(json!({"body": "too late", "author": "a"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "expected rejection: {body:?}");
+    }
+
+    // ── Collab: atom-edit tests ───────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_collab_atom_edit_anchor_schema_validation() {
+        let state = make_state_with_collab(vec![]).await;
+        let (art_id, _) = seed_collab_artifact(&state, "collab").await;
+
+        let app = crate::http::router(state);
+        let (status, body) = req(
+            app,
+            "POST",
+            &format!("/artifacts/{}/edits", art_id),
+            Some(json!({"anchor": "/forbidden", "prev_value": "hello", "new_value": "world", "author": "a"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "expected 400 for bad anchor: {body:?}");
+        assert!(
+            body["error"].as_str().unwrap().contains("anchor_schema"),
+            "error must mention anchor_schema: {body:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_collab_atom_edit_occ_conflict() {
+        let state = make_state_with_collab(vec![]).await;
+        let (art_id, _) = seed_collab_artifact(&state, "collab").await;
+
+        let payload = json!({"anchor": "/title", "prev_value": "hello", "new_value": "world", "author": "a"});
+
+        // First edit succeeds.
+        let app = crate::http::router(state.clone());
+        let (status, _) = req(
+            app,
+            "POST",
+            &format!("/artifacts/{}/edits", art_id),
+            Some(payload.clone()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+
+        // Second edit with the same prev_value must be rejected (a child already exists).
+        let app = crate::http::router(state.clone());
+        let (status, body) = req(
+            app,
+            "POST",
+            &format!("/artifacts/{}/edits", art_id),
+            Some(payload),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "expected 409: {body:?}");
+    }
+
+    // ── Collab: review item tests ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_collab_review_items_round_trip() {
+        let state = make_state_with_collab(vec![]).await;
+        let (art_id, _) = seed_collab_artifact(&state, "collab").await;
+
+        // POST review item.
+        let app = crate::http::router(state.clone());
+        let (status, item) = req(
+            app,
+            "POST",
+            &format!("/artifacts/{}/review_items", art_id),
+            Some(json!({"anchor": "/title", "claim": "bad title", "reality": "hello"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "post_review_item: {item:?}");
+        let item_id = item["id"].as_str().unwrap().to_string();
+        assert_eq!(item["status"], json!("open"));
+
+        // GET review items.
+        let app = crate::http::router(state.clone());
+        let (status, list) = req(
+            app,
+            "GET",
+            &format!("/artifacts/{}/review_items", art_id),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(list.as_array().unwrap().len(), 1);
+
+        // PATCH resolve.
+        let app = crate::http::router(state.clone());
+        let (status, updated) = req(
+            app,
+            "PATCH",
+            &format!("/review_items/{}", item_id),
+            Some(json!({"status": "resolved", "resolution": "fixed it"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "patch_review_item: {updated:?}");
+        assert_eq!(updated["status"], json!("resolved"));
+        assert_eq!(updated["resolution"], json!("fixed it"));
+    }
+
+    #[tokio::test]
+    async fn test_collab_review_items_capability_gating() {
+        let state = make_state_with_collab(vec![]).await;
+        let (art_id, _) = seed_collab_artifact(&state, "any").await;
+
+        let app = crate::http::router(state);
+        let (status, _) = req(
+            app,
+            "POST",
+            &format!("/artifacts/{}/review_items", art_id),
+            Some(json!({"anchor": "/x", "claim": "c", "reality": "r"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

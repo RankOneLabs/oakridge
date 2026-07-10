@@ -1266,6 +1266,296 @@ pub async fn set_session_unit_artifact_id(
     Ok(())
 }
 
+// ── Collab row structs ────────────────────────────────────────────────────────
+
+#[derive(sqlx::FromRow)]
+struct ThreadRow {
+    id: String,
+    artifact_id: String,
+    revision_id: String,
+    anchor: Option<String>,
+    status: String,
+    created_at: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct MessageRow {
+    id: String,
+    thread_id: String,
+    body: String,
+    author: String,
+    created_at: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct ReviewItemRow {
+    id: String,
+    artifact_id: String,
+    revision_id: String,
+    anchor: String,
+    claim: String,
+    reality: String,
+    status: String,
+    resolution: Option<String>,
+    created_at: String,
+}
+
+fn row_to_thread(r: ThreadRow) -> crate::Result<crate::collab::CollabThread> {
+    use crate::collab::ThreadStatus;
+    Ok(crate::collab::CollabThread {
+        id: parse_uuid(&r.id)?,
+        artifact_id: parse_uuid(&r.artifact_id)?,
+        revision_id: r.revision_id,
+        anchor: r.anchor,
+        status: ThreadStatus::from_str(&r.status)?,
+        created_at: parse_dt(&r.created_at)?,
+    })
+}
+
+fn row_to_message(r: MessageRow) -> crate::Result<crate::collab::CollabMessage> {
+    Ok(crate::collab::CollabMessage {
+        id: parse_uuid(&r.id)?,
+        thread_id: parse_uuid(&r.thread_id)?,
+        body: r.body,
+        author: r.author,
+        created_at: parse_dt(&r.created_at)?,
+    })
+}
+
+fn row_to_review_item(r: ReviewItemRow) -> crate::Result<crate::collab::ReviewItem> {
+    use crate::collab::ReviewItemStatus;
+    Ok(crate::collab::ReviewItem {
+        id: parse_uuid(&r.id)?,
+        artifact_id: parse_uuid(&r.artifact_id)?,
+        revision_id: r.revision_id,
+        anchor: r.anchor,
+        claim: r.claim,
+        reality: r.reality,
+        status: ReviewItemStatus::from_str(&r.status)?,
+        resolution: r.resolution,
+        created_at: parse_dt(&r.created_at)?,
+    })
+}
+
+// ── Thread CRUD ───────────────────────────────────────────────────────────────
+
+pub async fn insert_thread(
+    pool: &SqlitePool,
+    t: &crate::collab::CollabThread,
+) -> crate::Result<()> {
+    let id = t.id.to_string();
+    let artifact_id = t.artifact_id.to_string();
+    let status = t.status.as_str();
+    let created_at = t.created_at.to_rfc3339();
+    sqlx::query!(
+        "INSERT INTO threads (id, artifact_id, revision_id, anchor, status, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?)",
+        id,
+        artifact_id,
+        t.revision_id,
+        t.anchor,
+        status,
+        created_at,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn get_thread_by_id(
+    pool: &SqlitePool,
+    id: &Uuid,
+) -> crate::Result<crate::collab::CollabThread> {
+    let id_str = id.to_string();
+    let row = sqlx::query_as!(
+        ThreadRow,
+        "SELECT id, artifact_id, revision_id, anchor, status, created_at \
+         FROM threads WHERE id = ?",
+        id_str,
+    )
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| crate::Error::NotFound {
+        entity: "thread".into(),
+        id: id_str,
+    })?;
+    row_to_thread(row)
+}
+
+pub async fn list_threads_for_artifact(
+    pool: &SqlitePool,
+    revision_id: &str,
+) -> crate::Result<Vec<crate::collab::CollabThread>> {
+    let rows = sqlx::query_as::<_, ThreadRow>(
+        "SELECT id, artifact_id, revision_id, anchor, status, created_at \
+         FROM threads WHERE revision_id = ? ORDER BY created_at, id",
+    )
+    .bind(revision_id)
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter().map(row_to_thread).collect()
+}
+
+pub async fn update_thread_status(
+    pool: &SqlitePool,
+    id: &Uuid,
+    status: &crate::collab::ThreadStatus,
+) -> crate::Result<()> {
+    let id_str = id.to_string();
+    let status_str = status.as_str();
+    let result = sqlx::query("UPDATE threads SET status = ? WHERE id = ?")
+        .bind(status_str)
+        .bind(&id_str)
+        .execute(pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(crate::Error::NotFound {
+            entity: "thread".into(),
+            id: id_str,
+        });
+    }
+    Ok(())
+}
+
+// ── Message CRUD ──────────────────────────────────────────────────────────────
+
+pub async fn insert_message(
+    pool: &SqlitePool,
+    m: &crate::collab::CollabMessage,
+) -> crate::Result<()> {
+    let id = m.id.to_string();
+    let thread_id = m.thread_id.to_string();
+    let created_at = m.created_at.to_rfc3339();
+    sqlx::query!(
+        "INSERT INTO messages (id, thread_id, body, author, created_at) \
+         VALUES (?, ?, ?, ?, ?)",
+        id,
+        thread_id,
+        m.body,
+        m.author,
+        created_at,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn list_messages_for_thread(
+    pool: &SqlitePool,
+    thread_id: &Uuid,
+) -> crate::Result<Vec<crate::collab::CollabMessage>> {
+    let id_str = thread_id.to_string();
+    let rows = sqlx::query_as!(
+        MessageRow,
+        "SELECT id, thread_id, body, author, created_at \
+         FROM messages WHERE thread_id = ? ORDER BY created_at, id",
+        id_str,
+    )
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter().map(row_to_message).collect()
+}
+
+// ── ReviewItem CRUD ───────────────────────────────────────────────────────────
+
+pub async fn insert_review_item(
+    pool: &SqlitePool,
+    ri: &crate::collab::ReviewItem,
+) -> crate::Result<()> {
+    let id = ri.id.to_string();
+    let artifact_id = ri.artifact_id.to_string();
+    let status = ri.status.as_str();
+    let created_at = ri.created_at.to_rfc3339();
+    sqlx::query!(
+        "INSERT INTO review_items \
+         (id, artifact_id, revision_id, anchor, claim, reality, status, resolution, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        id,
+        artifact_id,
+        ri.revision_id,
+        ri.anchor,
+        ri.claim,
+        ri.reality,
+        status,
+        ri.resolution,
+        created_at,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn get_review_item_by_id(
+    pool: &SqlitePool,
+    id: &Uuid,
+) -> crate::Result<crate::collab::ReviewItem> {
+    let id_str = id.to_string();
+    let row = sqlx::query_as!(
+        ReviewItemRow,
+        "SELECT id, artifact_id, revision_id, anchor, claim, reality, status, resolution, created_at \
+         FROM review_items WHERE id = ?",
+        id_str,
+    )
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| crate::Error::NotFound {
+        entity: "review_item".into(),
+        id: id_str,
+    })?;
+    row_to_review_item(row)
+}
+
+pub async fn list_review_items_for_artifact(
+    pool: &SqlitePool,
+    revision_id: &str,
+) -> crate::Result<Vec<crate::collab::ReviewItem>> {
+    let rows = sqlx::query_as::<_, ReviewItemRow>(
+        "SELECT id, artifact_id, revision_id, anchor, claim, reality, status, resolution, created_at \
+         FROM review_items WHERE revision_id = ? ORDER BY created_at, id",
+    )
+    .bind(revision_id)
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter().map(row_to_review_item).collect()
+}
+
+pub async fn patch_review_item(
+    pool: &SqlitePool,
+    id: &Uuid,
+    status: &crate::collab::ReviewItemStatus,
+    resolution: Option<&str>,
+) -> crate::Result<()> {
+    let id_str = id.to_string();
+    let status_str = status.as_str();
+    let result = sqlx::query(
+        "UPDATE review_items SET status = ?, resolution = ? WHERE id = ?",
+    )
+    .bind(status_str)
+    .bind(resolution)
+    .bind(&id_str)
+    .execute(pool)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(crate::Error::NotFound {
+            entity: "review_item".into(),
+            id: id_str,
+        });
+    }
+    Ok(())
+}
+
+pub async fn count_open_review_items_for_artifact(
+    pool: &SqlitePool,
+    revision_id: &str,
+) -> crate::Result<i64> {
+    let row: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM review_items WHERE revision_id = ? AND status = 'open'")
+            .bind(revision_id)
+            .fetch_one(pool)
+            .await?;
+    Ok(row.0)
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

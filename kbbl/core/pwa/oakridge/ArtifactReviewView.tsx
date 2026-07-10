@@ -1,8 +1,12 @@
 import { useState } from "react";
-import { useArtifact } from "./hooks";
+import { useArtifact, useThreads, usePostThread, usePostMessage, usePingThread, useResolveThread, useReviewItems, usePatchReviewItem } from "./hooks";
 import { resolveViewer } from "./artifactRegistry";
+import { ReviewItemsChecklist } from "./ReviewItemsChecklist";
 import type { ArtifactRevision } from "./types";
 import { formatRelative } from "../lib/time";
+import { ThreadSidebar } from "../review/shared/ThreadSidebar";
+import { ThreadView } from "../review/shared/ThreadView";
+import type { Thread, Message } from "../review/shared/types";
 
 // JSON pretty-print fallback — retained from ArtifactDetailView
 function JsonRevisionPanel({ revision }: { revision: ArtifactRevision }) {
@@ -46,6 +50,21 @@ interface ArtifactReviewViewProps {
 export function ArtifactReviewView({ artifactId, onBack }: ArtifactReviewViewProps) {
   const query = useArtifact(artifactId);
   const [selectedRevIdx, setSelectedRevIdx] = useState<number>(0);
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+
+  // Collab data — loaded only when the artifact has relevant capabilities
+  const caps = query.data?.capabilities ?? null;
+  const commentable = caps?.commentable ?? false;
+  const hasReviewItems = caps?.review_items ?? false;
+
+  const threadsQuery = useThreads(artifactId, commentable);
+  const reviewItemsQuery = useReviewItems(artifactId, hasReviewItems);
+
+  const postThread = usePostThread(artifactId);
+  const postMessage = usePostMessage(artifactId, selectedThreadId ?? "");
+  const pingThread = usePingThread(artifactId);
+  const resolveThread = useResolveThread(artifactId);
+  const patchReviewItem = usePatchReviewItem(artifactId);
 
   if (query.isError) {
     return (
@@ -79,6 +98,61 @@ export function ArtifactReviewView({ artifactId, onBack }: ArtifactReviewViewPro
     resolveViewer(artifact.component_id) ??
     resolveViewer(artifact.type_id) ??
     null;
+
+  // Adapt oakridge CollabThread to the v1 Thread shape that ThreadSidebar/ThreadView accept
+  const collabThreads = threadsQuery.data ?? [];
+  const v1Threads: Thread[] = collabThreads.map((t) => ({
+    id: t.id,
+    target_type: "artifact",
+    target_id: t.artifact_id,
+    anchor: t.anchor ?? null,
+    author: null,
+    status: t.status,
+    created_at: t.created_at,
+  }));
+
+  const selectedThread = collabThreads.find((t) => t.id === selectedThreadId) ?? null;
+  const selectedV1Thread = v1Threads.find((t) => t.id === selectedThreadId) ?? null;
+
+  const v1Messages: Message[] = selectedThread
+    ? selectedThread.messages.map((m) => ({
+        id: m.id,
+        thread_id: m.thread_id,
+        author: m.author,
+        body: m.body,
+        created_at: m.created_at,
+      }))
+    : [];
+
+  function handleNewThread() {
+    postThread.mutate({ body: "(new thread)", author: "operator", anchor: null });
+  }
+
+  function handleSendMessage(body: string) {
+    if (!selectedThreadId) return;
+    postMessage.mutate({ body, author: "operator" });
+  }
+
+  function handlePing() {
+    if (!selectedThreadId) return;
+    pingThread.mutate(selectedThreadId);
+  }
+
+  function handleResolveThread() {
+    if (!selectedThreadId) return;
+    resolveThread.mutate(selectedThreadId);
+    setSelectedThreadId(null);
+  }
+
+  const reviewItems = reviewItemsQuery.data ?? [];
+
+  function handleResolveItem(id: string, resolution: string) {
+    patchReviewItem.mutate({ id, req: { status: "resolved", resolution: resolution || undefined } });
+  }
+
+  function handleWaiveItem(id: string, resolution: string) {
+    patchReviewItem.mutate({ id, req: { status: "waived", resolution: resolution || undefined } });
+  }
 
   return (
     <div className="or-artifact-detail" data-testid="or-artifact-detail">
@@ -146,6 +220,41 @@ export function ArtifactReviewView({ artifactId, onBack }: ArtifactReviewViewPro
 
       {revisions.length === 0 && (
         <div className="or-empty">No revisions.</div>
+      )}
+
+      {/* ── Collab chrome: review items ─────────────────────────────────── */}
+      {hasReviewItems && (
+        <section className="or-artifact-detail__collab" data-testid="or-review-items-section">
+          <ReviewItemsChecklist
+            items={reviewItems}
+            onResolve={handleResolveItem}
+            onWaive={handleWaiveItem}
+          />
+        </section>
+      )}
+
+      {/* ── Collab chrome: threads ──────────────────────────────────────── */}
+      {commentable && (
+        <section className="or-artifact-detail__threads" data-testid="or-threads-section">
+          <div className="or-threads-layout">
+            <ThreadSidebar
+              threads={v1Threads}
+              selectedThreadId={selectedThreadId}
+              onSelect={setSelectedThreadId}
+              onNewThread={handleNewThread}
+            />
+            {selectedV1Thread && (
+              <ThreadView
+                thread={selectedV1Thread}
+                messages={v1Messages}
+                onSendMessage={handleSendMessage}
+                onPing={handlePing}
+                onResolve={handleResolveThread}
+                frozen={false}
+              />
+            )}
+          </div>
+        </section>
       )}
     </div>
   );

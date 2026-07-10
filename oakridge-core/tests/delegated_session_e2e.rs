@@ -447,6 +447,7 @@ async fn delegated_session_e2e_gate_driven_completion() {
                 component_id: "text-viewer".into(),
                 capabilities: Default::default(),
                 anchor_schema: None,
+            review_items_extractor: None,
             });
 
             stage_types.register(Arc::new(DelegatedSessionStage::new(
@@ -725,6 +726,7 @@ async fn waiting_for_kbbl_parks_and_reattaches() {
                 component_id: "text-viewer".into(),
                 capabilities: Default::default(),
                 anchor_schema: None,
+            review_items_extractor: None,
             });
             stage_types.register(Arc::new(DelegatedSessionStage::new(
                 prompts_dir2,
@@ -837,6 +839,7 @@ async fn session_ended_without_emit_parks_running_stage() {
                 component_id: "text-viewer".into(),
                 capabilities: Default::default(),
                 anchor_schema: None,
+            review_items_extractor: None,
             });
             stage_types.register(Arc::new(DelegatedSessionStage::new(
                 prompts_dir2,

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO review_items (id, artifact_id, revision_id, anchor, claim, reality, status, resolution, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 9
+    },
+    "nullable": []
+  },
+  "hash": "37e03966b5323c08a072bb9b2bb405293e3725f56cb197531e572155bf764918"
+}

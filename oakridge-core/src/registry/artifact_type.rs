@@ -29,6 +29,12 @@ pub struct ArtifactTypeDef {
     pub capabilities: ArtifactCapabilities,
     /// RFC-6901 pointer prefixes that are addressable atoms (atom_editable types only).
     pub anchor_schema: Option<Vec<String>>,
+    /// For review_items-capable types: extract materialized review item candidates from
+    /// a freshly emitted artifact body. Called by `StageContext::emit` after the artifact
+    /// is committed; each candidate is inserted as an open `review_item` row keyed to
+    /// `revision_id = artifact.id` (the chain root for a freshly emitted artifact).
+    /// `None` means items must be posted manually via POST /artifacts/:id/review_items.
+    pub review_items_extractor: Option<fn(&Value) -> Vec<crate::collab::ReviewItemCandidate>>,
 }
 
 /// Registry that maps artifact-type IDs to their definitions.

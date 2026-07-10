@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO threads (id, artifact_id, revision_id, anchor, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "ba1381a5864d65a5683ee6beae7373b5ed1b3b80af92757c0909f7da2d44138a"
+}

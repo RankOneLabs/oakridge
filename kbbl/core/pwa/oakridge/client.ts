@@ -13,6 +13,13 @@ import type {
   ArtifactTypeDescriptor,
   GateResumeRequest,
   GateResumeResponse,
+  CollabThread,
+  ReviewItem,
+  PostThreadRequest,
+  PostMessageRequest,
+  PostAtomEditRequest,
+  PostReviewItemRequest,
+  PatchReviewItemRequest,
 } from "./types";
 
 const API = "/oakridge/api";
@@ -36,6 +43,20 @@ async function oakridgePost<T>(path: string, body: unknown): Promise<T> {
   if (!res.ok) {
     const b = await res.json().catch(() => null) as { error?: string } | null;
     const detail = typeof b?.error === "string" ? b.error : `oakridge POST ${path}: ${res.status}`;
+    throw new Error(detail);
+  }
+  return (await res.json()) as T;
+}
+
+async function oakridgePatch<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${API}${path}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const b = await res.json().catch(() => null) as { error?: string } | null;
+    const detail = typeof b?.error === "string" ? b.error : `oakridge PATCH ${path}: ${res.status}`;
     throw new Error(detail);
   }
   return (await res.json()) as T;
@@ -97,4 +118,61 @@ export function retryStuckStage(stageInstanceId: string): Promise<unknown> {
 
 export function fetchArtifactTypes(): Promise<ArtifactTypeDescriptor[]> {
   return oakridgeGet<ArtifactTypeDescriptor[]>("/artifact_types");
+}
+
+// ── Collab: threads ───────────────────────────────────────────────────────────
+
+export function fetchThreads(artifactId: string): Promise<CollabThread[]> {
+  return oakridgeGet<CollabThread[]>(`/artifacts/${encodeURIComponent(artifactId)}/threads`);
+}
+
+export function postThread(
+  artifactId: string,
+  req: PostThreadRequest,
+): Promise<{ thread_id: string; message_id: string }> {
+  return oakridgePost(`/artifacts/${encodeURIComponent(artifactId)}/threads`, req);
+}
+
+export function postMessage(
+  threadId: string,
+  req: PostMessageRequest,
+): Promise<{ message_id: string }> {
+  return oakridgePost(`/threads/${encodeURIComponent(threadId)}/messages`, req);
+}
+
+export function pingThread(threadId: string): Promise<{ ok: boolean }> {
+  return oakridgePost(`/threads/${encodeURIComponent(threadId)}/ping`, {});
+}
+
+export function resolveThread(threadId: string): Promise<{ thread_id: string; status: string }> {
+  return oakridgePatch(`/threads/${encodeURIComponent(threadId)}`, { status: "resolved" });
+}
+
+// ── Collab: atom edits ────────────────────────────────────────────────────────
+
+export function postAtomEdit(
+  artifactId: string,
+  req: PostAtomEditRequest,
+): Promise<{ artifact_id: string }> {
+  return oakridgePost(`/artifacts/${encodeURIComponent(artifactId)}/edits`, req);
+}
+
+// ── Collab: review items ──────────────────────────────────────────────────────
+
+export function fetchReviewItems(artifactId: string): Promise<ReviewItem[]> {
+  return oakridgeGet<ReviewItem[]>(`/artifacts/${encodeURIComponent(artifactId)}/review_items`);
+}
+
+export function postReviewItem(
+  artifactId: string,
+  req: PostReviewItemRequest,
+): Promise<ReviewItem> {
+  return oakridgePost(`/artifacts/${encodeURIComponent(artifactId)}/review_items`, req);
+}
+
+export function patchReviewItem(
+  reviewItemId: string,
+  req: PatchReviewItemRequest,
+): Promise<ReviewItem> {
+  return oakridgePatch(`/review_items/${encodeURIComponent(reviewItemId)}`, req);
 }

@@ -14,8 +14,25 @@ import {
   fetchArtifact,
   fetchArtifactTypes,
   resumeGate,
+  fetchThreads,
+  postThread,
+  postMessage,
+  pingThread,
+  resolveThread,
+  fetchReviewItems,
+  postReviewItem,
+  patchReviewItem,
+  postAtomEdit,
 } from "./client";
-import type { CreateRunRequest, GateResumeRequest } from "./types";
+import type {
+  CreateRunRequest,
+  GateResumeRequest,
+  PostThreadRequest,
+  PostMessageRequest,
+  PostAtomEditRequest,
+  PostReviewItemRequest,
+  PatchReviewItemRequest,
+} from "./types";
 
 const POLL_MS = 10_000;
 
@@ -139,6 +156,97 @@ export function useRetryStuck(runId: string) {
     mutationFn: (stageInstanceId: string) => retryStuckStage(stageInstanceId),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["oakridge", "run", runId] });
+    },
+  });
+}
+
+// ── Collab hooks ──────────────────────────────────────────────────────────────
+
+export function useThreads(artifactId: string, enabled = true) {
+  return useQuery({
+    queryKey: ["oakridge", "artifact", artifactId, "threads"],
+    queryFn: () => fetchThreads(artifactId),
+    refetchInterval: POLL_MS,
+    enabled,
+  });
+}
+
+export function usePostThread(artifactId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (req: PostThreadRequest) => postThread(artifactId, req),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["oakridge", "artifact", artifactId, "threads"] });
+    },
+  });
+}
+
+export function usePostMessage(artifactId: string, threadId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (req: PostMessageRequest) => postMessage(threadId, req),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["oakridge", "artifact", artifactId, "threads"] });
+    },
+  });
+}
+
+export function usePingThread(_artifactId: string) {
+  return useMutation({
+    mutationFn: (threadId: string) => pingThread(threadId),
+  });
+}
+
+export function useResolveThread(artifactId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (threadId: string) => resolveThread(threadId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["oakridge", "artifact", artifactId, "threads"] });
+    },
+  });
+}
+
+export function useReviewItems(artifactId: string, enabled = true) {
+  return useQuery({
+    queryKey: ["oakridge", "artifact", artifactId, "review_items"],
+    queryFn: () => fetchReviewItems(artifactId),
+    refetchInterval: POLL_MS,
+    enabled,
+  });
+}
+
+export function usePostReviewItem(artifactId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (req: PostReviewItemRequest) => postReviewItem(artifactId, req),
+    onSuccess: () => {
+      void qc.invalidateQueries({
+        queryKey: ["oakridge", "artifact", artifactId, "review_items"],
+      });
+    },
+  });
+}
+
+export function usePatchReviewItem(artifactId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, req }: { id: string; req: PatchReviewItemRequest }) =>
+      patchReviewItem(id, req),
+    onSuccess: () => {
+      void qc.invalidateQueries({
+        queryKey: ["oakridge", "artifact", artifactId, "review_items"],
+      });
+    },
+  });
+}
+
+export function useAtomEdit(artifactId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (req: PostAtomEditRequest) => postAtomEdit(artifactId, req),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["oakridge", "artifact", artifactId] });
     },
   });
 }
