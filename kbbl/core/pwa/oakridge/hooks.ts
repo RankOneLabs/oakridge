@@ -6,6 +6,9 @@ import {
   fetchWorkflowDefs,
   createRun,
   cancelRun,
+  archiveRun,
+  unarchiveRun,
+  deleteRun,
   retryStuckStage,
   fetchRuns,
   fetchRun,
@@ -44,10 +47,10 @@ export function useOakridgeConfig() {
   });
 }
 
-export function useRuns() {
+export function useRuns(filter?: string) {
   return useQuery({
-    queryKey: ["oakridge", "runs"],
-    queryFn: fetchRuns,
+    queryKey: ["oakridge", "runs", filter ?? ""],
+    queryFn: () => fetchRuns(filter),
     refetchInterval: POLL_MS,
   });
 }
@@ -145,6 +148,38 @@ export function useCancelRun(runId: string) {
     mutationFn: () => cancelRun(runId),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["oakridge", "run", runId] });
+      void qc.invalidateQueries({ queryKey: ["oakridge", "runs"] });
+    },
+  });
+}
+
+export function useArchiveRun(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => archiveRun(runId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["oakridge", "runs"] });
+      void qc.invalidateQueries({ queryKey: ["oakridge", "run", runId] });
+    },
+  });
+}
+
+export function useUnarchiveRun(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => unarchiveRun(runId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["oakridge", "runs"] });
+      void qc.invalidateQueries({ queryKey: ["oakridge", "run", runId] });
+    },
+  });
+}
+
+export function useDeleteRun(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => deleteRun(runId),
+    onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["oakridge", "runs"] });
     },
   });

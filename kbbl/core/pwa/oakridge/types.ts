@@ -46,6 +46,7 @@ export interface RunSummary {
   updated_at: string;
   is_stuck: boolean;
   is_failed: boolean;
+  archived?: boolean;
 }
 
 export interface WorktreeMetadata {
@@ -135,6 +136,7 @@ export interface ParkedGate {
   artifact_revision_id: string | null;
   worktree: WorktreeMetadata | null;
   resume_actions: string[];
+  pr_url?: string | null;
 }
 
 export interface GateResumeRequest {

@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useRun, useCancelRun, useRetryStuck } from "./hooks";
+import { useRun, useCancelRun, useRetryStuck, useArchiveRun, useUnarchiveRun, useDeleteRun } from "./hooks";
 import type { StageDetail, StageUnit } from "./types";
 import { RunParkedGateList } from "./ParkedGateList";
 
@@ -200,6 +200,9 @@ export function RunDetailView({ runId, onBack, onSelectArtifact }: RunDetailView
   const query = useRun(runId);
   const cancelMutation = useCancelRun(runId);
   const retryMutation = useRetryStuck(runId);
+  const archiveMutation = useArchiveRun(runId);
+  const unarchiveMutation = useUnarchiveRun(runId);
+  const deleteMutation = useDeleteRun(runId);
 
   const onRefresh = () => {
     void qc.invalidateQueries({ queryKey: ["oakridge", "run", runId] });
@@ -268,6 +271,38 @@ export function RunDetailView({ runId, onBack, onSelectArtifact }: RunDetailView
               {cancelMutation.isPending ? "Cancelling…" : "Cancel Run"}
             </button>
           )}
+          <button
+            type="button"
+            className={secondaryButtonClass}
+            onClick={() => void archiveMutation.mutate()}
+            disabled={archiveMutation.isPending}
+            data-testid="or-archive-run-btn"
+          >
+            {archiveMutation.isPending ? "…" : "Archive"}
+          </button>
+          <button
+            type="button"
+            className={secondaryButtonClass}
+            onClick={() => void unarchiveMutation.mutate()}
+            disabled={unarchiveMutation.isPending}
+            data-testid="or-unarchive-run-btn"
+          >
+            {unarchiveMutation.isPending ? "…" : "Unarchive"}
+          </button>
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 rounded-md border border-red-800 px-3 py-1.5 text-sm text-red-800 hover:bg-red-800 hover:text-white disabled:opacity-50 dark:border-red-400 dark:text-red-400 dark:hover:bg-red-400 dark:hover:text-black"
+            onClick={() => {
+              if (window.confirm("Delete this run permanently? This cannot be undone.")) {
+                void deleteMutation.mutate();
+                onBack();
+              }
+            }}
+            disabled={deleteMutation.isPending}
+            data-testid="or-delete-run-btn"
+          >
+            {deleteMutation.isPending ? "…" : "Delete"}
+          </button>
           <button type="button" className={secondaryButtonClass} onClick={onRefresh}>
             Refresh
           </button>

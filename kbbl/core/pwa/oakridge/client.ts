@@ -48,6 +48,15 @@ async function oakridgePost<T>(path: string, body: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
+async function oakridgeDelete(path: string): Promise<void> {
+  const res = await fetch(`${API}${path}`, { method: "DELETE" });
+  if (!res.ok) {
+    const b = await res.json().catch(() => null) as { error?: string } | null;
+    const detail = typeof b?.error === "string" ? b.error : `oakridge DELETE ${path}: ${res.status}`;
+    throw new Error(detail);
+  }
+}
+
 async function oakridgePatch<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${API}${path}`, {
     method: "PATCH",
@@ -68,8 +77,9 @@ export async function fetchOakridgeConfig(): Promise<OakridgeConfig> {
   return (await res.json()) as OakridgeConfig;
 }
 
-export function fetchRuns(): Promise<RunSummary[]> {
-  return oakridgeGet<RunSummary[]>("/runs");
+export function fetchRuns(filter?: string): Promise<RunSummary[]> {
+  const qs = filter ? `?filter=${encodeURIComponent(filter)}` : "";
+  return oakridgeGet<RunSummary[]>(`/runs${qs}`);
 }
 
 export function fetchRun(id: string): Promise<RunDetail> {
@@ -110,6 +120,18 @@ export function createRun(body: CreateRunRequest): Promise<RunSummary> {
 
 export function cancelRun(runId: string): Promise<unknown> {
   return oakridgePost<unknown>(`/workflow_runs/${encodeURIComponent(runId)}/cancel`, {});
+}
+
+export function archiveRun(runId: string): Promise<unknown> {
+  return oakridgePost<unknown>(`/workflow_runs/${encodeURIComponent(runId)}/archive`, {});
+}
+
+export function unarchiveRun(runId: string): Promise<unknown> {
+  return oakridgePost<unknown>(`/workflow_runs/${encodeURIComponent(runId)}/unarchive`, {});
+}
+
+export function deleteRun(runId: string): Promise<void> {
+  return oakridgeDelete(`/workflow_runs/${encodeURIComponent(runId)}`);
 }
 
 export function retryStuckStage(stageInstanceId: string): Promise<unknown> {
