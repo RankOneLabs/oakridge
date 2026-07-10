@@ -1,7 +1,7 @@
 {
-  "id": "00000000-0000-0000-0000-000000000001",
+  "id": "15af5600-1aa7-4ca8-9a12-56f9b132216d",
   "name": "dev-flow",
-  "version": 1,
+  "version": 2,
   "created_at": "2026-01-01T00:00:00Z",
   "graph": {
     "stages": {
@@ -53,18 +53,42 @@
         "stage_type": "delegated_session",
         "config": {
           "runtime": "claude-code",
-          "prompt_template_path": "dev-flow/build_v1.md",
+          "prompt_template_path": "dev-flow/build.md",
           "slot_bindings": {
-            "PLAN":          { "from": "input", "input_name": "plan", "path": null },
-            "WORKTREE_PATH": { "from": "context", "path": "/worktree_path" },
-            "OAKRIDGE_URL":  { "from": "context", "path": "/oakridge_url" }
+            "OAKRIDGE_URL":       { "from": "context", "path": "/oakridge_url" },
+            "UNIT_ID":            { "from": "literal", "value": "0" },
+            "COHORT_ID":          { "from": "literal", "value": "" },
+            "COHORT_TITLE":       { "from": "literal", "value": "" },
+            "COHORT_SCOPE":       { "from": "literal", "value": "" },
+            "COHORT_DESCRIPTION": { "from": "literal", "value": "" },
+            "COHORT_DECISIONS":   { "from": "literal", "value": "" },
+            "COHORT_ACCEPTANCE":  { "from": "literal", "value": "" }
           },
-          "workdir":      { "from": "context", "path": "/worktree_path" },
-          "session_name": "build-{{STAGE_INSTANCE_ID}}",
+          "workdir":      { "from": "literal", "value": "/" },
+          "session_name": "build-{{STAGE_INSTANCE_ID}}-{{UNIT_ID}}",
           "model":        { "from": "context", "path": "/worker_model" },
           "effort":       { "from": "context", "path": "/worker_effort" },
           "pre_authorized_tools": [],
-          "yolo": false
+          "yolo": false,
+          "fan_out": {
+            "over": { "from": "input", "input_name": "plan", "path": "/cohorts" },
+            "unit_id_path": "/id",
+            "depends_on_path": "/depends_on",
+            "max_parallel": 4,
+            "item_bindings": {
+              "COHORT_ID":          { "from": "item", "path": "/id" },
+              "COHORT_TITLE":       { "from": "item", "path": "/title" },
+              "COHORT_SCOPE":       { "from": "item", "path": "/scope" },
+              "COHORT_DESCRIPTION": { "from": "item", "path": "/description" },
+              "COHORT_DECISIONS":   { "from": "item", "path": "/decisions" },
+              "COHORT_ACCEPTANCE":  { "from": "item", "path": "/acceptance_criteria" }
+            },
+            "worktree": {
+              "branch_name": "cohort/{{STAGE_INSTANCE_ID}}/{{UNIT_ID}}",
+              "worktree_subdir": "{{STAGE_INSTANCE_ID}}/{{UNIT_ID}}",
+              "base_ref": "main"
+            }
+          }
         },
         "inputs": [
           { "name": "plan", "artifact_type": "dev.plan" }
@@ -79,17 +103,24 @@
           "runtime": "claude-code",
           "prompt_template_path": "dev-flow/assessor.md",
           "slot_bindings": {
-            "BUILD_RESULT": { "from": "input", "input_name": "build_result", "path": null },
-            "PLAN":         { "from": "input", "input_name": "plan",         "path": null },
+            "BUILD_RESULT":  { "from": "input", "input_name": "build_result", "path": null },
+            "PLAN":          { "from": "input", "input_name": "plan",         "path": null },
             "WORKTREE_PATH": { "from": "context", "path": "/worktree_path" },
             "OAKRIDGE_URL":  { "from": "context", "path": "/oakridge_url" },
             "UNIT_ID":       { "from": "literal", "value": "0" }
           },
           "workdir":      { "from": "context", "path": "/worktree_path" },
-          "session_name": "assessor-{{STAGE_INSTANCE_ID}}",
+          "session_name": "assessor-{{STAGE_INSTANCE_ID}}-{{UNIT_ID}}",
           "model":        { "from": "context", "path": "/worker_model" },
           "pre_authorized_tools": [],
-          "yolo": false
+          "yolo": false,
+          "fan_out": {
+            "over": { "from": "input", "input_name": "build_result" },
+            "unit_id_path": "/unit_id",
+            "depends_on_path": null,
+            "max_parallel": 4,
+            "item_bindings": {}
+          }
         },
         "inputs": [
           { "name": "build_result", "artifact_type": "dev.build_result" },

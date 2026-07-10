@@ -141,6 +141,19 @@ pub struct OperatorStageArtifact {
     pub id: String,
     pub type_id: String,
     pub version: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+/// Per-unit row within a fanned stage. Empty until the stage activates; once
+/// started, N=1 stages have exactly one row with unit_id="0".
+#[derive(Serialize, Clone)]
+pub struct OperatorStageUnit {
+    pub unit_id: String,
+    pub sid: Option<String>,
+    pub worktree: Option<OperatorWorktreeMetadata>,
+    pub status: String,
+    pub gate: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -165,6 +178,7 @@ pub struct OperatorStageDetail {
     pub artifacts: Vec<OperatorStageArtifact>,
     pub delegated_kbbl_sid: Option<String>,
     pub worktree: Option<OperatorWorktreeMetadata>,
+    pub units: Vec<OperatorStageUnit>,
 }
 
 #[derive(Serialize)]
@@ -223,6 +237,7 @@ pub struct OperatorArtifactDetail {
     pub anchor_schema: Option<Vec<String>>,
     pub run_id: String,
     pub producing_stage: String,
+    pub label: Option<String>,
     pub revisions: Vec<OperatorArtifactRevision>,
 }
 
@@ -764,7 +779,64 @@ fn artifacts_by_stage(
                 id: artifact.id.0.to_string(),
                 type_id: artifact.artifact_type,
                 version: artifact.version,
+                label: artifact.label,
             });
+    }
+    by_stage
+}
+
+fn operator_unit_status(status: &crate::types::UnitStatus) -> String {
+    match status {
+        crate::types::UnitStatus::Pending => "pending",
+        crate::types::UnitStatus::Running => "running",
+        crate::types::UnitStatus::Parked => "parked",
+        crate::types::UnitStatus::Done => "complete",
+        crate::types::UnitStatus::Failed => "failed",
+    }
+    .to_owned()
+}
+
+fn operator_stage_unit(unit: crate::types::SessionUnit) -> OperatorStageUnit {
+    let sid = unit
+        .external_ref
+        .as_deref()
+        .map(|s| DelegatedExternalRef::parse(s).sid);
+    let worktree = worktree_from_parts(
+        unit.worktree_path,
+        unit.worktree_branch,
+        unit.worktree_base_ref,
+    );
+    let gate = unit
+        .gate_state
+        .as_ref()
+        .and_then(|v| serde_json::from_value::<DelegatedGateState>(v.clone()).ok())
+        .map(|g| operator_gate_type_str(&g.gate));
+    OperatorStageUnit {
+        unit_id: unit.unit_id,
+        sid,
+        worktree,
+        status: operator_unit_status(&unit.status),
+        gate,
+    }
+}
+
+fn operator_gate_type_str(gate: &DelegatedGate) -> String {
+    match gate {
+        DelegatedGate::ArtifactApproval => "artifact_approval".to_owned(),
+        DelegatedGate::MergeConfirmation => "merge_confirmation".to_owned(),
+    }
+}
+
+fn units_by_stage(
+    units: Vec<crate::types::SessionUnit>,
+) -> HashMap<StageInstanceId, Vec<OperatorStageUnit>> {
+    let mut by_stage: HashMap<StageInstanceId, Vec<OperatorStageUnit>> = HashMap::new();
+    for unit in units {
+        let stage_id = unit.stage_instance_id;
+        by_stage
+            .entry(stage_id)
+            .or_default()
+            .push(operator_stage_unit(unit));
     }
     by_stage
 }
@@ -772,6 +844,7 @@ fn artifacts_by_stage(
 fn operator_stage(
     stage: StageInstance,
     artifacts_by_stage: &HashMap<StageInstanceId, Vec<OperatorStageArtifact>>,
+    units_by_stage: &HashMap<StageInstanceId, Vec<OperatorStageUnit>>,
 ) -> OperatorStageDetail {
     let external = delegated_external_ref(&stage);
     OperatorStageDetail {
@@ -785,6 +858,10 @@ fn operator_stage(
             .unwrap_or_default(),
         delegated_kbbl_sid: external.map(|external| external.sid),
         worktree: operator_worktree(&stage),
+        units: units_by_stage
+            .get(&stage.id)
+            .cloned()
+            .unwrap_or_default(),
     }
 }
 
@@ -821,7 +898,9 @@ pub async fn get_operator_run(
     let def = queries::get_workflow_def_by_id(&state.pool, &run.workflow_def_id).await?;
     let stages = queries::list_stage_instances_for_run(&state.pool, &run_id).await?;
     let artifacts = queries::list_artifacts_for_run(&state.pool, &run_id, None).await?;
+    let session_units = queries::list_session_units_for_run(&state.pool, &run_id).await?;
     let artifacts_by_stage = artifacts_by_stage(artifacts);
+    let units_by_stage = units_by_stage(session_units);
     let parked_count = stages
         .iter()
         .filter(|stage| matches!(stage.status, StageStatus::Parked))
@@ -832,7 +911,7 @@ pub async fn get_operator_run(
     let current_status = operator_run_status(&run, parked_count);
     let stage_details = stages
         .into_iter()
-        .map(|stage| operator_stage(stage, &artifacts_by_stage))
+        .map(|stage| operator_stage(stage, &artifacts_by_stage, &units_by_stage))
         .collect();
     Ok(Json(OperatorRunDetail {
         id: run.id.0.to_string(),
@@ -1010,6 +1089,7 @@ pub async fn get_operator_artifact_detail(
         anchor_schema,
         run_id: requested.run_id.0.to_string(),
         producing_stage: producing_stage.stage_key,
+        label: requested.label,
         revisions,
     }))
 }

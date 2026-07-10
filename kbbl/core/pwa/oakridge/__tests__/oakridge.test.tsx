@@ -65,6 +65,7 @@ const PARKED_GATE_FIXTURE: ParkedGate = {
   gate_type: "operator_approval",
   run_id: "run-2",
   stage_name: "approve",
+  unit_id: "0",
   artifact_revision_id: "rev-abc",
   worktree: { branch: "cohort/v2_readiness/3-foo", path: "/home/steve/codes/rol/oakridge", base_ref: "epic/v2_readiness" },
   resume_actions: ["approve", "reject"],

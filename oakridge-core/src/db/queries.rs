@@ -1102,6 +1102,25 @@ pub async fn list_session_units_for_stage(
     rows.into_iter().map(row_to_session_unit).collect()
 }
 
+pub async fn list_session_units_for_run(
+    pool: &SqlitePool,
+    run_id: &WorkflowRunId,
+) -> crate::Result<Vec<crate::types::SessionUnit>> {
+    let id_str = run_id.0.to_string();
+    let rows = sqlx::query_as::<_, SessionUnitRow>(
+        "SELECT ssu.stage_instance_id, ssu.unit_id, ssu.params, ssu.depends_on, ssu.external_ref, \
+         ssu.worktree_branch, ssu.worktree_path, ssu.worktree_base_ref, \
+         ssu.status, ssu.gate_state, ssu.artifact_id, ssu.terminal_meta, ssu.created_at, ssu.updated_at \
+         FROM stage_session_units ssu \
+         JOIN stage_instance si ON si.id = ssu.stage_instance_id \
+         WHERE si.run_id = ? ORDER BY ssu.stage_instance_id, ssu.unit_id",
+    )
+    .bind(id_str)
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter().map(row_to_session_unit).collect()
+}
+
 pub async fn get_session_unit(
     pool: &SqlitePool,
     stage_instance_id: &StageInstanceId,

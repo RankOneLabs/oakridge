@@ -91,6 +91,12 @@ export function ArtifactReviewView({ artifactId, onBack }: ArtifactReviewViewPro
         <div className="or-artifact-detail__meta">
           <span className="or-label">Stage</span>
           <span data-testid="or-artifact-stage">{artifact.producing_stage}</span>
+          {artifact.label && (
+            <>
+              <span className="or-label">Unit</span>
+              <code className="or-code" data-testid="or-artifact-unit-label">{artifact.label}</code>
+            </>
+          )}
           <span className="or-label">Run</span>
           <span>{artifact.run_id.slice(0, 8)}</span>
           {artifact.component_id && (
