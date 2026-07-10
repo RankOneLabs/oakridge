@@ -362,6 +362,36 @@ fn validate_workflow_graph(state: &AppState, graph: &WorkflowGraph) -> Result<()
     Ok(())
 }
 
+/// Guardrail: multi-session fan-out execution is not yet implemented — the
+/// substrate (stage_session_units, per-unit emit route, composite gate id, fan_out
+/// config) landed in Phase 2a/2b but `delegated_session::execute` still rejects any
+/// `fan_out` config at runtime. Reject a *run* of a fan-out def at creation time so
+/// the operator gets a clear, fast error instead of a run that dies mid-flight at the
+/// build stage (after spec-analysis + planning have already executed).
+///
+/// This is deliberately run-creation-only: fan-out defs may still be seeded and
+/// authored (via the Phase 4b UI) so they are ready the moment the engine lands.
+/// Remove this check when the N>1 execution engine ships — see the tracking spec at
+/// `comms/v2-parity-multi-session-engine-spec.md`.
+fn reject_unsupported_fan_out(graph: &WorkflowGraph) -> Result<(), AppError> {
+    let mut fan_out_stages: Vec<&str> = graph
+        .stages
+        .iter()
+        .filter(|(_, node)| node.config.get("fan_out").is_some_and(|v| !v.is_null()))
+        .map(|(key, _)| key.as_str())
+        .collect();
+    fan_out_stages.sort_unstable();
+    if !fan_out_stages.is_empty() {
+        return Err(validation_error(format!(
+            "multi-session fan-out is not yet enabled; stage(s) [{}] declare a fan_out block. \
+             Launch the single-session dev-flow instead. \
+             Tracking: comms/v2-parity-multi-session-engine-spec.md",
+            fan_out_stages.join(", ")
+        )));
+    }
+    Ok(())
+}
+
 // ── Project handlers ──────────────────────────────────────────────────────────
 
 pub async fn create_project(
@@ -432,6 +462,7 @@ pub async fn create_workflow_run(
 ) -> Result<(StatusCode, Json<WorkflowRun>), AppError> {
     let def = queries::get_workflow_def_by_id(&state.pool, &body.workflow_def_id).await?;
     validate_workflow_graph(&state, &def.graph)?;
+    reject_unsupported_fan_out(&def.graph)?;
 
     let caller_context = body
         .context
@@ -3452,5 +3483,63 @@ mod tests {
             entry.get("anchor_schema").is_some(),
             "anchor_schema field must be present"
         );
+    }
+
+    // ── fan-out run-creation guardrail ────────────────────────────────────────
+
+    #[test]
+    fn reject_unsupported_fan_out_flags_fanned_stages() {
+        let graph: WorkflowGraph = serde_json::from_value(json!({
+            "stages": {
+                "build": {
+                    "stage_type": "delegated_session",
+                    "config": {
+                        "fan_out": {
+                            "over": { "from": "input", "input_name": "plan", "path": "/cohorts" },
+                            "unit_id_path": "/id"
+                        }
+                    },
+                    "inputs": [],
+                    "outputs": []
+                }
+            },
+            "edges": []
+        }))
+        .unwrap();
+
+        match reject_unsupported_fan_out(&graph).unwrap_err() {
+            AppError::Domain(crate::Error::Validation(msg)) => {
+                let m = msg.to_lowercase();
+                assert!(m.contains("build"), "expected offending stage key, got: {m}");
+                assert!(m.contains("fan-out"), "expected fan-out mention, got: {m}");
+            }
+            _ => panic!("expected a Domain(Validation) AppError"),
+        }
+    }
+
+    #[test]
+    fn reject_unsupported_fan_out_allows_single_session() {
+        // A def with no fan_out (and a stage that explicitly sets fan_out: null)
+        // is runnable and must pass the guardrail unchanged.
+        let graph: WorkflowGraph = serde_json::from_value(json!({
+            "stages": {
+                "plan": {
+                    "stage_type": "delegated_session",
+                    "config": { "model": "claude-sonnet-5" },
+                    "inputs": [],
+                    "outputs": []
+                },
+                "build": {
+                    "stage_type": "delegated_session",
+                    "config": { "fan_out": null },
+                    "inputs": [],
+                    "outputs": []
+                }
+            },
+            "edges": []
+        }))
+        .unwrap();
+
+        assert!(reject_unsupported_fan_out(&graph).is_ok());
     }
 }

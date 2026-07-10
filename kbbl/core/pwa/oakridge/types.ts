@@ -18,6 +18,11 @@ export interface WorkflowDefSummary {
   id: string;
   name: string;
   version: number;
+  // GET /workflow_defs returns the full def (graph included) today. It is optional
+  // here so the summary stays forward-compatible if the endpoint is ever trimmed;
+  // the New-run form uses it only to avoid defaulting into a def that cannot yet run
+  // (any stage with a fan_out block — multi-session execution is not yet enabled).
+  graph?: WorkflowGraph;
 }
 
 export interface CreateRunContext {
