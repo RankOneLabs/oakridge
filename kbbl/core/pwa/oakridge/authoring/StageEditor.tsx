@@ -44,6 +44,10 @@ interface ArtifactTypeOption {
 }
 
 export interface StageFormEntry {
+  // Stable synthetic id for React keys. The stageKey is user-editable and can be
+  // blank or duplicated mid-edit, so it can't serve as a key; this id is assigned
+  // once at creation and never serialized into the workflow graph.
+  _uid: string;
   stageKey: string;
   inputs: InputSlotDef[];
   outputs: OutputSlotDef[];
@@ -63,7 +67,7 @@ interface StageEditorProps {
 }
 
 export function defaultStageEntry(key: string): StageFormEntry {
-  return { stageKey: key, inputs: [], outputs: [], config: defaultConfig() };
+  return { _uid: crypto.randomUUID(), stageKey: key, inputs: [], outputs: [], config: defaultConfig() };
 }
 
 export function stageFormEntryToNodeDef(entry: StageFormEntry): StageNodeDef {

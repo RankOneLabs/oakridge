@@ -320,10 +320,28 @@ impl StageContext {
             .map_err(|_| anyhow::anyhow!("executor event channel closed"))?;
 
         // Materialize review items from the type's extractor, if registered.
-        // For a freshly emitted artifact (no parent), revision_id = artifact.id.
+        // Anchor them to the artifact-chain root — the `revision_id` convention the
+        // collab API uses (see `chain_root_id` in http/rest.rs) — so items group
+        // correctly across revisions. For a freshly emitted artifact (no parent) the
+        // root is the artifact itself, matching prior behavior byte-for-byte.
         // Best-effort: a failure here does not fail the emit.
         if let Some(extractor) = extractor {
-            let revision_id = artifact.id.0.to_string();
+            let revision_id = match artifact.parent_artifact_id {
+                None => artifact.id.0.to_string(),
+                Some(_) => {
+                    match crate::db::queries::get_artifact_chain_root_id(&self.db, &artifact.id).await
+                    {
+                        Ok(root_id) => root_id,
+                        Err(e) => {
+                            tracing::warn!(
+                                artifact_id = %artifact.id.0,
+                                "review_items_extractor: chain-root lookup failed, anchoring to artifact id: {e}"
+                            );
+                            artifact.id.0.to_string()
+                        }
+                    }
+                }
+            };
             let now = Utc::now();
             for candidate in extractor(&artifact.body) {
                 let ri = crate::collab::ReviewItem {

@@ -102,6 +102,7 @@ function defToFormState(def: WorkflowDefFull): {
   edges: EdgeDef[];
 } {
   const stages: StageFormEntry[] = Object.entries(def.graph.stages).map(([key, node]) => ({
+    _uid: crypto.randomUUID(),
     stageKey: key,
     inputs: node.inputs,
     outputs: node.outputs,
@@ -307,7 +308,7 @@ export function WorkflowDefEditor({ cloneFromId, onBack, onCreated }: WorkflowDe
             )}
             {stages.map((stage, i) => (
               <StageEditor
-                key={i}
+                key={stage._uid}
                 stageKey={stage.stageKey}
                 entry={stage}
                 onChangeKey={(k) => updateStageKey(i, k)}

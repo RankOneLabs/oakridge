@@ -1035,6 +1035,38 @@ pub async fn get_artifact_chain(
     Ok(chain)
 }
 
+/// Walk `parent_artifact_id` to the chain root, reading only `id`/`parent_artifact_id`
+/// (never the body) — the lightweight form of [`get_artifact_chain`] for callers that
+/// only need the root id (thread / atom-edit / review-item anchoring). Detects cycles.
+pub async fn get_artifact_chain_root_id(pool: &SqlitePool, id: &ArtifactId) -> crate::Result<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut current = id.0.to_string();
+    loop {
+        if !seen.insert(current.clone()) {
+            return Err(crate::Error::Validation(format!(
+                "artifact chain contains a cycle at {current}"
+            )));
+        }
+        // `Option<Option<String>>`: outer None = no such artifact row; inner None =
+        // NULL parent (the root); inner Some = the parent id to walk to next.
+        let parent: Option<Option<String>> =
+            sqlx::query_scalar("SELECT parent_artifact_id FROM artifact WHERE id = ?")
+                .bind(&current)
+                .fetch_optional(pool)
+                .await?;
+        match parent {
+            None => {
+                return Err(crate::Error::NotFound {
+                    entity: "artifact".into(),
+                    id: current,
+                })
+            }
+            Some(None) => return Ok(current),
+            Some(Some(parent_id)) => current = parent_id,
+        }
+    }
+}
+
 pub async fn list_artifacts_for_run(
     pool: &SqlitePool,
     run_id: &WorkflowRunId,
@@ -2013,6 +2045,57 @@ mod tests {
         assert_eq!(chain[0].version, 3);
         assert_eq!(chain[1].version, 2);
         assert_eq!(chain[2].version, 1);
+    }
+
+    #[tokio::test]
+    async fn test_artifact_chain_root_id() {
+        let pool = make_test_pool().await;
+        let def = test_workflow_def();
+        insert_workflow_def(&pool, &def).await.unwrap();
+        let run = test_run(def.id);
+        insert_workflow_run(&pool, &run).await.unwrap();
+        let si = test_stage(run.id);
+        insert_stage_instance(&pool, &si).await.unwrap();
+
+        let a1 = Artifact {
+            id: ArtifactId(Uuid::new_v4()),
+            run_id: run.id,
+            stage_instance_id: si.id,
+            artifact_type: "text".into(),
+            output_name: Some("out".into()),
+            label: None,
+            body: json!("v1"),
+            version: 1,
+            parent_artifact_id: None,
+            created_at: fixed_dt(),
+        };
+        insert_artifact(&pool, &a1).await.unwrap();
+        let a2 = Artifact {
+            id: ArtifactId(Uuid::new_v4()),
+            parent_artifact_id: Some(a1.id),
+            body: json!("v2"),
+            version: 2,
+            ..a1.clone()
+        };
+        insert_artifact(&pool, &a2).await.unwrap();
+        let a3 = Artifact {
+            id: ArtifactId(Uuid::new_v4()),
+            parent_artifact_id: Some(a2.id),
+            body: json!("v3"),
+            version: 3,
+            ..a1.clone()
+        };
+        insert_artifact(&pool, &a3).await.unwrap();
+
+        // Resolves the root from any point in the chain (and from the root itself).
+        assert_eq!(
+            get_artifact_chain_root_id(&pool, &a3.id).await.unwrap(),
+            a1.id.0.to_string()
+        );
+        assert_eq!(
+            get_artifact_chain_root_id(&pool, &a1.id).await.unwrap(),
+            a1.id.0.to_string()
+        );
     }
 
     #[tokio::test]
