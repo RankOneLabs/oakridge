@@ -9,6 +9,7 @@ use serde_json::Value;
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -85,6 +86,14 @@ fn is_sqlite_busy(err: &sqlx::Error) -> bool {
 }
 
 const MAX_ARTIFACT_EMIT_RETRIES: usize = 8;
+
+/// Yielding alone lets concurrent emitters repeatedly recreate stale SQLite
+/// snapshots. Back off briefly so the winning writer can commit before the
+/// next revision-number read starts a fresh transaction.
+async fn artifact_emit_retry_backoff(attempt: usize) {
+    let delay_ms = 1_u64 << attempt.min(5);
+    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+}
 
 // ── StageContext ──────────────────────────────────────────────────────────────
 
@@ -287,6 +296,7 @@ impl StageContext {
                             ));
                         }
                         attempts += 1;
+                        artifact_emit_retry_backoff(attempts).await;
                         continue;
                     }
                     Err(err) => return Err(err.into()),
@@ -301,6 +311,7 @@ impl StageContext {
                         ));
                     }
                     attempts += 1;
+                    artifact_emit_retry_backoff(attempts).await;
                     continue;
                 }
                 Err(err) => {

@@ -8,16 +8,6 @@ import {
 import type { RuntimeDescriptor, RuntimeModelSelection } from "../types";
 import { coerceSelection } from "../sidebar/AddSpecModal";
 import { useOakridgeConfig, useProjects, useWorkflowDefs, useCreateRun } from "./hooks";
-import type { WorkflowDefSummary } from "./types";
-
-// A def is not yet runnable if any stage declares a fan_out block: multi-session
-// fan-out execution is not implemented, and core rejects such runs at creation time.
-// Detect it here so the form defaults to (and only allows) a runnable def.
-function defHasFanOut(def: WorkflowDefSummary): boolean {
-  const stages = def.graph?.stages;
-  if (!stages) return false;
-  return Object.values(stages).some((s) => s.config?.fan_out != null);
-}
 
 const secondaryButtonClass =
   "inline-flex items-center gap-1.5 rounded-md border border-[var(--border-muted)] bg-transparent px-3 py-1.5 text-sm text-[var(--text-secondary)] hover:border-[var(--border-hover)]";
@@ -217,13 +207,11 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
     });
   }, [defsQuery.data]);
 
-  // Auto-select the newest RUNNABLE workflow def when defs load. Fan-out defs
-  // (e.g. the multi-session dev-flow) can't run yet, so default to the newest def
-  // without a fan_out stage; fall back to the newest def only if none are runnable.
+  // The sorted list is newest-first within each workflow name, so its first
+  // entry is the normal default workflow definition.
   useEffect(() => {
     if (workflowDefId || sortedDefs.length === 0) return;
-    const target = sortedDefs.find((d) => !defHasFanOut(d)) ?? sortedDefs[0];
-    setWorkflowDefId(target.id);
+    setWorkflowDefId(sortedDefs[0].id);
   }, [sortedDefs, workflowDefId]);
 
   // When project is selected, populate worktree_path from repo_dir
@@ -283,15 +271,11 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
             {!defsQuery.isPending && sortedDefs.length === 0 && (
               <option value="">No workflow definitions found</option>
             )}
-            {sortedDefs.map((def) => {
-              const fannedOut = defHasFanOut(def);
-              return (
-                <option key={def.id} value={def.id} disabled={fannedOut}>
-                  {def.name} v{def.version}
-                  {fannedOut ? " — multi-session (not yet runnable)" : ""}
-                </option>
-              );
-            })}
+            {sortedDefs.map((def) => (
+              <option key={def.id} value={def.id}>
+                {def.name} v{def.version}
+              </option>
+            ))}
           </select>
         </label>
 

@@ -877,6 +877,25 @@ pub async fn list_parked_stage_instances(pool: &SqlitePool) -> crate::Result<Vec
     rows.into_iter().map(row_to_stage_instance).collect()
 }
 
+/// Lists stages that own at least one parked unit with durable gate metadata.
+/// Fan-out aggregation may leave the stage itself Running while an individual
+/// unit remains actionable, so operator gate lists cannot rely on stage status.
+pub async fn list_stage_instances_with_parked_unit_gates(
+    pool: &SqlitePool,
+) -> crate::Result<Vec<StageInstance>> {
+    let rows = sqlx::query_as::<_, StageInstanceRow>(
+        "SELECT DISTINCT si.id, si.run_id, si.stage_key, si.stage_type, si.status, si.config, \
+         si.parked_reason, si.parked_meta, si.terminal_meta, si.external_ref, si.started_at, \
+         si.ended_at, si.created_at, si.updated_at \
+         FROM stage_instance si \
+         INNER JOIN stage_session_units su ON su.stage_instance_id = si.id \
+         WHERE su.status = 'parked' AND su.gate_state IS NOT NULL",
+    )
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter().map(row_to_stage_instance).collect()
+}
+
 /// Bump updated_at on a stage instance without changing its status.
 /// Used by StageContext::heartbeat and after successful artifact emits to
 /// signal liveness to the stuck-stage sweeper.
@@ -1038,7 +1057,10 @@ pub async fn get_artifact_chain(
 /// Walk `parent_artifact_id` to the chain root, reading only `id`/`parent_artifact_id`
 /// (never the body) — the lightweight form of [`get_artifact_chain`] for callers that
 /// only need the root id (thread / atom-edit / review-item anchoring). Detects cycles.
-pub async fn get_artifact_chain_root_id(pool: &SqlitePool, id: &ArtifactId) -> crate::Result<String> {
+pub async fn get_artifact_chain_root_id(
+    pool: &SqlitePool,
+    id: &ArtifactId,
+) -> crate::Result<String> {
     let mut seen = std::collections::HashSet::new();
     let mut current = id.0.to_string();
     loop {
@@ -1176,8 +1198,16 @@ fn row_to_session_unit(r: SessionUnitRow) -> crate::Result<crate::types::Session
         worktree_base_ref: r.worktree_base_ref,
         status: str_to_enum(r.status)?,
         gate_state: r.gate_state.map(|s| serde_json::from_str(&s)).transpose()?,
-        artifact_id: r.artifact_id.as_deref().map(parse_uuid).transpose()?.map(ArtifactId),
-        terminal_meta: r.terminal_meta.map(|s| serde_json::from_str(&s)).transpose()?,
+        artifact_id: r
+            .artifact_id
+            .as_deref()
+            .map(parse_uuid)
+            .transpose()?
+            .map(ArtifactId),
+        terminal_meta: r
+            .terminal_meta
+            .map(|s| serde_json::from_str(&s))
+            .transpose()?,
         created_at: parse_dt(&r.created_at)?,
         updated_at: parse_dt(&r.updated_at)?,
     })
@@ -1190,12 +1220,24 @@ pub async fn upsert_session_unit(
     unit: &crate::types::SessionUnit,
 ) -> crate::Result<()> {
     let stage_instance_id = unit.stage_instance_id.0.to_string();
-    let params = unit.params.as_ref().map(serde_json::to_string).transpose()?;
+    let params = unit
+        .params
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()?;
     let depends_on = serde_json::to_string(&unit.depends_on)?;
     let status = enum_to_str(&unit.status)?;
-    let gate_state = unit.gate_state.as_ref().map(serde_json::to_string).transpose()?;
+    let gate_state = unit
+        .gate_state
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()?;
     let artifact_id = unit.artifact_id.map(|id| id.0.to_string());
-    let terminal_meta = unit.terminal_meta.as_ref().map(serde_json::to_string).transpose()?;
+    let terminal_meta = unit
+        .terminal_meta
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()?;
     let created_at = unit.created_at.to_rfc3339();
     let updated_at = unit.updated_at.to_rfc3339();
     sqlx::query(
@@ -1316,7 +1358,10 @@ pub async fn set_session_unit_status(
 ) -> crate::Result<()> {
     let id_str = stage_instance_id.0.to_string();
     let status_str = enum_to_str(&status)?;
-    let terminal_meta_str = terminal_meta.as_ref().map(serde_json::to_string).transpose()?;
+    let terminal_meta_str = terminal_meta
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()?;
     let updated_at = Utc::now().to_rfc3339();
     let result = sqlx::query(
         "UPDATE stage_session_units SET status = ?, terminal_meta = ?, updated_at = ? \
@@ -1690,14 +1735,12 @@ pub async fn patch_review_item(
 ) -> crate::Result<()> {
     let id_str = id.to_string();
     let status_str = status.as_str();
-    let result = sqlx::query(
-        "UPDATE review_items SET status = ?, resolution = ? WHERE id = ?",
-    )
-    .bind(status_str)
-    .bind(resolution)
-    .bind(&id_str)
-    .execute(pool)
-    .await?;
+    let result = sqlx::query("UPDATE review_items SET status = ?, resolution = ? WHERE id = ?")
+        .bind(status_str)
+        .bind(resolution)
+        .bind(&id_str)
+        .execute(pool)
+        .await?;
     if result.rows_affected() == 0 {
         return Err(crate::Error::NotFound {
             entity: "review_item".into(),
@@ -1711,11 +1754,12 @@ pub async fn count_open_review_items_for_artifact(
     pool: &SqlitePool,
     revision_id: &str,
 ) -> crate::Result<i64> {
-    let row: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM review_items WHERE revision_id = ? AND status = 'open'")
-            .bind(revision_id)
-            .fetch_one(pool)
-            .await?;
+    let row: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM review_items WHERE revision_id = ? AND status = 'open'",
+    )
+    .bind(revision_id)
+    .fetch_one(pool)
+    .await?;
     Ok(row.0)
 }
 
@@ -2735,7 +2779,10 @@ mod tests {
             .await
             .unwrap();
         let units_after_delete = list_session_units_for_stage(&pool, &si.id).await.unwrap();
-        assert!(units_after_delete.is_empty(), "units must cascade-delete with stage_instance");
+        assert!(
+            units_after_delete.is_empty(),
+            "units must cascade-delete with stage_instance"
+        );
     }
 
     #[tokio::test]
@@ -2766,7 +2813,9 @@ mod tests {
         };
         upsert_session_unit(&pool, &unit).await.unwrap();
 
-        assert!(reset_session_unit_for_retry(&pool, &si.id, "failed").await.unwrap());
+        assert!(reset_session_unit_for_retry(&pool, &si.id, "failed")
+            .await
+            .unwrap());
         let reset = get_session_unit(&pool, &si.id, "failed").await.unwrap();
         assert_eq!(reset.status, crate::types::UnitStatus::Pending);
         assert!(reset.external_ref.is_none());
