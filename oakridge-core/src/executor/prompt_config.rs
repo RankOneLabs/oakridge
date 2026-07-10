@@ -43,7 +43,7 @@ pub fn resolve_binding(
             let input = inputs.get(input_name).ok_or_else(|| {
                 anyhow::anyhow!("input '{}' not found in activation inputs", input_name)
             })?;
-            let input_value = resolved_input_value(input);
+            let input_value = input.to_binding_value();
             let v = match path {
                 None => &input_value,
                 Some(ptr) => input_value.pointer(ptr).ok_or_else(|| {
@@ -69,20 +69,6 @@ pub fn resolve_binding(
             })?;
             value_to_string(v)
         }
-    }
-}
-
-fn resolved_input_value(input: &ResolvedInput) -> Value {
-    match input {
-        ResolvedInput::Single(artifact) => artifact.body.clone(),
-        ResolvedInput::Collection(artifacts) => Value::Array(
-            artifacts
-                .iter()
-                .map(|(unit_id, artifact)| {
-                    serde_json::json!({"unit_id": unit_id, "artifact": artifact.body})
-                })
-                .collect(),
-        ),
     }
 }
 

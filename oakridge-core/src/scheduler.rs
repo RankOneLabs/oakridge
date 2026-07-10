@@ -92,6 +92,18 @@ struct RunTask {
     run_map: Arc<Mutex<HashMap<WorkflowRunId, RunHandle>>>,
 }
 
+/// Keys a resolved entry by the producer stage and its persisted unit label.
+/// Labels are only unique within a producer, while collection fan-in needs to
+/// retain artifacts from every producer without collisions. N=1 keeps its
+/// conventional label of `0` within that producer namespace.
+fn resolved_unit_id(producer_stage: &str, artifact: &Artifact) -> String {
+    format!(
+        "{}:{}",
+        producer_stage,
+        artifact.label.as_deref().unwrap_or("0")
+    )
+}
+
 impl RunTask {
     async fn run(mut self) {
         loop {
@@ -221,6 +233,12 @@ impl RunTask {
                 .cloned()
                 .unwrap_or_default();
             if slot.collect || self.is_fan_out_over_slot(stage_key, &slot.name) {
+                if values.is_empty() && !slot.optional {
+                    return Err(format!(
+                        "required collection input '{}' has no producer artifacts",
+                        slot.name
+                    ));
+                }
                 inputs.insert(slot.name.clone(), ResolvedInput::Collection(values));
             } else if values.len() == 1 {
                 let artifact = values.into_values().next().expect("one resolved input");
@@ -483,7 +501,7 @@ impl RunTask {
         for edge in edges {
             let consumer_key = edge.to.stage.clone();
             let slot_name = edge.to.slot.clone();
-            let unit_id = artifact.label.clone().unwrap_or_else(|| "0".to_owned());
+            let unit_id = resolved_unit_id(&producer_key, &artifact);
             self.resolved
                 .entry((consumer_key.clone(), slot_name))
                 .or_default()
@@ -560,7 +578,7 @@ impl RunTask {
             if known_outputs.get(&output_name) != Some(&artifact.artifact_type) {
                 continue;
             }
-            let unit_id = artifact.label.clone().unwrap_or_else(|| "0".to_owned());
+            let unit_id = resolved_unit_id(&stage_key, &artifact);
             let key = (output_name.clone(), unit_id);
             let should_use = latest_by_output_and_unit
                 .get(&key)
@@ -1247,7 +1265,7 @@ impl Coordinator {
                 if edge.from.stage == producer_key && edge.from.slot == output_name {
                     let key = (edge.to.stage.clone(), edge.to.slot.clone());
                     let inner = resolved.entry(key).or_default();
-                    let unit_id = artifact.label.clone().unwrap_or_else(|| "0".to_owned());
+                    let unit_id = resolved_unit_id(&producer_key, artifact);
                     let should_use = inner
                         .get(&unit_id)
                         .map(|current| artifact.created_at > current.created_at)
@@ -1654,7 +1672,7 @@ impl Coordinator {
                     if edge.from.stage == producer_key && edge.from.slot == output_name {
                         let key = (edge.to.stage.clone(), edge.to.slot.clone());
                         let inner = resolved.entry(key).or_default();
-                        let unit_id = artifact.label.clone().unwrap_or_else(|| "0".to_owned());
+                        let unit_id = resolved_unit_id(&producer_key, artifact);
                         let should_use = inner
                             .get(&unit_id)
                             .map(|e| artifact.created_at > e.created_at)

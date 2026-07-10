@@ -257,6 +257,24 @@ pub enum ResolvedInput {
     Collection(BTreeMap<String, Artifact>),
 }
 
+impl ResolvedInput {
+    /// Convert this input to the JSON value visible to prompt/config bindings.
+    /// Collections preserve their ordered producer-unit keys in envelopes.
+    pub fn to_binding_value(&self) -> Value {
+        match self {
+            Self::Single(artifact) => artifact.body.clone(),
+            Self::Collection(artifacts) => Value::Array(
+                artifacts
+                    .iter()
+                    .map(|(unit_id, artifact)| {
+                        serde_json::json!({"unit_id": unit_id, "artifact": artifact.body})
+                    })
+                    .collect(),
+            ),
+        }
+    }
+}
+
 // --- Gate vocabulary ---
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

@@ -112,14 +112,7 @@ pub fn resolve_json_binding(
             let input = inputs.get(input_name).ok_or_else(|| {
                 anyhow::anyhow!("input '{}' not found in activation inputs", input_name)
             })?;
-            let input_value = match input {
-                ResolvedInput::Single(artifact) => artifact.body.clone(),
-                ResolvedInput::Collection(artifacts) => Value::Array(
-                    artifacts.iter().map(|(unit_id, artifact)| {
-                        serde_json::json!({"unit_id": unit_id, "artifact": artifact.body})
-                    }).collect(),
-                ),
-            };
+            let input_value = input.to_binding_value();
             match path {
                 None => Ok(input_value),
                 Some(ptr) => input_value.pointer(ptr).cloned().ok_or_else(|| {
