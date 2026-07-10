@@ -20,7 +20,9 @@ use uuid::Uuid;
 use oakridge_core::db::{self, queries};
 use oakridge_core::executor::delegated_session::{kbbl_client::KbblClient, DelegatedSessionStage};
 use oakridge_core::http::{boot, Config};
-use oakridge_core::registry::{ArtifactTypeDef, ArtifactTypeRegistry, StageTypeRegistry};
+use oakridge_core::registry::{
+    register_dev_flow_types, ArtifactTypeDef, ArtifactTypeRegistry, StageTypeRegistry,
+};
 use oakridge_core::types::*;
 
 #[derive(Clone, Debug)]
@@ -164,6 +166,25 @@ async fn yield_scheduler() {
     }
 }
 
+async fn stage_for_key(
+    pool: &sqlx::SqlitePool,
+    run_id: WorkflowRunId,
+    stage_key: &str,
+) -> StageInstance {
+    for _ in 0..64 {
+        if let Some(stage) = queries::list_stage_instances_for_run(pool, &run_id)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|stage| stage.stage_key == stage_key)
+        {
+            return stage;
+        }
+        tokio::task::yield_now().await;
+    }
+    panic!("stage '{stage_key}' was not activated");
+}
+
 fn fan_out_definition() -> WorkflowDef {
     let mut stages = HashMap::new();
     stages.insert("build".into(), StageNodeDef {
@@ -196,6 +217,77 @@ fn fan_out_definition() -> WorkflowDef {
         graph: WorkflowGraph {
             stages,
             edges: vec![],
+        },
+        created_at: chrono::Utc::now(),
+    }
+}
+
+fn collect_definition() -> WorkflowDef {
+    let mut stages = HashMap::new();
+    stages.insert(
+        "producer".into(),
+        StageNodeDef {
+            stage_type: "delegated_session".into(),
+            config: json!({
+                "runtime": "claude-code",
+                "prompt_template_path": "unit.md",
+                "slot_bindings": {"UNIT_ID": {"from": "literal", "value": "0"}},
+                "workdir": {"from": "literal", "value": "/tmp"},
+                "session_name": "producer-{{UNIT_ID}}",
+                "pre_authorized_tools": [],
+                "yolo": false,
+                "gate_output": "result",
+                "fan_out": {
+                    "over": {"from": "literal", "value": r#"[{"id":"a"},{"id":"b"}]"#},
+                    "unit_id_path": "/id",
+                    "max_parallel": 2
+                }
+            }),
+            inputs: vec![],
+            outputs: vec![OutputSlot {
+                name: "result".into(),
+                artifact_type: "result".into(),
+            }],
+        },
+    );
+    stages.insert(
+        "collector".into(),
+        StageNodeDef {
+            stage_type: "delegated_session".into(),
+            config: json!({
+                "runtime": "claude-code",
+                "prompt_template_path": "collect.md",
+                "slot_bindings": {"RESULTS": {"from": "input", "input_name": "results", "path": null}},
+                "workdir": {"from": "literal", "value": "/tmp"},
+                "session_name": "collector",
+                "pre_authorized_tools": [],
+                "yolo": false
+            }),
+            inputs: vec![InputSlot {
+                name: "results".into(),
+                artifact_type: "result".into(),
+                optional: false,
+                collect: true,
+            }],
+            outputs: vec![],
+        },
+    );
+    WorkflowDef {
+        id: WorkflowDefId(Uuid::new_v4()),
+        name: "collect".into(),
+        version: 1,
+        graph: WorkflowGraph {
+            stages,
+            edges: vec![Edge {
+                from: EdgeEndpoint {
+                    stage: "producer".into(),
+                    slot: "result".into(),
+                },
+                to: EdgeEndpoint {
+                    stage: "collector".into(),
+                    slot: "results".into(),
+                },
+            }],
         },
         created_at: chrono::Utc::now(),
     }
@@ -338,5 +430,447 @@ async fn dependent_units_have_independent_sessions_gates_and_pr_metadata() {
         .await
         .unwrap();
     assert!(units.iter().all(|unit| unit.status == UnitStatus::Done));
+    fake_task.abort();
+}
+
+#[tokio::test]
+async fn collect_consumer_waits_for_and_receives_the_complete_ordered_collection() {
+    let prompts = tempfile::tempdir().unwrap();
+    std::fs::write(prompts.path().join("unit.md"), "Unit {{UNIT_ID}}").unwrap();
+    std::fs::write(prompts.path().join("collect.md"), "Results {{RESULTS}}").unwrap();
+    let prompt_dir = prompts.path().to_path_buf();
+    let (base_url, mut inputs, fake_task) = fake_kbbl().await;
+    let db_url = format!("sqlite:///tmp/oakridge-collect-{}.db", Uuid::new_v4());
+    let (app, _coordinator) = boot(
+        Config {
+            port: 0,
+            bind_addr: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            db_url: db_url.clone(),
+            pwa_dir: PathBuf::from("/tmp"),
+            cors_origins: vec![],
+            auth_policy: oakridge_core::config::AuthPolicy::Loopback,
+            stage_timeout_secs: 3600,
+            stuck_sweep_interval_secs: 3600,
+        },
+        move |stages: &mut StageTypeRegistry, artifacts: &mut ArtifactTypeRegistry| {
+            artifacts.register(ArtifactTypeDef {
+                id: "result".into(),
+                validate: |_| Ok(()),
+                component_id: "result".into(),
+                capabilities: Default::default(),
+                anchor_schema: None,
+                review_items_extractor: None,
+            });
+            stages.register(Arc::new(DelegatedSessionStage::new(
+                prompt_dir,
+                KbblClient::new(base_url).unwrap(),
+            )));
+        },
+    )
+    .await
+    .unwrap();
+    let pool = db::init_pool(&db_url).await.unwrap();
+    let definition = collect_definition();
+    queries::insert_workflow_def(&pool, &definition)
+        .await
+        .unwrap();
+    let run: WorkflowRun = serde_json::from_value(
+        json_request(
+            &app,
+            "POST",
+            "/workflow_runs".into(),
+            json!({"workflow_def_id": definition.id, "project_id": null, "context": {}}),
+        )
+        .await,
+    )
+    .unwrap();
+
+    let _producer_a = tokio::time::timeout(std::time::Duration::from_secs(3), inputs.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let _producer_b = tokio::time::timeout(std::time::Duration::from_secs(3), inputs.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let producer = stage_for_key(&pool, run.id, "producer").await;
+    let artifact_a = emit(
+        &app,
+        producer.id,
+        "a",
+        "result",
+        json!({"marker": "A-ONLY"}),
+    )
+    .await;
+    assert!(inputs.try_recv().is_err(), "collector started before producer done");
+    pass_gate(&app, producer.id, artifact_a).await;
+    assert!(inputs.try_recv().is_err(), "collector started after only one unit completed");
+    let artifact_b = emit(
+        &app,
+        producer.id,
+        "b",
+        "result",
+        json!({"marker": "B-ONLY"}),
+    )
+    .await;
+    pass_gate(&app, producer.id, artifact_b).await;
+
+    let collector = tokio::time::timeout(std::time::Duration::from_secs(3), inputs.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(collector.text.contains("A-ONLY"));
+    assert!(collector.text.contains("B-ONLY"));
+    let a_index = collector.text.find("A-ONLY").unwrap();
+    let b_index = collector.text.find("B-ONLY").unwrap();
+    assert!(a_index < b_index, "collection must be ordered by unit id");
+    fake_task.abort();
+}
+
+#[tokio::test]
+async fn targeted_retry_restarts_only_the_failed_unit() {
+    let prompts = tempfile::tempdir().unwrap();
+    std::fs::write(prompts.path().join("unit.md"), "Unit {{UNIT_ID}}").unwrap();
+    std::fs::write(prompts.path().join("collect.md"), "Results {{RESULTS}}").unwrap();
+    let prompt_dir = prompts.path().to_path_buf();
+    let (base_url, mut inputs, fake_task) = fake_kbbl().await;
+    let db_url = format!("sqlite:///tmp/oakridge-retry-unit-{}.db", Uuid::new_v4());
+    let (app, _coordinator) = boot(
+        Config {
+            port: 0,
+            bind_addr: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            db_url: db_url.clone(),
+            pwa_dir: PathBuf::from("/tmp"),
+            cors_origins: vec![],
+            auth_policy: oakridge_core::config::AuthPolicy::Loopback,
+            stage_timeout_secs: 3600,
+            stuck_sweep_interval_secs: 3600,
+        },
+        move |stages: &mut StageTypeRegistry, artifacts: &mut ArtifactTypeRegistry| {
+            artifacts.register(ArtifactTypeDef {
+                id: "result".into(),
+                validate: |_| Ok(()),
+                component_id: "result".into(),
+                capabilities: Default::default(),
+                anchor_schema: None,
+                review_items_extractor: None,
+            });
+            stages.register(Arc::new(DelegatedSessionStage::new(
+                prompt_dir,
+                KbblClient::new(base_url).unwrap(),
+            )));
+        },
+    )
+    .await
+    .unwrap();
+    let pool = db::init_pool(&db_url).await.unwrap();
+    let definition = collect_definition();
+    queries::insert_workflow_def(&pool, &definition)
+        .await
+        .unwrap();
+    let run: WorkflowRun = serde_json::from_value(
+        json_request(
+            &app,
+            "POST",
+            "/workflow_runs".into(),
+            json!({"workflow_def_id": definition.id, "project_id": null, "context": {}}),
+        )
+        .await,
+    )
+    .unwrap();
+    let _first = tokio::time::timeout(std::time::Duration::from_secs(3), inputs.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let _second = tokio::time::timeout(std::time::Duration::from_secs(3), inputs.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let producer = stage_for_key(&pool, run.id, "producer").await;
+    let before = queries::list_session_units_for_stage(&pool, &producer.id)
+        .await
+        .unwrap();
+    let sibling_ref = before
+        .iter()
+        .find(|unit| unit.unit_id == "b")
+        .unwrap()
+        .external_ref
+        .clone();
+    queries::set_session_unit_status(
+        &pool,
+        &producer.id,
+        "a",
+        UnitStatus::Failed,
+        Some(json!({"kind": "session_ended_without_emit"})),
+    )
+    .await
+    .unwrap();
+
+    json_request(
+        &app,
+        "POST",
+        format!("/stage_instances/{}/retry_stuck", producer.id.0),
+        json!({"unit_id": "a"}),
+    )
+    .await;
+    let retried = tokio::time::timeout(std::time::Duration::from_secs(3), inputs.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(retried.text.contains("a"));
+    let after = queries::list_session_units_for_stage(&pool, &producer.id)
+        .await
+        .unwrap();
+    let unit_a = after.iter().find(|unit| unit.unit_id == "a").unwrap();
+    let unit_b = after.iter().find(|unit| unit.unit_id == "b").unwrap();
+    assert_eq!(unit_a.status, UnitStatus::Running);
+    assert_ne!(unit_a.external_ref, before[0].external_ref);
+    assert_eq!(unit_b.status, UnitStatus::Running);
+    assert_eq!(unit_b.external_ref, sibling_ref);
+    fake_task.abort();
+}
+
+#[tokio::test]
+async fn seeded_dev_flow_v2_inherits_only_the_matching_build_result() {
+    let prompts = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("prompts");
+    let (base_url, mut inputs, fake_task) = fake_kbbl().await;
+    let db_url = format!("sqlite:///tmp/oakridge-seeded-multi-session-{}.db", Uuid::new_v4());
+    let (app, _coordinator) = boot(
+        Config {
+            port: 0,
+            bind_addr: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            db_url: db_url.clone(),
+            pwa_dir: PathBuf::from("/tmp"),
+            cors_origins: vec![],
+            auth_policy: oakridge_core::config::AuthPolicy::Loopback,
+            stage_timeout_secs: 3600,
+            stuck_sweep_interval_secs: 3600,
+        },
+        move |stages: &mut StageTypeRegistry, artifacts: &mut ArtifactTypeRegistry| {
+            register_dev_flow_types(artifacts);
+            stages.register(Arc::new(DelegatedSessionStage::new(
+                prompts,
+                KbblClient::new(base_url).unwrap(),
+            )));
+        },
+    )
+    .await
+    .unwrap();
+    let pool = db::init_pool(&db_url).await.unwrap();
+    let definition_id = WorkflowDefId(
+        Uuid::parse_str("15af5600-1aa7-4ca8-9a12-56f9b132216d").unwrap(),
+    );
+    let run: WorkflowRun = serde_json::from_value(
+        json_request(
+            &app,
+            "POST",
+            "/workflow_runs".into(),
+            json!({
+                "workflow_def_id": definition_id,
+                "project_id": null,
+                "context": {
+                    "brief_notes": "implement two cohorts",
+                    "worktree_path": "/tmp",
+                    "oakridge_url": "http://oakridge.test",
+                    "planner_model": "planner",
+                    "worker_model": "worker",
+                    "worker_effort": "medium"
+                }
+            }),
+        )
+        .await,
+    )
+    .unwrap();
+
+    let spec_input = tokio::time::timeout(std::time::Duration::from_secs(3), inputs.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(spec_input.text.contains("implement two cohorts"));
+    let spec_stage = stage_for_key(&pool, run.id, "spec_analyzer").await;
+    let spec_artifact = emit(
+        &app,
+        spec_stage.id,
+        "0",
+        "spec_analysis",
+        json!({
+            "summary": "spec",
+            "source_spec_refs": [],
+            "findings": [],
+            "requirements": [],
+            "risks": []
+        }),
+    )
+    .await;
+    pass_gate(&app, spec_stage.id, spec_artifact).await;
+
+    let plan_input = tokio::time::timeout(std::time::Duration::from_secs(3), inputs.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(plan_input.text.contains("spec"));
+    let plan_stage = stage_for_key(&pool, run.id, "plan_writer").await;
+    let plan_artifact = emit(
+        &app,
+        plan_stage.id,
+        "0",
+        "plan",
+        json!({
+            "summary": "two cohorts",
+            "cohorts": [
+                {
+                    "id": "cohort-a",
+                    "title": "A",
+                    "scope": "a",
+                    "depends_on": [],
+                    "description": "first",
+                    "decisions": [],
+                    "acceptance_criteria": []
+                },
+                {
+                    "id": "cohort-b",
+                    "title": "B",
+                    "scope": "b",
+                    "depends_on": ["cohort-a"],
+                    "description": "second",
+                    "decisions": [],
+                    "acceptance_criteria": []
+                }
+            ],
+            "dependency_order": ["cohort-a", "cohort-b"],
+            "scope": {},
+            "acceptance_criteria": [],
+            "risks": []
+        }),
+    )
+    .await;
+    pass_gate(&app, plan_stage.id, plan_artifact).await;
+
+    let build_a = tokio::time::timeout(std::time::Duration::from_secs(3), inputs.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(build_a.text.contains("cohort-a"));
+    assert!(inputs.try_recv().is_err(), "dependent cohort started early");
+    let build_stage = stage_for_key(&pool, run.id, "build").await;
+    emit(
+        &app,
+        build_stage.id,
+        "cohort-a",
+        "pr_summary",
+        json!({
+            "pr_url": "https://example.test/a",
+            "branch": "cohort-a",
+            "summary": "A"
+        }),
+    )
+    .await;
+    let result_a = emit(
+        &app,
+        build_stage.id,
+        "cohort-a",
+        "build_result",
+        json!({
+            "summary": "RESULT-A-ONLY",
+            "changed_files": ["a.rs"],
+            "tests": {},
+            "known_issues": []
+        }),
+    )
+    .await;
+    pass_gate(&app, build_stage.id, result_a).await;
+
+    let build_b = tokio::time::timeout(std::time::Duration::from_secs(3), inputs.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(build_b.text.contains("cohort-b"));
+    emit(
+        &app,
+        build_stage.id,
+        "cohort-b",
+        "pr_summary",
+        json!({
+            "pr_url": "https://example.test/b",
+            "branch": "cohort-b",
+            "summary": "B"
+        }),
+    )
+    .await;
+    let result_b = emit(
+        &app,
+        build_stage.id,
+        "cohort-b",
+        "build_result",
+        json!({
+            "summary": "RESULT-B-ONLY",
+            "changed_files": ["b.rs"],
+            "tests": {},
+            "known_issues": []
+        }),
+    )
+    .await;
+    pass_gate(&app, build_stage.id, result_b).await;
+
+    let assessor_one = tokio::time::timeout(std::time::Duration::from_secs(3), inputs.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let assessor_two = tokio::time::timeout(std::time::Duration::from_secs(3), inputs.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let assessor_inputs = [assessor_one, assessor_two];
+    let assessor_a = assessor_inputs
+        .iter()
+        .find(|input| input.text.contains("RESULT-A-ONLY"))
+        .expect("missing cohort-a assessor");
+    let assessor_b = assessor_inputs
+        .iter()
+        .find(|input| input.text.contains("RESULT-B-ONLY"))
+        .expect("missing cohort-b assessor");
+    assert!(!assessor_a.text.contains("RESULT-B-ONLY"));
+    assert!(!assessor_b.text.contains("RESULT-A-ONLY"));
+
+    let assessor_stage = stage_for_key(&pool, run.id, "assessor").await;
+    for unit_id in ["cohort-a", "cohort-b"] {
+        let artifact = emit(
+            &app,
+            assessor_stage.id,
+            unit_id,
+            "assessment",
+            json!({
+                "verdict": "pass",
+                "findings": [],
+                "recommended_next_actions": []
+            }),
+        )
+        .await;
+        pass_gate(&app, assessor_stage.id, artifact).await;
+    }
+    let mut finished = queries::get_workflow_run_by_id(&pool, &run.id)
+        .await
+        .unwrap();
+    for _ in 0..64 {
+        if finished.status == RunStatus::Done {
+            break;
+        }
+        tokio::task::yield_now().await;
+        finished = queries::get_workflow_run_by_id(&pool, &run.id)
+            .await
+            .unwrap();
+    }
+    assert_eq!(finished.status, RunStatus::Done);
+    assert!(spec_stage.external_ref.is_some());
+    assert!(plan_stage.external_ref.is_some());
+    assert!(build_stage.external_ref.is_none());
+    for stage in [&spec_stage, &plan_stage] {
+        let units = queries::list_session_units_for_stage(&pool, &stage.id)
+            .await
+            .unwrap();
+        assert_eq!(units.len(), 1);
+        assert_eq!(units[0].unit_id, "0");
+        assert_eq!(units[0].external_ref, stage.external_ref);
+    }
     fake_task.abort();
 }

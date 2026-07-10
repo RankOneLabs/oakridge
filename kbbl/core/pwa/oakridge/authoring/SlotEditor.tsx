@@ -27,7 +27,15 @@ export function InputSlotEditor({
   disabled = false,
 }: InputSlotEditorProps) {
   const addSlot = () =>
-    onChange([...slots, { name: "", artifact_type: artifactTypes[0]?.value ?? "", optional: false }]);
+    onChange([
+      ...slots,
+      {
+        name: "",
+        artifact_type: artifactTypes[0]?.value ?? "",
+        optional: false,
+        collect: false,
+      },
+    ]);
   const removeSlot = (i: number) => onChange(slots.filter((_, idx) => idx !== i));
   const updateSlot = (i: number, patch: Partial<InputSlotDef>) =>
     onChange(slots.map((s, idx) => (idx === i ? { ...s, ...patch } : s)));
@@ -74,6 +82,15 @@ export function InputSlotEditor({
                 disabled={disabled}
               />
               Optional
+            </label>
+            <label className="flex items-center gap-1 text-xs text-[var(--text-muted)]">
+              <input
+                type="checkbox"
+                checked={slot.collect ?? false}
+                onChange={(e) => updateSlot(i, { collect: e.target.checked })}
+                disabled={disabled}
+              />
+              Collect producer units
             </label>
           </div>
           <button

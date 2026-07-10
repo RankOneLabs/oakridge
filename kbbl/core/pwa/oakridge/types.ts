@@ -270,6 +270,7 @@ export interface InputSlotDef {
   name: string;
   artifact_type: string;
   optional?: boolean;
+  collect?: boolean;
 }
 
 export interface OutputSlotDef {

@@ -30,7 +30,7 @@ use crate::types::{UnitStatus};
 
 use config::{
     validate_effort, Bindable, DelegatedSessionConfig, DelegatedSessionDefConfig, FanOut,
-    FanOutPromptPlan, WorktreeIdentity,
+    FanOutPromptPlan, InheritedInputBinding, WorktreeIdentity,
 };
 use kbbl_client::{
     AckResponse, CreateSessionRequest, DelegatedExternalRef, EventsSinceResponse, KbblClient,
@@ -52,6 +52,27 @@ struct MaterializedFanOutUnit {
     depends_on: Vec<String>,
     rendered_prompt: String,
     worktree: Option<WorktreeIdentity>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum UnitRecoveryMarker {
+    WaitingForKbbl {
+        previous_status: UnitStatus,
+        previous_gate_state: Option<Value>,
+    },
+}
+
+fn waiting_for_kbbl_previous_state(
+    unit: &crate::types::SessionUnit,
+) -> Option<(UnitStatus, Option<Value>)> {
+    let marker = serde_json::from_value::<UnitRecoveryMarker>(unit.gate_state.clone()?).ok()?;
+    match marker {
+        UnitRecoveryMarker::WaitingForKbbl {
+            previous_status,
+            previous_gate_state,
+        } => Some((previous_status, previous_gate_state)),
+    }
 }
 
 fn substitute_unit_template(template: &str, unit_id: &str, stage_instance_id: StageInstanceId) -> String {
@@ -118,6 +139,7 @@ fn materialize_fan_out_units(
         }
 
         let mut slot_values = prompt_plan.base_slot_values.clone();
+        resolve_inherited_prompt_bindings(prompt_plan, item, &mut slot_values)?;
         for (slot_name, binding) in &fan_out.item_bindings {
             slot_values.insert(
                 slot_name.clone(),
@@ -195,6 +217,7 @@ fn materialize_persisted_unit(
     let params = unit.params.clone()
         .ok_or_else(|| anyhow::anyhow!("persisted unit '{}' is missing params", unit.unit_id))?;
     let mut slot_values = prompt_plan.base_slot_values.clone();
+    resolve_inherited_prompt_bindings(prompt_plan, &params, &mut slot_values)?;
     for (slot_name, binding) in &fan_out.item_bindings {
         slot_values.insert(
             slot_name.clone(),
@@ -218,6 +241,29 @@ fn materialize_persisted_unit(
         rendered_prompt: render_template(&prompt_plan.raw_template, &slot_values)?,
         worktree,
     })
+}
+
+fn resolve_inherited_prompt_bindings(
+    prompt_plan: &FanOutPromptPlan,
+    unit_params: &Value,
+    slot_values: &mut HashMap<String, String>,
+) -> anyhow::Result<()> {
+    for (slot_name, binding) in &prompt_plan.inherited_input_bindings {
+        let item_path = match &binding.path {
+            Some(path) => format!("/artifact{path}"),
+            None => "/artifact".to_owned(),
+        };
+        slot_values.insert(
+            slot_name.clone(),
+            resolve_binding(
+                &SlotBinding::Item { path: item_path },
+                &HashMap::new(),
+                &Value::Null,
+                Some(unit_params),
+            )?,
+        );
+    }
+    Ok(())
 }
 
 /// Number of consecutive retryable poll errors before the observer gives up.
@@ -476,7 +522,7 @@ impl UnitScheduler {
     /// idempotent and leaves completed/pending units untouched.
     async fn recover_live_units(self: &Arc<Self>) -> anyhow::Result<()> {
         let units = queries::list_session_units_for_stage(self.ctx.pool(), &self.ctx.stage_instance_id).await?;
-        for unit in units.into_iter().filter(|unit| {
+        for mut unit in units.into_iter().filter(|unit| {
             matches!(unit.status, UnitStatus::Running | UnitStatus::Parked)
                 && unit.external_ref.is_some()
         }) {
@@ -487,6 +533,27 @@ impl UnitScheduler {
             let external = DelegatedExternalRef::parse(unit.external_ref.as_deref().expect("filtered"));
             match self.kbbl_client.read_events_since(&external.sid, -1).await {
                 Ok(response) if response.session_id == external.sid => {
+                    if let Some((previous_status, previous_gate_state)) =
+                        waiting_for_kbbl_previous_state(&unit)
+                    {
+                        queries::set_session_unit_status(
+                            self.ctx.pool(),
+                            &self.ctx.stage_instance_id,
+                            &unit.unit_id,
+                            previous_status,
+                            None,
+                        )
+                        .await?;
+                        queries::set_session_unit_gate_state(
+                            self.ctx.pool(),
+                            &self.ctx.stage_instance_id,
+                            &unit.unit_id,
+                            previous_gate_state.clone(),
+                        )
+                        .await?;
+                        unit.status = previous_status;
+                        unit.gate_state = previous_gate_state;
+                    }
                     if let Some(reason) = failure_reason_from_events(&external.sid, &response.events) {
                         self.mark_failed(&unit.unit_id, reason).await;
                         continue;
@@ -500,16 +567,21 @@ impl UnitScheduler {
                     self.attach_recovered_unit(unit, external)?;
                 }
                 Err(err) if is_retryable_observer_error(&err) => {
-                    let pre_wait_status = unit.status;
-                    let pre_wait_gate_state = unit.gate_state.clone();
-                    if matches!(unit.status, UnitStatus::Running) {
+                    let previous_state = waiting_for_kbbl_previous_state(&unit);
+                    let (pre_wait_status, pre_wait_gate_state) = previous_state
+                        .clone()
+                        .unwrap_or_else(|| (unit.status, unit.gate_state.clone()));
+                    if previous_state.is_none() && matches!(unit.status, UnitStatus::Running) {
                         queries::set_session_unit_status(
                             self.ctx.pool(), &self.ctx.stage_instance_id, &unit.unit_id,
                             UnitStatus::Parked, None,
                         ).await?;
                         queries::set_session_unit_gate_state(
                             self.ctx.pool(), &self.ctx.stage_instance_id, &unit.unit_id,
-                            Some(serde_json::json!({"kind": "waiting_for_kbbl"})),
+                            Some(serde_json::to_value(UnitRecoveryMarker::WaitingForKbbl {
+                                previous_status: pre_wait_status,
+                                previous_gate_state: pre_wait_gate_state.clone(),
+                            })?),
                         ).await?;
                     }
                     self.spawn_unit_waiting_for_kbbl(unit, external, pre_wait_status, pre_wait_gate_state);
@@ -687,8 +759,7 @@ impl UnitScheduler {
                         if has_clean_exit(&response.events) {
                             let unit = queries::get_session_unit(scheduler.ctx.pool(), &scheduler.ctx.stage_instance_id, &unit_id).await.ok();
                             if matches!(unit.as_ref().map(|unit| unit.status), Some(UnitStatus::Running)) {
-                                let _ = queries::set_session_unit_status(scheduler.ctx.pool(), &scheduler.ctx.stage_instance_id, &unit_id, UnitStatus::Parked, None).await;
-                                let _ = scheduler.recompute_aggregate().await;
+                                scheduler.mark_session_ended_without_emit(&unit_id).await;
                                 let _ = scheduler.admit().await;
                             } else if matches!(unit.as_ref().map(|unit| unit.status), Some(UnitStatus::Parked)) {
                                 // A gate remains actionable after a clean exit.
@@ -1294,9 +1365,31 @@ impl StageType for DelegatedSessionStage {
         let def: DelegatedSessionDefConfig = serde_json::from_value(def_config.clone())?;
         let template = load_template(&self.prompts_dir, &def.prompt_template_path)?;
 
+        let inherited_input_name = def.fan_out.as_ref().and_then(|fan_out| {
+            match &fan_out.over {
+                SlotBinding::Input {
+                    input_name,
+                    path: None,
+                } if matches!(inputs.get(input_name), Some(ResolvedInput::Collection(_))) => {
+                    Some(input_name.as_str())
+                }
+                _ => None,
+            }
+        });
+        let mut inherited_input_bindings = HashMap::new();
         let mut slot_values: HashMap<String, String> = HashMap::new();
         for (slot_name, binding) in &def.slot_bindings {
-            if !matches!(binding, SlotBinding::Item { .. }) {
+            let inherited_binding = match binding {
+                SlotBinding::Input { input_name, path }
+                    if inherited_input_name == Some(input_name.as_str()) =>
+                {
+                    Some(InheritedInputBinding { path: path.clone() })
+                }
+                _ => None,
+            };
+            if let Some(binding) = inherited_binding {
+                inherited_input_bindings.insert(slot_name.clone(), binding);
+            } else if !matches!(binding, SlotBinding::Item { .. }) {
                 slot_values.insert(
                     slot_name.clone(),
                     resolve_binding(binding, inputs, run_context, None)?,
@@ -1311,7 +1404,9 @@ impl StageType for DelegatedSessionStage {
 
         let mut render_values = slot_values.clone();
         for (slot_name, binding) in &def.slot_bindings {
-            if matches!(binding, SlotBinding::Item { .. }) {
+            if matches!(binding, SlotBinding::Item { .. })
+                || inherited_input_bindings.contains_key(slot_name)
+            {
                 render_values.insert(slot_name.clone(), format!("{{{{{slot_name}}}}}"));
             }
         }
@@ -1319,6 +1414,7 @@ impl StageType for DelegatedSessionStage {
         let fan_out_prompt_plan = def.fan_out.as_ref().map(|_| FanOutPromptPlan {
             raw_template: template.clone(),
             base_slot_values: slot_values.clone(),
+            inherited_input_bindings,
         });
         let resolved_fan_out_over = def
             .fan_out
@@ -1374,8 +1470,7 @@ impl StageType for DelegatedSessionStage {
             pre_authorized_tools: def.pre_authorized_tools,
             yolo: def.yolo,
             output_slots: output_slots.to_vec(),
-            // Thread fan_out through to the built config so execute() can detect
-            // N>1 and reject until Phase 2b implements the per-unit scheduler.
+            // Thread fan_out through to execute-time materialization and admission.
             fan_out: def.fan_out,
             // Carry gate_output designation to built config so the emit handler
             // knows which slot triggers parking vs. just storing an artifact.
@@ -1393,6 +1488,10 @@ impl StageType for DelegatedSessionStage {
             // input cannot leave a partially launched stage.
             let materialized = materialize_fan_out_units(&config, &fan_out, ctx.stage_instance_id)?;
             if materialized.is_empty() {
+                tracing::info!(
+                    stage_instance_id = %ctx.stage_instance_id.0,
+                    "fan-out resolved to zero units; completing stage"
+                );
                 ctx.set_status(StageStatus::Done, None).await?;
                 return Ok(Box::new(DelegatedSessionHandle {
                     stage_instance_id: ctx.stage_instance_id,
@@ -1727,7 +1826,36 @@ impl DelegatedSessionHandle {
                 self.send_kbbl_input(&session.sid, format!(
                     "Feedback artifact {} (type {}):\n{}", artifact.id.0, artifact.artifact_type,
                     serde_json::to_string_pretty(&artifact.body).unwrap_or_else(|_| artifact.body.to_string()),
-                )).await
+                )).await?;
+                let unit = queries::get_session_unit(
+                    scheduler.ctx.pool(),
+                    &self.stage_instance_id,
+                    &unit_id,
+                )
+                .await?;
+                if let Some(gate_state) = unit.gate_state {
+                    if let Ok(mut gate_state) =
+                        serde_json::from_value::<DelegatedGateState>(gate_state)
+                    {
+                        gate_state.revision_count = gate_state.revision_count.saturating_add(1);
+                        queries::set_session_unit_gate_state(
+                            scheduler.ctx.pool(),
+                            &self.stage_instance_id,
+                            &unit_id,
+                            Some(serde_json::to_value(gate_state)?),
+                        )
+                        .await?;
+                    }
+                }
+                queries::set_session_unit_status(
+                    scheduler.ctx.pool(),
+                    &self.stage_instance_id,
+                    &unit_id,
+                    UnitStatus::Running,
+                    None,
+                )
+                .await?;
+                scheduler.recompute_aggregate().await
             }
             crate::executor::ResumePayload::GateDecision { decision, against_artifact_id } => {
                 let units = queries::list_session_units_for_stage(scheduler.ctx.pool(), &self.stage_instance_id).await?;
@@ -2224,6 +2352,7 @@ mod tests {
             fan_out_prompt_plan: Some(FanOutPromptPlan {
                 raw_template: "unit={{UNIT_ID}} stage={{STAGE_INSTANCE_ID}} item={{ITEM}} base={{BASE}}".into(),
                 base_slot_values: HashMap::from([("BASE".into(), "base-value".into())]),
+                inherited_input_bindings: HashMap::new(),
             }),
             resolved_fan_out_over: Some(over),
             workdir: PathBuf::from("/work"),
@@ -2336,6 +2465,195 @@ mod tests {
         assert_eq!(rebuilt.depends_on, vec!["already-done"]);
         assert!(rebuilt.rendered_prompt.contains("item=saved"));
         assert_eq!(rebuilt.worktree.unwrap().branch_name, "saved-branch");
+    }
+
+    #[tokio::test]
+    async fn recovery_reattaches_multiple_units_and_restores_pre_wait_state() {
+        let (base_url, capture, join) = spawn_kbbl_mock().await;
+        let pool = make_pool().await;
+        let config = fan_out_config(
+            json!([
+                {"id": "a", "name": "a", "depends_on": []},
+                {"id": "b", "name": "b", "depends_on": []}
+            ]),
+            Some("/depends_on"),
+        );
+        let config_value = serde_json::to_value(&config).unwrap();
+        let (run_id, stage_instance_id) =
+            setup_stage_instance(&pool, config_value.clone(), None).await;
+        let external_ref = serde_json::to_string(&DelegatedExternalRef {
+            sid: "sid-123".into(),
+            worktree_path: Some("/tmp/worktree".into()),
+            worktree_branch: Some("cohort/test".into()),
+            worktree_base_ref: Some("main".into()),
+        })
+        .unwrap();
+        let now = chrono::Utc::now();
+        let waiting_marker = serde_json::to_value(UnitRecoveryMarker::WaitingForKbbl {
+            previous_status: UnitStatus::Running,
+            previous_gate_state: None,
+        })
+        .unwrap();
+        let parked_gate = serde_json::to_value(DelegatedGateState::artifact_approval(
+            "sid-123".into(),
+            ArtifactId(Uuid::new_v4()),
+            1,
+            None,
+            None,
+            None,
+            None,
+        ))
+        .unwrap();
+        for (unit_id, status, gate_state) in [
+            ("a", UnitStatus::Parked, Some(waiting_marker)),
+            ("b", UnitStatus::Parked, Some(parked_gate)),
+        ] {
+            queries::upsert_session_unit(
+                &pool,
+                &crate::types::SessionUnit {
+                    stage_instance_id,
+                    unit_id: unit_id.into(),
+                    params: Some(json!({"id": unit_id, "name": unit_id, "depends_on": []})),
+                    depends_on: vec![],
+                    external_ref: Some(external_ref.clone()),
+                    worktree_branch: Some(format!("cohort/{unit_id}")),
+                    worktree_path: Some(format!("/tmp/{unit_id}")),
+                    worktree_base_ref: Some("main".into()),
+                    status,
+                    gate_state,
+                    artifact_id: None,
+                    terminal_meta: None,
+                    created_at: now,
+                    updated_at: now,
+                },
+            )
+            .await
+            .unwrap();
+        }
+        let stage = DelegatedSessionStage::new(
+            PathBuf::from("/tmp"),
+            KbblClient::new(base_url).unwrap(),
+        );
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        let ctx = StageContext::new(
+            crate::types::StageInstanceSummary {
+                stage_instance_id,
+                workflow_run_id: run_id,
+                stage_key: "delegate".into(),
+                status: StageStatus::Parked,
+                parked_reason: Some("waiting_gate".into()),
+                parked_meta: None,
+                terminal_meta: None,
+                external_ref: None,
+            },
+            config_value,
+            HashMap::new(),
+            tx,
+            pool.clone(),
+            Arc::new(ArtifactTypeRegistry::new()),
+        );
+
+        let _handle = stage.execute(ctx).await.unwrap();
+        let units = queries::list_session_units_for_stage(&pool, &stage_instance_id)
+            .await
+            .unwrap();
+        assert_eq!(units[0].status, UnitStatus::Running);
+        assert!(units[0].gate_state.is_none());
+        assert_eq!(units[1].status, UnitStatus::Parked);
+        assert_eq!(stage.live_sessions.lock().unwrap().len(), 2);
+        assert!(capture
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|request| request.path != "/sessions"));
+        join.abort();
+    }
+
+    #[tokio::test]
+    async fn fan_out_feedback_restarts_only_its_unit_and_bumps_gate_revision() {
+        let (base_url, _capture, join) = spawn_kbbl_mock().await;
+        let pool = make_pool().await;
+        let config = fan_out_config(
+            json!([{"id": "a", "name": "a", "depends_on": []}]),
+            Some("/depends_on"),
+        );
+        let config_value = serde_json::to_value(&config).unwrap();
+        let (run_id, stage_instance_id) =
+            setup_stage_instance(&pool, config_value.clone(), None).await;
+        let stage = DelegatedSessionStage::new(
+            PathBuf::from("/tmp"),
+            KbblClient::new(base_url).unwrap(),
+        );
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        let ctx = StageContext::new(
+            crate::types::StageInstanceSummary {
+                stage_instance_id,
+                workflow_run_id: run_id,
+                stage_key: "delegate".into(),
+                status: StageStatus::Pending,
+                parked_reason: None,
+                parked_meta: None,
+                terminal_meta: None,
+                external_ref: None,
+            },
+            config_value,
+            HashMap::new(),
+            tx,
+            pool.clone(),
+            Arc::new(ArtifactTypeRegistry::new()),
+        );
+        let handle = stage.execute(ctx).await.unwrap();
+        let gate = DelegatedGateState::artifact_approval(
+            "sid-123".into(),
+            ArtifactId(Uuid::new_v4()),
+            1,
+            None,
+            None,
+            None,
+            None,
+        );
+        queries::set_session_unit_gate_state(
+            &pool,
+            &stage_instance_id,
+            "a",
+            Some(serde_json::to_value(gate).unwrap()),
+        )
+        .await
+        .unwrap();
+        queries::set_session_unit_status(
+            &pool,
+            &stage_instance_id,
+            "a",
+            UnitStatus::Parked,
+            None,
+        )
+        .await
+        .unwrap();
+        handle
+            .resume(ResumePayload::FeedbackArtifact {
+                artifact: Artifact {
+                    id: ArtifactId(Uuid::new_v4()),
+                    run_id,
+                    stage_instance_id,
+                    artifact_type: "feedback".into(),
+                    output_name: Some("feedback".into()),
+                    label: Some("a".into()),
+                    body: json!({"request": "revise"}),
+                    version: 1,
+                    parent_artifact_id: None,
+                    created_at: chrono::Utc::now(),
+                },
+            })
+            .await
+            .unwrap();
+
+        let unit = queries::get_session_unit(&pool, &stage_instance_id, "a")
+            .await
+            .unwrap();
+        let gate: DelegatedGateState = serde_json::from_value(unit.gate_state.unwrap()).unwrap();
+        assert_eq!(unit.status, UnitStatus::Running);
+        assert_eq!(gate.revision_count, 2);
+        join.abort();
     }
 
     #[test]
@@ -2534,6 +2852,90 @@ mod tests {
         assert_eq!(plan.raw_template, "Base {{BASE}} item {{ITEM}}");
         assert_eq!(plan.base_slot_values.get("BASE"), Some(&"ready".to_owned()));
         assert!(!plan.base_slot_values.contains_key("ITEM"));
+    }
+
+    #[tokio::test]
+    async fn inherited_fan_out_renders_only_the_matching_artifact_per_unit() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("inherited.md"),
+            "Result {{BUILD_RESULT}} plan {{PLAN}} unit {{UNIT_ID}}",
+        )
+        .unwrap();
+        let stage = DelegatedSessionStage::new(
+            dir.path().to_path_buf(),
+            KbblClient::new("http://127.0.0.1:8080/").unwrap(),
+        );
+        let make_artifact = |label: &str, body: Value| Artifact {
+            id: crate::types::ArtifactId(Uuid::new_v4()),
+            run_id: crate::types::WorkflowRunId(Uuid::new_v4()),
+            stage_instance_id: StageInstanceId(Uuid::new_v4()),
+            artifact_type: "dev.build_result".into(),
+            output_name: Some("build_result".into()),
+            label: Some(label.into()),
+            body,
+            version: 1,
+            parent_artifact_id: None,
+            created_at: chrono::Utc::now(),
+        };
+        let build_results = std::collections::BTreeMap::from([
+            (
+                "cohort-a".into(),
+                make_artifact("cohort-a", json!({"summary": "only-a"})),
+            ),
+            (
+                "cohort-b".into(),
+                make_artifact("cohort-b", json!({"summary": "only-b"})),
+            ),
+        ]);
+        let plan = make_artifact("0", json!({"summary": "shared-plan"}));
+        let inputs = HashMap::from([
+            (
+                "build_result".into(),
+                ResolvedInput::Collection(build_results),
+            ),
+            ("plan".into(), ResolvedInput::Single(plan)),
+        ]);
+        let config = stage
+            .build_config(
+                &json!({
+                    "runtime": "codex",
+                    "prompt_template_path": "inherited.md",
+                    "slot_bindings": {
+                        "BUILD_RESULT": {"from": "input", "input_name": "build_result", "path": null},
+                        "PLAN": {"from": "input", "input_name": "plan", "path": null},
+                        "UNIT_ID": {"from": "literal", "value": "0"}
+                    },
+                    "workdir": {"from": "literal", "value": "/work"},
+                    "session_name": "assessor-{{UNIT_ID}}",
+                    "fan_out": {
+                        "over": {"from": "input", "input_name": "build_result", "path": null},
+                        "unit_id_path": "/unit_id"
+                    }
+                }),
+                &inputs,
+                &[],
+                StageInstanceId(Uuid::new_v4()),
+                &Value::Null,
+            )
+            .await
+            .unwrap();
+        let config: DelegatedSessionConfig = serde_json::from_value(config).unwrap();
+        let units = materialize_fan_out_units(
+            &config,
+            config.fan_out.as_ref().unwrap(),
+            StageInstanceId(Uuid::new_v4()),
+        )
+        .unwrap();
+
+        assert_eq!(units.len(), 2);
+        assert!(units[0].rendered_prompt.contains("only-a"));
+        assert!(!units[0].rendered_prompt.contains("only-b"));
+        assert!(units[1].rendered_prompt.contains("only-b"));
+        assert!(!units[1].rendered_prompt.contains("only-a"));
+        assert!(units
+            .iter()
+            .all(|unit| unit.rendered_prompt.contains("shared-plan")));
     }
 
     fn gate_output_def_config(prompts_dir: &std::path::Path, gate_output: &str) -> Value {

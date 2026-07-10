@@ -202,7 +202,7 @@ impl RunTask {
         stage_key: &StageKey,
         slot: &crate::types::InputSlot,
     ) -> bool {
-        slot.collect || self.is_fan_out_over_slot(stage_key, &slot.name)
+        slot.collect || self.input_inherits_fan_out(stage_key, &slot.name)
     }
 
     fn is_fan_out_over_slot(&self, stage_key: &StageKey, slot_name: &str) -> bool {
@@ -220,6 +220,31 @@ impl RunTask {
             config.fan_out.map(|fan_out| fan_out.over),
             Some(SlotBinding::Input { input_name, .. }) if input_name == slot_name
         )
+    }
+
+    /// An input is an inherited fan-out collection only when the consumer fans
+    /// over that slot and at least one producer is itself fanned. A non-fanned
+    /// producer may emit one artifact whose body contains the array to fan over
+    /// (for example dev.plan/cohorts); that remains a scalar input.
+    fn input_inherits_fan_out(&self, stage_key: &StageKey, slot_name: &str) -> bool {
+        if !self.is_fan_out_over_slot(stage_key, slot_name) {
+            return false;
+        }
+        self.def.graph.edges.iter().any(|edge| {
+            if edge.to.stage != *stage_key || edge.to.slot != slot_name {
+                return false;
+            }
+            let Some(producer) = self.def.graph.stages.get(&edge.from.stage) else {
+                return false;
+            };
+            if producer.stage_type != "delegated_session" {
+                return false;
+            }
+            serde_json::from_value::<DelegatedSessionDefConfig>(producer.config.clone())
+                .ok()
+                .and_then(|config| config.fan_out)
+                .is_some()
+        })
     }
 
     fn producer_stages_are_done(&self, consumer_key: &StageKey, slot_name: &str) -> bool {
@@ -252,7 +277,7 @@ impl RunTask {
                 .get(&(stage_key.clone(), slot.name.clone()))
                 .cloned()
                 .unwrap_or_default();
-            if slot.collect || self.is_fan_out_over_slot(stage_key, &slot.name) {
+            if slot.collect || self.input_inherits_fan_out(stage_key, &slot.name) {
                 if values.is_empty() && !slot.optional {
                     return Err(format!(
                         "required collection input '{}' has no producer artifacts",
@@ -510,30 +535,56 @@ impl RunTask {
         artifact: Artifact,
         output_name: String,
     ) {
-        let edges: Vec<_> = self
-            .def
-            .graph
-            .edges
-            .iter()
-            .filter(|e| e.from.stage == producer_key && e.from.slot == output_name)
-            .cloned()
-            .collect();
+        self.propagate_artifacts(vec![(producer_key, artifact, output_name)])
+            .await;
+    }
 
-        for edge in edges {
-            let consumer_key = edge.to.stage.clone();
-            let slot_name = edge.to.slot.clone();
-            let unit_id = resolved_unit_id(
-                &self.def,
-                &producer_key,
-                &consumer_key,
-                &slot_name,
-                &artifact,
-            );
-            self.resolved
-                .entry((consumer_key.clone(), slot_name))
+    /// File a complete producer transition before considering consumer
+    /// activation. Delegated fan-out stages release all unit artifacts only
+    /// when the aggregate reaches Done; activating after the first insert would
+    /// give collection consumers a timing-dependent partial input.
+    async fn propagate_artifacts(
+        &mut self,
+        artifacts: Vec<(StageKey, Artifact, String)>,
+    ) {
+        let mut deliveries = Vec::new();
+        for (producer_key, artifact, output_name) in artifacts {
+            let edges: Vec<_> = self
+                .def
+                .graph
+                .edges
+                .iter()
+                .filter(|edge| {
+                    edge.from.stage == producer_key && edge.from.slot == output_name
+                })
+                .cloned()
+                .collect();
+            for edge in edges {
+                let consumer_key = edge.to.stage.clone();
+                let slot_name = edge.to.slot.clone();
+                let unit_id = resolved_unit_id(
+                    &self.def,
+                    &producer_key,
+                    &consumer_key,
+                    &slot_name,
+                    &artifact,
+                );
+                self.resolved
+                    .entry((consumer_key.clone(), slot_name))
+                    .or_default()
+                    .insert(unit_id, artifact.clone());
+                deliveries.push((consumer_key, artifact.clone()));
+            }
+        }
+
+        let mut deliveries_by_consumer: HashMap<StageKey, Vec<Artifact>> = HashMap::new();
+        for (consumer_key, artifact) in deliveries {
+            deliveries_by_consumer
+                .entry(consumer_key)
                 .or_default()
-                .insert(unit_id, artifact.clone());
-
+                .push(artifact);
+        }
+        for (consumer_key, artifacts) in deliveries_by_consumer {
             if let Some((si_id, status)) = self.index.get(&consumer_key).cloned() {
                 // Pending stages have a handle but haven't emitted Running yet; treat
                 // them as live so feedback artifacts are not silently dropped.
@@ -542,18 +593,18 @@ impl RunTask {
                     StageStatus::Pending | StageStatus::Running | StageStatus::Parked
                 ) {
                     if let Some(handle) = self.handles.get(&si_id) {
-                        let _ = handle
-                            .resume(ResumePayload::FeedbackArtifact {
-                                artifact: artifact.clone(),
-                            })
-                            .await;
-                        self.bus.publish(
-                            self.run_id,
-                            SubstrateEvent::StageResumed {
-                                stage_instance_id: si_id,
-                                resume_kind: "feedback_artifact".to_string(),
-                            },
-                        );
+                        for artifact in artifacts {
+                            let _ = handle
+                                .resume(ResumePayload::FeedbackArtifact { artifact })
+                                .await;
+                            self.bus.publish(
+                                self.run_id,
+                                SubstrateEvent::StageResumed {
+                                    stage_instance_id: si_id,
+                                    resume_kind: "feedback_artifact".to_string(),
+                                },
+                            );
+                        }
                     }
                     continue;
                 }
@@ -620,10 +671,13 @@ impl RunTask {
             }
         }
 
-        for ((output_name, _unit_id), artifact) in latest_by_output_and_unit {
-            self.propagate_artifact(stage_key.clone(), artifact, output_name)
-                .await;
-        }
+        let artifacts = latest_by_output_and_unit
+            .into_iter()
+            .map(|((output_name, _unit_id), artifact)| {
+                (stage_key.clone(), artifact, output_name)
+            })
+            .collect();
+        self.propagate_artifacts(artifacts).await;
     }
 
     /// Returns true when the run has reached a terminal state.
