@@ -1,4 +1,5 @@
 import type { InputSlotDef, OutputSlotDef } from "../../oakridge/types";
+import { updateInputSlot } from "../../lib/input-slots";
 
 const inputClass =
   "w-full rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-3 py-1.5 text-sm text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none";
@@ -27,10 +28,18 @@ export function InputSlotEditor({
   disabled = false,
 }: InputSlotEditorProps) {
   const addSlot = () =>
-    onChange([...slots, { name: "", artifact_type: artifactTypes[0]?.value ?? "", optional: false }]);
+    onChange([
+      ...slots,
+      {
+        name: "",
+        artifact_type: artifactTypes[0]?.value ?? "",
+        optional: false,
+        collect: false,
+      },
+    ]);
   const removeSlot = (i: number) => onChange(slots.filter((_, idx) => idx !== i));
   const updateSlot = (i: number, patch: Partial<InputSlotDef>) =>
-    onChange(slots.map((s, idx) => (idx === i ? { ...s, ...patch } : s)));
+    onChange(updateInputSlot(slots, i, patch));
 
   return (
     <div className="flex flex-col gap-2">
@@ -74,6 +83,15 @@ export function InputSlotEditor({
                 disabled={disabled}
               />
               Optional
+            </label>
+            <label className="flex items-center gap-1 text-xs text-[var(--text-muted)]">
+              <input
+                type="checkbox"
+                checked={slot.collect ?? false}
+                onChange={(e) => updateSlot(i, { collect: e.target.checked })}
+                disabled={disabled}
+              />
+              Collect producer units
             </label>
           </div>
           <button

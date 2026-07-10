@@ -25,11 +25,11 @@ kbbl-owned dev-flow (Epic → Spec → Plan → Build → Assess), see
 | --- | --- | --- |
 | **Epic** | project + workflow context (run carries repo and task metadata) | partial — v2 has no named Epic entity; project ties a repo to runs |
 | **Spec** | input artifact (brief notes in run context) + `dev.spec_analysis` stage output | partial — spec analysis runs; no persistent Spec record or discrepancy workflow |
-| **Plan** | `dev.plan` artifact emitted by `plan_writer` stage + artifact-approval gate | partial — plan artifact exists and gates; no DAG editor or cohort-dependency graph |
-| **Cohort** | generic stage/run worktree identity supplied by kbbl `POST /sessions` | partial — worktree identity is tracked; no named Cohort entity in v2 |
+| **Plan** | `dev.plan` artifact emitted by `plan_writer` stage + artifact-approval gate | partial — plan cohorts and their dependencies drive the build fan-out DAG; there is no DAG editor |
+| **Cohort** | a fanned `stage_session_units` row keyed by the plan cohort id, with its own session and worktree | partial — cohort execution is durable and independently gated, but there is no standalone Cohort entity |
 | **Brief** | prompt templates (`oakridge-core/prompts/dev-flow/`) + scoped stage inputs bound at run time | partial — templates drive each stage; no standalone Brief artifact or review surface |
 | **Assessment** | `dev.assessment` artifact emitted by `assessor` stage | partial — assessor runs and emits; no Assessment inbox or accept/reject lifecycle |
-| **PR merge** | external worktree/branch confirmation gate (operator confirms outside v2) | partial — v2 exposes branch and path at merge-confirmation gate; does not own PR creation or merge |
+| **PR merge** | per-cohort PR opened by the seeded build agent + merge-confirmation gate | partial — the agent emits `dev.pr_summary` and v2 shows its PR URL, branch, and path; v2 does not merge the PR |
 
 ## What You Will Run
 
@@ -519,8 +519,12 @@ best-effort and is also recorded in `terminal_meta`.
 
 ## Run The Dev-Flow Workflow
 
-The dev-flow workflow is a four-stage `delegated_session` pipeline. It lives in
-`oakridge-core/examples/dev_flow.json`.
+The dev-flow workflow is a four-stage `delegated_session` pipeline with two
+definitions:
+
+- `oakridge-core/examples/dev_flow.json` (version 1) runs one session per stage.
+- `oakridge-core/examples/dev_flow_v2.json` (version 2) fans build and assessment
+  out over the cohorts produced by the plan.
 
 ### Workflow graph
 
@@ -532,14 +536,27 @@ spec_analyzer → plan_writer → build → assessor
 | --- | --- | --- |
 | `spec_analyzer` | `dev.spec_analysis` | Reads the codebase and the brief; catalogs requirements, findings, and risks. |
 | `plan_writer` | `dev.plan` | Converts the spec analysis into an ordered implementation plan. |
-| `build` | `dev.build_result` | Implements the plan commit-by-commit and emits a build result. |
-| `assessor` | `dev.assessment` | Evaluates the build result against the plan's acceptance criteria. |
+| `build` | `dev.pr_summary`, `dev.build_result` | Implements the plan in one independently gated unit per cohort. |
+| `assessor` | `dev.assessment` | Evaluates each cohort's build result against the plan's acceptance criteria. |
 
-Each stage is a `delegated_session` with typed artifacts, artifact-approval
-and merge-confirmation gates, and generic worktree identity supplied by the run
-context or artifact data. The `build` stage produces and commits work on a
-branch; the merge-confirmation gate is where the operator confirms that branch
-externally and signals v2 to advance.
+Each stage is a `delegated_session` with typed artifacts and artifact-approval
+and merge-confirmation gates. Version 1 retains the implicit unit id `"0"` and
+single-session behavior.
+
+In version 2, `plan_writer` emits a `cohorts` array and `build` materializes one
+unit per cohort. Each build unit has its own kbbl session, branch, worktree,
+artifacts, gates, and PR metadata. A cohort starts only after all ids in its
+`depends_on` list are `done`; independent cohorts may run concurrently, up to
+the stage's `fan_out.max_parallel` limit. Dependencies control execution order
+only: every build worktree uses the configured run base rather than a preceding
+cohort's branch.
+
+The seeded `assessor` inherits the build fan-out by unit id. It starts after the
+complete build stage is done and each assessor unit receives only the matching
+cohort's `dev.build_result`. A custom aggregate consumer can instead declare
+`collect: true` on an input slot; it receives a deterministic unit-id-ordered
+array of `{ "unit_id": "...", "artifact": ... }` envelopes after the producer
+stage is done.
 
 ### Prerequisites
 
@@ -555,10 +572,11 @@ CORE=http://127.0.0.1:8790
 
 curl -sX POST "$CORE/workflow_defs" \
   -H 'content-type: application/json' \
-  -d "$(jq '{name,version,graph}' oakridge-core/examples/dev_flow.json)"
+  -d "$(jq '{name,version,graph}' oakridge-core/examples/dev_flow_v2.json)"
 ```
 
-Save the returned `id` as `DEV_FLOW_DEF_ID`.
+Save the returned `id` as `DEV_FLOW_DEF_ID`. Use `dev_flow.json` instead when
+you specifically need the version 1 single-session workflow.
 
 ### Start a run
 
@@ -579,13 +597,19 @@ curl -sX POST "$CORE/workflow_runs" \
 
 ### Gate decisions
 
-Each stage parks for artifact approval after emitting its output. The gate
-cycle is the same as any other `delegated_session` stage:
+Each stage or fan-out unit parks for artifact approval after emitting its gate
+output. The gate cycle is the same as any other `delegated_session` stage:
 
-1. `POST /stage_instances/<id>/resume` with `outcome: "pass"` after review.
+1. For a stage without `fan_out`, call
+   `POST /stage_instances/<id>/resume` with a passing gate-decision payload. For
+   a fan-out unit, call `POST /gates/<stage_instance_uuid>:<unit_id>/resume`
+   with the composite gate id returned by `GET /parked` or
+   `GET /runs/:id/gates`.
 2. A second pass moves from artifact approval to merge confirmation and then to
-   `done`. At merge confirmation, the operator must verify the displayed branch
-   and path before approving — blind approval is not acceptable.
+   `done`. At merge confirmation, the operator must verify the displayed PR URL,
+   branch, and path when present before approving — blind approval is not
+   acceptable. A dependent fan-out unit is not eligible until this pass marks
+   every dependency `done`.
 3. A `fail` or `rerun` decision sends feedback into the live kbbl session so the
    agent can revise its output.
 
@@ -643,6 +667,10 @@ Shows the stage timeline table with per-stage columns:
   `#sid=<sid>` in the kbbl inbox)
 - **Worktree** — branch name and path when the session has worktree metadata
 
+Fanned stages expand into unit rows. Each unit row shows its own status,
+session, worktree, and emitted artifacts; N>1 state is authoritative on these
+unit rows rather than mirrored onto the parent stage row.
+
 The run detail also shows a **Refresh** button and the parked gate panel (see
 below).
 
@@ -657,8 +685,10 @@ table. Each parked gate shows:
 - Pass / Fail / Rerun action buttons
 
 The `id` field on each gate returned by `GET /parked` and `GET /runs/:id/gates` is a
-**composite gate id** with the form `"{stage_instance_uuid}:{unit_id}"`. For the current
-single-unit (N=1) case this is `"{uuid}:0"`. Pass this composite id when calling
+**composite gate id** with the form `"{stage_instance_uuid}:{unit_id}"`. For a
+stage without `fan_out` this is `"{uuid}:0"`; for a fanned stage — including a
+fan-out containing one item — the suffix is the materialized unit id. Pass this
+composite id when calling
 `POST /gates/:id/resume` directly via curl:
 
 ```bash
@@ -666,10 +696,9 @@ single-unit (N=1) case this is `"{uuid}:0"`. Pass this composite id when calling
 curl -sX POST "$CORE/gates/<composite_id>/resume" \
   -H 'content-type: application/json' \
   -d '{
-    "outcome": "pass",
-    "comment": null,
-    "feedback": null,
-    "against_artifact_id": "<artifact_id>"
+    "action": "pass",
+    "operator_comment": "Reviewed the artifact and worktree",
+    "feedback": null
   }'
 ```
 
@@ -682,22 +711,36 @@ for each revision. Navigate here from the artifact chips in the stage table.
 
 ### Delegated session links
 
-Each stage row links to the kbbl session that executed the stage. Clicking the
-link navigates to `#sid=<sid>`, opening the full session transcript in the kbbl
-inbox. This is the primary path for inspecting what the delegated agent did,
-reviewing its transcript, and sending follow-up input after a gate rejection.
+Each single-session stage row, or unit row within a fanned stage, links to the
+kbbl session that executed it. Clicking the link navigates to `#sid=<sid>`,
+opening the full session transcript in the kbbl inbox. This is the primary path
+for inspecting what the delegated agent did, reviewing its transcript, and
+sending follow-up input after a gate rejection.
 
-## Phase 2a: Multi-session Substrate
+## Multi-session Fan-out
 
-Phase 2a adds the data model and route plumbing required for per-unit sessions within a stage.
-All N=1 (single-session) behavior is byte-for-byte identical to before. The changes are:
+`delegated_session` supports durable N>1 fan-out while preserving the implicit
+unit `"0"` path for definitions without `fan_out`.
 
 ### stage_session_units table
 
-A new `stage_session_units` table keyed by `(stage_instance_id, unit_id)` stores per-unit
-session state: kbbl sid, worktree branch/path/base_ref, status, gate_state, and artifact_id.
-For N=1 stages, a single row with `unit_id = "0"` is written when the session starts and
-updated when the session emits an artifact and parks.
+The `stage_session_units` table is keyed by `(stage_instance_id, unit_id)` and
+stores per-unit parameters, dependencies, kbbl session id, worktree identity,
+status, gate state, artifact id, and terminal metadata. For N=1 stages, a single
+row with `unit_id = "0"` is written when the session starts. N>1 units are
+materialized from the array selected by `fan_out.over` before any session is
+admitted.
+
+The fan-out definition selects each unit id and optional dependency list with
+RFC 6901 pointers. Unit ids must be non-empty and unique; dependencies must
+refer to known units and form an acyclic graph. An empty source array completes
+the stage with zero units. Item bindings and the `{{UNIT_ID}}` and
+`{{STAGE_INSTANCE_ID}}` placeholders are rendered separately for every unit.
+
+Pending units are admitted when all dependencies are done, bounded by
+`fan_out.max_parallel`. A stage is `done` only when every unit is done. If any
+unit is parked or failed, the aggregate stage is parked while unaffected
+siblings continue; otherwise it remains running.
 
 ### Per-unit emit route
 
@@ -707,60 +750,63 @@ The emit route now includes a `units/:unit_id` segment:
 POST /executors/delegated_session/:stage_instance_id/units/:unit_id/emit/:output_name
 ```
 
-For N=1, use `unit_id = "0"`. See the "Artifact Emit And Gates" section for the curl form.
+Artifacts emitted through this route are labeled with `unit_id`, which preserves
+producer identity for gates, downstream inherited fan-out, collections, retry,
+and recovery. For N=1, use `unit_id = "0"`. See the "Artifact Emit And Gates"
+section for the curl form.
 
 ### Composite gate id
 
-Gates returned by `GET /parked` and `GET /runs/:id/gates` now carry a composite `id` of the
-form `"{stage_uuid}:{unit_id}"`. For N=1 this is `"{uuid}:0"`. The `POST /gates/:id/resume`
-route parses this composite id to route the decision. See the "Parked gate panel" section.
+Gates returned by `GET /parked` and `GET /runs/:id/gates` carry a composite `id`
+of the form `"{stage_uuid}:{unit_id}"`. A stage without `fan_out` uses
+`"{uuid}:0"`; any fanned stage uses its materialized unit id, even when it has
+only one item. The `POST /gates/:id/resume` route parses this composite id to
+route the decision. See the "Parked gate panel" section.
 
-### retry_stuck with unit_id
+### Targeted retry
 
-`POST /stage_instances/:id/retry_stuck` now accepts an optional body:
+For an N>1 stage, `POST /stage_instances/:id/retry_stuck` requires the unit to
+retry:
 
 ```json
-{ "unit_id": "0" }
+{ "unit_id": "cohort-a" }
 ```
 
-The `unit_id` is accepted and parsed but not yet forwarded to the scheduler (N=1 always
-retries the whole stage). It will be used to target a specific unit when N>1 is implemented.
+The selected unit must be failed, including a unit whose session ended without
+emitting. Retry clears only attempt-local state and re-admits that unit through
+the same dependency and concurrency checks; sibling state and artifact history
+are preserved. Omitting `unit_id` retains the existing N=1 `stuck_timeout`
+whole-stage retry and is rejected for a fanned stage.
 
-### fan_out config (stub only)
+### Recovery
 
-The `delegated_session` def config accepts a `fan_out` block. The config struct, route
-plumbing, and DB model for N>1 are in place, but **execute rejects N>1 at runtime**:
-
-```text
-fan_out multi-unit execution is not yet implemented; the substrate … is in place
-but the N>1 session scheduler and per-unit launch are pending (Phase 2b)
-```
-
-Do not use `fan_out` in production workflow defs until Phase 2b ships.
+On coordinator recovery, N>1 stage state is rebuilt from all persisted unit
+rows. Each running or parked unit is independently probed and reattached by its
+kbbl session id. Done units remain done, pending units are admitted when their
+dependencies allow it, and temporarily unreachable sessions retry attachment
+without blocking healthy siblings. See `oakridge-core/docs/runtime_delegation.md`
+for the detailed recovery states.
 
 ## Not Covered in Phase 2
 
 The following v1 behaviors are explicitly outside the Phase 2 scope:
 
-- **PR creation and merge** — v2 does not own opening pull requests or merging
-  branches. The build stage emits a build result and surfaces branch/path at the
-  merge-confirmation gate, but the operator completes the PR lifecycle externally.
+- **PR merge** — the seeded v2 build agent opens one PR per cohort and emits a
+  `dev.pr_summary`; oakridge-core surfaces the matching PR URL and worktree at
+  the unit's merge-confirmation gate. The operator completes the merge itself.
 - **Review-thread workflows** — comment threads, ping-responder, and
   reviewer-facing review surfaces exist only in the v1 kbbl dev-flow. There is
   no equivalent in the v2 workflow surface.
 - **Full epic lifecycle management** — v1 Epics carry archive, delete, and status
   transitions across Spec/Plan/Build/Assess. v2 has no named Epic entity; runs do
   not carry Epic-level status.
-- **Automatic cancellation and recovery beyond existing delegated-session
-  recovery** — the existing `waiting_for_kbbl` and `session_ended_without_emit`
-  recovery paths are supported. Broader automatic recovery (e.g., restarting a
-  failed build stage) is not.
+- **Automatic retry of failed work** — delegated sessions reattach after a
+  coordinator restart, including independent fan-out units. A failed unit is
+  not automatically rerun; the operator uses targeted `retry_stuck` or fails
+  the stage explicitly.
 - **Standalone v2 tool approval UI** — there is no tool-approval surface in
   oakridge-core or the oakridge kbbl shell for Phase 2. Use the kbbl session
   approval cards directly.
-- **N>1 fan-out execution** — the `stage_session_units` substrate, per-unit emit
-  route, and `fan_out` config model are in place (Phase 2a), but launching multiple
-  parallel kbbl sessions per stage with an intra-stage DAG is Phase 2b.
 
 ## Optional Real LBC Smoke Test
 

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::executor::prompt_config::{resolve_binding, SlotBinding};
-use crate::types::OutputSlot;
+use crate::types::{OutputSlot, ResolvedInput};
 
 /// JSON-preserving binding for structured legit-biz-club run-spec fields.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -103,18 +103,19 @@ pub struct DelegatedLbcRunConfig {
 
 pub fn resolve_json_binding(
     binding: &JsonBinding,
-    inputs: &HashMap<String, crate::types::Artifact>,
+    inputs: &HashMap<String, ResolvedInput>,
     run_context: &Value,
 ) -> anyhow::Result<Value> {
     match binding {
         JsonBinding::Literal { value } => Ok(value.clone()),
         JsonBinding::Input { input_name, path } => {
-            let artifact = inputs.get(input_name).ok_or_else(|| {
+            let input = inputs.get(input_name).ok_or_else(|| {
                 anyhow::anyhow!("input '{}' not found in activation inputs", input_name)
             })?;
+            let input_value = input.to_binding_value();
             match path {
-                None => Ok(artifact.body.clone()),
-                Some(ptr) => artifact.body.pointer(ptr).cloned().ok_or_else(|| {
+                None => Ok(input_value),
+                Some(ptr) => input_value.pointer(ptr).cloned().ok_or_else(|| {
                     anyhow::anyhow!("JSON pointer '{}' not found in input '{}'", ptr, input_name)
                 }),
             }
@@ -132,7 +133,7 @@ pub fn default_result_output_slot() -> String {
 
 pub fn resolve_run_spec(
     def: &DelegatedLbcRunDefConfig,
-    inputs: &HashMap<String, crate::types::Artifact>,
+    inputs: &HashMap<String, ResolvedInput>,
     run_context: &Value,
 ) -> anyhow::Result<DelegatedLbcRunSpec> {
     let task = resolve_binding(&def.task, inputs, run_context, None)?;
@@ -184,7 +185,7 @@ pub fn resolve_run_spec(
 
 pub fn resolve_output_dir(
     def: &DelegatedLbcRunDefConfig,
-    inputs: &HashMap<String, crate::types::Artifact>,
+    inputs: &HashMap<String, ResolvedInput>,
     run_context: &Value,
 ) -> anyhow::Result<PathBuf> {
     let output_dir = match &def.output_dir {
@@ -342,7 +343,7 @@ mod tests {
         let mut inputs = HashMap::new();
         inputs.insert(
             "spec".into(),
-            artifact(json!({"task": "alpha", "flags": [1, 2]})),
+            ResolvedInput::Single(artifact(json!({"task": "alpha", "flags": [1, 2]}))),
         );
 
         let value = resolve_json_binding(

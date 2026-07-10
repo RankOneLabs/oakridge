@@ -77,7 +77,7 @@ impl StageType for ScriptedStageType {
     async fn build_config(
         &self,
         def_config: &Value,
-        _inputs: &HashMap<String, oakridge_core::types::Artifact>,
+        _inputs: &HashMap<String, oakridge_core::types::ResolvedInput>,
         _output_slots: &[oakridge_core::types::OutputSlot],
         _stage_instance_id: oakridge_core::types::StageInstanceId,
         _run_context: &Value,
@@ -473,6 +473,7 @@ async fn recovery_missing_stage_key_fails_with_structured_meta() {
             name: "dep".into(),
             artifact_type: "any".into(),
             optional: false,
+            collect: false,
         });
         d
     };

@@ -148,6 +148,14 @@ pub struct DelegatedSessionDefConfig {
 pub struct DelegatedSessionConfig {
     pub runtime: DelegatedRuntime,
     pub rendered_prompt: String,
+    /// Lossless prompt state retained for deferred fan-out unit rendering.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub fan_out_prompt_plan: Option<FanOutPromptPlan>,
+    /// The value selected by `fan_out.over` while activation inputs are still
+    /// available.  Execute later uses this persisted value to materialize the
+    /// complete unit graph before admitting any session.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub resolved_fan_out_over: Option<serde_json::Value>,
     pub workdir: PathBuf,
     pub session_name: String,
     pub model: Option<String>,
@@ -160,16 +168,34 @@ pub struct DelegatedSessionConfig {
     #[serde(default)]
     pub yolo: bool,
     pub output_slots: Vec<OutputSlot>,
-    /// Fan-out carried from the def config. `None` = N=1 implicit unit (current
-    /// default). When `Some`, `execute` rejects with "not yet implemented" until
-    /// Phase 2b wires the per-unit session scheduler. Carrying it through to the
-    /// built config ensures the field is round-trippable and visible at execute time.
+    /// Fan-out carried from the def config. `None` selects the implicit N=1 unit;
+    /// `Some` materializes and schedules one durable session unit per selected item.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub fan_out: Option<FanOut>,
     /// Resolved gate_output from the def config. Determines which output slot parks
     /// the unit; auxiliary slots store artifacts without changing stage status.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub gate_output: Option<String>,
+}
+
+/// Prompt material that cannot be recovered from a rendered fan-out prompt.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct FanOutPromptPlan {
+    pub raw_template: String,
+    pub base_slot_values: HashMap<String, String>,
+    /// Prompt bindings sourced from the same per-unit collection used by
+    /// `fan_out.over`. They are resolved against the matching unit envelope at
+    /// admission time so inherited consumers see only their own artifact.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub inherited_input_bindings: HashMap<String, InheritedInputBinding>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct InheritedInputBinding {
+    /// RFC-6901 pointer into the matching producer artifact body. `None`
+    /// selects the whole artifact body.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -269,6 +295,8 @@ mod tests {
         let cfg = DelegatedSessionConfig {
             runtime: DelegatedRuntime::Codex,
             rendered_prompt: "do the thing".into(),
+            fan_out_prompt_plan: None,
+            resolved_fan_out_over: None,
             workdir: PathBuf::from("/workspace/abc"),
             session_name: "s1".into(),
             model: None,

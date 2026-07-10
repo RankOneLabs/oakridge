@@ -1,7 +1,7 @@
 use chrono::Utc;
 use serde_json::Value;
 use sqlx::SqlitePool;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::oneshot;
 use tokio::sync::{mpsc, Mutex};
@@ -11,11 +11,15 @@ use uuid::Uuid;
 
 use crate::db::queries;
 use crate::events::{EventBus, SubstrateEvent};
+use crate::executor::delegated_session::config::{
+    DelegatedSessionConfig, DelegatedSessionDefConfig,
+};
+use crate::executor::prompt_config::SlotBinding;
 use crate::executor::{ExecutorEvent, ResumePayload, StageContext, StageHandle};
 use crate::registry::{ArtifactTypeRegistry, StageTypeRegistry};
 use crate::types::{
-    Artifact, RunStatus, StageInstance, StageInstanceId, StageInstanceSummary, StageKey,
-    StageStatus, StageTypeId, WorkflowDef, WorkflowRunId,
+    Artifact, ResolvedInput, RunStatus, StageInstance, StageInstanceId, StageInstanceSummary,
+    StageKey, StageStatus, StageTypeId, WorkflowDef, WorkflowRunId,
 };
 
 // ── Control messages ──────────────────────────────────────────────────────────
@@ -39,6 +43,7 @@ pub enum ControlMsg {
     },
     RetryStuckStage {
         stage_instance_id: StageInstanceId,
+        unit_id: Option<String>,
         reply_tx: oneshot::Sender<Result<(), DecisionError>>,
     },
 }
@@ -83,11 +88,57 @@ struct RunTask {
     // (consumer_stage_key, input_slot_name) -> {unit_id -> latest artifact}
     // N=1 implicit unit uses unit_id="0"; N>1 fan-out populates one entry per unit.
     resolved: HashMap<(StageKey, String), std::collections::BTreeMap<String, Artifact>>,
+    // Parsed once from the immutable workflow definition so collection checks
+    // on the artifact propagation path are O(1).
+    fan_out_producers: HashSet<StageKey>,
     db: Arc<SqlitePool>,
     stage_types: Arc<StageTypeRegistry>,
     artifact_types: Arc<ArtifactTypeRegistry>,
     bus: Arc<EventBus>,
     run_map: Arc<Mutex<HashMap<WorkflowRunId, RunHandle>>>,
+}
+
+/// Keys a resolved input by its persisted unit label. The unit id remains
+/// unqualified for the common one-producer case so downstream fan-out inherits
+/// the producer identity; multiple producers sharing one input slot are
+/// namespaced to avoid collisions such as two implicit unit `0` artifacts.
+fn resolved_unit_id(
+    def: &WorkflowDef,
+    producer_stage: &StageKey,
+    consumer_stage: &StageKey,
+    slot_name: &str,
+    artifact: &Artifact,
+) -> String {
+    let producer_count = def
+        .graph
+        .edges
+        .iter()
+        .filter(|edge| edge.to.stage == *consumer_stage && edge.to.slot == slot_name)
+        .map(|edge| &edge.from.stage)
+        .collect::<std::collections::HashSet<_>>()
+        .len();
+    let unit_id = artifact.label.as_deref().unwrap_or("0");
+    if producer_count > 1 {
+        format!("{producer_stage}:{unit_id}")
+    } else {
+        unit_id.to_owned()
+    }
+}
+
+fn fan_out_producer_stages(def: &WorkflowDef) -> HashSet<StageKey> {
+    def.graph
+        .stages
+        .iter()
+        .filter_map(|(stage_key, node)| {
+            if node.stage_type != "delegated_session" {
+                return None;
+            }
+            serde_json::from_value::<DelegatedSessionDefConfig>(node.config.clone())
+                .ok()
+                .and_then(|config| config.fan_out)
+                .map(|_| stage_key.clone())
+        })
+        .collect()
 }
 
 impl RunTask {
@@ -121,8 +172,8 @@ impl RunTask {
                             break;
                         }
                     }
-                    Some(ControlMsg::RetryStuckStage { stage_instance_id, reply_tx }) => {
-                        self.on_retry_stuck(stage_instance_id, reply_tx).await;
+                    Some(ControlMsg::RetryStuckStage { stage_instance_id, unit_id, reply_tx }) => {
+                        self.on_retry_stuck(stage_instance_id, unit_id, reply_tx).await;
                     }
                     None => break,
                 },
@@ -155,11 +206,107 @@ impl RunTask {
             .iter()
             .filter(|slot| !slot.optional)
             .all(|slot| {
+                if self.input_waits_for_producer_completion(stage_key, slot) {
+                    return self.producer_stages_are_done(stage_key, &slot.name);
+                }
                 self.resolved
                     .get(&(stage_key.clone(), slot.name.clone()))
                     .map(|inner| !inner.is_empty())
                     .unwrap_or(false)
             })
+    }
+
+    fn input_waits_for_producer_completion(
+        &self,
+        stage_key: &StageKey,
+        slot: &crate::types::InputSlot,
+    ) -> bool {
+        slot.collect || self.input_inherits_fan_out(stage_key, &slot.name)
+    }
+
+    fn is_fan_out_over_slot(&self, stage_key: &StageKey, slot_name: &str) -> bool {
+        let Some(node) = self.def.graph.stages.get(stage_key) else {
+            return false;
+        };
+        if node.stage_type != "delegated_session" {
+            return false;
+        }
+        let Ok(config) = serde_json::from_value::<DelegatedSessionDefConfig>(node.config.clone())
+        else {
+            return false;
+        };
+        matches!(
+            config.fan_out.map(|fan_out| fan_out.over),
+            Some(SlotBinding::Input { input_name, .. }) if input_name == slot_name
+        )
+    }
+
+    /// An input is an inherited fan-out collection only when the consumer fans
+    /// over that slot and at least one producer is itself fanned. A non-fanned
+    /// producer may emit one artifact whose body contains the array to fan over
+    /// (for example dev.plan/cohorts); that remains a scalar input.
+    fn input_inherits_fan_out(&self, stage_key: &StageKey, slot_name: &str) -> bool {
+        if !self.is_fan_out_over_slot(stage_key, slot_name) {
+            return false;
+        }
+        self.def.graph.edges.iter().any(|edge| {
+            if edge.to.stage != *stage_key || edge.to.slot != slot_name {
+                return false;
+            }
+            self.fan_out_producers.contains(&edge.from.stage)
+        })
+    }
+
+    fn producer_stages_are_done(&self, consumer_key: &StageKey, slot_name: &str) -> bool {
+        let producers: Vec<&StageKey> = self
+            .def
+            .graph
+            .edges
+            .iter()
+            .filter(|edge| edge.to.stage == *consumer_key && edge.to.slot == slot_name)
+            .map(|edge| &edge.from.stage)
+            .collect();
+        !producers.is_empty()
+            && producers.iter().all(|producer| {
+                self.index
+                    .get(*producer)
+                    .map(|(_, status)| *status == StageStatus::Done)
+                    .unwrap_or(false)
+            })
+    }
+
+    fn resolved_inputs(
+        &self,
+        stage_key: &StageKey,
+        node: &crate::types::StageNodeDef,
+    ) -> Result<HashMap<String, ResolvedInput>, String> {
+        let mut inputs = HashMap::new();
+        for slot in &node.inputs {
+            let values = self
+                .resolved
+                .get(&(stage_key.clone(), slot.name.clone()))
+                .cloned()
+                .unwrap_or_default();
+            if slot.collect || self.input_inherits_fan_out(stage_key, &slot.name) {
+                if values.is_empty() && !slot.optional {
+                    return Err(format!(
+                        "required collection input '{}' has no producer artifacts",
+                        slot.name
+                    ));
+                }
+                inputs.insert(slot.name.clone(), ResolvedInput::Collection(values));
+            } else if values.len() == 1 {
+                let artifact = values.into_values().next().expect("one resolved input");
+                inputs.insert(slot.name.clone(), ResolvedInput::Single(artifact));
+            } else if values.len() > 1 {
+                return Err(format!(
+                    "input '{}' has {} producer units but is not collect:true",
+                    slot.name,
+                    values.len()
+                ));
+            }
+        }
+        Ok(inputs)
     }
 
     async fn activate_stage(&mut self, stage_key: &StageKey) {
@@ -193,16 +340,20 @@ impl RunTask {
             }
         };
 
-        let inputs: HashMap<String, Artifact> = node
-            .inputs
-            .iter()
-            .filter_map(|slot| {
-                self.resolved
-                    .get(&(stage_key.clone(), slot.name.clone()))
-                    .and_then(|inner| inner.values().next())
-                    .map(|a| (slot.name.clone(), a.clone()))
-            })
-            .collect();
+        let inputs = match self.resolved_inputs(stage_key, &node) {
+            Ok(inputs) => inputs,
+            Err(error) => {
+                self.fail_activation(
+                    stage_key,
+                    si_id,
+                    node.stage_type.clone(),
+                    node.config.clone(),
+                    Some(serde_json::json!({"error": error})),
+                )
+                .await;
+                return;
+            }
+        };
 
         let config = match st
             .build_config(
@@ -394,25 +545,56 @@ impl RunTask {
         artifact: Artifact,
         output_name: String,
     ) {
-        let edges: Vec<_> = self
-            .def
-            .graph
-            .edges
-            .iter()
-            .filter(|e| e.from.stage == producer_key && e.from.slot == output_name)
-            .cloned()
-            .collect();
+        self.propagate_artifacts(vec![(producer_key, artifact, output_name)])
+            .await;
+    }
 
-        for edge in edges {
-            let consumer_key = edge.to.stage.clone();
-            let slot_name = edge.to.slot.clone();
-            // N=1 implicit unit: key the inner BTreeMap by "0".
-            // N>1 fan-out will supply the unit_id explicitly via a separate path (Phase 2b).
-            self.resolved
-                .entry((consumer_key.clone(), slot_name))
+    /// File a complete producer transition before considering consumer
+    /// activation. Delegated fan-out stages release all unit artifacts only
+    /// when the aggregate reaches Done; activating after the first insert would
+    /// give collection consumers a timing-dependent partial input.
+    async fn propagate_artifacts(
+        &mut self,
+        artifacts: Vec<(StageKey, Artifact, String)>,
+    ) {
+        let mut deliveries = Vec::new();
+        for (producer_key, artifact, output_name) in artifacts {
+            let edges: Vec<_> = self
+                .def
+                .graph
+                .edges
+                .iter()
+                .filter(|edge| {
+                    edge.from.stage == producer_key && edge.from.slot == output_name
+                })
+                .cloned()
+                .collect();
+            for edge in edges {
+                let consumer_key = edge.to.stage.clone();
+                let slot_name = edge.to.slot.clone();
+                let unit_id = resolved_unit_id(
+                    &self.def,
+                    &producer_key,
+                    &consumer_key,
+                    &slot_name,
+                    &artifact,
+                );
+                self.resolved
+                    .entry((consumer_key.clone(), slot_name))
+                    .or_default()
+                    .insert(unit_id, artifact.clone());
+                deliveries.push((consumer_key, artifact.clone()));
+            }
+        }
+
+        let mut deliveries_by_consumer: HashMap<StageKey, Vec<Artifact>> = HashMap::new();
+        for (consumer_key, artifact) in deliveries {
+            deliveries_by_consumer
+                .entry(consumer_key)
                 .or_default()
-                .insert("0".to_owned(), artifact.clone());
-
+                .push(artifact);
+        }
+        for (consumer_key, artifacts) in deliveries_by_consumer {
             if let Some((si_id, status)) = self.index.get(&consumer_key).cloned() {
                 // Pending stages have a handle but haven't emitted Running yet; treat
                 // them as live so feedback artifacts are not silently dropped.
@@ -421,18 +603,18 @@ impl RunTask {
                     StageStatus::Pending | StageStatus::Running | StageStatus::Parked
                 ) {
                     if let Some(handle) = self.handles.get(&si_id) {
-                        let _ = handle
-                            .resume(ResumePayload::FeedbackArtifact {
-                                artifact: artifact.clone(),
-                            })
-                            .await;
-                        self.bus.publish(
-                            self.run_id,
-                            SubstrateEvent::StageResumed {
-                                stage_instance_id: si_id,
-                                resume_kind: "feedback_artifact".to_string(),
-                            },
-                        );
+                        for artifact in artifacts {
+                            let _ = handle
+                                .resume(ResumePayload::FeedbackArtifact { artifact })
+                                .await;
+                            self.bus.publish(
+                                self.run_id,
+                                SubstrateEvent::StageResumed {
+                                    stage_instance_id: si_id,
+                                    resume_kind: "feedback_artifact".to_string(),
+                                },
+                            );
+                        }
                     }
                     continue;
                 }
@@ -472,7 +654,7 @@ impl RunTask {
             .iter()
             .map(|slot| (slot.name.clone(), slot.artifact_type.clone()))
             .collect();
-        let mut latest_by_output: std::collections::HashMap<String, Artifact> =
+        let mut latest_by_output_and_unit: std::collections::HashMap<(String, String), Artifact> =
             std::collections::HashMap::new();
         for artifact in artifacts
             .into_iter()
@@ -484,8 +666,10 @@ impl RunTask {
             if known_outputs.get(&output_name) != Some(&artifact.artifact_type) {
                 continue;
             }
-            let should_use = latest_by_output
-                .get(&output_name)
+            let unit_id = artifact.label.as_deref().unwrap_or("0").to_owned();
+            let key = (output_name.clone(), unit_id);
+            let should_use = latest_by_output_and_unit
+                .get(&key)
                 .map(|current| {
                     artifact.version > current.version
                         || (artifact.version == current.version
@@ -493,14 +677,17 @@ impl RunTask {
                 })
                 .unwrap_or(true);
             if should_use {
-                latest_by_output.insert(output_name, artifact);
+                latest_by_output_and_unit.insert(key, artifact);
             }
         }
 
-        for (output_name, artifact) in latest_by_output {
-            self.propagate_artifact(stage_key.clone(), artifact, output_name)
-                .await;
-        }
+        let artifacts = latest_by_output_and_unit
+            .into_iter()
+            .map(|((output_name, _unit_id), artifact)| {
+                (stage_key.clone(), artifact, output_name)
+            })
+            .collect();
+        self.propagate_artifacts(artifacts).await;
     }
 
     /// Returns true when the run has reached a terminal state.
@@ -601,7 +788,12 @@ impl RunTask {
             )));
         }
 
-        if !matches!(current.status, StageStatus::Parked) {
+        let is_delegated_session = current.stage_type == "delegated_session";
+        // A fan-out delegated stage owns independently parked unit gates. Its
+        // aggregate status can be Running while another unit still has a
+        // durable gate, so let the delegated handle validate the artifact/unit
+        // routing instead of rejecting the decision at the stage boundary.
+        if !matches!(current.status, StageStatus::Parked) && !is_delegated_session {
             return Err(DecisionError::Conflict(format!(
                 "stage instance {} is not parked (status: {:?})",
                 stage_instance_id.0, current.status
@@ -625,7 +817,7 @@ impl RunTask {
             )));
         }
 
-        if !matches!(status, StageStatus::Parked) {
+        if !matches!(status, StageStatus::Parked) && !is_delegated_session {
             return Err(DecisionError::Conflict(format!(
                 "stage instance {} is not parked (status: {:?})",
                 stage_instance_id.0, status
@@ -659,22 +851,11 @@ impl RunTask {
 
         // Delegated sessions use a two-step gate: artifact approval keeps the
         // stage parked until the explicit merge-confirmation decision arrives.
-        let keep_parked_for_merge_confirmation = after_resume.stage_type == "delegated_session"
-            && after_resume
-                .parked_meta
-                .as_ref()
-                .and_then(|meta| {
-                    serde_json::from_value::<
-                    crate::executor::delegated_session::DelegatedGateState,
-                >(meta.clone()).ok()
-                })
-                .map(|gate_state| {
-                    matches!(
-                        gate_state.gate,
-                        crate::executor::delegated_session::DelegatedGate::MergeConfirmation
-                    )
-                })
-                .unwrap_or(false);
+        // A delegated-session handle owns its own gate transitions. In
+        // particular, a fan-out stage can retain per-unit merge state while
+        // unrelated units continue, so the generic stage resume path must not
+        // overwrite its aggregate status with Running.
+        let keep_parked_for_merge_confirmation = after_resume.stage_type == "delegated_session";
 
         if matches!(after_resume.status, StageStatus::Parked) && !keep_parked_for_merge_confirmation
         {
@@ -822,6 +1003,7 @@ impl RunTask {
     async fn on_retry_stuck(
         &mut self,
         stage_instance_id: StageInstanceId,
+        unit_id: Option<String>,
         reply_tx: oneshot::Sender<Result<(), DecisionError>>,
     ) {
         let mut reply_tx = Some(reply_tx);
@@ -833,7 +1015,6 @@ impl RunTask {
                 return;
             }};
         }
-
         let current = match queries::get_stage_instance_by_id(&self.db, &stage_instance_id).await {
             Ok(current) => current,
             Err(e) => reject_retry!(match e {
@@ -850,6 +1031,23 @@ impl RunTask {
                 "stage instance {} does not belong to run {}",
                 stage_instance_id.0, self.run_id.0
             )));
+        }
+        if let Some(unit_id) = unit_id {
+            let handle = match self.handles.get(&stage_instance_id) {
+                Some(handle) => handle,
+                None => reject_retry!(DecisionError::Conflict(format!(
+                    "stage instance {} has no active delegated-session handle",
+                    stage_instance_id.0
+                ))),
+            };
+            let result = handle
+                .retry_stuck(Some(unit_id))
+                .await
+                .map_err(|err| DecisionError::Conflict(err.to_string()));
+            if let Some(tx) = reply_tx.take() {
+                let _ = tx.send(result);
+            }
+            return;
         }
         if !matches!(current.status, StageStatus::Parked)
             || current.parked_reason.as_deref() != Some("stuck_timeout")
@@ -923,16 +1121,10 @@ impl RunTask {
             Ok(refreshed) => refreshed,
             Err(e) => reject_retry!(DecisionError::Internal(anyhow::Error::new(e))),
         };
-        let inputs: HashMap<String, Artifact> = node
-            .inputs
-            .iter()
-            .filter_map(|slot| {
-                self.resolved
-                    .get(&(current.stage_key.clone(), slot.name.clone()))
-                    .and_then(|inner| inner.values().next())
-                    .map(|artifact| (slot.name.clone(), artifact.clone()))
-            })
-            .collect();
+        let inputs = match self.resolved_inputs(&current.stage_key, &node) {
+            Ok(inputs) => inputs,
+            Err(error) => reject_retry!(DecisionError::Conflict(error)),
+        };
         let ctx = StageContext::new(
             StageInstanceSummary::from(&refreshed),
             refreshed.config.clone(),
@@ -1148,7 +1340,10 @@ impl Coordinator {
         let instances = queries::list_stage_instances_for_run(&self.db, &run_id).await?;
         let artifacts = queries::list_artifacts_for_run(&self.db, &run_id, None).await?;
 
-        let mut resolved: HashMap<(StageKey, String), std::collections::BTreeMap<String, Artifact>> = HashMap::new();
+        let mut resolved: HashMap<
+            (StageKey, String),
+            std::collections::BTreeMap<String, Artifact>,
+        > = HashMap::new();
         for artifact in &artifacts {
             let producer_key = instances
                 .iter()
@@ -1175,12 +1370,19 @@ impl Coordinator {
                 if edge.from.stage == producer_key && edge.from.slot == output_name {
                     let key = (edge.to.stage.clone(), edge.to.slot.clone());
                     let inner = resolved.entry(key).or_default();
+                    let unit_id = resolved_unit_id(
+                        &def,
+                        &producer_key,
+                        &edge.to.stage,
+                        &edge.to.slot,
+                        artifact,
+                    );
                     let should_use = inner
-                        .get("0")
+                        .get(&unit_id)
                         .map(|current| artifact.created_at > current.created_at)
                         .unwrap_or(true);
                     if should_use {
-                        inner.insert("0".to_owned(), artifact.clone());
+                        inner.insert(unit_id, artifact.clone());
                     }
                 }
             }
@@ -1190,6 +1392,7 @@ impl Coordinator {
             .iter()
             .map(|si| (si.stage_key.clone(), (si.id, si.status)))
             .collect();
+        let fan_out_producers = fan_out_producer_stages(&def);
         let (events_tx, events_rx) = mpsc::channel(256);
         let (control_tx, control_rx) = mpsc::channel(64);
         let task = RunTask {
@@ -1202,6 +1405,7 @@ impl Coordinator {
             handles: HashMap::new(),
             index,
             resolved,
+            fan_out_producers,
             db: self.db.clone(),
             stage_types: self.stage_types.clone(),
             artifact_types: self.artifact_types.clone(),
@@ -1221,6 +1425,7 @@ impl Coordinator {
     pub async fn retry_stuck_stage(
         &self,
         stage_instance_id: StageInstanceId,
+        unit_id: Option<String>,
     ) -> Result<(), DecisionError> {
         let si = queries::get_stage_instance_by_id(&self.db, &stage_instance_id)
             .await
@@ -1243,8 +1448,62 @@ impl Coordinator {
             )));
         }
 
-        if !matches!(si.status, StageStatus::Parked)
-            || si.parked_reason.as_deref() != Some("stuck_timeout")
+        if let Some(unit_id) = unit_id.as_deref() {
+            if si.stage_type != "delegated_session" {
+                return Err(DecisionError::Conflict(format!(
+                    "stage instance {} is not a delegated_session stage",
+                    stage_instance_id.0
+                )));
+            }
+            let config: DelegatedSessionConfig = serde_json::from_value(si.config.clone())
+                .map_err(|err| DecisionError::Internal(anyhow::Error::new(err)))?;
+            if config.fan_out.is_none() {
+                return Err(DecisionError::Conflict(format!(
+                    "stage instance {} does not have configured fan_out",
+                    stage_instance_id.0
+                )));
+            }
+            let unit = queries::get_session_unit(&self.db, &stage_instance_id, unit_id)
+                .await
+                .map_err(|err| match err {
+                    crate::Error::NotFound { .. } => DecisionError::Conflict(format!(
+                        "unit '{}' does not exist for stage instance {}",
+                        unit_id, stage_instance_id.0
+                    )),
+                    other => DecisionError::Internal(anyhow::Error::new(other)),
+                })?;
+            let ended_without_emit = unit
+                .terminal_meta
+                .as_ref()
+                .and_then(|meta| meta.get("kind"))
+                .and_then(serde_json::Value::as_str)
+                == Some("session_ended_without_emit");
+            if !matches!(unit.status, crate::types::UnitStatus::Failed) && !ended_without_emit {
+                return Err(DecisionError::Conflict(format!(
+                    "unit '{}' is not retryable (status: {:?})",
+                    unit_id, unit.status
+                )));
+            }
+        } else if si.stage_type == "delegated_session" {
+            let config: DelegatedSessionConfig = serde_json::from_value(si.config.clone())
+                .map_err(|err| DecisionError::Internal(anyhow::Error::new(err)))?;
+            if config.fan_out.is_some()
+                && queries::list_session_units_for_stage(&self.db, &stage_instance_id)
+                    .await
+                    .map_err(|err| DecisionError::Internal(anyhow::Error::new(err)))?
+                    .len()
+                    > 1
+            {
+                return Err(DecisionError::Conflict(format!(
+                    "stage instance {} has multiple units; select a unit_id to retry",
+                    stage_instance_id.0
+                )));
+            }
+        }
+
+        if unit_id.is_none()
+            && (!matches!(si.status, StageStatus::Parked)
+                || si.parked_reason.as_deref() != Some("stuck_timeout"))
         {
             return Err(DecisionError::Conflict(format!(
                 "stage instance {} is not parked as stuck_timeout (status: {:?}, parked_reason: {:?})",
@@ -1257,9 +1516,13 @@ impl Coordinator {
             runs.get(&si.run_id).map(|handle| handle.control_tx.clone())
         };
         if tx.is_none() {
-            self.recover_run_task_for_retry(si.run_id)
-                .await
-                .map_err(DecisionError::Internal)?;
+            if unit_id.is_some() {
+                self.recover().await.map_err(DecisionError::Internal)?;
+            } else {
+                self.recover_run_task_for_retry(si.run_id)
+                    .await
+                    .map_err(DecisionError::Internal)?;
+            }
             tx = {
                 let runs = self.runs.lock().await;
                 runs.get(&si.run_id).map(|handle| handle.control_tx.clone())
@@ -1275,6 +1538,7 @@ impl Coordinator {
         let (reply_tx, reply_rx) = oneshot::channel();
         tx.send(ControlMsg::RetryStuckStage {
             stage_instance_id,
+            unit_id,
             reply_tx,
         })
         .await
@@ -1331,6 +1595,7 @@ impl Coordinator {
 
         let (events_tx, events_rx) = mpsc::channel(256);
         let (control_tx, control_rx) = mpsc::channel(64);
+        let fan_out_producers = fan_out_producer_stages(&def);
 
         let task = RunTask {
             run_id,
@@ -1342,6 +1607,7 @@ impl Coordinator {
             handles: HashMap::new(),
             index: HashMap::new(),
             resolved: HashMap::new(),
+            fan_out_producers,
             db: self.db.clone(),
             stage_types: self.stage_types.clone(),
             artifact_types: self.artifact_types.clone(),
@@ -1545,7 +1811,10 @@ impl Coordinator {
             let instances = queries::list_stage_instances_for_run(&self.db, &run_id).await?;
             let artifacts = queries::list_artifacts_for_run(&self.db, &run_id, None).await?;
 
-            let mut resolved: HashMap<(StageKey, String), std::collections::BTreeMap<String, Artifact>> = HashMap::new();
+            let mut resolved: HashMap<
+                (StageKey, String),
+                std::collections::BTreeMap<String, Artifact>,
+            > = HashMap::new();
             for artifact in &artifacts {
                 let producer_key = instances
                     .iter()
@@ -1581,12 +1850,19 @@ impl Coordinator {
                     if edge.from.stage == producer_key && edge.from.slot == output_name {
                         let key = (edge.to.stage.clone(), edge.to.slot.clone());
                         let inner = resolved.entry(key).or_default();
+                        let unit_id = resolved_unit_id(
+                            &def,
+                            &producer_key,
+                            &edge.to.stage,
+                            &edge.to.slot,
+                            artifact,
+                        );
                         let should_use = inner
-                            .get("0")
+                            .get(&unit_id)
                             .map(|e| artifact.created_at > e.created_at)
                             .unwrap_or(true);
                         if should_use {
-                            inner.insert("0".to_owned(), artifact.clone());
+                            inner.insert(unit_id, artifact.clone());
                         }
                     }
                 }
@@ -1599,6 +1875,7 @@ impl Coordinator {
 
             let (events_tx, events_rx) = mpsc::channel(256);
             let (control_tx, control_rx) = mpsc::channel(64);
+            let fan_out_producers = fan_out_producer_stages(&def);
 
             let mut task = RunTask {
                 run_id,
@@ -1610,6 +1887,7 @@ impl Coordinator {
                 handles: HashMap::new(),
                 index,
                 resolved,
+                fan_out_producers,
                 db: self.db.clone(),
                 stage_types: self.stage_types.clone(),
                 artifact_types: self.artifact_types.clone(),
@@ -1729,16 +2007,17 @@ impl Coordinator {
                         continue;
                     }
                 };
-                let inputs: HashMap<String, Artifact> = node
-                    .inputs
-                    .iter()
-                    .filter_map(|slot| {
-                        task.resolved
-                            .get(&(si.stage_key.clone(), slot.name.clone()))
-                            .and_then(|inner| inner.values().next())
-                            .map(|a| (slot.name.clone(), a.clone()))
-                    })
-                    .collect();
+                let inputs = match task.resolved_inputs(&si.stage_key, &node) {
+                    Ok(inputs) => inputs,
+                    Err(error) => {
+                        tracing::error!(
+                            stage_key = si.stage_key,
+                            "recovery input resolution failed: {}",
+                            error
+                        );
+                        continue;
+                    }
+                };
                 let ctx = StageContext::new(
                     StageInstanceSummary::from(&si),
                     si.config.clone(),
@@ -1975,7 +2254,7 @@ mod tests {
         async fn build_config(
             &self,
             def_config: &Value,
-            _inputs: &HashMap<String, Artifact>,
+            _inputs: &HashMap<String, ResolvedInput>,
             _output_slots: &[crate::types::OutputSlot],
             _stage_instance_id: crate::types::StageInstanceId,
             _run_context: &Value,
@@ -2019,7 +2298,7 @@ mod tests {
         async fn build_config(
             &self,
             def_config: &Value,
-            _inputs: &HashMap<String, Artifact>,
+            _inputs: &HashMap<String, ResolvedInput>,
             _output_slots: &[crate::types::OutputSlot],
             _stage_instance_id: crate::types::StageInstanceId,
             _run_context: &Value,
@@ -2047,7 +2326,7 @@ mod tests {
         async fn build_config(
             &self,
             def_config: &Value,
-            _inputs: &HashMap<String, Artifact>,
+            _inputs: &HashMap<String, ResolvedInput>,
             _output_slots: &[crate::types::OutputSlot],
             _stage_instance_id: crate::types::StageInstanceId,
             _run_context: &Value,
@@ -2260,6 +2539,7 @@ mod tests {
                                 name: "in".into(),
                                 artifact_type: "any".into(),
                                 optional: false,
+                                collect: false,
                             }],
                             outputs: vec![],
                         },
@@ -2378,6 +2658,7 @@ mod tests {
                                 name: "in_a".into(),
                                 artifact_type: "any".into(),
                                 optional: true,
+                                collect: false,
                             }],
                             outputs: vec![OutputSlot {
                                 name: "out_a".into(),
@@ -2394,6 +2675,7 @@ mod tests {
                                 name: "in_b".into(),
                                 artifact_type: "any".into(),
                                 optional: false,
+                                collect: false,
                             }],
                             outputs: vec![OutputSlot {
                                 name: "out_b".into(),
@@ -3624,7 +3906,7 @@ mod tests {
         };
         queries::insert_stage_instance(&pool, &si).await.unwrap();
 
-        coord.retry_stuck_stage(si.id).await.unwrap();
+        coord.retry_stuck_stage(si.id, None).await.unwrap();
         let (retry_ctx, _resume_rx) = tokio::time::timeout(timeout_dur(), ctx_rx.recv())
             .await
             .unwrap()
@@ -3671,7 +3953,7 @@ mod tests {
 
         let accepted = tokio::time::timeout(
             std::time::Duration::from_millis(100),
-            coord.retry_stuck_stage(si.id),
+            coord.retry_stuck_stage(si.id, None),
         )
         .await
         .expect("retry should be acknowledged before slow execute completes");
@@ -3700,7 +3982,7 @@ mod tests {
         );
         let (run, si) = seed_stuck_retry_stage(&pool, "failing_retry").await;
 
-        coord.retry_stuck_stage(si.id).await.unwrap();
+        coord.retry_stuck_stage(si.id, None).await.unwrap();
         wait_run_done(&pool, run.id).await;
 
         let persisted = queries::get_stage_instance_by_id(&pool, &si.id)
@@ -3788,7 +4070,7 @@ mod tests {
         };
         queries::insert_stage_instance(&pool, &si).await.unwrap();
 
-        let err = coord.retry_stuck_stage(si.id).await.unwrap_err();
+        let err = coord.retry_stuck_stage(si.id, None).await.unwrap_err();
         assert!(
             matches!(err, DecisionError::Conflict(_)),
             "retry must reject a non-stuck-parked stage with Conflict"

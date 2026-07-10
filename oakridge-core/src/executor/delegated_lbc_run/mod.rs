@@ -12,7 +12,7 @@ use tokio::{fs, io::AsyncReadExt};
 
 use crate::executor::{StageContext, StageHandle};
 use crate::registry::stage_type::StageType;
-use crate::types::{Artifact, OutputSlot, StageInstanceId, StageStatus};
+use crate::types::{Artifact, OutputSlot, ResolvedInput, StageInstanceId, StageStatus};
 
 use config::{
     default_result_output_slot, resolve_output_dir, resolve_run_spec, validate_result_output_slot,
@@ -70,7 +70,7 @@ impl StageType for DelegatedLbcRunStage {
     async fn build_config(
         &self,
         def_config: &Value,
-        inputs: &HashMap<String, Artifact>,
+        inputs: &HashMap<String, ResolvedInput>,
         output_slots: &[OutputSlot],
         _stage_instance_id: StageInstanceId,
         run_context: &Value,
@@ -750,7 +750,7 @@ mod tests {
     async fn build_config_preserves_json_bindings_and_custom_bridge_and_slot() {
         let stage = make_stage();
         let mut inputs = HashMap::new();
-        inputs.insert("spec".into(), artifact(json!({
+        inputs.insert("spec".into(), ResolvedInput::Single(artifact(json!({
             "task": "local_task",
             "model_pool": ["m1", "m2"],
             "condition": { "kind": "ensemble_multi_round", "n": 2 },
@@ -758,7 +758,7 @@ mod tests {
             "grader": { "kind": "registered", "key": "prose_substrate_thesis", "config": { "depth": 3 } },
             "local_task_dir": "/workspace/tasks",
             "local_grader_config_dir": "/workspace/graders"
-        })));
+        }))));
         let def_config = json!({
             "task": {"from": "input", "input_name": "spec", "path": "/task"},
             "model_pool": {"from": "input", "input_name": "spec", "path": "/model_pool"},

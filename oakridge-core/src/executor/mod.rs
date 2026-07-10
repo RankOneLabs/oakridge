@@ -9,13 +9,14 @@ use serde_json::Value;
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::db::queries;
 use crate::registry::ArtifactTypeRegistry;
 use crate::types::{
-    Artifact, ArtifactId, ArtifactTypeId, GateDecision, StageInstanceId, StageInstanceSummary,
+    Artifact, ArtifactId, ArtifactTypeId, GateDecision, ResolvedInput, StageInstanceId, StageInstanceSummary,
     StageStatus, WorkflowRunId,
 };
 
@@ -86,6 +87,14 @@ fn is_sqlite_busy(err: &sqlx::Error) -> bool {
 
 const MAX_ARTIFACT_EMIT_RETRIES: usize = 8;
 
+/// Yielding alone lets concurrent emitters repeatedly recreate stale SQLite
+/// snapshots. Back off briefly so the winning writer can commit before the
+/// next revision-number read starts a fresh transaction.
+async fn artifact_emit_retry_backoff(attempt: usize) {
+    let delay_ms = 1_u64 << attempt.min(5);
+    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+}
+
 // ── StageContext ──────────────────────────────────────────────────────────────
 
 /// Runtime context injected into a stage when it executes.
@@ -103,7 +112,7 @@ pub struct StageContext {
     /// Resolved config for this stage (output of `StageType::build_config`).
     pub config: Value,
     /// Resolved input artifacts, keyed by input slot name.
-    pub inputs: HashMap<String, Artifact>,
+    pub inputs: HashMap<String, ResolvedInput>,
     stage_instance: Arc<Mutex<StageInstanceSummary>>,
     events_tx: mpsc::Sender<ExecutorEvent>,
     db: Arc<SqlitePool>,
@@ -122,7 +131,7 @@ impl StageContext {
     pub fn new(
         stage_instance: StageInstanceSummary,
         config: Value,
-        inputs: HashMap<String, Artifact>,
+        inputs: HashMap<String, ResolvedInput>,
         events_tx: mpsc::Sender<ExecutorEvent>,
         db: Arc<SqlitePool>,
         registry: Arc<ArtifactTypeRegistry>,
@@ -287,6 +296,7 @@ impl StageContext {
                             ));
                         }
                         attempts += 1;
+                        artifact_emit_retry_backoff(attempts).await;
                         continue;
                     }
                     Err(err) => return Err(err.into()),
@@ -301,6 +311,7 @@ impl StageContext {
                         ));
                     }
                     attempts += 1;
+                    artifact_emit_retry_backoff(attempts).await;
                     continue;
                 }
                 Err(err) => {
@@ -528,6 +539,12 @@ pub trait StageHandle: Send + Sync {
 
     /// Cancel the stage, releasing any external resources it holds.
     async fn cancel(&self) -> anyhow::Result<()>;
+
+    /// Retry a stuck execution. `Some(unit_id)` targets one persisted fan-out
+    /// unit; `None` preserves the legacy whole-stage retry behavior.
+    async fn retry_stuck(&self, _unit_id: Option<String>) -> anyhow::Result<()> {
+        anyhow::bail!("this stage does not support stuck retry")
+    }
 }
 
 // ── ResumePayload ─────────────────────────────────────────────────────────────
@@ -703,7 +720,7 @@ mod tests {
         async fn build_config(
             &self,
             def_config: &Value,
-            _inputs: &HashMap<String, Artifact>,
+            _inputs: &HashMap<String, ResolvedInput>,
             _output_slots: &[crate::types::OutputSlot],
             _stage_instance_id: crate::types::StageInstanceId,
             _run_context: &Value,

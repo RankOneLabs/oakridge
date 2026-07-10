@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use crate::db::queries;
 use crate::executor::EmitArgs;
-use crate::types::{StageInstanceId, StageStatus};
+use crate::types::{StageInstanceId, StageStatus, UnitStatus};
 
 use super::{
     revision_count_from_meta, DelegatedGate, DelegatedGateState, KbblClient, LiveSessions,
@@ -54,11 +54,25 @@ async fn emit_handler(
         }
     };
 
+    let unit = match queries::get_session_unit(live_session.ctx.pool(), &stage_instance_id, &unit_id).await {
+        Ok(unit) => unit,
+        Err(crate::Error::NotFound { .. }) => return not_found(),
+        Err(err) => {
+            tracing::error!(
+                stage_instance_id = %stage_instance_id.0,
+                unit_id = %unit_id,
+                error = %err,
+                "failed to load delegated session unit"
+            );
+            return internal_error();
+        }
+    };
     let summary = live_session.ctx.stage_instance_summary();
-    let current_gate = summary
-        .parked_meta
-        .as_ref()
-        .and_then(|meta| serde_json::from_value::<DelegatedGateState>(meta.clone()).ok());
+    let current_gate = if live_session.unit_scheduler.is_some() {
+        unit.gate_state.as_ref()
+    } else {
+        summary.parked_meta.as_ref()
+    }.and_then(|meta| serde_json::from_value::<DelegatedGateState>(meta.clone()).ok());
     if matches!(
         current_gate.as_ref().map(|gate_state| &gate_state.gate),
         Some(DelegatedGate::MergeConfirmation)
@@ -176,17 +190,17 @@ async fn emit_handler(
     // Look up the pr_summary artifact emitted earlier by this stage instance
     // so the PR link is available on the artifact-approval gate state (which
     // the operator will later promote to merge-confirmation on resume).
-    let pr_url = queries::get_latest_artifact_by_stage_and_output(
-        live_session.ctx.pool(),
-        &stage_instance_id,
-        "pr_summary",
-    )
-    .await
-    .ok()
-    .flatten()
-    .and_then(|a| a.body.get("pr_url")?.as_str().map(|s| s.to_owned()));
+    let pr_url = if live_session.unit_scheduler.is_some() {
+        queries::get_latest_artifact_by_stage_output_and_label(live_session.ctx.pool(), &stage_instance_id, "pr_summary", &unit_id).await
+    } else {
+        queries::get_latest_artifact_by_stage_and_output(live_session.ctx.pool(), &stage_instance_id, "pr_summary").await
+    }.ok().flatten().and_then(|a| a.body.get("pr_url")?.as_str().map(|s| s.to_owned()));
 
-    let revision_count = revision_count_from_meta(summary.parked_meta.as_ref());
+    let revision_count = if live_session.unit_scheduler.is_some() {
+        revision_count_from_meta(unit.gate_state.as_ref())
+    } else {
+        revision_count_from_meta(summary.parked_meta.as_ref())
+    };
     let gate_state = DelegatedGateState::artifact_approval(
         live_session.sid.clone(),
         artifact.id,
@@ -219,23 +233,31 @@ async fn emit_handler(
         );
     }
 
-    if live_session
-        .ctx
-        .set_parked_meta(Some(gate_state_value))
-        .await
-        .is_err()
-    {
-        return internal_error();
-    }
+    if let Some(scheduler) = &live_session.unit_scheduler {
+        if queries::set_session_unit_status(
+            live_session.ctx.pool(), &stage_instance_id, &unit_id, UnitStatus::Parked, None,
+        ).await.is_err() || scheduler.recompute_aggregate().await.is_err() {
+            return internal_error();
+        }
+    } else {
+        if live_session
+            .ctx
+            .set_parked_meta(Some(gate_state_value))
+            .await
+            .is_err()
+        {
+            return internal_error();
+        }
 
-    if live_session
-        .ctx
-        .set_status(StageStatus::Parked, Some("waiting_gate".into()))
-        .await
-        .is_err()
-    {
-        let _ = live_session.ctx.set_parked_meta(None).await;
-        return internal_error();
+        if live_session
+            .ctx
+            .set_status(StageStatus::Parked, Some("waiting_gate".into()))
+            .await
+            .is_err()
+        {
+            let _ = live_session.ctx.set_parked_meta(None).await;
+            return internal_error();
+        }
     }
 
     (
