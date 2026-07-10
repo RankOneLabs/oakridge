@@ -789,11 +789,11 @@ fn operator_resume_actions(gate: Option<&DelegatedGateState>) -> Vec<String> {
     }
 }
 
-fn operator_gate(stage: &StageInstance, pr_url: Option<String>) -> OperatorParkedGate {
-    let gate = delegated_gate_state(stage);
-    // N=1 implicit unit always uses unit_id "0".
-    // N>1 fan-out (Phase 2b) will supply the unit_id from stage_session_units.
-    let unit_id = "0".to_owned();
+fn operator_gate(
+    stage: &StageInstance,
+    unit_id: String,
+    gate: Option<DelegatedGateState>,
+) -> OperatorParkedGate {
     OperatorParkedGate {
         id: format!("{}:{}", stage.id.0, unit_id),
         gate_type: operator_gate_type(stage, gate.as_ref()),
@@ -801,33 +801,42 @@ fn operator_gate(stage: &StageInstance, pr_url: Option<String>) -> OperatorParke
         stage_name: stage.stage_key.clone(),
         unit_id,
         artifact_revision_id: gate.as_ref().map(|gate| gate.artifact_id.0.to_string()),
-        worktree: operator_worktree(stage),
+        worktree: gate.as_ref().and_then(|gate| {
+            worktree_from_parts(
+                gate.worktree_path.clone(),
+                gate.worktree_branch.clone(),
+                gate.worktree_base_ref.clone(),
+            )
+        }).or_else(|| operator_worktree(stage)),
         resume_actions: operator_resume_actions(gate.as_ref()),
-        pr_url,
+        pr_url: gate.and_then(|gate| gate.pr_url),
     }
 }
 
-/// Look up the pr_url for a stage instance by finding the latest `pr_summary` artifact.
-async fn pr_url_for_stage(
+/// Every persisted unit gate is independently actionable. The legacy implicit
+/// unit mirrors its gate onto the stage row, so retain that as a compatibility
+/// fallback only when no unit gate is present.
+async fn operator_gates_for_stage(
     pool: &sqlx::SqlitePool,
     stage: &StageInstance,
-) -> Option<String> {
-    let artifact = queries::get_latest_artifact_by_stage_and_output(
-        pool,
-        &stage.id,
-        "pr_summary",
-    )
-    .await
-    .map_err(|err| {
-        tracing::warn!(
-            stage_instance_id = %stage.id.0,
-            error = %err,
-            "pr_summary artifact lookup failed"
-        );
-        err
-    })
-    .ok()??;
-    artifact.body.get("pr_url")?.as_str().map(|s| s.to_owned())
+) -> Result<Vec<OperatorParkedGate>, crate::Error> {
+    let units = queries::list_session_units_for_stage(pool, &stage.id).await?;
+    let gates: Vec<_> = units
+        .into_iter()
+        .filter_map(|unit| {
+            let gate = unit.gate_state.and_then(|state| {
+                serde_json::from_value::<DelegatedGateState>(state).ok()
+            });
+            gate.map(|gate| operator_gate(stage, unit.unit_id, Some(gate)))
+        })
+        .collect();
+    if !gates.is_empty() {
+        return Ok(gates);
+    }
+
+    Ok(delegated_gate_state(stage)
+        .map(|gate| vec![operator_gate(stage, "0".to_owned(), Some(gate))])
+        .unwrap_or_default())
 }
 
 fn artifacts_by_stage(
@@ -998,13 +1007,9 @@ pub async fn list_operator_gates(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<OperatorParkedGate>>, AppError> {
     let parked = queries::list_parked_stage_instances(&state.pool).await?;
-    let mut gates = Vec::with_capacity(parked.len());
-    // TODO: N+1 — one pr_summary query per parked stage. Acceptable while gate lists
-    // are short; batch with WHERE stage_instance_id IN (...) AND output_name='pr_summary'
-    // if this becomes a performance concern.
+    let mut gates = Vec::new();
     for stage in &parked {
-        let pr_url = pr_url_for_stage(&state.pool, stage).await;
-        gates.push(operator_gate(stage, pr_url));
+        gates.extend(operator_gates_for_stage(&state.pool, stage).await?);
     }
     Ok(Json(gates))
 }
@@ -1017,10 +1022,8 @@ pub async fn list_operator_run_gates(
     queries::get_workflow_run_by_id(&state.pool, &run_id).await?;
     let stages = queries::list_stage_instances_for_run(&state.pool, &run_id).await?;
     let mut gates = Vec::new();
-    // TODO: same N+1 as list_operator_gates — batch if perf warrants.
     for stage in stages.iter().filter(|s| matches!(s.status, StageStatus::Parked)) {
-        let pr_url = pr_url_for_stage(&state.pool, stage).await;
-        gates.push(operator_gate(stage, pr_url));
+        gates.extend(operator_gates_for_stage(&state.pool, stage).await?);
     }
     Ok(Json(gates))
 }
@@ -1063,7 +1066,13 @@ pub async fn resume_operator_gate(
             unit_id, stage_instance_id.0
         )));
     }
-    let gate = delegated_gate_state(&stage).ok_or_else(|| {
+    let gate = units
+        .iter()
+        .find(|unit| unit.unit_id == unit_id)
+        .and_then(|unit| unit.gate_state.as_ref())
+        .and_then(|state| serde_json::from_value::<DelegatedGateState>(state.clone()).ok())
+        .or_else(|| delegated_gate_state(&stage))
+        .ok_or_else(|| {
         validation_error(format!(
             "stage instance {} has no resumable delegated gate metadata",
             stage_instance_id.0
@@ -1731,7 +1740,7 @@ mod tests {
     use crate::executor::{EmitArgs, ResumePayload, StageContext, StageHandle};
     use crate::registry::{ArtifactTypeDef, ArtifactTypeRegistry, StageTypeRegistry};
     use crate::scheduler::Coordinator;
-    use crate::types::{StageNodeDef, StageStatus};
+    use crate::types::{SessionUnit, StageNodeDef, StageStatus, UnitStatus};
     use async_trait::async_trait;
     use axum::body::Body;
     use axum::http::Request;
@@ -2095,6 +2104,91 @@ mod tests {
             artifact_detail["revisions"][0]["validation"]["valid"],
             json!(true)
         );
+    }
+
+    #[tokio::test]
+    async fn operator_gates_keep_fan_out_units_and_pr_urls_independent() {
+        let state = make_state(vec![]).await;
+        let now = Utc::now();
+        let def = WorkflowDef {
+            id: WorkflowDefId(Uuid::new_v4()),
+            name: "operator-fan-out".into(),
+            version: 1,
+            graph: WorkflowGraph { stages: HashMap::new(), edges: vec![] },
+            created_at: now,
+        };
+        queries::insert_workflow_def(&state.pool, &def).await.unwrap();
+        let run = WorkflowRun {
+            id: WorkflowRunId(Uuid::new_v4()),
+            workflow_def_id: def.id,
+            project_id: None,
+            status: RunStatus::Running,
+            context: json!({}),
+            version: 1,
+            created_at: now,
+            updated_at: now,
+        };
+        queries::insert_workflow_run(&state.pool, &run).await.unwrap();
+        let stage = StageInstance {
+            id: StageInstanceId(Uuid::new_v4()),
+            run_id: run.id,
+            stage_key: "build".into(),
+            stage_type: "delegated_session".into(),
+            status: StageStatus::Parked,
+            config: json!({}),
+            parked_reason: Some("waiting_gate".into()),
+            parked_meta: None,
+            terminal_meta: None,
+            external_ref: None,
+            started_at: Some(now),
+            ended_at: None,
+            created_at: now,
+            updated_at: now,
+        };
+        queries::insert_stage_instance(&state.pool, &stage).await.unwrap();
+
+        for unit_id in ["cohort-a", "cohort-b"] {
+            let artifact_id = ArtifactId(Uuid::new_v4());
+            let gate = DelegatedGateState {
+                executor: DelegatedExecutor::DelegatedSession,
+                kbbl_sid: format!("sid-{unit_id}"),
+                gate: DelegatedGate::MergeConfirmation,
+                artifact_id,
+                revision_count: 0,
+                worktree_path: Some(format!("/worktrees/{unit_id}")),
+                worktree_branch: Some(format!("cohort/build/{unit_id}")),
+                worktree_base_ref: Some("main".into()),
+                pr_url: Some(format!("https://github.com/acme/repo/pull/{unit_id}")),
+            };
+            queries::upsert_session_unit(
+                &state.pool,
+                &SessionUnit {
+                    stage_instance_id: stage.id,
+                    unit_id: unit_id.into(),
+                    params: Some(json!({"id": unit_id})),
+                    depends_on: vec![],
+                    external_ref: None,
+                    worktree_branch: Some(format!("cohort/build/{unit_id}")),
+                    worktree_path: Some(format!("/worktrees/{unit_id}")),
+                    worktree_base_ref: Some("main".into()),
+                    status: UnitStatus::Parked,
+                    gate_state: Some(serde_json::to_value(gate).unwrap()),
+                    artifact_id: Some(artifact_id),
+                    terminal_meta: None,
+                    created_at: now,
+                    updated_at: now,
+                },
+            )
+            .await
+            .unwrap();
+        }
+
+        let gates = operator_gates_for_stage(&state.pool, &stage).await.unwrap();
+        assert_eq!(gates.len(), 2);
+        assert_eq!(gates[0].unit_id, "cohort-a");
+        assert_eq!(gates[0].pr_url.as_deref(), Some("https://github.com/acme/repo/pull/cohort-a"));
+        assert_eq!(gates[1].unit_id, "cohort-b");
+        assert_eq!(gates[1].pr_url.as_deref(), Some("https://github.com/acme/repo/pull/cohort-b"));
     }
 
     #[tokio::test]
