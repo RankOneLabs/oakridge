@@ -4,7 +4,7 @@ use std::path::{Component, Path};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::types::Artifact;
+use crate::types::ResolvedInput;
 
 // ── SlotBinding ───────────────────────────────────────────────────────────────
 
@@ -33,19 +33,20 @@ pub enum SlotBinding {
 
 pub fn resolve_binding(
     binding: &SlotBinding,
-    inputs: &HashMap<String, Artifact>,
+    inputs: &HashMap<String, ResolvedInput>,
     run_context: &Value,
     unit_params: Option<&Value>,
 ) -> anyhow::Result<String> {
     match binding {
         SlotBinding::Literal { value } => Ok(value.clone()),
         SlotBinding::Input { input_name, path } => {
-            let artifact = inputs.get(input_name).ok_or_else(|| {
+            let input = inputs.get(input_name).ok_or_else(|| {
                 anyhow::anyhow!("input '{}' not found in activation inputs", input_name)
             })?;
+            let input_value = input.to_binding_value();
             let v = match path {
-                None => &artifact.body,
-                Some(ptr) => artifact.body.pointer(ptr).ok_or_else(|| {
+                None => &input_value,
+                Some(ptr) => input_value.pointer(ptr).ok_or_else(|| {
                     anyhow::anyhow!("JSON pointer '{}' not found in input '{}'", ptr, input_name)
                 })?,
             };
@@ -195,7 +196,7 @@ fn validate_relative_template_path(rel_path: &str) -> anyhow::Result<&Path> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{ArtifactId, StageInstanceId, WorkflowRunId};
+    use crate::types::{Artifact, ArtifactId, StageInstanceId, WorkflowRunId};
     use chrono::Utc;
     use serde_json::json;
     use uuid::Uuid;
@@ -283,7 +284,7 @@ mod tests {
     fn resolve_input_whole_body_string() {
         let artifact = make_artifact(json!("the content"));
         let mut inputs = HashMap::new();
-        inputs.insert("doc".into(), artifact);
+        inputs.insert("doc".into(), ResolvedInput::Single(artifact));
         let b = SlotBinding::Input {
             input_name: "doc".into(),
             path: None,
@@ -293,10 +294,32 @@ mod tests {
     }
 
     #[test]
+    fn resolve_collection_input_uses_ordered_provenance_envelopes() {
+        let mut artifacts = std::collections::BTreeMap::new();
+        artifacts.insert("b".into(), make_artifact(json!({"value": 2})));
+        artifacts.insert("a".into(), make_artifact(json!({"value": 1})));
+        let mut inputs = HashMap::new();
+        inputs.insert("items".into(), ResolvedInput::Collection(artifacts));
+        let binding = SlotBinding::Input {
+            input_name: "items".into(),
+            path: None,
+        };
+
+        let resolved = resolve_binding(&binding, &inputs, &json!({}), None).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&resolved).unwrap(),
+            json!([
+                {"unit_id": "a", "artifact": {"value": 1}},
+                {"unit_id": "b", "artifact": {"value": 2}}
+            ])
+        );
+    }
+
+    #[test]
     fn resolve_input_pointer() {
         let artifact = make_artifact(json!({"notes": "my notes"}));
         let mut inputs = HashMap::new();
-        inputs.insert("spec".into(), artifact);
+        inputs.insert("spec".into(), ResolvedInput::Single(artifact));
         let b = SlotBinding::Input {
             input_name: "spec".into(),
             path: Some("/notes".into()),
@@ -318,7 +341,7 @@ mod tests {
     fn resolve_input_bad_pointer_returns_err() {
         let artifact = make_artifact(json!({"x": 1}));
         let mut inputs = HashMap::new();
-        inputs.insert("a".into(), artifact);
+        inputs.insert("a".into(), ResolvedInput::Single(artifact));
         let b = SlotBinding::Input {
             input_name: "a".into(),
             path: Some("/missing_field".into()),

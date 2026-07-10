@@ -672,6 +672,7 @@ async fn waiting_for_kbbl_parks_and_reattaches() {
         let cfg = DelegatedSessionConfig {
             runtime: DelegatedRuntime::ClaudeCode,
             rendered_prompt: "Task: test\nStage: placeholder".into(),
+            fan_out_prompt_plan: None,
             workdir: workdir.clone(),
             session_name: format!("delegated-{}", si_id.0),
             model: Some("claude-sonnet-4-6".into()),

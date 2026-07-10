@@ -148,6 +148,9 @@ pub struct DelegatedSessionDefConfig {
 pub struct DelegatedSessionConfig {
     pub runtime: DelegatedRuntime,
     pub rendered_prompt: String,
+    /// Lossless prompt state retained for deferred fan-out unit rendering.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub fan_out_prompt_plan: Option<FanOutPromptPlan>,
     pub workdir: PathBuf,
     pub session_name: String,
     pub model: Option<String>,
@@ -170,6 +173,13 @@ pub struct DelegatedSessionConfig {
     /// the unit; auxiliary slots store artifacts without changing stage status.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub gate_output: Option<String>,
+}
+
+/// Prompt material that cannot be recovered from a rendered fan-out prompt.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct FanOutPromptPlan {
+    pub raw_template: String,
+    pub base_slot_values: HashMap<String, String>,
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -269,6 +279,7 @@ mod tests {
         let cfg = DelegatedSessionConfig {
             runtime: DelegatedRuntime::Codex,
             rendered_prompt: "do the thing".into(),
+            fan_out_prompt_plan: None,
             workdir: PathBuf::from("/workspace/abc"),
             session_name: "s1".into(),
             model: None,
