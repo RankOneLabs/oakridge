@@ -17,7 +17,7 @@ export interface RuntimeDescriptor {
    * Reasoning/effort levels this runtime accepts, most-effort-last. Empty for
    * runtimes with no effort control. The PWA renders these as an effort picker
    * (prepending a "default" = unset option) exactly as it does `models`. Values
-   * differ per runtime (CC: low..max; Codex: minimal..xhigh), so each adapter
+   * differ per runtime (CC: low..max; Codex: minimal..max), so each adapter
    * advertises its own set rather than sharing a global enum.
    */
   efforts: readonly { value: string; label: string }[];
@@ -38,12 +38,12 @@ export type RuntimeModelSelection = {
 
 const DEFAULT_PLANNER_MODEL_BY_RUNTIME: Record<RuntimeId, string> = {
   "claude-code": "claude-opus-4-8",
-  codex: "gpt-5.5",
+  codex: "gpt-5.6-sol",
 };
 
 const DEFAULT_WORKER_MODEL_BY_RUNTIME: Record<RuntimeId, string> = {
   "claude-code": "claude-sonnet-4-6",
-  codex: "gpt-5.4-mini",
+  codex: "gpt-5.6-luna",
 };
 
 export function defaultPlannerModelForRuntime(runtimeId: RuntimeId): string {

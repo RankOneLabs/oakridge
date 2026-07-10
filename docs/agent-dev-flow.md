@@ -131,7 +131,7 @@ curl -sX POST "$KBBL/projects" -H 'content-type: application/json' \
 # → { "id":"<project_id>", ... }
 
 curl -sX POST "$KBBL/specs" -H 'content-type: application/json' \
-  -d '{"project_id":"<project_id>","title":"…","notes":"<full spec prose>","planner_model_selection":{"runtime":"claude-code","model":"claude-opus-4-8"},"worker_model_selection":{"runtime":"codex","model":"gpt-5.4-mini"}}'
+  -d '{"project_id":"<project_id>","title":"…","notes":"<full spec prose>","planner_model_selection":{"runtime":"claude-code","model":"claude-opus-4-8"},"worker_model_selection":{"runtime":"codex","model":"gpt-5.6-luna"}}'
 # → { "id":"<spec_id>", "epic_id":"<epic_id>", ... }
 
 # Or load the prose from a file (mutually exclusive with `notes`). The path

@@ -69,8 +69,8 @@ const inputRef: InputRef = {
 
 const CLAUDE_PLANNER_SELECTION = { runtime: "claude-code", model: "claude-opus-4-8" } as const;
 const CLAUDE_WORKER_SELECTION = { runtime: "claude-code", model: "claude-sonnet-4-6" } as const;
-const CODEX_PLANNER_SELECTION = { runtime: "codex", model: "gpt-5.5" } as const;
-const CODEX_WORKER_SELECTION = { runtime: "codex", model: "gpt-5.4-mini" } as const;
+const CODEX_PLANNER_SELECTION = { runtime: "codex", model: "gpt-5.6-sol" } as const;
+const CODEX_WORKER_SELECTION = { runtime: "codex", model: "gpt-5.6-luna" } as const;
 
 describe("KbblChatBackend dispatch routes explicit model selections", () => {
   test("spec_analyzer → planner selection", async () => {
@@ -110,7 +110,7 @@ describe("KbblChatBackend dispatch routes explicit model selections", () => {
     expect(calls[0]?.model).toBe("claude-sonnet-4-6");
   });
 
-  test("codex flow routes planner stages to gpt-5.5", async () => {
+  test("codex flow routes planner stages to gpt-5.6-sol", async () => {
     const { manager, calls } = makeFakeManager();
     const backend = createKbblChatBackend({ manager });
     await backend.dispatch(
@@ -118,11 +118,11 @@ describe("KbblChatBackend dispatch routes explicit model selections", () => {
       { ...inputRef, modelSelection: CODEX_PLANNER_SELECTION },
       "prompt",
     );
-    expect(calls[0]?.model).toBe("gpt-5.5");
+    expect(calls[0]?.model).toBe("gpt-5.6-sol");
     expect(calls[0]?.runtime).toBe("codex");
   });
 
-  test("codex flow routes build to gpt-5.4-mini", async () => {
+  test("codex flow routes build to gpt-5.6-luna", async () => {
     const { manager, calls } = makeFakeManager();
     const backend = createKbblChatBackend({ manager });
     await backend.dispatch(
@@ -130,7 +130,7 @@ describe("KbblChatBackend dispatch routes explicit model selections", () => {
       { ...inputRef, modelSelection: CODEX_WORKER_SELECTION },
       "prompt",
     );
-    expect(calls[0]?.model).toBe("gpt-5.4-mini");
+    expect(calls[0]?.model).toBe("gpt-5.6-luna");
     expect(calls[0]?.runtime).toBe("codex");
   });
 
@@ -138,7 +138,7 @@ describe("KbblChatBackend dispatch routes explicit model selections", () => {
     const { manager, calls } = makeFakeManager();
     const backend = createKbblChatBackend({ manager });
     await backend.dispatch(stage("future-stage"), { ...inputRef, modelSelection: CODEX_PLANNER_SELECTION }, "prompt");
-    expect(calls[0]?.model).toBe("gpt-5.5");
+    expect(calls[0]?.model).toBe("gpt-5.6-sol");
     expect(calls[0]?.runtime).toBe("codex");
   });
 });

@@ -4,44 +4,59 @@ import { normalizeModelList } from "./models";
 // Note: startCodexAppServer integration tests require a real codex binary.
 // These tests cover the config/logic surface that is testable without a process.
 
+const PINNED_CODEX_MODEL_VALUES = [
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "gpt-5.6-luna",
+  "gpt-5.5",
+  "gpt-5.4",
+  "gpt-5.4-mini",
+  "gpt-5.3-codex-spark",
+];
+
+const PINNED_CODEX_MODELS = [
+  { value: "gpt-5.6-sol", label: "gpt-5.6 sol" },
+  { value: "gpt-5.6-terra", label: "gpt-5.6 terra" },
+  { value: "gpt-5.6-luna", label: "gpt-5.6 luna" },
+  { value: "gpt-5.5", label: "gpt-5.5" },
+  { value: "gpt-5.4", label: "gpt-5.4" },
+  { value: "gpt-5.4-mini", label: "gpt-5.4 mini" },
+  { value: "gpt-5.3-codex-spark", label: "gpt-5.3 codex spark" },
+];
+
 describe("normalizeModelList (used by app-server startup)", () => {
   test("returns pinned Codex models for null", () => {
-    expect(normalizeModelList(null)).toEqual([
-      { value: "gpt-5.5", label: "gpt-5.5" },
-      { value: "gpt-5.4-mini", label: "gpt-5.4 mini" },
-    ]);
+    expect(normalizeModelList(null)).toEqual(PINNED_CODEX_MODELS);
   });
 
   test("returns pinned Codex models for non-array", () => {
-    expect(normalizeModelList("string").map((model) => model.value)).toEqual([
-      "gpt-5.5",
-      "gpt-5.4-mini",
-    ]);
-    expect(normalizeModelList(42).map((model) => model.value)).toEqual([
-      "gpt-5.5",
-      "gpt-5.4-mini",
-    ]);
-    expect(normalizeModelList({}).map((model) => model.value)).toEqual([
-      "gpt-5.5",
-      "gpt-5.4-mini",
-    ]);
+    expect(normalizeModelList("string").map((model) => model.value)).toEqual(
+      PINNED_CODEX_MODEL_VALUES,
+    );
+    expect(normalizeModelList(42).map((model) => model.value)).toEqual(
+      PINNED_CODEX_MODEL_VALUES,
+    );
+    expect(normalizeModelList({}).map((model) => model.value)).toEqual(
+      PINNED_CODEX_MODEL_VALUES,
+    );
   });
 
   test("normalizes model array and appends pinned models", () => {
-    const raw = [{ id: "gpt-5.5" }, { id: "o3" }];
+    const raw = [{ id: "gpt-5.6-sol" }, { id: "o3" }];
     const result = normalizeModelList(raw);
-    expect(result).toHaveLength(3);
-    expect(result[0]).toEqual({ value: "gpt-5.5", label: "gpt-5.5" });
+    expect(result).toHaveLength(8);
+    expect(result[0]).toEqual({ value: "gpt-5.6-sol", label: "gpt-5.6-sol" });
     expect(result[1]).toEqual({ value: "o3", label: "o3" });
-    expect(result[2]).toEqual({ value: "gpt-5.4-mini", label: "gpt-5.4 mini" });
+    expect(result.slice(2).map((model) => model.value)).toEqual(
+      PINNED_CODEX_MODEL_VALUES.slice(1),
+    );
   });
 
   test("filters out entries without string id", () => {
-    const raw = [{ id: "gpt-5.5" }, { id: 42 }, { label: "no-id" }, null];
+    const raw = [{ id: "gpt-5.6-sol" }, { id: 42 }, { label: "no-id" }, null];
     const result = normalizeModelList(raw);
-    expect(result).toHaveLength(2);
-    expect(result[0].value).toBe("gpt-5.5");
-    expect(result[1].value).toBe("gpt-5.4-mini");
+    expect(result).toHaveLength(7);
+    expect(result.map((model) => model.value)).toEqual(PINNED_CODEX_MODEL_VALUES);
   });
 });
 

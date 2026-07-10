@@ -83,7 +83,7 @@ beforeEach(() => {
     status: "active",
     current_stage: "spec",
     planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
-    worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini" },
+    worker_model_selection: { runtime: "codex", model: "gpt-5.6-luna" },
   });
 
   mockBackend = createMockBackend();

@@ -76,7 +76,7 @@ describe("insertEpic + getEpic", () => {
       status: "active",
       current_stage: "spec",
       planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
-      worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini" },
+      worker_model_selection: { runtime: "codex", model: "gpt-5.6-luna" },
     });
     expect(e.planner_model_selection).toEqual({
       runtime: "claude-code",
@@ -85,7 +85,7 @@ describe("insertEpic + getEpic", () => {
     });
     expect(e.worker_model_selection).toEqual({
       runtime: "codex",
-      model: "gpt-5.4-mini",
+      model: "gpt-5.6-luna",
       effort: null,
     });
   });
@@ -98,13 +98,13 @@ describe("insertEpic + getEpic", () => {
       title: "Split Epic",
       status: "active",
       current_stage: "spec",
-      planner_model_selection: { runtime: "codex", model: "gpt-5.5" },
-      worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini" },
+      planner_model_selection: { runtime: "codex", model: "gpt-5.6-sol" },
+      worker_model_selection: { runtime: "codex", model: "gpt-5.6-luna" },
     });
-    expect(e.planner_model_selection).toEqual({ runtime: "codex", model: "gpt-5.5", effort: null });
+    expect(e.planner_model_selection).toEqual({ runtime: "codex", model: "gpt-5.6-sol", effort: null });
     expect(e.worker_model_selection).toEqual({
       runtime: "codex",
-      model: "gpt-5.4-mini",
+      model: "gpt-5.6-luna",
       effort: null,
     });
   });

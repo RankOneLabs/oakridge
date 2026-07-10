@@ -55,6 +55,7 @@ describe("Codex adapter descriptor", () => {
     const values = rt.descriptor.efforts.map((e) => e.value);
     // A representative Codex ReasoningEffort level the picker should offer.
     expect(values).toContain("medium");
+    expect(values).toContain("max");
   });
 });
 

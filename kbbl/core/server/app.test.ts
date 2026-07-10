@@ -111,7 +111,18 @@ describe("GET /config", () => {
       defaultId: "codex",
       runtimes: new Map([
         ["claude-code", makeRuntime("claude-code", ["claude-opus-4-8", "claude-sonnet-4-6"])],
-        ["codex", makeRuntime("codex", ["gpt-5.5", "gpt-5.4-mini"])],
+        [
+          "codex",
+          makeRuntime("codex", [
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
+            "gpt-5.6-luna",
+            "gpt-5.5",
+            "gpt-5.4",
+            "gpt-5.4-mini",
+            "gpt-5.3-codex-spark",
+          ]),
+        ],
       ]),
     } as RuntimeRegistry;
     const app = buildApp(KbblConfigSchema.parse({}), "/tmp/test-workdir", registry);
@@ -145,8 +156,13 @@ describe("GET /config", () => {
         label: "Codex",
         supportsCompaction: false,
         models: [
+          { value: "gpt-5.6-sol", label: "gpt-5.6-sol" },
+          { value: "gpt-5.6-terra", label: "gpt-5.6-terra" },
+          { value: "gpt-5.6-luna", label: "gpt-5.6-luna" },
           { value: "gpt-5.5", label: "gpt-5.5" },
+          { value: "gpt-5.4", label: "gpt-5.4" },
           { value: "gpt-5.4-mini", label: "gpt-5.4-mini" },
+          { value: "gpt-5.3-codex-spark", label: "gpt-5.3-codex-spark" },
         ],
         efforts: [],
       },
