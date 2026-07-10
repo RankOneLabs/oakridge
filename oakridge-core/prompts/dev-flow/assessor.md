@@ -32,7 +32,7 @@ Stage instance: `{{STAGE_INSTANCE_ID}}`
 POST exactly once and then stop:
 
 ```http
-POST {{OAKRIDGE_URL}}/executors/delegated_session/{{STAGE_INSTANCE_ID}}/emit/assessment
+POST {{OAKRIDGE_URL}}/executors/delegated_session/{{STAGE_INSTANCE_ID}}/units/{{UNIT_ID}}/emit/assessment
 Content-Type: application/json
 
 {
