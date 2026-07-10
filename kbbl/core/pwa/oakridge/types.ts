@@ -210,3 +210,102 @@ export interface PatchReviewItemRequest {
   status: "resolved" | "waived";
   resolution?: string;
 }
+
+// ── Workflow-def authoring types ──────────────────────────────────────────────
+// Mirror the oakridge-core Rust schema so form output matches what
+// POST /workflow_defs and GET /workflow_defs/:id round-trip.
+
+export type SlotBindingSource = "input" | "context" | "literal" | "item";
+
+export type SlotBinding =
+  | { from: "input"; input_name: string; path?: string | null }
+  | { from: "context"; path: string }
+  | { from: "literal"; value: string }
+  | { from: "item"; path: string };
+
+// Bindable: a bare string literal OR a SlotBinding (Rust #[serde(untagged)])
+export type Bindable = string | SlotBinding;
+
+export interface WorktreeTemplate {
+  branch_name: string;
+  worktree_subdir: string;
+  base_ref?: string | null;
+}
+
+// camelCase: matches Rust #[serde(rename_all = "camelCase")] on WorktreeIdentity
+export interface WorktreeIdentity {
+  branchName: string;
+  worktreeSubdir: string;
+  baseRef?: string | null;
+}
+
+export interface FanOutConfig {
+  over: SlotBinding;
+  unit_id_path: string;
+  depends_on_path?: string | null;
+  max_parallel?: number;
+  item_bindings?: Record<string, SlotBinding>;
+  worktree?: WorktreeTemplate | null;
+}
+
+export interface DelegatedSessionStageConfig {
+  runtime: "claude-code" | "codex";
+  prompt_template_path: string;
+  slot_bindings: Record<string, SlotBinding>;
+  workdir: SlotBinding;
+  session_name: string;
+  model?: Bindable | null;
+  effort?: Bindable | null;
+  worktree?: WorktreeIdentity | null;
+  pre_authorized_tools?: string[];
+  yolo?: boolean;
+  fan_out?: FanOutConfig | null;
+  gate_output?: string | null;
+}
+
+export interface InputSlotDef {
+  name: string;
+  artifact_type: string;
+  optional?: boolean;
+}
+
+export interface OutputSlotDef {
+  name: string;
+  artifact_type: string;
+}
+
+export interface StageNodeDef {
+  stage_type: string;
+  config: DelegatedSessionStageConfig;
+  inputs: InputSlotDef[];
+  outputs: OutputSlotDef[];
+}
+
+export interface EdgeEndpoint {
+  stage: string;
+  slot: string;
+}
+
+export interface EdgeDef {
+  from: EdgeEndpoint;
+  to: EdgeEndpoint;
+}
+
+export interface WorkflowGraph {
+  stages: Record<string, StageNodeDef>;
+  edges: EdgeDef[];
+}
+
+export interface WorkflowDefFull {
+  id: string;
+  name: string;
+  version: number;
+  graph: WorkflowGraph;
+  created_at: string;
+}
+
+export interface WorkflowDefInput {
+  name: string;
+  version: number;
+  graph: WorkflowGraph;
+}

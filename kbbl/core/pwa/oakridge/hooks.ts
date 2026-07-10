@@ -4,6 +4,8 @@ import {
   fetchProjects,
   createProject,
   fetchWorkflowDefs,
+  fetchWorkflowDef,
+  createWorkflowDef,
   createRun,
   cancelRun,
   archiveRun,
@@ -35,6 +37,7 @@ import type {
   PostAtomEditRequest,
   PostReviewItemRequest,
   PatchReviewItemRequest,
+  WorkflowDefInput,
 } from "./types";
 
 const POLL_MS = 10_000;
@@ -119,6 +122,24 @@ export function useWorkflowDefs() {
   return useQuery({
     queryKey: ["oakridge", "workflow_defs"],
     queryFn: fetchWorkflowDefs,
+  });
+}
+
+export function useWorkflowDef(id: string | null) {
+  return useQuery({
+    queryKey: ["oakridge", "workflow_def", id],
+    queryFn: () => fetchWorkflowDef(id!),
+    enabled: id !== null,
+  });
+}
+
+export function useCreateWorkflowDef() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: WorkflowDefInput) => createWorkflowDef(input),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["oakridge", "workflow_defs"] });
+    },
   });
 }
 

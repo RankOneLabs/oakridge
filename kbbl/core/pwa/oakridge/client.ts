@@ -5,6 +5,8 @@ import type {
   OakridgeConfig,
   Project,
   WorkflowDefSummary,
+  WorkflowDefFull,
+  WorkflowDefInput,
   CreateRunRequest,
   RunSummary,
   RunDetail,
@@ -115,6 +117,14 @@ export function createProject(body: { name: string; repo_dir: string }): Promise
 
 export function fetchWorkflowDefs(): Promise<WorkflowDefSummary[]> {
   return oakridgeGet<WorkflowDefSummary[]>("/workflow_defs");
+}
+
+export function fetchWorkflowDef(id: string): Promise<WorkflowDefFull> {
+  return oakridgeGet<WorkflowDefFull>(`/workflow_defs/${encodeURIComponent(id)}`);
+}
+
+export function createWorkflowDef(body: WorkflowDefInput): Promise<WorkflowDefFull> {
+  return oakridgePost<WorkflowDefFull>("/workflow_defs", body);
 }
 
 export function createRun(body: CreateRunRequest): Promise<RunSummary> {
