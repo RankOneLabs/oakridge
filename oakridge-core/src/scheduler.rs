@@ -694,7 +694,12 @@ impl RunTask {
             )));
         }
 
-        if !matches!(current.status, StageStatus::Parked) {
+        let is_delegated_session = current.stage_type == "delegated_session";
+        // A fan-out delegated stage owns independently parked unit gates. Its
+        // aggregate status can be Running while another unit still has a
+        // durable gate, so let the delegated handle validate the artifact/unit
+        // routing instead of rejecting the decision at the stage boundary.
+        if !matches!(current.status, StageStatus::Parked) && !is_delegated_session {
             return Err(DecisionError::Conflict(format!(
                 "stage instance {} is not parked (status: {:?})",
                 stage_instance_id.0, current.status
@@ -718,7 +723,7 @@ impl RunTask {
             )));
         }
 
-        if !matches!(status, StageStatus::Parked) {
+        if !matches!(status, StageStatus::Parked) && !is_delegated_session {
             return Err(DecisionError::Conflict(format!(
                 "stage instance {} is not parked (status: {:?})",
                 stage_instance_id.0, status
