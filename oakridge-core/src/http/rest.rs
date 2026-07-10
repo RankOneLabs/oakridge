@@ -180,10 +180,13 @@ pub struct OperatorRunDetail {
 
 #[derive(Serialize)]
 pub struct OperatorParkedGate {
+    /// Composite gate id: "{stage_instance_uuid}:{unit_id}". N=1 implicit unit → "…:0".
     pub id: String,
     pub gate_type: String,
     pub run_id: String,
     pub stage_name: String,
+    /// unit_id within the stage; "0" for the N=1 implicit unit.
+    pub unit_id: String,
     pub artifact_revision_id: Option<String>,
     pub worktree: Option<OperatorWorktreeMetadata>,
     pub resume_actions: Vec<String>,
@@ -591,11 +594,23 @@ pub async fn resume_stage_instance(
     Ok((StatusCode::ACCEPTED, Json(updated)))
 }
 
+/// Optional body for POST /stage_instances/:id/retry_stuck.
+/// `unit_id` targets a specific fan-out unit; absent or null → retry the whole stage (N=1 path).
+#[derive(Deserialize, Default)]
+pub struct RetryStuckRequest {
+    #[serde(default)]
+    pub unit_id: Option<String>,
+}
+
 pub async fn retry_stuck_stage_instance(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
+    body: Option<Json<RetryStuckRequest>>,
 ) -> Result<(StatusCode, Json<StageInstance>), AppError> {
     let si_id = StageInstanceId(id);
+    // unit_id is accepted in the body but not yet forwarded to the coordinator
+    // (the N=1 path always retries the whole stage). N>1 fan-out will use it in Phase 2b.
+    let _unit_id = body.map(|Json(b)| b.unit_id).unwrap_or(None);
 
     state
         .coordinator
@@ -722,11 +737,15 @@ fn operator_resume_actions(gate: Option<&DelegatedGateState>) -> Vec<String> {
 
 fn operator_gate(stage: &StageInstance) -> OperatorParkedGate {
     let gate = delegated_gate_state(stage);
+    // N=1 implicit unit always uses unit_id "0".
+    // N>1 fan-out (Phase 2b) will supply the unit_id from stage_session_units.
+    let unit_id = "0".to_owned();
     OperatorParkedGate {
-        id: stage.id.0.to_string(),
+        id: format!("{}:{}", stage.id.0, unit_id),
         gate_type: operator_gate_type(stage, gate.as_ref()),
         run_id: stage.run_id.0.to_string(),
         stage_name: stage.stage_key.clone(),
+        unit_id,
         artifact_revision_id: gate.as_ref().map(|gate| gate.artifact_id.0.to_string()),
         worktree: operator_worktree(stage),
         resume_actions: operator_resume_actions(gate.as_ref()),
@@ -859,10 +878,23 @@ fn gate_outcome(action: &str) -> Option<GateOutcome> {
 
 pub async fn resume_operator_gate(
     State(state): State<AppState>,
-    Path(id): Path<Uuid>,
+    Path(composite_id): Path<String>,
     Json(body): Json<OperatorGateResumeRequest>,
 ) -> Result<(StatusCode, Json<OperatorGateResumeResponse>), AppError> {
-    let stage_instance_id = StageInstanceId(id);
+    // Parse composite gate id: "{stage_uuid}:{unit_id}"
+    let (stage_uuid_str, _unit_id) = composite_id.split_once(':').ok_or_else(|| {
+        validation_error(format!(
+            "invalid gate id '{}': expected '{{stage_uuid}}:{{unit_id}}'",
+            composite_id
+        ))
+    })?;
+    let stage_uuid = Uuid::parse_str(stage_uuid_str).map_err(|_| {
+        validation_error(format!(
+            "invalid stage uuid in gate id '{}'",
+            composite_id
+        ))
+    })?;
+    let stage_instance_id = StageInstanceId(stage_uuid);
     let stage = queries::get_stage_instance_by_id(&state.pool, &stage_instance_id).await?;
     let gate = delegated_gate_state(&stage).ok_or_else(|| {
         validation_error(format!(
@@ -906,7 +938,7 @@ pub async fn resume_operator_gate(
     Ok((
         StatusCode::ACCEPTED,
         Json(OperatorGateResumeResponse {
-            gate_id: stage_instance_id.0.to_string(),
+            gate_id: composite_id,
             resumed: true,
         }),
     ))
