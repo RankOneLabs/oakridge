@@ -1111,6 +1111,479 @@ pub async fn get_artifact_types(
     Ok(Json(types))
 }
 
+// ── Collab DTOs ───────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct PostThreadRequest {
+    pub anchor: Option<String>,
+    pub body: String,
+    pub author: String,
+}
+
+#[derive(Serialize)]
+pub struct PostThreadResponse {
+    pub thread_id: String,
+    pub message_id: String,
+}
+
+#[derive(Deserialize)]
+pub struct PostMessageRequest {
+    pub body: String,
+    pub author: String,
+}
+
+#[derive(Serialize)]
+pub struct PostMessageResponse {
+    pub message_id: String,
+}
+
+#[derive(Deserialize)]
+pub struct PatchThreadRequest {
+    pub status: String,
+}
+
+#[derive(Serialize)]
+pub struct ThreadWithMessages {
+    pub id: String,
+    pub artifact_id: String,
+    pub revision_id: String,
+    pub anchor: Option<String>,
+    pub status: String,
+    pub created_at: String,
+    pub messages: Vec<MessageDto>,
+}
+
+#[derive(Serialize)]
+pub struct MessageDto {
+    pub id: String,
+    pub thread_id: String,
+    pub body: String,
+    pub author: String,
+    pub created_at: String,
+}
+
+#[derive(Deserialize)]
+pub struct PostAtomEditRequest {
+    pub anchor: String,
+    pub prev_value: Value,
+    pub new_value: Value,
+    pub author: String,
+}
+
+#[derive(Serialize)]
+pub struct PostAtomEditResponse {
+    pub artifact_id: String,
+}
+
+#[derive(Deserialize)]
+pub struct PostReviewItemRequest {
+    pub anchor: String,
+    pub claim: String,
+    pub reality: String,
+}
+
+#[derive(Serialize)]
+pub struct ReviewItemDto {
+    pub id: String,
+    pub artifact_id: String,
+    pub revision_id: String,
+    pub anchor: String,
+    pub claim: String,
+    pub reality: String,
+    pub status: String,
+    pub resolution: Option<String>,
+    pub created_at: String,
+}
+
+impl From<crate::collab::ReviewItem> for ReviewItemDto {
+    fn from(ri: crate::collab::ReviewItem) -> Self {
+        ReviewItemDto {
+            id: ri.id.to_string(),
+            artifact_id: ri.artifact_id.to_string(),
+            revision_id: ri.revision_id,
+            anchor: ri.anchor,
+            claim: ri.claim,
+            reality: ri.reality,
+            status: ri.status.as_str().to_string(),
+            resolution: ri.resolution,
+            created_at: ri.created_at.to_rfc3339(),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct PatchReviewItemRequest {
+    pub status: String,
+    pub resolution: Option<String>,
+}
+
+// ── Collab helpers ────────────────────────────────────────────────────────────
+
+/// Require that the artifact type supports the given capability flag.
+fn require_cap(
+    state: &super::AppState,
+    artifact_type: &str,
+    getter: impl Fn(&crate::registry::artifact_type::ArtifactCapabilities) -> bool,
+    cap_name: &str,
+) -> Result<(), AppError> {
+    let def = state
+        .artifact_registry
+        .get(artifact_type)
+        .ok_or_else(|| crate::Error::RegistryMiss(artifact_type.to_string()))?;
+    if !getter(&def.capabilities) {
+        return Err(AppError::Domain(crate::Error::Validation(format!(
+            "artifact type '{artifact_type}' does not support '{cap_name}'"
+        ))));
+    }
+    Ok(())
+}
+
+/// Walk the parent chain to find the chain-root artifact id.
+async fn chain_root_id(
+    pool: &sqlx::SqlitePool,
+    artifact_id: &crate::types::ArtifactId,
+) -> crate::Result<String> {
+    let chain = queries::get_artifact_chain(pool, artifact_id).await?;
+    let root = chain
+        .last()
+        .ok_or_else(|| crate::Error::Validation("empty artifact chain".into()))?;
+    Ok(root.id.0.to_string())
+}
+
+// ── POST /artifacts/:id/threads ───────────────────────────────────────────────
+
+pub async fn post_thread(
+    State(state): State<super::AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<PostThreadRequest>,
+) -> Result<(StatusCode, Json<PostThreadResponse>), AppError> {
+    let artifact_id = crate::types::ArtifactId(id);
+    let artifact = queries::get_artifact_by_id(&state.pool, &artifact_id).await?;
+    require_cap(&state, &artifact.artifact_type, |c| c.commentable, "commentable")?;
+
+    let revision_id = chain_root_id(&state.pool, &artifact_id).await?;
+    let now = chrono::Utc::now();
+    let thread_id = Uuid::new_v4();
+    let message_id = Uuid::new_v4();
+
+    let thread = crate::collab::CollabThread {
+        id: thread_id,
+        artifact_id: id,
+        revision_id,
+        anchor: req.anchor,
+        status: crate::collab::ThreadStatus::Open,
+        created_at: now,
+    };
+    queries::insert_thread(&state.pool, &thread).await?;
+
+    let message = crate::collab::CollabMessage {
+        id: message_id,
+        thread_id,
+        body: req.body,
+        author: req.author,
+        created_at: now,
+    };
+    queries::insert_message(&state.pool, &message).await?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(PostThreadResponse {
+            thread_id: thread_id.to_string(),
+            message_id: message_id.to_string(),
+        }),
+    ))
+}
+
+// ── GET /artifacts/:id/threads ────────────────────────────────────────────────
+
+pub async fn list_threads(
+    State(state): State<super::AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<ThreadWithMessages>>, AppError> {
+    let artifact_id = crate::types::ArtifactId(id);
+    let artifact = queries::get_artifact_by_id(&state.pool, &artifact_id).await?;
+    require_cap(&state, &artifact.artifact_type, |c| c.commentable, "commentable")?;
+
+    let threads = queries::list_threads_for_artifact(&state.pool, &id).await?;
+    let mut result = Vec::with_capacity(threads.len());
+    for t in threads {
+        let messages = queries::list_messages_for_thread(&state.pool, &t.id).await?;
+        result.push(ThreadWithMessages {
+            id: t.id.to_string(),
+            artifact_id: t.artifact_id.to_string(),
+            revision_id: t.revision_id,
+            anchor: t.anchor,
+            status: t.status.as_str().to_string(),
+            created_at: t.created_at.to_rfc3339(),
+            messages: messages
+                .into_iter()
+                .map(|m| MessageDto {
+                    id: m.id.to_string(),
+                    thread_id: m.thread_id.to_string(),
+                    body: m.body,
+                    author: m.author,
+                    created_at: m.created_at.to_rfc3339(),
+                })
+                .collect(),
+        });
+    }
+    Ok(Json(result))
+}
+
+// ── POST /threads/:id/messages ────────────────────────────────────────────────
+
+pub async fn post_message(
+    State(state): State<super::AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<PostMessageRequest>,
+) -> Result<(StatusCode, Json<PostMessageResponse>), AppError> {
+    let thread = queries::get_thread_by_id(&state.pool, &id).await?;
+    if thread.status != crate::collab::ThreadStatus::Open {
+        return Err(AppError::Domain(crate::Error::Validation(
+            "cannot post to a resolved thread".into(),
+        )));
+    }
+    let message_id = Uuid::new_v4();
+    let message = crate::collab::CollabMessage {
+        id: message_id,
+        thread_id: id,
+        body: req.body,
+        author: req.author,
+        created_at: chrono::Utc::now(),
+    };
+    queries::insert_message(&state.pool, &message).await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(PostMessageResponse {
+            message_id: message_id.to_string(),
+        }),
+    ))
+}
+
+// ── POST /threads/:id/ping ────────────────────────────────────────────────────
+
+pub async fn post_ping(
+    State(state): State<super::AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Value>, AppError> {
+    let thread = queries::get_thread_by_id(&state.pool, &id).await?;
+    if thread.status != crate::collab::ThreadStatus::Open {
+        return Err(AppError::Domain(crate::Error::Validation(
+            "cannot ping a resolved thread".into(),
+        )));
+    }
+    let artifact_id = crate::types::ArtifactId(thread.artifact_id);
+    let artifact = queries::get_artifact_by_id(&state.pool, &artifact_id).await?;
+    let messages = queries::list_messages_for_thread(&state.pool, &id).await?;
+
+    let thread_id_str = id.to_string();
+    let anchor_str = thread.anchor.clone().unwrap_or_else(|| "entire artifact".into());
+    let artifact_body_pretty =
+        serde_json::to_string_pretty(&artifact.body).unwrap_or_else(|_| artifact.body.to_string());
+
+    let messages_text = messages
+        .iter()
+        .map(|m| format!("{} ({}): {}", m.author, m.created_at.to_rfc3339(), m.body))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+
+    let oakridge_base = std::env::var("OAKRIDGE_CORE_SELF_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:8790".into());
+
+    // Load ping-responder prompt template from prompts_dir.
+    let prompts_dir = std::env::var("OAKRIDGE_PROMPTS_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("./prompts"));
+    let template_path = prompts_dir.join("collab").join("ping_responder.md");
+    let template = match tokio::fs::read_to_string(&template_path).await {
+        Ok(t) => t,
+        Err(_) => {
+            return Err(AppError::Internal(format!(
+                "ping_responder.md not found at {:?}",
+                template_path
+            )))
+        }
+    };
+
+    let prompt = template
+        .replace("{{ARTIFACT_ID}}", &artifact.id.0.to_string())
+        .replace("{{ARTIFACT_BODY}}", &artifact_body_pretty)
+        .replace("{{THREAD_ID}}", &thread_id_str)
+        .replace("{{ANCHOR}}", &anchor_str)
+        .replace("{{MESSAGES}}", &messages_text)
+        .replace("{{OAKRIDGE_API_BASE}}", &format!("{oakridge_base}"));
+
+    // Spawn fire-and-forget kbbl session for the responder.
+    let kbbl_url = std::env::var("KBBL_API_BASE_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:8788/".into());
+    match crate::executor::delegated_session::kbbl_client::KbblClient::new(&kbbl_url) {
+        Ok(kbbl) => {
+            tokio::spawn(async move {
+                use crate::executor::delegated_session::kbbl_client::{
+                    CreateSessionRequest, SendInputRequest,
+                };
+                use crate::executor::delegated_session::config::DelegatedRuntime;
+                let req = CreateSessionRequest {
+                    workdir: "/tmp".into(),
+                    name: format!("ping-responder-{}", thread_id_str),
+                    artifact_id: thread_id_str.clone(),
+                    runtime: DelegatedRuntime::ClaudeCode,
+                    model: None,
+                    effort: None,
+                    worktree: None,
+                };
+                match kbbl.create_session(req).await {
+                    Ok(snap) => {
+                        let _ = kbbl
+                            .send_input(&snap.sid, SendInputRequest { text: prompt })
+                            .await;
+                    }
+                    Err(e) => {
+                        tracing::warn!("ping-responder session failed: {e}");
+                    }
+                }
+            });
+        }
+        Err(e) => {
+            tracing::warn!("ping-responder: invalid KBBL_API_BASE_URL: {e}");
+        }
+    }
+
+    Ok(Json(json!({ "ok": true })))
+}
+
+// ── PATCH /threads/:id ────────────────────────────────────────────────────────
+
+pub async fn patch_thread(
+    State(state): State<super::AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<PatchThreadRequest>,
+) -> Result<Json<Value>, AppError> {
+    let status = crate::collab::ThreadStatus::from_str(&req.status)?;
+    queries::update_thread_status(&state.pool, &id, &status).await?;
+    Ok(Json(json!({ "thread_id": id.to_string(), "status": req.status })))
+}
+
+// ── POST /artifacts/:id/edits ─────────────────────────────────────────────────
+
+pub async fn post_atom_edit(
+    State(state): State<super::AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<PostAtomEditRequest>,
+) -> Result<(StatusCode, Json<PostAtomEditResponse>), AppError> {
+    let artifact_id = crate::types::ArtifactId(id);
+    let artifact = queries::get_artifact_by_id(&state.pool, &artifact_id).await?;
+    require_cap(&state, &artifact.artifact_type, |c| c.atom_editable, "atom_editable")?;
+
+    // Verify prev_value matches current value at anchor (OCC check).
+    let current_at_anchor = artifact.body.pointer(&req.anchor);
+    let prev_matches = match current_at_anchor {
+        Some(v) => v == &req.prev_value,
+        None => req.prev_value.is_null(),
+    };
+    if !prev_matches {
+        return Err(AppError::Conflict(format!(
+            "prev_value mismatch at anchor '{}': optimistic lock failed",
+            req.anchor
+        )));
+    }
+
+    // Apply edit to a clone of the body.
+    let mut new_body = artifact.body.clone();
+    let target = new_body
+        .pointer_mut(&req.anchor)
+        .ok_or_else(|| crate::Error::Validation(format!("anchor '{}' not found in body", req.anchor)))?;
+    *target = req.new_value;
+
+    // Validate the new body against the artifact type's schema.
+    if let Some(def) = state.artifact_registry.get(&artifact.artifact_type) {
+        (def.validate)(&new_body)?;
+    }
+
+    // Create a new artifact revision.
+    let new_id = crate::types::ArtifactId(Uuid::new_v4());
+    let new_artifact = crate::types::Artifact {
+        id: new_id,
+        run_id: artifact.run_id,
+        stage_instance_id: artifact.stage_instance_id,
+        artifact_type: artifact.artifact_type,
+        output_name: artifact.output_name,
+        label: artifact.label,
+        body: new_body,
+        version: artifact.version + 1,
+        parent_artifact_id: Some(artifact_id),
+        created_at: chrono::Utc::now(),
+    };
+    queries::insert_artifact(&state.pool, &new_artifact).await?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(PostAtomEditResponse {
+            artifact_id: new_id.0.to_string(),
+        }),
+    ))
+}
+
+// ── POST /artifacts/:id/review_items ─────────────────────────────────────────
+
+pub async fn post_review_item(
+    State(state): State<super::AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<PostReviewItemRequest>,
+) -> Result<(StatusCode, Json<ReviewItemDto>), AppError> {
+    let artifact_id = crate::types::ArtifactId(id);
+    let artifact = queries::get_artifact_by_id(&state.pool, &artifact_id).await?;
+    require_cap(&state, &artifact.artifact_type, |c| c.review_items, "review_items")?;
+
+    let revision_id = chain_root_id(&state.pool, &artifact_id).await?;
+    let ri = crate::collab::ReviewItem {
+        id: Uuid::new_v4(),
+        artifact_id: id,
+        revision_id,
+        anchor: req.anchor,
+        claim: req.claim,
+        reality: req.reality,
+        status: crate::collab::ReviewItemStatus::Open,
+        resolution: None,
+        created_at: chrono::Utc::now(),
+    };
+    queries::insert_review_item(&state.pool, &ri).await?;
+    Ok((StatusCode::CREATED, Json(ri.into())))
+}
+
+// ── GET /artifacts/:id/review_items ──────────────────────────────────────────
+
+pub async fn list_review_items(
+    State(state): State<super::AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<ReviewItemDto>>, AppError> {
+    let artifact_id = crate::types::ArtifactId(id);
+    let artifact = queries::get_artifact_by_id(&state.pool, &artifact_id).await?;
+    require_cap(&state, &artifact.artifact_type, |c| c.review_items, "review_items")?;
+
+    let items = queries::list_review_items_for_artifact(&state.pool, &id).await?;
+    Ok(Json(items.into_iter().map(ReviewItemDto::from).collect()))
+}
+
+// ── PATCH /review_items/:id ───────────────────────────────────────────────────
+
+pub async fn patch_review_item_status(
+    State(state): State<super::AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<PatchReviewItemRequest>,
+) -> Result<Json<ReviewItemDto>, AppError> {
+    let status = crate::collab::ReviewItemStatus::from_str(&req.status)?;
+    queries::patch_review_item(
+        &state.pool,
+        &id,
+        &status,
+        req.resolution.as_deref(),
+    )
+    .await?;
+    let updated = queries::get_review_item_by_id(&state.pool, &id).await?;
+    Ok(Json(updated.into()))
+}
+
 // ── Integration tests ─────────────────────────────────────────────────────────
 
 #[cfg(test)]

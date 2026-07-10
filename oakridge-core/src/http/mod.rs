@@ -4,7 +4,7 @@ pub mod sse;
 use axum::body::Body;
 use axum::http::{header, HeaderName, Method, Request, Response, StatusCode};
 use axum::middleware::{self, Next};
-use axum::routing::{get, post};
+use axum::routing::{get, patch, post};
 use axum::Router;
 use serde_json::json;
 use sqlx::SqlitePool;
@@ -257,6 +257,20 @@ pub fn router(state: AppState) -> Router {
         .route("/runs/:id/gates", get(rest::list_operator_run_gates))
         .route("/gates", get(rest::list_operator_gates))
         .route("/gates/:id/resume", post(rest::resume_operator_gate))
+        // ── Collab endpoints ──────────────────────────────────────────────────
+        .route(
+            "/artifacts/:id/threads",
+            post(rest::post_thread).get(rest::list_threads),
+        )
+        .route("/threads/:id/messages", post(rest::post_message))
+        .route("/threads/:id/ping", post(rest::post_ping))
+        .route("/threads/:id", patch(rest::patch_thread))
+        .route("/artifacts/:id/edits", post(rest::post_atom_edit))
+        .route(
+            "/artifacts/:id/review_items",
+            post(rest::post_review_item).get(rest::list_review_items),
+        )
+        .route("/review_items/:id", patch(rest::patch_review_item_status))
         .merge(sse::sse_routes());
 
     for st in stage_registry.all() {
