@@ -1121,6 +1121,28 @@ pub async fn get_latest_artifact_by_stage_and_output(
     row.map(row_to_artifact).transpose()
 }
 
+/// Return the latest artifact for one output and unit label.  Fan-out stages
+/// share a stage instance, so merge-gate PR discovery must not cross units.
+pub async fn get_latest_artifact_by_stage_output_and_label(
+    pool: &SqlitePool,
+    stage_instance_id: &StageInstanceId,
+    output_name: &str,
+    label: &str,
+) -> crate::Result<Option<Artifact>> {
+    let row = sqlx::query_as::<_, ArtifactRow>(
+        "SELECT id, run_id, stage_instance_id, artifact_type, output_name, label, body, version, \
+         parent_artifact_id, created_at FROM artifact \
+         WHERE stage_instance_id = ? AND output_name = ? AND label = ? \
+         ORDER BY created_at DESC, id DESC LIMIT 1",
+    )
+    .bind(stage_instance_id.0.to_string())
+    .bind(output_name)
+    .bind(label)
+    .fetch_optional(pool)
+    .await?;
+    row.map(row_to_artifact).transpose()
+}
+
 // ── SessionUnit ───────────────────────────────────────────────────────────────
 
 #[derive(sqlx::FromRow)]

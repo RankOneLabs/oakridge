@@ -151,6 +151,11 @@ pub struct DelegatedSessionConfig {
     /// Lossless prompt state retained for deferred fan-out unit rendering.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub fan_out_prompt_plan: Option<FanOutPromptPlan>,
+    /// The value selected by `fan_out.over` while activation inputs are still
+    /// available.  Execute later uses this persisted value to materialize the
+    /// complete unit graph before admitting any session.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub resolved_fan_out_over: Option<serde_json::Value>,
     pub workdir: PathBuf,
     pub session_name: String,
     pub model: Option<String>,
@@ -280,6 +285,7 @@ mod tests {
             runtime: DelegatedRuntime::Codex,
             rendered_prompt: "do the thing".into(),
             fan_out_prompt_plan: None,
+            resolved_fan_out_over: None,
             workdir: PathBuf::from("/workspace/abc"),
             session_name: "s1".into(),
             model: None,
