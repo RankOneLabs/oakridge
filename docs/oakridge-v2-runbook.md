@@ -168,8 +168,18 @@ Emit the result artifact to oakridge-core when complete.
 The delegated agent must eventually POST an artifact to:
 
 ```http
-POST /executors/delegated_session/:stage_instance_id/emit/:output_name
+POST /executors/delegated_session/:stage_instance_id/units/:unit_id/emit/:output_name
 ```
+
+For the current single-session case (no `fan_out` config), `unit_id` is always `0`:
+
+```http
+POST /executors/delegated_session/<stage_instance_id>/units/0/emit/<output_name>
+```
+
+The `/units/:unit_id/` segment is required in all cases. The implicit-unit constant `"0"` is
+part of the route contract for N=1 stages; it will match the `unit_id` in the stage's
+`stage_session_units` row and in the gate id returned by `GET /parked` and `GET /runs/:id/gates`.
 
 ## Create A Project In oakridge-core
 
@@ -382,10 +392,11 @@ curl -s "http://127.0.0.1:8788/artifacts/<stage_instance_id>/sessions"
 
 ## Artifact Emit And Gates
 
-The delegated agent emits the declared output artifact:
+The delegated agent emits the declared output artifact. For the N=1 implicit-unit
+case (no `fan_out` config), the unit id is always `0`:
 
 ```bash
-curl -sX POST "$CORE/executors/delegated_session/<stage_instance_id>/emit/out" \
+curl -sX POST "$CORE/executors/delegated_session/<stage_instance_id>/units/0/emit/out" \
   -H 'content-type: application/json' \
   -d '{"result":"done","notes":"artifact body is workflow-specific JSON"}'
 ```
@@ -643,6 +654,25 @@ table. Each parked gate shows:
   merge-confirmation gate**
 - Pass / Fail / Rerun action buttons
 
+The `id` field on each gate returned by `GET /parked` and `GET /runs/:id/gates` is a
+**composite gate id** with the form `"{stage_instance_uuid}:{unit_id}"`. For the current
+single-unit (N=1) case this is `"{uuid}:0"`. Pass this composite id when calling
+`POST /gates/:id/resume` directly via curl:
+
+```bash
+# composite_id is the "id" field from GET /parked (e.g. "abc...def:0")
+curl -sX POST "$CORE/gates/<composite_id>/resume" \
+  -H 'content-type: application/json' \
+  -d '{
+    "outcome": "pass",
+    "comment": null,
+    "feedback": null,
+    "against_artifact_id": "<artifact_id>"
+  }'
+```
+
+The `unit_id` suffix is `"0"` for every stage that does not have a `fan_out` config.
+
 ### Artifact inspection (`#oakridge/artifact/<id>`)
 
 Shows the artifact revision chain with body, status, and created-at timestamp
@@ -654,6 +684,57 @@ Each stage row links to the kbbl session that executed the stage. Clicking the
 link navigates to `#sid=<sid>`, opening the full session transcript in the kbbl
 inbox. This is the primary path for inspecting what the delegated agent did,
 reviewing its transcript, and sending follow-up input after a gate rejection.
+
+## Phase 2a: Multi-session Substrate
+
+Phase 2a adds the data model and route plumbing required for per-unit sessions within a stage.
+All N=1 (single-session) behavior is byte-for-byte identical to before. The changes are:
+
+### stage_session_units table
+
+A new `stage_session_units` table keyed by `(stage_instance_id, unit_id)` stores per-unit
+session state: kbbl sid, worktree branch/path/base_ref, status, gate_state, and artifact_id.
+For N=1 stages, a single row with `unit_id = "0"` is written when the session starts and
+updated when the session emits an artifact and parks.
+
+### Per-unit emit route
+
+The emit route now includes a `units/:unit_id` segment:
+
+```
+POST /executors/delegated_session/:stage_instance_id/units/:unit_id/emit/:output_name
+```
+
+For N=1, use `unit_id = "0"`. See the "Artifact Emit And Gates" section for the curl form.
+
+### Composite gate id
+
+Gates returned by `GET /parked` and `GET /runs/:id/gates` now carry a composite `id` of the
+form `"{stage_uuid}:{unit_id}"`. For N=1 this is `"{uuid}:0"`. The `POST /gates/:id/resume`
+route parses this composite id to route the decision. See the "Parked gate panel" section.
+
+### retry_stuck with unit_id
+
+`POST /stage_instances/:id/retry_stuck` now accepts an optional body:
+
+```json
+{ "unit_id": "0" }
+```
+
+The `unit_id` is accepted and parsed but not yet forwarded to the scheduler (N=1 always
+retries the whole stage). It will be used to target a specific unit when N>1 is implemented.
+
+### fan_out config (stub only)
+
+The `delegated_session` def config accepts a `fan_out` block. The config struct, route
+plumbing, and DB model for N>1 are in place, but **execute rejects N>1 at runtime**:
+
+```
+fan_out multi-unit execution is not yet implemented; the substrate … is in place
+but the N>1 session scheduler and per-unit launch are pending (Phase 2b)
+```
+
+Do not use `fan_out` in production workflow defs until Phase 2b ships.
 
 ## Not Covered in Phase 2
 
@@ -675,6 +756,9 @@ The following v1 behaviors are explicitly outside the Phase 2 scope:
 - **Standalone v2 tool approval UI** — there is no tool-approval surface in
   oakridge-core or the oakridge kbbl shell for Phase 2. Use the kbbl session
   approval cards directly.
+- **N>1 fan-out execution** — the `stage_session_units` substrate, per-unit emit
+  route, and `fan_out` config model are in place (Phase 2a), but launching multiple
+  parallel kbbl sessions per stage with an intra-stage DAG is Phase 2b.
 
 ## Optional Real LBC Smoke Test
 

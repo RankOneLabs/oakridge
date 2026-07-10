@@ -1004,6 +1004,249 @@ pub async fn list_artifacts_for_run(
     rows.into_iter().map(row_to_artifact).collect()
 }
 
+// ── SessionUnit ───────────────────────────────────────────────────────────────
+
+#[derive(sqlx::FromRow)]
+struct SessionUnitRow {
+    stage_instance_id: String,
+    unit_id: String,
+    params: Option<String>,
+    depends_on: String,
+    external_ref: Option<String>,
+    worktree_branch: Option<String>,
+    worktree_path: Option<String>,
+    worktree_base_ref: Option<String>,
+    status: String,
+    gate_state: Option<String>,
+    artifact_id: Option<String>,
+    terminal_meta: Option<String>,
+    created_at: String,
+    updated_at: String,
+}
+
+fn row_to_session_unit(r: SessionUnitRow) -> crate::Result<crate::types::SessionUnit> {
+    use crate::types::{ArtifactId, SessionUnit};
+    Ok(SessionUnit {
+        stage_instance_id: StageInstanceId(parse_uuid(&r.stage_instance_id)?),
+        unit_id: r.unit_id,
+        params: r.params.map(|s| serde_json::from_str(&s)).transpose()?,
+        depends_on: serde_json::from_str(&r.depends_on)?,
+        external_ref: r.external_ref,
+        worktree_branch: r.worktree_branch,
+        worktree_path: r.worktree_path,
+        worktree_base_ref: r.worktree_base_ref,
+        status: str_to_enum(r.status)?,
+        gate_state: r.gate_state.map(|s| serde_json::from_str(&s)).transpose()?,
+        artifact_id: r.artifact_id.as_deref().map(parse_uuid).transpose()?.map(ArtifactId),
+        terminal_meta: r.terminal_meta.map(|s| serde_json::from_str(&s)).transpose()?,
+        created_at: parse_dt(&r.created_at)?,
+        updated_at: parse_dt(&r.updated_at)?,
+    })
+}
+
+/// Insert or replace a session unit (upsert). Uses INSERT OR REPLACE so callers
+/// can call this to both create and overwrite (e.g. on retry).
+pub async fn upsert_session_unit(
+    pool: &SqlitePool,
+    unit: &crate::types::SessionUnit,
+) -> crate::Result<()> {
+    let stage_instance_id = unit.stage_instance_id.0.to_string();
+    let params = unit.params.as_ref().map(serde_json::to_string).transpose()?;
+    let depends_on = serde_json::to_string(&unit.depends_on)?;
+    let status = enum_to_str(&unit.status)?;
+    let gate_state = unit.gate_state.as_ref().map(serde_json::to_string).transpose()?;
+    let artifact_id = unit.artifact_id.map(|id| id.0.to_string());
+    let terminal_meta = unit.terminal_meta.as_ref().map(serde_json::to_string).transpose()?;
+    let created_at = unit.created_at.to_rfc3339();
+    let updated_at = unit.updated_at.to_rfc3339();
+    sqlx::query(
+        "INSERT OR REPLACE INTO stage_session_units \
+         (stage_instance_id, unit_id, params, depends_on, external_ref, \
+          worktree_branch, worktree_path, worktree_base_ref, \
+          status, gate_state, artifact_id, terminal_meta, created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&stage_instance_id)
+    .bind(&unit.unit_id)
+    .bind(params)
+    .bind(depends_on)
+    .bind(&unit.external_ref)
+    .bind(&unit.worktree_branch)
+    .bind(&unit.worktree_path)
+    .bind(&unit.worktree_base_ref)
+    .bind(status)
+    .bind(gate_state)
+    .bind(artifact_id)
+    .bind(terminal_meta)
+    .bind(created_at)
+    .bind(updated_at)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn list_session_units_for_stage(
+    pool: &SqlitePool,
+    stage_instance_id: &StageInstanceId,
+) -> crate::Result<Vec<crate::types::SessionUnit>> {
+    let id_str = stage_instance_id.0.to_string();
+    let rows = sqlx::query_as::<_, SessionUnitRow>(
+        "SELECT stage_instance_id, unit_id, params, depends_on, external_ref, \
+         worktree_branch, worktree_path, worktree_base_ref, \
+         status, gate_state, artifact_id, terminal_meta, created_at, updated_at \
+         FROM stage_session_units WHERE stage_instance_id = ? ORDER BY unit_id",
+    )
+    .bind(id_str)
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter().map(row_to_session_unit).collect()
+}
+
+pub async fn get_session_unit(
+    pool: &SqlitePool,
+    stage_instance_id: &StageInstanceId,
+    unit_id: &str,
+) -> crate::Result<crate::types::SessionUnit> {
+    let id_str = stage_instance_id.0.to_string();
+    let row = sqlx::query_as::<_, SessionUnitRow>(
+        "SELECT stage_instance_id, unit_id, params, depends_on, external_ref, \
+         worktree_branch, worktree_path, worktree_base_ref, \
+         status, gate_state, artifact_id, terminal_meta, created_at, updated_at \
+         FROM stage_session_units WHERE stage_instance_id = ? AND unit_id = ?",
+    )
+    .bind(&id_str)
+    .bind(unit_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| crate::Error::NotFound {
+        entity: "session_unit".into(),
+        id: format!("{}:{}", id_str, unit_id),
+    })?;
+    row_to_session_unit(row)
+}
+
+pub async fn set_session_unit_status(
+    pool: &SqlitePool,
+    stage_instance_id: &StageInstanceId,
+    unit_id: &str,
+    status: crate::types::UnitStatus,
+    terminal_meta: Option<serde_json::Value>,
+) -> crate::Result<()> {
+    let id_str = stage_instance_id.0.to_string();
+    let status_str = enum_to_str(&status)?;
+    let terminal_meta_str = terminal_meta.as_ref().map(serde_json::to_string).transpose()?;
+    let updated_at = Utc::now().to_rfc3339();
+    let result = sqlx::query(
+        "UPDATE stage_session_units SET status = ?, terminal_meta = ?, updated_at = ? \
+         WHERE stage_instance_id = ? AND unit_id = ?",
+    )
+    .bind(status_str)
+    .bind(terminal_meta_str)
+    .bind(updated_at)
+    .bind(&id_str)
+    .bind(unit_id)
+    .execute(pool)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(crate::Error::NotFound {
+            entity: "session_unit".into(),
+            id: format!("{}:{}", id_str, unit_id),
+        });
+    }
+    Ok(())
+}
+
+pub async fn set_session_unit_external_ref(
+    pool: &SqlitePool,
+    stage_instance_id: &StageInstanceId,
+    unit_id: &str,
+    external_ref: Option<String>,
+    worktree_branch: Option<String>,
+    worktree_path: Option<String>,
+    worktree_base_ref: Option<String>,
+) -> crate::Result<()> {
+    let id_str = stage_instance_id.0.to_string();
+    let updated_at = Utc::now().to_rfc3339();
+    let result = sqlx::query(
+        "UPDATE stage_session_units \
+         SET external_ref = ?, worktree_branch = ?, worktree_path = ?, worktree_base_ref = ?, \
+             updated_at = ? \
+         WHERE stage_instance_id = ? AND unit_id = ?",
+    )
+    .bind(&external_ref)
+    .bind(&worktree_branch)
+    .bind(&worktree_path)
+    .bind(&worktree_base_ref)
+    .bind(updated_at)
+    .bind(&id_str)
+    .bind(unit_id)
+    .execute(pool)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(crate::Error::NotFound {
+            entity: "session_unit".into(),
+            id: format!("{}:{}", id_str, unit_id),
+        });
+    }
+    Ok(())
+}
+
+pub async fn set_session_unit_gate_state(
+    pool: &SqlitePool,
+    stage_instance_id: &StageInstanceId,
+    unit_id: &str,
+    gate_state: Option<serde_json::Value>,
+) -> crate::Result<()> {
+    let id_str = stage_instance_id.0.to_string();
+    let gate_state_str = gate_state.as_ref().map(serde_json::to_string).transpose()?;
+    let updated_at = Utc::now().to_rfc3339();
+    let result = sqlx::query(
+        "UPDATE stage_session_units SET gate_state = ?, updated_at = ? \
+         WHERE stage_instance_id = ? AND unit_id = ?",
+    )
+    .bind(gate_state_str)
+    .bind(updated_at)
+    .bind(&id_str)
+    .bind(unit_id)
+    .execute(pool)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(crate::Error::NotFound {
+            entity: "session_unit".into(),
+            id: format!("{}:{}", id_str, unit_id),
+        });
+    }
+    Ok(())
+}
+
+pub async fn set_session_unit_artifact_id(
+    pool: &SqlitePool,
+    stage_instance_id: &StageInstanceId,
+    unit_id: &str,
+    artifact_id: crate::types::ArtifactId,
+) -> crate::Result<()> {
+    let id_str = stage_instance_id.0.to_string();
+    let artifact_id_str = artifact_id.0.to_string();
+    let updated_at = Utc::now().to_rfc3339();
+    let result = sqlx::query(
+        "UPDATE stage_session_units SET artifact_id = ?, updated_at = ? \
+         WHERE stage_instance_id = ? AND unit_id = ?",
+    )
+    .bind(artifact_id_str)
+    .bind(updated_at)
+    .bind(&id_str)
+    .bind(unit_id)
+    .execute(pool)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(crate::Error::NotFound {
+            entity: "session_unit".into(),
+            id: format!("{}:{}", id_str, unit_id),
+        });
+    }
+    Ok(())
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1878,6 +2121,98 @@ mod tests {
 
         assert_eq!(stale.len(), 1);
         assert_eq!(stale[0].id, old_running.id);
+    }
+
+    #[tokio::test]
+    async fn test_session_unit_crud() {
+        let pool = make_test_pool().await;
+        let def = test_workflow_def();
+        insert_workflow_def(&pool, &def).await.unwrap();
+        let run = test_run(def.id);
+        insert_workflow_run(&pool, &run).await.unwrap();
+        let si = test_stage(run.id);
+        insert_stage_instance(&pool, &si).await.unwrap();
+
+        let now = fixed_dt();
+        let unit = crate::types::SessionUnit {
+            stage_instance_id: si.id,
+            unit_id: "0".to_string(),
+            params: None,
+            depends_on: vec![],
+            external_ref: None,
+            worktree_branch: None,
+            worktree_path: None,
+            worktree_base_ref: None,
+            status: crate::types::UnitStatus::Pending,
+            gate_state: None,
+            artifact_id: None,
+            terminal_meta: None,
+            created_at: now,
+            updated_at: now,
+        };
+
+        // Insert
+        upsert_session_unit(&pool, &unit).await.unwrap();
+
+        // Read back and verify fields
+        let got = get_session_unit(&pool, &si.id, "0").await.unwrap();
+        assert_eq!(got.stage_instance_id, si.id);
+        assert_eq!(got.unit_id, "0");
+        assert_eq!(got.status, crate::types::UnitStatus::Pending);
+        assert!(got.params.is_none());
+        assert!(got.depends_on.is_empty());
+        assert!(got.external_ref.is_none());
+
+        // Update status
+        set_session_unit_status(&pool, &si.id, "0", crate::types::UnitStatus::Running, None)
+            .await
+            .unwrap();
+        let got2 = get_session_unit(&pool, &si.id, "0").await.unwrap();
+        assert_eq!(got2.status, crate::types::UnitStatus::Running);
+
+        // Update external_ref
+        set_session_unit_external_ref(
+            &pool,
+            &si.id,
+            "0",
+            Some("sid-abc".into()),
+            Some("branch-1".into()),
+            Some("/worktrees/wt1".into()),
+            Some("abc123".into()),
+        )
+        .await
+        .unwrap();
+        let got3 = get_session_unit(&pool, &si.id, "0").await.unwrap();
+        assert_eq!(got3.external_ref.as_deref(), Some("sid-abc"));
+        assert_eq!(got3.worktree_branch.as_deref(), Some("branch-1"));
+
+        // Set done status
+        set_session_unit_status(
+            &pool,
+            &si.id,
+            "0",
+            crate::types::UnitStatus::Done,
+            Some(json!({"reason": "complete"})),
+        )
+        .await
+        .unwrap();
+        let got4 = get_session_unit(&pool, &si.id, "0").await.unwrap();
+        assert_eq!(got4.status, crate::types::UnitStatus::Done);
+        assert_eq!(got4.terminal_meta, Some(json!({"reason": "complete"})));
+
+        // List units for stage
+        let units = list_session_units_for_stage(&pool, &si.id).await.unwrap();
+        assert_eq!(units.len(), 1);
+        assert_eq!(units[0].unit_id, "0");
+
+        // Cascade delete: deleting stage_instance should delete units
+        sqlx::query("DELETE FROM workflow_run WHERE id = ?")
+            .bind(run.id.0.to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+        let units_after_delete = list_session_units_for_stage(&pool, &si.id).await.unwrap();
+        assert!(units_after_delete.is_empty(), "units must cascade-delete with stage_instance");
     }
 
     #[tokio::test]

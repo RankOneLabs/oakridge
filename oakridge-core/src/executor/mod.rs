@@ -435,6 +435,13 @@ impl StageContext {
         Ok(())
     }
 
+    /// Expose the underlying DB pool so executor implementations that manage
+    /// per-unit rows (e.g. delegated_session stage_session_units) can run
+    /// their own queries without needing a separate pool handle.
+    pub fn pool(&self) -> &Arc<SqlitePool> {
+        &self.db
+    }
+
     /// Persist the external substrate reference for this stage instance and update
     /// the in-memory summary so subsequent reads observe the new handle.
     pub async fn set_external_ref(&self, external_ref: Option<String>) -> anyhow::Result<()> {

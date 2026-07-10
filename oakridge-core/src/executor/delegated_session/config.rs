@@ -44,6 +44,45 @@ pub struct WorktreeIdentity {
     pub base_ref: Option<String>,
 }
 
+// ── WorktreeTemplate ──────────────────────────────────────────────────────────
+
+/// Per-unit worktree template; {{UNIT_ID}} and {{STAGE_INSTANCE_ID}} are substituted.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct WorktreeTemplate {
+    pub branch_name: String,
+    pub worktree_subdir: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_ref: Option<String>,
+}
+
+// ── FanOut ────────────────────────────────────────────────────────────────────
+
+/// Fan-out configuration for multi-unit stages. When present, the stage spawns
+/// one kbbl session per item in the resolved array. Absent → N=1 implicit unit.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct FanOut {
+    /// Binding that resolves to a JSON array of items. Each item becomes a unit.
+    pub over: SlotBinding,
+    /// RFC-6901 pointer into each item to extract the unit_id (must be a string).
+    pub unit_id_path: String,
+    /// Optional RFC-6901 pointer to extract depends_on array; absent = fully parallel.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub depends_on_path: Option<String>,
+    /// Max concurrent units (also bounded by kbbl capacity).
+    #[serde(default = "default_max_parallel")]
+    pub max_parallel: usize,
+    /// Per-unit prompt slot bindings sourced from the item.
+    #[serde(default)]
+    pub item_bindings: std::collections::HashMap<String, SlotBinding>,
+    /// Worktree template; {{UNIT_ID}} and {{STAGE_INSTANCE_ID}} are substituted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<WorktreeTemplate>,
+}
+
+fn default_max_parallel() -> usize {
+    8
+}
+
 // ── DelegatedRuntime ──────────────────────────────────────────────────────────
 
 /// Runtime target for delegated session execution.
@@ -87,6 +126,11 @@ pub struct DelegatedSessionDefConfig {
     pub pre_authorized_tools: Vec<String>,
     #[serde(default)]
     pub yolo: bool,
+    /// Fan-out configuration. When present the stage spawns one kbbl session per
+    /// item in the resolved array. When absent the stage runs a single implicit
+    /// unit (unit_id="0") preserving today's single-session behavior.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fan_out: Option<FanOut>,
 }
 
 // ── DelegatedSessionConfig ───────────────────────────────────────────────────
@@ -111,6 +155,12 @@ pub struct DelegatedSessionConfig {
     #[serde(default)]
     pub yolo: bool,
     pub output_slots: Vec<OutputSlot>,
+    /// Fan-out carried from the def config. `None` = N=1 implicit unit (current
+    /// default). When `Some`, `execute` rejects with "not yet implemented" until
+    /// Phase 2b wires the per-unit session scheduler. Carrying it through to the
+    /// built config ensures the field is round-trippable and visible at execute time.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub fan_out: Option<FanOut>,
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -159,6 +209,7 @@ mod tests {
             worktree: None,
             pre_authorized_tools: vec!["Bash".into()],
             yolo: false,
+            fan_out: None,
         };
 
         let value = serde_json::to_value(&def).unwrap();
@@ -219,10 +270,99 @@ mod tests {
                 name: "out".into(),
                 artifact_type: "text".into(),
             }],
+            fan_out: None,
         };
 
         let value = serde_json::to_value(&cfg).unwrap();
         let back: DelegatedSessionConfig = serde_json::from_value(value).unwrap();
         assert_eq!(cfg, back);
+    }
+
+    #[test]
+    fn fan_out_roundtrip() {
+        let fan_out = FanOut {
+            over: SlotBinding::Input {
+                input_name: "items".into(),
+                path: None,
+            },
+            unit_id_path: "/id".into(),
+            depends_on_path: Some("/depends_on".into()),
+            max_parallel: 4,
+            item_bindings: {
+                let mut m = std::collections::HashMap::new();
+                m.insert(
+                    "ITEM_NAME".to_owned(),
+                    SlotBinding::Item {
+                        path: "/name".into(),
+                    },
+                );
+                m
+            },
+            worktree: Some(WorktreeTemplate {
+                branch_name: "cohort/{{UNIT_ID}}".into(),
+                worktree_subdir: "wt/{{UNIT_ID}}".into(),
+                base_ref: Some("main".into()),
+            }),
+        };
+        let v = serde_json::to_value(&fan_out).unwrap();
+        let back: FanOut = serde_json::from_value(v).unwrap();
+        assert_eq!(fan_out, back);
+    }
+
+    #[test]
+    fn fan_out_default_max_parallel_is_8() {
+        let json = serde_json::json!({
+            "over": {"from": "input", "input_name": "items"},
+            "unit_id_path": "/id"
+        });
+        let fan_out: FanOut = serde_json::from_value(json).unwrap();
+        assert_eq!(fan_out.max_parallel, 8);
+        assert!(fan_out.depends_on_path.is_none());
+        assert!(fan_out.item_bindings.is_empty());
+        assert!(fan_out.worktree.is_none());
+    }
+
+    #[test]
+    fn def_config_with_fan_out_roundtrip() {
+        let json = serde_json::json!({
+            "runtime": "codex",
+            "prompt_template_path": "t.md",
+            "slot_bindings": {},
+            "workdir": {"from": "literal", "value": "/w"},
+            "session_name": "s",
+            "pre_authorized_tools": [],
+            "yolo": false,
+            "fan_out": {
+                "over": {"from": "input", "input_name": "items"},
+                "unit_id_path": "/id",
+                "max_parallel": 2
+            }
+        });
+        let def: DelegatedSessionDefConfig = serde_json::from_value(json).unwrap();
+        assert!(def.fan_out.is_some());
+        let fo = def.fan_out.as_ref().unwrap();
+        assert_eq!(fo.max_parallel, 2);
+        assert_eq!(fo.unit_id_path, "/id");
+
+        let v = serde_json::to_value(&def).unwrap();
+        let back: DelegatedSessionDefConfig = serde_json::from_value(v).unwrap();
+        assert_eq!(def, back);
+    }
+
+    #[test]
+    fn def_config_without_fan_out_omits_field() {
+        let json = serde_json::json!({
+            "runtime": "codex",
+            "prompt_template_path": "t.md",
+            "slot_bindings": {},
+            "workdir": {"from": "literal", "value": "/w"},
+            "session_name": "s",
+            "pre_authorized_tools": [],
+            "yolo": false
+        });
+        let def: DelegatedSessionDefConfig = serde_json::from_value(json).unwrap();
+        assert!(def.fan_out.is_none());
+        let v = serde_json::to_value(&def).unwrap();
+        assert!(v.get("fan_out").is_none());
     }
 }

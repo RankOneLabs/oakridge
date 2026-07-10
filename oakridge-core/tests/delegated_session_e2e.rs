@@ -278,6 +278,7 @@ fn delegated_workflow_def(
         worktree: None,
         pre_authorized_tools: vec![],
         yolo: true,
+        fan_out: None,
     };
 
     stages.insert(
@@ -392,7 +393,7 @@ async fn emit_artifact(app: &Router, stage_instance_id: StageInstanceId, body: V
             Request::builder()
                 .method("POST")
                 .uri(format!(
-                    "/executors/delegated_session/{}/emit/out",
+                    "/executors/delegated_session/{}/units/0/emit/out",
                     stage_instance_id.0
                 ))
                 .header("content-type", "application/json")
@@ -680,6 +681,7 @@ async fn waiting_for_kbbl_parks_and_reattaches() {
                 name: "out".into(),
                 artifact_type: "text".into(),
             }],
+            fan_out: None,
         };
         serde_json::to_value(cfg).unwrap()
     };
