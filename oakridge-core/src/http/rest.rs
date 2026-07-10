@@ -696,13 +696,11 @@ pub async fn retry_stuck_stage_instance(
     body: Option<Json<RetryStuckRequest>>,
 ) -> Result<(StatusCode, Json<StageInstance>), AppError> {
     let si_id = StageInstanceId(id);
-    // unit_id is accepted in the body but not yet forwarded to the coordinator
-    // (the N=1 path always retries the whole stage). N>1 fan-out will use it in Phase 2b.
-    let _unit_id = body.map(|Json(b)| b.unit_id).unwrap_or(None);
+    let unit_id = body.map(|Json(b)| b.unit_id).unwrap_or(None);
 
     state
         .coordinator
-        .retry_stuck_stage(si_id)
+        .retry_stuck_stage(si_id, unit_id)
         .await
         .map_err(|e| match e {
             DecisionError::Conflict(msg) => AppError::Conflict(msg),

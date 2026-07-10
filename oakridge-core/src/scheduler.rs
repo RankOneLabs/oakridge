@@ -17,7 +17,7 @@ use crate::types::{
     Artifact, ResolvedInput, RunStatus, StageInstance, StageInstanceId, StageInstanceSummary, StageKey,
     StageStatus, StageTypeId, WorkflowDef, WorkflowRunId,
 };
-use crate::executor::delegated_session::config::DelegatedSessionDefConfig;
+use crate::executor::delegated_session::config::{DelegatedSessionConfig, DelegatedSessionDefConfig};
 use crate::executor::prompt_config::SlotBinding;
 
 // ── Control messages ──────────────────────────────────────────────────────────
@@ -41,6 +41,7 @@ pub enum ControlMsg {
     },
     RetryStuckStage {
         stage_instance_id: StageInstanceId,
+        unit_id: Option<String>,
         reply_tx: oneshot::Sender<Result<(), DecisionError>>,
     },
 }
@@ -135,8 +136,8 @@ impl RunTask {
                             break;
                         }
                     }
-                    Some(ControlMsg::RetryStuckStage { stage_instance_id, reply_tx }) => {
-                        self.on_retry_stuck(stage_instance_id, reply_tx).await;
+                    Some(ControlMsg::RetryStuckStage { stage_instance_id, unit_id, reply_tx }) => {
+                        self.on_retry_stuck(stage_instance_id, unit_id, reply_tx).await;
                     }
                     None => break,
                 },
@@ -916,6 +917,7 @@ impl RunTask {
     async fn on_retry_stuck(
         &mut self,
         stage_instance_id: StageInstanceId,
+        unit_id: Option<String>,
         reply_tx: oneshot::Sender<Result<(), DecisionError>>,
     ) {
         let mut reply_tx = Some(reply_tx);
@@ -927,7 +929,6 @@ impl RunTask {
                 return;
             }};
         }
-
         let current = match queries::get_stage_instance_by_id(&self.db, &stage_instance_id).await {
             Ok(current) => current,
             Err(e) => reject_retry!(match e {
@@ -944,6 +945,21 @@ impl RunTask {
                 "stage instance {} does not belong to run {}",
                 stage_instance_id.0, self.run_id.0
             )));
+        }
+        if let Some(unit_id) = unit_id {
+            let handle = match self.handles.get(&stage_instance_id) {
+                Some(handle) => handle,
+                None => reject_retry!(DecisionError::Conflict(format!(
+                    "stage instance {} has no active delegated-session handle",
+                    stage_instance_id.0
+                ))),
+            };
+            let result = handle.retry_stuck(Some(unit_id)).await
+                .map_err(|err| DecisionError::Conflict(err.to_string()));
+            if let Some(tx) = reply_tx.take() {
+                let _ = tx.send(result);
+            }
+            return;
         }
         if !matches!(current.status, StageStatus::Parked)
             || current.parked_reason.as_deref() != Some("stuck_timeout")
@@ -1310,6 +1326,7 @@ impl Coordinator {
     pub async fn retry_stuck_stage(
         &self,
         stage_instance_id: StageInstanceId,
+        unit_id: Option<String>,
     ) -> Result<(), DecisionError> {
         let si = queries::get_stage_instance_by_id(&self.db, &stage_instance_id)
             .await
@@ -1332,9 +1349,54 @@ impl Coordinator {
             )));
         }
 
-        if !matches!(si.status, StageStatus::Parked)
+        if let Some(unit_id) = unit_id.as_deref() {
+            if si.stage_type != "delegated_session" {
+                return Err(DecisionError::Conflict(format!(
+                    "stage instance {} is not a delegated_session stage",
+                    stage_instance_id.0
+                )));
+            }
+            let config: DelegatedSessionConfig = serde_json::from_value(si.config.clone())
+                .map_err(|err| DecisionError::Internal(anyhow::Error::new(err)))?;
+            if config.fan_out.is_none() {
+                return Err(DecisionError::Conflict(format!(
+                    "stage instance {} does not have configured fan_out",
+                    stage_instance_id.0
+                )));
+            }
+            let unit = queries::get_session_unit(&self.db, &stage_instance_id, unit_id)
+                .await
+                .map_err(|err| match err {
+                    crate::Error::NotFound { .. } => DecisionError::Conflict(format!(
+                        "unit '{}' does not exist for stage instance {}", unit_id, stage_instance_id.0
+                    )),
+                    other => DecisionError::Internal(anyhow::Error::new(other)),
+                })?;
+            let ended_without_emit = unit.terminal_meta.as_ref()
+                .and_then(|meta| meta.get("kind"))
+                .and_then(serde_json::Value::as_str)
+                == Some("session_ended_without_emit");
+            if !matches!(unit.status, crate::types::UnitStatus::Failed) && !ended_without_emit {
+                return Err(DecisionError::Conflict(format!(
+                    "unit '{}' is not retryable (status: {:?})", unit_id, unit.status
+                )));
+            }
+        } else if si.stage_type == "delegated_session" {
+            let config: Result<DelegatedSessionConfig, _> = serde_json::from_value(si.config.clone());
+            if config.as_ref().ok().and_then(|config| config.fan_out.as_ref()).is_some()
+                && queries::list_session_units_for_stage(&self.db, &stage_instance_id).await
+                    .map_err(|err| DecisionError::Internal(anyhow::Error::new(err)))?.len() > 1
+            {
+                return Err(DecisionError::Conflict(format!(
+                    "stage instance {} has multiple units; select a unit_id to retry",
+                    stage_instance_id.0
+                )));
+            }
+        }
+
+        if unit_id.is_none() && (!matches!(si.status, StageStatus::Parked)
             || si.parked_reason.as_deref() != Some("stuck_timeout")
-        {
+        ) {
             return Err(DecisionError::Conflict(format!(
                 "stage instance {} is not parked as stuck_timeout (status: {:?}, parked_reason: {:?})",
                 stage_instance_id.0, si.status, si.parked_reason
@@ -1364,6 +1426,7 @@ impl Coordinator {
         let (reply_tx, reply_rx) = oneshot::channel();
         tx.send(ControlMsg::RetryStuckStage {
             stage_instance_id,
+            unit_id,
             reply_tx,
         })
         .await
@@ -3714,7 +3777,7 @@ mod tests {
         };
         queries::insert_stage_instance(&pool, &si).await.unwrap();
 
-        coord.retry_stuck_stage(si.id).await.unwrap();
+        coord.retry_stuck_stage(si.id, None).await.unwrap();
         let (retry_ctx, _resume_rx) = tokio::time::timeout(timeout_dur(), ctx_rx.recv())
             .await
             .unwrap()
@@ -3761,7 +3824,7 @@ mod tests {
 
         let accepted = tokio::time::timeout(
             std::time::Duration::from_millis(100),
-            coord.retry_stuck_stage(si.id),
+            coord.retry_stuck_stage(si.id, None),
         )
         .await
         .expect("retry should be acknowledged before slow execute completes");
@@ -3790,7 +3853,7 @@ mod tests {
         );
         let (run, si) = seed_stuck_retry_stage(&pool, "failing_retry").await;
 
-        coord.retry_stuck_stage(si.id).await.unwrap();
+        coord.retry_stuck_stage(si.id, None).await.unwrap();
         wait_run_done(&pool, run.id).await;
 
         let persisted = queries::get_stage_instance_by_id(&pool, &si.id)
@@ -3878,7 +3941,7 @@ mod tests {
         };
         queries::insert_stage_instance(&pool, &si).await.unwrap();
 
-        let err = coord.retry_stuck_stage(si.id).await.unwrap_err();
+        let err = coord.retry_stuck_stage(si.id, None).await.unwrap_err();
         assert!(
             matches!(err, DecisionError::Conflict(_)),
             "retry must reject a non-stuck-parked stage with Conflict"

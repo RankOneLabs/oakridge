@@ -528,6 +528,12 @@ pub trait StageHandle: Send + Sync {
 
     /// Cancel the stage, releasing any external resources it holds.
     async fn cancel(&self) -> anyhow::Result<()>;
+
+    /// Retry a stuck execution. `Some(unit_id)` targets one persisted fan-out
+    /// unit; `None` preserves the legacy whole-stage retry behavior.
+    async fn retry_stuck(&self, _unit_id: Option<String>) -> anyhow::Result<()> {
+        anyhow::bail!("this stage does not support stuck retry")
+    }
 }
 
 // ── ResumePayload ─────────────────────────────────────────────────────────────

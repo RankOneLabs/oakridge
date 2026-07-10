@@ -398,6 +398,35 @@ impl UnitScheduler {
         self.recompute_aggregate().await
     }
 
+    async fn retry_unit(self: &Arc<Self>, unit_id: &str) -> anyhow::Result<()> {
+        let unit = queries::get_session_unit(self.ctx.pool(), &self.ctx.stage_instance_id, unit_id).await?;
+        let ended_without_emit = unit.terminal_meta.as_ref()
+            .and_then(|meta| meta.get("kind"))
+            .and_then(serde_json::Value::as_str)
+            == Some("session_ended_without_emit");
+        if !matches!(unit.status, UnitStatus::Failed) && !ended_without_emit {
+            anyhow::bail!(
+                "unit '{}' is not retryable (status: {:?})",
+                unit_id,
+                unit.status
+            );
+        }
+
+        if let Some(session) = self.live_sessions.lock().unwrap()
+            .remove(&(self.ctx.stage_instance_id, unit_id.to_owned()))
+        {
+            session.cancelled.store(true, Ordering::SeqCst);
+        }
+
+        if !queries::reset_session_unit_for_retry(
+            self.ctx.pool(), &self.ctx.stage_instance_id, unit_id,
+        ).await? {
+            anyhow::bail!("unit '{}' is no longer retryable", unit_id);
+        }
+        self.recompute_aggregate().await?;
+        self.admit().await
+    }
+
     async fn launch_unit(self: &Arc<Self>, unit: &MaterializedFanOutUnit) -> anyhow::Result<()> {
         let mut unit_config = self.config.clone();
         unit_config.rendered_prompt = unit.rendered_prompt.clone();
@@ -1465,6 +1494,13 @@ impl StageHandle for DelegatedSessionHandle {
             );
         }
         Ok(())
+    }
+
+    async fn retry_stuck(&self, unit_id: Option<String>) -> anyhow::Result<()> {
+        let unit_id = unit_id.ok_or_else(|| anyhow::anyhow!("delegated-session unit retry requires a unit_id"))?;
+        let scheduler = self.unit_scheduler.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("unit retry requires a fan-out delegated session"))?;
+        scheduler.retry_unit(&unit_id).await
     }
 }
 
