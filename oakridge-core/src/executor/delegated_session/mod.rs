@@ -2207,6 +2207,34 @@ mod tests {
     }
 
     #[test]
+    fn materialize_persisted_unit_reuses_durable_identity() {
+        let stage_instance_id = StageInstanceId(uuid::Uuid::new_v4());
+        let config = fan_out_config(json!([{"id": "changed", "name": "changed"}]), Some("/depends_on"));
+        let unit = crate::types::SessionUnit {
+            stage_instance_id,
+            unit_id: "durable".into(),
+            params: Some(json!({"id": "durable", "name": "saved"})),
+            depends_on: vec!["already-done".into()],
+            external_ref: None,
+            worktree_branch: Some("saved-branch".into()),
+            worktree_path: Some("saved-path".into()),
+            worktree_base_ref: Some("saved-base".into()),
+            status: UnitStatus::Pending,
+            gate_state: None,
+            artifact_id: None,
+            terminal_meta: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        let rebuilt = materialize_persisted_unit(&config, &unit).unwrap();
+        assert_eq!(rebuilt.unit_id, "durable");
+        assert_eq!(rebuilt.depends_on, vec!["already-done"]);
+        assert!(rebuilt.rendered_prompt.contains("item=saved"));
+        assert_eq!(rebuilt.worktree.unwrap().branch_name, "saved-branch");
+    }
+
+    #[test]
     fn materialize_fan_out_rejects_invalid_identity_and_dependencies() {
         let stage_id = StageInstanceId(Uuid::new_v4());
         for (over, expected) in [

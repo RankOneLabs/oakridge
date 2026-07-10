@@ -1408,9 +1408,13 @@ impl Coordinator {
             runs.get(&si.run_id).map(|handle| handle.control_tx.clone())
         };
         if tx.is_none() {
-            self.recover_run_task_for_retry(si.run_id)
-                .await
-                .map_err(DecisionError::Internal)?;
+            if unit_id.is_some() {
+                self.recover().await.map_err(DecisionError::Internal)?;
+            } else {
+                self.recover_run_task_for_retry(si.run_id)
+                    .await
+                    .map_err(DecisionError::Internal)?;
+            }
             tx = {
                 let runs = self.runs.lock().await;
                 runs.get(&si.run_id).map(|handle| handle.control_tx.clone())
