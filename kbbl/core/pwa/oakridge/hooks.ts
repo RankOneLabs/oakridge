@@ -162,11 +162,12 @@ export function useRetryStuck(runId: string) {
 
 // ── Collab hooks ──────────────────────────────────────────────────────────────
 
-export function useThreads(artifactId: string) {
+export function useThreads(artifactId: string, enabled = true) {
   return useQuery({
     queryKey: ["oakridge", "artifact", artifactId, "threads"],
     queryFn: () => fetchThreads(artifactId),
     refetchInterval: POLL_MS,
+    enabled,
   });
 }
 
@@ -206,11 +207,12 @@ export function useResolveThread(artifactId: string) {
   });
 }
 
-export function useReviewItems(artifactId: string) {
+export function useReviewItems(artifactId: string, enabled = true) {
   return useQuery({
     queryKey: ["oakridge", "artifact", artifactId, "review_items"],
     queryFn: () => fetchReviewItems(artifactId),
     refetchInterval: POLL_MS,
+    enabled,
   });
 }
 

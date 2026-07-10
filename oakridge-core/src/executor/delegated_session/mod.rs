@@ -1150,9 +1150,12 @@ impl DelegatedSessionHandle {
         match decision.outcome {
             crate::types::GateOutcome::Pass => {
                 // Gate coupling: reject approval while open review items remain.
+                // The artifact emitted by this stage IS the chain root (revision_id),
+                // so gate_state.artifact_id.0.to_string() == revision_id for all items.
+                let revision_id = gate_state.artifact_id.0.to_string();
                 let open_count = queries::count_open_review_items_for_artifact(
                     session.ctx.pool(),
-                    &gate_state.artifact_id.0,
+                    &revision_id,
                 )
                 .await
                 .map_err(|e| anyhow::anyhow!("gate coupling check failed: {e}"))?;

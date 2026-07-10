@@ -1384,15 +1384,13 @@ pub async fn get_thread_by_id(
 
 pub async fn list_threads_for_artifact(
     pool: &SqlitePool,
-    artifact_id: &Uuid,
+    revision_id: &str,
 ) -> crate::Result<Vec<crate::collab::CollabThread>> {
-    let id_str = artifact_id.to_string();
-    let rows = sqlx::query_as!(
-        ThreadRow,
+    let rows = sqlx::query_as::<_, ThreadRow>(
         "SELECT id, artifact_id, revision_id, anchor, status, created_at \
-         FROM threads WHERE artifact_id = ? ORDER BY created_at, id",
-        id_str,
+         FROM threads WHERE revision_id = ? ORDER BY created_at, id",
     )
+    .bind(revision_id)
     .fetch_all(pool)
     .await?;
     rows.into_iter().map(row_to_thread).collect()
@@ -1509,15 +1507,13 @@ pub async fn get_review_item_by_id(
 
 pub async fn list_review_items_for_artifact(
     pool: &SqlitePool,
-    artifact_id: &Uuid,
+    revision_id: &str,
 ) -> crate::Result<Vec<crate::collab::ReviewItem>> {
-    let id_str = artifact_id.to_string();
-    let rows = sqlx::query_as!(
-        ReviewItemRow,
+    let rows = sqlx::query_as::<_, ReviewItemRow>(
         "SELECT id, artifact_id, revision_id, anchor, claim, reality, status, resolution, created_at \
-         FROM review_items WHERE artifact_id = ? ORDER BY created_at, id",
-        id_str,
+         FROM review_items WHERE revision_id = ? ORDER BY created_at, id",
     )
+    .bind(revision_id)
     .fetch_all(pool)
     .await?;
     rows.into_iter().map(row_to_review_item).collect()
@@ -1550,12 +1546,11 @@ pub async fn patch_review_item(
 
 pub async fn count_open_review_items_for_artifact(
     pool: &SqlitePool,
-    artifact_id: &Uuid,
+    revision_id: &str,
 ) -> crate::Result<i64> {
-    let id_str = artifact_id.to_string();
     let row: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM review_items WHERE artifact_id = ? AND status = 'open'")
-            .bind(&id_str)
+        sqlx::query_as("SELECT COUNT(*) FROM review_items WHERE revision_id = ? AND status = 'open'")
+            .bind(revision_id)
             .fetch_one(pool)
             .await?;
     Ok(row.0)

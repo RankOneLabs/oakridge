@@ -57,8 +57,8 @@ export function ArtifactReviewView({ artifactId, onBack }: ArtifactReviewViewPro
   const commentable = caps?.commentable ?? false;
   const hasReviewItems = caps?.review_items ?? false;
 
-  const threadsQuery = useThreads(artifactId);
-  const reviewItemsQuery = useReviewItems(artifactId);
+  const threadsQuery = useThreads(artifactId, commentable);
+  const reviewItemsQuery = useReviewItems(artifactId, hasReviewItems);
 
   const postThread = usePostThread(artifactId);
   const postMessage = usePostMessage(artifactId, selectedThreadId ?? "");

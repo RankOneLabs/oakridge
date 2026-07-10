@@ -183,6 +183,10 @@ impl StageContext {
 
         (type_def.validate)(&args.body)?;
 
+        // Extract before the loop so the fn-pointer Copy lands in the future state
+        // without holding a reference to the registry across await points.
+        let extractor = type_def.review_items_extractor;
+
         let EmitArgs {
             output_name,
             artifact_type,
@@ -314,6 +318,33 @@ impl StageContext {
             })
             .await
             .map_err(|_| anyhow::anyhow!("executor event channel closed"))?;
+
+        // Materialize review items from the type's extractor, if registered.
+        // For a freshly emitted artifact (no parent), revision_id = artifact.id.
+        // Best-effort: a failure here does not fail the emit.
+        if let Some(extractor) = extractor {
+            let revision_id = artifact.id.0.to_string();
+            let now = Utc::now();
+            for candidate in extractor(&artifact.body) {
+                let ri = crate::collab::ReviewItem {
+                    id: Uuid::new_v4(),
+                    artifact_id: artifact.id.0,
+                    revision_id: revision_id.clone(),
+                    anchor: candidate.anchor,
+                    claim: candidate.claim,
+                    reality: candidate.reality,
+                    status: crate::collab::ReviewItemStatus::Open,
+                    resolution: None,
+                    created_at: now,
+                };
+                if let Err(e) = crate::db::queries::insert_review_item(&self.db, &ri).await {
+                    tracing::warn!(
+                        artifact_id = %artifact.id.0,
+                        "review_items_extractor: failed to insert review item: {e}"
+                    );
+                }
+            }
+        }
 
         // Bump updated_at to signal liveness after a successful emit.
         // Best-effort: the artifact is already committed and the event sent.
@@ -1306,6 +1337,52 @@ mod tests {
             after > before,
             "heartbeat must advance updated_at (before={before:?}, after={after:?})"
         );
+    }
+
+    #[tokio::test]
+    async fn emit_materializes_review_items_via_extractor() {
+        fn extract_items(body: &Value) -> Vec<crate::collab::ReviewItemCandidate> {
+            vec![crate::collab::ReviewItemCandidate {
+                anchor: "/x".into(),
+                claim: "x must be positive".into(),
+                reality: body.get("x").map(|v| v.to_string()).unwrap_or_default(),
+            }]
+        }
+
+        let pool = make_pool().await;
+        let (run_id, si_id) = setup_run(&pool).await;
+        let mut reg = ArtifactTypeRegistry::new();
+        reg.register(ArtifactTypeDef {
+            id: "with-extractor".into(),
+            validate: validate_always_ok,
+            component_id: "v".into(),
+            capabilities: Default::default(),
+            anchor_schema: None,
+            review_items_extractor: Some(extract_items),
+        });
+        let registry = Arc::new(reg);
+        let (tx, _rx) = mpsc::channel(8);
+
+        let ctx = make_ctx(pool.clone(), run_id, si_id, registry, tx);
+        let artifact = ctx
+            .emit(EmitArgs {
+                output_name: "out".into(),
+                artifact_type: "with-extractor".into(),
+                body: json!({"x": 42}),
+                label: None,
+                parent_artifact_id: None,
+            })
+            .await
+            .unwrap();
+
+        let revision_id = artifact.id.0.to_string();
+        let items = queries::list_review_items_for_artifact(&pool, &revision_id)
+            .await
+            .unwrap();
+        assert_eq!(items.len(), 1, "extractor must have materialized one review item");
+        assert_eq!(items[0].anchor, "/x");
+        assert_eq!(items[0].claim, "x must be positive");
+        assert_eq!(items[0].status, crate::collab::ReviewItemStatus::Open);
     }
 
     #[tokio::test]
