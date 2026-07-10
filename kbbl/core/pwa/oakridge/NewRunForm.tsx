@@ -197,12 +197,22 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
     );
   }, [defaultRuntimeId, runtimeKey, runtimeDescriptors, workerRuntimeTouched]);
 
-  // Auto-select first workflow def when defs load
+  // Sort defs: newest version first per name, then by name. Memoized so the
+  // sort only runs when the server response changes.
+  const sortedDefs = useMemo(() => {
+    if (!defsQuery.data) return [];
+    return [...defsQuery.data].sort((a, b) => {
+      if (a.name !== b.name) return a.name.localeCompare(b.name);
+      return b.version - a.version;
+    });
+  }, [defsQuery.data]);
+
+  // Auto-select first (newest) workflow def when defs load
   useEffect(() => {
-    if (defsQuery.data && defsQuery.data.length > 0 && !workflowDefId) {
-      setWorkflowDefId(defsQuery.data[0].id);
+    if (sortedDefs.length > 0 && !workflowDefId) {
+      setWorkflowDefId(sortedDefs[0].id);
     }
-  }, [defsQuery.data, workflowDefId]);
+  }, [sortedDefs, workflowDefId]);
 
   // When project is selected, populate worktree_path from repo_dir
   useEffect(() => {
@@ -258,10 +268,10 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
             required
           >
             {defsQuery.isPending && <option value="">Loading…</option>}
-            {!defsQuery.isPending && defsQuery.data?.length === 0 && (
+            {!defsQuery.isPending && sortedDefs.length === 0 && (
               <option value="">No workflow definitions found</option>
             )}
-            {defsQuery.data?.map((def) => (
+            {sortedDefs.map((def) => (
               <option key={def.id} value={def.id}>
                 {def.name} v{def.version}
               </option>
