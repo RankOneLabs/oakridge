@@ -756,21 +756,19 @@ impl RunTask {
         // Delegated sessions use a two-step gate: artifact approval keeps the
         // stage parked until the explicit merge-confirmation decision arrives.
         let keep_parked_for_merge_confirmation = after_resume.stage_type == "delegated_session"
-            && after_resume
-                .parked_meta
-                .as_ref()
-                .and_then(|meta| {
-                    serde_json::from_value::<
-                    crate::executor::delegated_session::DelegatedGateState,
-                >(meta.clone()).ok()
-                })
-                .map(|gate_state| {
-                    matches!(
-                        gate_state.gate,
-                        crate::executor::delegated_session::DelegatedGate::MergeConfirmation
-                    )
-                })
-                .unwrap_or(false);
+            && (serde_json::from_value::<DelegatedSessionDefConfig>(
+                self.def.graph.stages.get(&stage_key).map(|node| node.config.clone()).unwrap_or(Value::Null),
+            ).ok().and_then(|config| config.fan_out).is_some()
+                || after_resume
+                    .parked_meta
+                    .as_ref()
+                    .and_then(|meta| {
+                        serde_json::from_value::<
+                        crate::executor::delegated_session::DelegatedGateState,
+                    >(meta.clone()).ok()
+                    })
+                    .map(|gate_state| matches!(gate_state.gate, crate::executor::delegated_session::DelegatedGate::MergeConfirmation))
+                    .unwrap_or(false));
 
         if matches!(after_resume.status, StageStatus::Parked) && !keep_parked_for_merge_confirmation
         {

@@ -13,6 +13,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::time::{sleep, Duration};
+use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, warn};
 
 use crate::executor::prompt_config::{
@@ -21,7 +22,10 @@ use crate::executor::prompt_config::{
 use crate::db::queries;
 use crate::executor::{StageContext, StageHandle};
 use crate::registry::stage_type::StageType;
-use crate::types::{Artifact, InputSlot, OutputSlot, ResolvedInput, StageInstanceId, StageStatus};
+use crate::types::{
+    derive_stage_status_from_units, Artifact, InputSlot, OutputSlot, ResolvedInput,
+    StageInstanceId, StageStatus,
+};
 use crate::types::{UnitStatus};
 
 use config::{
@@ -304,9 +308,167 @@ pub(crate) struct LiveSession {
     pub worktree_path: Option<String>,
     pub worktree_branch: Option<String>,
     pub worktree_base_ref: Option<String>,
+    pub unit_scheduler: Option<Arc<UnitScheduler>>,
 }
 
 pub(crate) type LiveSessions = Arc<Mutex<HashMap<(StageInstanceId, String), LiveSession>>>;
+
+/// Edge-triggered, stage-local unit admission controller.  Every caller pokes
+/// it after a transition; the admission lock makes concurrent pokes harmless.
+pub(crate) struct UnitScheduler {
+    ctx: StageContext,
+    config: DelegatedSessionConfig,
+    fan_out: FanOut,
+    kbbl_client: Arc<KbblClient>,
+    live_sessions: LiveSessions,
+    admission_lock: AsyncMutex<()>,
+}
+
+impl UnitScheduler {
+    fn new(
+        ctx: StageContext,
+        config: DelegatedSessionConfig,
+        fan_out: FanOut,
+        kbbl_client: Arc<KbblClient>,
+        live_sessions: LiveSessions,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            ctx,
+            config,
+            fan_out,
+            kbbl_client,
+            live_sessions,
+            admission_lock: AsyncMutex::new(()),
+        })
+    }
+
+    async fn recompute_aggregate(&self) -> anyhow::Result<()> {
+        let units = queries::list_session_units_for_stage(self.ctx.pool(), &self.ctx.stage_instance_id).await?;
+        let status = derive_stage_status_from_units(&units.iter().map(|unit| unit.status).collect::<Vec<_>>());
+        let reason = if units.iter().any(|unit| matches!(unit.status, UnitStatus::Failed)) {
+            Some("unit_attention_required".to_owned())
+        } else if matches!(status, StageStatus::Parked) {
+            Some("waiting_gate".to_owned())
+        } else {
+            None
+        };
+        self.ctx.set_parked_meta(None).await?;
+        self.ctx.set_status(status, reason).await
+    }
+
+    async fn mark_failed(self: &Arc<Self>, unit_id: &str, reason: String) {
+        let _ = queries::set_session_unit_status(
+            self.ctx.pool(),
+            &self.ctx.stage_instance_id,
+            unit_id,
+            UnitStatus::Failed,
+            Some(serde_json::json!({"kind": "unit_runtime_error", "reason": reason})),
+        ).await;
+        let _ = self.recompute_aggregate().await;
+    }
+
+    async fn admit(self: &Arc<Self>) -> anyhow::Result<()> {
+        let _guard = self.admission_lock.lock().await;
+        let units = queries::list_session_units_for_stage(self.ctx.pool(), &self.ctx.stage_instance_id).await?;
+        let mut running = units.iter().filter(|unit| matches!(unit.status, UnitStatus::Running)).count();
+        let done: HashSet<String> = units.iter().filter(|unit| matches!(unit.status, UnitStatus::Done)).map(|unit| unit.unit_id.clone()).collect();
+        let rendered = materialize_fan_out_units(&self.config, &self.fan_out, self.ctx.stage_instance_id)?;
+        for unit in units.into_iter().filter(|unit| matches!(unit.status, UnitStatus::Pending)) {
+            if running >= self.fan_out.max_parallel {
+                break;
+            }
+            if !unit.depends_on.iter().all(|dependency| done.contains(dependency)) {
+                continue;
+            }
+            let materialized = rendered.iter().find(|candidate| candidate.unit_id == unit.unit_id)
+                .ok_or_else(|| anyhow::anyhow!("persisted unit '{}' is absent from fan_out config", unit.unit_id))?;
+            if let Err(err) = self.launch_unit(materialized).await {
+                self.mark_failed(&unit.unit_id, err.to_string()).await;
+            } else {
+                running += 1;
+            }
+        }
+        self.recompute_aggregate().await
+    }
+
+    async fn launch_unit(self: &Arc<Self>, unit: &MaterializedFanOutUnit) -> anyhow::Result<()> {
+        let mut unit_config = self.config.clone();
+        unit_config.rendered_prompt = unit.rendered_prompt.clone();
+        unit_config.worktree = unit.worktree.clone();
+        let snapshot = self.kbbl_client.create_session(CreateSessionRequest {
+            workdir: unit_config.workdir.display().to_string(),
+            name: substitute_unit_template(&unit_config.session_name, &unit.unit_id, self.ctx.stage_instance_id),
+            artifact_id: self.ctx.stage_instance_id.0.to_string(),
+            runtime: unit_config.runtime.clone(),
+            model: unit_config.model.clone(),
+            effort: unit_config.effort.clone(),
+            worktree: unit_config.worktree.clone(),
+        }).await?;
+        let external_ref = serde_json::to_string(&DelegatedExternalRef {
+            sid: snapshot.sid.clone(),
+            worktree_path: snapshot.worktree_path.clone(),
+            worktree_branch: snapshot.worktree_branch.clone(),
+            worktree_base_ref: snapshot.worktree_base_ref.clone(),
+        })?;
+        queries::set_session_unit_external_ref(
+            self.ctx.pool(), &self.ctx.stage_instance_id, &unit.unit_id, Some(external_ref),
+            snapshot.worktree_branch.clone(), snapshot.worktree_path.clone(), snapshot.worktree_base_ref.clone(),
+        ).await?;
+        queries::set_session_unit_status(
+            self.ctx.pool(), &self.ctx.stage_instance_id, &unit.unit_id, UnitStatus::Running, None,
+        ).await?;
+        let cancelled = Arc::new(AtomicBool::new(false));
+        self.live_sessions.lock().unwrap().insert((self.ctx.stage_instance_id, unit.unit_id.clone()), LiveSession {
+            cancelled: cancelled.clone(), ctx: self.ctx.clone(), unit_id: unit.unit_id.clone(), sid: snapshot.sid.clone(),
+            config: unit_config.clone(), worktree_path: snapshot.worktree_path.clone(),
+            worktree_branch: snapshot.worktree_branch.clone(), worktree_base_ref: snapshot.worktree_base_ref.clone(),
+            unit_scheduler: Some(self.clone()),
+        });
+        if unit_config.yolo {
+            self.kbbl_client.set_yolo(&snapshot.sid, SetYoloRequest { enabled: true }).await?;
+        }
+        self.kbbl_client.send_input(&snapshot.sid, SendInputRequest { text: unit_config.rendered_prompt }).await?;
+        self.spawn_unit_observer(unit.unit_id.clone(), snapshot.sid, cancelled);
+        Ok(())
+    }
+
+    fn spawn_unit_observer(self: &Arc<Self>, unit_id: String, sid: String, cancelled: Arc<AtomicBool>) {
+        let scheduler = self.clone();
+        tokio::spawn(async move {
+            let mut last_seen = -1;
+            loop {
+                sleep(Duration::from_millis(OBSERVER_POLL_INTERVAL_MS)).await;
+                if cancelled.load(Ordering::SeqCst) { return; }
+                match scheduler.kbbl_client.read_events_since(&sid, last_seen).await {
+                    Ok(response) if response.session_id == sid => {
+                        if let Some(reason) = failure_reason_from_events(&sid, &response.events) {
+                            scheduler.mark_failed(&unit_id, reason).await;
+                            let _ = scheduler.admit().await;
+                            break;
+                        }
+                        if has_clean_exit(&response.events) {
+                            let unit = queries::get_session_unit(scheduler.ctx.pool(), &scheduler.ctx.stage_instance_id, &unit_id).await.ok();
+                            if matches!(unit.as_ref().map(|unit| unit.status), Some(UnitStatus::Running)) {
+                                let _ = queries::set_session_unit_status(scheduler.ctx.pool(), &scheduler.ctx.stage_instance_id, &unit_id, UnitStatus::Parked, None).await;
+                                let _ = scheduler.recompute_aggregate().await;
+                                let _ = scheduler.admit().await;
+                            } else if matches!(unit.as_ref().map(|unit| unit.status), Some(UnitStatus::Parked)) {
+                                // A gate remains actionable after a clean exit.
+                                return;
+                            }
+                            break;
+                        }
+                        if let Some(next) = latest_event_id(&response.events) { last_seen = next; }
+                    }
+                    Ok(_) => { scheduler.mark_failed(&unit_id, "kbbl returned a mismatched session id".into()).await; let _ = scheduler.admit().await; break; }
+                    Err(err) if !is_retryable_observer_error(&err) => { scheduler.mark_failed(&unit_id, err.to_string()).await; let _ = scheduler.admit().await; break; }
+                    Err(_) => continue,
+                }
+            }
+            scheduler.live_sessions.lock().unwrap().remove(&(scheduler.ctx.stage_instance_id, unit_id));
+        });
+    }
+}
 
 struct DelegatedSessionHandle {
     stage_instance_id: StageInstanceId,
@@ -314,6 +476,7 @@ struct DelegatedSessionHandle {
     sid: String,
     kbbl_client: Arc<KbblClient>,
     live_sessions: LiveSessions,
+    unit_scheduler: Option<Arc<UnitScheduler>>,
 }
 
 impl DelegatedSessionStage {
@@ -444,6 +607,7 @@ impl DelegatedSessionStage {
                 worktree_path,
                 worktree_branch,
                 worktree_base_ref,
+                unit_scheduler: None,
             },
         );
         cancelled
@@ -604,6 +768,7 @@ impl DelegatedSessionStage {
                     worktree_path,
                     worktree_branch,
                     worktree_base_ref,
+                    unit_scheduler: None,
                 },
             );
 
@@ -811,6 +976,7 @@ impl StageHandle for WaitingForKbblHandle {
                 sid: self.sid.clone(),
                 kbbl_client: self.kbbl_client.clone(),
                 live_sessions: self.live_sessions.clone(),
+                unit_scheduler: None,
             };
             return delegate.resume(payload).await;
         }
@@ -984,16 +1150,57 @@ impl StageType for DelegatedSessionStage {
     async fn execute(&self, ctx: StageContext) -> anyhow::Result<Box<dyn StageHandle>> {
         let config: DelegatedSessionConfig = serde_json::from_value(ctx.config.clone())?;
 
-        // N>1 fan-out execution stub: reject early with a clear message.
-        // The substrate (stage_session_units table, per-unit emit route /:id/units/:unit_id/emit/:name,
-        // composite gate id, FanOut config struct) is in place (Phase 2a). The per-unit session
-        // scheduler, intra-stage DAG, and worktree-per-unit launch are Phase 2b.
-        if config.fan_out.is_some() {
-            anyhow::bail!(
-                "fan_out multi-unit execution is not yet implemented; \
-                 the substrate (stage_session_units schema, per-unit emit route, composite gate id) \
-                 is in place but the N>1 session scheduler and per-unit launch are pending (Phase 2b)"
+        if let Some(fan_out) = config.fan_out.clone() {
+            // Materialize before any write or external call so invalid fan-out
+            // input cannot leave a partially launched stage.
+            let materialized = materialize_fan_out_units(&config, &fan_out, ctx.stage_instance_id)?;
+            if materialized.is_empty() {
+                ctx.set_status(StageStatus::Done, None).await?;
+                return Ok(Box::new(DelegatedSessionHandle {
+                    stage_instance_id: ctx.stage_instance_id,
+                    unit_id: String::new(),
+                    sid: String::new(),
+                    kbbl_client: self.kbbl_client.clone(),
+                    live_sessions: self.live_sessions.clone(),
+                    unit_scheduler: None,
+                }));
+            }
+            let now = chrono::Utc::now();
+            for unit in &materialized {
+                let worktree = unit.worktree.as_ref();
+                queries::upsert_session_unit(
+                    ctx.pool(),
+                    &crate::types::SessionUnit {
+                        stage_instance_id: ctx.stage_instance_id,
+                        unit_id: unit.unit_id.clone(),
+                        params: Some(unit.params.clone()),
+                        depends_on: unit.depends_on.clone(),
+                        external_ref: None,
+                        worktree_branch: worktree.map(|identity| identity.branch_name.clone()),
+                        worktree_path: worktree.map(|identity| identity.worktree_subdir.clone()),
+                        worktree_base_ref: worktree.and_then(|identity| identity.base_ref.clone()),
+                        status: UnitStatus::Pending,
+                        gate_state: None,
+                        artifact_id: None,
+                        terminal_meta: None,
+                        created_at: now,
+                        updated_at: now,
+                    },
+                ).await?;
+            }
+            let scheduler = UnitScheduler::new(
+                ctx.clone(), config.clone(), fan_out, self.kbbl_client.clone(), self.live_sessions.clone(),
             );
+            ctx.set_status(StageStatus::Running, None).await?;
+            scheduler.admit().await?;
+            return Ok(Box::new(DelegatedSessionHandle {
+                stage_instance_id: ctx.stage_instance_id,
+                unit_id: String::new(),
+                sid: String::new(),
+                kbbl_client: self.kbbl_client.clone(),
+                live_sessions: self.live_sessions.clone(),
+                unit_scheduler: Some(scheduler),
+            }));
         }
 
         if !config.pre_authorized_tools.is_empty() {
@@ -1183,6 +1390,7 @@ impl StageType for DelegatedSessionStage {
             sid,
             kbbl_client: self.kbbl_client.clone(),
             live_sessions: self.live_sessions.clone(),
+            unit_scheduler: None,
         }))
     }
 
@@ -1208,6 +1416,9 @@ impl StageType for DelegatedSessionStage {
 #[async_trait]
 impl StageHandle for DelegatedSessionHandle {
     async fn resume(&self, payload: crate::executor::ResumePayload) -> anyhow::Result<()> {
+        if let Some(scheduler) = &self.unit_scheduler {
+            return self.resume_fan_out(scheduler, payload).await;
+        }
         match payload {
             crate::executor::ResumePayload::GateDecision {
                 decision,
@@ -1226,6 +1437,9 @@ impl StageHandle for DelegatedSessionHandle {
     }
 
     async fn cancel(&self) -> anyhow::Result<()> {
+        if let Some(scheduler) = &self.unit_scheduler {
+            return self.cancel_fan_out(scheduler).await;
+        }
         let cancelled = {
             let mut live_sessions = self.live_sessions.lock().unwrap();
             live_sessions
@@ -1248,6 +1462,99 @@ impl StageHandle for DelegatedSessionHandle {
 }
 
 impl DelegatedSessionHandle {
+    async fn resume_fan_out(
+        &self,
+        scheduler: &Arc<UnitScheduler>,
+        payload: crate::executor::ResumePayload,
+    ) -> anyhow::Result<()> {
+        match payload {
+            crate::executor::ResumePayload::FeedbackArtifact { artifact } => {
+                if artifact.stage_instance_id != self.stage_instance_id {
+                    anyhow::bail!("feedback artifact does not belong to this stage");
+                }
+                let unit_id = artifact.label.filter(|label| !label.is_empty())
+                    .ok_or_else(|| anyhow::anyhow!("fan-out feedback artifact is missing a unit label"))?;
+                let session = self.live_sessions.lock().unwrap()
+                    .get(&(self.stage_instance_id, unit_id.clone())).cloned()
+                    .ok_or_else(|| anyhow::anyhow!("feedback unit '{}' is not live", unit_id))?;
+                self.send_kbbl_input(&session.sid, format!(
+                    "Feedback artifact {} (type {}):\n{}", artifact.id.0, artifact.artifact_type,
+                    serde_json::to_string_pretty(&artifact.body).unwrap_or_else(|_| artifact.body.to_string()),
+                )).await
+            }
+            crate::executor::ResumePayload::GateDecision { decision, against_artifact_id } => {
+                let units = queries::list_session_units_for_stage(scheduler.ctx.pool(), &self.stage_instance_id).await?;
+                let unit = units.into_iter().find(|unit| unit.artifact_id == Some(against_artifact_id))
+                    .ok_or_else(|| anyhow::anyhow!("gate decision artifact {} does not belong to a fan-out unit", against_artifact_id.0))?;
+                let gate_state: DelegatedGateState = unit.gate_state.clone()
+                    .ok_or_else(|| anyhow::anyhow!("fan-out unit '{}' has no gate state", unit.unit_id))
+                    .and_then(|value| serde_json::from_value(value).map_err(Into::into))?;
+                match gate_state.gate {
+                    DelegatedGate::ArtifactApproval => match decision.outcome {
+                        crate::types::GateOutcome::Pass => {
+                            let open_count = queries::count_open_review_items_for_artifact(
+                                scheduler.ctx.pool(), &gate_state.artifact_id.0.to_string(),
+                            ).await?;
+                            if open_count > 0 { anyhow::bail!("cannot approve: {open_count} review item(s) are still open"); }
+                            let merge_state = DelegatedGateState { gate: DelegatedGate::MergeConfirmation, ..gate_state };
+                            queries::set_session_unit_gate_state(
+                                scheduler.ctx.pool(), &self.stage_instance_id, &unit.unit_id,
+                                Some(serde_json::to_value(merge_state)?),
+                            ).await?;
+                            scheduler.recompute_aggregate().await
+                        }
+                        crate::types::GateOutcome::Fail | crate::types::GateOutcome::Rerun => {
+                            let session = self.live_sessions.lock().unwrap()
+                                .get(&(self.stage_instance_id, unit.unit_id.clone())).cloned()
+                                .ok_or_else(|| anyhow::anyhow!("fan-out unit '{}' is not live", unit.unit_id))?;
+                            self.send_kbbl_input(&session.sid, self.follow_up_message(&decision, &gate_state)).await?;
+                            let rerun_state = DelegatedGateState { revision_count: gate_state.revision_count.saturating_add(1), ..gate_state };
+                            queries::set_session_unit_gate_state(scheduler.ctx.pool(), &self.stage_instance_id, &unit.unit_id, Some(serde_json::to_value(rerun_state)?)).await?;
+                            queries::set_session_unit_status(scheduler.ctx.pool(), &self.stage_instance_id, &unit.unit_id, UnitStatus::Running, None).await?;
+                            scheduler.recompute_aggregate().await?;
+                            scheduler.admit().await
+                        }
+                    },
+                    DelegatedGate::MergeConfirmation => match decision.outcome {
+                        crate::types::GateOutcome::Pass => {
+                            queries::set_session_unit_gate_state(scheduler.ctx.pool(), &self.stage_instance_id, &unit.unit_id, None).await?;
+                            queries::set_session_unit_status(scheduler.ctx.pool(), &self.stage_instance_id, &unit.unit_id, UnitStatus::Done, None).await?;
+                            let removed_session = {
+                                self.live_sessions.lock().unwrap().remove(&(self.stage_instance_id, unit.unit_id.clone()))
+                            };
+                            if let Some(session) = removed_session {
+                                session.cancelled.store(true, Ordering::SeqCst);
+                                let _ = self.kbbl_client.stop_session(&session.sid).await;
+                            }
+                            scheduler.recompute_aggregate().await?;
+                            scheduler.admit().await
+                        }
+                        crate::types::GateOutcome::Fail | crate::types::GateOutcome::Rerun => anyhow::bail!("merge confirmation only accepts pass decisions"),
+                    },
+                }
+            }
+            crate::executor::ResumePayload::Executor { .. } => anyhow::bail!("delegated approval forwarding is not enabled until K1 exists"),
+        }
+    }
+
+    async fn cancel_fan_out(&self, scheduler: &Arc<UnitScheduler>) -> anyhow::Result<()> {
+        let units = queries::list_session_units_for_stage(scheduler.ctx.pool(), &self.stage_instance_id).await?;
+        for unit in units.iter().filter(|unit| !matches!(unit.status, UnitStatus::Done | UnitStatus::Failed)) {
+            queries::set_session_unit_status(
+                scheduler.ctx.pool(), &self.stage_instance_id, &unit.unit_id, UnitStatus::Failed,
+                Some(serde_json::json!({"kind": "cancelled"})),
+            ).await?;
+        }
+        let sessions: Vec<LiveSession> = self.live_sessions.lock().unwrap()
+            .extract_if(|(stage_id, _), _| *stage_id == self.stage_instance_id)
+            .map(|(_, session)| session).collect();
+        for session in sessions {
+            session.cancelled.store(true, Ordering::SeqCst);
+            let _ = self.kbbl_client.stop_session(&session.sid).await;
+        }
+        scheduler.recompute_aggregate().await
+    }
+
     fn live_session(&self) -> anyhow::Result<LiveSession> {
         self.live_sessions
             .lock()
@@ -2054,11 +2361,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn execute_rejects_fan_out_config_not_yet_implemented() {
+    async fn execute_rejects_fan_out_without_persisted_resolved_input() {
         let pool = make_pool().await;
         let (run_id, si_id) = setup_stage_instance(
             &pool,
-            // Provide a fan_out in the built config — execute must reject it immediately.
+            // A pre-foundation config has no persisted resolved fan-out value.
             json!({
                 "runtime": "codex",
                 "rendered_prompt": "do the thing",
@@ -2119,12 +2426,9 @@ mod tests {
                     msg.contains("fan_out"),
                     "expected 'fan_out' in rejection message, got: {msg}"
                 );
-                assert!(
-                    msg.contains("not yet implemented"),
-                    "expected 'not yet implemented' in rejection message, got: {msg}"
-                );
+                assert!(msg.contains("resolved input is missing"), "unexpected error: {msg}");
             }
-            Ok(_) => panic!("execute must fail when fan_out is set (N>1 not yet implemented)"),
+            Ok(_) => panic!("execute must reject fan_out without a persisted resolved input"),
         }
     }
 
