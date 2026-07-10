@@ -185,6 +185,19 @@ pub struct DelegatedSessionConfig {
 pub struct FanOutPromptPlan {
     pub raw_template: String,
     pub base_slot_values: HashMap<String, String>,
+    /// Prompt bindings sourced from the same per-unit collection used by
+    /// `fan_out.over`. They are resolved against the matching unit envelope at
+    /// admission time so inherited consumers see only their own artifact.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub inherited_input_bindings: HashMap<String, InheritedInputBinding>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct InheritedInputBinding {
+    /// RFC-6901 pointer into the matching producer artifact body. `None`
+    /// selects the whole artifact body.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
