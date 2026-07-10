@@ -199,7 +199,7 @@ where
         app.layer(
             CorsLayer::new()
                 .allow_origin(AllowOrigin::list(cfg.cors_origins.clone()))
-                .allow_methods([Method::GET, Method::POST])
+                .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE])
                 .allow_headers([
                     header::CONTENT_TYPE,
                     header::AUTHORIZATION,
