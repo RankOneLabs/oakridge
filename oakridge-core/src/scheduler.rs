@@ -1382,8 +1382,9 @@ impl Coordinator {
                 )));
             }
         } else if si.stage_type == "delegated_session" {
-            let config: Result<DelegatedSessionConfig, _> = serde_json::from_value(si.config.clone());
-            if config.as_ref().ok().and_then(|config| config.fan_out.as_ref()).is_some()
+            let config: DelegatedSessionConfig = serde_json::from_value(si.config.clone())
+                .map_err(|err| DecisionError::Internal(anyhow::Error::new(err)))?;
+            if config.fan_out.is_some()
                 && queries::list_session_units_for_stage(&self.db, &stage_instance_id).await
                     .map_err(|err| DecisionError::Internal(anyhow::Error::new(err)))?.len() > 1
             {
