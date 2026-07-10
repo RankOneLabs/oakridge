@@ -7,6 +7,10 @@ import {
 } from "../hooks/useServerConfig";
 import type { RuntimeDescriptor, RuntimeModelSelection } from "../types";
 import { coerceSelection } from "../sidebar/AddSpecModal";
+import {
+  defaultWorkflowDefinitionId,
+  sortWorkflowDefinitions,
+} from "../lib/workflow-defs";
 import { useOakridgeConfig, useProjects, useWorkflowDefs, useCreateRun } from "./hooks";
 
 const secondaryButtonClass =
@@ -200,18 +204,15 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
   // Sort defs: newest version first per name, then by name. Memoized so the
   // sort only runs when the server response changes.
   const sortedDefs = useMemo(() => {
-    if (!defsQuery.data) return [];
-    return [...defsQuery.data].sort((a, b) => {
-      if (a.name !== b.name) return a.name.localeCompare(b.name);
-      return b.version - a.version;
-    });
+    return sortWorkflowDefinitions(defsQuery.data ?? []);
   }, [defsQuery.data]);
 
   // The sorted list is newest-first within each workflow name, so its first
   // entry is the normal default workflow definition.
   useEffect(() => {
-    if (workflowDefId || sortedDefs.length === 0) return;
-    setWorkflowDefId(sortedDefs[0].id);
+    if (workflowDefId) return;
+    const defaultId = defaultWorkflowDefinitionId(sortedDefs);
+    if (defaultId) setWorkflowDefId(defaultId);
   }, [sortedDefs, workflowDefId]);
 
   // When project is selected, populate worktree_path from repo_dir

@@ -41,8 +41,12 @@ async fn create_session(
     State(state): State<FakeKbbl>,
     Json(_body): Json<Value>,
 ) -> impl IntoResponse {
-    let sid = format!("sid-{}", state.sessions.lock().unwrap().len() + 1);
-    state.sessions.lock().unwrap().push_back(sid.clone());
+    let sid = {
+        let mut sessions = state.sessions.lock().unwrap();
+        let sid = format!("sid-{}", sessions.len() + 1);
+        sessions.push_back(sid.clone());
+        sid
+    };
     Json(json!({
         "sid": sid,
         "worktreePath": format!("/tmp/{sid}"),
