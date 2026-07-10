@@ -171,8 +171,9 @@ async fn emit_handler(
             .into_response();
     }
 
-    // For merge_confirmation gate slots, look up the pr_summary artifact
-    // emitted earlier by this stage instance to surface the PR link.
+    // Look up the pr_summary artifact emitted earlier by this stage instance
+    // so the PR link is available on the artifact-approval gate state (which
+    // the operator will later promote to merge-confirmation on resume).
     let pr_url = queries::get_latest_artifact_by_stage_and_output(
         live_session.ctx.pool(),
         &stage_instance_id,

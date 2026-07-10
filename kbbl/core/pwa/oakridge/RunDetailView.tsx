@@ -294,8 +294,7 @@ export function RunDetailView({ runId, onBack, onSelectArtifact }: RunDetailView
             className="inline-flex items-center gap-1.5 rounded-md border border-red-800 px-3 py-1.5 text-sm text-red-800 hover:bg-red-800 hover:text-white disabled:opacity-50 dark:border-red-400 dark:text-red-400 dark:hover:bg-red-400 dark:hover:text-black"
             onClick={() => {
               if (window.confirm("Delete this run permanently? This cannot be undone.")) {
-                void deleteMutation.mutate();
-                onBack();
+                void deleteMutation.mutate(undefined, { onSuccess: onBack });
               }
             }}
             disabled={deleteMutation.isPending}
@@ -303,6 +302,11 @@ export function RunDetailView({ runId, onBack, onSelectArtifact }: RunDetailView
           >
             {deleteMutation.isPending ? "…" : "Delete"}
           </button>
+          {deleteMutation.isError && (
+            <span className="text-sm text-red-500" role="alert">
+              {deleteMutation.error instanceof Error ? deleteMutation.error.message : "Delete failed"}
+            </span>
+          )}
           <button type="button" className={secondaryButtonClass} onClick={onRefresh}>
             Refresh
           </button>

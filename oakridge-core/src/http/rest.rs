@@ -814,6 +814,14 @@ async fn pr_url_for_stage(
         "pr_summary",
     )
     .await
+    .map_err(|err| {
+        tracing::warn!(
+            stage_instance_id = %stage.id.0,
+            error = %err,
+            "pr_summary artifact lookup failed"
+        );
+        err
+    })
     .ok()??;
     artifact.body.get("pr_url")?.as_str().map(|s| s.to_owned())
 }
@@ -987,6 +995,9 @@ pub async fn list_operator_gates(
 ) -> Result<Json<Vec<OperatorParkedGate>>, AppError> {
     let parked = queries::list_parked_stage_instances(&state.pool).await?;
     let mut gates = Vec::with_capacity(parked.len());
+    // TODO: N+1 — one pr_summary query per parked stage. Acceptable while gate lists
+    // are short; batch with WHERE stage_instance_id IN (...) AND output_name='pr_summary'
+    // if this becomes a performance concern.
     for stage in &parked {
         let pr_url = pr_url_for_stage(&state.pool, stage).await;
         gates.push(operator_gate(stage, pr_url));
@@ -1002,6 +1013,7 @@ pub async fn list_operator_run_gates(
     queries::get_workflow_run_by_id(&state.pool, &run_id).await?;
     let stages = queries::list_stage_instances_for_run(&state.pool, &run_id).await?;
     let mut gates = Vec::new();
+    // TODO: same N+1 as list_operator_gates — batch if perf warrants.
     for stage in stages.iter().filter(|s| matches!(s.status, StageStatus::Parked)) {
         let pr_url = pr_url_for_stage(&state.pool, stage).await;
         gates.push(operator_gate(stage, pr_url));

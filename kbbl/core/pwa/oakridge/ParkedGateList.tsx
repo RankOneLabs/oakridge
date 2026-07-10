@@ -63,7 +63,7 @@ function GateCard({ gate, onNavigateRun }: GateCardProps) {
         </div>
       )}
 
-      {gate.pr_url && (
+      {gate.pr_url && /^https?:\/\//i.test(gate.pr_url) && (
         <div className="flex items-center gap-2" data-testid="or-gate-pr-url">
           <span className={labelClass}>PR</span>
           <a

@@ -45,6 +45,9 @@ async function oakridgePost<T>(path: string, body: unknown): Promise<T> {
     const detail = typeof b?.error === "string" ? b.error : `oakridge POST ${path}: ${res.status}`;
     throw new Error(detail);
   }
+  if (res.status === 204 || res.headers.get("content-length") === "0") {
+    return undefined as unknown as T;
+  }
   return (await res.json()) as T;
 }
 
