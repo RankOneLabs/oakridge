@@ -1741,6 +1741,7 @@ mod tests {
                 review_items: false,
             },
             anchor_schema: None,
+            review_items_extractor: None,
         });
         let artifact_registry = Arc::new(art_reg);
 

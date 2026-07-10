@@ -964,6 +964,7 @@ mod tests {
             component_id: "artifact-viewer".into(),
             capabilities: Default::default(),
             anchor_schema: None,
+            review_items_extractor: None,
         });
         Arc::new(registry)
     }

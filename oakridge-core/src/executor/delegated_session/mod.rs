@@ -1003,7 +1003,7 @@ impl StageType for DelegatedSessionStage {
                 GateStep { gate_type: "artifact_approval".into() },
                 GateStep { gate_type: "merge_confirmation".into() },
             ],
-            requires_zero_open_review_items: false,
+            requires_zero_open_review_items: true,
         }
     }
 }
@@ -1149,6 +1149,18 @@ impl DelegatedSessionHandle {
     ) -> anyhow::Result<()> {
         match decision.outcome {
             crate::types::GateOutcome::Pass => {
+                // Gate coupling: reject approval while open review items remain.
+                let open_count = queries::count_open_review_items_for_artifact(
+                    session.ctx.pool(),
+                    &gate_state.artifact_id.0,
+                )
+                .await
+                .map_err(|e| anyhow::anyhow!("gate coupling check failed: {e}"))?;
+                if open_count > 0 {
+                    anyhow::bail!(
+                        "cannot approve: {open_count} review item(s) are still open"
+                    );
+                }
                 let updated_state = DelegatedGateState {
                     gate: DelegatedGate::MergeConfirmation,
                     ..gate_state
@@ -1459,6 +1471,7 @@ mod tests {
             component_id: "text-viewer".into(),
             capabilities: Default::default(),
             anchor_schema: None,
+            review_items_extractor: None,
         });
         Arc::new(registry)
     }

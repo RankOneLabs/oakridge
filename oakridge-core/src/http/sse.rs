@@ -476,6 +476,7 @@ mod tests {
             component_id: "v".into(),
             capabilities: Default::default(),
             anchor_schema: None,
+            review_items_extractor: None,
         });
         let artifact_registry = Arc::new(art_reg);
 

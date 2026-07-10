@@ -616,6 +616,7 @@ mod tests {
             component_id: "any-viewer".into(),
             capabilities: Default::default(),
             anchor_schema: None,
+            review_items_extractor: None,
         });
         reg.register(ArtifactTypeDef {
             id: "strict".into(),
@@ -623,6 +624,7 @@ mod tests {
             component_id: "strict-viewer".into(),
             capabilities: Default::default(),
             anchor_schema: None,
+            review_items_extractor: None,
         });
         Arc::new(reg)
     }

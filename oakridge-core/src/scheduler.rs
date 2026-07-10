@@ -1917,6 +1917,7 @@ mod tests {
             component_id: "v".into(),
             capabilities: Default::default(),
             anchor_schema: None,
+            review_items_extractor: None,
         });
         Arc::new(reg)
     }
