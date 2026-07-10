@@ -25,7 +25,14 @@ function makeRuntime(
     efforts:
       id === "claude-code"
         ? [{ value: "low", label: "low" }, { value: "high", label: "high" }]
-        : [{ value: "minimal", label: "minimal" }, { value: "medium", label: "medium" }],
+        : [
+            { value: "minimal", label: "minimal" },
+            { value: "low", label: "low" },
+            { value: "medium", label: "medium" },
+            { value: "high", label: "high" },
+            { value: "xhigh", label: "xhigh" },
+            { value: "max", label: "max" },
+          ],
     supportsCompaction: id === "claude-code",
   };
   return {
@@ -58,7 +65,15 @@ beforeEach(() => {
   db = openTestDb();
   registry = createRuntimeRegistry([
     makeRuntime("claude-code", ["claude-opus-4-8", "claude-sonnet-4-6"]),
-    makeRuntime("codex", ["gpt-5.5", "gpt-5.4-mini"]),
+    makeRuntime("codex", [
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+      "gpt-5.5",
+      "gpt-5.4",
+      "gpt-5.4-mini",
+      "gpt-5.3-codex-spark",
+    ]),
   ]);
   app = new Hono();
   mountProjectsRoutes(app, { db });
@@ -89,7 +104,7 @@ describe("POST /specs split model validation", () => {
       project_id: project.id,
       title: "Split spec",
       planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
-      worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini" },
+      worker_model_selection: { runtime: "codex", model: "gpt-5.6-luna" },
     });
 
     expect(res.status).toBe(201);
@@ -104,7 +119,7 @@ describe("POST /specs split model validation", () => {
     });
     expect(epic.worker_model_selection).toEqual({
       runtime: "codex",
-      model: "gpt-5.4-mini",
+      model: "gpt-5.6-luna",
       effort: null,
     });
   });
@@ -120,7 +135,7 @@ describe("POST /specs split model validation", () => {
       project_id: project.id,
       title: "Effort spec",
       planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8", effort: "high" },
-      worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini", effort: "minimal" },
+      worker_model_selection: { runtime: "codex", model: "gpt-5.6-luna", effort: "minimal" },
     });
 
     expect(res.status).toBe(201);
@@ -141,7 +156,7 @@ describe("POST /specs split model validation", () => {
       project_id: project.id,
       title: "Blank effort spec",
       planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8", effort: "   " },
-      worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini" },
+      worker_model_selection: { runtime: "codex", model: "gpt-5.6-luna" },
     });
 
     expect(res.status).toBe(400);
@@ -156,17 +171,16 @@ describe("POST /specs split model validation", () => {
       repo_path: "/tmp/project",
     });
 
-    // "high" is a claude-code effort but not a codex effort.
     const res = await post({
       project_id: project.id,
       title: "Bad effort spec",
       planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
-      worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini", effort: "high" },
+      worker_model_selection: { runtime: "codex", model: "gpt-5.6-luna", effort: "turbo" },
     });
 
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
-    expect(body.error).toBe('worker effort "high" is not allowed for runtime "codex"');
+    expect(body.error).toBe('worker effort "turbo" is not allowed for runtime "codex"');
   });
 
   test("rejects an invalid runtime id with a clear error", async () => {
@@ -180,7 +194,7 @@ describe("POST /specs split model validation", () => {
       project_id: "project-1",
       title: "Split spec",
       planner_model_selection: { runtime: "not-registered", model: "claude-opus-4-8" },
-      worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini" },
+      worker_model_selection: { runtime: "codex", model: "gpt-5.6-luna" },
     });
 
     expect(res.status).toBe(400);
@@ -199,13 +213,13 @@ describe("POST /specs split model validation", () => {
     const res = await post({
       project_id: "project-1",
       title: "Split spec",
-      planner_model_selection: { runtime: "claude-code", model: "gpt-5.4-mini" },
-      worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini" },
+      planner_model_selection: { runtime: "claude-code", model: "gpt-5.6-luna" },
+      worker_model_selection: { runtime: "codex", model: "gpt-5.6-luna" },
     });
 
     expect(res.status).toBe(400);
     expect((await res.json()) as { error: string }).toEqual({
-      error: 'planner model "gpt-5.4-mini" is not allowed for runtime "claude-code"',
+      error: 'planner model "gpt-5.6-luna" is not allowed for runtime "claude-code"',
     });
   });
 

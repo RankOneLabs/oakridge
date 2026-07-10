@@ -20,7 +20,15 @@ const PROJECT_ID = "proj-1";
 
 const MODELS_BY_RUNTIME: Record<RuntimeId, string[]> = {
   "claude-code": ["claude-opus-4-8", "claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001", "opus", "sonnet", "haiku"],
-  codex: ["gpt-5.5", "gpt-5.4-mini"],
+  codex: [
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "gpt-5.5",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.3-codex-spark",
+  ],
 };
 
 const CREATE_SPEC_SELECTIONS = {
@@ -252,7 +260,7 @@ describe("POST /specs", () => {
           project_id: PROJECT_ID,
           title: "Split flow",
           planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
-          worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini" },
+          worker_model_selection: { runtime: "codex", model: "gpt-5.6-luna" },
         }),
       ),
     });
@@ -266,7 +274,7 @@ describe("POST /specs", () => {
     });
     expect(epic?.worker_model_selection).toEqual({
       runtime: "codex",
-      model: "gpt-5.4-mini",
+      model: "gpt-5.6-luna",
       effort: null,
     });
   });
@@ -280,7 +288,7 @@ describe("POST /specs", () => {
           project_id: PROJECT_ID,
           title: "Split flow",
           planner_model_selection: { runtime: "claude-code", model: "claude-opus-4-8" },
-          worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini" },
+          worker_model_selection: { runtime: "codex", model: "gpt-5.6-luna" },
         }),
       ),
     });
@@ -294,7 +302,7 @@ describe("POST /specs", () => {
     });
     expect(epic?.worker_model_selection).toEqual({
       runtime: "codex",
-      model: "gpt-5.4-mini",
+      model: "gpt-5.6-luna",
       effort: null,
     });
   });
@@ -308,7 +316,7 @@ describe("POST /specs", () => {
           project_id: PROJECT_ID,
           title: "Bad split",
           planner_model_selection: { runtime: "codex", model: "not-a-model" },
-          worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini" },
+          worker_model_selection: { runtime: "codex", model: "gpt-5.6-luna" },
         }),
       ),
     });

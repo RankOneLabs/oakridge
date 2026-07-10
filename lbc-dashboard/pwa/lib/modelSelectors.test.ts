@@ -51,6 +51,22 @@ describe("modelDisplay", () => {
     });
   });
 
+  test("maps gpt-5.6-sol to GPT-5.6 Sol / OpenAI", () => {
+    expect(modelDisplay("gpt-5.6-sol")).toEqual({
+      id: "gpt-5.6-sol",
+      name: "GPT-5.6 Sol",
+      provider: "OpenAI",
+    });
+  });
+
+  test("maps gpt-5.3-codex-spark to GPT-5.3 Codex Spark / OpenAI", () => {
+    expect(modelDisplay("gpt-5.3-codex-spark")).toEqual({
+      id: "gpt-5.3-codex-spark",
+      name: "GPT-5.3 Codex Spark",
+      provider: "OpenAI",
+    });
+  });
+
   test("maps gemini-2.5-pro to Gemini 2.5 Pro / Google", () => {
     expect(modelDisplay("gemini-2.5-pro")).toEqual({
       id: "gemini-2.5-pro",

@@ -96,7 +96,7 @@ export interface SessionOpts {
   /**
    * Per-session reasoning/effort level. null means "no effort override at
    * spawn" — the runtime uses its default. Adapter-specific opaque string
-   * (CC: low..max via `--effort`; codex: minimal..xhigh per-turn). Persisted
+   * (CC: low..max via `--effort`; codex: minimal..max per-turn). Persisted
    * into session_started.payload.effort so resume-from-disk can recover it.
    */
   effort?: string | null;

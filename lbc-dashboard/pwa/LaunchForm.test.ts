@@ -126,6 +126,21 @@ describe("buildRunSpec", () => {
     }
   });
 
+  test("includes GPT-5.6 Codex models as known models", () => {
+    const r = buildRunSpec({
+      ...base,
+      checkedModels: new Set(["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"]),
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.spec.model_pool).toEqual([
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+      ]);
+    }
+  });
+
   test("accepts arbitrary task names", () => {
     const r = buildRunSpec({
       ...base,

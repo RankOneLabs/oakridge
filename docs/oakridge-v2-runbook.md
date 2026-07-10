@@ -271,6 +271,8 @@ Each delegated session can optionally carry a reasoning-effort level:
 | `low` | Light reasoning pass. |
 | `medium` | Balanced default for most tasks. |
 | `high` | Deep reasoning; more thorough but slower. |
+| `xhigh` | Extra-high reasoning for difficult tasks. |
+| `max` | Maximum reasoning for the hardest quality-first tasks. |
 
 Omitting `effort` (or setting it to `null`) uses the runtime's default effort
 for that model tier. The `effort` field is forwarded to the kbbl session and

@@ -7,8 +7,13 @@ export interface CodexModel {
 }
 
 const PINNED_CODEX_MODELS: CodexModel[] = [
+  { value: "gpt-5.6-sol", label: "gpt-5.6 sol" },
+  { value: "gpt-5.6-terra", label: "gpt-5.6 terra" },
+  { value: "gpt-5.6-luna", label: "gpt-5.6 luna" },
   { value: "gpt-5.5", label: "gpt-5.5" },
+  { value: "gpt-5.4", label: "gpt-5.4" },
   { value: "gpt-5.4-mini", label: "gpt-5.4 mini" },
+  { value: "gpt-5.3-codex-spark", label: "gpt-5.3 codex spark" },
 ];
 
 /**
@@ -23,6 +28,7 @@ export const CODEX_EFFORTS: readonly { value: string; label: string }[] = [
   { value: "medium", label: "medium" },
   { value: "high", label: "high" },
   { value: "xhigh", label: "xhigh" },
+  { value: "max", label: "max" },
 ];
 
 /**

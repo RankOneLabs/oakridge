@@ -49,6 +49,16 @@ function getSelectOptions(select: HTMLSelectElement): string[] {
   return Array.from(select.options).map((option) => option.value);
 }
 
+const CODEX_MODELS: Array<{ value: string; label: string }> = [
+  { value: "gpt-5.6-sol", label: "gpt-5.6 sol" },
+  { value: "gpt-5.6-terra", label: "gpt-5.6 terra" },
+  { value: "gpt-5.6-luna", label: "gpt-5.6 luna" },
+  { value: "gpt-5.5", label: "gpt-5.5" },
+  { value: "gpt-5.4", label: "gpt-5.4" },
+  { value: "gpt-5.4-mini", label: "gpt-5.4-mini" },
+  { value: "gpt-5.3-codex-spark", label: "gpt-5.3 codex spark" },
+];
+
 describe("AddSpecModal split role selection", () => {
   afterEach(() => {
     if (originalFetch !== undefined) {
@@ -78,10 +88,7 @@ describe("AddSpecModal split role selection", () => {
             id: "codex",
             label: "Codex",
             supportsCompaction: false,
-            models: [
-              { value: "gpt-5.5", label: "gpt-5.5" },
-              { value: "gpt-5.4-mini", label: "gpt-5.4-mini" },
-            ],
+            models: CODEX_MODELS,
           },
         ],
       },
@@ -102,9 +109,9 @@ describe("AddSpecModal split role selection", () => {
       expect(screen.getByLabelText("Planner runtime")).toHaveProperty("value", "codex");
     });
 
-    expect(screen.getByLabelText("Planner model")).toHaveProperty("value", "gpt-5.5");
+    expect(screen.getByLabelText("Planner model")).toHaveProperty("value", "gpt-5.6-sol");
     expect(screen.getByLabelText("Worker runtime")).toHaveProperty("value", "codex");
-    expect(screen.getByLabelText("Worker model")).toHaveProperty("value", "gpt-5.4-mini");
+    expect(screen.getByLabelText("Worker model")).toHaveProperty("value", "gpt-5.6-luna");
 
     fireEvent.change(screen.getByLabelText("Title"), {
       target: { value: "Build the thing" },
@@ -115,8 +122,8 @@ describe("AddSpecModal split role selection", () => {
       expect(postBody).toMatchObject({
         project_id: "project-1",
         title: "Build the thing",
-        planner_model_selection: { runtime: "codex", model: "gpt-5.5" },
-        worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini" },
+        planner_model_selection: { runtime: "codex", model: "gpt-5.6-sol" },
+        worker_model_selection: { runtime: "codex", model: "gpt-5.6-luna" },
       });
     });
     expect(Object.keys(postBody as Record<string, unknown>).sort()).toEqual([
@@ -202,10 +209,7 @@ describe("AddSpecModal split role selection", () => {
           id: "codex",
           label: "Codex",
           supportsCompaction: false,
-          models: [
-            { value: "gpt-5.5", label: "gpt-5.5" },
-            { value: "gpt-5.4-mini", label: "gpt-5.4-mini" },
-          ],
+          models: CODEX_MODELS,
         },
       ],
     });
@@ -235,10 +239,15 @@ describe("AddSpecModal split role selection", () => {
       "claude-sonnet-4-6",
     ]);
     expect(screen.getByLabelText("Worker runtime")).toHaveProperty("value", "codex");
-    expect(screen.getByLabelText("Worker model")).toHaveProperty("value", "gpt-5.4-mini");
+    expect(screen.getByLabelText("Worker model")).toHaveProperty("value", "gpt-5.6-luna");
     expect(getSelectOptions(screen.getByLabelText("Worker model") as HTMLSelectElement)).toEqual([
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
       "gpt-5.5",
+      "gpt-5.4",
       "gpt-5.4-mini",
+      "gpt-5.3-codex-spark",
     ]);
 
     fireEvent.change(screen.getByLabelText("Worker runtime"), {
@@ -318,10 +327,7 @@ describe("AddSpecModal split role selection", () => {
             id: "codex",
             label: "Codex",
             supportsCompaction: false,
-            models: [
-              { value: "gpt-5.5", label: "gpt-5.5" },
-              { value: "gpt-5.4-mini", label: "gpt-5.4-mini" },
-            ],
+            models: CODEX_MODELS,
           },
         ],
       },
@@ -372,8 +378,8 @@ describe("AddSpecModal split role selection", () => {
       expect(postBody).toMatchObject({
         title: "From a file",
         notes: "manual notes",
-        planner_model_selection: { runtime: "codex", model: "gpt-5.5" },
-        worker_model_selection: { runtime: "codex", model: "gpt-5.4-mini" },
+        planner_model_selection: { runtime: "codex", model: "gpt-5.6-sol" },
+        worker_model_selection: { runtime: "codex", model: "gpt-5.6-luna" },
       });
     });
   });
@@ -393,7 +399,7 @@ describe("coerceSelection effort handling", () => {
   const codex: RuntimeDescriptor = {
     id: "codex",
     label: "Codex",
-    models: [{ value: "gpt-5.5", label: "gpt-5.5" }],
+    models: [{ value: "gpt-5.6-sol", label: "gpt-5.6 sol" }],
     efforts: [{ value: "minimal", label: "minimal" }],
     supportsCompaction: false,
   };
@@ -427,7 +433,7 @@ describe("coerceSelection effort handling", () => {
   test("drops the effort when the runtime changes", () => {
     const next = coerceSelection(
       "planner",
-      { runtime: "codex", model: "gpt-5.5", effort: "minimal" },
+      { runtime: "codex", model: "gpt-5.6-sol", effort: "minimal" },
       descriptors,
       "claude-code",
       false, // not touched → coerces back to the default (claude-code) runtime
