@@ -180,6 +180,46 @@ fn materialize_fan_out_units(
     Ok(units)
 }
 
+/// Rebuild launch input from the authoritative persisted unit graph. Recovery
+/// and retry intentionally do not revisit fan_out.over, dependency extraction,
+/// or worktree templates: those values were materialized before the first
+/// session was admitted and can no longer change underneath a unit.
+fn materialize_persisted_unit(
+    config: &DelegatedSessionConfig,
+    unit: &crate::types::SessionUnit,
+) -> anyhow::Result<MaterializedFanOutUnit> {
+    let fan_out = config.fan_out.as_ref()
+        .ok_or_else(|| anyhow::anyhow!("persisted unit requires fan_out config"))?;
+    let prompt_plan = config.fan_out_prompt_plan.as_ref()
+        .ok_or_else(|| anyhow::anyhow!("fan_out prompt plan is missing from stage config"))?;
+    let params = unit.params.clone()
+        .ok_or_else(|| anyhow::anyhow!("persisted unit '{}' is missing params", unit.unit_id))?;
+    let mut slot_values = prompt_plan.base_slot_values.clone();
+    for (slot_name, binding) in &fan_out.item_bindings {
+        slot_values.insert(
+            slot_name.clone(),
+            resolve_binding(binding, &HashMap::new(), &Value::Null, Some(&params))?,
+        );
+    }
+    slot_values.insert("UNIT_ID".into(), unit.unit_id.clone());
+    slot_values.insert("STAGE_INSTANCE_ID".into(), unit.stage_instance_id.0.to_string());
+    let worktree = match (&unit.worktree_branch, &unit.worktree_path) {
+        (Some(branch_name), Some(worktree_subdir)) => Some(WorktreeIdentity {
+            branch_name: branch_name.clone(),
+            worktree_subdir: worktree_subdir.clone(),
+            base_ref: unit.worktree_base_ref.clone(),
+        }),
+        _ => None,
+    };
+    Ok(MaterializedFanOutUnit {
+        unit_id: unit.unit_id.clone(),
+        params,
+        depends_on: unit.depends_on.clone(),
+        rendered_prompt: render_template(&prompt_plan.raw_template, &slot_values)?,
+        worktree,
+    })
+}
+
 /// Number of consecutive retryable poll errors before the observer gives up.
 const MAX_OBSERVER_POLL_ERRORS: u32 = 5;
 /// Poll interval and backoff constants are shortened under test to keep suites fast.
@@ -367,19 +407,24 @@ impl UnitScheduler {
         let _ = self.recompute_aggregate().await;
     }
 
+    async fn mark_session_ended_without_emit(self: &Arc<Self>, unit_id: &str) {
+        let _ = queries::set_session_unit_status(
+            self.ctx.pool(),
+            &self.ctx.stage_instance_id,
+            unit_id,
+            UnitStatus::Failed,
+            Some(serde_json::json!({"kind": "session_ended_without_emit"})),
+        ).await;
+        let _ = self.recompute_aggregate().await;
+    }
+
     async fn admit(self: &Arc<Self>) -> anyhow::Result<()> {
         let _guard = self.admission_lock.lock().await;
         let units = queries::list_session_units_for_stage(self.ctx.pool(), &self.ctx.stage_instance_id).await?;
-        let mut running = units.iter().filter(|unit| matches!(unit.status, UnitStatus::Running)).count();
+        let mut running = units.iter().filter(|unit| {
+            matches!(unit.status, UnitStatus::Running | UnitStatus::Parked)
+        }).count();
         let done: HashSet<String> = units.iter().filter(|unit| matches!(unit.status, UnitStatus::Done)).map(|unit| unit.unit_id.clone()).collect();
-        let rendered: HashMap<String, MaterializedFanOutUnit> = materialize_fan_out_units(
-            &self.config,
-            &self.fan_out,
-            self.ctx.stage_instance_id,
-        )?
-        .into_iter()
-        .map(|unit| (unit.unit_id.clone(), unit))
-        .collect();
         for unit in units.into_iter().filter(|unit| matches!(unit.status, UnitStatus::Pending)) {
             if running >= self.fan_out.max_parallel {
                 break;
@@ -387,8 +432,7 @@ impl UnitScheduler {
             if !unit.depends_on.iter().all(|dependency| done.contains(dependency)) {
                 continue;
             }
-            let materialized = rendered.get(&unit.unit_id).cloned()
-                .ok_or_else(|| anyhow::anyhow!("persisted unit '{}' is absent from fan_out config", unit.unit_id))?;
+            let materialized = materialize_persisted_unit(&self.config, &unit)?;
             if let Err(err) = self.launch_unit(&materialized).await {
                 self.mark_failed(&unit.unit_id, err.to_string()).await;
             } else {
@@ -396,6 +440,193 @@ impl UnitScheduler {
             }
         }
         self.recompute_aggregate().await
+    }
+
+    async fn retry_unit(self: &Arc<Self>, unit_id: &str) -> anyhow::Result<()> {
+        let unit = queries::get_session_unit(self.ctx.pool(), &self.ctx.stage_instance_id, unit_id).await?;
+        let ended_without_emit = unit.terminal_meta.as_ref()
+            .and_then(|meta| meta.get("kind"))
+            .and_then(serde_json::Value::as_str)
+            == Some("session_ended_without_emit");
+        if !matches!(unit.status, UnitStatus::Failed) && !ended_without_emit {
+            anyhow::bail!(
+                "unit '{}' is not retryable (status: {:?})",
+                unit_id,
+                unit.status
+            );
+        }
+
+        if let Some(session) = self.live_sessions.lock().unwrap()
+            .remove(&(self.ctx.stage_instance_id, unit_id.to_owned()))
+        {
+            session.cancelled.store(true, Ordering::SeqCst);
+        }
+
+        if !queries::reset_session_unit_for_retry(
+            self.ctx.pool(), &self.ctx.stage_instance_id, unit_id,
+        ).await? {
+            anyhow::bail!("unit '{}' is no longer retryable", unit_id);
+        }
+        self.recompute_aggregate().await?;
+        self.admit().await
+    }
+
+    /// Reattach every independently durable N>1 session before issuing the one
+    /// admission edge. The live-session key makes repeated coordinator recovery
+    /// idempotent and leaves completed/pending units untouched.
+    async fn recover_live_units(self: &Arc<Self>) -> anyhow::Result<()> {
+        let units = queries::list_session_units_for_stage(self.ctx.pool(), &self.ctx.stage_instance_id).await?;
+        for unit in units.into_iter().filter(|unit| {
+            matches!(unit.status, UnitStatus::Running | UnitStatus::Parked)
+                && unit.external_ref.is_some()
+        }) {
+            let key = (self.ctx.stage_instance_id, unit.unit_id.clone());
+            if self.live_sessions.lock().unwrap().contains_key(&key) {
+                continue;
+            }
+            let external = DelegatedExternalRef::parse(unit.external_ref.as_deref().expect("filtered"));
+            match self.kbbl_client.read_events_since(&external.sid, -1).await {
+                Ok(response) if response.session_id == external.sid => {
+                    if let Some(reason) = failure_reason_from_events(&external.sid, &response.events) {
+                        self.mark_failed(&unit.unit_id, reason).await;
+                        continue;
+                    }
+                    // A parked unit with gate state has a valid operator path; a
+                    // clean process exit does not invalidate that durable gate.
+                    if has_clean_exit(&response.events) && unit.gate_state.is_none() {
+                        self.mark_session_ended_without_emit(&unit.unit_id).await;
+                        continue;
+                    }
+                    self.attach_recovered_unit(unit, external)?;
+                }
+                Err(err) if is_retryable_observer_error(&err) => {
+                    let pre_wait_status = unit.status;
+                    let pre_wait_gate_state = unit.gate_state.clone();
+                    if matches!(unit.status, UnitStatus::Running) {
+                        queries::set_session_unit_status(
+                            self.ctx.pool(), &self.ctx.stage_instance_id, &unit.unit_id,
+                            UnitStatus::Parked, None,
+                        ).await?;
+                        queries::set_session_unit_gate_state(
+                            self.ctx.pool(), &self.ctx.stage_instance_id, &unit.unit_id,
+                            Some(serde_json::json!({"kind": "waiting_for_kbbl"})),
+                        ).await?;
+                    }
+                    self.spawn_unit_waiting_for_kbbl(unit, external, pre_wait_status, pre_wait_gate_state);
+                }
+                Ok(_) => {
+                    self.mark_failed(&unit.unit_id, format!(
+                        "kbbl responded for a different session than '{}'", external.sid
+                    )).await;
+                }
+                Err(err) => {
+                    self.mark_failed(&unit.unit_id, err.to_string()).await;
+                }
+            }
+        }
+        self.recompute_aggregate().await
+    }
+
+    fn attach_recovered_unit(
+        self: &Arc<Self>,
+        unit: crate::types::SessionUnit,
+        external: DelegatedExternalRef,
+    ) -> anyhow::Result<()> {
+        let materialized = materialize_persisted_unit(&self.config, &unit)?;
+        let mut unit_config = self.config.clone();
+        unit_config.rendered_prompt = materialized.rendered_prompt;
+        unit_config.worktree = materialized.worktree;
+        let key = (self.ctx.stage_instance_id, unit.unit_id.clone());
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let inserted = {
+            let mut sessions = self.live_sessions.lock().unwrap();
+            if sessions.contains_key(&key) {
+                false
+            } else {
+                sessions.insert(key, LiveSession {
+                    cancelled: cancelled.clone(), ctx: self.ctx.clone(), unit_id: unit.unit_id.clone(),
+                    sid: external.sid.clone(), config: unit_config,
+                    worktree_path: external.worktree_path.or(unit.worktree_path),
+                    worktree_branch: external.worktree_branch.or(unit.worktree_branch),
+                    worktree_base_ref: external.worktree_base_ref.or(unit.worktree_base_ref),
+                    unit_scheduler: Some(self.clone()),
+                });
+                true
+            }
+        };
+        if inserted {
+            self.spawn_unit_observer(unit.unit_id, external.sid, cancelled);
+        }
+        Ok(())
+    }
+
+    fn spawn_unit_waiting_for_kbbl(
+        self: &Arc<Self>,
+        unit: crate::types::SessionUnit,
+        external: DelegatedExternalRef,
+        pre_wait_status: UnitStatus,
+        pre_wait_gate_state: Option<Value>,
+    ) {
+        let scheduler = self.clone();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let key = (self.ctx.stage_instance_id, unit.unit_id.clone());
+        {
+            let mut sessions = self.live_sessions.lock().unwrap();
+            if sessions.contains_key(&key) { return; }
+            sessions.insert(key.clone(), LiveSession {
+                cancelled: cancelled.clone(), ctx: self.ctx.clone(), unit_id: unit.unit_id.clone(),
+                sid: external.sid.clone(), config: self.config.clone(),
+                worktree_path: external.worktree_path.clone().or(unit.worktree_path.clone()),
+                worktree_branch: external.worktree_branch.clone().or(unit.worktree_branch.clone()),
+                worktree_base_ref: external.worktree_base_ref.clone().or(unit.worktree_base_ref.clone()),
+                unit_scheduler: Some(self.clone()),
+            });
+        }
+        tokio::spawn(async move {
+            loop {
+                sleep(Duration::from_millis(WAITING_FOR_KBBL_RETRY_MS)).await;
+                if cancelled.load(Ordering::SeqCst) { return; }
+                match scheduler.kbbl_client.read_events_since(&external.sid, -1).await {
+                    Ok(response) if response.session_id == external.sid => {
+                        if let Some(reason) = failure_reason_from_events(&external.sid, &response.events) {
+                            scheduler.live_sessions.lock().unwrap().remove(&key);
+                            scheduler.mark_failed(&unit.unit_id, reason).await;
+                            return;
+                        }
+                        if has_clean_exit(&response.events) && pre_wait_gate_state.is_none() {
+                            scheduler.live_sessions.lock().unwrap().remove(&key);
+                            scheduler.mark_session_ended_without_emit(&unit.unit_id).await;
+                            return;
+                        }
+                        let _ = queries::set_session_unit_status(
+                            scheduler.ctx.pool(), &scheduler.ctx.stage_instance_id, &unit.unit_id,
+                            pre_wait_status, None,
+                        ).await;
+                        let _ = queries::set_session_unit_gate_state(
+                            scheduler.ctx.pool(), &scheduler.ctx.stage_instance_id, &unit.unit_id,
+                            pre_wait_gate_state,
+                        ).await;
+                        scheduler.live_sessions.lock().unwrap().remove(&key);
+                        if scheduler.attach_recovered_unit(unit, external).is_err() {
+                            scheduler.mark_failed(&key.1, "failed to rebuild recovered unit".into()).await;
+                        }
+                        let _ = scheduler.recompute_aggregate().await;
+                        return;
+                    }
+                    Ok(_) => {
+                        scheduler.live_sessions.lock().unwrap().remove(&key);
+                        scheduler.mark_failed(&unit.unit_id, "kbbl returned a mismatched session id".into()).await;
+                        return;
+                    }
+                    Err(err) if is_retryable_observer_error(&err) => continue,
+                    Err(err) => {
+                        scheduler.live_sessions.lock().unwrap().remove(&key);
+                        scheduler.mark_failed(&unit.unit_id, err.to_string()).await;
+                        return;
+                    }
+                }
+            }
+        });
     }
 
     async fn launch_unit(self: &Arc<Self>, unit: &MaterializedFanOutUnit) -> anyhow::Result<()> {
@@ -1172,33 +1403,35 @@ impl StageType for DelegatedSessionStage {
                     unit_scheduler: None,
                 }));
             }
-            let now = chrono::Utc::now();
-            for unit in &materialized {
-                let worktree = unit.worktree.as_ref();
-                queries::upsert_session_unit(
-                    ctx.pool(),
-                    &crate::types::SessionUnit {
-                        stage_instance_id: ctx.stage_instance_id,
-                        unit_id: unit.unit_id.clone(),
-                        params: Some(unit.params.clone()),
-                        depends_on: unit.depends_on.clone(),
-                        external_ref: None,
-                        worktree_branch: worktree.map(|identity| identity.branch_name.clone()),
-                        worktree_path: worktree.map(|identity| identity.worktree_subdir.clone()),
-                        worktree_base_ref: worktree.and_then(|identity| identity.base_ref.clone()),
-                        status: UnitStatus::Pending,
-                        gate_state: None,
-                        artifact_id: None,
-                        terminal_meta: None,
-                        created_at: now,
-                        updated_at: now,
-                    },
-                ).await?;
+            if queries::list_session_units_for_stage(ctx.pool(), &ctx.stage_instance_id).await?.is_empty() {
+                let now = chrono::Utc::now();
+                for unit in &materialized {
+                    let worktree = unit.worktree.as_ref();
+                    queries::upsert_session_unit(
+                        ctx.pool(),
+                        &crate::types::SessionUnit {
+                            stage_instance_id: ctx.stage_instance_id,
+                            unit_id: unit.unit_id.clone(),
+                            params: Some(unit.params.clone()),
+                            depends_on: unit.depends_on.clone(),
+                            external_ref: None,
+                            worktree_branch: worktree.map(|identity| identity.branch_name.clone()),
+                            worktree_path: worktree.map(|identity| identity.worktree_subdir.clone()),
+                            worktree_base_ref: worktree.and_then(|identity| identity.base_ref.clone()),
+                            status: UnitStatus::Pending,
+                            gate_state: None,
+                            artifact_id: None,
+                            terminal_meta: None,
+                            created_at: now,
+                            updated_at: now,
+                        },
+                    ).await?;
+                }
             }
             let scheduler = UnitScheduler::new(
                 ctx.clone(), config.clone(), fan_out, self.kbbl_client.clone(), self.live_sessions.clone(),
             );
-            ctx.set_status(StageStatus::Running, None).await?;
+            scheduler.recover_live_units().await?;
             scheduler.admit().await?;
             return Ok(Box::new(DelegatedSessionHandle {
                 stage_instance_id: ctx.stage_instance_id,
@@ -1465,6 +1698,13 @@ impl StageHandle for DelegatedSessionHandle {
             );
         }
         Ok(())
+    }
+
+    async fn retry_stuck(&self, unit_id: Option<String>) -> anyhow::Result<()> {
+        let unit_id = unit_id.ok_or_else(|| anyhow::anyhow!("delegated-session unit retry requires a unit_id"))?;
+        let scheduler = self.unit_scheduler.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("unit retry requires a fan-out delegated session"))?;
+        scheduler.retry_unit(&unit_id).await
     }
 }
 
@@ -2068,6 +2308,34 @@ mod tests {
         assert_eq!(units[0].rendered_prompt, format!("unit=a stage={} item=alpha base=base-value", stage_id.0));
         assert_eq!(units[1].worktree.as_ref().unwrap().branch_name, format!("run/{}/b", stage_id.0));
         assert_eq!(units[1].worktree.as_ref().unwrap().worktree_subdir, "units/b");
+    }
+
+    #[test]
+    fn materialize_persisted_unit_reuses_durable_identity() {
+        let stage_instance_id = StageInstanceId(uuid::Uuid::new_v4());
+        let config = fan_out_config(json!([{"id": "changed", "name": "changed"}]), Some("/depends_on"));
+        let unit = crate::types::SessionUnit {
+            stage_instance_id,
+            unit_id: "durable".into(),
+            params: Some(json!({"id": "durable", "name": "saved"})),
+            depends_on: vec!["already-done".into()],
+            external_ref: None,
+            worktree_branch: Some("saved-branch".into()),
+            worktree_path: Some("saved-path".into()),
+            worktree_base_ref: Some("saved-base".into()),
+            status: UnitStatus::Pending,
+            gate_state: None,
+            artifact_id: None,
+            terminal_meta: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        let rebuilt = materialize_persisted_unit(&config, &unit).unwrap();
+        assert_eq!(rebuilt.unit_id, "durable");
+        assert_eq!(rebuilt.depends_on, vec!["already-done"]);
+        assert!(rebuilt.rendered_prompt.contains("item=saved"));
+        assert_eq!(rebuilt.worktree.unwrap().branch_name, "saved-branch");
     }
 
     #[test]
