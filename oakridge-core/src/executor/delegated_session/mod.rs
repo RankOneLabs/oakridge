@@ -697,11 +697,24 @@ impl StageType for DelegatedSessionStage {
         &self,
         def_config: &Value,
         input_slots: &[InputSlot],
-        _output_slots: &[OutputSlot],
+        output_slots: &[OutputSlot],
     ) -> anyhow::Result<()> {
         let def: DelegatedSessionDefConfig = serde_json::from_value(def_config.clone())?;
         load_template(&self.prompts_dir, &def.prompt_template_path)?;
         validate_delegated_def(&def)?;
+
+        // A configured gate_output must name a declared output slot. Otherwise the
+        // emit handler treats every emit as auxiliary and never parks the unit,
+        // leaving the stage stuck in Running with no gate to resume. Fail fast at
+        // def validation instead of deadlocking a live run.
+        if let Some(gate_output) = &def.gate_output {
+            if !output_slots.iter().any(|slot| &slot.name == gate_output) {
+                anyhow::bail!(
+                    "gate_output '{}' does not match any declared output slot",
+                    gate_output
+                );
+            }
+        }
 
         let input_names: std::collections::HashSet<&str> =
             input_slots.iter().map(|slot| slot.name.as_str()).collect();
@@ -1639,6 +1652,61 @@ mod tests {
         assert_eq!(cfg.output_slots, output_slots);
         assert!(cfg.pre_authorized_tools.is_empty());
         assert!(cfg.yolo);
+    }
+
+    fn gate_output_def_config(prompts_dir: &std::path::Path, gate_output: &str) -> Value {
+        std::fs::write(prompts_dir.join("delegated.md"), "Task {{STAGE_INSTANCE_ID}}").unwrap();
+        json!({
+            "runtime": "codex",
+            "prompt_template_path": "delegated.md",
+            "slot_bindings": {},
+            "workdir": {"from": "literal", "value": "/work"},
+            "session_name": "s",
+            "pre_authorized_tools": [],
+            "yolo": false,
+            "gate_output": gate_output
+        })
+    }
+
+    #[test]
+    fn validate_def_config_rejects_gate_output_without_matching_slot() {
+        let dir = tempfile::tempdir().unwrap();
+        let stage = DelegatedSessionStage::new(
+            dir.path().to_path_buf(),
+            KbblClient::new("http://127.0.0.1:8080/").unwrap(),
+        );
+        let def_config = gate_output_def_config(dir.path(), "nonexistent");
+        let output_slots = vec![OutputSlot {
+            name: "build_result".into(),
+            artifact_type: "text".into(),
+        }];
+
+        let err = stage
+            .validate_def_config(&def_config, &[], &output_slots)
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("gate_output") && msg.contains("nonexistent"),
+            "expected gate_output mismatch error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn validate_def_config_accepts_gate_output_matching_slot() {
+        let dir = tempfile::tempdir().unwrap();
+        let stage = DelegatedSessionStage::new(
+            dir.path().to_path_buf(),
+            KbblClient::new("http://127.0.0.1:8080/").unwrap(),
+        );
+        let def_config = gate_output_def_config(dir.path(), "build_result");
+        let output_slots = vec![OutputSlot {
+            name: "build_result".into(),
+            artifact_type: "text".into(),
+        }];
+
+        assert!(stage
+            .validate_def_config(&def_config, &[], &output_slots)
+            .is_ok());
     }
 
     #[tokio::test]

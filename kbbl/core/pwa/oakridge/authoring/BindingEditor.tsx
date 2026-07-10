@@ -1,4 +1,3 @@
-import { useState } from "react";
 import type { SlotBinding, SlotBindingSource } from "../../oakridge/types";
 
 const inputClass =
@@ -29,10 +28,10 @@ export function BindingEditor({
   allowItem = false,
   disabled = false,
 }: BindingEditorProps) {
-  const [source, setSource] = useState<SlotBindingSource>(value.from);
-
+  // Derive the select's value directly from `value.from` rather than mirroring it
+  // in local state — a mirror would go stale when the parent replaces `value`
+  // (clone/load a def, reset bindings, async load resolving after mount).
   const onSourceChange = (next: SlotBindingSource) => {
-    setSource(next);
     onChange(defaultForSource(next));
   };
 
@@ -45,7 +44,7 @@ export function BindingEditor({
         <span className="text-xs font-medium text-[var(--text-secondary)]">{label}</span>
         <select
           className="rounded border border-[var(--border-muted)] bg-[var(--bg-surface)] px-2 py-0.5 text-xs text-[var(--text-secondary)]"
-          value={source}
+          value={value.from}
           onChange={(e) => onSourceChange(e.target.value as SlotBindingSource)}
           disabled={disabled}
           aria-label={`${label} binding source`}
