@@ -168,10 +168,8 @@ pub struct DelegatedSessionConfig {
     #[serde(default)]
     pub yolo: bool,
     pub output_slots: Vec<OutputSlot>,
-    /// Fan-out carried from the def config. `None` = N=1 implicit unit (current
-    /// default). When `Some`, `execute` rejects with "not yet implemented" until
-    /// Phase 2b wires the per-unit session scheduler. Carrying it through to the
-    /// built config ensures the field is round-trippable and visible at execute time.
+    /// Fan-out carried from the def config. `None` selects the implicit N=1 unit;
+    /// `Some` materializes and schedules one durable session unit per selected item.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub fan_out: Option<FanOut>,
     /// Resolved gate_output from the def config. Determines which output slot parks

@@ -142,8 +142,12 @@ the emitted artifact.
 
 ## Recovery states for `delegated_session`
 
-When `oakridge-core` recovers a `delegated_session` stage on boot, several
-situations can leave it in a non-normal park or failure state.
+When `oakridge-core` recovers a `delegated_session` stage on boot, it selects
+the recovery path from the persisted configuration and session-unit rows.
+Definitions without `fan_out` retain the N=1 stage-level behavior. Fanned N>1
+stages rebuild their complete unit graph, reattach each durable session
+independently, leave done units untouched, and admit dependency-ready pending
+units after reconstruction.
 
 ### `waiting_for_kbbl`
 
@@ -151,11 +155,12 @@ situations can leave it in a non-normal park or failure state.
 process lifetime), but kbbl is unreachable at boot time — connect failure, timeout,
 or a 5xx response.
 
-**State**: stage status `parked`, `parked_reason = "waiting_for_kbbl"`,
+**N=1 state**: stage status `parked`,
+`parked_reason = "waiting_for_kbbl"`,
 `parked_meta = {"kind": "waiting_for_kbbl"}`.
 
-**Behaviour**: a background retry task polls kbbl at the scheduler cadence (5 s
-in production). When kbbl becomes reachable:
+**N=1 behaviour**: a background retry task polls kbbl at the scheduler cadence
+(5 s in production). When kbbl becomes reachable:
 
 - If the stage was `Running` before the park: status returns to `Running`,
   `parked_reason` and `parked_meta` are cleared, and the normal observer loop
@@ -167,8 +172,21 @@ in production). When kbbl becomes reachable:
 If kbbl responds with a terminal error (4xx, non-retryable) during retries, the
 stage is failed with `terminal_meta = {"reason": "..."}`.
 
-**Operator action**: none required — the substrate reattaches automatically. If
-the stage stays in `waiting_for_kbbl` for an extended period, check kbbl health.
+**N>1 behaviour**: recovery probes every running or parked unit that has an
+`external_ref`. A temporarily unreachable running unit is parked with an
+internal recovery marker that preserves its previous status and gate state;
+an already gate-parked unit keeps its gate. Each affected unit retries kbbl
+attachment independently. When kbbl returns, the prior unit state is restored
+and its observer is reattached exactly once. Healthy siblings continue, and
+the parent stage status is derived from all unit rows.
+
+A non-retryable response fails only the affected unit with terminal metadata.
+The aggregate stage parks with `parked_reason = "unit_attention_required"`
+while other eligible units continue.
+
+**Operator action**: none required — attachment retries automatically. If a
+stage or unit stays in the waiting state for an extended period, check kbbl
+health.
 
 ### `session_ended_without_emit`
 
@@ -176,19 +194,38 @@ the stage stays in `waiting_for_kbbl` for an extended period, check kbbl health.
 stage is still `Running` (no artifact has been emitted yet). This happens when the
 delegated agent exits cleanly without calling the emit route.
 
-**State**: stage status `parked`, `parked_reason = "session_ended_without_emit"`,
+**N=1 state**: stage status `parked`,
+`parked_reason = "session_ended_without_emit"`,
 `parked_meta = {"kind": "session_ended_without_emit"}`.
 
-**Behaviour**: the stage is not completed and not failed. The operator must decide
-what to do: restart the session (future operator action), fail the stage manually,
-or supply an artifact out-of-band.
+**N=1 behaviour**: the stage is not completed and not failed. The operator must
+inspect it and decide whether to fail the stage or supply an artifact
+out-of-band; whole-stage retry remains limited to `stuck_timeout`.
+
+**N>1 state and behaviour**: only the affected unit becomes `failed`, with
+`terminal_meta = {"kind": "session_ended_without_emit"}`. The aggregate stage
+parks with `parked_reason = "unit_attention_required"`, while unaffected
+siblings continue. Retry that unit without disturbing siblings:
+
+```http
+POST /stage_instances/:id/retry_stuck
+Content-Type: application/json
+
+{ "unit_id": "<unit-id>" }
+```
+
+The retry preserves the materialized parameters, dependency list, worktree
+identity, and historical artifact revisions. It clears the previous attempt's
+session, gate, and current-artifact routing state, then re-admits the unit
+through the normal dependency and `max_parallel` checks.
 
 If the stage is already `Parked` at a gate (artifact already emitted) when the
 clean exit arrives, the exit is expected — the observer stops but the live session
 remains intact so the pending gate decision can still be delivered.
 
 **Operator action**: inspect the kbbl session transcript to determine why the
-agent exited without emitting an artifact.
+agent exited without emitting an artifact. For N>1, retry the named unit only
+after correcting the cause.
 
 ### Recovery failures: structured `terminal_meta`
 

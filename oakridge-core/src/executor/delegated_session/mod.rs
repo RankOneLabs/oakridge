@@ -386,7 +386,7 @@ impl DelegatedSessionStage {
 pub(crate) struct LiveSession {
     pub cancelled: Arc<AtomicBool>,
     pub ctx: StageContext,
-    /// unit_id is stored here for future N>1 fan-out routing; not yet read on the N=1 path.
+    /// Unit identity retained alongside the live-session map key.
     #[allow(dead_code)]
     pub unit_id: String,
     pub sid: String,
