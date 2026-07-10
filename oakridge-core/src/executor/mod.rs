@@ -328,20 +328,19 @@ impl StageContext {
         if let Some(extractor) = extractor {
             let revision_id = match artifact.parent_artifact_id {
                 None => artifact.id.0.to_string(),
-                Some(_) => match crate::db::queries::get_artifact_chain(&self.db, &artifact.id).await
-                {
-                    Ok(chain) => chain
-                        .last()
-                        .map(|root| root.id.0.to_string())
-                        .unwrap_or_else(|| artifact.id.0.to_string()),
-                    Err(e) => {
-                        tracing::warn!(
-                            artifact_id = %artifact.id.0,
-                            "review_items_extractor: chain-root lookup failed, anchoring to artifact id: {e}"
-                        );
-                        artifact.id.0.to_string()
+                Some(_) => {
+                    match crate::db::queries::get_artifact_chain_root_id(&self.db, &artifact.id).await
+                    {
+                        Ok(root_id) => root_id,
+                        Err(e) => {
+                            tracing::warn!(
+                                artifact_id = %artifact.id.0,
+                                "review_items_extractor: chain-root lookup failed, anchoring to artifact id: {e}"
+                            );
+                            artifact.id.0.to_string()
+                        }
                     }
-                },
+                }
             };
             let now = Utc::now();
             for candidate in extractor(&artifact.body) {

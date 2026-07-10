@@ -1349,11 +1349,7 @@ async fn chain_root_id(
     pool: &sqlx::SqlitePool,
     artifact_id: &crate::types::ArtifactId,
 ) -> crate::Result<String> {
-    let chain = queries::get_artifact_chain(pool, artifact_id).await?;
-    let root = chain
-        .last()
-        .ok_or_else(|| crate::Error::Validation("empty artifact chain".into()))?;
-    Ok(root.id.0.to_string())
+    queries::get_artifact_chain_root_id(pool, artifact_id).await
 }
 
 // ── POST /artifacts/:id/threads ───────────────────────────────────────────────
