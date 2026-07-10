@@ -109,7 +109,9 @@ async fn emit_handler(
             output_name: output_name.clone(),
             artifact_type: slot.artifact_type,
             body,
-            label: None,
+            // label carries the unit id (spec §3.5) so per-unit artifacts group by
+            // unit; N=1 uses "0". Downstream unit-artifact filtering keys off this.
+            label: Some(unit_id.clone()),
             parent_artifact_id: None,
         })
         .await

@@ -189,11 +189,30 @@ export function WorkflowDefEditor({ cloneFromId, onBack, onCreated }: WorkflowDe
   };
 
   const updateStageKey = (i: number, newKey: string) => {
+    const oldKey = stages[i]?.stageKey;
     setStages((prev) => prev.map((s, idx) => (idx === i ? { ...s, stageKey: newKey } : s)));
+    // Keep edges pointing at the renamed stage; a stale key makes the graph
+    // non-submittable.
+    if (oldKey && oldKey !== newKey) {
+      setEdges((prev) =>
+        prev.map((edge) => ({
+          from: edge.from.stage === oldKey ? { ...edge.from, stage: newKey } : edge.from,
+          to: edge.to.stage === oldKey ? { ...edge.to, stage: newKey } : edge.to,
+        })),
+      );
+    }
   };
 
   const removeStage = (i: number) => {
+    const stageKey = stages[i]?.stageKey;
     setStages((prev) => prev.filter((_, idx) => idx !== i));
+    // Drop edges connected to the removed stage; dangling edges make the graph
+    // non-submittable.
+    if (stageKey) {
+      setEdges((prev) =>
+        prev.filter((edge) => edge.from.stage !== stageKey && edge.to.stage !== stageKey),
+      );
+    }
   };
 
   const validationErrors = useMemo(

@@ -771,7 +771,7 @@ impl StageType for DelegatedSessionStage {
             None => None,
             Some(Bindable::Literal(s)) => Some(s),
             Some(Bindable::Bound(ref binding)) => {
-                resolve_optional_binding(binding, run_context)
+                resolve_optional_binding(binding, run_context)?
             }
         };
 
@@ -779,7 +779,7 @@ impl StageType for DelegatedSessionStage {
             None => None,
             Some(Bindable::Literal(s)) => Some(s),
             Some(Bindable::Bound(ref binding)) => {
-                let resolved = resolve_optional_binding(binding, run_context);
+                let resolved = resolve_optional_binding(binding, run_context)?;
                 if let Some(ref e) = resolved {
                     if !validate_effort(e) {
                         anyhow::bail!(
@@ -931,8 +931,20 @@ impl StageType for DelegatedSessionStage {
                 worktree_branch: live_worktree_branch.clone(),
                 worktree_path: live_worktree_path.clone(),
                 worktree_base_ref: live_worktree_base_ref.clone(),
-                status: UnitStatus::Running,
-                gate_state: None,
+                // On recovery of a gate-parked stage, mirror the recovered parked
+                // state onto the unit row instead of hardcoding Running/None — else
+                // the per-unit read-model reports a running unit with no gate while
+                // the stage is parked.
+                status: if recovered_parked {
+                    UnitStatus::Parked
+                } else {
+                    UnitStatus::Running
+                },
+                gate_state: if recovered_parked {
+                    summary.parked_meta.clone()
+                } else {
+                    None
+                },
                 artifact_id: None,
                 terminal_meta: None,
                 created_at: now,

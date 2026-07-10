@@ -329,8 +329,9 @@ export function RunDetailView({ runId, onBack, onSelectArtifact }: RunDetailView
             </thead>
             <tbody>
               {run.stages.flatMap((stage: StageDetail) => {
-                if (isFannedOut(stage)) {
-                  return stage.units!.map((unit) => {
+                const units = stage.units;
+                if (units != null && isFannedOut(stage)) {
+                  return units.map((unit) => {
                     const unitArtifacts = stage.artifacts.filter(
                       (a) => a.label === unit.unit_id,
                     );

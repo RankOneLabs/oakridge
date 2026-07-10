@@ -107,7 +107,11 @@ export function StageEditor({
   const slotBindingEntries = Object.entries(cfg.slot_bindings);
 
   const addSlotBinding = () => {
-    const key = `new_binding_${Object.keys(cfg.slot_bindings).length}`;
+    // Find an unused name so a length-based name can't collide with a surviving
+    // entry after removals and silently overwrite it.
+    let n = Object.keys(cfg.slot_bindings).length;
+    let key = `new_binding_${n}`;
+    while (key in cfg.slot_bindings) key = `new_binding_${++n}`;
     const next = { ...cfg.slot_bindings, [key]: { from: "literal" as const, value: "" } };
     updateCfg({ slot_bindings: next });
   };
@@ -119,6 +123,8 @@ export function StageEditor({
   };
 
   const updateSlotBindingKey = (oldKey: string, newKey: string) => {
+    // Reject a rename that would collide with (and silently drop) another binding.
+    if (newKey !== oldKey && newKey in cfg.slot_bindings) return;
     const next: Record<string, SlotBinding> = {};
     for (const [k, v] of Object.entries(cfg.slot_bindings)) {
       next[k === oldKey ? newKey : k] = v;

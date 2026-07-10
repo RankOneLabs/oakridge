@@ -288,26 +288,33 @@ fn find_output<'a>(outputs: &'a [OutputSlot], name: &str) -> Option<&'a OutputSl
     outputs.iter().find(|slot| slot.name == name)
 }
 
-fn validate_workflow_graph(state: &AppState, graph: &WorkflowGraph) -> Result<(), AppError> {
+/// Validate a workflow graph against the type registries. Takes the registries
+/// directly (rather than `AppState`) and returns `crate::Error` so it can be shared
+/// by the HTTP handlers and by boot-time seeding of the built-in defs.
+pub(crate) fn validate_workflow_graph(
+    stage_registry: &crate::registry::StageTypeRegistry,
+    artifact_registry: &crate::registry::ArtifactTypeRegistry,
+    graph: &WorkflowGraph,
+) -> crate::Result<()> {
     for (stage_key, node) in &graph.stages {
-        let stage_type = state.stage_registry.get(&node.stage_type).ok_or_else(|| {
-            validation_error(format!(
+        let stage_type = stage_registry.get(&node.stage_type).ok_or_else(|| {
+            crate::Error::Validation(format!(
                 "stage '{}' references unknown stage type '{}'",
                 stage_key, node.stage_type
             ))
         })?;
 
         for input in &node.inputs {
-            if state.artifact_registry.get(&input.artifact_type).is_none() {
-                return Err(validation_error(format!(
+            if artifact_registry.get(&input.artifact_type).is_none() {
+                return Err(crate::Error::Validation(format!(
                     "stage '{}' input '{}' references unknown artifact type '{}'",
                     stage_key, input.name, input.artifact_type
                 )));
             }
         }
         for output in &node.outputs {
-            if state.artifact_registry.get(&output.artifact_type).is_none() {
-                return Err(validation_error(format!(
+            if artifact_registry.get(&output.artifact_type).is_none() {
+                return Err(crate::Error::Validation(format!(
                     "stage '{}' output '{}' references unknown artifact type '{}'",
                     stage_key, output.name, output.artifact_type
                 )));
@@ -317,37 +324,37 @@ fn validate_workflow_graph(state: &AppState, graph: &WorkflowGraph) -> Result<()
         stage_type
             .validate_def_config(&node.config, &node.inputs, &node.outputs)
             .map_err(|err| {
-                validation_error(format!("stage '{}' config invalid: {}", stage_key, err))
+                crate::Error::Validation(format!("stage '{}' config invalid: {}", stage_key, err))
             })?;
     }
 
     for edge in &graph.edges {
         let producer = graph.stages.get(&edge.from.stage).ok_or_else(|| {
-            validation_error(format!(
+            crate::Error::Validation(format!(
                 "edge source stage '{}' does not exist",
                 edge.from.stage
             ))
         })?;
         let consumer = graph.stages.get(&edge.to.stage).ok_or_else(|| {
-            validation_error(format!(
+            crate::Error::Validation(format!(
                 "edge target stage '{}' does not exist",
                 edge.to.stage
             ))
         })?;
         let output = find_output(&producer.outputs, &edge.from.slot).ok_or_else(|| {
-            validation_error(format!(
+            crate::Error::Validation(format!(
                 "edge source '{}.{}' does not match any output slot",
                 edge.from.stage, edge.from.slot
             ))
         })?;
         let input = find_input(&consumer.inputs, &edge.to.slot).ok_or_else(|| {
-            validation_error(format!(
+            crate::Error::Validation(format!(
                 "edge target '{}.{}' does not match any input slot",
                 edge.to.stage, edge.to.slot
             ))
         })?;
         if output.artifact_type != input.artifact_type {
-            return Err(validation_error(format!(
+            return Err(crate::Error::Validation(format!(
                 "edge '{}.{}' -> '{}.{}' connects artifact type '{}' to '{}'",
                 edge.from.stage,
                 edge.from.slot,
@@ -427,7 +434,7 @@ pub async fn create_workflow_def(
     State(state): State<AppState>,
     Json(body): Json<CreateWorkflowDef>,
 ) -> Result<(StatusCode, Json<WorkflowDef>), AppError> {
-    validate_workflow_graph(&state, &body.graph)?;
+    validate_workflow_graph(&state.stage_registry, &state.artifact_registry, &body.graph)?;
     let def = WorkflowDef {
         id: WorkflowDefId(Uuid::new_v4()),
         name: body.name,
@@ -461,7 +468,7 @@ pub async fn create_workflow_run(
     Json(body): Json<CreateWorkflowRun>,
 ) -> Result<(StatusCode, Json<WorkflowRun>), AppError> {
     let def = queries::get_workflow_def_by_id(&state.pool, &body.workflow_def_id).await?;
-    validate_workflow_graph(&state, &def.graph)?;
+    validate_workflow_graph(&state.stage_registry, &state.artifact_registry, &def.graph)?;
     reject_unsupported_fan_out(&def.graph)?;
 
     let caller_context = body

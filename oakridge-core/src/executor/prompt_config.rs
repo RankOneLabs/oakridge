@@ -81,20 +81,30 @@ fn value_to_string(v: &Value) -> anyhow::Result<String> {
     }
 }
 
-/// Resolve a slot binding for optional model/effort fields, yielding None when
-/// the bound context key is absent or null instead of erroring (lenient path).
-/// Input bindings are not valid for model/effort and return None.
-pub fn resolve_optional_binding(binding: &SlotBinding, run_context: &Value) -> Option<String> {
+/// Resolve a slot binding for optional model/effort fields, yielding `Ok(None)`
+/// when the bound context key is absent or null (lenient — falls back to the
+/// runtime default). `Input`/`Item` bindings are not valid for model/effort and
+/// are rejected rather than silently coerced to `None`, so a misconfigured def
+/// fails workflow construction instead of quietly using the default.
+pub fn resolve_optional_binding(
+    binding: &SlotBinding,
+    run_context: &Value,
+) -> anyhow::Result<Option<String>> {
     match binding {
-        SlotBinding::Literal { value } => Some(value.clone()),
+        SlotBinding::Literal { value } => Ok(Some(value.clone())),
         SlotBinding::Context { path } => {
-            let v = run_context.pointer(path)?;
+            let Some(v) = run_context.pointer(path) else {
+                return Ok(None);
+            };
             if v.is_null() {
-                return None;
+                return Ok(None);
             }
-            value_to_string(v).ok()
+            Ok(value_to_string(v).ok())
         }
-        SlotBinding::Input { .. } | SlotBinding::Item { .. } => None,
+        SlotBinding::Input { .. } | SlotBinding::Item { .. } => anyhow::bail!(
+            "model/effort binding must be a literal or a context binding; \
+             input/item bindings are not supported here"
+        ),
     }
 }
 

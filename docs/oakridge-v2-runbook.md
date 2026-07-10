@@ -701,7 +701,7 @@ updated when the session emits an artifact and parks.
 
 The emit route now includes a `units/:unit_id` segment:
 
-```
+```http
 POST /executors/delegated_session/:stage_instance_id/units/:unit_id/emit/:output_name
 ```
 
@@ -729,7 +729,7 @@ retries the whole stage). It will be used to target a specific unit when N>1 is 
 The `delegated_session` def config accepts a `fan_out` block. The config struct, route
 plumbing, and DB model for N>1 are in place, but **execute rejects N>1 at runtime**:
 
-```
+```text
 fan_out multi-unit execution is not yet implemented; the substrate … is in place
 but the N>1 session scheduler and per-unit launch are pending (Phase 2b)
 ```

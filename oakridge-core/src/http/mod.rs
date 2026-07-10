@@ -145,15 +145,18 @@ where
     }
 
     let pool = Arc::new(db::init_pool(&cfg.db_url).await?);
-    seed::seed_builtin_workflow_defs(&pool).await?;
 
     let mut stage_reg = StageTypeRegistry::new();
     let mut artifact_reg = ArtifactTypeRegistry::new();
     register_fn(&mut stage_reg, &mut artifact_reg);
-
-    let bus = EventBus::new();
     let stage_reg = Arc::new(stage_reg);
     let artifact_reg = Arc::new(artifact_reg);
+
+    // Seed after the registries exist so built-in defs are validated the same way
+    // POST /workflow_defs validates operator-authored defs.
+    seed::seed_builtin_workflow_defs(&pool, &stage_reg, &artifact_reg).await?;
+
+    let bus = EventBus::new();
     let coordinator = Arc::new(
         Coordinator::new(
             pool.clone(),

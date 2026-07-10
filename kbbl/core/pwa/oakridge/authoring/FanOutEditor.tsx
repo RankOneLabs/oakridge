@@ -50,9 +50,13 @@ export function FanOutEditor({ value, onChange, disabled = false }: FanOutEditor
   const itemBindings = Object.entries(fo.item_bindings ?? {});
 
   const addItemBinding = () => {
-    const key = `new_binding_${Object.keys(fo.item_bindings ?? {}).length}`;
-    const next = { ...fo.item_bindings, [key]: { from: "item" as const, path: "" } };
-    update({ item_bindings: next });
+    const bindings = fo.item_bindings ?? {};
+    // Find an unused name — a length-based name can collide with a surviving
+    // entry after removals and silently overwrite it.
+    let n = Object.keys(bindings).length;
+    let key = `new_binding_${n}`;
+    while (key in bindings) key = `new_binding_${++n}`;
+    update({ item_bindings: { ...bindings, [key]: { from: "item" as const, path: "" } } });
   };
 
   const removeItemBinding = (key: string) => {
@@ -62,8 +66,11 @@ export function FanOutEditor({ value, onChange, disabled = false }: FanOutEditor
   };
 
   const updateItemBindingKey = (oldKey: string, newKey: string) => {
+    const bindings = fo.item_bindings ?? {};
+    // Reject a rename that would collide with (and silently drop) another entry.
+    if (newKey !== oldKey && newKey in bindings) return;
     const next: Record<string, SlotBinding> = {};
-    for (const [k, v] of Object.entries(fo.item_bindings ?? {})) {
+    for (const [k, v] of Object.entries(bindings)) {
       next[k === oldKey ? newKey : k] = v;
     }
     update({ item_bindings: next });

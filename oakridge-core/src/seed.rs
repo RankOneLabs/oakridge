@@ -6,7 +6,11 @@ use crate::types::WorkflowDef;
 const DEV_FLOW_V1_JSON: &str = include_str!("../examples/dev_flow.json");
 const DEV_FLOW_V2_JSON: &str = include_str!("../examples/dev_flow_v2.json");
 
-pub async fn seed_builtin_workflow_defs(pool: &SqlitePool) -> crate::Result<()> {
+pub async fn seed_builtin_workflow_defs(
+    pool: &SqlitePool,
+    stage_registry: &crate::registry::StageTypeRegistry,
+    artifact_registry: &crate::registry::ArtifactTypeRegistry,
+) -> crate::Result<()> {
     for (label, json_str) in [
         ("dev_flow.json", DEV_FLOW_V1_JSON),
         ("dev_flow_v2.json", DEV_FLOW_V2_JSON),
@@ -14,6 +18,25 @@ pub async fn seed_builtin_workflow_defs(pool: &SqlitePool) -> crate::Result<()> 
         let def: WorkflowDef = serde_json::from_str(json_str).map_err(|e| {
             crate::Error::Validation(format!("failed to parse built-in {}: {}", label, e))
         })?;
+
+        // Run the same graph/type/config validation as POST /workflow_defs so a
+        // drifted example (unknown stage/artifact type, invalid def_config) is
+        // surfaced at boot instead of silently failing later at run creation.
+        //
+        // This warns rather than aborts: boot() runs with a caller-provided type
+        // registry (embedders and tests may register a minimal set), so a built-in
+        // def whose types aren't registered in this process just isn't runnable
+        // here — that shouldn't take down boot. A genuinely malformed def is still
+        // rejected when a run is created (create_workflow_run validates too).
+        if let Err(e) =
+            crate::http::rest::validate_workflow_graph(stage_registry, artifact_registry, &def.graph)
+        {
+            tracing::warn!(
+                def = %label,
+                "built-in workflow def failed validation against the registered types \
+                 and will not be runnable in this process: {e}"
+            );
+        }
 
         // Attempt the insert unconditionally so concurrent boots are safe: if two
         // processes both try to seed the same (name, version), the second hits the

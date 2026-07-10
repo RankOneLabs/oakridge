@@ -40,6 +40,7 @@ function ReviewItemRow({ item, onResolve, onWaive }: ReviewItemRowProps) {
         <div className="or-review-item__actions">
           <input
             type="text"
+            aria-label="Resolution note"
             className="or-input or-review-item__resolution-input"
             placeholder="Resolution note (optional)…"
             value={resolution}
