@@ -60,6 +60,15 @@ export interface StageArtifact {
   id: string;
   type_id: string;
   version: number;
+  label?: string | null;
+}
+
+export interface StageUnit {
+  unit_id: string;
+  sid: string | null;
+  worktree: WorktreeMetadata | null;
+  status: StageStatus;
+  gate: string | null;
 }
 
 export interface StageDetail {
@@ -70,6 +79,7 @@ export interface StageDetail {
   artifacts: StageArtifact[];
   delegated_kbbl_sid: string | null;
   worktree: WorktreeMetadata | null;
+  units?: StageUnit[];
 }
 
 export interface RunDetail {
@@ -112,6 +122,7 @@ export interface ArtifactDetail {
   anchor_schema: string[] | null;
   run_id: string;
   producing_stage: string;
+  label?: string | null;
   revisions: ArtifactRevision[];
 }
 
@@ -120,6 +131,7 @@ export interface ParkedGate {
   gate_type: string;
   run_id: string;
   stage_name: string;
+  unit_id: string;
   artifact_revision_id: string | null;
   worktree: WorktreeMetadata | null;
   resume_actions: string[];

@@ -32,6 +32,14 @@ function GateCard({ gate, onNavigateRun }: GateCardProps) {
         <span className="text-sm text-[var(--text-secondary)]" data-testid="or-gate-stage">
           {gate.stage_name}
         </span>
+        {gate.unit_id && gate.unit_id !== "0" && (
+          <span
+            className="rounded bg-[var(--bg-elevated)] px-1.5 py-0.5 text-xs font-mono text-[var(--text-muted)]"
+            data-testid="or-gate-unit-id"
+          >
+            {gate.unit_id}
+          </span>
+        )}
         {onNavigateRun && (
           <button
             type="button"
