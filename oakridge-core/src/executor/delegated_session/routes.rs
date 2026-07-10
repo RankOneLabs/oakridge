@@ -127,13 +127,21 @@ async fn emit_handler(
     };
 
     // Write artifact_id to the unit row (best-effort; unit CRUD errors don't fail the emit).
-    let _ = queries::set_session_unit_artifact_id(
+    if let Err(err) = queries::set_session_unit_artifact_id(
         live_session.ctx.pool(),
         &stage_instance_id,
         &unit_id,
         artifact.id,
     )
-    .await;
+    .await
+    {
+        tracing::warn!(
+            stage_instance_id = %stage_instance_id.0,
+            unit_id = %unit_id,
+            error = %err,
+            "set_session_unit_artifact_id failed; unit row may lack artifact_id"
+        );
+    }
 
     let revision_count = revision_count_from_meta(summary.parked_meta.as_ref());
     let gate_state = DelegatedGateState::artifact_approval(
@@ -151,13 +159,21 @@ async fn emit_handler(
     };
 
     // Write gate_state to the unit row (best-effort).
-    let _ = queries::set_session_unit_gate_state(
+    if let Err(err) = queries::set_session_unit_gate_state(
         live_session.ctx.pool(),
         &stage_instance_id,
         &unit_id,
         Some(gate_state_value.clone()),
     )
-    .await;
+    .await
+    {
+        tracing::warn!(
+            stage_instance_id = %stage_instance_id.0,
+            unit_id = %unit_id,
+            error = %err,
+            "set_session_unit_gate_state failed; unit row may lack gate_state"
+        );
+    }
 
     if live_session
         .ctx

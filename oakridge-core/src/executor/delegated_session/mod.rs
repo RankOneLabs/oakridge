@@ -900,7 +900,7 @@ impl StageType for DelegatedSessionStage {
             };
             serde_json::to_string(&ext).ok()
         };
-        let _ = queries::upsert_session_unit(
+        if let Err(err) = queries::upsert_session_unit(
             ctx.pool(),
             &crate::types::SessionUnit {
                 stage_instance_id,
@@ -919,7 +919,15 @@ impl StageType for DelegatedSessionStage {
                 updated_at: now,
             },
         )
-        .await;
+        .await
+        {
+            tracing::warn!(
+                stage_instance_id = %stage_instance_id.0,
+                unit_id = %unit_id,
+                error = %err,
+                "upsert_session_unit failed; unit state may be inconsistent with stage"
+            );
+        }
 
         let cancelled = self.insert_live_session(
             stage_instance_id,

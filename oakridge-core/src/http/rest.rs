@@ -882,7 +882,7 @@ pub async fn resume_operator_gate(
     Json(body): Json<OperatorGateResumeRequest>,
 ) -> Result<(StatusCode, Json<OperatorGateResumeResponse>), AppError> {
     // Parse composite gate id: "{stage_uuid}:{unit_id}"
-    let (stage_uuid_str, _unit_id) = composite_id.split_once(':').ok_or_else(|| {
+    let (stage_uuid_str, unit_id) = composite_id.split_once(':').ok_or_else(|| {
         validation_error(format!(
             "invalid gate id '{}': expected '{{stage_uuid}}:{{unit_id}}'",
             composite_id
@@ -896,6 +896,15 @@ pub async fn resume_operator_gate(
     })?;
     let stage_instance_id = StageInstanceId(stage_uuid);
     let stage = queries::get_stage_instance_by_id(&state.pool, &stage_instance_id).await?;
+    // Validate unit_id against the known units for this stage (rejects stale or
+    // client-side bugs where a wrong unit is targeted — e.g. "uuid:1" when only "0" exists).
+    let units = queries::list_session_units_for_stage(&state.pool, &stage_instance_id).await?;
+    if !units.iter().any(|u| u.unit_id == unit_id) {
+        return Err(validation_error(format!(
+            "unit '{}' not found on stage instance '{}'",
+            unit_id, stage_instance_id.0
+        )));
+    }
     let gate = delegated_gate_state(&stage).ok_or_else(|| {
         validation_error(format!(
             "stage instance {} has no resumable delegated gate metadata",

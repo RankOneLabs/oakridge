@@ -721,7 +721,7 @@ route parses this composite id to route the decision. See the "Parked gate panel
 { "unit_id": "0" }
 ```
 
-The `unit_id` is accepted and stored but not yet forwarded to the scheduler (N=1 always
+The `unit_id` is accepted and parsed but not yet forwarded to the scheduler (N=1 always
 retries the whole stage). It will be used to target a specific unit when N>1 is implemented.
 
 ### fan_out config (stub only)
