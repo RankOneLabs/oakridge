@@ -50,7 +50,8 @@ export function FanOutEditor({ value, onChange, disabled = false }: FanOutEditor
   const itemBindings = Object.entries(fo.item_bindings ?? {});
 
   const addItemBinding = () => {
-    const next = { ...fo.item_bindings, "": { from: "item" as const, path: "" } };
+    const key = `new_binding_${Object.keys(fo.item_bindings ?? {}).length}`;
+    const next = { ...fo.item_bindings, [key]: { from: "item" as const, path: "" } };
     update({ item_bindings: next });
   };
 
@@ -133,8 +134,8 @@ export function FanOutEditor({ value, onChange, disabled = false }: FanOutEditor
             + Add
           </button>
         </div>
-        {itemBindings.map(([key, binding]) => (
-          <div key={key} className="flex flex-col gap-1 rounded border border-[var(--border-subtle)] p-2">
+        {itemBindings.map(([key, binding], i) => (
+          <div key={i} className="flex flex-col gap-1 rounded border border-[var(--border-subtle)] p-2">
             <div className="flex items-center gap-2">
               <input
                 type="text"

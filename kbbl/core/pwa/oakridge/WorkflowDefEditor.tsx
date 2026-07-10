@@ -51,6 +51,12 @@ function validateGraph(
       if (!stageKeys.has(e.to.stage)) {
         errors.push(`Edge references unknown to-stage: "${e.to.stage}".`);
       }
+      if (!e.from.slot) {
+        errors.push(`Edge from "${e.from.stage}" — from-slot must not be empty.`);
+      }
+      if (!e.to.slot) {
+        errors.push(`Edge to "${e.to.stage}" — to-slot must not be empty.`);
+      }
     }
   }
 

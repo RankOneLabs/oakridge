@@ -103,7 +103,8 @@ export function StageEditor({
   const slotBindingEntries = Object.entries(cfg.slot_bindings);
 
   const addSlotBinding = () => {
-    const next = { ...cfg.slot_bindings, "": { from: "literal" as const, value: "" } };
+    const key = `new_binding_${Object.keys(cfg.slot_bindings).length}`;
+    const next = { ...cfg.slot_bindings, [key]: { from: "literal" as const, value: "" } };
     updateCfg({ slot_bindings: next });
   };
 
@@ -124,6 +125,15 @@ export function StageEditor({
   const updateSlotBindingValue = (key: string, binding: SlotBinding) => {
     updateCfg({ slot_bindings: { ...cfg.slot_bindings, [key]: binding } });
   };
+
+  const addPreAuthTool = () =>
+    updateCfg({ pre_authorized_tools: [...(cfg.pre_authorized_tools ?? []), ""] });
+  const removePreAuthTool = (i: number) =>
+    updateCfg({ pre_authorized_tools: (cfg.pre_authorized_tools ?? []).filter((_, idx) => idx !== i) });
+  const updatePreAuthTool = (i: number, v: string) =>
+    updateCfg({
+      pre_authorized_tools: (cfg.pre_authorized_tools ?? []).map((t, idx) => (idx === i ? v : t)),
+    });
 
   return (
     <div className="flex flex-col gap-0 rounded-md border border-[var(--border-muted)]" data-testid="or-stage-editor">
@@ -256,8 +266,8 @@ export function StageEditor({
             {slotBindingEntries.length === 0 && (
               <p className="text-xs text-[var(--text-muted)]">No slot bindings.</p>
             )}
-            {slotBindingEntries.map(([key, binding]) => (
-              <div key={key} className="flex flex-col gap-1 rounded border border-[var(--border-subtle)] p-2">
+            {slotBindingEntries.map(([key, binding], i) => (
+              <div key={i} className="flex flex-col gap-1 rounded border border-[var(--border-subtle)] p-2">
                 <div className="flex items-center gap-2">
                   <input
                     type="text"
@@ -331,6 +341,106 @@ export function StageEditor({
               onChange={(fo) => updateCfg({ fan_out: fo ?? undefined })}
               disabled={disabled}
             />
+          </div>
+
+          {/* Worktree identity (session-level) */}
+          <div className={sectionClass}>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase text-[var(--text-muted)]">Worktree Identity</span>
+              <button
+                type="button"
+                className={addBtnClass}
+                onClick={() =>
+                  updateCfg({
+                    worktree: cfg.worktree
+                      ? null
+                      : { branchName: "", worktreeSubdir: "", baseRef: null },
+                  })
+                }
+                disabled={disabled}
+              >
+                {cfg.worktree ? "Remove" : "+ Add"}
+              </button>
+            </div>
+            {cfg.worktree && (
+              <div className="flex flex-col gap-2">
+                <label className="flex flex-col gap-1">
+                  <span className={labelClass}>branchName</span>
+                  <input
+                    type="text"
+                    className={inputClass}
+                    value={cfg.worktree.branchName}
+                    onChange={(e) =>
+                      updateCfg({ worktree: { ...cfg.worktree!, branchName: e.target.value } })
+                    }
+                    disabled={disabled}
+                    placeholder="cohort/{{UNIT_ID}}"
+                  />
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className={labelClass}>worktreeSubdir</span>
+                  <input
+                    type="text"
+                    className={inputClass}
+                    value={cfg.worktree.worktreeSubdir}
+                    onChange={(e) =>
+                      updateCfg({ worktree: { ...cfg.worktree!, worktreeSubdir: e.target.value } })
+                    }
+                    disabled={disabled}
+                    placeholder="wt/{{UNIT_ID}}"
+                  />
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className={labelClass}>baseRef (optional)</span>
+                  <input
+                    type="text"
+                    className={inputClass}
+                    value={cfg.worktree.baseRef ?? ""}
+                    onChange={(e) =>
+                      updateCfg({ worktree: { ...cfg.worktree!, baseRef: e.target.value || null } })
+                    }
+                    disabled={disabled}
+                    placeholder="main"
+                  />
+                </label>
+              </div>
+            )}
+          </div>
+
+          {/* Pre-authorized tools */}
+          <div className={sectionClass}>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase text-[var(--text-muted)]">
+                Pre-authorized Tools
+              </span>
+              <button type="button" className={addBtnClass} onClick={addPreAuthTool} disabled={disabled}>
+                + Add
+              </button>
+            </div>
+            {(cfg.pre_authorized_tools ?? []).length === 0 && (
+              <p className="text-xs text-[var(--text-muted)]">No pre-authorized tools.</p>
+            )}
+            {(cfg.pre_authorized_tools ?? []).map((tool, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <input
+                  type="text"
+                  className={inputClass}
+                  value={tool}
+                  onChange={(e) => updatePreAuthTool(i, e.target.value)}
+                  disabled={disabled}
+                  placeholder="Bash"
+                  aria-label={`Pre-authorized tool ${i + 1}`}
+                />
+                <button
+                  type="button"
+                  className={dangerBtnClass}
+                  onClick={() => removePreAuthTool(i)}
+                  disabled={disabled}
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
           </div>
         </div>
       )}

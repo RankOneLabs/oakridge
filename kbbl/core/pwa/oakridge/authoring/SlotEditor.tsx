@@ -36,7 +36,7 @@ export function InputSlotEditor({
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
         <span className={labelClass}>Input slots</span>
-        <button type="button" className={addBtnClass} onClick={addSlot} disabled={disabled}>
+        <button type="button" className={addBtnClass} onClick={addSlot} disabled={disabled || artifactTypes.length === 0}>
           + Add
         </button>
       </div>
@@ -114,7 +114,7 @@ export function OutputSlotEditor({
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
         <span className={labelClass}>Output slots</span>
-        <button type="button" className={addBtnClass} onClick={addSlot} disabled={disabled}>
+        <button type="button" className={addBtnClass} onClick={addSlot} disabled={disabled || artifactTypes.length === 0}>
           + Add
         </button>
       </div>

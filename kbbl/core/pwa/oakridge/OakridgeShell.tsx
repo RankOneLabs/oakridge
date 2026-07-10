@@ -107,6 +107,7 @@ function OakridgeShellInner({ route, onBack, onNavigate }: OakridgeShellInnerPro
     case "def-new":
       content = (
         <WorkflowDefEditor
+          key="new"
           cloneFromId={null}
           onBack={navigateToDefs}
           onCreated={navigateToDefs}
@@ -116,6 +117,7 @@ function OakridgeShellInner({ route, onBack, onNavigate }: OakridgeShellInnerPro
     case "def-edit":
       content = (
         <WorkflowDefEditor
+          key={route.id}
           cloneFromId={route.id}
           onBack={navigateToDefs}
           onCreated={navigateToDefs}
