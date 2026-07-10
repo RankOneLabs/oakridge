@@ -16,6 +16,7 @@ use crate::executor::delegated_session::{
     kbbl_client::DelegatedExternalRef, DelegatedGate, DelegatedGateState,
 };
 use crate::executor::ResumePayload;
+use crate::registry::artifact_type::ArtifactCapabilities;
 use crate::scheduler::DecisionError;
 use crate::types::{
     Artifact, ArtifactId, GateDecision, GateOutcome, InputSlot, OutputSlot, Project, ProjectId,
@@ -140,6 +141,19 @@ pub struct OperatorStageArtifact {
     pub id: String,
     pub type_id: String,
     pub version: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+/// Per-unit row within a fanned stage. Empty until the stage activates; once
+/// started, N=1 stages have exactly one row with unit_id="0".
+#[derive(Serialize, Clone)]
+pub struct OperatorStageUnit {
+    pub unit_id: String,
+    pub sid: Option<String>,
+    pub worktree: Option<OperatorWorktreeMetadata>,
+    pub status: String,
+    pub gate: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -152,10 +166,12 @@ pub struct OperatorRunSummary {
     pub updated_at: String,
     pub is_stuck: bool,
     pub is_failed: bool,
+    pub archived: bool,
 }
 
 #[derive(Serialize)]
 pub struct OperatorStageDetail {
+    pub stage_instance_id: String,
     pub name: String,
     #[serde(rename = "type")]
     pub stage_type: String,
@@ -163,6 +179,7 @@ pub struct OperatorStageDetail {
     pub artifacts: Vec<OperatorStageArtifact>,
     pub delegated_kbbl_sid: Option<String>,
     pub worktree: Option<OperatorWorktreeMetadata>,
+    pub units: Vec<OperatorStageUnit>,
 }
 
 #[derive(Serialize)]
@@ -173,17 +190,23 @@ pub struct OperatorRunDetail {
     pub stages: Vec<OperatorStageDetail>,
     pub parked_count: usize,
     pub updated_at: String,
+    pub is_stuck: bool,
 }
 
 #[derive(Serialize)]
 pub struct OperatorParkedGate {
+    /// Composite gate id: "{stage_instance_uuid}:{unit_id}". N=1 implicit unit → "…:0".
     pub id: String,
     pub gate_type: String,
     pub run_id: String,
     pub stage_name: String,
+    /// unit_id within the stage; "0" for the N=1 implicit unit.
+    pub unit_id: String,
     pub artifact_revision_id: Option<String>,
     pub worktree: Option<OperatorWorktreeMetadata>,
     pub resume_actions: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pr_url: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -212,9 +235,21 @@ pub struct OperatorArtifactRevision {
 pub struct OperatorArtifactDetail {
     pub id: String,
     pub type_id: String,
+    pub component_id: Option<String>,
+    pub capabilities: Option<ArtifactCapabilities>,
+    pub anchor_schema: Option<Vec<String>>,
     pub run_id: String,
     pub producing_stage: String,
+    pub label: Option<String>,
     pub revisions: Vec<OperatorArtifactRevision>,
+}
+
+#[derive(Serialize)]
+pub struct ArtifactTypeResponse {
+    pub id: String,
+    pub component_id: String,
+    pub capabilities: ArtifactCapabilities,
+    pub anchor_schema: Option<Vec<String>>,
 }
 
 // ── Query param structs ───────────────────────────────────────────────────────
@@ -224,6 +259,14 @@ pub struct ListRunsQuery {
     pub status: Option<RunStatus>,
     pub def_id: Option<Uuid>,
     pub project_id: Option<Uuid>,
+}
+
+#[derive(Deserialize, Default)]
+pub struct ListOperatorRunsQuery {
+    /// Filter by lifecycle state.
+    /// "all" → no filter; "archived" → archived only;
+    /// absent / "active" / "parked" / "complete" → non-archived only (frontend post-filters by status).
+    pub filter: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -245,26 +288,33 @@ fn find_output<'a>(outputs: &'a [OutputSlot], name: &str) -> Option<&'a OutputSl
     outputs.iter().find(|slot| slot.name == name)
 }
 
-fn validate_workflow_graph(state: &AppState, graph: &WorkflowGraph) -> Result<(), AppError> {
+/// Validate a workflow graph against the type registries. Takes the registries
+/// directly (rather than `AppState`) and returns `crate::Error` so it can be shared
+/// by the HTTP handlers and by boot-time seeding of the built-in defs.
+pub(crate) fn validate_workflow_graph(
+    stage_registry: &crate::registry::StageTypeRegistry,
+    artifact_registry: &crate::registry::ArtifactTypeRegistry,
+    graph: &WorkflowGraph,
+) -> crate::Result<()> {
     for (stage_key, node) in &graph.stages {
-        let stage_type = state.stage_registry.get(&node.stage_type).ok_or_else(|| {
-            validation_error(format!(
+        let stage_type = stage_registry.get(&node.stage_type).ok_or_else(|| {
+            crate::Error::Validation(format!(
                 "stage '{}' references unknown stage type '{}'",
                 stage_key, node.stage_type
             ))
         })?;
 
         for input in &node.inputs {
-            if state.artifact_registry.get(&input.artifact_type).is_none() {
-                return Err(validation_error(format!(
+            if artifact_registry.get(&input.artifact_type).is_none() {
+                return Err(crate::Error::Validation(format!(
                     "stage '{}' input '{}' references unknown artifact type '{}'",
                     stage_key, input.name, input.artifact_type
                 )));
             }
         }
         for output in &node.outputs {
-            if state.artifact_registry.get(&output.artifact_type).is_none() {
-                return Err(validation_error(format!(
+            if artifact_registry.get(&output.artifact_type).is_none() {
+                return Err(crate::Error::Validation(format!(
                     "stage '{}' output '{}' references unknown artifact type '{}'",
                     stage_key, output.name, output.artifact_type
                 )));
@@ -274,37 +324,37 @@ fn validate_workflow_graph(state: &AppState, graph: &WorkflowGraph) -> Result<()
         stage_type
             .validate_def_config(&node.config, &node.inputs, &node.outputs)
             .map_err(|err| {
-                validation_error(format!("stage '{}' config invalid: {}", stage_key, err))
+                crate::Error::Validation(format!("stage '{}' config invalid: {}", stage_key, err))
             })?;
     }
 
     for edge in &graph.edges {
         let producer = graph.stages.get(&edge.from.stage).ok_or_else(|| {
-            validation_error(format!(
+            crate::Error::Validation(format!(
                 "edge source stage '{}' does not exist",
                 edge.from.stage
             ))
         })?;
         let consumer = graph.stages.get(&edge.to.stage).ok_or_else(|| {
-            validation_error(format!(
+            crate::Error::Validation(format!(
                 "edge target stage '{}' does not exist",
                 edge.to.stage
             ))
         })?;
         let output = find_output(&producer.outputs, &edge.from.slot).ok_or_else(|| {
-            validation_error(format!(
+            crate::Error::Validation(format!(
                 "edge source '{}.{}' does not match any output slot",
                 edge.from.stage, edge.from.slot
             ))
         })?;
         let input = find_input(&consumer.inputs, &edge.to.slot).ok_or_else(|| {
-            validation_error(format!(
+            crate::Error::Validation(format!(
                 "edge target '{}.{}' does not match any input slot",
                 edge.to.stage, edge.to.slot
             ))
         })?;
         if output.artifact_type != input.artifact_type {
-            return Err(validation_error(format!(
+            return Err(crate::Error::Validation(format!(
                 "edge '{}.{}' -> '{}.{}' connects artifact type '{}' to '{}'",
                 edge.from.stage,
                 edge.from.slot,
@@ -316,6 +366,36 @@ fn validate_workflow_graph(state: &AppState, graph: &WorkflowGraph) -> Result<()
         }
     }
 
+    Ok(())
+}
+
+/// Guardrail: multi-session fan-out execution is not yet implemented — the
+/// substrate (stage_session_units, per-unit emit route, composite gate id, fan_out
+/// config) landed in Phase 2a/2b but `delegated_session::execute` still rejects any
+/// `fan_out` config at runtime. Reject a *run* of a fan-out def at creation time so
+/// the operator gets a clear, fast error instead of a run that dies mid-flight at the
+/// build stage (after spec-analysis + planning have already executed).
+///
+/// This is deliberately run-creation-only: fan-out defs may still be seeded and
+/// authored (via the Phase 4b UI) so they are ready the moment the engine lands.
+/// Remove this check when the N>1 execution engine ships — see the tracking spec at
+/// `comms/v2-parity-multi-session-engine-spec.md`.
+fn reject_unsupported_fan_out(graph: &WorkflowGraph) -> Result<(), AppError> {
+    let mut fan_out_stages: Vec<&str> = graph
+        .stages
+        .iter()
+        .filter(|(_, node)| node.config.get("fan_out").is_some_and(|v| !v.is_null()))
+        .map(|(key, _)| key.as_str())
+        .collect();
+    fan_out_stages.sort_unstable();
+    if !fan_out_stages.is_empty() {
+        return Err(validation_error(format!(
+            "multi-session fan-out is not yet enabled; stage(s) [{}] declare a fan_out block. \
+             Launch the single-session dev-flow instead. \
+             Tracking: comms/v2-parity-multi-session-engine-spec.md",
+            fan_out_stages.join(", ")
+        )));
+    }
     Ok(())
 }
 
@@ -354,7 +434,7 @@ pub async fn create_workflow_def(
     State(state): State<AppState>,
     Json(body): Json<CreateWorkflowDef>,
 ) -> Result<(StatusCode, Json<WorkflowDef>), AppError> {
-    validate_workflow_graph(&state, &body.graph)?;
+    validate_workflow_graph(&state.stage_registry, &state.artifact_registry, &body.graph)?;
     let def = WorkflowDef {
         id: WorkflowDefId(Uuid::new_v4()),
         name: body.name,
@@ -388,7 +468,8 @@ pub async fn create_workflow_run(
     Json(body): Json<CreateWorkflowRun>,
 ) -> Result<(StatusCode, Json<WorkflowRun>), AppError> {
     let def = queries::get_workflow_def_by_id(&state.pool, &body.workflow_def_id).await?;
-    validate_workflow_graph(&state, &def.graph)?;
+    validate_workflow_graph(&state.stage_registry, &state.artifact_registry, &def.graph)?;
+    reject_unsupported_fan_out(&def.graph)?;
 
     let caller_context = body
         .context
@@ -519,6 +600,30 @@ pub async fn cancel_workflow_run(
     ))
 }
 
+pub async fn archive_workflow_run(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    queries::archive_run(&state.pool, &WorkflowRunId(id)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn unarchive_workflow_run(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    queries::unarchive_run(&state.pool, &WorkflowRunId(id)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn delete_workflow_run(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    queries::delete_run(&state.pool, &WorkflowRunId(id)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 pub async fn list_run_artifacts(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -577,11 +682,23 @@ pub async fn resume_stage_instance(
     Ok((StatusCode::ACCEPTED, Json(updated)))
 }
 
+/// Optional body for POST /stage_instances/:id/retry_stuck.
+/// `unit_id` targets a specific fan-out unit; absent or null → retry the whole stage (N=1 path).
+#[derive(Deserialize, Default)]
+pub struct RetryStuckRequest {
+    #[serde(default)]
+    pub unit_id: Option<String>,
+}
+
 pub async fn retry_stuck_stage_instance(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
+    body: Option<Json<RetryStuckRequest>>,
 ) -> Result<(StatusCode, Json<StageInstance>), AppError> {
     let si_id = StageInstanceId(id);
+    // unit_id is accepted in the body but not yet forwarded to the coordinator
+    // (the N=1 path always retries the whole stage). N>1 fan-out will use it in Phase 2b.
+    let _unit_id = body.map(|Json(b)| b.unit_id).unwrap_or(None);
 
     state
         .coordinator
@@ -706,17 +823,45 @@ fn operator_resume_actions(gate: Option<&DelegatedGateState>) -> Vec<String> {
     }
 }
 
-fn operator_gate(stage: &StageInstance) -> OperatorParkedGate {
+fn operator_gate(stage: &StageInstance, pr_url: Option<String>) -> OperatorParkedGate {
     let gate = delegated_gate_state(stage);
+    // N=1 implicit unit always uses unit_id "0".
+    // N>1 fan-out (Phase 2b) will supply the unit_id from stage_session_units.
+    let unit_id = "0".to_owned();
     OperatorParkedGate {
-        id: stage.id.0.to_string(),
+        id: format!("{}:{}", stage.id.0, unit_id),
         gate_type: operator_gate_type(stage, gate.as_ref()),
         run_id: stage.run_id.0.to_string(),
         stage_name: stage.stage_key.clone(),
+        unit_id,
         artifact_revision_id: gate.as_ref().map(|gate| gate.artifact_id.0.to_string()),
         worktree: operator_worktree(stage),
         resume_actions: operator_resume_actions(gate.as_ref()),
+        pr_url,
     }
+}
+
+/// Look up the pr_url for a stage instance by finding the latest `pr_summary` artifact.
+async fn pr_url_for_stage(
+    pool: &sqlx::SqlitePool,
+    stage: &StageInstance,
+) -> Option<String> {
+    let artifact = queries::get_latest_artifact_by_stage_and_output(
+        pool,
+        &stage.id,
+        "pr_summary",
+    )
+    .await
+    .map_err(|err| {
+        tracing::warn!(
+            stage_instance_id = %stage.id.0,
+            error = %err,
+            "pr_summary artifact lookup failed"
+        );
+        err
+    })
+    .ok()??;
+    artifact.body.get("pr_url")?.as_str().map(|s| s.to_owned())
 }
 
 fn artifacts_by_stage(
@@ -731,7 +876,64 @@ fn artifacts_by_stage(
                 id: artifact.id.0.to_string(),
                 type_id: artifact.artifact_type,
                 version: artifact.version,
+                label: artifact.label,
             });
+    }
+    by_stage
+}
+
+fn operator_unit_status(status: &crate::types::UnitStatus) -> String {
+    match status {
+        crate::types::UnitStatus::Pending => "pending",
+        crate::types::UnitStatus::Running => "running",
+        crate::types::UnitStatus::Parked => "parked",
+        crate::types::UnitStatus::Done => "complete",
+        crate::types::UnitStatus::Failed => "failed",
+    }
+    .to_owned()
+}
+
+fn operator_stage_unit(unit: crate::types::SessionUnit) -> OperatorStageUnit {
+    let sid = unit
+        .external_ref
+        .as_deref()
+        .map(|s| DelegatedExternalRef::parse(s).sid);
+    let worktree = worktree_from_parts(
+        unit.worktree_path,
+        unit.worktree_branch,
+        unit.worktree_base_ref,
+    );
+    let gate = unit
+        .gate_state
+        .as_ref()
+        .and_then(|v| serde_json::from_value::<DelegatedGateState>(v.clone()).ok())
+        .map(|g| operator_gate_type_str(&g.gate));
+    OperatorStageUnit {
+        unit_id: unit.unit_id,
+        sid,
+        worktree,
+        status: operator_unit_status(&unit.status),
+        gate,
+    }
+}
+
+fn operator_gate_type_str(gate: &DelegatedGate) -> String {
+    match gate {
+        DelegatedGate::ArtifactApproval => "artifact_approval".to_owned(),
+        DelegatedGate::MergeConfirmation => "merge_confirmation".to_owned(),
+    }
+}
+
+fn units_by_stage(
+    units: Vec<crate::types::SessionUnit>,
+) -> HashMap<StageInstanceId, Vec<OperatorStageUnit>> {
+    let mut by_stage: HashMap<StageInstanceId, Vec<OperatorStageUnit>> = HashMap::new();
+    for unit in units {
+        let stage_id = unit.stage_instance_id;
+        by_stage
+            .entry(stage_id)
+            .or_default()
+            .push(operator_stage_unit(unit));
     }
     by_stage
 }
@@ -739,9 +941,11 @@ fn artifacts_by_stage(
 fn operator_stage(
     stage: StageInstance,
     artifacts_by_stage: &HashMap<StageInstanceId, Vec<OperatorStageArtifact>>,
+    units_by_stage: &HashMap<StageInstanceId, Vec<OperatorStageUnit>>,
 ) -> OperatorStageDetail {
     let external = delegated_external_ref(&stage);
     OperatorStageDetail {
+        stage_instance_id: stage.id.0.to_string(),
         name: stage.stage_key.clone(),
         stage_type: stage.stage_type.clone(),
         status: operator_stage_status(stage.status),
@@ -751,6 +955,10 @@ fn operator_stage(
             .unwrap_or_default(),
         delegated_kbbl_sid: external.map(|external| external.sid),
         worktree: operator_worktree(&stage),
+        units: units_by_stage
+            .get(&stage.id)
+            .cloned()
+            .unwrap_or_default(),
     }
 }
 
@@ -764,13 +972,20 @@ fn operator_run_summary(row: queries::OperatorRunSummary) -> OperatorRunSummary 
         updated_at: row.updated_at.to_rfc3339(),
         is_stuck: row.is_stuck,
         is_failed: matches!(row.status, RunStatus::Failed),
+        archived: row.archived,
     }
 }
 
 pub async fn list_operator_runs(
     State(state): State<AppState>,
+    Query(params): Query<ListOperatorRunsQuery>,
 ) -> Result<Json<Vec<OperatorRunSummary>>, AppError> {
-    let summaries = queries::list_operator_run_summaries(&state.pool)
+    let archived_filter = match params.filter.as_deref() {
+        Some("all") => None,
+        Some("archived") => Some(true),
+        _ => Some(false), // default: hide archived runs
+    };
+    let summaries = queries::list_operator_run_summaries(&state.pool, archived_filter)
         .await?
         .into_iter()
         .map(operator_run_summary)
@@ -787,15 +1002,20 @@ pub async fn get_operator_run(
     let def = queries::get_workflow_def_by_id(&state.pool, &run.workflow_def_id).await?;
     let stages = queries::list_stage_instances_for_run(&state.pool, &run_id).await?;
     let artifacts = queries::list_artifacts_for_run(&state.pool, &run_id, None).await?;
+    let session_units = queries::list_session_units_for_run(&state.pool, &run_id).await?;
     let artifacts_by_stage = artifacts_by_stage(artifacts);
+    let units_by_stage = units_by_stage(session_units);
     let parked_count = stages
         .iter()
         .filter(|stage| matches!(stage.status, StageStatus::Parked))
         .count();
+    let is_stuck = stages
+        .iter()
+        .any(|s| s.parked_reason.as_deref() == Some("stuck_timeout"));
     let current_status = operator_run_status(&run, parked_count);
     let stage_details = stages
         .into_iter()
-        .map(|stage| operator_stage(stage, &artifacts_by_stage))
+        .map(|stage| operator_stage(stage, &artifacts_by_stage, &units_by_stage))
         .collect();
     Ok(Json(OperatorRunDetail {
         id: run.id.0.to_string(),
@@ -804,6 +1024,7 @@ pub async fn get_operator_run(
         stages: stage_details,
         parked_count,
         updated_at: run.updated_at.to_rfc3339(),
+        is_stuck,
     }))
 }
 
@@ -811,7 +1032,15 @@ pub async fn list_operator_gates(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<OperatorParkedGate>>, AppError> {
     let parked = queries::list_parked_stage_instances(&state.pool).await?;
-    Ok(Json(parked.iter().map(operator_gate).collect()))
+    let mut gates = Vec::with_capacity(parked.len());
+    // TODO: N+1 — one pr_summary query per parked stage. Acceptable while gate lists
+    // are short; batch with WHERE stage_instance_id IN (...) AND output_name='pr_summary'
+    // if this becomes a performance concern.
+    for stage in &parked {
+        let pr_url = pr_url_for_stage(&state.pool, stage).await;
+        gates.push(operator_gate(stage, pr_url));
+    }
+    Ok(Json(gates))
 }
 
 pub async fn list_operator_run_gates(
@@ -821,12 +1050,13 @@ pub async fn list_operator_run_gates(
     let run_id = WorkflowRunId(id);
     queries::get_workflow_run_by_id(&state.pool, &run_id).await?;
     let stages = queries::list_stage_instances_for_run(&state.pool, &run_id).await?;
-    let parked = stages
-        .iter()
-        .filter(|stage| matches!(stage.status, StageStatus::Parked))
-        .map(operator_gate)
-        .collect();
-    Ok(Json(parked))
+    let mut gates = Vec::new();
+    // TODO: same N+1 as list_operator_gates — batch if perf warrants.
+    for stage in stages.iter().filter(|s| matches!(s.status, StageStatus::Parked)) {
+        let pr_url = pr_url_for_stage(&state.pool, stage).await;
+        gates.push(operator_gate(stage, pr_url));
+    }
+    Ok(Json(gates))
 }
 
 fn gate_outcome(action: &str) -> Option<GateOutcome> {
@@ -840,11 +1070,33 @@ fn gate_outcome(action: &str) -> Option<GateOutcome> {
 
 pub async fn resume_operator_gate(
     State(state): State<AppState>,
-    Path(id): Path<Uuid>,
+    Path(composite_id): Path<String>,
     Json(body): Json<OperatorGateResumeRequest>,
 ) -> Result<(StatusCode, Json<OperatorGateResumeResponse>), AppError> {
-    let stage_instance_id = StageInstanceId(id);
+    // Parse composite gate id: "{stage_uuid}:{unit_id}"
+    let (stage_uuid_str, unit_id) = composite_id.split_once(':').ok_or_else(|| {
+        validation_error(format!(
+            "invalid gate id '{}': expected '{{stage_uuid}}:{{unit_id}}'",
+            composite_id
+        ))
+    })?;
+    let stage_uuid = Uuid::parse_str(stage_uuid_str).map_err(|_| {
+        validation_error(format!(
+            "invalid stage uuid in gate id '{}'",
+            composite_id
+        ))
+    })?;
+    let stage_instance_id = StageInstanceId(stage_uuid);
     let stage = queries::get_stage_instance_by_id(&state.pool, &stage_instance_id).await?;
+    // Validate unit_id against the known units for this stage (rejects stale or
+    // client-side bugs where a wrong unit is targeted — e.g. "uuid:1" when only "0" exists).
+    let units = queries::list_session_units_for_stage(&state.pool, &stage_instance_id).await?;
+    if !units.iter().any(|u| u.unit_id == unit_id) {
+        return Err(validation_error(format!(
+            "unit '{}' not found on stage instance '{}'",
+            unit_id, stage_instance_id.0
+        )));
+    }
     let gate = delegated_gate_state(&stage).ok_or_else(|| {
         validation_error(format!(
             "stage instance {} has no resumable delegated gate metadata",
@@ -887,7 +1139,7 @@ pub async fn resume_operator_gate(
     Ok((
         StatusCode::ACCEPTED,
         Json(OperatorGateResumeResponse {
-            gate_id: stage_instance_id.0.to_string(),
+            gate_id: composite_id,
             resumed: true,
         }),
     ))
@@ -937,13 +1189,569 @@ pub async fn get_operator_artifact_detail(
         })
         .collect();
 
+    let type_def = state.artifact_registry.get(&requested.artifact_type);
+    let component_id = type_def.map(|d| d.component_id.clone());
+    let capabilities = type_def.map(|d| d.capabilities.clone());
+    let anchor_schema = type_def.and_then(|d| d.anchor_schema.clone());
+
     Ok(Json(OperatorArtifactDetail {
         id: requested.id.0.to_string(),
         type_id: requested.artifact_type,
+        component_id,
+        capabilities,
+        anchor_schema,
         run_id: requested.run_id.0.to_string(),
         producing_stage: producing_stage.stage_key,
+        label: requested.label,
         revisions,
     }))
+}
+
+pub async fn get_artifact_types(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<ArtifactTypeResponse>>, AppError> {
+    let mut types: Vec<ArtifactTypeResponse> = state
+        .artifact_registry
+        .all()
+        .map(|def| ArtifactTypeResponse {
+            id: def.id.clone(),
+            component_id: def.component_id.clone(),
+            capabilities: def.capabilities.clone(),
+            anchor_schema: def.anchor_schema.clone(),
+        })
+        .collect();
+    types.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(Json(types))
+}
+
+// ── Collab DTOs ───────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct PostThreadRequest {
+    pub anchor: Option<String>,
+    pub body: String,
+    pub author: String,
+}
+
+#[derive(Serialize)]
+pub struct PostThreadResponse {
+    pub thread_id: String,
+    pub message_id: String,
+}
+
+#[derive(Deserialize)]
+pub struct PostMessageRequest {
+    pub body: String,
+    pub author: String,
+}
+
+#[derive(Serialize)]
+pub struct PostMessageResponse {
+    pub message_id: String,
+}
+
+#[derive(Deserialize)]
+pub struct PatchThreadRequest {
+    pub status: String,
+}
+
+#[derive(Serialize)]
+pub struct ThreadWithMessages {
+    pub id: String,
+    pub artifact_id: String,
+    pub revision_id: String,
+    pub anchor: Option<String>,
+    pub status: String,
+    pub created_at: String,
+    pub messages: Vec<MessageDto>,
+}
+
+#[derive(Serialize)]
+pub struct MessageDto {
+    pub id: String,
+    pub thread_id: String,
+    pub body: String,
+    pub author: String,
+    pub created_at: String,
+}
+
+#[derive(Deserialize)]
+pub struct PostAtomEditRequest {
+    pub anchor: String,
+    pub prev_value: Value,
+    pub new_value: Value,
+    pub author: String,
+}
+
+#[derive(Serialize)]
+pub struct PostAtomEditResponse {
+    pub artifact_id: String,
+}
+
+#[derive(Deserialize)]
+pub struct PostReviewItemRequest {
+    pub anchor: String,
+    pub claim: String,
+    pub reality: String,
+}
+
+#[derive(Serialize)]
+pub struct ReviewItemDto {
+    pub id: String,
+    pub artifact_id: String,
+    pub revision_id: String,
+    pub anchor: String,
+    pub claim: String,
+    pub reality: String,
+    pub status: String,
+    pub resolution: Option<String>,
+    pub created_at: String,
+}
+
+impl From<crate::collab::ReviewItem> for ReviewItemDto {
+    fn from(ri: crate::collab::ReviewItem) -> Self {
+        ReviewItemDto {
+            id: ri.id.to_string(),
+            artifact_id: ri.artifact_id.to_string(),
+            revision_id: ri.revision_id,
+            anchor: ri.anchor,
+            claim: ri.claim,
+            reality: ri.reality,
+            status: ri.status.as_str().to_string(),
+            resolution: ri.resolution,
+            created_at: ri.created_at.to_rfc3339(),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct PatchReviewItemRequest {
+    pub status: String,
+    pub resolution: Option<String>,
+}
+
+// ── Collab helpers ────────────────────────────────────────────────────────────
+
+/// Require that the artifact type supports the given capability flag.
+fn require_cap(
+    state: &super::AppState,
+    artifact_type: &str,
+    getter: impl Fn(&crate::registry::artifact_type::ArtifactCapabilities) -> bool,
+    cap_name: &str,
+) -> Result<(), AppError> {
+    let def = state
+        .artifact_registry
+        .get(artifact_type)
+        .ok_or_else(|| crate::Error::RegistryMiss(artifact_type.to_string()))?;
+    if !getter(&def.capabilities) {
+        return Err(AppError::Domain(crate::Error::Validation(format!(
+            "artifact type '{artifact_type}' does not support '{cap_name}'"
+        ))));
+    }
+    Ok(())
+}
+
+/// Walk the parent chain to find the chain-root artifact id.
+async fn chain_root_id(
+    pool: &sqlx::SqlitePool,
+    artifact_id: &crate::types::ArtifactId,
+) -> crate::Result<String> {
+    queries::get_artifact_chain_root_id(pool, artifact_id).await
+}
+
+// ── POST /artifacts/:id/threads ───────────────────────────────────────────────
+
+pub async fn post_thread(
+    State(state): State<super::AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<PostThreadRequest>,
+) -> Result<(StatusCode, Json<PostThreadResponse>), AppError> {
+    let artifact_id = crate::types::ArtifactId(id);
+    let artifact = queries::get_artifact_by_id(&state.pool, &artifact_id).await?;
+    require_cap(&state, &artifact.artifact_type, |c| c.commentable, "commentable")?;
+
+    let revision_id = chain_root_id(&state.pool, &artifact_id).await?;
+    let now = chrono::Utc::now();
+    let thread_id = Uuid::new_v4();
+    let message_id = Uuid::new_v4();
+
+    // Insert thread + first message atomically so a failed message insert cannot
+    // leave an orphaned thread row.
+    let mut txn = state.pool.begin().await.map_err(|e| AppError::Domain(e.into()))?;
+    sqlx::query(
+        "INSERT INTO threads (id, artifact_id, revision_id, anchor, status, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(thread_id.to_string())
+    .bind(id.to_string())
+    .bind(&revision_id)
+    .bind(&req.anchor)
+    .bind("open")
+    .bind(now.to_rfc3339())
+    .execute(&mut *txn)
+    .await
+    .map_err(|e| AppError::Domain(e.into()))?;
+
+    sqlx::query(
+        "INSERT INTO messages (id, thread_id, body, author, created_at) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(message_id.to_string())
+    .bind(thread_id.to_string())
+    .bind(&req.body)
+    .bind(&req.author)
+    .bind(now.to_rfc3339())
+    .execute(&mut *txn)
+    .await
+    .map_err(|e| AppError::Domain(e.into()))?;
+
+    txn.commit().await.map_err(|e| AppError::Domain(e.into()))?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(PostThreadResponse {
+            thread_id: thread_id.to_string(),
+            message_id: message_id.to_string(),
+        }),
+    ))
+}
+
+// ── GET /artifacts/:id/threads ────────────────────────────────────────────────
+
+pub async fn list_threads(
+    State(state): State<super::AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<ThreadWithMessages>>, AppError> {
+    let artifact_id = crate::types::ArtifactId(id);
+    let artifact = queries::get_artifact_by_id(&state.pool, &artifact_id).await?;
+    require_cap(&state, &artifact.artifact_type, |c| c.commentable, "commentable")?;
+
+    // Query by chain-root (revision_id) so threads survive atom-edits that
+    // create new artifact revisions.
+    // Known: N+1 message loads per thread; acceptable for now given SQLite's
+    // single-writer model and expected small thread counts. Replace with a
+    // JOIN + client-side grouping if this becomes a bottleneck.
+    let revision_id = chain_root_id(&state.pool, &artifact_id).await?;
+    let threads = queries::list_threads_for_artifact(&state.pool, &revision_id).await?;
+    let mut result = Vec::with_capacity(threads.len());
+    for t in threads {
+        let messages = queries::list_messages_for_thread(&state.pool, &t.id).await?;
+        result.push(ThreadWithMessages {
+            id: t.id.to_string(),
+            artifact_id: t.artifact_id.to_string(),
+            revision_id: t.revision_id,
+            anchor: t.anchor,
+            status: t.status.as_str().to_string(),
+            created_at: t.created_at.to_rfc3339(),
+            messages: messages
+                .into_iter()
+                .map(|m| MessageDto {
+                    id: m.id.to_string(),
+                    thread_id: m.thread_id.to_string(),
+                    body: m.body,
+                    author: m.author,
+                    created_at: m.created_at.to_rfc3339(),
+                })
+                .collect(),
+        });
+    }
+    Ok(Json(result))
+}
+
+// ── POST /threads/:id/messages ────────────────────────────────────────────────
+
+pub async fn post_message(
+    State(state): State<super::AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<PostMessageRequest>,
+) -> Result<(StatusCode, Json<PostMessageResponse>), AppError> {
+    let thread = queries::get_thread_by_id(&state.pool, &id).await?;
+    if thread.status != crate::collab::ThreadStatus::Open {
+        return Err(AppError::Domain(crate::Error::Validation(
+            "cannot post to a resolved thread".into(),
+        )));
+    }
+    let message_id = Uuid::new_v4();
+    let message = crate::collab::CollabMessage {
+        id: message_id,
+        thread_id: id,
+        body: req.body,
+        author: req.author,
+        created_at: chrono::Utc::now(),
+    };
+    queries::insert_message(&state.pool, &message).await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(PostMessageResponse {
+            message_id: message_id.to_string(),
+        }),
+    ))
+}
+
+// ── POST /threads/:id/ping ────────────────────────────────────────────────────
+
+pub async fn post_ping(
+    State(state): State<super::AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Value>, AppError> {
+    let thread = queries::get_thread_by_id(&state.pool, &id).await?;
+    if thread.status != crate::collab::ThreadStatus::Open {
+        return Err(AppError::Domain(crate::Error::Validation(
+            "cannot ping a resolved thread".into(),
+        )));
+    }
+    let artifact_id = crate::types::ArtifactId(thread.artifact_id);
+    let artifact = queries::get_artifact_by_id(&state.pool, &artifact_id).await?;
+    let messages = queries::list_messages_for_thread(&state.pool, &id).await?;
+
+    let thread_id_str = id.to_string();
+    let anchor_str = thread.anchor.clone().unwrap_or_else(|| "entire artifact".into());
+    let artifact_body_pretty =
+        serde_json::to_string_pretty(&artifact.body).unwrap_or_else(|_| artifact.body.to_string());
+
+    let messages_text = messages
+        .iter()
+        .map(|m| format!("{} ({}): {}", m.author, m.created_at.to_rfc3339(), m.body))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+
+    let oakridge_base = std::env::var("OAKRIDGE_CORE_SELF_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:8790".into());
+
+    // Load ping-responder prompt template from prompts_dir.
+    let prompts_dir = std::env::var("OAKRIDGE_PROMPTS_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("./prompts"));
+    let template_path = prompts_dir.join("collab").join("ping_responder.md");
+    let template = match tokio::fs::read_to_string(&template_path).await {
+        Ok(t) => t,
+        Err(_) => {
+            return Err(AppError::Internal(format!(
+                "ping_responder.md not found at {:?}",
+                template_path
+            )))
+        }
+    };
+
+    let prompt = template
+        .replace("{{ARTIFACT_ID}}", &artifact.id.0.to_string())
+        .replace("{{ARTIFACT_BODY}}", &artifact_body_pretty)
+        .replace("{{THREAD_ID}}", &thread_id_str)
+        .replace("{{ANCHOR}}", &anchor_str)
+        .replace("{{MESSAGES}}", &messages_text)
+        .replace("{{OAKRIDGE_API_BASE}}", &format!("{oakridge_base}"));
+
+    // Spawn fire-and-forget kbbl session for the responder.
+    // SECURITY NOTE: artifact_body and thread messages are included verbatim in the
+    // prompt. A JSON fence is not sufficient to prevent instruction-following content
+    // from steering the responder. Acceptable in a controlled homelab context where
+    // all content is operator-authored; revisit with a data-isolation wrapper
+    // (<data>…</data> + explicit non-instructional framing) if the surface becomes
+    // publicly writable.
+    let kbbl_url = std::env::var("KBBL_API_BASE_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:8788/".into());
+    let artifact_id_str = thread.artifact_id.to_string();
+    match crate::executor::delegated_session::kbbl_client::KbblClient::new(&kbbl_url) {
+        Ok(kbbl) => {
+            tokio::spawn(async move {
+                use crate::executor::delegated_session::kbbl_client::{
+                    CreateSessionRequest, SendInputRequest,
+                };
+                use crate::executor::delegated_session::config::DelegatedRuntime;
+                let req = CreateSessionRequest {
+                    workdir: "/tmp".into(),
+                    name: format!("ping-responder-{}", thread_id_str),
+                    artifact_id: artifact_id_str,
+                    runtime: DelegatedRuntime::ClaudeCode,
+                    model: None,
+                    effort: None,
+                    worktree: None,
+                };
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(30),
+                    kbbl.create_session(req),
+                )
+                .await
+                {
+                    Ok(Ok(snap)) => {
+                        let _ = tokio::time::timeout(
+                            std::time::Duration::from_secs(30),
+                            kbbl.send_input(&snap.sid, SendInputRequest { text: prompt }),
+                        )
+                        .await;
+                    }
+                    Ok(Err(e)) => {
+                        tracing::warn!("ping-responder session failed: {e}");
+                    }
+                    Err(_) => {
+                        tracing::warn!("ping-responder: create_session timed out");
+                    }
+                }
+            });
+        }
+        Err(e) => {
+            tracing::warn!("ping-responder: invalid KBBL_API_BASE_URL: {e}");
+        }
+    }
+
+    Ok(Json(json!({ "ok": true })))
+}
+
+// ── PATCH /threads/:id ────────────────────────────────────────────────────────
+
+pub async fn patch_thread(
+    State(state): State<super::AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<PatchThreadRequest>,
+) -> Result<Json<Value>, AppError> {
+    let status = crate::collab::ThreadStatus::from_str(&req.status)?;
+    queries::update_thread_status(&state.pool, &id, &status).await?;
+    Ok(Json(json!({ "thread_id": id.to_string(), "status": req.status })))
+}
+
+// ── POST /artifacts/:id/edits ─────────────────────────────────────────────────
+
+pub async fn post_atom_edit(
+    State(state): State<super::AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<PostAtomEditRequest>,
+) -> Result<(StatusCode, Json<PostAtomEditResponse>), AppError> {
+    let artifact_id = crate::types::ArtifactId(id);
+    let artifact = queries::get_artifact_by_id(&state.pool, &artifact_id).await?;
+    require_cap(&state, &artifact.artifact_type, |c| c.atom_editable, "atom_editable")?;
+
+    // Reject anchors not declared in the type's anchor_schema.
+    if let Some(def) = state.artifact_registry.get(&artifact.artifact_type) {
+        if let Some(schema) = &def.anchor_schema {
+            if !schema.iter().any(|a| a == &req.anchor) {
+                return Err(AppError::Domain(crate::Error::Validation(format!(
+                    "anchor '{}' is not in the anchor_schema for type '{}'",
+                    req.anchor, artifact.artifact_type
+                ))));
+            }
+        }
+    }
+
+    // Verify prev_value matches current value at anchor (OCC check).
+    let current_at_anchor = artifact.body.pointer(&req.anchor);
+    let prev_matches = match current_at_anchor {
+        Some(v) => v == &req.prev_value,
+        None => req.prev_value.is_null(),
+    };
+    if !prev_matches {
+        return Err(AppError::Conflict(format!(
+            "prev_value mismatch at anchor '{}': optimistic lock failed",
+            req.anchor
+        )));
+    }
+
+    // Apply edit to a clone of the body.
+    let mut new_body = artifact.body.clone();
+    let target = new_body
+        .pointer_mut(&req.anchor)
+        .ok_or_else(|| crate::Error::Validation(format!("anchor '{}' not found in body", req.anchor)))?;
+    *target = req.new_value;
+
+    // Validate the new body against the artifact type's schema.
+    if let Some(def) = state.artifact_registry.get(&artifact.artifact_type) {
+        (def.validate)(&new_body)?;
+    }
+
+    // Create a new artifact revision.
+    let new_id = crate::types::ArtifactId(Uuid::new_v4());
+    let new_artifact = crate::types::Artifact {
+        id: new_id,
+        run_id: artifact.run_id,
+        stage_instance_id: artifact.stage_instance_id,
+        artifact_type: artifact.artifact_type,
+        output_name: artifact.output_name,
+        label: artifact.label,
+        body: new_body,
+        version: artifact.version + 1,
+        parent_artifact_id: Some(artifact_id),
+        created_at: chrono::Utc::now(),
+    };
+    // The unique index on artifact(parent_artifact_id) enforces the OCC guarantee
+    // at the DB level: if two concurrent edits both pass the in-memory prev_value
+    // check, only the first commit succeeds; the second gets a unique violation → 409.
+    match queries::insert_artifact(&state.pool, &new_artifact).await {
+        Ok(()) => {}
+        Err(crate::Error::Db(sqlx::Error::Database(dbe)))
+            if dbe.kind() == sqlx::error::ErrorKind::UniqueViolation =>
+        {
+            return Err(AppError::Conflict(
+                "concurrent edit: another revision already exists for this artifact".into(),
+            ));
+        }
+        Err(e) => return Err(AppError::Domain(e)),
+    }
+
+    Ok((
+        StatusCode::CREATED,
+        Json(PostAtomEditResponse {
+            artifact_id: new_id.0.to_string(),
+        }),
+    ))
+}
+
+// ── POST /artifacts/:id/review_items ─────────────────────────────────────────
+
+pub async fn post_review_item(
+    State(state): State<super::AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<PostReviewItemRequest>,
+) -> Result<(StatusCode, Json<ReviewItemDto>), AppError> {
+    let artifact_id = crate::types::ArtifactId(id);
+    let artifact = queries::get_artifact_by_id(&state.pool, &artifact_id).await?;
+    require_cap(&state, &artifact.artifact_type, |c| c.review_items, "review_items")?;
+
+    let revision_id = chain_root_id(&state.pool, &artifact_id).await?;
+    let ri = crate::collab::ReviewItem {
+        id: Uuid::new_v4(),
+        artifact_id: id,
+        revision_id,
+        anchor: req.anchor,
+        claim: req.claim,
+        reality: req.reality,
+        status: crate::collab::ReviewItemStatus::Open,
+        resolution: None,
+        created_at: chrono::Utc::now(),
+    };
+    queries::insert_review_item(&state.pool, &ri).await?;
+    Ok((StatusCode::CREATED, Json(ri.into())))
+}
+
+// ── GET /artifacts/:id/review_items ──────────────────────────────────────────
+
+pub async fn list_review_items(
+    State(state): State<super::AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<ReviewItemDto>>, AppError> {
+    let artifact_id = crate::types::ArtifactId(id);
+    let artifact = queries::get_artifact_by_id(&state.pool, &artifact_id).await?;
+    require_cap(&state, &artifact.artifact_type, |c| c.review_items, "review_items")?;
+
+    let revision_id = chain_root_id(&state.pool, &artifact_id).await?;
+    let items = queries::list_review_items_for_artifact(&state.pool, &revision_id).await?;
+    Ok(Json(items.into_iter().map(ReviewItemDto::from).collect()))
+}
+
+// ── PATCH /review_items/:id ───────────────────────────────────────────────────
+
+pub async fn patch_review_item_status(
+    State(state): State<super::AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<PatchReviewItemRequest>,
+) -> Result<Json<ReviewItemDto>, AppError> {
+    let status = crate::collab::ReviewItemStatus::from_str(&req.status)?;
+    queries::patch_review_item(
+        &state.pool,
+        &id,
+        &status,
+        req.resolution.as_deref(),
+    )
+    .await?;
+    let updated = queries::get_review_item_by_id(&state.pool, &id).await?;
+    Ok(Json(updated.into()))
 }
 
 // ── Integration tests ─────────────────────────────────────────────────────────
@@ -1096,6 +1904,14 @@ mod tests {
             id: "any".into(),
             validate: |_| Ok(()),
             component_id: "v".into(),
+            capabilities: crate::registry::artifact_type::ArtifactCapabilities {
+                reviewable: false,
+                commentable: false,
+                atom_editable: false,
+                review_items: false,
+            },
+            anchor_schema: None,
+            review_items_extractor: None,
         });
         let artifact_registry = Arc::new(art_reg);
 
@@ -1237,6 +2053,7 @@ mod tests {
             worktree_path: Some("/worktrees/v2/build".into()),
             worktree_branch: Some("cohort/v2/1-build".into()),
             worktree_base_ref: Some("abc123".into()),
+            pr_url: None,
         };
         let stage = StageInstance {
             id: stage_id,
@@ -2264,5 +3081,468 @@ mod tests {
             body["error"].as_str().is_some(),
             "error field must be present"
         );
+    }
+
+    // ── Collab test helpers ───────────────────────────────────────────────────
+
+    fn extract_title_review_items(body: &Value) -> Vec<crate::collab::ReviewItemCandidate> {
+        if let Some(title) = body.get("title").and_then(|v| v.as_str()) {
+            vec![crate::collab::ReviewItemCandidate {
+                anchor: "/title".into(),
+                claim: "title must be non-empty".into(),
+                reality: title.to_string(),
+            }]
+        } else {
+            vec![]
+        }
+    }
+
+    async fn make_state_with_collab(
+        stage_types: Vec<Arc<dyn crate::registry::stage_type::StageType>>,
+    ) -> AppState {
+        let path = format!("/tmp/oakridge_http_collab_{}.db", Uuid::new_v4());
+        let pool = Arc::new(db::init_pool(&format!("sqlite:{}", path)).await.unwrap());
+
+        let mut stage_reg = StageTypeRegistry::new();
+        for st in stage_types {
+            stage_reg.register(st);
+        }
+
+        let mut art_reg = ArtifactTypeRegistry::new();
+        // Collab-capable type used by collab tests.
+        art_reg.register(ArtifactTypeDef {
+            id: "collab".into(),
+            validate: |_| Ok(()),
+            component_id: "collab-viewer".into(),
+            capabilities: crate::registry::artifact_type::ArtifactCapabilities {
+                reviewable: true,
+                commentable: true,
+                atom_editable: true,
+                review_items: true,
+            },
+            anchor_schema: Some(vec!["/title".into()]),
+            review_items_extractor: Some(extract_title_review_items),
+        });
+        // Non-collab type for capability-gating tests.
+        art_reg.register(ArtifactTypeDef {
+            id: "any".into(),
+            validate: |_| Ok(()),
+            component_id: "v".into(),
+            capabilities: Default::default(),
+            anchor_schema: None,
+            review_items_extractor: None,
+        });
+
+        let bus = EventBus::new();
+        let stage_registry = Arc::new(stage_reg);
+        let artifact_registry = Arc::new(art_reg);
+        let coordinator = Arc::new(Coordinator::new(
+            pool.clone(),
+            stage_registry.clone(),
+            artifact_registry.clone(),
+            bus.clone(),
+        ));
+        AppState { pool, stage_registry, artifact_registry, coordinator, bus }
+    }
+
+    /// Inserts the minimal DB rows needed for collab tests and returns the artifact id.
+    async fn seed_collab_artifact(state: &AppState, artifact_type: &str) -> (Uuid, Uuid) {
+        use crate::types::{
+            Artifact, ArtifactId, RunStatus, StageInstance, StageInstanceId, WorkflowDef,
+            WorkflowDefId, WorkflowGraph, WorkflowRun, WorkflowRunId,
+        };
+        let now = chrono::Utc::now();
+        let def = WorkflowDef {
+            id: WorkflowDefId(Uuid::new_v4()),
+            name: format!("collab-wf-{}", Uuid::new_v4()),
+            version: 1,
+            graph: WorkflowGraph { stages: HashMap::new(), edges: vec![] },
+            created_at: now,
+        };
+        queries::insert_workflow_def(&state.pool, &def).await.unwrap();
+        let run = WorkflowRun {
+            id: WorkflowRunId(Uuid::new_v4()),
+            workflow_def_id: def.id,
+            project_id: None,
+            status: RunStatus::Running,
+            context: json!({}),
+            version: 1,
+            created_at: now,
+            updated_at: now,
+        };
+        queries::insert_workflow_run(&state.pool, &run).await.unwrap();
+        let si_id = StageInstanceId(Uuid::new_v4());
+        let si = StageInstance {
+            id: si_id,
+            run_id: run.id,
+            stage_key: "s1".into(),
+            stage_type: "dummy".into(),
+            status: crate::types::StageStatus::Running,
+            config: json!({}),
+            parked_reason: None,
+            parked_meta: None,
+            terminal_meta: None,
+            external_ref: None,
+            started_at: None,
+            ended_at: None,
+            created_at: now,
+            updated_at: now,
+        };
+        queries::insert_stage_instance(&state.pool, &si).await.unwrap();
+        let artifact_id = ArtifactId(Uuid::new_v4());
+        let artifact = Artifact {
+            id: artifact_id,
+            run_id: run.id,
+            stage_instance_id: si_id,
+            artifact_type: artifact_type.into(),
+            output_name: Some("out".into()),
+            label: None,
+            body: json!({"title": "hello"}),
+            version: 1,
+            parent_artifact_id: None,
+            created_at: now,
+        };
+        queries::insert_artifact(&state.pool, &artifact).await.unwrap();
+        (artifact_id.0, si_id.0)
+    }
+
+    // ── Collab: thread tests ──────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_collab_post_thread_and_list_happy_path() {
+        let state = make_state_with_collab(vec![]).await;
+        let (art_id, _) = seed_collab_artifact(&state, "collab").await;
+
+        let app = crate::http::router(state.clone());
+        let (status, body) = req(
+            app,
+            "POST",
+            &format!("/artifacts/{}/threads", art_id),
+            Some(json!({"anchor": "/title", "body": "looks wrong", "author": "reviewer"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "post_thread: {body:?}");
+        let thread_id = body["thread_id"].as_str().unwrap().to_string();
+
+        let app = crate::http::router(state.clone());
+        let (status, list) = req(
+            app,
+            "GET",
+            &format!("/artifacts/{}/threads", art_id),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let threads = list.as_array().unwrap();
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0]["id"], json!(thread_id));
+        assert_eq!(threads[0]["messages"].as_array().unwrap().len(), 1);
+        assert_eq!(threads[0]["messages"][0]["body"], json!("looks wrong"));
+    }
+
+    #[tokio::test]
+    async fn test_collab_thread_survives_atom_edit_chain_root_query() {
+        let state = make_state_with_collab(vec![]).await;
+        let (art_id, _) = seed_collab_artifact(&state, "collab").await;
+
+        // Open a thread on the original revision.
+        let app = crate::http::router(state.clone());
+        let (status, _) = req(
+            app,
+            "POST",
+            &format!("/artifacts/{}/threads", art_id),
+            Some(json!({"body": "original comment", "author": "a"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+
+        // Atom-edit creates a child revision.
+        let app = crate::http::router(state.clone());
+        let (status, edit_body) = req(
+            app,
+            "POST",
+            &format!("/artifacts/{}/edits", art_id),
+            Some(json!({"anchor": "/title", "prev_value": "hello", "new_value": "world", "author": "a"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "atom-edit: {edit_body:?}");
+        let child_id = edit_body["artifact_id"].as_str().unwrap().to_string();
+
+        // GET threads on the child revision should still return the original thread
+        // because both share the same revision_id (chain root = original artifact).
+        let app = crate::http::router(state.clone());
+        let (status, list) = req(
+            app,
+            "GET",
+            &format!("/artifacts/{}/threads", child_id),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            list.as_array().unwrap().len(),
+            1,
+            "thread must be visible on child revision: {list:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_collab_thread_capability_gating() {
+        let state = make_state_with_collab(vec![]).await;
+        let (art_id, _) = seed_collab_artifact(&state, "any").await;
+
+        let app = crate::http::router(state);
+        let (status, body) = req(
+            app,
+            "POST",
+            &format!("/artifacts/{}/threads", art_id),
+            Some(json!({"body": "x", "author": "a"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "expected 400: {body:?}");
+        assert!(
+            body["error"].as_str().unwrap().contains("commentable"),
+            "error must mention capability: {body:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_collab_post_message_to_resolved_thread_rejected() {
+        let state = make_state_with_collab(vec![]).await;
+        let (art_id, _) = seed_collab_artifact(&state, "collab").await;
+
+        // Create thread.
+        let app = crate::http::router(state.clone());
+        let (_, body) = req(
+            app,
+            "POST",
+            &format!("/artifacts/{}/threads", art_id),
+            Some(json!({"body": "hi", "author": "a"})),
+        )
+        .await;
+        let thread_id = body["thread_id"].as_str().unwrap().to_string();
+
+        // Resolve the thread.
+        let app = crate::http::router(state.clone());
+        let (status, _) = req(
+            app,
+            "PATCH",
+            &format!("/threads/{}", thread_id),
+            Some(json!({"status": "resolved"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        // Now try to post a message → 400.
+        let app = crate::http::router(state.clone());
+        let (status, body) = req(
+            app,
+            "POST",
+            &format!("/threads/{}/messages", thread_id),
+            Some(json!({"body": "too late", "author": "a"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "expected rejection: {body:?}");
+    }
+
+    // ── Collab: atom-edit tests ───────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_collab_atom_edit_anchor_schema_validation() {
+        let state = make_state_with_collab(vec![]).await;
+        let (art_id, _) = seed_collab_artifact(&state, "collab").await;
+
+        let app = crate::http::router(state);
+        let (status, body) = req(
+            app,
+            "POST",
+            &format!("/artifacts/{}/edits", art_id),
+            Some(json!({"anchor": "/forbidden", "prev_value": "hello", "new_value": "world", "author": "a"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "expected 400 for bad anchor: {body:?}");
+        assert!(
+            body["error"].as_str().unwrap().contains("anchor_schema"),
+            "error must mention anchor_schema: {body:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_collab_atom_edit_occ_conflict() {
+        let state = make_state_with_collab(vec![]).await;
+        let (art_id, _) = seed_collab_artifact(&state, "collab").await;
+
+        let payload = json!({"anchor": "/title", "prev_value": "hello", "new_value": "world", "author": "a"});
+
+        // First edit succeeds.
+        let app = crate::http::router(state.clone());
+        let (status, _) = req(
+            app,
+            "POST",
+            &format!("/artifacts/{}/edits", art_id),
+            Some(payload.clone()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+
+        // Second edit with the same prev_value must be rejected (a child already exists).
+        let app = crate::http::router(state.clone());
+        let (status, body) = req(
+            app,
+            "POST",
+            &format!("/artifacts/{}/edits", art_id),
+            Some(payload),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "expected 409: {body:?}");
+    }
+
+    // ── Collab: review item tests ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_collab_review_items_round_trip() {
+        let state = make_state_with_collab(vec![]).await;
+        let (art_id, _) = seed_collab_artifact(&state, "collab").await;
+
+        // POST review item.
+        let app = crate::http::router(state.clone());
+        let (status, item) = req(
+            app,
+            "POST",
+            &format!("/artifacts/{}/review_items", art_id),
+            Some(json!({"anchor": "/title", "claim": "bad title", "reality": "hello"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "post_review_item: {item:?}");
+        let item_id = item["id"].as_str().unwrap().to_string();
+        assert_eq!(item["status"], json!("open"));
+
+        // GET review items.
+        let app = crate::http::router(state.clone());
+        let (status, list) = req(
+            app,
+            "GET",
+            &format!("/artifacts/{}/review_items", art_id),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(list.as_array().unwrap().len(), 1);
+
+        // PATCH resolve.
+        let app = crate::http::router(state.clone());
+        let (status, updated) = req(
+            app,
+            "PATCH",
+            &format!("/review_items/{}", item_id),
+            Some(json!({"status": "resolved", "resolution": "fixed it"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "patch_review_item: {updated:?}");
+        assert_eq!(updated["status"], json!("resolved"));
+        assert_eq!(updated["resolution"], json!("fixed it"));
+    }
+
+    #[tokio::test]
+    async fn test_collab_review_items_capability_gating() {
+        let state = make_state_with_collab(vec![]).await;
+        let (art_id, _) = seed_collab_artifact(&state, "any").await;
+
+        let app = crate::http::router(state);
+        let (status, _) = req(
+            app,
+            "POST",
+            &format!("/artifacts/{}/review_items", art_id),
+            Some(json!({"anchor": "/x", "claim": "c", "reality": "r"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_get_artifact_types_returns_registered_types_with_capabilities() {
+        let state = make_state(vec![]).await;
+        let app = crate::http::router(state);
+
+        let (status, body) = req(app, "GET", "/artifact_types", None).await;
+        assert_eq!(status, StatusCode::OK);
+
+        let types = body.as_array().expect("response must be an array");
+        assert_eq!(types.len(), 1, "one artifact type registered in test state");
+
+        let entry = &types[0];
+        assert_eq!(entry["id"], "any");
+        assert_eq!(entry["component_id"], "v");
+
+        let caps = &entry["capabilities"];
+        assert!(caps.is_object(), "capabilities must be an object");
+        assert!(caps["reviewable"].is_boolean());
+        assert!(caps["commentable"].is_boolean());
+        assert!(caps["atom_editable"].is_boolean());
+        assert!(caps["review_items"].is_boolean());
+
+        // anchor_schema is present (may be null for types without one)
+        assert!(
+            entry.get("anchor_schema").is_some(),
+            "anchor_schema field must be present"
+        );
+    }
+
+    // ── fan-out run-creation guardrail ────────────────────────────────────────
+
+    #[test]
+    fn reject_unsupported_fan_out_flags_fanned_stages() {
+        let graph: WorkflowGraph = serde_json::from_value(json!({
+            "stages": {
+                "build": {
+                    "stage_type": "delegated_session",
+                    "config": {
+                        "fan_out": {
+                            "over": { "from": "input", "input_name": "plan", "path": "/cohorts" },
+                            "unit_id_path": "/id"
+                        }
+                    },
+                    "inputs": [],
+                    "outputs": []
+                }
+            },
+            "edges": []
+        }))
+        .unwrap();
+
+        match reject_unsupported_fan_out(&graph).unwrap_err() {
+            AppError::Domain(crate::Error::Validation(msg)) => {
+                let m = msg.to_lowercase();
+                assert!(m.contains("build"), "expected offending stage key, got: {m}");
+                assert!(m.contains("fan-out"), "expected fan-out mention, got: {m}");
+            }
+            _ => panic!("expected a Domain(Validation) AppError"),
+        }
+    }
+
+    #[test]
+    fn reject_unsupported_fan_out_allows_single_session() {
+        // A def with no fan_out (and a stage that explicitly sets fan_out: null)
+        // is runnable and must pass the guardrail unchanged.
+        let graph: WorkflowGraph = serde_json::from_value(json!({
+            "stages": {
+                "plan": {
+                    "stage_type": "delegated_session",
+                    "config": { "model": "claude-sonnet-5" },
+                    "inputs": [],
+                    "outputs": []
+                },
+                "build": {
+                    "stage_type": "delegated_session",
+                    "config": { "fan_out": null },
+                    "inputs": [],
+                    "outputs": []
+                }
+            },
+            "edges": []
+        }))
+        .unwrap();
+
+        assert!(reject_unsupported_fan_out(&graph).is_ok());
     }
 }

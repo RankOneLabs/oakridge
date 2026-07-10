@@ -1,3 +1,4 @@
+pub mod collab;
 pub mod config;
 pub mod db;
 pub mod events;
@@ -5,6 +6,7 @@ pub mod executor;
 pub mod http;
 pub mod registry;
 pub mod scheduler;
+pub mod seed;
 pub mod types;
 
 pub use config::Config;

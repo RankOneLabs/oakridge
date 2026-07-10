@@ -42,6 +42,55 @@ pub enum StageStatus {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+pub enum UnitStatus {
+    Pending,
+    Running,
+    Parked,
+    Done,
+    Failed,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct SessionUnit {
+    pub stage_instance_id: StageInstanceId,
+    pub unit_id: String,
+    pub params: Option<Value>,
+    pub depends_on: Vec<String>,
+    pub external_ref: Option<String>,
+    pub worktree_branch: Option<String>,
+    pub worktree_path: Option<String>,
+    pub worktree_base_ref: Option<String>,
+    pub status: UnitStatus,
+    pub gate_state: Option<Value>,
+    pub artifact_id: Option<ArtifactId>,
+    pub terminal_meta: Option<Value>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Derive aggregate stage status from unit statuses per spec §3.3:
+/// - all done → Done
+/// - any failed OR parked → Parked (surface for operator; siblings keep running)
+/// - otherwise → Running
+/// - empty → Pending
+pub fn derive_stage_status_from_units(units: &[UnitStatus]) -> StageStatus {
+    if units.is_empty() {
+        return StageStatus::Pending;
+    }
+    if units.iter().all(|u| matches!(u, UnitStatus::Done)) {
+        return StageStatus::Done;
+    }
+    if units
+        .iter()
+        .any(|u| matches!(u, UnitStatus::Failed | UnitStatus::Parked))
+    {
+        return StageStatus::Parked;
+    }
+    StageStatus::Running
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
 pub enum RunStatus {
     Pending,
     Running,
@@ -448,6 +497,64 @@ mod tests {
         let v = serde_json::to_value(&a).unwrap();
         let back: Artifact = serde_json::from_value(v).unwrap();
         assert_eq!(a, back);
+    }
+
+    #[test]
+    fn unit_status_canonical_variants() {
+        let variants = [
+            (UnitStatus::Pending, "pending"),
+            (UnitStatus::Running, "running"),
+            (UnitStatus::Parked, "parked"),
+            (UnitStatus::Done, "done"),
+            (UnitStatus::Failed, "failed"),
+        ];
+        for (variant, expected) in &variants {
+            let s = serde_json::to_value(variant).unwrap();
+            assert_eq!(
+                s,
+                json!(expected),
+                "UnitStatus::{:?} should serialize as {:?}",
+                variant,
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn derive_stage_status_empty_is_pending() {
+        assert_eq!(derive_stage_status_from_units(&[]), StageStatus::Pending);
+    }
+
+    #[test]
+    fn derive_stage_status_all_done_is_done() {
+        assert_eq!(
+            derive_stage_status_from_units(&[UnitStatus::Done, UnitStatus::Done]),
+            StageStatus::Done
+        );
+    }
+
+    #[test]
+    fn derive_stage_status_any_failed_is_parked() {
+        assert_eq!(
+            derive_stage_status_from_units(&[UnitStatus::Done, UnitStatus::Failed]),
+            StageStatus::Parked
+        );
+    }
+
+    #[test]
+    fn derive_stage_status_any_parked_is_parked() {
+        assert_eq!(
+            derive_stage_status_from_units(&[UnitStatus::Running, UnitStatus::Parked]),
+            StageStatus::Parked
+        );
+    }
+
+    #[test]
+    fn derive_stage_status_running_without_failed_or_parked_is_running() {
+        assert_eq!(
+            derive_stage_status_from_units(&[UnitStatus::Running, UnitStatus::Pending]),
+            StageStatus::Running
+        );
     }
 
     #[test]

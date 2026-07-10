@@ -5,7 +5,7 @@ import type { ReactElement } from "react";
 
 import { RunListView } from "../RunListView";
 import { RunDetailView } from "../RunDetailView";
-import { ArtifactDetailView } from "../ArtifactDetailView";
+import { ArtifactReviewView } from "../ArtifactReviewView";
 import { GateResumeForm } from "../GateResumeForm";
 import { GlobalParkedGateList } from "../ParkedGateList";
 import type { RunSummary, RunDetail, ArtifactDetail, ParkedGate } from "../types";
@@ -65,6 +65,7 @@ const PARKED_GATE_FIXTURE: ParkedGate = {
   gate_type: "operator_approval",
   run_id: "run-2",
   stage_name: "approve",
+  unit_id: "0",
   artifact_revision_id: "rev-abc",
   worktree: { branch: "cohort/v2_readiness/3-foo", path: "/home/steve/codes/rol/oakridge", base_ref: "epic/v2_readiness" },
   resume_actions: ["approve", "reject"],
@@ -74,8 +75,10 @@ const RUN_DETAIL_FIXTURE: RunDetail = {
   id: "run-1",
   workflow_name: "v2_spec_to_ship",
   status: "running",
+  is_stuck: false,
   stages: [
     {
+      stage_instance_id: "si-1",
       name: "spec",
       type: "spec_generation",
       status: "complete",
@@ -84,6 +87,7 @@ const RUN_DETAIL_FIXTURE: RunDetail = {
       worktree: null,
     },
     {
+      stage_instance_id: "si-2",
       name: "build",
       type: "build_agent",
       status: "running",
@@ -103,6 +107,9 @@ const RUN_DETAIL_FIXTURE: RunDetail = {
 const ARTIFACT_FIXTURE: ArtifactDetail = {
   id: "art-1",
   type_id: "spec_v2",
+  component_id: null,
+  capabilities: null,
+  anchor_schema: null,
   run_id: "run-1",
   producing_stage: "spec",
   revisions: [
@@ -123,7 +130,7 @@ const ARTIFACT_FIXTURE: ArtifactDetail = {
 describe("RunListView", () => {
   it("shows loading state while runs are pending", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise(() => {}));
-    wrap(<RunListView onSelectRun={() => {}} />);
+    wrap(<RunListView onSelectRun={() => {}} onNewRun={() => {}} onNewProject={() => {}} />);
     expect(screen.getByTestId("or-run-list-loading")).toBeTruthy();
   });
 
@@ -131,7 +138,7 @@ describe("RunListView", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       json([RUN_SUMMARY_FIXTURE, PARKED_RUN_SUMMARY]),
     );
-    wrap(<RunListView onSelectRun={() => {}} />);
+    wrap(<RunListView onSelectRun={() => {}} onNewRun={() => {}} onNewProject={() => {}} />);
     const rows = await screen.findAllByTestId("or-run-row");
     expect(rows).toHaveLength(2);
   });
@@ -140,7 +147,7 @@ describe("RunListView", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       json([PARKED_RUN_SUMMARY]),
     );
-    wrap(<RunListView onSelectRun={() => {}} />);
+    wrap(<RunListView onSelectRun={() => {}} onNewRun={() => {}} onNewProject={() => {}} />);
     const badge = await screen.findByTestId("or-parked-count");
     expect(badge.textContent).toBe("2");
   });
@@ -149,20 +156,20 @@ describe("RunListView", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       json([{ ...PARKED_RUN_SUMMARY, is_stuck: true }]),
     );
-    wrap(<RunListView onSelectRun={() => {}} />);
+    wrap(<RunListView onSelectRun={() => {}} onNewRun={() => {}} onNewProject={() => {}} />);
     expect(await screen.findByText("stuck")).toBeTruthy();
   });
 
   it("shows empty state when no runs", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json([]));
-    wrap(<RunListView onSelectRun={() => {}} />);
+    wrap(<RunListView onSelectRun={() => {}} onNewRun={() => {}} onNewProject={() => {}} />);
     expect(await screen.findByTestId("or-run-list-empty")).toBeTruthy();
   });
 
   it("calls onSelectRun when a row is clicked", async () => {
     const onSelectRun = vi.fn();
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json([RUN_SUMMARY_FIXTURE]));
-    wrap(<RunListView onSelectRun={onSelectRun} />);
+    wrap(<RunListView onSelectRun={onSelectRun} onNewRun={() => {}} onNewProject={() => {}} />);
     const row = await screen.findByTestId("or-run-row");
     fireEvent.click(row);
     expect(onSelectRun).toHaveBeenCalledWith("run-1");
@@ -172,7 +179,7 @@ describe("RunListView", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       json({ error: "server down" }, 500),
     );
-    wrap(<RunListView onSelectRun={() => {}} />);
+    wrap(<RunListView onSelectRun={() => {}} onNewRun={() => {}} onNewProject={() => {}} />);
     expect(await screen.findByTestId("or-run-list-error")).toBeTruthy();
   });
 });
@@ -313,10 +320,10 @@ describe("GateResumeForm", () => {
 // Artifact detail view
 // ──────────────────────────────────────────────────────────────────────────────
 
-describe("ArtifactDetailView", () => {
+describe("ArtifactReviewView", () => {
   it("renders artifact type, producing stage, and revision body", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json(ARTIFACT_FIXTURE));
-    wrap(<ArtifactDetailView artifactId="art-1" onBack={() => {}} />);
+    wrap(<ArtifactReviewView artifactId="art-1" onBack={() => {}} />);
 
     expect(await screen.findByTestId("or-artifact-type")).toBeTruthy();
     expect(screen.getByTestId("or-artifact-type").textContent).toBe("spec_v2");
@@ -331,14 +338,14 @@ describe("ArtifactDetailView", () => {
 
   it("shows revision status chip", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json(ARTIFACT_FIXTURE));
-    wrap(<ArtifactDetailView artifactId="art-1" onBack={() => {}} />);
+    wrap(<ArtifactReviewView artifactId="art-1" onBack={() => {}} />);
     const status = await screen.findByTestId("or-revision-status");
     expect(status.textContent).toBe("approved");
   });
 
   it("shows error state when artifact fetch fails", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ error: "not found" }, 404));
-    wrap(<ArtifactDetailView artifactId="bad-id" onBack={() => {}} />);
+    wrap(<ArtifactReviewView artifactId="bad-id" onBack={() => {}} />);
     expect(await screen.findByTestId("or-artifact-detail-error")).toBeTruthy();
   });
 });

@@ -25,7 +25,7 @@ use uuid::Uuid;
 
 use oakridge_core::db::{self, queries};
 use oakridge_core::executor::delegated_session::{
-    config::{DelegatedRuntime, DelegatedSessionDefConfig},
+    config::{Bindable, DelegatedRuntime, DelegatedSessionDefConfig},
     kbbl_client::KbblClient,
     DelegatedExecutor, DelegatedGate, DelegatedGateState, DelegatedSessionStage,
 };
@@ -273,11 +273,13 @@ fn delegated_workflow_def(
             value: format!("{}/{{{{STAGE_INSTANCE_ID}}}}", workdir.display()),
         },
         session_name: "delegated-{{STAGE_INSTANCE_ID}}".into(),
-        model: Some("claude-sonnet-4-6".into()),
+        model: Some(Bindable::Literal("claude-sonnet-4-6".into())),
         effort: None,
         worktree: None,
         pre_authorized_tools: vec![],
         yolo: true,
+        fan_out: None,
+        gate_output: None,
     };
 
     stages.insert(
@@ -392,7 +394,7 @@ async fn emit_artifact(app: &Router, stage_instance_id: StageInstanceId, body: V
             Request::builder()
                 .method("POST")
                 .uri(format!(
-                    "/executors/delegated_session/{}/emit/out",
+                    "/executors/delegated_session/{}/units/0/emit/out",
                     stage_instance_id.0
                 ))
                 .header("content-type", "application/json")
@@ -444,6 +446,9 @@ async fn delegated_session_e2e_gate_driven_completion() {
                 id: "text".into(),
                 validate: |_| Ok(()),
                 component_id: "text-viewer".into(),
+                capabilities: Default::default(),
+                anchor_schema: None,
+            review_items_extractor: None,
             });
 
             stage_types.register(Arc::new(DelegatedSessionStage::new(
@@ -678,6 +683,8 @@ async fn waiting_for_kbbl_parks_and_reattaches() {
                 name: "out".into(),
                 artifact_type: "text".into(),
             }],
+            fan_out: None,
+            gate_output: None,
         };
         serde_json::to_value(cfg).unwrap()
     };
@@ -719,6 +726,9 @@ async fn waiting_for_kbbl_parks_and_reattaches() {
                 id: "text".into(),
                 validate: |_| Ok(()),
                 component_id: "text-viewer".into(),
+                capabilities: Default::default(),
+                anchor_schema: None,
+            review_items_extractor: None,
             });
             stage_types.register(Arc::new(DelegatedSessionStage::new(
                 prompts_dir2,
@@ -829,6 +839,9 @@ async fn session_ended_without_emit_parks_running_stage() {
                 id: "text".into(),
                 validate: |_| Ok(()),
                 component_id: "text-viewer".into(),
+                capabilities: Default::default(),
+                anchor_schema: None,
+            review_items_extractor: None,
             });
             stage_types.register(Arc::new(DelegatedSessionStage::new(
                 prompts_dir2,

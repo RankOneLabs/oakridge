@@ -183,6 +183,10 @@ impl StageContext {
 
         (type_def.validate)(&args.body)?;
 
+        // Extract before the loop so the fn-pointer Copy lands in the future state
+        // without holding a reference to the registry across await points.
+        let extractor = type_def.review_items_extractor;
+
         let EmitArgs {
             output_name,
             artifact_type,
@@ -315,6 +319,51 @@ impl StageContext {
             .await
             .map_err(|_| anyhow::anyhow!("executor event channel closed"))?;
 
+        // Materialize review items from the type's extractor, if registered.
+        // Anchor them to the artifact-chain root — the `revision_id` convention the
+        // collab API uses (see `chain_root_id` in http/rest.rs) — so items group
+        // correctly across revisions. For a freshly emitted artifact (no parent) the
+        // root is the artifact itself, matching prior behavior byte-for-byte.
+        // Best-effort: a failure here does not fail the emit.
+        if let Some(extractor) = extractor {
+            let revision_id = match artifact.parent_artifact_id {
+                None => artifact.id.0.to_string(),
+                Some(_) => {
+                    match crate::db::queries::get_artifact_chain_root_id(&self.db, &artifact.id).await
+                    {
+                        Ok(root_id) => root_id,
+                        Err(e) => {
+                            tracing::warn!(
+                                artifact_id = %artifact.id.0,
+                                "review_items_extractor: chain-root lookup failed, anchoring to artifact id: {e}"
+                            );
+                            artifact.id.0.to_string()
+                        }
+                    }
+                }
+            };
+            let now = Utc::now();
+            for candidate in extractor(&artifact.body) {
+                let ri = crate::collab::ReviewItem {
+                    id: Uuid::new_v4(),
+                    artifact_id: artifact.id.0,
+                    revision_id: revision_id.clone(),
+                    anchor: candidate.anchor,
+                    claim: candidate.claim,
+                    reality: candidate.reality,
+                    status: crate::collab::ReviewItemStatus::Open,
+                    resolution: None,
+                    created_at: now,
+                };
+                if let Err(e) = crate::db::queries::insert_review_item(&self.db, &ri).await {
+                    tracing::warn!(
+                        artifact_id = %artifact.id.0,
+                        "review_items_extractor: failed to insert review item: {e}"
+                    );
+                }
+            }
+        }
+
         // Bump updated_at to signal liveness after a successful emit.
         // Best-effort: the artifact is already committed and the event sent.
         let _ = queries::touch_stage_instance(&self.db, &self.stage_instance_id).await;
@@ -433,6 +482,13 @@ impl StageContext {
             .await?;
         self.stage_instance_summary_mut().parked_meta = meta;
         Ok(())
+    }
+
+    /// Expose the underlying DB pool so executor implementations that manage
+    /// per-unit rows (e.g. delegated_session stage_session_units) can run
+    /// their own queries without needing a separate pool handle.
+    pub fn pool(&self) -> &Arc<SqlitePool> {
+        &self.db
     }
 
     /// Persist the external substrate reference for this stage instance and update
@@ -607,11 +663,17 @@ mod tests {
             id: "any".into(),
             validate: validate_always_ok,
             component_id: "any-viewer".into(),
+            capabilities: Default::default(),
+            anchor_schema: None,
+            review_items_extractor: None,
         });
         reg.register(ArtifactTypeDef {
             id: "strict".into(),
             validate: validate_requires_field,
             component_id: "strict-viewer".into(),
+            capabilities: Default::default(),
+            anchor_schema: None,
+            review_items_extractor: None,
         });
         Arc::new(reg)
     }
@@ -1293,6 +1355,52 @@ mod tests {
             after > before,
             "heartbeat must advance updated_at (before={before:?}, after={after:?})"
         );
+    }
+
+    #[tokio::test]
+    async fn emit_materializes_review_items_via_extractor() {
+        fn extract_items(body: &Value) -> Vec<crate::collab::ReviewItemCandidate> {
+            vec![crate::collab::ReviewItemCandidate {
+                anchor: "/x".into(),
+                claim: "x must be positive".into(),
+                reality: body.get("x").map(|v| v.to_string()).unwrap_or_default(),
+            }]
+        }
+
+        let pool = make_pool().await;
+        let (run_id, si_id) = setup_run(&pool).await;
+        let mut reg = ArtifactTypeRegistry::new();
+        reg.register(ArtifactTypeDef {
+            id: "with-extractor".into(),
+            validate: validate_always_ok,
+            component_id: "v".into(),
+            capabilities: Default::default(),
+            anchor_schema: None,
+            review_items_extractor: Some(extract_items),
+        });
+        let registry = Arc::new(reg);
+        let (tx, _rx) = mpsc::channel(8);
+
+        let ctx = make_ctx(pool.clone(), run_id, si_id, registry, tx);
+        let artifact = ctx
+            .emit(EmitArgs {
+                output_name: "out".into(),
+                artifact_type: "with-extractor".into(),
+                body: json!({"x": 42}),
+                label: None,
+                parent_artifact_id: None,
+            })
+            .await
+            .unwrap();
+
+        let revision_id = artifact.id.0.to_string();
+        let items = queries::list_review_items_for_artifact(&pool, &revision_id)
+            .await
+            .unwrap();
+        assert_eq!(items.len(), 1, "extractor must have materialized one review item");
+        assert_eq!(items[0].anchor, "/x");
+        assert_eq!(items[0].claim, "x must be positive");
+        assert_eq!(items[0].status, crate::collab::ReviewItemStatus::Open);
     }
 
     #[tokio::test]

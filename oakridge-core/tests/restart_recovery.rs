@@ -236,6 +236,9 @@ async fn boot_twice_restart_recovery() {
                 id: "any".into(),
                 validate: |_| Ok(()),
                 component_id: "v".into(),
+                capabilities: Default::default(),
+                anchor_schema: None,
+            review_items_extractor: None,
             });
             stage.register(scripted1);
         },
@@ -303,6 +306,9 @@ async fn boot_twice_restart_recovery() {
                 id: "any".into(),
                 validate: |_| Ok(()),
                 component_id: "v".into(),
+                capabilities: Default::default(),
+                anchor_schema: None,
+            review_items_extractor: None,
             });
             stage.register(scripted2);
         },
@@ -395,6 +401,9 @@ async fn recovery_unregistered_stage_type_fails_with_structured_meta() {
                 id: "any".into(),
                 validate: |_| Ok(()),
                 component_id: "v".into(),
+                capabilities: Default::default(),
+                anchor_schema: None,
+            review_items_extractor: None,
             });
             stage.register(scripted_other);
         },
@@ -493,6 +502,9 @@ async fn recovery_missing_stage_key_fails_with_structured_meta() {
                 id: "any".into(),
                 validate: |_| Ok(()),
                 component_id: "v".into(),
+                capabilities: Default::default(),
+                anchor_schema: None,
+            review_items_extractor: None,
             });
             stage.register(scripted_known);
         },
@@ -601,6 +613,9 @@ async fn cancelled_stage_is_not_rehydrated_by_recovery() {
                 id: "any".into(),
                 validate: |_| Ok(()),
                 component_id: "v".into(),
+                capabilities: Default::default(),
+                anchor_schema: None,
+            review_items_extractor: None,
             });
             stage.register(scripted_stage);
         },

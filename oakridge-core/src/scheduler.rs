@@ -80,8 +80,9 @@ struct RunTask {
     handles: HashMap<StageInstanceId, Box<dyn StageHandle>>,
     // stage_key -> (stage_instance_id, current status)
     index: HashMap<StageKey, (StageInstanceId, StageStatus)>,
-    // (consumer_stage_key, input_slot_name) -> latest artifact
-    resolved: HashMap<(StageKey, String), Artifact>,
+    // (consumer_stage_key, input_slot_name) -> {unit_id -> latest artifact}
+    // N=1 implicit unit uses unit_id="0"; N>1 fan-out populates one entry per unit.
+    resolved: HashMap<(StageKey, String), std::collections::BTreeMap<String, Artifact>>,
     db: Arc<SqlitePool>,
     stage_types: Arc<StageTypeRegistry>,
     artifact_types: Arc<ArtifactTypeRegistry>,
@@ -155,7 +156,9 @@ impl RunTask {
             .filter(|slot| !slot.optional)
             .all(|slot| {
                 self.resolved
-                    .contains_key(&(stage_key.clone(), slot.name.clone()))
+                    .get(&(stage_key.clone(), slot.name.clone()))
+                    .map(|inner| !inner.is_empty())
+                    .unwrap_or(false)
             })
     }
 
@@ -196,6 +199,7 @@ impl RunTask {
             .filter_map(|slot| {
                 self.resolved
                     .get(&(stage_key.clone(), slot.name.clone()))
+                    .and_then(|inner| inner.values().next())
                     .map(|a| (slot.name.clone(), a.clone()))
             })
             .collect();
@@ -402,8 +406,12 @@ impl RunTask {
         for edge in edges {
             let consumer_key = edge.to.stage.clone();
             let slot_name = edge.to.slot.clone();
+            // N=1 implicit unit: key the inner BTreeMap by "0".
+            // N>1 fan-out will supply the unit_id explicitly via a separate path (Phase 2b).
             self.resolved
-                .insert((consumer_key.clone(), slot_name), artifact.clone());
+                .entry((consumer_key.clone(), slot_name))
+                .or_default()
+                .insert("0".to_owned(), artifact.clone());
 
             if let Some((si_id, status)) = self.index.get(&consumer_key).cloned() {
                 // Pending stages have a handle but haven't emitted Running yet; treat
@@ -921,6 +929,7 @@ impl RunTask {
             .filter_map(|slot| {
                 self.resolved
                     .get(&(current.stage_key.clone(), slot.name.clone()))
+                    .and_then(|inner| inner.values().next())
                     .map(|artifact| (slot.name.clone(), artifact.clone()))
             })
             .collect();
@@ -1139,7 +1148,7 @@ impl Coordinator {
         let instances = queries::list_stage_instances_for_run(&self.db, &run_id).await?;
         let artifacts = queries::list_artifacts_for_run(&self.db, &run_id, None).await?;
 
-        let mut resolved: HashMap<(StageKey, String), Artifact> = HashMap::new();
+        let mut resolved: HashMap<(StageKey, String), std::collections::BTreeMap<String, Artifact>> = HashMap::new();
         for artifact in &artifacts {
             let producer_key = instances
                 .iter()
@@ -1165,12 +1174,13 @@ impl Coordinator {
             for edge in &def.graph.edges {
                 if edge.from.stage == producer_key && edge.from.slot == output_name {
                     let key = (edge.to.stage.clone(), edge.to.slot.clone());
-                    let should_use = resolved
-                        .get(&key)
+                    let inner = resolved.entry(key).or_default();
+                    let should_use = inner
+                        .get("0")
                         .map(|current| artifact.created_at > current.created_at)
                         .unwrap_or(true);
                     if should_use {
-                        resolved.insert(key, artifact.clone());
+                        inner.insert("0".to_owned(), artifact.clone());
                     }
                 }
             }
@@ -1535,7 +1545,7 @@ impl Coordinator {
             let instances = queries::list_stage_instances_for_run(&self.db, &run_id).await?;
             let artifacts = queries::list_artifacts_for_run(&self.db, &run_id, None).await?;
 
-            let mut resolved: HashMap<(StageKey, String), Artifact> = HashMap::new();
+            let mut resolved: HashMap<(StageKey, String), std::collections::BTreeMap<String, Artifact>> = HashMap::new();
             for artifact in &artifacts {
                 let producer_key = instances
                     .iter()
@@ -1570,12 +1580,13 @@ impl Coordinator {
                 for edge in &def.graph.edges {
                     if edge.from.stage == producer_key && edge.from.slot == output_name {
                         let key = (edge.to.stage.clone(), edge.to.slot.clone());
-                        let should_use = resolved
-                            .get(&key)
+                        let inner = resolved.entry(key).or_default();
+                        let should_use = inner
+                            .get("0")
                             .map(|e| artifact.created_at > e.created_at)
                             .unwrap_or(true);
                         if should_use {
-                            resolved.insert(key, artifact.clone());
+                            inner.insert("0".to_owned(), artifact.clone());
                         }
                     }
                 }
@@ -1724,6 +1735,7 @@ impl Coordinator {
                     .filter_map(|slot| {
                         task.resolved
                             .get(&(si.stage_key.clone(), slot.name.clone()))
+                            .and_then(|inner| inner.values().next())
                             .map(|a| (slot.name.clone(), a.clone()))
                     })
                     .collect();
@@ -1903,6 +1915,9 @@ mod tests {
             id: "any".into(),
             validate: |_| Ok(()),
             component_id: "v".into(),
+            capabilities: Default::default(),
+            anchor_schema: None,
+            review_items_extractor: None,
         });
         Arc::new(reg)
     }

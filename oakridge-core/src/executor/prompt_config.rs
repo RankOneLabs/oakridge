@@ -24,6 +24,9 @@ pub enum SlotBinding {
     Context { path: String },
     /// A static string value.
     Literal { value: String },
+    /// Resolve from the per-unit params blob via an RFC-6901 pointer.
+    /// Only valid inside a FanOut.item_bindings block; errors if unit_params is None.
+    Item { path: String },
 }
 
 // ── resolve_binding ───────────────────────────────────────────────────────────
@@ -32,6 +35,7 @@ pub fn resolve_binding(
     binding: &SlotBinding,
     inputs: &HashMap<String, Artifact>,
     run_context: &Value,
+    unit_params: Option<&Value>,
 ) -> anyhow::Result<String> {
     match binding {
         SlotBinding::Literal { value } => Ok(value.clone()),
@@ -53,6 +57,17 @@ pub fn resolve_binding(
             })?;
             value_to_string(v)
         }
+        SlotBinding::Item { path } => {
+            let params = unit_params.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "SlotBinding::Item used outside of a FanOut context (unit_params is None)"
+                )
+            })?;
+            let v = params.pointer(path).ok_or_else(|| {
+                anyhow::anyhow!("JSON pointer '{}' not found in unit params", path)
+            })?;
+            value_to_string(v)
+        }
     }
 }
 
@@ -63,6 +78,33 @@ fn value_to_string(v: &Value) -> anyhow::Result<String> {
         Value::Bool(b) => Ok(b.to_string()),
         Value::Null => Ok("null".to_owned()),
         _ => Ok(v.to_string()),
+    }
+}
+
+/// Resolve a slot binding for optional model/effort fields, yielding `Ok(None)`
+/// when the bound context key is absent or null (lenient — falls back to the
+/// runtime default). `Input`/`Item` bindings are not valid for model/effort and
+/// are rejected rather than silently coerced to `None`, so a misconfigured def
+/// fails workflow construction instead of quietly using the default.
+pub fn resolve_optional_binding(
+    binding: &SlotBinding,
+    run_context: &Value,
+) -> anyhow::Result<Option<String>> {
+    match binding {
+        SlotBinding::Literal { value } => Ok(Some(value.clone())),
+        SlotBinding::Context { path } => {
+            let Some(v) = run_context.pointer(path) else {
+                return Ok(None);
+            };
+            if v.is_null() {
+                return Ok(None);
+            }
+            Ok(value_to_string(v).ok())
+        }
+        SlotBinding::Input { .. } | SlotBinding::Item { .. } => anyhow::bail!(
+            "model/effort binding must be a literal or a context binding; \
+             input/item bindings are not supported here"
+        ),
     }
 }
 
@@ -233,7 +275,7 @@ mod tests {
         let b = SlotBinding::Literal {
             value: "abc".into(),
         };
-        let res = resolve_binding(&b, &HashMap::new(), &json!({})).unwrap();
+        let res = resolve_binding(&b, &HashMap::new(), &json!({}), None).unwrap();
         assert_eq!(res, "abc");
     }
 
@@ -246,7 +288,7 @@ mod tests {
             input_name: "doc".into(),
             path: None,
         };
-        let res = resolve_binding(&b, &inputs, &json!({})).unwrap();
+        let res = resolve_binding(&b, &inputs, &json!({}), None).unwrap();
         assert_eq!(res, "the content");
     }
 
@@ -259,7 +301,7 @@ mod tests {
             input_name: "spec".into(),
             path: Some("/notes".into()),
         };
-        let res = resolve_binding(&b, &inputs, &json!({})).unwrap();
+        let res = resolve_binding(&b, &inputs, &json!({}), None).unwrap();
         assert_eq!(res, "my notes");
     }
 
@@ -269,7 +311,7 @@ mod tests {
             input_name: "missing".into(),
             path: None,
         };
-        assert!(resolve_binding(&b, &HashMap::new(), &json!({})).is_err());
+        assert!(resolve_binding(&b, &HashMap::new(), &json!({}), None).is_err());
     }
 
     #[test]
@@ -281,7 +323,7 @@ mod tests {
             input_name: "a".into(),
             path: Some("/missing_field".into()),
         };
-        assert!(resolve_binding(&b, &inputs, &json!({})).is_err());
+        assert!(resolve_binding(&b, &inputs, &json!({}), None).is_err());
     }
 
     #[test]
@@ -290,7 +332,7 @@ mod tests {
         let b = SlotBinding::Context {
             path: "/project_id".into(),
         };
-        let res = resolve_binding(&b, &HashMap::new(), &ctx).unwrap();
+        let res = resolve_binding(&b, &HashMap::new(), &ctx, None).unwrap();
         assert_eq!(res, "proj-123");
     }
 
@@ -299,7 +341,48 @@ mod tests {
         let b = SlotBinding::Context {
             path: "/missing".into(),
         };
-        assert!(resolve_binding(&b, &HashMap::new(), &json!({})).is_err());
+        assert!(resolve_binding(&b, &HashMap::new(), &json!({}), None).is_err());
+    }
+
+    // ── SlotBinding::Item ─────────────────────────────────────────────────────
+
+    #[test]
+    fn slot_binding_item_roundtrip() {
+        let b = SlotBinding::Item {
+            path: "/title".into(),
+        };
+        let v = serde_json::to_value(&b).unwrap();
+        assert_eq!(v["from"], "item");
+        assert_eq!(v["path"], "/title");
+        let back: SlotBinding = serde_json::from_value(v).unwrap();
+        assert_eq!(b, back);
+    }
+
+    #[test]
+    fn resolve_item_with_params() {
+        let b = SlotBinding::Item {
+            path: "/name".into(),
+        };
+        let params = json!({"name": "widget-42"});
+        let res = resolve_binding(&b, &HashMap::new(), &json!({}), Some(&params)).unwrap();
+        assert_eq!(res, "widget-42");
+    }
+
+    #[test]
+    fn resolve_item_missing_path_returns_err() {
+        let b = SlotBinding::Item {
+            path: "/missing".into(),
+        };
+        let params = json!({"name": "widget-42"});
+        assert!(resolve_binding(&b, &HashMap::new(), &json!({}), Some(&params)).is_err());
+    }
+
+    #[test]
+    fn resolve_item_without_params_returns_err() {
+        let b = SlotBinding::Item {
+            path: "/name".into(),
+        };
+        assert!(resolve_binding(&b, &HashMap::new(), &json!({}), None).is_err());
     }
 
     // ── render_template ───────────────────────────────────────────────────────

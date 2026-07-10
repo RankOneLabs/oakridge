@@ -1,7 +1,19 @@
+import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRuns } from "./hooks";
 import type { RunSummary } from "./types";
 import { formatRelative } from "../lib/time";
+
+type FilterTab = "all" | "active" | "parked" | "complete" | "archived";
+
+function applyTabFilter(runs: RunSummary[], tab: FilterTab): RunSummary[] {
+  switch (tab) {
+    case "active": return runs.filter((r) => r.status === "running" || r.status === "parked");
+    case "parked": return runs.filter((r) => r.status === "parked");
+    case "complete": return runs.filter((r) => r.status === "complete" || r.status === "failed" || r.status === "cancelled");
+    default: return runs;
+  }
+}
 
 type RunDisplayStatus = "failed" | "stuck" | RunSummary["status"];
 
@@ -40,28 +52,80 @@ function statusChipClass(status: RunDisplayStatus): string {
 
 interface RunListViewProps {
   onSelectRun: (id: string) => void;
+  onNewRun: () => void;
+  onNewProject: () => void;
 }
 
-export function RunListView({ onSelectRun }: RunListViewProps) {
+const FILTER_TABS: { key: FilterTab; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "active", label: "Active" },
+  { key: "parked", label: "Parked" },
+  { key: "complete", label: "Complete" },
+  { key: "archived", label: "Archived" },
+];
+
+export function RunListView({ onSelectRun, onNewRun, onNewProject }: RunListViewProps) {
+  const [activeTab, setActiveTab] = useState<FilterTab>("all");
   const qc = useQueryClient();
-  const query = useRuns();
+  const apiFilter = activeTab === "archived" ? "archived" : undefined;
+  const query = useRuns(apiFilter);
 
   const onRefresh = () => {
     void qc.invalidateQueries({ queryKey: ["oakridge", "runs"] });
   };
 
+  const visibleRuns = applyTabFilter(query.data ?? [], activeTab);
+
   return (
     <div data-testid="or-run-list">
       <div className="mb-4 flex items-center justify-between gap-3">
         <h2 className="m-0 text-lg font-semibold text-[var(--text-primary)]">Workflow Runs</h2>
-        <button
-          type="button"
-          className={secondaryButtonClass}
-          onClick={onRefresh}
-          aria-label="Refresh runs"
-        >
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className={secondaryButtonClass}
+            onClick={onNewProject}
+            data-testid="or-new-project-btn"
+          >
+            + Project
+          </button>
+          <button
+            type="button"
+            className={secondaryButtonClass}
+            onClick={onNewRun}
+            data-testid="or-new-run-btn"
+          >
+            + New Run
+          </button>
+          <button
+            type="button"
+            className={secondaryButtonClass}
+            onClick={onRefresh}
+            aria-label="Refresh runs"
+          >
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      <div className="mb-3 flex gap-1 border-b border-[var(--border-subtle)]" role="tablist">
+        {FILTER_TABS.map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === tab.key}
+            className={
+              activeTab === tab.key
+                ? "border-b-2 border-[var(--accent-blue)] px-3 py-1.5 text-sm font-medium text-[var(--accent-blue)]"
+                : "px-3 py-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
+            }
+            onClick={() => setActiveTab(tab.key)}
+            data-testid={`or-filter-tab-${tab.key}`}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
       {query.isError && (
@@ -80,13 +144,13 @@ export function RunListView({ onSelectRun }: RunListViewProps) {
         </div>
       )}
 
-      {query.data && query.data.length === 0 && (
+      {query.data && visibleRuns.length === 0 && (
         <div className="py-6 text-sm text-[var(--text-muted)]" data-testid="or-run-list-empty">
           No workflow runs found.
         </div>
       )}
 
-      {query.data && query.data.length > 0 && (
+      {visibleRuns.length > 0 && (
         <table className="w-full border-collapse text-sm" aria-label="Workflow runs">
           <thead>
             <tr>
@@ -98,7 +162,7 @@ export function RunListView({ onSelectRun }: RunListViewProps) {
             </tr>
           </thead>
           <tbody>
-            {query.data.map((run) => {
+            {visibleRuns.map((run) => {
               const status = displayStatus(run);
               return (
                 <tr

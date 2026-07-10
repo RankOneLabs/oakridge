@@ -32,6 +32,14 @@ function GateCard({ gate, onNavigateRun }: GateCardProps) {
         <span className="text-sm text-[var(--text-secondary)]" data-testid="or-gate-stage">
           {gate.stage_name}
         </span>
+        {gate.unit_id && gate.unit_id !== "0" && (
+          <span
+            className="rounded bg-[var(--bg-elevated)] px-1.5 py-0.5 text-xs font-mono text-[var(--text-muted)]"
+            data-testid="or-gate-unit-id"
+          >
+            {gate.unit_id}
+          </span>
+        )}
         {onNavigateRun && (
           <button
             type="button"
@@ -52,6 +60,20 @@ function GateCard({ gate, onNavigateRun }: GateCardProps) {
           <code className={codeClass} data-testid="or-gate-path">{gate.worktree.path}</code>
           <span className={labelClass}>Base</span>
           <code className={codeClass}>{gate.worktree.base_ref}</code>
+        </div>
+      )}
+
+      {gate.pr_url && /^https?:\/\//i.test(gate.pr_url) && (
+        <div className="flex items-center gap-2" data-testid="or-gate-pr-url">
+          <span className={labelClass}>PR</span>
+          <a
+            href={gate.pr_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sm text-[var(--accent-blue)] underline"
+          >
+            {gate.pr_url}
+          </a>
         </div>
       )}
 

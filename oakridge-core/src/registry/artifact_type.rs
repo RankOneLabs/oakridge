@@ -1,6 +1,20 @@
 use crate::types::ArtifactTypeId;
+use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
+
+/// Capability flags for an artifact type; drives the PWA render surface.
+#[derive(Serialize, Clone, Default)]
+pub struct ArtifactCapabilities {
+    /// Artifact can be reviewed (operator approval gate).
+    pub reviewable: bool,
+    /// Artifact supports threaded comments (cohort 5).
+    pub commentable: bool,
+    /// Artifact supports per-atom editing (cohort 5).
+    pub atom_editable: bool,
+    /// Review gate advances only after all review-items are resolved (cohort 5).
+    pub review_items: bool,
+}
 
 /// Definition of a registered artifact type: its ID, body validator, and PWA mount hint.
 pub struct ArtifactTypeDef {
@@ -11,6 +25,16 @@ pub struct ArtifactTypeDef {
     pub validate: fn(&Value) -> crate::Result<()>,
     /// PWA component ID for rendering this artifact; opaque to the substrate.
     pub component_id: String,
+    /// Capability flags for the PWA rendering and collaboration surface.
+    pub capabilities: ArtifactCapabilities,
+    /// RFC-6901 pointer prefixes that are addressable atoms (atom_editable types only).
+    pub anchor_schema: Option<Vec<String>>,
+    /// For review_items-capable types: extract materialized review item candidates from
+    /// a freshly emitted artifact body. Called by `StageContext::emit` after the artifact
+    /// is committed; each candidate is inserted as an open `review_item` row keyed to
+    /// `revision_id = artifact.id` (the chain root for a freshly emitted artifact).
+    /// `None` means items must be posted manually via POST /artifacts/:id/review_items.
+    pub review_items_extractor: Option<fn(&Value) -> Vec<crate::collab::ReviewItemCandidate>>,
 }
 
 /// Registry that maps artifact-type IDs to their definitions.
@@ -34,5 +58,10 @@ impl ArtifactTypeRegistry {
     /// Look up an artifact type definition by ID.
     pub fn get(&self, id: &str) -> Option<&ArtifactTypeDef> {
         self.types.get(id)
+    }
+
+    /// Iterate over all registered artifact type definitions.
+    pub fn all(&self) -> impl Iterator<Item = &ArtifactTypeDef> {
+        self.types.values()
     }
 }

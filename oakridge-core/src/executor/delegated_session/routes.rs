@@ -10,6 +10,7 @@ use axum::{
 };
 use uuid::Uuid;
 
+use crate::db::queries;
 use crate::executor::EmitArgs;
 use crate::types::{StageInstanceId, StageStatus};
 
@@ -25,7 +26,10 @@ struct RouteState {
 
 pub(crate) fn emit_routes(kbbl_client: Arc<KbblClient>, live_sessions: LiveSessions) -> Router {
     Router::new()
-        .route("/:stage_instance_id/emit/:output_name", post(emit_handler))
+        .route(
+            "/:stage_instance_id/units/:unit_id/emit/:output_name",
+            post(emit_handler),
+        )
         .with_state(RouteState {
             _kbbl_client: kbbl_client,
             live_sessions,
@@ -34,7 +38,7 @@ pub(crate) fn emit_routes(kbbl_client: Arc<KbblClient>, live_sessions: LiveSessi
 
 async fn emit_handler(
     State(state): State<RouteState>,
-    Path((stage_instance_id_str, output_name)): Path<(String, String)>,
+    Path((stage_instance_id_str, unit_id, output_name)): Path<(String, String, String)>,
     body: Bytes,
 ) -> impl IntoResponse {
     let stage_instance_id = match Uuid::parse_str(&stage_instance_id_str) {
@@ -44,7 +48,7 @@ async fn emit_handler(
 
     let live_session = {
         let live_sessions = state.live_sessions.lock().unwrap();
-        match live_sessions.get(&stage_instance_id) {
+        match live_sessions.get(&(stage_instance_id, unit_id.clone())) {
             Some(session) => session.clone(),
             None => return not_found(),
         }
@@ -105,7 +109,9 @@ async fn emit_handler(
             output_name: output_name.clone(),
             artifact_type: slot.artifact_type,
             body,
-            label: None,
+            // label carries the unit id (spec §3.5) so per-unit artifacts group by
+            // unit; N=1 uses "0". Downstream unit-artifact filtering keys off this.
+            label: Some(unit_id.clone()),
             parent_artifact_id: None,
         })
         .await
@@ -122,6 +128,64 @@ async fn emit_handler(
         }
     };
 
+    // Write artifact_id to the unit row (best-effort; unit CRUD errors don't fail the emit).
+    if let Err(err) = queries::set_session_unit_artifact_id(
+        live_session.ctx.pool(),
+        &stage_instance_id,
+        &unit_id,
+        artifact.id,
+    )
+    .await
+    {
+        tracing::warn!(
+            stage_instance_id = %stage_instance_id.0,
+            unit_id = %unit_id,
+            error = %err,
+            "set_session_unit_artifact_id failed; unit row may lack artifact_id"
+        );
+    }
+
+    // Determine whether this output slot is the designated gate output.
+    // If gate_output is configured, only that slot parks the unit; other slots
+    // store artifacts without changing stage status (auxiliary outputs).
+    let designated_gate_output = live_session
+        .config
+        .gate_output
+        .as_deref()
+        .or_else(|| {
+            live_session
+                .config
+                .output_slots
+                .first()
+                .map(|s| s.name.as_str())
+        })
+        .unwrap_or("")
+        .to_owned();
+
+    let is_gate_output = output_name == designated_gate_output;
+
+    if !is_gate_output {
+        // Auxiliary output: artifact stored, no gate transition.
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!({ "artifact_id": artifact.id.0.to_string() })),
+        )
+            .into_response();
+    }
+
+    // Look up the pr_summary artifact emitted earlier by this stage instance
+    // so the PR link is available on the artifact-approval gate state (which
+    // the operator will later promote to merge-confirmation on resume).
+    let pr_url = queries::get_latest_artifact_by_stage_and_output(
+        live_session.ctx.pool(),
+        &stage_instance_id,
+        "pr_summary",
+    )
+    .await
+    .ok()
+    .flatten()
+    .and_then(|a| a.body.get("pr_url")?.as_str().map(|s| s.to_owned()));
+
     let revision_count = revision_count_from_meta(summary.parked_meta.as_ref());
     let gate_state = DelegatedGateState::artifact_approval(
         live_session.sid.clone(),
@@ -130,14 +194,34 @@ async fn emit_handler(
         live_session.worktree_path.clone(),
         live_session.worktree_branch.clone(),
         live_session.worktree_base_ref.clone(),
+        pr_url,
     );
+
+    let gate_state_value = match serde_json::to_value(&gate_state) {
+        Ok(value) => value,
+        Err(_) => return internal_error(),
+    };
+
+    // Write gate_state to the unit row (best-effort).
+    if let Err(err) = queries::set_session_unit_gate_state(
+        live_session.ctx.pool(),
+        &stage_instance_id,
+        &unit_id,
+        Some(gate_state_value.clone()),
+    )
+    .await
+    {
+        tracing::warn!(
+            stage_instance_id = %stage_instance_id.0,
+            unit_id = %unit_id,
+            error = %err,
+            "set_session_unit_gate_state failed; unit row may lack gate_state"
+        );
+    }
 
     if live_session
         .ctx
-        .set_parked_meta(Some(match serde_json::to_value(&gate_state) {
-            Ok(value) => value,
-            Err(_) => return internal_error(),
-        }))
+        .set_parked_meta(Some(gate_state_value))
         .await
         .is_err()
     {

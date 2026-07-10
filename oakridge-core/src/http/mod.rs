@@ -4,7 +4,7 @@ pub mod sse;
 use axum::body::Body;
 use axum::http::{header, HeaderName, Method, Request, Response, StatusCode};
 use axum::middleware::{self, Next};
-use axum::routing::{get, post};
+use axum::routing::{get, patch, post};
 use axum::Router;
 use serde_json::json;
 use sqlx::SqlitePool;
@@ -16,6 +16,7 @@ use tower_http::trace::TraceLayer;
 pub use crate::config::{AuthPolicy, Config};
 use crate::db;
 use crate::events::EventBus;
+use crate::seed;
 use crate::executor::delegated_lbc_run::DelegatedLbcRunStage;
 use crate::executor::delegated_session::{kbbl_client::KbblClient, DelegatedSessionStage};
 use crate::registry::{register_dev_flow_types, ArtifactTypeRegistry, StageTypeRegistry};
@@ -148,10 +149,14 @@ where
     let mut stage_reg = StageTypeRegistry::new();
     let mut artifact_reg = ArtifactTypeRegistry::new();
     register_fn(&mut stage_reg, &mut artifact_reg);
-
-    let bus = EventBus::new();
     let stage_reg = Arc::new(stage_reg);
     let artifact_reg = Arc::new(artifact_reg);
+
+    // Seed after the registries exist so built-in defs are validated the same way
+    // POST /workflow_defs validates operator-authored defs.
+    seed::seed_builtin_workflow_defs(&pool, &stage_reg, &artifact_reg).await?;
+
+    let bus = EventBus::new();
     let coordinator = Arc::new(
         Coordinator::new(
             pool.clone(),
@@ -197,7 +202,7 @@ where
         app.layer(
             CorsLayer::new()
                 .allow_origin(AllowOrigin::list(cfg.cors_origins.clone()))
-                .allow_methods([Method::GET, Method::POST])
+                .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE])
                 .allow_headers([
                     header::CONTENT_TYPE,
                     header::AUTHORIZATION,
@@ -228,8 +233,10 @@ pub fn router(state: AppState) -> Router {
             "/workflow_runs",
             post(rest::create_workflow_run).get(rest::list_workflow_runs),
         )
-        .route("/workflow_runs/:id", get(rest::get_workflow_run))
+        .route("/workflow_runs/:id", get(rest::get_workflow_run).delete(rest::delete_workflow_run))
         .route("/workflow_runs/:id/cancel", post(rest::cancel_workflow_run))
+        .route("/workflow_runs/:id/archive", post(rest::archive_workflow_run))
+        .route("/workflow_runs/:id/unarchive", post(rest::unarchive_workflow_run))
         .route(
             "/workflow_runs/:id/artifacts",
             get(rest::list_run_artifacts),
@@ -244,6 +251,7 @@ pub fn router(state: AppState) -> Router {
             post(rest::retry_stuck_stage_instance),
         )
         .route("/artifacts/:id", get(rest::get_artifact))
+        .route("/artifact_types", get(rest::get_artifact_types))
         .route(
             "/artifact_details/:id",
             get(rest::get_operator_artifact_detail),
@@ -254,6 +262,20 @@ pub fn router(state: AppState) -> Router {
         .route("/runs/:id/gates", get(rest::list_operator_run_gates))
         .route("/gates", get(rest::list_operator_gates))
         .route("/gates/:id/resume", post(rest::resume_operator_gate))
+        // ── Collab endpoints ──────────────────────────────────────────────────
+        .route(
+            "/artifacts/:id/threads",
+            post(rest::post_thread).get(rest::list_threads),
+        )
+        .route("/threads/:id/messages", post(rest::post_message))
+        .route("/threads/:id/ping", post(rest::post_ping))
+        .route("/threads/:id", patch(rest::patch_thread))
+        .route("/artifacts/:id/edits", post(rest::post_atom_edit))
+        .route(
+            "/artifacts/:id/review_items",
+            post(rest::post_review_item).get(rest::list_review_items),
+        )
+        .route("/review_items/:id", patch(rest::patch_review_item_status))
         .merge(sse::sse_routes());
 
     for st in stage_registry.all() {

@@ -2,8 +2,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useOakridgeConfig } from "./hooks";
 import { RunListView } from "./RunListView";
 import { RunDetailView } from "./RunDetailView";
-import { ArtifactDetailView } from "./ArtifactDetailView";
+import { ArtifactReviewView } from "./ArtifactReviewView";
+import { NewRunForm } from "./NewRunForm";
+import { CreateProjectModal } from "./CreateProjectModal";
+import { WorkflowDefListView } from "./WorkflowDefListView";
+import { WorkflowDefEditor } from "./WorkflowDefEditor";
 import type { OakridgeSubRoute } from "../lib/hash";
+import type { WorkflowDefSummary } from "./types";
 
 // The oakridge shell gets its own QueryClient so it doesn't collide with the
 // main app's client when mounted independently under the oakridge hash route.
@@ -46,11 +51,22 @@ function OakridgeShellInner({ route, onBack, onNavigate }: OakridgeShellInnerPro
   const navigateToRun = (id: string) => onNavigate(`oakridge/run/${encodeURIComponent(id)}`);
   const navigateToArtifact = (id: string) => onNavigate(`oakridge/artifact/${encodeURIComponent(id)}`);
   const navigateToRuns = () => onNavigate("oakridge");
+  const navigateToNewRun = () => onNavigate("oakridge/new-run");
+  const navigateToCreateProject = () => onNavigate("oakridge/create-project");
+  const navigateToDefs = () => onNavigate("oakridge/defs");
+  const navigateToDefNew = () => onNavigate("oakridge/def-new");
+  const navigateToDefEdit = (id: string) => onNavigate(`oakridge/def-edit/${encodeURIComponent(id)}`);
 
   let content: React.ReactNode;
   switch (route.sub) {
     case "runs":
-      content = <RunListView onSelectRun={navigateToRun} />;
+      content = (
+        <RunListView
+          onSelectRun={navigateToRun}
+          onNewRun={navigateToNewRun}
+          onNewProject={navigateToCreateProject}
+        />
+      );
       break;
     case "run":
       content = (
@@ -62,7 +78,51 @@ function OakridgeShellInner({ route, onBack, onNavigate }: OakridgeShellInnerPro
       );
       break;
     case "artifact":
-      content = <ArtifactDetailView artifactId={route.id} onBack={navigateToRuns} />;
+      content = <ArtifactReviewView artifactId={route.id} onBack={navigateToRuns} />;
+      break;
+    case "new-run":
+      content = (
+        <NewRunForm
+          onBack={navigateToRuns}
+          onCreated={(id) => navigateToRun(id)}
+        />
+      );
+      break;
+    case "create-project":
+      content = (
+        <CreateProjectModal
+          onBack={navigateToRuns}
+          onCreated={navigateToRuns}
+        />
+      );
+      break;
+    case "defs":
+      content = (
+        <WorkflowDefListView
+          onNew={navigateToDefNew}
+          onClone={(def: WorkflowDefSummary) => navigateToDefEdit(def.id)}
+        />
+      );
+      break;
+    case "def-new":
+      content = (
+        <WorkflowDefEditor
+          key="new"
+          cloneFromId={null}
+          onBack={navigateToDefs}
+          onCreated={navigateToDefs}
+        />
+      );
+      break;
+    case "def-edit":
+      content = (
+        <WorkflowDefEditor
+          key={route.id}
+          cloneFromId={route.id}
+          onBack={navigateToDefs}
+          onCreated={navigateToDefs}
+        />
+      );
       break;
   }
 
@@ -84,6 +144,13 @@ function OakridgeShellInner({ route, onBack, onNavigate }: OakridgeShellInnerPro
           onClick={navigateToRuns}
         >
           Runs
+        </button>
+        <button
+          type="button"
+          className={`or-shell__nav-item ${route.sub === "defs" || route.sub === "def-new" || route.sub === "def-edit" ? "or-shell__nav-item--active" : ""}`}
+          onClick={navigateToDefs}
+        >
+          Workflows
         </button>
       </nav>
       <main className="or-shell__content">

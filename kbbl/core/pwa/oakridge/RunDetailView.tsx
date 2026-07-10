@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useRun } from "./hooks";
-import type { StageDetail } from "./types";
+import { useRun, useCancelRun, useRetryStuck, useArchiveRun, useUnarchiveRun, useDeleteRun } from "./hooks";
+import type { StageDetail, StageUnit } from "./types";
 import { RunParkedGateList } from "./ParkedGateList";
 
 const secondaryButtonClass =
@@ -32,10 +32,13 @@ function stageRowClass(status: string): string {
 
 interface StageRowProps {
   stage: StageDetail;
+  canRetry: boolean;
+  onRetry: (stageInstanceId: string) => void;
+  retrying: boolean;
   onSelectArtifact?: (artifactId: string) => void;
 }
 
-function StageRow({ stage, onSelectArtifact }: StageRowProps) {
+function StageRow({ stage, canRetry, onRetry, retrying, onSelectArtifact }: StageRowProps) {
   return (
     <tr className={stageRowClass(stage.status)} data-testid="or-stage-row">
       <td className={`${tableCellClass} font-medium text-[var(--text-primary)]`} data-testid="or-stage-name">
@@ -43,7 +46,20 @@ function StageRow({ stage, onSelectArtifact }: StageRowProps) {
       </td>
       <td className={`${tableCellClass} text-[var(--text-secondary)]`}>{stage.type}</td>
       <td className={tableCellClass}>
-        <span className={statusChipClass(stage.status)}>{stage.status}</span>
+        <div className="flex items-center gap-2">
+          <span className={statusChipClass(stage.status)}>{stage.status}</span>
+          {canRetry && stage.status === "parked" && (
+            <button
+              type="button"
+              className="rounded border border-amber-400 px-2 py-0.5 text-xs text-amber-400 hover:bg-amber-400 hover:text-black disabled:opacity-50"
+              onClick={() => onRetry(stage.stage_instance_id)}
+              disabled={retrying}
+              data-testid="or-retry-stuck-btn"
+            >
+              {retrying ? "…" : "Retry"}
+            </button>
+          )}
+        </div>
       </td>
       <td className={tableCellClass}>
         {stage.artifacts.length === 0 && <span className={mutedClass}>-</span>}
@@ -91,6 +107,88 @@ function StageRow({ stage, onSelectArtifact }: StageRowProps) {
   );
 }
 
+interface UnitRowProps {
+  stageName: string;
+  stageType: string;
+  unit: StageUnit;
+  unitArtifacts: StageDetail["artifacts"];
+  onSelectArtifact?: (artifactId: string) => void;
+}
+
+function UnitRow({ stageName, stageType, unit, unitArtifacts, onSelectArtifact }: UnitRowProps) {
+  return (
+    <tr className={stageRowClass(unit.status)} data-testid="or-stage-row">
+      <td className={`${tableCellClass} font-medium text-[var(--text-primary)]`} data-testid="or-stage-name">
+        <span>{stageName}</span>
+        <span className="ml-1.5 rounded bg-[var(--bg-elevated)] px-1.5 py-0.5 text-xs font-mono text-[var(--text-muted)]">
+          {unit.unit_id}
+        </span>
+      </td>
+      <td className={`${tableCellClass} text-[var(--text-secondary)]`}>{stageType}</td>
+      <td className={tableCellClass}>
+        <div className="flex items-center gap-2">
+          <span className={statusChipClass(unit.status)}>{unit.status}</span>
+          {unit.gate && (
+            <span className="rounded border border-amber-400 px-1.5 py-0.5 text-xs text-amber-400">
+              {unit.gate}
+            </span>
+          )}
+        </div>
+      </td>
+      <td className={tableCellClass}>
+        {unitArtifacts.length === 0 && <span className={mutedClass}>-</span>}
+        <div className="flex flex-wrap gap-1.5">
+          {unitArtifacts.map((artifact) => (
+            <button
+              key={artifact.id}
+              type="button"
+              className={`${chipBaseClass} border-[var(--accent-blue)] text-[var(--accent-blue)] underline`}
+              onClick={() => onSelectArtifact?.(artifact.id)}
+            >
+              {artifact.type_id}
+            </button>
+          ))}
+        </div>
+      </td>
+      <td className={tableCellClass} data-testid="or-stage-session">
+        {unit.sid ? (
+          <a
+            href={`#sid=${encodeURIComponent(unit.sid)}`}
+            className="text-[var(--accent-blue)] underline"
+            data-testid="or-delegated-session-link"
+          >
+            {unit.sid.slice(0, 8)}
+          </a>
+        ) : (
+          <span className={mutedClass}>-</span>
+        )}
+      </td>
+      <td className={tableCellClass} data-testid="or-stage-worktree">
+        {unit.worktree ? (
+          <div className="flex flex-col gap-1">
+            <code className={codeClass} data-testid="or-stage-branch">
+              {unit.worktree.branch}
+            </code>
+            <code className={codeClass} data-testid="or-stage-path">
+              {unit.worktree.path}
+            </code>
+          </div>
+        ) : (
+          <span className={mutedClass}>-</span>
+        )}
+      </td>
+    </tr>
+  );
+}
+
+function isFannedOut(stage: StageDetail): boolean {
+  return (
+    stage.units != null &&
+    stage.units.length > 0 &&
+    !(stage.units.length === 1 && stage.units[0].unit_id === "0")
+  );
+}
+
 interface RunDetailViewProps {
   runId: string;
   onBack: () => void;
@@ -100,6 +198,11 @@ interface RunDetailViewProps {
 export function RunDetailView({ runId, onBack, onSelectArtifact }: RunDetailViewProps) {
   const qc = useQueryClient();
   const query = useRun(runId);
+  const cancelMutation = useCancelRun(runId);
+  const retryMutation = useRetryStuck(runId);
+  const archiveMutation = useArchiveRun(runId);
+  const unarchiveMutation = useUnarchiveRun(runId);
+  const deleteMutation = useDeleteRun(runId);
 
   const onRefresh = () => {
     void qc.invalidateQueries({ queryKey: ["oakridge", "run", runId] });
@@ -132,6 +235,8 @@ export function RunDetailView({ runId, onBack, onSelectArtifact }: RunDetailView
 
   const run = query.data;
 
+  const canCancel = run.status === "running" || run.status === "parked";
+
   return (
     <div className="flex flex-col gap-5" data-testid="or-run-detail">
       <header className="flex items-start gap-4">
@@ -154,9 +259,58 @@ export function RunDetailView({ runId, onBack, onSelectArtifact }: RunDetailView
             )}
           </div>
         </div>
-        <button type="button" className={secondaryButtonClass} onClick={onRefresh}>
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          {canCancel && (
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 rounded-md border border-red-500 px-3 py-1.5 text-sm text-red-500 hover:bg-red-500 hover:text-white disabled:opacity-50"
+              onClick={() => void cancelMutation.mutate()}
+              disabled={cancelMutation.isPending}
+              data-testid="or-cancel-run-btn"
+            >
+              {cancelMutation.isPending ? "Cancelling…" : "Cancel Run"}
+            </button>
+          )}
+          <button
+            type="button"
+            className={secondaryButtonClass}
+            onClick={() => void archiveMutation.mutate()}
+            disabled={archiveMutation.isPending}
+            data-testid="or-archive-run-btn"
+          >
+            {archiveMutation.isPending ? "…" : "Archive"}
+          </button>
+          <button
+            type="button"
+            className={secondaryButtonClass}
+            onClick={() => void unarchiveMutation.mutate()}
+            disabled={unarchiveMutation.isPending}
+            data-testid="or-unarchive-run-btn"
+          >
+            {unarchiveMutation.isPending ? "…" : "Unarchive"}
+          </button>
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 rounded-md border border-red-800 px-3 py-1.5 text-sm text-red-800 hover:bg-red-800 hover:text-white disabled:opacity-50 dark:border-red-400 dark:text-red-400 dark:hover:bg-red-400 dark:hover:text-black"
+            onClick={() => {
+              if (window.confirm("Delete this run permanently? This cannot be undone.")) {
+                void deleteMutation.mutate(undefined, { onSuccess: onBack });
+              }
+            }}
+            disabled={deleteMutation.isPending}
+            data-testid="or-delete-run-btn"
+          >
+            {deleteMutation.isPending ? "…" : "Delete"}
+          </button>
+          {deleteMutation.isError && (
+            <span className="text-sm text-red-500" role="alert">
+              {deleteMutation.error instanceof Error ? deleteMutation.error.message : "Delete failed"}
+            </span>
+          )}
+          <button type="button" className={secondaryButtonClass} onClick={onRefresh}>
+            Refresh
+          </button>
+        </div>
       </header>
 
       <section className="flex flex-col">
@@ -174,13 +328,36 @@ export function RunDetailView({ runId, onBack, onSelectArtifact }: RunDetailView
               </tr>
             </thead>
             <tbody>
-              {run.stages.map((stage: StageDetail) => (
-                <StageRow
-                  key={stage.name}
-                  stage={stage}
-                  onSelectArtifact={onSelectArtifact}
-                />
-              ))}
+              {run.stages.flatMap((stage: StageDetail) => {
+                const units = stage.units;
+                if (units != null && isFannedOut(stage)) {
+                  return units.map((unit) => {
+                    const unitArtifacts = stage.artifacts.filter(
+                      (a) => a.label === unit.unit_id,
+                    );
+                    return (
+                      <UnitRow
+                        key={`${stage.name}:${unit.unit_id}`}
+                        stageName={stage.name}
+                        stageType={stage.type}
+                        unit={unit}
+                        unitArtifacts={unitArtifacts}
+                        onSelectArtifact={onSelectArtifact}
+                      />
+                    );
+                  });
+                }
+                return [
+                  <StageRow
+                    key={stage.name}
+                    stage={stage}
+                    canRetry={run.is_stuck}
+                    onRetry={(sid) => void retryMutation.mutate(sid)}
+                    retrying={retryMutation.isPending}
+                    onSelectArtifact={onSelectArtifact}
+                  />,
+                ];
+              })}
             </tbody>
           </table>
         </div>

@@ -1,7 +1,8 @@
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::registry::artifact_type::{ArtifactTypeDef, ArtifactTypeRegistry};
+use crate::collab::ReviewItemCandidate;
+use crate::registry::artifact_type::{ArtifactCapabilities, ArtifactTypeDef, ArtifactTypeRegistry};
 
 // ── Body structs for schema validation ───────────────────────────────────────
 //
@@ -27,9 +28,25 @@ fn validate_spec_analysis(v: &Value) -> crate::Result<()> {
 }
 
 #[derive(Deserialize)]
+struct Cohort {
+    id: String,
+    title: String,
+    scope: String,
+    depends_on: Vec<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    files_in_scope: Vec<Value>,
+    #[serde(default)]
+    decisions: Vec<Value>,
+    #[serde(default)]
+    acceptance_criteria: Vec<Value>,
+}
+
+#[derive(Deserialize)]
 struct PlanBody {
     summary: String,
-    cohorts: Vec<Value>,
+    cohorts: Vec<Cohort>,
     dependency_order: Vec<Value>,
     scope: Value,
     acceptance_criteria: Vec<Value>,
@@ -85,6 +102,37 @@ fn validate_pr_summary(v: &Value) -> crate::Result<()> {
         .map_err(Into::into)
 }
 
+// ── dev.spec_analysis extractor ───────────────────────────────────────────────
+
+/// Map each finding in a spec_analysis body to a ReviewItemCandidate.
+/// Findings are free-form JSON; we extract `description` as the claim and `id` as the reality key.
+fn extract_spec_analysis_review_items(body: &Value) -> Vec<ReviewItemCandidate> {
+    let Some(findings) = body.get("findings").and_then(Value::as_array) else {
+        return vec![];
+    };
+    findings
+        .iter()
+        .enumerate()
+        .map(|(i, finding)| {
+            let claim = finding
+                .get("description")
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| finding.get("id").and_then(Value::as_str).unwrap_or("(finding)"))
+                .to_string();
+            let reality = finding
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+                .to_string();
+            ReviewItemCandidate {
+                anchor: format!("/findings/{i}"),
+                claim,
+                reality,
+            }
+        })
+        .collect()
+}
+
 // ── Registration ──────────────────────────────────────────────────────────────
 
 /// Register the five dev-flow artifact types in the given registry.
@@ -99,30 +147,83 @@ fn validate_pr_summary(v: &Value) -> crate::Result<()> {
 /// `dev.pr_summary` is registered but not required by the first workflow graph;
 /// it becomes a gate artifact once PR ownership is decided.
 pub fn register_dev_flow_types(registry: &mut ArtifactTypeRegistry) {
+    // dev.spec_analysis: reviewable, commentable, review_items; no atom editing.
     registry.register(ArtifactTypeDef {
         id: "dev.spec_analysis".into(),
         validate: validate_spec_analysis,
         component_id: "dev-spec-analysis-viewer".into(),
+        capabilities: ArtifactCapabilities {
+            reviewable: true,
+            commentable: true,
+            atom_editable: false,
+            review_items: true,
+        },
+        anchor_schema: None,
+        review_items_extractor: Some(extract_spec_analysis_review_items),
     });
+    // dev.plan: fully interactive (cohort 5); anchor_schema covers cohort/dependency atoms.
     registry.register(ArtifactTypeDef {
         id: "dev.plan".into(),
         validate: validate_plan,
         component_id: "dev-plan-viewer".into(),
+        capabilities: ArtifactCapabilities {
+            reviewable: true,
+            commentable: true,
+            atom_editable: true,
+            review_items: false,
+        },
+        anchor_schema: Some(vec![
+            "/cohorts".into(),
+            "/dependency_order".into(),
+        ]),
+        review_items_extractor: None,
     });
+    // dev.build_result: reviewable, commentable, atom_editable; anchor_schema covers top-level sections.
     registry.register(ArtifactTypeDef {
         id: "dev.build_result".into(),
         validate: validate_build_result,
         component_id: "dev-build-result-viewer".into(),
+        capabilities: ArtifactCapabilities {
+            reviewable: true,
+            commentable: true,
+            atom_editable: true,
+            review_items: false,
+        },
+        anchor_schema: Some(vec![
+            "/summary".into(),
+            "/changed_files".into(),
+            "/tests".into(),
+            "/known_issues".into(),
+        ]),
+        review_items_extractor: None,
     });
+    // dev.assessment: reviewable, commentable; no atom editing or review_items.
     registry.register(ArtifactTypeDef {
         id: "dev.assessment".into(),
         validate: validate_assessment,
         component_id: "dev-assessment-viewer".into(),
+        capabilities: ArtifactCapabilities {
+            reviewable: true,
+            commentable: true,
+            atom_editable: false,
+            review_items: false,
+        },
+        anchor_schema: None,
+        review_items_extractor: None,
     });
+    // dev.pr_summary: reviewable only.
     registry.register(ArtifactTypeDef {
         id: "dev.pr_summary".into(),
         validate: validate_pr_summary,
         component_id: "dev-pr-summary-viewer".into(),
+        capabilities: ArtifactCapabilities {
+            reviewable: true,
+            commentable: false,
+            atom_editable: false,
+            review_items: false,
+        },
+        anchor_schema: None,
+        review_items_extractor: None,
     });
 }
 
@@ -223,13 +324,102 @@ mod tests {
         let def = reg.get("dev.plan").unwrap();
         let body = json!({
             "summary": "Plan for adding feature X.",
-            "cohorts": [{"id": "c1", "title": "Cohort 1"}],
+            "cohorts": [{
+                "id": "c1",
+                "title": "Cohort 1",
+                "scope": "Add the feature.",
+                "depends_on": []
+            }],
             "dependency_order": ["c1"],
             "scope": {"files": ["src/lib.rs"]},
             "acceptance_criteria": ["Tests pass", "Typecheck clean"],
             "risks": []
         });
         assert!((def.validate)(&body).is_ok());
+    }
+
+    #[test]
+    fn plan_cohort_with_all_optional_fields_passes() {
+        let reg = make_registry();
+        let def = reg.get("dev.plan").unwrap();
+        let body = json!({
+            "summary": "Plan.",
+            "cohorts": [{
+                "id": "c1",
+                "title": "Cohort 1",
+                "scope": "Build the thing.",
+                "depends_on": ["c0"],
+                "description": "Extended description.",
+                "files_in_scope": ["src/lib.rs"],
+                "decisions": ["Use serde"],
+                "acceptance_criteria": ["Tests pass"]
+            }],
+            "dependency_order": ["c0", "c1"],
+            "scope": {},
+            "acceptance_criteria": [],
+            "risks": []
+        });
+        assert!((def.validate)(&body).is_ok());
+    }
+
+    #[test]
+    fn plan_cohort_missing_id_fails() {
+        let reg = make_registry();
+        let def = reg.get("dev.plan").unwrap();
+        let body = json!({
+            "summary": "Plan",
+            "cohorts": [{"title": "Cohort 1", "scope": "Do X.", "depends_on": []}],
+            "dependency_order": [],
+            "scope": {},
+            "acceptance_criteria": [],
+            "risks": []
+        });
+        assert!((def.validate)(&body).is_err());
+    }
+
+    #[test]
+    fn plan_cohort_missing_title_fails() {
+        let reg = make_registry();
+        let def = reg.get("dev.plan").unwrap();
+        let body = json!({
+            "summary": "Plan",
+            "cohorts": [{"id": "c1", "scope": "Do X.", "depends_on": []}],
+            "dependency_order": [],
+            "scope": {},
+            "acceptance_criteria": [],
+            "risks": []
+        });
+        assert!((def.validate)(&body).is_err());
+    }
+
+    #[test]
+    fn plan_cohort_missing_scope_fails() {
+        let reg = make_registry();
+        let def = reg.get("dev.plan").unwrap();
+        let body = json!({
+            "summary": "Plan",
+            "cohorts": [{"id": "c1", "title": "Cohort 1", "depends_on": []}],
+            "dependency_order": [],
+            "scope": {},
+            "acceptance_criteria": [],
+            "risks": []
+        });
+        assert!((def.validate)(&body).is_err());
+    }
+
+    #[test]
+    fn plan_cohort_missing_depends_on_fails() {
+        let reg = make_registry();
+        let def = reg.get("dev.plan").unwrap();
+        let body = json!({
+            "summary": "Plan",
+            "cohorts": [{"id": "c1", "title": "Cohort 1", "scope": "Do X."}],
+            "dependency_order": [],
+            "scope": {},
+            "acceptance_criteria": [],
+            "risks": []
+        });
+        assert!((def.validate)(&body).is_err());
     }
 
     #[test]
