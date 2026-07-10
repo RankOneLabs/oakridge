@@ -93,16 +93,12 @@ struct RunTask {
     run_map: Arc<Mutex<HashMap<WorkflowRunId, RunHandle>>>,
 }
 
-/// Keys a resolved entry by the producer stage and its persisted unit label.
-/// Labels are only unique within a producer, while collection fan-in needs to
-/// retain artifacts from every producer without collisions. N=1 keeps its
-/// conventional label of `0` within that producer namespace.
-fn resolved_unit_id(producer_stage: &str, artifact: &Artifact) -> String {
-    format!(
-        "{}:{}",
-        producer_stage,
-        artifact.label.as_deref().unwrap_or("0")
-    )
+/// Keys a resolved entry by its persisted producer unit label. This value is
+/// part of the fan-out contract: downstream stages use it to inherit the
+/// matching unit's input and to render their own stable unit identity. N=1
+/// retains the conventional implicit label of `0`.
+fn resolved_unit_id(artifact: &Artifact) -> String {
+    artifact.label.as_deref().unwrap_or("0").to_owned()
 }
 
 impl RunTask {
@@ -502,7 +498,7 @@ impl RunTask {
         for edge in edges {
             let consumer_key = edge.to.stage.clone();
             let slot_name = edge.to.slot.clone();
-            let unit_id = resolved_unit_id(&producer_key, &artifact);
+            let unit_id = resolved_unit_id(&artifact);
             self.resolved
                 .entry((consumer_key.clone(), slot_name))
                 .or_default()
@@ -579,7 +575,7 @@ impl RunTask {
             if known_outputs.get(&output_name) != Some(&artifact.artifact_type) {
                 continue;
             }
-            let unit_id = resolved_unit_id(&stage_key, &artifact);
+            let unit_id = resolved_unit_id(&artifact);
             let key = (output_name.clone(), unit_id);
             let should_use = latest_by_output_and_unit
                 .get(&key)
@@ -756,20 +752,11 @@ impl RunTask {
 
         // Delegated sessions use a two-step gate: artifact approval keeps the
         // stage parked until the explicit merge-confirmation decision arrives.
-        let keep_parked_for_merge_confirmation = after_resume.stage_type == "delegated_session"
-            && (serde_json::from_value::<DelegatedSessionDefConfig>(
-                self.def.graph.stages.get(&stage_key).map(|node| node.config.clone()).unwrap_or(Value::Null),
-            ).ok().and_then(|config| config.fan_out).is_some()
-                || after_resume
-                    .parked_meta
-                    .as_ref()
-                    .and_then(|meta| {
-                        serde_json::from_value::<
-                        crate::executor::delegated_session::DelegatedGateState,
-                    >(meta.clone()).ok()
-                    })
-                    .map(|gate_state| matches!(gate_state.gate, crate::executor::delegated_session::DelegatedGate::MergeConfirmation))
-                    .unwrap_or(false));
+        // A delegated-session handle owns its own gate transitions. In
+        // particular, a fan-out stage can retain per-unit merge state while
+        // unrelated units continue, so the generic stage resume path must not
+        // overwrite its aggregate status with Running.
+        let keep_parked_for_merge_confirmation = after_resume.stage_type == "delegated_session";
 
         if matches!(after_resume.status, StageStatus::Parked) && !keep_parked_for_merge_confirmation
         {
@@ -1279,7 +1266,7 @@ impl Coordinator {
                 if edge.from.stage == producer_key && edge.from.slot == output_name {
                     let key = (edge.to.stage.clone(), edge.to.slot.clone());
                     let inner = resolved.entry(key).or_default();
-                    let unit_id = resolved_unit_id(&producer_key, artifact);
+                    let unit_id = resolved_unit_id(artifact);
                     let should_use = inner
                         .get(&unit_id)
                         .map(|current| artifact.created_at > current.created_at)
@@ -1738,7 +1725,7 @@ impl Coordinator {
                     if edge.from.stage == producer_key && edge.from.slot == output_name {
                         let key = (edge.to.stage.clone(), edge.to.slot.clone());
                         let inner = resolved.entry(key).or_default();
-                        let unit_id = resolved_unit_id(&producer_key, artifact);
+                        let unit_id = resolved_unit_id(artifact);
                         let should_use = inner
                             .get(&unit_id)
                             .map(|e| artifact.created_at > e.created_at)
