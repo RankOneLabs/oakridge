@@ -79,7 +79,7 @@ impl StageType for RetryObservedStage {
     async fn build_config(
         &self,
         def_config: &Value,
-        _inputs: &HashMap<String, Artifact>,
+        _inputs: &HashMap<String, oakridge_core::types::ResolvedInput>,
         _output_slots: &[OutputSlot],
         _stage_instance_id: StageInstanceId,
         _run_context: &Value,

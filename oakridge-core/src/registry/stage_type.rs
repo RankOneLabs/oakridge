@@ -1,5 +1,5 @@
 use crate::executor::{StageContext, StageHandle};
-use crate::types::{Artifact, InputSlot, OutputSlot, StageInstanceId};
+use crate::types::{InputSlot, OutputSlot, ResolvedInput, StageInstanceId};
 use async_trait::async_trait;
 use serde::Serialize;
 use serde_json::Value;
@@ -40,7 +40,7 @@ pub trait StageType: Send + Sync {
     async fn build_config(
         &self,
         def_config: &Value,
-        inputs: &HashMap<String, Artifact>,
+        inputs: &HashMap<String, ResolvedInput>,
         output_slots: &[OutputSlot],
         stage_instance_id: StageInstanceId,
         run_context: &Value,

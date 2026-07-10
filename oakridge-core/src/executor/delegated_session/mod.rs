@@ -21,10 +21,10 @@ use crate::executor::prompt_config::{
 use crate::db::queries;
 use crate::executor::{StageContext, StageHandle};
 use crate::registry::stage_type::StageType;
-use crate::types::{Artifact, InputSlot, OutputSlot, StageInstanceId, StageStatus};
+use crate::types::{Artifact, InputSlot, OutputSlot, ResolvedInput, StageInstanceId, StageStatus};
 use crate::types::{UnitStatus};
 
-use config::{validate_effort, Bindable, DelegatedSessionConfig, DelegatedSessionDefConfig};
+use config::{validate_effort, Bindable, DelegatedSessionConfig, DelegatedSessionDefConfig, FanOutPromptPlan};
 use kbbl_client::{
     AckResponse, CreateSessionRequest, DelegatedExternalRef, EventsSinceResponse, KbblClient,
     SendInputRequest, SessionSnapshot, SetYoloRequest,
@@ -741,7 +741,7 @@ impl StageType for DelegatedSessionStage {
     async fn build_config(
         &self,
         def_config: &Value,
-        inputs: &HashMap<String, Artifact>,
+        inputs: &HashMap<String, ResolvedInput>,
         output_slots: &[OutputSlot],
         stage_instance_id: StageInstanceId,
         run_context: &Value,
@@ -751,10 +751,12 @@ impl StageType for DelegatedSessionStage {
 
         let mut slot_values: HashMap<String, String> = HashMap::new();
         for (slot_name, binding) in &def.slot_bindings {
-            slot_values.insert(
-                slot_name.clone(),
-                resolve_binding(binding, inputs, run_context, None)?,
-            );
+            if !matches!(binding, SlotBinding::Item { .. }) {
+                slot_values.insert(
+                    slot_name.clone(),
+                    resolve_binding(binding, inputs, run_context, None)?,
+                );
+            }
         }
         slot_values.insert(
             "STAGE_INSTANCE_ID".to_owned(),
@@ -762,7 +764,17 @@ impl StageType for DelegatedSessionStage {
         );
         validate_delegated_def(&def)?;
 
-        let rendered_prompt = render_template(&template, &slot_values)?;
+        let mut render_values = slot_values.clone();
+        for (slot_name, binding) in &def.slot_bindings {
+            if matches!(binding, SlotBinding::Item { .. }) {
+                render_values.insert(slot_name.clone(), format!("{{{{{slot_name}}}}}"));
+            }
+        }
+        let rendered_prompt = render_template(&template, &render_values)?;
+        let fan_out_prompt_plan = def.fan_out.as_ref().map(|_| FanOutPromptPlan {
+            raw_template: template.clone(),
+            base_slot_values: slot_values.clone(),
+        });
         let sid_str = stage_instance_id.0.to_string();
         let workdir_str = resolve_binding(&def.workdir, inputs, run_context, None)?
             .replace(STAGE_INSTANCE_ID_SENTINEL, &sid_str);
@@ -795,6 +807,7 @@ impl StageType for DelegatedSessionStage {
         let config = DelegatedSessionConfig {
             runtime: def.runtime,
             rendered_prompt,
+            fan_out_prompt_plan,
             workdir: PathBuf::from(workdir_str),
             session_name: def
                 .session_name
@@ -1653,6 +1666,7 @@ mod tests {
         assert!(cfg
             .rendered_prompt
             .contains("00000000-0000-0000-0000-000000000042"));
+        assert_eq!(cfg.fan_out_prompt_plan, None);
         assert_eq!(
             cfg.workdir,
             PathBuf::from("/work/00000000-0000-0000-0000-000000000042")
@@ -1664,6 +1678,45 @@ mod tests {
         assert_eq!(cfg.output_slots, output_slots);
         assert!(cfg.pre_authorized_tools.is_empty());
         assert!(cfg.yolo);
+    }
+
+    #[tokio::test]
+    async fn build_config_persists_fan_out_prompt_source_and_keeps_item_binding() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("fanout.md"), "Base {{BASE}} item {{ITEM}}").unwrap();
+        let stage = DelegatedSessionStage::new(
+            dir.path().to_path_buf(),
+            KbblClient::new("http://127.0.0.1:8080/").unwrap(),
+        );
+        let config = stage
+            .build_config(
+                &json!({
+                    "runtime": "codex",
+                    "prompt_template_path": "fanout.md",
+                    "slot_bindings": {
+                        "BASE": {"from": "literal", "value": "ready"},
+                        "ITEM": {"from": "item", "path": "/name"}
+                    },
+                    "workdir": {"from": "literal", "value": "/work"},
+                    "session_name": "fanout",
+                    "fan_out": {
+                        "over": {"from": "literal", "value": "[]"},
+                        "unit_id_path": "/id"
+                    }
+                }),
+                &HashMap::new(),
+                &[],
+                StageInstanceId(uuid::Uuid::new_v4()),
+                &json!({}),
+            )
+            .await
+            .unwrap();
+        let config: DelegatedSessionConfig = serde_json::from_value(config).unwrap();
+        assert_eq!(config.rendered_prompt, "Base ready item {{ITEM}}");
+        let plan = config.fan_out_prompt_plan.unwrap();
+        assert_eq!(plan.raw_template, "Base {{BASE}} item {{ITEM}}");
+        assert_eq!(plan.base_slot_values.get("BASE"), Some(&"ready".to_owned()));
+        assert!(!plan.base_slot_values.contains_key("ITEM"));
     }
 
     fn gate_output_def_config(prompts_dir: &std::path::Path, gate_output: &str) -> Value {

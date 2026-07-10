@@ -1803,7 +1803,7 @@ mod tests {
         async fn build_config(
             &self,
             def_config: &Value,
-            _: &HashMap<String, crate::types::Artifact>,
+            _: &HashMap<String, crate::types::ResolvedInput>,
             _: &[crate::types::OutputSlot],
             _: crate::types::StageInstanceId,
             _: &Value,
@@ -1854,7 +1854,7 @@ mod tests {
         async fn build_config(
             &self,
             def_config: &Value,
-            _: &HashMap<String, crate::types::Artifact>,
+            _: &HashMap<String, crate::types::ResolvedInput>,
             _: &[crate::types::OutputSlot],
             _: crate::types::StageInstanceId,
             _: &Value,
@@ -2852,7 +2852,7 @@ mod tests {
         async fn build_config(
             &self,
             def_config: &Value,
-            _: &HashMap<String, crate::types::Artifact>,
+            _: &HashMap<String, crate::types::ResolvedInput>,
             _: &[crate::types::OutputSlot],
             _: crate::types::StageInstanceId,
             _: &Value,

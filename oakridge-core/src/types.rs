@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -114,6 +114,9 @@ pub struct InputSlot {
     pub artifact_type: ArtifactTypeId,
     #[serde(default)]
     pub optional: bool,
+    /// Preserve the latest artifact from every producer unit for this input.
+    #[serde(default)]
+    pub collect: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -244,6 +247,14 @@ pub struct Artifact {
     pub version: i32,
     pub parent_artifact_id: Option<ArtifactId>,
     pub created_at: DateTime<Utc>,
+}
+
+/// A resolved scheduler input: either one producer artifact or an ordered,
+/// provenance-preserving collection keyed by producer unit id.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ResolvedInput {
+    Single(Artifact),
+    Collection(BTreeMap<String, Artifact>),
 }
 
 // --- Gate vocabulary ---
@@ -389,6 +400,7 @@ mod tests {
         let json = json!({"name": "x", "artifact_type": "file"});
         let slot: InputSlot = serde_json::from_value(json).unwrap();
         assert!(!slot.optional);
+        assert!(!slot.collect);
     }
 
     #[test]
@@ -409,6 +421,7 @@ mod tests {
                                 name: "prompt".to_string(),
                                 artifact_type: "text".to_string(),
                                 optional: false,
+                                collect: false,
                             }],
                             outputs: vec![OutputSlot {
                                 name: "response".to_string(),

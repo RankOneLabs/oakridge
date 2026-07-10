@@ -14,9 +14,11 @@ use crate::events::{EventBus, SubstrateEvent};
 use crate::executor::{ExecutorEvent, ResumePayload, StageContext, StageHandle};
 use crate::registry::{ArtifactTypeRegistry, StageTypeRegistry};
 use crate::types::{
-    Artifact, RunStatus, StageInstance, StageInstanceId, StageInstanceSummary, StageKey,
+    Artifact, ResolvedInput, RunStatus, StageInstance, StageInstanceId, StageInstanceSummary, StageKey,
     StageStatus, StageTypeId, WorkflowDef, WorkflowRunId,
 };
+use crate::executor::delegated_session::config::DelegatedSessionDefConfig;
+use crate::executor::prompt_config::SlotBinding;
 
 // ── Control messages ──────────────────────────────────────────────────────────
 
@@ -155,11 +157,83 @@ impl RunTask {
             .iter()
             .filter(|slot| !slot.optional)
             .all(|slot| {
+                if self.input_waits_for_producer_completion(stage_key, slot) {
+                    return self.producer_stages_are_done(stage_key, &slot.name);
+                }
                 self.resolved
                     .get(&(stage_key.clone(), slot.name.clone()))
                     .map(|inner| !inner.is_empty())
                     .unwrap_or(false)
             })
+    }
+
+    fn input_waits_for_producer_completion(
+        &self,
+        stage_key: &StageKey,
+        slot: &crate::types::InputSlot,
+    ) -> bool {
+        slot.collect || self.is_fan_out_over_slot(stage_key, &slot.name)
+    }
+
+    fn is_fan_out_over_slot(&self, stage_key: &StageKey, slot_name: &str) -> bool {
+        let Some(node) = self.def.graph.stages.get(stage_key) else {
+            return false;
+        };
+        if node.stage_type != "delegated_session" {
+            return false;
+        }
+        let Ok(config) = serde_json::from_value::<DelegatedSessionDefConfig>(node.config.clone()) else {
+            return false;
+        };
+        matches!(
+            config.fan_out.map(|fan_out| fan_out.over),
+            Some(SlotBinding::Input { input_name, .. }) if input_name == slot_name
+        )
+    }
+
+    fn producer_stages_are_done(&self, consumer_key: &StageKey, slot_name: &str) -> bool {
+        let producers: Vec<&StageKey> = self
+            .def
+            .graph
+            .edges
+            .iter()
+            .filter(|edge| edge.to.stage == *consumer_key && edge.to.slot == slot_name)
+            .map(|edge| &edge.from.stage)
+            .collect();
+        !producers.is_empty() && producers.iter().all(|producer| {
+            self.index
+                .get(*producer)
+                .map(|(_, status)| *status == StageStatus::Done)
+                .unwrap_or(false)
+        })
+    }
+
+    fn resolved_inputs(
+        &self,
+        stage_key: &StageKey,
+        node: &crate::types::StageNodeDef,
+    ) -> Result<HashMap<String, ResolvedInput>, String> {
+        let mut inputs = HashMap::new();
+        for slot in &node.inputs {
+            let values = self
+                .resolved
+                .get(&(stage_key.clone(), slot.name.clone()))
+                .cloned()
+                .unwrap_or_default();
+            if slot.collect || self.is_fan_out_over_slot(stage_key, &slot.name) {
+                inputs.insert(slot.name.clone(), ResolvedInput::Collection(values));
+            } else if values.len() == 1 {
+                let artifact = values.into_values().next().expect("one resolved input");
+                inputs.insert(slot.name.clone(), ResolvedInput::Single(artifact));
+            } else if values.len() > 1 {
+                return Err(format!(
+                    "input '{}' has {} producer units but is not collect:true",
+                    slot.name,
+                    values.len()
+                ));
+            }
+        }
+        Ok(inputs)
     }
 
     async fn activate_stage(&mut self, stage_key: &StageKey) {
@@ -193,16 +267,19 @@ impl RunTask {
             }
         };
 
-        let inputs: HashMap<String, Artifact> = node
-            .inputs
-            .iter()
-            .filter_map(|slot| {
-                self.resolved
-                    .get(&(stage_key.clone(), slot.name.clone()))
-                    .and_then(|inner| inner.values().next())
-                    .map(|a| (slot.name.clone(), a.clone()))
-            })
-            .collect();
+        let inputs = match self.resolved_inputs(stage_key, &node) {
+            Ok(inputs) => inputs,
+            Err(error) => {
+                self.fail_activation(
+                    stage_key,
+                    si_id,
+                    node.stage_type.clone(),
+                    node.config.clone(),
+                    Some(serde_json::json!({"error": error})),
+                ).await;
+                return;
+            }
+        };
 
         let config = match st
             .build_config(
@@ -406,12 +483,11 @@ impl RunTask {
         for edge in edges {
             let consumer_key = edge.to.stage.clone();
             let slot_name = edge.to.slot.clone();
-            // N=1 implicit unit: key the inner BTreeMap by "0".
-            // N>1 fan-out will supply the unit_id explicitly via a separate path (Phase 2b).
+            let unit_id = artifact.label.clone().unwrap_or_else(|| "0".to_owned());
             self.resolved
                 .entry((consumer_key.clone(), slot_name))
                 .or_default()
-                .insert("0".to_owned(), artifact.clone());
+                .insert(unit_id, artifact.clone());
 
             if let Some((si_id, status)) = self.index.get(&consumer_key).cloned() {
                 // Pending stages have a handle but haven't emitted Running yet; treat
@@ -472,7 +548,7 @@ impl RunTask {
             .iter()
             .map(|slot| (slot.name.clone(), slot.artifact_type.clone()))
             .collect();
-        let mut latest_by_output: std::collections::HashMap<String, Artifact> =
+        let mut latest_by_output_and_unit: std::collections::HashMap<(String, String), Artifact> =
             std::collections::HashMap::new();
         for artifact in artifacts
             .into_iter()
@@ -484,8 +560,10 @@ impl RunTask {
             if known_outputs.get(&output_name) != Some(&artifact.artifact_type) {
                 continue;
             }
-            let should_use = latest_by_output
-                .get(&output_name)
+            let unit_id = artifact.label.clone().unwrap_or_else(|| "0".to_owned());
+            let key = (output_name.clone(), unit_id);
+            let should_use = latest_by_output_and_unit
+                .get(&key)
                 .map(|current| {
                     artifact.version > current.version
                         || (artifact.version == current.version
@@ -493,11 +571,11 @@ impl RunTask {
                 })
                 .unwrap_or(true);
             if should_use {
-                latest_by_output.insert(output_name, artifact);
+                latest_by_output_and_unit.insert(key, artifact);
             }
         }
 
-        for (output_name, artifact) in latest_by_output {
+        for ((output_name, _unit_id), artifact) in latest_by_output_and_unit {
             self.propagate_artifact(stage_key.clone(), artifact, output_name)
                 .await;
         }
@@ -923,16 +1001,10 @@ impl RunTask {
             Ok(refreshed) => refreshed,
             Err(e) => reject_retry!(DecisionError::Internal(anyhow::Error::new(e))),
         };
-        let inputs: HashMap<String, Artifact> = node
-            .inputs
-            .iter()
-            .filter_map(|slot| {
-                self.resolved
-                    .get(&(current.stage_key.clone(), slot.name.clone()))
-                    .and_then(|inner| inner.values().next())
-                    .map(|artifact| (slot.name.clone(), artifact.clone()))
-            })
-            .collect();
+        let inputs = match self.resolved_inputs(&current.stage_key, &node) {
+            Ok(inputs) => inputs,
+            Err(error) => reject_retry!(DecisionError::Conflict(error)),
+        };
         let ctx = StageContext::new(
             StageInstanceSummary::from(&refreshed),
             refreshed.config.clone(),
@@ -1175,12 +1247,13 @@ impl Coordinator {
                 if edge.from.stage == producer_key && edge.from.slot == output_name {
                     let key = (edge.to.stage.clone(), edge.to.slot.clone());
                     let inner = resolved.entry(key).or_default();
+                    let unit_id = artifact.label.clone().unwrap_or_else(|| "0".to_owned());
                     let should_use = inner
-                        .get("0")
+                        .get(&unit_id)
                         .map(|current| artifact.created_at > current.created_at)
                         .unwrap_or(true);
                     if should_use {
-                        inner.insert("0".to_owned(), artifact.clone());
+                        inner.insert(unit_id, artifact.clone());
                     }
                 }
             }
@@ -1581,12 +1654,13 @@ impl Coordinator {
                     if edge.from.stage == producer_key && edge.from.slot == output_name {
                         let key = (edge.to.stage.clone(), edge.to.slot.clone());
                         let inner = resolved.entry(key).or_default();
+                        let unit_id = artifact.label.clone().unwrap_or_else(|| "0".to_owned());
                         let should_use = inner
-                            .get("0")
+                            .get(&unit_id)
                             .map(|e| artifact.created_at > e.created_at)
                             .unwrap_or(true);
                         if should_use {
-                            inner.insert("0".to_owned(), artifact.clone());
+                            inner.insert(unit_id, artifact.clone());
                         }
                     }
                 }
@@ -1729,16 +1803,13 @@ impl Coordinator {
                         continue;
                     }
                 };
-                let inputs: HashMap<String, Artifact> = node
-                    .inputs
-                    .iter()
-                    .filter_map(|slot| {
-                        task.resolved
-                            .get(&(si.stage_key.clone(), slot.name.clone()))
-                            .and_then(|inner| inner.values().next())
-                            .map(|a| (slot.name.clone(), a.clone()))
-                    })
-                    .collect();
+                let inputs = match task.resolved_inputs(&si.stage_key, &node) {
+                    Ok(inputs) => inputs,
+                    Err(error) => {
+                        tracing::error!(stage_key = si.stage_key, "recovery input resolution failed: {}", error);
+                        continue;
+                    }
+                };
                 let ctx = StageContext::new(
                     StageInstanceSummary::from(&si),
                     si.config.clone(),
@@ -1975,7 +2046,7 @@ mod tests {
         async fn build_config(
             &self,
             def_config: &Value,
-            _inputs: &HashMap<String, Artifact>,
+            _inputs: &HashMap<String, ResolvedInput>,
             _output_slots: &[crate::types::OutputSlot],
             _stage_instance_id: crate::types::StageInstanceId,
             _run_context: &Value,
@@ -2019,7 +2090,7 @@ mod tests {
         async fn build_config(
             &self,
             def_config: &Value,
-            _inputs: &HashMap<String, Artifact>,
+            _inputs: &HashMap<String, ResolvedInput>,
             _output_slots: &[crate::types::OutputSlot],
             _stage_instance_id: crate::types::StageInstanceId,
             _run_context: &Value,
@@ -2047,7 +2118,7 @@ mod tests {
         async fn build_config(
             &self,
             def_config: &Value,
-            _inputs: &HashMap<String, Artifact>,
+            _inputs: &HashMap<String, ResolvedInput>,
             _output_slots: &[crate::types::OutputSlot],
             _stage_instance_id: crate::types::StageInstanceId,
             _run_context: &Value,
@@ -2260,6 +2331,7 @@ mod tests {
                                 name: "in".into(),
                                 artifact_type: "any".into(),
                                 optional: false,
+                                collect: false,
                             }],
                             outputs: vec![],
                         },
@@ -2378,6 +2450,7 @@ mod tests {
                                 name: "in_a".into(),
                                 artifact_type: "any".into(),
                                 optional: true,
+                                collect: false,
                             }],
                             outputs: vec![OutputSlot {
                                 name: "out_a".into(),
@@ -2394,6 +2467,7 @@ mod tests {
                                 name: "in_b".into(),
                                 artifact_type: "any".into(),
                                 optional: false,
+                                collect: false,
                             }],
                             outputs: vec![OutputSlot {
                                 name: "out_b".into(),
