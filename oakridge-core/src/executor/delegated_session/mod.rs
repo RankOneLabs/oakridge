@@ -372,7 +372,14 @@ impl UnitScheduler {
         let units = queries::list_session_units_for_stage(self.ctx.pool(), &self.ctx.stage_instance_id).await?;
         let mut running = units.iter().filter(|unit| matches!(unit.status, UnitStatus::Running)).count();
         let done: HashSet<String> = units.iter().filter(|unit| matches!(unit.status, UnitStatus::Done)).map(|unit| unit.unit_id.clone()).collect();
-        let rendered = materialize_fan_out_units(&self.config, &self.fan_out, self.ctx.stage_instance_id)?;
+        let rendered: HashMap<String, MaterializedFanOutUnit> = materialize_fan_out_units(
+            &self.config,
+            &self.fan_out,
+            self.ctx.stage_instance_id,
+        )?
+        .into_iter()
+        .map(|unit| (unit.unit_id.clone(), unit))
+        .collect();
         for unit in units.into_iter().filter(|unit| matches!(unit.status, UnitStatus::Pending)) {
             if running >= self.fan_out.max_parallel {
                 break;
@@ -380,9 +387,9 @@ impl UnitScheduler {
             if !unit.depends_on.iter().all(|dependency| done.contains(dependency)) {
                 continue;
             }
-            let materialized = rendered.iter().find(|candidate| candidate.unit_id == unit.unit_id)
+            let materialized = rendered.get(&unit.unit_id).cloned()
                 .ok_or_else(|| anyhow::anyhow!("persisted unit '{}' is absent from fan_out config", unit.unit_id))?;
-            if let Err(err) = self.launch_unit(materialized).await {
+            if let Err(err) = self.launch_unit(&materialized).await {
                 self.mark_failed(&unit.unit_id, err.to_string()).await;
             } else {
                 running += 1;

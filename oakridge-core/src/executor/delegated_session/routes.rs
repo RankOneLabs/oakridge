@@ -56,7 +56,16 @@ async fn emit_handler(
 
     let unit = match queries::get_session_unit(live_session.ctx.pool(), &stage_instance_id, &unit_id).await {
         Ok(unit) => unit,
-        Err(_) => return not_found(),
+        Err(crate::Error::NotFound { .. }) => return not_found(),
+        Err(err) => {
+            tracing::error!(
+                stage_instance_id = %stage_instance_id.0,
+                unit_id = %unit_id,
+                error = %err,
+                "failed to load delegated session unit"
+            );
+            return internal_error();
+        }
     };
     let summary = live_session.ctx.stage_instance_summary();
     let current_gate = if live_session.unit_scheduler.is_some() {
