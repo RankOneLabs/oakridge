@@ -80,6 +80,8 @@ pub struct DelegatedGateState {
     pub worktree_branch: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub worktree_base_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pr_url: Option<String>,
 }
 
 impl DelegatedGateState {
@@ -90,6 +92,7 @@ impl DelegatedGateState {
         worktree_path: Option<String>,
         worktree_branch: Option<String>,
         worktree_base_ref: Option<String>,
+        pr_url: Option<String>,
     ) -> Self {
         Self {
             executor: DelegatedExecutor::DelegatedSession,
@@ -100,6 +103,7 @@ impl DelegatedGateState {
             worktree_path,
             worktree_branch,
             worktree_base_ref,
+            pr_url,
         }
     }
 }
@@ -791,6 +795,9 @@ impl StageType for DelegatedSessionStage {
             // Thread fan_out through to the built config so execute() can detect
             // N>1 and reject until Phase 2b implements the per-unit scheduler.
             fan_out: def.fan_out,
+            // Carry gate_output designation to built config so the emit handler
+            // knows which slot triggers parking vs. just storing an artifact.
+            gate_output: def.gate_output,
         };
 
         Ok(serde_json::to_value(config)?)
@@ -1499,6 +1506,7 @@ mod tests {
             worktree_path: Some("/work/wt/abc".into()),
             worktree_branch: Some("cohort/e/1-foo".into()),
             worktree_base_ref: Some("abc123".into()),
+            pr_url: None,
         };
 
         let value = serde_json::to_value(&state).unwrap();
@@ -1517,6 +1525,7 @@ mod tests {
             worktree_path: None,
             worktree_branch: None,
             worktree_base_ref: None,
+            pr_url: None,
         };
         let value = serde_json::to_value(&state).unwrap();
         assert!(value.get("worktree_path").is_none());

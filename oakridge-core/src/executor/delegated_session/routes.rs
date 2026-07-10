@@ -143,6 +143,47 @@ async fn emit_handler(
         );
     }
 
+    // Determine whether this output slot is the designated gate output.
+    // If gate_output is configured, only that slot parks the unit; other slots
+    // store artifacts without changing stage status (auxiliary outputs).
+    let designated_gate_output = live_session
+        .config
+        .gate_output
+        .as_deref()
+        .or_else(|| {
+            live_session
+                .config
+                .output_slots
+                .first()
+                .map(|s| s.name.as_str())
+        })
+        .unwrap_or("")
+        .to_owned();
+
+    let is_gate_output = output_name == designated_gate_output;
+
+    if !is_gate_output {
+        // Auxiliary output: artifact stored, no gate transition.
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!({ "artifact_id": artifact.id.0.to_string() })),
+        )
+            .into_response();
+    }
+
+    // Look up the pr_summary artifact emitted earlier by this stage instance
+    // so the PR link is available on the artifact-approval gate state (which
+    // the operator will later promote to merge-confirmation on resume).
+    let pr_url = queries::get_latest_artifact_by_stage_and_output(
+        live_session.ctx.pool(),
+        &stage_instance_id,
+        "pr_summary",
+    )
+    .await
+    .ok()
+    .flatten()
+    .and_then(|a| a.body.get("pr_url")?.as_str().map(|s| s.to_owned()));
+
     let revision_count = revision_count_from_meta(summary.parked_meta.as_ref());
     let gate_state = DelegatedGateState::artifact_approval(
         live_session.sid.clone(),
@@ -151,6 +192,7 @@ async fn emit_handler(
         live_session.worktree_path.clone(),
         live_session.worktree_branch.clone(),
         live_session.worktree_base_ref.clone(),
+        pr_url,
     );
 
     let gate_state_value = match serde_json::to_value(&gate_state) {

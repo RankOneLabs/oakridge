@@ -63,6 +63,20 @@ function GateCard({ gate, onNavigateRun }: GateCardProps) {
         </div>
       )}
 
+      {gate.pr_url && /^https?:\/\//i.test(gate.pr_url) && (
+        <div className="flex items-center gap-2" data-testid="or-gate-pr-url">
+          <span className={labelClass}>PR</span>
+          <a
+            href={gate.pr_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sm text-[var(--accent-blue)] underline"
+          >
+            {gate.pr_url}
+          </a>
+        </div>
+      )}
+
       {gate.artifact_revision_id && (
         <div className="flex items-center gap-2">
           <span className={labelClass}>Revision</span>

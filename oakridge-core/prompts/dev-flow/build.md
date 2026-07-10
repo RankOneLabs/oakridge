@@ -23,11 +23,34 @@ Unit: `{{UNIT_ID}}`
 2. Read the cohort scope and decisions above. The scope is your complete brief — implement exactly what it describes.
 3. Follow the cohort's decisions exactly — do not relitigate closed decisions.
 4. Make one commit per logical subgoal. Each commit must leave tests passing and typecheck clean (`cargo test` or `bun test`, plus `tsc --noEmit` if there is a TypeScript project).
-5. When all subgoals are committed, collect the results and emit the build result artifact.
+5. When all subgoals are committed, push the branch and open a PR (see below), then emit the two artifacts in order.
 
-## Emit the artifact
+## Push branch and open PR
 
-POST exactly once after all commits are complete, then stop:
+After all commits are complete, use the gated-review MCP tools to publish the branch:
+
+1. Push the branch: call `mcp__gated-review__git_push` (no arguments needed — it pushes the current branch).
+2. Open a PR: call `mcp__gated-review__open_pr` with a short title and a brief body summarising the cohort work. The base branch is the upstream of the current branch (typically `main` or the epic branch configured for this run).
+3. Note the `pr_url` returned by `open_pr` — you will include it in the `pr_summary` emit below.
+
+## Emit the artifacts
+
+Emit **in this order** (both calls must complete before stopping):
+
+### 1. PR summary (emit first)
+
+```http
+POST {{OAKRIDGE_URL}}/executors/delegated_session/{{STAGE_INSTANCE_ID}}/units/{{UNIT_ID}}/emit/pr_summary
+Content-Type: application/json
+
+{
+  "pr_url": "<URL returned by open_pr>",
+  "branch": "<current branch name>",
+  "summary": "<1-2 sentence description of what the PR contains>"
+}
+```
+
+### 2. Build result (emit second — this parks the unit for operator review)
 
 ```http
 POST {{OAKRIDGE_URL}}/executors/delegated_session/{{STAGE_INSTANCE_ID}}/units/{{UNIT_ID}}/emit/build_result
@@ -50,7 +73,7 @@ Content-Type: application/json
 }
 ```
 
-Empty arrays are valid for `changed_files` and `known_issues`. If all tests pass, `failed` should be 0.
+Empty arrays are valid for `changed_files` and `known_issues`. If all tests pass, `failed` should be 0. The `build_result` emit parks the unit — do not emit it until `pr_summary` has been successfully posted.
 
 ## Constraints
 

@@ -279,6 +279,7 @@ fn delegated_workflow_def(
         pre_authorized_tools: vec![],
         yolo: true,
         fan_out: None,
+        gate_output: None,
     };
 
     stages.insert(
@@ -683,6 +684,7 @@ async fn waiting_for_kbbl_parks_and_reattaches() {
                 artifact_type: "text".into(),
             }],
             fan_out: None,
+            gate_output: None,
         };
         serde_json::to_value(cfg).unwrap()
     };

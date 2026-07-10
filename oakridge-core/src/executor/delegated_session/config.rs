@@ -131,6 +131,11 @@ pub struct DelegatedSessionDefConfig {
     /// unit (unit_id="0") preserving today's single-session behavior.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fan_out: Option<FanOut>,
+    /// The output slot whose emit triggers the approval gate and parks the unit.
+    /// When absent, defaults to the first declared output slot. Auxiliary outputs
+    /// (those not named here) are stored as artifacts without parking.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gate_output: Option<String>,
 }
 
 // ── DelegatedSessionConfig ───────────────────────────────────────────────────
@@ -161,6 +166,10 @@ pub struct DelegatedSessionConfig {
     /// built config ensures the field is round-trippable and visible at execute time.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub fan_out: Option<FanOut>,
+    /// Resolved gate_output from the def config. Determines which output slot parks
+    /// the unit; auxiliary slots store artifacts without changing stage status.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub gate_output: Option<String>,
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -210,6 +219,7 @@ mod tests {
             pre_authorized_tools: vec!["Bash".into()],
             yolo: false,
             fan_out: None,
+            gate_output: None,
         };
 
         let value = serde_json::to_value(&def).unwrap();
@@ -271,6 +281,7 @@ mod tests {
                 artifact_type: "text".into(),
             }],
             fan_out: None,
+            gate_output: None,
         };
 
         let value = serde_json::to_value(&cfg).unwrap();

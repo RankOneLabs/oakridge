@@ -166,6 +166,7 @@ pub struct OperatorRunSummary {
     pub updated_at: String,
     pub is_stuck: bool,
     pub is_failed: bool,
+    pub archived: bool,
 }
 
 #[derive(Serialize)]
@@ -204,6 +205,8 @@ pub struct OperatorParkedGate {
     pub artifact_revision_id: Option<String>,
     pub worktree: Option<OperatorWorktreeMetadata>,
     pub resume_actions: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pr_url: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -256,6 +259,14 @@ pub struct ListRunsQuery {
     pub status: Option<RunStatus>,
     pub def_id: Option<Uuid>,
     pub project_id: Option<Uuid>,
+}
+
+#[derive(Deserialize, Default)]
+pub struct ListOperatorRunsQuery {
+    /// Filter by lifecycle state.
+    /// "all" → no filter; "archived" → archived only;
+    /// absent / "active" / "parked" / "complete" → non-archived only (frontend post-filters by status).
+    pub filter: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -551,6 +562,30 @@ pub async fn cancel_workflow_run(
     ))
 }
 
+pub async fn archive_workflow_run(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    queries::archive_run(&state.pool, &WorkflowRunId(id)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn unarchive_workflow_run(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    queries::unarchive_run(&state.pool, &WorkflowRunId(id)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn delete_workflow_run(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    queries::delete_run(&state.pool, &WorkflowRunId(id)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 pub async fn list_run_artifacts(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -750,7 +785,7 @@ fn operator_resume_actions(gate: Option<&DelegatedGateState>) -> Vec<String> {
     }
 }
 
-fn operator_gate(stage: &StageInstance) -> OperatorParkedGate {
+fn operator_gate(stage: &StageInstance, pr_url: Option<String>) -> OperatorParkedGate {
     let gate = delegated_gate_state(stage);
     // N=1 implicit unit always uses unit_id "0".
     // N>1 fan-out (Phase 2b) will supply the unit_id from stage_session_units.
@@ -764,7 +799,31 @@ fn operator_gate(stage: &StageInstance) -> OperatorParkedGate {
         artifact_revision_id: gate.as_ref().map(|gate| gate.artifact_id.0.to_string()),
         worktree: operator_worktree(stage),
         resume_actions: operator_resume_actions(gate.as_ref()),
+        pr_url,
     }
+}
+
+/// Look up the pr_url for a stage instance by finding the latest `pr_summary` artifact.
+async fn pr_url_for_stage(
+    pool: &sqlx::SqlitePool,
+    stage: &StageInstance,
+) -> Option<String> {
+    let artifact = queries::get_latest_artifact_by_stage_and_output(
+        pool,
+        &stage.id,
+        "pr_summary",
+    )
+    .await
+    .map_err(|err| {
+        tracing::warn!(
+            stage_instance_id = %stage.id.0,
+            error = %err,
+            "pr_summary artifact lookup failed"
+        );
+        err
+    })
+    .ok()??;
+    artifact.body.get("pr_url")?.as_str().map(|s| s.to_owned())
 }
 
 fn artifacts_by_stage(
@@ -875,13 +934,20 @@ fn operator_run_summary(row: queries::OperatorRunSummary) -> OperatorRunSummary 
         updated_at: row.updated_at.to_rfc3339(),
         is_stuck: row.is_stuck,
         is_failed: matches!(row.status, RunStatus::Failed),
+        archived: row.archived,
     }
 }
 
 pub async fn list_operator_runs(
     State(state): State<AppState>,
+    Query(params): Query<ListOperatorRunsQuery>,
 ) -> Result<Json<Vec<OperatorRunSummary>>, AppError> {
-    let summaries = queries::list_operator_run_summaries(&state.pool)
+    let archived_filter = match params.filter.as_deref() {
+        Some("all") => None,
+        Some("archived") => Some(true),
+        _ => Some(false), // default: hide archived runs
+    };
+    let summaries = queries::list_operator_run_summaries(&state.pool, archived_filter)
         .await?
         .into_iter()
         .map(operator_run_summary)
@@ -928,7 +994,15 @@ pub async fn list_operator_gates(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<OperatorParkedGate>>, AppError> {
     let parked = queries::list_parked_stage_instances(&state.pool).await?;
-    Ok(Json(parked.iter().map(operator_gate).collect()))
+    let mut gates = Vec::with_capacity(parked.len());
+    // TODO: N+1 — one pr_summary query per parked stage. Acceptable while gate lists
+    // are short; batch with WHERE stage_instance_id IN (...) AND output_name='pr_summary'
+    // if this becomes a performance concern.
+    for stage in &parked {
+        let pr_url = pr_url_for_stage(&state.pool, stage).await;
+        gates.push(operator_gate(stage, pr_url));
+    }
+    Ok(Json(gates))
 }
 
 pub async fn list_operator_run_gates(
@@ -938,12 +1012,13 @@ pub async fn list_operator_run_gates(
     let run_id = WorkflowRunId(id);
     queries::get_workflow_run_by_id(&state.pool, &run_id).await?;
     let stages = queries::list_stage_instances_for_run(&state.pool, &run_id).await?;
-    let parked = stages
-        .iter()
-        .filter(|stage| matches!(stage.status, StageStatus::Parked))
-        .map(operator_gate)
-        .collect();
-    Ok(Json(parked))
+    let mut gates = Vec::new();
+    // TODO: same N+1 as list_operator_gates — batch if perf warrants.
+    for stage in stages.iter().filter(|s| matches!(s.status, StageStatus::Parked)) {
+        let pr_url = pr_url_for_stage(&state.pool, stage).await;
+        gates.push(operator_gate(stage, pr_url));
+    }
+    Ok(Json(gates))
 }
 
 fn gate_outcome(action: &str) -> Option<GateOutcome> {
@@ -1944,6 +2019,7 @@ mod tests {
             worktree_path: Some("/worktrees/v2/build".into()),
             worktree_branch: Some("cohort/v2/1-build".into()),
             worktree_base_ref: Some("abc123".into()),
+            pr_url: None,
         };
         let stage = StageInstance {
             id: stage_id,

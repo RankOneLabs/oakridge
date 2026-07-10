@@ -70,6 +70,7 @@
           "effort":       { "from": "context", "path": "/worker_effort" },
           "pre_authorized_tools": [],
           "yolo": false,
+          "gate_output": "build_result",
           "fan_out": {
             "over": { "from": "input", "input_name": "plan", "path": "/cohorts" },
             "unit_id_path": "/id",
@@ -94,6 +95,7 @@
           { "name": "plan", "artifact_type": "dev.plan" }
         ],
         "outputs": [
+          { "name": "pr_summary",   "artifact_type": "dev.pr_summary" },
           { "name": "build_result", "artifact_type": "dev.build_result" }
         ]
       },

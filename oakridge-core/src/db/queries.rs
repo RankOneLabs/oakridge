@@ -53,6 +53,7 @@ struct OperatorRunSummaryRow {
     parked_count: i64,
     is_stuck: i64,
     updated_at: String,
+    archived: i64,
 }
 
 #[derive(sqlx::FromRow)]
@@ -170,6 +171,7 @@ pub struct OperatorRunSummary {
     /// True when any stage in this run is parked with parked_reason = 'stuck_timeout'.
     pub is_stuck: bool,
     pub updated_at: DateTime<Utc>,
+    pub archived: bool,
 }
 
 fn row_to_operator_run_summary(r: OperatorRunSummaryRow) -> crate::Result<OperatorRunSummary> {
@@ -181,6 +183,7 @@ fn row_to_operator_run_summary(r: OperatorRunSummaryRow) -> crate::Result<Operat
         parked_count: r.parked_count as usize,
         is_stuck: r.is_stuck != 0,
         updated_at: parse_dt(&r.updated_at)?,
+        archived: r.archived != 0,
     })
 }
 
@@ -480,10 +483,19 @@ pub async fn list_workflow_runs(
     rows.into_iter().map(row_to_workflow_run).collect()
 }
 
+/// List operator run summaries with an optional archived filter.
+/// `archived = Some(true)` → archived only; `Some(false)` → active only (default);
+/// `None` → all runs regardless of archived flag.
 pub async fn list_operator_run_summaries(
     pool: &SqlitePool,
+    archived: Option<bool>,
 ) -> crate::Result<Vec<OperatorRunSummary>> {
-    let rows = sqlx::query_as::<_, OperatorRunSummaryRow>(
+    let where_clause = match archived {
+        Some(true) => " WHERE wr.archived = 1",
+        Some(false) => " WHERE wr.archived = 0",
+        None => "",
+    };
+    let sql = format!(
         "SELECT \
              wr.id AS run_id, \
              wd.name AS workflow_name, \
@@ -495,16 +507,66 @@ pub async fn list_operator_run_summaries(
              ) AS current_stage, \
              COALESCE(SUM(CASE WHEN si.status = 'parked' THEN 1 ELSE 0 END), 0) AS parked_count, \
              COALESCE(MAX(CASE WHEN si.status = 'parked' AND si.parked_reason = 'stuck_timeout' THEN 1 ELSE 0 END), 0) AS is_stuck, \
-             wr.updated_at AS updated_at \
+             wr.updated_at AS updated_at, \
+             wr.archived AS archived \
          FROM workflow_run wr \
          INNER JOIN workflow_def wd ON wd.id = wr.workflow_def_id \
-         LEFT JOIN stage_instance si ON si.run_id = wr.id \
-         GROUP BY wr.id, wd.name, wr.status, wr.updated_at, wr.created_at \
-         ORDER BY wr.created_at, wr.id",
-    )
-    .fetch_all(pool)
-    .await?;
+         LEFT JOIN stage_instance si ON si.run_id = wr.id\
+         {where_clause} \
+         GROUP BY wr.id, wd.name, wr.status, wr.updated_at, wr.created_at, wr.archived \
+         ORDER BY wr.created_at, wr.id"
+    );
+    let rows = sqlx::query_as::<_, OperatorRunSummaryRow>(&sql)
+        .fetch_all(pool)
+        .await?;
     rows.into_iter().map(row_to_operator_run_summary).collect()
+}
+
+pub async fn archive_run(pool: &SqlitePool, id: &WorkflowRunId) -> crate::Result<()> {
+    let id_str = id.0.to_string();
+    let result = sqlx::query("UPDATE workflow_run SET archived = 1 WHERE id = ?")
+        .bind(&id_str)
+        .execute(pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(crate::Error::NotFound {
+            entity: "workflow_run".into(),
+            id: id_str,
+        });
+    }
+    Ok(())
+}
+
+pub async fn unarchive_run(pool: &SqlitePool, id: &WorkflowRunId) -> crate::Result<()> {
+    let id_str = id.0.to_string();
+    let result = sqlx::query("UPDATE workflow_run SET archived = 0 WHERE id = ?")
+        .bind(&id_str)
+        .execute(pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(crate::Error::NotFound {
+            entity: "workflow_run".into(),
+            id: id_str,
+        });
+    }
+    Ok(())
+}
+
+pub async fn delete_run(pool: &SqlitePool, id: &WorkflowRunId) -> crate::Result<()> {
+    let id_str = id.0.to_string();
+    let mut txn = pool.begin().await?;
+    let result = sqlx::query("DELETE FROM workflow_run WHERE id = ?")
+        .bind(&id_str)
+        .execute(&mut *txn)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(crate::Error::NotFound {
+            entity: "workflow_run".into(),
+            id: id_str,
+        });
+    }
+    txn.commit().await?;
+    Ok(())
 }
 
 pub async fn list_active_runs(pool: &SqlitePool) -> crate::Result<Vec<WorkflowRun>> {
@@ -1002,6 +1064,29 @@ pub async fn list_artifacts_for_run(
         .await?
     };
     rows.into_iter().map(row_to_artifact).collect()
+}
+
+/// Return the most recently created artifact for the given stage instance and output
+/// slot name, or None if no such artifact exists yet.
+pub async fn get_latest_artifact_by_stage_and_output(
+    pool: &SqlitePool,
+    stage_instance_id: &StageInstanceId,
+    output_name: &str,
+) -> crate::Result<Option<Artifact>> {
+    let id_str = stage_instance_id.0.to_string();
+    let row = sqlx::query_as::<_, ArtifactRow>(
+        "SELECT id, run_id, stage_instance_id, artifact_type, output_name, label, body, version, \
+         parent_artifact_id, created_at \
+         FROM artifact \
+         WHERE stage_instance_id = ? AND output_name = ? \
+         ORDER BY created_at DESC, id DESC \
+         LIMIT 1",
+    )
+    .bind(&id_str)
+    .bind(output_name)
+    .fetch_optional(pool)
+    .await?;
+    row.map(row_to_artifact).transpose()
 }
 
 // ── SessionUnit ───────────────────────────────────────────────────────────────
@@ -2128,7 +2213,7 @@ mod tests {
         };
         insert_stage_instance(&pool, &parked_stage).await.unwrap();
 
-        let summaries = list_operator_run_summaries(&pool).await.unwrap();
+        let summaries = list_operator_run_summaries(&pool, None).await.unwrap();
         assert_eq!(summaries.len(), 2);
 
         let run_summary = summaries
@@ -2546,7 +2631,7 @@ mod tests {
         };
         insert_stage_instance(&pool, &normal_parked).await.unwrap();
 
-        let summaries = list_operator_run_summaries(&pool).await.unwrap();
+        let summaries = list_operator_run_summaries(&pool, None).await.unwrap();
         let s = summaries.iter().find(|s| s.run_id == run.id).unwrap();
         assert!(!s.is_stuck, "normal park must not set is_stuck");
 
@@ -2560,7 +2645,7 @@ mod tests {
         };
         insert_stage_instance(&pool, &stuck_parked).await.unwrap();
 
-        let summaries2 = list_operator_run_summaries(&pool).await.unwrap();
+        let summaries2 = list_operator_run_summaries(&pool, None).await.unwrap();
         let s2 = summaries2.iter().find(|s| s.run_id == run.id).unwrap();
         assert!(s2.is_stuck, "stuck_timeout parked stage must set is_stuck");
     }
