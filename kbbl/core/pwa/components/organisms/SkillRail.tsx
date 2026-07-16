@@ -13,7 +13,7 @@ interface RailSection {
   skills: Skill[];
 }
 
-/** True for an MCP-tool pseudo-skill (e.g. `cc:mcp:<server>:<tool>`). */
+/** True for a typed MCP rail action (e.g. `cc:mcp:<server>:<tool>`). */
 function isMcpSkill(skill: Skill): boolean {
   return skill.id.split(":")[1] === "mcp";
 }
@@ -124,10 +124,11 @@ export function SkillRail({
     setDispatchingId(skill.id);
     try {
       await invokeMutation.mutateAsync({ skill_id: skill.id, args });
-    } catch {
+    } catch (err) {
       // Submission failed (transport down, session not live, …). Surface it
       // explicitly so the user can tell "not dispatched" from "dispatched".
-      setInvokeError(`Couldn't invoke "${skill.name}" — it was not submitted.`);
+      const detail = err instanceof Error ? ` ${err.message}` : "";
+      setInvokeError(`Couldn't invoke "${skill.name}".${detail}`);
     } finally {
       setDispatchingId(null);
     }

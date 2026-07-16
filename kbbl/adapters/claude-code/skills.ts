@@ -4,6 +4,10 @@ import { homedir } from "node:os";
 import { parse as parseYaml } from "yaml";
 
 import type { Skill, ArgSpec } from "../../core/skills/types";
+import {
+  gatedReviewSkills,
+  parseMcpSkillReference,
+} from "../../core/skills/gated-review";
 
 /**
  * Minimum CC version where the slash+frontmatter behavior this adapter
@@ -263,22 +267,6 @@ const CC_BUILTIN_COMMANDS: ReadonlyArray<{
   { name: "init", description: "Initialize a CLAUDE.md with codebase documentation." },
 ];
 
-const GATED_REVIEW_MCP_TOOLS: ReadonlyArray<{
-  name: string;
-  description: string;
-}> = [
-  { name: "get_review_round", description: "Read PR review threads and comments." },
-  { name: "reply_to_thread", description: "Reply to a PR review thread." },
-  { name: "resolve_thread", description: "Resolve a handled PR review thread." },
-  { name: "git_push", description: "Push through the gated-review MCP server." },
-  { name: "git_pull", description: "Pull through the gated-review MCP server." },
-  { name: "git_fetch", description: "Fetch through the gated-review MCP server." },
-  {
-    name: "open_pr",
-    description: "Open a pull request through the gated-review MCP server.",
-  },
-];
-
 function builtinSkills(): Skill[] {
   return CC_BUILTIN_COMMANDS.map((cmd) => ({
     id: `cc:builtin:${cmd.name}`,
@@ -289,19 +277,6 @@ function builtinSkills(): Skill[] {
     args: cmd.args ?? [],
     user_invocable: true,
     model_invocable: false,
-  }));
-}
-
-function gatedReviewMcpSkills(): Skill[] {
-  return GATED_REVIEW_MCP_TOOLS.map((tool) => ({
-    id: `cc:mcp:gated-review:${tool.name}`,
-    name: `mcp:gated-review:${tool.name}`,
-    description: tool.description,
-    backend: "claude-code" as const,
-    scope: "system" as const,
-    args: [],
-    user_invocable: true,
-    model_invocable: true,
   }));
 }
 
@@ -343,8 +318,8 @@ export async function discoverSkills(
     ...onDisk,
     ...pluginSkills,
     ...builtins,
-    // Pseudo-skills for the MCP server kbbl injects into every CC session.
-    ...gatedReviewMcpSkills(),
+    // Typed rail actions for the MCP server kbbl injects into every CC session.
+    ...gatedReviewSkills("claude-code"),
   ]) {
     byId.set(skill.id, skill);
   }
@@ -361,9 +336,8 @@ export function formatSkillInvocation(
   skill: Skill,
   args: Record<string, string>,
 ): string {
-  if (skill.id.startsWith("cc:mcp:")) {
-    const [, , serverName, toolName] = skill.id.split(":");
-    return `Use the ${serverName} MCP tool ${toolName}.`;
+  if (parseMcpSkillReference(skill) !== null) {
+    throw new Error("MCP tools must be invoked through the typed MCP route");
   }
 
   const numericParts = Object.entries(args)

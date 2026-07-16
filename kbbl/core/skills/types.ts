@@ -4,6 +4,8 @@ export interface ArgSpec {
   key: string;
   required: boolean;
   hint: string;
+  /** Input/coercion kind. Omitted for legacy skill arguments, which are text. */
+  kind?: "string" | "integer" | "boolean";
 }
 
 export interface Skill {

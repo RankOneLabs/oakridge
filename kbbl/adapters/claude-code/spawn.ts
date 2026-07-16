@@ -5,6 +5,8 @@ import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
 
+import { GATED_REVIEW_MCP_URL } from "../../core/skills/gated-review";
+
 const execFileAsync = promisify(execFile);
 
 /** True for a non-null, non-array object — the shape we can safely index/spread. */
@@ -105,8 +107,6 @@ export async function writeCcSettings(opts: CcSettingsOpts): Promise<string> {
  * unless we load it through `--mcp-config`, which is independent of
  * `--setting-sources`. (oakridge-core's session_agent mirrors this URL.)
  */
-const GATED_REVIEW_MCP_URL = "http://otto:3555/mcp";
-
 /**
  * Writes the MCP-config file the spawned CC subprocess reads via
  * `--mcp-config <path>`. Returns the absolute path.

@@ -53,4 +53,39 @@ describe("ArgSheet", () => {
     });
     expect((submit as HTMLButtonElement).disabled).toBe(false);
   });
+
+  it("collects MCP integer and boolean arguments with typed controls", () => {
+    const onSubmit = vi.fn();
+    const mcpSkill: Skill = {
+      ...SKILL,
+      id: "cc:mcp:gated-review:get_review_round",
+      name: "mcp:gated-review:get_review_round",
+      args: [
+        {
+          key: "pullRequestNumber",
+          required: true,
+          hint: "pull request number",
+          kind: "integer",
+        },
+        {
+          key: "includeResolved",
+          required: false,
+          hint: "include resolved threads",
+          kind: "boolean",
+        },
+      ],
+    };
+    render(<ArgSheet skill={mcpSkill} onSubmit={onSubmit} onCancel={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText(/pull request number/), {
+      target: { value: "373" },
+    });
+    fireEvent.click(screen.getByLabelText(/include resolved threads/));
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      pullRequestNumber: "373",
+      includeResolved: "true",
+    });
+  });
 });

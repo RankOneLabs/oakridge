@@ -95,8 +95,8 @@ const RuntimeSchema = z
   .strict();
 
 const DEFAULT_CONFIRM_SKILLS = [
-  "mcp:gated-review:git_push",
-  "mcp:gated-review:git_pull",
+  "mcp:gated-review:git.push",
+  "mcp:gated-review:git.pull",
   "mcp:gated-review:open_pr",
 ];
 

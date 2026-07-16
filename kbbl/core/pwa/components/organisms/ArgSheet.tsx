@@ -11,7 +11,9 @@ export function ArgSheet({
   onCancel: () => void;
 }) {
   const [args, setArgs] = useState<Record<string, string>>(() =>
-    Object.fromEntries(skill.args.map((a) => [a.key, ""])),
+    Object.fromEntries(
+      skill.args.map((arg) => [arg.key, arg.kind === "boolean" ? "false" : ""]),
+    ),
   );
 
   // Escape-to-close, matching the other modal surfaces (e.g. DirectoryPicker).
@@ -25,7 +27,9 @@ export function ArgSheet({
 
   const canSubmit = skill.args
     .filter((a) => a.required)
-    .every((a) => args[a.key]?.trim());
+    .every((a) =>
+      a.kind === "boolean" ? args[a.key] !== undefined : args[a.key]?.trim(),
+    );
 
   const titleId = `arg-sheet-title-${skill.id}`;
 
@@ -54,26 +58,51 @@ export function ArgSheet({
           </button>
         </div>
         <div className="arg-sheet__fields">
-          {skill.args.map((spec) => (
-            <div key={spec.key} className="arg-sheet__field">
-              <label className="arg-sheet__label" htmlFor={`arg-${spec.key}`}>
-                {spec.hint}
-                {spec.required && (
-                  <span className="arg-sheet__required">*</span>
+          {skill.args.map((spec) => {
+            const isBoolean = spec.kind === "boolean";
+            return (
+              <div
+                key={spec.key}
+                className={`arg-sheet__field ${
+                  isBoolean ? "arg-sheet__field--boolean" : ""
+                }`}
+              >
+                <label className="arg-sheet__label" htmlFor={`arg-${spec.key}`}>
+                  {isBoolean && (
+                    <input
+                      id={`arg-${spec.key}`}
+                      type="checkbox"
+                      className="arg-sheet__checkbox"
+                      checked={args[spec.key] === "true"}
+                      onChange={(e) =>
+                        setArgs((prev) => ({
+                          ...prev,
+                          [spec.key]: String(e.target.checked),
+                        }))
+                      }
+                    />
+                  )}
+                  {spec.hint}
+                  {spec.required && (
+                    <span className="arg-sheet__required">*</span>
+                  )}
+                </label>
+                {!isBoolean && (
+                  <input
+                    id={`arg-${spec.key}`}
+                    type={spec.kind === "integer" ? "number" : "text"}
+                    step={spec.kind === "integer" ? 1 : undefined}
+                    className="arg-sheet__input"
+                    value={args[spec.key] ?? ""}
+                    placeholder={spec.hint}
+                    onChange={(e) =>
+                      setArgs((prev) => ({ ...prev, [spec.key]: e.target.value }))
+                    }
+                  />
                 )}
-              </label>
-              <input
-                id={`arg-${spec.key}`}
-                type="text"
-                className="arg-sheet__input"
-                value={args[spec.key] ?? ""}
-                placeholder={spec.hint}
-                onChange={(e) =>
-                  setArgs((prev) => ({ ...prev, [spec.key]: e.target.value }))
-                }
-              />
-            </div>
-          ))}
+              </div>
+            );
+          })}
         </div>
         <button type="submit" className="arg-sheet__submit" disabled={!canSubmit}>
           Run
