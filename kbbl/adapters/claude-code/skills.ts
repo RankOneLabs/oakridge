@@ -354,8 +354,8 @@ export async function discoverSkills(
 /**
  * Build the CC-native slash trigger for a skill invocation. Pure, synchronous,
  * and IO-free. Returns `/<name>` followed by positional arg values (ascending
- * numeric key order) then named arg values, space-joined. The caller passes
- * the returned string to send() via the existing channel-push seam.
+ * numeric key order) then named arg values, space-joined. The skills route tags
+ * the returned string for the adapter's native PTY command path.
  */
 export function formatSkillInvocation(
   skill: Skill,

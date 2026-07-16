@@ -115,6 +115,12 @@ export type ArchiveRef = string;
 
 export type ApprovalDecision = "allow" | "deny" | "always_allow" | "always_deny";
 
+/** Result of submitting input through a runtime's native command parser. */
+export interface RuntimeCommandResult {
+  /** Whether the command starts a model turn that will emit the normal turn-end signal. */
+  startsTurn: boolean;
+}
+
 export interface RuntimeConfig {
   workingDirectory: string;
   initialPrompt?: string;
@@ -204,6 +210,19 @@ export interface AgentRuntime {
 
   /** Operator sends text/commands back into the session. */
   send(handle: SessionHandle, input: string): Promise<void>;
+
+  /**
+   * Submit a slash command through the runtime's native command parser.
+   *
+   * Claude Code channel messages are always ordinary chat, even when their
+   * text starts with `/`; its adapter therefore implements this separately by
+   * writing to the interactive PTY. Runtimes without a distinct command path
+   * omit it and core falls back to send().
+   */
+  sendCommand?(
+    handle: SessionHandle,
+    command: string,
+  ): Promise<RuntimeCommandResult>;
 
   /**
    * True when the runtime does not echo operator input back as a `user`
@@ -299,11 +318,11 @@ export interface AgentRuntime {
   /**
    * Build the backend-native trigger string for a skill invocation. This is a
    * PURE, synchronous, IO-free function — it has no side effects and sends
-   * nothing. The caller (the registry) passes the returned string to send()
-   * through the existing session.writeInput seam (the Claude Code channel-push
-   * transport for CC adapters). Keeping slash/mention/frontmatter syntax here,
-   * inside the adapter, honors the spec rule that the backend-native invocation
-   * contract lives entirely in the adapter.
+   * nothing. The caller passes the returned string through session.writeInput;
+   * slash-prefixed triggers use sendCommand() when the runtime exposes it, and
+   * all other triggers use send(). Keeping slash/mention/frontmatter syntax
+   * here, inside the adapter, keeps the backend-native invocation contract in
+   * the adapter.
    */
   formatSkillInvocation?(skill: Skill, args: Record<string, string>): string;
 

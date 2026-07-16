@@ -294,6 +294,11 @@ export function buildCcArgv(opts: CcArgvOpts): string[] {
     "--mcp-config",
     opts.mcpConfigPath,
     "--strict-mcp-config",
+    // kbbl has no structured response path for AskUserQuestion. Leaving the
+    // tool available parks the turn indefinitely until the operator sends an
+    // interrupt, so remove it from the model's tool surface at launch.
+    "--disallowed-tools",
+    "AskUserQuestion",
   ];
   // Forced session id (PTY mode), assigned before launch. --fork-session below
   // is required for CC to accept --session-id alongside --resume.
@@ -395,4 +400,3 @@ export async function assertA1Invariants(opts: {
   }
   return resolvedBin;
 }
-

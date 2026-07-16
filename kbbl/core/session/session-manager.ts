@@ -1288,7 +1288,10 @@ export class SessionManager {
           resolve(md);
         });
       });
-      await session.writeInput(COMPACT_PROMPT, { internal: true });
+      await session.writeInput(COMPACT_PROMPT, {
+        internal: true,
+        command: true,
+      });
       const timed = new Promise<null>((resolve) => {
         timeoutHandle = setTimeout(() => resolve(null), timeoutMs);
       });

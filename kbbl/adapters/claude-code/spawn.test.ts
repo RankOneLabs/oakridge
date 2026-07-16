@@ -69,6 +69,13 @@ describe("buildCcArgv construction", () => {
     expect(mcpIdx).toBeGreaterThan(cmd.indexOf("--settings"));
   });
 
+  test("disables AskUserQuestion because kbbl cannot deliver its response UI", () => {
+    const cmd = buildCcArgv(BASE_ARGV_OPTS);
+    const idx = cmd.indexOf("--disallowed-tools");
+    expect(idx).toBeGreaterThanOrEqual(0);
+    expect(cmd[idx + 1]).toBe("AskUserQuestion");
+  });
+
   test("--model appears before --resume when both are set", () => {
     const cmd = buildCcArgv({ ...BASE_ARGV_OPTS, model: "claude-opus-4-7", parentCcSid: "abc" });
     const modelIdx = cmd.indexOf("--model");

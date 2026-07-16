@@ -57,6 +57,12 @@ import type { Skill } from "../../core/skills/types";
 // dispatches the first message within this window rather than waiting forever.
 const READY_FALLBACK_MS = 10_000;
 
+// Native slash commands must be typed into CC's interactive prompt. The Stop
+// hook advances kbbl's queue slightly before the TUI is ready for another PTY
+// write, so wait for a short quiet window before submitting a command.
+const COMMAND_QUIET_MS = 750;
+const COMMAND_MAX_WAIT_MS = 12_000;
+
 /**
  * Block until CC's PTY output has been quiet for `quietMs`, or `maxWaitMs`
  * elapses. `getLastOutputAt()` returns the epoch-ms of the most recent PTY
@@ -89,6 +95,24 @@ export async function awaitPtyQuiescence(
     const wait = Math.min(opts.quietMs - quietFor, pollMs, deadline - tick);
     await sleep(Math.max(wait, 1));
   }
+}
+
+/** Format one native command as terminal input for Claude Code's prompt. */
+export function formatClaudeCommandInput(command: string): string {
+  if (command.includes("\n")) {
+    return `\x15\x1b[200~${command}\x1b[201~\r`;
+  }
+  return `\x15${command}\r`;
+}
+
+/**
+ * Whether a native command produces a model turn and therefore a Stop hook.
+ * `/clear` only resets the interactive conversation; the remaining curated
+ * built-ins and custom skills run a normal turn.
+ */
+export function claudeCommandStartsTurn(command: string): boolean {
+  const name = command.trimStart().slice(1).split(/\s/, 1)[0]?.toLowerCase();
+  return name !== "clear";
 }
 
 /**
@@ -134,8 +158,8 @@ interface CcHandle {
   /**
    * Resolves once CC's PTY has produced its first output (the REPL is up and
    * rendering) — or a fallback timeout / process exit, whichever comes first.
-   * Awaited by events() before starting the transcript tailer so the first
-   * output (including modal acceptance) is not missed.
+   * Native command submission awaits this before writing so a command cannot
+   * land before the interactive prompt is reading PTY input.
    */
   ready: Promise<void>;
   /** Idempotent resolver for `ready` (multiple calls are harmless). */
@@ -663,6 +687,28 @@ export async function createClaudeCodeRuntime(
       // removed the last source of fragility (raw PTY byte injection).
       const line = JSON.stringify({ content: input, meta: { source: "kbbl" } }) + "\n";
       await writeFile(h.channelOutboxPath, line, { flag: "a" });
+    },
+
+    // --- AgentRuntime.sendCommand ---
+    async sendCommand(handle: SessionHandle, command: string) {
+      const h = procs.get(handle.sessionId);
+      if (!h) throw new Error(`no proc for session ${handle.sessionId}`);
+      if (!command.trimStart().startsWith("/")) {
+        throw new Error("Claude Code native commands must start with '/'");
+      }
+
+      await h.ready;
+      const quiescence = await awaitPtyQuiescence(() => h.lastOutputAt, {
+        quietMs: COMMAND_QUIET_MS,
+        maxWaitMs: COMMAND_MAX_WAIT_MS,
+      });
+      if (quiescence === "timeout") {
+        console.error(
+          `kbbl: CC PTY never quiesced within ${COMMAND_MAX_WAIT_MS}ms before command [${handle.sessionId}] — submitting anyway`,
+        );
+      }
+      h.pty.write(formatClaudeCommandInput(command));
+      return { startsTurn: claudeCommandStartsTurn(command) };
     },
 
     // --- AgentRuntime.interrupt ---

@@ -7,7 +7,13 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
-import { awaitPtyQuiescence, ccTranscriptPath, createClaudeCodeRuntime } from "./index";
+import {
+  awaitPtyQuiescence,
+  ccTranscriptPath,
+  claudeCommandStartsTurn,
+  createClaudeCodeRuntime,
+  formatClaudeCommandInput,
+} from "./index";
 import type { EnvelopeEvent } from "../../core/session/session";
 
 let tmpRoot: string;
@@ -70,6 +76,22 @@ describe("awaitPtyQuiescence", () => {
     const r = await awaitPtyQuiescence(clk.now, { quietMs: 80, maxWaitMs: 250, pollMs: 20, now: clk.now, sleep: clk.sleep });
     expect(r).toBe("timeout");
     expect(clk.t).toBeGreaterThanOrEqual(250);
+  });
+});
+
+describe("Claude native command input", () => {
+  test("formats single-line and multiline commands for the interactive PTY", () => {
+    expect(formatClaudeCommandInput("/clear")).toBe("\x15/clear\r");
+    expect(formatClaudeCommandInput("/compact one\ntwo")).toBe(
+      "\x15\x1b[200~/compact one\ntwo\x1b[201~\r",
+    );
+  });
+
+  test("only clear is classified as a no-turn command", () => {
+    expect(claudeCommandStartsTurn("/clear")).toBe(false);
+    expect(claudeCommandStartsTurn(" /CLEAR ")).toBe(false);
+    expect(claudeCommandStartsTurn("/compact handoff")).toBe(true);
+    expect(claudeCommandStartsTurn("/code-review")).toBe(true);
   });
 });
 

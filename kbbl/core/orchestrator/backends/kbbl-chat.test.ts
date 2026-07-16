@@ -9,6 +9,7 @@ import type { KbblConfig } from "../../config";
 import { KbblConfigSchema } from "../../config";
 import type { RuntimeId } from "../../runtime";
 import type { Session, SpawnCmd } from "../../session/session";
+import { ensureEpicBranchExists } from "./dispatcher";
 
 interface FakeCreateOpts {
   workdir: string;
@@ -273,5 +274,23 @@ describe("KbblChatBackend worktreeIdentity integration", () => {
     if (!session) throw new Error("session not found");
     expect(session.worktreeBranch).toBe(`cohort/${EPIC_SLUG}/${COHORT_SLUG}`);
     expect(session.worktreeBaseRef).toBe(expectedSha);
+  });
+
+  test("absent epic branch is seeded from latest remote main, not stale local main", async () => {
+    const updater = join(tmpRoot, "updater");
+    await runCmd(["git", "clone", join(tmpRoot, "origin"), updater]);
+    await runCmd(["git", "-C", updater, "config", "user.email", "test@example.com"]);
+    await runCmd(["git", "-C", updater, "config", "user.name", "test"]);
+    await runCmd(["git", "-C", updater, "config", "commit.gpgsign", "false"]);
+    await runCmd(["git", "-C", updater, "commit", "--allow-empty", "-m", "remote ahead"]);
+    await runCmd(["git", "-C", updater, "push", "origin", "main"]);
+
+    const staleLocalMain = await getRevParse(workdir, "main");
+    const latestRemoteMain = await getRevParse(updater, "main");
+    expect(staleLocalMain).not.toBe(latestRemoteMain);
+
+    await ensureEpicBranchExists(EPIC_BRANCH, workdir);
+
+    expect(await getRevParse(workdir, `origin/${EPIC_BRANCH}`)).toBe(latestRemoteMain);
   });
 });

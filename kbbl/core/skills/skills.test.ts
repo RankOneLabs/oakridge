@@ -17,7 +17,10 @@ const VALID_SID = "deadbeef-cafe-4abc-8def-aaaaaaaaaaaa";
 function makeSession(overrides: {
   runtimeId?: "claude-code" | "codex";
   status?: "starting" | "live" | "compacting" | "ended";
-  writeInput?: (text: string) => Promise<void>;
+  writeInput?: (
+    text: string,
+    opts?: { internal?: boolean; command?: boolean },
+  ) => Promise<void>;
 } = {}): Session {
   return {
     oakridgeSid: VALID_SID,
@@ -538,9 +541,11 @@ describe("POST /:sid/skills/invoke", () => {
 
   test("returns 200 { ok: true } and writes trigger on success (fixtures mode)", async () => {
     let captured: string | null = null;
+    let capturedCommand = false;
     const session = makeSession({
-      writeInput: async (text: string) => {
+      writeInput: async (text, opts) => {
         captured = text;
+        capturedCommand = opts?.command === true;
       },
     });
     const registry: RuntimeRegistry = {
@@ -561,6 +566,7 @@ describe("POST /:sid/skills/invoke", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
     expect(captured as unknown as string).toBe("/list-tasks");
+    expect(capturedCommand).toBe(true);
   });
 
   test("ack-only — no result envelope in the 200 body", async () => {

@@ -317,7 +317,18 @@ async function ensureEpicBranchExistsUnlocked(epicBranch: string, workdir: strin
 
   // Branch absent — seed it from origin/main.
   const fetchMain = Bun.spawn({
-    cmd: ["git", "-C", workdir, "fetch", "origin", "main"],
+    // Use an explicit refspec so the fetched remote head always replaces the
+    // local origin/main tracking ref. The epic branch must never inherit a
+    // stale local main branch (or a stale tracking ref under unusual fetch
+    // configuration).
+    cmd: [
+      "git",
+      "-C",
+      workdir,
+      "fetch",
+      "origin",
+      "+refs/heads/main:refs/remotes/origin/main",
+    ],
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -328,7 +339,7 @@ async function ensureEpicBranchExistsUnlocked(epicBranch: string, workdir: strin
   ]);
   if (fetchCode !== 0) {
     throw new Error(
-      `git fetch origin main failed (exit ${fetchCode}): ${fetchErr.trim()}`,
+      `git fetch origin +refs/heads/main:refs/remotes/origin/main failed (exit ${fetchCode}): ${fetchErr.trim()}`,
     );
   }
 

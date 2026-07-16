@@ -32,7 +32,8 @@ export function mountSkillsRoutes(app: Hono, deps: SkillRoutesDeps): void {
   });
 
   // POST /:sid/skills/invoke — formats and submits a skill invocation via
-  // session.writeInput(), returning a submission ack only (no result envelope).
+  // session.writeInput(), tagging slash-prefixed triggers for the runtime's
+  // native command parser. Returns a submission ack only (no result envelope).
   app.post("/:sid/skills/invoke", async (c) => {
     const sid = c.req.param("sid");
     if (!isValidSid(sid)) return c.json({ error: "invalid sid" }, 400);
@@ -99,7 +100,9 @@ export function mountSkillsRoutes(app: Hono, deps: SkillRoutesDeps): void {
     const trigger = runtime.formatSkillInvocation(skill, args);
 
     try {
-      await session.writeInput(trigger);
+      await session.writeInput(trigger, {
+        command: trigger.trimStart().startsWith("/"),
+      });
     } catch (err) {
       if (err instanceof SessionNotReadyError) {
         return c.json({ error: "subprocess not ready" }, 503);

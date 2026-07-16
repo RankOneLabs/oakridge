@@ -3,7 +3,12 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
 import type { Compactor } from "./compactor";
-import type { AgentRuntime, RuntimeId, SessionHandle } from "../runtime";
+import type {
+  AgentRuntime,
+  RuntimeCommandResult,
+  RuntimeId,
+  SessionHandle,
+} from "../runtime";
 import type {
   ArtifactId,
   ResultUsage,
@@ -143,6 +148,10 @@ export interface SessionOpts {
  * never trips it on a legitimate turn.
  */
 export const BUSY_TURN_WATCHDOG_MS = 15_000;
+
+type PendingRuntimeInput =
+  | { kind: "message"; text: string }
+  | { kind: "command"; text: string };
 
 /**
  * Hard cap on `artifactId` length. Enforced at the Session constructor,
@@ -290,7 +299,7 @@ export class Session {
   // actually started — the busy watchdog already owns that "sent but never a
   // turn" case.
   private turnObservedStarted = false;
-  private pendingInput: string[] = [];
+  private pendingInput: PendingRuntimeInput[] = [];
   // Watchdog that recovers the queue if a dispatched message never becomes a
   // turn (e.g. swallowed by a CC startup modal) and so never yields a Stop
   // hook. Armed when a message is sent; cleared once a turn is observed to
@@ -299,7 +308,7 @@ export class Session {
   private readonly busyWatchdogMs: number;
   // The message currently dispatched to the PTY (claimed by pumpInputQueue).
   // Held so the watchdog can re-deliver it once if it produced no turn.
-  private lastDispatched: string | null = null;
+  private lastDispatched: PendingRuntimeInput | null = null;
   // True when the in-flight dispatch is a fresh message eligible for exactly
   // one watchdog re-delivery. Cleared once that re-delivery is used so a
   // genuinely unprocessable message can't loop forever.
@@ -1172,10 +1181,10 @@ export class Session {
     if (this._runtime === null || this._handle === null) return;
     // Claim the message and transition to busy before any await. JS is
     // single-threaded, so this block is atomic with respect to other callers.
-    const msg = this.pendingInput.shift() as string; // length > 0 checked above
+    const input = this.pendingInput.shift() as PendingRuntimeInput; // length > 0 checked above
     this.turnState = "busy";
     this.turnObservedStarted = false;
-    this.lastDispatched = msg;
+    this.lastDispatched = input;
     if (this.nextDispatchIsRetry) {
       // This dispatch is the one-shot re-delivery of a previously lost
       // message — don't grant it another retry.
@@ -1189,7 +1198,19 @@ export class Session {
     const handle = this._handle;
     const task = async () => {
       try {
-        await runtime.send(handle, msg);
+        let commandResult: RuntimeCommandResult | null = null;
+        if (input.kind === "command" && runtime.sendCommand) {
+          commandResult = await runtime.sendCommand(handle, input.text);
+        } else {
+          await runtime.send(handle, input.text);
+        }
+        // UI-only commands such as /clear return directly to the prompt and
+        // produce no Stop hook. Advance the queue immediately instead of
+        // waiting for the watchdog to retry a command that already succeeded.
+        if (commandResult?.startsTurn === false) {
+          this.notifyTurnEnd();
+          return;
+        }
         // Arm the watchdog only after the message is actually written to the
         // PTY — not at queue-claim. The CC readiness gate makes send() await
         // the REPL coming up; arming earlier would start the "no turn" clock
@@ -1286,7 +1307,7 @@ export class Session {
 
   async writeInput(
     text: string,
-    opts: { internal?: boolean } = {},
+    opts: { internal?: boolean; command?: boolean } = {},
   ): Promise<void> {
     // External writes (HTTP /:sid/input) require status === "live".
     // Internal writes (runCompact's COMPACT_PROMPT, successor handoff
@@ -1325,11 +1346,20 @@ export class Session {
     if (this._runtime !== null && this._handle !== null) {
       const runtime = this._runtime;
       const handle = this._handle;
+      const sendCommand =
+        opts.command === true ? runtime.sendCommand?.bind(runtime) : undefined;
+      const isNativeCommand = typeof sendCommand === "function";
 
       if (isInternal) {
         // Internal writes bypass the turn queue: compaction prompts and
         // handoff delivery are not operator turns and must not be held.
-        const task = async () => { await runtime.send(handle, text); };
+        const task = async () => {
+          if (sendCommand) {
+            await sendCommand(handle, text);
+          } else {
+            await runtime.send(handle, text);
+          }
+        };
         this.inputQueue = this.inputQueue.then(task, task);
         await this.inputQueue;
         return;
@@ -1341,13 +1371,17 @@ export class Session {
         // Synthesis is a separate opt-in: emit the `user` row only when the
         // runtime doesn't echo input back (synthesizeUserInputEvents).
         const task = async () => {
-          if (runtime.synthesizeUserInputEvents === true) {
+          if (!isNativeCommand && runtime.synthesizeUserInputEvents === true) {
             await this.emit("user", {
               type: "user",
               message: { role: "user", content: text },
             });
           }
-          await runtime.send(handle, text);
+          if (sendCommand) {
+            await sendCommand(handle, text);
+          } else {
+            await runtime.send(handle, text);
+          }
         };
         this.inputQueue = this.inputQueue.then(task, task);
         if (this._compactor) {
@@ -1373,7 +1407,7 @@ export class Session {
       // ingests the message, so synthesizing here would both double the message
       // and insert it into the flow before CC has processed it. The flag remains
       // the general mechanism for a turn-queue runtime that echoes by no path.
-      if (runtime.synthesizeUserInputEvents === true) {
+      if (!isNativeCommand && runtime.synthesizeUserInputEvents === true) {
         await this.emit("user", {
           type: "user",
           message: { role: "user", content: text },
@@ -1382,7 +1416,9 @@ export class Session {
       // Push onto the pending queue. Return once accepted — do not await
       // delivery to the channel outbox. pumpInputQueue() will send immediately
       // if the turn is idle, or defer until notifyTurnEnd().
-      this.pendingInput.push(text);
+      this.pendingInput.push(
+        isNativeCommand ? { kind: "command", text } : { kind: "message", text },
+      );
       if (this._compactor) {
         try {
           this._compactor.observeUserMessage();
