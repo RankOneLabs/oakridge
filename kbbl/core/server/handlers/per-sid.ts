@@ -179,10 +179,10 @@ export interface PerSidRouteDeps {
 export function mountPerSidRoutes(app: Hono, deps: PerSidRouteDeps): void {
   const { manager, sessionsDir } = deps;
 
-  app.get("/:sid/stream", (c) => {
+  app.get("/:sid/stream", async (c) => {
     const session = manager.get(c.req.param("sid"));
     if (!session) return c.json({ error: "unknown session" }, 404);
-    return streamForSession(session, c);
+    return await streamForSession(session, c);
   });
 
   app.get("/:sid/events", async (c) => {
