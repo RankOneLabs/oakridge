@@ -586,7 +586,7 @@ describe("MCP tool discovery", () => {
     });
 
     expect(skills).toHaveLength(1);
-    expect(skills[0]?.id).toBe("codex:mcp:gated-review:git_push");
+    expect(skills[0]?.id).toBe("codex:mcp:gated-review:git.push");
     expect(skills[0]?.name).toBe("mcp:gated-review:Git push");
     expect(skills[0]?.scope).toBe("system");
   });
@@ -633,8 +633,8 @@ describe("mergeCodexSkills", () => {
     ];
     const mcpTools = [
       {
-        id: "codex:mcp:gated-review:git_push",
-        name: "mcp:gated-review:git_push",
+        id: "codex:mcp:gated-review:git.push",
+        name: "mcp:gated-review:git.push",
         description: "push",
         backend: "codex" as const,
         scope: "system" as const,
@@ -650,7 +650,7 @@ describe("mergeCodexSkills", () => {
     expect(skills[0]?.description).toBe("native");
     expect(skills[0]?.args).toEqual(local[0]!.args);
     expect(skills[0]?.model_invocable).toBe(false);
-    expect(skills.some((s) => s.id === "codex:mcp:gated-review:git_push")).toBe(
+    expect(skills.some((s) => s.id === "codex:mcp:gated-review:git.push")).toBe(
       true,
     );
   });
@@ -664,7 +664,7 @@ describe("mergeCodexSkills", () => {
     expect(names).toContain("mcp:gated-review:get_review_round");
     expect(names).toContain("mcp:gated-review:reply_to_thread");
     expect(names).toContain("mcp:gated-review:resolve_thread");
-    expect(names).toContain("mcp:gated-review:git_push");
+    expect(names).toContain("mcp:gated-review:git.push");
     expect(names).toContain("mcp:gated-review:open_pr");
   });
 });
@@ -713,8 +713,8 @@ describe("makeSkillInvocationFormatter — slash form (supported)", () => {
     expect(formatSkillInvocation(skill, { "1": "" })).toBe("/ghreview");
   });
 
-  test("mcp tool button sends a tool-use steering prompt", () => {
-    expect(
+  test("mcp tool button cannot fall back to a text steering prompt", () => {
+    expect(() =>
       formatSkillInvocation(
         {
           ...skill,
@@ -724,7 +724,7 @@ describe("makeSkillInvocationFormatter — slash form (supported)", () => {
         },
         {},
       ),
-    ).toBe("Use the gated-review MCP tool git_push.");
+    ).toThrow(/typed MCP route/);
   });
 
   test("built-in command button sends slash command", () => {

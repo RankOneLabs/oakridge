@@ -2,13 +2,15 @@ import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 
 import { KbblConfigSchema } from "../config";
-import type { Session } from "../session/session";
+import type { Session, WriteInputOpts } from "../session/session";
 import { SessionNotReadyError } from "../session/session";
 import type { SessionManager } from "../session/session-manager";
 import type { RuntimeRegistry, AgentRuntime } from "../runtime";
 import type { Skill } from "./types";
 import { filterSkillsForSession, buildSkillRegistry } from "./registry";
 import { FIXTURE_SKILLS } from "./fixtures";
+import { gatedReviewSkills } from "./gated-review";
+import type { McpInvoker } from "./mcp-client";
 import { mountSkillsRoutes } from "./routes";
 
 const VALID_SID = "deadbeef-cafe-4abc-8def-aaaaaaaaaaaa";
@@ -17,7 +19,12 @@ const VALID_SID = "deadbeef-cafe-4abc-8def-aaaaaaaaaaaa";
 function makeSession(overrides: {
   runtimeId?: "claude-code" | "codex";
   status?: "starting" | "live" | "compacting" | "ended";
-  writeInput?: (text: string) => Promise<void>;
+  writeInput?: (
+    text: string,
+    opts?: WriteInputOpts,
+  ) => Promise<void>;
+  emit?: (type: string, payload: unknown) => Promise<unknown>;
+  workdir?: string;
 } = {}): Session {
   return {
     oakridgeSid: VALID_SID,
@@ -25,7 +32,9 @@ function makeSession(overrides: {
     status: overrides.status ?? "live",
     currentCcSid: null,
     currentObservedModel: null,
+    workdir: overrides.workdir ?? "/tmp/kbbl-test-worktree",
     writeInput: overrides.writeInput ?? (() => Promise.resolve()),
+    emit: overrides.emit ?? (() => Promise.resolve({})),
   } as unknown as Session;
 }
 
@@ -276,8 +285,8 @@ describe("buildSkillRegistry aggregate()", () => {
   test("confirm annotation: mutating gated-review skills are gated by default", async () => {
     const skills: Skill[] = [
       {
-        id: "cc:mcp:gated-review:git_push",
-        name: "mcp:gated-review:git_push",
+        id: "cc:mcp:gated-review:git.push",
+        name: "mcp:gated-review:git.push",
         description: "",
         backend: "claude-code",
         scope: "system",
@@ -300,7 +309,7 @@ describe("buildSkillRegistry aggregate()", () => {
     const config = KbblConfigSchema.parse({});
     const agg = buildSkillRegistry({ registry, config });
     const result = await agg.aggregate(makeSession());
-    expect(result.find((s) => s.name === "mcp:gated-review:git_push")?.confirm).toBe(
+    expect(result.find((s) => s.name === "mcp:gated-review:git.push")?.confirm).toBe(
       true,
     );
     expect(
@@ -337,6 +346,7 @@ function buildRoutesApp(opts: {
   registry?: RuntimeRegistry;
   hidden?: string[];
   fixtures?: boolean;
+  mcpInvoker?: McpInvoker;
 }): Hono {
   const { session, registry } = opts;
   const manager: Partial<SessionManager> = {
@@ -351,6 +361,7 @@ function buildRoutesApp(opts: {
     manager: manager as SessionManager,
     registry,
     config,
+    mcpInvoker: opts.mcpInvoker,
   });
   return app;
 }
@@ -538,9 +549,11 @@ describe("POST /:sid/skills/invoke", () => {
 
   test("returns 200 { ok: true } and writes trigger on success (fixtures mode)", async () => {
     let captured: string | null = null;
+    let capturedCommand = false;
     const session = makeSession({
-      writeInput: async (text: string) => {
+      writeInput: async (text, opts) => {
         captured = text;
+        capturedCommand = opts?.command === true;
       },
     });
     const registry: RuntimeRegistry = {
@@ -561,6 +574,7 @@ describe("POST /:sid/skills/invoke", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
     expect(captured as unknown as string).toBe("/list-tasks");
+    expect(capturedCommand).toBe(true);
   });
 
   test("ack-only — no result envelope in the 200 body", async () => {
@@ -582,5 +596,43 @@ describe("POST /:sid/skills/invoke", () => {
     const body = (await res.json()) as Record<string, unknown>;
     // Only { ok: true } — no result, no skill data, no trigger
     expect(Object.keys(body)).toEqual(["ok"]);
+  });
+
+  test("gated-review actions invoke MCP directly and emit tool cards", async () => {
+    const events: Array<{ type: string; payload: unknown }> = [];
+    let writeInputCalled = false;
+    const session = makeSession({
+      writeInput: async () => {
+        writeInputCalled = true;
+      },
+      emit: (type, payload) => {
+        events.push({ type, payload });
+        return Promise.resolve({});
+      },
+    });
+    let capturedCall: Parameters<McpInvoker>[0] | null = null;
+    const mcpInvoker: McpInvoker = async (call) => {
+      capturedCall = call;
+      return { result: { content: [{ type: "text", text: "ready" }] }, isError: false };
+    };
+    const registry = makeRegistry(() => Promise.resolve(gatedReviewSkills("claude-code")));
+    const app = buildRoutesApp({ session, registry, mcpInvoker });
+
+    const res = await post(app, {
+      skill_id: "cc:mcp:gated-review:review.get_state",
+      args: { reviewId: "review-123" },
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(capturedCall as unknown).toEqual({
+      serverName: "gated-review",
+      toolName: "review.get_state",
+      arguments: { reviewId: "review-123" },
+    });
+    expect(writeInputCalled).toBe(false);
+    expect(events.map((event) => event.type)).toEqual(["assistant", "user"]);
+    expect(JSON.stringify(events[0]?.payload)).toContain("tool_use");
+    expect(JSON.stringify(events[1]?.payload)).toContain("tool_result");
   });
 });

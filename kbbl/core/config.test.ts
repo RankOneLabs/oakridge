@@ -78,8 +78,8 @@ describe("skills.confirm", () => {
   test("defaults to mutating gated-review MCP tools", () => {
     const r = KbblConfigSchema.parse({});
     expect(r.skills.confirm).toEqual([
-      "mcp:gated-review:git_push",
-      "mcp:gated-review:git_pull",
+      "mcp:gated-review:git.push",
+      "mcp:gated-review:git.pull",
       "mcp:gated-review:open_pr",
     ]);
   });

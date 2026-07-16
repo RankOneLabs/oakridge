@@ -331,7 +331,7 @@ describe("discoverSkills — gated-review MCP tools", () => {
     expect(names).toContain("mcp:gated-review:get_review_round");
     expect(names).toContain("mcp:gated-review:reply_to_thread");
     expect(names).toContain("mcp:gated-review:resolve_thread");
-    expect(names).toContain("mcp:gated-review:git_push");
+    expect(names).toContain("mcp:gated-review:git.push");
     expect(names).toContain("mcp:gated-review:open_pr");
   });
 });
@@ -541,15 +541,13 @@ describe("formatSkillInvocation — slash serialization", () => {
     expect(formatSkillInvocation(s, {})).toBe("/custom-name");
   });
 
-  test("MCP tool skills send a tool-use steering prompt", () => {
+  test("MCP tool skills cannot fall back to a text steering prompt", () => {
     const s: Skill = {
       ...baseSkill,
       id: "cc:mcp:gated-review:get_review_round",
       name: "mcp:gated-review:get_review_round",
     };
-    expect(formatSkillInvocation(s, {})).toBe(
-      "Use the gated-review MCP tool get_review_round.",
-    );
+    expect(() => formatSkillInvocation(s, {})).toThrow(/typed MCP route/);
   });
 
   test("is pure — same inputs produce same output", () => {

@@ -34,6 +34,11 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import type { Skill, ArgSpec } from "../../core/skills/types";
+import {
+  canonicalGatedReviewToolName,
+  gatedReviewSkills,
+  parseMcpSkillReference,
+} from "../../core/skills/gated-review";
 
 // Pinned at build time from `codex --version` output: "codex-cli 0.137.0"
 export const MIN_CODEX_VERSION = "0.137.0";
@@ -103,22 +108,6 @@ const CODEX_BUILTIN_COMMANDS: ReadonlyArray<{
 }> = [
   { name: "clear", description: "Clear the visible Codex conversation." },
   { name: "compact", description: "Compact the current Codex session context." },
-];
-
-const GATED_REVIEW_MCP_TOOLS: ReadonlyArray<{
-  name: string;
-  description: string;
-}> = [
-  { name: "get_review_round", description: "Read PR review threads and comments." },
-  { name: "reply_to_thread", description: "Reply to a PR review thread." },
-  { name: "resolve_thread", description: "Resolve a handled PR review thread." },
-  { name: "git_push", description: "Push through the gated-review MCP server." },
-  { name: "git_pull", description: "Pull through the gated-review MCP server." },
-  { name: "git_fetch", description: "Fetch through the gated-review MCP server." },
-  {
-    name: "open_pr",
-    description: "Open a pull request through the gated-review MCP server.",
-  },
 ];
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -405,16 +394,7 @@ function builtinCommandSkills(): Skill[] {
 }
 
 function gatedReviewMcpFallbackSkills(): Skill[] {
-  return GATED_REVIEW_MCP_TOOLS.map((tool) => ({
-    id: `codex:mcp:gated-review:${tool.name}`,
-    name: `mcp:gated-review:${tool.name}`,
-    description: tool.description,
-    backend: "codex" as const,
-    scope: "system" as const,
-    args: [],
-    user_invocable: true,
-    model_invocable: true,
-  }));
+  return gatedReviewSkills("codex");
 }
 
 // ---------------------------------------------------------------------------
@@ -514,8 +494,12 @@ export async function discoverNativeSkills(
 function normalizeMcpTool(serverName: string, rawTool: unknown): Skill | null {
   const tool = asRecord(rawTool) as CodexMcpTool | null;
   if (tool === null) return null;
-  const toolName = stringValue(tool.name);
-  if (toolName === null) return null;
+  const rawToolName = stringValue(tool.name);
+  if (rawToolName === null) return null;
+  const toolName =
+    serverName === "gated-review"
+      ? canonicalGatedReviewToolName(rawToolName)
+      : rawToolName;
   const displayName = stringValue(tool.title) ?? toolName;
   const description =
     stringValue(tool.description) ??
@@ -591,8 +575,19 @@ export function mergeCodexSkills({
       model_invocable: localSkill?.model_invocable ?? skill.model_invocable,
     });
   }
-  for (const skill of gatedReviewMcpFallbackSkills()) merged.set(skill.id, skill);
-  for (const skill of mcpTools) merged.set(skill.id, skill);
+  const gatedReviewFallbacks = new Map(
+    gatedReviewMcpFallbackSkills().map((skill) => [skill.id, skill]),
+  );
+  for (const skill of gatedReviewFallbacks.values()) merged.set(skill.id, skill);
+  for (const skill of mcpTools) {
+    const fallback = gatedReviewFallbacks.get(skill.id);
+    merged.set(
+      skill.id,
+      fallback === undefined
+        ? skill
+        : { ...skill, name: fallback.name, args: fallback.args },
+    );
+  }
 
   return [...merged.values()];
 }
@@ -626,9 +621,8 @@ export function makeSkillInvocationFormatter(
   slashForSkillsSupported: boolean,
 ): (skill: Skill, args: Record<string, string>) => string {
   return (skill: Skill, args: Record<string, string>): string => {
-    if (skill.id.startsWith("codex:mcp:")) {
-      const [, , serverName, toolName] = skill.id.split(":");
-      return `Use the ${serverName} MCP tool ${toolName}.`;
+    if (parseMcpSkillReference(skill) !== null) {
+      throw new Error("MCP tools must be invoked through the typed MCP route");
     }
 
     const isBuiltinCommand = skill.id.startsWith("codex:builtin:");

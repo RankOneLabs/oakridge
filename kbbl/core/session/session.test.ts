@@ -429,6 +429,34 @@ function makeControllableRuntime(): {
 }
 
 describe("Session input queue (CC PTY mode)", () => {
+  test("native no-turn command advances the queue without channel text or watchdog retry", async () => {
+    const commands: string[] = [];
+    const { runtime: base, sent, finish } = makeControllableRuntime();
+    const runtime: AgentRuntime = {
+      ...base,
+      async sendCommand(_handle: SessionHandle, command: string) {
+        commands.push(command);
+        return { startsTurn: false };
+      },
+    };
+    const session = makeSession({ busyWatchdogMs: 25 });
+    const handle = await runtime.spawn({ workingDirectory: "/tmp" });
+    await session.attachRuntime(runtime, handle);
+
+    await session.writeInput("/clear", { command: true });
+    await session.writeInput("after clear");
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(commands).toEqual(["/clear"]);
+    expect(sent).toEqual(["after clear"]);
+    session.notifyTurnStarted();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(commands).toEqual(["/clear"]);
+
+    finish();
+    await session.waitForEnd();
+  });
+
   test("two external writes while busy: first sent immediately, second queued until notifyTurnEnd", async () => {
     const { runtime, sent, finish } = makeControllableRuntime();
     const session = makeSession();
