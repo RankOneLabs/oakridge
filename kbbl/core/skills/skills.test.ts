@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 
 import { KbblConfigSchema } from "../config";
-import type { Session } from "../session/session";
+import type { Session, WriteInputOpts } from "../session/session";
 import { SessionNotReadyError } from "../session/session";
 import type { SessionManager } from "../session/session-manager";
 import type { RuntimeRegistry, AgentRuntime } from "../runtime";
@@ -21,7 +21,7 @@ function makeSession(overrides: {
   status?: "starting" | "live" | "compacting" | "ended";
   writeInput?: (
     text: string,
-    opts?: { internal?: boolean; command?: boolean },
+    opts?: WriteInputOpts,
   ) => Promise<void>;
   emit?: (type: string, payload: unknown) => Promise<unknown>;
   workdir?: string;

@@ -195,6 +195,11 @@ export type InterruptOutcome =
   | { ok: true }
   | { ok: false; reason: "not_live" | "unsupported" | "io_failed"; detail?: string };
 
+export interface WriteInputOpts {
+  internal?: boolean;
+  command?: boolean;
+}
+
 export async function readJsonlOrEmpty(path: string): Promise<string> {
   try {
     return await readFile(path, "utf8");
@@ -1307,7 +1312,7 @@ export class Session {
 
   async writeInput(
     text: string,
-    opts: { internal?: boolean; command?: boolean } = {},
+    opts: WriteInputOpts = {},
   ): Promise<void> {
     // External writes (HTTP /:sid/input) require status === "live".
     // Internal writes (runCompact's COMPACT_PROMPT, successor handoff
