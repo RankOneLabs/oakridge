@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { RuntimeId } from "../../runtime-interface";
 import type { RuntimeDescriptor, RuntimeModelOption } from "../types";
@@ -111,22 +112,24 @@ export function useServerConfig(): ServerConfig | null {
     },
     staleTime: Infinity,
   });
-  if (!query.data) return null;
-  const runtimes = coerceRuntimeDescriptors(query.data.runtimes);
-  return {
-    defaultWorkdir: query.data.defaultWorkdir,
-    softThresholdTokens:
-      typeof query.data.softThresholdTokens === "number"
-        ? query.data.softThresholdTokens
-        : undefined,
-    defaultRuntimeId: defaultRuntimeIdForConfig({
+  return useMemo(() => {
+    if (!query.data) return null;
+    const runtimes = coerceRuntimeDescriptors(query.data.runtimes);
+    return {
       defaultWorkdir: query.data.defaultWorkdir,
-      softThresholdTokens: query.data.softThresholdTokens,
-      defaultRuntimeId: isRuntimeId(query.data.defaultRuntimeId)
-        ? query.data.defaultRuntimeId
-        : "claude-code",
+      softThresholdTokens:
+        typeof query.data.softThresholdTokens === "number"
+          ? query.data.softThresholdTokens
+          : undefined,
+      defaultRuntimeId: defaultRuntimeIdForConfig({
+        defaultWorkdir: query.data.defaultWorkdir,
+        softThresholdTokens: query.data.softThresholdTokens,
+        defaultRuntimeId: isRuntimeId(query.data.defaultRuntimeId)
+          ? query.data.defaultRuntimeId
+          : "claude-code",
+        runtimes,
+      }),
       runtimes,
-    }),
-    runtimes,
-  };
+    };
+  }, [query.data]);
 }
