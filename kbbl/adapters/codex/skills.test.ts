@@ -713,18 +713,20 @@ describe("makeSkillInvocationFormatter — slash form (supported)", () => {
     expect(formatSkillInvocation(skill, { "1": "" })).toBe("/ghreview");
   });
 
-  test("mcp tool button cannot fall back to a text steering prompt", () => {
-    expect(() =>
+  test("mcp tool button becomes a text request visible to the model", () => {
+    expect(
       formatSkillInvocation(
         {
           ...skill,
-          id: "codex:mcp:gated-review:git_push",
-          name: "mcp:gated-review:git_push",
+          id: "codex:mcp:gated-review:get_review_round",
+          name: "mcp:gated-review:get_review_round",
           args: [],
         },
-        {},
+        { pullRequestNumber: "373", includeResolved: "false" },
       ),
-    ).toThrow(/typed MCP route/);
+    ).toBe(
+      'Use the gated-review MCP tool get_review_round with these arguments: {"pullRequestNumber":"373","includeResolved":"false"}.',
+    );
   });
 
   test("built-in command button sends slash command", () => {
@@ -739,6 +741,20 @@ describe("makeSkillInvocationFormatter — slash form (supported)", () => {
         {},
       ),
     ).toBe("/clear");
+  });
+
+  test("compact built-in button sends slash command", () => {
+    expect(
+      formatSkillInvocation(
+        {
+          ...skill,
+          id: "codex:builtin:compact",
+          name: "compact",
+          args: [],
+        },
+        {},
+      ),
+    ).toBe("/compact");
   });
 });
 

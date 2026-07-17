@@ -9,8 +9,7 @@ import type { RuntimeRegistry, AgentRuntime } from "../runtime";
 import type { Skill } from "./types";
 import { filterSkillsForSession, buildSkillRegistry } from "./registry";
 import { FIXTURE_SKILLS } from "./fixtures";
-import { gatedReviewSkills } from "./gated-review";
-import type { McpInvoker } from "./mcp-client";
+import { formatMcpSkillRequest, gatedReviewSkills } from "./gated-review";
 import { mountSkillsRoutes } from "./routes";
 
 const VALID_SID = "deadbeef-cafe-4abc-8def-aaaaaaaaaaaa";
@@ -23,8 +22,6 @@ function makeSession(overrides: {
     text: string,
     opts?: WriteInputOpts,
   ) => Promise<void>;
-  emit?: (type: string, payload: unknown) => Promise<unknown>;
-  workdir?: string;
 } = {}): Session {
   return {
     oakridgeSid: VALID_SID,
@@ -32,9 +29,7 @@ function makeSession(overrides: {
     status: overrides.status ?? "live",
     currentCcSid: null,
     currentObservedModel: null,
-    workdir: overrides.workdir ?? "/tmp/kbbl-test-worktree",
     writeInput: overrides.writeInput ?? (() => Promise.resolve()),
-    emit: overrides.emit ?? (() => Promise.resolve({})),
   } as unknown as Session;
 }
 
@@ -346,7 +341,6 @@ function buildRoutesApp(opts: {
   registry?: RuntimeRegistry;
   hidden?: string[];
   fixtures?: boolean;
-  mcpInvoker?: McpInvoker;
 }): Hono {
   const { session, registry } = opts;
   const manager: Partial<SessionManager> = {
@@ -361,7 +355,6 @@ function buildRoutesApp(opts: {
     manager: manager as SessionManager,
     registry,
     config,
-    mcpInvoker: opts.mcpInvoker,
   });
   return app;
 }
@@ -598,41 +591,79 @@ describe("POST /:sid/skills/invoke", () => {
     expect(Object.keys(body)).toEqual(["ok"]);
   });
 
-  test("gated-review actions invoke MCP directly and emit tool cards", async () => {
-    const events: Array<{ type: string; payload: unknown }> = [];
-    let writeInputCalled = false;
+  test("gated-review actions write a normal text request into the model session", async () => {
+    let capturedText: string | null = null;
+    let capturedCommand: boolean | undefined;
     const session = makeSession({
-      writeInput: async () => {
-        writeInputCalled = true;
-      },
-      emit: (type, payload) => {
-        events.push({ type, payload });
-        return Promise.resolve({});
+      writeInput: async (text, opts) => {
+        capturedText = text;
+        capturedCommand = opts?.command;
       },
     });
-    let capturedCall: Parameters<McpInvoker>[0] | null = null;
-    const mcpInvoker: McpInvoker = async (call) => {
-      capturedCall = call;
-      return { result: { content: [{ type: "text", text: "ready" }] }, isError: false };
+    const runtime: Partial<AgentRuntime> = {
+      id: "claude-code",
+      discoverSkills: () => Promise.resolve(gatedReviewSkills("claude-code")),
+      formatSkillInvocation: (skill, args) => {
+        const request = formatMcpSkillRequest(skill, args);
+        if (request === null) throw new Error("expected MCP skill");
+        return request;
+      },
     };
-    const registry = makeRegistry(() => Promise.resolve(gatedReviewSkills("claude-code")));
-    const app = buildRoutesApp({ session, registry, mcpInvoker });
+    const registry: RuntimeRegistry = {
+      runtimes: new Map([["claude-code", runtime as AgentRuntime]]),
+      defaultId: "claude-code",
+    };
+    const app = buildRoutesApp({ session, registry });
 
     const res = await post(app, {
-      skill_id: "cc:mcp:gated-review:review.get_state",
-      args: { reviewId: "review-123" },
+      skill_id: "cc:mcp:gated-review:get_review_round",
+      args: { pullRequestNumber: "373", includeResolved: "false" },
     });
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
-    expect(capturedCall as unknown).toEqual({
-      serverName: "gated-review",
-      toolName: "review.get_state",
-      arguments: { reviewId: "review-123" },
+    expect(capturedText as unknown as string).toBe(
+      'Use the gated-review MCP tool get_review_round with these arguments: {"pullRequestNumber":"373","includeResolved":"false"}.',
+    );
+    expect(capturedCommand).toBe(false);
+  });
+
+  test("clear and compact actions stay on the native command path", async () => {
+    const captured: Array<{ text: string; command: boolean | undefined }> = [];
+    const session = makeSession({
+      writeInput: async (text, opts) => {
+        captured.push({ text, command: opts?.command });
+      },
     });
-    expect(writeInputCalled).toBe(false);
-    expect(events.map((event) => event.type)).toEqual(["assistant", "user"]);
-    expect(JSON.stringify(events[0]?.payload)).toContain("tool_use");
-    expect(JSON.stringify(events[1]?.payload)).toContain("tool_result");
+    const builtins: Skill[] = ["clear", "compact"].map((name) => ({
+      id: `cc:builtin:${name}`,
+      name,
+      description: `${name} session`,
+      backend: "claude-code",
+      scope: "system",
+      args: [],
+      user_invocable: true,
+      model_invocable: false,
+    }));
+    const runtime: Partial<AgentRuntime> = {
+      id: "claude-code",
+      discoverSkills: () => Promise.resolve(builtins),
+      formatSkillInvocation: (skill) => `/${skill.name}`,
+    };
+    const registry: RuntimeRegistry = {
+      runtimes: new Map([["claude-code", runtime as AgentRuntime]]),
+      defaultId: "claude-code",
+    };
+    const app = buildRoutesApp({ session, registry });
+
+    const clearResponse = await post(app, { skill_id: "cc:builtin:clear" });
+    const compactResponse = await post(app, { skill_id: "cc:builtin:compact" });
+
+    expect(clearResponse.status).toBe(200);
+    expect(compactResponse.status).toBe(200);
+    expect(captured).toEqual([
+      { text: "/clear", command: true },
+      { text: "/compact", command: true },
+    ]);
   });
 });

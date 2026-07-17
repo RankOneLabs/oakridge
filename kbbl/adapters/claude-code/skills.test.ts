@@ -541,13 +541,35 @@ describe("formatSkillInvocation — slash serialization", () => {
     expect(formatSkillInvocation(s, {})).toBe("/custom-name");
   });
 
-  test("MCP tool skills cannot fall back to a text steering prompt", () => {
+  test("MCP tool skills become text requests visible to the model", () => {
     const s: Skill = {
       ...baseSkill,
       id: "cc:mcp:gated-review:get_review_round",
       name: "mcp:gated-review:get_review_round",
     };
-    expect(() => formatSkillInvocation(s, {})).toThrow(/typed MCP route/);
+    expect(
+      formatSkillInvocation(s, {
+        pullRequestNumber: "373",
+        includeResolved: "false",
+      }),
+    ).toBe(
+      'Use the gated-review MCP tool get_review_round with these arguments: {"pullRequestNumber":"373","includeResolved":"false"}.',
+    );
+  });
+
+  test("clear and compact built-ins remain native slash commands", () => {
+    expect(
+      formatSkillInvocation(
+        { ...baseSkill, id: "cc:builtin:clear", name: "clear" },
+        {},
+      ),
+    ).toBe("/clear");
+    expect(
+      formatSkillInvocation(
+        { ...baseSkill, id: "cc:builtin:compact", name: "compact" },
+        {},
+      ),
+    ).toBe("/compact");
   });
 
   test("is pure — same inputs produce same output", () => {

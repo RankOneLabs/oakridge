@@ -5,8 +5,8 @@ import { parse as parseYaml } from "yaml";
 
 import type { Skill, ArgSpec } from "../../core/skills/types";
 import {
+  formatMcpSkillRequest,
   gatedReviewSkills,
-  parseMcpSkillReference,
 } from "../../core/skills/gated-review";
 
 /**
@@ -329,16 +329,15 @@ export async function discoverSkills(
 /**
  * Build the CC-native slash trigger for a skill invocation. Pure, synchronous,
  * and IO-free. Returns `/<name>` followed by positional arg values (ascending
- * numeric key order) then named arg values, space-joined. The skills route tags
- * the returned string for the adapter's native PTY command path.
+ * numeric key order) then named arg values, space-joined. MCP rail selections
+ * become normal text requests so the live model sees and performs the call.
  */
 export function formatSkillInvocation(
   skill: Skill,
   args: Record<string, string>,
 ): string {
-  if (parseMcpSkillReference(skill) !== null) {
-    throw new Error("MCP tools must be invoked through the typed MCP route");
-  }
+  const mcpRequest = formatMcpSkillRequest(skill, args);
+  if (mcpRequest !== null) return mcpRequest;
 
   const numericParts = Object.entries(args)
     .filter(([k]) => /^\d+$/.test(k))

@@ -4,9 +4,6 @@ import type { ArgSpec, Skill } from "./types";
 export const GATED_REVIEW_MCP_URL = "http://otto:3555/mcp";
 export const GATED_REVIEW_SERVER_NAME = "gated-review";
 
-export type McpArgumentValue = string | number | boolean;
-export type McpArguments = Record<string, McpArgumentValue>;
-
 export type GatedReviewToolName =
   | "review.get_state"
   | "review.list_actions"
@@ -59,7 +56,8 @@ const booleanArg = (key: string, hint: string): ArgSpec => ({
 
 /**
  * Curated from gated-review's MCP tools/list response. Repository and worktree
- * arguments are not exposed in the UI: kbbl binds them to the live session.
+ * arguments are not exposed in the UI: the live model derives them from its
+ * session context when it handles the steering request.
  */
 export const GATED_REVIEW_TOOL_SPECS: readonly GatedReviewToolSpec[] = [
   {
@@ -188,165 +186,24 @@ export function parseMcpSkillReference(skill: Skill): McpSkillReference | null {
   };
 }
 
-type PrepareResult =
-  | { ok: true; value: McpArguments }
-  | { ok: false; error: string };
+/**
+ * Format an MCP rail selection as a normal user request for the live model.
+ * kbbl deliberately does not execute the tool itself: the model must receive
+ * this text in its turn context and make the MCP call through its own runtime.
+ */
+export function formatMcpSkillRequest(
+  skill: Skill,
+  args: Record<string, string>,
+): string | null {
+  const reference = parseMcpSkillReference(skill);
+  if (reference === null) return null;
 
-export interface GitContext {
-  repository: string | null;
-  branch: string | null;
-}
-
-export type GitContextResolver = (workdir: string) => Promise<GitContext>;
-
-async function readGitValue(
-  workdir: string,
-  args: string[],
-): Promise<string | null> {
-  const proc = Bun.spawn({
-    cmd: ["git", "-C", workdir, ...args],
-    stdout: "pipe",
-    stderr: "ignore",
-  });
-  const [exitCode, stdout] = await Promise.all([
-    proc.exited,
-    new Response(proc.stdout).text(),
-  ]);
-  if (exitCode !== 0) return null;
-  const value = stdout.trim();
-  return value.length > 0 ? value : null;
-}
-
-export function repositoryFromRemote(remote: string): string | null {
-  const scpMatch = remote.match(/^[^@]+@[^:]+:(.+)$/);
-  let path = scpMatch?.[1] ?? null;
-  if (path === null) {
-    try {
-      path = new URL(remote).pathname;
-    } catch {
-      path = remote;
-    }
+  const providedArgs = Object.fromEntries(
+    Object.entries(args).filter(([, value]) => value.length > 0),
+  );
+  const argumentEntries = Object.keys(providedArgs);
+  if (argumentEntries.length === 0) {
+    return `Use the ${reference.serverName} MCP tool ${reference.toolName}.`;
   }
-  const parts = path
-    .replace(/^\/+|\/+$/g, "")
-    .replace(/\.git$/, "")
-    .split("/")
-    .filter(Boolean);
-  return parts.length >= 2 ? parts.slice(-2).join("/") : null;
-}
-
-export const resolveGitContext: GitContextResolver = async (workdir) => {
-  const [remote, branch] = await Promise.all([
-    readGitValue(workdir, ["config", "--get", "remote.origin.url"]),
-    readGitValue(workdir, ["branch", "--show-current"]),
-  ]);
-  return {
-    repository: remote === null ? null : repositoryFromRemote(remote),
-    branch,
-  };
-};
-
-function coerceArguments(
-  spec: GatedReviewToolSpec,
-  raw: Record<string, string>,
-): PrepareResult {
-  const values: McpArguments = {};
-  const knownKeys = new Set(spec.args.map((arg) => arg.key));
-  for (const key of Object.keys(raw)) {
-    if (!knownKeys.has(key)) return { ok: false, error: `unknown arg: ${key}` };
-  }
-
-  for (const arg of spec.args) {
-    const rawValue = raw[arg.key] ?? "";
-    if (arg.required && rawValue.trim().length === 0) {
-      return { ok: false, error: `missing required arg: ${arg.key}` };
-    }
-    if (rawValue.length === 0) continue;
-
-    if (arg.kind === "integer") {
-      if (!/^-?\d+$/.test(rawValue.trim())) {
-        return { ok: false, error: `${arg.key} must be an integer` };
-      }
-      values[arg.key] = Number.parseInt(rawValue, 10);
-    } else if (arg.kind === "boolean") {
-      if (rawValue !== "true" && rawValue !== "false") {
-        return { ok: false, error: `${arg.key} must be true or false` };
-      }
-      values[arg.key] = rawValue === "true";
-    } else {
-      values[arg.key] = rawValue;
-    }
-  }
-  return { ok: true, value: values };
-}
-
-const REPOSITORY_TOOLS = new Set<GatedReviewToolName>([
-  "open_pr",
-  "reply_to_thread",
-  "resolve_thread",
-  "request_next_round",
-  "git.push",
-  "git.pull",
-  "git.fetch",
-  "get_review_round",
-  "pr_status",
-]);
-
-export async function prepareGatedReviewArguments({
-  toolName,
-  rawArgs,
-  workdir,
-  gitContextResolver = resolveGitContext,
-}: {
-  toolName: string;
-  rawArgs: Record<string, string>;
-  workdir: string;
-  gitContextResolver?: GitContextResolver;
-}): Promise<PrepareResult> {
-  const spec = getGatedReviewToolSpec(toolName);
-  if (!spec) {
-    return { ok: false, error: `unsupported gated-review tool: ${toolName}` };
-  }
-
-  const coerced = coerceArguments(spec, rawArgs);
-  if (!coerced.ok) return coerced;
-  const values = coerced.value;
-
-  const needsRepository = REPOSITORY_TOOLS.has(spec.name);
-  const needsBranch =
-    spec.name === "open_pr" &&
-    !values.head;
-  const context =
-    needsRepository || needsBranch
-      ? await gitContextResolver(workdir)
-      : { repository: null, branch: null };
-
-  if (REPOSITORY_TOOLS.has(spec.name)) {
-    if (context.repository === null) {
-      return {
-        ok: false,
-        error: "repository is required (could not derive owner/repository from origin)",
-      };
-    }
-    values.repository = context.repository;
-  }
-
-  if (
-    spec.name === "git.push" ||
-    spec.name === "git.pull" ||
-    spec.name === "git.fetch"
-  ) {
-    values.repo_path = workdir;
-  }
-  if (spec.name === "open_pr") {
-    values.base ??= "main";
-    if (!values.head) {
-      if (context.branch === null) {
-        return { ok: false, error: "head is required (could not derive current branch)" };
-      }
-      values.head = context.branch;
-    }
-  }
-
-  return { ok: true, value: values };
+  return `Use the ${reference.serverName} MCP tool ${reference.toolName} with these arguments: ${JSON.stringify(providedArgs)}.`;
 }
