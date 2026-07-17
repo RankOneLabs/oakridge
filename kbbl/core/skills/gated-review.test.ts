@@ -1,10 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  formatMcpSkillRequest,
   GATED_REVIEW_TOOL_SPECS,
   gatedReviewSkills,
-  prepareGatedReviewArguments,
-  repositoryFromRemote,
 } from "./gated-review";
 
 describe("gated-review tool catalog", () => {
@@ -27,76 +26,36 @@ describe("gated-review tool catalog", () => {
     );
   });
 
-  test("parses HTTPS and SSH origin URLs into repository names", () => {
-    expect(repositoryFromRemote("https://github.com/RankOneLabs/oakridge.git")).toBe(
-      "RankOneLabs/oakridge",
+  test("formats a rail selection as a model-visible request with arguments", () => {
+    const skill = gatedReviewSkills("codex").find(
+      (candidate) => candidate.id === "codex:mcp:gated-review:get_review_round",
     );
-    expect(repositoryFromRemote("git@github.com:RankOneLabs/oakridge.git")).toBe(
-      "RankOneLabs/oakridge",
+    if (skill === undefined) throw new Error("missing get_review_round fixture");
+
+    expect(
+      formatMcpSkillRequest(skill, {
+        pullRequestNumber: "373",
+        includeResolved: "false",
+      }),
+    ).toBe(
+      'Use the gated-review MCP tool get_review_round with these arguments: {"pullRequestNumber":"373","includeResolved":"false"}.',
     );
   });
-});
 
-describe("prepareGatedReviewArguments", () => {
-  const gitContextResolver = async () => ({
-    repository: "RankOneLabs/oakridge",
-    branch: "kbbl/direct-mcp",
-  });
+  test("omits undeclared and whitespace-only arguments from the request", () => {
+    const skill = gatedReviewSkills("claude-code").find(
+      (candidate) => candidate.id === "cc:mcp:gated-review:git.fetch",
+    );
+    if (skill === undefined) throw new Error("missing git.fetch fixture");
 
-  test("coerces integer arguments and derives repository", async () => {
-    const result = await prepareGatedReviewArguments({
-      toolName: "pr_status",
-      rawArgs: { pullRequestNumber: "373" },
-      workdir: "/repo/worktree",
-      gitContextResolver,
-    });
-
-    expect(result).toEqual({
-      ok: true,
-      value: {
-        repository: "RankOneLabs/oakridge",
-        pullRequestNumber: 373,
-      },
-    });
-  });
-
-  test("derives open-PR base and head while preserving typed draft", async () => {
-    const result = await prepareGatedReviewArguments({
-      toolName: "open_pr",
-      rawArgs: {
-        base: "",
-        head: "",
-        title: "Direct MCP",
-        body: "",
-        draft: "true",
-      },
-      workdir: "/repo/worktree",
-      gitContextResolver,
-    });
-
-    expect(result).toEqual({
-      ok: true,
-      value: {
-        repository: "RankOneLabs/oakridge",
-        base: "main",
-        head: "kbbl/direct-mcp",
-        title: "Direct MCP",
-        draft: true,
-      },
-    });
-  });
-
-  test("rejects malformed integer input before invoking MCP", async () => {
-    const result = await prepareGatedReviewArguments({
-      toolName: "get_review_round",
-      rawArgs: { pullRequestNumber: "three" },
-      workdir: "/repo/worktree",
-      gitContextResolver,
-    });
-
-    expect(result).toEqual({
-      ok: false,
-      error: "pullRequestNumber must be an integer",
-    });
+    expect(
+      formatMcpSkillRequest(skill, {
+        refspec: "   ",
+        repository: "attacker/repository",
+        repo_path: "/tmp/attacker-worktree",
+      }),
+    ).toBe(
+      "Use the gated-review MCP tool git.fetch.",
+    );
   });
 });

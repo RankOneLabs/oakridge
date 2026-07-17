@@ -36,8 +36,8 @@ import { join } from "node:path";
 import type { Skill, ArgSpec } from "../../core/skills/types";
 import {
   canonicalGatedReviewToolName,
+  formatMcpSkillRequest,
   gatedReviewSkills,
-  parseMcpSkillReference,
 } from "../../core/skills/gated-review";
 
 // Pinned at build time from `codex --version` output: "codex-cli 0.137.0"
@@ -621,9 +621,8 @@ export function makeSkillInvocationFormatter(
   slashForSkillsSupported: boolean,
 ): (skill: Skill, args: Record<string, string>) => string {
   return (skill: Skill, args: Record<string, string>): string => {
-    if (parseMcpSkillReference(skill) !== null) {
-      throw new Error("MCP tools must be invoked through the typed MCP route");
-    }
+    const mcpRequest = formatMcpSkillRequest(skill, args);
+    if (mcpRequest !== null) return mcpRequest;
 
     const isBuiltinCommand = skill.id.startsWith("codex:builtin:");
     const prefix =

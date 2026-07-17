@@ -6,42 +6,16 @@ import type { SessionManager } from "../session/session-manager";
 import type { RuntimeRegistry } from "../runtime";
 import type { KbblConfig } from "../config";
 import { buildSkillRegistry } from "./registry";
-import {
-  GATED_REVIEW_MCP_URL,
-  GATED_REVIEW_SERVER_NAME,
-  parseMcpSkillReference,
-  prepareGatedReviewArguments,
-} from "./gated-review";
-import {
-  invokeHttpMcpTool,
-  type McpCallOutcome,
-  type McpInvoker,
-  type McpToolCall,
-} from "./mcp-client";
 
 export interface SkillRoutesDeps {
   manager: SessionManager;
   registry: RuntimeRegistry | undefined;
   config: KbblConfig;
-  mcpInvoker?: McpInvoker;
-}
-
-function defaultMcpInvoker(call: McpToolCall): Promise<McpCallOutcome> {
-  return invokeHttpMcpTool({ url: GATED_REVIEW_MCP_URL, call });
-}
-
-function mcpResultContent(result: unknown): unknown {
-  if (typeof result !== "object" || result === null || Array.isArray(result)) {
-    return result;
-  }
-  const content = (result as { content?: unknown }).content;
-  return content ?? result;
 }
 
 export function mountSkillsRoutes(app: Hono, deps: SkillRoutesDeps): void {
   const { manager, registry, config } = deps;
   const aggregator = buildSkillRegistry({ registry, config });
-  const invokeMcp = deps.mcpInvoker ?? defaultMcpInvoker;
 
   // GET /:sid/skills — returns visible+permitted Skill[] (possibly empty).
   // Always 200: the rail degrades to an empty list rather than an error banner.
@@ -57,9 +31,9 @@ export function mountSkillsRoutes(app: Hono, deps: SkillRoutesDeps): void {
     return c.json(skills);
   });
 
-  // POST /:sid/skills/invoke — native slash commands go through the runtime's
-  // command parser; gated-review actions are direct, typed MCP calls. Returns
-  // a submission ack only; MCP call/result events stream into the transcript.
+  // POST /:sid/skills/invoke — formats the selection as agent input and submits
+  // it through session.writeInput(). MCP rail actions are steering requests:
+  // the live model sees the request and owns the actual tool call.
   app.post("/:sid/skills/invoke", async (c) => {
     const sid = c.req.param("sid");
     if (!isValidSid(sid)) return c.json({ error: "invalid sid" }, 400);
@@ -113,93 +87,6 @@ export function mountSkillsRoutes(app: Hono, deps: SkillRoutesDeps): void {
       if (argSpec.required && !args[argSpec.key]?.trim()) {
         return c.json({ error: `missing required arg: ${argSpec.key}` }, 400);
       }
-    }
-
-    const mcpReference = parseMcpSkillReference(skill);
-    if (mcpReference?.serverName === GATED_REVIEW_SERVER_NAME) {
-      let prepared;
-      try {
-        prepared = await prepareGatedReviewArguments({
-          toolName: mcpReference.toolName,
-          rawArgs: args,
-          workdir: session.workdir,
-        });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return c.json({ error: `could not prepare MCP call: ${message}` }, 503);
-      }
-      if (!prepared.ok) return c.json({ error: prepared.error }, 400);
-
-      const toolUseId = `kbbl-mcp-${crypto.randomUUID()}`;
-      const toolDisplayName = `mcp__${mcpReference.serverName}__${mcpReference.toolName}`;
-      await session.emit("assistant", {
-        type: "assistant",
-        source: "kbbl_mcp",
-        message: {
-          role: "assistant",
-          content: [
-            {
-              type: "tool_use",
-              id: toolUseId,
-              name: toolDisplayName,
-              input: prepared.value,
-            },
-          ],
-        },
-      });
-
-      let outcome: McpCallOutcome;
-      try {
-        outcome = await invokeMcp({
-          serverName: mcpReference.serverName,
-          toolName: mcpReference.toolName,
-          arguments: prepared.value,
-        });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        await session.emit("user", {
-          type: "user",
-          source: "kbbl_mcp",
-          message: {
-            role: "user",
-            content: [
-              {
-                type: "tool_result",
-                tool_use_id: toolUseId,
-                content: message,
-                is_error: true,
-              },
-            ],
-          },
-        });
-        return c.json({ error: `MCP call failed: ${message}` }, 502);
-      }
-
-      await session.emit("user", {
-        type: "user",
-        source: "kbbl_mcp",
-        message: {
-          role: "user",
-          content: [
-            {
-              type: "tool_result",
-              tool_use_id: toolUseId,
-              content: mcpResultContent(outcome.result),
-              is_error: outcome.isError,
-            },
-          ],
-        },
-      });
-      if (outcome.isError) {
-        return c.json({ error: "gated-review tool returned an error" }, 502);
-      }
-      return c.json({ ok: true });
-    }
-    if (mcpReference !== null) {
-      return c.json(
-        { error: `direct MCP invocation is not configured for ${mcpReference.serverName}` },
-        409,
-      );
     }
 
     const runtime = registry?.runtimes.get(session.runtimeId);

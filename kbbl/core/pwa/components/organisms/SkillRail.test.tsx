@@ -233,6 +233,21 @@ describe("SkillRail MCP grouping + collapse", () => {
     // The verbose mcp:server: prefix is stripped from the visible label.
     expect(toolBtn.textContent).not.toContain("mcp:gated-review:");
   });
+
+  it("dispatches an expanded MCP selection through the skill invoke mutation", async () => {
+    setup([MCP_SKILL]);
+    renderOpenRail();
+
+    fireEvent.click(screen.getByRole("button", { name: /MCP · gated-review/ }));
+    fireEvent.click(screen.getByRole("button", { name: /open_pr/ }));
+
+    await waitFor(() =>
+      expect(mockMutateAsync).toHaveBeenCalledWith({
+        skill_id: "codex:mcp:gated-review:open_pr",
+        args: {},
+      }),
+    );
+  });
 });
 
 describe("SkillRail invoke failure", () => {
