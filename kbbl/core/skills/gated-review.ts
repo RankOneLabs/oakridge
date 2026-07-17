@@ -198,8 +198,12 @@ export function formatMcpSkillRequest(
   const reference = parseMcpSkillReference(skill);
   if (reference === null) return null;
 
+  const declaredArgKeys = new Set(skill.args.map((arg) => arg.key));
   const providedArgs = Object.fromEntries(
-    Object.entries(args).filter(([, value]) => value.length > 0),
+    Object.entries(args).filter(
+      ([key, value]) =>
+        declaredArgKeys.has(key) && value.trim().length > 0,
+    ),
   );
   const argumentEntries = Object.keys(providedArgs);
   if (argumentEntries.length === 0) {

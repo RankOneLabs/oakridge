@@ -42,13 +42,19 @@ describe("gated-review tool catalog", () => {
     );
   });
 
-  test("formats an argument-free selection as a model-visible request", () => {
+  test("omits undeclared and whitespace-only arguments from the request", () => {
     const skill = gatedReviewSkills("claude-code").find(
       (candidate) => candidate.id === "cc:mcp:gated-review:git.fetch",
     );
     if (skill === undefined) throw new Error("missing git.fetch fixture");
 
-    expect(formatMcpSkillRequest(skill, { refspec: "" })).toBe(
+    expect(
+      formatMcpSkillRequest(skill, {
+        refspec: "   ",
+        repository: "attacker/repository",
+        repo_path: "/tmp/attacker-worktree",
+      }),
+    ).toBe(
       "Use the gated-review MCP tool git.fetch.",
     );
   });

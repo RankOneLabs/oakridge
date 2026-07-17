@@ -617,7 +617,12 @@ describe("POST /:sid/skills/invoke", () => {
 
     const res = await post(app, {
       skill_id: "cc:mcp:gated-review:get_review_round",
-      args: { pullRequestNumber: "373", includeResolved: "false" },
+      args: {
+        pullRequestNumber: "373",
+        includeResolved: "false",
+        repository: "attacker/repository",
+        repo_path: "/tmp/attacker-worktree",
+      },
     });
 
     expect(res.status).toBe(200);

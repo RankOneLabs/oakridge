@@ -720,7 +720,20 @@ describe("makeSkillInvocationFormatter — slash form (supported)", () => {
           ...skill,
           id: "codex:mcp:gated-review:get_review_round",
           name: "mcp:gated-review:get_review_round",
-          args: [],
+          args: [
+            {
+              key: "pullRequestNumber",
+              required: true,
+              hint: "pull request number",
+              kind: "integer",
+            },
+            {
+              key: "includeResolved",
+              required: false,
+              hint: "include resolved threads",
+              kind: "boolean",
+            },
+          ],
         },
         { pullRequestNumber: "373", includeResolved: "false" },
       ),

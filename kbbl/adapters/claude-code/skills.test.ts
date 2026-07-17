@@ -546,6 +546,20 @@ describe("formatSkillInvocation — slash serialization", () => {
       ...baseSkill,
       id: "cc:mcp:gated-review:get_review_round",
       name: "mcp:gated-review:get_review_round",
+      args: [
+        {
+          key: "pullRequestNumber",
+          required: true,
+          hint: "pull request number",
+          kind: "integer",
+        },
+        {
+          key: "includeResolved",
+          required: false,
+          hint: "include resolved threads",
+          kind: "boolean",
+        },
+      ],
     };
     expect(
       formatSkillInvocation(s, {
