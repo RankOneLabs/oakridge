@@ -633,17 +633,17 @@ describe("POST /:sid/skills/invoke", () => {
     expect(capturedCommand).toBe(false);
   });
 
-  test("clear and compact actions stay on the native command path", async () => {
+  test("native slash-command built-ins dispatch on the command path", async () => {
     const captured: Array<{ text: string; command: boolean | undefined }> = [];
     const session = makeSession({
       writeInput: async (text, opts) => {
         captured.push({ text, command: opts?.command });
       },
     });
-    const builtins: Skill[] = ["clear", "compact"].map((name) => ({
+    const builtins: Skill[] = ["code-review", "simplify"].map((name) => ({
       id: `cc:builtin:${name}`,
       name,
-      description: `${name} session`,
+      description: `${name} action`,
       backend: "claude-code",
       scope: "system",
       args: [],
@@ -661,14 +661,14 @@ describe("POST /:sid/skills/invoke", () => {
     };
     const app = buildRoutesApp({ session, registry });
 
-    const clearResponse = await post(app, { skill_id: "cc:builtin:clear" });
-    const compactResponse = await post(app, { skill_id: "cc:builtin:compact" });
+    const reviewResponse = await post(app, { skill_id: "cc:builtin:code-review" });
+    const simplifyResponse = await post(app, { skill_id: "cc:builtin:simplify" });
 
-    expect(clearResponse.status).toBe(200);
-    expect(compactResponse.status).toBe(200);
+    expect(reviewResponse.status).toBe(200);
+    expect(simplifyResponse.status).toBe(200);
     expect(captured).toEqual([
-      { text: "/clear", command: true },
-      { text: "/compact", command: true },
+      { text: "/code-review", command: true },
+      { text: "/simplify", command: true },
     ]);
   });
 });

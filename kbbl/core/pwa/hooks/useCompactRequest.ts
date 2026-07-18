@@ -3,7 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 export function useCompactRequest(
   sid: string,
   onSuccess: () => void,
-): { trigger: () => Promise<void> } {
+): { trigger: () => Promise<void>; isPending: boolean } {
   const mutation = useMutation({
     mutationFn: async () => {
       const res = await fetch(`/${encodeURIComponent(sid)}/compact`, {
@@ -17,5 +17,6 @@ export function useCompactRequest(
   // retry — matches the prior shape's `catch {}` semantics.
   return {
     trigger: () => mutation.mutateAsync().catch(() => {}),
+    isPending: mutation.isPending,
   };
 }

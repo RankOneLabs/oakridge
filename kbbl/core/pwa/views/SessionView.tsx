@@ -165,6 +165,7 @@ export function SessionView({
         onThresholdChange={onSoftThresholdChange}
         onToggleSystemEvents={() => setShowSystemEvents((p) => !p)}
         onToggleTheme={onToggleTheme}
+        onClearCompactSuggestion={onClearCompactSuggestion}
         onBack={onBack}
       />
       {compactSuggestion !== null && (
