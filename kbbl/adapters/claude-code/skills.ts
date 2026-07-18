@@ -248,14 +248,21 @@ async function discoverFromInstalledPlugins(home: string): Promise<Skill[]> {
  * the built-in surface changes; an entry whose command no longer exists merely
  * produces a "no such command" error in-session when tapped — it does not break
  * discovery.
+ *
+ * Deliberately EXCLUDED: `/compact` and `/clear`. kbbl owns session context
+ * lifecycle — compaction runs through the managed path (POST /:sid/compact →
+ * requestManualCompact, which writes a handoff doc and spawns a successor
+ * session), surfaced by a dedicated Compact control in the top bar. CC's native
+ * `/compact`/`/clear` would mutate CC's in-process context out from under
+ * kbbl's session model (token accounting, transcript, successor lineage) via
+ * the raw-PTY command path, desyncing everything. They must not be one-tap rail
+ * actions.
  */
 const CC_BUILTIN_COMMANDS: ReadonlyArray<{
   name: string;
   description: string;
   args?: ArgSpec[];
 }> = [
-  { name: "clear", description: "Clear the visible Claude Code conversation." },
-  { name: "compact", description: "Compact the current Claude Code session context." },
   {
     name: "code-review",
     description: "Review the current diff for correctness bugs and cleanups.",

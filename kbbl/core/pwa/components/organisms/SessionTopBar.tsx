@@ -5,6 +5,7 @@ import type { SessionSnapshot, Status, Theme } from "../../types";
 import { prettyEffortLabel, prettyModelLabel } from "../../lib/format";
 import { responseError } from "../../lib/http";
 import { sessionLabelTitle, workdirBasename } from "../../lib/session";
+import { useCompactRequest } from "../../hooks/useCompactRequest";
 
 export function SessionTopBar({
   ref,
@@ -21,6 +22,7 @@ export function SessionTopBar({
   onThresholdChange,
   onToggleSystemEvents,
   onToggleTheme,
+  onClearCompactSuggestion,
   onBack,
 }: {
   ref?: Ref<HTMLElement>;
@@ -37,11 +39,19 @@ export function SessionTopBar({
   onThresholdChange: (n: number, input: string) => void;
   onToggleSystemEvents: () => void;
   onToggleTheme: () => void;
+  onClearCompactSuggestion: () => void;
   onBack: () => void;
 }) {
   const [error, setError] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const canToggleYolo = snapshot?.status === "live";
+  // Manual compaction goes through kbbl's MANAGED path (POST /:sid/compact →
+  // requestManualCompact: handoff doc + successor session), NOT CC's native
+  // `/compact` command. Clearing the suggestion on success dismisses the
+  // threshold banner if it happened to be showing.
+  const { trigger: triggerCompact, isPending: compactPending } =
+    useCompactRequest(sid, onClearCompactSuggestion);
+  const canCompact = snapshot?.status === "live";
 
   const yoloMutation = useMutation({
     mutationFn: async (enabled: boolean) => {
@@ -151,6 +161,20 @@ export function SessionTopBar({
         aria-pressed={yoloMode}
       >
         {yoloMode ? "YOLO ON" : "YOLO"}
+      </button>
+      <button
+        type="button"
+        className="theme-toggle"
+        onClick={() => void triggerCompact()}
+        disabled={compactPending || !canCompact}
+        title={
+          !canCompact
+            ? "Compaction only available while the session is live"
+            : "Compact this session — writes a handoff doc and starts a fresh successor session"
+        }
+        aria-label="Compact session"
+      >
+        COMPACT
       </button>
       {error && (
         <span className="yolo-error" title={error} role="alert">

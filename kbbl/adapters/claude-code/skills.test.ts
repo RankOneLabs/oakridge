@@ -268,9 +268,12 @@ describe("discoverSkills — built-in CC commands", () => {
     const builtins = skills.filter((s) => s.id.startsWith("cc:builtin:"));
     expect(builtins.length).toBeGreaterThan(0);
     const names = builtins.map((s) => s.name);
-    expect(names).toContain("clear");
-    expect(names).toContain("compact");
     expect(names).toContain("code-review");
+    // `clear`/`compact` are deliberately NOT rail built-ins — kbbl owns
+    // context lifecycle via the managed POST /:sid/compact path, so CC's
+    // native slash-command equivalents must never be one-tap rail actions.
+    expect(names).not.toContain("clear");
+    expect(names).not.toContain("compact");
     const cr = builtins.find((s) => s.name === "code-review");
     expect(cr).toBeDefined();
     if (!cr) return;
@@ -571,19 +574,19 @@ describe("formatSkillInvocation — slash serialization", () => {
     );
   });
 
-  test("clear and compact built-ins remain native slash commands", () => {
+  test("argless built-ins format as a bare native slash command", () => {
     expect(
       formatSkillInvocation(
-        { ...baseSkill, id: "cc:builtin:clear", name: "clear" },
+        { ...baseSkill, id: "cc:builtin:code-review", name: "code-review" },
         {},
       ),
-    ).toBe("/clear");
+    ).toBe("/code-review");
     expect(
       formatSkillInvocation(
-        { ...baseSkill, id: "cc:builtin:compact", name: "compact" },
+        { ...baseSkill, id: "cc:builtin:simplify", name: "simplify" },
         {},
       ),
-    ).toBe("/compact");
+    ).toBe("/simplify");
   });
 
   test("is pure — same inputs produce same output", () => {
