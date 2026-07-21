@@ -4,7 +4,11 @@ import type { Database } from "bun:sqlite";
 import { getSpec } from "../../db/specs";
 import { getEpicBySpec } from "../../db/epics";
 import { isFrozen } from "../../db/epic-freeze";
-import { countOpenDiscrepancies } from "../../db/spec-discrepancies";
+import {
+  countOpenDiscrepancies,
+  listResolvedDiscrepanciesBySpec,
+  renderSpecAmendments,
+} from "../../db/spec-discrepancies";
 import { taskTrackerEvents } from "../../db/events";
 import type { Spec } from "../../types/task-tracker";
 
@@ -71,10 +75,18 @@ export function mountSpecStatusRoutes(app: Hono, deps: SpecStatusRouteDeps): voi
           const epic = getEpicBySpec(db, spec_id);
           if (!epic) return "epic_not_found";
 
-          // Copy notes→final_notes atomically
+          // Snapshot notes → final_notes, amending each resolved discrepancy in
+          // so the approved spec is the single source of truth downstream
+          // (plan_writer/brief_writer/build read COALESCE(final_notes, notes)).
+          // When nothing is resolved, final_notes === notes (null preserved).
+          const amendments = renderSpecAmendments(
+            listResolvedDiscrepanciesBySpec(db, spec_id),
+          );
+          const finalNotes =
+            amendments === "" ? spec.notes : (spec.notes ?? "") + amendments;
           db.prepare(
-            "UPDATE specs SET internal_status = 'approved', final_notes = notes WHERE id = ?",
-          ).run(spec_id);
+            "UPDATE specs SET internal_status = 'approved', final_notes = ? WHERE id = ?",
+          ).run(finalNotes, spec_id);
 
           emitApproved = { spec_id, epic_id: epic.id };
         } else {

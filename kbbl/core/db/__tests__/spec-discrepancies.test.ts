@@ -9,6 +9,7 @@ import {
   listSpecDiscrepancies,
   countOpenDiscrepancies,
   listResolvedDiscrepanciesBySpec,
+  renderSpecAmendments,
   updateSpecDiscrepancy,
 } from "../spec-discrepancies";
 
@@ -175,5 +176,61 @@ describe("updateSpecDiscrepancy", () => {
     const result = updateSpecDiscrepancy(db, "u4", {});
     expect(result?.id).toBe("u4");
     expect(result?.status).toBe("open");
+  });
+});
+
+describe("renderSpecAmendments", () => {
+  test("returns empty string when there are no resolved discrepancies", () => {
+    insertSpecDiscrepancy(db, { id: "a-open", ...MINIMAL, status: "open" });
+    expect(renderSpecAmendments(listSpecDiscrepancies(db, SPEC_ID))).toBe("");
+  });
+
+  test("renders only resolved discrepancies, numbered in creation order", () => {
+    insertSpecDiscrepancy(db, {
+      id: "a-res-1",
+      spec_id: SPEC_ID,
+      spec_assumption: "assumes A",
+      code_reality: "A missing",
+      resolution: "add A",
+      status: "resolved",
+    });
+    insertSpecDiscrepancy(db, {
+      id: "a-open-2",
+      spec_id: SPEC_ID,
+      spec_assumption: "assumes B",
+      code_reality: "B missing",
+      status: "open",
+    });
+    insertSpecDiscrepancy(db, {
+      id: "a-res-2",
+      spec_id: SPEC_ID,
+      spec_assumption: "assumes C",
+      code_reality: "C missing",
+      resolution: "add C",
+      status: "resolved",
+    });
+
+    // Pass ALL rows to prove the renderer filters to resolved internally.
+    const out = renderSpecAmendments(listSpecDiscrepancies(db, SPEC_ID));
+    expect(out).toContain("## Amendments (resolved discrepancies)");
+    expect(out).toContain("### 1. assumes A");
+    expect(out).toContain("**Code reality:** A missing");
+    expect(out).toContain("**Resolution:** add A");
+    expect(out).toContain("### 2. assumes C");
+    expect(out).toContain("**Resolution:** add C");
+    expect(out).not.toContain("assumes B");
+  });
+
+  test("uses a placeholder when a resolved row has no resolution text", () => {
+    insertSpecDiscrepancy(db, {
+      id: "a-res-empty",
+      spec_id: SPEC_ID,
+      spec_assumption: "assumes D",
+      code_reality: "D missing",
+      resolution: null,
+      status: "resolved",
+    });
+    const out = renderSpecAmendments(listResolvedDiscrepanciesBySpec(db, SPEC_ID));
+    expect(out).toContain("**Resolution:** (no resolution recorded)");
   });
 });

@@ -131,7 +131,7 @@ function setupPromptFixtures() {
   writeFileSync(join(promptsDir, "spec_analyzer.md"),
     "spec_analyzer {{SPEC_ID}} {{SPEC_TITLE}} {{SPEC_NOTES}} {{REPO_PATH}} {{KBBL_URL}}", "utf8");
   writeFileSync(join(promptsDir, "plan_writer.md"),
-    "plan_writer {{SPEC_ID}} {{SPEC_TITLE}} {{SPEC_NOTES}} {{DISCREPANCY_RESOLUTIONS}} {{REPO_PATH}} {{KBBL_URL}}", "utf8");
+    "plan_writer {{SPEC_ID}} {{SPEC_TITLE}} {{SPEC_NOTES}} {{REPO_PATH}} {{KBBL_URL}}", "utf8");
   writeFileSync(join(promptsDir, "brief_writer.md"),
     "brief_writer {{PLAN_ID}} {{PLAN_TITLE}} {{SPEC_NOTES}} {{COHORTS}} {{PLAN_DEPENDENCIES}} {{KBBL_URL}} {{BRIEF_FORMAT_GUIDE}}", "utf8");
   writeFileSync(join(promptsDir, "build.md"),
