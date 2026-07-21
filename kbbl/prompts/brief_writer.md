@@ -26,6 +26,15 @@ The following cohorts are listed in the order you must write their briefs. This 
 
 {{BRIEF_FORMAT_GUIDE}}
 
+## Source of truth
+
+The spec notes above are the single, authoritative source of truth for this plan. Where spec_analyzer surfaced a conflict with the codebase and the operator resolved it, that resolution is amended directly into the notes under an **"Amendments (resolved discrepancies)"** section. There is no separate resolutions document to reconcile — the amended spec already reflects every decision. Treat it as binding:
+
+- **Never redesign, rename, or replace** a data model, interface, or decision the spec (including its amendments) has already settled. Reuse the exact names and shapes it establishes.
+- Read the implementation sources an amendment names — the files, functions, and data models in its resolution — **before** you draft the affected brief.
+- Every `decisions_made` entry must trace to the spec, one of its amendments, or a source artifact you inspected. Do not invent a decision the spec left open; if a cohort genuinely cannot be briefed without one, say so in the brief rather than guessing.
+- If a cohort note omits detail, recover it from the spec and the source implementation. Omission is not license to reopen a settled decision.
+
 ## Your tasks
 
 For each cohort in the order listed above:
@@ -57,6 +66,7 @@ For each cohort in the order listed above:
 
 ## Constraints
 
+- The spec notes (including their amendments) are the source of truth. A decision they settled must never be redesigned, renamed, or replaced.
 - Write and POST each brief before starting the next one. Do **not** batch all POSTs at the end.
 - Do not write open questions. Every decision must be closed.
 - The `next_action` field must be concrete and actionable — the build agent uses it as its starting point.

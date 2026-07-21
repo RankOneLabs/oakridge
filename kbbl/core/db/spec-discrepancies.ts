@@ -62,6 +62,41 @@ export function listResolvedDiscrepanciesBySpec(db: Database, spec_id: string): 
     .all(spec_id);
 }
 
+/**
+ * Render resolved discrepancies as a spec "Amendments" section, meant to be
+ * appended to the spec notes at approval so the amended spec is the single
+ * source of truth for every downstream stage (plan_writer, brief_writer,
+ * build) — they never have to reconcile original spec text against a separate
+ * resolutions sidecar. Returns "" when there are no resolved discrepancies, so
+ * callers append nothing and the original notes are preserved verbatim.
+ */
+export function renderSpecAmendments(discrepancies: SpecDiscrepancy[]): string {
+  const resolved = discrepancies.filter((d) => d.status === "resolved");
+  if (resolved.length === 0) return "";
+
+  const body = resolved
+    .map((r, i) =>
+      [
+        `### ${i + 1}. ${r.spec_assumption}`,
+        "",
+        `**Code reality:** ${r.code_reality}`,
+        "",
+        `**Resolution:** ${r.resolution ?? "(no resolution recorded)"}`,
+      ].join("\n"),
+    )
+    .join("\n\n");
+
+  return [
+    "",
+    "",
+    "## Amendments (resolved discrepancies)",
+    "",
+    "The assumptions below conflicted with the codebase and were resolved by the operator. Each resolution is a binding amendment to the spec above and overrides any conflicting text.",
+    "",
+    body,
+  ].join("\n");
+}
+
 export function updateSpecDiscrepancy(
   db: Database,
   id: string,

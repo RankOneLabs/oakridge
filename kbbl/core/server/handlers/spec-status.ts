@@ -4,7 +4,11 @@ import type { Database } from "bun:sqlite";
 import { getSpec } from "../../db/specs";
 import { getEpicBySpec } from "../../db/epics";
 import { isFrozen } from "../../db/epic-freeze";
-import { countOpenDiscrepancies } from "../../db/spec-discrepancies";
+import {
+  countOpenDiscrepancies,
+  listResolvedDiscrepanciesBySpec,
+  renderSpecAmendments,
+} from "../../db/spec-discrepancies";
 import { taskTrackerEvents } from "../../db/events";
 import type { Spec } from "../../types/task-tracker";
 
@@ -61,20 +65,33 @@ export function mountSpecStatusRoutes(app: Hono, deps: SpecStatusRouteDeps): voi
         const transitionKey = `${spec.internal_status}→${requestedStatus}`;
         if (!SPEC_INTERNAL_TRANSITIONS[transitionKey]) return "invalid_transition";
 
-        // discrepancies→review requires no open discrepancies
-        if (spec.internal_status === "discrepancies" && requestedStatus === "review") {
-          const openCount = countOpenDiscrepancies(db, spec_id);
-          if (openCount > 0) return "has_open_discrepancies";
+        // Neither review nor approved may be entered while open discrepancies
+        // exist. Approval amends only *resolved* discrepancies into final_notes,
+        // so an open one created after the review gate would otherwise be
+        // silently dropped and the spec approved with it unresolved.
+        if (
+          (requestedStatus === "review" || requestedStatus === "approved") &&
+          countOpenDiscrepancies(db, spec_id) > 0
+        ) {
+          return "has_open_discrepancies";
         }
 
         if (requestedStatus === "approved") {
           const epic = getEpicBySpec(db, spec_id);
           if (!epic) return "epic_not_found";
 
-          // Copy notes→final_notes atomically
+          // Snapshot notes → final_notes, amending each resolved discrepancy in
+          // so the approved spec is the single source of truth downstream
+          // (plan_writer/brief_writer/build read COALESCE(final_notes, notes)).
+          // When nothing is resolved, final_notes === notes (null preserved).
+          const amendments = renderSpecAmendments(
+            listResolvedDiscrepanciesBySpec(db, spec_id),
+          );
+          const finalNotes =
+            amendments === "" ? spec.notes : (spec.notes ?? "") + amendments;
           db.prepare(
-            "UPDATE specs SET internal_status = 'approved', final_notes = notes WHERE id = ?",
-          ).run(spec_id);
+            "UPDATE specs SET internal_status = 'approved', final_notes = ? WHERE id = ?",
+          ).run(finalNotes, spec_id);
 
           emitApproved = { spec_id, epic_id: epic.id };
         } else {
@@ -101,7 +118,7 @@ export function mountSpecStatusRoutes(app: Hono, deps: SpecStatusRouteDeps): voi
       return c.json({ error: "invalid internal_status transition" }, 409);
     }
     if (error === "has_open_discrepancies") {
-      return c.json({ error: "cannot move to review while open discrepancies exist" }, 409);
+      return c.json({ error: "cannot advance while open discrepancies exist" }, 409);
     }
     if (error === "epic_not_found") {
       return c.json({ error: "cannot approve spec without an epic" }, 409);

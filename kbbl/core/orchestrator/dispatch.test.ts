@@ -121,7 +121,7 @@ function setupPromptFixtures() {
   );
   writeFileSync(
     join(promptsDir, "plan_writer.md"),
-    "plan_writer {{SPEC_ID}} {{SPEC_TITLE}} {{SPEC_NOTES}} {{DISCREPANCY_RESOLUTIONS}} {{REPO_PATH}} {{KBBL_URL}}",
+    "plan_writer {{SPEC_ID}} {{SPEC_TITLE}} {{SPEC_NOTES}} {{REPO_PATH}} {{KBBL_URL}}",
     "utf8",
   );
   writeFileSync(
@@ -719,7 +719,7 @@ describe("full dispatch pipeline with MockBackend", () => {
     expect(Array.isArray(debriefed.deviations)).toBe(true);
   });
 
-  test("plan_writer prompt renders DISCREPANCY_RESOLUTIONS fallback when no resolved discrepancies", async () => {
+  test("plan_writer prompt has no amendments section when there are no resolved discrepancies", async () => {
     const projRes = await post(app, "/projects", { name: "dr-fallback", repo_path: testRepoPath });
     const proj = (await projRes.json()) as { id: string };
     const specRes = await post(app, "/specs", { project_id: proj.id, title: "DR Spec", notes: "notes" });
@@ -735,7 +735,7 @@ describe("full dispatch pipeline with MockBackend", () => {
 
     const call = mockBackend.calls[mockBackend.calls.length - 1];
     expect(call?.stageName).toBe("plan_writer");
-    expect(call?.renderedPrompt).toContain("(none — spec analyzed clean or pre-resolutions spec)");
+    expect(call?.renderedPrompt).not.toContain("## Amendments (resolved discrepancies)");
   });
 
   test("spec without epic cannot dispatch agent-dev stages", async () => {
@@ -756,36 +756,6 @@ describe("full dispatch pipeline with MockBackend", () => {
     await expect(dispatcher.dispatch("plan_writer", spec.id)).rejects.toThrow(
       `spec ${spec.id}: no epic found`,
     );
-  });
-
-  test("plan_writer prompt renders resolved discrepancies as numbered sections", async () => {
-    const projRes = await post(app, "/projects", { name: "dr-nonempty", repo_path: testRepoPath });
-    const proj = (await projRes.json()) as { id: string };
-    const specRes = await post(app, "/specs", { project_id: proj.id, title: "DR Spec 2", notes: "notes" });
-    const spec = (await specRes.json()) as { id: string };
-    await flushAsync(); // consume spec_analyzer hook
-
-    insertSpecDiscrepancy(db, {
-      id: "disc-test-1",
-      spec_id: spec.id,
-      spec_assumption: "assumes X exists",
-      code_reality: "X does not exist",
-      resolution: "add X before implementing",
-      status: "resolved",
-    });
-
-    const dispatcher = createDispatcher({
-      db,
-      backends: { kbbl_chat: mockBackend },
-      kbblUrl: "http://localhost:8788",
-    });
-    await dispatcher.dispatch("plan_writer", spec.id);
-
-    const call = mockBackend.calls[mockBackend.calls.length - 1];
-    expect(call?.stageName).toBe("plan_writer");
-    expect(call?.renderedPrompt).toContain("### 1. assumes X exists");
-    expect(call?.renderedPrompt).toContain("**Code reality:** X does not exist");
-    expect(call?.renderedPrompt).toContain("**Resolution:** add X before implementing");
   });
 
   test("spec approval → plan_writer prompt renders resolved discrepancy, excludes waived assumption, and reads SPEC_NOTES from final_notes", async () => {
@@ -834,8 +804,8 @@ describe("full dispatch pipeline with MockBackend", () => {
 
     const toApproved = await patch(app, `/specs/${spec.id}/internal-status`, { internal_status: "approved" });
     expect(toApproved.status).toBe(200);
-    // Approval copies notes → final_notes atomically and emits spec.approved
-    // plan_writer dispatch is enqueued but not yet settled
+    // Approval amends resolved discrepancies into final_notes atomically and
+    // emits spec.approved; plan_writer dispatch is enqueued but not yet settled
 
     // 4. Mutate spec.notes directly before flushAsync — proves SPEC_NOTES is frozen via final_notes
     db.prepare("UPDATE specs SET notes = ? WHERE id = ?").run("POST_APPROVAL_MUTATION_SHOULD_NOT_APPEAR", spec.id);
@@ -850,13 +820,17 @@ describe("full dispatch pipeline with MockBackend", () => {
 
     const prompt = pwCall.renderedPrompt;
 
-    // (a) Resolved discrepancy's resolution string appears in the rendered prompt
-    expect(prompt).toContain(RESOLUTION_STRING);
+    // (a) The resolved discrepancy is amended into SPEC_NOTES as a numbered
+    //     "Amendments" section — the single source of truth, with no separate
+    //     DISCREPANCY_RESOLUTIONS slot to reconcile.
+    expect(prompt).toContain("## Amendments (resolved discrepancies)");
+    expect(prompt).toContain(`### 1. ${ASSUMPTION_A}`);
+    expect(prompt).toContain(`**Resolution:** ${RESOLUTION_STRING}`);
 
     // (b) Waived discrepancy's spec_assumption does NOT appear (status filtering excludes non-resolved rows)
     expect(prompt).not.toContain(ASSUMPTION_B);
 
-    // (c) SPEC_NOTES reflects the original notes (copied into final_notes at approval)
+    // (c) SPEC_NOTES retains the original notes (amendments are appended to them in final_notes)
     expect(prompt).toContain(ORIGINAL_NOTES);
 
     // (d) Post-approval mutation to spec.notes does NOT appear (final_notes is the frozen source)

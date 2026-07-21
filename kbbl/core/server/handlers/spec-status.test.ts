@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import type { Database } from "bun:sqlite";
 import { openTestDb } from "../../db/test-db";
 import { insertProject } from "../../db/projects";
-import { insertSpec } from "../../db/specs";
+import { insertSpec, getSpec } from "../../db/specs";
 import { insertEpic } from "../../db/epics";
 import { insertSpecDiscrepancy } from "../../db/spec-discrepancies";
 import { mountSpecStatusRoutes } from "./spec-status";
@@ -158,6 +158,29 @@ describe("PATCH /specs/:id/internal-status", () => {
       expect(body.error).toMatch(/epic/);
     });
 
+    test("409 when an open discrepancy is created after the review gate", async () => {
+      // The review→approved transition must re-check: /spec-discrepancies can
+      // POST an open row while the spec sits in review, and approval only amends
+      // resolved rows — so an open one would otherwise ship unresolved.
+      insertSpecDiscrepancy(db, {
+        id: "disc-open-after-review",
+        spec_id: SPEC_ID,
+        spec_assumption: "new open assumption",
+        code_reality: "reality",
+        status: "open",
+      });
+      const res = await patch(`/specs/${SPEC_ID}/internal-status`, {
+        internal_status: "approved",
+      });
+      expect(res.status).toBe(409);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toMatch(/open discrepancies/);
+
+      // spec stays in review — not approved
+      const spec = getSpec(db, SPEC_ID);
+      expect(spec?.internal_status).toBe("review");
+    });
+
     test("200 with approved spec and final_notes snapshot", async () => {
       // Set notes on spec first
       db.prepare("UPDATE specs SET notes = 'spec notes content' WHERE id = ?").run(SPEC_ID);
@@ -179,6 +202,29 @@ describe("PATCH /specs/:id/internal-status", () => {
       const body = (await res.json()) as Spec;
       expect(body.internal_status).toBe("approved");
       expect(body.final_notes).toBeNull();
+    });
+
+    test("final_notes appends a resolved-discrepancy amendments section at approval", async () => {
+      db.prepare("UPDATE specs SET notes = 'original spec body' WHERE id = ?").run(SPEC_ID);
+      insertSpecDiscrepancy(db, {
+        id: "disc-amend-1",
+        spec_id: SPEC_ID,
+        spec_assumption: "assumes X exists",
+        code_reality: "X does not exist",
+        resolution: "add X before implementing",
+        status: "resolved",
+      });
+
+      const res = await patch(`/specs/${SPEC_ID}/internal-status`, {
+        internal_status: "approved",
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as Spec;
+      // Original notes stay verbatim as the prefix; the amendment is appended.
+      expect(body.final_notes?.startsWith("original spec body")).toBe(true);
+      expect(body.final_notes).toContain("## Amendments (resolved discrepancies)");
+      expect(body.final_notes).toContain("### 1. assumes X exists");
+      expect(body.final_notes).toContain("**Resolution:** add X before implementing");
     });
 
     test("emits spec.approved with spec_id and epic_id", async () => {
