@@ -65,10 +65,15 @@ export function mountSpecStatusRoutes(app: Hono, deps: SpecStatusRouteDeps): voi
         const transitionKey = `${spec.internal_status}→${requestedStatus}`;
         if (!SPEC_INTERNAL_TRANSITIONS[transitionKey]) return "invalid_transition";
 
-        // discrepancies→review requires no open discrepancies
-        if (spec.internal_status === "discrepancies" && requestedStatus === "review") {
-          const openCount = countOpenDiscrepancies(db, spec_id);
-          if (openCount > 0) return "has_open_discrepancies";
+        // Neither review nor approved may be entered while open discrepancies
+        // exist. Approval amends only *resolved* discrepancies into final_notes,
+        // so an open one created after the review gate would otherwise be
+        // silently dropped and the spec approved with it unresolved.
+        if (
+          (requestedStatus === "review" || requestedStatus === "approved") &&
+          countOpenDiscrepancies(db, spec_id) > 0
+        ) {
+          return "has_open_discrepancies";
         }
 
         if (requestedStatus === "approved") {
@@ -113,7 +118,7 @@ export function mountSpecStatusRoutes(app: Hono, deps: SpecStatusRouteDeps): voi
       return c.json({ error: "invalid internal_status transition" }, 409);
     }
     if (error === "has_open_discrepancies") {
-      return c.json({ error: "cannot move to review while open discrepancies exist" }, 409);
+      return c.json({ error: "cannot advance while open discrepancies exist" }, 409);
     }
     if (error === "epic_not_found") {
       return c.json({ error: "cannot approve spec without an epic" }, 409);
