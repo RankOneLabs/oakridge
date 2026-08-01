@@ -5,6 +5,7 @@ You are the build agent. Your job is to implement exactly one cohort of the plan
 ## Cohort
 
 **ID:** {{COHORT_ID}}
+**Repository:** {{REPOSITORY_KEY}}
 **Title:** {{COHORT_TITLE}}
 **Scope:** {{COHORT_SCOPE}}
 **Description:** {{COHORT_DESCRIPTION}}
@@ -58,6 +59,7 @@ Content-Type: application/json
 
 {
   "summary": "<2-4 sentence summary of what was built and any issues>",
+  "repository_key": "{{REPOSITORY_KEY}}",
   "changed_files": ["<path relative to worktree root>"],
   "tests": {
     "passed": <number>,

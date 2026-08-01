@@ -150,6 +150,8 @@ pub struct OperatorStageArtifact {
 #[derive(Serialize, Clone)]
 pub struct OperatorStageUnit {
     pub unit_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repository_key: Option<String>,
     pub sid: Option<String>,
     pub worktree: Option<OperatorWorktreeMetadata>,
     pub status: String,
@@ -202,6 +204,8 @@ pub struct OperatorParkedGate {
     pub stage_name: String,
     /// unit_id within the stage; "0" for the N=1 implicit unit.
     pub unit_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repository_key: Option<String>,
     pub artifact_revision_id: Option<String>,
     pub worktree: Option<OperatorWorktreeMetadata>,
     pub resume_actions: Vec<String>,
@@ -792,6 +796,7 @@ fn operator_resume_actions(gate: Option<&DelegatedGateState>) -> Vec<String> {
 fn operator_gate(
     stage: &StageInstance,
     unit_id: String,
+    repository_key: Option<String>,
     gate: Option<DelegatedGateState>,
 ) -> OperatorParkedGate {
     OperatorParkedGate {
@@ -800,6 +805,7 @@ fn operator_gate(
         run_id: stage.run_id.0.to_string(),
         stage_name: stage.stage_key.clone(),
         unit_id,
+        repository_key,
         artifact_revision_id: gate.as_ref().map(|gate| gate.artifact_id.0.to_string()),
         worktree: gate
             .as_ref()
@@ -830,7 +836,10 @@ async fn operator_gates_for_stage(
             let gate = unit
                 .gate_state
                 .and_then(|state| serde_json::from_value::<DelegatedGateState>(state).ok());
-            gate.map(|gate| operator_gate(stage, unit.unit_id, Some(gate)))
+            gate.map(|gate| {
+                let repository_key = repository_key_from_params(unit.params.as_ref());
+                operator_gate(stage, unit.unit_id, repository_key, Some(gate))
+            })
         })
         .collect();
     if !gates.is_empty() {
@@ -840,6 +849,7 @@ async fn operator_gates_for_stage(
     Ok(vec![operator_gate(
         stage,
         "0".to_owned(),
+        None,
         delegated_gate_state(stage),
     )])
 }
@@ -874,6 +884,7 @@ fn operator_unit_status(status: &crate::types::UnitStatus) -> String {
 }
 
 fn operator_stage_unit(unit: crate::types::SessionUnit) -> OperatorStageUnit {
+    let repository_key = repository_key_from_params(unit.params.as_ref());
     let sid = unit
         .external_ref
         .as_deref()
@@ -890,11 +901,21 @@ fn operator_stage_unit(unit: crate::types::SessionUnit) -> OperatorStageUnit {
         .map(|g| operator_gate_type_str(&g.gate));
     OperatorStageUnit {
         unit_id: unit.unit_id,
+        repository_key,
         sid,
         worktree,
         status: operator_unit_status(&unit.status),
         gate,
     }
+}
+
+fn repository_key_from_params(params: Option<&Value>) -> Option<String> {
+    let params = params?;
+    params
+        .pointer("/repository_key")
+        .or_else(|| params.pointer("/artifact/repository_key"))
+        .and_then(Value::as_str)
+        .map(str::to_owned)
 }
 
 fn operator_gate_type_str(gate: &DelegatedGate) -> String {

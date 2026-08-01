@@ -25,11 +25,18 @@ export interface WorkflowDefSummary {
 
 export interface CreateRunContext {
   brief_notes: string;
+  repositories: RepositoryInput[];
+  // Compatibility input for workflow definitions older than dev-flow v2.
   worktree_path: string;
   oakridge_url: string;
   planner_model: string;
   worker_model: string;
   worker_effort?: string;
+}
+
+export interface RepositoryInput {
+  key: string;
+  path: string;
 }
 
 export interface CreateRunRequest {
@@ -69,6 +76,7 @@ export interface StageArtifact {
 
 export interface StageUnit {
   unit_id: string;
+  repository_key?: string | null;
   sid: string | null;
   worktree: WorktreeMetadata | null;
   status: StageStatus;
@@ -136,6 +144,7 @@ export interface ParkedGate {
   run_id: string;
   stage_name: string;
   unit_id: string;
+  repository_key?: string | null;
   artifact_revision_id: string | null;
   worktree: WorktreeMetadata | null;
   resume_actions: string[];
@@ -218,13 +227,20 @@ export interface PatchReviewItemRequest {
 // Mirror the oakridge-core Rust schema so form output matches what
 // POST /workflow_defs and GET /workflow_defs/:id round-trip.
 
-export type SlotBindingSource = "input" | "context" | "literal" | "item";
+export type SlotBindingSource = "input" | "context" | "literal" | "item" | "context_lookup";
 
 export type SlotBinding =
   | { from: "input"; input_name: string; path?: string | null }
   | { from: "context"; path: string }
   | { from: "literal"; value: string }
-  | { from: "item"; path: string };
+  | { from: "item"; path: string }
+  | {
+      from: "context_lookup";
+      collection_path: string;
+      collection_key_path: string;
+      item_key_path: string;
+      value_path: string;
+    };
 
 // Bindable: a bare string literal OR a SlotBinding (Rust #[serde(untagged)])
 export type Bindable = string | SlotBinding;
@@ -248,6 +264,7 @@ export interface FanOutConfig {
   depends_on_path?: string | null;
   max_parallel?: number;
   item_bindings?: Record<string, SlotBinding>;
+  workdir?: SlotBinding | null;
   worktree?: WorktreeTemplate | null;
 }
 

@@ -12,6 +12,8 @@ import {
   sortWorkflowDefinitions,
 } from "../lib/workflow-defs";
 import { useOakridgeConfig, useProjects, useWorkflowDefs, useCreateRun } from "./hooks";
+import type { RepositoryInput } from "./types";
+import { validateRepositoryInputs } from "./repository-inputs";
 
 const secondaryButtonClass =
   "inline-flex items-center gap-1.5 rounded-md border border-[var(--border-muted)] bg-transparent px-3 py-1.5 text-sm text-[var(--text-secondary)] hover:border-[var(--border-hover)]";
@@ -176,7 +178,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
   );
 
   const [briefNotes, setBriefNotes] = useState("");
-  const [worktreePath, setWorktreePath] = useState("");
+  const [repositories, setRepositories] = useState<RepositoryInput[]>([{ key: "repo", path: "" }]);
   const [projectId, setProjectId] = useState<string>("");
   const [workflowDefId, setWorkflowDefId] = useState<string>("");
   const [plannerSelection, setPlannerSelection] = useState<RuntimeModelSelection>(() =>
@@ -215,11 +217,18 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
     if (defaultId) setWorkflowDefId(defaultId);
   }, [sortedDefs, workflowDefId]);
 
-  // When project is selected, populate worktree_path from repo_dir
+  // A legacy project is a convenience preset for the first repository. It
+  // does not constrain the run to that repository.
   useEffect(() => {
     if (!projectId) return;
     const project = projectsQuery.data?.find((p) => p.id === projectId);
-    if (project) setWorktreePath(project.repo_dir);
+    if (project) {
+      const key = project.name.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-") || "repo";
+      setRepositories((current) => [
+        { key, path: project.repo_dir },
+        ...current.slice(1),
+      ]);
+    }
   }, [projectId, projectsQuery.data]);
 
   const coreUrl = configQuery.data?.core_url ?? "";
@@ -229,7 +238,9 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
     e.preventDefault();
     setError(null);
     if (!workflowDefId) { setError("Select a workflow definition."); return; }
-    if (!worktreePath.trim()) { setError("Worktree path is required."); return; }
+    const repositoryResult = validateRepositoryInputs(repositories);
+    if (!repositoryResult.ok) { setError(repositoryResult.error); return; }
+    const normalizedRepositories = repositoryResult.repositories;
     if (!briefNotes.trim()) { setError("Brief notes are required."); return; }
     if (!coreUrl) { setError("oakridge core URL is not configured."); return; }
     try {
@@ -238,7 +249,8 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
         project_id: projectId || null,
         context: {
           brief_notes: briefNotes.trim(),
-          worktree_path: worktreePath.trim(),
+          repositories: normalizedRepositories,
+          worktree_path: normalizedRepositories[0].path,
           oakridge_url: coreUrl,
           planner_model: plannerSelection.model,
           worker_model: workerSelection.model,
@@ -295,18 +307,56 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
           </select>
         </label>
 
-        <label className="flex flex-col gap-1">
-          <span className={fieldLabelClass}>Worktree Path</span>
-          <input
-            type="text"
-            className={inputClass}
-            value={worktreePath}
-            onChange={(e) => setWorktreePath(e.target.value)}
-            disabled={pending}
-            placeholder="/path/to/repo"
-            required
-          />
-        </label>
+        <fieldset className="flex flex-col gap-2 rounded-md border border-[var(--border-subtle)] p-3">
+          <div className="flex items-center justify-between gap-3">
+            <legend className={fieldLabelClass}>Repositories</legend>
+            <button
+              type="button"
+              className={secondaryButtonClass}
+              disabled={pending}
+              onClick={() => setRepositories((current) => [...current, { key: "", path: "" }])}
+            >
+              + Repository
+            </button>
+          </div>
+          {repositories.map((repository, index) => (
+            <div className="grid grid-cols-[minmax(7rem,0.35fr)_1fr_auto] gap-2" key={index}>
+              <input
+                type="text"
+                className={inputClass}
+                value={repository.key}
+                onChange={(event) => setRepositories((current) => current.map((item, itemIndex) =>
+                  itemIndex === index ? { ...item, key: event.target.value } : item
+                ))}
+                disabled={pending}
+                placeholder="api"
+                aria-label={`Repository ${index + 1} key`}
+                required
+              />
+              <input
+                type="text"
+                className={inputClass}
+                value={repository.path}
+                onChange={(event) => setRepositories((current) => current.map((item, itemIndex) =>
+                  itemIndex === index ? { ...item, path: event.target.value } : item
+                ))}
+                disabled={pending}
+                placeholder="/absolute/path/to/repo"
+                aria-label={`Repository ${index + 1} path`}
+                required
+              />
+              <button
+                type="button"
+                className={secondaryButtonClass}
+                disabled={pending || repositories.length === 1}
+                onClick={() => setRepositories((current) => current.filter((_, itemIndex) => itemIndex !== index))}
+                aria-label={`Remove repository ${index + 1}`}
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+        </fieldset>
 
         <label className="flex flex-col gap-1">
           <span className={fieldLabelClass}>Brief Notes</span>

@@ -448,7 +448,7 @@ async fn delegated_session_e2e_gate_driven_completion() {
                 component_id: "text-viewer".into(),
                 capabilities: Default::default(),
                 anchor_schema: None,
-            review_items_extractor: None,
+                review_items_extractor: None,
             });
 
             stage_types.register(Arc::new(DelegatedSessionStage::new(
@@ -668,12 +668,12 @@ async fn waiting_for_kbbl_parks_and_reattaches() {
         use oakridge_core::executor::delegated_session::config::{
             DelegatedRuntime, DelegatedSessionConfig,
         };
-        use oakridge_core::executor::prompt_config::SlotBinding;
         let cfg = DelegatedSessionConfig {
             runtime: DelegatedRuntime::ClaudeCode,
             rendered_prompt: "Task: test\nStage: placeholder".into(),
             fan_out_prompt_plan: None,
             resolved_fan_out_over: None,
+            resolved_fan_out_workdirs: std::collections::HashMap::new(),
             workdir: workdir.clone(),
             session_name: format!("delegated-{}", si_id.0),
             model: Some("claude-sonnet-4-6".into()),
@@ -730,7 +730,7 @@ async fn waiting_for_kbbl_parks_and_reattaches() {
                 component_id: "text-viewer".into(),
                 capabilities: Default::default(),
                 anchor_schema: None,
-            review_items_extractor: None,
+                review_items_extractor: None,
             });
             stage_types.register(Arc::new(DelegatedSessionStage::new(
                 prompts_dir2,
@@ -843,7 +843,7 @@ async fn session_ended_without_emit_parks_running_stage() {
                 component_id: "text-viewer".into(),
                 capabilities: Default::default(),
                 anchor_schema: None,
-            review_items_extractor: None,
+                review_items_extractor: None,
             });
             stage_types.register(Arc::new(DelegatedSessionStage::new(
                 prompts_dir2,

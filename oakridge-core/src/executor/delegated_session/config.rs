@@ -74,6 +74,11 @@ pub struct FanOut {
     /// Per-unit prompt slot bindings sourced from the item.
     #[serde(default)]
     pub item_bindings: std::collections::HashMap<String, SlotBinding>,
+    /// Optional per-unit working-directory binding. It is resolved for every
+    /// item at config-build time and persisted, so retries never re-read mutable
+    /// run context. When absent, units inherit the stage-level workdir.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workdir: Option<SlotBinding>,
     /// Worktree template; {{UNIT_ID}} and {{STAGE_INSTANCE_ID}} are substituted.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub worktree: Option<WorktreeTemplate>,
@@ -156,6 +161,9 @@ pub struct DelegatedSessionConfig {
     /// complete unit graph before admitting any session.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub resolved_fan_out_over: Option<serde_json::Value>,
+    /// Workdirs resolved from `fan_out.workdir`, keyed by materialized unit id.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub resolved_fan_out_workdirs: HashMap<String, PathBuf>,
     pub workdir: PathBuf,
     pub session_name: String,
     pub model: Option<String>,
@@ -297,6 +305,7 @@ mod tests {
             rendered_prompt: "do the thing".into(),
             fan_out_prompt_plan: None,
             resolved_fan_out_over: None,
+            resolved_fan_out_workdirs: HashMap::new(),
             workdir: PathBuf::from("/workspace/abc"),
             session_name: "s1".into(),
             model: None,
@@ -337,6 +346,7 @@ mod tests {
                 );
                 m
             },
+            workdir: None,
             worktree: Some(WorktreeTemplate {
                 branch_name: "cohort/{{UNIT_ID}}".into(),
                 worktree_subdir: "wt/{{UNIT_ID}}".into(),

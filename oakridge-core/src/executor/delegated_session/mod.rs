@@ -12,21 +12,21 @@ use std::sync::{
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::time::{sleep, Duration};
 use tokio::sync::Mutex as AsyncMutex;
+use tokio::time::{sleep, Duration};
 use tracing::{debug, warn};
 
+use crate::db::queries;
 use crate::executor::prompt_config::{
     load_template, render_template, resolve_binding, resolve_optional_binding, SlotBinding,
 };
-use crate::db::queries;
 use crate::executor::{StageContext, StageHandle};
 use crate::registry::stage_type::StageType;
+use crate::types::UnitStatus;
 use crate::types::{
     derive_stage_status_from_units, Artifact, InputSlot, OutputSlot, ResolvedInput,
     StageInstanceId, StageStatus,
 };
-use crate::types::{UnitStatus};
 
 use config::{
     validate_effort, Bindable, DelegatedSessionConfig, DelegatedSessionDefConfig, FanOut,
@@ -51,6 +51,7 @@ struct MaterializedFanOutUnit {
     params: Value,
     depends_on: Vec<String>,
     rendered_prompt: String,
+    workdir: PathBuf,
     worktree: Option<WorktreeIdentity>,
 }
 
@@ -75,7 +76,11 @@ fn waiting_for_kbbl_previous_state(
     }
 }
 
-fn substitute_unit_template(template: &str, unit_id: &str, stage_instance_id: StageInstanceId) -> String {
+fn substitute_unit_template(
+    template: &str,
+    unit_id: &str,
+    stage_instance_id: StageInstanceId,
+) -> String {
     template
         .replace("{{UNIT_ID}}", unit_id)
         .replace(STAGE_INSTANCE_ID_SENTINEL, &stage_instance_id.0.to_string())
@@ -107,7 +112,12 @@ fn materialize_fan_out_units(
             .pointer(&fan_out.unit_id_path)
             .and_then(Value::as_str)
             .filter(|id| !id.is_empty())
-            .ok_or_else(|| anyhow::anyhow!("fan_out unit_id at '{}' must be a non-empty string", fan_out.unit_id_path))?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "fan_out unit_id at '{}' must be a non-empty string",
+                    fan_out.unit_id_path
+                )
+            })?
             .to_owned();
         if !unit_ids.insert(unit_id.clone()) {
             anyhow::bail!("fan_out unit_id '{}' is duplicated", unit_id);
@@ -118,12 +128,21 @@ fn materialize_fan_out_units(
             Some(path) => item
                 .pointer(path)
                 .and_then(Value::as_array)
-                .ok_or_else(|| anyhow::anyhow!("fan_out depends_on at '{}' must be an array", path))?
+                .ok_or_else(|| {
+                    anyhow::anyhow!("fan_out depends_on at '{}' must be an array", path)
+                })?
                 .iter()
                 .map(|value| {
-                    value.as_str().filter(|id| !id.is_empty()).map(str::to_owned).ok_or_else(|| {
-                        anyhow::anyhow!("fan_out dependency for unit '{}' must be a non-empty string", unit_id)
-                    })
+                    value
+                        .as_str()
+                        .filter(|id| !id.is_empty())
+                        .map(str::to_owned)
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "fan_out dependency for unit '{}' must be a non-empty string",
+                                unit_id
+                            )
+                        })
                 })
                 .collect::<anyhow::Result<Vec<_>>>()?,
         };
@@ -134,7 +153,11 @@ fn materialize_fan_out_units(
                 anyhow::bail!("fan_out unit '{}' cannot depend on itself", unit_id);
             }
             if !seen_dependencies.insert(dependency.clone()) {
-                anyhow::bail!("fan_out unit '{}' repeats dependency '{}'", unit_id, dependency);
+                anyhow::bail!(
+                    "fan_out unit '{}' repeats dependency '{}'",
+                    unit_id,
+                    dependency
+                );
             }
         }
 
@@ -149,12 +172,28 @@ fn materialize_fan_out_units(
         slot_values.insert("UNIT_ID".into(), unit_id.clone());
         slot_values.insert("STAGE_INSTANCE_ID".into(), stage_instance_id.0.to_string());
         let rendered_prompt = render_template(&prompt_plan.raw_template, &slot_values)?;
+        let workdir = config
+            .resolved_fan_out_workdirs
+            .get(&unit_id)
+            .cloned()
+            .unwrap_or_else(|| config.workdir.clone());
 
         let worktree = match &fan_out.worktree {
             Some(template) => Some(WorktreeIdentity {
-                branch_name: substitute_unit_template(&template.branch_name, &unit_id, stage_instance_id),
-                worktree_subdir: substitute_unit_template(&template.worktree_subdir, &unit_id, stage_instance_id),
-                base_ref: template.base_ref.as_ref().map(|base| substitute_unit_template(base, &unit_id, stage_instance_id)),
+                branch_name: substitute_unit_template(
+                    &template.branch_name,
+                    &unit_id,
+                    stage_instance_id,
+                ),
+                worktree_subdir: substitute_unit_template(
+                    &template.worktree_subdir,
+                    &unit_id,
+                    stage_instance_id,
+                ),
+                base_ref: template
+                    .base_ref
+                    .as_ref()
+                    .map(|base| substitute_unit_template(base, &unit_id, stage_instance_id)),
             }),
             None => config.worktree.clone(),
         };
@@ -163,6 +202,7 @@ fn materialize_fan_out_units(
             params: item.clone(),
             depends_on,
             rendered_prompt,
+            workdir,
             worktree,
         });
     }
@@ -170,7 +210,11 @@ fn materialize_fan_out_units(
     for unit in &units {
         for dependency in &unit.depends_on {
             if !unit_ids.contains(dependency) {
-                anyhow::bail!("fan_out unit '{}' depends on unknown unit '{}'", unit.unit_id, dependency);
+                anyhow::bail!(
+                    "fan_out unit '{}' depends on unknown unit '{}'",
+                    unit.unit_id,
+                    dependency
+                );
             }
         }
     }
@@ -188,7 +232,9 @@ fn materialize_fan_out_units(
         consumed += 1;
         for unit in &units {
             if unit.depends_on.iter().any(|dependency| dependency == done) {
-                let count = remaining.get_mut(unit.unit_id.as_str()).expect("known unit");
+                let count = remaining
+                    .get_mut(unit.unit_id.as_str())
+                    .expect("known unit");
                 *count -= 1;
                 if *count == 0 {
                     ready.push(unit.unit_id.as_str());
@@ -210,11 +256,17 @@ fn materialize_persisted_unit(
     config: &DelegatedSessionConfig,
     unit: &crate::types::SessionUnit,
 ) -> anyhow::Result<MaterializedFanOutUnit> {
-    let fan_out = config.fan_out.as_ref()
+    let fan_out = config
+        .fan_out
+        .as_ref()
         .ok_or_else(|| anyhow::anyhow!("persisted unit requires fan_out config"))?;
-    let prompt_plan = config.fan_out_prompt_plan.as_ref()
+    let prompt_plan = config
+        .fan_out_prompt_plan
+        .as_ref()
         .ok_or_else(|| anyhow::anyhow!("fan_out prompt plan is missing from stage config"))?;
-    let params = unit.params.clone()
+    let params = unit
+        .params
+        .clone()
         .ok_or_else(|| anyhow::anyhow!("persisted unit '{}' is missing params", unit.unit_id))?;
     let mut slot_values = prompt_plan.base_slot_values.clone();
     resolve_inherited_prompt_bindings(prompt_plan, &params, &mut slot_values)?;
@@ -225,7 +277,10 @@ fn materialize_persisted_unit(
         );
     }
     slot_values.insert("UNIT_ID".into(), unit.unit_id.clone());
-    slot_values.insert("STAGE_INSTANCE_ID".into(), unit.stage_instance_id.0.to_string());
+    slot_values.insert(
+        "STAGE_INSTANCE_ID".into(),
+        unit.stage_instance_id.0.to_string(),
+    );
     let worktree = match (&unit.worktree_branch, &unit.worktree_path) {
         (Some(branch_name), Some(worktree_subdir)) => Some(WorktreeIdentity {
             branch_name: branch_name.clone(),
@@ -239,6 +294,11 @@ fn materialize_persisted_unit(
         params,
         depends_on: unit.depends_on.clone(),
         rendered_prompt: render_template(&prompt_plan.raw_template, &slot_values)?,
+        workdir: config
+            .resolved_fan_out_workdirs
+            .get(&unit.unit_id)
+            .cloned()
+            .unwrap_or_else(|| config.workdir.clone()),
         worktree,
     })
 }
@@ -429,9 +489,16 @@ impl UnitScheduler {
     }
 
     async fn recompute_aggregate(&self) -> anyhow::Result<()> {
-        let units = queries::list_session_units_for_stage(self.ctx.pool(), &self.ctx.stage_instance_id).await?;
-        let status = derive_stage_status_from_units(&units.iter().map(|unit| unit.status).collect::<Vec<_>>());
-        let reason = if units.iter().any(|unit| matches!(unit.status, UnitStatus::Failed)) {
+        let units =
+            queries::list_session_units_for_stage(self.ctx.pool(), &self.ctx.stage_instance_id)
+                .await?;
+        let status = derive_stage_status_from_units(
+            &units.iter().map(|unit| unit.status).collect::<Vec<_>>(),
+        );
+        let reason = if units
+            .iter()
+            .any(|unit| matches!(unit.status, UnitStatus::Failed))
+        {
             Some("unit_attention_required".to_owned())
         } else if matches!(status, StageStatus::Parked) {
             Some("waiting_gate".to_owned())
@@ -449,7 +516,8 @@ impl UnitScheduler {
             unit_id,
             UnitStatus::Failed,
             Some(serde_json::json!({"kind": "unit_runtime_error", "reason": reason})),
-        ).await;
+        )
+        .await;
         let _ = self.recompute_aggregate().await;
     }
 
@@ -460,22 +528,37 @@ impl UnitScheduler {
             unit_id,
             UnitStatus::Failed,
             Some(serde_json::json!({"kind": "session_ended_without_emit"})),
-        ).await;
+        )
+        .await;
         let _ = self.recompute_aggregate().await;
     }
 
     async fn admit(self: &Arc<Self>) -> anyhow::Result<()> {
         let _guard = self.admission_lock.lock().await;
-        let units = queries::list_session_units_for_stage(self.ctx.pool(), &self.ctx.stage_instance_id).await?;
-        let mut running = units.iter().filter(|unit| {
-            matches!(unit.status, UnitStatus::Running | UnitStatus::Parked)
-        }).count();
-        let done: HashSet<String> = units.iter().filter(|unit| matches!(unit.status, UnitStatus::Done)).map(|unit| unit.unit_id.clone()).collect();
-        for unit in units.into_iter().filter(|unit| matches!(unit.status, UnitStatus::Pending)) {
+        let units =
+            queries::list_session_units_for_stage(self.ctx.pool(), &self.ctx.stage_instance_id)
+                .await?;
+        let mut running = units
+            .iter()
+            .filter(|unit| matches!(unit.status, UnitStatus::Running | UnitStatus::Parked))
+            .count();
+        let done: HashSet<String> = units
+            .iter()
+            .filter(|unit| matches!(unit.status, UnitStatus::Done))
+            .map(|unit| unit.unit_id.clone())
+            .collect();
+        for unit in units
+            .into_iter()
+            .filter(|unit| matches!(unit.status, UnitStatus::Pending))
+        {
             if running >= self.fan_out.max_parallel {
                 break;
             }
-            if !unit.depends_on.iter().all(|dependency| done.contains(dependency)) {
+            if !unit
+                .depends_on
+                .iter()
+                .all(|dependency| done.contains(dependency))
+            {
                 continue;
             }
             let materialized = materialize_persisted_unit(&self.config, &unit)?;
@@ -489,8 +572,11 @@ impl UnitScheduler {
     }
 
     async fn retry_unit(self: &Arc<Self>, unit_id: &str) -> anyhow::Result<()> {
-        let unit = queries::get_session_unit(self.ctx.pool(), &self.ctx.stage_instance_id, unit_id).await?;
-        let ended_without_emit = unit.terminal_meta.as_ref()
+        let unit = queries::get_session_unit(self.ctx.pool(), &self.ctx.stage_instance_id, unit_id)
+            .await?;
+        let ended_without_emit = unit
+            .terminal_meta
+            .as_ref()
             .and_then(|meta| meta.get("kind"))
             .and_then(serde_json::Value::as_str)
             == Some("session_ended_without_emit");
@@ -502,15 +588,22 @@ impl UnitScheduler {
             );
         }
 
-        if let Some(session) = self.live_sessions.lock().unwrap()
+        if let Some(session) = self
+            .live_sessions
+            .lock()
+            .unwrap()
             .remove(&(self.ctx.stage_instance_id, unit_id.to_owned()))
         {
             session.cancelled.store(true, Ordering::SeqCst);
         }
 
         if !queries::reset_session_unit_for_retry(
-            self.ctx.pool(), &self.ctx.stage_instance_id, unit_id,
-        ).await? {
+            self.ctx.pool(),
+            &self.ctx.stage_instance_id,
+            unit_id,
+        )
+        .await?
+        {
             anyhow::bail!("unit '{}' is no longer retryable", unit_id);
         }
         self.recompute_aggregate().await?;
@@ -521,7 +614,9 @@ impl UnitScheduler {
     /// admission edge. The live-session key makes repeated coordinator recovery
     /// idempotent and leaves completed/pending units untouched.
     async fn recover_live_units(self: &Arc<Self>) -> anyhow::Result<()> {
-        let units = queries::list_session_units_for_stage(self.ctx.pool(), &self.ctx.stage_instance_id).await?;
+        let units =
+            queries::list_session_units_for_stage(self.ctx.pool(), &self.ctx.stage_instance_id)
+                .await?;
         for mut unit in units.into_iter().filter(|unit| {
             matches!(unit.status, UnitStatus::Running | UnitStatus::Parked)
                 && unit.external_ref.is_some()
@@ -530,7 +625,8 @@ impl UnitScheduler {
             if self.live_sessions.lock().unwrap().contains_key(&key) {
                 continue;
             }
-            let external = DelegatedExternalRef::parse(unit.external_ref.as_deref().expect("filtered"));
+            let external =
+                DelegatedExternalRef::parse(unit.external_ref.as_deref().expect("filtered"));
             match self.kbbl_client.read_events_since(&external.sid, -1).await {
                 Ok(response) if response.session_id == external.sid => {
                     if let Some((previous_status, previous_gate_state)) =
@@ -554,7 +650,9 @@ impl UnitScheduler {
                         unit.status = previous_status;
                         unit.gate_state = previous_gate_state;
                     }
-                    if let Some(reason) = failure_reason_from_events(&external.sid, &response.events) {
+                    if let Some(reason) =
+                        failure_reason_from_events(&external.sid, &response.events)
+                    {
                         self.mark_failed(&unit.unit_id, reason).await;
                         continue;
                     }
@@ -573,23 +671,40 @@ impl UnitScheduler {
                         .unwrap_or_else(|| (unit.status, unit.gate_state.clone()));
                     if previous_state.is_none() && matches!(unit.status, UnitStatus::Running) {
                         queries::set_session_unit_status(
-                            self.ctx.pool(), &self.ctx.stage_instance_id, &unit.unit_id,
-                            UnitStatus::Parked, None,
-                        ).await?;
+                            self.ctx.pool(),
+                            &self.ctx.stage_instance_id,
+                            &unit.unit_id,
+                            UnitStatus::Parked,
+                            None,
+                        )
+                        .await?;
                         queries::set_session_unit_gate_state(
-                            self.ctx.pool(), &self.ctx.stage_instance_id, &unit.unit_id,
+                            self.ctx.pool(),
+                            &self.ctx.stage_instance_id,
+                            &unit.unit_id,
                             Some(serde_json::to_value(UnitRecoveryMarker::WaitingForKbbl {
                                 previous_status: pre_wait_status,
                                 previous_gate_state: pre_wait_gate_state.clone(),
                             })?),
-                        ).await?;
+                        )
+                        .await?;
                     }
-                    self.spawn_unit_waiting_for_kbbl(unit, external, pre_wait_status, pre_wait_gate_state);
+                    self.spawn_unit_waiting_for_kbbl(
+                        unit,
+                        external,
+                        pre_wait_status,
+                        pre_wait_gate_state,
+                    );
                 }
                 Ok(_) => {
-                    self.mark_failed(&unit.unit_id, format!(
-                        "kbbl responded for a different session than '{}'", external.sid
-                    )).await;
+                    self.mark_failed(
+                        &unit.unit_id,
+                        format!(
+                            "kbbl responded for a different session than '{}'",
+                            external.sid
+                        ),
+                    )
+                    .await;
                 }
                 Err(err) => {
                     self.mark_failed(&unit.unit_id, err.to_string()).await;
@@ -615,14 +730,20 @@ impl UnitScheduler {
             if sessions.contains_key(&key) {
                 false
             } else {
-                sessions.insert(key, LiveSession {
-                    cancelled: cancelled.clone(), ctx: self.ctx.clone(), unit_id: unit.unit_id.clone(),
-                    sid: external.sid.clone(), config: unit_config,
-                    worktree_path: external.worktree_path.or(unit.worktree_path),
-                    worktree_branch: external.worktree_branch.or(unit.worktree_branch),
-                    worktree_base_ref: external.worktree_base_ref.or(unit.worktree_base_ref),
-                    unit_scheduler: Some(self.clone()),
-                });
+                sessions.insert(
+                    key,
+                    LiveSession {
+                        cancelled: cancelled.clone(),
+                        ctx: self.ctx.clone(),
+                        unit_id: unit.unit_id.clone(),
+                        sid: external.sid.clone(),
+                        config: unit_config,
+                        worktree_path: external.worktree_path.or(unit.worktree_path),
+                        worktree_branch: external.worktree_branch.or(unit.worktree_branch),
+                        worktree_base_ref: external.worktree_base_ref.or(unit.worktree_base_ref),
+                        unit_scheduler: Some(self.clone()),
+                    },
+                );
                 true
             }
         };
@@ -644,50 +765,91 @@ impl UnitScheduler {
         let key = (self.ctx.stage_instance_id, unit.unit_id.clone());
         {
             let mut sessions = self.live_sessions.lock().unwrap();
-            if sessions.contains_key(&key) { return; }
-            sessions.insert(key.clone(), LiveSession {
-                cancelled: cancelled.clone(), ctx: self.ctx.clone(), unit_id: unit.unit_id.clone(),
-                sid: external.sid.clone(), config: self.config.clone(),
-                worktree_path: external.worktree_path.clone().or(unit.worktree_path.clone()),
-                worktree_branch: external.worktree_branch.clone().or(unit.worktree_branch.clone()),
-                worktree_base_ref: external.worktree_base_ref.clone().or(unit.worktree_base_ref.clone()),
-                unit_scheduler: Some(self.clone()),
-            });
+            if sessions.contains_key(&key) {
+                return;
+            }
+            sessions.insert(
+                key.clone(),
+                LiveSession {
+                    cancelled: cancelled.clone(),
+                    ctx: self.ctx.clone(),
+                    unit_id: unit.unit_id.clone(),
+                    sid: external.sid.clone(),
+                    config: self.config.clone(),
+                    worktree_path: external
+                        .worktree_path
+                        .clone()
+                        .or(unit.worktree_path.clone()),
+                    worktree_branch: external
+                        .worktree_branch
+                        .clone()
+                        .or(unit.worktree_branch.clone()),
+                    worktree_base_ref: external
+                        .worktree_base_ref
+                        .clone()
+                        .or(unit.worktree_base_ref.clone()),
+                    unit_scheduler: Some(self.clone()),
+                },
+            );
         }
         tokio::spawn(async move {
             loop {
                 sleep(Duration::from_millis(WAITING_FOR_KBBL_RETRY_MS)).await;
-                if cancelled.load(Ordering::SeqCst) { return; }
-                match scheduler.kbbl_client.read_events_since(&external.sid, -1).await {
+                if cancelled.load(Ordering::SeqCst) {
+                    return;
+                }
+                match scheduler
+                    .kbbl_client
+                    .read_events_since(&external.sid, -1)
+                    .await
+                {
                     Ok(response) if response.session_id == external.sid => {
-                        if let Some(reason) = failure_reason_from_events(&external.sid, &response.events) {
+                        if let Some(reason) =
+                            failure_reason_from_events(&external.sid, &response.events)
+                        {
                             scheduler.live_sessions.lock().unwrap().remove(&key);
                             scheduler.mark_failed(&unit.unit_id, reason).await;
                             return;
                         }
                         if has_clean_exit(&response.events) && pre_wait_gate_state.is_none() {
                             scheduler.live_sessions.lock().unwrap().remove(&key);
-                            scheduler.mark_session_ended_without_emit(&unit.unit_id).await;
+                            scheduler
+                                .mark_session_ended_without_emit(&unit.unit_id)
+                                .await;
                             return;
                         }
                         let _ = queries::set_session_unit_status(
-                            scheduler.ctx.pool(), &scheduler.ctx.stage_instance_id, &unit.unit_id,
-                            pre_wait_status, None,
-                        ).await;
+                            scheduler.ctx.pool(),
+                            &scheduler.ctx.stage_instance_id,
+                            &unit.unit_id,
+                            pre_wait_status,
+                            None,
+                        )
+                        .await;
                         let _ = queries::set_session_unit_gate_state(
-                            scheduler.ctx.pool(), &scheduler.ctx.stage_instance_id, &unit.unit_id,
+                            scheduler.ctx.pool(),
+                            &scheduler.ctx.stage_instance_id,
+                            &unit.unit_id,
                             pre_wait_gate_state,
-                        ).await;
+                        )
+                        .await;
                         scheduler.live_sessions.lock().unwrap().remove(&key);
                         if scheduler.attach_recovered_unit(unit, external).is_err() {
-                            scheduler.mark_failed(&key.1, "failed to rebuild recovered unit".into()).await;
+                            scheduler
+                                .mark_failed(&key.1, "failed to rebuild recovered unit".into())
+                                .await;
                         }
                         let _ = scheduler.recompute_aggregate().await;
                         return;
                     }
                     Ok(_) => {
                         scheduler.live_sessions.lock().unwrap().remove(&key);
-                        scheduler.mark_failed(&unit.unit_id, "kbbl returned a mismatched session id".into()).await;
+                        scheduler
+                            .mark_failed(
+                                &unit.unit_id,
+                                "kbbl returned a mismatched session id".into(),
+                            )
+                            .await;
                         return;
                     }
                     Err(err) if is_retryable_observer_error(&err) => continue,
@@ -704,16 +866,24 @@ impl UnitScheduler {
     async fn launch_unit(self: &Arc<Self>, unit: &MaterializedFanOutUnit) -> anyhow::Result<()> {
         let mut unit_config = self.config.clone();
         unit_config.rendered_prompt = unit.rendered_prompt.clone();
+        unit_config.workdir = unit.workdir.clone();
         unit_config.worktree = unit.worktree.clone();
-        let snapshot = self.kbbl_client.create_session(CreateSessionRequest {
-            workdir: unit_config.workdir.display().to_string(),
-            name: substitute_unit_template(&unit_config.session_name, &unit.unit_id, self.ctx.stage_instance_id),
-            artifact_id: self.ctx.stage_instance_id.0.to_string(),
-            runtime: unit_config.runtime.clone(),
-            model: unit_config.model.clone(),
-            effort: unit_config.effort.clone(),
-            worktree: unit_config.worktree.clone(),
-        }).await?;
+        let snapshot = self
+            .kbbl_client
+            .create_session(CreateSessionRequest {
+                workdir: unit_config.workdir.display().to_string(),
+                name: substitute_unit_template(
+                    &unit_config.session_name,
+                    &unit.unit_id,
+                    self.ctx.stage_instance_id,
+                ),
+                artifact_id: self.ctx.stage_instance_id.0.to_string(),
+                runtime: unit_config.runtime.clone(),
+                model: unit_config.model.clone(),
+                effort: unit_config.effort.clone(),
+                worktree: unit_config.worktree.clone(),
+            })
+            .await?;
         let external_ref = serde_json::to_string(&DelegatedExternalRef {
             sid: snapshot.sid.clone(),
             worktree_path: snapshot.worktree_path.clone(),
@@ -721,35 +891,74 @@ impl UnitScheduler {
             worktree_base_ref: snapshot.worktree_base_ref.clone(),
         })?;
         queries::set_session_unit_external_ref(
-            self.ctx.pool(), &self.ctx.stage_instance_id, &unit.unit_id, Some(external_ref),
-            snapshot.worktree_branch.clone(), snapshot.worktree_path.clone(), snapshot.worktree_base_ref.clone(),
-        ).await?;
+            self.ctx.pool(),
+            &self.ctx.stage_instance_id,
+            &unit.unit_id,
+            Some(external_ref),
+            snapshot.worktree_branch.clone(),
+            snapshot.worktree_path.clone(),
+            snapshot.worktree_base_ref.clone(),
+        )
+        .await?;
         queries::set_session_unit_status(
-            self.ctx.pool(), &self.ctx.stage_instance_id, &unit.unit_id, UnitStatus::Running, None,
-        ).await?;
+            self.ctx.pool(),
+            &self.ctx.stage_instance_id,
+            &unit.unit_id,
+            UnitStatus::Running,
+            None,
+        )
+        .await?;
         let cancelled = Arc::new(AtomicBool::new(false));
-        self.live_sessions.lock().unwrap().insert((self.ctx.stage_instance_id, unit.unit_id.clone()), LiveSession {
-            cancelled: cancelled.clone(), ctx: self.ctx.clone(), unit_id: unit.unit_id.clone(), sid: snapshot.sid.clone(),
-            config: unit_config.clone(), worktree_path: snapshot.worktree_path.clone(),
-            worktree_branch: snapshot.worktree_branch.clone(), worktree_base_ref: snapshot.worktree_base_ref.clone(),
-            unit_scheduler: Some(self.clone()),
-        });
+        self.live_sessions.lock().unwrap().insert(
+            (self.ctx.stage_instance_id, unit.unit_id.clone()),
+            LiveSession {
+                cancelled: cancelled.clone(),
+                ctx: self.ctx.clone(),
+                unit_id: unit.unit_id.clone(),
+                sid: snapshot.sid.clone(),
+                config: unit_config.clone(),
+                worktree_path: snapshot.worktree_path.clone(),
+                worktree_branch: snapshot.worktree_branch.clone(),
+                worktree_base_ref: snapshot.worktree_base_ref.clone(),
+                unit_scheduler: Some(self.clone()),
+            },
+        );
         if unit_config.yolo {
-            self.kbbl_client.set_yolo(&snapshot.sid, SetYoloRequest { enabled: true }).await?;
+            self.kbbl_client
+                .set_yolo(&snapshot.sid, SetYoloRequest { enabled: true })
+                .await?;
         }
-        self.kbbl_client.send_input(&snapshot.sid, SendInputRequest { text: unit_config.rendered_prompt }).await?;
+        self.kbbl_client
+            .send_input(
+                &snapshot.sid,
+                SendInputRequest {
+                    text: unit_config.rendered_prompt,
+                },
+            )
+            .await?;
         self.spawn_unit_observer(unit.unit_id.clone(), snapshot.sid, cancelled);
         Ok(())
     }
 
-    fn spawn_unit_observer(self: &Arc<Self>, unit_id: String, sid: String, cancelled: Arc<AtomicBool>) {
+    fn spawn_unit_observer(
+        self: &Arc<Self>,
+        unit_id: String,
+        sid: String,
+        cancelled: Arc<AtomicBool>,
+    ) {
         let scheduler = self.clone();
         tokio::spawn(async move {
             let mut last_seen = -1;
             loop {
                 sleep(Duration::from_millis(OBSERVER_POLL_INTERVAL_MS)).await;
-                if cancelled.load(Ordering::SeqCst) { return; }
-                match scheduler.kbbl_client.read_events_since(&sid, last_seen).await {
+                if cancelled.load(Ordering::SeqCst) {
+                    return;
+                }
+                match scheduler
+                    .kbbl_client
+                    .read_events_since(&sid, last_seen)
+                    .await
+                {
                     Ok(response) if response.session_id == sid => {
                         if let Some(reason) = failure_reason_from_events(&sid, &response.events) {
                             scheduler.mark_failed(&unit_id, reason).await;
@@ -757,24 +966,52 @@ impl UnitScheduler {
                             break;
                         }
                         if has_clean_exit(&response.events) {
-                            let unit = queries::get_session_unit(scheduler.ctx.pool(), &scheduler.ctx.stage_instance_id, &unit_id).await.ok();
-                            if matches!(unit.as_ref().map(|unit| unit.status), Some(UnitStatus::Running)) {
+                            let unit = queries::get_session_unit(
+                                scheduler.ctx.pool(),
+                                &scheduler.ctx.stage_instance_id,
+                                &unit_id,
+                            )
+                            .await
+                            .ok();
+                            if matches!(
+                                unit.as_ref().map(|unit| unit.status),
+                                Some(UnitStatus::Running)
+                            ) {
                                 scheduler.mark_session_ended_without_emit(&unit_id).await;
                                 let _ = scheduler.admit().await;
-                            } else if matches!(unit.as_ref().map(|unit| unit.status), Some(UnitStatus::Parked)) {
+                            } else if matches!(
+                                unit.as_ref().map(|unit| unit.status),
+                                Some(UnitStatus::Parked)
+                            ) {
                                 // A gate remains actionable after a clean exit.
                                 return;
                             }
                             break;
                         }
-                        if let Some(next) = latest_event_id(&response.events) { last_seen = next; }
+                        if let Some(next) = latest_event_id(&response.events) {
+                            last_seen = next;
+                        }
                     }
-                    Ok(_) => { scheduler.mark_failed(&unit_id, "kbbl returned a mismatched session id".into()).await; let _ = scheduler.admit().await; break; }
-                    Err(err) if !is_retryable_observer_error(&err) => { scheduler.mark_failed(&unit_id, err.to_string()).await; let _ = scheduler.admit().await; break; }
+                    Ok(_) => {
+                        scheduler
+                            .mark_failed(&unit_id, "kbbl returned a mismatched session id".into())
+                            .await;
+                        let _ = scheduler.admit().await;
+                        break;
+                    }
+                    Err(err) if !is_retryable_observer_error(&err) => {
+                        scheduler.mark_failed(&unit_id, err.to_string()).await;
+                        let _ = scheduler.admit().await;
+                        break;
+                    }
                     Err(_) => continue,
                 }
             }
-            scheduler.live_sessions.lock().unwrap().remove(&(scheduler.ctx.stage_instance_id, unit_id));
+            scheduler
+                .live_sessions
+                .lock()
+                .unwrap()
+                .remove(&(scheduler.ctx.stage_instance_id, unit_id));
         });
     }
 }
@@ -999,7 +1236,10 @@ impl DelegatedSessionStage {
                                     None,
                                     Some(serde_json::json!({"reason": format!("kbbl session {} became unavailable", sid)})),
                                 ).await;
-                                live_sessions.lock().unwrap().remove(&(stage_instance_id, unit_id.clone()));
+                                live_sessions
+                                    .lock()
+                                    .unwrap()
+                                    .remove(&(stage_instance_id, unit_id.clone()));
                             }
                             return;
                         }
@@ -1012,7 +1252,10 @@ impl DelegatedSessionStage {
                                         Some(serde_json::json!({"reason": reason})),
                                     )
                                     .await;
-                                live_sessions.lock().unwrap().remove(&(stage_instance_id, unit_id.clone()));
+                                live_sessions
+                                    .lock()
+                                    .unwrap()
+                                    .remove(&(stage_instance_id, unit_id.clone()));
                             }
                             return;
                         }
@@ -1028,7 +1271,10 @@ impl DelegatedSessionStage {
                                     Some(serde_json::json!({"reason": e.to_string()})),
                                 )
                                 .await;
-                            live_sessions.lock().unwrap().remove(&(stage_instance_id, unit_id.clone()));
+                            live_sessions
+                                .lock()
+                                .unwrap()
+                                .remove(&(stage_instance_id, unit_id.clone()));
                         }
                         return;
                     }
@@ -1255,7 +1501,10 @@ async fn observer_loop(
             }
         }
     }
-    live_sessions.lock().unwrap().remove(&(stage_instance_id, unit_id.to_owned()));
+    live_sessions
+        .lock()
+        .unwrap()
+        .remove(&(stage_instance_id, unit_id.to_owned()));
 }
 
 struct WaitingForKbblHandle {
@@ -1365,8 +1614,10 @@ impl StageType for DelegatedSessionStage {
         let def: DelegatedSessionDefConfig = serde_json::from_value(def_config.clone())?;
         let template = load_template(&self.prompts_dir, &def.prompt_template_path)?;
 
-        let inherited_input_name = def.fan_out.as_ref().and_then(|fan_out| {
-            match &fan_out.over {
+        let inherited_input_name = def
+            .fan_out
+            .as_ref()
+            .and_then(|fan_out| match &fan_out.over {
                 SlotBinding::Input {
                     input_name,
                     path: None,
@@ -1374,8 +1625,7 @@ impl StageType for DelegatedSessionStage {
                     Some(input_name.as_str())
                 }
                 _ => None,
-            }
-        });
+            });
         let mut inherited_input_bindings = HashMap::new();
         let mut slot_values: HashMap<String, String> = HashMap::new();
         for (slot_name, binding) in &def.slot_bindings {
@@ -1421,11 +1671,33 @@ impl StageType for DelegatedSessionStage {
             .as_ref()
             .map(|fan_out| {
                 let value = resolve_binding(&fan_out.over, inputs, run_context, None)?;
-                serde_json::from_str::<Value>(&value).map_err(|err| {
-                    anyhow::anyhow!("fan_out.over did not resolve to JSON: {}", err)
-                })
+                serde_json::from_str::<Value>(&value)
+                    .map_err(|err| anyhow::anyhow!("fan_out.over did not resolve to JSON: {}", err))
             })
             .transpose()?;
+        let resolved_fan_out_workdirs = match (&def.fan_out, &resolved_fan_out_over) {
+            (Some(fan_out), Some(Value::Array(items))) => {
+                let mut workdirs = HashMap::new();
+                if let Some(binding) = &fan_out.workdir {
+                    for item in items {
+                        let unit_id = item
+                            .pointer(&fan_out.unit_id_path)
+                            .and_then(Value::as_str)
+                            .filter(|id| !id.is_empty())
+                            .ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "fan_out unit_id at '{}' must be a non-empty string",
+                                    fan_out.unit_id_path
+                                )
+                            })?;
+                        let workdir = resolve_binding(binding, inputs, run_context, Some(item))?;
+                        workdirs.insert(unit_id.to_owned(), PathBuf::from(workdir));
+                    }
+                }
+                workdirs
+            }
+            _ => HashMap::new(),
+        };
         let sid_str = stage_instance_id.0.to_string();
         let workdir_str = resolve_binding(&def.workdir, inputs, run_context, None)?
             .replace(STAGE_INSTANCE_ID_SENTINEL, &sid_str);
@@ -1433,9 +1705,7 @@ impl StageType for DelegatedSessionStage {
         let model = match def.model {
             None => None,
             Some(Bindable::Literal(s)) => Some(s),
-            Some(Bindable::Bound(ref binding)) => {
-                resolve_optional_binding(binding, run_context)?
-            }
+            Some(Bindable::Bound(ref binding)) => resolve_optional_binding(binding, run_context)?,
         };
 
         let effort = match def.effort {
@@ -1460,6 +1730,7 @@ impl StageType for DelegatedSessionStage {
             rendered_prompt,
             fan_out_prompt_plan,
             resolved_fan_out_over,
+            resolved_fan_out_workdirs,
             workdir: PathBuf::from(workdir_str),
             session_name: def
                 .session_name
@@ -1502,7 +1773,10 @@ impl StageType for DelegatedSessionStage {
                     unit_scheduler: None,
                 }));
             }
-            if queries::list_session_units_for_stage(ctx.pool(), &ctx.stage_instance_id).await?.is_empty() {
+            if queries::list_session_units_for_stage(ctx.pool(), &ctx.stage_instance_id)
+                .await?
+                .is_empty()
+            {
                 let now = chrono::Utc::now();
                 for unit in &materialized {
                     let worktree = unit.worktree.as_ref();
@@ -1515,8 +1789,10 @@ impl StageType for DelegatedSessionStage {
                             depends_on: unit.depends_on.clone(),
                             external_ref: None,
                             worktree_branch: worktree.map(|identity| identity.branch_name.clone()),
-                            worktree_path: worktree.map(|identity| identity.worktree_subdir.clone()),
-                            worktree_base_ref: worktree.and_then(|identity| identity.base_ref.clone()),
+                            worktree_path: worktree
+                                .map(|identity| identity.worktree_subdir.clone()),
+                            worktree_base_ref: worktree
+                                .and_then(|identity| identity.base_ref.clone()),
                             status: UnitStatus::Pending,
                             gate_state: None,
                             artifact_id: None,
@@ -1524,11 +1800,16 @@ impl StageType for DelegatedSessionStage {
                             created_at: now,
                             updated_at: now,
                         },
-                    ).await?;
+                    )
+                    .await?;
                 }
             }
             let scheduler = UnitScheduler::new(
-                ctx.clone(), config.clone(), fan_out, self.kbbl_client.clone(), self.live_sessions.clone(),
+                ctx.clone(),
+                config.clone(),
+                fan_out,
+                self.kbbl_client.clone(),
+                self.live_sessions.clone(),
             );
             scheduler.recover_live_units().await?;
             scheduler.admit().await?;
@@ -1744,8 +2025,12 @@ impl StageType for DelegatedSessionStage {
         use crate::registry::stage_type::{GateFlowDescriptor, GateStep};
         GateFlowDescriptor {
             steps: vec![
-                GateStep { gate_type: "artifact_approval".into() },
-                GateStep { gate_type: "merge_confirmation".into() },
+                GateStep {
+                    gate_type: "artifact_approval".into(),
+                },
+                GateStep {
+                    gate_type: "merge_confirmation".into(),
+                },
             ],
             requires_zero_open_review_items: true,
         }
@@ -1803,8 +2088,11 @@ impl StageHandle for DelegatedSessionHandle {
     }
 
     async fn retry_stuck(&self, unit_id: Option<String>) -> anyhow::Result<()> {
-        let unit_id = unit_id.ok_or_else(|| anyhow::anyhow!("delegated-session unit retry requires a unit_id"))?;
-        let scheduler = self.unit_scheduler.as_ref()
+        let unit_id = unit_id
+            .ok_or_else(|| anyhow::anyhow!("delegated-session unit retry requires a unit_id"))?;
+        let scheduler = self
+            .unit_scheduler
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("unit retry requires a fan-out delegated session"))?;
         scheduler.retry_unit(&unit_id).await
     }
@@ -1821,15 +2109,30 @@ impl DelegatedSessionHandle {
                 if artifact.stage_instance_id != self.stage_instance_id {
                     anyhow::bail!("feedback artifact does not belong to this stage");
                 }
-                let unit_id = artifact.label.filter(|label| !label.is_empty())
-                    .ok_or_else(|| anyhow::anyhow!("fan-out feedback artifact is missing a unit label"))?;
-                let session = self.live_sessions.lock().unwrap()
-                    .get(&(self.stage_instance_id, unit_id.clone())).cloned()
+                let unit_id = artifact
+                    .label
+                    .filter(|label| !label.is_empty())
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("fan-out feedback artifact is missing a unit label")
+                    })?;
+                let session = self
+                    .live_sessions
+                    .lock()
+                    .unwrap()
+                    .get(&(self.stage_instance_id, unit_id.clone()))
+                    .cloned()
                     .ok_or_else(|| anyhow::anyhow!("feedback unit '{}' is not live", unit_id))?;
-                self.send_kbbl_input(&session.sid, format!(
-                    "Feedback artifact {} (type {}):\n{}", artifact.id.0, artifact.artifact_type,
-                    serde_json::to_string_pretty(&artifact.body).unwrap_or_else(|_| artifact.body.to_string()),
-                )).await?;
+                self.send_kbbl_input(
+                    &session.sid,
+                    format!(
+                        "Feedback artifact {} (type {}):\n{}",
+                        artifact.id.0,
+                        artifact.artifact_type,
+                        serde_json::to_string_pretty(&artifact.body)
+                            .unwrap_or_else(|_| artifact.body.to_string()),
+                    ),
+                )
+                .await?;
                 let unit = queries::get_session_unit(
                     scheduler.ctx.pool(),
                     &self.stage_instance_id,
@@ -1860,45 +2163,117 @@ impl DelegatedSessionHandle {
                 .await?;
                 scheduler.recompute_aggregate().await
             }
-            crate::executor::ResumePayload::GateDecision { decision, against_artifact_id } => {
-                let units = queries::list_session_units_for_stage(scheduler.ctx.pool(), &self.stage_instance_id).await?;
-                let unit = units.into_iter().find(|unit| unit.artifact_id == Some(against_artifact_id))
-                    .ok_or_else(|| anyhow::anyhow!("gate decision artifact {} does not belong to a fan-out unit", against_artifact_id.0))?;
-                let gate_state: DelegatedGateState = unit.gate_state.clone()
-                    .ok_or_else(|| anyhow::anyhow!("fan-out unit '{}' has no gate state", unit.unit_id))
+            crate::executor::ResumePayload::GateDecision {
+                decision,
+                against_artifact_id,
+            } => {
+                let units = queries::list_session_units_for_stage(
+                    scheduler.ctx.pool(),
+                    &self.stage_instance_id,
+                )
+                .await?;
+                let unit = units
+                    .into_iter()
+                    .find(|unit| unit.artifact_id == Some(against_artifact_id))
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "gate decision artifact {} does not belong to a fan-out unit",
+                            against_artifact_id.0
+                        )
+                    })?;
+                let gate_state: DelegatedGateState = unit
+                    .gate_state
+                    .clone()
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("fan-out unit '{}' has no gate state", unit.unit_id)
+                    })
                     .and_then(|value| serde_json::from_value(value).map_err(Into::into))?;
                 match gate_state.gate {
                     DelegatedGate::ArtifactApproval => match decision.outcome {
                         crate::types::GateOutcome::Pass => {
                             let open_count = queries::count_open_review_items_for_artifact(
-                                scheduler.ctx.pool(), &gate_state.artifact_id.0.to_string(),
-                            ).await?;
-                            if open_count > 0 { anyhow::bail!("cannot approve: {open_count} review item(s) are still open"); }
-                            let merge_state = DelegatedGateState { gate: DelegatedGate::MergeConfirmation, ..gate_state };
+                                scheduler.ctx.pool(),
+                                &gate_state.artifact_id.0.to_string(),
+                            )
+                            .await?;
+                            if open_count > 0 {
+                                anyhow::bail!(
+                                    "cannot approve: {open_count} review item(s) are still open"
+                                );
+                            }
+                            let merge_state = DelegatedGateState {
+                                gate: DelegatedGate::MergeConfirmation,
+                                ..gate_state
+                            };
                             queries::set_session_unit_gate_state(
-                                scheduler.ctx.pool(), &self.stage_instance_id, &unit.unit_id,
+                                scheduler.ctx.pool(),
+                                &self.stage_instance_id,
+                                &unit.unit_id,
                                 Some(serde_json::to_value(merge_state)?),
-                            ).await?;
+                            )
+                            .await?;
                             scheduler.recompute_aggregate().await
                         }
                         crate::types::GateOutcome::Fail | crate::types::GateOutcome::Rerun => {
-                            let session = self.live_sessions.lock().unwrap()
-                                .get(&(self.stage_instance_id, unit.unit_id.clone())).cloned()
-                                .ok_or_else(|| anyhow::anyhow!("fan-out unit '{}' is not live", unit.unit_id))?;
-                            self.send_kbbl_input(&session.sid, self.follow_up_message(&decision, &gate_state)).await?;
-                            let rerun_state = DelegatedGateState { revision_count: gate_state.revision_count.saturating_add(1), ..gate_state };
-                            queries::set_session_unit_gate_state(scheduler.ctx.pool(), &self.stage_instance_id, &unit.unit_id, Some(serde_json::to_value(rerun_state)?)).await?;
-                            queries::set_session_unit_status(scheduler.ctx.pool(), &self.stage_instance_id, &unit.unit_id, UnitStatus::Running, None).await?;
+                            let session = self
+                                .live_sessions
+                                .lock()
+                                .unwrap()
+                                .get(&(self.stage_instance_id, unit.unit_id.clone()))
+                                .cloned()
+                                .ok_or_else(|| {
+                                    anyhow::anyhow!("fan-out unit '{}' is not live", unit.unit_id)
+                                })?;
+                            self.send_kbbl_input(
+                                &session.sid,
+                                self.follow_up_message(&decision, &gate_state),
+                            )
+                            .await?;
+                            let rerun_state = DelegatedGateState {
+                                revision_count: gate_state.revision_count.saturating_add(1),
+                                ..gate_state
+                            };
+                            queries::set_session_unit_gate_state(
+                                scheduler.ctx.pool(),
+                                &self.stage_instance_id,
+                                &unit.unit_id,
+                                Some(serde_json::to_value(rerun_state)?),
+                            )
+                            .await?;
+                            queries::set_session_unit_status(
+                                scheduler.ctx.pool(),
+                                &self.stage_instance_id,
+                                &unit.unit_id,
+                                UnitStatus::Running,
+                                None,
+                            )
+                            .await?;
                             scheduler.recompute_aggregate().await?;
                             scheduler.admit().await
                         }
                     },
                     DelegatedGate::MergeConfirmation => match decision.outcome {
                         crate::types::GateOutcome::Pass => {
-                            queries::set_session_unit_gate_state(scheduler.ctx.pool(), &self.stage_instance_id, &unit.unit_id, None).await?;
-                            queries::set_session_unit_status(scheduler.ctx.pool(), &self.stage_instance_id, &unit.unit_id, UnitStatus::Done, None).await?;
+                            queries::set_session_unit_gate_state(
+                                scheduler.ctx.pool(),
+                                &self.stage_instance_id,
+                                &unit.unit_id,
+                                None,
+                            )
+                            .await?;
+                            queries::set_session_unit_status(
+                                scheduler.ctx.pool(),
+                                &self.stage_instance_id,
+                                &unit.unit_id,
+                                UnitStatus::Done,
+                                None,
+                            )
+                            .await?;
                             let removed_session = {
-                                self.live_sessions.lock().unwrap().remove(&(self.stage_instance_id, unit.unit_id.clone()))
+                                self.live_sessions
+                                    .lock()
+                                    .unwrap()
+                                    .remove(&(self.stage_instance_id, unit.unit_id.clone()))
                             };
                             if let Some(session) = removed_session {
                                 session.cancelled.store(true, Ordering::SeqCst);
@@ -1907,25 +2282,42 @@ impl DelegatedSessionHandle {
                             scheduler.recompute_aggregate().await?;
                             scheduler.admit().await
                         }
-                        crate::types::GateOutcome::Fail | crate::types::GateOutcome::Rerun => anyhow::bail!("merge confirmation only accepts pass decisions"),
+                        crate::types::GateOutcome::Fail | crate::types::GateOutcome::Rerun => {
+                            anyhow::bail!("merge confirmation only accepts pass decisions")
+                        }
                     },
                 }
             }
-            crate::executor::ResumePayload::Executor { .. } => anyhow::bail!("delegated approval forwarding is not enabled until K1 exists"),
+            crate::executor::ResumePayload::Executor { .. } => {
+                anyhow::bail!("delegated approval forwarding is not enabled until K1 exists")
+            }
         }
     }
 
     async fn cancel_fan_out(&self, scheduler: &Arc<UnitScheduler>) -> anyhow::Result<()> {
-        let units = queries::list_session_units_for_stage(scheduler.ctx.pool(), &self.stage_instance_id).await?;
-        for unit in units.iter().filter(|unit| !matches!(unit.status, UnitStatus::Done | UnitStatus::Failed)) {
+        let units =
+            queries::list_session_units_for_stage(scheduler.ctx.pool(), &self.stage_instance_id)
+                .await?;
+        for unit in units
+            .iter()
+            .filter(|unit| !matches!(unit.status, UnitStatus::Done | UnitStatus::Failed))
+        {
             queries::set_session_unit_status(
-                scheduler.ctx.pool(), &self.stage_instance_id, &unit.unit_id, UnitStatus::Failed,
+                scheduler.ctx.pool(),
+                &self.stage_instance_id,
+                &unit.unit_id,
+                UnitStatus::Failed,
                 Some(serde_json::json!({"kind": "cancelled"})),
-            ).await?;
+            )
+            .await?;
         }
-        let sessions: Vec<LiveSession> = self.live_sessions.lock().unwrap()
+        let sessions: Vec<LiveSession> = self
+            .live_sessions
+            .lock()
+            .unwrap()
             .extract_if(|(stage_id, _), _| *stage_id == self.stage_instance_id)
-            .map(|(_, session)| session).collect();
+            .map(|(_, session)| session)
+            .collect();
         for session in sessions {
             session.cancelled.store(true, Ordering::SeqCst);
             let _ = self.kbbl_client.stop_session(&session.sid).await;
@@ -2035,16 +2427,12 @@ impl DelegatedSessionHandle {
                 // The artifact emitted by this stage IS the chain root (revision_id),
                 // so gate_state.artifact_id.0.to_string() == revision_id for all items.
                 let revision_id = gate_state.artifact_id.0.to_string();
-                let open_count = queries::count_open_review_items_for_artifact(
-                    session.ctx.pool(),
-                    &revision_id,
-                )
-                .await
-                .map_err(|e| anyhow::anyhow!("gate coupling check failed: {e}"))?;
+                let open_count =
+                    queries::count_open_review_items_for_artifact(session.ctx.pool(), &revision_id)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("gate coupling check failed: {e}"))?;
                 if open_count > 0 {
-                    anyhow::bail!(
-                        "cannot approve: {open_count} review item(s) are still open"
-                    );
+                    anyhow::bail!("cannot approve: {open_count} review item(s) are still open");
                 }
                 let updated_state = DelegatedGateState {
                     gate: DelegatedGate::MergeConfirmation,
@@ -2353,11 +2741,14 @@ mod tests {
             runtime: config::DelegatedRuntime::Codex,
             rendered_prompt: "legacy prompt".into(),
             fan_out_prompt_plan: Some(FanOutPromptPlan {
-                raw_template: "unit={{UNIT_ID}} stage={{STAGE_INSTANCE_ID}} item={{ITEM}} base={{BASE}}".into(),
+                raw_template:
+                    "unit={{UNIT_ID}} stage={{STAGE_INSTANCE_ID}} item={{ITEM}} base={{BASE}}"
+                        .into(),
                 base_slot_values: HashMap::from([("BASE".into(), "base-value".into())]),
                 inherited_input_bindings: HashMap::new(),
             }),
             resolved_fan_out_over: Some(over),
+            resolved_fan_out_workdirs: HashMap::new(),
             workdir: PathBuf::from("/work"),
             session_name: "session".into(),
             model: None,
@@ -2373,8 +2764,11 @@ mod tests {
                 max_parallel: 2,
                 item_bindings: HashMap::from([(
                     "ITEM".into(),
-                    SlotBinding::Item { path: "/name".into() },
+                    SlotBinding::Item {
+                        path: "/name".into(),
+                    },
                 )]),
+                workdir: None,
                 worktree: Some(config::WorktreeTemplate {
                     branch_name: "run/{{STAGE_INSTANCE_ID}}/{{UNIT_ID}}".into(),
                     worktree_subdir: "units/{{UNIT_ID}}".into(),
@@ -2429,23 +2823,45 @@ mod tests {
     #[test]
     fn materialize_fan_out_renders_prompt_and_worktree_per_unit() {
         let stage_id = StageInstanceId(Uuid::new_v4());
-        let config = fan_out_config(json!([
-            {"id": "a", "name": "alpha", "depends_on": []},
-            {"id": "b", "name": "beta", "depends_on": ["a"]}
-        ]), Some("/depends_on"));
-        let units = materialize_fan_out_units(&config, config.fan_out.as_ref().unwrap(), stage_id).unwrap();
+        let mut config = fan_out_config(
+            json!([
+                {"id": "a", "name": "alpha", "depends_on": []},
+                {"id": "b", "name": "beta", "depends_on": ["a"]}
+            ]),
+            Some("/depends_on"),
+        );
+        config.resolved_fan_out_workdirs = HashMap::from([
+            ("a".into(), PathBuf::from("/repos/api")),
+            ("b".into(), PathBuf::from("/repos/web")),
+        ]);
+        let units =
+            materialize_fan_out_units(&config, config.fan_out.as_ref().unwrap(), stage_id).unwrap();
 
         assert_eq!(units.len(), 2);
         assert_eq!(units[1].depends_on, vec!["a"]);
-        assert_eq!(units[0].rendered_prompt, format!("unit=a stage={} item=alpha base=base-value", stage_id.0));
-        assert_eq!(units[1].worktree.as_ref().unwrap().branch_name, format!("run/{}/b", stage_id.0));
-        assert_eq!(units[1].worktree.as_ref().unwrap().worktree_subdir, "units/b");
+        assert_eq!(units[0].workdir, PathBuf::from("/repos/api"));
+        assert_eq!(units[1].workdir, PathBuf::from("/repos/web"));
+        assert_eq!(
+            units[0].rendered_prompt,
+            format!("unit=a stage={} item=alpha base=base-value", stage_id.0)
+        );
+        assert_eq!(
+            units[1].worktree.as_ref().unwrap().branch_name,
+            format!("run/{}/b", stage_id.0)
+        );
+        assert_eq!(
+            units[1].worktree.as_ref().unwrap().worktree_subdir,
+            "units/b"
+        );
     }
 
     #[test]
     fn materialize_persisted_unit_reuses_durable_identity() {
         let stage_instance_id = StageInstanceId(uuid::Uuid::new_v4());
-        let config = fan_out_config(json!([{"id": "changed", "name": "changed"}]), Some("/depends_on"));
+        let config = fan_out_config(
+            json!([{"id": "changed", "name": "changed"}]),
+            Some("/depends_on"),
+        );
         let unit = crate::types::SessionUnit {
             stage_instance_id,
             unit_id: "durable".into(),
@@ -2533,10 +2949,8 @@ mod tests {
             .await
             .unwrap();
         }
-        let stage = DelegatedSessionStage::new(
-            PathBuf::from("/tmp"),
-            KbblClient::new(base_url).unwrap(),
-        );
+        let stage =
+            DelegatedSessionStage::new(PathBuf::from("/tmp"), KbblClient::new(base_url).unwrap());
         let (tx, _rx) = tokio::sync::mpsc::channel(8);
         let ctx = StageContext::new(
             crate::types::StageInstanceSummary {
@@ -2583,10 +2997,8 @@ mod tests {
         let config_value = serde_json::to_value(&config).unwrap();
         let (run_id, stage_instance_id) =
             setup_stage_instance(&pool, config_value.clone(), None).await;
-        let stage = DelegatedSessionStage::new(
-            PathBuf::from("/tmp"),
-            KbblClient::new(base_url).unwrap(),
-        );
+        let stage =
+            DelegatedSessionStage::new(PathBuf::from("/tmp"), KbblClient::new(base_url).unwrap());
         let (tx, _rx) = tokio::sync::mpsc::channel(8);
         let ctx = StageContext::new(
             crate::types::StageInstanceSummary {
@@ -2623,15 +3035,9 @@ mod tests {
         )
         .await
         .unwrap();
-        queries::set_session_unit_status(
-            &pool,
-            &stage_instance_id,
-            "a",
-            UnitStatus::Parked,
-            None,
-        )
-        .await
-        .unwrap();
+        queries::set_session_unit_status(&pool, &stage_instance_id, "a", UnitStatus::Parked, None)
+            .await
+            .unwrap();
         handle
             .resume(ResumePayload::FeedbackArtifact {
                 artifact: Artifact {
@@ -2664,30 +3070,58 @@ mod tests {
         let stage_id = StageInstanceId(Uuid::new_v4());
         for (over, expected) in [
             (json!([{"id": "", "depends_on": []}]), "non-empty string"),
-            (json!([{"id": "a", "name": "a", "depends_on": []}, {"id": "a", "name": "b", "depends_on": []}]), "duplicated"),
-            (json!([{"id": "a", "name": "a", "depends_on": ["missing"]}]), "unknown"),
-            (json!([{"id": "a", "name": "a", "depends_on": ["a"]}]), "itself"),
-            (json!([{"id": "a", "name": "a", "depends_on": ["b", "b"]}, {"id": "b", "name": "b", "depends_on": []}]), "repeats"),
+            (
+                json!([{"id": "a", "name": "a", "depends_on": []}, {"id": "a", "name": "b", "depends_on": []}]),
+                "duplicated",
+            ),
+            (
+                json!([{"id": "a", "name": "a", "depends_on": ["missing"]}]),
+                "unknown",
+            ),
+            (
+                json!([{"id": "a", "name": "a", "depends_on": ["a"]}]),
+                "itself",
+            ),
+            (
+                json!([{"id": "a", "name": "a", "depends_on": ["b", "b"]}, {"id": "b", "name": "b", "depends_on": []}]),
+                "repeats",
+            ),
         ] {
             let config = fan_out_config(over, Some("/depends_on"));
-            let err = materialize_fan_out_units(&config, config.fan_out.as_ref().unwrap(), stage_id).unwrap_err();
-            assert!(err.to_string().contains(expected), "unexpected error: {err}");
+            let err =
+                materialize_fan_out_units(&config, config.fan_out.as_ref().unwrap(), stage_id)
+                    .unwrap_err();
+            assert!(
+                err.to_string().contains(expected),
+                "unexpected error: {err}"
+            );
         }
     }
 
     #[test]
     fn materialize_fan_out_rejects_cycles_and_non_array_values() {
         let stage_id = StageInstanceId(Uuid::new_v4());
-        let cycle = fan_out_config(json!([
-            {"id": "a", "name": "a", "depends_on": ["b"]},
-            {"id": "b", "name": "b", "depends_on": ["a"]}
-        ]), Some("/depends_on"));
-        assert!(materialize_fan_out_units(&cycle, cycle.fan_out.as_ref().unwrap(), stage_id)
-            .unwrap_err().to_string().contains("cycle"));
+        let cycle = fan_out_config(
+            json!([
+                {"id": "a", "name": "a", "depends_on": ["b"]},
+                {"id": "b", "name": "b", "depends_on": ["a"]}
+            ]),
+            Some("/depends_on"),
+        );
+        assert!(
+            materialize_fan_out_units(&cycle, cycle.fan_out.as_ref().unwrap(), stage_id)
+                .unwrap_err()
+                .to_string()
+                .contains("cycle")
+        );
 
         let scalar = fan_out_config(json!({"id": "not-an-array"}), None);
-        assert!(materialize_fan_out_units(&scalar, scalar.fan_out.as_ref().unwrap(), stage_id)
-            .unwrap_err().to_string().contains("JSON array"));
+        assert!(
+            materialize_fan_out_units(&scalar, scalar.fan_out.as_ref().unwrap(), stage_id)
+                .unwrap_err()
+                .to_string()
+                .contains("JSON array")
+        );
     }
 
     #[test]
@@ -2942,7 +3376,11 @@ mod tests {
     }
 
     fn gate_output_def_config(prompts_dir: &std::path::Path, gate_output: &str) -> Value {
-        std::fs::write(prompts_dir.join("delegated.md"), "Task {{STAGE_INSTANCE_ID}}").unwrap();
+        std::fs::write(
+            prompts_dir.join("delegated.md"),
+            "Task {{STAGE_INSTANCE_ID}}",
+        )
+        .unwrap();
         json!({
             "runtime": "codex",
             "prompt_template_path": "delegated.md",
@@ -3106,7 +3544,10 @@ mod tests {
                     msg.contains("fan_out"),
                     "expected 'fan_out' in rejection message, got: {msg}"
                 );
-                assert!(msg.contains("resolved input is missing"), "unexpected error: {msg}");
+                assert!(
+                    msg.contains("resolved input is missing"),
+                    "unexpected error: {msg}"
+                );
             }
             Ok(_) => panic!("execute must reject fan_out without a persisted resolved input"),
         }
@@ -3296,12 +3737,8 @@ mod tests {
         let (base_url, capture, join) = spawn_kbbl_mock().await;
         let pool = make_pool().await;
         let config = fan_out_config(json!([]), None);
-        let (run_id, si_id) = setup_stage_instance(
-            &pool,
-            serde_json::to_value(config).unwrap(),
-            None,
-        )
-        .await;
+        let (run_id, si_id) =
+            setup_stage_instance(&pool, serde_json::to_value(config).unwrap(), None).await;
         let (tx, _rx) = tokio::sync::mpsc::channel(8);
         let stage =
             DelegatedSessionStage::new(PathBuf::from("/tmp"), KbblClient::new(base_url).unwrap());

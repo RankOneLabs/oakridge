@@ -27,6 +27,15 @@ pub enum SlotBinding {
     /// Resolve from the per-unit params blob via an RFC-6901 pointer.
     /// Only valid inside a FanOut.item_bindings block; errors if unit_params is None.
     Item { path: String },
+    /// Resolve a value from a run-context array by matching a key from the
+    /// current fan-out item. This keeps unit artifacts keyed by stable domain
+    /// ids while paths and other operator inputs remain authoritative context.
+    ContextLookup {
+        collection_path: String,
+        collection_key_path: String,
+        item_key_path: String,
+        value_path: String,
+    },
 }
 
 // ── resolve_binding ───────────────────────────────────────────────────────────
@@ -69,6 +78,63 @@ pub fn resolve_binding(
             })?;
             value_to_string(v)
         }
+        SlotBinding::ContextLookup {
+            collection_path,
+            collection_key_path,
+            item_key_path,
+            value_path,
+        } => {
+            let params = unit_params.ok_or_else(|| {
+                anyhow::anyhow!("context_lookup binding used outside of a fan-out unit")
+            })?;
+            let item_key = params
+                .pointer(item_key_path)
+                .and_then(Value::as_str)
+                .filter(|key| !key.is_empty())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "context_lookup item key at '{}' must be a non-empty string",
+                        item_key_path
+                    )
+                })?;
+            let collection = run_context
+                .pointer(collection_path)
+                .and_then(Value::as_array)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "context_lookup collection at '{}' must be an array",
+                        collection_path
+                    )
+                })?;
+            let matches = collection
+                .iter()
+                .filter(|entry| {
+                    entry.pointer(collection_key_path).and_then(Value::as_str) == Some(item_key)
+                })
+                .collect::<Vec<_>>();
+            if matches.len() > 1 {
+                anyhow::bail!(
+                    "context_lookup key '{}' is duplicated in '{}'",
+                    item_key,
+                    collection_path
+                );
+            }
+            let matched = matches.first().copied().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "context_lookup key '{}' was not found in '{}'",
+                    item_key,
+                    collection_path
+                )
+            })?;
+            let value = matched.pointer(value_path).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "context_lookup value '{}' was not found for key '{}'",
+                    value_path,
+                    item_key
+                )
+            })?;
+            value_to_string(value)
+        }
     }
 }
 
@@ -102,7 +168,9 @@ pub fn resolve_optional_binding(
             }
             Ok(value_to_string(v).ok())
         }
-        SlotBinding::Input { .. } | SlotBinding::Item { .. } => anyhow::bail!(
+        SlotBinding::Input { .. }
+        | SlotBinding::Item { .. }
+        | SlotBinding::ContextLookup { .. } => anyhow::bail!(
             "model/effort binding must be a literal or a context binding; \
              input/item bindings are not supported here"
         ),
@@ -406,6 +474,50 @@ mod tests {
             path: "/name".into(),
         };
         assert!(resolve_binding(&b, &HashMap::new(), &json!({}), None).is_err());
+    }
+
+    #[test]
+    fn resolve_context_lookup_matches_item_key() {
+        let binding = SlotBinding::ContextLookup {
+            collection_path: "/repositories".into(),
+            collection_key_path: "/key".into(),
+            item_key_path: "/repository_key".into(),
+            value_path: "/path".into(),
+        };
+        let context = json!({
+            "repositories": [
+                {"key": "api", "path": "/repos/api"},
+                {"key": "web", "path": "/repos/web"}
+            ]
+        });
+        let item = json!({"repository_key": "web"});
+
+        let resolved = resolve_binding(&binding, &HashMap::new(), &context, Some(&item)).unwrap();
+
+        assert_eq!(resolved, "/repos/web");
+    }
+
+    #[test]
+    fn resolve_context_lookup_rejects_duplicate_keys() {
+        let binding = SlotBinding::ContextLookup {
+            collection_path: "/repositories".into(),
+            collection_key_path: "/key".into(),
+            item_key_path: "/repository_key".into(),
+            value_path: "/path".into(),
+        };
+        let context = json!({
+            "repositories": [
+                {"key": "api", "path": "/repos/api-a"},
+                {"key": "api", "path": "/repos/api-b"}
+            ]
+        });
+        let item = json!({"repository_key": "api"});
+
+        let error = resolve_binding(&binding, &HashMap::new(), &context, Some(&item))
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("duplicated"));
     }
 
     // ── render_template ───────────────────────────────────────────────────────

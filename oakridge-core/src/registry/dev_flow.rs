@@ -30,6 +30,8 @@ fn validate_spec_analysis(v: &Value) -> crate::Result<()> {
 #[derive(Deserialize)]
 struct Cohort {
     id: String,
+    #[serde(default)]
+    repository_key: Option<String>,
     title: String,
     scope: String,
     depends_on: Vec<String>,
@@ -61,6 +63,8 @@ fn validate_plan(v: &Value) -> crate::Result<()> {
 
 #[derive(Deserialize)]
 struct BuildResultBody {
+    #[serde(default)]
+    repository_key: Option<String>,
     summary: String,
     changed_files: Vec<String>,
     tests: Value,
@@ -117,7 +121,12 @@ fn extract_spec_analysis_review_items(body: &Value) -> Vec<ReviewItemCandidate> 
             let claim = finding
                 .get("description")
                 .and_then(Value::as_str)
-                .unwrap_or_else(|| finding.get("id").and_then(Value::as_str).unwrap_or("(finding)"))
+                .unwrap_or_else(|| {
+                    finding
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .unwrap_or("(finding)")
+                })
                 .to_string();
             let reality = finding
                 .get("id")
@@ -172,10 +181,7 @@ pub fn register_dev_flow_types(registry: &mut ArtifactTypeRegistry) {
             atom_editable: true,
             review_items: false,
         },
-        anchor_schema: Some(vec![
-            "/cohorts".into(),
-            "/dependency_order".into(),
-        ]),
+        anchor_schema: Some(vec!["/cohorts".into(), "/dependency_order".into()]),
         review_items_extractor: None,
     });
     // dev.build_result: reviewable, commentable, atom_editable; anchor_schema covers top-level sections.
