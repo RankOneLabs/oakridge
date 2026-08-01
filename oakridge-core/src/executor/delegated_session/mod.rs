@@ -304,6 +304,40 @@ fn materialize_persisted_unit(
     })
 }
 
+async fn inherited_producer_workdir(
+    pool: &sqlx::SqlitePool,
+    params: &Value,
+    unit_id: &str,
+) -> anyhow::Result<PathBuf> {
+    let artifact_id = params
+        .get("artifact_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("inherited worktree input is missing artifact_id"))
+        .and_then(|id| {
+            uuid::Uuid::parse_str(id)
+                .map(crate::types::ArtifactId)
+                .map_err(Into::into)
+        })?;
+    let artifact = queries::get_artifact_by_id(pool, &artifact_id).await?;
+    if artifact.label.as_deref() != Some(unit_id) {
+        anyhow::bail!(
+            "inherited worktree artifact unit '{}' does not match consumer unit '{}'",
+            artifact.label.as_deref().unwrap_or(""),
+            unit_id
+        );
+    }
+    let producer_unit =
+        queries::get_session_unit(pool, &artifact.stage_instance_id, unit_id).await?;
+    if !matches!(producer_unit.status, UnitStatus::Done) {
+        anyhow::bail!("producer unit '{}' is not complete", unit_id);
+    }
+    producer_unit
+        .worktree_path
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| anyhow::anyhow!("producer unit '{}' has no persisted worktree path", unit_id))
+}
+
 fn resolve_inherited_prompt_bindings(
     prompt_plan: &FanOutPromptPlan,
     unit_params: &Value,
@@ -1621,6 +1655,39 @@ impl StageType for DelegatedSessionStage {
                 anyhow::bail!("workdir binding references unknown input '{}'", input_name);
             }
         }
+        if let Some(fan_out) = &def.fan_out {
+            if let Some(input_name) = &fan_out.inherit_worktree_from {
+                if fan_out.worktree.is_some() {
+                    anyhow::bail!(
+                        "fan_out cannot combine inherit_worktree_from with worktree"
+                    );
+                }
+                let input = input_slots
+                    .iter()
+                    .find(|slot| &slot.name == input_name)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "inherit_worktree_from references unknown input '{}'",
+                            input_name
+                        )
+                    })?;
+                if input.delivery != crate::types::InputDelivery::UnitComplete {
+                    anyhow::bail!(
+                        "inherit_worktree_from input '{}' must use unit_complete delivery",
+                        input_name
+                    );
+                }
+                if !matches!(
+                    &fan_out.over,
+                    SlotBinding::Input { input_name: over, path: None } if over == input_name
+                ) {
+                    anyhow::bail!(
+                        "inherit_worktree_from input '{}' must also be the whole fan_out.over input",
+                        input_name
+                    );
+                }
+            }
+        }
 
         Ok(())
     }
@@ -1784,7 +1851,19 @@ impl StageType for DelegatedSessionStage {
         if let Some(fan_out) = config.fan_out.clone() {
             // Materialize before any write or external call so invalid fan-out
             // input cannot leave a partially launched stage.
-            let materialized = materialize_fan_out_units(&config, &fan_out, ctx.stage_instance_id)?;
+            let mut materialized =
+                materialize_fan_out_units(&config, &fan_out, ctx.stage_instance_id)?;
+            if fan_out.inherit_worktree_from.is_some() {
+                for unit in &mut materialized {
+                    unit.workdir = inherited_producer_workdir(
+                        ctx.pool(),
+                        &unit.params,
+                        &unit.unit_id,
+                    )
+                    .await?;
+                    unit.worktree = None;
+                }
+            }
             if materialized.is_empty() {
                 tracing::info!(
                     stage_instance_id = %ctx.stage_instance_id.0,
@@ -2204,17 +2283,29 @@ impl DelegatedSessionHandle {
                             .ok_or_else(|| anyhow::anyhow!("fan_out dependency must be a non-empty string")))
                         .collect::<anyhow::Result<Vec<_>>>()?,
                 };
-                let workdir = scheduler
-                    .fan_out
-                    .workdir
-                    .as_ref()
-                    .map(|binding| {
-                        resolve_binding(
-                            binding,
-                            &HashMap::new(),
-                            &scheduler.config.fan_out_context,
-                            Some(&params),
+                let workdir = if scheduler.fan_out.inherit_worktree_from.is_some() {
+                    Some(
+                        inherited_producer_workdir(
+                            scheduler.ctx.pool(),
+                            &params,
+                            &unit_id,
                         )
+                        .await?
+                        .to_string_lossy()
+                        .into_owned(),
+                    )
+                } else {
+                    scheduler
+                        .fan_out
+                        .workdir
+                        .as_ref()
+                        .map(|binding| {
+                            resolve_binding(
+                                binding,
+                                &HashMap::new(),
+                                &scheduler.config.fan_out_context,
+                                Some(&params),
+                            )
                             .map(|path| {
                                 substitute_unit_template(
                                     &path,
@@ -2222,10 +2313,15 @@ impl DelegatedSessionHandle {
                                     self.stage_instance_id,
                                 )
                             })
-                    })
-                    .transpose()?;
-                let worktree = scheduler.fan_out.worktree.as_ref().map(|template| {
-                    WorktreeIdentity {
+                        })
+                        .transpose()?
+                };
+                let worktree = scheduler
+                    .fan_out
+                    .worktree
+                    .as_ref()
+                    .filter(|_| scheduler.fan_out.inherit_worktree_from.is_none())
+                    .map(|template| WorktreeIdentity {
                         branch_name: substitute_unit_template(
                             &template.branch_name,
                             &unit_id,
@@ -2239,8 +2335,7 @@ impl DelegatedSessionHandle {
                         base_ref: template.base_ref.as_ref().map(|base| {
                             substitute_unit_template(base, &unit_id, self.stage_instance_id)
                         }),
-                    }
-                });
+                    });
                 let now = chrono::Utc::now();
                 queries::upsert_session_unit(
                     scheduler.ctx.pool(),
@@ -2955,6 +3050,7 @@ mod tests {
                     worktree_subdir: "units/{{UNIT_ID}}".into(),
                     base_ref: Some("base/{{STAGE_INSTANCE_ID}}".into()),
                 }),
+                inherit_worktree_from: None,
             }),
             gate_output: None,
         }

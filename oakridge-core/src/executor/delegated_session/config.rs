@@ -82,6 +82,10 @@ pub struct FanOut {
     /// Worktree template; {{UNIT_ID}} and {{STAGE_INSTANCE_ID}} are substituted.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub worktree: Option<WorktreeTemplate>,
+    /// Reuse the completed producer unit's persisted worktree as this unit's
+    /// workdir. The value names the unit-complete input that carries provenance.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inherit_worktree_from: Option<String>,
 }
 
 fn default_max_parallel() -> usize {
@@ -356,6 +360,7 @@ mod tests {
                 worktree_subdir: "wt/{{UNIT_ID}}".into(),
                 base_ref: Some("main".into()),
             }),
+            inherit_worktree_from: None,
         };
         let v = serde_json::to_value(&fan_out).unwrap();
         let back: FanOut = serde_json::from_value(v).unwrap();

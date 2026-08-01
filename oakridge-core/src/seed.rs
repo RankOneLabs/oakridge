@@ -5,6 +5,7 @@ use crate::types::WorkflowDef;
 
 const DEV_FLOW_V1_JSON: &str = include_str!("../examples/dev_flow.json");
 const DEV_FLOW_V2_JSON: &str = include_str!("../examples/dev_flow_v2.json");
+const DEV_FLOW_V4_JSON: &str = include_str!("../examples/dev_flow_v4.json");
 
 pub async fn seed_builtin_workflow_defs(
     pool: &SqlitePool,
@@ -14,6 +15,7 @@ pub async fn seed_builtin_workflow_defs(
     for (label, json_str) in [
         ("dev_flow.json", DEV_FLOW_V1_JSON),
         ("dev_flow_v2.json", DEV_FLOW_V2_JSON),
+        ("dev_flow_v4.json", DEV_FLOW_V4_JSON),
     ] {
         let def: WorkflowDef = serde_json::from_str(json_str).map_err(|e| {
             crate::Error::Validation(format!("failed to parse built-in {}: {}", label, e))
