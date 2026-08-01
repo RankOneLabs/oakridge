@@ -272,6 +272,7 @@ fn collect_definition() -> WorkflowDef {
                 artifact_type: "result".into(),
                 optional: false,
                 collect: true,
+                delivery: oakridge_core::types::InputDelivery::ProducerComplete,
             }],
             outputs: vec![],
         },
@@ -295,6 +296,238 @@ fn collect_definition() -> WorkflowDef {
         },
         created_at: chrono::Utc::now(),
     }
+}
+
+fn incremental_definition() -> WorkflowDef {
+    let mut definition = collect_definition();
+    definition.name = "incremental".into();
+    let consumer = definition.graph.stages.remove("collector").unwrap();
+    definition.graph.stages.insert(
+        "assessor".into(),
+        StageNodeDef {
+            stage_type: "delegated_session".into(),
+            config: json!({
+                "runtime": "claude-code",
+                "prompt_template_path": "assess.md",
+                "slot_bindings": {
+                    "UNIT_ID": {"from": "item", "path": "/unit_id"},
+                    "RESULT": {"from": "input", "input_name": "results", "path": "/marker"}
+                },
+                "workdir": {"from": "literal", "value": "/tmp"},
+                "session_name": "assessor-{{UNIT_ID}}",
+                "pre_authorized_tools": [],
+                "yolo": false,
+                "gate_output": "assessment",
+                "fan_out": {
+                    "over": {"from": "input", "input_name": "results", "path": null},
+                    "unit_id_path": "/unit_id",
+                    "max_parallel": 2
+                }
+            }),
+            inputs: vec![InputSlot {
+                name: "results".into(),
+                artifact_type: "result".into(),
+                optional: false,
+                collect: false,
+                delivery: oakridge_core::types::InputDelivery::UnitComplete,
+            }],
+            outputs: vec![OutputSlot {
+                name: "assessment".into(),
+                artifact_type: "result".into(),
+            }],
+        },
+    );
+    assert_eq!(consumer.stage_type, "delegated_session");
+    definition.graph.edges[0].to.stage = "assessor".into();
+    definition
+}
+
+#[tokio::test]
+async fn unit_complete_delivery_starts_matching_consumer_before_producer_stage_finishes() {
+    let prompts = tempfile::tempdir().unwrap();
+    std::fs::write(prompts.path().join("unit.md"), "Build {{UNIT_ID}}").unwrap();
+    std::fs::write(
+        prompts.path().join("assess.md"),
+        "Assess {{UNIT_ID}} {{RESULT}}",
+    )
+    .unwrap();
+    let prompt_dir = prompts.path().to_path_buf();
+    let (base_url, mut inputs, fake_task) = fake_kbbl().await;
+    let db_url = format!("sqlite:///tmp/oakridge-incremental-{}.db", Uuid::new_v4());
+    let (app, _coordinator) = boot(
+        Config {
+            port: 0,
+            bind_addr: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            db_url: db_url.clone(),
+            pwa_dir: PathBuf::from("/tmp"),
+            cors_origins: vec![],
+            auth_policy: oakridge_core::config::AuthPolicy::Loopback,
+            stage_timeout_secs: 3600,
+            stuck_sweep_interval_secs: 3600,
+        },
+        move |stages: &mut StageTypeRegistry, artifacts: &mut ArtifactTypeRegistry| {
+            artifacts.register(ArtifactTypeDef {
+                id: "result".into(),
+                validate: |_| Ok(()),
+                component_id: "result".into(),
+                capabilities: Default::default(),
+                anchor_schema: None,
+                review_items_extractor: None,
+            });
+            stages.register(Arc::new(DelegatedSessionStage::new(
+                prompt_dir,
+                KbblClient::new(base_url).unwrap(),
+            )));
+        },
+    )
+    .await
+    .unwrap();
+    let pool = db::init_pool(&db_url).await.unwrap();
+    let definition = incremental_definition();
+    queries::insert_workflow_def(&pool, &definition).await.unwrap();
+    let run: WorkflowRun = serde_json::from_value(
+        json_request(
+            &app,
+            "POST",
+            "/workflow_runs".into(),
+            json!({"workflow_def_id": definition.id, "project_id": null, "context": {}}),
+        )
+        .await,
+    )
+    .unwrap();
+
+    let _producer_a = inputs.recv().await.unwrap();
+    let _producer_b = inputs.recv().await.unwrap();
+    let producer = stage_for_key(&pool, run.id, "producer").await;
+    let artifact_a = emit(
+        &app,
+        producer.id,
+        "a",
+        "result",
+        json!({"marker": "A-READY"}),
+    )
+    .await;
+    pass_gate(&app, producer.id, artifact_a).await;
+
+    let assessor_a = match tokio::time::timeout(std::time::Duration::from_secs(3), inputs.recv()).await {
+        Ok(Some(input)) => input,
+        other => panic!(
+            "assessor did not start: {other:?}; stages={:?}",
+            queries::list_stage_instances_for_run(&pool, &run.id).await.unwrap()
+        ),
+    };
+    assert!(assessor_a.text.contains("A-READY"));
+    let assessor = stage_for_key(&pool, run.id, "assessor").await;
+    let units = queries::list_session_units_for_stage(&pool, &assessor.id)
+        .await
+        .unwrap();
+    assert_eq!(units.len(), 1);
+    assert_eq!(units[0].unit_id, "a");
+    assert_eq!(units[0].source_artifact_id, Some(artifact_a));
+    let assessment_a = emit(
+        &app,
+        assessor.id,
+        "a",
+        "assessment",
+        json!({"verdict": "pass"}),
+    )
+    .await;
+    pass_gate(&app, assessor.id, assessment_a).await;
+    let mut held_assessor = queries::get_stage_instance_by_id(&pool, &assessor.id)
+        .await
+        .unwrap();
+    for _ in 0..64 {
+        if held_assessor.status == oakridge_core::types::StageStatus::Running {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        held_assessor = queries::get_stage_instance_by_id(&pool, &assessor.id)
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        held_assessor.status,
+        oakridge_core::types::StageStatus::Running,
+        "consumer stays open until the producer stream is exhausted"
+    );
+    assert!(
+        held_assessor.started_at.is_some(),
+        "holding the consumer open must preserve its start timestamp"
+    );
+    assert_ne!(
+        queries::get_stage_instance_by_id(&pool, &producer.id)
+            .await
+            .unwrap()
+            .status,
+        oakridge_core::types::StageStatus::Done
+    );
+    fake_task.abort();
+}
+
+#[tokio::test]
+async fn zero_unit_producer_surfaces_missing_required_incremental_input() {
+    let prompts = tempfile::tempdir().unwrap();
+    std::fs::write(prompts.path().join("unit.md"), "Build {{UNIT_ID}}").unwrap();
+    std::fs::write(prompts.path().join("assess.md"), "Assess {{UNIT_ID}} {{RESULT}}")
+        .unwrap();
+    let prompt_dir = prompts.path().to_path_buf();
+    let (base_url, _inputs, fake_task) = fake_kbbl().await;
+    let db_url = format!("sqlite:///tmp/oakridge-zero-unit-{}.db", Uuid::new_v4());
+    let (app, _coordinator) = boot(
+        Config {
+            port: 0,
+            bind_addr: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            db_url: db_url.clone(),
+            pwa_dir: PathBuf::from("/tmp"),
+            cors_origins: vec![],
+            auth_policy: oakridge_core::config::AuthPolicy::Loopback,
+            stage_timeout_secs: 3600,
+            stuck_sweep_interval_secs: 3600,
+        },
+        move |stages: &mut StageTypeRegistry, artifacts: &mut ArtifactTypeRegistry| {
+            artifacts.register(ArtifactTypeDef {
+                id: "result".into(),
+                validate: |_| Ok(()),
+                component_id: "result".into(),
+                capabilities: Default::default(),
+                anchor_schema: None,
+                review_items_extractor: None,
+            });
+            stages.register(Arc::new(DelegatedSessionStage::new(
+                prompt_dir,
+                KbblClient::new(base_url).unwrap(),
+            )));
+        },
+    )
+    .await
+    .unwrap();
+    let pool = db::init_pool(&db_url).await.unwrap();
+    let mut definition = incremental_definition();
+    definition.graph.stages.get_mut("producer").unwrap().config["fan_out"]["over"]["value"] =
+        json!("[]");
+    queries::insert_workflow_def(&pool, &definition).await.unwrap();
+    let run: WorkflowRun = serde_json::from_value(
+        json_request(
+            &app,
+            "POST",
+            "/workflow_runs".into(),
+            json!({"workflow_def_id": definition.id, "project_id": null, "context": {}}),
+        )
+        .await,
+    )
+    .unwrap();
+
+    let assessor = stage_for_key(&pool, run.id, "assessor").await;
+    assert_eq!(assessor.status, oakridge_core::types::StageStatus::Failed);
+    assert!(
+        assessor
+            .terminal_meta
+            .as_ref()
+            .and_then(|meta| meta.get("error"))
+            .and_then(Value::as_str)
+            .is_some_and(|error| error.contains("required collection input 'results'"))
+    );
+    fake_task.abort();
 }
 
 #[tokio::test]

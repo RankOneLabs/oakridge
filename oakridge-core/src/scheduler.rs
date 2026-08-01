@@ -18,7 +18,7 @@ use crate::executor::prompt_config::SlotBinding;
 use crate::executor::{ExecutorEvent, ResumePayload, StageContext, StageHandle};
 use crate::registry::{ArtifactTypeRegistry, StageTypeRegistry};
 use crate::types::{
-    Artifact, ResolvedInput, RunStatus, StageInstance, StageInstanceId, StageInstanceSummary,
+    Artifact, InputDelivery, ResolvedInput, RunStatus, StageInstance, StageInstanceId, StageInstanceSummary,
     StageKey, StageStatus, StageTypeId, WorkflowDef, WorkflowRunId,
 };
 
@@ -154,6 +154,9 @@ impl RunTask {
                             break;
                         }
                     }
+                    Some(ExecutorEvent::UnitCompleted { instance_id, unit_id, artifact }) => {
+                        self.on_unit_completed(instance_id, unit_id, artifact).await;
+                    }
                     None => break,
                 },
                 msg = self.control_rx.recv() => match msg {
@@ -221,7 +224,8 @@ impl RunTask {
         stage_key: &StageKey,
         slot: &crate::types::InputSlot,
     ) -> bool {
-        slot.collect || self.input_inherits_fan_out(stage_key, &slot.name)
+        slot.delivery == InputDelivery::ProducerComplete
+            && (slot.collect || self.input_inherits_fan_out(stage_key, &slot.name))
     }
 
     fn is_fan_out_over_slot(&self, stage_key: &StageKey, slot_name: &str) -> bool {
@@ -539,6 +543,71 @@ impl RunTask {
             .await;
     }
 
+    async fn on_unit_completed(
+        &mut self,
+        instance_id: StageInstanceId,
+        unit_id: String,
+        artifact: Artifact,
+    ) {
+        let Some(producer_key) = self
+            .index
+            .iter()
+            .find(|(_, (id, _))| *id == instance_id)
+            .map(|(key, _)| key.clone())
+        else {
+            return;
+        };
+        let Some(output_name) = artifact.output_name.clone() else {
+            return;
+        };
+        let edges: Vec<_> = self
+            .def
+            .graph
+            .edges
+            .iter()
+            .filter(|edge| edge.from.stage == producer_key && edge.from.slot == output_name)
+            .filter(|edge| {
+                self.def
+                    .graph
+                    .stages
+                    .get(&edge.to.stage)
+                    .and_then(|node| node.inputs.iter().find(|slot| slot.name == edge.to.slot))
+                    .map(|slot| slot.delivery == InputDelivery::UnitComplete)
+                    .unwrap_or(false)
+            })
+            .cloned()
+            .collect();
+        for edge in edges {
+            self.resolved
+                .entry((edge.to.stage.clone(), edge.to.slot.clone()))
+                .or_default()
+                .insert(unit_id.clone(), artifact.clone());
+            if let Some((stage_instance_id, status)) = self.index.get(&edge.to.stage).cloned() {
+                if matches!(status, StageStatus::Pending | StageStatus::Running | StageStatus::Parked) {
+                    if let Some(handle) = self.handles.get(&stage_instance_id) {
+                        if let Err(err) = handle
+                            .resume(ResumePayload::UnitInputAvailable {
+                                input_name: edge.to.slot,
+                                unit_id: unit_id.clone(),
+                                artifact: artifact.clone(),
+                            })
+                            .await
+                        {
+                            tracing::error!(
+                                consumer_stage = edge.to.stage,
+                                unit_id,
+                                "incremental unit delivery failed: {}",
+                                err
+                            );
+                        }
+                    }
+                }
+            } else if self.all_required_inputs_satisfied(&edge.to.stage) {
+                self.activate_stage(&edge.to.stage).await;
+            }
+        }
+    }
+
     async fn propagate_artifact(
         &mut self,
         producer_key: StageKey,
@@ -572,6 +641,17 @@ impl RunTask {
             for edge in edges {
                 let consumer_key = edge.to.stage.clone();
                 let slot_name = edge.to.slot.clone();
+                let is_unit_complete = self
+                    .def
+                    .graph
+                    .stages
+                    .get(&consumer_key)
+                    .and_then(|node| node.inputs.iter().find(|slot| slot.name == slot_name))
+                    .map(|slot| slot.delivery == InputDelivery::UnitComplete)
+                    .unwrap_or(false);
+                if is_unit_complete {
+                    continue;
+                }
                 let unit_id = resolved_unit_id(
                     &self.def,
                     &producer_key,
@@ -698,6 +778,39 @@ impl RunTask {
         parked_reason: Option<String>,
         terminal_meta: Option<Value>,
     ) -> bool {
+        let changed_stage_key = self
+            .index
+            .iter()
+            .find(|(_, (id, _))| *id == instance_id)
+            .map(|(key, _)| key.clone());
+        if status == StageStatus::Done
+            && changed_stage_key
+                .as_ref()
+                .map(|key| self.awaits_more_unit_inputs(key))
+                .unwrap_or(false)
+        {
+            let started_at = queries::get_stage_instance_by_id(&self.db, &instance_id)
+                .await
+                .ok()
+                .and_then(|stage| stage.started_at);
+            if let Some((_, current)) = changed_stage_key
+                .as_ref()
+                .and_then(|key| self.index.get_mut(key))
+            {
+                *current = StageStatus::Running;
+            }
+            let _ = queries::update_stage_instance_status_with_terminal_meta(
+                &self.db,
+                &instance_id,
+                StageStatus::Running,
+                None,
+                None,
+                started_at,
+                None,
+            )
+            .await;
+            return false;
+        }
         for (_, (id, s)) in self.index.iter_mut() {
             if *id == instance_id {
                 *s = status;
@@ -716,6 +829,7 @@ impl RunTask {
             if let Some(stage_key) = completed_stage_key {
                 self.release_completed_delegated_outputs(stage_key, instance_id)
                     .await;
+                self.notify_unit_input_exhaustion(instance_id).await;
             }
         }
 
@@ -761,6 +875,102 @@ impl RunTask {
         true
     }
 
+    fn awaits_more_unit_inputs(&self, consumer_key: &StageKey) -> bool {
+        self.def
+            .graph
+            .stages
+            .get(consumer_key)
+            .map(|node| {
+                node.inputs.iter().any(|slot| {
+                    slot.delivery == InputDelivery::UnitComplete
+                        && !self.producer_stages_are_done(consumer_key, &slot.name)
+                })
+            })
+            .unwrap_or(false)
+    }
+
+    async fn notify_unit_input_exhaustion(&mut self, producer_instance_id: StageInstanceId) {
+        let Some(producer_key) = self
+            .index
+            .iter()
+            .find(|(_, (id, _))| *id == producer_instance_id)
+            .map(|(key, _)| key.clone())
+        else {
+            return;
+        };
+        let edges: Vec<_> = self
+            .def
+            .graph
+            .edges
+            .iter()
+            .filter(|edge| edge.from.stage == producer_key)
+            .cloned()
+            .collect();
+        for edge in edges {
+            let is_incremental = self
+                .def
+                .graph
+                .stages
+                .get(&edge.to.stage)
+                .and_then(|node| node.inputs.iter().find(|slot| slot.name == edge.to.slot))
+                .map(|slot| slot.delivery == InputDelivery::UnitComplete)
+                .unwrap_or(false);
+            if !is_incremental || !self.producer_stages_are_done(&edge.to.stage, &edge.to.slot) {
+                continue;
+            }
+            if !self.index.contains_key(&edge.to.stage) {
+                // A producer may validly complete without materializing any
+                // units. Activate the consumer at exhaustion so its normal
+                // required-input validation records a diagnosable failure.
+                self.activate_stage(&edge.to.stage).await;
+                continue;
+            }
+            if let Some((consumer_id, _)) = self.index.get(&edge.to.stage) {
+                if let Some(handle) = self.handles.get(consumer_id) {
+                    if let Err(err) = handle
+                        .resume(ResumePayload::UnitInputExhausted {
+                            input_name: edge.to.slot.clone(),
+                        })
+                        .await
+                    {
+                        tracing::error!(
+                            consumer_stage = edge.to.stage,
+                            "incremental input exhaustion delivery failed: {}",
+                            err
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    async fn replay_completed_unit_deliveries(&mut self) {
+        let Ok(units) = queries::list_session_units_for_run(&self.db, &self.run_id).await else {
+            return;
+        };
+        for unit in units
+            .into_iter()
+            .filter(|unit| matches!(unit.status, crate::types::UnitStatus::Done))
+        {
+            let Some(artifact_id) = unit.artifact_id else {
+                continue;
+            };
+            let Ok(artifact) = queries::get_artifact_by_id(&self.db, &artifact_id).await else {
+                continue;
+            };
+            self.on_unit_completed(unit.stage_instance_id, unit.unit_id, artifact)
+                .await;
+        }
+        let completed_instances: Vec<_> = self
+            .index
+            .values()
+            .filter_map(|(id, status)| (*status == StageStatus::Done).then_some(*id))
+            .collect();
+        for instance_id in completed_instances {
+            self.notify_unit_input_exhaustion(instance_id).await;
+        }
+    }
+
     async fn on_decision(
         &mut self,
         stage_instance_id: StageInstanceId,
@@ -769,6 +979,8 @@ impl RunTask {
         let resume_kind = match &payload {
             ResumePayload::GateDecision { .. } => "gate_decision",
             ResumePayload::FeedbackArtifact { .. } => "feedback_artifact",
+            ResumePayload::UnitInputAvailable { .. } => "unit_input_available",
+            ResumePayload::UnitInputExhausted { .. } => "unit_input_exhausted",
             ResumePayload::Executor { .. } => "executor",
         };
         let current = queries::get_stage_instance_by_id(&self.db, &stage_instance_id)
@@ -2060,6 +2272,7 @@ impl Coordinator {
                 }
             }
 
+            task.replay_completed_unit_deliveries().await;
             task.prime_source_stages().await;
 
             // Evaluate quiescence before entering the event loop.
@@ -2540,6 +2753,7 @@ mod tests {
                                 artifact_type: "any".into(),
                                 optional: false,
                                 collect: false,
+                                delivery: InputDelivery::ProducerComplete,
                             }],
                             outputs: vec![],
                         },
@@ -2659,6 +2873,7 @@ mod tests {
                                 artifact_type: "any".into(),
                                 optional: true,
                                 collect: false,
+                                delivery: InputDelivery::ProducerComplete,
                             }],
                             outputs: vec![OutputSlot {
                                 name: "out_a".into(),
@@ -2676,6 +2891,7 @@ mod tests {
                                 artifact_type: "any".into(),
                                 optional: false,
                                 collect: false,
+                                delivery: InputDelivery::ProducerComplete,
                             }],
                             outputs: vec![OutputSlot {
                                 name: "out_b".into(),

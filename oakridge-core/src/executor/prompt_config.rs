@@ -364,8 +364,12 @@ mod tests {
     #[test]
     fn resolve_collection_input_uses_ordered_provenance_envelopes() {
         let mut artifacts = std::collections::BTreeMap::new();
-        artifacts.insert("b".into(), make_artifact(json!({"value": 2})));
-        artifacts.insert("a".into(), make_artifact(json!({"value": 1})));
+        let artifact_b = make_artifact(json!({"value": 2}));
+        let artifact_a = make_artifact(json!({"value": 1}));
+        let artifact_b_id = artifact_b.id;
+        let artifact_a_id = artifact_a.id;
+        artifacts.insert("b".into(), artifact_b);
+        artifacts.insert("a".into(), artifact_a);
         let mut inputs = HashMap::new();
         inputs.insert("items".into(), ResolvedInput::Collection(artifacts));
         let binding = SlotBinding::Input {
@@ -377,8 +381,8 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<Value>(&resolved).unwrap(),
             json!([
-                {"unit_id": "a", "artifact": {"value": 1}},
-                {"unit_id": "b", "artifact": {"value": 2}}
+                {"unit_id": "a", "artifact_id": artifact_a_id, "artifact": {"value": 1}},
+                {"unit_id": "b", "artifact_id": artifact_b_id, "artifact": {"value": 2}}
             ])
         );
     }

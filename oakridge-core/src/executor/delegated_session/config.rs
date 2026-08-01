@@ -164,6 +164,9 @@ pub struct DelegatedSessionConfig {
     /// Workdirs resolved from `fan_out.workdir`, keyed by materialized unit id.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub resolved_fan_out_workdirs: HashMap<String, PathBuf>,
+    /// Immutable run context retained for bindings on units delivered after activation.
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    pub fan_out_context: serde_json::Value,
     pub workdir: PathBuf,
     pub session_name: String,
     pub model: Option<String>,
@@ -306,6 +309,7 @@ mod tests {
             fan_out_prompt_plan: None,
             resolved_fan_out_over: None,
             resolved_fan_out_workdirs: HashMap::new(),
+            fan_out_context: serde_json::Value::Null,
             workdir: PathBuf::from("/workspace/abc"),
             session_name: "s1".into(),
             model: None,

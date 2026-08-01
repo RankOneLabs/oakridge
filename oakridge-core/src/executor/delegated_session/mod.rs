@@ -294,10 +294,11 @@ fn materialize_persisted_unit(
         params,
         depends_on: unit.depends_on.clone(),
         rendered_prompt: render_template(&prompt_plan.raw_template, &slot_values)?,
-        workdir: config
-            .resolved_fan_out_workdirs
-            .get(&unit.unit_id)
-            .cloned()
+        workdir: unit
+            .workdir_path
+            .as_ref()
+            .map(PathBuf::from)
+            .or_else(|| config.resolved_fan_out_workdirs.get(&unit.unit_id).cloned())
             .unwrap_or_else(|| config.workdir.clone()),
         worktree,
     })
@@ -1756,6 +1757,7 @@ impl StageType for DelegatedSessionStage {
             fan_out_prompt_plan,
             resolved_fan_out_over,
             resolved_fan_out_workdirs,
+            fan_out_context: run_context.clone(),
             workdir: PathBuf::from(workdir_str),
             session_name: def
                 .session_name
@@ -1818,9 +1820,16 @@ impl StageType for DelegatedSessionStage {
                                 .map(|identity| identity.worktree_subdir.clone()),
                             worktree_base_ref: worktree
                                 .and_then(|identity| identity.base_ref.clone()),
+                            workdir_path: Some(unit.workdir.to_string_lossy().into_owned()),
                             status: UnitStatus::Pending,
                             gate_state: None,
                             artifact_id: None,
+                            source_artifact_id: unit
+                                .params
+                                .get("artifact_id")
+                                .and_then(Value::as_str)
+                                .and_then(|id| uuid::Uuid::parse_str(id).ok())
+                                .map(crate::types::ArtifactId),
                             terminal_meta: None,
                             created_at: now,
                             updated_at: now,
@@ -1948,6 +1957,7 @@ impl StageType for DelegatedSessionStage {
                 worktree_branch: live_worktree_branch.clone(),
                 worktree_path: live_worktree_path.clone(),
                 worktree_base_ref: live_worktree_base_ref.clone(),
+                workdir_path: Some(config.workdir.to_string_lossy().into_owned()),
                 // On recovery of a gate-parked stage, mirror the recovered parked
                 // state onto the unit row instead of hardcoding Running/None — else
                 // the per-unit read-model reports a running unit with no gate while
@@ -1963,6 +1973,7 @@ impl StageType for DelegatedSessionStage {
                     None
                 },
                 artifact_id: None,
+                source_artifact_id: None,
                 terminal_meta: None,
                 created_at: now,
                 updated_at: now,
@@ -2079,6 +2090,12 @@ impl StageHandle for DelegatedSessionHandle {
             crate::executor::ResumePayload::FeedbackArtifact { artifact } => {
                 self.resume_feedback_artifact(artifact).await
             }
+            crate::executor::ResumePayload::UnitInputAvailable { .. } => {
+                anyhow::bail!("unit input delivery requires a fan-out delegated session")
+            }
+            crate::executor::ResumePayload::UnitInputExhausted { .. } => {
+                anyhow::bail!("unit input delivery requires a fan-out delegated session")
+            }
             crate::executor::ResumePayload::Executor { .. } => {
                 anyhow::bail!("delegated approval forwarding is not enabled until K1 exists")
             }
@@ -2130,6 +2147,135 @@ impl DelegatedSessionHandle {
         payload: crate::executor::ResumePayload,
     ) -> anyhow::Result<()> {
         match payload {
+            crate::executor::ResumePayload::UnitInputExhausted { input_name } => {
+                let expected_input = match &scheduler.fan_out.over {
+                    SlotBinding::Input { input_name, path: None } => input_name,
+                    _ => anyhow::bail!(
+                        "incremental unit delivery requires fan_out.over to select the whole input"
+                    ),
+                };
+                if &input_name != expected_input {
+                    anyhow::bail!("unit input exhaustion was delivered for an unrelated input");
+                }
+                scheduler.recompute_aggregate().await
+            }
+            crate::executor::ResumePayload::UnitInputAvailable {
+                input_name,
+                unit_id,
+                artifact,
+            } => {
+                let expected_input = match &scheduler.fan_out.over {
+                    SlotBinding::Input { input_name, path: None } => input_name,
+                    _ => anyhow::bail!(
+                        "incremental unit delivery requires fan_out.over to select the whole input"
+                    ),
+                };
+                if &input_name != expected_input {
+                    anyhow::bail!(
+                        "incremental unit was delivered on '{}' but fan_out uses '{}'",
+                        input_name,
+                        expected_input
+                    );
+                }
+                let units = queries::list_session_units_for_stage(
+                    scheduler.ctx.pool(),
+                    &self.stage_instance_id,
+                )
+                .await?;
+                if let Some(existing) = units.iter().find(|unit| unit.unit_id == unit_id) {
+                    if existing.source_artifact_id == Some(artifact.id) {
+                        return Ok(());
+                    }
+                    anyhow::bail!("incremental unit '{}' already exists from another artifact", unit_id);
+                }
+                let params = serde_json::json!({
+                    "unit_id": unit_id,
+                    "artifact_id": artifact.id,
+                    "artifact": artifact.body,
+                });
+                let depends_on = match &scheduler.fan_out.depends_on_path {
+                    None => Vec::new(),
+                    Some(path) => params
+                        .pointer(path)
+                        .and_then(Value::as_array)
+                        .ok_or_else(|| anyhow::anyhow!("fan_out depends_on at '{}' must be an array", path))?
+                        .iter()
+                        .map(|value| value.as_str().filter(|id| !id.is_empty()).map(str::to_owned)
+                            .ok_or_else(|| anyhow::anyhow!("fan_out dependency must be a non-empty string")))
+                        .collect::<anyhow::Result<Vec<_>>>()?,
+                };
+                let workdir = scheduler
+                    .fan_out
+                    .workdir
+                    .as_ref()
+                    .map(|binding| {
+                        resolve_binding(
+                            binding,
+                            &HashMap::new(),
+                            &scheduler.config.fan_out_context,
+                            Some(&params),
+                        )
+                            .map(|path| {
+                                substitute_unit_template(
+                                    &path,
+                                    &unit_id,
+                                    self.stage_instance_id,
+                                )
+                            })
+                    })
+                    .transpose()?;
+                let worktree = scheduler.fan_out.worktree.as_ref().map(|template| {
+                    WorktreeIdentity {
+                        branch_name: substitute_unit_template(
+                            &template.branch_name,
+                            &unit_id,
+                            self.stage_instance_id,
+                        ),
+                        worktree_subdir: substitute_unit_template(
+                            &template.worktree_subdir,
+                            &unit_id,
+                            self.stage_instance_id,
+                        ),
+                        base_ref: template.base_ref.as_ref().map(|base| {
+                            substitute_unit_template(base, &unit_id, self.stage_instance_id)
+                        }),
+                    }
+                });
+                let now = chrono::Utc::now();
+                queries::upsert_session_unit(
+                    scheduler.ctx.pool(),
+                    &crate::types::SessionUnit {
+                        stage_instance_id: self.stage_instance_id,
+                        unit_id,
+                        params: Some(params),
+                        depends_on,
+                        external_ref: None,
+                        worktree_branch: worktree
+                            .as_ref()
+                            .map(|identity| identity.branch_name.clone()),
+                        worktree_path: worktree
+                            .as_ref()
+                            .map(|identity| identity.worktree_subdir.clone()),
+                        worktree_base_ref: worktree
+                            .and_then(|identity| identity.base_ref),
+                        workdir_path: Some(
+                            workdir.unwrap_or_else(|| {
+                                scheduler.config.workdir.to_string_lossy().into_owned()
+                            }),
+                        ),
+                        status: UnitStatus::Pending,
+                        gate_state: None,
+                        artifact_id: None,
+                        source_artifact_id: Some(artifact.id),
+                        terminal_meta: None,
+                        created_at: now,
+                        updated_at: now,
+                    },
+                )
+                .await?;
+                scheduler.recompute_aggregate().await?;
+                scheduler.admit().await
+            }
             crate::executor::ResumePayload::FeedbackArtifact { artifact } => {
                 if artifact.stage_instance_id != self.stage_instance_id {
                     anyhow::bail!("feedback artifact does not belong to this stage");
@@ -2294,6 +2440,15 @@ impl DelegatedSessionHandle {
                                 None,
                             )
                             .await?;
+                            let completed_artifact = queries::get_artifact_by_id(
+                                scheduler.ctx.pool(),
+                                &gate_state.artifact_id,
+                            )
+                            .await?;
+                            scheduler
+                                .ctx
+                                .unit_completed(unit.unit_id.clone(), completed_artifact)
+                                .await?;
                             let removed_session = {
                                 self.live_sessions
                                     .lock()
@@ -2774,6 +2929,7 @@ mod tests {
             }),
             resolved_fan_out_over: Some(over),
             resolved_fan_out_workdirs: HashMap::new(),
+            fan_out_context: Value::Null,
             workdir: PathBuf::from("/work"),
             session_name: "session".into(),
             model: None,
@@ -2896,9 +3052,11 @@ mod tests {
             worktree_branch: Some("saved-branch".into()),
             worktree_path: Some("saved-path".into()),
             worktree_base_ref: Some("saved-base".into()),
+            workdir_path: Some("/saved-workdir".into()),
             status: UnitStatus::Pending,
             gate_state: None,
             artifact_id: None,
+            source_artifact_id: None,
             terminal_meta: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -2963,9 +3121,11 @@ mod tests {
                     worktree_branch: Some(format!("cohort/{unit_id}")),
                     worktree_path: Some(format!("/tmp/{unit_id}")),
                     worktree_base_ref: Some("main".into()),
+                    workdir_path: Some("/tmp".into()),
                     status,
                     gate_state,
                     artifact_id: None,
+                    source_artifact_id: None,
                     terminal_meta: None,
                     created_at: now,
                     updated_at: now,
