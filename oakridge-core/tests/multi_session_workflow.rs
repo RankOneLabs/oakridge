@@ -424,12 +424,108 @@ async fn unit_complete_delivery_starts_matching_consumer_before_producer_stage_f
     assert_eq!(units.len(), 1);
     assert_eq!(units[0].unit_id, "a");
     assert_eq!(units[0].source_artifact_id, Some(artifact_a));
+    let assessment_a = emit(
+        &app,
+        assessor.id,
+        "a",
+        "assessment",
+        json!({"verdict": "pass"}),
+    )
+    .await;
+    pass_gate(&app, assessor.id, assessment_a).await;
+    let mut held_assessor = queries::get_stage_instance_by_id(&pool, &assessor.id)
+        .await
+        .unwrap();
+    for _ in 0..64 {
+        if held_assessor.status == oakridge_core::types::StageStatus::Running {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        held_assessor = queries::get_stage_instance_by_id(&pool, &assessor.id)
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        held_assessor.status,
+        oakridge_core::types::StageStatus::Running,
+        "consumer stays open until the producer stream is exhausted"
+    );
+    assert!(
+        held_assessor.started_at.is_some(),
+        "holding the consumer open must preserve its start timestamp"
+    );
     assert_ne!(
         queries::get_stage_instance_by_id(&pool, &producer.id)
             .await
             .unwrap()
             .status,
         oakridge_core::types::StageStatus::Done
+    );
+    fake_task.abort();
+}
+
+#[tokio::test]
+async fn zero_unit_producer_surfaces_missing_required_incremental_input() {
+    let prompts = tempfile::tempdir().unwrap();
+    std::fs::write(prompts.path().join("unit.md"), "Build {{UNIT_ID}}").unwrap();
+    std::fs::write(prompts.path().join("assess.md"), "Assess {{UNIT_ID}} {{RESULT}}")
+        .unwrap();
+    let prompt_dir = prompts.path().to_path_buf();
+    let (base_url, _inputs, fake_task) = fake_kbbl().await;
+    let db_url = format!("sqlite:///tmp/oakridge-zero-unit-{}.db", Uuid::new_v4());
+    let (app, _coordinator) = boot(
+        Config {
+            port: 0,
+            bind_addr: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            db_url: db_url.clone(),
+            pwa_dir: PathBuf::from("/tmp"),
+            cors_origins: vec![],
+            auth_policy: oakridge_core::config::AuthPolicy::Loopback,
+            stage_timeout_secs: 3600,
+            stuck_sweep_interval_secs: 3600,
+        },
+        move |stages: &mut StageTypeRegistry, artifacts: &mut ArtifactTypeRegistry| {
+            artifacts.register(ArtifactTypeDef {
+                id: "result".into(),
+                validate: |_| Ok(()),
+                component_id: "result".into(),
+                capabilities: Default::default(),
+                anchor_schema: None,
+                review_items_extractor: None,
+            });
+            stages.register(Arc::new(DelegatedSessionStage::new(
+                prompt_dir,
+                KbblClient::new(base_url).unwrap(),
+            )));
+        },
+    )
+    .await
+    .unwrap();
+    let pool = db::init_pool(&db_url).await.unwrap();
+    let mut definition = incremental_definition();
+    definition.graph.stages.get_mut("producer").unwrap().config["fan_out"]["over"]["value"] =
+        json!("[]");
+    queries::insert_workflow_def(&pool, &definition).await.unwrap();
+    let run: WorkflowRun = serde_json::from_value(
+        json_request(
+            &app,
+            "POST",
+            "/workflow_runs".into(),
+            json!({"workflow_def_id": definition.id, "project_id": null, "context": {}}),
+        )
+        .await,
+    )
+    .unwrap();
+
+    let assessor = stage_for_key(&pool, run.id, "assessor").await;
+    assert_eq!(assessor.status, oakridge_core::types::StageStatus::Failed);
+    assert!(
+        assessor
+            .terminal_meta
+            .as_ref()
+            .and_then(|meta| meta.get("error"))
+            .and_then(Value::as_str)
+            .is_some_and(|error| error.contains("required collection input 'results'"))
     );
     fake_task.abort();
 }

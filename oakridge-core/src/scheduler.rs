@@ -789,6 +789,10 @@ impl RunTask {
                 .map(|key| self.awaits_more_unit_inputs(key))
                 .unwrap_or(false)
         {
+            let started_at = queries::get_stage_instance_by_id(&self.db, &instance_id)
+                .await
+                .ok()
+                .and_then(|stage| stage.started_at);
             if let Some((_, current)) = changed_stage_key
                 .as_ref()
                 .and_then(|key| self.index.get_mut(key))
@@ -801,7 +805,7 @@ impl RunTask {
                 StageStatus::Running,
                 None,
                 None,
-                None,
+                started_at,
                 None,
             )
             .await;
@@ -885,22 +889,24 @@ impl RunTask {
             .unwrap_or(false)
     }
 
-    async fn notify_unit_input_exhaustion(&self, producer_instance_id: StageInstanceId) {
+    async fn notify_unit_input_exhaustion(&mut self, producer_instance_id: StageInstanceId) {
         let Some(producer_key) = self
             .index
             .iter()
             .find(|(_, (id, _))| *id == producer_instance_id)
-            .map(|(key, _)| key)
+            .map(|(key, _)| key.clone())
         else {
             return;
         };
-        for edge in self
+        let edges: Vec<_> = self
             .def
             .graph
             .edges
             .iter()
-            .filter(|edge| &edge.from.stage == producer_key)
-        {
+            .filter(|edge| edge.from.stage == producer_key)
+            .cloned()
+            .collect();
+        for edge in edges {
             let is_incremental = self
                 .def
                 .graph
@@ -910,6 +916,13 @@ impl RunTask {
                 .map(|slot| slot.delivery == InputDelivery::UnitComplete)
                 .unwrap_or(false);
             if !is_incremental || !self.producer_stages_are_done(&edge.to.stage, &edge.to.slot) {
+                continue;
+            }
+            if !self.index.contains_key(&edge.to.stage) {
+                // A producer may validly complete without materializing any
+                // units. Activate the consumer at exhaustion so its normal
+                // required-input validation records a diagnosable failure.
+                self.activate_stage(&edge.to.stage).await;
                 continue;
             }
             if let Some((consumer_id, _)) = self.index.get(&edge.to.stage) {
