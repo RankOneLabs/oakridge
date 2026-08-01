@@ -304,6 +304,27 @@ fn materialize_persisted_unit(
     })
 }
 
+fn producer_unit_id_for_consumer(
+    artifact_label: Option<&str>,
+    consumer_unit_id: &str,
+) -> anyhow::Result<String> {
+    let producer_unit_id = artifact_label
+        .filter(|label| !label.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("inherited worktree artifact has no producer unit label"))?;
+    let consumer_leaf_id = consumer_unit_id
+        .rsplit(':')
+        .next()
+        .unwrap_or(consumer_unit_id);
+    if producer_unit_id != consumer_leaf_id {
+        anyhow::bail!(
+            "inherited worktree artifact unit '{}' does not match consumer unit '{}'",
+            producer_unit_id,
+            consumer_unit_id
+        );
+    }
+    Ok(producer_unit_id.to_owned())
+}
+
 async fn inherited_producer_workdir(
     pool: &sqlx::SqlitePool,
     params: &Value,
@@ -319,23 +340,27 @@ async fn inherited_producer_workdir(
                 .map_err(Into::into)
         })?;
     let artifact = queries::get_artifact_by_id(pool, &artifact_id).await?;
-    if artifact.label.as_deref() != Some(unit_id) {
-        anyhow::bail!(
-            "inherited worktree artifact unit '{}' does not match consumer unit '{}'",
-            artifact.label.as_deref().unwrap_or(""),
-            unit_id
-        );
-    }
-    let producer_unit =
-        queries::get_session_unit(pool, &artifact.stage_instance_id, unit_id).await?;
+    let producer_unit_id =
+        producer_unit_id_for_consumer(artifact.label.as_deref(), unit_id)?;
+    let producer_unit = queries::get_session_unit(
+        pool,
+        &artifact.stage_instance_id,
+        &producer_unit_id,
+    )
+    .await?;
     if !matches!(producer_unit.status, UnitStatus::Done) {
-        anyhow::bail!("producer unit '{}' is not complete", unit_id);
+        anyhow::bail!("producer unit '{}' is not complete", producer_unit_id);
     }
     producer_unit
         .worktree_path
         .filter(|path| !path.is_empty())
         .map(PathBuf::from)
-        .ok_or_else(|| anyhow::anyhow!("producer unit '{}' has no persisted worktree path", unit_id))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "producer unit '{}' has no persisted worktree path",
+                producer_unit_id
+            )
+        })
 }
 
 fn resolve_inherited_prompt_bindings(
@@ -1657,6 +1682,11 @@ impl StageType for DelegatedSessionStage {
         }
         if let Some(fan_out) = &def.fan_out {
             if let Some(input_name) = &fan_out.inherit_worktree_from {
+                if fan_out.workdir.is_some() {
+                    anyhow::bail!(
+                        "fan_out cannot combine inherit_worktree_from with workdir"
+                    );
+                }
                 if fan_out.worktree.is_some() {
                     anyhow::bail!(
                         "fan_out cannot combine inherit_worktree_from with worktree"
@@ -3682,6 +3712,50 @@ mod tests {
             "yolo": false,
             "gate_output": gate_output
         })
+    }
+
+    #[test]
+    fn inherited_worktree_uses_artifact_label_for_namespaced_consumer_unit() {
+        assert_eq!(
+            producer_unit_id_for_consumer(Some("cohort-a"), "build:cohort-a").unwrap(),
+            "cohort-a"
+        );
+        assert!(producer_unit_id_for_consumer(Some("cohort-b"), "build:cohort-a").is_err());
+    }
+
+    #[test]
+    fn validate_def_config_rejects_inherited_worktree_with_fan_out_workdir() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("delegated.md"), "Task {{UNIT_ID}}").unwrap();
+        let stage = DelegatedSessionStage::new(
+            dir.path().to_path_buf(),
+            KbblClient::new("http://127.0.0.1:8080/").unwrap(),
+        );
+        let config = json!({
+            "runtime": "codex",
+            "prompt_template_path": "delegated.md",
+            "slot_bindings": {"UNIT_ID": {"from": "literal", "value": "0"}},
+            "workdir": {"from": "literal", "value": "/work"},
+            "session_name": "s",
+            "fan_out": {
+                "over": {"from": "input", "input_name": "build_result", "path": null},
+                "unit_id_path": "/unit_id",
+                "workdir": {"from": "literal", "value": "/other"},
+                "inherit_worktree_from": "build_result"
+            }
+        });
+        let inputs = vec![InputSlot {
+            name: "build_result".into(),
+            artifact_type: "text".into(),
+            optional: false,
+            collect: false,
+            delivery: crate::types::InputDelivery::UnitComplete,
+        }];
+
+        let error = stage.validate_def_config(&config, &inputs, &[]).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("cannot combine inherit_worktree_from with workdir"));
     }
 
     #[test]
