@@ -18,6 +18,15 @@ function defaultForSource(source: SlotBindingSource): SlotBinding {
   if (source === "input") return { from: "input", input_name: "", path: null };
   if (source === "context") return { from: "context", path: "" };
   if (source === "item") return { from: "item", path: "" };
+  if (source === "context_lookup") {
+    return {
+      from: "context_lookup",
+      collection_path: "",
+      collection_key_path: "/key",
+      item_key_path: "/repository_key",
+      value_path: "/path",
+    };
+  }
   return { from: "literal", value: "" };
 }
 
@@ -36,7 +45,7 @@ export function BindingEditor({
   };
 
   const sources: SlotBindingSource[] = ["literal", "input", "context"];
-  if (allowItem) sources.push("item");
+  if (allowItem) sources.push("item", "context_lookup");
 
   return (
     <div className="flex flex-col gap-2 rounded-md border border-[var(--border-subtle)] p-2">
@@ -130,6 +139,29 @@ export function BindingEditor({
             placeholder="/field"
           />
         </label>
+      )}
+
+      {value.from === "context_lookup" && (
+        <div className="grid grid-cols-2 gap-2">
+          {([
+            ["Collection context path", "collection_path", "/repositories"],
+            ["Collection key path", "collection_key_path", "/key"],
+            ["Item key path", "item_key_path", "/repository_key"],
+            ["Value path", "value_path", "/path"],
+          ] as const).map(([fieldLabel, field, placeholder]) => (
+            <label className="flex flex-col gap-1" key={field}>
+              <span className={labelClass}>{fieldLabel}</span>
+              <input
+                type="text"
+                className={inputClass}
+                value={value[field]}
+                onChange={(event) => onChange({ ...value, [field]: event.target.value })}
+                disabled={disabled}
+                placeholder={placeholder}
+              />
+            </label>
+          ))}
+        </div>
       )}
     </div>
   );

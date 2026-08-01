@@ -220,6 +220,12 @@ curl -sX POST "$CORE/workflow_defs" \
 
 See `docs/oakridge-v2-runbook.md` for a full walkthrough.
 
+The multi-repository dev-flow v3 accepts
+`repositories: [{"key":"api","path":"/abs/path/to/api"}, ...]`. Planning
+cohorts name one `repository_key`; build and assessment fan-out resolve their
+working directory from that run-scoped input. The version 1 workflow retains
+the single `worktree_path` contract above.
+
 ### Tool approval policy
 
 `pre_authorized_tools` is kept on the config struct for contract stability, but

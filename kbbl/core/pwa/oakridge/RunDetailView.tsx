@@ -120,6 +120,11 @@ function UnitRow({ stageName, stageType, unit, unitArtifacts, onSelectArtifact }
     <tr className={stageRowClass(unit.status)} data-testid="or-stage-row">
       <td className={`${tableCellClass} font-medium text-[var(--text-primary)]`} data-testid="or-stage-name">
         <span>{stageName}</span>
+        {unit.repository_key && (
+          <span className="ml-1.5 rounded border border-[var(--border-muted)] px-1.5 py-0.5 text-xs text-[var(--text-secondary)]">
+            {unit.repository_key}
+          </span>
+        )}
         <span className="ml-1.5 rounded bg-[var(--bg-elevated)] px-1.5 py-0.5 text-xs font-mono text-[var(--text-muted)]">
           {unit.unit_id}
         </span>

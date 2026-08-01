@@ -6,6 +6,7 @@
   "description": "Multi-agent workspace built on jig and kbbl.",
   "workspaces": ["kbbl", "lbc-dashboard"],
   "scripts": {
+    "oakridge": "./scripts/oakridge-start",
     "typecheck": "bunx tsc --noEmit"
   }
 }

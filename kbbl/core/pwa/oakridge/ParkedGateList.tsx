@@ -40,6 +40,11 @@ function GateCard({ gate, onNavigateRun }: GateCardProps) {
             {gate.unit_id}
           </span>
         )}
+        {gate.repository_key && (
+          <span className={chipClass} data-testid="or-gate-repository">
+            Repository: {gate.repository_key}
+          </span>
+        )}
         {onNavigateRun && (
           <button
             type="button"

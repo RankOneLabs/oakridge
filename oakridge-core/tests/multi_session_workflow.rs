@@ -506,9 +506,15 @@ async fn collect_consumer_waits_for_and_receives_the_complete_ordered_collection
         json!({"marker": "A-ONLY"}),
     )
     .await;
-    assert!(inputs.try_recv().is_err(), "collector started before producer done");
+    assert!(
+        inputs.try_recv().is_err(),
+        "collector started before producer done"
+    );
     pass_gate(&app, producer.id, artifact_a).await;
-    assert!(inputs.try_recv().is_err(), "collector started after only one unit completed");
+    assert!(
+        inputs.try_recv().is_err(),
+        "collector started after only one unit completed"
+    );
     let artifact_b = emit(
         &app,
         producer.id,
@@ -635,10 +641,13 @@ async fn targeted_retry_restarts_only_the_failed_unit() {
 }
 
 #[tokio::test]
-async fn seeded_dev_flow_v2_inherits_only_the_matching_build_result() {
+async fn seeded_multi_repository_dev_flow_inherits_only_the_matching_build_result() {
     let prompts = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("prompts");
     let (base_url, mut inputs, fake_task) = fake_kbbl().await;
-    let db_url = format!("sqlite:///tmp/oakridge-seeded-multi-session-{}.db", Uuid::new_v4());
+    let db_url = format!(
+        "sqlite:///tmp/oakridge-seeded-multi-session-{}.db",
+        Uuid::new_v4()
+    );
     let (app, _coordinator) = boot(
         Config {
             port: 0,
@@ -661,9 +670,8 @@ async fn seeded_dev_flow_v2_inherits_only_the_matching_build_result() {
     .await
     .unwrap();
     let pool = db::init_pool(&db_url).await.unwrap();
-    let definition_id = WorkflowDefId(
-        Uuid::parse_str("15af5600-1aa7-4ca8-9a12-56f9b132216d").unwrap(),
-    );
+    let definition_id =
+        WorkflowDefId(Uuid::parse_str("7f80ea26-a412-46fa-9446-0d8a84cd92b8").unwrap());
     let run: WorkflowRun = serde_json::from_value(
         json_request(
             &app,
@@ -674,7 +682,10 @@ async fn seeded_dev_flow_v2_inherits_only_the_matching_build_result() {
                 "project_id": null,
                 "context": {
                     "brief_notes": "implement two cohorts",
-                    "worktree_path": "/tmp",
+                    "repositories": [
+                        {"key": "api", "path": "/tmp/repo-api"},
+                        {"key": "web", "path": "/tmp/repo-web"}
+                    ],
                     "oakridge_url": "http://oakridge.test",
                     "planner_model": "planner",
                     "worker_model": "worker",
@@ -724,6 +735,7 @@ async fn seeded_dev_flow_v2_inherits_only_the_matching_build_result() {
             "cohorts": [
                 {
                     "id": "cohort-a",
+                    "repository_key": "api",
                     "title": "A",
                     "scope": "a",
                     "depends_on": [],
@@ -733,6 +745,7 @@ async fn seeded_dev_flow_v2_inherits_only_the_matching_build_result() {
                 },
                 {
                     "id": "cohort-b",
+                    "repository_key": "web",
                     "title": "B",
                     "scope": "b",
                     "depends_on": ["cohort-a"],
@@ -775,6 +788,7 @@ async fn seeded_dev_flow_v2_inherits_only_the_matching_build_result() {
         "cohort-a",
         "build_result",
         json!({
+            "repository_key": "api",
             "summary": "RESULT-A-ONLY",
             "changed_files": ["a.rs"],
             "tests": {},
@@ -807,6 +821,7 @@ async fn seeded_dev_flow_v2_inherits_only_the_matching_build_result() {
         "cohort-b",
         "build_result",
         json!({
+            "repository_key": "web",
             "summary": "RESULT-B-ONLY",
             "changed_files": ["b.rs"],
             "tests": {},

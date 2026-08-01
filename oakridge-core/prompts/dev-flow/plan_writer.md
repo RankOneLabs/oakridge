@@ -18,7 +18,7 @@ Stage instance: `{{STAGE_INSTANCE_ID}}`
 2. Resolve any `blocked` or `ambiguous` requirements from the spec analysis by inspecting the code. Document your resolution in the relevant cohort's notes.
 3. Produce a plan with:
    - `summary` — 2–4 sentences: what the plan builds, the approach, and any significant trade-offs.
-   - `cohorts` — ordered list of discrete implementation units. Each cohort has: `id` (stable string key), `title` (short display title), `scope` (the brief for this cohort: what to build and how), `depends_on` (array of predecessor cohort ids, empty `[]` if none), `description` (optional extended notes), `files_in_scope` (list of paths), `decisions` (key choices already made), and `acceptance_criteria` (verifiable conditions).
+   - `cohorts` — ordered list of discrete implementation units. Each cohort has: `id` (stable string key), `repository_key` (`"default"` for this single-repository workflow), `title` (short display title), `scope` (the brief for this cohort: what to build and how), `depends_on` (array of predecessor cohort ids, empty `[]` if none), `description` (optional extended notes), `files_in_scope` (list of paths), `decisions` (key choices already made), and `acceptance_criteria` (verifiable conditions).
    - `dependency_order` — list of cohort ids in the order they should execute.
    - `scope` — object with `in_scope` (list of things being built) and `out_of_scope` (list of things explicitly deferred).
    - `acceptance_criteria` — plan-level verifiable conditions that must hold when all cohorts are done.
@@ -38,6 +38,7 @@ Content-Type: application/json
   "cohorts": [
     {
       "id": "<c1>",
+      "repository_key": "default",
       "title": "<short title>",
       "scope": "<the brief for this cohort: what to build and how>",
       "depends_on": ["<predecessor cohort id>"],

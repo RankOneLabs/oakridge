@@ -45,11 +45,26 @@ bun install
 
 Defaults to `127.0.0.1:8788`. See `kbbl/README.md` for tablet/phone exposure, dev mode, compaction config, and security posture.
 
-For workflow-driven delegated sessions, run kbbl and oakridge-core together:
+For Oakridge v2 workflow-driven sessions, start the complete local stack from
+the repository root:
+
+```bash
+bun run oakridge
+```
+
+Open `http://127.0.0.1:8788/#oakridge`. The launcher builds the kbbl PWA,
+starts kbbl and oakridge-core with their integration configured, and stops both
+when you press Ctrl-C. The bundled multi-repository dev-flow definition is seeded
+automatically; choose **New Run**, select `dev-flow v3`, add the repositories
+the brief spans, enter the brief, and
+start the run.
+
+To run the services separately for debugging:
 
 ```bash
 # Terminal 1
-./kbbl/scripts/kbbl-start /path/to/your/repo
+OAKRIDGE_CORE_BASE_URL=http://127.0.0.1:8790 \
+  ./kbbl/scripts/kbbl-start /path/to/your/repo
 
 # Terminal 2
 cd oakridge-core
@@ -57,9 +72,15 @@ KBBL_API_BASE_URL=http://127.0.0.1:8788 \
 cargo run
 ```
 
-Then create workflow definitions through oakridge-core with
-`stage_type: "delegated_session"`. oakridge-core reads the kbbl base URL from
+When starting them separately, also set
+`OAKRIDGE_CORE_BASE_URL=http://127.0.0.1:8790` on the kbbl process to enable
+the Oakridge PWA. oakridge-core reads the kbbl base URL from
 `KBBL_API_BASE_URL`.
+
+The combined launcher requires Bash 4.3 or newer because it supervises both
+services with `wait -n`. Set `OAKRIDGE_CORE_BIND` and `OAKRIDGE_CORE_PORT` to
+change the local core listener; the launcher derives kbbl's core URL from those
+same values.
 
 For the full Oakridge v2 runtime-delegation operator guide, including both
 interactive `delegated_session` and headless `delegated_lbc_run` examples, see

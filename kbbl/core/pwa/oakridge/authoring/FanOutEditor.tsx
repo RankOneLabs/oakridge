@@ -16,6 +16,7 @@ function defaultFanOut(): FanOutConfig {
     depends_on_path: null,
     max_parallel: 8,
     item_bindings: {},
+    workdir: null,
     worktree: null,
   };
 }
@@ -171,6 +172,33 @@ export function FanOutEditor({ value, onChange, disabled = false }: FanOutEditor
             />
           </div>
         ))}
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center gap-2">
+          <span className={labelClass}>Per-unit workdir</span>
+          <button
+            type="button"
+            className={addBtnClass}
+            onClick={() => update({
+              workdir: fo.workdir
+                ? null
+                : { from: "item", path: "/workdir" },
+            })}
+            disabled={disabled}
+          >
+            {fo.workdir ? "Remove" : "+ Add"}
+          </button>
+        </div>
+        {fo.workdir && (
+          <BindingEditor
+            label="unit workdir"
+            value={fo.workdir}
+            onChange={(binding) => update({ workdir: binding })}
+            allowItem
+            disabled={disabled}
+          />
+        )}
       </div>
 
       <div className="flex flex-col gap-2">

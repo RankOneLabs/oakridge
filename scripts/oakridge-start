@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if ((BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 3))); then
+  echo "oakridge: Bash 4.3 or newer is required (found $BASH_VERSION)" >&2
+  exit 1
+fi
+
+OAKRIDGE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CORE_ROOT="$OAKRIDGE_ROOT/oakridge-core"
+CORE_BIND="${OAKRIDGE_CORE_BIND:-127.0.0.1}"
+CORE_PORT="${OAKRIDGE_CORE_PORT:-8790}"
+CORE_URL="http://${CORE_BIND}:${CORE_PORT}"
+
+core_pid=""
+kbbl_pid=""
+
+stop_services() {
+  trap - INT TERM EXIT
+
+  if [ -n "$kbbl_pid" ] && kill -0 "$kbbl_pid" 2>/dev/null; then
+    kill -TERM "$kbbl_pid" 2>/dev/null || true
+  fi
+  if [ -n "$core_pid" ] && kill -0 "$core_pid" 2>/dev/null; then
+    kill -TERM "$core_pid" 2>/dev/null || true
+  fi
+
+  [ -z "$kbbl_pid" ] || wait "$kbbl_pid" 2>/dev/null || true
+  [ -z "$core_pid" ] || wait "$core_pid" 2>/dev/null || true
+}
+
+trap stop_services INT TERM EXIT
+
+echo "oakridge: starting core at $CORE_URL"
+(
+  cd "$CORE_ROOT"
+  KBBL_API_BASE_URL="${KBBL_API_BASE_URL:-http://127.0.0.1:8788}" \
+    OAKRIDGE_CORE_BIND="$CORE_BIND" \
+    OAKRIDGE_CORE_PORT="$CORE_PORT" \
+    cargo run
+) &
+core_pid=$!
+
+echo "oakridge: starting kbbl (the PWA rebuild may take a moment)"
+env -u ANTHROPIC_API_KEY \
+  OAKRIDGE_CORE_BASE_URL="$CORE_URL" \
+  "$OAKRIDGE_ROOT/kbbl/scripts/kbbl-start" "$@" &
+kbbl_pid=$!
+
+echo "oakridge: open http://127.0.0.1:8788/#oakridge"
+echo "oakridge: Ctrl-C stops both services"
+
+set +e
+wait -n "$core_pid" "$kbbl_pid"
+exit_code=$?
+set -e
+
+exit "$exit_code"

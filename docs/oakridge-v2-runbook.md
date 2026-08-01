@@ -79,6 +79,22 @@ bun install
 
 ## Start kbbl For Interactive Stages
 
+### One-command local stack
+
+For the normal local v2 test path, start both services from the repository
+root:
+
+```bash
+bun run oakridge
+```
+
+Then open `http://127.0.0.1:8788/#oakridge`. The command configures the kbbl
+proxy to oakridge-core, rebuilds the PWA, and stops both services together on
+Ctrl-C. It also removes `ANTHROPIC_API_KEY` from the kbbl process environment as
+required by the default Claude Code subscription runtime.
+
+Use the separate commands below when debugging either service.
+
 From the repository root:
 
 ```bash
@@ -523,7 +539,7 @@ The dev-flow workflow is a four-stage `delegated_session` pipeline with two
 definitions:
 
 - `oakridge-core/examples/dev_flow.json` (version 1) runs one session per stage.
-- `oakridge-core/examples/dev_flow_v2.json` (version 2) fans build and assessment
+- `oakridge-core/examples/dev_flow_v2.json` (version 3) fans build and assessment
   out over the cohorts produced by the plan.
 
 ### Workflow graph
@@ -543,7 +559,7 @@ Each stage is a `delegated_session` with typed artifacts and artifact-approval
 and merge-confirmation gates. Version 1 retains the implicit unit id `"0"` and
 single-session behavior.
 
-In version 2, `plan_writer` emits a `cohorts` array and `build` materializes one
+In version 3, `plan_writer` emits a repository-bound `cohorts` array and `build` materializes one
 unit per cohort. Each build unit has its own kbbl session, branch, worktree,
 artifacts, gates, and PR metadata. A cohort starts only after all ids in its
 `depends_on` list are `done`; independent cohorts may run concurrently, up to
@@ -561,11 +577,19 @@ stage is done.
 ### Prerequisites
 
 - kbbl and oakridge-core running (see earlier sections).
-- A git worktree already checked out where the agent should work.
+- One or more local Git checkouts supplied when the run is created.
 - `OAKRIDGE_PROMPTS_DIR` pointed at `oakridge-core/prompts` (or started from the
   `oakridge-core/` directory where `./prompts` is the default).
 
-### Create the workflow definition
+### Select the workflow definition
+
+oakridge-core seeds the bundled dev-flow definitions on startup. In the kbbl
+PWA, choose **New Run** and select `dev-flow v3` (the newest version is selected
+by default).
+
+The API command below is only needed when loading a modified or custom copy of
+the example. Posting the unchanged built-in again conflicts with its seeded
+name and version.
 
 ```bash
 CORE=http://127.0.0.1:8790
@@ -587,13 +611,17 @@ curl -sX POST "$CORE/workflow_runs" \
     \"workflow_def_id\": \"$DEV_FLOW_DEF_ID\",
     \"context\": {
       \"brief_notes\": \"Implement the feature described in <brief here>.\",
-      \"worktree_path\": \"/abs/path/to/worktree\",
+      \"repositories\": [
+        {\"key\": \"api\", \"path\": \"/abs/path/to/api\"},
+        {\"key\": \"web\", \"path\": \"/abs/path/to/web\"}
+      ],
       \"oakridge_url\": \"http://127.0.0.1:8790/\"
     }
   }"
 ```
 
-`brief_notes` is passed verbatim into the `spec_analyzer` prompt.
+`brief_notes` and the complete keyed repository list are passed into the
+`spec_analyzer` and `plan_writer` prompts. Each planned cohort selects one key.
 
 ### Gate decisions
 

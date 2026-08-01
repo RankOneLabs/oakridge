@@ -83,7 +83,8 @@
             "PLAN":         { "from": "input", "input_name": "plan",         "path": null },
             "WORKTREE_PATH": { "from": "context", "path": "/worktree_path" },
             "OAKRIDGE_URL":  { "from": "context", "path": "/oakridge_url" },
-            "UNIT_ID":       { "from": "literal", "value": "0" }
+            "UNIT_ID":       { "from": "literal", "value": "0" },
+            "REPOSITORY_KEY": { "from": "literal", "value": "default" }
           },
           "workdir":      { "from": "context", "path": "/worktree_path" },
           "session_name": "assessor-{{STAGE_INSTANCE_ID}}",
