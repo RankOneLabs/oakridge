@@ -19,7 +19,7 @@ use crate::executor::ResumePayload;
 use crate::registry::artifact_type::ArtifactCapabilities;
 use crate::scheduler::DecisionError;
 use crate::types::{
-    Artifact, ArtifactId, GateDecision, GateOutcome, InputSlot, OutputSlot, Project, ProjectId,
+    Artifact, ArtifactId, GateDecision, GateOutcome, InputDelivery, InputSlot, OutputSlot, Project, ProjectId,
     RunStatus, StageInstance, StageInstanceId, StageStatus, WorkflowDef, WorkflowDefId,
     WorkflowGraph, WorkflowRun, WorkflowRunId,
 };
@@ -315,6 +315,12 @@ pub(crate) fn validate_workflow_graph(
                     stage_key, input.name, input.artifact_type
                 )));
             }
+            if input.collect && input.delivery == InputDelivery::UnitComplete {
+                return Err(crate::Error::Validation(format!(
+                    "stage '{}' input '{}' cannot combine collect:true with unit_complete delivery",
+                    stage_key, input.name
+                )));
+            }
         }
         for output in &node.outputs {
             if artifact_registry.get(&output.artifact_type).is_none() {
@@ -367,6 +373,51 @@ pub(crate) fn validate_workflow_graph(
                 output.artifact_type,
                 input.artifact_type
             )));
+        }
+        if input.delivery == InputDelivery::UnitComplete {
+            if producer.stage_type != "delegated_session"
+                || consumer.stage_type != "delegated_session"
+            {
+                return Err(crate::Error::Validation(format!(
+                    "edge '{}.{}' -> '{}.{}' uses unit_complete delivery but both stages are not delegated_session stages",
+                    edge.from.stage, edge.from.slot, edge.to.stage, edge.to.slot
+                )));
+            }
+            let producer_config: crate::executor::delegated_session::config::DelegatedSessionDefConfig =
+                serde_json::from_value(producer.config.clone()).map_err(|err| {
+                    crate::Error::Validation(format!("stage '{}' config invalid: {}", edge.from.stage, err))
+                })?;
+            let consumer_config: crate::executor::delegated_session::config::DelegatedSessionDefConfig =
+                serde_json::from_value(consumer.config.clone()).map_err(|err| {
+                    crate::Error::Validation(format!("stage '{}' config invalid: {}", edge.to.stage, err))
+                })?;
+            if producer_config.fan_out.is_none() || consumer_config.fan_out.is_none() {
+                return Err(crate::Error::Validation(format!(
+                    "edge '{}.{}' -> '{}.{}' uses unit_complete delivery but both stages must configure fan_out",
+                    edge.from.stage, edge.from.slot, edge.to.stage, edge.to.slot
+                )));
+            }
+            let gate_output = producer_config
+                .gate_output
+                .as_deref()
+                .or_else(|| producer.outputs.first().map(|slot| slot.name.as_str()));
+            if gate_output != Some(edge.from.slot.as_str()) {
+                return Err(crate::Error::Validation(format!(
+                    "edge '{}.{}' uses unit_complete delivery but the source is not the producer gate output",
+                    edge.from.stage, edge.from.slot
+                )));
+            }
+            let fans_over_input = matches!(
+                consumer_config.fan_out.as_ref().map(|fan_out| &fan_out.over),
+                Some(crate::executor::prompt_config::SlotBinding::Input { input_name, path: None })
+                    if input_name == &edge.to.slot
+            );
+            if !fans_over_input {
+                return Err(crate::Error::Validation(format!(
+                    "edge '{}.{}' uses unit_complete delivery but consumer fan_out.over does not select that whole input",
+                    edge.to.stage, edge.to.slot
+                )));
+            }
         }
     }
 
@@ -2242,9 +2293,11 @@ mod tests {
                     worktree_branch: Some(format!("cohort/build/{unit_id}")),
                     worktree_path: Some(format!("/worktrees/{unit_id}")),
                     worktree_base_ref: Some("main".into()),
+                    workdir_path: Some("/tmp".into()),
                     status: UnitStatus::Parked,
                     gate_state: Some(serde_json::to_value(gate).unwrap()),
                     artifact_id: Some(artifact_id),
+                    source_artifact_id: None,
                     terminal_meta: None,
                     created_at: now,
                     updated_at: now,

@@ -474,6 +474,7 @@ async fn recovery_missing_stage_key_fails_with_structured_meta() {
             artifact_type: "any".into(),
             optional: false,
             collect: false,
+            delivery: oakridge_core::types::InputDelivery::ProducerComplete,
         });
         d
     };

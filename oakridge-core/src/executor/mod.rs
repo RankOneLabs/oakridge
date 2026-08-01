@@ -50,6 +50,13 @@ pub enum ExecutorEvent {
         /// Structured metadata attached when the stage reaches a terminal status.
         terminal_meta: Option<Value>,
     },
+    /// A durable producer unit reached Done and its final artifact is ready for
+    /// downstream inputs configured with unit_complete delivery.
+    UnitCompleted {
+        instance_id: StageInstanceId,
+        unit_id: String,
+        artifact: Artifact,
+    },
 }
 
 // ── EmitArgs ─────────────────────────────────────────────────────────────────
@@ -166,6 +173,18 @@ impl StageContext {
     pub async fn persisted_status(&self) -> anyhow::Result<StageStatus> {
         let si = queries::get_stage_instance_by_id(&self.db, &self.stage_instance_id).await?;
         Ok(si.status)
+    }
+
+    /// Notify the scheduler that a durable fan-out unit reached its final gate.
+    pub async fn unit_completed(&self, unit_id: String, artifact: Artifact) -> anyhow::Result<()> {
+        self.events_tx
+            .send(ExecutorEvent::UnitCompleted {
+                instance_id: self.stage_instance_id,
+                unit_id,
+                artifact,
+            })
+            .await
+            .map_err(|_| anyhow::anyhow!("executor event channel closed"))
     }
 
     /// Emit an artifact.
@@ -568,6 +587,14 @@ pub enum ResumePayload {
         /// The feedback artifact.
         artifact: Artifact,
     },
+    /// A new upstream unit is available to an already-live fan-out stage.
+    UnitInputAvailable {
+        input_name: String,
+        unit_id: String,
+        artifact: Artifact,
+    },
+    /// All producers for an incrementally delivered input are complete.
+    UnitInputExhausted { input_name: String },
     /// An opaque executor-specific payload routed to the parked stage's handle without
     /// interpretation by the substrate.
     Executor {

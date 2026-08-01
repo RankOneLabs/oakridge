@@ -1177,9 +1177,11 @@ struct SessionUnitRow {
     worktree_branch: Option<String>,
     worktree_path: Option<String>,
     worktree_base_ref: Option<String>,
+    workdir_path: Option<String>,
     status: String,
     gate_state: Option<String>,
     artifact_id: Option<String>,
+    source_artifact_id: Option<String>,
     terminal_meta: Option<String>,
     created_at: String,
     updated_at: String,
@@ -1196,10 +1198,17 @@ fn row_to_session_unit(r: SessionUnitRow) -> crate::Result<crate::types::Session
         worktree_branch: r.worktree_branch,
         worktree_path: r.worktree_path,
         worktree_base_ref: r.worktree_base_ref,
+        workdir_path: r.workdir_path,
         status: str_to_enum(r.status)?,
         gate_state: r.gate_state.map(|s| serde_json::from_str(&s)).transpose()?,
         artifact_id: r
             .artifact_id
+            .as_deref()
+            .map(parse_uuid)
+            .transpose()?
+            .map(ArtifactId),
+        source_artifact_id: r
+            .source_artifact_id
             .as_deref()
             .map(parse_uuid)
             .transpose()?
@@ -1233,6 +1242,7 @@ pub async fn upsert_session_unit(
         .map(serde_json::to_string)
         .transpose()?;
     let artifact_id = unit.artifact_id.map(|id| id.0.to_string());
+    let source_artifact_id = unit.source_artifact_id.map(|id| id.0.to_string());
     let terminal_meta = unit
         .terminal_meta
         .as_ref()
@@ -1243,9 +1253,9 @@ pub async fn upsert_session_unit(
     sqlx::query(
         "INSERT OR REPLACE INTO stage_session_units \
          (stage_instance_id, unit_id, params, depends_on, external_ref, \
-          worktree_branch, worktree_path, worktree_base_ref, \
-          status, gate_state, artifact_id, terminal_meta, created_at, updated_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          worktree_branch, worktree_path, worktree_base_ref, workdir_path, \
+          status, gate_state, artifact_id, source_artifact_id, terminal_meta, created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&stage_instance_id)
     .bind(&unit.unit_id)
@@ -1255,9 +1265,11 @@ pub async fn upsert_session_unit(
     .bind(&unit.worktree_branch)
     .bind(&unit.worktree_path)
     .bind(&unit.worktree_base_ref)
+    .bind(&unit.workdir_path)
     .bind(status)
     .bind(gate_state)
     .bind(artifact_id)
+    .bind(source_artifact_id)
     .bind(terminal_meta)
     .bind(created_at)
     .bind(updated_at)
@@ -1273,8 +1285,8 @@ pub async fn list_session_units_for_stage(
     let id_str = stage_instance_id.0.to_string();
     let rows = sqlx::query_as::<_, SessionUnitRow>(
         "SELECT stage_instance_id, unit_id, params, depends_on, external_ref, \
-         worktree_branch, worktree_path, worktree_base_ref, \
-         status, gate_state, artifact_id, terminal_meta, created_at, updated_at \
+         worktree_branch, worktree_path, worktree_base_ref, workdir_path, \
+         status, gate_state, artifact_id, source_artifact_id, terminal_meta, created_at, updated_at \
          FROM stage_session_units WHERE stage_instance_id = ? ORDER BY unit_id",
     )
     .bind(id_str)
@@ -1290,8 +1302,8 @@ pub async fn list_session_units_for_run(
     let id_str = run_id.0.to_string();
     let rows = sqlx::query_as::<_, SessionUnitRow>(
         "SELECT ssu.stage_instance_id, ssu.unit_id, ssu.params, ssu.depends_on, ssu.external_ref, \
-         ssu.worktree_branch, ssu.worktree_path, ssu.worktree_base_ref, \
-         ssu.status, ssu.gate_state, ssu.artifact_id, ssu.terminal_meta, ssu.created_at, ssu.updated_at \
+         ssu.worktree_branch, ssu.worktree_path, ssu.worktree_base_ref, ssu.workdir_path, \
+         ssu.status, ssu.gate_state, ssu.artifact_id, ssu.source_artifact_id, ssu.terminal_meta, ssu.created_at, ssu.updated_at \
          FROM stage_session_units ssu \
          JOIN stage_instance si ON si.id = ssu.stage_instance_id \
          WHERE si.run_id = ? ORDER BY ssu.stage_instance_id, ssu.unit_id",
@@ -1310,8 +1322,8 @@ pub async fn get_session_unit(
     let id_str = stage_instance_id.0.to_string();
     let row = sqlx::query_as::<_, SessionUnitRow>(
         "SELECT stage_instance_id, unit_id, params, depends_on, external_ref, \
-         worktree_branch, worktree_path, worktree_base_ref, \
-         status, gate_state, artifact_id, terminal_meta, created_at, updated_at \
+         worktree_branch, worktree_path, worktree_base_ref, workdir_path, \
+         status, gate_state, artifact_id, source_artifact_id, terminal_meta, created_at, updated_at \
          FROM stage_session_units WHERE stage_instance_id = ? AND unit_id = ?",
     )
     .bind(&id_str)
@@ -2701,6 +2713,7 @@ mod tests {
         insert_stage_instance(&pool, &si).await.unwrap();
 
         let now = fixed_dt();
+        let source_artifact_id = crate::types::ArtifactId(Uuid::new_v4());
         let unit = crate::types::SessionUnit {
             stage_instance_id: si.id,
             unit_id: "0".to_string(),
@@ -2710,9 +2723,11 @@ mod tests {
             worktree_branch: None,
             worktree_path: None,
             worktree_base_ref: None,
+            workdir_path: None,
             status: crate::types::UnitStatus::Pending,
             gate_state: None,
             artifact_id: None,
+            source_artifact_id: Some(source_artifact_id),
             terminal_meta: None,
             created_at: now,
             updated_at: now,
@@ -2729,6 +2744,7 @@ mod tests {
         assert!(got.params.is_none());
         assert!(got.depends_on.is_empty());
         assert!(got.external_ref.is_none());
+        assert_eq!(got.source_artifact_id, Some(source_artifact_id));
 
         // Update status
         set_session_unit_status(&pool, &si.id, "0", crate::types::UnitStatus::Running, None)
@@ -2804,9 +2820,11 @@ mod tests {
             worktree_branch: Some("branch".into()),
             worktree_path: Some("path".into()),
             worktree_base_ref: Some("base".into()),
+            workdir_path: Some("workdir".into()),
             status: crate::types::UnitStatus::Failed,
             gate_state: Some(json!({"gate": "approval"})),
             artifact_id: Some(crate::types::ArtifactId(Uuid::new_v4())),
+            source_artifact_id: None,
             terminal_meta: Some(json!({"kind": "unit_runtime_error"})),
             created_at: now,
             updated_at: now,

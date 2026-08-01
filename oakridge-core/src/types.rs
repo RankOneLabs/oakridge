@@ -60,12 +60,27 @@ pub struct SessionUnit {
     pub worktree_branch: Option<String>,
     pub worktree_path: Option<String>,
     pub worktree_base_ref: Option<String>,
+    /// Fully resolved working directory for this unit.
+    pub workdir_path: Option<String>,
     pub status: UnitStatus,
     pub gate_state: Option<Value>,
     pub artifact_id: Option<ArtifactId>,
+    /// Upstream artifact that caused this unit to be materialized. Present for
+    /// incrementally delivered fan-out units and used as the idempotency key.
+    pub source_artifact_id: Option<ArtifactId>,
     pub terminal_meta: Option<Value>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum InputDelivery {
+    /// Make the input visible only after every producer stage is complete.
+    #[default]
+    ProducerComplete,
+    /// Materialize the matching consumer unit whenever a producer unit completes.
+    UnitComplete,
 }
 
 /// Derive aggregate stage status from unit statuses per spec §3.3:
@@ -117,6 +132,9 @@ pub struct InputSlot {
     /// Preserve the latest artifact from every producer unit for this input.
     #[serde(default)]
     pub collect: bool,
+    /// Controls when artifacts from delegated fan-out producers become available.
+    #[serde(default)]
+    pub delivery: InputDelivery,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -267,7 +285,11 @@ impl ResolvedInput {
                 artifacts
                     .iter()
                     .map(|(unit_id, artifact)| {
-                        serde_json::json!({"unit_id": unit_id, "artifact": artifact.body})
+                        serde_json::json!({
+                            "unit_id": unit_id,
+                            "artifact_id": artifact.id,
+                            "artifact": artifact.body
+                        })
                     })
                     .collect(),
             ),
@@ -419,6 +441,18 @@ mod tests {
         let slot: InputSlot = serde_json::from_value(json).unwrap();
         assert!(!slot.optional);
         assert!(!slot.collect);
+        assert_eq!(slot.delivery, InputDelivery::ProducerComplete);
+    }
+
+    #[test]
+    fn input_slot_deserializes_unit_complete_delivery() {
+        let slot: InputSlot = serde_json::from_value(json!({
+            "name": "build_result",
+            "artifact_type": "dev.build_result",
+            "delivery": "unit_complete"
+        }))
+        .unwrap();
+        assert_eq!(slot.delivery, InputDelivery::UnitComplete);
     }
 
     #[test]
@@ -440,6 +474,7 @@ mod tests {
                                 artifact_type: "text".to_string(),
                                 optional: false,
                                 collect: false,
+                                delivery: InputDelivery::ProducerComplete,
                             }],
                             outputs: vec![OutputSlot {
                                 name: "response".to_string(),
