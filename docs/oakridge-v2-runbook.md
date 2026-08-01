@@ -541,6 +541,8 @@ definitions:
 - `oakridge-core/examples/dev_flow.json` (version 1) runs one session per stage.
 - `oakridge-core/examples/dev_flow_v2.json` (version 3) fans build and assessment
   out over the cohorts produced by the plan.
+- `oakridge-core/examples/dev_flow_v4.json` (version 4, default) starts each
+  assessor as soon as its build cohort completes and reuses that build worktree.
 
 ### Workflow graph
 
@@ -567,12 +569,15 @@ the stage's `fan_out.max_parallel` limit. Dependencies control execution order
 only: every build worktree uses the configured run base rather than a preceding
 cohort's branch.
 
-The seeded `assessor` inherits the build fan-out by unit id. It starts after the
-complete build stage is done and each assessor unit receives only the matching
-cohort's `dev.build_result`. A custom aggregate consumer can instead declare
-`collect: true` on an input slot; it receives a deterministic unit-id-ordered
-array of `{ "unit_id": "...", "artifact": ... }` envelopes after the producer
-stage is done.
+In version 4, the seeded `assessor` inherits the build fan-out by unit id. Each
+assessor unit starts when its matching build unit is done, receives only that
+cohort's `dev.build_result`, and runs in the completed builder's persisted
+worktree. Assessment uses `planner_model` and `planner_effort`. Version 3 keeps
+the earlier whole-build-stage barrier. A custom aggregate consumer can instead
+declare `collect: true` on an input slot; it receives a deterministic
+unit-id-ordered array of
+`{ "unit_id": "...", "artifact_id": "...", "artifact": ... }` envelopes after
+the producer stage is done.
 
 ### Prerequisites
 
@@ -584,7 +589,7 @@ stage is done.
 ### Select the workflow definition
 
 oakridge-core seeds the bundled dev-flow definitions on startup. In the kbbl
-PWA, choose **New Run** and select `dev-flow v3` (the newest version is selected
+PWA, choose **New Run** and select `dev-flow v4` (the newest version is selected
 by default).
 
 The API command below is only needed when loading a modified or custom copy of
@@ -596,7 +601,7 @@ CORE=http://127.0.0.1:8790
 
 curl -sX POST "$CORE/workflow_defs" \
   -H 'content-type: application/json' \
-  -d "$(jq '{name,version,graph}' oakridge-core/examples/dev_flow_v2.json)"
+  -d "$(jq '{name,version,graph}' oakridge-core/examples/dev_flow_v4.json)"
 ```
 
 Save the returned `id` as `DEV_FLOW_DEF_ID`. Use `dev_flow.json` instead when

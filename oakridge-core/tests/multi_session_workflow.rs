@@ -321,7 +321,8 @@ fn incremental_definition() -> WorkflowDef {
                 "fan_out": {
                     "over": {"from": "input", "input_name": "results", "path": null},
                     "unit_id_path": "/unit_id",
-                    "max_parallel": 2
+                    "max_parallel": 2,
+                    "inherit_worktree_from": "results"
                 }
             }),
             inputs: vec![InputSlot {
@@ -424,6 +425,14 @@ async fn unit_complete_delivery_starts_matching_consumer_before_producer_stage_f
     assert_eq!(units.len(), 1);
     assert_eq!(units[0].unit_id, "a");
     assert_eq!(units[0].source_artifact_id, Some(artifact_a));
+    let producer_unit = queries::get_session_unit(&pool, &producer.id, "a")
+        .await
+        .unwrap();
+    assert_eq!(
+        units[0].workdir_path,
+        producer_unit.worktree_path,
+        "consumer must reuse the completed producer checkout"
+    );
     let assessment_a = emit(
         &app,
         assessor.id,

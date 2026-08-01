@@ -37,6 +37,14 @@ fn load_dev_flow_json() -> serde_json::Value {
         .unwrap_or_else(|e| panic!("failed to parse {}: {e}", path.display()))
 }
 
+fn load_dev_flow_v4() -> WorkflowDef {
+    let path = manifest_dir().join("examples/dev_flow_v4.json");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
+    serde_json::from_str(&text)
+        .unwrap_or_else(|e| panic!("failed to parse {}: {e}", path.display()))
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct RecordedRequest {
     method: Method,
@@ -222,6 +230,34 @@ fn dev_flow_workflow_json_deserializes_as_workflow_def() {
             );
         }
     }
+}
+
+#[test]
+fn dev_flow_v4_assesses_each_completed_cohort_in_its_build_worktree() {
+    let def = load_dev_flow_v4();
+    assert_eq!(def.name, "dev-flow");
+    assert_eq!(def.version, 4);
+
+    let assessor = def.graph.stages.get("assessor").unwrap();
+    let input = assessor
+        .inputs
+        .iter()
+        .find(|input| input.name == "build_result")
+        .unwrap();
+    assert_eq!(input.delivery, oakridge_core::types::InputDelivery::UnitComplete);
+
+    let config: DelegatedSessionDefConfig =
+        serde_json::from_value(assessor.config.clone()).unwrap();
+    let fan_out = config.fan_out.unwrap();
+    assert_eq!(fan_out.inherit_worktree_from.as_deref(), Some("build_result"));
+    assert!(fan_out.worktree.is_none());
+    let model = serde_json::to_value(config.model).unwrap();
+    let effort = serde_json::to_value(config.effort).unwrap();
+    assert_eq!(model, json!({"from": "context", "path": "/planner_model"}));
+    assert_eq!(
+        effort,
+        json!({"from": "context", "path": "/planner_effort"})
+    );
 }
 
 // ── Prompt file existence + root containment ──────────────────────────────────

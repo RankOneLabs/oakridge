@@ -220,11 +220,11 @@ curl -sX POST "$CORE/workflow_defs" \
 
 See `docs/oakridge-v2-runbook.md` for a full walkthrough.
 
-The multi-repository dev-flow v3 accepts
+The default multi-repository dev-flow v4 accepts
 `repositories: [{"key":"api","path":"/abs/path/to/api"}, ...]`. Planning
-cohorts name one `repository_key`; build and assessment fan-out resolve their
-working directory from that run-scoped input. The version 1 workflow retains
-the single `worktree_path` contract above.
+cohorts name one `repository_key`; each assessment starts when its matching
+build cohort completes and reuses the builder's persisted worktree. The version
+1 workflow retains the single `worktree_path` contract above.
 
 ### Tool approval policy
 
