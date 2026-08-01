@@ -12,10 +12,11 @@ const tableCellClass =
 
 interface WorkflowDefListViewProps {
   onNew: () => void;
+  onSelect: (def: WorkflowDefSummary) => void;
   onClone: (def: WorkflowDefSummary) => void;
 }
 
-export function WorkflowDefListView({ onNew, onClone }: WorkflowDefListViewProps) {
+export function WorkflowDefListView({ onNew, onSelect, onClone }: WorkflowDefListViewProps) {
   const query = useWorkflowDefs();
 
   // Group defs by name, latest version first within each name
@@ -76,7 +77,14 @@ export function WorkflowDefListView({ onNew, onClone }: WorkflowDefListViewProps
             {grouped.map((def) => (
               <tr key={def.id} className="hover:bg-[var(--bg-elevated)]" data-testid="or-def-row">
                 <td className={`${tableCellClass} font-medium text-[var(--text-primary)]`}>
-                  {def.name}
+                  <button
+                    type="button"
+                    className="or-def-list__link"
+                    onClick={() => onSelect(def)}
+                    data-testid="or-def-view-btn"
+                  >
+                    {def.name}
+                  </button>
                 </td>
                 <td className={`${tableCellClass} text-[var(--text-secondary)]`}>
                   v{def.version}
@@ -85,14 +93,19 @@ export function WorkflowDefListView({ onNew, onClone }: WorkflowDefListViewProps
                   {def.id.slice(0, 8)}…
                 </td>
                 <td className={tableCellClass}>
-                  <button
-                    type="button"
-                    className={secondaryButtonClass}
-                    onClick={() => onClone(def)}
-                    data-testid="or-def-clone-btn"
-                  >
-                    Clone to new version
-                  </button>
+                  <div className="or-def-list__actions">
+                    <button type="button" className={secondaryButtonClass} onClick={() => onSelect(def)}>
+                      View
+                    </button>
+                    <button
+                      type="button"
+                      className={secondaryButtonClass}
+                      onClick={() => onClone(def)}
+                      data-testid="or-def-clone-btn"
+                    >
+                      Clone to new version
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}

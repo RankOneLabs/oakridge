@@ -5344,3 +5344,30 @@ body {
 .or-revision-panel__meta       { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
 .or-revision-panel__body       { display: flex; flex-direction: column; gap: 0.375rem; }
 .or-revision-panel__validation { display: flex; flex-direction: column; gap: 0.375rem; }
+
+/* workflow definition inspection */
+.or-def-list__link { background: none; border: 0; color: var(--accent-blue); cursor: pointer; font: inherit; font-weight: 600; padding: 0; }
+.or-def-list__link:hover { text-decoration: underline; }
+.or-def-list__actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.or-def-detail { display: flex; flex-direction: column; gap: 1.5rem; }
+.or-def-detail__header { align-items: flex-start; display: flex; justify-content: space-between; gap: 1rem; }
+.or-def-detail__header h2 { font-size: 1.375rem; margin: 1rem 0 0.25rem; }
+.or-def-detail__header h2 span { color: var(--text-muted); font-size: 0.875rem; }
+.or-def-detail__header p, .or-def-detail__muted { color: var(--text-muted); font-size: 0.8125rem; margin: 0; }
+.or-def-detail__graph h3, .or-def-edges h3 { font-size: 0.875rem; margin: 0 0 0.75rem; text-transform: uppercase; color: var(--text-muted); }
+.or-def-detail__stages { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+.or-def-stage { background: var(--bg-elevated); border: 1px solid var(--border-subtle); border-radius: 8px; min-width: 0; padding: 1rem; }
+.or-def-stage__header { align-items: center; display: flex; justify-content: space-between; gap: 0.75rem; }
+.or-def-stage__header h3 { color: var(--text-primary); font-size: 1rem; margin: 0; text-transform: none; }
+.or-def-stage__slots { align-items: center; display: flex; flex-wrap: wrap; gap: 0.375rem; margin-top: 0.75rem; }
+.or-def-stage__slot-label { color: var(--text-muted); font-size: 0.6875rem; font-weight: 600; min-width: 3rem; text-transform: uppercase; }
+.or-def-stage__slot { background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 999px; font-size: 0.75rem; padding: 0.2rem 0.5rem; }
+.or-def-stage__slot small { color: var(--text-muted); }
+.or-def-stage__empty { color: var(--text-muted); font-size: 0.75rem; }
+.or-def-stage__config, .or-def-detail__raw { border-top: 1px solid var(--border-subtle); margin-top: 0.875rem; padding-top: 0.75rem; }
+.or-def-stage__config summary, .or-def-detail__raw summary { color: var(--text-secondary); cursor: pointer; font-size: 0.8125rem; font-weight: 600; }
+.or-def-stage__config pre, .or-def-detail__raw pre { background: var(--bg-surface); border-radius: 6px; font-size: 0.75rem; max-height: 28rem; overflow: auto; padding: 0.75rem; white-space: pre-wrap; }
+.or-def-edges ol { display: flex; flex-direction: column; gap: 0.5rem; list-style: none; margin: 0; padding: 0; }
+.or-def-edges li { align-items: center; background: var(--bg-elevated); border: 1px solid var(--border-subtle); border-radius: 6px; display: flex; flex-wrap: wrap; gap: 0.625rem; padding: 0.625rem 0.75rem; }
+.or-def-edges li span { color: var(--accent-blue); }
+@media (max-width: 640px) { .or-def-detail__header { flex-direction: column; } }

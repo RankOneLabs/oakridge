@@ -5,6 +5,7 @@ import type { ReactElement } from "react";
 
 import { WorkflowDefListView } from "../WorkflowDefListView";
 import { WorkflowDefEditor } from "../WorkflowDefEditor";
+import { WorkflowDefDetailView } from "../WorkflowDefDetailView";
 import type { WorkflowDefFull } from "../types";
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -79,33 +80,33 @@ const DEF_WITH_STAGES: WorkflowDefFull = {
 describe("WorkflowDefListView", () => {
   it("shows loading state while defs are pending", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise(() => {}));
-    wrap(<WorkflowDefListView onNew={() => {}} onClone={() => {}} />);
+    wrap(<WorkflowDefListView onNew={() => {}} onSelect={() => {}} onClone={() => {}} />);
     expect(screen.getByTestId("or-def-list-loading")).toBeTruthy();
   });
 
   it("renders a row for each def", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json([DEF_FIXTURE, DEF_WITH_STAGES]));
-    wrap(<WorkflowDefListView onNew={() => {}} onClone={() => {}} />);
+    wrap(<WorkflowDefListView onNew={() => {}} onSelect={() => {}} onClone={() => {}} />);
     const rows = await screen.findAllByTestId("or-def-row");
     expect(rows).toHaveLength(2);
   });
 
   it("shows empty state when no defs exist", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json([]));
-    wrap(<WorkflowDefListView onNew={() => {}} onClone={() => {}} />);
+    wrap(<WorkflowDefListView onNew={() => {}} onSelect={() => {}} onClone={() => {}} />);
     expect(await screen.findByTestId("or-def-list-empty")).toBeTruthy();
   });
 
   it("shows error state when fetch fails", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ error: "server down" }, 500));
-    wrap(<WorkflowDefListView onNew={() => {}} onClone={() => {}} />);
+    wrap(<WorkflowDefListView onNew={() => {}} onSelect={() => {}} onClone={() => {}} />);
     expect(await screen.findByTestId("or-def-list-error")).toBeTruthy();
   });
 
   it("calls onNew when New Definition button is clicked", async () => {
     const onNew = vi.fn();
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json([]));
-    wrap(<WorkflowDefListView onNew={onNew} onClone={() => {}} />);
+    wrap(<WorkflowDefListView onNew={onNew} onSelect={() => {}} onClone={() => {}} />);
     await screen.findByTestId("or-def-list-empty");
     fireEvent.click(screen.getByTestId("or-def-new-btn"));
     expect(onNew).toHaveBeenCalled();
@@ -114,10 +115,32 @@ describe("WorkflowDefListView", () => {
   it("calls onClone with the def when clone button is clicked", async () => {
     const onClone = vi.fn();
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json([DEF_FIXTURE]));
-    wrap(<WorkflowDefListView onNew={() => {}} onClone={onClone} />);
+    wrap(<WorkflowDefListView onNew={() => {}} onSelect={() => {}} onClone={onClone} />);
     const cloneBtn = await screen.findByTestId("or-def-clone-btn");
     fireEvent.click(cloneBtn);
     expect(onClone).toHaveBeenCalledWith(expect.objectContaining({ id: "def-1" }));
+  });
+
+  it("opens a definition when its name is clicked", async () => {
+    const onSelect = vi.fn();
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json([DEF_FIXTURE]));
+    wrap(<WorkflowDefListView onNew={() => {}} onSelect={onSelect} onClone={() => {}} />);
+    fireEvent.click(await screen.findByTestId("or-def-view-btn"));
+    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ id: "def-1" }));
+  });
+});
+
+describe("WorkflowDefDetailView", () => {
+  it("shows stages, slots, connections, and expandable configuration", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json(DEF_WITH_STAGES));
+    wrap(<WorkflowDefDetailView definitionId="def-2" onBack={() => {}} onClone={() => {}} />);
+
+    expect(await screen.findByTestId("or-def-detail")).toBeTruthy();
+    expect(screen.getAllByTestId("or-def-stage")).toHaveLength(1);
+    expect(screen.getByText("plan")).toBeTruthy();
+    expect(screen.getByText("result")).toBeTruthy();
+    expect(screen.getByText("No connections.")).toBeTruthy();
+    expect(screen.getByText("Stage configuration")).toBeTruthy();
   });
 });
 

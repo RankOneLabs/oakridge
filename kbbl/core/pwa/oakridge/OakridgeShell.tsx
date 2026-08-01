@@ -7,6 +7,7 @@ import { NewRunForm } from "./NewRunForm";
 import { CreateProjectModal } from "./CreateProjectModal";
 import { WorkflowDefListView } from "./WorkflowDefListView";
 import { WorkflowDefEditor } from "./WorkflowDefEditor";
+import { WorkflowDefDetailView } from "./WorkflowDefDetailView";
 import type { OakridgeSubRoute } from "../lib/hash";
 import type { WorkflowDefSummary } from "./types";
 
@@ -54,6 +55,7 @@ function OakridgeShellInner({ route, onBack, onNavigate }: OakridgeShellInnerPro
   const navigateToNewRun = () => onNavigate("oakridge/new-run");
   const navigateToCreateProject = () => onNavigate("oakridge/create-project");
   const navigateToDefs = () => onNavigate("oakridge/defs");
+  const navigateToDef = (id: string) => onNavigate(`oakridge/def/${encodeURIComponent(id)}`);
   const navigateToDefNew = () => onNavigate("oakridge/def-new");
   const navigateToDefEdit = (id: string) => onNavigate(`oakridge/def-edit/${encodeURIComponent(id)}`);
 
@@ -100,7 +102,17 @@ function OakridgeShellInner({ route, onBack, onNavigate }: OakridgeShellInnerPro
       content = (
         <WorkflowDefListView
           onNew={navigateToDefNew}
+          onSelect={(def: WorkflowDefSummary) => navigateToDef(def.id)}
           onClone={(def: WorkflowDefSummary) => navigateToDefEdit(def.id)}
+        />
+      );
+      break;
+    case "def":
+      content = (
+        <WorkflowDefDetailView
+          definitionId={route.id}
+          onBack={navigateToDefs}
+          onClone={() => navigateToDefEdit(route.id)}
         />
       );
       break;
@@ -147,7 +159,7 @@ function OakridgeShellInner({ route, onBack, onNavigate }: OakridgeShellInnerPro
         </button>
         <button
           type="button"
-          className={`or-shell__nav-item ${route.sub === "defs" || route.sub === "def-new" || route.sub === "def-edit" ? "or-shell__nav-item--active" : ""}`}
+          className={`or-shell__nav-item ${route.sub === "defs" || route.sub === "def" || route.sub === "def-new" || route.sub === "def-edit" ? "or-shell__nav-item--active" : ""}`}
           onClick={navigateToDefs}
         >
           Workflows

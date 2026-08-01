@@ -273,6 +273,7 @@ export interface FanOutConfig {
   item_bindings?: Record<string, SlotBinding>;
   workdir?: SlotBinding | null;
   worktree?: WorktreeTemplate | null;
+  inherit_worktree_from?: string | null;
 }
 
 export interface DelegatedSessionStageConfig {
@@ -295,6 +296,7 @@ export interface InputSlotDef {
   artifact_type: string;
   optional?: boolean;
   collect?: boolean;
+  delivery?: "stage_complete" | "unit_complete";
 }
 
 export interface OutputSlotDef {
