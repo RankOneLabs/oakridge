@@ -17,6 +17,10 @@ describe("readHashRoute oakridge routes", () => {
       view: "oakridge",
       route: { sub: "run", id: "run-1" },
     });
+    expect(withHash("#oakridge/def/def%2F1")).toEqual({
+      view: "oakridge",
+      route: { sub: "def", id: "def/1" },
+    });
     expect(withHash("#oakridgeSomethingElse")).toBeNull();
   });
 });

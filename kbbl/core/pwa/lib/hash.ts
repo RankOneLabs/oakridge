@@ -25,6 +25,7 @@ export type OakridgeSubRoute =
   | { sub: "new-run" }
   | { sub: "create-project" }
   | { sub: "defs" }
+  | { sub: "def"; id: string }
   | { sub: "def-new" }
   | { sub: "def-edit"; id: string };
 
@@ -93,6 +94,13 @@ export function readHashRoute(): HashRoute | null {
     }
     if (rest === "/defs") {
       return { view: "oakridge", route: { sub: "defs" } };
+    }
+    if (rest.startsWith("/def/")) {
+      const raw = rest.slice("/def/".length);
+      if (raw) {
+        const id = tryDecode(raw);
+        return { view: "oakridge", route: { sub: "def", id } };
+      }
     }
     if (rest === "/def-new") {
       return { view: "oakridge", route: { sub: "def-new" } };
