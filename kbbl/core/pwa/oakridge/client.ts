@@ -22,9 +22,44 @@ import type {
   PostAtomEditRequest,
   PostReviewItemRequest,
   PatchReviewItemRequest,
+  StageDetail,
+  StageUnit,
 } from "./types";
+import { parseRepositoryKey } from "./repository-inputs";
 
 const API = "/oakridge/api";
+
+type RawStageUnit = Omit<StageUnit, "repository_key"> & { repository_key?: string | null };
+type RawStageDetail = Omit<StageDetail, "units"> & { units?: RawStageUnit[] };
+type RawRunDetail = Omit<RunDetail, "stages"> & { stages: RawStageDetail[] };
+type RawParkedGate = Omit<ParkedGate, "repository_key"> & { repository_key?: string | null };
+
+function parseOptionalRepositoryKey(value: string | null | undefined) {
+  if (value == null) return value;
+  const key = parseRepositoryKey(value);
+  if (!key) throw new Error("oakridge response contained an empty repository key");
+  return key;
+}
+
+function parseRunDetail(run: RawRunDetail): RunDetail {
+  return {
+    ...run,
+    stages: run.stages.map((stage) => ({
+      ...stage,
+      units: stage.units?.map((unit) => ({
+        ...unit,
+        repository_key: parseOptionalRepositoryKey(unit.repository_key),
+      })),
+    })),
+  };
+}
+
+function parseParkedGates(gates: RawParkedGate[]): ParkedGate[] {
+  return gates.map((gate) => ({
+    ...gate,
+    repository_key: parseOptionalRepositoryKey(gate.repository_key),
+  }));
+}
 
 async function oakridgeGet<T>(path: string): Promise<T> {
   const res = await fetch(`${API}${path}`);
@@ -88,15 +123,15 @@ export function fetchRuns(filter?: string): Promise<RunSummary[]> {
 }
 
 export function fetchRun(id: string): Promise<RunDetail> {
-  return oakridgeGet<RunDetail>(`/runs/${encodeURIComponent(id)}`);
+  return oakridgeGet<RawRunDetail>(`/runs/${encodeURIComponent(id)}`).then(parseRunDetail);
 }
 
 export function fetchRunGates(runId: string): Promise<ParkedGate[]> {
-  return oakridgeGet<ParkedGate[]>(`/runs/${encodeURIComponent(runId)}/gates`);
+  return oakridgeGet<RawParkedGate[]>(`/runs/${encodeURIComponent(runId)}/gates`).then(parseParkedGates);
 }
 
 export function fetchGates(): Promise<ParkedGate[]> {
-  return oakridgeGet<ParkedGate[]>("/gates");
+  return oakridgeGet<RawParkedGate[]>("/gates").then(parseParkedGates);
 }
 
 export function fetchArtifact(id: string): Promise<ArtifactDetail> {

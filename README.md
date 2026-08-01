@@ -63,7 +63,8 @@ To run the services separately for debugging:
 
 ```bash
 # Terminal 1
-./kbbl/scripts/kbbl-start /path/to/your/repo
+OAKRIDGE_CORE_BASE_URL=http://127.0.0.1:8790 \
+  ./kbbl/scripts/kbbl-start /path/to/your/repo
 
 # Terminal 2
 cd oakridge-core
@@ -75,6 +76,11 @@ When starting them separately, also set
 `OAKRIDGE_CORE_BASE_URL=http://127.0.0.1:8790` on the kbbl process to enable
 the Oakridge PWA. oakridge-core reads the kbbl base URL from
 `KBBL_API_BASE_URL`.
+
+The combined launcher requires Bash 4.3 or newer because it supervises both
+services with `wait -n`. Set `OAKRIDGE_CORE_BIND` and `OAKRIDGE_CORE_PORT` to
+change the local core listener; the launcher derives kbbl's core URL from those
+same values.
 
 For the full Oakridge v2 runtime-delegation operator guide, including both
 interactive `delegated_session` and headless `delegated_lbc_run` examples, see

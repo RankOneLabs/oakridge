@@ -34,8 +34,15 @@ export interface CreateRunContext {
   worker_effort?: string;
 }
 
-export interface RepositoryInput {
+export type RepositoryKey = string & { readonly __brand: "RepositoryKey" };
+
+export interface RepositoryInputDraft {
   key: string;
+  path: string;
+}
+
+export interface RepositoryInput {
+  key: RepositoryKey;
   path: string;
 }
 
@@ -76,7 +83,7 @@ export interface StageArtifact {
 
 export interface StageUnit {
   unit_id: string;
-  repository_key?: string | null;
+  repository_key?: RepositoryKey | null;
   sid: string | null;
   worktree: WorktreeMetadata | null;
   status: StageStatus;
@@ -144,7 +151,7 @@ export interface ParkedGate {
   run_id: string;
   stage_name: string;
   unit_id: string;
-  repository_key?: string | null;
+  repository_key?: RepositoryKey | null;
   artifact_revision_id: string | null;
   worktree: WorktreeMetadata | null;
   resume_actions: string[];

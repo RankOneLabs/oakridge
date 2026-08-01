@@ -19,12 +19,26 @@ describe("validateRepositoryInputs", () => {
     expect(validateRepositoryInputs([
       { key: "api", path: "/repos/one" },
       { key: "api", path: "/repos/two" },
-    ])).toEqual({ ok: false, error: "Repository keys must be unique." });
+    ])).toEqual({
+      ok: false,
+      error: {
+        operation: "validate_repository_inputs",
+        repository: "api",
+        detail: "Repository keys must be unique.",
+      },
+    });
   });
 
   it("rejects relative paths", () => {
     expect(validateRepositoryInputs([
       { key: "api", path: "repos/api" },
-    ])).toEqual({ ok: false, error: "Repository paths must be absolute." });
+    ])).toEqual({
+      ok: false,
+      error: {
+        operation: "validate_repository_inputs",
+        repository: 0,
+        detail: "Repository paths must be absolute.",
+      },
+    });
   });
 });

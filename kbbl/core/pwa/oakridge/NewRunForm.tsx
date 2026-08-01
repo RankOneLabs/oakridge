@@ -12,7 +12,7 @@ import {
   sortWorkflowDefinitions,
 } from "../lib/workflow-defs";
 import { useOakridgeConfig, useProjects, useWorkflowDefs, useCreateRun } from "./hooks";
-import type { RepositoryInput } from "./types";
+import type { RepositoryInputDraft } from "./types";
 import { validateRepositoryInputs } from "./repository-inputs";
 
 const secondaryButtonClass =
@@ -178,7 +178,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
   );
 
   const [briefNotes, setBriefNotes] = useState("");
-  const [repositories, setRepositories] = useState<RepositoryInput[]>([{ key: "repo", path: "" }]);
+  const [repositories, setRepositories] = useState<RepositoryInputDraft[]>([{ key: "repo", path: "" }]);
   const [projectId, setProjectId] = useState<string>("");
   const [workflowDefId, setWorkflowDefId] = useState<string>("");
   const [plannerSelection, setPlannerSelection] = useState<RuntimeModelSelection>(() =>
@@ -239,7 +239,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
     setError(null);
     if (!workflowDefId) { setError("Select a workflow definition."); return; }
     const repositoryResult = validateRepositoryInputs(repositories);
-    if (!repositoryResult.ok) { setError(repositoryResult.error); return; }
+    if (!repositoryResult.ok) { setError(repositoryResult.error.detail); return; }
     const normalizedRepositories = repositoryResult.repositories;
     if (!briefNotes.trim()) { setError("Brief notes are required."); return; }
     if (!coreUrl) { setError("oakridge core URL is not configured."); return; }

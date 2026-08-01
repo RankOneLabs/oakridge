@@ -890,7 +890,7 @@ impl UnitScheduler {
             worktree_branch: snapshot.worktree_branch.clone(),
             worktree_base_ref: snapshot.worktree_base_ref.clone(),
         })?;
-        queries::set_session_unit_external_ref(
+        let persisted = queries::set_session_unit_external_ref(
             self.ctx.pool(),
             &self.ctx.stage_instance_id,
             &unit.unit_id,
@@ -899,15 +899,23 @@ impl UnitScheduler {
             snapshot.worktree_path.clone(),
             snapshot.worktree_base_ref.clone(),
         )
-        .await?;
-        queries::set_session_unit_status(
+        .await;
+        if let Err(err) = persisted {
+            let _ = self.kbbl_client.stop_session(&snapshot.sid).await;
+            return Err(err.into());
+        }
+        let started = queries::set_session_unit_status(
             self.ctx.pool(),
             &self.ctx.stage_instance_id,
             &unit.unit_id,
             UnitStatus::Running,
             None,
         )
-        .await?;
+        .await;
+        if let Err(err) = started {
+            let _ = self.kbbl_client.stop_session(&snapshot.sid).await;
+            return Err(err.into());
+        }
         let cancelled = Arc::new(AtomicBool::new(false));
         self.live_sessions.lock().unwrap().insert(
             (self.ctx.stage_instance_id, unit.unit_id.clone()),
@@ -923,19 +931,32 @@ impl UnitScheduler {
                 unit_scheduler: Some(self.clone()),
             },
         );
-        if unit_config.yolo {
+        let setup = async {
+            if unit_config.yolo {
+                self.kbbl_client
+                    .set_yolo(&snapshot.sid, SetYoloRequest { enabled: true })
+                    .await?;
+            }
             self.kbbl_client
-                .set_yolo(&snapshot.sid, SetYoloRequest { enabled: true })
+                .send_input(
+                    &snapshot.sid,
+                    SendInputRequest {
+                        text: unit_config.rendered_prompt.clone(),
+                    },
+                )
                 .await?;
+            Ok::<(), anyhow::Error>(())
         }
-        self.kbbl_client
-            .send_input(
-                &snapshot.sid,
-                SendInputRequest {
-                    text: unit_config.rendered_prompt,
-                },
-            )
-            .await?;
+        .await;
+        if let Err(err) = setup {
+            cancelled.store(true, Ordering::SeqCst);
+            self.live_sessions
+                .lock()
+                .unwrap()
+                .remove(&(self.ctx.stage_instance_id, unit.unit_id.clone()));
+            let _ = self.kbbl_client.stop_session(&snapshot.sid).await;
+            return Err(err);
+        }
         self.spawn_unit_observer(unit.unit_id.clone(), snapshot.sid, cancelled);
         Ok(())
     }
@@ -1690,7 +1711,11 @@ impl StageType for DelegatedSessionStage {
                                     fan_out.unit_id_path
                                 )
                             })?;
-                        let workdir = resolve_binding(binding, inputs, run_context, Some(item))?;
+                        let workdir = substitute_unit_template(
+                            &resolve_binding(binding, inputs, run_context, Some(item))?,
+                            unit_id,
+                            stage_instance_id,
+                        );
                         workdirs.insert(unit_id.to_owned(), PathBuf::from(workdir));
                     }
                 }
@@ -3260,6 +3285,9 @@ mod tests {
             dir.path().to_path_buf(),
             KbblClient::new("http://127.0.0.1:8080/").unwrap(),
         );
+        let stage_instance_id = StageInstanceId(
+            uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000043").unwrap(),
+        );
         let config = stage
             .build_config(
                 &json!({
@@ -3272,23 +3300,30 @@ mod tests {
                     "workdir": {"from": "literal", "value": "/work"},
                     "session_name": "fanout",
                     "fan_out": {
-                        "over": {"from": "literal", "value": "[]"},
-                        "unit_id_path": "/id"
+                        "over": {"from": "literal", "value": "[{\"id\":\"api\"}]"},
+                        "unit_id_path": "/id",
+                        "workdir": {"from": "literal", "value": "/repos/{{STAGE_INSTANCE_ID}}"}
                     }
                 }),
                 &HashMap::new(),
                 &[],
-                StageInstanceId(uuid::Uuid::new_v4()),
+                stage_instance_id,
                 &json!({}),
             )
             .await
             .unwrap();
         let config: DelegatedSessionConfig = serde_json::from_value(config).unwrap();
         assert_eq!(config.rendered_prompt, "Base ready item {{ITEM}}");
-        let plan = config.fan_out_prompt_plan.unwrap();
+        let plan = config.fan_out_prompt_plan.as_ref().unwrap();
         assert_eq!(plan.raw_template, "Base {{BASE}} item {{ITEM}}");
         assert_eq!(plan.base_slot_values.get("BASE"), Some(&"ready".to_owned()));
         assert!(!plan.base_slot_values.contains_key("ITEM"));
+        assert_eq!(
+            config.resolved_fan_out_workdirs.get("api"),
+            Some(&PathBuf::from(
+                "/repos/00000000-0000-0000-0000-000000000043"
+            ))
+        );
     }
 
     #[tokio::test]
