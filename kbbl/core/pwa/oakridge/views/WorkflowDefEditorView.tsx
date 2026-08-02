@@ -5,10 +5,12 @@ import {
   runtimeDescriptorsForConfig,
   useServerConfig,
 } from "../../hooks/useServerConfig";
-import type { WorkflowGraph, EdgeDef, WorkflowDefFull } from "../types";
-import { StageEditor, defaultStageEntry, stageFormEntryToNodeDef } from "../authoring/StageEditor";
-import type { StageFormEntry } from "../authoring/StageEditor";
+import type { EdgeDef } from "../types";
+import { StageEditor } from "../authoring/StageEditor";
+import { defaultStageEntry, type StageFormEntry } from "../authoring/stage-form";
 import { EdgeEditor } from "../authoring/EdgeEditor";
+import { buildWorkflowGraph, validateWorkflowDefinition, workflowDefinitionToFormState } from "../lib/workflow-definition-form";
+import { WorkflowJsonPreview } from "../components/molecules/WorkflowJsonPreview";
 
 const secondaryButtonClass =
   "inline-flex items-center gap-1.5 rounded-md border border-[var(--border-muted)] bg-transparent px-3 py-1.5 text-sm text-[var(--text-secondary)] hover:border-[var(--border-hover)]";
@@ -19,110 +21,6 @@ const inputClass =
 const labelClass = "block text-xs font-medium text-[var(--text-muted)] mb-1";
 const addBtnClass =
   "inline-flex items-center gap-1.5 rounded-md border border-[var(--border-muted)] bg-transparent px-3 py-1.5 text-sm text-[var(--text-secondary)] hover:border-[var(--border-hover)]";
-
-// ── Validation ────────────────────────────────────────────────────────────────
-
-function validateGraph(
-  stages: StageFormEntry[],
-  edges: EdgeDef[],
-  name: string,
-): string[] {
-  const errors: string[] = [];
-  if (!name.trim()) errors.push("Name is required.");
-
-  const stageKeys = new Set<string>();
-  for (const s of stages) {
-    if (!s.stageKey.trim()) {
-      errors.push("Each stage must have a non-empty key.");
-    } else if (stageKeys.has(s.stageKey)) {
-      errors.push(`Duplicate stage key: "${s.stageKey}".`);
-    } else {
-      stageKeys.add(s.stageKey);
-    }
-  }
-
-  for (const e of edges) {
-    if (!e.from.stage || !e.to.stage) {
-      errors.push("Each edge must have a from/to stage.");
-    } else {
-      if (!stageKeys.has(e.from.stage)) {
-        errors.push(`Edge references unknown from-stage: "${e.from.stage}".`);
-      }
-      if (!stageKeys.has(e.to.stage)) {
-        errors.push(`Edge references unknown to-stage: "${e.to.stage}".`);
-      }
-      if (!e.from.slot) {
-        errors.push(`Edge from "${e.from.stage}" — from-slot must not be empty.`);
-      }
-      if (!e.to.slot) {
-        errors.push(`Edge to "${e.to.stage}" — to-slot must not be empty.`);
-      }
-    }
-  }
-
-  // Check that edges reference declared slot names
-  for (const e of edges) {
-    const fromStage = stages.find((s) => s.stageKey === e.from.stage);
-    const toStage = stages.find((s) => s.stageKey === e.to.stage);
-    if (fromStage && e.from.slot) {
-      const hasSlot = fromStage.outputs.some((o) => o.name === e.from.slot);
-      if (!hasSlot) {
-        errors.push(
-          `Edge from "${e.from.stage}.${e.from.slot}" — slot not declared in that stage's outputs.`,
-        );
-      }
-    }
-    if (toStage && e.to.slot) {
-      const hasSlot = toStage.inputs.some((i) => i.name === e.to.slot);
-      if (!hasSlot) {
-        errors.push(
-          `Edge to "${e.to.stage}.${e.to.slot}" — slot not declared in that stage's inputs.`,
-        );
-      }
-    }
-  }
-
-  return errors;
-}
-
-// ── Graph assembly ────────────────────────────────────────────────────────────
-
-function buildGraph(stages: StageFormEntry[], edges: EdgeDef[]): WorkflowGraph {
-  const stagesMap: WorkflowGraph["stages"] = {};
-  for (const s of stages) {
-    stagesMap[s.stageKey] = stageFormEntryToNodeDef(s);
-  }
-  return { stages: stagesMap, edges };
-}
-
-// ── Load existing def into form state ─────────────────────────────────────────
-
-function defToFormState(def: WorkflowDefFull): {
-  stages: StageFormEntry[];
-  edges: EdgeDef[];
-} {
-  const stages: StageFormEntry[] = Object.entries(def.graph.stages).map(([key, node]) => ({
-    _uid: crypto.randomUUID(),
-    stageKey: key,
-    inputs: node.inputs,
-    outputs: node.outputs,
-    config: {
-      runtime: node.config.runtime ?? "claude-code",
-      prompt_template_path: node.config.prompt_template_path ?? "",
-      slot_bindings: node.config.slot_bindings ?? {},
-      workdir: node.config.workdir ?? { from: "context", path: "/workdir" },
-      session_name: node.config.session_name ?? "",
-      model: node.config.model ?? null,
-      effort: node.config.effort ?? null,
-      worktree: node.config.worktree ?? null,
-      pre_authorized_tools: node.config.pre_authorized_tools ?? [],
-      yolo: node.config.yolo ?? false,
-      fan_out: node.config.fan_out ?? null,
-      gate_output: node.config.gate_output ?? null,
-    },
-  }));
-  return { stages, edges: def.graph.edges };
-}
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -170,7 +68,7 @@ export function WorkflowDefEditorView({ cloneFromId, onBack, onCreated }: Workfl
     if (cloneLoaded && !populated) {
       setName(cloneLoaded.name);
       setVersion(cloneLoaded.version + 1);
-      const { stages: s, edges: e } = defToFormState(cloneLoaded);
+      const { stages: s, edges: e } = workflowDefinitionToFormState(cloneLoaded);
       setStages(s);
       setEdges(e);
       setPopulated(true);
@@ -216,10 +114,10 @@ export function WorkflowDefEditorView({ cloneFromId, onBack, onCreated }: Workfl
   };
 
   const validationErrors = useMemo(
-    () => validateGraph(stages, edges, name),
+    () => validateWorkflowDefinition(stages, edges, name),
     [stages, edges, name],
   );
-  const graph = useMemo(() => buildGraph(stages, edges), [stages, edges]);
+  const graph = useMemo(() => buildWorkflowGraph(stages, edges), [stages, edges]);
   const previewJson = useMemo(
     () => JSON.stringify({ name, version, graph }, null, 2),
     [name, version, graph],
@@ -393,18 +291,7 @@ export function WorkflowDefEditorView({ cloneFromId, onBack, onCreated }: Workfl
           </div>
         </form>
 
-        {/* Right: live JSON preview */}
-        <aside className="sticky top-4 flex flex-col gap-2">
-          <span className="text-xs font-semibold uppercase text-[var(--text-muted)]">
-            JSON Preview (POST body)
-          </span>
-          <pre
-            className="max-h-[70vh] overflow-auto rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-3 font-mono text-xs text-[var(--text-secondary)]"
-            data-testid="or-def-preview"
-          >
-            {previewJson}
-          </pre>
-        </aside>
+        <WorkflowJsonPreview json={previewJson} />
       </div>
     </div>
   );

@@ -1,15 +1,11 @@
 import { useState } from "react";
-import type {
-  StageNodeDef,
-  DelegatedSessionStageConfig,
-  SlotBinding,
-  InputSlotDef,
-  OutputSlotDef,
-} from "../../oakridge/types";
+import type { DelegatedSessionStageConfig, SlotBinding } from "../../oakridge/types";
 import type { RuntimeModelOption } from "../../types";
 import { BindingEditor, BindableEditor } from "./BindingEditor";
 import { InputSlotEditor, OutputSlotEditor } from "./SlotEditor";
 import { FanOutEditor } from "./FanOutEditor";
+import { StageAdvancedSettings } from "../components/molecules/StageAdvancedSettings";
+import type { StageFormEntry } from "./stage-form";
 
 const inputClass =
   "w-full rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-3 py-1.5 text-sm text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none";
@@ -21,37 +17,9 @@ const addBtnClass =
 const sectionClass =
   "flex flex-col gap-3 rounded-md border border-[var(--border-subtle)] p-3";
 
-function defaultConfig(): DelegatedSessionStageConfig {
-  return {
-    runtime: "claude-code",
-    prompt_template_path: "",
-    slot_bindings: {},
-    workdir: { from: "context", path: "/workdir" },
-    session_name: "",
-    model: null,
-    effort: null,
-    worktree: null,
-    pre_authorized_tools: [],
-    yolo: false,
-    fan_out: null,
-    gate_output: null,
-  };
-}
-
 interface ArtifactTypeOption {
   value: string;
   label: string;
-}
-
-export interface StageFormEntry {
-  // Stable synthetic id for React keys. The stageKey is user-editable and can be
-  // blank or duplicated mid-edit, so it can't serve as a key; this id is assigned
-  // once at creation and never serialized into the workflow graph.
-  _uid: string;
-  stageKey: string;
-  inputs: InputSlotDef[];
-  outputs: OutputSlotDef[];
-  config: DelegatedSessionStageConfig;
 }
 
 interface StageEditorProps {
@@ -64,27 +32,6 @@ interface StageEditorProps {
   modelOptions: RuntimeModelOption[];
   effortOptions: RuntimeModelOption[];
   disabled?: boolean;
-}
-
-export function defaultStageEntry(key: string): StageFormEntry {
-  return { _uid: crypto.randomUUID(), stageKey: key, inputs: [], outputs: [], config: defaultConfig() };
-}
-
-export function stageFormEntryToNodeDef(entry: StageFormEntry): StageNodeDef {
-  const cfg = { ...entry.config };
-  // Strip null/empty optional fields to keep the JSON clean
-  if (!cfg.model) delete cfg.model;
-  if (!cfg.effort) delete cfg.effort;
-  if (!cfg.worktree) delete cfg.worktree;
-  if (!cfg.fan_out) delete cfg.fan_out;
-  if (!cfg.gate_output) delete cfg.gate_output;
-  if (!cfg.pre_authorized_tools?.length) delete cfg.pre_authorized_tools;
-  return {
-    stage_type: "delegated_session",
-    config: cfg,
-    inputs: entry.inputs,
-    outputs: entry.outputs,
-  };
 }
 
 export function StageEditor({
@@ -135,15 +82,6 @@ export function StageEditor({
   const updateSlotBindingValue = (key: string, binding: SlotBinding) => {
     updateCfg({ slot_bindings: { ...cfg.slot_bindings, [key]: binding } });
   };
-
-  const addPreAuthTool = () =>
-    updateCfg({ pre_authorized_tools: [...(cfg.pre_authorized_tools ?? []), ""] });
-  const removePreAuthTool = (i: number) =>
-    updateCfg({ pre_authorized_tools: (cfg.pre_authorized_tools ?? []).filter((_, idx) => idx !== i) });
-  const updatePreAuthTool = (i: number, v: string) =>
-    updateCfg({
-      pre_authorized_tools: (cfg.pre_authorized_tools ?? []).map((t, idx) => (idx === i ? v : t)),
-    });
 
   return (
     <div className="flex flex-col gap-0 rounded-md border border-[var(--border-muted)]" data-testid="or-stage-editor">
@@ -353,105 +291,7 @@ export function StageEditor({
             />
           </div>
 
-          {/* Worktree identity (session-level) */}
-          <div className={sectionClass}>
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase text-[var(--text-muted)]">Worktree Identity</span>
-              <button
-                type="button"
-                className={addBtnClass}
-                onClick={() =>
-                  updateCfg({
-                    worktree: cfg.worktree
-                      ? null
-                      : { branchName: "", worktreeSubdir: "", baseRef: null },
-                  })
-                }
-                disabled={disabled}
-              >
-                {cfg.worktree ? "Remove" : "+ Add"}
-              </button>
-            </div>
-            {cfg.worktree && (
-              <div className="flex flex-col gap-2">
-                <label className="flex flex-col gap-1">
-                  <span className={labelClass}>branchName</span>
-                  <input
-                    type="text"
-                    className={inputClass}
-                    value={cfg.worktree.branchName}
-                    onChange={(e) =>
-                      updateCfg({ worktree: { ...cfg.worktree!, branchName: e.target.value } })
-                    }
-                    disabled={disabled}
-                    placeholder="cohort/{{UNIT_ID}}"
-                  />
-                </label>
-                <label className="flex flex-col gap-1">
-                  <span className={labelClass}>worktreeSubdir</span>
-                  <input
-                    type="text"
-                    className={inputClass}
-                    value={cfg.worktree.worktreeSubdir}
-                    onChange={(e) =>
-                      updateCfg({ worktree: { ...cfg.worktree!, worktreeSubdir: e.target.value } })
-                    }
-                    disabled={disabled}
-                    placeholder="wt/{{UNIT_ID}}"
-                  />
-                </label>
-                <label className="flex flex-col gap-1">
-                  <span className={labelClass}>baseRef (optional)</span>
-                  <input
-                    type="text"
-                    className={inputClass}
-                    value={cfg.worktree.baseRef ?? ""}
-                    onChange={(e) =>
-                      updateCfg({ worktree: { ...cfg.worktree!, baseRef: e.target.value || null } })
-                    }
-                    disabled={disabled}
-                    placeholder="main"
-                  />
-                </label>
-              </div>
-            )}
-          </div>
-
-          {/* Pre-authorized tools */}
-          <div className={sectionClass}>
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase text-[var(--text-muted)]">
-                Pre-authorized Tools
-              </span>
-              <button type="button" className={addBtnClass} onClick={addPreAuthTool} disabled={disabled}>
-                + Add
-              </button>
-            </div>
-            {(cfg.pre_authorized_tools ?? []).length === 0 && (
-              <p className="text-xs text-[var(--text-muted)]">No pre-authorized tools.</p>
-            )}
-            {(cfg.pre_authorized_tools ?? []).map((tool, i) => (
-              <div key={i} className="flex items-center gap-2">
-                <input
-                  type="text"
-                  className={inputClass}
-                  value={tool}
-                  onChange={(e) => updatePreAuthTool(i, e.target.value)}
-                  disabled={disabled}
-                  placeholder="Bash"
-                  aria-label={`Pre-authorized tool ${i + 1}`}
-                />
-                <button
-                  type="button"
-                  className={dangerBtnClass}
-                  onClick={() => removePreAuthTool(i)}
-                  disabled={disabled}
-                >
-                  ✕
-                </button>
-              </div>
-            ))}
-          </div>
+          <StageAdvancedSettings config={cfg} onChange={updateCfg} isDisabled={disabled} />
         </div>
       )}
     </div>

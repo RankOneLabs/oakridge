@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { defaultPlannerModelForRuntime, defaultWorkerModelForRuntime, type RuntimeId } from "../../../runtime";
 import {
   defaultRuntimeIdForConfig,
   runtimeDescriptorsForConfig,
   useServerConfig,
 } from "../../hooks/useServerConfig";
-import type { RuntimeDescriptor, RuntimeModelSelection } from "../../types";
+import type { RuntimeModelSelection } from "../../types";
 import { coerceSelection } from "../../sidebar/AddSpecModal";
 import {
   defaultWorkflowDefinitionId,
@@ -14,6 +13,7 @@ import {
 import { useOakridgeConfig, useProjects, useWorkflowDefs, useCreateRun } from "../hooks";
 import type { RepositoryInputDraft } from "../types";
 import { validateRepositoryInputs } from "../repository-inputs";
+import { initialSelectionForRole, RoleModelPicker } from "../components/molecules/RoleModelPicker";
 
 const secondaryButtonClass =
   "inline-flex items-center gap-1.5 rounded-md border border-[var(--border-muted)] bg-transparent px-3 py-1.5 text-sm text-[var(--text-secondary)] hover:border-[var(--border-hover)]";
@@ -23,137 +23,6 @@ const fieldLabelClass = "block text-xs font-medium text-[var(--text-muted)] mb-1
 const inputClass =
   "w-full rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-3 py-1.5 text-sm text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none";
 
-type Role = "planner" | "worker";
-type SetSelection = (
-  value: RuntimeModelSelection | ((current: RuntimeModelSelection) => RuntimeModelSelection),
-) => void;
-
-function isModelAllowed(runtime: RuntimeDescriptor, model: string): boolean {
-  return runtime.models.some((option) => option.value === model);
-}
-
-function getRoleDefaultModel(role: Role, runtime: RuntimeDescriptor): string {
-  const preferred =
-    role === "planner"
-      ? defaultPlannerModelForRuntime(runtime.id)
-      : defaultWorkerModelForRuntime(runtime.id);
-  if (isModelAllowed(runtime, preferred)) return preferred;
-  return runtime.models[0]?.value ?? preferred;
-}
-
-function getRuntimeForSelection(
-  runtimeDescriptors: RuntimeDescriptor[],
-  defaultRuntimeId: RuntimeId,
-  runtimeId: RuntimeId,
-): RuntimeDescriptor {
-  return (
-    runtimeDescriptors.find((r) => r.id === runtimeId) ??
-    runtimeDescriptors.find((r) => r.id === defaultRuntimeId) ??
-    runtimeDescriptors[0]
-  );
-}
-
-function initialSelectionForRole(
-  role: Role,
-  runtimeDescriptors: RuntimeDescriptor[],
-  defaultRuntimeId: RuntimeId,
-): RuntimeModelSelection {
-  const runtime = getRuntimeForSelection(runtimeDescriptors, defaultRuntimeId, defaultRuntimeId);
-  return { runtime: runtime.id, model: getRoleDefaultModel(role, runtime) };
-}
-
-interface RoleModelPickerProps {
-  role: Role;
-  selection: RuntimeModelSelection;
-  setSelection: SetSelection;
-  setRuntimeTouched: (v: boolean) => void;
-  runtimeDescriptors: RuntimeDescriptor[];
-  defaultRuntimeId: RuntimeId;
-  pending: boolean;
-}
-
-function RoleModelPicker({
-  role,
-  selection,
-  setSelection,
-  setRuntimeTouched,
-  runtimeDescriptors,
-  defaultRuntimeId,
-  pending,
-}: RoleModelPickerProps) {
-  const roleLabel = role === "planner" ? "Planner" : "Worker";
-  const runtime = getRuntimeForSelection(runtimeDescriptors, defaultRuntimeId, selection.runtime);
-  const modelOptions = runtime.models;
-
-  return (
-    <section className="flex flex-col gap-2 rounded-md border border-[var(--border-subtle)] p-3">
-      <div className="text-xs font-semibold uppercase text-[var(--text-muted)]">{roleLabel}</div>
-      <label className="flex flex-col gap-1">
-        <span className={fieldLabelClass}>Runtime</span>
-        <select
-          className={inputClass}
-          value={selection.runtime}
-          onChange={(e) => {
-            const nextId = e.target.value as RuntimeId;
-            const nextRuntime = getRuntimeForSelection(runtimeDescriptors, defaultRuntimeId, nextId);
-            setRuntimeTouched(true);
-            setSelection({ runtime: nextRuntime.id, model: getRoleDefaultModel(role, nextRuntime) });
-          }}
-          disabled={pending}
-          aria-label={`${roleLabel} runtime`}
-        >
-          {runtimeDescriptors.map((r) => (
-            <option key={r.id} value={r.id}>{r.label}</option>
-          ))}
-        </select>
-      </label>
-      <label className="flex flex-col gap-1">
-        <span className={fieldLabelClass}>Model</span>
-        {modelOptions.length > 0 ? (
-          <select
-            className={inputClass}
-            value={selection.model}
-            onChange={(e) => setSelection((cur) => ({ ...cur, model: e.target.value }))}
-            disabled={pending}
-            aria-label={`${roleLabel} model`}
-          >
-            {modelOptions.map((opt) => (
-              <option key={opt.value || "default"} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
-        ) : (
-          <input
-            type="text"
-            className={inputClass}
-            value={selection.model}
-            onChange={(e) => setSelection((cur) => ({ ...cur, model: e.target.value }))}
-            disabled={pending}
-            aria-label={`${roleLabel} model`}
-            spellCheck={false}
-          />
-        )}
-      </label>
-      {runtime.efforts.length > 0 && (
-        <label className="flex flex-col gap-1">
-          <span className={fieldLabelClass}>Effort</span>
-          <select
-            className={inputClass}
-            value={selection.effort ?? ""}
-            onChange={(e) =>
-              setSelection((cur) => ({ ...cur, effort: e.target.value || undefined }))
-            }
-            disabled={pending}
-            aria-label={`${roleLabel} effort`}
-          >
-            {[{ value: "", label: "default" }, ...runtime.efforts].map((opt) => (
-              <option key={opt.value || "default"} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
-        </label>
-      )}
-    </section>
-  );
-}
 
 interface NewRunViewProps {
   onBack: () => void;
@@ -379,7 +248,7 @@ export function NewRunView({ onBack, onCreated }: NewRunViewProps) {
             setRuntimeTouched={setPlannerRuntimeTouched}
             runtimeDescriptors={runtimeDescriptors}
             defaultRuntimeId={defaultRuntimeId}
-            pending={pending}
+            isPending={pending}
           />
           <RoleModelPicker
             role="worker"
@@ -388,7 +257,7 @@ export function NewRunView({ onBack, onCreated }: NewRunViewProps) {
             setRuntimeTouched={setWorkerRuntimeTouched}
             runtimeDescriptors={runtimeDescriptors}
             defaultRuntimeId={defaultRuntimeId}
-            pending={pending}
+            isPending={pending}
           />
         </div>
 
