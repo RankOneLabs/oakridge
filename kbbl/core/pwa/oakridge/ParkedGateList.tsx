@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useGates, useRunGates } from "./hooks";
+import { useGates } from "./hooks/useGates";
+import { useRunGates } from "./hooks/useRunGates";
 import type { ParkedGate } from "./types";
 import { GateResumeForm } from "./GateResumeForm";
 

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useResumeGate } from "./hooks";
+import { useResumeGate } from "./hooks/useResumeGate";
 import type { ParkedGate } from "./types";
 
 interface GateResumeFormProps {
