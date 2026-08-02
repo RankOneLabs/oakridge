@@ -3,9 +3,9 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement } from "react";
 
-import { WorkflowDefListView } from "../WorkflowDefListView";
-import { WorkflowDefEditor } from "../WorkflowDefEditor";
-import { WorkflowDefDetailView } from "../WorkflowDefDetailView";
+import { WorkflowDefListView } from "../views/WorkflowDefListView";
+import { WorkflowDefEditorView } from "../views/WorkflowDefEditorView";
+import { WorkflowDefDetailView } from "../views/WorkflowDefDetailView";
 import type { WorkflowDefFull } from "../types";
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -165,25 +165,25 @@ describe("WorkflowDefEditor", () => {
 
   it("renders the editor for a new def when cloneFromId is null", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(makeEditorFetch());
-    wrap(<WorkflowDefEditor cloneFromId={null} onBack={() => {}} onCreated={() => {}} />);
+    wrap(<WorkflowDefEditorView cloneFromId={null} onBack={() => {}} onCreated={() => {}} />);
     expect(await screen.findByTestId("or-def-editor")).toBeTruthy();
   });
 
   it("shows loading state while the clone source is fetching", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise(() => {}));
-    wrap(<WorkflowDefEditor cloneFromId="def-1" onBack={() => {}} onCreated={() => {}} />);
+    wrap(<WorkflowDefEditorView cloneFromId="def-1" onBack={() => {}} onCreated={() => {}} />);
     expect(screen.getByTestId("or-def-editor-loading")).toBeTruthy();
   });
 
   it("shows error state when clone source fetch fails", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(makeEditorFetch({ defError: true }));
-    wrap(<WorkflowDefEditor cloneFromId="missing" onBack={() => {}} onCreated={() => {}} />);
+    wrap(<WorkflowDefEditorView cloneFromId="missing" onBack={() => {}} onCreated={() => {}} />);
     expect(await screen.findByTestId("or-def-editor-load-error")).toBeTruthy();
   });
 
   it("submit is disabled when no stages are defined", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(makeEditorFetch());
-    wrap(<WorkflowDefEditor cloneFromId={null} onBack={() => {}} onCreated={() => {}} />);
+    wrap(<WorkflowDefEditorView cloneFromId={null} onBack={() => {}} onCreated={() => {}} />);
     await screen.findByTestId("or-def-editor");
     fireEvent.change(screen.getByTestId("or-def-name"), { target: { value: "my_flow" } });
     const btn = screen.getByTestId("or-def-submit") as HTMLButtonElement;
@@ -192,7 +192,7 @@ describe("WorkflowDefEditor", () => {
 
   it("shows validation error when name is empty", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(makeEditorFetch());
-    wrap(<WorkflowDefEditor cloneFromId={null} onBack={() => {}} onCreated={() => {}} />);
+    wrap(<WorkflowDefEditorView cloneFromId={null} onBack={() => {}} onCreated={() => {}} />);
     await screen.findByTestId("or-def-editor");
     // Name starts empty — validation errors panel should be present immediately
     expect(screen.getByTestId("or-def-validation-errors")).toBeTruthy();
@@ -200,7 +200,7 @@ describe("WorkflowDefEditor", () => {
 
   it("populates form from clone source and bumps version", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(makeEditorFetch({ def: DEF_WITH_STAGES }));
-    wrap(<WorkflowDefEditor cloneFromId="def-2" onBack={() => {}} onCreated={() => {}} />);
+    wrap(<WorkflowDefEditorView cloneFromId="def-2" onBack={() => {}} onCreated={() => {}} />);
     // editor appears (not loading state) once data loads
     expect(await screen.findByTestId("or-def-editor")).toBeTruthy();
     // version field should show original + 1

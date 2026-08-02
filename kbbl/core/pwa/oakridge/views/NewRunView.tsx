@@ -1,19 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
-import { defaultPlannerModelForRuntime, defaultWorkerModelForRuntime, type RuntimeId } from "../../runtime";
+import { defaultPlannerModelForRuntime, defaultWorkerModelForRuntime, type RuntimeId } from "../../../runtime";
 import {
   defaultRuntimeIdForConfig,
   runtimeDescriptorsForConfig,
   useServerConfig,
-} from "../hooks/useServerConfig";
-import type { RuntimeDescriptor, RuntimeModelSelection } from "../types";
-import { coerceSelection } from "../sidebar/AddSpecModal";
+} from "../../hooks/useServerConfig";
+import type { RuntimeDescriptor, RuntimeModelSelection } from "../../types";
+import { coerceSelection } from "../../sidebar/AddSpecModal";
 import {
   defaultWorkflowDefinitionId,
   sortWorkflowDefinitions,
-} from "../lib/workflow-defs";
-import { useOakridgeConfig, useProjects, useWorkflowDefs, useCreateRun } from "./hooks";
-import type { RepositoryInputDraft } from "./types";
-import { validateRepositoryInputs } from "./repository-inputs";
+} from "../../lib/workflow-defs";
+import { useOakridgeConfig, useProjects, useWorkflowDefs, useCreateRun } from "../hooks";
+import type { RepositoryInputDraft } from "../types";
+import { validateRepositoryInputs } from "../repository-inputs";
 
 const secondaryButtonClass =
   "inline-flex items-center gap-1.5 rounded-md border border-[var(--border-muted)] bg-transparent px-3 py-1.5 text-sm text-[var(--text-secondary)] hover:border-[var(--border-hover)]";
@@ -155,12 +155,12 @@ function RoleModelPicker({
   );
 }
 
-interface NewRunFormProps {
+interface NewRunViewProps {
   onBack: () => void;
   onCreated: (runId: string) => void;
 }
 
-export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
+export function NewRunView({ onBack, onCreated }: NewRunViewProps) {
   const configQuery = useOakridgeConfig();
   const projectsQuery = useProjects();
   const defsQuery = useWorkflowDefs();

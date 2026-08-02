@@ -1,5 +1,5 @@
-import { useWorkflowDef } from "./hooks";
-import type { EdgeDef, StageNodeDef } from "./types";
+import { useWorkflowDef } from "../hooks";
+import type { EdgeDef, StageNodeDef } from "../types";
 
 interface WorkflowDefDetailViewProps {
   definitionId: string;

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useCreateProject } from "./hooks";
+import { useCreateProject } from "../hooks";
 
 const secondaryButtonClass =
   "inline-flex items-center gap-1.5 rounded-md border border-[var(--border-muted)] bg-transparent px-3 py-1.5 text-sm text-[var(--text-secondary)] hover:border-[var(--border-hover)]";
@@ -9,12 +9,12 @@ const fieldLabelClass = "block text-xs font-medium text-[var(--text-muted)] mb-1
 const inputClass =
   "w-full rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-3 py-1.5 text-sm text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none";
 
-interface CreateProjectModalProps {
+interface CreateProjectViewProps {
   onBack: () => void;
   onCreated: () => void;
 }
 
-export function CreateProjectModal({ onBack, onCreated }: CreateProjectModalProps) {
+export function CreateProjectView({ onBack, onCreated }: CreateProjectViewProps) {
   const [name, setName] = useState("");
   const [repoDir, setRepoDir] = useState("");
   const [error, setError] = useState<string | null>(null);

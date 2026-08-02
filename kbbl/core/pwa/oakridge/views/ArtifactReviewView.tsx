@@ -1,12 +1,12 @@
 import { useState } from "react";
-import { useArtifact, useThreads, usePostThread, usePostMessage, usePingThread, useResolveThread, useReviewItems, usePatchReviewItem } from "./hooks";
-import { resolveViewer } from "./artifactRegistry";
-import { ReviewItemsChecklist } from "./ReviewItemsChecklist";
-import type { ArtifactRevision } from "./types";
-import { formatRelative } from "../lib/time";
-import { ThreadSidebar } from "../review/shared/ThreadSidebar";
-import { ThreadView } from "../review/shared/ThreadView";
-import type { Thread, Message } from "../review/shared/types";
+import { useArtifact, useThreads, usePostThread, usePostMessage, usePingThread, useResolveThread, useReviewItems, usePatchReviewItem } from "../hooks";
+import { resolveViewer } from "../artifactRegistry";
+import { ReviewItemsChecklist } from "../ReviewItemsChecklist";
+import type { ArtifactRevision } from "../types";
+import { formatRelative } from "../../lib/time";
+import { ThreadSidebar } from "../../review/shared/ThreadSidebar";
+import { ThreadView } from "../../review/shared/ThreadView";
+import type { Thread, Message } from "../../review/shared/types";
 
 // JSON pretty-print fallback — retained from ArtifactDetailView
 function JsonRevisionPanel({ revision }: { revision: ArtifactRevision }) {
