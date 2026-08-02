@@ -1,4 +1,4 @@
-import { useArtifact } from "./hooks";
+import { useArtifact } from "./hooks/useArtifact";
 import type { ArtifactRevision } from "./types";
 import { formatRelative } from "../lib/time";
 

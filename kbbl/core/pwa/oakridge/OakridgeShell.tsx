@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useOakridgeConfig } from "./hooks";
+import { useOakridgeConfig } from "./hooks/useOakridgeConfig";
 import { RunListView } from "./views/RunListView";
 import { RunDetailView } from "./views/RunDetailView";
 import { ArtifactReviewView } from "./views/ArtifactReviewView";

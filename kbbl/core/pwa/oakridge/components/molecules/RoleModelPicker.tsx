@@ -1,26 +1,12 @@
-import { defaultPlannerModelForRuntime, defaultWorkerModelForRuntime, type RuntimeId } from "../../../../runtime";
-import type { RuntimeDescriptor, RuntimeModelSelection } from "../../../types";
+import type { RuntimeId } from "../../../../runtime";
+import type { RuntimeModelSelection } from "../../../types";
 import type { RuntimeDescriptors } from "../../../hooks/useServerConfig";
+import { roleDefaultModel, runtimeForSelection, type ModelRole } from "../../lib/runtime-selection";
 
 const fieldLabelClass = "block text-xs font-medium text-[var(--text-muted)] mb-1";
 const inputClass = "w-full rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-3 py-1.5 text-sm text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none";
 
-export type ModelRole = "planner" | "worker";
 type SetSelection = (value: RuntimeModelSelection | ((current: RuntimeModelSelection) => RuntimeModelSelection)) => void;
-
-function roleDefaultModel(role: ModelRole, runtime: RuntimeDescriptor): string {
-  const preferred = role === "planner" ? defaultPlannerModelForRuntime(runtime.id) : defaultWorkerModelForRuntime(runtime.id);
-  return runtime.models.some((option) => option.value === preferred) ? preferred : runtime.models[0]?.value ?? preferred;
-}
-
-function runtimeForSelection(runtimeDescriptors: RuntimeDescriptors, defaultRuntimeId: RuntimeId, runtimeId: RuntimeId): RuntimeDescriptor {
-  return runtimeDescriptors.find((runtime) => runtime.id === runtimeId) ?? runtimeDescriptors.find((runtime) => runtime.id === defaultRuntimeId) ?? runtimeDescriptors[0];
-}
-
-export function initialSelectionForRole(role: ModelRole, runtimeDescriptors: RuntimeDescriptors, defaultRuntimeId: RuntimeId): RuntimeModelSelection {
-  const runtime = runtimeForSelection(runtimeDescriptors, defaultRuntimeId, defaultRuntimeId);
-  return { runtime: runtime.id, model: roleDefaultModel(role, runtime) };
-}
 
 interface RoleModelPickerProps {
   role: ModelRole;
