@@ -1,5 +1,6 @@
 import { defaultPlannerModelForRuntime, defaultWorkerModelForRuntime, type RuntimeId } from "../../../../runtime";
 import type { RuntimeDescriptor, RuntimeModelSelection } from "../../../types";
+import type { RuntimeDescriptors } from "../../../hooks/useServerConfig";
 
 const fieldLabelClass = "block text-xs font-medium text-[var(--text-muted)] mb-1";
 const inputClass = "w-full rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-3 py-1.5 text-sm text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none";
@@ -12,11 +13,11 @@ function roleDefaultModel(role: ModelRole, runtime: RuntimeDescriptor): string {
   return runtime.models.some((option) => option.value === preferred) ? preferred : runtime.models[0]?.value ?? preferred;
 }
 
-function runtimeForSelection(runtimeDescriptors: RuntimeDescriptor[], defaultRuntimeId: RuntimeId, runtimeId: RuntimeId): RuntimeDescriptor {
+function runtimeForSelection(runtimeDescriptors: RuntimeDescriptors, defaultRuntimeId: RuntimeId, runtimeId: RuntimeId): RuntimeDescriptor {
   return runtimeDescriptors.find((runtime) => runtime.id === runtimeId) ?? runtimeDescriptors.find((runtime) => runtime.id === defaultRuntimeId) ?? runtimeDescriptors[0];
 }
 
-export function initialSelectionForRole(role: ModelRole, runtimeDescriptors: RuntimeDescriptor[], defaultRuntimeId: RuntimeId): RuntimeModelSelection {
+export function initialSelectionForRole(role: ModelRole, runtimeDescriptors: RuntimeDescriptors, defaultRuntimeId: RuntimeId): RuntimeModelSelection {
   const runtime = runtimeForSelection(runtimeDescriptors, defaultRuntimeId, defaultRuntimeId);
   return { runtime: runtime.id, model: roleDefaultModel(role, runtime) };
 }
@@ -26,7 +27,7 @@ interface RoleModelPickerProps {
   selection: RuntimeModelSelection;
   setSelection: SetSelection;
   setRuntimeTouched: (isTouched: boolean) => void;
-  runtimeDescriptors: RuntimeDescriptor[];
+  runtimeDescriptors: RuntimeDescriptors;
   defaultRuntimeId: RuntimeId;
   isPending: boolean;
 }

@@ -73,7 +73,7 @@ interface ArtifactCellProps {
 function ArtifactCell({ artifacts, onSelectArtifact }: ArtifactCellProps) {
   return <td className={tableCellClass}>
     {artifacts.length === 0 && <span className={mutedClass}>-</span>}
-    <div className="flex flex-wrap gap-1.5">{artifacts.map((artifact) => <button key={artifact.id} type="button" className={`${chipBaseClass} border-[var(--accent-blue)] text-[var(--accent-blue)] underline`} onClick={() => onSelectArtifact?.(artifact.id)}>{artifact.type_id}</button>)}</div>
+    <div className="flex flex-wrap gap-1.5">{artifacts.map((artifact) => onSelectArtifact ? <button key={artifact.id} type="button" className={`${chipBaseClass} border-[var(--accent-blue)] text-[var(--accent-blue)] underline`} onClick={() => onSelectArtifact(artifact.id)}>{artifact.type_id}</button> : <span key={artifact.id} className={`${chipBaseClass} border-[var(--border-muted)] text-[var(--text-secondary)]`}>{artifact.type_id}</span>)}</div>
   </td>;
 }
 

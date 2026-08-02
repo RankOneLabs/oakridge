@@ -113,10 +113,11 @@ export function WorkflowDefEditorView({ cloneFromId, onBack, onCreated }: Workfl
     }
   };
 
-  const validationErrors = useMemo(
-    () => validateWorkflowDefinition(stages, edges, name),
+  const validationResult = useMemo(
+    () => validateWorkflowDefinition({ stages, edges, name }),
     [stages, edges, name],
   );
+  const validationErrors = validationResult.ok ? [] : validationResult.error.details;
   const graph = useMemo(() => buildWorkflowGraph(stages, edges), [stages, edges]);
   const previewJson = useMemo(
     () => JSON.stringify({ name, version, graph }, null, 2),
@@ -127,7 +128,7 @@ export function WorkflowDefEditorView({ cloneFromId, onBack, onCreated }: Workfl
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (validationErrors.length > 0) return;
+    if (!validationResult.ok) return;
     setSubmitError(null);
     try {
       await createMutation.mutateAsync({ name, version, graph });

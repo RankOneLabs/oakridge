@@ -1,12 +1,25 @@
 import { stageFormEntryToNodeDef, type StageFormEntry } from "../authoring/stage-form";
 import type { EdgeDef, WorkflowDefFull, WorkflowGraph } from "../types";
+import type { Result } from "../../lib/result";
 
 export interface WorkflowDefinitionFormState {
   stages: StageFormEntry[];
   edges: EdgeDef[];
 }
 
-export function validateWorkflowDefinition(stages: StageFormEntry[], edges: EdgeDef[], name: string): string[] {
+export interface WorkflowDefinitionValidationInput {
+  name: string;
+  stages: StageFormEntry[];
+  edges: EdgeDef[];
+}
+
+export interface WorkflowDefinitionValidationError {
+  operation: "validate_workflow_definition";
+  entityId: string;
+  details: string[];
+}
+
+export function validateWorkflowDefinition({ name, stages, edges }: WorkflowDefinitionValidationInput): Result<null, WorkflowDefinitionValidationError> {
   const errors: string[] = [];
   if (!name.trim()) errors.push("Name is required.");
   const stageKeys = new Set<string>();
@@ -28,7 +41,16 @@ export function validateWorkflowDefinition(stages: StageFormEntry[], edges: Edge
     if (fromStage && edge.from.slot && !fromStage.outputs.some((output) => output.name === edge.from.slot)) errors.push(`Edge from "${edge.from.stage}.${edge.from.slot}" — slot not declared in that stage's outputs.`);
     if (toStage && edge.to.slot && !toStage.inputs.some((input) => input.name === edge.to.slot)) errors.push(`Edge to "${edge.to.stage}.${edge.to.slot}" — slot not declared in that stage's inputs.`);
   }
-  return errors;
+  return errors.length === 0
+    ? { ok: true, value: null }
+    : {
+        ok: false,
+        error: {
+          operation: "validate_workflow_definition",
+          entityId: name.trim() || "new_workflow_definition",
+          details: errors,
+        },
+      };
 }
 
 export function buildWorkflowGraph(stages: StageFormEntry[], edges: EdgeDef[]): WorkflowGraph {

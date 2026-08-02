@@ -180,7 +180,10 @@ export function RunDetailView({ runId, onBack, onSelectArtifact }: RunDetailView
                     stage={stage}
                     canRetry={run.is_stuck}
                     onRetry={(sid) => void retryMutation.mutate(sid)}
-                    retrying={retryMutation.isPending}
+                    retrying={
+                      retryMutation.isPending &&
+                      retryMutation.variables === stage.stage_instance_id
+                    }
                     onSelectArtifact={onSelectArtifact}
                   />,
                 ];

@@ -29,7 +29,7 @@ export function StageAdvancedSettings({ config, onChange, isDisabled }: StageAdv
     <div className={sectionClass}>
       <div className="flex items-center justify-between"><span className="text-xs font-semibold uppercase text-[var(--text-muted)]">Pre-authorized Tools</span><button type="button" className={addButtonClass} onClick={() => onChange({ pre_authorized_tools: [...tools, ""] })} disabled={isDisabled}>+ Add</button></div>
       {tools.length === 0 && <p className="text-xs text-[var(--text-muted)]">No pre-authorized tools.</p>}
-      {tools.map((tool, index) => <div key={index} className="flex items-center gap-2"><input type="text" className={inputClass} value={tool} onChange={(event) => updateTool(index, event.target.value)} disabled={isDisabled} placeholder="Bash" aria-label={`Pre-authorized tool ${index + 1}`} /><button type="button" className={dangerButtonClass} onClick={() => onChange({ pre_authorized_tools: tools.filter((_, toolIndex) => toolIndex !== index) })} disabled={isDisabled}>✕</button></div>)}
+      {tools.map((tool, index) => <div key={index} className="flex items-center gap-2"><input type="text" className={inputClass} value={tool} onChange={(event) => updateTool(index, event.target.value)} disabled={isDisabled} placeholder="Bash" aria-label={`Pre-authorized tool ${index + 1}`} /><button type="button" className={dangerButtonClass} onClick={() => onChange({ pre_authorized_tools: tools.filter((_, toolIndex) => toolIndex !== index) })} disabled={isDisabled} aria-label={`Remove pre-authorized tool ${index + 1}`}>✕</button></div>)}
     </div>
   </>;
 }
