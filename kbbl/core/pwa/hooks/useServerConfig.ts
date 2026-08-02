@@ -18,9 +18,11 @@ export interface ServerConfig {
   runtimes: RuntimeDescriptor[];
 }
 
+export type RuntimeDescriptors = [RuntimeDescriptor, ...RuntimeDescriptor[]];
+
 export function runtimeDescriptorsForConfig(
   serverConfig: ServerConfig | null,
-): [RuntimeDescriptor, ...RuntimeDescriptor[]] {
+): RuntimeDescriptors {
   const runtimes = serverConfig?.runtimes ?? [];
   if (runtimes.length === 0) return [fallbackClaudeDescriptor()];
   const [first, ...rest] = runtimes;
