@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useRuns } from "./hooks";
-import type { RunSummary } from "./types";
-import { formatRelative } from "../lib/time";
+import { useRuns } from "../hooks";
+import type { RunSummary } from "../types";
+import { formatRelative } from "../../lib/time";
 
 type FilterTab = "all" | "active" | "parked" | "complete" | "archived";
 

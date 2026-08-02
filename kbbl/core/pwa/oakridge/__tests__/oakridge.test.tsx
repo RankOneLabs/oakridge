@@ -3,9 +3,9 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement } from "react";
 
-import { RunListView } from "../RunListView";
-import { RunDetailView } from "../RunDetailView";
-import { ArtifactReviewView } from "../ArtifactReviewView";
+import { RunListView } from "../views/RunListView";
+import { RunDetailView } from "../views/RunDetailView";
+import { ArtifactReviewView } from "../views/ArtifactReviewView";
 import { GateResumeForm } from "../GateResumeForm";
 import { GlobalParkedGateList } from "../ParkedGateList";
 import type { RunSummary, RunDetail, ArtifactDetail, ParkedGate } from "../types";

@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useRun, useCancelRun, useRetryStuck, useArchiveRun, useUnarchiveRun, useDeleteRun } from "./hooks";
-import type { StageDetail, StageUnit } from "./types";
-import { RunParkedGateList } from "./ParkedGateList";
+import { useRun, useCancelRun, useRetryStuck, useArchiveRun, useUnarchiveRun, useDeleteRun } from "../hooks";
+import type { StageDetail, StageUnit } from "../types";
+import { RunParkedGateList } from "../ParkedGateList";
 
 const secondaryButtonClass =
   "inline-flex items-center gap-1.5 rounded-md border border-[var(--border-muted)] bg-transparent px-3 py-1.5 text-sm text-[var(--text-secondary)] hover:border-[var(--border-hover)]";

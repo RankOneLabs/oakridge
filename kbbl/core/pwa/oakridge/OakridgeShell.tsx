@@ -1,13 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useOakridgeConfig } from "./hooks";
-import { RunListView } from "./RunListView";
-import { RunDetailView } from "./RunDetailView";
-import { ArtifactReviewView } from "./ArtifactReviewView";
-import { NewRunForm } from "./NewRunForm";
-import { CreateProjectModal } from "./CreateProjectModal";
-import { WorkflowDefListView } from "./WorkflowDefListView";
-import { WorkflowDefEditor } from "./WorkflowDefEditor";
-import { WorkflowDefDetailView } from "./WorkflowDefDetailView";
+import { RunListView } from "./views/RunListView";
+import { RunDetailView } from "./views/RunDetailView";
+import { ArtifactReviewView } from "./views/ArtifactReviewView";
+import { NewRunView } from "./views/NewRunView";
+import { CreateProjectView } from "./views/CreateProjectView";
+import { WorkflowDefListView } from "./views/WorkflowDefListView";
+import { WorkflowDefEditorView } from "./views/WorkflowDefEditorView";
+import { WorkflowDefDetailView } from "./views/WorkflowDefDetailView";
 import type { OakridgeSubRoute } from "../lib/hash";
 import type { WorkflowDefSummary } from "./types";
 
@@ -84,7 +84,7 @@ function OakridgeShellInner({ route, onBack, onNavigate }: OakridgeShellInnerPro
       break;
     case "new-run":
       content = (
-        <NewRunForm
+        <NewRunView
           onBack={navigateToRuns}
           onCreated={(id) => navigateToRun(id)}
         />
@@ -92,7 +92,7 @@ function OakridgeShellInner({ route, onBack, onNavigate }: OakridgeShellInnerPro
       break;
     case "create-project":
       content = (
-        <CreateProjectModal
+        <CreateProjectView
           onBack={navigateToRuns}
           onCreated={navigateToRuns}
         />
@@ -118,7 +118,7 @@ function OakridgeShellInner({ route, onBack, onNavigate }: OakridgeShellInnerPro
       break;
     case "def-new":
       content = (
-        <WorkflowDefEditor
+        <WorkflowDefEditorView
           key="new"
           cloneFromId={null}
           onBack={navigateToDefs}
@@ -128,7 +128,7 @@ function OakridgeShellInner({ route, onBack, onNavigate }: OakridgeShellInnerPro
       break;
     case "def-edit":
       content = (
-        <WorkflowDefEditor
+        <WorkflowDefEditorView
           key={route.id}
           cloneFromId={route.id}
           onBack={navigateToDefs}

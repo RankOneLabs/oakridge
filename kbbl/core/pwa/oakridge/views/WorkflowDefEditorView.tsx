@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
-import { useWorkflowDef, useCreateWorkflowDef, useArtifactTypes } from "./hooks";
+import { useWorkflowDef, useCreateWorkflowDef, useArtifactTypes } from "../hooks";
 import {
   defaultRuntimeIdForConfig,
   runtimeDescriptorsForConfig,
   useServerConfig,
-} from "../hooks/useServerConfig";
-import type { WorkflowGraph, EdgeDef, WorkflowDefFull } from "./types";
-import { StageEditor, defaultStageEntry, stageFormEntryToNodeDef } from "./authoring/StageEditor";
-import type { StageFormEntry } from "./authoring/StageEditor";
-import { EdgeEditor } from "./authoring/EdgeEditor";
+} from "../../hooks/useServerConfig";
+import type { WorkflowGraph, EdgeDef, WorkflowDefFull } from "../types";
+import { StageEditor, defaultStageEntry, stageFormEntryToNodeDef } from "../authoring/StageEditor";
+import type { StageFormEntry } from "../authoring/StageEditor";
+import { EdgeEditor } from "../authoring/EdgeEditor";
 
 const secondaryButtonClass =
   "inline-flex items-center gap-1.5 rounded-md border border-[var(--border-muted)] bg-transparent px-3 py-1.5 text-sm text-[var(--text-secondary)] hover:border-[var(--border-hover)]";
@@ -126,13 +126,13 @@ function defToFormState(def: WorkflowDefFull): {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-interface WorkflowDefEditorProps {
+interface WorkflowDefEditorViewProps {
   cloneFromId: string | null;
   onBack: () => void;
   onCreated: () => void;
 }
 
-export function WorkflowDefEditor({ cloneFromId, onBack, onCreated }: WorkflowDefEditorProps) {
+export function WorkflowDefEditorView({ cloneFromId, onBack, onCreated }: WorkflowDefEditorViewProps) {
   const cloneQuery = useWorkflowDef(cloneFromId);
   const artifactTypesQuery = useArtifactTypes();
   const createMutation = useCreateWorkflowDef();
