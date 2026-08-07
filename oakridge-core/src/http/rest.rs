@@ -3205,6 +3205,14 @@ mod tests {
         queries::insert_stage_instance(&state.pool, &stage)
             .await
             .unwrap();
+        let assessor_stage = StageInstance {
+            id: StageInstanceId(Uuid::new_v4()),
+            stage_key: "assessor".into(),
+            ..stage.clone()
+        };
+        queries::insert_stage_instance(&state.pool, &assessor_stage)
+            .await
+            .unwrap();
         let artifact_id = ArtifactId(Uuid::new_v4());
         let gate = DelegatedGateState {
             executor: DelegatedExecutor::DelegatedSession,
@@ -3267,6 +3275,93 @@ mod tests {
         queries::admit_session_unit(&state.pool, &stage.id, "cohort-a", "admit-cohort-a")
             .await
             .unwrap();
+        queries::insert_artifact(
+            &state.pool,
+            &Artifact {
+                id: artifact_id,
+                run_id: run.id,
+                stage_instance_id: stage.id,
+                artifact_type: "any".into(),
+                output_name: Some("out".into()),
+                label: Some("cohort-b".into()),
+                body: json!({"unit_id": "cohort-b"}),
+                version: 1,
+                parent_artifact_id: None,
+                created_at: now,
+            },
+        )
+        .await
+        .unwrap();
+        let revision_id = ArtifactId(Uuid::new_v4());
+        queries::insert_artifact(
+            &state.pool,
+            &Artifact {
+                id: revision_id,
+                run_id: run.id,
+                stage_instance_id: stage.id,
+                artifact_type: "any".into(),
+                output_name: Some("out".into()),
+                label: Some("cohort-b revision".into()),
+                body: json!({"unit_id": "cohort-b", "revision": 2}),
+                version: 2,
+                parent_artifact_id: Some(artifact_id),
+                created_at: now,
+            },
+        )
+        .await
+        .unwrap();
+        let assessor_artifact_id = ArtifactId(Uuid::new_v4());
+        queries::insert_artifact(
+            &state.pool,
+            &Artifact {
+                id: assessor_artifact_id,
+                run_id: run.id,
+                stage_instance_id: assessor_stage.id,
+                artifact_type: "any".into(),
+                output_name: Some("assessment".into()),
+                label: Some("cohort-b assessment".into()),
+                body: json!({"unit_id": "cohort-b"}),
+                version: 1,
+                parent_artifact_id: None,
+                created_at: now,
+            },
+        )
+        .await
+        .unwrap();
+        for (decision_stage, decision_artifact, decision_revision, key) in [
+            (stage.id, artifact_id, revision_id, "build-decision"),
+            (
+                assessor_stage.id,
+                assessor_artifact_id,
+                assessor_artifact_id,
+                "assessor-decision",
+            ),
+        ] {
+            queries::reserve_gate_decision_audit(
+                &state.pool,
+                &GateDecisionAudit {
+                    id: GateDecisionAuditId(Uuid::new_v4()),
+                    run_id: run.id,
+                    stage_instance_id: decision_stage,
+                    unit_id: "cohort-b".into(),
+                    artifact_chain_id: decision_artifact,
+                    artifact_revision_id: decision_revision,
+                    gate_step: "artifact_approval".into(),
+                    action: "approve".into(),
+                    operator_comment: None,
+                    feedback: None,
+                    status: crate::types::GateDecisionAuditStatus::Pending,
+                    created_at: now,
+                    applied_at: None,
+                    idempotency_key: key.into(),
+                },
+            )
+            .await
+            .unwrap();
+            queries::mark_gate_decision_audit_applied(&state.pool, key, now)
+                .await
+                .unwrap();
+        }
 
         let app = crate::http::router(state);
         let (status, body) = req(app, "GET", "/review_inbox", None).await;
@@ -3287,12 +3382,23 @@ mod tests {
             .collect();
         assert_eq!(
             kinds,
-            vec!["admission", "artifact_gate", "cohort_blocked", "cohort_failed"]
+            vec![
+                "admission",
+                "artifact_gate",
+                "gate_decision",
+                "cohort_blocked",
+                "cohort_failed"
+            ]
         );
         assert_eq!(body["items"][0]["state"], json!("completed"));
         assert!(body["items"][0]["completed_at"].as_str().is_some());
-        assert_eq!(body["items"][2]["blocked_by"], json!(["cohort-a"]));
-        assert_eq!(body["items"][3]["state"], json!("blocked"));
+        assert_eq!(body["items"][2]["state"], json!("completed"));
+        assert_eq!(
+            body["items"][2]["artifact_url"],
+            json!(format!("/artifact_details/{}", revision_id.0))
+        );
+        assert_eq!(body["items"][3]["blocked_by"], json!(["cohort-a"]));
+        assert_eq!(body["items"][4]["state"], json!("blocked"));
     }
 
     #[test]
