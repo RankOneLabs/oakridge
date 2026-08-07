@@ -290,6 +290,19 @@ Each delegated session can optionally carry a reasoning-effort level:
 | `xhigh` | Extra-high reasoning for difficult tasks. |
 | `max` | Maximum reasoning for the hardest quality-first tasks. |
 
+**Which of these are legal depends on the runtime, and kbbl is the authority.**
+Each kbbl adapter declares its own effort levels and publishes them on kbbl's
+`/config` — today `claude-code` accepts `low`–`max` and `codex` accepts
+`minimal`–`max`, so `minimal` is *not* valid for a claude-code session. The New
+Run form's effort picker is populated from that endpoint, so it only ever offers
+levels the selected runtime accepts.
+
+oakridge-core deliberately keeps no effort allowlist of its own: it resolves
+`effort` and forwards it verbatim, exactly as it does `model`, and kbbl rejects
+an unsupported pair at session create. A core-side copy of this list previously
+existed, went stale against `xhigh`/`max`, and failed valid runs — which is why
+the check is gone rather than merely widened.
+
 Omitting `effort` (or setting it to `null`) uses the runtime's default effort
 for that model tier. The `effort` field is forwarded to the kbbl session and
 passed to the agent subprocess at spawn time.
