@@ -266,6 +266,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/parked", get(rest::list_parked))
         .route("/runs", get(rest::list_operator_runs))
+        .route("/review_inbox", get(rest::get_operator_review_inbox))
         .route("/runs/:id", get(rest::get_operator_run))
         .route(
             "/stages/:stage_id/units/:unit_id/admit",

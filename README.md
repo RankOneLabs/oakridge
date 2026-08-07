@@ -55,9 +55,33 @@ bun run oakridge
 Open `http://127.0.0.1:8788/#oakridge`. The launcher builds the kbbl PWA,
 starts kbbl and oakridge-core with their integration configured, and stops both
 when you press Ctrl-C. The bundled multi-repository dev-flow definition is seeded
-automatically; choose **New Run**, select `dev-flow v3`, add the repositories
-the brief spans, enter the brief, and
-start the run.
+automatically; choose **New Run**, select `dev-flow v6`, add the repositories
+the brief spans, enter the brief, and start the run.
+
+For access from another device on a trusted LAN or tailnet, prefer a control
+token:
+
+```bash
+export OAKRIDGE_CONTROL_TOKEN="$(openssl rand -hex 32)"
+./scripts/oakridge-start --host=0.0.0.0
+```
+
+Open `http://<machine-ip-or-tailnet-name>:8788/#oakridge`. The core remains on
+loopback and kbbl proxies its API, so port 8790 does not need LAN exposure. For
+a temporary unauthenticated development bind, the explicit escape hatch is:
+
+```bash
+ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1 \
+  ./scripts/oakridge-start --host=0.0.0.0
+```
+
+That mode exposes control actions to every client that can reach port 8788; do
+not use it on an untrusted network. After startup, verify the browser route and
+same-origin core proxy with:
+
+```bash
+./scripts/oakridge-browser-smoke http://<machine-ip-or-tailnet-name>:8788
+```
 
 To run the services separately for debugging:
 

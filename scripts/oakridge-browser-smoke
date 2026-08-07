@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BASE_URL="${1:-http://127.0.0.1:8788}"
+BASE_URL="${BASE_URL%/}"
+CURL_ARGS=(--fail --silent --show-error --max-time 10)
+
+if [ -n "${OAKRIDGE_CONTROL_TOKEN:-}" ]; then
+  CURL_ARGS+=(--header "Authorization: Bearer ${OAKRIDGE_CONTROL_TOKEN}")
+fi
+
+check() {
+  local label="$1"
+  local path="$2"
+  curl "${CURL_ARGS[@]}" --output /dev/null "${BASE_URL}${path}"
+  echo "ok: ${label} (${BASE_URL}${path})"
+}
+
+check_contains() {
+  local label="$1"
+  local path="$2"
+  local pattern="$3"
+  if ! curl "${CURL_ARGS[@]}" "${BASE_URL}${path}" | grep -Eq "$pattern"; then
+    echo "failed: ${label} did not return the expected payload (${BASE_URL}${path})" >&2
+    return 1
+  fi
+  echo "ok: ${label} (${BASE_URL}${path})"
+}
+
+check_contains "PWA shell" "/" 'id="app"'
+check_contains "Oakridge integration config" "/oakridge/config" '"available"[[:space:]]*:[[:space:]]*true'
+check "workflow definitions through same-origin proxy" "/oakridge/api/workflow_defs"
+check "review inbox through same-origin proxy" "/oakridge/api/review_inbox"
+
+echo "ok: browser entry point ${BASE_URL}/#oakridge"

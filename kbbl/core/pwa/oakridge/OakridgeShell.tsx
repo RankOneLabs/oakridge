@@ -8,6 +8,7 @@ import { CreateProjectView } from "./views/CreateProjectView";
 import { WorkflowDefListView } from "./views/WorkflowDefListView";
 import { WorkflowDefEditorView } from "./views/WorkflowDefEditorView";
 import { WorkflowDefDetailView } from "./views/WorkflowDefDetailView";
+import { ReviewInboxView } from "./views/ReviewInboxView";
 import type { OakridgeSubRoute } from "../lib/hash";
 import type { WorkflowDefSummary } from "./types";
 
@@ -53,6 +54,7 @@ function OakridgeShellInner({ route, onBack, onNavigate }: OakridgeShellInnerPro
   const navigateToArtifact = (id: string) => onNavigate(`oakridge/artifact/${encodeURIComponent(id)}`);
   const navigateToRuns = () => onNavigate("oakridge");
   const navigateToNewRun = () => onNavigate("oakridge/new-run");
+  const navigateToReviewInbox = () => onNavigate("oakridge/review-inbox");
   const navigateToCreateProject = () => onNavigate("oakridge/create-project");
   const navigateToDefs = () => onNavigate("oakridge/defs");
   const navigateToDef = (id: string) => onNavigate(`oakridge/def/${encodeURIComponent(id)}`);
@@ -67,6 +69,14 @@ function OakridgeShellInner({ route, onBack, onNavigate }: OakridgeShellInnerPro
           onSelectRun={navigateToRun}
           onNewRun={navigateToNewRun}
           onNewProject={navigateToCreateProject}
+          onSelectArtifact={navigateToArtifact}
+        />
+      );
+      break;
+    case "review-inbox":
+      content = (
+        <ReviewInboxView
+          onSelectRun={navigateToRun}
           onSelectArtifact={navigateToArtifact}
         />
       );
@@ -157,6 +167,13 @@ function OakridgeShellInner({ route, onBack, onNavigate }: OakridgeShellInnerPro
           onClick={navigateToRuns}
         >
           Runs
+        </button>
+        <button
+          type="button"
+          className={`or-shell__nav-item ${route.sub === "review-inbox" ? "or-shell__nav-item--active" : ""}`}
+          onClick={navigateToReviewInbox}
+        >
+          Review inbox
         </button>
         <button
           type="button"
