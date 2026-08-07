@@ -138,6 +138,12 @@ export interface RunDetail {
   is_stuck: boolean;
 }
 
+export interface AdmitStageUnitResponse {
+  stage_instance_id: string;
+  unit_id: string;
+  admitted: boolean;
+}
+
 export interface ArtifactRevision {
   id: string;
   status: "draft" | "approved" | "rejected";
@@ -184,12 +190,12 @@ export interface ArtifactDetail {
 export interface ParkedGate {
   id: string;
   gate_type: string;
+  gate_step: string | null;
   run_id: string;
   stage_name: string;
   unit_id: string;
   repository_key?: RepositoryKey | null;
   artifact_revision_id: string | null;
-  gate_step?: string;
   worktree: WorktreeMetadata | null;
   resume_actions: string[];
   pr_url?: string | null;

@@ -63,6 +63,7 @@ const PARKED_RUN_SUMMARY: RunSummary = {
 const PARKED_GATE_FIXTURE: ParkedGate = {
   id: "gate-1",
   gate_type: "operator_approval",
+  gate_step: null,
   run_id: "run-2",
   stage_name: "approve",
   unit_id: "0",
@@ -418,6 +419,23 @@ describe("GateResumeForm", () => {
 
     expect(await screen.findByTestId("or-resume-error")).toBeTruthy();
   });
+
+  it("reuses the idempotency key when the same operator action is retried", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(json({ error: "temporary failure" }, 503))
+      .mockResolvedValueOnce(json({ gate_id: "gate-1", resumed: true }));
+    wrap(<GateResumeForm gate={PARKED_GATE_FIXTURE} onDone={() => {}} />);
+
+    fireEvent.change(screen.getByTestId("or-resume-comment"), { target: { value: "approved" } });
+    fireEvent.click(screen.getByTestId("or-resume-submit"));
+    expect(await screen.findByTestId("or-resume-error")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("or-resume-submit"));
+
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(2));
+    const first = JSON.parse(String((fetchSpy.mock.calls[0]?.[1] as RequestInit).body));
+    const second = JSON.parse(String((fetchSpy.mock.calls[1]?.[1] as RequestInit).body));
+    expect(second.idempotency_key).toBe(first.idempotency_key);
+  });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -473,6 +491,59 @@ describe("ArtifactReviewView", () => {
     expect(screen.getByTestId("or-resume-action-static").textContent).toContain("Approve discrepancy report");
     const sections = Array.from(screen.getByTestId("or-descriptor-sections").querySelectorAll("[data-artifact-section]"));
     expect(sections.map((section) => section.getAttribute("data-artifact-section"))).toEqual(["summary", "details"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByTestId("or-resume-form")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Review gate" }));
+    expect(screen.getByTestId("or-resume-form")).toBeTruthy();
+  });
+
+  it("loads run-scoped gates and only offers actions for the selected revision", async () => {
+    const artifact: ArtifactDetail = {
+      ...ARTIFACT_FIXTURE,
+      revisions: [
+        ARTIFACT_FIXTURE.revisions[0]!,
+        { ...ARTIFACT_FIXTURE.revisions[0]!, id: "rev-2", status: "draft" },
+      ],
+    };
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/runs/run-1/gates")) {
+        return json([{ ...PARKED_GATE_FIXTURE, artifact_revision_id: "rev-2" }]);
+      }
+      return json(artifact);
+    });
+    wrap(<ArtifactReviewView artifactId="art-1" onBack={() => {}} />);
+
+    await screen.findByTestId("or-artifact-type");
+    expect(screen.queryByTestId("or-artifact-gate-actions")).toBeNull();
+    fireEvent.click(screen.getByTestId("or-rev-tab-1"));
+    expect(await screen.findByTestId("or-artifact-gate-actions")).toBeTruthy();
+    expect(fetchSpy.mock.calls.some(([input]) => String(input).includes("/runs/run-1/gates"))).toBe(true);
+  });
+
+  it("renders configured plan scope and risks", async () => {
+    const plan: ArtifactDetail = {
+      ...ARTIFACT_FIXTURE,
+      component_id: "dev-plan-viewer",
+      revisions: [{
+        ...ARTIFACT_FIXTURE.revisions[0]!,
+        body: { scope: { include: ["core"] }, risks: ["migration"] },
+      }],
+      review: {
+        viewer: "dev-plan-viewer",
+        layout: "dag",
+        sections: ["scope", "risks"],
+        action_labels: {},
+      },
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+      String(input).includes("/gates") ? json([]) : json(plan));
+    wrap(<ArtifactReviewView artifactId="art-1" onBack={() => {}} />);
+
+    expect(await screen.findByText("Scope")).toBeTruthy();
+    expect(screen.getByText("Risks")).toBeTruthy();
+    expect(screen.getByText("migration")).toBeTruthy();
   });
 
   it("shows error state when artifact fetch fails", async () => {
