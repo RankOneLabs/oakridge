@@ -66,6 +66,20 @@ export function WorkflowDefList({ onNew, onSelect, onClone }: WorkflowDefListPro
         </div>
       )}
 
+      {/* Retire/restore failures would otherwise be invisible: the mutation just
+          re-enables the button and the row keeps its old state. */}
+      {setArchived.isError && (
+        <div
+          className="rounded-md border border-[var(--danger-card-border)] bg-[var(--danger-bg)] px-4 py-3 text-sm text-[var(--danger-fg)]"
+          role="alert"
+          data-testid="or-def-archive-error"
+        >
+          {setArchived.error instanceof Error
+            ? setArchived.error.message
+            : "Failed to change the retired state of this definition"}
+        </div>
+      )}
+
       {query.isPending && !query.data && (
         <div className="py-6 text-sm text-[var(--text-muted)]" data-testid="or-def-list-loading">
           Loading definitions…

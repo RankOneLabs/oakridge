@@ -136,7 +136,7 @@ export function StageEditor({
               // `required`: runtime has no default, so onChange never yields null.
               onChange={(v) => updateCfg({ runtime: v ?? "claude-code" })}
               required
-              placeholder="/planner_runtime"
+              pathPlaceholder="/planner_runtime"
               disabled={disabled}
             />
 

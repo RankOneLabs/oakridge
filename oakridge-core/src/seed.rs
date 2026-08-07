@@ -85,7 +85,7 @@ mod tests {
     use super::*;
     use crate::registry::{ArtifactTypeRegistry, StageTypeRegistry};
 
-    async fn seed_twice_into_fresh_pool() -> SqlitePool {
+    async fn seed_into_fresh_pool() -> SqlitePool {
         let path = format!("/tmp/oakridge_seed_test_{}.db", uuid::Uuid::new_v4());
         let pool = crate::db::init_pool(&format!("sqlite:{}", path))
             .await
@@ -100,7 +100,7 @@ mod tests {
 
     #[tokio::test]
     async fn seeding_retires_every_superseded_dev_flow_version() {
-        let pool = seed_twice_into_fresh_pool().await;
+        let pool = seed_into_fresh_pool().await;
 
         let active = queries::list_workflow_defs(&pool, false).await.unwrap();
         let versions: Vec<i32> = active.iter().map(|d| d.version).collect();
@@ -116,7 +116,7 @@ mod tests {
 
     #[tokio::test]
     async fn re_seeding_does_not_re_retire_a_def_the_operator_unarchived() {
-        let pool = seed_twice_into_fresh_pool().await;
+        let pool = seed_into_fresh_pool().await;
         let retired = queries::list_workflow_defs(&pool, true)
             .await
             .unwrap()

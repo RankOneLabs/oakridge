@@ -181,7 +181,9 @@ interface BindableEditorProps {
   onChange: (v: string | SlotBinding | null) => void;
   // When true, drop the "— default —" mode: the field must carry a literal or a binding.
   required?: boolean;
-  placeholder?: string;
+  // Hint for the context-path input only. The literal input hints a value, not a
+  // path, so the two cannot share one placeholder.
+  pathPlaceholder?: string;
   disabled?: boolean;
 }
 
@@ -197,7 +199,7 @@ export function BindableEditor({
   value,
   onChange,
   required = false,
-  placeholder = "model string",
+  pathPlaceholder = "/planner_model",
   disabled = false,
 }: BindableEditorProps) {
   const mode = detectMode(value);
@@ -246,7 +248,7 @@ export function BindableEditor({
               value={typeof value === "string" ? value : ""}
               onChange={(e) => onChange(e.target.value)}
               disabled={disabled}
-              placeholder={placeholder}
+              placeholder="model string"
             />
           )}
         </>
@@ -259,7 +261,7 @@ export function BindableEditor({
           value={value.path}
           onChange={(e) => onChange({ from: "context", path: e.target.value })}
           disabled={disabled}
-          placeholder="/planner_model"
+          placeholder={pathPlaceholder}
         />
       )}
     </div>
