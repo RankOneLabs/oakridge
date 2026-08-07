@@ -5,7 +5,8 @@
 // Run from the oakridge-core directory.
 
 use crate::types::{
-    Artifact, ArtifactId, Project, ProjectId, RunStatus, StageInstance, StageInstanceId,
+    Artifact, ArtifactId, GateDecisionAudit, GateDecisionAuditId, GateDecisionAuditInsert,
+    GateDecisionAuditStatus, Project, ProjectId, RunStatus, StageInstance, StageInstanceId,
     StageStatus, WorkflowDef, WorkflowDefId, WorkflowRun, WorkflowRunId,
 };
 use chrono::{DateTime, Utc};
@@ -87,6 +88,24 @@ struct ArtifactRow {
     version: i64,
     parent_artifact_id: Option<String>,
     created_at: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct GateDecisionAuditRow {
+    id: String,
+    run_id: String,
+    stage_instance_id: String,
+    unit_id: String,
+    artifact_chain_id: String,
+    artifact_revision_id: String,
+    gate_step: String,
+    action: String,
+    operator_comment: Option<String>,
+    feedback: Option<String>,
+    status: String,
+    created_at: String,
+    applied_at: Option<String>,
+    idempotency_key: String,
 }
 
 // ── Conversion helpers ────────────────────────────────────────────────────────
@@ -231,6 +250,25 @@ fn row_to_artifact(r: ArtifactRow) -> crate::Result<Artifact> {
             .transpose()?
             .map(ArtifactId),
         created_at: parse_dt(&r.created_at)?,
+    })
+}
+
+fn row_to_gate_decision_audit(r: GateDecisionAuditRow) -> crate::Result<GateDecisionAudit> {
+    Ok(GateDecisionAudit {
+        id: GateDecisionAuditId(parse_uuid(&r.id)?),
+        run_id: WorkflowRunId(parse_uuid(&r.run_id)?),
+        stage_instance_id: StageInstanceId(parse_uuid(&r.stage_instance_id)?),
+        unit_id: r.unit_id,
+        artifact_chain_id: ArtifactId(parse_uuid(&r.artifact_chain_id)?),
+        artifact_revision_id: ArtifactId(parse_uuid(&r.artifact_revision_id)?),
+        gate_step: r.gate_step,
+        action: r.action,
+        operator_comment: r.operator_comment,
+        feedback: r.feedback,
+        status: str_to_enum(r.status)?,
+        created_at: parse_dt(&r.created_at)?,
+        applied_at: opt_dt(r.applied_at)?,
+        idempotency_key: r.idempotency_key,
     })
 }
 
@@ -1145,6 +1183,166 @@ pub async fn get_artifact_chain_root_id(
             Some(Some(parent_id)) => current = parent_id,
         }
     }
+}
+
+/// Resolve the latest revision in the linear chain containing `id`.
+/// Branches are rejected because a gate cannot infer which sibling was reviewed.
+pub async fn get_artifact_chain_tip(pool: &SqlitePool, id: &ArtifactId) -> crate::Result<Artifact> {
+    let mut current = get_artifact_chain_root_id(pool, id).await?;
+    loop {
+        let children: Vec<String> =
+            sqlx::query_scalar("SELECT id FROM artifact WHERE parent_artifact_id = ? ORDER BY id")
+                .bind(&current)
+                .fetch_all(pool)
+                .await?;
+        match children.as_slice() {
+            [] => return get_artifact_by_id(pool, &ArtifactId(parse_uuid(&current)?)).await,
+            [child] => current = child.clone(),
+            _ => {
+                return Err(crate::Error::Validation(format!(
+                    "artifact chain branches at {current}"
+                )))
+            }
+        }
+    }
+}
+
+// ── Gate decision audit ──────────────────────────────────────────────────────
+
+/// Durably reserve a gate-decision request before attempting its transition.
+///
+/// Reusing an idempotency key is a no-op even when the retry carries a newly
+/// generated row id. The existing row remains authoritative for reconciliation.
+pub async fn reserve_gate_decision_audit(
+    pool: &SqlitePool,
+    decision: &GateDecisionAudit,
+) -> crate::Result<GateDecisionAuditInsert> {
+    if decision.status != GateDecisionAuditStatus::Pending || decision.applied_at.is_some() {
+        return Err(crate::Error::Validation(
+            "gate decision reservations must begin pending without applied_at".into(),
+        ));
+    }
+    let stage = get_stage_instance_by_id(pool, &decision.stage_instance_id).await?;
+    if stage.run_id != decision.run_id {
+        return Err(crate::Error::Validation(format!(
+            "gate decision stage {} belongs to run {}, not {}",
+            decision.stage_instance_id.0, stage.run_id.0, decision.run_id.0
+        )));
+    }
+    let artifact = get_artifact_by_id(pool, &decision.artifact_revision_id).await?;
+    if artifact.run_id != decision.run_id
+        || artifact.stage_instance_id != decision.stage_instance_id
+    {
+        return Err(crate::Error::Validation(format!(
+            "gate decision artifact {} does not belong to run {} stage {}",
+            decision.artifact_revision_id.0, decision.run_id.0, decision.stage_instance_id.0
+        )));
+    }
+    let actual_chain_id = get_artifact_chain_root_id(pool, &decision.artifact_revision_id).await?;
+    if actual_chain_id != decision.artifact_chain_id.0.to_string() {
+        return Err(crate::Error::Validation(format!(
+            "gate decision artifact {} has chain root {}, not {}",
+            decision.artifact_revision_id.0, actual_chain_id, decision.artifact_chain_id.0
+        )));
+    }
+
+    let id = decision.id.0.to_string();
+    let run_id = decision.run_id.0.to_string();
+    let stage_instance_id = decision.stage_instance_id.0.to_string();
+    let artifact_chain_id = decision.artifact_chain_id.0.to_string();
+    let artifact_revision_id = decision.artifact_revision_id.0.to_string();
+    let created_at = decision.created_at.to_rfc3339();
+    let status = enum_to_str(&decision.status)?;
+    let applied_at = decision.applied_at.map(|value| value.to_rfc3339());
+
+    let result = sqlx::query(
+        "INSERT INTO gate_decision_audit \
+         (id, run_id, stage_instance_id, unit_id, artifact_chain_id, \
+          artifact_revision_id, gate_step, action, operator_comment, feedback, status, \
+          created_at, applied_at, idempotency_key) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+         ON CONFLICT(idempotency_key) DO NOTHING",
+    )
+    .bind(id)
+    .bind(run_id)
+    .bind(stage_instance_id)
+    .bind(&decision.unit_id)
+    .bind(artifact_chain_id)
+    .bind(artifact_revision_id)
+    .bind(&decision.gate_step)
+    .bind(&decision.action)
+    .bind(&decision.operator_comment)
+    .bind(&decision.feedback)
+    .bind(status)
+    .bind(created_at)
+    .bind(applied_at)
+    .bind(&decision.idempotency_key)
+    .execute(pool)
+    .await?;
+
+    Ok(if result.rows_affected() == 1 {
+        GateDecisionAuditInsert::Inserted
+    } else {
+        GateDecisionAuditInsert::AlreadyRecorded
+    })
+}
+
+pub async fn mark_gate_decision_audit_applied(
+    pool: &SqlitePool,
+    idempotency_key: &str,
+    applied_at: DateTime<Utc>,
+) -> crate::Result<()> {
+    let result = sqlx::query(
+        "UPDATE gate_decision_audit SET status = 'applied', applied_at = ? \
+         WHERE idempotency_key = ? AND status = 'pending'",
+    )
+    .bind(applied_at.to_rfc3339())
+    .bind(idempotency_key)
+    .execute(pool)
+    .await?;
+    if result.rows_affected() == 0 {
+        let existing = get_gate_decision_audit_by_idempotency_key(pool, idempotency_key).await?;
+        if !existing.is_some_and(|row| row.status == GateDecisionAuditStatus::Applied) {
+            return Err(crate::Error::NotFound {
+                entity: "gate_decision_audit".into(),
+                id: idempotency_key.into(),
+            });
+        }
+    }
+    Ok(())
+}
+
+pub async fn list_gate_decision_audits_for_run(
+    pool: &SqlitePool,
+    run_id: &WorkflowRunId,
+) -> crate::Result<Vec<GateDecisionAudit>> {
+    let run_id = run_id.0.to_string();
+    let rows = sqlx::query_as::<_, GateDecisionAuditRow>(
+        "SELECT id, run_id, stage_instance_id, unit_id, artifact_chain_id, \
+                artifact_revision_id, gate_step, action, operator_comment, feedback, status, \
+                created_at, applied_at, idempotency_key \
+         FROM gate_decision_audit WHERE run_id = ? ORDER BY created_at, id",
+    )
+    .bind(run_id)
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter().map(row_to_gate_decision_audit).collect()
+}
+
+pub async fn get_gate_decision_audit_by_idempotency_key(
+    pool: &SqlitePool,
+    idempotency_key: &str,
+) -> crate::Result<Option<GateDecisionAudit>> {
+    let row = sqlx::query_as::<_, GateDecisionAuditRow>(
+        "SELECT id, run_id, stage_instance_id, unit_id, artifact_chain_id, \
+                artifact_revision_id, gate_step, action, operator_comment, feedback, status, \
+                created_at, applied_at, idempotency_key \
+         FROM gate_decision_audit WHERE idempotency_key = ?",
+    )
+    .bind(idempotency_key)
+    .fetch_optional(pool)
+    .await?;
+    row.map(row_to_gate_decision_audit).transpose()
 }
 
 pub async fn list_artifacts_for_run(
@@ -2306,6 +2504,173 @@ mod tests {
         assert_eq!(chain[0].version, 3);
         assert_eq!(chain[1].version, 2);
         assert_eq!(chain[2].version, 1);
+        assert_eq!(
+            get_artifact_chain_tip(&pool, &a1.id).await.unwrap().id,
+            a3.id
+        );
+        assert_eq!(
+            get_artifact_chain_tip(&pool, &a2_id).await.unwrap().id,
+            a3.id
+        );
+    }
+
+    #[tokio::test]
+    async fn gate_decision_audit_round_trips_exact_revision_and_operator_context() {
+        let pool = make_test_pool().await;
+        let def = test_workflow_def();
+        insert_workflow_def(&pool, &def).await.unwrap();
+        let run = test_run(def.id);
+        insert_workflow_run(&pool, &run).await.unwrap();
+        let stage = test_stage(run.id);
+        insert_stage_instance(&pool, &stage).await.unwrap();
+        let root = test_artifact(run.id, stage.id);
+        insert_artifact(&pool, &root).await.unwrap();
+        let revision = Artifact {
+            id: ArtifactId(Uuid::new_v4()),
+            version: 2,
+            parent_artifact_id: Some(root.id),
+            body: json!({"content": "revised"}),
+            ..root.clone()
+        };
+        insert_artifact(&pool, &revision).await.unwrap();
+
+        let decision = GateDecisionAudit {
+            id: GateDecisionAuditId(Uuid::new_v4()),
+            run_id: run.id,
+            stage_instance_id: stage.id,
+            unit_id: "cohort-a".into(),
+            artifact_chain_id: root.id,
+            artifact_revision_id: revision.id,
+            gate_step: "artifact_approval".into(),
+            action: "request_revision".into(),
+            operator_comment: Some("The dependency is missing".into()),
+            feedback: Some("Add cohort-b before resubmitting".into()),
+            status: GateDecisionAuditStatus::Pending,
+            created_at: fixed_dt(),
+            applied_at: None,
+            idempotency_key: "gate-request-123".into(),
+        };
+
+        assert_eq!(
+            reserve_gate_decision_audit(&pool, &decision).await.unwrap(),
+            GateDecisionAuditInsert::Inserted
+        );
+        assert_eq!(
+            list_gate_decision_audits_for_run(&pool, &run.id)
+                .await
+                .unwrap(),
+            vec![decision]
+        );
+    }
+
+    #[tokio::test]
+    async fn gate_decision_audit_idempotency_key_prevents_duplicate_rows() {
+        let pool = make_test_pool().await;
+        let def = test_workflow_def();
+        insert_workflow_def(&pool, &def).await.unwrap();
+        let run = test_run(def.id);
+        insert_workflow_run(&pool, &run).await.unwrap();
+        let stage = test_stage(run.id);
+        insert_stage_instance(&pool, &stage).await.unwrap();
+        let artifact = test_artifact(run.id, stage.id);
+        insert_artifact(&pool, &artifact).await.unwrap();
+        let decision = GateDecisionAudit {
+            id: GateDecisionAuditId(Uuid::new_v4()),
+            run_id: run.id,
+            stage_instance_id: stage.id,
+            unit_id: "0".into(),
+            artifact_chain_id: artifact.id,
+            artifact_revision_id: artifact.id,
+            gate_step: "artifact_approval".into(),
+            action: "approve".into(),
+            operator_comment: None,
+            feedback: None,
+            status: GateDecisionAuditStatus::Pending,
+            created_at: fixed_dt(),
+            applied_at: None,
+            idempotency_key: "same-request".into(),
+        };
+
+        assert_eq!(
+            reserve_gate_decision_audit(&pool, &decision).await.unwrap(),
+            GateDecisionAuditInsert::Inserted
+        );
+        let retry = GateDecisionAudit {
+            id: GateDecisionAuditId(Uuid::new_v4()),
+            ..decision.clone()
+        };
+        assert_eq!(
+            reserve_gate_decision_audit(&pool, &retry).await.unwrap(),
+            GateDecisionAuditInsert::AlreadyRecorded
+        );
+        assert_eq!(
+            get_gate_decision_audit_by_idempotency_key(&pool, "same-request")
+                .await
+                .unwrap(),
+            Some(decision.clone())
+        );
+        assert_eq!(
+            list_gate_decision_audits_for_run(&pool, &run.id)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        mark_gate_decision_audit_applied(&pool, "same-request", fixed_dt())
+            .await
+            .unwrap();
+        let applied = get_gate_decision_audit_by_idempotency_key(&pool, "same-request")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(applied.status, GateDecisionAuditStatus::Applied);
+        assert_eq!(applied.applied_at, Some(fixed_dt()));
+        mark_gate_decision_audit_applied(&pool, "same-request", fixed_dt())
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn gate_decision_audit_rejects_a_mismatched_chain_root() {
+        let pool = make_test_pool().await;
+        let def = test_workflow_def();
+        insert_workflow_def(&pool, &def).await.unwrap();
+        let run = test_run(def.id);
+        insert_workflow_run(&pool, &run).await.unwrap();
+        let stage = test_stage(run.id);
+        insert_stage_instance(&pool, &stage).await.unwrap();
+        let artifact = test_artifact(run.id, stage.id);
+        insert_artifact(&pool, &artifact).await.unwrap();
+        let unrelated = Artifact {
+            id: ArtifactId(Uuid::new_v4()),
+            ..artifact.clone()
+        };
+        insert_artifact(&pool, &unrelated).await.unwrap();
+        let decision = GateDecisionAudit {
+            id: GateDecisionAuditId(Uuid::new_v4()),
+            run_id: run.id,
+            stage_instance_id: stage.id,
+            unit_id: "0".into(),
+            artifact_chain_id: unrelated.id,
+            artifact_revision_id: artifact.id,
+            gate_step: "artifact_approval".into(),
+            action: "approve".into(),
+            operator_comment: None,
+            feedback: None,
+            status: GateDecisionAuditStatus::Pending,
+            created_at: fixed_dt(),
+            applied_at: None,
+            idempotency_key: "wrong-chain".into(),
+        };
+
+        assert!(matches!(
+            reserve_gate_decision_audit(&pool, &decision).await,
+            Err(crate::Error::Validation(_))
+        ));
+        assert!(list_gate_decision_audits_for_run(&pool, &run.id)
+            .await
+            .unwrap()
+            .is_empty());
     }
 
     #[tokio::test]

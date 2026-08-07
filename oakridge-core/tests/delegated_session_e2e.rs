@@ -280,6 +280,7 @@ fn delegated_workflow_def(
         yolo: true,
         fan_out: None,
         gate_output: None,
+        output_gate: None,
     };
 
     stages.insert(
@@ -542,6 +543,7 @@ async fn delegated_session_e2e_gate_driven_completion() {
                 "feedback": null
             },
             "against_artifact_id": artifact_id,
+            "against_gate_step": "artifact_approval",
         }),
     )
     .await;
@@ -561,6 +563,7 @@ async fn delegated_session_e2e_gate_driven_completion() {
                 "feedback": null
             },
             "against_artifact_id": artifact_id,
+            "against_gate_step": "merge_confirmation",
         }),
     )
     .await;
@@ -689,6 +692,7 @@ async fn waiting_for_kbbl_parks_and_reattaches() {
             }],
             fan_out: None,
             gate_output: None,
+            output_gate: None,
         };
         serde_json::to_value(cfg).unwrap()
     };

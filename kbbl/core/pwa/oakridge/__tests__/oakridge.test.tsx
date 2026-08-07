@@ -301,6 +301,14 @@ describe("GateResumeForm", () => {
     fireEvent.click(screen.getByTestId("or-resume-submit"));
 
     await waitFor(() => expect(onDone).toHaveBeenCalled());
+    const request = vi.mocked(globalThis.fetch).mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(request.body))).toMatchObject({
+      artifact_revision_id: PARKED_GATE_FIXTURE.artifact_revision_id,
+      gate_step: PARKED_GATE_FIXTURE.gate_type,
+      idempotency_key: expect.any(String),
+      action: PARKED_GATE_FIXTURE.resume_actions[0],
+      operator_comment: "LGTM — approving build",
+    });
   });
 
   it("shows error message when resume fails", async () => {

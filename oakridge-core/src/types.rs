@@ -22,6 +22,9 @@ pub struct ArtifactId(pub Uuid);
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ProjectId(pub Uuid);
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct GateDecisionAuditId(pub Uuid);
+
 // --- String aliases ---
 
 pub type StageKey = String;
@@ -269,6 +272,42 @@ pub struct Artifact {
     pub version: i32,
     pub parent_artifact_id: Option<ArtifactId>,
     pub created_at: DateTime<Utc>,
+}
+
+/// An immutable gate-decision request plus its durable application status.
+///
+/// The decision boundary owns the idempotency key. Persisting the same key again is
+/// a successful no-op, which makes post-decision retries safe without duplicating
+/// the audit trail.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct GateDecisionAudit {
+    pub id: GateDecisionAuditId,
+    pub run_id: WorkflowRunId,
+    pub stage_instance_id: StageInstanceId,
+    pub unit_id: String,
+    pub artifact_chain_id: ArtifactId,
+    pub artifact_revision_id: ArtifactId,
+    pub gate_step: String,
+    pub action: String,
+    pub operator_comment: Option<String>,
+    pub feedback: Option<String>,
+    pub status: GateDecisionAuditStatus,
+    pub created_at: DateTime<Utc>,
+    pub applied_at: Option<DateTime<Utc>>,
+    pub idempotency_key: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GateDecisionAuditStatus {
+    Pending,
+    Applied,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GateDecisionAuditInsert {
+    Inserted,
+    AlreadyRecorded,
 }
 
 /// A resolved scheduler input: either one producer artifact or an ordered,

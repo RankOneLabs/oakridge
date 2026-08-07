@@ -581,6 +581,9 @@ pub enum ResumePayload {
         decision: GateDecision,
         /// The artifact the gate was applied against.
         against_artifact_id: ArtifactId,
+        /// The exact gate step the operator reviewed. Prevents a retry from
+        /// advancing a later step that happens to reference the same artifact.
+        against_gate_step: String,
     },
     /// A feedback artifact injected back into the stage for re-execution.
     FeedbackArtifact {

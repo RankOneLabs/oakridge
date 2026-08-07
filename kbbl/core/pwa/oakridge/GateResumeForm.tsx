@@ -15,13 +15,25 @@ export function GateResumeForm({ gate, onDone }: GateResumeFormProps) {
   const mutation = useResumeGate(gate.id, gate.run_id);
 
   const hasActions = gate.resume_actions.length > 0;
-  const canSubmit = hasActions && action !== "" && operatorComment.trim() !== "" && !mutation.isPending;
+  const canSubmit =
+    hasActions &&
+    gate.artifact_revision_id !== null &&
+    action !== "" &&
+    operatorComment.trim() !== "" &&
+    !mutation.isPending;
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!canSubmit) return;
+    if (!canSubmit || !gate.artifact_revision_id) return;
     mutation.mutate(
-      { action, operator_comment: operatorComment.trim(), feedback: feedback.trim() },
+      {
+        idempotency_key: crypto.randomUUID(),
+        artifact_revision_id: gate.artifact_revision_id,
+        gate_step: gate.gate_type,
+        action,
+        operator_comment: operatorComment.trim(),
+        feedback: feedback.trim(),
+      },
       { onSuccess: onDone },
     );
   };

@@ -54,7 +54,13 @@ async fn emit_handler(
         }
     };
 
-    let unit = match queries::get_session_unit(live_session.ctx.pool(), &stage_instance_id, &unit_id).await {
+    let unit = match queries::get_session_unit(
+        live_session.ctx.pool(),
+        &stage_instance_id,
+        &unit_id,
+    )
+    .await
+    {
         Ok(unit) => unit,
         Err(crate::Error::NotFound { .. }) => return not_found(),
         Err(err) => {
@@ -72,7 +78,8 @@ async fn emit_handler(
         unit.gate_state.as_ref()
     } else {
         summary.parked_meta.as_ref()
-    }.and_then(|meta| serde_json::from_value::<DelegatedGateState>(meta.clone()).ok());
+    }
+    .and_then(|meta| serde_json::from_value::<DelegatedGateState>(meta.clone()).ok());
     if matches!(
         current_gate.as_ref().map(|gate_state| &gate_state.gate),
         Some(DelegatedGate::MergeConfirmation)
@@ -162,10 +169,16 @@ async fn emit_handler(
     // Determine whether this output slot is the designated gate output.
     // If gate_output is configured, only that slot parks the unit; other slots
     // store artifacts without changing stage status (auxiliary outputs).
-    let designated_gate_output = live_session
-        .config
-        .gate_output
-        .as_deref()
+    let gate_policy = live_session.config.output_gate.clone().or_else(|| {
+        live_session
+            .config
+            .gate_output
+            .clone()
+            .map(super::config::OutputGateConfig::legacy)
+    });
+    let designated_gate_output = gate_policy
+        .as_ref()
+        .map(|policy| policy.output.as_str())
         .or_else(|| {
             live_session
                 .config
@@ -191,17 +204,31 @@ async fn emit_handler(
     // so the PR link is available on the artifact-approval gate state (which
     // the operator will later promote to merge-confirmation on resume).
     let pr_url = if live_session.unit_scheduler.is_some() {
-        queries::get_latest_artifact_by_stage_output_and_label(live_session.ctx.pool(), &stage_instance_id, "pr_summary", &unit_id).await
+        queries::get_latest_artifact_by_stage_output_and_label(
+            live_session.ctx.pool(),
+            &stage_instance_id,
+            "pr_summary",
+            &unit_id,
+        )
+        .await
     } else {
-        queries::get_latest_artifact_by_stage_and_output(live_session.ctx.pool(), &stage_instance_id, "pr_summary").await
-    }.ok().flatten().and_then(|a| a.body.get("pr_url")?.as_str().map(|s| s.to_owned()));
+        queries::get_latest_artifact_by_stage_and_output(
+            live_session.ctx.pool(),
+            &stage_instance_id,
+            "pr_summary",
+        )
+        .await
+    }
+    .ok()
+    .flatten()
+    .and_then(|a| a.body.get("pr_url")?.as_str().map(|s| s.to_owned()));
 
     let revision_count = if live_session.unit_scheduler.is_some() {
         revision_count_from_meta(unit.gate_state.as_ref())
     } else {
         revision_count_from_meta(summary.parked_meta.as_ref())
     };
-    let gate_state = DelegatedGateState::artifact_approval(
+    let gate_state = DelegatedGateState::artifact_approval_with_policy(
         live_session.sid.clone(),
         artifact.id,
         revision_count,
@@ -209,6 +236,8 @@ async fn emit_handler(
         live_session.worktree_branch.clone(),
         live_session.worktree_base_ref.clone(),
         pr_url,
+        gate_policy
+            .unwrap_or_else(|| super::config::OutputGateConfig::legacy(designated_gate_output)),
     );
 
     let gate_state_value = match serde_json::to_value(&gate_state) {
@@ -235,8 +264,16 @@ async fn emit_handler(
 
     if let Some(scheduler) = &live_session.unit_scheduler {
         if queries::set_session_unit_status(
-            live_session.ctx.pool(), &stage_instance_id, &unit_id, UnitStatus::Parked, None,
-        ).await.is_err() || scheduler.recompute_aggregate().await.is_err() {
+            live_session.ctx.pool(),
+            &stage_instance_id,
+            &unit_id,
+            UnitStatus::Parked,
+            None,
+        )
+        .await
+        .is_err()
+            || scheduler.recompute_aggregate().await.is_err()
+        {
             return internal_error();
         }
     } else {

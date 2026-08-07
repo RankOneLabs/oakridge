@@ -169,6 +169,9 @@ export interface ParkedGate {
 }
 
 export interface GateResumeRequest {
+  idempotency_key: string;
+  artifact_revision_id: string;
+  gate_step: string;
   action: string;
   operator_comment: string;
   feedback: string;
