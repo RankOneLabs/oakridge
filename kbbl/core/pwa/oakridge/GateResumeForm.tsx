@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useResumeGate } from "./hooks/useResumeGate";
 import type { ParkedGate } from "./types";
 
@@ -12,6 +12,7 @@ export function GateResumeForm({ gate, onDone, actionLabels = {} }: GateResumeFo
   const [action, setAction] = useState<string>(gate.resume_actions[0] ?? "");
   const [operatorComment, setOperatorComment] = useState("");
   const [feedback, setFeedback] = useState("");
+  const requestKey = useRef<{ identity: string; key: string } | null>(null);
 
   const mutation = useResumeGate(gate.id, gate.run_id);
 
@@ -26,9 +27,20 @@ export function GateResumeForm({ gate, onDone, actionLabels = {} }: GateResumeFo
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!canSubmit || !gate.artifact_revision_id) return;
+    const identity = JSON.stringify({
+      gateId: gate.id,
+      artifactRevisionId: gate.artifact_revision_id,
+      gateStep: gate.gate_step ?? gate.gate_type,
+      action,
+      operatorComment: operatorComment.trim(),
+      feedback: feedback.trim(),
+    });
+    if (requestKey.current?.identity !== identity) {
+      requestKey.current = { identity, key: crypto.randomUUID() };
+    }
     mutation.mutate(
       {
-        idempotency_key: crypto.randomUUID(),
+        idempotency_key: requestKey.current.key,
         artifact_revision_id: gate.artifact_revision_id,
         gate_step: gate.gate_step ?? gate.gate_type,
         action,
