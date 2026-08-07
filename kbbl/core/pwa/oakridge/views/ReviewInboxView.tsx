@@ -24,6 +24,7 @@ const LIFECYCLE_LABELS: Record<CohortLifecycle, string> = {
 const ITEM_LABELS: Record<ReviewInboxItem["kind"], string> = {
   admission: "Build admission",
   artifact_gate: "Artifact review",
+  merge_confirmation: "Merge confirmation",
   cohort_blocked: "Blocked cohort",
   cohort_failed: "Failed cohort",
   gate_decision: "Gate decision",
@@ -91,7 +92,7 @@ export function ReviewInboxView({ onSelectRun, onSelectArtifact }: ReviewInboxVi
       </section>
 
       <section aria-labelledby="cohort-progress">
-        <h3 id="cohort-progress" className="mb-3 mt-0 text-sm font-semibold text-[var(--text-secondary)]">Cohort lifecycle ({activeCohorts.length} active)</h3>
+        <h3 id="cohort-progress" className="mb-3 mt-0 text-sm font-semibold text-[var(--text-secondary)]">Cohort lifecycle ({query.data.cohorts.length} total · {activeCohorts.length} active)</h3>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
           {query.data.cohorts.map((cohort) => {
             const artifactId = cohort.artifact_revision_id;

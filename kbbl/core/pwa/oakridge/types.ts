@@ -260,6 +260,7 @@ export interface CohortLifecycleSummary {
 export type ReviewInboxItemKind =
   | "admission"
   | "artifact_gate"
+  | "merge_confirmation"
   | "cohort_blocked"
   | "cohort_failed"
   | "gate_decision";

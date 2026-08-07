@@ -79,6 +79,20 @@ describe("ReviewInboxView", () => {
     });
     await screen.findByTestId("or-review-inbox");
     for (const label of labels) expect(screen.getByText(label)).toBeTruthy();
-    expect(screen.getByText("Cohort lifecycle (7 active)")).toBeTruthy();
+    expect(screen.getByText("Cohort lifecycle (8 total · 7 active)")).toBeTruthy();
+  });
+
+  it("labels merge-confirmation work distinctly from artifact review", async () => {
+    renderInbox({
+      cohorts: [],
+      items: [{
+        ...inbox.items[1],
+        id: "merge-web",
+        kind: "merge_confirmation",
+        lifecycle: "merge_confirmation",
+      }],
+    });
+
+    expect((await screen.findAllByText("Merge confirmation")).length).toBeGreaterThanOrEqual(1);
   });
 });
