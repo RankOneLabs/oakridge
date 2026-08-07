@@ -27,7 +27,7 @@ check_contains() {
   echo "ok: ${label} (${BASE_URL}${path})"
 }
 
-check_contains "PWA shell" "/" 'id="root"'
+check_contains "PWA shell" "/" 'id="app"'
 check_contains "Oakridge integration config" "/oakridge/config" '"available"[[:space:]]*:[[:space:]]*true'
 check "workflow definitions through same-origin proxy" "/oakridge/api/workflow_defs"
 check "review inbox through same-origin proxy" "/oakridge/api/review_inbox"
