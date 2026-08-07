@@ -63,6 +63,7 @@ const PARKED_RUN_SUMMARY: RunSummary = {
 const PARKED_GATE_FIXTURE: ParkedGate = {
   id: "gate-1",
   gate_type: "operator_approval",
+  gate_step: null,
   run_id: "run-2",
   stage_name: "approve",
   unit_id: "0",

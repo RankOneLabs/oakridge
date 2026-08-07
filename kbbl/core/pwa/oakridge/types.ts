@@ -167,6 +167,7 @@ export interface ArtifactDetail {
 export interface ParkedGate {
   id: string;
   gate_type: string;
+  gate_step: string | null;
   run_id: string;
   stage_name: string;
   unit_id: string;
