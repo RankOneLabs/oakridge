@@ -14,7 +14,7 @@ at boot.
 | Type | What it is |
 | --- | --- |
 | `Project` | Optional owner of runs; carries a `repo_dir` and metadata merged into a run's context. |
-| `WorkflowDef` | A named, versioned graph: a map of `StageKey → StageNodeDef` plus `Edge`s wiring one stage's output slot to another's input slot. |
+| `WorkflowDef` | A named, versioned graph: a map of `StageKey → StageNodeDef` plus `Edge`s wiring one stage's output slot to another's input slot. Carries an `archived` flag — see [Retiring definitions](#retiring-definitions). |
 | `WorkflowRun` | A live execution of a `WorkflowDef`. Status: `pending → running → done`/`failed`. |
 | `StageInstance` | A single stage's execution within a run. Status: `pending → running → parked → done`/`failed`. |
 | `Artifact` | Typed JSON output emitted by a stage; revisable via `parent_artifact_id` + `version`. |
@@ -114,7 +114,8 @@ per-service tokens).
 | `POST /projects` | `201` | Body `{name, repo_dir}`. |
 | `GET /projects` · `GET /projects/:id` | `200` | `404` when missing. |
 | `POST /workflow_defs` | `201` | Body `{name, version, graph}`. |
-| `GET /workflow_defs` · `GET /workflow_defs/:id` | `200` | `404` when missing. |
+| `GET /workflow_defs` · `GET /workflow_defs/:id` | `200` | `404` when missing. The list hides archived defs; `?include_archived=1` returns all. |
+| `POST /workflow_defs/:id/archive` · `/unarchive` | `204` | Retire a def from the listing, or restore it. `404` when missing. |
 | `POST /workflow_runs` | `201` | Body `{workflow_def_id, project_id?, context?}`; **creates and starts** the run. |
 | `GET /workflow_runs` | `200` | Filters: `?status=&def_id=&project_id=`. |
 | `GET /workflow_runs/:id` | `200` | Run fields flattened with inline `stage_instances`. |
@@ -220,11 +221,33 @@ curl -sX POST "$CORE/workflow_defs" \
 
 See `docs/oakridge-v2-runbook.md` for a full walkthrough.
 
-The default multi-repository dev-flow v4 accepts
+The default multi-repository dev-flow v5 accepts
 `repositories: [{"key":"api","path":"/abs/path/to/api"}, ...]`. Planning
 cohorts name one `repository_key`; each assessment starts when its matching
 build cohort completes and reuses the builder's persisted worktree. The version
 1 workflow retains the single `worktree_path` contract above.
+
+v5 also binds each stage's **runtime** from run context — `planner_runtime` for
+`spec_analyzer`/`plan_writer`/`assessor`, `worker_runtime` for `build` — beside
+the matching `*_model` and `*_effort` keys. Model and effort fall back to the
+runtime default when absent; runtime does not, because which models are valid
+depends on it. Through v4 the runtime was pinned to `claude-code` in the
+definition while the model was bound, so a codex model silently reached a
+claude-code stage and failed at kbbl session creation.
+
+### Retiring definitions
+
+Definitions are never deleted — `workflow_run.workflow_def_id` is
+`ON DELETE RESTRICT`, so a def with runs cannot be removed without losing the
+run history that references it. Instead each def carries an `archived` flag:
+archived defs disappear from `GET /workflow_defs` (the launcher's list) while
+staying fully resolvable by id for the runs that used them.
+
+Seeding a **new** built-in version archives the older versions of that name, so
+the launcher shows one entry per workflow instead of accumulating every version
+ever shipped. This runs only on the boot that first inserts the new version — a
+def an operator deliberately restores via `POST /workflow_defs/:id/unarchive`
+stays restored across later boots.
 
 ### Tool approval policy
 

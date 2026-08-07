@@ -541,8 +541,11 @@ definitions:
 - `oakridge-core/examples/dev_flow.json` (version 1) runs one session per stage.
 - `oakridge-core/examples/dev_flow_v2.json` (version 3) fans build and assessment
   out over the cohorts produced by the plan.
-- `oakridge-core/examples/dev_flow_v4.json` (version 4, default) starts each
+- `oakridge-core/examples/dev_flow_v4.json` (version 4) starts each
   assessor as soon as its build cohort completes and reuses that build worktree.
+- `oakridge-core/examples/dev_flow_v5.json` (version 5, default) binds each
+  stage's **runtime** from run context alongside its model and effort, so the
+  planner and worker roles can target different runtimes.
 
 ### Workflow graph
 
@@ -579,6 +582,29 @@ unit-id-ordered array of
 `{ "unit_id": "...", "artifact_id": "...", "artifact": ... }` envelopes after
 the producer stage is done.
 
+In version 5, `runtime` is bound from run context per role — `planner_runtime`
+for `spec_analyzer`, `plan_writer`, and `assessor`; `worker_runtime` for `build`
+— rather than pinned in the definition. Through version 4 every stage pinned
+`"runtime": "claude-code"` while the model was bound from context, so a run
+launched with a codex model failed at session creation with
+`unknown model for claude-code: <model>`. A model is only valid against the
+runtime it was chosen from, so both now travel together.
+
+Unlike `model` and `effort`, a bound `runtime` has **no default**: if the launch
+context omits it, the stage fails at config-build time naming the missing
+pointer, rather than silently running on the wrong runtime.
+
+### Role context keys
+
+| Key | Consumed by | Required |
+| --- | --- | --- |
+| `planner_runtime` | `spec_analyzer`, `plan_writer`, `assessor` | yes (v5) |
+| `planner_model` | same | no — falls back to the runtime default |
+| `planner_effort` | same | no — falls back to the runtime default |
+| `worker_runtime` | `build` | yes (v5) |
+| `worker_model` | `build` | no — falls back to the runtime default |
+| `worker_effort` | `build` | no — falls back to the runtime default |
+
 ### Prerequisites
 
 - kbbl and oakridge-core running (see earlier sections).
@@ -589,8 +615,17 @@ the producer stage is done.
 ### Select the workflow definition
 
 oakridge-core seeds the bundled dev-flow definitions on startup. In the kbbl
-PWA, choose **New Run** and select `dev-flow v4` (the newest version is selected
-by default).
+PWA, choose **New Run** and select `dev-flow v5` (the newest version is selected
+by default). The Planner and Worker pickers each choose a runtime, a model, and
+an effort; all three are sent with the run.
+
+Older versions are retired automatically when a new built-in version is first
+seeded, so only v5 appears in the picker. They are archived, not deleted — every
+existing run still resolves its definition. To bring one back, tick **Show
+retired** on the Workflow Definitions screen and choose **Restore** (or
+`POST /workflow_defs/:id/unarchive`); the seed will not re-retire it on later
+boots. Note that v1/v3/v4 pin `runtime: claude-code`, so a restored version
+still fails if you pair it with a codex model.
 
 The API command below is only needed when loading a modified or custom copy of
 the example. Posting the unchanged built-in again conflicts with its seeded
@@ -601,7 +636,7 @@ CORE=http://127.0.0.1:8790
 
 curl -sX POST "$CORE/workflow_defs" \
   -H 'content-type: application/json' \
-  -d "$(jq '{name,version,graph}' oakridge-core/examples/dev_flow_v4.json)"
+  -d "$(jq '{name,version,graph}' oakridge-core/examples/dev_flow_v5.json)"
 ```
 
 Save the returned `id` as `DEV_FLOW_DEF_ID`. Use `dev_flow.json` instead when
@@ -620,13 +655,23 @@ curl -sX POST "$CORE/workflow_runs" \
         {\"key\": \"api\", \"path\": \"/abs/path/to/api\"},
         {\"key\": \"web\", \"path\": \"/abs/path/to/web\"}
       ],
-      \"oakridge_url\": \"http://127.0.0.1:8790/\"
+      \"oakridge_url\": \"http://127.0.0.1:8790/\",
+      \"planner_runtime\": \"claude-code\",
+      \"planner_model\": \"claude-opus-5\",
+      \"planner_effort\": \"high\",
+      \"worker_runtime\": \"claude-code\",
+      \"worker_model\": \"claude-sonnet-5\",
+      \"worker_effort\": \"high\"
     }
   }"
 ```
 
 `brief_notes` and the complete keyed repository list are passed into the
 `spec_analyzer` and `plan_writer` prompts. Each planned cohort selects one key.
+
+`planner_runtime` and `worker_runtime` are required by version 5 — omitting
+either fails the corresponding stage at config-build time. Drop all six
+role keys when running the version 1 or 3 definitions, which pin their runtime.
 
 ### Gate decisions
 

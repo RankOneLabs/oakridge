@@ -25,7 +25,7 @@ use uuid::Uuid;
 
 use oakridge_core::db::{self, queries};
 use oakridge_core::executor::delegated_session::{
-    config::{Bindable, DelegatedRuntime, DelegatedSessionDefConfig},
+    config::{Bindable, DelegatedSessionDefConfig},
     kbbl_client::KbblClient,
     DelegatedExecutor, DelegatedGate, DelegatedGateState, DelegatedSessionStage,
 };
@@ -261,7 +261,7 @@ fn delegated_workflow_def(
     );
 
     let def_config = DelegatedSessionDefConfig {
-        runtime: DelegatedRuntime::ClaudeCode,
+        runtime: Bindable::Literal("claude-code".into()),
         prompt_template_path: prompts_dir
             .join("delegated_prompt.md")
             .file_name()
@@ -307,6 +307,7 @@ fn delegated_workflow_def(
         version: 1,
         graph,
         created_at: Utc::now(),
+        archived: false,
     };
 
     let config = json!({

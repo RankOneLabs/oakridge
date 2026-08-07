@@ -230,6 +230,14 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/workflow_defs/:id", get(rest::get_workflow_def))
         .route(
+            "/workflow_defs/:id/archive",
+            post(rest::archive_workflow_def),
+        )
+        .route(
+            "/workflow_defs/:id/unarchive",
+            post(rest::unarchive_workflow_def),
+        )
+        .route(
             "/workflow_runs",
             post(rest::create_workflow_run).get(rest::list_workflow_runs),
         )

@@ -466,16 +466,48 @@ pub async fn create_workflow_def(
         version: body.version,
         graph: body.graph,
         created_at: Utc::now(),
+        // A newly authored def is always active; retiring it is a separate call.
+        archived: false,
     };
     queries::insert_workflow_def(&state.pool, &def).await?;
     Ok((StatusCode::CREATED, Json(def)))
 }
 
+/// `?include_archived=1` returns retired defs alongside active ones. The default
+/// hides them so the launcher shows one entry per workflow instead of every
+/// version ever seeded.
+#[derive(Debug, Deserialize, Default)]
+pub struct ListWorkflowDefsQuery {
+    #[serde(default)]
+    include_archived: Option<String>,
+}
+
 pub async fn list_workflow_defs(
     State(state): State<AppState>,
+    Query(params): Query<ListWorkflowDefsQuery>,
 ) -> Result<Json<Vec<WorkflowDef>>, AppError> {
-    let defs = queries::list_workflow_defs(&state.pool).await?;
+    let include_archived = matches!(
+        params.include_archived.as_deref(),
+        Some("1") | Some("true")
+    );
+    let defs = queries::list_workflow_defs(&state.pool, include_archived).await?;
     Ok(Json(defs))
+}
+
+pub async fn archive_workflow_def(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    queries::set_workflow_def_archived(&state.pool, &WorkflowDefId(id), true).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn unarchive_workflow_def(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    queries::set_workflow_def_archived(&state.pool, &WorkflowDefId(id), false).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn get_workflow_def(
@@ -2106,6 +2138,7 @@ mod tests {
                 edges: vec![],
             },
             created_at: now,
+            archived: false,
         };
         queries::insert_workflow_def(&state.pool, &def)
             .await
@@ -2232,6 +2265,7 @@ mod tests {
                 edges: vec![],
             },
             created_at: now,
+            archived: false,
         };
         queries::insert_workflow_def(&state.pool, &def)
             .await
@@ -2342,6 +2376,7 @@ mod tests {
                 edges: vec![],
             },
             created_at: now,
+            archived: false,
         };
         queries::insert_workflow_def(&state.pool, &def)
             .await
@@ -2563,6 +2598,7 @@ mod tests {
                 edges: vec![],
             },
             created_at: Utc::now(),
+            archived: false,
         };
         queries::insert_workflow_def(&pool, &def).await.unwrap();
         sqlx::query("UPDATE workflow_def SET graph = ? WHERE id = ?")
@@ -3365,6 +3401,7 @@ mod tests {
                 edges: vec![],
             },
             created_at: now,
+            archived: false,
         };
         queries::insert_workflow_def(&state.pool, &def)
             .await

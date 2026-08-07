@@ -30,6 +30,7 @@ struct WorkflowDefRow {
     version: i64,
     graph: String,
     created_at: String,
+    archived: i64,
 }
 
 #[derive(sqlx::FromRow)]
@@ -140,6 +141,7 @@ fn row_to_workflow_def(r: WorkflowDefRow) -> crate::Result<WorkflowDef> {
         version: r.version as i32,
         graph: serde_json::from_str(&r.graph)?,
         created_at: parse_dt(&r.created_at)?,
+        archived: r.archived != 0,
     })
 }
 
@@ -301,13 +303,69 @@ pub async fn insert_workflow_def(pool: &SqlitePool, d: &WorkflowDef) -> crate::R
     Ok(())
 }
 
-pub async fn list_workflow_defs(pool: &SqlitePool) -> crate::Result<Vec<WorkflowDef>> {
-    let rows = sqlx::query_as::<_, WorkflowDefRow>(
-        "SELECT id, name, version, graph, created_at FROM workflow_def ORDER BY created_at, id",
-    )
+/// List workflow definitions. `include_archived = false` (the launcher's default)
+/// hides retired defs; `true` returns every def regardless of the flag.
+pub async fn list_workflow_defs(
+    pool: &SqlitePool,
+    include_archived: bool,
+) -> crate::Result<Vec<WorkflowDef>> {
+    let where_clause = if include_archived {
+        ""
+    } else {
+        " WHERE archived = 0"
+    };
+    let rows = sqlx::query_as::<_, WorkflowDefRow>(&format!(
+        "SELECT id, name, version, graph, created_at, archived FROM workflow_def{} \
+         ORDER BY created_at, id",
+        where_clause
+    ))
     .fetch_all(pool)
     .await?;
     rows.into_iter().map(row_to_workflow_def).collect()
+}
+
+/// Set the archived flag on one def. Archiving never breaks the runs that
+/// reference it — the row stays, only the launcher listing filters it out.
+pub async fn set_workflow_def_archived(
+    pool: &SqlitePool,
+    id: &WorkflowDefId,
+    archived: bool,
+) -> crate::Result<()> {
+    let id_str = id.0.to_string();
+    let flag = i64::from(archived);
+    let result = sqlx::query("UPDATE workflow_def SET archived = ? WHERE id = ?")
+        .bind(flag)
+        .bind(&id_str)
+        .execute(pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(crate::Error::NotFound {
+            entity: "workflow_def".into(),
+            id: id_str,
+        });
+    }
+    Ok(())
+}
+
+/// Archive every def sharing `name` below `version`. Used when a newly seeded
+/// built-in supersedes its predecessors, so the launcher shows one entry per
+/// workflow instead of accumulating every version ever shipped.
+///
+/// Returns the number of defs retired.
+pub async fn archive_workflow_defs_below_version(
+    pool: &SqlitePool,
+    name: &str,
+    version: i32,
+) -> crate::Result<u64> {
+    let version = version as i64;
+    let result = sqlx::query(
+        "UPDATE workflow_def SET archived = 1 WHERE name = ? AND version < ? AND archived = 0",
+    )
+    .bind(name)
+    .bind(version)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
 }
 
 pub async fn get_workflow_def_by_id(
@@ -317,7 +375,7 @@ pub async fn get_workflow_def_by_id(
     let id_str = id.0.to_string();
     let row = sqlx::query_as!(
         WorkflowDefRow,
-        "SELECT id, name, version, graph, created_at FROM workflow_def WHERE id = ?",
+        "SELECT id, name, version, graph, created_at, archived FROM workflow_def WHERE id = ?",
         id_str,
     )
     .fetch_optional(pool)
@@ -336,7 +394,7 @@ pub async fn get_workflow_def_by_name_version(
 ) -> crate::Result<Option<WorkflowDef>> {
     let version_i64 = version as i64;
     let row = sqlx::query_as::<_, WorkflowDefRow>(
-        "SELECT id, name, version, graph, created_at FROM workflow_def WHERE name = ? AND version = ?",
+        "SELECT id, name, version, graph, created_at, archived FROM workflow_def WHERE name = ? AND version = ?",
     )
     .bind(name)
     .bind(version_i64)
@@ -1816,6 +1874,7 @@ mod tests {
                 edges: vec![],
             },
             created_at: fixed_dt(),
+            archived: false,
         }
     }
 
@@ -1868,6 +1927,105 @@ mod tests {
 
     // ── Round-trip tests ──────────────────────────────────────────────────────
 
+    async fn insert_def_version(pool: &SqlitePool, name: &str, version: i32) -> WorkflowDefId {
+        let def = WorkflowDef {
+            version,
+            name: name.into(),
+            ..test_workflow_def()
+        };
+        insert_workflow_def(pool, &def).await.unwrap();
+        def.id
+    }
+
+    #[tokio::test]
+    async fn archiving_a_def_hides_it_from_the_default_listing() {
+        let pool = make_test_pool().await;
+        let name = format!("wf-{}", Uuid::new_v4());
+        let old = insert_def_version(&pool, &name, 1).await;
+        let current = insert_def_version(&pool, &name, 2).await;
+
+        set_workflow_def_archived(&pool, &old, true).await.unwrap();
+
+        let active: Vec<_> = list_workflow_defs(&pool, false)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|d| d.id)
+            .collect();
+        assert_eq!(active, vec![current]);
+
+        // Both fixtures share a created_at, so the listing's secondary sort is by
+        // id — compare as a set rather than asserting an incidental order.
+        let all: std::collections::HashSet<_> = list_workflow_defs(&pool, true)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|d| d.id)
+            .collect();
+        assert_eq!(all, std::collections::HashSet::from([old, current]));
+    }
+
+    #[tokio::test]
+    async fn an_archived_def_is_still_resolvable_by_id() {
+        // Runs reference their def by id forever. Archiving must retire it from the
+        // launcher without breaking history — that is why this is a flag, not a delete.
+        let pool = make_test_pool().await;
+        let name = format!("wf-{}", Uuid::new_v4());
+        let id = insert_def_version(&pool, &name, 1).await;
+
+        set_workflow_def_archived(&pool, &id, true).await.unwrap();
+
+        let def = get_workflow_def_by_id(&pool, &id).await.unwrap();
+        assert!(def.archived);
+    }
+
+    #[tokio::test]
+    async fn archiving_below_version_retires_only_predecessors() {
+        let pool = make_test_pool().await;
+        let name = format!("wf-{}", Uuid::new_v4());
+        let v1 = insert_def_version(&pool, &name, 1).await;
+        let v3 = insert_def_version(&pool, &name, 3).await;
+        let v4 = insert_def_version(&pool, &name, 4).await;
+        let other = insert_def_version(&pool, &format!("other-{}", Uuid::new_v4()), 1).await;
+
+        let retired = archive_workflow_defs_below_version(&pool, &name, 4)
+            .await
+            .unwrap();
+        assert_eq!(retired, 2);
+
+        for (id, expected) in [(v1, true), (v3, true), (v4, false), (other, false)] {
+            let def = get_workflow_def_by_id(&pool, &id).await.unwrap();
+            assert_eq!(def.archived, expected, "def {id:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn archiving_below_version_is_unconditional_so_its_caller_must_gate_it() {
+        // This query re-retires anything below the version every time it runs. The
+        // seed is what makes the retire one-time, by calling it only on the boot
+        // that first inserts the superseding version.
+        let pool = make_test_pool().await;
+        let name = format!("wf-{}", Uuid::new_v4());
+        let v1 = insert_def_version(&pool, &name, 1).await;
+        insert_def_version(&pool, &name, 2).await;
+
+        assert_eq!(
+            archive_workflow_defs_below_version(&pool, &name, 2)
+                .await
+                .unwrap(),
+            1
+        );
+        set_workflow_def_archived(&pool, &v1, false).await.unwrap();
+
+        assert_eq!(
+            archive_workflow_defs_below_version(&pool, &name, 2)
+                .await
+                .unwrap(),
+            1,
+            "the query itself is unconditional; the seed is what runs it only once"
+        );
+    }
+
     #[tokio::test]
     async fn test_project_roundtrip() {
         let pool = make_test_pool().await;
@@ -1901,6 +2059,7 @@ mod tests {
                 edges: vec![],
             },
             created_at: fixed_dt(),
+            archived: false,
         };
         insert_workflow_def(&pool, &d).await.unwrap();
         let got = get_workflow_def_by_id(&pool, &d.id).await.unwrap();

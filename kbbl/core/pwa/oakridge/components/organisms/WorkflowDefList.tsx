@@ -1,4 +1,6 @@
+import { useState } from "react";
 import { useWorkflowDefs } from "../../hooks/useWorkflowDefs";
+import { useSetWorkflowDefArchived } from "../../hooks/useSetWorkflowDefArchived";
 import type { WorkflowDefSummary } from "../../types";
 
 const secondaryButtonClass =
@@ -17,7 +19,9 @@ interface WorkflowDefListProps {
 }
 
 export function WorkflowDefList({ onNew, onSelect, onClone }: WorkflowDefListProps) {
-  const query = useWorkflowDefs();
+  const [showRetired, setShowRetired] = useState(false);
+  const query = useWorkflowDefs(showRetired);
+  const setArchived = useSetWorkflowDefArchived();
 
   // Group defs by name, latest version first within each name
   const grouped: WorkflowDefSummary[] = query.data
@@ -31,14 +35,25 @@ export function WorkflowDefList({ onNew, onSelect, onClone }: WorkflowDefListPro
     <div data-testid="or-def-list">
       <div className="mb-4 flex items-center justify-between gap-3">
         <h2 className="m-0 text-lg font-semibold text-[var(--text-primary)]">Workflow Definitions</h2>
-        <button
-          type="button"
-          className={primaryButtonClass}
-          onClick={onNew}
-          data-testid="or-def-new-btn"
-        >
-          + New Definition
-        </button>
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-1.5 text-sm text-[var(--text-secondary)]">
+            <input
+              type="checkbox"
+              checked={showRetired}
+              onChange={(e) => setShowRetired(e.target.checked)}
+              data-testid="or-def-show-retired"
+            />
+            Show retired
+          </label>
+          <button
+            type="button"
+            className={primaryButtonClass}
+            onClick={onNew}
+            data-testid="or-def-new-btn"
+          >
+            + New Definition
+          </button>
+        </div>
       </div>
 
       {query.isError && (
@@ -88,6 +103,14 @@ export function WorkflowDefList({ onNew, onSelect, onClone }: WorkflowDefListPro
                 </td>
                 <td className={`${tableCellClass} text-[var(--text-secondary)]`}>
                   v{def.version}
+                  {def.archived && (
+                    <span
+                      className="ml-2 rounded bg-[var(--bg-elevated)] px-1.5 py-0.5 text-xs text-[var(--text-muted)]"
+                      data-testid="or-def-retired-badge"
+                    >
+                      retired
+                    </span>
+                  )}
                 </td>
                 <td className={`${tableCellClass} font-mono text-xs text-[var(--text-muted)]`}>
                   {def.id.slice(0, 8)}…
@@ -104,6 +127,17 @@ export function WorkflowDefList({ onNew, onSelect, onClone }: WorkflowDefListPro
                       data-testid="or-def-clone-btn"
                     >
                       Clone to new version
+                    </button>
+                    <button
+                      type="button"
+                      className={secondaryButtonClass}
+                      onClick={() =>
+                        setArchived.mutate({ defId: def.id, archived: !def.archived })
+                      }
+                      disabled={setArchived.isPending}
+                      data-testid="or-def-archive-btn"
+                    >
+                      {def.archived ? "Restore" : "Retire"}
                     </button>
                   </div>
                 </td>

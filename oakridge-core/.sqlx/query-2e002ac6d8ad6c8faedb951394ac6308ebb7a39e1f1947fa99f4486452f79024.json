@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, name, version, graph, created_at FROM workflow_def WHERE id = ?",
+  "query": "SELECT id, name, version, graph, created_at, archived FROM workflow_def WHERE id = ?",
   "describe": {
     "columns": [
       {
@@ -27,6 +27,11 @@
         "name": "created_at",
         "ordinal": 4,
         "type_info": "Text"
+      },
+      {
+        "name": "archived",
+        "ordinal": 5,
+        "type_info": "Int64"
       }
     ],
     "parameters": {
@@ -37,8 +42,9 @@
       false,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "a818982273a2a62159e21512c088802c479c9c7fb4b6e6bcd7cea42af701e0ba"
+  "hash": "2e002ac6d8ad6c8faedb951394ac6308ebb7a39e1f1947fa99f4486452f79024"
 }

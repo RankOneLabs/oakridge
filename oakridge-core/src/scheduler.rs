@@ -2594,6 +2594,7 @@ mod tests {
                 edges: vec![],
             },
             created_at: fixed_dt(),
+            archived: false,
         };
         queries::insert_workflow_def(pool, &def).await.unwrap();
 
@@ -2689,6 +2690,7 @@ mod tests {
                 edges: vec![],
             },
             created_at: fixed_dt(),
+            archived: false,
         };
 
         let run_id = insert_run_for_def(&pool, &def).await;
@@ -2772,6 +2774,7 @@ mod tests {
                 }],
             },
             created_at: fixed_dt(),
+            archived: false,
         };
 
         let run_id = insert_run_for_def(&pool, &def).await;
@@ -2925,6 +2928,7 @@ mod tests {
                 ],
             },
             created_at: fixed_dt(),
+            archived: false,
         };
 
         let run_id = insert_run_for_def(&pool, &def).await;
@@ -3033,6 +3037,7 @@ mod tests {
                 edges: vec![],
             },
             created_at: fixed_dt(),
+            archived: false,
         };
 
         let run_id = insert_run_for_def(&pool, &def).await;
@@ -3136,6 +3141,7 @@ mod tests {
                 edges: vec![],
             },
             created_at: fixed_dt(),
+            archived: false,
         };
         queries::insert_workflow_def(&pool, &def).await.unwrap();
 
@@ -3262,6 +3268,7 @@ mod tests {
                 edges: vec![],
             },
             created_at: fixed_dt(),
+            archived: false,
         };
         queries::insert_workflow_def(&pool, &def).await.unwrap();
 
@@ -3372,6 +3379,7 @@ mod tests {
                 edges: vec![],
             },
             created_at: fixed_dt(),
+            archived: false,
         };
         queries::insert_workflow_def(&pool, &def).await.unwrap();
 
@@ -3486,6 +3494,7 @@ mod tests {
                 edges: vec![],
             },
             created_at: fixed_dt(),
+            archived: false,
         };
         let run_id = insert_run_for_def(&pool, &def).await;
 
@@ -3538,6 +3547,7 @@ mod tests {
                 edges: vec![],
             },
             created_at: fixed_dt(),
+            archived: false,
         };
         let run_id = insert_run_for_def(&pool, &def).await;
         coord.start_run(run_id).await.unwrap();
@@ -3586,6 +3596,7 @@ mod tests {
                 edges: vec![],
             },
             created_at: fixed_dt(),
+            archived: false,
         };
         queries::insert_workflow_def(&pool, &def).await.unwrap();
 
@@ -3704,6 +3715,7 @@ mod tests {
                 edges: vec![],
             },
             created_at: fixed_dt(),
+            archived: false,
         };
         queries::insert_workflow_def(&pool, &def).await.unwrap();
 
@@ -3782,6 +3794,7 @@ mod tests {
                 edges: vec![],
             },
             created_at: fixed_dt(),
+            archived: false,
         };
         queries::insert_workflow_def(&pool, &def).await.unwrap();
 
@@ -3906,6 +3919,7 @@ mod tests {
                 edges: vec![],
             },
             created_at: fixed_dt(),
+            archived: false,
         };
         queries::insert_workflow_def(&pool, &def).await.unwrap();
 
@@ -4005,6 +4019,7 @@ mod tests {
                 edges: vec![],
             },
             created_at: fixed_dt(),
+            archived: false,
         };
         queries::insert_workflow_def(&pool, &def).await.unwrap();
 
@@ -4084,6 +4099,7 @@ mod tests {
                 edges: vec![],
             },
             created_at: fixed_dt(),
+            archived: false,
         };
         queries::insert_workflow_def(&pool, &def).await.unwrap();
 
@@ -4253,6 +4269,7 @@ mod tests {
                 edges: vec![],
             },
             created_at: fixed_dt(),
+            archived: false,
         };
         queries::insert_workflow_def(&pool, &def).await.unwrap();
 

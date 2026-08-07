@@ -99,6 +99,7 @@ async fn setup_run(
             edges: vec![],
         },
         created_at: fixed_dt(),
+        archived: false,
     };
     queries::insert_workflow_def(pool, &def).await.unwrap();
 

@@ -104,6 +104,25 @@ pub enum DelegatedRuntime {
     Codex,
 }
 
+pub const VALID_RUNTIME_VALUES: &[&str] = &["claude-code", "codex"];
+
+impl DelegatedRuntime {
+    /// Parse a runtime id supplied as a definition literal or resolved from run
+    /// context. Accepts exactly the strings in kbbl's runtime contract; anything
+    /// else is a workflow-authoring or launch-payload error, not a default.
+    pub fn parse(value: &str) -> anyhow::Result<Self> {
+        match value {
+            "claude-code" => Ok(Self::ClaudeCode),
+            "codex" => Ok(Self::Codex),
+            other => anyhow::bail!(
+                "invalid runtime {:?}: must be one of {:?}",
+                other,
+                VALID_RUNTIME_VALUES
+            ),
+        }
+    }
+}
+
 // ── DelegatedSessionDefConfig ────────────────────────────────────────────────
 
 /// Definition-time config for delegated sessions.
@@ -112,7 +131,11 @@ pub enum DelegatedRuntime {
 /// contract, but it remains inert until kbbl can apply it at session creation.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct DelegatedSessionDefConfig {
-    pub runtime: DelegatedRuntime,
+    /// Runtime id (`"claude-code"` / `"codex"`) or a SlotBinding resolved from run
+    /// context at build time. Unlike model and effort this has no runtime default:
+    /// which models are valid depends on it, so an unresolvable binding is an
+    /// error rather than a silent fallback.
+    pub runtime: Bindable,
     pub prompt_template_path: String,
     pub slot_bindings: HashMap<String, SlotBinding>,
     pub workdir: SlotBinding,
@@ -247,7 +270,7 @@ mod tests {
         );
 
         let def = DelegatedSessionDefConfig {
-            runtime: DelegatedRuntime::ClaudeCode,
+            runtime: Bindable::Literal("claude-code".into()),
             prompt_template_path: "build.md".into(),
             slot_bindings,
             workdir: SlotBinding::Literal {

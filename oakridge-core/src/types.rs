@@ -176,6 +176,10 @@ pub struct WorkflowDef {
     pub version: i32,
     pub graph: WorkflowGraph,
     pub created_at: DateTime<Utc>,
+    /// Retired from the launcher surface but still resolvable by the runs that
+    /// reference it. Defaults false so a def POSTed without the field is active.
+    #[serde(default)]
+    pub archived: bool,
 }
 
 // --- Runtime types ---
@@ -487,6 +491,7 @@ mod tests {
                 edges: vec![],
             },
             created_at: now(),
+            archived: false,
         };
         let v = serde_json::to_value(&def).unwrap();
         let back: WorkflowDef = serde_json::from_value(v).unwrap();

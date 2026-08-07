@@ -168,7 +168,9 @@ export function BindingEditor({
 }
 
 // ── BindableEditor ────────────────────────────────────────────────────────────
-// For model/effort fields: toggle between "none", "literal", and "context binding".
+// For model/effort/runtime fields: toggle between "none", "literal", and
+// "context binding". Runtime passes `required` — it has no runtime default, so
+// "none" is not an offerable mode there.
 
 type BindableMode = "none" | "literal" | "context";
 
@@ -177,6 +179,9 @@ interface BindableEditorProps {
   literalOptions?: Array<{ value: string; label: string }>;
   value: string | SlotBinding | null | undefined;
   onChange: (v: string | SlotBinding | null) => void;
+  // When true, drop the "— default —" mode: the field must carry a literal or a binding.
+  required?: boolean;
+  placeholder?: string;
   disabled?: boolean;
 }
 
@@ -191,6 +196,8 @@ export function BindableEditor({
   literalOptions,
   value,
   onChange,
+  required = false,
+  placeholder = "model string",
   disabled = false,
 }: BindableEditorProps) {
   const mode = detectMode(value);
@@ -212,7 +219,7 @@ export function BindableEditor({
           disabled={disabled}
           aria-label={`${label} mode`}
         >
-          <option value="none">— default —</option>
+          {!required && <option value="none">— default —</option>}
           <option value="literal">literal</option>
           <option value="context">context binding</option>
         </select>
@@ -239,7 +246,7 @@ export function BindableEditor({
               value={typeof value === "string" ? value : ""}
               onChange={(e) => onChange(e.target.value)}
               disabled={disabled}
-              placeholder="model string"
+              placeholder={placeholder}
             />
           )}
         </>

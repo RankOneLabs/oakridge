@@ -17,6 +17,12 @@ const addBtnClass =
 const sectionClass =
   "flex flex-col gap-3 rounded-md border border-[var(--border-subtle)] p-3";
 
+// Mirrors oakridge-core's DelegatedRuntime enum (VALID_RUNTIME_VALUES).
+const RUNTIME_LITERAL_OPTIONS = [
+  { value: "claude-code", label: "claude-code" },
+  { value: "codex", label: "codex" },
+];
+
 interface ArtifactTypeOption {
   value: string;
   label: string;
@@ -123,20 +129,16 @@ export function StageEditor({
           {/* Runtime */}
           <div className={sectionClass}>
             <span className="text-xs font-semibold uppercase text-[var(--text-muted)]">Session Config</span>
-            <label className="flex flex-col gap-1">
-              <span className={labelClass}>Runtime</span>
-              <select
-                className={inputClass}
-                value={cfg.runtime}
-                onChange={(e) =>
-                  updateCfg({ runtime: e.target.value as "claude-code" | "codex" })
-                }
-                disabled={disabled}
-              >
-                <option value="claude-code">claude-code</option>
-                <option value="codex">codex</option>
-              </select>
-            </label>
+            <BindableEditor
+              label="runtime"
+              literalOptions={RUNTIME_LITERAL_OPTIONS}
+              value={cfg.runtime}
+              // `required`: runtime has no default, so onChange never yields null.
+              onChange={(v) => updateCfg({ runtime: v ?? "claude-code" })}
+              required
+              placeholder="/planner_runtime"
+              disabled={disabled}
+            />
 
             <label className="flex flex-col gap-1">
               <span className={labelClass}>prompt_template_path</span>

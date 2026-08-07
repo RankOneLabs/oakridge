@@ -2,6 +2,8 @@
 // These are typed at the PWA boundary — they do not copy oakridge-core
 // internal Rust domain models wholesale but cover what the UI needs.
 
+import type { RuntimeId } from "../../runtime";
+
 export interface OakridgeConfig {
   available: boolean;
   core_url?: string | null;
@@ -18,18 +20,26 @@ export interface WorkflowDefSummary {
   id: string;
   name: string;
   version: number;
+  // Retired from the launcher. The def still resolves for the runs that used it.
+  archived?: boolean;
   // GET /workflow_defs returns the full def today; keep this optional for a
   // future trimmed summary response.
   graph?: WorkflowGraph;
 }
 
+// Each role ships runtime, model, and effort together. A model is only valid
+// against the runtime it was chosen from, so sending a model without its runtime
+// is what let a codex planner model reach a claude-code-pinned stage.
 export interface CreateRunContext {
   brief_notes: string;
   repositories: RepositoryInput[];
   // Compatibility input for workflow definitions older than dev-flow v2.
   worktree_path: string;
   oakridge_url: string;
+  planner_runtime: RuntimeId;
   planner_model: string;
+  planner_effort?: string;
+  worker_runtime: RuntimeId;
   worker_model: string;
   worker_effort?: string;
 }
@@ -277,7 +287,9 @@ export interface FanOutConfig {
 }
 
 export interface DelegatedSessionStageConfig {
-  runtime: "claude-code" | "codex";
+  // Bindable like model/effort, but required: oakridge-core errors rather than
+  // defaulting when a bound runtime resolves to nothing.
+  runtime: Bindable;
   prompt_template_path: string;
   slot_bindings: Record<string, SlotBinding>;
   workdir: SlotBinding;

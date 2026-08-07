@@ -223,6 +223,7 @@ fn fan_out_definition() -> WorkflowDef {
             edges: vec![],
         },
         created_at: chrono::Utc::now(),
+        archived: false,
     }
 }
 
@@ -295,6 +296,7 @@ fn collect_definition() -> WorkflowDef {
             }],
         },
         created_at: chrono::Utc::now(),
+        archived: false,
     }
 }
 
