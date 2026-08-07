@@ -339,6 +339,7 @@ async fn boot_twice_restart_recovery() {
                     feedback: None,
                 },
                 against_artifact_id: artifact_id,
+                against_gate_step: "artifact_approval".into(),
             },
         )
         .await

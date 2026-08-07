@@ -19,9 +19,10 @@ use crate::executor::ResumePayload;
 use crate::registry::artifact_type::ArtifactCapabilities;
 use crate::scheduler::DecisionError;
 use crate::types::{
-    Artifact, ArtifactId, GateDecision, GateOutcome, InputDelivery, InputSlot, OutputSlot, Project, ProjectId,
-    RunStatus, StageInstance, StageInstanceId, StageStatus, WorkflowDef, WorkflowDefId,
-    WorkflowGraph, WorkflowRun, WorkflowRunId,
+    Artifact, ArtifactId, GateDecision, GateDecisionAudit, GateDecisionAuditId, GateOutcome,
+    InputDelivery, InputSlot, OutputSlot, Project, ProjectId, RunStatus, StageInstance,
+    StageInstanceId, StageStatus, WorkflowDef, WorkflowDefId, WorkflowGraph, WorkflowRun,
+    WorkflowRunId,
 };
 
 use super::AppState;
@@ -215,6 +216,12 @@ pub struct OperatorParkedGate {
 
 #[derive(Deserialize)]
 pub struct OperatorGateResumeRequest {
+    /// Stable caller-generated key. Retrying the same operator action must reuse it.
+    pub idempotency_key: String,
+    /// Exact immutable artifact revision the operator reviewed.
+    pub artifact_revision_id: String,
+    /// Gate step displayed to the operator (for example `artifact_approval`).
+    pub gate_step: String,
     pub action: String,
     pub operator_comment: String,
     pub feedback: Option<String>,
@@ -486,10 +493,7 @@ pub async fn list_workflow_defs(
     State(state): State<AppState>,
     Query(params): Query<ListWorkflowDefsQuery>,
 ) -> Result<Json<Vec<WorkflowDef>>, AppError> {
-    let include_archived = matches!(
-        params.include_archived.as_deref(),
-        Some("1") | Some("true")
-    );
+    let include_archived = matches!(params.include_archived.as_deref(), Some("1") | Some("true"));
     let defs = queries::list_workflow_defs(&state.pool, include_archived).await?;
     Ok(Json(defs))
 }
@@ -867,6 +871,11 @@ fn operator_gate_type(stage: &StageInstance, gate: Option<&DelegatedGateState>) 
 }
 
 fn operator_resume_actions(gate: Option<&DelegatedGateState>) -> Vec<String> {
+    if let Some(gate) = gate {
+        if let Some(step) = gate.steps.get(gate.step_index) {
+            return step.actions.clone();
+        }
+    }
     match gate.map(|gate| &gate.gate) {
         Some(DelegatedGate::ArtifactApproval) => {
             vec!["pass".to_owned(), "fail".to_owned(), "rerun".to_owned()]
@@ -1146,15 +1155,51 @@ pub async fn list_operator_run_gates(
 
 fn gate_outcome(action: &str) -> Option<GateOutcome> {
     match action {
-        "pass" | "approve" => Some(GateOutcome::Pass),
+        "pass" | "approve" | "confirm_merged" | "closed_without_merge" => Some(GateOutcome::Pass),
         "fail" | "reject" => Some(GateOutcome::Fail),
-        "rerun" => Some(GateOutcome::Rerun),
+        "rerun" | "request_revision" => Some(GateOutcome::Rerun),
         _ => None,
     }
 }
 
 fn is_known_operator_gate_unit(units: &[crate::types::SessionUnit], unit_id: &str) -> bool {
     (units.is_empty() && unit_id == "0") || units.iter().any(|unit| unit.unit_id == unit_id)
+}
+
+fn gate_decision_identity_matches(
+    recorded: &GateDecisionAudit,
+    stage_instance_id: StageInstanceId,
+    unit_id: &str,
+    artifact_revision_id: ArtifactId,
+    gate_step: &str,
+    action: &str,
+    operator_comment: &str,
+    feedback: &Option<String>,
+) -> bool {
+    recorded.stage_instance_id == stage_instance_id
+        && recorded.unit_id == unit_id
+        && recorded.artifact_revision_id == artifact_revision_id
+        && recorded.gate_step == gate_step
+        && recorded.action == action
+        && recorded.operator_comment.as_deref() == Some(operator_comment)
+        && &recorded.feedback == feedback
+}
+
+fn pending_gate_request_has_advanced(
+    recorded_gate_step: &str,
+    recorded_action: &str,
+    current_gate_step: Option<&str>,
+    execution_has_advanced_without_gate: bool,
+) -> bool {
+    if matches!(recorded_action, "rerun" | "request_revision")
+        && execution_has_advanced_without_gate
+    {
+        return true;
+    }
+    match current_gate_step {
+        Some(current) => current != recorded_gate_step,
+        None => execution_has_advanced_without_gate,
+    }
 }
 
 pub async fn resume_operator_gate(
@@ -1174,27 +1219,18 @@ pub async fn resume_operator_gate(
     })?;
     let stage_instance_id = StageInstanceId(stage_uuid);
     let stage = queries::get_stage_instance_by_id(&state.pool, &stage_instance_id).await?;
-    // Validate against persisted units when present. Legacy N=1 stages may have
-    // no unit rows, in which case only the implicit unit "0" is valid.
-    let units = queries::list_session_units_for_stage(&state.pool, &stage_instance_id).await?;
-    if !is_known_operator_gate_unit(&units, unit_id) {
-        return Err(validation_error(format!(
-            "unit '{}' not found on stage instance '{}'",
-            unit_id, stage_instance_id.0
-        )));
+    let idempotency_key = body.idempotency_key.trim();
+    if idempotency_key.is_empty() {
+        return Err(validation_error("idempotency_key is required"));
     }
-    let gate = units
-        .iter()
-        .find(|unit| unit.unit_id == unit_id)
-        .and_then(|unit| unit.gate_state.as_ref())
-        .and_then(|state| serde_json::from_value::<DelegatedGateState>(state.clone()).ok())
-        .or_else(|| delegated_gate_state(&stage))
-        .ok_or_else(|| {
-            validation_error(format!(
-                "stage instance {} has no resumable delegated gate metadata",
-                stage_instance_id.0
-            ))
-        })?;
+    let artifact_revision_id = ArtifactId(
+        Uuid::parse_str(body.artifact_revision_id.trim())
+            .map_err(|_| validation_error("artifact_revision_id must be a UUID"))?,
+    );
+    let requested_gate_step = body.gate_step.trim();
+    if requested_gate_step.is_empty() {
+        return Err(validation_error("gate_step is required"));
+    }
     let outcome = gate_outcome(body.action.as_str())
         .ok_or_else(|| validation_error(format!("unknown gate action '{}'", body.action)))?;
     let comment = body.operator_comment.trim();
@@ -1207,6 +1243,139 @@ pub async fn resume_operator_gate(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_owned);
+    // Validate against persisted units when present. Legacy N=1 stages may have
+    // no unit rows, in which case only the implicit unit "0" is valid.
+    let units = queries::list_session_units_for_stage(&state.pool, &stage_instance_id).await?;
+    if !is_known_operator_gate_unit(&units, unit_id) {
+        return Err(validation_error(format!(
+            "unit '{}' not found on stage instance '{}'",
+            unit_id, stage_instance_id.0
+        )));
+    }
+    let existing_reservation =
+        queries::get_gate_decision_audit_by_idempotency_key(&state.pool, idempotency_key).await?;
+    if let Some(recorded) = &existing_reservation {
+        let has_same_identity = gate_decision_identity_matches(
+            recorded,
+            stage_instance_id,
+            unit_id,
+            artifact_revision_id,
+            requested_gate_step,
+            &body.action,
+            comment,
+            &feedback,
+        );
+        if !has_same_identity {
+            return Err(AppError::Conflict(format!(
+                "idempotency key '{}' was already used for a different gate decision",
+                idempotency_key
+            )));
+        }
+        if recorded.status == crate::types::GateDecisionAuditStatus::Applied {
+            return Ok((
+                StatusCode::ACCEPTED,
+                Json(OperatorGateResumeResponse {
+                    gate_id: composite_id,
+                    resumed: true,
+                }),
+            ));
+        }
+    }
+    let gate = units
+        .iter()
+        .find(|unit| unit.unit_id == unit_id)
+        .and_then(|unit| unit.gate_state.as_ref())
+        .and_then(|state| serde_json::from_value::<DelegatedGateState>(state.clone()).ok())
+        .or_else(|| delegated_gate_state(&stage));
+    let current_tip = match &gate {
+        Some(gate) => Some(queries::get_artifact_chain_tip(&state.pool, &gate.artifact_id).await?),
+        None => None,
+    };
+    let current_matches_request = gate.as_ref().is_some_and(|gate| {
+        current_tip.as_ref().map(|tip| tip.id) == Some(artifact_revision_id)
+            && operator_gate_type_str(&gate.gate) == requested_gate_step
+    });
+    let unit_has_advanced = units
+        .iter()
+        .find(|unit| unit.unit_id == unit_id)
+        .is_some_and(|unit| !matches!(unit.status, crate::types::UnitStatus::Parked));
+    let stage_has_advanced = !matches!(stage.status, StageStatus::Parked);
+    let current_gate_step = gate.as_ref().map(|gate| operator_gate_type_str(&gate.gate));
+    let pending_request_has_advanced = existing_reservation.as_ref().is_some_and(|recorded| {
+        pending_gate_request_has_advanced(
+            &recorded.gate_step,
+            &recorded.action,
+            current_gate_step.as_deref(),
+            unit_has_advanced || stage_has_advanced,
+        )
+    });
+    if pending_request_has_advanced {
+        // The durable request is still pending but the persisted gate has already
+        // advanced. Reconcile the crash window without submitting a second decision.
+        queries::mark_gate_decision_audit_applied(&state.pool, idempotency_key, Utc::now()).await?;
+        return Ok((
+            StatusCode::ACCEPTED,
+            Json(OperatorGateResumeResponse {
+                gate_id: composite_id,
+                resumed: true,
+            }),
+        ));
+    }
+    let gate = gate.ok_or_else(|| {
+        validation_error(format!(
+            "stage instance {} has no resumable delegated gate metadata",
+            stage_instance_id.0
+        ))
+    })?;
+    if !current_matches_request {
+        return Err(AppError::Conflict(format!(
+            "reviewed artifact revision or gate step is stale; current gate is {} for revision {}",
+            operator_gate_type_str(&gate.gate),
+            current_tip
+                .as_ref()
+                .map(|tip| tip.id)
+                .unwrap_or(gate.artifact_id)
+                .0
+        )));
+    }
+    if !operator_resume_actions(Some(&gate))
+        .iter()
+        .any(|action| action == &body.action)
+    {
+        return Err(validation_error(format!(
+            "action '{}' is not allowed for the current gate step",
+            body.action
+        )));
+    }
+
+    let artifact_chain_id = ArtifactId(
+        Uuid::parse_str(
+            &queries::get_artifact_chain_root_id(&state.pool, &artifact_revision_id).await?,
+        )
+        .map_err(|error| {
+            AppError::Internal(format!("stored artifact chain id is invalid: {error}"))
+        })?,
+    );
+    queries::reserve_gate_decision_audit(
+        &state.pool,
+        &GateDecisionAudit {
+            id: GateDecisionAuditId(Uuid::new_v4()),
+            run_id: stage.run_id,
+            stage_instance_id,
+            unit_id: unit_id.to_owned(),
+            artifact_chain_id,
+            artifact_revision_id,
+            gate_step: requested_gate_step.to_owned(),
+            action: body.action.clone(),
+            operator_comment: Some(comment.to_owned()),
+            feedback: feedback.clone(),
+            status: crate::types::GateDecisionAuditStatus::Pending,
+            created_at: Utc::now(),
+            applied_at: None,
+            idempotency_key: idempotency_key.to_owned(),
+        },
+    )
+    .await?;
 
     state
         .coordinator
@@ -1217,9 +1386,10 @@ pub async fn resume_operator_gate(
                 decision: GateDecision {
                     outcome,
                     comment: Some(comment.to_owned()),
-                    feedback,
+                    feedback: feedback.clone(),
                 },
-                against_artifact_id: gate.artifact_id,
+                against_artifact_id: artifact_revision_id,
+                against_gate_step: requested_gate_step.to_owned(),
             },
         )
         .await
@@ -1227,6 +1397,8 @@ pub async fn resume_operator_gate(
             DecisionError::Conflict(msg) => AppError::Conflict(msg),
             DecisionError::Internal(err) => AppError::Internal(err.to_string()),
         })?;
+
+    queries::mark_gate_decision_audit_applied(&state.pool, idempotency_key, Utc::now()).await?;
 
     Ok((
         StatusCode::ACCEPTED,
@@ -2171,6 +2343,9 @@ mod tests {
             gate: DelegatedGate::ArtifactApproval,
             artifact_id,
             revision_count: 1,
+            step_index: 0,
+            steps: vec![],
+            requires_zero_open_review_items: true,
             worktree_path: Some("/worktrees/v2/build".into()),
             worktree_branch: Some("cohort/v2/1-build".into()),
             worktree_base_ref: Some("abc123".into()),
@@ -2311,6 +2486,9 @@ mod tests {
                 gate: DelegatedGate::MergeConfirmation,
                 artifact_id,
                 revision_count: 0,
+                step_index: 1,
+                steps: vec![],
+                requires_zero_open_review_items: true,
                 worktree_path: Some(format!("/worktrees/{unit_id}")),
                 worktree_branch: Some(format!("cohort/build/{unit_id}")),
                 worktree_base_ref: Some("main".into()),
@@ -2361,6 +2539,205 @@ mod tests {
 
         assert!(is_known_operator_gate_unit(&units, "0"));
         assert!(!is_known_operator_gate_unit(&units, "cohort-a"));
+    }
+
+    #[test]
+    fn operator_gate_idempotency_requires_the_full_normalized_decision_identity() {
+        let stage_id = StageInstanceId(Uuid::new_v4());
+        let artifact_id = ArtifactId(Uuid::new_v4());
+        let recorded = GateDecisionAudit {
+            id: GateDecisionAuditId(Uuid::new_v4()),
+            run_id: WorkflowRunId(Uuid::new_v4()),
+            stage_instance_id: stage_id,
+            unit_id: "cohort-a".into(),
+            artifact_chain_id: artifact_id,
+            artifact_revision_id: artifact_id,
+            gate_step: "artifact_approval".into(),
+            action: "approve".into(),
+            operator_comment: Some("reviewed".into()),
+            feedback: None,
+            status: crate::types::GateDecisionAuditStatus::Pending,
+            created_at: Utc::now(),
+            applied_at: None,
+            idempotency_key: "request-1".into(),
+        };
+
+        assert!(gate_decision_identity_matches(
+            &recorded,
+            stage_id,
+            "cohort-a",
+            artifact_id,
+            "artifact_approval",
+            "approve",
+            "reviewed",
+            &None,
+        ));
+        assert!(!gate_decision_identity_matches(
+            &recorded,
+            stage_id,
+            "cohort-a",
+            artifact_id,
+            "artifact_approval",
+            "rerun",
+            "reviewed",
+            &None,
+        ));
+        assert!(!gate_decision_identity_matches(
+            &recorded,
+            stage_id,
+            "cohort-a",
+            ArtifactId(Uuid::new_v4()),
+            "artifact_approval",
+            "approve",
+            "reviewed",
+            &None,
+        ));
+    }
+
+    #[test]
+    fn pending_gate_reconciliation_distinguishes_new_revision_from_applied_transition() {
+        assert!(pending_gate_request_has_advanced(
+            "artifact_approval",
+            "approve",
+            Some("merge_confirmation"),
+            false,
+        ));
+        assert!(
+            !pending_gate_request_has_advanced(
+                "artifact_approval",
+                "approve",
+                Some("artifact_approval"),
+                false,
+            ),
+            "same step with a different chain tip remains pending and is rejected as stale"
+        );
+        assert!(
+            pending_gate_request_has_advanced(
+                "artifact_approval",
+                "request_revision",
+                Some("artifact_approval"),
+                true,
+            ),
+            "a revision request that moved its target to running is already applied"
+        );
+    }
+
+    #[tokio::test]
+    async fn operator_gate_rejects_a_stale_root_when_an_atom_edit_child_exists() {
+        let state = make_state(vec![]).await;
+        let now = Utc::now();
+        let def = WorkflowDef {
+            id: WorkflowDefId(Uuid::new_v4()),
+            name: format!("gate-audit-{}", Uuid::new_v4()),
+            version: 1,
+            graph: WorkflowGraph {
+                stages: HashMap::new(),
+                edges: vec![],
+            },
+            created_at: now,
+            archived: false,
+        };
+        queries::insert_workflow_def(&state.pool, &def)
+            .await
+            .unwrap();
+        let run = WorkflowRun {
+            id: WorkflowRunId(Uuid::new_v4()),
+            workflow_def_id: def.id,
+            project_id: None,
+            status: RunStatus::Running,
+            context: json!({}),
+            version: 1,
+            created_at: now,
+            updated_at: now,
+        };
+        queries::insert_workflow_run(&state.pool, &run)
+            .await
+            .unwrap();
+        let stage_id = StageInstanceId(Uuid::new_v4());
+        let root_id = ArtifactId(Uuid::new_v4());
+        let gate = DelegatedGateState {
+            executor: DelegatedExecutor::DelegatedSession,
+            kbbl_sid: "sid-stale".into(),
+            gate: DelegatedGate::ArtifactApproval,
+            artifact_id: root_id,
+            revision_count: 1,
+            step_index: 0,
+            steps: vec![crate::executor::delegated_session::config::OutputGateStep {
+                gate_type:
+                    crate::executor::delegated_session::config::DelegatedGateKind::ArtifactApproval,
+                actions: vec!["approve".into(), "request_revision".into()],
+            }],
+            requires_zero_open_review_items: false,
+            worktree_path: None,
+            worktree_branch: None,
+            worktree_base_ref: None,
+            pr_url: None,
+        };
+        let stage = StageInstance {
+            id: stage_id,
+            run_id: run.id,
+            stage_key: "analysis".into(),
+            stage_type: "delegated_session".into(),
+            status: StageStatus::Parked,
+            config: json!({}),
+            parked_reason: Some("waiting_gate".into()),
+            parked_meta: Some(serde_json::to_value(gate).unwrap()),
+            terminal_meta: None,
+            external_ref: None,
+            started_at: Some(now),
+            ended_at: None,
+            created_at: now,
+            updated_at: now,
+        };
+        queries::insert_stage_instance(&state.pool, &stage)
+            .await
+            .unwrap();
+        let root = Artifact {
+            id: root_id,
+            run_id: run.id,
+            stage_instance_id: stage_id,
+            artifact_type: "any".into(),
+            output_name: Some("out".into()),
+            label: None,
+            body: json!({"content": "root"}),
+            version: 1,
+            parent_artifact_id: None,
+            created_at: now,
+        };
+        queries::insert_artifact(&state.pool, &root).await.unwrap();
+        let child = Artifact {
+            id: ArtifactId(Uuid::new_v4()),
+            body: json!({"content": "edited"}),
+            version: 2,
+            parent_artifact_id: Some(root.id),
+            ..root.clone()
+        };
+        queries::insert_artifact(&state.pool, &child).await.unwrap();
+
+        let app = crate::http::router(state.clone());
+        let (status, body) = req(
+            app,
+            "POST",
+            &format!("/gates/{}:0/resume", stage_id.0),
+            Some(json!({
+                "idempotency_key": "stale-root-request",
+                "artifact_revision_id": root.id.0.to_string(),
+                "gate_step": "artifact_approval",
+                "action": "approve",
+                "operator_comment": "reviewed root",
+                "feedback": null
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(body["error"].as_str().unwrap().contains("stale"));
+        assert!(queries::get_gate_decision_audit_by_idempotency_key(
+            &state.pool,
+            "stale-root-request"
+        )
+        .await
+        .unwrap()
+        .is_none());
     }
 
     #[tokio::test]
@@ -2831,7 +3208,8 @@ mod tests {
             Some(json!({
                 "kind": "gate_decision",
                 "decision": {"outcome": "pass", "comment": null, "feedback": null},
-                "against_artifact_id": artifact_id.0.to_string()
+                "against_artifact_id": artifact_id.0.to_string(),
+                "against_gate_step": "artifact_approval"
             })),
         )
         .await;
@@ -2933,7 +3311,8 @@ mod tests {
         let payload = json!({
             "kind": "gate_decision",
             "decision": {"outcome": "pass", "comment": null, "feedback": null},
-            "against_artifact_id": artifact.id.0.to_string()
+            "against_artifact_id": artifact.id.0.to_string(),
+            "against_gate_step": "artifact_approval"
         });
         let resume_url = format!("/stage_instances/{}/resume", si_id.0);
 
@@ -3047,7 +3426,8 @@ mod tests {
             Some(json!({
                 "kind": "gate_decision",
                 "decision": {"outcome": "pass", "comment": null, "feedback": null},
-                "against_artifact_id": artifact.id.0.to_string()
+                "against_artifact_id": artifact.id.0.to_string(),
+                "against_gate_step": "artifact_approval"
             })),
         )
         .await;

@@ -63,6 +63,7 @@ const PARKED_RUN_SUMMARY: RunSummary = {
 const PARKED_GATE_FIXTURE: ParkedGate = {
   id: "gate-1",
   gate_type: "operator_approval",
+  gate_step: null,
   run_id: "run-2",
   stage_name: "approve",
   unit_id: "0",
@@ -301,6 +302,14 @@ describe("GateResumeForm", () => {
     fireEvent.click(screen.getByTestId("or-resume-submit"));
 
     await waitFor(() => expect(onDone).toHaveBeenCalled());
+    const request = vi.mocked(globalThis.fetch).mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(request.body))).toMatchObject({
+      artifact_revision_id: PARKED_GATE_FIXTURE.artifact_revision_id,
+      gate_step: PARKED_GATE_FIXTURE.gate_type,
+      idempotency_key: expect.any(String),
+      action: PARKED_GATE_FIXTURE.resume_actions[0],
+      operator_comment: "LGTM — approving build",
+    });
   });
 
   it("shows error message when resume fails", async () => {
@@ -313,6 +322,23 @@ describe("GateResumeForm", () => {
     fireEvent.click(screen.getByTestId("or-resume-submit"));
 
     expect(await screen.findByTestId("or-resume-error")).toBeTruthy();
+  });
+
+  it("reuses the idempotency key when the same operator action is retried", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(json({ error: "temporary failure" }, 503))
+      .mockResolvedValueOnce(json({ gate_id: "gate-1", resumed: true }));
+    wrap(<GateResumeForm gate={PARKED_GATE_FIXTURE} onDone={() => {}} />);
+
+    fireEvent.change(screen.getByTestId("or-resume-comment"), { target: { value: "approved" } });
+    fireEvent.click(screen.getByTestId("or-resume-submit"));
+    expect(await screen.findByTestId("or-resume-error")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("or-resume-submit"));
+
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(2));
+    const first = JSON.parse(String((fetchSpy.mock.calls[0]?.[1] as RequestInit).body));
+    const second = JSON.parse(String((fetchSpy.mock.calls[1]?.[1] as RequestInit).body));
+    expect(second.idempotency_key).toBe(first.idempotency_key);
   });
 });
 

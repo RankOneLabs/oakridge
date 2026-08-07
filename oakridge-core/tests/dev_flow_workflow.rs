@@ -53,6 +53,14 @@ fn load_dev_flow_v5() -> WorkflowDef {
         .unwrap_or_else(|e| panic!("failed to parse {}: {e}", path.display()))
 }
 
+fn load_dev_flow_v6() -> WorkflowDef {
+    let path = manifest_dir().join("examples/dev_flow_v6.json");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
+    serde_json::from_str(&text)
+        .unwrap_or_else(|e| panic!("failed to parse {}: {e}", path.display()))
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct RecordedRequest {
     method: Method,
@@ -252,12 +260,18 @@ fn dev_flow_v4_assesses_each_completed_cohort_in_its_build_worktree() {
         .iter()
         .find(|input| input.name == "build_result")
         .unwrap();
-    assert_eq!(input.delivery, oakridge_core::types::InputDelivery::UnitComplete);
+    assert_eq!(
+        input.delivery,
+        oakridge_core::types::InputDelivery::UnitComplete
+    );
 
     let config: DelegatedSessionDefConfig =
         serde_json::from_value(assessor.config.clone()).unwrap();
     let fan_out = config.fan_out.unwrap();
-    assert_eq!(fan_out.inherit_worktree_from.as_deref(), Some("build_result"));
+    assert_eq!(
+        fan_out.inherit_worktree_from.as_deref(),
+        Some("build_result")
+    );
     assert!(fan_out.worktree.is_none());
     let model = serde_json::to_value(config.model).unwrap();
     let effort = serde_json::to_value(config.effort).unwrap();
@@ -301,6 +315,55 @@ fn dev_flow_v5_binds_runtime_model_and_effort_per_role() {
                 "stage '{stage_key}' must bind {field} from /{role}_{field}"
             );
         }
+    }
+}
+
+#[test]
+fn dev_flow_v6_declares_review_gate_sequences() {
+    use oakridge_core::executor::delegated_session::config::DelegatedGateKind;
+
+    let def = load_dev_flow_v6();
+    assert_eq!(def.version, 6);
+    for (stage_key, output, steps, requires_items) in [
+        (
+            "spec_analyzer",
+            "spec_analysis",
+            vec![DelegatedGateKind::ArtifactApproval],
+            true,
+        ),
+        (
+            "plan_writer",
+            "plan",
+            vec![DelegatedGateKind::ArtifactApproval],
+            false,
+        ),
+        (
+            "build",
+            "build_result",
+            vec![
+                DelegatedGateKind::ArtifactApproval,
+                DelegatedGateKind::MergeConfirmation,
+            ],
+            false,
+        ),
+    ] {
+        let stage = def.graph.stages.get(stage_key).unwrap();
+        let config: DelegatedSessionDefConfig =
+            serde_json::from_value(stage.config.clone()).unwrap();
+        assert!(
+            config.gate_output.is_none(),
+            "v6 must use the explicit policy contract"
+        );
+        let gate = config.output_gate.unwrap();
+        assert_eq!(gate.output, output);
+        assert_eq!(
+            gate.steps
+                .iter()
+                .map(|step| step.gate_type)
+                .collect::<Vec<_>>(),
+            steps
+        );
+        assert_eq!(gate.requires_zero_open_review_items, requires_items);
     }
 }
 

@@ -7,22 +7,27 @@ const DEV_FLOW_V1_JSON: &str = include_str!("../examples/dev_flow.json");
 const DEV_FLOW_V2_JSON: &str = include_str!("../examples/dev_flow_v2.json");
 const DEV_FLOW_V4_JSON: &str = include_str!("../examples/dev_flow_v4.json");
 const DEV_FLOW_V5_JSON: &str = include_str!("../examples/dev_flow_v5.json");
+const DEV_FLOW_V6_JSON: &str = include_str!("../examples/dev_flow_v6.json");
 
 pub async fn seed_builtin_workflow_defs(
     pool: &SqlitePool,
     stage_registry: &crate::registry::StageTypeRegistry,
     artifact_registry: &crate::registry::ArtifactTypeRegistry,
 ) -> crate::Result<()> {
+    let mut definitions = Vec::new();
     for (label, json_str) in [
         ("dev_flow.json", DEV_FLOW_V1_JSON),
         ("dev_flow_v2.json", DEV_FLOW_V2_JSON),
         ("dev_flow_v4.json", DEV_FLOW_V4_JSON),
         ("dev_flow_v5.json", DEV_FLOW_V5_JSON),
+        ("dev_flow_v6.json", DEV_FLOW_V6_JSON),
     ] {
         let def: WorkflowDef = serde_json::from_str(json_str).map_err(|e| {
             crate::Error::Validation(format!("failed to parse built-in {}: {}", label, e))
         })?;
-
+        definitions.push((label, def));
+    }
+    for (label, def) in definitions {
         // Run the same graph/type/config validation as POST /workflow_defs so a
         // drifted example (unknown stage/artifact type, invalid def_config) is
         // surfaced at boot instead of silently failing later at run creation.
@@ -32,9 +37,11 @@ pub async fn seed_builtin_workflow_defs(
         // def whose types aren't registered in this process just isn't runnable
         // here — that shouldn't take down boot. A genuinely malformed def is still
         // rejected when a run is created (create_workflow_run validates too).
-        if let Err(e) =
-            crate::http::rest::validate_workflow_graph(stage_registry, artifact_registry, &def.graph)
-        {
+        if let Err(e) = crate::http::rest::validate_workflow_graph(
+            stage_registry,
+            artifact_registry,
+            &def.graph,
+        ) {
             tracing::warn!(
                 def = %label,
                 "built-in workflow def failed validation against the registered types \
@@ -106,12 +113,12 @@ mod tests {
         let versions: Vec<i32> = active.iter().map(|d| d.version).collect();
         assert_eq!(
             versions,
-            vec![5],
+            vec![6],
             "only the newest built-in should reach the launcher"
         );
 
         let all = queries::list_workflow_defs(&pool, true).await.unwrap();
-        assert_eq!(all.len(), 4, "retired defs are kept, not deleted");
+        assert_eq!(all.len(), 5, "retired defs are kept, not deleted");
     }
 
     #[tokio::test]

@@ -169,6 +169,51 @@ pub struct DelegatedSessionDefConfig {
     /// (those not named here) are stored as artifacts without parking.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gate_output: Option<String>,
+    /// Output-specific gate policy. This supersedes `gate_output`, which is
+    /// retained for loading existing workflow definitions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_gate: Option<OutputGateConfig>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct OutputGateConfig {
+    pub output: String,
+    pub steps: Vec<OutputGateStep>,
+    #[serde(default)]
+    pub requires_zero_open_review_items: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct OutputGateStep {
+    #[serde(rename = "type")]
+    pub gate_type: DelegatedGateKind,
+    pub actions: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DelegatedGateKind {
+    ArtifactApproval,
+    MergeConfirmation,
+}
+
+impl OutputGateConfig {
+    pub fn legacy(output: String) -> Self {
+        Self {
+            output,
+            steps: vec![
+                OutputGateStep {
+                    gate_type: DelegatedGateKind::ArtifactApproval,
+                    actions: vec!["approve".into(), "request_revision".into()],
+                },
+                OutputGateStep {
+                    gate_type: DelegatedGateKind::MergeConfirmation,
+                    actions: vec!["confirm_merged".into()],
+                },
+            ],
+            requires_zero_open_review_items: true,
+        }
+    }
 }
 
 // ── DelegatedSessionConfig ───────────────────────────────────────────────────
@@ -215,6 +260,8 @@ pub struct DelegatedSessionConfig {
     /// the unit; auxiliary slots store artifacts without changing stage status.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub gate_output: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub output_gate: Option<OutputGateConfig>,
 }
 
 /// Prompt material that cannot be recovered from a rendered fan-out prompt.
@@ -285,6 +332,7 @@ mod tests {
             yolo: false,
             fan_out: None,
             gate_output: None,
+            output_gate: None,
         };
 
         let value = serde_json::to_value(&def).unwrap();
@@ -351,6 +399,7 @@ mod tests {
             }],
             fan_out: None,
             gate_output: None,
+            output_gate: None,
         };
 
         let value = serde_json::to_value(&cfg).unwrap();

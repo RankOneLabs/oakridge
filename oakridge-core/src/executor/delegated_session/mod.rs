@@ -29,8 +29,8 @@ use crate::types::{
 };
 
 use config::{
-    Bindable, DelegatedRuntime, DelegatedSessionConfig, DelegatedSessionDefConfig,
-    FanOut, FanOutPromptPlan, InheritedInputBinding, WorktreeIdentity,
+    Bindable, DelegatedRuntime, DelegatedSessionConfig, DelegatedSessionDefConfig, FanOut,
+    FanOutPromptPlan, InheritedInputBinding, WorktreeIdentity,
 };
 use kbbl_client::{
     AckResponse, CreateSessionRequest, DelegatedExternalRef, EventsSinceResponse, KbblClient,
@@ -340,14 +340,9 @@ async fn inherited_producer_workdir(
                 .map_err(Into::into)
         })?;
     let artifact = queries::get_artifact_by_id(pool, &artifact_id).await?;
-    let producer_unit_id =
-        producer_unit_id_for_consumer(artifact.label.as_deref(), unit_id)?;
-    let producer_unit = queries::get_session_unit(
-        pool,
-        &artifact.stage_instance_id,
-        &producer_unit_id,
-    )
-    .await?;
+    let producer_unit_id = producer_unit_id_for_consumer(artifact.label.as_deref(), unit_id)?;
+    let producer_unit =
+        queries::get_session_unit(pool, &artifact.stage_instance_id, &producer_unit_id).await?;
     if !matches!(producer_unit.status, UnitStatus::Done) {
         anyhow::bail!("producer unit '{}' is not complete", producer_unit_id);
     }
@@ -411,6 +406,24 @@ pub enum DelegatedGate {
     MergeConfirmation,
 }
 
+impl DelegatedGate {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::ArtifactApproval => "artifact_approval",
+            Self::MergeConfirmation => "merge_confirmation",
+        }
+    }
+}
+
+impl From<config::DelegatedGateKind> for DelegatedGate {
+    fn from(value: config::DelegatedGateKind) -> Self {
+        match value {
+            config::DelegatedGateKind::ArtifactApproval => Self::ArtifactApproval,
+            config::DelegatedGateKind::MergeConfirmation => Self::MergeConfirmation,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DelegatedExecutor {
@@ -425,6 +438,12 @@ pub struct DelegatedGateState {
     pub gate: DelegatedGate,
     pub artifact_id: crate::types::ArtifactId,
     pub revision_count: u32,
+    #[serde(default)]
+    pub step_index: usize,
+    #[serde(default)]
+    pub steps: Vec<config::OutputGateStep>,
+    #[serde(default = "default_true")]
+    pub requires_zero_open_review_items: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub worktree_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -433,6 +452,10 @@ pub struct DelegatedGateState {
     pub worktree_base_ref: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pr_url: Option<String>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl DelegatedGateState {
@@ -445,12 +468,41 @@ impl DelegatedGateState {
         worktree_base_ref: Option<String>,
         pr_url: Option<String>,
     ) -> Self {
+        Self::artifact_approval_with_policy(
+            kbbl_sid,
+            artifact_id,
+            revision_count,
+            worktree_path,
+            worktree_branch,
+            worktree_base_ref,
+            pr_url,
+            config::OutputGateConfig::legacy(String::new()),
+        )
+    }
+
+    pub fn artifact_approval_with_policy(
+        kbbl_sid: String,
+        artifact_id: crate::types::ArtifactId,
+        revision_count: u32,
+        worktree_path: Option<String>,
+        worktree_branch: Option<String>,
+        worktree_base_ref: Option<String>,
+        pr_url: Option<String>,
+        policy: config::OutputGateConfig,
+    ) -> Self {
         Self {
             executor: DelegatedExecutor::DelegatedSession,
             kbbl_sid,
-            gate: DelegatedGate::ArtifactApproval,
+            gate: policy
+                .steps
+                .first()
+                .map(|step| step.gate_type.into())
+                .unwrap_or(DelegatedGate::ArtifactApproval),
             artifact_id,
             revision_count,
+            step_index: 0,
+            steps: policy.steps,
+            requires_zero_open_review_items: policy.requires_zero_open_review_items,
             worktree_path,
             worktree_branch,
             worktree_base_ref,
@@ -1673,6 +1725,50 @@ impl StageType for DelegatedSessionStage {
                 );
             }
         }
+        if def.gate_output.is_some() && def.output_gate.is_some() {
+            anyhow::bail!("gate_output and output_gate are mutually exclusive");
+        }
+        if let Some(policy) = &def.output_gate {
+            if !output_slots.iter().any(|slot| slot.name == policy.output) {
+                anyhow::bail!(
+                    "output_gate output '{}' does not match any declared output slot",
+                    policy.output
+                );
+            }
+            if policy.steps.is_empty() {
+                anyhow::bail!("output_gate steps must not be empty");
+            }
+            if policy.steps[0].gate_type != config::DelegatedGateKind::ArtifactApproval {
+                anyhow::bail!("output_gate must begin with artifact_approval");
+            }
+            if policy
+                .steps
+                .iter()
+                .skip(1)
+                .any(|step| step.gate_type != config::DelegatedGateKind::MergeConfirmation)
+                || policy.steps.len() > 2
+            {
+                anyhow::bail!("output_gate supports artifact_approval optionally followed by merge_confirmation");
+            }
+            for step in &policy.steps {
+                let valid = match step.gate_type {
+                    config::DelegatedGateKind::ArtifactApproval => {
+                        ["approve", "request_revision"].as_slice()
+                    }
+                    config::DelegatedGateKind::MergeConfirmation => {
+                        ["confirm_merged", "closed_without_merge"].as_slice()
+                    }
+                };
+                if step.actions.is_empty()
+                    || step
+                        .actions
+                        .iter()
+                        .any(|action| !valid.contains(&action.as_str()))
+                {
+                    anyhow::bail!("output_gate contains an invalid or empty action set");
+                }
+            }
+        }
 
         let input_names: std::collections::HashSet<&str> =
             input_slots.iter().map(|slot| slot.name.as_str()).collect();
@@ -1695,14 +1791,10 @@ impl StageType for DelegatedSessionStage {
         if let Some(fan_out) = &def.fan_out {
             if let Some(input_name) = &fan_out.inherit_worktree_from {
                 if fan_out.workdir.is_some() {
-                    anyhow::bail!(
-                        "fan_out cannot combine inherit_worktree_from with workdir"
-                    );
+                    anyhow::bail!("fan_out cannot combine inherit_worktree_from with workdir");
                 }
                 if fan_out.worktree.is_some() {
-                    anyhow::bail!(
-                        "fan_out cannot combine inherit_worktree_from with worktree"
-                    );
+                    anyhow::bail!("fan_out cannot combine inherit_worktree_from with worktree");
                 }
                 let input = input_slots
                     .iter()
@@ -1891,6 +1983,7 @@ impl StageType for DelegatedSessionStage {
             // Carry gate_output designation to built config so the emit handler
             // knows which slot triggers parking vs. just storing an artifact.
             gate_output: def.gate_output,
+            output_gate: def.output_gate,
         };
 
         Ok(serde_json::to_value(config)?)
@@ -1906,12 +1999,8 @@ impl StageType for DelegatedSessionStage {
                 materialize_fan_out_units(&config, &fan_out, ctx.stage_instance_id)?;
             if fan_out.inherit_worktree_from.is_some() {
                 for unit in &mut materialized {
-                    unit.workdir = inherited_producer_workdir(
-                        ctx.pool(),
-                        &unit.params,
-                        &unit.unit_id,
-                    )
-                    .await?;
+                    unit.workdir =
+                        inherited_producer_workdir(ctx.pool(), &unit.params, &unit.unit_id).await?;
                     unit.worktree = None;
                 }
             }
@@ -2213,8 +2302,9 @@ impl StageHandle for DelegatedSessionHandle {
             crate::executor::ResumePayload::GateDecision {
                 decision,
                 against_artifact_id,
+                against_gate_step,
             } => {
-                self.resume_gate_decision(decision, against_artifact_id)
+                self.resume_gate_decision(decision, against_artifact_id, &against_gate_step)
                     .await
             }
             crate::executor::ResumePayload::FeedbackArtifact { artifact } => {
@@ -2279,7 +2369,10 @@ impl DelegatedSessionHandle {
         match payload {
             crate::executor::ResumePayload::UnitInputExhausted { input_name } => {
                 let expected_input = match &scheduler.fan_out.over {
-                    SlotBinding::Input { input_name, path: None } => input_name,
+                    SlotBinding::Input {
+                        input_name,
+                        path: None,
+                    } => input_name,
                     _ => anyhow::bail!(
                         "incremental unit delivery requires fan_out.over to select the whole input"
                     ),
@@ -2295,7 +2388,10 @@ impl DelegatedSessionHandle {
                 artifact,
             } => {
                 let expected_input = match &scheduler.fan_out.over {
-                    SlotBinding::Input { input_name, path: None } => input_name,
+                    SlotBinding::Input {
+                        input_name,
+                        path: None,
+                    } => input_name,
                     _ => anyhow::bail!(
                         "incremental unit delivery requires fan_out.over to select the whole input"
                     ),
@@ -2316,7 +2412,10 @@ impl DelegatedSessionHandle {
                     if existing.source_artifact_id == Some(artifact.id) {
                         return Ok(());
                     }
-                    anyhow::bail!("incremental unit '{}' already exists from another artifact", unit_id);
+                    anyhow::bail!(
+                        "incremental unit '{}' already exists from another artifact",
+                        unit_id
+                    );
                 }
                 let params = serde_json::json!({
                     "unit_id": unit_id,
@@ -2328,22 +2427,27 @@ impl DelegatedSessionHandle {
                     Some(path) => params
                         .pointer(path)
                         .and_then(Value::as_array)
-                        .ok_or_else(|| anyhow::anyhow!("fan_out depends_on at '{}' must be an array", path))?
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("fan_out depends_on at '{}' must be an array", path)
+                        })?
                         .iter()
-                        .map(|value| value.as_str().filter(|id| !id.is_empty()).map(str::to_owned)
-                            .ok_or_else(|| anyhow::anyhow!("fan_out dependency must be a non-empty string")))
+                        .map(|value| {
+                            value
+                                .as_str()
+                                .filter(|id| !id.is_empty())
+                                .map(str::to_owned)
+                                .ok_or_else(|| {
+                                    anyhow::anyhow!("fan_out dependency must be a non-empty string")
+                                })
+                        })
                         .collect::<anyhow::Result<Vec<_>>>()?,
                 };
                 let workdir = if scheduler.fan_out.inherit_worktree_from.is_some() {
                     Some(
-                        inherited_producer_workdir(
-                            scheduler.ctx.pool(),
-                            &params,
-                            &unit_id,
-                        )
-                        .await?
-                        .to_string_lossy()
-                        .into_owned(),
+                        inherited_producer_workdir(scheduler.ctx.pool(), &params, &unit_id)
+                            .await?
+                            .to_string_lossy()
+                            .into_owned(),
                     )
                 } else {
                     scheduler
@@ -2358,11 +2462,7 @@ impl DelegatedSessionHandle {
                                 Some(&params),
                             )
                             .map(|path| {
-                                substitute_unit_template(
-                                    &path,
-                                    &unit_id,
-                                    self.stage_instance_id,
-                                )
+                                substitute_unit_template(&path, &unit_id, self.stage_instance_id)
                             })
                         })
                         .transpose()?
@@ -2402,13 +2502,10 @@ impl DelegatedSessionHandle {
                         worktree_path: worktree
                             .as_ref()
                             .map(|identity| identity.worktree_subdir.clone()),
-                        worktree_base_ref: worktree
-                            .and_then(|identity| identity.base_ref),
-                        workdir_path: Some(
-                            workdir.unwrap_or_else(|| {
-                                scheduler.config.workdir.to_string_lossy().into_owned()
-                            }),
-                        ),
+                        worktree_base_ref: worktree.and_then(|identity| identity.base_ref),
+                        workdir_path: Some(workdir.unwrap_or_else(|| {
+                            scheduler.config.workdir.to_string_lossy().into_owned()
+                        })),
                         status: UnitStatus::Pending,
                         gate_state: None,
                         artifact_id: None,
@@ -2483,52 +2580,115 @@ impl DelegatedSessionHandle {
             crate::executor::ResumePayload::GateDecision {
                 decision,
                 against_artifact_id,
+                against_gate_step,
             } => {
                 let units = queries::list_session_units_for_stage(
                     scheduler.ctx.pool(),
                     &self.stage_instance_id,
                 )
                 .await?;
-                let unit = units
-                    .into_iter()
-                    .find(|unit| unit.artifact_id == Some(against_artifact_id))
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "gate decision artifact {} does not belong to a fan-out unit",
-                            against_artifact_id.0
-                        )
-                    })?;
-                let gate_state: DelegatedGateState = unit
-                    .gate_state
-                    .clone()
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("fan-out unit '{}' has no gate state", unit.unit_id)
-                    })
-                    .and_then(|value| serde_json::from_value(value).map_err(Into::into))?;
+                let mut matched = None;
+                for unit in units {
+                    let Some(value) = unit.gate_state.clone() else {
+                        continue;
+                    };
+                    let candidate: DelegatedGateState = serde_json::from_value(value)?;
+                    let tip = queries::get_artifact_chain_tip(
+                        scheduler.ctx.pool(),
+                        &candidate.artifact_id,
+                    )
+                    .await?;
+                    if tip.id == against_artifact_id {
+                        matched = Some((unit, candidate));
+                        break;
+                    }
+                }
+                let (unit, mut gate_state) = matched.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "gate decision artifact {} is not the latest revision for a fan-out unit",
+                        against_artifact_id.0
+                    )
+                })?;
+                gate_state.artifact_id = against_artifact_id;
+                if gate_state.gate.as_str() != against_gate_step {
+                    anyhow::bail!(
+                        "gate decision step '{}' does not match parked gate '{}'",
+                        against_gate_step,
+                        gate_state.gate.as_str()
+                    );
+                }
                 match gate_state.gate {
                     DelegatedGate::ArtifactApproval => match decision.outcome {
                         crate::types::GateOutcome::Pass => {
-                            let open_count = queries::count_open_review_items_for_artifact(
-                                scheduler.ctx.pool(),
-                                &gate_state.artifact_id.0.to_string(),
-                            )
-                            .await?;
-                            if open_count > 0 {
-                                anyhow::bail!(
-                                    "cannot approve: {open_count} review item(s) are still open"
-                                );
+                            if gate_state.requires_zero_open_review_items {
+                                let chain_root = queries::get_artifact_chain_root_id(
+                                    scheduler.ctx.pool(),
+                                    &gate_state.artifact_id,
+                                )
+                                .await?;
+                                let open_count = queries::count_open_review_items_for_artifact(
+                                    scheduler.ctx.pool(),
+                                    &chain_root,
+                                )
+                                .await?;
+                                if open_count > 0 {
+                                    anyhow::bail!("cannot approve: {open_count} review item(s) are still open");
+                                }
                             }
-                            let merge_state = DelegatedGateState {
-                                gate: DelegatedGate::MergeConfirmation,
-                                ..gate_state
+                            let steps = if gate_state.steps.is_empty() {
+                                config::OutputGateConfig::legacy(String::new()).steps
+                            } else {
+                                gate_state.steps.clone()
                             };
-                            queries::set_session_unit_gate_state(
-                                scheduler.ctx.pool(),
-                                &self.stage_instance_id,
-                                &unit.unit_id,
-                                Some(serde_json::to_value(merge_state)?),
-                            )
-                            .await?;
+                            if let Some(next) = steps.get(gate_state.step_index + 1) {
+                                let merge_state = DelegatedGateState {
+                                    gate: next.gate_type.into(),
+                                    step_index: gate_state.step_index + 1,
+                                    steps,
+                                    ..gate_state
+                                };
+                                queries::set_session_unit_gate_state(
+                                    scheduler.ctx.pool(),
+                                    &self.stage_instance_id,
+                                    &unit.unit_id,
+                                    Some(serde_json::to_value(merge_state)?),
+                                )
+                                .await?;
+                            } else {
+                                queries::set_session_unit_gate_state(
+                                    scheduler.ctx.pool(),
+                                    &self.stage_instance_id,
+                                    &unit.unit_id,
+                                    None,
+                                )
+                                .await?;
+                                queries::set_session_unit_status(
+                                    scheduler.ctx.pool(),
+                                    &self.stage_instance_id,
+                                    &unit.unit_id,
+                                    UnitStatus::Done,
+                                    None,
+                                )
+                                .await?;
+                                let completed_artifact = queries::get_artifact_by_id(
+                                    scheduler.ctx.pool(),
+                                    &gate_state.artifact_id,
+                                )
+                                .await?;
+                                scheduler
+                                    .ctx
+                                    .unit_completed(unit.unit_id.clone(), completed_artifact)
+                                    .await?;
+                                let removed_session = self
+                                    .live_sessions
+                                    .lock()
+                                    .unwrap()
+                                    .remove(&(self.stage_instance_id, unit.unit_id.clone()));
+                                if let Some(session) = removed_session {
+                                    session.cancelled.store(true, Ordering::SeqCst);
+                                    let _ = self.kbbl_client.stop_session(&session.sid).await;
+                                }
+                            }
                             scheduler.recompute_aggregate().await
                         }
                         crate::types::GateOutcome::Fail | crate::types::GateOutcome::Rerun => {
@@ -2718,14 +2878,25 @@ impl DelegatedSessionHandle {
         &self,
         decision: crate::types::GateDecision,
         against_artifact_id: crate::types::ArtifactId,
+        against_gate_step: &str,
     ) -> anyhow::Result<()> {
         let session = self.live_session()?;
-        let gate_state = self.parked_gate_state(&session)?;
-        if gate_state.artifact_id != against_artifact_id {
+        let mut gate_state = self.parked_gate_state(&session)?;
+        let tip =
+            queries::get_artifact_chain_tip(session.ctx.pool(), &gate_state.artifact_id).await?;
+        if tip.id != against_artifact_id {
             anyhow::bail!(
-                "gate decision artifact {} does not match parked artifact {}",
+                "gate decision artifact {} is not the latest revision of parked artifact {}",
                 against_artifact_id.0,
                 gate_state.artifact_id.0
+            );
+        }
+        gate_state.artifact_id = against_artifact_id;
+        if gate_state.gate.as_str() != against_gate_step {
+            anyhow::bail!(
+                "gate decision step '{}' does not match parked gate '{}'",
+                against_gate_step,
+                gate_state.gate.as_str()
             );
         }
 
@@ -2752,22 +2923,48 @@ impl DelegatedSessionHandle {
                 // Gate coupling: reject approval while open review items remain.
                 // The artifact emitted by this stage IS the chain root (revision_id),
                 // so gate_state.artifact_id.0.to_string() == revision_id for all items.
-                let revision_id = gate_state.artifact_id.0.to_string();
-                let open_count =
-                    queries::count_open_review_items_for_artifact(session.ctx.pool(), &revision_id)
-                        .await
-                        .map_err(|e| anyhow::anyhow!("gate coupling check failed: {e}"))?;
-                if open_count > 0 {
-                    anyhow::bail!("cannot approve: {open_count} review item(s) are still open");
-                }
-                let updated_state = DelegatedGateState {
-                    gate: DelegatedGate::MergeConfirmation,
-                    ..gate_state
-                };
-                session
-                    .ctx
-                    .set_parked_meta(Some(serde_json::to_value(&updated_state)?))
+                if gate_state.requires_zero_open_review_items {
+                    let revision_id = queries::get_artifact_chain_root_id(
+                        session.ctx.pool(),
+                        &gate_state.artifact_id,
+                    )
                     .await?;
+                    let open_count = queries::count_open_review_items_for_artifact(
+                        session.ctx.pool(),
+                        &revision_id,
+                    )
+                    .await
+                    .map_err(|e| anyhow::anyhow!("gate coupling check failed: {e}"))?;
+                    if open_count > 0 {
+                        anyhow::bail!("cannot approve: {open_count} review item(s) are still open");
+                    }
+                }
+                let steps = if gate_state.steps.is_empty() {
+                    config::OutputGateConfig::legacy(String::new()).steps
+                } else {
+                    gate_state.steps.clone()
+                };
+                if let Some(next) = steps.get(gate_state.step_index + 1) {
+                    let updated_state = DelegatedGateState {
+                        gate: next.gate_type.into(),
+                        step_index: gate_state.step_index + 1,
+                        steps,
+                        ..gate_state
+                    };
+                    session
+                        .ctx
+                        .set_parked_meta(Some(serde_json::to_value(&updated_state)?))
+                        .await?;
+                } else {
+                    session.ctx.set_status(StageStatus::Done, None).await?;
+                    session.ctx.set_parked_meta(None).await?;
+                    session.cancelled.store(true, Ordering::SeqCst);
+                    self.live_sessions
+                        .lock()
+                        .unwrap()
+                        .remove(&(self.stage_instance_id, self.unit_id.clone()));
+                    let _ = self.kbbl_client.stop_session(&session.sid).await;
+                }
                 Ok(())
             }
             crate::types::GateOutcome::Fail | crate::types::GateOutcome::Rerun => {
@@ -3105,6 +3302,7 @@ mod tests {
                 inherit_worktree_from: None,
             }),
             gate_output: None,
+            output_gate: None,
         }
     }
 
@@ -3138,6 +3336,9 @@ mod tests {
             gate: DelegatedGate::ArtifactApproval,
             artifact_id: crate::types::ArtifactId(Uuid::new_v4()),
             revision_count: 3,
+            step_index: 0,
+            steps: vec![],
+            requires_zero_open_review_items: true,
             worktree_path: Some("/work/wt/abc".into()),
             worktree_branch: Some("cohort/e/1-foo".into()),
             worktree_base_ref: Some("abc123".into()),
@@ -3244,14 +3445,37 @@ mod tests {
             previous_gate_state: None,
         })
         .unwrap();
-        let parked_gate = serde_json::to_value(DelegatedGateState::artifact_approval(
+        let parked_artifact = Artifact {
+            id: ArtifactId(Uuid::new_v4()),
+            run_id,
+            stage_instance_id,
+            artifact_type: "text".into(),
+            output_name: Some("out".into()),
+            label: Some("b".into()),
+            body: json!({"v":1}),
+            version: 1,
+            parent_artifact_id: None,
+            created_at: now,
+        };
+        queries::insert_artifact(&pool, &parked_artifact)
+            .await
+            .unwrap();
+        let parked_gate = serde_json::to_value(DelegatedGateState::artifact_approval_with_policy(
             "sid-123".into(),
-            ArtifactId(Uuid::new_v4()),
+            parked_artifact.id,
             1,
             None,
             None,
             None,
             None,
+            config::OutputGateConfig {
+                output: "out".into(),
+                steps: vec![config::OutputGateStep {
+                    gate_type: config::DelegatedGateKind::ArtifactApproval,
+                    actions: vec!["approve".into()],
+                }],
+                requires_zero_open_review_items: false,
+            },
         ))
         .unwrap();
         for (unit_id, status, gate_state) in [
@@ -3303,7 +3527,7 @@ mod tests {
             Arc::new(ArtifactTypeRegistry::new()),
         );
 
-        let _handle = stage.execute(ctx).await.unwrap();
+        let handle = stage.execute(ctx).await.unwrap();
         let units = queries::list_session_units_for_stage(&pool, &stage_instance_id)
             .await
             .unwrap();
@@ -3316,6 +3540,23 @@ mod tests {
             .unwrap()
             .iter()
             .all(|request| request.path != "/sessions"));
+        handle
+            .resume(ResumePayload::GateDecision {
+                decision: GateDecision {
+                    outcome: GateOutcome::Pass,
+                    comment: Some("approved after restart".into()),
+                    feedback: None,
+                },
+                against_artifact_id: parked_artifact.id,
+                against_gate_step: "artifact_approval".into(),
+            })
+            .await
+            .unwrap();
+        let recovered = queries::get_session_unit(&pool, &stage_instance_id, "b")
+            .await
+            .unwrap();
+        assert_eq!(recovered.status, UnitStatus::Done);
+        assert!(recovered.gate_state.is_none());
         join.abort();
     }
 
@@ -3398,6 +3639,149 @@ mod tests {
         join.abort();
     }
 
+    #[tokio::test]
+    async fn fan_out_one_step_approval_completes_unit_with_reviewed_chain_tip() {
+        let (base_url, capture, join) = spawn_kbbl_mock().await;
+        let pool = make_pool().await;
+        let mut config = fan_out_config(
+            json!([{"id": "a", "name": "a", "depends_on": []}]),
+            Some("/depends_on"),
+        );
+        config.output_slots = vec![OutputSlot {
+            name: "out".into(),
+            artifact_type: "text".into(),
+        }];
+        config.output_gate = Some(config::OutputGateConfig {
+            output: "out".into(),
+            steps: vec![config::OutputGateStep {
+                gate_type: config::DelegatedGateKind::ArtifactApproval,
+                actions: vec!["approve".into(), "request_revision".into()],
+            }],
+            requires_zero_open_review_items: true,
+        });
+        let config_value = serde_json::to_value(&config).unwrap();
+        let (run_id, stage_instance_id) =
+            setup_stage_instance(&pool, config_value.clone(), None).await;
+        let stage =
+            DelegatedSessionStage::new(PathBuf::from("/tmp"), KbblClient::new(base_url).unwrap());
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let ctx = StageContext::new(
+            crate::types::StageInstanceSummary {
+                stage_instance_id,
+                workflow_run_id: run_id,
+                stage_key: "delegate".into(),
+                status: StageStatus::Pending,
+                parked_reason: None,
+                parked_meta: None,
+                terminal_meta: None,
+                external_ref: None,
+            },
+            config_value,
+            HashMap::new(),
+            tx,
+            pool.clone(),
+            make_text_artifact_registry(),
+        );
+        let handle = stage.execute(ctx).await.unwrap();
+        let root = Artifact {
+            id: ArtifactId(Uuid::new_v4()),
+            run_id,
+            stage_instance_id,
+            artifact_type: "text".into(),
+            output_name: Some("out".into()),
+            label: Some("a".into()),
+            body: json!({"v":1}),
+            version: 1,
+            parent_artifact_id: None,
+            created_at: chrono::Utc::now(),
+        };
+        queries::insert_artifact(&pool, &root).await.unwrap();
+        let child = Artifact {
+            id: ArtifactId(Uuid::new_v4()),
+            body: json!({"v":2}),
+            version: 2,
+            parent_artifact_id: Some(root.id),
+            ..root.clone()
+        };
+        queries::insert_artifact(&pool, &child).await.unwrap();
+        let review_item = crate::collab::ReviewItem {
+            id: Uuid::new_v4(),
+            artifact_id: root.id.0,
+            revision_id: root.id.0.to_string(),
+            anchor: "/v".into(),
+            claim: "expected".into(),
+            reality: "actual".into(),
+            status: crate::collab::ReviewItemStatus::Open,
+            resolution: None,
+            created_at: chrono::Utc::now(),
+        };
+        queries::insert_review_item(&pool, &review_item)
+            .await
+            .unwrap();
+        let policy = config.output_gate.unwrap();
+        let gate = DelegatedGateState::artifact_approval_with_policy(
+            "sid-123".into(),
+            root.id,
+            1,
+            None,
+            None,
+            None,
+            None,
+            policy,
+        );
+        queries::set_session_unit_artifact_id(&pool, &stage_instance_id, "a", root.id)
+            .await
+            .unwrap();
+        queries::set_session_unit_gate_state(
+            &pool,
+            &stage_instance_id,
+            "a",
+            Some(serde_json::to_value(gate).unwrap()),
+        )
+        .await
+        .unwrap();
+        queries::set_session_unit_status(&pool, &stage_instance_id, "a", UnitStatus::Parked, None)
+            .await
+            .unwrap();
+        let decision = ResumePayload::GateDecision {
+            decision: GateDecision {
+                outcome: GateOutcome::Pass,
+                comment: Some("approved".into()),
+                feedback: None,
+            },
+            against_artifact_id: child.id,
+            against_gate_step: "artifact_approval".into(),
+        };
+        let blocked = handle.resume(decision.clone()).await.unwrap_err();
+        assert!(blocked.to_string().contains("still open"));
+        sqlx::query(
+            "UPDATE review_items SET status = 'resolved', resolution = 'accepted' WHERE id = ?",
+        )
+        .bind(review_item.id.to_string())
+        .execute(pool.as_ref())
+        .await
+        .unwrap();
+        handle.resume(decision).await.unwrap();
+        let unit = queries::get_session_unit(&pool, &stage_instance_id, "a")
+            .await
+            .unwrap();
+        assert_eq!(unit.status, UnitStatus::Done);
+        assert!(unit.gate_state.is_none());
+        assert!(capture
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|request| request.method == Method::DELETE));
+        let mut completed_artifacts = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            if let ExecutorEvent::UnitCompleted { artifact, .. } = event {
+                completed_artifacts.push(artifact.id);
+            }
+        }
+        assert_eq!(completed_artifacts, vec![child.id]);
+        join.abort();
+    }
+
     #[test]
     fn materialize_fan_out_rejects_invalid_identity_and_dependencies() {
         let stage_id = StageInstanceId(Uuid::new_v4());
@@ -3465,6 +3849,9 @@ mod tests {
             gate: DelegatedGate::MergeConfirmation,
             artifact_id: crate::types::ArtifactId(Uuid::new_v4()),
             revision_count: 1,
+            step_index: 1,
+            steps: vec![],
+            requires_zero_open_review_items: true,
             worktree_path: None,
             worktree_branch: None,
             worktree_base_ref: None,
@@ -3720,9 +4107,8 @@ mod tests {
             dir.path().to_path_buf(),
             KbblClient::new("http://127.0.0.1:8080/").unwrap(),
         );
-        let stage_instance_id = StageInstanceId(
-            uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000043").unwrap(),
-        );
+        let stage_instance_id =
+            StageInstanceId(uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000043").unwrap());
         let config = stage
             .build_config(
                 &json!({
@@ -3864,6 +4250,49 @@ mod tests {
     }
 
     #[test]
+    fn validate_def_config_rejects_invalid_explicit_gate_sequences() {
+        let dir = tempfile::tempdir().unwrap();
+        let stage = DelegatedSessionStage::new(
+            dir.path().to_path_buf(),
+            KbblClient::new("http://127.0.0.1:8080/").unwrap(),
+        );
+        let outputs = vec![OutputSlot {
+            name: "result".into(),
+            artifact_type: "text".into(),
+        }];
+        for steps in [
+            json!([]),
+            json!([{"type":"merge_confirmation","actions":["confirm_merged"]}]),
+            json!([{"type":"artifact_approval","actions":["approve"]},{"type":"artifact_approval","actions":["approve"]}]),
+        ] {
+            let mut config = gate_output_def_config(dir.path(), "result");
+            config.as_object_mut().unwrap().remove("gate_output");
+            config["output_gate"] = json!({"output": "result", "steps": steps});
+            assert!(stage.validate_def_config(&config, &[], &outputs).is_err());
+        }
+    }
+
+    #[test]
+    fn validate_def_config_preserves_legacy_gate_output_and_accepts_one_step_policy() {
+        let dir = tempfile::tempdir().unwrap();
+        let stage = DelegatedSessionStage::new(
+            dir.path().to_path_buf(),
+            KbblClient::new("http://127.0.0.1:8080/").unwrap(),
+        );
+        let outputs = vec![OutputSlot {
+            name: "result".into(),
+            artifact_type: "text".into(),
+        }];
+        assert!(stage
+            .validate_def_config(&gate_output_def_config(dir.path(), "result"), &[], &outputs)
+            .is_ok());
+        let mut explicit = gate_output_def_config(dir.path(), "result");
+        explicit.as_object_mut().unwrap().remove("gate_output");
+        explicit["output_gate"] = json!({"output": "result", "steps": [{"type":"artifact_approval","actions":["approve","request_revision"]}]});
+        assert!(stage.validate_def_config(&explicit, &[], &outputs).is_ok());
+    }
+
+    #[test]
     fn inherited_worktree_uses_artifact_label_for_namespaced_consumer_unit() {
         assert_eq!(
             producer_unit_id_for_consumer(Some("cohort-a"), "build:cohort-a").unwrap(),
@@ -3901,7 +4330,9 @@ mod tests {
             delivery: crate::types::InputDelivery::UnitComplete,
         }];
 
-        let error = stage.validate_def_config(&config, &inputs, &[]).unwrap_err();
+        let error = stage
+            .validate_def_config(&config, &inputs, &[])
+            .unwrap_err();
         assert!(error
             .to_string()
             .contains("cannot combine inherit_worktree_from with workdir"));
@@ -4288,20 +4719,21 @@ mod tests {
     async fn emit_route_parks_stage_with_artifact_approval_gate_state() {
         let (base_url, capture, join) = spawn_kbbl_mock().await;
         let pool = make_pool().await;
-        let (run_id, si_id) = setup_stage_instance(
-            &pool,
-            delegated_config_json_with_outputs(
-                "hello artifact",
-                "/workdir",
-                false,
-                vec![OutputSlot {
-                    name: "out".into(),
-                    artifact_type: "text".into(),
-                }],
-            ),
-            None,
-        )
-        .await;
+        let mut config = delegated_config_json_with_outputs(
+            "hello artifact",
+            "/workdir",
+            false,
+            vec![OutputSlot {
+                name: "out".into(),
+                artifact_type: "text".into(),
+            }],
+        );
+        config["output_gate"] = json!({
+            "output": "out",
+            "steps": [{"type":"artifact_approval","actions":["approve","request_revision"]}],
+            "requires_zero_open_review_items": false
+        });
+        let (run_id, si_id) = setup_stage_instance(&pool, config.clone(), None).await;
         let (tx, _rx) = tokio::sync::mpsc::channel(8);
         let stage =
             DelegatedSessionStage::new(PathBuf::from("/tmp"), KbblClient::new(base_url).unwrap());
@@ -4317,22 +4749,14 @@ mod tests {
                 terminal_meta: None,
                 external_ref: None,
             },
-            delegated_config_json_with_outputs(
-                "hello artifact",
-                "/workdir",
-                false,
-                vec![OutputSlot {
-                    name: "out".into(),
-                    artifact_type: "text".into(),
-                }],
-            ),
+            config,
             HashMap::new(),
             tx,
             pool.clone(),
             artifact_types,
         );
 
-        let _handle = stage.execute(ctx).await.unwrap();
+        let handle = stage.execute(ctx).await.unwrap();
         let app = stage.http_routes().unwrap();
         let request = Request::builder()
             .method("POST")
@@ -4362,6 +4786,24 @@ mod tests {
         assert_eq!(meta.gate, DelegatedGate::ArtifactApproval);
         assert_eq!(meta.revision_count, 1);
         assert_eq!(meta.artifact_id.0.to_string(), artifact_id);
+
+        handle
+            .resume(ResumePayload::GateDecision {
+                decision: GateDecision {
+                    outcome: GateOutcome::Pass,
+                    comment: Some("approved".into()),
+                    feedback: None,
+                },
+                against_artifact_id: meta.artifact_id,
+                against_gate_step: "artifact_approval".into(),
+            })
+            .await
+            .unwrap();
+        let completed = queries::get_stage_instance_by_id(&pool, &si_id)
+            .await
+            .unwrap();
+        assert_eq!(completed.status, StageStatus::Done);
+        assert!(completed.parked_meta.is_none());
 
         // Verify the two requests execute() makes regardless of how many poll requests
         // the background observer has issued since (observer polls are correct behaviour).
@@ -4544,6 +4986,7 @@ mod tests {
         let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
         let artifact_id =
             ArtifactId(Uuid::parse_str(payload["artifact_id"].as_str().unwrap()).unwrap());
+        let root_artifact_id = artifact_id;
 
         handle
             .resume(ResumePayload::GateDecision {
@@ -4553,6 +4996,7 @@ mod tests {
                     feedback: Some("please revise the conclusion".into()),
                 },
                 against_artifact_id: artifact_id,
+                against_gate_step: "artifact_approval".into(),
             })
             .await
             .unwrap();
@@ -4582,6 +5026,20 @@ mod tests {
         let artifact_id =
             ArtifactId(Uuid::parse_str(payload["artifact_id"].as_str().unwrap()).unwrap());
 
+        let stale = handle
+            .resume(ResumePayload::GateDecision {
+                decision: GateDecision {
+                    outcome: GateOutcome::Pass,
+                    comment: None,
+                    feedback: None,
+                },
+                against_artifact_id: root_artifact_id,
+                against_gate_step: "artifact_approval".into(),
+            })
+            .await
+            .unwrap_err();
+        assert!(stale.to_string().contains("not the latest revision"));
+
         handle
             .resume(ResumePayload::GateDecision {
                 decision: GateDecision {
@@ -4590,6 +5048,7 @@ mod tests {
                     feedback: None,
                 },
                 against_artifact_id: artifact_id,
+                against_gate_step: "artifact_approval".into(),
             })
             .await
             .unwrap();
@@ -4627,6 +5086,7 @@ mod tests {
                     feedback: None,
                 },
                 against_artifact_id: artifact_id,
+                against_gate_step: "merge_confirmation".into(),
             })
             .await
             .unwrap();

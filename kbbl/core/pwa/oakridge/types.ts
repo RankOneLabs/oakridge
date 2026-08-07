@@ -158,6 +158,7 @@ export interface ArtifactDetail {
 export interface ParkedGate {
   id: string;
   gate_type: string;
+  gate_step: string | null;
   run_id: string;
   stage_name: string;
   unit_id: string;
@@ -169,6 +170,9 @@ export interface ParkedGate {
 }
 
 export interface GateResumeRequest {
+  idempotency_key: string;
+  artifact_revision_id: string;
+  gate_step: string;
   action: string;
   operator_comment: string;
   feedback: string;
