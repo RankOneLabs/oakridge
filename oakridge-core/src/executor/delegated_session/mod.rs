@@ -671,10 +671,22 @@ impl UnitScheduler {
             .filter(|unit| matches!(unit.status, UnitStatus::Done))
             .map(|unit| unit.unit_id.clone())
             .collect();
+        let admitted: HashSet<String> = if self.fan_out.manual_admission {
+            queries::list_session_unit_admissions(self.ctx.pool(), &self.ctx.stage_instance_id)
+                .await?
+                .into_iter()
+                .map(|admission| admission.unit_id)
+                .collect()
+        } else {
+            units.iter().map(|unit| unit.unit_id.clone()).collect()
+        };
         for unit in units
             .into_iter()
             .filter(|unit| matches!(unit.status, UnitStatus::Pending))
         {
+            if !admitted.contains(&unit.unit_id) {
+                continue;
+            }
             if running >= self.fan_out.max_parallel {
                 break;
             }
@@ -2774,8 +2786,31 @@ impl DelegatedSessionHandle {
                     },
                 }
             }
-            crate::executor::ResumePayload::Executor { .. } => {
-                anyhow::bail!("delegated approval forwarding is not enabled until K1 exists")
+            crate::executor::ResumePayload::Executor { payload } => {
+                #[derive(serde::Deserialize)]
+                struct AdmitUnitPayload {
+                    action: String,
+                    unit_id: String,
+                    idempotency_key: String,
+                }
+                let request: AdmitUnitPayload = serde_json::from_value(payload)?;
+                if request.action != "admit_unit" {
+                    anyhow::bail!("unknown delegated fan-out action '{}'", request.action);
+                }
+                if !scheduler.fan_out.manual_admission {
+                    anyhow::bail!("stage does not use manual admission");
+                }
+                if request.idempotency_key.trim().is_empty() {
+                    anyhow::bail!("idempotency_key is required");
+                }
+                queries::admit_session_unit(
+                    scheduler.ctx.pool(),
+                    &self.stage_instance_id,
+                    &request.unit_id,
+                    request.idempotency_key.trim(),
+                )
+                .await?;
+                scheduler.admit().await
             }
         }
     }
@@ -3287,6 +3322,7 @@ mod tests {
                 unit_id_path: "/id".into(),
                 depends_on_path: depends_on_path.map(str::to_owned),
                 max_parallel: 2,
+                manual_admission: false,
                 item_bindings: HashMap::from([(
                     "ITEM".into(),
                     SlotBinding::Item {

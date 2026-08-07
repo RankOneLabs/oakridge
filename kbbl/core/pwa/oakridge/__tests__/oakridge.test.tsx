@@ -234,6 +234,94 @@ describe("RunDetailView", () => {
     wrap(<RunDetailView runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
     expect(await screen.findByTestId("or-run-detail-error")).toBeTruthy();
   });
+
+  it("renders a cohort brief and admits an eligible pending build unit", async () => {
+    const detail: RunDetail = {
+      ...RUN_DETAIL_FIXTURE,
+      stages: [{
+        stage_instance_id: "build-stage-1",
+        name: "build",
+        type: "build_agent",
+        status: "pending",
+        artifacts: [],
+        delegated_kbbl_sid: null,
+        worktree: null,
+        units: [{
+          unit_id: "cohort-a",
+          repository_key: null,
+          sid: null,
+          worktree: null,
+          status: "pending",
+          gate: null,
+          admission_required: true,
+          admitted: false,
+          admission_eligible: true,
+          admission_blocked_by: [],
+          params: {
+            title: "Build the cohort UI",
+            scope: "Operator workflow",
+            description: "Expose the materialized cohort brief.",
+            files_in_scope: ["kbbl/core/pwa/oakridge"],
+            decisions: ["Reuse the run table"],
+            acceptance_criteria: ["Admission is explicit"],
+            depends_on: ["spec"],
+            repository_key: "oakridge",
+          },
+        }],
+      }],
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      void init;
+      const url = String(input);
+      if (url.includes("/admit")) return new Response(null, { status: 204 });
+      if (url.includes("/gates")) return json([]);
+      if (url.includes("/runs/")) return json(detail);
+      return json([]);
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(fetchMock);
+
+    wrap(<RunDetailView runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
+
+    expect(await screen.findByText("Build the cohort UI")).toBeTruthy();
+    expect(screen.getByText("Admission is explicit")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("or-admit-unit-btn"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/oakridge/api/stages/build-stage-1/units/cohort-a/admit",
+      expect.objectContaining({ method: "POST" }),
+    ));
+    const admissionRequest = fetchMock.mock.calls.find(([input]) => String(input).includes("/admit"));
+    expect(JSON.parse(String(admissionRequest?.[1]?.body))).toEqual({ idempotency_key: expect.any(String) });
+  });
+
+  it("shows the exact dependencies blocking build admission", async () => {
+    const buildUnit = {
+      unit_id: "cohort-b",
+      repository_key: null,
+      sid: null,
+      worktree: null,
+      status: "pending" as const,
+      gate: null,
+      admission_required: true,
+      admitted: false,
+      admission_eligible: false,
+      admission_blocked_by: ["cohort-a", "schema-review"],
+      params: { title: "Blocked cohort", depends_on: ["cohort-a", "schema-review"] },
+    };
+    const detail: RunDetail = {
+      ...RUN_DETAIL_FIXTURE,
+      stages: [{
+        stage_instance_id: "build-stage-1", name: "build", type: "build_agent",
+        status: "pending", artifacts: [], delegated_kbbl_sid: null, worktree: null,
+        units: [buildUnit],
+      }],
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch(detail));
+    wrap(<RunDetailView runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
+
+    expect((await screen.findByTestId("or-admission-blocked")).textContent).toContain("cohort-a, schema-review");
+    expect(screen.getByTestId("or-dependency-status").textContent).toContain("cohort-a: waiting");
+    expect(screen.queryByTestId("or-admit-unit-btn")).toBeNull();
+  });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────

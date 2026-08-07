@@ -1,5 +1,7 @@
 import type { StageDetail, StageUnit } from "../../types";
 import { StatusBadge } from "../atoms/StatusBadge";
+import { Fragment } from "react";
+import { CohortBrief } from "./CohortBrief";
 
 const tableCellClass = "border-b border-[var(--border-subtle)] px-3 py-2.5 align-middle";
 const chipBaseClass = "inline-block rounded border bg-[var(--bg-surface)] px-2 py-0.5 text-xs font-medium";
@@ -43,10 +45,17 @@ interface RunUnitRowProps {
   unit: StageUnit;
   unitArtifacts: StageDetail["artifacts"];
   onSelectArtifact?: (artifactId: string) => void;
+  onAdmit: (unitId: string) => void;
+  admitting: boolean;
+  admissionError?: string;
 }
 
-export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelectArtifact }: RunUnitRowProps) {
+export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelectArtifact, onAdmit, admitting, admissionError }: RunUnitRowProps) {
+  const blockedBy = unit.admission_blocked_by ?? [];
+  const dependencies = unit.params?.depends_on ?? [];
+  const needsAdmission = unit.status === "pending" && unit.admission_required === true && unit.admitted !== true;
   return (
+    <Fragment>
     <tr className={stageRowClass(unit.status)} data-testid="or-stage-row">
       <td className={`${tableCellClass} font-medium text-[var(--text-primary)]`} data-testid="or-stage-name">
         <span>{stageName}</span>
@@ -57,11 +66,58 @@ export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelect
       <td className={tableCellClass}><div className="flex items-center gap-2">
         <StatusBadge status={unit.status} />
         {unit.gate && <span className="rounded border border-amber-400 px-1.5 py-0.5 text-xs text-amber-400">{unit.gate}</span>}
+        {unit.admission_required && unit.admitted && <span className="text-xs text-emerald-500" data-testid="or-unit-admitted">Admitted</span>}
       </div></td>
       <ArtifactCell artifacts={unitArtifacts} onSelectArtifact={onSelectArtifact} />
       <SessionCell sid={unit.sid} />
       <WorktreeCell worktree={unit.worktree} />
     </tr>
+    {(unit.params || needsAdmission) && (
+      <tr data-testid="or-cohort-detail-row">
+        <td colSpan={6} className={`${tableCellClass} bg-[var(--bg-surface)]`}>
+          <div className="flex flex-col gap-3">
+            <CohortBrief unit={unit} />
+            {dependencies.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 text-xs" data-testid="or-dependency-status">
+                <span className="font-semibold uppercase text-[var(--text-muted)]">Dependency status</span>
+                {dependencies.map((dependency) => {
+                  const isBlocked = blockedBy.includes(dependency);
+                  return (
+                    <span
+                      key={dependency}
+                      className={`rounded border px-1.5 py-0.5 ${isBlocked ? "border-amber-400 text-amber-500" : "border-emerald-500 text-emerald-500"}`}
+                    >
+                      {dependency}: {isBlocked ? "waiting" : "complete"}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+            {needsAdmission && (
+              <div className="flex flex-wrap items-center gap-3" data-testid="or-unit-admission">
+                {blockedBy.length > 0 || unit.admission_eligible !== true ? (
+                  <div className="text-sm text-amber-500" data-testid="or-admission-blocked">
+                    Blocked by: {blockedBy.length > 0 ? blockedBy.join(", ") : "dependencies not yet complete"}
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    className="rounded-md border border-[var(--accent-blue)] px-3 py-1.5 text-sm text-[var(--accent-blue)] disabled:opacity-50"
+                    onClick={() => onAdmit(unit.unit_id)}
+                    disabled={admitting || unit.admission_eligible !== true}
+                    data-testid="or-admit-unit-btn"
+                  >
+                    {admitting ? "Admitting…" : "Admit build"}
+                  </button>
+                )}
+                {admissionError && <span role="alert" className="text-sm text-red-500">{admissionError}</span>}
+              </div>
+            )}
+          </div>
+        </td>
+      </tr>
+    )}
+    </Fragment>
   );
 }
 

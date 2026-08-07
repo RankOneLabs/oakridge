@@ -94,10 +94,27 @@ export interface StageArtifact {
 export interface StageUnit {
   unit_id: string;
   repository_key?: RepositoryKey | null;
+  params?: CohortBriefParams | null;
   sid: string | null;
   worktree: WorktreeMetadata | null;
   status: StageStatus;
   gate: string | null;
+  admission_required?: boolean;
+  admitted?: boolean;
+  admission_eligible?: boolean;
+  admission_blocked_by?: string[];
+}
+
+/** The operator-facing subset of the persisted fan-out item contract. */
+export interface CohortBriefParams {
+  title?: string;
+  scope?: string;
+  description?: string;
+  files_in_scope?: string[];
+  decisions?: string[];
+  acceptance_criteria?: string[];
+  depends_on?: string[];
+  repository_key?: RepositoryKey | string;
 }
 
 export interface StageDetail {
@@ -119,6 +136,12 @@ export interface RunDetail {
   parked_count: number;
   updated_at: string;
   is_stuck: boolean;
+}
+
+export interface AdmitStageUnitResponse {
+  stage_instance_id: string;
+  unit_id: string;
+  admitted: boolean;
 }
 
 export interface ArtifactRevision {
@@ -190,6 +213,85 @@ export interface GateResumeRequest {
 export interface GateResumeResponse {
   gate_id: string;
   resumed: boolean;
+}
+
+export type CohortLifecycle =
+  | "waiting_admission"
+  | "building"
+  | "artifact_review"
+  | "revision_requested"
+  | "merge_confirmation"
+  | "assessing"
+  | "complete"
+  | "failed";
+
+export interface CohortCompletion {
+  build_complete: boolean;
+  assessment_complete: boolean;
+}
+
+export interface CohortAdmission {
+  required: boolean;
+  admitted: boolean;
+  eligible: boolean;
+  blocked_by: string[];
+}
+
+export interface CohortLifecycleSummary {
+  id: string;
+  run_id: string;
+  workflow_name: string;
+  stage_instance_id: string;
+  stage_name: string;
+  unit_id: string;
+  repository_key?: RepositoryKey | null;
+  title?: string | null;
+  lifecycle: CohortLifecycle;
+  completion: CohortCompletion;
+  admission: CohortAdmission;
+  artifact_revision_id?: string | null;
+  artifact_url?: string | null;
+  gate_id?: string | null;
+  gate_url?: string | null;
+  pr_url?: string | null;
+  updated_at: string;
+}
+
+export type ReviewInboxItemKind =
+  | "admission"
+  | "artifact_gate"
+  | "merge_confirmation"
+  | "cohort_blocked"
+  | "cohort_failed"
+  | "gate_decision";
+
+export type ReviewInboxItemState = "actionable" | "blocked" | "completed";
+
+export interface ReviewInboxItem {
+  id: string;
+  kind: ReviewInboxItemKind;
+  state: ReviewInboxItemState;
+  run_id: string;
+  workflow_name: string;
+  stage_instance_id: string;
+  stage_name: string;
+  unit_id: string;
+  repository_key?: RepositoryKey | null;
+  lifecycle: CohortLifecycle;
+  title?: string | null;
+  artifact_revision_id?: string | null;
+  artifact_url?: string | null;
+  gate_id?: string | null;
+  gate_url?: string | null;
+  resume_actions: string[];
+  blocked_by: string[];
+  pr_url?: string | null;
+  completed_at?: string | null;
+}
+
+export interface ReviewInbox {
+  cohorts: CohortLifecycleSummary[];
+  items: ReviewInboxItem[];
 }
 
 // ── Collab types ──────────────────────────────────────────────────────────────

@@ -1593,6 +1593,88 @@ pub async fn get_session_unit(
     row_to_session_unit(row)
 }
 
+#[derive(sqlx::FromRow)]
+pub struct SessionUnitAdmission {
+    pub stage_instance_id: String,
+    pub unit_id: String,
+    pub idempotency_key: String,
+    pub admitted_at: String,
+}
+
+pub async fn list_session_unit_admissions(
+    pool: &SqlitePool,
+    stage_instance_id: &StageInstanceId,
+) -> crate::Result<Vec<SessionUnitAdmission>> {
+    Ok(sqlx::query_as::<_, SessionUnitAdmission>(
+        "SELECT stage_instance_id, unit_id, idempotency_key, admitted_at \
+         FROM stage_session_unit_admission WHERE stage_instance_id = ? ORDER BY unit_id",
+    )
+    .bind(stage_instance_id.0.to_string())
+    .fetch_all(pool)
+    .await?)
+}
+
+/// Persist admission before launch. Repeating the same unit/key is idempotent;
+/// reusing a key or admitting the unit with another key is a conflict.
+pub async fn admit_session_unit(
+    pool: &SqlitePool,
+    stage_instance_id: &StageInstanceId,
+    unit_id: &str,
+    idempotency_key: &str,
+) -> crate::Result<bool> {
+    let result = sqlx::query(
+        "INSERT OR IGNORE INTO stage_session_unit_admission \
+         (stage_instance_id, unit_id, idempotency_key, admitted_at) VALUES (?, ?, ?, ?)",
+    )
+    .bind(stage_instance_id.0.to_string())
+    .bind(unit_id)
+    .bind(idempotency_key)
+    .bind(Utc::now().to_rfc3339())
+    .execute(pool)
+    .await?;
+    if result.rows_affected() == 1 {
+        return Ok(true);
+    }
+    let existing = sqlx::query_as::<_, (String, String, String)>(
+        "SELECT stage_instance_id, unit_id, idempotency_key FROM stage_session_unit_admission \
+         WHERE (stage_instance_id = ? AND unit_id = ?) OR idempotency_key = ?",
+    )
+    .bind(stage_instance_id.0.to_string())
+    .bind(unit_id)
+    .bind(idempotency_key)
+    .fetch_one(pool)
+    .await?;
+    if existing.0 == stage_instance_id.0.to_string()
+        && existing.1 == unit_id
+        && existing.2 == idempotency_key
+    {
+        Ok(false)
+    } else {
+        Err(crate::Error::Validation(format!(
+            "admission idempotency conflict for unit '{}'",
+            unit_id
+        )))
+    }
+}
+
+pub async fn get_session_unit_admission_by_unit_or_key(
+    pool: &SqlitePool,
+    stage_instance_id: &StageInstanceId,
+    unit_id: &str,
+    idempotency_key: &str,
+) -> crate::Result<Option<SessionUnitAdmission>> {
+    Ok(sqlx::query_as::<_, SessionUnitAdmission>(
+        "SELECT stage_instance_id, unit_id, idempotency_key, admitted_at \
+         FROM stage_session_unit_admission \
+         WHERE (stage_instance_id = ? AND unit_id = ?) OR idempotency_key = ?",
+    )
+    .bind(stage_instance_id.0.to_string())
+    .bind(unit_id)
+    .bind(idempotency_key)
+    .fetch_optional(pool)
+    .await?)
+}
+
 /// Atomically prepare one persisted fan-out unit for a fresh attempt. Historical
 /// artifacts and the materialized params/dependency/worktree contract remain in
 /// place; only attempt-scoped routing state is cleared.
@@ -3323,6 +3405,57 @@ mod tests {
             units_after_delete.is_empty(),
             "units must cascade-delete with stage_instance"
         );
+    }
+
+    #[tokio::test]
+    async fn unit_admission_is_durable_idempotent_and_conflict_safe() {
+        let pool = make_test_pool().await;
+        let def = test_workflow_def();
+        insert_workflow_def(&pool, &def).await.unwrap();
+        let run = test_run(def.id);
+        insert_workflow_run(&pool, &run).await.unwrap();
+        let si = test_stage(run.id);
+        insert_stage_instance(&pool, &si).await.unwrap();
+        for unit_id in ["a", "b"] {
+            upsert_session_unit(
+                &pool,
+                &crate::types::SessionUnit {
+                    stage_instance_id: si.id,
+                    unit_id: unit_id.into(),
+                    params: Some(json!({"id": unit_id, "title": unit_id})),
+                    depends_on: vec![],
+                    external_ref: None,
+                    worktree_branch: None,
+                    worktree_path: None,
+                    worktree_base_ref: None,
+                    workdir_path: None,
+                    status: crate::types::UnitStatus::Pending,
+                    gate_state: None,
+                    artifact_id: None,
+                    source_artifact_id: None,
+                    terminal_meta: None,
+                    created_at: fixed_dt(),
+                    updated_at: fixed_dt(),
+                },
+            )
+            .await
+            .unwrap();
+        }
+        assert!(admit_session_unit(&pool, &si.id, "a", "key-a")
+            .await
+            .unwrap());
+        assert!(!admit_session_unit(&pool, &si.id, "a", "key-a")
+            .await
+            .unwrap());
+        assert!(admit_session_unit(&pool, &si.id, "a", "other-key")
+            .await
+            .is_err());
+        assert!(admit_session_unit(&pool, &si.id, "b", "key-a")
+            .await
+            .is_err());
+        let admissions = list_session_unit_admissions(&pool, &si.id).await.unwrap();
+        assert_eq!(admissions.len(), 1);
+        assert_eq!(admissions[0].unit_id, "a");
     }
 
     #[tokio::test]
