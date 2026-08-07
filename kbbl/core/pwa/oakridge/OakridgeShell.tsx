@@ -67,6 +67,7 @@ function OakridgeShellInner({ route, onBack, onNavigate }: OakridgeShellInnerPro
           onSelectRun={navigateToRun}
           onNewRun={navigateToNewRun}
           onNewProject={navigateToCreateProject}
+          onSelectArtifact={navigateToArtifact}
         />
       );
       break;

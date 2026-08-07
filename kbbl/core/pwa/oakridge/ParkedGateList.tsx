@@ -18,9 +18,10 @@ const codeClass =
 interface GateCardProps {
   gate: ParkedGate;
   onNavigateRun?: (runId: string) => void;
+  onNavigateArtifact?: (artifactRevisionId: string) => void;
 }
 
-function GateCard({ gate, onNavigateRun }: GateCardProps) {
+function GateCard({ gate, onNavigateRun, onNavigateArtifact }: GateCardProps) {
   const [showResume, setShowResume] = useState(false);
 
   return (
@@ -86,7 +87,16 @@ function GateCard({ gate, onNavigateRun }: GateCardProps) {
       {gate.artifact_revision_id && (
         <div className="flex items-center gap-2">
           <span className={labelClass}>Revision</span>
-          <code className={codeClass}>{gate.artifact_revision_id}</code>
+          {onNavigateArtifact ? (
+            <button
+              type="button"
+              className="border-0 bg-transparent p-0 font-mono text-xs text-[var(--accent-blue)] underline"
+              onClick={() => onNavigateArtifact(gate.artifact_revision_id!)}
+              data-testid="or-gate-artifact-link"
+            >
+              {gate.artifact_revision_id}
+            </button>
+          ) : <code className={codeClass}>{gate.artifact_revision_id}</code>}
         </div>
       )}
 
@@ -108,7 +118,7 @@ function GateCard({ gate, onNavigateRun }: GateCardProps) {
   );
 }
 
-export function GlobalParkedGateList({ onNavigateRun }: { onNavigateRun: (id: string) => void }) {
+export function GlobalParkedGateList({ onNavigateRun, onNavigateArtifact }: { onNavigateRun: (id: string) => void; onNavigateArtifact?: (id: string) => void }) {
   const qc = useQueryClient();
   const query = useGates();
 
@@ -146,7 +156,7 @@ export function GlobalParkedGateList({ onNavigateRun }: { onNavigateRun: (id: st
       )}
 
       {query.data && query.data.map((gate: ParkedGate) => (
-        <GateCard key={gate.id} gate={gate} onNavigateRun={onNavigateRun} />
+        <GateCard key={gate.id} gate={gate} onNavigateRun={onNavigateRun} onNavigateArtifact={onNavigateArtifact} />
       ))}
     </div>
   );

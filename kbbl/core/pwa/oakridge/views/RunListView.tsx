@@ -4,6 +4,7 @@ interface RunListViewProps {
   onSelectRun: (id: string) => void;
   onNewRun: () => void;
   onNewProject: () => void;
+  onSelectArtifact?: (id: string) => void;
 }
 
 export function RunListView(props: RunListViewProps) {
