@@ -1024,17 +1024,17 @@ fn operator_gate(
         unit_id,
         repository_key,
         artifact_revision_id: gate.as_ref().map(|gate| gate.artifact_id.0.to_string()),
-        gate_step: gate
-            .as_ref()
-            .and_then(|gate| gate.steps.get(gate.step_index))
-            .map(|step| {
-                match step.gate_type {
+        gate_step: gate.as_ref().map(|gate| {
+            gate.steps
+                .get(gate.step_index)
+                .map(|step| match step.gate_type {
                     crate::executor::delegated_session::config::DelegatedGateKind::ArtifactApproval =>
                         "artifact_approval".to_owned(),
                     crate::executor::delegated_session::config::DelegatedGateKind::MergeConfirmation =>
                         "merge_confirmation".to_owned(),
-                }
-            }),
+                })
+                .unwrap_or_else(|| operator_gate_type_str(&gate.gate))
+        }),
         worktree: gate
             .as_ref()
             .and_then(|gate| {
@@ -1293,12 +1293,16 @@ async fn units_by_stage(
     units: Vec<crate::types::SessionUnit>,
 ) -> Result<HashMap<StageInstanceId, Vec<OperatorStageUnit>>, crate::Error> {
     let mut by_stage: HashMap<StageInstanceId, Vec<OperatorStageUnit>> = HashMap::new();
+    let mut raw_by_stage: HashMap<StageInstanceId, Vec<crate::types::SessionUnit>> =
+        HashMap::new();
+    for unit in units {
+        raw_by_stage
+            .entry(unit.stage_instance_id)
+            .or_default()
+            .push(unit);
+    }
     for stage in stages {
-        let stage_units: Vec<_> = units
-            .iter()
-            .filter(|unit| unit.stage_instance_id == stage.id)
-            .cloned()
-            .collect();
+        let stage_units = raw_by_stage.remove(&stage.id).unwrap_or_default();
         let done: HashSet<_> = stage_units
             .iter()
             .filter(|unit| matches!(unit.status, crate::types::UnitStatus::Done))
@@ -3110,11 +3114,13 @@ mod tests {
         let gates = operator_gates_for_stage(&state.pool, &stage).await.unwrap();
         assert_eq!(gates.len(), 2);
         assert_eq!(gates[0].unit_id, "cohort-a");
+        assert_eq!(gates[0].gate_step.as_deref(), Some("merge_confirmation"));
         assert_eq!(
             gates[0].pr_url.as_deref(),
             Some("https://github.com/acme/repo/pull/cohort-a")
         );
         assert_eq!(gates[1].unit_id, "cohort-b");
+        assert_eq!(gates[1].gate_step.as_deref(), Some("merge_confirmation"));
         assert_eq!(
             gates[1].pr_url.as_deref(),
             Some("https://github.com/acme/repo/pull/cohort-b")

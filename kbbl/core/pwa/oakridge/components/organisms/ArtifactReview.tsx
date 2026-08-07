@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useArtifact } from "../../hooks/useArtifact";
 import { useThreads } from "../../hooks/useThreads";
 import { usePostThread } from "../../hooks/usePostThread";
@@ -6,7 +6,7 @@ import { usePostMessage } from "../../hooks/usePostMessage";
 import { usePingThread } from "../../hooks/usePingThread";
 import { useResolveThread } from "../../hooks/useResolveThread";
 import { useReviewItems } from "../../hooks/useReviewItems";
-import { useGates } from "../../hooks/useGates";
+import { useRunGates } from "../../hooks/useRunGates";
 import { usePatchReviewItem } from "../../hooks/usePatchReviewItem";
 import { resolveViewer } from "../../artifactRegistry";
 import { ReviewItemsChecklist } from "../../ReviewItemsChecklist";
@@ -81,6 +81,7 @@ export function ArtifactReview({ artifactId, onBack }: ArtifactReviewProps) {
   const query = useArtifact(artifactId);
   const [selectedRevIdx, setSelectedRevIdx] = useState<number>(0);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+  const [showGateForm, setShowGateForm] = useState(true);
 
   // Collab data — loaded only when the artifact has relevant capabilities
   const caps = query.data?.capabilities ?? null;
@@ -89,7 +90,18 @@ export function ArtifactReview({ artifactId, onBack }: ArtifactReviewProps) {
 
   const threadsQuery = useThreads(artifactId, commentable);
   const reviewItemsQuery = useReviewItems(artifactId, hasReviewItems);
-  const gatesQuery = useGates();
+  const revisions = query.data?.revisions ?? [];
+  const revIdx = Math.min(selectedRevIdx, Math.max(0, revisions.length - 1));
+  const revision = revisions[revIdx] as ArtifactRevision | undefined;
+  const gatesQuery = useRunGates(query.data?.run_id ?? "", Boolean(query.data?.run_id));
+  const gates = Array.isArray(gatesQuery.data) ? gatesQuery.data : [];
+  const artifactGate = revision
+    ? gates.find((gate) => gate.artifact_revision_id === revision.id)
+    : undefined;
+
+  useEffect(() => {
+    setShowGateForm(true);
+  }, [artifactGate?.id]);
 
   const postThread = usePostThread(artifactId);
   const postMessage = usePostMessage(artifactId, selectedThreadId ?? "");
@@ -118,11 +130,6 @@ export function ArtifactReview({ artifactId, onBack }: ArtifactReviewProps) {
   }
 
   const artifact = query.data;
-  const revisions = artifact.revisions;
-
-  // Clamp selected index in case revisions changed since mount
-  const revIdx = Math.min(selectedRevIdx, Math.max(0, revisions.length - 1));
-  const revision = revisions[revIdx] as ArtifactRevision | undefined;
 
   // Resolve viewer: component_id → type_id → JSON fallback
   const Viewer =
@@ -177,10 +184,6 @@ export function ArtifactReview({ artifactId, onBack }: ArtifactReviewProps) {
   }
 
   const reviewItems = reviewItemsQuery.data ?? [];
-  const gates = Array.isArray(gatesQuery.data) ? gatesQuery.data : [];
-  const artifactGate = gates.find((gate) =>
-    revisions.some((candidate) => candidate.id === gate.artifact_revision_id),
-  );
 
   function handleResolveItem(id: string, resolution: string) {
     patchReviewItem.mutate({ id, req: { status: "resolved", resolution: resolution || undefined } });
@@ -290,11 +293,17 @@ export function ArtifactReview({ artifactId, onBack }: ArtifactReviewProps) {
 
   const gateActions = artifactGate ? (
     <section className="or-artifact-detail__collab" data-testid="or-artifact-gate-actions">
-      <GateResumeForm
-        gate={artifactGate}
-        actionLabels={artifact.review?.action_labels}
-        onDone={() => undefined}
-      />
+      {showGateForm ? (
+        <GateResumeForm
+          gate={artifactGate}
+          actionLabels={artifact.review?.action_labels}
+          onDone={() => setShowGateForm(false)}
+        />
+      ) : (
+        <button type="button" className="or-btn or-btn--primary" onClick={() => setShowGateForm(true)}>
+          Review gate
+        </button>
+      )}
     </section>
   ) : undefined;
 
