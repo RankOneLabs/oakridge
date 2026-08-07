@@ -41,7 +41,7 @@ export function GateResumeForm({ gate, onDone }: GateResumeFormProps) {
       {
         idempotency_key: requestKey.current.key,
         artifact_revision_id: gate.artifact_revision_id,
-        gate_step: gate.gate_type,
+        gate_step: gate.gate_step ?? gate.gate_type,
         action,
         operator_comment: operatorComment.trim(),
         feedback: feedback.trim(),
