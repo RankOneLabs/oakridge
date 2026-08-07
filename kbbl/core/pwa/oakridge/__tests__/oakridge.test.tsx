@@ -330,6 +330,23 @@ describe("GateResumeForm", () => {
 
     expect(await screen.findByTestId("or-resume-error")).toBeTruthy();
   });
+
+  it("reuses the idempotency key when the same operator action is retried", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(json({ error: "temporary failure" }, 503))
+      .mockResolvedValueOnce(json({ gate_id: "gate-1", resumed: true }));
+    wrap(<GateResumeForm gate={PARKED_GATE_FIXTURE} onDone={() => {}} />);
+
+    fireEvent.change(screen.getByTestId("or-resume-comment"), { target: { value: "approved" } });
+    fireEvent.click(screen.getByTestId("or-resume-submit"));
+    expect(await screen.findByTestId("or-resume-error")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("or-resume-submit"));
+
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(2));
+    const first = JSON.parse(String((fetchSpy.mock.calls[0]?.[1] as RequestInit).body));
+    const second = JSON.parse(String((fetchSpy.mock.calls[1]?.[1] as RequestInit).body));
+    expect(second.idempotency_key).toBe(first.idempotency_key);
+  });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
