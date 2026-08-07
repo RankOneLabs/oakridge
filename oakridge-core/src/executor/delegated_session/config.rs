@@ -18,18 +18,19 @@ pub enum Bindable {
     Bound(SlotBinding),
 }
 
-// ── Valid effort levels accepted by oakridge-core ─────────────────────────────
-
-/// Canonical effort values that workflow definitions may specify for a
-/// delegated session. kbbl validates the value against the chosen runtime's
-/// declared effort levels; oakridge-core only enforces that a workflow author
-/// hasn't used an unsupported string. Values map across runtimes (e.g.
-/// "medium" is valid for both codex and claude-code).
-pub const VALID_EFFORT_VALUES: &[&str] = &["minimal", "low", "medium", "high"];
-
-pub fn validate_effort(effort: &str) -> bool {
-    VALID_EFFORT_VALUES.contains(&effort)
-}
+// ── Effort is not validated here ──────────────────────────────────────────────
+//
+// oakridge-core deliberately owns no effort allowlist. Effort levels are
+// declared per runtime by each kbbl adapter and published on kbbl's /config
+// (claude-code: low..max; codex: minimal..max), so any list here is a copy of
+// someone else's contract — and it drifted: it predated "xhigh"/"max" and
+// rejected valid runs, while still admitting "minimal" for claude-code, which
+// kbbl rejects. Effort is now forwarded verbatim exactly as `model` already is,
+// and kbbl validates both against the selected runtime.
+//
+// Contrast `runtime` (see DelegatedRuntime::parse), which core *does* validate:
+// its two values are core's own contract with kbbl, and model validity depends
+// on it, so an unresolvable runtime cannot be deferred.
 
 // ── WorktreeIdentity ──────────────────────────────────────────────────────────
 

@@ -29,7 +29,7 @@ use crate::types::{
 };
 
 use config::{
-    validate_effort, Bindable, DelegatedRuntime, DelegatedSessionConfig, DelegatedSessionDefConfig,
+    Bindable, DelegatedRuntime, DelegatedSessionConfig, DelegatedSessionDefConfig,
     FanOut, FanOutPromptPlan, InheritedInputBinding, WorktreeIdentity,
 };
 use kbbl_client::{
@@ -492,16 +492,8 @@ fn validate_delegated_def(def: &DelegatedSessionDefConfig) -> anyhow::Result<()>
         DelegatedRuntime::parse(r)?;
     }
 
-    // Only validate effort when it is a literal string; bound effort is deferred
-    // to build_config time when the resolved value is available.
-    if let Some(Bindable::Literal(ref e)) = def.effort {
-        if !validate_effort(e) {
-            anyhow::bail!(
-                "invalid effort {:?}: must be one of [minimal, low, medium, high]",
-                e
-            );
-        }
-    }
+    // Effort is intentionally unvalidated here — see config.rs. Its legal values
+    // are per-runtime and owned by kbbl, which validates them at session create.
 
     Ok(())
 }
@@ -1869,21 +1861,12 @@ impl StageType for DelegatedSessionStage {
             Some(Bindable::Bound(ref binding)) => resolve_optional_binding(binding, run_context)?,
         };
 
+        // Same shape as `model` above: resolve and forward. kbbl rejects an
+        // effort the selected runtime doesn't declare.
         let effort = match def.effort {
             None => None,
             Some(Bindable::Literal(s)) => Some(s),
-            Some(Bindable::Bound(ref binding)) => {
-                let resolved = resolve_optional_binding(binding, run_context)?;
-                if let Some(ref e) = resolved {
-                    if !validate_effort(e) {
-                        anyhow::bail!(
-                            "invalid effort {:?} resolved from binding: must be one of [minimal, low, medium, high]",
-                            e
-                        );
-                    }
-                }
-                resolved
-            }
+            Some(Bindable::Bound(ref binding)) => resolve_optional_binding(binding, run_context)?,
         };
 
         let config = DelegatedSessionConfig {
@@ -3621,6 +3604,13 @@ mod tests {
         runtime: Value,
         run_context: Value,
     ) -> anyhow::Result<DelegatedSessionConfig> {
+        build_runtime_config_with(runtime_def_config(runtime), run_context).await
+    }
+
+    async fn build_runtime_config_with(
+        def_config: Value,
+        run_context: Value,
+    ) -> anyhow::Result<DelegatedSessionConfig> {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("delegated.md"), "task").unwrap();
         let stage = DelegatedSessionStage::new(
@@ -3629,7 +3619,7 @@ mod tests {
         );
         let config = stage
             .build_config(
-                &runtime_def_config(runtime),
+                &def_config,
                 &HashMap::new(),
                 &[],
                 StageInstanceId(uuid::Uuid::nil()),
@@ -3688,6 +3678,38 @@ mod tests {
 
         let err = validate_delegated_def(&def).expect_err("bad literal runtime must be rejected");
         assert!(err.to_string().contains("invalid runtime"), "got: {err}");
+    }
+
+    /// A def whose effort is bound to run context, for the pass-through tests
+    /// below. Kept separate from `runtime_def_config` so the runtime tests keep
+    /// resolving effort to `None`.
+    fn effort_def_config(effort: Value) -> Value {
+        let mut cfg = runtime_def_config(json!("codex"));
+        cfg["effort"] = effort;
+        cfg
+    }
+
+    #[tokio::test]
+    async fn build_config_forwards_an_effort_core_does_not_know() {
+        // "xhigh" is declared by both kbbl runtimes but was absent from the
+        // effort allowlist core used to keep, which failed valid runs. Core owns
+        // no such list now: effort is forwarded like model and kbbl judges it.
+        let cfg = build_runtime_config_with(
+            effort_def_config(json!({"from": "context", "path": "/planner_effort"})),
+            json!({"planner_model": "gpt-5.6-sol", "planner_effort": "xhigh"}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(cfg.effort.as_deref(), Some("xhigh"));
+    }
+
+    #[test]
+    fn validate_delegated_def_accepts_a_literal_effort_core_does_not_know() {
+        let def: DelegatedSessionDefConfig =
+            serde_json::from_value(effort_def_config(json!("max"))).unwrap();
+
+        validate_delegated_def(&def).expect("effort is kbbl's contract, not core's");
     }
 
     #[tokio::test]
