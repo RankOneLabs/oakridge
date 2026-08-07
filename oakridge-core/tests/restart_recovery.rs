@@ -133,6 +133,7 @@ fn simple_def(stage_type_id: &str) -> WorkflowDef {
             edges: vec![],
         },
         created_at: fixed_dt(),
+        archived: false,
     }
 }
 

@@ -29,8 +29,8 @@ use crate::types::{
 };
 
 use config::{
-    validate_effort, Bindable, DelegatedSessionConfig, DelegatedSessionDefConfig, FanOut,
-    FanOutPromptPlan, InheritedInputBinding, WorktreeIdentity,
+    validate_effort, Bindable, DelegatedRuntime, DelegatedSessionConfig, DelegatedSessionDefConfig,
+    FanOut, FanOutPromptPlan, InheritedInputBinding, WorktreeIdentity,
 };
 use kbbl_client::{
     AckResponse, CreateSessionRequest, DelegatedExternalRef, EventsSinceResponse, KbblClient,
@@ -465,11 +465,31 @@ fn revision_count_from_meta(meta: Option<&Value>) -> u32 {
         .unwrap_or(1)
 }
 
+/// Human-readable source of a binding, for error messages that must tell the
+/// operator *which* launch-payload key was missing rather than just that one was.
+fn describe_binding_source(binding: &SlotBinding) -> String {
+    match binding {
+        SlotBinding::Context { path } => format!("context path '{path}'"),
+        SlotBinding::Literal { value } => format!("literal '{value}'"),
+        SlotBinding::Input { input_name, .. } => format!("input '{input_name}'"),
+        SlotBinding::Item { path } => format!("item path '{path}'"),
+        SlotBinding::ContextLookup {
+            collection_path, ..
+        } => format!("context lookup over '{collection_path}'"),
+    }
+}
+
 fn validate_delegated_def(def: &DelegatedSessionDefConfig) -> anyhow::Result<()> {
     if !def.pre_authorized_tools.is_empty() {
         anyhow::bail!(
             "pre_authorized_tools is not supported: per-tool approval is managed by the kbbl PWA (Phase 2). Remove pre_authorized_tools from the workflow definition or set it to an empty array."
         );
+    }
+
+    // Only validate runtime when it is a literal string; bound runtime is deferred
+    // to build_config time when the resolved value is available.
+    if let Bindable::Literal(ref r) = def.runtime {
+        DelegatedRuntime::parse(r)?;
     }
 
     // Only validate effort when it is a literal string; bound effort is deferred
@@ -1825,6 +1845,24 @@ impl StageType for DelegatedSessionStage {
         let workdir_str = resolve_binding(&def.workdir, inputs, run_context, None)?
             .replace(STAGE_INSTANCE_ID_SENTINEL, &sid_str);
 
+        // Runtime resolves before model so a bound runtime that the launch payload
+        // never supplied fails here — loudly, naming the pointer — instead of
+        // defaulting and handing kbbl a model from the wrong runtime's registry.
+        let runtime = match def.runtime {
+            Bindable::Literal(ref s) => DelegatedRuntime::parse(s)?,
+            Bindable::Bound(ref binding) => {
+                let resolved = resolve_optional_binding(binding, run_context)?;
+                let value = resolved.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "runtime binding ({}) resolved to no value: the run context must supply \
+                         a runtime, which has no default because model validity depends on it",
+                        describe_binding_source(binding)
+                    )
+                })?;
+                DelegatedRuntime::parse(&value)?
+            }
+        };
+
         let model = match def.model {
             None => None,
             Some(Bindable::Literal(s)) => Some(s),
@@ -1849,7 +1887,7 @@ impl StageType for DelegatedSessionStage {
         };
 
         let config = DelegatedSessionConfig {
-            runtime: def.runtime,
+            runtime,
             rendered_prompt,
             fan_out_prompt_plan,
             resolved_fan_out_over,
@@ -2975,6 +3013,7 @@ mod tests {
                 edges: vec![],
             },
             created_at: fixed_dt(),
+            archived: false,
         };
         queries::insert_workflow_def(pool, &def).await.unwrap();
 
@@ -3561,6 +3600,94 @@ mod tests {
         assert_eq!(cfg.output_slots, output_slots);
         assert!(cfg.pre_authorized_tools.is_empty());
         assert!(cfg.yolo);
+    }
+
+    /// Minimal def config with a caller-chosen `runtime` value, for the bound-runtime
+    /// cases below. Everything else is inert.
+    fn runtime_def_config(runtime: Value) -> Value {
+        json!({
+            "runtime": runtime,
+            "prompt_template_path": "delegated.md",
+            "slot_bindings": {},
+            "workdir": {"from": "literal", "value": "/work"},
+            "session_name": "s",
+            "model": {"from": "context", "path": "/planner_model"},
+            "pre_authorized_tools": [],
+            "yolo": false
+        })
+    }
+
+    async fn build_runtime_config(
+        runtime: Value,
+        run_context: Value,
+    ) -> anyhow::Result<DelegatedSessionConfig> {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("delegated.md"), "task").unwrap();
+        let stage = DelegatedSessionStage::new(
+            dir.path().to_path_buf(),
+            KbblClient::new("http://127.0.0.1:8080/").unwrap(),
+        );
+        let config = stage
+            .build_config(
+                &runtime_def_config(runtime),
+                &HashMap::new(),
+                &[],
+                StageInstanceId(uuid::Uuid::nil()),
+                &run_context,
+            )
+            .await?;
+        Ok(serde_json::from_value(config).unwrap())
+    }
+
+    #[tokio::test]
+    async fn build_config_resolves_runtime_from_run_context() {
+        let cfg = build_runtime_config(
+            json!({"from": "context", "path": "/planner_runtime"}),
+            json!({"planner_runtime": "codex", "planner_model": "gpt-5.6-sol"}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(cfg.runtime, config::DelegatedRuntime::Codex);
+        assert_eq!(cfg.model.as_deref(), Some("gpt-5.6-sol"));
+    }
+
+    #[tokio::test]
+    async fn build_config_errors_when_bound_runtime_is_absent_from_context() {
+        // Unlike model and effort, an unresolved runtime must not fall back to a
+        // default — the resulting model/runtime pair is what kbbl rejects at
+        // session creation, long after the operator has stopped watching.
+        let err = build_runtime_config(
+            json!({"from": "context", "path": "/planner_runtime"}),
+            json!({"planner_model": "gpt-5.6-sol"}),
+        )
+        .await
+        .expect_err("absent runtime binding must fail the build");
+
+        let message = err.to_string();
+        assert!(message.contains("/planner_runtime"), "got: {message}");
+        assert!(message.contains("no value"), "got: {message}");
+    }
+
+    #[tokio::test]
+    async fn build_config_rejects_runtime_outside_the_kbbl_contract() {
+        let err = build_runtime_config(
+            json!({"from": "context", "path": "/planner_runtime"}),
+            json!({"planner_runtime": "gpt-5.6-sol"}),
+        )
+        .await
+        .expect_err("an unknown runtime id must fail the build");
+
+        assert!(err.to_string().contains("invalid runtime"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_delegated_def_rejects_a_literal_runtime_outside_the_contract() {
+        let def: DelegatedSessionDefConfig =
+            serde_json::from_value(runtime_def_config(json!("claude-code-v2"))).unwrap();
+
+        let err = validate_delegated_def(&def).expect_err("bad literal runtime must be rejected");
+        assert!(err.to_string().contains("invalid runtime"), "got: {err}");
     }
 
     #[tokio::test]

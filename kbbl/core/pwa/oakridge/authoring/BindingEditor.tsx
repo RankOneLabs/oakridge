@@ -168,7 +168,9 @@ export function BindingEditor({
 }
 
 // ── BindableEditor ────────────────────────────────────────────────────────────
-// For model/effort fields: toggle between "none", "literal", and "context binding".
+// For model/effort/runtime fields: toggle between "none", "literal", and
+// "context binding". Runtime passes `required` — it has no runtime default, so
+// "none" is not an offerable mode there.
 
 type BindableMode = "none" | "literal" | "context";
 
@@ -177,6 +179,11 @@ interface BindableEditorProps {
   literalOptions?: Array<{ value: string; label: string }>;
   value: string | SlotBinding | null | undefined;
   onChange: (v: string | SlotBinding | null) => void;
+  // When true, drop the "— default —" mode: the field must carry a literal or a binding.
+  required?: boolean;
+  // Hint for the context-path input only. The literal input hints a value, not a
+  // path, so the two cannot share one placeholder.
+  pathPlaceholder?: string;
   disabled?: boolean;
 }
 
@@ -191,6 +198,8 @@ export function BindableEditor({
   literalOptions,
   value,
   onChange,
+  required = false,
+  pathPlaceholder = "/planner_model",
   disabled = false,
 }: BindableEditorProps) {
   const mode = detectMode(value);
@@ -212,7 +221,7 @@ export function BindableEditor({
           disabled={disabled}
           aria-label={`${label} mode`}
         >
-          <option value="none">— default —</option>
+          {!required && <option value="none">— default —</option>}
           <option value="literal">literal</option>
           <option value="context">context binding</option>
         </select>
@@ -252,7 +261,7 @@ export function BindableEditor({
           value={value.path}
           onChange={(e) => onChange({ from: "context", path: e.target.value })}
           disabled={disabled}
-          placeholder="/planner_model"
+          placeholder={pathPlaceholder}
         />
       )}
     </div>

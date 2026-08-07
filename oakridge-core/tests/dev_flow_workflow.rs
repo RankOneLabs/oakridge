@@ -45,6 +45,14 @@ fn load_dev_flow_v4() -> WorkflowDef {
         .unwrap_or_else(|e| panic!("failed to parse {}: {e}", path.display()))
 }
 
+fn load_dev_flow_v5() -> WorkflowDef {
+    let path = manifest_dir().join("examples/dev_flow_v5.json");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
+    serde_json::from_str(&text)
+        .unwrap_or_else(|e| panic!("failed to parse {}: {e}", path.display()))
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct RecordedRequest {
     method: Method,
@@ -258,6 +266,42 @@ fn dev_flow_v4_assesses_each_completed_cohort_in_its_build_worktree() {
         effort,
         json!({"from": "context", "path": "/planner_effort"})
     );
+}
+
+#[test]
+fn dev_flow_v5_binds_runtime_model_and_effort_per_role() {
+    let def = load_dev_flow_v5();
+    assert_eq!(def.name, "dev-flow");
+    assert_eq!(def.version, 5);
+
+    // A model is only valid against the runtime it was chosen from, so every stage
+    // must bind both from the same role rather than pinning one and binding the other.
+    for (stage_key, role) in [
+        ("spec_analyzer", "planner"),
+        ("plan_writer", "planner"),
+        ("assessor", "planner"),
+        ("build", "worker"),
+    ] {
+        let stage = def
+            .graph
+            .stages
+            .get(stage_key)
+            .unwrap_or_else(|| panic!("stage '{stage_key}' missing from dev-flow v5"));
+        let config: DelegatedSessionDefConfig =
+            serde_json::from_value(stage.config.clone()).unwrap();
+
+        for (field, value) in [
+            ("runtime", serde_json::to_value(&config.runtime).unwrap()),
+            ("model", serde_json::to_value(&config.model).unwrap()),
+            ("effort", serde_json::to_value(&config.effort).unwrap()),
+        ] {
+            assert_eq!(
+                value,
+                json!({"from": "context", "path": format!("/{role}_{field}")}),
+                "stage '{stage_key}' must bind {field} from /{role}_{field}"
+            );
+        }
+    }
 }
 
 // ── Prompt file existence + root containment ──────────────────────────────────

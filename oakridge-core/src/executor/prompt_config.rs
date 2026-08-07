@@ -148,10 +148,11 @@ fn value_to_string(v: &Value) -> anyhow::Result<String> {
     }
 }
 
-/// Resolve a slot binding for optional model/effort fields, yielding `Ok(None)`
-/// when the bound context key is absent or null (lenient — falls back to the
-/// runtime default). `Input`/`Item`/`ContextLookup` bindings are not valid for model/effort and
-/// are rejected rather than silently coerced to `None`, so a misconfigured def
+/// Resolve a slot binding for the model/effort/runtime fields, yielding `Ok(None)`
+/// when the bound context key is absent or null. Model and effort treat `None` as
+/// "fall back to the runtime default"; runtime has no default and its caller turns
+/// `None` into an error. `Input`/`Item`/`ContextLookup` bindings are not valid here
+/// and are rejected rather than silently coerced to `None`, so a misconfigured def
 /// fails workflow construction instead of quietly using the default.
 pub fn resolve_optional_binding(
     binding: &SlotBinding,
@@ -171,7 +172,7 @@ pub fn resolve_optional_binding(
         SlotBinding::Input { .. }
         | SlotBinding::Item { .. }
         | SlotBinding::ContextLookup { .. } => anyhow::bail!(
-            "model/effort binding must be a literal or a context binding; \
+            "model/effort/runtime binding must be a literal or a context binding; \
              input/item/context_lookup bindings are not supported here"
         ),
     }

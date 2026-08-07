@@ -647,6 +647,7 @@ mod tests {
                 edges: vec![],
             },
             created_at: fixed_dt(),
+            archived: false,
         };
         queries::insert_workflow_def(pool, &def).await.unwrap();
 

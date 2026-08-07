@@ -149,6 +149,7 @@ async fn stuck_sweep_and_retry_via_http() {
             edges: vec![],
         },
         created_at: fixed_dt(),
+        archived: false,
     };
     queries::insert_workflow_def(&pool, &def).await.unwrap();
 
@@ -275,6 +276,7 @@ async fn retry_stuck_on_running_stage_returns_409() {
             edges: vec![],
         },
         created_at: fixed_dt(),
+        archived: false,
     };
     queries::insert_workflow_def(&pool, &def).await.unwrap();
 

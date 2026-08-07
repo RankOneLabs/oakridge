@@ -150,8 +150,19 @@ export function createProject(body: { name: string; repo_dir: string }): Promise
   return oakridgePost<Project>("/projects", body);
 }
 
-export function fetchWorkflowDefs(): Promise<WorkflowDefSummary[]> {
-  return oakridgeGet<WorkflowDefSummary[]>("/workflow_defs");
+// Retired defs are hidden by default: the seed archives superseded built-ins, so
+// without the filter the launcher accumulates every version ever shipped.
+export function fetchWorkflowDefs(includeArchived = false): Promise<WorkflowDefSummary[]> {
+  const query = includeArchived ? "?include_archived=1" : "";
+  return oakridgeGet<WorkflowDefSummary[]>(`/workflow_defs${query}`);
+}
+
+export function archiveWorkflowDef(defId: string): Promise<unknown> {
+  return oakridgePost<unknown>(`/workflow_defs/${encodeURIComponent(defId)}/archive`, {});
+}
+
+export function unarchiveWorkflowDef(defId: string): Promise<unknown> {
+  return oakridgePost<unknown>(`/workflow_defs/${encodeURIComponent(defId)}/unarchive`, {});
 }
 
 export function fetchWorkflowDef(id: string): Promise<WorkflowDefFull> {
