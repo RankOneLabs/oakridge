@@ -878,7 +878,7 @@ curl -sX POST "$CORE/gates/<composite_id>/resume" \
     "gate_step": "artifact_approval",
     "action": "approve",
     "operator_comment": "Reviewed the artifact and worktree",
-    "feedback": ""
+    "feedback": null
   }'
 ```
 

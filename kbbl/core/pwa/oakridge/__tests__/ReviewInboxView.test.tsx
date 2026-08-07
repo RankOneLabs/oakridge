@@ -44,7 +44,9 @@ describe("ReviewInboxView", () => {
   });
 
   it("admits an eligible cohort with an idempotency key", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => init?.method === "POST" ? new Response(null, { status: 204 }) : json(inbox));
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => init?.method === "POST"
+      ? json({ stage_instance_id: "stage-build", unit_id: "api", admitted: true })
+      : json(inbox));
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     render(<QueryClientProvider client={client}><ReviewInboxView onSelectRun={() => {}} onSelectArtifact={() => {}} /></QueryClientProvider>);
     fireEvent.click(await screen.findByTestId("or-inbox-admit-btn"));

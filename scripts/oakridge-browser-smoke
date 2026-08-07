@@ -5,14 +5,19 @@ BASE_URL="${1:-http://127.0.0.1:8788}"
 BASE_URL="${BASE_URL%/}"
 CURL_ARGS=(--fail --silent --show-error --max-time 10)
 
-if [ -n "${OAKRIDGE_CONTROL_TOKEN:-}" ]; then
-  CURL_ARGS+=(--header "Authorization: Bearer ${OAKRIDGE_CONTROL_TOKEN}")
-fi
+curl_request() {
+  if [ -n "${OAKRIDGE_CONTROL_TOKEN:-}" ]; then
+    printf 'Authorization: Bearer %s\n' "$OAKRIDGE_CONTROL_TOKEN" \
+      | curl "${CURL_ARGS[@]}" --header @- "$@"
+  else
+    curl "${CURL_ARGS[@]}" "$@"
+  fi
+}
 
 check() {
   local label="$1"
   local path="$2"
-  curl "${CURL_ARGS[@]}" --output /dev/null "${BASE_URL}${path}"
+  curl_request --output /dev/null "${BASE_URL}${path}"
   echo "ok: ${label} (${BASE_URL}${path})"
 }
 
@@ -20,7 +25,12 @@ check_contains() {
   local label="$1"
   local path="$2"
   local pattern="$3"
-  if ! curl "${CURL_ARGS[@]}" "${BASE_URL}${path}" | grep -Eq "$pattern"; then
+  local body
+  if ! body=$(curl_request "${BASE_URL}${path}"); then
+    echo "failed: ${label} request failed (${BASE_URL}${path})" >&2
+    return 1
+  fi
+  if ! grep -Eq "$pattern" <<<"$body"; then
     echo "failed: ${label} did not return the expected payload (${BASE_URL}${path})" >&2
     return 1
   fi

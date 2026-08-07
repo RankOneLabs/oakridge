@@ -1206,6 +1206,7 @@ fn active_unit_gate(unit: &crate::types::SessionUnit) -> Option<DelegatedGateSta
 struct CohortLifecycleInput<'a> {
     build: &'a crate::types::SessionUnit,
     assessment: Option<&'a crate::types::SessionUnit>,
+    assessment_expected: bool,
     admission_required: bool,
     admitted: bool,
     admission_eligible: bool,
@@ -1226,6 +1227,9 @@ fn derive_cohort_lifecycle(input: CohortLifecycleInput<'_>) -> OperatorCohortLif
         .assessment
         .is_some_and(|unit| matches!(unit.status, UnitStatus::Done))
     {
+        return OperatorCohortLifecycleState::Complete;
+    }
+    if matches!(input.build.status, UnitStatus::Done) && !input.assessment_expected {
         return OperatorCohortLifecycleState::Complete;
     }
     if matches!(input.build.status, UnitStatus::Done) {
@@ -1470,10 +1474,9 @@ pub async fn get_operator_review_inbox(
             let assessment = assessment_units
                 .iter()
                 .find(|unit| unit.unit_id == build.unit_id);
-            let latest_decision = decisions
-                .iter()
-                .rev()
-                .find(|decision| decision.unit_id == build.unit_id);
+            let latest_decision = decisions.iter().rev().find(|decision| {
+                decision.stage_instance_id == build_stage.id && decision.unit_id == build.unit_id
+            });
             let is_admitted = admitted.contains(build.unit_id.as_str());
             let blocked_by: Vec<_> = build
                 .depends_on
@@ -1484,6 +1487,7 @@ pub async fn get_operator_review_inbox(
             let lifecycle = derive_cohort_lifecycle(CohortLifecycleInput {
                 build,
                 assessment,
+                assessment_expected: assessment_stage.is_some(),
                 admission_required,
                 admitted: is_admitted,
                 admission_eligible: blocked_by.is_empty(),
@@ -1589,7 +1593,8 @@ pub async fn get_operator_review_inbox(
                 ));
             }
             for decision in decisions.iter().filter(|decision| {
-                decision.unit_id == build.unit_id
+                decision.stage_instance_id == build_stage.id
+                    && decision.unit_id == build.unit_id
                     && decision.status == crate::types::GateDecisionAuditStatus::Applied
             }) {
                 let mut item = cohort_inbox_item(
@@ -3229,6 +3234,7 @@ mod tests {
                 vec!["cohort-a".to_owned()],
                 None,
             ),
+            ("cohort-d", UnitStatus::Failed, vec![], None),
         ] {
             queries::upsert_session_unit(
                 &state.pool,
@@ -3258,12 +3264,15 @@ mod tests {
             .await
             .unwrap();
         }
+        queries::admit_session_unit(&state.pool, &stage.id, "cohort-a", "admit-cohort-a")
+            .await
+            .unwrap();
 
         let app = crate::http::router(state);
         let (status, body) = req(app, "GET", "/review_inbox", None).await;
         assert_eq!(status, StatusCode::OK, "{body:?}");
-        assert_eq!(body["cohorts"].as_array().unwrap().len(), 3);
-        assert_eq!(body["cohorts"][0]["lifecycle"], json!("waiting_admission"));
+        assert_eq!(body["cohorts"].as_array().unwrap().len(), 4);
+        assert_eq!(body["cohorts"][0]["lifecycle"], json!("building"));
         assert_eq!(body["cohorts"][1]["lifecycle"], json!("artifact_review"));
         assert_eq!(body["cohorts"][1]["repository_key"], json!("oakridge"));
         assert_eq!(
@@ -3276,9 +3285,14 @@ mod tests {
             .iter()
             .map(|item| item["kind"].as_str().unwrap())
             .collect();
-        assert_eq!(kinds, vec!["admission", "artifact_gate", "cohort_blocked"]);
-        assert_eq!(body["items"][0]["state"], json!("actionable"));
+        assert_eq!(
+            kinds,
+            vec!["admission", "artifact_gate", "cohort_blocked", "cohort_failed"]
+        );
+        assert_eq!(body["items"][0]["state"], json!("completed"));
+        assert!(body["items"][0]["completed_at"].as_str().is_some());
         assert_eq!(body["items"][2]["blocked_by"], json!(["cohort-a"]));
+        assert_eq!(body["items"][3]["state"], json!("blocked"));
     }
 
     #[test]
@@ -3308,6 +3322,7 @@ mod tests {
             derive_cohort_lifecycle(CohortLifecycleInput {
                 build: &build,
                 assessment: Some(&assessed),
+                assessment_expected: true,
                 admission_required: true,
                 admitted: true,
                 admission_eligible: true,
@@ -3320,6 +3335,7 @@ mod tests {
             derive_cohort_lifecycle(CohortLifecycleInput {
                 build: &build,
                 assessment: Some(&failed),
+                assessment_expected: true,
                 admission_required: true,
                 admitted: true,
                 admission_eligible: true,
@@ -3333,12 +3349,38 @@ mod tests {
             derive_cohort_lifecycle(CohortLifecycleInput {
                 build: &blocked,
                 assessment: None,
+                assessment_expected: true,
                 admission_required: true,
                 admitted: false,
                 admission_eligible: false,
                 latest_decision: None,
             }),
             OperatorCohortLifecycleState::Building
+        );
+
+        assert_eq!(
+            derive_cohort_lifecycle(CohortLifecycleInput {
+                build: &build,
+                assessment: None,
+                assessment_expected: false,
+                admission_required: false,
+                admitted: true,
+                admission_eligible: true,
+                latest_decision: None,
+            }),
+            OperatorCohortLifecycleState::Complete
+        );
+        assert_eq!(
+            derive_cohort_lifecycle(CohortLifecycleInput {
+                build: &build,
+                assessment: None,
+                assessment_expected: true,
+                admission_required: false,
+                admitted: true,
+                admission_eligible: true,
+                latest_decision: None,
+            }),
+            OperatorCohortLifecycleState::Assessing
         );
     }
 

@@ -18,19 +18,33 @@ next_is_host=0
 next_is_port=0
 for arg in "$@"; do
   if [ "$next_is_host" -eq 1 ]; then
-    KBBL_DISPLAY_HOST="$arg"
     next_is_host=0
+    if [[ -n "$arg" && "$arg" != -* ]]; then
+      KBBL_DISPLAY_HOST="$arg"
+      continue
+    fi
   elif [ "$next_is_port" -eq 1 ]; then
-    KBBL_DISPLAY_PORT="$arg"
     next_is_port=0
-  elif [ "$arg" = "--host" ]; then
+    if [[ -n "$arg" && "$arg" != -* ]]; then
+      KBBL_DISPLAY_PORT="$arg"
+      continue
+    fi
+  fi
+
+  if [ "$arg" = "--host" ]; then
     next_is_host=1
   elif [[ "$arg" == --host=* ]]; then
-    KBBL_DISPLAY_HOST="${arg#--host=}"
+    value="${arg#--host=}"
+    if [ -n "$value" ]; then
+      KBBL_DISPLAY_HOST="$value"
+    fi
   elif [ "$arg" = "--port" ]; then
     next_is_port=1
   elif [[ "$arg" == --port=* ]]; then
-    KBBL_DISPLAY_PORT="${arg#--port=}"
+    value="${arg#--port=}"
+    if [ -n "$value" ]; then
+      KBBL_DISPLAY_PORT="$value"
+    fi
   fi
 done
 
