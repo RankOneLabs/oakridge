@@ -12,6 +12,50 @@ CORE_BIND="${OAKRIDGE_CORE_BIND:-127.0.0.1}"
 CORE_PORT="${OAKRIDGE_CORE_PORT:-8790}"
 CORE_URL="http://${CORE_BIND}:${CORE_PORT}"
 
+KBBL_DISPLAY_HOST="127.0.0.1"
+KBBL_DISPLAY_PORT="${KBBL_PORT:-8788}"
+next_is_host=0
+next_is_port=0
+for arg in "$@"; do
+  if [ "$next_is_host" -eq 1 ]; then
+    next_is_host=0
+    if [[ -n "$arg" && "$arg" != -* ]]; then
+      KBBL_DISPLAY_HOST="$arg"
+      continue
+    fi
+  elif [ "$next_is_port" -eq 1 ]; then
+    next_is_port=0
+    if [[ -n "$arg" && "$arg" != -* ]]; then
+      KBBL_DISPLAY_PORT="$arg"
+      continue
+    fi
+  fi
+
+  if [ "$arg" = "--host" ]; then
+    next_is_host=1
+  elif [[ "$arg" == --host=* ]]; then
+    value="${arg#--host=}"
+    if [ -n "$value" ]; then
+      KBBL_DISPLAY_HOST="$value"
+    fi
+  elif [ "$arg" = "--port" ]; then
+    next_is_port=1
+  elif [[ "$arg" == --port=* ]]; then
+    value="${arg#--port=}"
+    if [ -n "$value" ]; then
+      KBBL_DISPLAY_PORT="$value"
+    fi
+  fi
+done
+
+if [ "$KBBL_DISPLAY_HOST" = "0.0.0.0" ]; then
+  KBBL_DISPLAY_HOST="<machine-ip-or-tailnet-name>"
+elif [ "$KBBL_DISPLAY_HOST" = "::" ]; then
+  KBBL_DISPLAY_HOST="<machine-ipv6-or-tailnet-name>"
+elif [[ "$KBBL_DISPLAY_HOST" == *:* ]] && [[ "$KBBL_DISPLAY_HOST" != \[*\] ]]; then
+  KBBL_DISPLAY_HOST="[$KBBL_DISPLAY_HOST]"
+fi
+
 core_pid=""
 kbbl_pid=""
 
@@ -47,7 +91,7 @@ env -u ANTHROPIC_API_KEY \
   "$OAKRIDGE_ROOT/kbbl/scripts/kbbl-start" "$@" &
 kbbl_pid=$!
 
-echo "oakridge: open http://127.0.0.1:8788/#oakridge"
+echo "oakridge: open http://${KBBL_DISPLAY_HOST}:${KBBL_DISPLAY_PORT}/#oakridge"
 echo "oakridge: Ctrl-C stops both services"
 
 set +e

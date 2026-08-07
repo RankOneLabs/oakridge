@@ -275,6 +275,111 @@ pub struct OperatorArtifactDetail {
     pub revisions: Vec<OperatorArtifactRevision>,
 }
 
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OperatorCohortLifecycleState {
+    WaitingAdmission,
+    Building,
+    ArtifactReview,
+    RevisionRequested,
+    MergeConfirmation,
+    Assessing,
+    Complete,
+    Failed,
+}
+
+#[derive(Serialize, Clone)]
+pub struct OperatorCohortCompletion {
+    pub build_complete: bool,
+    pub assessment_complete: bool,
+}
+
+#[derive(Serialize, Clone)]
+pub struct OperatorCohortAdmission {
+    pub required: bool,
+    pub admitted: bool,
+    pub eligible: bool,
+    pub blocked_by: Vec<String>,
+}
+
+/// A cohort is a derived projection of the durable build unit, its matching
+/// assessment unit, gate state, and admission/decision records. It deliberately
+/// has no independently mutable lifecycle column.
+#[derive(Serialize, Clone)]
+pub struct OperatorCohortLifecycle {
+    pub id: String,
+    pub run_id: String,
+    pub workflow_name: String,
+    pub stage_instance_id: String,
+    pub stage_name: String,
+    pub unit_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repository_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub lifecycle: OperatorCohortLifecycleState,
+    pub completion: OperatorCohortCompletion,
+    pub admission: OperatorCohortAdmission,
+    pub artifact_revision_id: Option<String>,
+    pub artifact_url: Option<String>,
+    pub gate_id: Option<String>,
+    pub gate_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pr_url: Option<String>,
+    pub updated_at: String,
+}
+
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OperatorReviewInboxKind {
+    Admission,
+    ArtifactGate,
+    MergeConfirmation,
+    CohortBlocked,
+    CohortFailed,
+    GateDecision,
+}
+
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OperatorReviewInboxState {
+    Actionable,
+    Blocked,
+    Completed,
+}
+
+#[derive(Serialize, Clone)]
+pub struct OperatorReviewInboxItem {
+    pub id: String,
+    pub kind: OperatorReviewInboxKind,
+    pub state: OperatorReviewInboxState,
+    pub run_id: String,
+    pub workflow_name: String,
+    pub stage_instance_id: String,
+    pub stage_name: String,
+    pub unit_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repository_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub lifecycle: OperatorCohortLifecycleState,
+    pub artifact_revision_id: Option<String>,
+    pub artifact_url: Option<String>,
+    pub gate_id: Option<String>,
+    pub gate_url: Option<String>,
+    pub resume_actions: Vec<String>,
+    pub blocked_by: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pr_url: Option<String>,
+    pub completed_at: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct OperatorReviewInbox {
+    pub cohorts: Vec<OperatorCohortLifecycle>,
+    pub items: Vec<OperatorReviewInboxItem>,
+}
+
 #[derive(Serialize)]
 pub struct ArtifactTypeResponse {
     pub id: String,
@@ -1067,6 +1172,135 @@ fn operator_gate_type_str(gate: &DelegatedGate) -> String {
     }
 }
 
+fn value_string_at(params: Option<&Value>, pointer: &str) -> Option<String> {
+    params?
+        .pointer(pointer)
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+}
+
+fn cohort_gate_kind(gate: Option<&DelegatedGateState>) -> Option<DelegatedGate> {
+    let gate = gate?;
+    gate.steps
+        .get(gate.step_index)
+        .map(|step| match step.gate_type {
+            crate::executor::delegated_session::config::DelegatedGateKind::ArtifactApproval => {
+                DelegatedGate::ArtifactApproval
+            }
+            crate::executor::delegated_session::config::DelegatedGateKind::MergeConfirmation => {
+                DelegatedGate::MergeConfirmation
+            }
+        })
+        .or_else(|| Some(gate.gate.clone()))
+}
+
+fn active_unit_gate(unit: &crate::types::SessionUnit) -> Option<DelegatedGateState> {
+    if !matches!(unit.status, crate::types::UnitStatus::Parked) {
+        return None;
+    }
+    unit.gate_state
+        .as_ref()
+        .and_then(|state| serde_json::from_value::<DelegatedGateState>(state.clone()).ok())
+}
+
+struct CohortLifecycleInput<'a> {
+    build: &'a crate::types::SessionUnit,
+    assessment: Option<&'a crate::types::SessionUnit>,
+    assessment_expected: bool,
+    admission_required: bool,
+    admitted: bool,
+    admission_eligible: bool,
+    latest_decision: Option<&'a GateDecisionAudit>,
+}
+
+fn derive_cohort_lifecycle(input: CohortLifecycleInput<'_>) -> OperatorCohortLifecycleState {
+    use crate::types::UnitStatus;
+
+    if matches!(input.build.status, UnitStatus::Failed)
+        || input
+            .assessment
+            .is_some_and(|unit| matches!(unit.status, UnitStatus::Failed))
+    {
+        return OperatorCohortLifecycleState::Failed;
+    }
+    if input
+        .assessment
+        .is_some_and(|unit| matches!(unit.status, UnitStatus::Done))
+    {
+        return OperatorCohortLifecycleState::Complete;
+    }
+    if matches!(input.build.status, UnitStatus::Done) && !input.assessment_expected {
+        return OperatorCohortLifecycleState::Complete;
+    }
+    if matches!(input.build.status, UnitStatus::Done) {
+        return OperatorCohortLifecycleState::Assessing;
+    }
+
+    let gate = active_unit_gate(input.build);
+    match cohort_gate_kind(gate.as_ref()) {
+        Some(DelegatedGate::ArtifactApproval) => {
+            return OperatorCohortLifecycleState::ArtifactReview;
+        }
+        Some(DelegatedGate::MergeConfirmation) => {
+            return OperatorCohortLifecycleState::MergeConfirmation;
+        }
+        None => {}
+    }
+
+    if matches!(input.build.status, UnitStatus::Running)
+        && input.latest_decision.is_some_and(|decision| {
+            decision.status == crate::types::GateDecisionAuditStatus::Applied
+                && decision.action == "request_revision"
+        })
+    {
+        return OperatorCohortLifecycleState::RevisionRequested;
+    }
+    if input.admission_required
+        && !input.admitted
+        && input.admission_eligible
+        && matches!(input.build.status, UnitStatus::Pending)
+    {
+        return OperatorCohortLifecycleState::WaitingAdmission;
+    }
+    OperatorCohortLifecycleState::Building
+}
+
+fn review_inbox_kind_for_gate(gate: &DelegatedGateState) -> OperatorReviewInboxKind {
+    match cohort_gate_kind(Some(gate)) {
+        Some(DelegatedGate::MergeConfirmation) => OperatorReviewInboxKind::MergeConfirmation,
+        _ => OperatorReviewInboxKind::ArtifactGate,
+    }
+}
+
+fn cohort_inbox_item(
+    cohort: &OperatorCohortLifecycle,
+    kind: OperatorReviewInboxKind,
+    state: OperatorReviewInboxState,
+    suffix: &str,
+) -> OperatorReviewInboxItem {
+    OperatorReviewInboxItem {
+        id: format!("{}:{suffix}", cohort.id),
+        kind,
+        state,
+        run_id: cohort.run_id.clone(),
+        workflow_name: cohort.workflow_name.clone(),
+        stage_instance_id: cohort.stage_instance_id.clone(),
+        stage_name: cohort.stage_name.clone(),
+        unit_id: cohort.unit_id.clone(),
+        repository_key: cohort.repository_key.clone(),
+        title: cohort.title.clone(),
+        lifecycle: cohort.lifecycle,
+        artifact_revision_id: cohort.artifact_revision_id.clone(),
+        artifact_url: cohort.artifact_url.clone(),
+        gate_id: cohort.gate_id.clone(),
+        gate_url: cohort.gate_url.clone(),
+        resume_actions: vec![],
+        blocked_by: cohort.admission.blocked_by.clone(),
+        pr_url: cohort.pr_url.clone(),
+        completed_at: None,
+    }
+}
+
 async fn units_by_stage(
     pool: &sqlx::SqlitePool,
     stages: &[StageInstance],
@@ -1198,6 +1432,191 @@ pub async fn get_operator_run(
         updated_at: run.updated_at.to_rfc3339(),
         is_stuck,
     }))
+}
+
+pub async fn get_operator_review_inbox(
+    State(state): State<AppState>,
+) -> Result<Json<OperatorReviewInbox>, AppError> {
+    let runs = queries::list_operator_run_summaries(&state.pool, Some(false)).await?;
+    let mut cohorts = Vec::new();
+    let mut items = Vec::new();
+
+    for run in runs {
+        let stages = queries::list_stage_instances_for_run(&state.pool, &run.run_id).await?;
+        let Some(build_stage) = stages.iter().find(|stage| stage.stage_key == "build") else {
+            continue;
+        };
+        let assessment_stage = stages.iter().find(|stage| stage.stage_key == "assessor");
+        let build_units =
+            queries::list_session_units_for_stage(&state.pool, &build_stage.id).await?;
+        let assessment_units = match assessment_stage {
+            Some(stage) => queries::list_session_units_for_stage(&state.pool, &stage.id).await?,
+            None => vec![],
+        };
+        let admissions =
+            queries::list_session_unit_admissions(&state.pool, &build_stage.id).await?;
+        let admitted: HashSet<_> = admissions.iter().map(|row| row.unit_id.as_str()).collect();
+        let decisions =
+            queries::list_gate_decision_audits_for_run(&state.pool, &run.run_id).await?;
+        let admission_required = serde_json::from_value::<
+            crate::executor::delegated_session::config::DelegatedSessionConfig,
+        >(build_stage.config.clone())
+        .ok()
+        .and_then(|config| config.fan_out)
+        .is_some_and(|fan_out| fan_out.manual_admission);
+        let done: HashSet<_> = build_units
+            .iter()
+            .filter(|unit| matches!(unit.status, crate::types::UnitStatus::Done))
+            .map(|unit| unit.unit_id.as_str())
+            .collect();
+
+        for build in &build_units {
+            let assessment = assessment_units
+                .iter()
+                .find(|unit| unit.unit_id == build.unit_id);
+            let latest_decision = decisions.iter().rev().find(|decision| {
+                decision.stage_instance_id == build_stage.id && decision.unit_id == build.unit_id
+            });
+            let is_admitted = admitted.contains(build.unit_id.as_str());
+            let blocked_by: Vec<_> = build
+                .depends_on
+                .iter()
+                .filter(|dependency| !done.contains(dependency.as_str()))
+                .cloned()
+                .collect();
+            let lifecycle = derive_cohort_lifecycle(CohortLifecycleInput {
+                build,
+                assessment,
+                assessment_expected: assessment_stage.is_some(),
+                admission_required,
+                admitted: is_admitted,
+                admission_eligible: blocked_by.is_empty(),
+                latest_decision,
+            });
+            let gate = active_unit_gate(build);
+            let artifact_revision_id = gate
+                .as_ref()
+                .map(|gate| gate.artifact_id.0.to_string())
+                .or_else(|| build.artifact_id.map(|id| id.0.to_string()));
+            let gate_id = gate
+                .as_ref()
+                .map(|_| format!("{}:{}", build_stage.id.0, build.unit_id));
+            let cohort = OperatorCohortLifecycle {
+                id: format!("{}:{}", run.run_id.0, build.unit_id),
+                run_id: run.run_id.0.to_string(),
+                workflow_name: run.workflow_name.clone(),
+                stage_instance_id: build_stage.id.0.to_string(),
+                stage_name: build_stage.stage_key.clone(),
+                unit_id: build.unit_id.clone(),
+                repository_key: repository_key_from_params(build.params.as_ref()),
+                title: value_string_at(build.params.as_ref(), "/title"),
+                lifecycle,
+                completion: OperatorCohortCompletion {
+                    build_complete: matches!(build.status, crate::types::UnitStatus::Done),
+                    assessment_complete: assessment
+                        .is_some_and(|unit| matches!(unit.status, crate::types::UnitStatus::Done)),
+                },
+                admission: OperatorCohortAdmission {
+                    required: admission_required,
+                    admitted: is_admitted,
+                    eligible: admission_required
+                        && !is_admitted
+                        && matches!(build.status, crate::types::UnitStatus::Pending)
+                        && blocked_by.is_empty(),
+                    blocked_by,
+                },
+                artifact_url: artifact_revision_id
+                    .as_ref()
+                    .map(|id| format!("/artifact_details/{id}")),
+                artifact_revision_id,
+                gate_url: gate_id.as_ref().map(|id| format!("/gates/{id}/resume")),
+                gate_id,
+                pr_url: gate.as_ref().and_then(|gate| gate.pr_url.clone()),
+                updated_at: build.updated_at.to_rfc3339(),
+            };
+
+            if cohort.admission.required && !cohort.admission.admitted {
+                if cohort.admission.eligible {
+                    items.push(cohort_inbox_item(
+                        &cohort,
+                        OperatorReviewInboxKind::Admission,
+                        OperatorReviewInboxState::Actionable,
+                        "admission",
+                    ));
+                } else if !cohort.admission.blocked_by.is_empty() {
+                    items.push(cohort_inbox_item(
+                        &cohort,
+                        OperatorReviewInboxKind::CohortBlocked,
+                        OperatorReviewInboxState::Blocked,
+                        "blocked",
+                    ));
+                }
+            } else if cohort.admission.required && cohort.admission.admitted {
+                let mut item = cohort_inbox_item(
+                    &cohort,
+                    OperatorReviewInboxKind::Admission,
+                    OperatorReviewInboxState::Completed,
+                    "admission",
+                );
+                item.completed_at = admissions
+                    .iter()
+                    .find(|row| row.unit_id == build.unit_id)
+                    .map(|row| row.admitted_at.clone());
+                items.push(item);
+            }
+            if (!cohort.admission.blocked_by.is_empty() && cohort.admission.admitted)
+                || (matches!(build.status, crate::types::UnitStatus::Parked) && gate.is_none())
+            {
+                items.push(cohort_inbox_item(
+                    &cohort,
+                    OperatorReviewInboxKind::CohortBlocked,
+                    OperatorReviewInboxState::Blocked,
+                    "blocked",
+                ));
+            }
+            if let Some(gate) = gate.as_ref() {
+                let mut item = cohort_inbox_item(
+                    &cohort,
+                    review_inbox_kind_for_gate(gate),
+                    OperatorReviewInboxState::Actionable,
+                    "gate",
+                );
+                item.resume_actions = operator_resume_actions(Some(gate));
+                items.push(item);
+            }
+            if matches!(cohort.lifecycle, OperatorCohortLifecycleState::Failed) {
+                items.push(cohort_inbox_item(
+                    &cohort,
+                    OperatorReviewInboxKind::CohortFailed,
+                    OperatorReviewInboxState::Blocked,
+                    "failed",
+                ));
+            }
+            for decision in decisions.iter().filter(|decision| {
+                decision.stage_instance_id == build_stage.id
+                    && decision.unit_id == build.unit_id
+                    && decision.status == crate::types::GateDecisionAuditStatus::Applied
+            }) {
+                let mut item = cohort_inbox_item(
+                    &cohort,
+                    OperatorReviewInboxKind::GateDecision,
+                    OperatorReviewInboxState::Completed,
+                    &format!("decision:{}", decision.id.0),
+                );
+                let revision_id = decision.artifact_revision_id.0.to_string();
+                item.artifact_revision_id = Some(revision_id.clone());
+                item.artifact_url = Some(format!("/artifact_details/{revision_id}"));
+                item.completed_at = decision
+                    .applied_at
+                    .or(Some(decision.created_at))
+                    .map(|timestamp| timestamp.to_rfc3339());
+                items.push(item);
+            }
+            cohorts.push(cohort);
+        }
+    }
+
+    Ok(Json(OperatorReviewInbox { cohorts, items }))
 }
 
 pub async fn admit_operator_stage_unit(
@@ -2724,6 +3143,375 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn operator_review_inbox_derives_admissions_gates_and_blocked_cohorts() {
+        let state = make_state(vec![]).await;
+        let now = Utc::now();
+        let def = WorkflowDef {
+            id: WorkflowDefId(Uuid::new_v4()),
+            name: "review-inbox".into(),
+            version: 1,
+            graph: WorkflowGraph {
+                stages: HashMap::new(),
+                edges: vec![],
+            },
+            created_at: now,
+            archived: false,
+        };
+        queries::insert_workflow_def(&state.pool, &def)
+            .await
+            .unwrap();
+        let run = WorkflowRun {
+            id: WorkflowRunId(Uuid::new_v4()),
+            workflow_def_id: def.id,
+            project_id: None,
+            status: RunStatus::Running,
+            context: json!({}),
+            version: 1,
+            created_at: now,
+            updated_at: now,
+        };
+        queries::insert_workflow_run(&state.pool, &run)
+            .await
+            .unwrap();
+        let stage = StageInstance {
+            id: StageInstanceId(Uuid::new_v4()),
+            run_id: run.id,
+            stage_key: "build".into(),
+            stage_type: "delegated_session".into(),
+            status: StageStatus::Running,
+            config: json!({
+                "runtime": "codex",
+                "rendered_prompt": "build",
+                "workdir": "/",
+                "session_name": "build",
+                "model": null,
+                "output_slots": [],
+                "fan_out": {
+                    "over": {"from": "literal", "value": "[]"},
+                    "unit_id_path": "/id",
+                    "manual_admission": true
+                }
+            }),
+            parked_reason: None,
+            parked_meta: None,
+            terminal_meta: None,
+            external_ref: None,
+            started_at: Some(now),
+            ended_at: None,
+            created_at: now,
+            updated_at: now,
+        };
+        queries::insert_stage_instance(&state.pool, &stage)
+            .await
+            .unwrap();
+        let assessor_stage = StageInstance {
+            id: StageInstanceId(Uuid::new_v4()),
+            stage_key: "assessor".into(),
+            ..stage.clone()
+        };
+        queries::insert_stage_instance(&state.pool, &assessor_stage)
+            .await
+            .unwrap();
+        let artifact_id = ArtifactId(Uuid::new_v4());
+        let gate = DelegatedGateState {
+            executor: DelegatedExecutor::DelegatedSession,
+            kbbl_sid: "sid-b".into(),
+            gate: DelegatedGate::ArtifactApproval,
+            artifact_id,
+            revision_count: 0,
+            step_index: 0,
+            steps: vec![],
+            requires_zero_open_review_items: false,
+            worktree_path: None,
+            worktree_branch: None,
+            worktree_base_ref: None,
+            pr_url: None,
+        };
+        for (unit_id, status, depends_on, gate_state) in [
+            ("cohort-a", UnitStatus::Pending, vec![], None),
+            (
+                "cohort-b",
+                UnitStatus::Parked,
+                vec![],
+                Some(serde_json::to_value(&gate).unwrap()),
+            ),
+            (
+                "cohort-c",
+                UnitStatus::Pending,
+                vec!["cohort-a".to_owned()],
+                None,
+            ),
+            ("cohort-d", UnitStatus::Failed, vec![], None),
+        ] {
+            queries::upsert_session_unit(
+                &state.pool,
+                &SessionUnit {
+                    stage_instance_id: stage.id,
+                    unit_id: unit_id.into(),
+                    params: Some(json!({
+                        "id": unit_id,
+                        "title": format!("Title {unit_id}"),
+                        "repository_key": "oakridge"
+                    })),
+                    depends_on,
+                    external_ref: None,
+                    worktree_branch: None,
+                    worktree_path: None,
+                    worktree_base_ref: None,
+                    workdir_path: None,
+                    status,
+                    gate_state,
+                    artifact_id: (unit_id == "cohort-b").then_some(artifact_id),
+                    source_artifact_id: None,
+                    terminal_meta: None,
+                    created_at: now,
+                    updated_at: now,
+                },
+            )
+            .await
+            .unwrap();
+        }
+        queries::admit_session_unit(&state.pool, &stage.id, "cohort-a", "admit-cohort-a")
+            .await
+            .unwrap();
+        queries::insert_artifact(
+            &state.pool,
+            &Artifact {
+                id: artifact_id,
+                run_id: run.id,
+                stage_instance_id: stage.id,
+                artifact_type: "any".into(),
+                output_name: Some("out".into()),
+                label: Some("cohort-b".into()),
+                body: json!({"unit_id": "cohort-b"}),
+                version: 1,
+                parent_artifact_id: None,
+                created_at: now,
+            },
+        )
+        .await
+        .unwrap();
+        let revision_id = ArtifactId(Uuid::new_v4());
+        queries::insert_artifact(
+            &state.pool,
+            &Artifact {
+                id: revision_id,
+                run_id: run.id,
+                stage_instance_id: stage.id,
+                artifact_type: "any".into(),
+                output_name: Some("out".into()),
+                label: Some("cohort-b revision".into()),
+                body: json!({"unit_id": "cohort-b", "revision": 2}),
+                version: 2,
+                parent_artifact_id: Some(artifact_id),
+                created_at: now,
+            },
+        )
+        .await
+        .unwrap();
+        let assessor_artifact_id = ArtifactId(Uuid::new_v4());
+        queries::insert_artifact(
+            &state.pool,
+            &Artifact {
+                id: assessor_artifact_id,
+                run_id: run.id,
+                stage_instance_id: assessor_stage.id,
+                artifact_type: "any".into(),
+                output_name: Some("assessment".into()),
+                label: Some("cohort-b assessment".into()),
+                body: json!({"unit_id": "cohort-b"}),
+                version: 1,
+                parent_artifact_id: None,
+                created_at: now,
+            },
+        )
+        .await
+        .unwrap();
+        for (decision_stage, decision_artifact, decision_revision, key) in [
+            (stage.id, artifact_id, revision_id, "build-decision"),
+            (
+                assessor_stage.id,
+                assessor_artifact_id,
+                assessor_artifact_id,
+                "assessor-decision",
+            ),
+        ] {
+            queries::reserve_gate_decision_audit(
+                &state.pool,
+                &GateDecisionAudit {
+                    id: GateDecisionAuditId(Uuid::new_v4()),
+                    run_id: run.id,
+                    stage_instance_id: decision_stage,
+                    unit_id: "cohort-b".into(),
+                    artifact_chain_id: decision_artifact,
+                    artifact_revision_id: decision_revision,
+                    gate_step: "artifact_approval".into(),
+                    action: "approve".into(),
+                    operator_comment: None,
+                    feedback: None,
+                    status: crate::types::GateDecisionAuditStatus::Pending,
+                    created_at: now,
+                    applied_at: None,
+                    idempotency_key: key.into(),
+                },
+            )
+            .await
+            .unwrap();
+            queries::mark_gate_decision_audit_applied(&state.pool, key, now)
+                .await
+                .unwrap();
+        }
+
+        let app = crate::http::router(state);
+        let (status, body) = req(app, "GET", "/review_inbox", None).await;
+        assert_eq!(status, StatusCode::OK, "{body:?}");
+        assert_eq!(body["cohorts"].as_array().unwrap().len(), 4);
+        assert_eq!(body["cohorts"][0]["lifecycle"], json!("building"));
+        assert_eq!(body["cohorts"][1]["lifecycle"], json!("artifact_review"));
+        assert_eq!(body["cohorts"][1]["repository_key"], json!("oakridge"));
+        assert_eq!(
+            body["cohorts"][1]["artifact_url"],
+            json!(format!("/artifact_details/{}", artifact_id.0))
+        );
+        let kinds: Vec<_> = body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["kind"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                "admission",
+                "artifact_gate",
+                "gate_decision",
+                "cohort_blocked",
+                "cohort_failed"
+            ]
+        );
+        assert_eq!(body["items"][0]["state"], json!("completed"));
+        assert!(body["items"][0]["completed_at"].as_str().is_some());
+        assert_eq!(body["items"][2]["state"], json!("completed"));
+        assert_eq!(
+            body["items"][2]["artifact_url"],
+            json!(format!("/artifact_details/{}", revision_id.0))
+        );
+        assert_eq!(body["items"][3]["blocked_by"], json!(["cohort-a"]));
+        assert_eq!(body["items"][4]["state"], json!("blocked"));
+    }
+
+    #[test]
+    fn cohort_lifecycle_prefers_assessment_completion_and_failures() {
+        let now = Utc::now();
+        let unit = |status| SessionUnit {
+            stage_instance_id: StageInstanceId(Uuid::new_v4()),
+            unit_id: "cohort-a".into(),
+            params: None,
+            depends_on: vec![],
+            external_ref: None,
+            worktree_branch: None,
+            worktree_path: None,
+            worktree_base_ref: None,
+            workdir_path: None,
+            status,
+            gate_state: None,
+            artifact_id: None,
+            source_artifact_id: None,
+            terminal_meta: None,
+            created_at: now,
+            updated_at: now,
+        };
+        let build = unit(UnitStatus::Done);
+        let assessed = unit(UnitStatus::Done);
+        assert_eq!(
+            derive_cohort_lifecycle(CohortLifecycleInput {
+                build: &build,
+                assessment: Some(&assessed),
+                assessment_expected: true,
+                admission_required: true,
+                admitted: true,
+                admission_eligible: true,
+                latest_decision: None,
+            }),
+            OperatorCohortLifecycleState::Complete
+        );
+        let failed = unit(UnitStatus::Failed);
+        assert_eq!(
+            derive_cohort_lifecycle(CohortLifecycleInput {
+                build: &build,
+                assessment: Some(&failed),
+                assessment_expected: true,
+                admission_required: true,
+                admitted: true,
+                admission_eligible: true,
+                latest_decision: None,
+            }),
+            OperatorCohortLifecycleState::Failed
+        );
+
+        let blocked = unit(UnitStatus::Pending);
+        assert_eq!(
+            derive_cohort_lifecycle(CohortLifecycleInput {
+                build: &blocked,
+                assessment: None,
+                assessment_expected: true,
+                admission_required: true,
+                admitted: false,
+                admission_eligible: false,
+                latest_decision: None,
+            }),
+            OperatorCohortLifecycleState::Building
+        );
+
+        assert_eq!(
+            derive_cohort_lifecycle(CohortLifecycleInput {
+                build: &build,
+                assessment: None,
+                assessment_expected: false,
+                admission_required: false,
+                admitted: true,
+                admission_eligible: true,
+                latest_decision: None,
+            }),
+            OperatorCohortLifecycleState::Complete
+        );
+        assert_eq!(
+            derive_cohort_lifecycle(CohortLifecycleInput {
+                build: &build,
+                assessment: None,
+                assessment_expected: true,
+                admission_required: false,
+                admitted: true,
+                admission_eligible: true,
+                latest_decision: None,
+            }),
+            OperatorCohortLifecycleState::Assessing
+        );
+    }
+
+    #[test]
+    fn review_inbox_distinguishes_merge_confirmation_from_artifact_review() {
+        let gate = DelegatedGateState {
+            executor: DelegatedExecutor::DelegatedSession,
+            kbbl_sid: "sid".into(),
+            gate: DelegatedGate::MergeConfirmation,
+            artifact_id: ArtifactId(Uuid::new_v4()),
+            revision_count: 0,
+            step_index: 0,
+            steps: vec![],
+            requires_zero_open_review_items: false,
+            worktree_path: None,
+            worktree_branch: None,
+            worktree_base_ref: None,
+            pr_url: None,
+        };
+        assert_eq!(
+            review_inbox_kind_for_gate(&gate),
+            OperatorReviewInboxKind::MergeConfirmation
+        );
+    }
+
     #[test]
     fn legacy_operator_gate_accepts_only_implicit_unit_when_rows_are_absent() {
         let units = Vec::<SessionUnit>::new();
@@ -2811,6 +3599,182 @@ mod tests {
             ),
             "a revision request that moved its target to running is already applied"
         );
+    }
+
+    #[tokio::test]
+    async fn pending_gate_audits_reconcile_applied_actions_without_redelivery() {
+        let state = make_state(vec![]).await;
+        let now = Utc::now();
+        let def = WorkflowDef {
+            id: WorkflowDefId(Uuid::new_v4()),
+            name: format!("gate-reconcile-{}", Uuid::new_v4()),
+            version: 1,
+            graph: WorkflowGraph {
+                stages: HashMap::new(),
+                edges: vec![],
+            },
+            created_at: now,
+            archived: false,
+        };
+        queries::insert_workflow_def(&state.pool, &def)
+            .await
+            .unwrap();
+        let run = WorkflowRun {
+            id: WorkflowRunId(Uuid::new_v4()),
+            workflow_def_id: def.id,
+            project_id: None,
+            status: RunStatus::Running,
+            context: json!({}),
+            version: 1,
+            created_at: now,
+            updated_at: now,
+        };
+        queries::insert_workflow_run(&state.pool, &run)
+            .await
+            .unwrap();
+        let stage_id = StageInstanceId(Uuid::new_v4());
+        queries::insert_stage_instance(
+            &state.pool,
+            &StageInstance {
+                id: stage_id,
+                run_id: run.id,
+                stage_key: "build".into(),
+                stage_type: "delegated_session".into(),
+                status: StageStatus::Parked,
+                config: json!({}),
+                parked_reason: Some("waiting_gate".into()),
+                parked_meta: None,
+                terminal_meta: None,
+                external_ref: None,
+                started_at: Some(now),
+                ended_at: None,
+                created_at: now,
+                updated_at: now,
+            },
+        )
+        .await
+        .unwrap();
+
+        for (unit_id, action, status, current_gate) in [
+            (
+                "approved",
+                "approve",
+                UnitStatus::Parked,
+                DelegatedGate::MergeConfirmation,
+            ),
+            (
+                "revision",
+                "request_revision",
+                UnitStatus::Running,
+                DelegatedGate::ArtifactApproval,
+            ),
+        ] {
+            let artifact_id = ArtifactId(Uuid::new_v4());
+            queries::insert_artifact(
+                &state.pool,
+                &Artifact {
+                    id: artifact_id,
+                    run_id: run.id,
+                    stage_instance_id: stage_id,
+                    artifact_type: "any".into(),
+                    output_name: Some("out".into()),
+                    label: Some(unit_id.into()),
+                    body: json!({"unit_id": unit_id}),
+                    version: 1,
+                    parent_artifact_id: None,
+                    created_at: now,
+                },
+            )
+            .await
+            .unwrap();
+            let gate = DelegatedGateState {
+                executor: DelegatedExecutor::DelegatedSession,
+                kbbl_sid: format!("sid-{unit_id}"),
+                gate: current_gate,
+                artifact_id,
+                revision_count: 1,
+                step_index: usize::from(action == "approve"),
+                steps: vec![],
+                requires_zero_open_review_items: false,
+                worktree_path: None,
+                worktree_branch: None,
+                worktree_base_ref: None,
+                pr_url: None,
+            };
+            queries::upsert_session_unit(
+                &state.pool,
+                &SessionUnit {
+                    stage_instance_id: stage_id,
+                    unit_id: unit_id.into(),
+                    params: Some(json!({"id": unit_id})),
+                    depends_on: vec![],
+                    external_ref: Some(format!("sid-{unit_id}")),
+                    worktree_branch: None,
+                    worktree_path: None,
+                    worktree_base_ref: None,
+                    workdir_path: None,
+                    status,
+                    gate_state: Some(serde_json::to_value(gate).unwrap()),
+                    artifact_id: Some(artifact_id),
+                    source_artifact_id: None,
+                    terminal_meta: None,
+                    created_at: now,
+                    updated_at: now,
+                },
+            )
+            .await
+            .unwrap();
+            let key = format!("crash-{unit_id}");
+            queries::reserve_gate_decision_audit(
+                &state.pool,
+                &GateDecisionAudit {
+                    id: GateDecisionAuditId(Uuid::new_v4()),
+                    run_id: run.id,
+                    stage_instance_id: stage_id,
+                    unit_id: unit_id.into(),
+                    artifact_chain_id: artifact_id,
+                    artifact_revision_id: artifact_id,
+                    gate_step: "artifact_approval".into(),
+                    action: action.into(),
+                    operator_comment: Some("already delivered".into()),
+                    feedback: (action == "request_revision").then(|| "revise".into()),
+                    status: crate::types::GateDecisionAuditStatus::Pending,
+                    created_at: now,
+                    applied_at: None,
+                    idempotency_key: key.clone(),
+                },
+            )
+            .await
+            .unwrap();
+
+            // There is intentionally no live RunTask. Acceptance therefore
+            // proves the retry was reconciled from durable state rather than
+            // redelivered to the executor after the crash window.
+            let (response_status, body) = req(
+                crate::http::router(state.clone()),
+                "POST",
+                &format!("/gates/{}:{unit_id}/resume", stage_id.0),
+                Some(json!({
+                    "idempotency_key": key,
+                    "artifact_revision_id": artifact_id.0.to_string(),
+                    "gate_step": "artifact_approval",
+                    "action": action,
+                    "operator_comment": "already delivered",
+                    "feedback": (action == "request_revision").then_some("revise")
+                })),
+            )
+            .await;
+            assert_eq!(response_status, StatusCode::ACCEPTED, "{body:?}");
+            let audit = queries::get_gate_decision_audit_by_idempotency_key(
+                &state.pool,
+                &format!("crash-{unit_id}"),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert_eq!(audit.status, crate::types::GateDecisionAuditStatus::Applied);
+            assert!(audit.applied_at.is_some());
+        }
     }
 
     #[tokio::test]

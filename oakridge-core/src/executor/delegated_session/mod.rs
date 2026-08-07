@@ -3597,6 +3597,100 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn manual_admission_survives_restart_and_launches_only_admitted_units() {
+        let (base_url, capture, join) = spawn_kbbl_mock().await;
+        let pool = make_pool().await;
+        let mut config = fan_out_config(
+            json!([
+                {"id": "a", "name": "a", "depends_on": []},
+                {"id": "b", "name": "b", "depends_on": []}
+            ]),
+            Some("/depends_on"),
+        );
+        config.fan_out.as_mut().unwrap().manual_admission = true;
+        let config_value = serde_json::to_value(&config).unwrap();
+        let (run_id, stage_instance_id) =
+            setup_stage_instance(&pool, config_value.clone(), None).await;
+
+        let make_context = |status| {
+            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            let ctx = StageContext::new(
+                crate::types::StageInstanceSummary {
+                    stage_instance_id,
+                    workflow_run_id: run_id,
+                    stage_key: "delegate".into(),
+                    status,
+                    parked_reason: None,
+                    parked_meta: None,
+                    terminal_meta: None,
+                    external_ref: None,
+                },
+                config_value.clone(),
+                HashMap::new(),
+                tx,
+                pool.clone(),
+                Arc::new(ArtifactTypeRegistry::new()),
+            );
+            (ctx, rx)
+        };
+
+        // The first process durably materializes both units, but manual
+        // admission prevents either session from being launched.
+        let first_stage = DelegatedSessionStage::new(
+            PathBuf::from("/tmp"),
+            KbblClient::new(base_url.clone()).unwrap(),
+        );
+        let (first_context, _first_events) = make_context(StageStatus::Pending);
+        let first_handle = first_stage.execute(first_context).await.unwrap();
+        let units = queries::list_session_units_for_stage(&pool, &stage_instance_id)
+            .await
+            .unwrap();
+        assert!(units
+            .iter()
+            .all(|unit| matches!(unit.status, UnitStatus::Pending)));
+        assert!(!capture
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|request| request.path == "/sessions"));
+        drop(first_handle);
+        drop(first_stage);
+
+        // Admission is itself durable. A fresh executor instance (the restart
+        // path) must launch the admitted unit and leave every other pending
+        // unit untouched.
+        queries::admit_session_unit(&pool, &stage_instance_id, "a", "admit-a")
+            .await
+            .unwrap();
+        let restarted_stage =
+            DelegatedSessionStage::new(PathBuf::from("/tmp"), KbblClient::new(base_url).unwrap());
+        let (restarted_context, _restarted_events) = make_context(StageStatus::Parked);
+        let restarted_handle = restarted_stage.execute(restarted_context).await.unwrap();
+        let a = queries::get_session_unit(&pool, &stage_instance_id, "a")
+            .await
+            .unwrap();
+        let b = queries::get_session_unit(&pool, &stage_instance_id, "b")
+            .await
+            .unwrap();
+        assert_eq!(a.status, UnitStatus::Running);
+        assert!(a.external_ref.is_some());
+        assert_eq!(b.status, UnitStatus::Pending);
+        assert!(b.external_ref.is_none());
+        assert_eq!(
+            capture
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|request| request.path == "/sessions")
+                .count(),
+            1
+        );
+
+        restarted_handle.cancel().await.unwrap();
+        join.abort();
+    }
+
+    #[tokio::test]
     async fn fan_out_feedback_restarts_only_its_unit_and_bumps_gate_revision() {
         let (base_url, _capture, join) = spawn_kbbl_mock().await;
         let pool = make_pool().await;

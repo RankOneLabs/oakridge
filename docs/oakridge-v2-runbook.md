@@ -24,12 +24,12 @@ kbbl-owned dev-flow (Epic → Spec → Plan → Build → Assess), see
 | v1 Concept | v2 Mapping | Phase 2 Status |
 | --- | --- | --- |
 | **Epic** | project + workflow context (run carries repo and task metadata) | partial — v2 has no named Epic entity; project ties a repo to runs |
-| **Spec** | input artifact (brief notes in run context) + `dev.spec_analysis` stage output | partial — spec analysis runs; no persistent Spec record or discrepancy workflow |
-| **Plan** | `dev.plan` artifact emitted by `plan_writer` stage + artifact-approval gate | partial — plan cohorts and their dependencies drive the build fan-out DAG; there is no DAG editor |
-| **Cohort** | a fanned `stage_session_units` row keyed by the plan cohort id, with its own session and worktree | partial — cohort execution is durable and independently gated, but there is no standalone Cohort entity |
-| **Brief** | prompt templates (`oakridge-core/prompts/dev-flow/`) + scoped stage inputs bound at run time | partial — templates drive each stage; no standalone Brief artifact or review surface |
-| **Assessment** | `dev.assessment` artifact emitted by `assessor` stage | partial — assessor runs and emits; no Assessment inbox or accept/reject lifecycle |
-| **PR merge** | per-cohort PR opened by the seeded build agent + merge-confirmation gate | partial — the agent emits `dev.pr_summary` and v2 shows its PR URL, branch, and path; v2 does not merge the PR |
+| **Spec** | input brief + `dev.spec_analysis` artifact | runnable — discrepancies and review items are handled on the configurable artifact review page before approval |
+| **Plan** | `dev.plan` artifact + descriptor-driven plan viewer and approval gate | runnable — the plan viewer renders cohort dependency edges and the approved plan drives build fan-out |
+| **Cohort** | a fanned `stage_session_units` row keyed by plan cohort id | runnable — each cohort has a brief, dependency-aware manual admission, session/worktree, lifecycle state, and independent gates |
+| **Brief** | the scoped cohort fields in `dev.plan` and the build prompt bindings | runnable — title, repository, scope, description, decisions, and acceptance criteria are shown before admission and passed to the worker |
+| **Assessment** | per-cohort `dev.assessment` artifact emitted by `assessor` | runnable — assessment progress and cohort completion appear in the lifecycle inbox |
+| **PR merge** | per-cohort PR + explicit merge-confirmation gate | runnable operator handoff — v2 displays PR URL/branch/worktree and records `confirm_merged` or `closed_without_merge`; merging remains external |
 
 ## What You Will Run
 
@@ -92,6 +92,48 @@ Then open `http://127.0.0.1:8788/#oakridge`. The command configures the kbbl
 proxy to oakridge-core, rebuilds the PWA, and stops both services together on
 Ctrl-C. It also removes `ANTHROPIC_API_KEY` from the kbbl process environment as
 required by the default Claude Code subscription runtime.
+
+### LAN or tailnet access
+
+The browser only needs access to kbbl on port 8788. Keep oakridge-core on its
+default loopback bind; kbbl forwards `/oakridge/api/*` to it server-side.
+Prefer an authenticated bind:
+
+```bash
+export OAKRIDGE_CONTROL_TOKEN="$(openssl rand -hex 32)"
+./scripts/oakridge-start --host=0.0.0.0
+```
+
+Open `http://<machine-ip-or-tailnet-name>:8788/#oakridge`. The browser prompts
+for the token on first use. If the two services intentionally use different
+tokens, set `OAKRIDGE_CORE_CONTROL_TOKEN` to the core token before starting.
+
+For a short-lived development session on a trusted network only:
+
+```bash
+ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1 \
+  ./scripts/oakridge-start --host=0.0.0.0
+```
+
+This escape hatch disables authentication for reachable control routes and
+prints a warning. It is not suitable for a public interface or untrusted LAN.
+Do not set `OAKRIDGE_CORE_BIND=0.0.0.0` merely to use the PWA remotely.
+
+Verify the exact address a second device will use (the check is read-only):
+
+```bash
+./scripts/oakridge-browser-smoke http://<machine-ip-or-tailnet-name>:8788
+```
+
+When token authentication is enabled, leave `OAKRIDGE_CONTROL_TOKEN` exported
+for the smoke command. It checks the PWA shell, integration config, workflow
+definitions, and review inbox through the same-origin kbbl proxy.
+
+For final browser proof, load the URL on the second device and confirm **Runs**,
+**Review inbox**, and **Workflows** all render without an "oakridge-core not
+configured" banner. The smoke command proves reachability and proxy wiring;
+this short visual check proves that the built JavaScript bundle can render in
+the target browser.
 
 Use the separate commands below when debugging either service.
 
@@ -548,17 +590,21 @@ best-effort and is also recorded in `terminal_meta`.
 
 ## Run The Dev-Flow Workflow
 
-The dev-flow workflow is a four-stage `delegated_session` pipeline with two
-definitions:
+The dev-flow workflow is a four-stage `delegated_session` pipeline. Its bundled
+definitions preserve old runs while the newest definition carries the complete
+operator workflow:
 
 - `oakridge-core/examples/dev_flow.json` (version 1) runs one session per stage.
 - `oakridge-core/examples/dev_flow_v2.json` (version 3) fans build and assessment
   out over the cohorts produced by the plan.
 - `oakridge-core/examples/dev_flow_v4.json` (version 4) starts each
   assessor as soon as its build cohort completes and reuses that build worktree.
-- `oakridge-core/examples/dev_flow_v5.json` (version 5, default) binds each
+- `oakridge-core/examples/dev_flow_v5.json` (version 5) binds each
   stage's **runtime** from run context alongside its model and effort, so the
   planner and worker roles can target different runtimes.
+- `oakridge-core/examples/dev_flow_v6.json` (version 6, default) adds
+  configurable artifact actions, one-step spec/plan approval, manual build
+  admission, cohort briefs, and explicit merge outcomes.
 
 ### Workflow graph
 
@@ -573,9 +619,11 @@ spec_analyzer → plan_writer → build → assessor
 | `build` | `dev.pr_summary`, `dev.build_result` | Implements the plan in one independently gated unit per cohort. |
 | `assessor` | `dev.assessment` | Evaluates each cohort's build result against the plan's acceptance criteria. |
 
-Each stage is a `delegated_session` with typed artifacts and artifact-approval
-and merge-confirmation gates. Version 1 retains the implicit unit id `"0"` and
-single-session behavior.
+Each stage is a `delegated_session` with typed artifacts. In v6, spec and plan
+have one `artifact_approval` step with `approve` and `request_revision`; each
+build cohort has `artifact_approval` followed by `merge_confirmation`, whose
+actions are `confirm_merged` and `closed_without_merge`. Version 1 retains the
+implicit unit id `"0"` and single-session behavior.
 
 In version 3, `plan_writer` emits a repository-bound `cohorts` array and `build` materializes one
 unit per cohort. Each build unit has its own kbbl session, branch, worktree,
@@ -607,14 +655,20 @@ Unlike `model` and `effort`, a bound `runtime` has **no default**: if the launch
 context omits it, the stage fails at config-build time naming the missing
 pointer, rather than silently running on the wrong runtime.
 
+Version 6 retains those runtime bindings. Its build fan-out sets
+`manual_admission: true`, so an eligible cohort waits for an operator after its
+dependencies complete instead of starting immediately. Admission is durable
+and idempotent; refreshing or retrying the same request does not start a second
+session.
+
 ### Role context keys
 
 | Key | Consumed by | Required |
 | --- | --- | --- |
-| `planner_runtime` | `spec_analyzer`, `plan_writer`, `assessor` | yes (v5) |
+| `planner_runtime` | `spec_analyzer`, `plan_writer`, `assessor` | yes (v5/v6) |
 | `planner_model` | same | no — falls back to the runtime default |
 | `planner_effort` | same | no — falls back to the runtime default |
-| `worker_runtime` | `build` | yes (v5) |
+| `worker_runtime` | `build` | yes (v5/v6) |
 | `worker_model` | `build` | no — falls back to the runtime default |
 | `worker_effort` | `build` | no — falls back to the runtime default |
 
@@ -628,12 +682,12 @@ pointer, rather than silently running on the wrong runtime.
 ### Select the workflow definition
 
 oakridge-core seeds the bundled dev-flow definitions on startup. In the kbbl
-PWA, choose **New Run** and select `dev-flow v5` (the newest version is selected
+PWA, choose **New Run** and select `dev-flow v6` (the newest version is selected
 by default). The Planner and Worker pickers each choose a runtime, a model, and
 an effort; all three are sent with the run.
 
 Older versions are retired automatically when a new built-in version is first
-seeded, so only v5 appears in the picker. They are archived, not deleted — every
+seeded, so only v6 appears in the picker. They are archived, not deleted — every
 existing run still resolves its definition. To bring one back, tick **Show
 retired** on the Workflow Definitions screen and choose **Restore** (or
 `POST /workflow_defs/:id/unarchive`); the seed will not re-retire it on later
@@ -649,7 +703,7 @@ CORE=http://127.0.0.1:8790
 
 curl -sX POST "$CORE/workflow_defs" \
   -H 'content-type: application/json' \
-  -d "$(jq '{name,version,graph}' oakridge-core/examples/dev_flow_v5.json)"
+  -d "$(jq '{name,version,graph}' oakridge-core/examples/dev_flow_v6.json)"
 ```
 
 Save the returned `id` as `DEV_FLOW_DEF_ID`. Use `dev_flow.json` instead when
@@ -682,27 +736,47 @@ curl -sX POST "$CORE/workflow_runs" \
 `brief_notes` and the complete keyed repository list are passed into the
 `spec_analyzer` and `plan_writer` prompts. Each planned cohort selects one key.
 
-`planner_runtime` and `worker_runtime` are required by version 5 — omitting
+`planner_runtime` and `worker_runtime` are required by versions 5 and 6 — omitting
 either fails the corresponding stage at config-build time. Drop all six
 role keys when running the version 1 or 3 definitions, which pin their runtime.
 
-### Gate decisions
+### Complete v6 operator workflow
 
-Each stage or fan-out unit parks for artifact approval after emitting its gate
-output. The gate cycle is the same as any other `delegated_session` stage:
+Use the PWA for the normal path; the API remains available for automation.
 
-1. For a stage without `fan_out`, call
-   `POST /stage_instances/<id>/resume` with a passing gate-decision payload. For
-   a fan-out unit, call `POST /gates/<stage_instance_uuid>:<unit_id>/resume`
-   with the composite gate id returned by `GET /parked` or
-   `GET /runs/:id/gates`.
-2. A second pass moves from artifact approval to merge confirmation and then to
-   `done`. At merge confirmation, the operator must verify the displayed PR URL,
-   branch, and path when present before approving — blind approval is not
-   acceptable. A dependent fan-out unit is not eligible until this pass marks
-   every dependency `done`.
-3. A `fail` or `rerun` decision sends feedback into the live kbbl session so the
-   agent can revise its output.
+1. Open the emitted `dev.spec_analysis` from the run or **Review inbox**. Read
+   the discrepancy sections, add/resolve required review items, then choose
+   **Approve**. Choose **Request revision**, include actionable feedback, and
+   review the newly emitted child revision when the analysis is incomplete.
+   Approval always targets the displayed latest revision; a stale tab is
+   rejected.
+2. Review `dev.plan` the same way. The plan viewer shows cohort briefs and real
+   `depends_on` edges. Approve only when repository keys, scope, dependencies,
+   decisions, and acceptance criteria are correct. This is a one-step gate;
+   approval materializes build units exactly once.
+3. Open **Review inbox**. A build cohort appears as **Waiting for admission**.
+   Inspect its brief and blockers. **Admit build** is offered only after every
+   dependency is complete. Admission starts that cohort's kbbl session and
+   worktree; independent eligible cohorts may be admitted in parallel.
+4. Follow the cohort through **Building** to **Artifact review**. Open its
+   artifact, review the descriptor-selected sections and any discussion or
+   checklist items, then choose **Approve** or **Request revision**. Revision
+   feedback returns to the same delegated session; review the latest child
+   artifact before approving.
+5. At **Merge confirmation**, inspect the displayed PR URL, branch, and
+   worktree. After the external PR operation, record **Confirm merged** or
+   **Closed without merge**. Either explicit terminal outcome completes the
+   build cohort and releases eligible dependents; Oakridge never merges the PR
+   itself.
+6. The matching assessor starts from the completed builder worktree. Track
+   **Assessing** and final **Done** state in **Review inbox**. The cohort card
+   separately reports build and assessment completion. When every cohort and
+   assessment is complete, the workflow run reaches `done`.
+
+Gate mutations include a client-generated idempotency key, exact artifact
+revision, gate step, action, comment, and optional feedback. Durable pending
+decision records allow a retry after a process interruption to reconcile the
+already-applied transition rather than duplicate it.
 
 ## Tool Approval Policy
 
@@ -763,7 +837,18 @@ session, worktree, and emitted artifacts; N>1 state is authoritative on these
 unit rows rather than mirrored onto the parent stage row.
 
 The run detail also shows a **Refresh** button and the parked gate panel (see
-below).
+below). A pending manually admitted build unit includes its cohort brief,
+dependency blockers, and **Admit build** action.
+
+### Review inbox (`#oakridge/review-inbox`)
+
+This is the cross-run operator queue. **Needs attention** combines eligible
+build admissions, artifact gates, merge decisions, blocked cohorts, and failed
+cohorts. Artifact items link straight to the review page; admission items can
+be admitted in place. **Cohort lifecycle** tracks every cohort through Waiting
+for admission, Building, Artifact review, Revision requested, Merge
+confirmation, Assessing, Done, or Failed, with separate build and assessment
+completion indicators.
 
 ### Parked gate panel
 
@@ -773,7 +858,8 @@ table. Each parked gate shows:
 - Stage name and artifact revision id
 - Worktree branch and path (when present) — **read before approving a
   merge-confirmation gate**
-- Pass / Fail / Rerun action buttons
+- Only the actions configured for the current step: **Approve** / **Request
+  revision**, or **Confirm merged** / **Closed without merge** in dev-flow v6
 
 The `id` field on each gate returned by `GET /parked` and `GET /runs/:id/gates` is a
 **composite gate id** with the form `"{stage_instance_uuid}:{unit_id}"`. For a
@@ -787,7 +873,10 @@ composite id when calling
 curl -sX POST "$CORE/gates/<composite_id>/resume" \
   -H 'content-type: application/json' \
   -d '{
-    "action": "pass",
+    "idempotency_key": "<new-uuid-retained-for-retries>",
+    "artifact_revision_id": "<exact-displayed-revision-id>",
+    "gate_step": "artifact_approval",
+    "action": "approve",
     "operator_comment": "Reviewed the artifact and worktree",
     "feedback": null
   }'
@@ -797,8 +886,12 @@ The `unit_id` suffix is `"0"` for every stage that does not have a `fan_out` con
 
 ### Artifact inspection (`#oakridge/artifact/<id>`)
 
-Shows the artifact revision chain with body, status, and created-at timestamp
-for each revision. Navigate here from the artifact chips in the stage table.
+The descriptor-driven review shell selects a registered spec, plan, build,
+PR-summary, or assessment viewer and falls back to JSON for unknown types. It
+shows configured sections in order, revision history, comments, review-item
+checklists, and the matching gate actions on the artifact itself. Navigate here
+from stage artifact chips or directly from **Review inbox**. Gate actions target
+the latest displayed revision and reject stale revision or gate-step requests.
 
 ### Delegated session links
 
@@ -878,19 +971,16 @@ dependencies allow it, and temporarily unreachable sessions retry attachment
 without blocking healthy siblings. See `oakridge-core/docs/runtime_delegation.md`
 for the detailed recovery states.
 
-## Not Covered in Phase 2
+## Deliberate boundaries
 
-The following v1 behaviors are explicitly outside the Phase 2 scope:
+The runnable v2 operator flow still leaves these operations outside Oakridge:
 
 - **PR merge** — the seeded v2 build agent opens one PR per cohort and emits a
   `dev.pr_summary`; oakridge-core surfaces the matching PR URL and worktree at
   the unit's merge-confirmation gate. The operator completes the merge itself.
-- **Review-thread workflows** — comment threads, ping-responder, and
-  reviewer-facing review surfaces exist only in the v1 kbbl dev-flow. There is
-  no equivalent in the v2 workflow surface.
 - **Full epic lifecycle management** — v1 Epics carry archive, delete, and status
-  transitions across Spec/Plan/Build/Assess. v2 has no named Epic entity; runs do
-  not carry Epic-level status.
+  transitions. v2 uses workflow runs and cohort lifecycle states rather than a
+  separately named Epic entity.
 - **Automatic retry of failed work** — delegated sessions reattach after a
   coordinator restart, including independent fan-out units. A failed unit is
   not automatically rerun; the operator uses targeted `retry_stuck` or fails
