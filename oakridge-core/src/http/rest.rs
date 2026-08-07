@@ -334,6 +334,7 @@ pub struct OperatorCohortLifecycle {
 pub enum OperatorReviewInboxKind {
     Admission,
     ArtifactGate,
+    MergeConfirmation,
     CohortBlocked,
     CohortFailed,
     GateDecision,
@@ -1207,6 +1208,7 @@ struct CohortLifecycleInput<'a> {
     assessment: Option<&'a crate::types::SessionUnit>,
     admission_required: bool,
     admitted: bool,
+    admission_eligible: bool,
     latest_decision: Option<&'a GateDecisionAudit>,
 }
 
@@ -1251,11 +1253,19 @@ fn derive_cohort_lifecycle(input: CohortLifecycleInput<'_>) -> OperatorCohortLif
     }
     if input.admission_required
         && !input.admitted
+        && input.admission_eligible
         && matches!(input.build.status, UnitStatus::Pending)
     {
         return OperatorCohortLifecycleState::WaitingAdmission;
     }
     OperatorCohortLifecycleState::Building
+}
+
+fn review_inbox_kind_for_gate(gate: &DelegatedGateState) -> OperatorReviewInboxKind {
+    match cohort_gate_kind(Some(gate)) {
+        Some(DelegatedGate::MergeConfirmation) => OperatorReviewInboxKind::MergeConfirmation,
+        _ => OperatorReviewInboxKind::ArtifactGate,
+    }
 }
 
 fn cohort_inbox_item(
@@ -1476,6 +1486,7 @@ pub async fn get_operator_review_inbox(
                 assessment,
                 admission_required,
                 admitted: is_admitted,
+                admission_eligible: blocked_by.is_empty(),
                 latest_decision,
             });
             let gate = active_unit_gate(build);
@@ -1562,7 +1573,7 @@ pub async fn get_operator_review_inbox(
             if let Some(gate) = gate.as_ref() {
                 let mut item = cohort_inbox_item(
                     &cohort,
-                    OperatorReviewInboxKind::ArtifactGate,
+                    review_inbox_kind_for_gate(gate),
                     OperatorReviewInboxState::Actionable,
                     "gate",
                 );
@@ -3299,6 +3310,7 @@ mod tests {
                 assessment: Some(&assessed),
                 admission_required: true,
                 admitted: true,
+                admission_eligible: true,
                 latest_decision: None,
             }),
             OperatorCohortLifecycleState::Complete
@@ -3310,9 +3322,45 @@ mod tests {
                 assessment: Some(&failed),
                 admission_required: true,
                 admitted: true,
+                admission_eligible: true,
                 latest_decision: None,
             }),
             OperatorCohortLifecycleState::Failed
+        );
+
+        let blocked = unit(UnitStatus::Pending);
+        assert_eq!(
+            derive_cohort_lifecycle(CohortLifecycleInput {
+                build: &blocked,
+                assessment: None,
+                admission_required: true,
+                admitted: false,
+                admission_eligible: false,
+                latest_decision: None,
+            }),
+            OperatorCohortLifecycleState::Building
+        );
+    }
+
+    #[test]
+    fn review_inbox_distinguishes_merge_confirmation_from_artifact_review() {
+        let gate = DelegatedGateState {
+            executor: DelegatedExecutor::DelegatedSession,
+            kbbl_sid: "sid".into(),
+            gate: DelegatedGate::MergeConfirmation,
+            artifact_id: ArtifactId(Uuid::new_v4()),
+            revision_count: 0,
+            step_index: 0,
+            steps: vec![],
+            requires_zero_open_review_items: false,
+            worktree_path: None,
+            worktree_branch: None,
+            worktree_base_ref: None,
+            pr_url: None,
+        };
+        assert_eq!(
+            review_inbox_kind_for_gate(&gate),
+            OperatorReviewInboxKind::MergeConfirmation
         );
     }
 
