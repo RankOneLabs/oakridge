@@ -94,10 +94,27 @@ export interface StageArtifact {
 export interface StageUnit {
   unit_id: string;
   repository_key?: RepositoryKey | null;
+  params?: CohortBriefParams | null;
   sid: string | null;
   worktree: WorktreeMetadata | null;
   status: StageStatus;
   gate: string | null;
+  admission_required?: boolean;
+  admitted?: boolean;
+  admission_eligible?: boolean;
+  admission_blocked_by?: string[];
+}
+
+/** The operator-facing subset of the persisted fan-out item contract. */
+export interface CohortBriefParams {
+  title?: string;
+  scope?: string;
+  description?: string;
+  files_in_scope?: string[];
+  decisions?: string[];
+  acceptance_criteria?: string[];
+  depends_on?: string[];
+  repository_key?: RepositoryKey | string;
 }
 
 export interface StageDetail {
@@ -119,6 +136,12 @@ export interface RunDetail {
   parked_count: number;
   updated_at: string;
   is_stuck: boolean;
+}
+
+export interface AdmitStageUnitResponse {
+  stage_instance_id: string;
+  unit_id: string;
+  admitted: boolean;
 }
 
 export interface ArtifactRevision {

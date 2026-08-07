@@ -188,6 +188,7 @@
             "unit_id_path": "/id",
             "depends_on_path": "/depends_on",
             "max_parallel": 4,
+            "manual_admission": true,
             "item_bindings": {
               "COHORT_ID": {
                 "from": "item",

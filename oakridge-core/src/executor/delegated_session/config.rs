@@ -72,6 +72,10 @@ pub struct FanOut {
     /// Max concurrent units (also bounded by kbbl capacity).
     #[serde(default = "default_max_parallel")]
     pub max_parallel: usize,
+    /// Require an explicit operator admission before an otherwise eligible unit
+    /// may launch. Defaults off so existing workflow definitions remain automatic.
+    #[serde(default)]
+    pub manual_admission: bool,
     /// Per-unit prompt slot bindings sourced from the item.
     #[serde(default)]
     pub item_bindings: std::collections::HashMap<String, SlotBinding>,
@@ -417,6 +421,7 @@ mod tests {
             unit_id_path: "/id".into(),
             depends_on_path: Some("/depends_on".into()),
             max_parallel: 4,
+            manual_admission: false,
             item_bindings: {
                 let mut m = std::collections::HashMap::new();
                 m.insert(
@@ -448,6 +453,7 @@ mod tests {
         });
         let fan_out: FanOut = serde_json::from_value(json).unwrap();
         assert_eq!(fan_out.max_parallel, 8);
+        assert!(!fan_out.manual_admission);
         assert!(fan_out.depends_on_path.is_none());
         assert!(fan_out.item_bindings.is_empty());
         assert!(fan_out.worktree.is_none());
