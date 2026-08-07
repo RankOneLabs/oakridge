@@ -20,6 +20,7 @@ export function writeHashSid(sid: string | null): void {
 
 export type OakridgeSubRoute =
   | { sub: "runs" }
+  | { sub: "review-inbox" }
   | { sub: "run"; id: string }
   | { sub: "artifact"; id: string }
   | { sub: "new-run" }
@@ -88,6 +89,9 @@ export function readHashRoute(): HashRoute | null {
     }
     if (rest === "/new-run") {
       return { view: "oakridge", route: { sub: "new-run" } };
+    }
+    if (rest === "/review-inbox") {
+      return { view: "oakridge", route: { sub: "review-inbox" } };
     }
     if (rest === "/create-project") {
       return { view: "oakridge", route: { sub: "create-project" } };

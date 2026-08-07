@@ -24,6 +24,9 @@ import type {
   PatchReviewItemRequest,
   StageDetail,
   StageUnit,
+  ReviewInbox,
+  CohortLifecycleSummary,
+  ReviewInboxItem,
 } from "./types";
 import { parseRepositoryKey } from "./repository-inputs";
 
@@ -33,6 +36,12 @@ type RawStageUnit = Omit<StageUnit, "repository_key"> & { repository_key?: strin
 type RawStageDetail = Omit<StageDetail, "units"> & { units?: RawStageUnit[] };
 type RawRunDetail = Omit<RunDetail, "stages"> & { stages: RawStageDetail[] };
 type RawParkedGate = Omit<ParkedGate, "repository_key"> & { repository_key?: string | null };
+type RawCohortLifecycleSummary = Omit<CohortLifecycleSummary, "repository_key"> & { repository_key?: string | null };
+type RawReviewInboxItem = Omit<ReviewInboxItem, "repository_key"> & { repository_key?: string | null };
+interface RawReviewInbox {
+  cohorts: RawCohortLifecycleSummary[];
+  items: RawReviewInboxItem[];
+}
 
 function parseOptionalRepositoryKey(value: string | null | undefined) {
   if (value == null) return value;
@@ -59,6 +68,19 @@ function parseParkedGates(gates: RawParkedGate[]): ParkedGate[] {
     ...gate,
     repository_key: parseOptionalRepositoryKey(gate.repository_key),
   }));
+}
+
+function parseReviewInbox(inbox: RawReviewInbox): ReviewInbox {
+  return {
+    cohorts: inbox.cohorts.map((cohort) => ({
+      ...cohort,
+      repository_key: parseOptionalRepositoryKey(cohort.repository_key),
+    })),
+    items: inbox.items.map((item) => ({
+      ...item,
+      repository_key: parseOptionalRepositoryKey(item.repository_key),
+    })),
+  };
 }
 
 async function oakridgeGet<T>(path: string): Promise<T> {
@@ -139,6 +161,10 @@ export function fetchRunGates(runId: string): Promise<ParkedGate[]> {
 
 export function fetchGates(): Promise<ParkedGate[]> {
   return oakridgeGet<RawParkedGate[]>("/gates").then(parseParkedGates);
+}
+
+export function fetchReviewInbox(): Promise<ReviewInbox> {
+  return oakridgeGet<RawReviewInbox>("/review_inbox").then(parseReviewInbox);
 }
 
 export function fetchArtifact(id: string): Promise<ArtifactDetail> {

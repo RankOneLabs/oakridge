@@ -21,6 +21,7 @@ export function useAdmitStageUnit(runId: string) {
       requestKeys.current.delete(`${stageId}:${unitId}`);
       void client.invalidateQueries({ queryKey: ["oakridge", "run", runId] });
       void client.invalidateQueries({ queryKey: ["oakridge", "runs"] });
+      void client.invalidateQueries({ queryKey: ["oakridge", "review-inbox"] });
     },
   });
 }
