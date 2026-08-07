@@ -267,6 +267,10 @@ pub fn router(state: AppState) -> Router {
         .route("/parked", get(rest::list_parked))
         .route("/runs", get(rest::list_operator_runs))
         .route("/runs/:id", get(rest::get_operator_run))
+        .route(
+            "/stages/:stage_id/units/:unit_id/admit",
+            post(rest::admit_operator_stage_unit),
+        )
         .route("/runs/:id/gates", get(rest::list_operator_run_gates))
         .route("/gates", get(rest::list_operator_gates))
         .route("/gates/:id/resume", post(rest::resume_operator_gate))

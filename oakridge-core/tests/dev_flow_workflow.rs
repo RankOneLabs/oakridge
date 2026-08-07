@@ -367,6 +367,14 @@ fn dev_flow_v6_declares_review_gate_sequences() {
     }
 }
 
+#[test]
+fn dev_flow_v6_build_requires_manual_cohort_admission() {
+    let def = load_dev_flow_v6();
+    let stage = def.graph.stages.get("build").unwrap();
+    let config: DelegatedSessionDefConfig = serde_json::from_value(stage.config.clone()).unwrap();
+    assert!(config.fan_out.unwrap().manual_admission);
+}
+
 // ── Prompt file existence + root containment ──────────────────────────────────
 
 #[test]

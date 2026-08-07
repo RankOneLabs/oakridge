@@ -126,6 +126,13 @@ export function fetchRun(id: string): Promise<RunDetail> {
   return oakridgeGet<RawRunDetail>(`/runs/${encodeURIComponent(id)}`).then(parseRunDetail);
 }
 
+export function admitStageUnit(stageId: string, unitId: string, idempotencyKey: string): Promise<void> {
+  return oakridgePost<void>(
+    `/stages/${encodeURIComponent(stageId)}/units/${encodeURIComponent(unitId)}/admit`,
+    { idempotency_key: idempotencyKey },
+  );
+}
+
 export function fetchRunGates(runId: string): Promise<ParkedGate[]> {
   return oakridgeGet<RawParkedGate[]>(`/runs/${encodeURIComponent(runId)}/gates`).then(parseParkedGates);
 }

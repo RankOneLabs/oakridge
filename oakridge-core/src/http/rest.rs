@@ -114,6 +114,18 @@ pub struct CreateWorkflowRun {
     pub context: Option<Value>,
 }
 
+#[derive(Deserialize)]
+pub struct AdmitStageUnitRequest {
+    pub idempotency_key: String,
+}
+
+#[derive(Serialize)]
+pub struct AdmitStageUnitResponse {
+    pub stage_instance_id: String,
+    pub unit_id: String,
+    pub admitted: bool,
+}
+
 // ── Response DTOs ─────────────────────────────────────────────────────────────
 
 #[derive(Serialize)]
@@ -153,10 +165,16 @@ pub struct OperatorStageUnit {
     pub unit_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repository_key: Option<String>,
+    /// Durable fan-out item; this is the cohort brief source of truth.
+    pub params: Option<Value>,
     pub sid: Option<String>,
     pub worktree: Option<OperatorWorktreeMetadata>,
     pub status: String,
     pub gate: Option<String>,
+    pub admission_required: bool,
+    pub admitted: bool,
+    pub admission_eligible: bool,
+    pub admission_blocked_by: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -989,7 +1007,12 @@ fn operator_unit_status(status: &crate::types::UnitStatus) -> String {
     .to_owned()
 }
 
-fn operator_stage_unit(unit: crate::types::SessionUnit) -> OperatorStageUnit {
+fn operator_stage_unit(
+    unit: crate::types::SessionUnit,
+    admission_required: bool,
+    admitted: bool,
+    done: &HashSet<String>,
+) -> OperatorStageUnit {
     let repository_key = repository_key_from_params(unit.params.as_ref());
     let sid = unit
         .external_ref
@@ -1008,10 +1031,23 @@ fn operator_stage_unit(unit: crate::types::SessionUnit) -> OperatorStageUnit {
     OperatorStageUnit {
         unit_id: unit.unit_id,
         repository_key,
+        params: unit.params,
         sid,
         worktree,
         status: operator_unit_status(&unit.status),
         gate,
+        admission_required,
+        admitted,
+        admission_eligible: matches!(unit.status, crate::types::UnitStatus::Pending)
+            && unit
+                .depends_on
+                .iter()
+                .all(|dependency| done.contains(dependency)),
+        admission_blocked_by: unit
+            .depends_on
+            .into_iter()
+            .filter(|dependency| !done.contains(dependency))
+            .collect(),
     }
 }
 
@@ -1031,18 +1067,46 @@ fn operator_gate_type_str(gate: &DelegatedGate) -> String {
     }
 }
 
-fn units_by_stage(
+async fn units_by_stage(
+    pool: &sqlx::SqlitePool,
+    stages: &[StageInstance],
     units: Vec<crate::types::SessionUnit>,
-) -> HashMap<StageInstanceId, Vec<OperatorStageUnit>> {
+) -> Result<HashMap<StageInstanceId, Vec<OperatorStageUnit>>, crate::Error> {
     let mut by_stage: HashMap<StageInstanceId, Vec<OperatorStageUnit>> = HashMap::new();
-    for unit in units {
-        let stage_id = unit.stage_instance_id;
-        by_stage
-            .entry(stage_id)
-            .or_default()
-            .push(operator_stage_unit(unit));
+    for stage in stages {
+        let stage_units: Vec<_> = units
+            .iter()
+            .filter(|unit| unit.stage_instance_id == stage.id)
+            .cloned()
+            .collect();
+        let done: HashSet<_> = stage_units
+            .iter()
+            .filter(|unit| matches!(unit.status, crate::types::UnitStatus::Done))
+            .map(|unit| unit.unit_id.clone())
+            .collect();
+        let admitted: HashSet<_> = queries::list_session_unit_admissions(pool, &stage.id)
+            .await?
+            .into_iter()
+            .map(|row| row.unit_id)
+            .collect();
+        let admission_required = serde_json::from_value::<
+            crate::executor::delegated_session::config::DelegatedSessionConfig,
+        >(stage.config.clone())
+        .ok()
+        .and_then(|config| config.fan_out)
+        .is_some_and(|fan_out| fan_out.manual_admission);
+        by_stage.insert(
+            stage.id,
+            stage_units
+                .into_iter()
+                .map(|unit| {
+                    let is_admitted = admitted.contains(&unit.unit_id);
+                    operator_stage_unit(unit, admission_required, is_admitted, &done)
+                })
+                .collect(),
+        );
     }
-    by_stage
+    Ok(by_stage)
 }
 
 fn operator_stage(
@@ -1108,7 +1172,7 @@ pub async fn get_operator_run(
     let artifacts = queries::list_artifacts_for_run(&state.pool, &run_id, None).await?;
     let session_units = queries::list_session_units_for_run(&state.pool, &run_id).await?;
     let artifacts_by_stage = artifacts_by_stage(artifacts);
-    let units_by_stage = units_by_stage(session_units);
+    let units_by_stage = units_by_stage(&state.pool, &stages, session_units).await?;
     let parked_count = stages
         .iter()
         .filter(|stage| matches!(stage.status, StageStatus::Parked))
@@ -1130,6 +1194,110 @@ pub async fn get_operator_run(
         updated_at: run.updated_at.to_rfc3339(),
         is_stuck,
     }))
+}
+
+pub async fn admit_operator_stage_unit(
+    State(state): State<AppState>,
+    Path((stage_id, unit_id)): Path<(Uuid, String)>,
+    Json(body): Json<AdmitStageUnitRequest>,
+) -> Result<(StatusCode, Json<AdmitStageUnitResponse>), AppError> {
+    let stage_instance_id = StageInstanceId(stage_id);
+    let stage = queries::get_stage_instance_by_id(&state.pool, &stage_instance_id).await?;
+    let key = body.idempotency_key.trim();
+    if key.is_empty() {
+        return Err(validation_error("idempotency_key is required"));
+    }
+    let existing = queries::get_session_unit_admission_by_unit_or_key(
+        &state.pool,
+        &stage_instance_id,
+        &unit_id,
+        key,
+    )
+    .await?;
+    let is_idempotent_retry = if let Some(existing) = existing {
+        if existing.stage_instance_id == stage_id.to_string()
+            && existing.unit_id == unit_id
+            && existing.idempotency_key == key
+        {
+            true
+        } else {
+            return Err(AppError::Conflict(
+                "idempotency key or unit already admitted with different identity".into(),
+            ));
+        }
+    } else {
+        false
+    };
+    let config: crate::executor::delegated_session::config::DelegatedSessionConfig =
+        serde_json::from_value(stage.config.clone())
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+    if !config
+        .fan_out
+        .as_ref()
+        .is_some_and(|fan_out| fan_out.manual_admission)
+    {
+        return Err(AppError::Conflict(
+            "stage does not use manual admission".into(),
+        ));
+    }
+    if !is_idempotent_retry {
+        let unit = queries::get_session_unit(&state.pool, &stage_instance_id, &unit_id).await?;
+        if !matches!(unit.status, crate::types::UnitStatus::Pending) {
+            return Err(AppError::Conflict(format!(
+                "unit '{}' is not pending",
+                unit_id
+            )));
+        }
+        let units = queries::list_session_units_for_stage(&state.pool, &stage_instance_id).await?;
+        let done: HashSet<_> = units
+            .iter()
+            .filter(|unit| matches!(unit.status, crate::types::UnitStatus::Done))
+            .map(|unit| unit.unit_id.as_str())
+            .collect();
+        let blocked_by: Vec<_> = unit
+            .depends_on
+            .iter()
+            .filter(|dependency| !done.contains(dependency.as_str()))
+            .cloned()
+            .collect();
+        if !blocked_by.is_empty() {
+            return Err(AppError::Conflict(format!(
+                "unit '{}' is blocked by dependencies: {}",
+                unit_id,
+                blocked_by.join(", ")
+            )));
+        }
+        queries::admit_session_unit(&state.pool, &stage_instance_id, &unit_id, key)
+            .await
+            .map_err(|error| match error {
+                crate::Error::Validation(message) => AppError::Conflict(message),
+                other => AppError::Domain(other),
+            })?;
+    }
+    state
+        .coordinator
+        .resume_parked_stage_if_active(
+            stage.run_id,
+            stage_instance_id,
+            ResumePayload::Executor {
+                payload: json!({
+                    "action": "admit_unit", "unit_id": unit_id, "idempotency_key": key,
+                }),
+            },
+        )
+        .await
+        .map_err(|error| match error {
+            DecisionError::Conflict(message) => AppError::Conflict(message),
+            DecisionError::Internal(error) => AppError::Internal(error.to_string()),
+        })?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(AdmitStageUnitResponse {
+            stage_instance_id: stage_id.to_string(),
+            unit_id,
+            admitted: true,
+        }),
+    ))
 }
 
 pub async fn list_operator_gates(
