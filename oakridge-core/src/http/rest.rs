@@ -16,7 +16,7 @@ use crate::executor::delegated_session::{
     kbbl_client::DelegatedExternalRef, DelegatedGate, DelegatedGateState,
 };
 use crate::executor::ResumePayload;
-use crate::registry::artifact_type::ArtifactCapabilities;
+use crate::registry::artifact_type::{ArtifactCapabilities, ArtifactReviewDescriptor};
 use crate::scheduler::DecisionError;
 use crate::types::{
     Artifact, ArtifactId, GateDecision, GateDecisionAudit, GateDecisionAuditId, GateOutcome,
@@ -208,6 +208,7 @@ pub struct OperatorParkedGate {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repository_key: Option<String>,
     pub artifact_revision_id: Option<String>,
+    pub gate_step: Option<String>,
     pub worktree: Option<OperatorWorktreeMetadata>,
     pub resume_actions: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -249,6 +250,7 @@ pub struct OperatorArtifactDetail {
     pub component_id: Option<String>,
     pub capabilities: Option<ArtifactCapabilities>,
     pub anchor_schema: Option<Vec<String>>,
+    pub review: Option<ArtifactReviewDescriptor>,
     pub run_id: String,
     pub producing_stage: String,
     pub label: Option<String>,
@@ -261,6 +263,7 @@ pub struct ArtifactTypeResponse {
     pub component_id: String,
     pub capabilities: ArtifactCapabilities,
     pub anchor_schema: Option<Vec<String>>,
+    pub review: Option<ArtifactReviewDescriptor>,
 }
 
 // ── Query param structs ───────────────────────────────────────────────────────
@@ -899,6 +902,17 @@ fn operator_gate(
         unit_id,
         repository_key,
         artifact_revision_id: gate.as_ref().map(|gate| gate.artifact_id.0.to_string()),
+        gate_step: gate
+            .as_ref()
+            .and_then(|gate| gate.steps.get(gate.step_index))
+            .map(|step| {
+                match step.gate_type {
+                    crate::executor::delegated_session::config::DelegatedGateKind::ArtifactApproval =>
+                        "artifact_approval".to_owned(),
+                    crate::executor::delegated_session::config::DelegatedGateKind::MergeConfirmation =>
+                        "merge_confirmation".to_owned(),
+                }
+            }),
         worktree: gate
             .as_ref()
             .and_then(|gate| {
@@ -1457,6 +1471,7 @@ pub async fn get_operator_artifact_detail(
     let component_id = type_def.map(|d| d.component_id.clone());
     let capabilities = type_def.map(|d| d.capabilities.clone());
     let anchor_schema = type_def.and_then(|d| d.anchor_schema.clone());
+    let review = type_def.and_then(|d| d.review_descriptor());
 
     Ok(Json(OperatorArtifactDetail {
         id: requested.id.0.to_string(),
@@ -1464,6 +1479,7 @@ pub async fn get_operator_artifact_detail(
         component_id,
         capabilities,
         anchor_schema,
+        review,
         run_id: requested.run_id.0.to_string(),
         producing_stage: producing_stage.stage_key,
         label: requested.label,
@@ -1482,6 +1498,7 @@ pub async fn get_artifact_types(
             component_id: def.component_id.clone(),
             capabilities: def.capabilities.clone(),
             anchor_schema: def.anchor_schema.clone(),
+            review: def.review_descriptor(),
         })
         .collect();
     types.sort_by(|a, b| a.id.cmp(&b.id));
@@ -4120,6 +4137,14 @@ mod tests {
         assert!(
             entry.get("anchor_schema").is_some(),
             "anchor_schema field must be present"
+        );
+        assert!(
+            entry.get("review").is_some(),
+            "review descriptor field must be present"
+        );
+        assert!(
+            entry["review"].is_null(),
+            "non-reviewable types have no review shell"
         );
     }
 }

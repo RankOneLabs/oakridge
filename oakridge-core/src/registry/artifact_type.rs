@@ -1,7 +1,15 @@
 use crate::types::ArtifactTypeId;
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct ArtifactReviewDescriptor {
+    pub viewer: String,
+    pub layout: String,
+    pub sections: Vec<String>,
+    pub action_labels: BTreeMap<String, String>,
+}
 
 /// Capability flags for an artifact type; drives the PWA render surface.
 #[derive(Serialize, Clone, Default)]
@@ -35,6 +43,67 @@ pub struct ArtifactTypeDef {
     /// `revision_id = artifact.id` (the chain root for a freshly emitted artifact).
     /// `None` means items must be posted manually via POST /artifacts/:id/review_items.
     pub review_items_extractor: Option<fn(&Value) -> Vec<crate::collab::ReviewItemCandidate>>,
+}
+
+impl ArtifactTypeDef {
+    /// Serializable presentation policy for the reusable artifact review shell.
+    pub fn review_descriptor(&self) -> Option<ArtifactReviewDescriptor> {
+        if !self.capabilities.reviewable {
+            return None;
+        }
+        let (layout, sections): (&str, &[&str]) = match self.component_id.as_str() {
+            "dev-spec-analysis-viewer" => (
+                "document",
+                &["summary", "findings", "requirements", "risks"],
+            ),
+            "dev-plan-viewer" => (
+                "dag",
+                &[
+                    "summary",
+                    "cohorts",
+                    "dependency_order",
+                    "scope",
+                    "acceptance_criteria",
+                    "risks",
+                ],
+            ),
+            "dev-build-result-viewer" => (
+                "report",
+                &["summary", "changed_files", "tests", "known_issues"],
+            ),
+            "dev-assessment-viewer" => (
+                "report",
+                &[
+                    "verdict",
+                    "findings",
+                    "test_evidence",
+                    "recommended_next_actions",
+                ],
+            ),
+            "dev-pr-summary-viewer" => {
+                ("report", &["pr_url", "branch", "summary", "review_status"])
+            }
+            _ => ("document", &[]),
+        };
+        let action_labels = [
+            ("approve", "Approve"),
+            ("request_revision", "Request revision"),
+            ("confirm_merged", "Confirm merged"),
+            ("closed_without_merge", "Close without merge"),
+        ]
+        .into_iter()
+        .map(|(action, label)| (action.to_owned(), label.to_owned()))
+        .collect();
+        Some(ArtifactReviewDescriptor {
+            viewer: self.component_id.clone(),
+            layout: layout.to_owned(),
+            sections: sections
+                .iter()
+                .map(|section| (*section).to_owned())
+                .collect(),
+            action_labels,
+        })
+    }
 }
 
 /// Registry that maps artifact-type IDs to their definitions.

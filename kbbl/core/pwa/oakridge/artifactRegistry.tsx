@@ -1,4 +1,5 @@
 import type { ComponentType } from "react";
+import type { ArtifactReviewDescriptor } from "./types";
 import { SpecAnalysisViewer } from "./viewers/SpecAnalysisViewer";
 import { PlanViewer } from "./viewers/PlanViewer";
 import { BuildResultViewer } from "./viewers/BuildResultViewer";
@@ -7,6 +8,7 @@ import { PrSummaryViewer } from "./viewers/PrSummaryViewer";
 
 export interface ViewerProps {
   body: unknown;
+  descriptor?: ArtifactReviewDescriptor | null;
 }
 
 interface RegistryEntry {

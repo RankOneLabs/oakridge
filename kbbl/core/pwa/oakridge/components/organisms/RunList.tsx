@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useRuns } from "../../hooks/useRuns";
 import type { RunSummary } from "../../types";
 import { formatRelative } from "../../../lib/time";
+import { GlobalParkedGateList } from "../../ParkedGateList";
 
 type FilterTab = "all" | "active" | "parked" | "complete" | "archived";
 
@@ -54,6 +55,7 @@ interface RunListProps {
   onSelectRun: (id: string) => void;
   onNewRun: () => void;
   onNewProject: () => void;
+  onSelectArtifact?: (id: string) => void;
 }
 
 const FILTER_TABS: { key: FilterTab; label: string }[] = [
@@ -64,7 +66,7 @@ const FILTER_TABS: { key: FilterTab; label: string }[] = [
   { key: "archived", label: "Archived" },
 ];
 
-export function RunList({ onSelectRun, onNewRun, onNewProject }: RunListProps) {
+export function RunList({ onSelectRun, onNewRun, onNewProject, onSelectArtifact }: RunListProps) {
   const [activeTab, setActiveTab] = useState<FilterTab>("all");
   const qc = useQueryClient();
   const apiFilter = activeTab === "archived" ? "archived" : undefined;
@@ -78,6 +80,12 @@ export function RunList({ onSelectRun, onNewRun, onNewProject }: RunListProps) {
 
   return (
     <div data-testid="or-run-list">
+      {onSelectArtifact && <div className="mb-6">
+        <GlobalParkedGateList
+          onNavigateRun={onSelectRun}
+          onNavigateArtifact={onSelectArtifact}
+        />
+      </div>}
       <div className="mb-4 flex items-center justify-between gap-3">
         <h2 className="m-0 text-lg font-semibold text-[var(--text-primary)]">Workflow Runs</h2>
         <div className="flex items-center gap-2">

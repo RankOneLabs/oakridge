@@ -265,6 +265,14 @@ describe("GlobalParkedGateList", () => {
     fireEvent.click(runLink);
     expect(onNavigateRun).toHaveBeenCalledWith("run-2");
   });
+
+  it("links a parked gate directly to its review artifact", async () => {
+    const onNavigateArtifact = vi.fn();
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json([PARKED_GATE_FIXTURE]));
+    wrap(<GlobalParkedGateList onNavigateRun={() => {}} onNavigateArtifact={onNavigateArtifact} />);
+    fireEvent.click(await screen.findByTestId("or-gate-artifact-link"));
+    expect(onNavigateArtifact).toHaveBeenCalledWith("rev-abc");
+  });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -349,6 +357,34 @@ describe("ArtifactReviewView", () => {
     wrap(<ArtifactReviewView artifactId="art-1" onBack={() => {}} />);
     const status = await screen.findByTestId("or-revision-status");
     expect(status.textContent).toBe("approved");
+  });
+
+  it("uses the review descriptor layout and action labels for an artifact-local gate", async () => {
+    const described: ArtifactDetail = {
+      ...ARTIFACT_FIXTURE,
+      revisions: [{
+        ...ARTIFACT_FIXTURE.revisions[0]!,
+        body: { details: "Second", summary: "First" },
+      }],
+      review: {
+        viewer: "json",
+        layout: "report",
+        sections: ["summary", "details"],
+        action_labels: { approve: "Approve discrepancy report" },
+      },
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/gates")) return json([{ ...PARKED_GATE_FIXTURE, artifact_revision_id: "rev-1", resume_actions: ["approve"] }]);
+      return json(described);
+    });
+    wrap(<ArtifactReviewView artifactId="art-1" onBack={() => {}} />);
+
+    await waitFor(() => expect(screen.getByTestId("or-artifact-detail").getAttribute("data-review-layout")).toBe("report"));
+    expect(await screen.findByTestId("or-artifact-gate-actions")).toBeTruthy();
+    expect(screen.getByTestId("or-resume-action-static").textContent).toContain("Approve discrepancy report");
+    const sections = Array.from(screen.getByTestId("or-descriptor-sections").querySelectorAll("[data-artifact-section]"));
+    expect(sections.map((section) => section.getAttribute("data-artifact-section"))).toEqual(["summary", "details"]);
   });
 
   it("shows error state when artifact fetch fails", async () => {

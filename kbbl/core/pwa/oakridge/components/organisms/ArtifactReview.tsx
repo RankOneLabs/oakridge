@@ -6,17 +6,28 @@ import { usePostMessage } from "../../hooks/usePostMessage";
 import { usePingThread } from "../../hooks/usePingThread";
 import { useResolveThread } from "../../hooks/useResolveThread";
 import { useReviewItems } from "../../hooks/useReviewItems";
+import { useGates } from "../../hooks/useGates";
 import { usePatchReviewItem } from "../../hooks/usePatchReviewItem";
 import { resolveViewer } from "../../artifactRegistry";
 import { ReviewItemsChecklist } from "../../ReviewItemsChecklist";
-import type { ArtifactRevision } from "../../types";
+import type { ArtifactRevision, ArtifactReviewDescriptor } from "../../types";
 import { formatRelative } from "../../../lib/time";
 import { ThreadSidebar } from "../../../review/shared/ThreadSidebar";
 import { ThreadView } from "../../../review/shared/ThreadView";
 import type { Thread, Message } from "../../../review/shared/types";
+import { GateResumeForm } from "../../GateResumeForm";
+import { ArtifactReviewShell } from "./ArtifactReviewShell";
 
 // JSON pretty-print fallback — retained from ArtifactDetailView
-function JsonRevisionPanel({ revision }: { revision: ArtifactRevision }) {
+function stringify(value: unknown): string {
+  try {
+    return typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function JsonRevisionPanel({ revision, descriptor }: { revision: ArtifactRevision; descriptor?: ArtifactReviewDescriptor | null }) {
   let bodyText: string;
   try {
     bodyText = JSON.stringify(revision.body, null, 2);
@@ -37,7 +48,19 @@ function JsonRevisionPanel({ revision }: { revision: ArtifactRevision }) {
     <div className="or-revision-panel" data-testid="or-revision-panel">
       <div className="or-revision-panel__body">
         <span className="or-label">Body</span>
-        <pre className="or-pre" data-testid="or-revision-body">{bodyText}</pre>
+        {descriptor?.sections.length && revision.body && typeof revision.body === "object" && !Array.isArray(revision.body) ? (
+          <div data-testid="or-descriptor-sections">
+            {descriptor.sections.map((section) => {
+              const value = (revision.body as Record<string, unknown>)[section];
+              return value === undefined ? null : (
+                <section key={section} data-artifact-section={section}>
+                  <h3 className="or-viewer__section-title">{section.replaceAll("_", " ")}</h3>
+                  <pre className="or-pre">{stringify(value)}</pre>
+                </section>
+              );
+            })}
+          </div>
+        ) : <pre className="or-pre" data-testid="or-revision-body">{bodyText}</pre>}
       </div>
       {validationText && (
         <div className="or-revision-panel__validation">
@@ -66,6 +89,7 @@ export function ArtifactReview({ artifactId, onBack }: ArtifactReviewProps) {
 
   const threadsQuery = useThreads(artifactId, commentable);
   const reviewItemsQuery = useReviewItems(artifactId, hasReviewItems);
+  const gatesQuery = useGates();
 
   const postThread = usePostThread(artifactId);
   const postMessage = usePostMessage(artifactId, selectedThreadId ?? "");
@@ -102,6 +126,7 @@ export function ArtifactReview({ artifactId, onBack }: ArtifactReviewProps) {
 
   // Resolve viewer: component_id → type_id → JSON fallback
   const Viewer =
+    resolveViewer(artifact.review?.viewer) ??
     resolveViewer(artifact.component_id) ??
     resolveViewer(artifact.type_id) ??
     null;
@@ -152,6 +177,10 @@ export function ArtifactReview({ artifactId, onBack }: ArtifactReviewProps) {
   }
 
   const reviewItems = reviewItemsQuery.data ?? [];
+  const gates = Array.isArray(gatesQuery.data) ? gatesQuery.data : [];
+  const artifactGate = gates.find((gate) =>
+    revisions.some((candidate) => candidate.id === gate.artifact_revision_id),
+  );
 
   function handleResolveItem(id: string, resolution: string) {
     patchReviewItem.mutate({ id, req: { status: "resolved", resolution: resolution || undefined } });
@@ -161,10 +190,8 @@ export function ArtifactReview({ artifactId, onBack }: ArtifactReviewProps) {
     patchReviewItem.mutate({ id, req: { status: "waived", resolution: resolution || undefined } });
   }
 
-  return (
-    <div className="or-artifact-detail" data-testid="or-artifact-detail">
+  const header = <>
       <button type="button" className="or-btn or-btn--secondary" onClick={onBack}>← Back</button>
-
       <header className="or-artifact-detail__header">
         <h2 className="or-artifact-detail__title" data-testid="or-artifact-type">
           {artifact.type_id}
@@ -188,8 +215,9 @@ export function ArtifactReview({ artifactId, onBack }: ArtifactReviewProps) {
           )}
         </div>
       </header>
+    </>;
 
-      {revisions.length > 1 && (
+  const revisionNavigation = revisions.length > 1 ? (
         <nav className="or-artifact-detail__rev-nav">
           {revisions.map((rev, i) => (
             <button
@@ -204,9 +232,9 @@ export function ArtifactReview({ artifactId, onBack }: ArtifactReviewProps) {
             </button>
           ))}
         </nav>
-      )}
+      ) : undefined;
 
-      {revision && (
+  const artifactContent = revision ? (
         <section className="or-artifact-detail__revision">
           <div className="or-revision-panel__meta">
             <span className="or-label">Revision</span>
@@ -218,19 +246,15 @@ export function ArtifactReview({ artifactId, onBack }: ArtifactReviewProps) {
           </div>
 
           {Viewer ? (
-            <Viewer body={revision.body} />
+            <Viewer body={revision.body} descriptor={artifact.review} />
           ) : (
-            <JsonRevisionPanel revision={revision} />
+            <JsonRevisionPanel revision={revision} descriptor={artifact.review} />
           )}
         </section>
-      )}
-
-      {revisions.length === 0 && (
-        <div className="or-empty">No revisions.</div>
-      )}
+      ) : <div className="or-empty">No revisions.</div>;
 
       {/* ── Collab chrome: review items ─────────────────────────────────── */}
-      {hasReviewItems && (
+  const reviewItemsContent = hasReviewItems ? (
         <section className="or-artifact-detail__collab" data-testid="or-review-items-section">
           <ReviewItemsChecklist
             items={reviewItems}
@@ -238,10 +262,10 @@ export function ArtifactReview({ artifactId, onBack }: ArtifactReviewProps) {
             onWaive={handleWaiveItem}
           />
         </section>
-      )}
+      ) : undefined;
 
       {/* ── Collab chrome: threads ──────────────────────────────────────── */}
-      {commentable && (
+  const threadsContent = commentable ? (
         <section className="or-artifact-detail__threads" data-testid="or-threads-section">
           <div className="or-threads-layout">
             <ThreadSidebar
@@ -262,7 +286,27 @@ export function ArtifactReview({ artifactId, onBack }: ArtifactReviewProps) {
             )}
           </div>
         </section>
-      )}
-    </div>
+      ) : undefined;
+
+  const gateActions = artifactGate ? (
+    <section className="or-artifact-detail__collab" data-testid="or-artifact-gate-actions">
+      <GateResumeForm
+        gate={artifactGate}
+        actionLabels={artifact.review?.action_labels}
+        onDone={() => undefined}
+      />
+    </section>
+  ) : undefined;
+
+  return (
+    <ArtifactReviewShell
+      descriptor={artifact.review ?? null}
+      header={header}
+      revisionNavigation={revisionNavigation}
+      artifact={artifactContent}
+      reviewItems={reviewItemsContent}
+      threads={threadsContent}
+      gateActions={gateActions}
+    />
   );
 }

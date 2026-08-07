@@ -246,6 +246,19 @@ mod tests {
         reg
     }
 
+    #[test]
+    fn review_descriptors_are_serializable_ui_policy() {
+        let registry = make_registry();
+        let plan = registry
+            .get("dev.plan")
+            .and_then(ArtifactTypeDef::review_descriptor)
+            .expect("plan is reviewable");
+        assert_eq!(plan.viewer, "dev-plan-viewer");
+        assert_eq!(plan.layout, "dag");
+        assert_eq!(plan.sections.first().map(String::as_str), Some("summary"));
+        assert_eq!(plan.action_labels["request_revision"], "Request revision");
+    }
+
     // ── Registration ─────────────────────────────────────────────────────────
 
     #[test]

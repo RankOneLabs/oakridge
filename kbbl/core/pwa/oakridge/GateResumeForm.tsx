@@ -5,9 +5,10 @@ import type { ParkedGate } from "./types";
 interface GateResumeFormProps {
   gate: ParkedGate;
   onDone: () => void;
+  actionLabels?: Record<string, string>;
 }
 
-export function GateResumeForm({ gate, onDone }: GateResumeFormProps) {
+export function GateResumeForm({ gate, onDone, actionLabels = {} }: GateResumeFormProps) {
   const [action, setAction] = useState<string>(gate.resume_actions[0] ?? "");
   const [operatorComment, setOperatorComment] = useState("");
   const [feedback, setFeedback] = useState("");
@@ -29,7 +30,7 @@ export function GateResumeForm({ gate, onDone }: GateResumeFormProps) {
       {
         idempotency_key: crypto.randomUUID(),
         artifact_revision_id: gate.artifact_revision_id,
-        gate_step: gate.gate_type,
+        gate_step: gate.gate_step ?? gate.gate_type,
         action,
         operator_comment: operatorComment.trim(),
         feedback: feedback.trim(),
@@ -64,7 +65,7 @@ export function GateResumeForm({ gate, onDone }: GateResumeFormProps) {
             data-testid="or-resume-action"
           >
             {gate.resume_actions.map((a) => (
-              <option key={a} value={a}>{a}</option>
+              <option key={a} value={a}>{actionLabels[a] ?? a}</option>
             ))}
           </select>
         </div>
@@ -73,7 +74,9 @@ export function GateResumeForm({ gate, onDone }: GateResumeFormProps) {
       {gate.resume_actions.length === 1 && (
         <div className="or-resume-form__field">
           <span className="or-label">Action</span>
-          <span className="or-chip or-chip--action" data-testid="or-resume-action-static">{action}</span>
+          <span className="or-chip or-chip--action" data-testid="or-resume-action-static">
+            {actionLabels[action] ?? action}
+          </span>
         </div>
       )}
 

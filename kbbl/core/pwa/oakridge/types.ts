@@ -136,11 +136,19 @@ export interface ArtifactCapabilities {
   review_items: boolean;
 }
 
+export interface ArtifactReviewDescriptor {
+  viewer: string;
+  layout: "document" | "dag" | "report";
+  sections: string[];
+  action_labels: Record<string, string>;
+}
+
 export interface ArtifactTypeDescriptor {
   id: string;
   component_id: string;
   capabilities: ArtifactCapabilities;
   anchor_schema: string[] | null;
+  review?: ArtifactReviewDescriptor | null;
 }
 
 export interface ArtifactDetail {
@@ -149,6 +157,7 @@ export interface ArtifactDetail {
   component_id: string | null;
   capabilities: ArtifactCapabilities | null;
   anchor_schema: string[] | null;
+  review?: ArtifactReviewDescriptor | null;
   run_id: string;
   producing_stage: string;
   label?: string | null;
@@ -163,6 +172,7 @@ export interface ParkedGate {
   unit_id: string;
   repository_key?: RepositoryKey | null;
   artifact_revision_id: string | null;
+  gate_step?: string;
   worktree: WorktreeMetadata | null;
   resume_actions: string[];
   pr_url?: string | null;
