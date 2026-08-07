@@ -179,7 +179,11 @@ export function RunDetail({ runId, onBack, onSelectArtifact }: RunDetailProps) {
                         onSelectArtifact={onSelectArtifact}
                         onAdmit={(unitId) => void admitMutation.mutate({ stageId: stage.stage_instance_id, unitId })}
                         admitting={admitMutation.isPending && admitMutation.variables?.stageId === stage.stage_instance_id && admitMutation.variables.unitId === unit.unit_id}
-                        admissionError={admitMutation.isError && admitMutation.variables?.unitId === unit.unit_id ? (admitMutation.error instanceof Error ? admitMutation.error.message : "Admission failed") : undefined}
+                        admissionError={admitMutation.isError
+                          && admitMutation.variables?.stageId === stage.stage_instance_id
+                          && admitMutation.variables.unitId === unit.unit_id
+                          ? (admitMutation.error instanceof Error ? admitMutation.error.message : "Admission failed")
+                          : undefined}
                       />
                     );
                   });

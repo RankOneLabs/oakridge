@@ -138,6 +138,12 @@ export interface RunDetail {
   is_stuck: boolean;
 }
 
+export interface AdmitStageUnitResponse {
+  stage_instance_id: string;
+  unit_id: string;
+  admitted: boolean;
+}
+
 export interface ArtifactRevision {
   id: string;
   status: "draft" | "approved" | "rejected";

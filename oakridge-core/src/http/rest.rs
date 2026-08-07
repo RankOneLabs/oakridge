@@ -1073,12 +1073,16 @@ async fn units_by_stage(
     units: Vec<crate::types::SessionUnit>,
 ) -> Result<HashMap<StageInstanceId, Vec<OperatorStageUnit>>, crate::Error> {
     let mut by_stage: HashMap<StageInstanceId, Vec<OperatorStageUnit>> = HashMap::new();
+    let mut raw_by_stage: HashMap<StageInstanceId, Vec<crate::types::SessionUnit>> =
+        HashMap::new();
+    for unit in units {
+        raw_by_stage
+            .entry(unit.stage_instance_id)
+            .or_default()
+            .push(unit);
+    }
     for stage in stages {
-        let stage_units: Vec<_> = units
-            .iter()
-            .filter(|unit| unit.stage_instance_id == stage.id)
-            .cloned()
-            .collect();
+        let stage_units = raw_by_stage.remove(&stage.id).unwrap_or_default();
         let done: HashSet<_> = stage_units
             .iter()
             .filter(|unit| matches!(unit.status, crate::types::UnitStatus::Done))
