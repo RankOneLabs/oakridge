@@ -74,7 +74,8 @@ export function PlanViewer({ body, descriptor }: Props) {
   const dependencies = rawDependencies.length > 0
     ? adaptDependencies(rawDependencies)
     : deriveCohortDependencies(rawCohorts);
-  const visible = (section: string) => !descriptor?.sections.length || descriptor.sections.includes(section);
+  const configuredSections = descriptor?.sections ?? [];
+  const visible = (section: string) => configuredSections.length === 0 || configuredSections.includes(section);
   const cohorts = adaptCohorts(rawCohorts);
   // dependency_order is a topological sort of IDs, not an explicit edge list;
   // passing empty deps avoids rendering a false linear chain. Explicit edges
@@ -123,6 +124,13 @@ export function PlanViewer({ body, descriptor }: Props) {
         </section>
       )}
 
+      {data.scope !== undefined && visible("scope") && (
+        <section className="or-viewer__section">
+          <h3 className="or-viewer__section-title">Scope</h3>
+          <pre className="or-pre">{typeof data.scope === "string" ? data.scope : JSON.stringify(data.scope, null, 2)}</pre>
+        </section>
+      )}
+
       {Array.isArray(data.acceptance_criteria) && data.acceptance_criteria.length > 0 && visible("acceptance_criteria") && (
         <section className="or-viewer__section">
           <h3 className="or-viewer__section-title">Acceptance Criteria</h3>
@@ -130,6 +138,19 @@ export function PlanViewer({ body, descriptor }: Props) {
             {data.acceptance_criteria.map((c, i) => (
               <li key={i} className="or-viewer__list-item">
                 {typeof c === "string" ? c : JSON.stringify(c)}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {Array.isArray(data.risks) && data.risks.length > 0 && visible("risks") && (
+        <section className="or-viewer__section">
+          <h3 className="or-viewer__section-title">Risks</h3>
+          <ul className="or-viewer__list">
+            {data.risks.map((risk, index) => (
+              <li key={index} className="or-viewer__list-item">
+                {typeof risk === "string" ? risk : JSON.stringify(risk)}
               </li>
             ))}
           </ul>

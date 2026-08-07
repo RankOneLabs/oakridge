@@ -902,17 +902,17 @@ fn operator_gate(
         unit_id,
         repository_key,
         artifact_revision_id: gate.as_ref().map(|gate| gate.artifact_id.0.to_string()),
-        gate_step: gate
-            .as_ref()
-            .and_then(|gate| gate.steps.get(gate.step_index))
-            .map(|step| {
-                match step.gate_type {
+        gate_step: gate.as_ref().map(|gate| {
+            gate.steps
+                .get(gate.step_index)
+                .map(|step| match step.gate_type {
                     crate::executor::delegated_session::config::DelegatedGateKind::ArtifactApproval =>
                         "artifact_approval".to_owned(),
                     crate::executor::delegated_session::config::DelegatedGateKind::MergeConfirmation =>
                         "merge_confirmation".to_owned(),
-                }
-            }),
+                })
+                .unwrap_or_else(|| operator_gate_type_str(&gate.gate))
+        }),
         worktree: gate
             .as_ref()
             .and_then(|gate| {
@@ -2539,11 +2539,13 @@ mod tests {
         let gates = operator_gates_for_stage(&state.pool, &stage).await.unwrap();
         assert_eq!(gates.len(), 2);
         assert_eq!(gates[0].unit_id, "cohort-a");
+        assert_eq!(gates[0].gate_step.as_deref(), Some("merge_confirmation"));
         assert_eq!(
             gates[0].pr_url.as_deref(),
             Some("https://github.com/acme/repo/pull/cohort-a")
         );
         assert_eq!(gates[1].unit_id, "cohort-b");
+        assert_eq!(gates[1].gate_step.as_deref(), Some("merge_confirmation"));
         assert_eq!(
             gates[1].pr_url.as_deref(),
             Some("https://github.com/acme/repo/pull/cohort-b")
