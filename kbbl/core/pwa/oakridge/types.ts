@@ -173,7 +173,6 @@ export interface ParkedGate {
   unit_id: string;
   repository_key?: RepositoryKey | null;
   artifact_revision_id: string | null;
-  gate_step?: string;
   worktree: WorktreeMetadata | null;
   resume_actions: string[];
   pr_url?: string | null;
