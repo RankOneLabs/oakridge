@@ -119,6 +119,7 @@ fn simple_def(stage_type_id: &str) -> WorkflowDef {
                 m.insert(
                     "A".into(),
                     StageNodeDef {
+                        operator_role: None,
                         stage_type: stage_type_id.to_string(),
                         config: json!({}),
                         inputs: vec![],

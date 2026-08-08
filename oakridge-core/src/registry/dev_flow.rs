@@ -1,8 +1,8 @@
-use serde::Deserialize;
 use serde_json::Value;
 
 use crate::collab::ReviewItemCandidate;
 use crate::registry::artifact_type::{ArtifactCapabilities, ArtifactTypeDef, ArtifactTypeRegistry};
+use crate::types::{AssessmentBody, BuildResultBody, PlanBody, PrSummaryBody, SpecAnalysisBody};
 
 // ── Body structs for schema validation ───────────────────────────────────────
 //
@@ -12,47 +12,10 @@ use crate::registry::artifact_type::{ArtifactCapabilities, ArtifactTypeDef, Arti
 // Required fields must be present; `Option<T>` fields are optional.
 // Array element types use `Value` to allow any JSON object per the brief.
 
-#[derive(Deserialize)]
-struct SpecAnalysisBody {
-    summary: String,
-    source_spec_refs: Vec<Value>,
-    findings: Vec<Value>,
-    requirements: Vec<Value>,
-    risks: Vec<Value>,
-}
-
 fn validate_spec_analysis(v: &Value) -> crate::Result<()> {
     serde_json::from_value::<SpecAnalysisBody>(v.clone())
         .map(|_| ())
         .map_err(Into::into)
-}
-
-#[derive(Deserialize)]
-struct Cohort {
-    id: String,
-    #[serde(default)]
-    repository_key: Option<String>,
-    title: String,
-    scope: String,
-    depends_on: Vec<String>,
-    #[serde(default)]
-    description: Option<String>,
-    #[serde(default)]
-    files_in_scope: Vec<Value>,
-    #[serde(default)]
-    decisions: Vec<Value>,
-    #[serde(default)]
-    acceptance_criteria: Vec<Value>,
-}
-
-#[derive(Deserialize)]
-struct PlanBody {
-    summary: String,
-    cohorts: Vec<Cohort>,
-    dependency_order: Vec<Value>,
-    scope: Value,
-    acceptance_criteria: Vec<Value>,
-    risks: Vec<Value>,
 }
 
 fn validate_plan(v: &Value) -> crate::Result<()> {
@@ -61,43 +24,16 @@ fn validate_plan(v: &Value) -> crate::Result<()> {
         .map_err(Into::into)
 }
 
-#[derive(Deserialize)]
-struct BuildResultBody {
-    #[serde(default)]
-    repository_key: Option<String>,
-    summary: String,
-    changed_files: Vec<String>,
-    tests: Value,
-    delegated_session_metadata: Option<Value>,
-    known_issues: Vec<Value>,
-}
-
 fn validate_build_result(v: &Value) -> crate::Result<()> {
     serde_json::from_value::<BuildResultBody>(v.clone())
         .map(|_| ())
         .map_err(Into::into)
 }
 
-#[derive(Deserialize)]
-struct AssessmentBody {
-    verdict: String,
-    findings: Vec<Value>,
-    test_evidence: Option<Value>,
-    recommended_next_actions: Vec<Value>,
-}
-
 fn validate_assessment(v: &Value) -> crate::Result<()> {
     serde_json::from_value::<AssessmentBody>(v.clone())
         .map(|_| ())
         .map_err(Into::into)
-}
-
-#[derive(Deserialize)]
-struct PrSummaryBody {
-    pr_url: String,
-    branch: String,
-    summary: String,
-    review_status: Option<String>,
 }
 
 fn validate_pr_summary(v: &Value) -> crate::Result<()> {

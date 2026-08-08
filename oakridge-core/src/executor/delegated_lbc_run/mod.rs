@@ -907,6 +907,7 @@ mod tests {
                     stages.insert(
                         "s1".into(),
                         crate::types::StageNodeDef {
+                            operator_role: None,
                             stage_type: stage_type.into(),
                             config: json!({}),
                             inputs: vec![],

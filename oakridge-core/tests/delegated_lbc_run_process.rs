@@ -85,6 +85,7 @@ async fn setup_run(
                 stages.insert(
                     "s1".into(),
                     oakridge_core::types::StageNodeDef {
+                        operator_role: None,
                         stage_type: "delegated_lbc_run".into(),
                         config: json!({}),
                         inputs: vec![],
