@@ -280,9 +280,10 @@ in the `POST /sessions` body:
 creation fails with a worktree setup error before any agent subprocess is spawned.
 Verify the ref exists in the local clone before submitting.
 
-The worktree identity is the primary v1/v2 topology gap. v1 kbbl cohorts carry
-a named cohort identity; v2 stages use generic branch + path metadata from the
-session instead.
+The built-in dev-flow v7 binds each cohort worktree to the run's required
+`epic_branch`: kbbl resolves `origin/<epic_branch>` before creating the cohort
+branch. Generic workflow definitions may still omit `baseRef`, in which case
+kbbl uses the repository's current `HEAD`.
 
 ## Session Metadata
 
@@ -602,9 +603,10 @@ operator workflow:
 - `oakridge-core/examples/dev_flow_v5.json` (version 5) binds each
   stage's **runtime** from run context alongside its model and effort, so the
   planner and worker roles can target different runtimes.
-- `oakridge-core/examples/dev_flow_v6.json` (version 6, default) adds
+- `oakridge-core/examples/dev_flow_v7.json` (version 7, default) adds
   configurable artifact actions, one-step spec/plan approval, manual build
-  admission, cohort briefs, and explicit merge outcomes.
+  admission, cohort briefs, explicit merge outcomes, and an enforced epic
+  integration branch for cohort worktrees and pull requests.
 
 ### Workflow graph
 
@@ -619,7 +621,7 @@ spec_analyzer → plan_writer → build → assessor
 | `build` | `dev.pr_summary`, `dev.build_result` | Implements the plan in one independently gated unit per cohort. |
 | `assessor` | `dev.assessment` | Evaluates each cohort's build result against the plan's acceptance criteria. |
 
-Each stage is a `delegated_session` with typed artifacts. In v6, spec and plan
+Each stage is a `delegated_session` with typed artifacts. In v7, spec and plan
 have one `artifact_approval` step with `approve` and `request_revision`; each
 build cohort has `artifact_approval` followed by `merge_confirmation`, whose
 actions are `confirm_merged` and `closed_without_merge`. Version 1 retains the
@@ -655,22 +657,27 @@ Unlike `model` and `effort`, a bound `runtime` has **no default**: if the launch
 context omits it, the stage fails at config-build time naming the missing
 pointer, rather than silently running on the wrong runtime.
 
-Version 6 retains those runtime bindings. Its build fan-out sets
+Version 7 retains those runtime bindings. Its build fan-out sets
 `manual_admission: true`, so an eligible cohort waits for an operator after its
 dependencies complete instead of starting immediately. Admission is durable
 and idempotent; refreshing or retrying the same request does not start a second
 session.
 
+Version 7 also requires `epic_branch`. Build worktrees start from
+`origin/<epic_branch>`, and the build prompt requires
+`open_pr(base: <epic_branch>)`; cohort agents must never target `main`.
+
 ### Role context keys
 
 | Key | Consumed by | Required |
 | --- | --- | --- |
-| `planner_runtime` | `spec_analyzer`, `plan_writer`, `assessor` | yes (v5/v6) |
+| `planner_runtime` | `spec_analyzer`, `plan_writer`, `assessor` | yes (v5/v6/v7) |
 | `planner_model` | same | no — falls back to the runtime default |
 | `planner_effort` | same | no — falls back to the runtime default |
-| `worker_runtime` | `build` | yes (v5/v6) |
+| `worker_runtime` | `build` | yes (v5/v6/v7) |
 | `worker_model` | `build` | no — falls back to the runtime default |
 | `worker_effort` | `build` | no — falls back to the runtime default |
+| `epic_branch` | build worktree and PR base | yes (v7) |
 
 ### Prerequisites
 
@@ -682,12 +689,12 @@ session.
 ### Select the workflow definition
 
 oakridge-core seeds the bundled dev-flow definitions on startup. In the kbbl
-PWA, choose **New Run** and select `dev-flow v6` (the newest version is selected
+PWA, choose **New Run** and select `dev-flow v7` (the newest version is selected
 by default). The Planner and Worker pickers each choose a runtime, a model, and
 an effort; all three are sent with the run.
 
 Older versions are retired automatically when a new built-in version is first
-seeded, so only v6 appears in the picker. They are archived, not deleted — every
+seeded, so only v7 appears in the picker. They are archived, not deleted — every
 existing run still resolves its definition. To bring one back, tick **Show
 retired** on the Workflow Definitions screen and choose **Restore** (or
 `POST /workflow_defs/:id/unarchive`); the seed will not re-retire it on later
@@ -703,7 +710,7 @@ CORE=http://127.0.0.1:8790
 
 curl -sX POST "$CORE/workflow_defs" \
   -H 'content-type: application/json' \
-  -d "$(jq '{name,version,graph}' oakridge-core/examples/dev_flow_v6.json)"
+  -d "$(jq '{name,version,graph}' oakridge-core/examples/dev_flow_v7.json)"
 ```
 
 Save the returned `id` as `DEV_FLOW_DEF_ID`. Use `dev_flow.json` instead when
@@ -723,6 +730,7 @@ curl -sX POST "$CORE/workflow_runs" \
         {\"key\": \"web\", \"path\": \"/abs/path/to/web\"}
       ],
       \"oakridge_url\": \"http://127.0.0.1:8790/\",
+      \"epic_branch\": \"epic/my-feature\",
       \"planner_runtime\": \"claude-code\",
       \"planner_model\": \"claude-opus-5\",
       \"planner_effort\": \"high\",
@@ -736,11 +744,11 @@ curl -sX POST "$CORE/workflow_runs" \
 `brief_notes` and the complete keyed repository list are passed into the
 `spec_analyzer` and `plan_writer` prompts. Each planned cohort selects one key.
 
-`planner_runtime` and `worker_runtime` are required by versions 5 and 6 — omitting
+`planner_runtime` and `worker_runtime` are required by versions 5, 6, and 7 — omitting
 either fails the corresponding stage at config-build time. Drop all six
 role keys when running the version 1 or 3 definitions, which pin their runtime.
 
-### Complete v6 operator workflow
+### Complete v7 operator workflow
 
 Use the PWA for the normal path; the API remains available for automation.
 
@@ -859,7 +867,7 @@ table. Each parked gate shows:
 - Worktree branch and path (when present) — **read before approving a
   merge-confirmation gate**
 - Only the actions configured for the current step: **Approve** / **Request
-  revision**, or **Confirm merged** / **Closed without merge** in dev-flow v6
+  revision**, or **Confirm merged** / **Closed without merge** in dev-flow v7
 
 The `id` field on each gate returned by `GET /parked` and `GET /runs/:id/gates` is a
 **composite gate id** with the form `"{stage_instance_uuid}:{unit_id}"`. For a
@@ -970,6 +978,12 @@ kbbl session id. Done units remain done, pending units are admitted when their
 dependencies allow it, and temporarily unreachable sessions retry attachment
 without blocking healthy siblings. See `oakridge-core/docs/runtime_delegation.md`
 for the detailed recovery states.
+
+## Feature parity status
+
+The source-of-truth v1 comparison and release checklist is
+[`oakridge-v1-v2-feature-parity.md`](oakridge-v1-v2-feature-parity.md). Update it
+in the same change as any workflow, operator API, or Oakridge PWA behavior.
 
 ## Deliberate boundaries
 

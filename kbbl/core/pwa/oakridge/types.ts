@@ -32,6 +32,7 @@ export interface WorkflowDefSummary {
 // is what let a codex planner model reach a claude-code-pinned stage.
 export interface CreateRunContext {
   brief_notes: string;
+  epic_branch: string;
   repositories: RepositoryInput[];
   // Compatibility input for workflow definitions older than dev-flow v2.
   worktree_path: string;

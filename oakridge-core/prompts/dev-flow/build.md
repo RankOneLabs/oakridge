@@ -17,6 +17,7 @@ You are the build agent. Your job is to implement exactly one cohort of the plan
 Oakridge API: `{{OAKRIDGE_URL}}`
 Stage instance: `{{STAGE_INSTANCE_ID}}`
 Unit: `{{UNIT_ID}}`
+Epic integration branch: `{{EPIC_BRANCH}}`
 
 ## Your tasks
 
@@ -31,7 +32,7 @@ Unit: `{{UNIT_ID}}`
 After all commits are complete, use the gated-review MCP tools to publish the branch:
 
 1. Push the branch: call `mcp__gated-review__git_push` (no arguments needed — it pushes the current branch).
-2. Open a PR: call `mcp__gated-review__open_pr` with a short title and a brief body summarising the cohort work. The base branch is the upstream of the current branch (typically `main` or the epic branch configured for this run).
+2. Open a PR: call `mcp__gated-review__open_pr` with `base: "{{EPIC_BRANCH}}"`, a short title, and a brief body summarising the cohort work. Never target `main` from a cohort branch.
 3. Note the `pr_url` returned by `open_pr` — you will include it in the `pr_summary` emit below.
 
 ## Emit the artifacts

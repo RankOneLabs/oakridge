@@ -53,8 +53,8 @@ fn load_dev_flow_v5() -> WorkflowDef {
         .unwrap_or_else(|e| panic!("failed to parse {}: {e}", path.display()))
 }
 
-fn load_dev_flow_v6() -> WorkflowDef {
-    let path = manifest_dir().join("examples/dev_flow_v6.json");
+fn load_dev_flow_v7() -> WorkflowDef {
+    let path = manifest_dir().join("examples/dev_flow_v7.json");
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
     serde_json::from_str(&text)
@@ -319,11 +319,11 @@ fn dev_flow_v5_binds_runtime_model_and_effort_per_role() {
 }
 
 #[test]
-fn dev_flow_v6_declares_review_gate_sequences() {
+fn dev_flow_v7_declares_review_gate_sequences() {
     use oakridge_core::executor::delegated_session::config::DelegatedGateKind;
 
-    let def = load_dev_flow_v6();
-    assert_eq!(def.version, 6);
+    let def = load_dev_flow_v7();
+    assert_eq!(def.version, 7);
     for (stage_key, output, steps, requires_items) in [
         (
             "spec_analyzer",
@@ -368,11 +368,27 @@ fn dev_flow_v6_declares_review_gate_sequences() {
 }
 
 #[test]
-fn dev_flow_v6_build_requires_manual_cohort_admission() {
-    let def = load_dev_flow_v6();
+fn dev_flow_v7_build_requires_manual_cohort_admission() {
+    let def = load_dev_flow_v7();
     let stage = def.graph.stages.get("build").unwrap();
     let config: DelegatedSessionDefConfig = serde_json::from_value(stage.config.clone()).unwrap();
     assert!(config.fan_out.unwrap().manual_admission);
+}
+
+#[test]
+fn dev_flow_v7_routes_every_cohort_through_the_epic_branch() {
+    let def = load_dev_flow_v7();
+    let stage = def.graph.stages.get("build").unwrap();
+    let config: DelegatedSessionDefConfig = serde_json::from_value(stage.config.clone()).unwrap();
+    let fan_out = config.fan_out.unwrap();
+    let worktree = fan_out.worktree.expect("build cohorts need managed worktrees");
+
+    assert_eq!(worktree.base_ref.as_deref(), Some("origin/{{EPIC_BRANCH}}"));
+    assert!(matches!(
+        config.slot_bindings.get("EPIC_BRANCH"),
+        Some(oakridge_core::executor::prompt_config::SlotBinding::Context { path })
+            if path == "/epic_branch"
+    ));
 }
 
 // ── Prompt file existence + root containment ──────────────────────────────────

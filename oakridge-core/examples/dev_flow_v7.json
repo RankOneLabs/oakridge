@@ -1,7 +1,7 @@
 {
-  "id": "018dea85-c156-4317-991b-25e99ddf6bb5",
+  "id": "55b7524c-eb8c-4a49-bc2f-5e3f0cbfcfa2",
   "name": "dev-flow",
-  "version": 6,
+  "version": 7,
   "created_at": "2026-01-01T00:00:00Z",
   "graph": {
     "stages": {
@@ -126,6 +126,10 @@
               "from": "context",
               "path": "/oakridge_url"
             },
+            "EPIC_BRANCH": {
+              "from": "context",
+              "path": "/epic_branch"
+            },
             "UNIT_ID": {
               "from": "literal",
               "value": "0"
@@ -228,7 +232,8 @@
             },
             "worktree": {
               "branch_name": "cohort/{{STAGE_INSTANCE_ID}}/{{UNIT_ID}}",
-              "worktree_subdir": "{{STAGE_INSTANCE_ID}}/{{UNIT_ID}}"
+              "worktree_subdir": "{{STAGE_INSTANCE_ID}}/{{UNIT_ID}}",
+              "base_ref": "origin/{{EPIC_BRANCH}}"
             }
           }
         },

@@ -18,6 +18,7 @@ import type { RepositoryInputDraft } from "../../types";
 import { validateRepositoryInputs } from "../../repository-inputs";
 import { RoleModelPicker } from "../molecules/RoleModelPicker";
 import { initialSelectionForRole } from "../../lib/runtime-selection";
+import { validateEpicBranch } from "../../epic-branch";
 
 const secondaryButtonClass =
   "inline-flex items-center gap-1.5 rounded-md border border-[var(--border-muted)] bg-transparent px-3 py-1.5 text-sm text-[var(--text-secondary)] hover:border-[var(--border-hover)]";
@@ -51,6 +52,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
   );
 
   const [briefNotes, setBriefNotes] = useState("");
+  const [epicBranch, setEpicBranch] = useState("epic/");
   const [repositories, setRepositories] = useState<RepositoryInputDraft[]>([{ key: "repo", path: "" }]);
   const [projectId, setProjectId] = useState<string>("");
   const [workflowDefId, setWorkflowDefId] = useState<string>("");
@@ -114,6 +116,8 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
     const repositoryResult = validateRepositoryInputs(repositories);
     if (!repositoryResult.ok) { setError(repositoryResult.error.detail); return; }
     const normalizedRepositories = repositoryResult.repositories;
+    const epicBranchResult = validateEpicBranch(epicBranch);
+    if (!epicBranchResult.ok) { setError(epicBranchResult.error.detail); return; }
     if (!briefNotes.trim()) { setError("Brief notes are required."); return; }
     if (!coreUrl) { setError("oakridge core URL is not configured."); return; }
     try {
@@ -122,6 +126,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
         project_id: projectId || null,
         context: {
           brief_notes: briefNotes.trim(),
+          epic_branch: epicBranchResult.branch,
           repositories: normalizedRepositories,
           worktree_path: normalizedRepositories[0].path,
           oakridge_url: coreUrl,
@@ -233,6 +238,23 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
             </div>
           ))}
         </fieldset>
+
+        <label className="flex flex-col gap-1">
+          <span className={fieldLabelClass}>Epic integration branch</span>
+          <input
+            type="text"
+            className={inputClass}
+            value={epicBranch}
+            onChange={(event) => setEpicBranch(event.target.value)}
+            disabled={pending}
+            placeholder="epic/my-feature"
+            aria-describedby="epic-branch-help"
+            required
+          />
+          <span id="epic-branch-help" className="text-xs text-[var(--text-muted)]">
+            Must already exist on origin. Every cohort starts from and opens its PR into this branch; merge the epic branch into main only after the run completes.
+          </span>
+        </label>
 
         <label className="flex flex-col gap-1">
           <span className={fieldLabelClass}>Brief Notes</span>

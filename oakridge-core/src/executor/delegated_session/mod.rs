@@ -180,20 +180,13 @@ fn materialize_fan_out_units(
 
         let worktree = match &fan_out.worktree {
             Some(template) => Some(WorktreeIdentity {
-                branch_name: substitute_unit_template(
-                    &template.branch_name,
-                    &unit_id,
-                    stage_instance_id,
-                ),
-                worktree_subdir: substitute_unit_template(
-                    &template.worktree_subdir,
-                    &unit_id,
-                    stage_instance_id,
-                ),
+                branch_name: render_template(&template.branch_name, &slot_values)?,
+                worktree_subdir: render_template(&template.worktree_subdir, &slot_values)?,
                 base_ref: template
                     .base_ref
                     .as_ref()
-                    .map(|base| substitute_unit_template(base, &unit_id, stage_instance_id)),
+                    .map(|base| render_template(base, &slot_values))
+                    .transpose()?,
             }),
             None => config.worktree.clone(),
         };
@@ -3333,7 +3326,7 @@ mod tests {
                 worktree: Some(config::WorktreeTemplate {
                     branch_name: "run/{{STAGE_INSTANCE_ID}}/{{UNIT_ID}}".into(),
                     worktree_subdir: "units/{{UNIT_ID}}".into(),
-                    base_ref: Some("base/{{STAGE_INSTANCE_ID}}".into()),
+                    base_ref: Some("origin/{{BASE}}".into()),
                 }),
                 inherit_worktree_from: None,
             }),
@@ -3418,6 +3411,10 @@ mod tests {
         assert_eq!(
             units[1].worktree.as_ref().unwrap().worktree_subdir,
             "units/b"
+        );
+        assert_eq!(
+            units[1].worktree.as_ref().unwrap().base_ref.as_deref(),
+            Some("origin/base-value")
         );
     }
 
