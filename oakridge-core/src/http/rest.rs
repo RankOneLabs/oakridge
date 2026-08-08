@@ -16,14 +16,19 @@ use crate::executor::delegated_session::{
     kbbl_client::DelegatedExternalRef, DelegatedGate, DelegatedGateState,
 };
 use crate::executor::ResumePayload;
+use crate::reconciliation::{
+    github_pull_request_identity, reconcile_pull_request, CohortPullRequestReconciliation,
+    ExpectedCohortPullRequest, PullRequestMismatch, PullRequestMismatchKind,
+    PullRequestObservation, ReconciliationDecision,
+};
 use crate::registry::artifact_type::{ArtifactCapabilities, ArtifactReviewDescriptor};
 use crate::scheduler::DecisionError;
 use crate::types::{
     Artifact, ArtifactId, EpicLifecycleState, EpicRepositoryBinding, EpicWorkflowProfile,
     EpicWorkflowProfileId, FinalMergePolicy, GateDecision, GateDecisionAudit, GateDecisionAuditId,
-    GateOutcome, InputDelivery, InputSlot, OutputSlot, Project, ProjectId, RunStatus,
-    StageInstance, StageInstanceId, StageOperatorRole, StageStatus, WorkflowDef, WorkflowDefId,
-    WorkflowGraph, WorkflowRun, WorkflowRunId,
+    GateOutcome, InputDelivery, InputSlot, OutputSlot, PrSummaryBody, Project, ProjectId,
+    RunStatus, StageInstance, StageInstanceId, StageOperatorRole, StageStatus, UnitStatus,
+    WorkflowDef, WorkflowDefId, WorkflowGraph, WorkflowRun, WorkflowRunId,
 };
 
 use super::AppState;
@@ -130,6 +135,7 @@ pub struct EpicRepositoryConfig {
     pub repository_path: PathBuf,
     pub base_branch: String,
     pub epic_branch: Option<String>,
+    pub forge_repository: Option<crate::types::ForgeRepositoryIdentity>,
 }
 
 fn epic_profile_from_config(
@@ -155,6 +161,7 @@ fn epic_profile_from_config(
                 epic_branch: repository
                     .epic_branch
                     .unwrap_or_else(|| derived_branch.clone()),
+                forge_repository: repository.forge_repository,
                 final_pull_request: None,
                 final_merge_state: crate::types::FinalMergeState::Pending,
             })
@@ -339,6 +346,7 @@ pub enum OperatorCohortLifecycleState {
     MergeConfirmation,
     Assessing,
     GithubReview,
+    PullRequestMismatch,
     Complete,
     Failed,
 }
@@ -381,6 +389,8 @@ pub struct OperatorCohortLifecycle {
     pub gate_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pr_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pull_request_reconciliation: Option<CohortPullRequestReconciliation>,
     pub updated_at: String,
 }
 
@@ -392,6 +402,7 @@ pub enum OperatorReviewInboxKind {
     MergeConfirmation,
     CohortBlocked,
     CohortFailed,
+    PullRequestMismatch,
     GateDecision,
 }
 
@@ -900,6 +911,212 @@ pub async fn get_epic_workflow_profile(
     Ok(Json(
         queries::get_epic_workflow_profile(&state.pool, &WorkflowRunId(id)).await?,
     ))
+}
+
+#[derive(Deserialize)]
+pub struct ReconcileCohortPullRequestRequest {
+    pub observation: PullRequestObservation,
+}
+
+#[derive(Serialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReconcileCohortPullRequestOutcome {
+    Waiting,
+    Completed,
+    AlreadyCompleted,
+    Mismatch,
+    IgnoredStale,
+}
+
+#[derive(Serialize)]
+pub struct ReconcileCohortPullRequestResponse {
+    pub outcome: ReconcileCohortPullRequestOutcome,
+    pub reconciliation: CohortPullRequestReconciliation,
+}
+
+pub async fn reconcile_cohort_pull_request(
+    State(state): State<AppState>,
+    Path((run_uuid, unit_id)): Path<(Uuid, String)>,
+    Json(body): Json<ReconcileCohortPullRequestRequest>,
+) -> Result<Json<ReconcileCohortPullRequestResponse>, AppError> {
+    let run_id = WorkflowRunId(run_uuid);
+    let run = queries::get_workflow_run_by_id(&state.pool, &run_id).await?;
+    let definition = queries::get_workflow_def_by_id(&state.pool, &run.workflow_def_id).await?;
+    let stages = queries::list_stage_instances_for_run(&state.pool, &run_id).await?;
+    let build_stage = stages
+        .iter()
+        .find(|stage| {
+            definition
+                .graph
+                .stages
+                .get(&stage.stage_key)
+                .is_some_and(|node| node.operator_role == Some(StageOperatorRole::Build))
+        })
+        .ok_or_else(|| AppError::Conflict("run has no active build-role stage".into()))?;
+    let unit = queries::get_session_unit(&state.pool, &build_stage.id, &unit_id).await?;
+    let previous =
+        queries::get_cohort_pr_reconciliation(&state.pool, &build_stage.id, &unit_id).await?;
+    if matches!(unit.status, UnitStatus::Done) {
+        let mut reconciliation = previous.ok_or_else(|| {
+            AppError::Conflict("completed unit has no durable PR reconciliation".into())
+        })?;
+        if reconciliation.completed_at.is_none() {
+            reconciliation.completed_at = Some(Utc::now());
+            reconciliation.updated_at = Utc::now();
+            queries::upsert_cohort_pr_reconciliation(&state.pool, &reconciliation).await?;
+        }
+        return Ok(Json(ReconcileCohortPullRequestResponse {
+            outcome: ReconcileCohortPullRequestOutcome::AlreadyCompleted,
+            reconciliation,
+        }));
+    }
+    let external_wait = unit
+        .gate_state
+        .as_ref()
+        .and_then(|value| {
+            serde_json::from_value::<crate::executor::delegated_session::DownstreamWaitState>(
+                value.clone(),
+            )
+            .ok()
+        })
+        .and_then(|wait| match wait {
+            crate::executor::delegated_session::DownstreamWaitState::AwaitingExternal {
+                external_kind,
+                ..
+            } => Some(external_kind),
+            _ => None,
+        })
+        .ok_or_else(|| AppError::Conflict("cohort is not awaiting external review".into()))?;
+    if external_wait != "github_review" {
+        return Err(AppError::Conflict(format!(
+            "cohort awaits unsupported external kind '{external_wait}'"
+        )));
+    }
+    let repository_key = repository_key_from_params(unit.params.as_ref())
+        .ok_or_else(|| AppError::Conflict("cohort has no repository_key".into()))?;
+    let profile = queries::get_epic_workflow_profile(&state.pool, &run_id).await?;
+    let repository_binding = profile
+        .repositories
+        .iter()
+        .find(|repository| repository.repository_key == repository_key)
+        .ok_or_else(|| AppError::Conflict("cohort repository is not bound to the Epic".into()))?;
+    let forge_repository = match repository_binding.forge_repository.clone() {
+        Some(identity) => identity,
+        None => {
+            let now = Utc::now();
+            let mismatch = PullRequestMismatch {
+                kind: PullRequestMismatchKind::MissingRepositoryIdentity,
+                detail: "Epic repository binding has no durable forge identity".into(),
+            };
+            let reconciliation = CohortPullRequestReconciliation {
+                workflow_run_id: run_id,
+                stage_instance_id: build_stage.id,
+                unit_id,
+                repository_key,
+                observation: body.observation,
+                mismatch: Some(mismatch),
+                completed_at: None,
+                updated_at: now,
+            };
+            queries::upsert_cohort_pr_reconciliation(&state.pool, &reconciliation).await?;
+            return Ok(Json(ReconcileCohortPullRequestResponse {
+                outcome: ReconcileCohortPullRequestOutcome::Mismatch,
+                reconciliation,
+            }));
+        }
+    };
+    let pr_summary = queries::get_latest_artifact_by_stage_output_and_label(
+        &state.pool,
+        &build_stage.id,
+        "pr_summary",
+        &unit_id,
+    )
+    .await?
+    .ok_or_else(|| AppError::Conflict("cohort has no durable pr_summary artifact".into()))?;
+    let pr_summary: PrSummaryBody = serde_json::from_value(pr_summary.body)
+        .map_err(|error| AppError::Internal(format!("invalid persisted pr_summary: {error}")))?;
+    let (url_owner, url_name, number) = github_pull_request_identity(&pr_summary.pr_url)
+        .ok_or_else(|| {
+            AppError::Conflict("pr_summary URL is not a canonical GitHub PR URL".into())
+        })?;
+    let expected = ExpectedCohortPullRequest {
+        workflow_run_id: run_id,
+        stage_instance_id: build_stage.id,
+        unit_id: unit_id.clone(),
+        repository_key: repository_key.clone(),
+        repository: forge_repository.clone(),
+        number,
+        url: pr_summary.pr_url,
+        head_branch: pr_summary.branch,
+        base_branch: repository_binding.epic_branch.clone(),
+    };
+    let decision = if url_owner != forge_repository.owner || url_name != forge_repository.name {
+        ReconciliationDecision::Mismatch(PullRequestMismatch {
+            kind: PullRequestMismatchKind::RepositoryMismatch,
+            detail: "persisted pr_summary URL does not belong to the Epic repository binding"
+                .into(),
+        })
+    } else {
+        reconcile_pull_request(&expected, &body.observation, previous.as_ref())
+    };
+    let now = Utc::now();
+    let mismatch = match &decision {
+        ReconciliationDecision::Mismatch(mismatch)
+        | ReconciliationDecision::IgnoreStale(mismatch) => Some(mismatch.clone()),
+        _ => None,
+    };
+    if matches!(decision, ReconciliationDecision::IgnoreStale(_)) {
+        let reconciliation = previous.expect("stale requires previous reconciliation");
+        return Ok(Json(ReconcileCohortPullRequestResponse {
+            outcome: ReconcileCohortPullRequestOutcome::IgnoredStale,
+            reconciliation,
+        }));
+    }
+    let mut reconciliation = CohortPullRequestReconciliation {
+        workflow_run_id: run_id,
+        stage_instance_id: build_stage.id,
+        unit_id: unit_id.clone(),
+        repository_key,
+        observation: body.observation,
+        mismatch,
+        completed_at: None,
+        updated_at: now,
+    };
+    queries::upsert_cohort_pr_reconciliation(&state.pool, &reconciliation).await?;
+    let outcome = match decision {
+        ReconciliationDecision::Waiting => ReconcileCohortPullRequestOutcome::Waiting,
+        ReconciliationDecision::Mismatch(_) => ReconcileCohortPullRequestOutcome::Mismatch,
+        ReconciliationDecision::IgnoreStale(_) => unreachable!(),
+        ReconciliationDecision::Complete => {
+            state
+                .coordinator
+                .deliver_decision(
+                    run_id,
+                    build_stage.id,
+                    ResumePayload::ExternalWaitCompleted {
+                        unit_id,
+                        external_kind: external_wait,
+                        correlation_id: format!(
+                            "github:{}/{}/pull/{}",
+                            forge_repository.owner, forge_repository.name, number
+                        ),
+                    },
+                )
+                .await
+                .map_err(|error| match error {
+                    DecisionError::Conflict(message) => AppError::Conflict(message),
+                    DecisionError::Internal(error) => AppError::Internal(error.to_string()),
+                })?;
+            reconciliation.completed_at = Some(Utc::now());
+            reconciliation.updated_at = Utc::now();
+            queries::upsert_cohort_pr_reconciliation(&state.pool, &reconciliation).await?;
+            ReconcileCohortPullRequestOutcome::Completed
+        }
+    };
+    Ok(Json(ReconcileCohortPullRequestResponse {
+        outcome,
+        reconciliation,
+    }))
 }
 
 pub async fn cancel_workflow_run(
@@ -1653,6 +1870,8 @@ pub async fn get_operator_review_inbox(
         let admitted: HashSet<_> = admissions.iter().map(|row| row.unit_id.as_str()).collect();
         let decisions =
             queries::list_gate_decision_audits_for_run(&state.pool, &run.run_id).await?;
+        let reconciliations =
+            queries::list_cohort_pr_reconciliations_for_run(&state.pool, &run.run_id).await?;
         let admission_required = serde_json::from_value::<
             crate::executor::delegated_session::config::DelegatedSessionConfig,
         >(build_stage.config.clone())
@@ -1666,6 +1885,12 @@ pub async fn get_operator_review_inbox(
             .collect();
 
         for build in &build_units {
+            let pull_request_reconciliation = reconciliations
+                .iter()
+                .find(|record| {
+                    record.stage_instance_id == build_stage.id && record.unit_id == build.unit_id
+                })
+                .cloned();
             let assessment = assessment_units
                 .iter()
                 .find(|unit| unit.unit_id == build.unit_id);
@@ -1681,7 +1906,7 @@ pub async fn get_operator_review_inbox(
                 .filter(|dependency| !done.contains(dependency.as_str()))
                 .cloned()
                 .collect();
-            let lifecycle = derive_cohort_lifecycle(CohortLifecycleInput {
+            let mut lifecycle = derive_cohort_lifecycle(CohortLifecycleInput {
                 build,
                 assessment,
                 assessment_expected: assessment_stage.is_some(),
@@ -1690,6 +1915,13 @@ pub async fn get_operator_review_inbox(
                 admission_eligible: blocked_by.is_empty(),
                 latest_decision,
             });
+            if pull_request_reconciliation
+                .as_ref()
+                .is_some_and(|record| record.mismatch.is_some())
+                && !matches!(build.status, crate::types::UnitStatus::Done)
+            {
+                lifecycle = OperatorCohortLifecycleState::PullRequestMismatch;
+            }
             let gate_owner = assessment
                 .filter(|unit| active_unit_gate(unit).is_some())
                 .map(|unit| (assessment_stage.unwrap().id, unit))
@@ -1738,7 +1970,11 @@ pub async fn get_operator_review_inbox(
                 artifact_revision_id,
                 gate_url: gate_id.as_ref().map(|id| format!("/gates/{id}/resume")),
                 gate_id,
-                pr_url: gate.as_ref().and_then(|gate| gate.pr_url.clone()),
+                pr_url: pull_request_reconciliation
+                    .as_ref()
+                    .map(|record| record.observation.url.clone())
+                    .or_else(|| gate.as_ref().and_then(|gate| gate.pr_url.clone())),
+                pull_request_reconciliation,
                 updated_at: build.updated_at.to_rfc3339(),
             };
 
@@ -1797,6 +2033,17 @@ pub async fn get_operator_review_inbox(
                     OperatorReviewInboxKind::CohortFailed,
                     OperatorReviewInboxState::Blocked,
                     "failed",
+                ));
+            }
+            if matches!(
+                cohort.lifecycle,
+                OperatorCohortLifecycleState::PullRequestMismatch
+            ) {
+                items.push(cohort_inbox_item(
+                    &cohort,
+                    OperatorReviewInboxKind::PullRequestMismatch,
+                    OperatorReviewInboxState::Blocked,
+                    "pull-request-mismatch",
                 ));
             }
             for decision in decisions.iter().filter(|decision| {
@@ -3135,6 +3382,11 @@ mod tests {
                     "repositories": [{
                         "repository_key": "oakridge",
                         "repository_path": "/repos/oakridge",
+                        "forge_repository": {
+                            "provider": "github",
+                            "owner": "acme",
+                            "name": "oakridge"
+                        },
                         "base_branch": "develop"
                     }]
                 }
@@ -3164,8 +3416,7 @@ mod tests {
         let operator_run = tokio::time::timeout(Duration::from_secs(1), async {
             loop {
                 let app = crate::http::router(state.clone());
-                let (status, candidate) =
-                    req(app, "GET", &format!("/runs/{run_id}"), None).await;
+                let (status, candidate) = req(app, "GET", &format!("/runs/{run_id}"), None).await;
                 assert_eq!(status, StatusCode::OK);
                 if !candidate["stages"].as_array().unwrap().is_empty() {
                     return candidate;

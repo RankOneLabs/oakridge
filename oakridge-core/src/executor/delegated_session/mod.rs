@@ -2482,6 +2482,9 @@ impl StageHandle for DelegatedSessionHandle {
             crate::executor::ResumePayload::UpstreamRevisionRequested { .. } => {
                 anyhow::bail!("cohort revision routing requires a fan-out delegated session")
             }
+            crate::executor::ResumePayload::ExternalWaitCompleted { .. } => {
+                anyhow::bail!("external wait completion requires a fan-out delegated session")
+            }
             crate::executor::ResumePayload::UnitInputAvailable { .. } => {
                 anyhow::bail!("unit input delivery requires a fan-out delegated session")
             }
@@ -2886,6 +2889,75 @@ impl DelegatedSessionHandle {
                 )
                 .await?;
                 scheduler.recompute_aggregate().await
+            }
+            crate::executor::ResumePayload::ExternalWaitCompleted {
+                unit_id,
+                external_kind,
+                correlation_id,
+            } => {
+                if correlation_id.trim().is_empty() {
+                    anyhow::bail!("external completion correlation_id is required");
+                }
+                let unit = queries::get_session_unit(
+                    scheduler.ctx.pool(),
+                    &self.stage_instance_id,
+                    &unit_id,
+                )
+                .await?;
+                if matches!(unit.status, UnitStatus::Done) {
+                    return Ok(());
+                }
+                let wait = unit.gate_state.as_ref().and_then(|value| {
+                    serde_json::from_value::<DownstreamWaitState>(value.clone()).ok()
+                });
+                let artifact_id = match wait {
+                    Some(DownstreamWaitState::AwaitingExternal {
+                        artifact_id,
+                        external_kind: expected_kind,
+                        ..
+                    }) if expected_kind == external_kind => artifact_id,
+                    _ => anyhow::bail!(
+                        "unit '{}' is not awaiting external kind '{}'",
+                        unit_id,
+                        external_kind
+                    ),
+                };
+                queries::set_session_unit_gate_state(
+                    scheduler.ctx.pool(),
+                    &self.stage_instance_id,
+                    &unit_id,
+                    None,
+                )
+                .await?;
+                queries::set_session_unit_status(
+                    scheduler.ctx.pool(),
+                    &self.stage_instance_id,
+                    &unit_id,
+                    UnitStatus::Done,
+                    Some(serde_json::json!({
+                        "kind": "external_wait_completed",
+                        "external_kind": external_kind,
+                        "correlation_id": correlation_id,
+                    })),
+                )
+                .await?;
+                let completed_artifact =
+                    queries::get_artifact_by_id(scheduler.ctx.pool(), &artifact_id).await?;
+                scheduler
+                    .ctx
+                    .unit_completed(unit_id.clone(), completed_artifact)
+                    .await?;
+                let removed_session = self
+                    .live_sessions
+                    .lock()
+                    .unwrap()
+                    .remove(&(self.stage_instance_id, unit_id));
+                if let Some(session) = removed_session {
+                    session.cancelled.store(true, Ordering::SeqCst);
+                    let _ = self.kbbl_client.stop_session(&session.sid).await;
+                }
+                scheduler.recompute_aggregate().await?;
+                scheduler.admit().await
             }
             crate::executor::ResumePayload::GateDecision {
                 decision,

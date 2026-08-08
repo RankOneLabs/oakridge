@@ -991,6 +991,7 @@ impl RunTask {
             ResumePayload::GateDecision { .. } => "gate_decision",
             ResumePayload::FeedbackArtifact { .. } => "feedback_artifact",
             ResumePayload::UpstreamRevisionRequested { .. } => "upstream_revision_requested",
+            ResumePayload::ExternalWaitCompleted { .. } => "external_wait_completed",
             ResumePayload::UnitInputAvailable { .. } => "unit_input_available",
             ResumePayload::UnitInputExhausted { .. } => "unit_input_exhausted",
             ResumePayload::Executor { .. } => "executor",

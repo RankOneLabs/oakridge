@@ -263,6 +263,19 @@ pub struct PullRequestReference {
     pub base_branch: String,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ForgeProvider {
+    Github,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ForgeRepositoryIdentity {
+    pub provider: ForgeProvider,
+    pub owner: String,
+    pub name: String,
+}
+
 /// One repository participating in a dev-flow Epic.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct EpicRepositoryBinding {
@@ -270,6 +283,9 @@ pub struct EpicRepositoryBinding {
     pub repository_path: PathBuf,
     pub base_branch: String,
     pub epic_branch: String,
+    /// Immutable forge identity used to prove PR observations belong to this
+    /// binding. Optional only for loading pre-reconciliation profiles.
+    pub forge_repository: Option<ForgeRepositoryIdentity>,
     pub final_pull_request: Option<PullRequestReference>,
     pub final_merge_state: FinalMergeState,
 }
@@ -324,6 +340,22 @@ impl EpicWorkflowProfile {
                 return Err(crate::Error::Validation(
                     "repository key, path, base branch, and epic branch must be non-empty".into(),
                 ));
+            }
+            let Some(forge) = &repository.forge_repository else {
+                return Err(crate::Error::Validation(format!(
+                    "repository {} requires a forge identity for PR reconciliation",
+                    repository.repository_key
+                )));
+            };
+            if forge.owner.trim().is_empty()
+                || forge.name.trim().is_empty()
+                || forge.owner.contains('/')
+                || forge.name.contains('/')
+            {
+                return Err(crate::Error::Validation(format!(
+                    "repository {} has an invalid forge identity",
+                    repository.repository_key
+                )));
             }
             if !repository.repository_path.is_absolute() {
                 return Err(crate::Error::Validation(format!(
@@ -405,9 +437,7 @@ fn is_valid_git_branch_name(branch: &str) -> bool {
         && !branch.ends_with('/')
         && !branch.contains("..")
         && branch.split('/').all(|component| {
-            !component.is_empty()
-                && !component.starts_with('.')
-                && !component.ends_with(".lock")
+            !component.is_empty() && !component.starts_with('.') && !component.ends_with(".lock")
         })
         && !branch.contains("@{")
         && !branch.chars().any(|character| {
@@ -1037,6 +1067,11 @@ mod tests {
             repositories: vec![EpicRepositoryBinding {
                 repository_key: "oakridge".into(),
                 repository_path: "/repos/oakridge".into(),
+                forge_repository: Some(ForgeRepositoryIdentity {
+                    provider: ForgeProvider::Github,
+                    owner: "acme".into(),
+                    name: "oakridge".into(),
+                }),
                 base_branch: "develop".into(),
                 epic_branch: "epic/typed-parity".into(),
                 final_pull_request: None,
@@ -1054,6 +1089,13 @@ mod tests {
             repository_path: "/repos/other".into(),
             ..profile.repositories[0].clone()
         });
+        assert!(profile.validate().is_err());
+    }
+
+    #[test]
+    fn epic_profile_requires_forge_identity_for_new_repository_bindings() {
+        let mut profile = valid_epic_profile();
+        profile.repositories[0].forge_repository = None;
         assert!(profile.validate().is_err());
     }
 

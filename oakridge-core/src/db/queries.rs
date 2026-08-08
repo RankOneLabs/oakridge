@@ -4,11 +4,16 @@
 //     cargo sqlx prepare
 // Run from the oakridge-core directory.
 
+use crate::reconciliation::{
+    CohortPullRequestReconciliation, ObservedPullRequestState, PullRequestMismatch,
+    PullRequestMismatchKind, PullRequestObservation, PullRequestObservationSource,
+};
 use crate::types::{
     Artifact, ArtifactId, EpicRepositoryBinding, EpicWorkflowProfile, EpicWorkflowProfileId,
-    GateDecisionAudit, GateDecisionAuditId, GateDecisionAuditInsert, GateDecisionAuditStatus,
-    Project, ProjectId, PullRequestReference, RunStatus, StageInstance, StageInstanceId,
-    StageStatus, WorkflowDef, WorkflowDefId, WorkflowRun, WorkflowRunId,
+    ForgeProvider, ForgeRepositoryIdentity, GateDecisionAudit, GateDecisionAuditId,
+    GateDecisionAuditInsert, GateDecisionAuditStatus, Project, ProjectId, PullRequestReference,
+    RunStatus, StageInstance, StageInstanceId, StageStatus, WorkflowDef, WorkflowDefId,
+    WorkflowRun, WorkflowRunId,
 };
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -65,11 +70,38 @@ struct EpicRepositoryBindingRow {
     repository_path: String,
     base_branch: String,
     epic_branch: String,
+    forge_provider: Option<String>,
+    forge_owner: Option<String>,
+    forge_name: Option<String>,
     final_merge_state: String,
     final_pr_number: Option<i64>,
     final_pr_url: Option<String>,
     final_pr_head_branch: Option<String>,
     final_pr_base_branch: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
+struct CohortPullRequestReconciliationRow {
+    workflow_run_id: String,
+    stage_instance_id: String,
+    unit_id: String,
+    repository_key: String,
+    provider: String,
+    owner: String,
+    name: String,
+    pr_number: i64,
+    pr_url: String,
+    head_branch: String,
+    base_branch: String,
+    head_sha: Option<String>,
+    observed_state: String,
+    observation_source: String,
+    observed_at: String,
+    merged_at: Option<String>,
+    mismatch_kind: Option<String>,
+    mismatch_detail: Option<String>,
+    completed_at: Option<String>,
+    updated_at: String,
 }
 
 #[derive(sqlx::FromRow)]
@@ -239,8 +271,62 @@ fn row_to_epic_repository_binding(
         repository_path: row.repository_path.into(),
         base_branch: row.base_branch,
         epic_branch: row.epic_branch,
+        forge_repository: match (row.forge_provider, row.forge_owner, row.forge_name) {
+            (None, None, None) => None,
+            (Some(provider), Some(owner), Some(name)) => Some(ForgeRepositoryIdentity {
+                provider: str_to_enum::<ForgeProvider>(provider)?,
+                owner,
+                name,
+            }),
+            _ => {
+                return Err(crate::Error::Validation(
+                    "partial forge repository identity in database".into(),
+                ))
+            }
+        },
         final_pull_request,
         final_merge_state: str_to_enum(row.final_merge_state)?,
+    })
+}
+
+fn row_to_cohort_pr_reconciliation(
+    row: CohortPullRequestReconciliationRow,
+) -> crate::Result<CohortPullRequestReconciliation> {
+    let mismatch = match (row.mismatch_kind, row.mismatch_detail) {
+        (None, None) => None,
+        (Some(kind), Some(detail)) => Some(PullRequestMismatch {
+            kind: str_to_enum::<PullRequestMismatchKind>(kind)?,
+            detail,
+        }),
+        _ => {
+            return Err(crate::Error::Validation(
+                "partial PR mismatch state in database".into(),
+            ))
+        }
+    };
+    Ok(CohortPullRequestReconciliation {
+        workflow_run_id: WorkflowRunId(parse_uuid(&row.workflow_run_id)?),
+        stage_instance_id: StageInstanceId(parse_uuid(&row.stage_instance_id)?),
+        unit_id: row.unit_id,
+        repository_key: row.repository_key,
+        observation: PullRequestObservation {
+            provider: str_to_enum::<ForgeProvider>(row.provider)?,
+            owner: row.owner,
+            name: row.name,
+            number: u64::try_from(row.pr_number)
+                .map_err(|_| crate::Error::Validation("invalid persisted PR number".into()))?,
+            url: row.pr_url,
+            head_branch: row.head_branch,
+            base_branch: row.base_branch,
+            head_sha: row.head_sha,
+            state: str_to_enum::<ObservedPullRequestState>(row.observed_state)?,
+            source: str_to_enum::<PullRequestObservationSource>(row.observation_source)?,
+            observed_at: parse_dt(&row.observed_at)?,
+            merged_at: row.merged_at.as_deref().map(parse_dt).transpose()?,
+        },
+        mismatch,
+        completed_at: row.completed_at.as_deref().map(parse_dt).transpose()?,
+        updated_at: parse_dt(&row.updated_at)?,
     })
 }
 
@@ -631,7 +717,8 @@ async fn insert_epic_profile_rows(
             "INSERT INTO epic_repository_binding \
              (epic_profile_id, repository_key, repository_path, base_branch, epic_branch, \
               final_merge_state, final_pr_number, final_pr_url, final_pr_head_branch, \
-              final_pr_base_branch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              final_pr_base_branch, forge_provider, forge_owner, forge_name) \
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&profile_id)
         .bind(&repository.repository_key)
@@ -643,6 +730,25 @@ async fn insert_epic_profile_rows(
         .bind(pr_url)
         .bind(pr_head)
         .bind(pr_base)
+        .bind(
+            repository
+                .forge_repository
+                .as_ref()
+                .map(|forge| enum_to_str(&forge.provider))
+                .transpose()?,
+        )
+        .bind(
+            repository
+                .forge_repository
+                .as_ref()
+                .map(|forge| forge.owner.as_str()),
+        )
+        .bind(
+            repository
+                .forge_repository
+                .as_ref()
+                .map(|forge| forge.name.as_str()),
+        )
         .execute(&mut **transaction)
         .await?;
     }
@@ -668,8 +774,9 @@ pub async fn get_epic_workflow_profile(
     })?;
     let profile_id = row.id.clone();
     let repository_rows = sqlx::query_as::<_, EpicRepositoryBindingRow>(
-        "SELECT repository_key, repository_path, base_branch, epic_branch, final_merge_state, \
-         final_pr_number, final_pr_url, final_pr_head_branch, final_pr_base_branch \
+        "SELECT repository_key, repository_path, base_branch, epic_branch, forge_provider, \
+         forge_owner, forge_name, final_merge_state, final_pr_number, final_pr_url, \
+         final_pr_head_branch, final_pr_base_branch \
          FROM epic_repository_binding WHERE epic_profile_id = ? ORDER BY repository_key",
     )
     .bind(&profile_id)
@@ -2085,6 +2192,99 @@ pub async fn clear_session_unit_artifact_id(
     Ok(())
 }
 
+pub async fn get_cohort_pr_reconciliation(
+    pool: &SqlitePool,
+    stage_instance_id: &StageInstanceId,
+    unit_id: &str,
+) -> crate::Result<Option<CohortPullRequestReconciliation>> {
+    let row = sqlx::query_as::<_, CohortPullRequestReconciliationRow>(
+        "SELECT workflow_run_id, stage_instance_id, unit_id, repository_key, provider, owner, \
+         name, pr_number, pr_url, head_branch, base_branch, head_sha, observed_state, \
+         observation_source, observed_at, merged_at, mismatch_kind, mismatch_detail, \
+         completed_at, updated_at FROM cohort_pull_request_reconciliation \
+         WHERE stage_instance_id = ? AND unit_id = ?",
+    )
+    .bind(stage_instance_id.0.to_string())
+    .bind(unit_id)
+    .fetch_optional(pool)
+    .await?;
+    row.map(row_to_cohort_pr_reconciliation).transpose()
+}
+
+pub async fn list_cohort_pr_reconciliations_for_run(
+    pool: &SqlitePool,
+    run_id: &WorkflowRunId,
+) -> crate::Result<Vec<CohortPullRequestReconciliation>> {
+    sqlx::query_as::<_, CohortPullRequestReconciliationRow>(
+        "SELECT workflow_run_id, stage_instance_id, unit_id, repository_key, provider, owner, \
+         name, pr_number, pr_url, head_branch, base_branch, head_sha, observed_state, \
+         observation_source, observed_at, merged_at, mismatch_kind, mismatch_detail, \
+         completed_at, updated_at FROM cohort_pull_request_reconciliation \
+         WHERE workflow_run_id = ? ORDER BY stage_instance_id, unit_id",
+    )
+    .bind(run_id.0.to_string())
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .map(row_to_cohort_pr_reconciliation)
+    .collect()
+}
+
+pub async fn upsert_cohort_pr_reconciliation(
+    pool: &SqlitePool,
+    record: &CohortPullRequestReconciliation,
+) -> crate::Result<()> {
+    let mismatch_kind = record
+        .mismatch
+        .as_ref()
+        .map(|mismatch| enum_to_str(&mismatch.kind))
+        .transpose()?;
+    let mismatch_detail = record
+        .mismatch
+        .as_ref()
+        .map(|mismatch| mismatch.detail.as_str());
+    sqlx::query(
+        "INSERT INTO cohort_pull_request_reconciliation \
+         (workflow_run_id, stage_instance_id, unit_id, repository_key, provider, owner, name, \
+          pr_number, pr_url, head_branch, base_branch, head_sha, observed_state, \
+          observation_source, observed_at, merged_at, mismatch_kind, mismatch_detail, \
+          completed_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+         ON CONFLICT(stage_instance_id, unit_id) DO UPDATE SET \
+          repository_key=excluded.repository_key, provider=excluded.provider, owner=excluded.owner, \
+          name=excluded.name, pr_number=excluded.pr_number, pr_url=excluded.pr_url, \
+          head_branch=excluded.head_branch, base_branch=excluded.base_branch, \
+          head_sha=excluded.head_sha, observed_state=excluded.observed_state, \
+          observation_source=excluded.observation_source, observed_at=excluded.observed_at, \
+          merged_at=excluded.merged_at, mismatch_kind=excluded.mismatch_kind, \
+          mismatch_detail=excluded.mismatch_detail, completed_at=COALESCE( \
+            cohort_pull_request_reconciliation.completed_at, excluded.completed_at), \
+          updated_at=excluded.updated_at",
+    )
+    .bind(record.workflow_run_id.0.to_string())
+    .bind(record.stage_instance_id.0.to_string())
+    .bind(&record.unit_id)
+    .bind(&record.repository_key)
+    .bind(enum_to_str(&record.observation.provider)?)
+    .bind(&record.observation.owner)
+    .bind(&record.observation.name)
+    .bind(i64::try_from(record.observation.number).map_err(|_| crate::Error::Validation("PR number exceeds SQLite range".into()))?)
+    .bind(&record.observation.url)
+    .bind(&record.observation.head_branch)
+    .bind(&record.observation.base_branch)
+    .bind(&record.observation.head_sha)
+    .bind(enum_to_str(&record.observation.state)?)
+    .bind(enum_to_str(&record.observation.source)?)
+    .bind(record.observation.observed_at.to_rfc3339())
+    .bind(record.observation.merged_at.map(|value| value.to_rfc3339()))
+    .bind(mismatch_kind)
+    .bind(mismatch_detail)
+    .bind(record.completed_at.map(|value| value.to_rfc3339()))
+    .bind(record.updated_at.to_rfc3339())
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 // ── Collab row structs ────────────────────────────────────────────────────────
 
 #[derive(sqlx::FromRow)]
@@ -2448,6 +2648,11 @@ mod tests {
             repositories: vec![EpicRepositoryBinding {
                 repository_key: "oakridge".into(),
                 repository_path: "/repos/oakridge".into(),
+                forge_repository: Some(ForgeRepositoryIdentity {
+                    provider: ForgeProvider::Github,
+                    owner: "acme".into(),
+                    name: "oakridge".into(),
+                }),
                 base_branch: "develop".into(),
                 epic_branch: "epic/parity".into(),
                 final_pull_request: None,
@@ -3858,5 +4063,62 @@ mod tests {
         let summaries2 = list_operator_run_summaries(&pool, None).await.unwrap();
         let s2 = summaries2.iter().find(|s| s.run_id == run.id).unwrap();
         assert!(s2.is_stuck, "stuck_timeout parked stage must set is_stuck");
+    }
+
+    #[tokio::test]
+    async fn cohort_pull_request_reconciliation_round_trips_and_upserts() {
+        let pool = make_test_pool().await;
+        let def = test_workflow_def();
+        insert_workflow_def(&pool, &def).await.unwrap();
+        let run = test_run(def.id);
+        insert_workflow_run(&pool, &run).await.unwrap();
+        let stage = test_stage(run.id);
+        insert_stage_instance(&pool, &stage).await.unwrap();
+
+        let mut record = CohortPullRequestReconciliation {
+            workflow_run_id: run.id,
+            stage_instance_id: stage.id,
+            unit_id: "api".into(),
+            repository_key: "api".into(),
+            observation: PullRequestObservation {
+                provider: ForgeProvider::Github,
+                owner: "acme".into(),
+                name: "api".into(),
+                number: 42,
+                url: "https://github.com/acme/api/pull/42".into(),
+                head_branch: "cohort/api".into(),
+                base_branch: "epic/parity".into(),
+                head_sha: Some("deadbeef".into()),
+                state: ObservedPullRequestState::Open,
+                source: PullRequestObservationSource::Poll,
+                observed_at: fixed_dt(),
+                merged_at: None,
+            },
+            mismatch: None,
+            completed_at: None,
+            updated_at: fixed_dt(),
+        };
+        upsert_cohort_pr_reconciliation(&pool, &record)
+            .await
+            .unwrap();
+        assert_eq!(
+            get_cohort_pr_reconciliation(&pool, &stage.id, "api")
+                .await
+                .unwrap(),
+            Some(record.clone())
+        );
+
+        record.observation.state = ObservedPullRequestState::Merged;
+        record.observation.merged_at = Some(fixed_dt());
+        record.completed_at = Some(fixed_dt());
+        upsert_cohort_pr_reconciliation(&pool, &record)
+            .await
+            .unwrap();
+        assert_eq!(
+            list_cohort_pr_reconciliations_for_run(&pool, &run.id)
+                .await
+                .unwrap(),
+            vec![record]
+        );
     }
 }
