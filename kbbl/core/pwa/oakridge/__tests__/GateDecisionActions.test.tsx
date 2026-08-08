@@ -34,17 +34,20 @@ afterEach(() => vi.restoreAllMocks());
 describe("GateDecisionActions", () => {
   it("resets decision state on a gate switch and ignores the previous gate response", async () => {
     let resolveRequest: ((response: Response) => void) | undefined;
-    vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise<Response>((resolve) => { resolveRequest = resolve; }));
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise<Response>((resolve) => { resolveRequest = resolve; }));
     const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
     const onComplete = vi.fn();
     const view = render(wrapper(client, gate("gate-a", "revision-a"), onComplete));
 
     fireEvent.click(screen.getByTestId("or-decision-approve"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const staleResponseResolver = resolveRequest;
+    if (!staleResponseResolver) throw new Error("Expected an in-flight request for gate-a");
     view.rerender(wrapper(client, gate("gate-b", "revision-b"), onComplete));
     await waitFor(() => expect(screen.getByTestId("or-decision-approve")).toBeTruthy());
 
     await act(async () => {
-      resolveRequest?.(new Response(JSON.stringify({ gate_id: "gate-a", resumed: true }), {
+      staleResponseResolver(new Response(JSON.stringify({ gate_id: "gate-a", resumed: true }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       }));
