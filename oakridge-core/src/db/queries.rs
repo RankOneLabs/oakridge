@@ -614,6 +614,7 @@ async fn insert_epic_profile_rows(
 
     let profile_id = profile.id.0.to_string();
     for repository in &profile.repositories {
+        let repository_path = repository.repository_path.to_string_lossy().into_owned();
         let (pr_number, pr_url, pr_head, pr_base) = repository
             .final_pull_request
             .as_ref()
@@ -634,7 +635,7 @@ async fn insert_epic_profile_rows(
         )
         .bind(&profile_id)
         .bind(&repository.repository_key)
-        .bind(repository.repository_path.to_string_lossy().as_ref())
+        .bind(repository_path)
         .bind(&repository.base_branch)
         .bind(&repository.epic_branch)
         .bind(enum_to_str(&repository.final_merge_state)?)

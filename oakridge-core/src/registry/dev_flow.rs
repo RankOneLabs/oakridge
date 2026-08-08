@@ -9,8 +9,8 @@ use crate::types::{AssessmentBody, BuildResultBody, PlanBody, PrSummaryBody, Spe
 // Validators follow the registry convention:
 //   serde_json::from_value::<Body>(v.clone()).map(|_| ()).map_err(Into::into)
 //
-// Required fields must be present; `Option<T>` fields are optional.
-// Array element types use `Value` to allow any JSON object per the brief.
+// Required fields must be present; `Option<T>` fields are optional. Nested
+// arrays and objects are validated by the named contracts in `crate::types`.
 
 fn validate_spec_analysis(v: &Value) -> crate::Result<()> {
     serde_json::from_value::<SpecAnalysisBody>(v.clone())
