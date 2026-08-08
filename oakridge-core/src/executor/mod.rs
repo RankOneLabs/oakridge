@@ -599,6 +599,13 @@ pub enum ResumePayload {
         feedback: String,
         assessment_artifact_id: ArtifactId,
     },
+    /// A verified external-system observation completes a correlated fan-out
+    /// unit that was durably waiting after downstream approval.
+    ExternalWaitCompleted {
+        unit_id: String,
+        external_kind: String,
+        correlation_id: String,
+    },
     /// A new upstream unit is available to an already-live fan-out stage.
     UnitInputAvailable {
         input_name: String,
