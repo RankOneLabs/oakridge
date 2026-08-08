@@ -2272,6 +2272,15 @@ pub struct PostAtomEditResponse {
     pub artifact_id: String,
 }
 
+fn anchor_is_allowed(anchor: &str, schema: &[String]) -> bool {
+    schema.iter().any(|prefix| {
+        anchor == prefix
+            || anchor
+                .strip_prefix(prefix)
+                .is_some_and(|suffix| suffix.starts_with('/'))
+    })
+}
+
 #[derive(Deserialize)]
 pub struct PostReviewItemRequest {
     pub anchor: String,
@@ -2630,7 +2639,7 @@ pub async fn post_atom_edit(
     // Reject anchors not declared in the type's anchor_schema.
     if let Some(def) = state.artifact_registry.get(&artifact.artifact_type) {
         if let Some(schema) = &def.anchor_schema {
-            if !schema.iter().any(|a| a == &req.anchor) {
+            if !anchor_is_allowed(&req.anchor, schema) {
                 return Err(AppError::Domain(crate::Error::Validation(format!(
                     "anchor '{}' is not in the anchor_schema for type '{}'",
                     req.anchor, artifact.artifact_type
@@ -5352,6 +5361,14 @@ mod tests {
             body["error"].as_str().unwrap().contains("anchor_schema"),
             "error must mention anchor_schema: {body:?}"
         );
+    }
+
+    #[test]
+    fn atom_edit_anchor_schema_allows_nested_atoms_but_not_similar_prefixes() {
+        let schema = vec!["/files_in_scope".to_string(), "/decisions_made".to_string()];
+        assert!(anchor_is_allowed("/files_in_scope/0", &schema));
+        assert!(anchor_is_allowed("/decisions_made/0/rationale", &schema));
+        assert!(!anchor_is_allowed("/files_in_scope_extra/0", &schema));
     }
 
     #[tokio::test]

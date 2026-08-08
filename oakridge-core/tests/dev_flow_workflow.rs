@@ -69,6 +69,14 @@ fn load_dev_flow_v7() -> WorkflowDef {
         .unwrap_or_else(|e| panic!("failed to parse {}: {e}", path.display()))
 }
 
+fn load_dev_flow_v8() -> WorkflowDef {
+    let path = manifest_dir().join("examples/dev_flow_v8.json");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
+    serde_json::from_str(&text)
+        .unwrap_or_else(|e| panic!("failed to parse {}: {e}", path.display()))
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct RecordedRequest {
     method: Method,
@@ -429,6 +437,47 @@ fn dev_flow_v6_remains_loadable_without_git_topology_bindings() {
     let stage = def.graph.stages.get("build").unwrap();
     let config: DelegatedSessionDefConfig = serde_json::from_value(stage.config.clone()).unwrap();
     assert!(config.fan_out.unwrap().worktree.unwrap().base_ref.is_none());
+}
+
+#[test]
+fn dev_flow_v8_gates_briefs_and_preserves_repository_epic_topology() {
+    use oakridge_core::executor::delegated_session::config::{Bindable, DelegatedGateKind};
+    use oakridge_core::executor::prompt_config::SlotBinding;
+
+    let def = load_dev_flow_v8();
+    assert_eq!(def.name, "dev-flow");
+    assert_eq!(def.version, 8);
+    assert_eq!(
+        def.graph.stages["brief_writer"].operator_role,
+        Some(StageOperatorRole::Brief)
+    );
+
+    let brief_config: DelegatedSessionDefConfig =
+        serde_json::from_value(def.graph.stages["brief_writer"].config.clone()).unwrap();
+    assert_eq!(brief_config.fan_out.unwrap().unit_id_path, "/id");
+    let gate = brief_config.output_gate.unwrap();
+    assert_eq!(gate.output, "brief");
+    assert_eq!(gate.steps[0].gate_type, DelegatedGateKind::ArtifactApproval);
+
+    let build = &def.graph.stages["build"];
+    let brief_input = build.inputs.iter().find(|input| input.name == "brief").unwrap();
+    assert_eq!(brief_input.artifact_type, "dev.build_brief");
+    assert_eq!(brief_input.delivery, oakridge_core::types::InputDelivery::UnitComplete);
+    let build_config: DelegatedSessionDefConfig =
+        serde_json::from_value(build.config.clone()).unwrap();
+    assert_eq!(build_config.prompt_template_path, "dev-flow/build_v2.md");
+    let fan_out = build_config.fan_out.unwrap();
+    assert!(!fan_out.manual_admission);
+    assert_eq!(fan_out.depends_on_path.as_deref(), Some("/artifact/depends_on"));
+    assert_eq!(
+        fan_out.worktree.unwrap().base_ref,
+        Some(Bindable::Bound(SlotBinding::ContextLookup {
+            collection_path: "/repositories".into(),
+            collection_key_path: "/key".into(),
+            item_key_path: "/artifact/repository_key".into(),
+            value_path: "/epic_branch".into(),
+        }))
+    );
 }
 
 // ── Prompt file existence + root containment ──────────────────────────────────

@@ -5,6 +5,7 @@ import type { ParkedGate } from "./types";
 
 interface GateDecisionActionsProps {
   gate: ParkedGate;
+  artifactRevisionId?: string;
   actionLabels?: Record<string, string>;
   onComplete?: () => void;
 }
@@ -31,7 +32,7 @@ export function GateDecisionActions(props: GateDecisionActionsProps) {
   return <GateDecisionActionsForGate key={props.gate.id} {...props} />;
 }
 
-function GateDecisionActionsForGate({ gate, actionLabels = {}, onComplete }: GateDecisionActionsProps) {
+function GateDecisionActionsForGate({ gate, artifactRevisionId, actionLabels = {}, onComplete }: GateDecisionActionsProps) {
   const mutation = useResumeGate(gate.id, gate.run_id);
   const [feedbackAction, setFeedbackAction] = useState<string | null>(null);
   const [feedback, setFeedback] = useState("");
@@ -44,13 +45,14 @@ function GateDecisionActionsForGate({ gate, actionLabels = {}, onComplete }: Gat
   }, []);
 
   const submit = (action: string, decisionFeedback?: string) => {
-    if (!gate.artifact_revision_id) return;
+    const decisionRevisionId = artifactRevisionId ?? gate.artifact_revision_id;
+    if (!decisionRevisionId) return;
     const feedbackValue = decisionFeedback?.trim() ?? "";
     const gateStep = gate.gate_step ?? gate.gate_type;
     const operatorComment = actionLabels[action] ?? actionLabel(action);
     const requestIdentity = JSON.stringify({
       action,
-      artifact_revision_id: gate.artifact_revision_id,
+      artifact_revision_id: decisionRevisionId,
       feedback: feedbackValue,
       gate_step: gateStep,
       operator_comment: operatorComment,
@@ -62,7 +64,7 @@ function GateDecisionActionsForGate({ gate, actionLabels = {}, onComplete }: Gat
     }
     mutation.mutate({
       idempotency_key: key,
-      artifact_revision_id: gate.artifact_revision_id,
+      artifact_revision_id: decisionRevisionId,
       gate_step: gateStep,
       action,
       operator_comment: operatorComment,

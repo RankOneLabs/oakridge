@@ -498,6 +498,35 @@ pub struct PlanBody {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct BriefDecision {
+    pub decision: String,
+    pub rationale: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RejectedApproach {
+    pub approach: String,
+    pub reason: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct BuildBriefBody {
+    pub cohort_id: String,
+    pub repository_key: String,
+    pub title: String,
+    pub depends_on: Vec<String>,
+    pub goal: String,
+    pub files_in_scope: Vec<String>,
+    pub decisions_made: Vec<BriefDecision>,
+    pub approaches_rejected: Vec<RejectedApproach>,
+    pub acceptance_criteria: Vec<String>,
+    pub next_action: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct TestEvidence {
     #[serde(default)]
     pub passed: u64,

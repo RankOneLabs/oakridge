@@ -9,6 +9,7 @@ const DEV_FLOW_V4_JSON: &str = include_str!("../examples/dev_flow_v4.json");
 const DEV_FLOW_V5_JSON: &str = include_str!("../examples/dev_flow_v5.json");
 const DEV_FLOW_V6_JSON: &str = include_str!("../examples/dev_flow_v6.json");
 const DEV_FLOW_V7_JSON: &str = include_str!("../examples/dev_flow_v7.json");
+const DEV_FLOW_V8_JSON: &str = include_str!("../examples/dev_flow_v8.json");
 
 pub async fn seed_builtin_workflow_defs(
     pool: &SqlitePool,
@@ -23,6 +24,7 @@ pub async fn seed_builtin_workflow_defs(
         ("dev_flow_v5.json", DEV_FLOW_V5_JSON),
         ("dev_flow_v6.json", DEV_FLOW_V6_JSON),
         ("dev_flow_v7.json", DEV_FLOW_V7_JSON),
+        ("dev_flow_v8.json", DEV_FLOW_V8_JSON),
     ] {
         let def: WorkflowDef = serde_json::from_str(json_str).map_err(|e| {
             crate::Error::Validation(format!("failed to parse built-in {}: {}", label, e))
@@ -115,12 +117,12 @@ mod tests {
         let versions: Vec<i32> = active.iter().map(|d| d.version).collect();
         assert_eq!(
             versions,
-            vec![6],
+            vec![8],
             "only the newest built-in should reach the launcher"
         );
 
         let all = queries::list_workflow_defs(&pool, true).await.unwrap();
-        assert_eq!(all.len(), 5, "retired defs are kept, not deleted");
+        assert_eq!(all.len(), 7, "retired defs are kept, not deleted");
     }
 
     #[tokio::test]

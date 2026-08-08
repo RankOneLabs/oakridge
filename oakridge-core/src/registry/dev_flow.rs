@@ -2,7 +2,9 @@ use serde_json::Value;
 
 use crate::collab::ReviewItemCandidate;
 use crate::registry::artifact_type::{ArtifactCapabilities, ArtifactTypeDef, ArtifactTypeRegistry};
-use crate::types::{AssessmentBody, BuildResultBody, PlanBody, PrSummaryBody, SpecAnalysisBody};
+use crate::types::{
+    AssessmentBody, BuildBriefBody, BuildResultBody, PlanBody, PrSummaryBody, SpecAnalysisBody,
+};
 
 // ── Body structs for schema validation ───────────────────────────────────────
 //
@@ -14,6 +16,12 @@ use crate::types::{AssessmentBody, BuildResultBody, PlanBody, PrSummaryBody, Spe
 
 fn validate_spec_analysis(v: &Value) -> crate::Result<()> {
     serde_json::from_value::<SpecAnalysisBody>(v.clone())
+        .map(|_| ())
+        .map_err(Into::into)
+}
+
+fn validate_build_brief(v: &Value) -> crate::Result<()> {
+    serde_json::from_value::<BuildBriefBody>(v.clone())
         .map(|_| ())
         .map_err(Into::into)
 }
@@ -80,11 +88,12 @@ fn extract_spec_analysis_review_items(body: &Value) -> Vec<ReviewItemCandidate> 
 
 // ── Registration ──────────────────────────────────────────────────────────────
 
-/// Register the five dev-flow artifact types in the given registry.
+/// Register the dev-flow artifact types in the given registry.
 ///
 /// Types registered:
 /// - `dev.spec_analysis`  — spec-analysis output: summary, findings, requirements, risks.
 /// - `dev.plan`           — implementation plan: cohorts, scope, acceptance criteria.
+/// - `dev.build_brief`    — repository-bound instructions for one build cohort.
 /// - `dev.build_result`   — build output: changed files, tests, known issues.
 /// - `dev.assessment`     — post-build assessment: verdict, findings, next actions.
 /// - `dev.pr_summary`     — PR metadata: url, branch, summary, review status.
@@ -105,6 +114,28 @@ pub fn register_dev_flow_types(registry: &mut ArtifactTypeRegistry) {
         },
         anchor_schema: None,
         review_items_extractor: Some(extract_spec_analysis_review_items),
+    });
+    // dev.build_brief: the operator can review, discuss, and directly edit its
+    // structured sections before approving the matching build unit.
+    registry.register(ArtifactTypeDef {
+        id: "dev.build_brief".into(),
+        validate: validate_build_brief,
+        component_id: "dev-build-brief-viewer".into(),
+        capabilities: ArtifactCapabilities {
+            reviewable: true,
+            commentable: true,
+            atom_editable: true,
+            review_items: false,
+        },
+        anchor_schema: Some(vec![
+            "/goal".into(),
+            "/files_in_scope".into(),
+            "/decisions_made".into(),
+            "/approaches_rejected".into(),
+            "/acceptance_criteria".into(),
+            "/next_action".into(),
+        ]),
+        review_items_extractor: None,
     });
     // dev.plan: fully interactive (cohort 5); anchor_schema covers cohort/dependency atoms.
     registry.register(ArtifactTypeDef {
@@ -198,13 +229,41 @@ mod tests {
     // ── Registration ─────────────────────────────────────────────────────────
 
     #[test]
-    fn all_five_dev_flow_types_registered() {
+    fn all_dev_flow_types_registered() {
         let reg = make_registry();
         assert!(reg.get("dev.spec_analysis").is_some());
         assert!(reg.get("dev.plan").is_some());
+        assert!(reg.get("dev.build_brief").is_some());
         assert!(reg.get("dev.build_result").is_some());
         assert!(reg.get("dev.assessment").is_some());
         assert!(reg.get("dev.pr_summary").is_some());
+    }
+
+    #[test]
+    fn build_brief_requires_the_strict_v1_compatible_shape() {
+        let reg = make_registry();
+        let def = reg.get("dev.build_brief").unwrap();
+        let body = json!({
+            "cohort_id": "brief-ui",
+            "repository_key": "oakridge",
+            "title": "Build brief review UI",
+            "depends_on": [],
+            "goal": "Let the operator approve a complete brief.",
+            "files_in_scope": ["kbbl/core/pwa/oakridge"],
+            "decisions_made": [{"decision": "Reuse the review shell", "rationale": "It is proven in v1."}],
+            "approaches_rejected": [{"approach": "A second review system", "reason": "It would duplicate collaboration state."}],
+            "acceptance_criteria": ["The brief is readable before approval."],
+            "next_action": "Open the artifact review route."
+        });
+        assert!((def.validate)(&body).is_ok());
+
+        let mut unexpected = body.clone();
+        unexpected["untyped_notes"] = json!("not part of the contract");
+        assert!((def.validate)(&unexpected).is_err());
+
+        let mut malformed = body;
+        malformed["decisions_made"] = json!([{"decision": "Missing rationale"}]);
+        assert!((def.validate)(&malformed).is_err());
     }
 
     #[test]
