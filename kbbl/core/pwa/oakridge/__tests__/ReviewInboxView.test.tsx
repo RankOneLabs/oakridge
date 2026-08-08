@@ -3,8 +3,11 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ReviewInboxView } from "../views/ReviewInboxView";
+import { parseRepositoryKey } from "../repository-inputs";
 import type { ReviewInbox } from "../types";
 import type { CohortLifecycle } from "../types";
+
+const WEB_REPOSITORY_KEY = parseRepositoryKey("web")!;
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -29,9 +32,8 @@ afterEach(() => vi.restoreAllMocks());
 describe("ReviewInboxView", () => {
   it("puts actionable work first without duplicating it in progress", async () => {
     renderInbox(inbox);
-    expect(await screen.findAllByTestId("or-review-inbox-item")).toHaveLength(2);
-    expect(screen.queryAllByTestId("or-cohort-lifecycle-card")).toHaveLength(0);
-    expect(screen.getByText("Ready to start")).toBeTruthy();
+    expect(await screen.findAllByTestId("or-review-inbox-item")).toHaveLength(1);
+    expect(screen.queryAllByTestId("or-cohort-lifecycle-card")).toHaveLength(1);
     expect(screen.getByText("Artifact ready for review")).toBeTruthy();
   });
 
@@ -41,23 +43,6 @@ describe("ReviewInboxView", () => {
     expect(handlers.onSelectArtifact).toHaveBeenCalledWith("revision-web");
     fireEvent.click(screen.getAllByTestId("or-inbox-run-link")[0]);
     expect(handlers.onSelectRun).toHaveBeenCalledWith("run-1");
-  });
-
-  it("admits an eligible cohort with an idempotency key", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => init?.method === "POST"
-      ? json({ stage_instance_id: "stage-build", unit_id: "api", admitted: true })
-      : json(inbox));
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-    render(<QueryClientProvider client={client}><ReviewInboxView onSelectRun={() => {}} onSelectArtifact={() => {}} /></QueryClientProvider>);
-    fireEvent.click(await screen.findByTestId("or-inbox-admit-btn"));
-    await waitFor(() => expect(fetchMock.mock.calls.some((call) => call[1]?.method === "POST")).toBe(true));
-    const postCall = fetchMock.mock.calls.find((call) => call[1]?.method === "POST");
-    expect(postCall).toBeTruthy();
-    if (!postCall) return;
-    const [url, init] = postCall;
-    expect(String(url)).toContain("/stages/stage-build/units/api/admit");
-    const body = JSON.parse(String(init?.body)) as { idempotency_key: string };
-    expect(body.idempotency_key).toBeTruthy();
   });
 
   it("advances an artifact gate directly from the inbox", async () => {
@@ -107,8 +92,8 @@ describe("ReviewInboxView", () => {
   });
 
   it("names every lifecycle state in operator language", async () => {
-    const states: CohortLifecycle[] = ["waiting_admission", "building", "artifact_review", "revision_requested", "merge_confirmation", "assessing", "complete", "failed"];
-    const labels = ["Ready to start", "Building", "Waiting for your review", "Changes requested", "Waiting for merge confirmation", "Checking the result", "Needs recovery"];
+    const states: CohortLifecycle[] = ["waiting_admission", "building", "artifact_review", "revision_requested", "merge_confirmation", "assessing", "github_review", "pull_request_mismatch", "complete", "failed"];
+    const labels = ["Brief approved · queued", "Building", "Waiting for your review", "Changes requested", "Waiting for merge confirmation", "Checking the result", "Waiting for GitHub review or merge", "Pull request needs attention", "Needs recovery"];
     renderInbox({
       items: [],
       cohorts: states.map((lifecycle, index) => ({
@@ -122,7 +107,7 @@ describe("ReviewInboxView", () => {
     await screen.findByTestId("or-review-inbox");
     for (const label of labels) expect(screen.getByText(label)).toBeTruthy();
     fireEvent.click(screen.getByText("Finished recently (1)"));
-    expect(screen.getByText("Finished")).toBeTruthy();
+    expect(screen.getByText("Complete")).toBeTruthy();
   });
 
   it("labels merge-confirmation work distinctly from artifact review", async () => {
@@ -139,5 +124,42 @@ describe("ReviewInboxView", () => {
 
     expect(await screen.findByText("Confirm the merged pull request")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Confirm merge" })).toBeTruthy();
+  });
+
+  it("surfaces pull request mismatches as actionable with reconciliation detail", async () => {
+    const mismatchCohort = {
+      ...inbox.cohorts[1],
+      lifecycle: "pull_request_mismatch" as const,
+      pull_request_reconciliation: {
+        repository_key: WEB_REPOSITORY_KEY,
+        observation: { owner: "wrong", name: "web", number: 42, url: "https://github.com/wrong/web/pull/42", head_branch: "cohort/web", base_branch: "main", state: "open" as const, observed_at: "2026-08-08T00:00:00Z" },
+        mismatch: { kind: "repository_mismatch" as const, detail: "observed pull request belongs to another repository" },
+        completed_at: null,
+        updated_at: "2026-08-08T00:00:00Z",
+      },
+    };
+    renderInbox({ cohorts: [mismatchCohort], items: [{ ...inbox.items[1], id: "mismatch-web", kind: "pull_request_mismatch", state: "blocked", lifecycle: "pull_request_mismatch", pr_url: mismatchCohort.pull_request_reconciliation.observation.url }] });
+    expect(await screen.findByText("Pull request needs attention")).toBeTruthy();
+    expect(screen.getByText("observed pull request belongs to another repository")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Open pull request" })).toBeTruthy();
+  });
+
+  it("shows automatic merged completion from durable reconciliation", async () => {
+    renderInbox({
+      items: [],
+      cohorts: [{
+        ...inbox.cohorts[1],
+        lifecycle: "complete",
+        pull_request_reconciliation: {
+          repository_key: WEB_REPOSITORY_KEY,
+          observation: { owner: "acme", name: "web", number: 42, url: "https://github.com/acme/web/pull/42", head_branch: "cohort/web", base_branch: "epic/full-parity", state: "merged", observed_at: "2026-08-08T00:00:00Z" },
+          mismatch: null,
+          completed_at: "2026-08-08T00:00:00Z",
+          updated_at: "2026-08-08T00:00:00Z",
+        },
+      }],
+    });
+    fireEvent.click(await screen.findByText("Finished recently (1)"));
+    expect(screen.getByText("Merged · complete")).toBeTruthy();
   });
 });

@@ -242,7 +242,7 @@ describe("RunDetailView", () => {
     expect(await screen.findByTestId("or-run-detail-error")).toBeTruthy();
   });
 
-  it("renders a cohort brief and admits an eligible pending build unit", async () => {
+  it("renders a cohort brief without a manual admission control", async () => {
     const detail: RunDetail = {
       ...RUN_DETAIL_FIXTURE,
       stages: [{
@@ -277,10 +277,8 @@ describe("RunDetailView", () => {
         }],
       }],
     };
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      void init;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes("/admit")) return new Response(null, { status: 204 });
       if (url.includes("/gates")) return json([]);
       if (url.includes("/runs/")) return json(detail);
       return json([]);
@@ -291,13 +289,7 @@ describe("RunDetailView", () => {
 
     expect(await screen.findByText("Build the cohort UI")).toBeTruthy();
     expect(screen.getByText("Admission is explicit")).toBeTruthy();
-    fireEvent.click(screen.getByTestId("or-admit-unit-btn"));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/oakridge/api/stages/build-stage-1/units/cohort-a/admit",
-      expect.objectContaining({ method: "POST" }),
-    ));
-    const admissionRequest = fetchMock.mock.calls.find(([input]) => String(input).includes("/admit"));
-    expect(JSON.parse(String(admissionRequest?.[1]?.body))).toEqual({ idempotency_key: expect.any(String) });
+    expect(screen.queryByTestId("or-admit-unit-btn")).toBeNull();
   });
 
   it("shows the exact dependencies blocking build admission", async () => {
@@ -325,8 +317,7 @@ describe("RunDetailView", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch(detail));
     wrap(<RunDetailView runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
 
-    expect((await screen.findByTestId("or-admission-blocked")).textContent).toContain("cohort-a, schema-review");
-    expect(screen.getByTestId("or-dependency-status").textContent).toContain("cohort-a: waiting");
+    expect((await screen.findByTestId("or-dependency-status")).textContent).toContain("cohort-a: waiting");
     expect(screen.queryByTestId("or-admit-unit-btn")).toBeNull();
   });
 });

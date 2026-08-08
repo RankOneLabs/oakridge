@@ -5042,6 +5042,13 @@ body {
 }
 
 /* Oakridge operator review workspace */
+.or-repository-fields {
+  display: grid;
+  grid-template-columns: minmax(7rem, 0.55fr) minmax(14rem, 1.5fr) minmax(8rem, 0.75fr) minmax(9rem, 0.85fr) minmax(7rem, 0.6fr) auto;
+  gap: 0.6rem;
+  align-items: start;
+}
+.or-role-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; }
 .or-review-workspace {
   width: min(100%, 1120px);
   margin: 0 auto;
@@ -5094,8 +5101,8 @@ body {
 .or-progress-row:last-child { border-bottom: 0; }
 .or-progress-row:hover { background: var(--bg-elevated); }
 .or-progress-row__dot { width: 0.65rem; height: 0.65rem; border-radius: 999px; background: var(--text-muted); }
-.or-progress-row__dot--building, .or-progress-row__dot--assessing { background: var(--accent-blue); }
-.or-progress-row__dot--failed { background: var(--danger-fg); }
+.or-progress-row__dot--building, .or-progress-row__dot--assessing, .or-progress-row__dot--github_review { background: var(--accent-blue); }
+.or-progress-row__dot--failed, .or-progress-row__dot--pull_request_mismatch { background: var(--danger-fg); }
 .or-progress-row__identity { min-width: 0; display: flex; flex-direction: column; gap: 0.2rem; }
 .or-progress-row__identity strong, .or-progress-row__identity small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .or-progress-row__identity small, .or-progress-row__state { color: var(--text-muted); }
@@ -5107,11 +5114,17 @@ body {
 .or-artifact-decision-bar strong { display: block; margin-bottom: 0.25rem; }
 .or-artifact-decision-bar p { margin: 0; color: var(--text-muted); font-size: 0.875rem; }
 
+@media (max-width: 1100px) {
+  .or-repository-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 @media (max-width: 767px) {
   .or-shell__nav { gap: 0.4rem; padding: 0.65rem 0.75rem; overflow-x: auto; }
   .or-shell__breadcrumb { display: none; }
   .or-shell__nav-item { flex: 0 0 auto; min-height: 2.5rem; padding: 0.45rem 0.7rem; }
   .or-shell__content { padding: 1rem 0.85rem 2rem; }
+  .or-repository-fields, .or-role-grid { grid-template-columns: minmax(0, 1fr); }
+  .or-repository-fields button { width: 100%; }
   .or-review-workspace { gap: 2rem; }
   .or-review-workspace__header { align-items: stretch; flex-direction: column; gap: 1rem; }
   .or-review-refresh { align-self: flex-start; }
