@@ -6,9 +6,10 @@ interface GateResumeFormProps {
   gate: ParkedGate;
   onDone: () => void;
   actionLabels?: Record<string, string>;
+  idPrefix?: string;
 }
 
-export function GateResumeForm({ gate, onDone, actionLabels = {} }: GateResumeFormProps) {
+export function GateResumeForm({ gate, onDone, actionLabels = {}, idPrefix = "or-resume" }: GateResumeFormProps) {
   const [action, setAction] = useState<string>(gate.resume_actions[0] ?? "");
   const [operatorComment, setOperatorComment] = useState("");
   const [feedback, setFeedback] = useState("");
@@ -68,9 +69,9 @@ export function GateResumeForm({ gate, onDone, actionLabels = {} }: GateResumeFo
 
       {gate.resume_actions.length > 1 && (
         <div className="or-resume-form__field">
-          <label className="or-label" htmlFor="or-resume-action">Action</label>
-          <select
-            id="or-resume-action"
+        <label className="or-label" htmlFor={`${idPrefix}-action`}>Action</label>
+        <select
+            id={`${idPrefix}-action`}
             className="or-select"
             value={action}
             onChange={(e) => setAction(e.target.value)}
@@ -93,11 +94,11 @@ export function GateResumeForm({ gate, onDone, actionLabels = {} }: GateResumeFo
       )}
 
       <div className="or-resume-form__field">
-        <label className="or-label" htmlFor="or-resume-comment">
+        <label className="or-label" htmlFor={`${idPrefix}-comment`}>
           Operator comment <span className="or-required">(required)</span>
         </label>
         <textarea
-          id="or-resume-comment"
+          id={`${idPrefix}-comment`}
           className="or-textarea"
           value={operatorComment}
           onChange={(e) => setOperatorComment(e.target.value)}
@@ -109,11 +110,11 @@ export function GateResumeForm({ gate, onDone, actionLabels = {} }: GateResumeFo
       </div>
 
       <div className="or-resume-form__field">
-        <label className="or-label" htmlFor="or-resume-feedback">
+        <label className="or-label" htmlFor={`${idPrefix}-feedback`}>
           Feedback <span className="or-optional">(optional)</span>
         </label>
         <textarea
-          id="or-resume-feedback"
+          id={`${idPrefix}-feedback`}
           className="or-textarea"
           value={feedback}
           onChange={(e) => setFeedback(e.target.value)}

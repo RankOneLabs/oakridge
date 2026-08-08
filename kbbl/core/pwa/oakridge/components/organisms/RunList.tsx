@@ -55,6 +55,7 @@ interface RunListProps {
   onSelectRun: (id: string) => void;
   onNewRun: () => void;
   onNewProject: () => void;
+  onReviewInbox?: () => void;
   onSelectArtifact?: (id: string) => void;
 }
 
@@ -66,7 +67,7 @@ const FILTER_TABS: { key: FilterTab; label: string }[] = [
   { key: "archived", label: "Archived" },
 ];
 
-export function RunList({ onSelectRun, onNewRun, onNewProject, onSelectArtifact }: RunListProps) {
+export function RunList({ onSelectRun, onNewRun, onNewProject, onReviewInbox, onSelectArtifact }: RunListProps) {
   const [activeTab, setActiveTab] = useState<FilterTab>("all");
   const qc = useQueryClient();
   const apiFilter = activeTab === "archived" ? "archived" : undefined;
@@ -89,6 +90,14 @@ export function RunList({ onSelectRun, onNewRun, onNewProject, onSelectArtifact 
       <div className="mb-4 flex items-center justify-between gap-3">
         <h2 className="m-0 text-lg font-semibold text-[var(--text-primary)]">Workflow Runs</h2>
         <div className="flex items-center gap-2">
+          {onReviewInbox && <button
+            type="button"
+            className={secondaryButtonClass}
+            onClick={onReviewInbox}
+            data-testid="or-review-inbox-btn"
+          >
+            Review inbox
+          </button>}
           <button
             type="button"
             className={secondaryButtonClass}

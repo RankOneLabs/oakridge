@@ -129,6 +129,14 @@ const ARTIFACT_FIXTURE: ArtifactDetail = {
 // ──────────────────────────────────────────────────────────────────────────────
 
 describe("RunListView", () => {
+  it("offers a visible review inbox entry point", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json([]));
+    const onReviewInbox = vi.fn();
+    wrap(<RunListView onSelectRun={() => {}} onNewRun={() => {}} onNewProject={() => {}} onReviewInbox={onReviewInbox} />);
+    fireEvent.click(await screen.findByTestId("or-review-inbox-btn"));
+    expect(onReviewInbox).toHaveBeenCalledOnce();
+  });
+
   it("shows loading state while runs are pending", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise(() => {}));
     wrap(<RunListView onSelectRun={() => {}} onNewRun={() => {}} onNewProject={() => {}} />);
@@ -516,9 +524,9 @@ describe("ArtifactReviewView", () => {
     wrap(<ArtifactReviewView artifactId="art-1" onBack={() => {}} />);
 
     await screen.findByTestId("or-artifact-type");
-    expect(screen.queryByTestId("or-artifact-gate-actions")).toBeNull();
-    fireEvent.click(screen.getByTestId("or-rev-tab-1"));
     expect(await screen.findByTestId("or-artifact-gate-actions")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("or-rev-tab-0"));
+    expect(screen.queryByTestId("or-artifact-gate-actions")).toBeNull();
     expect(fetchSpy.mock.calls.some(([input]) => String(input).includes("/runs/run-1/gates"))).toBe(true);
   });
 

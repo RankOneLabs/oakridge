@@ -4,6 +4,7 @@ interface RunListViewProps {
   onSelectRun: (id: string) => void;
   onNewRun: () => void;
   onNewProject: () => void;
+  onReviewInbox?: () => void;
   onSelectArtifact?: (id: string) => void;
 }
 
