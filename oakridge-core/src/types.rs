@@ -284,7 +284,8 @@ pub struct EpicRepositoryBinding {
     pub base_branch: String,
     pub epic_branch: String,
     /// Immutable forge identity used to prove PR observations belong to this
-    /// binding. Optional only for loading pre-reconciliation profiles.
+    /// binding. The option preserves decoding of legacy database rows; creating
+    /// or validating a profile requires this identity to be present.
     pub forge_repository: Option<ForgeRepositoryIdentity>,
     pub final_pull_request: Option<PullRequestReference>,
     pub final_merge_state: FinalMergeState,

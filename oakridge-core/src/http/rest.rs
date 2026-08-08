@@ -17,7 +17,7 @@ use crate::executor::delegated_session::{
 };
 use crate::executor::ResumePayload;
 use crate::reconciliation::{
-    github_pull_request_identity, reconcile_pull_request, CohortPullRequestReconciliation,
+    github_pull_request_identity, github_repository_identity_matches, reconcile_pull_request, CohortPullRequestReconciliation,
     ExpectedCohortPullRequest, PullRequestMismatch, PullRequestMismatchKind,
     PullRequestObservation, ReconciliationDecision,
 };
@@ -1050,7 +1050,12 @@ pub async fn reconcile_cohort_pull_request(
         head_branch: pr_summary.branch,
         base_branch: repository_binding.epic_branch.clone(),
     };
-    let decision = if url_owner != forge_repository.owner || url_name != forge_repository.name {
+    let decision = if !github_repository_identity_matches(
+        &url_owner,
+        &url_name,
+        &forge_repository.owner,
+        &forge_repository.name,
+    ) {
         ReconciliationDecision::Mismatch(PullRequestMismatch {
             kind: PullRequestMismatchKind::RepositoryMismatch,
             detail: "persisted pr_summary URL does not belong to the Epic repository binding"

@@ -103,6 +103,33 @@ pub fn github_pull_request_identity(url: &str) -> Option<(String, String, u64)> 
     Some((owner, name, number))
 }
 
+pub fn github_repository_identity_matches(
+    left_owner: &str,
+    left_name: &str,
+    right_owner: &str,
+    right_name: &str,
+) -> bool {
+    left_owner.eq_ignore_ascii_case(right_owner) && left_name.eq_ignore_ascii_case(right_name)
+}
+
+fn github_pull_request_urls_match(left: &str, right: &str) -> bool {
+    match (
+        github_pull_request_identity(left),
+        github_pull_request_identity(right),
+    ) {
+        (Some((left_owner, left_name, left_number)), Some((right_owner, right_name, right_number))) => {
+            left_number == right_number
+                && github_repository_identity_matches(
+                    &left_owner,
+                    &left_name,
+                    &right_owner,
+                    &right_name,
+                )
+        }
+        _ => false,
+    }
+}
+
 pub fn reconcile_pull_request(
     expected: &ExpectedCohortPullRequest,
     observation: &PullRequestObservation,
@@ -115,15 +142,21 @@ pub fn reconcile_pull_request(
         });
     }
     if observation.provider != expected.repository.provider
-        || observation.owner != expected.repository.owner
-        || observation.name != expected.repository.name
+        || !github_repository_identity_matches(
+            &observation.owner,
+            &observation.name,
+            &expected.repository.owner,
+            &expected.repository.name,
+        )
     {
         return mismatch(
             PullRequestMismatchKind::RepositoryMismatch,
             "observed pull request belongs to another repository",
         );
     }
-    if observation.number != expected.number || observation.url != expected.url {
+    if observation.number != expected.number
+        || !github_pull_request_urls_match(&observation.url, &expected.url)
+    {
         return mismatch(
             PullRequestMismatchKind::PullRequestMismatch,
             "observed pull request does not match the build's durable PR identity",
@@ -279,6 +312,19 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn accepts_github_identity_case_and_trailing_slash_variants() {
+        let expected = expected();
+        let mut equivalent = observation(ObservedPullRequestState::Open);
+        equivalent.owner = "ACME".into();
+        equivalent.name = "Api".into();
+        equivalent.url = "https://github.com/ACME/Api/pull/42/".into();
+        assert_eq!(
+            reconcile_pull_request(&expected, &equivalent, None),
+            ReconciliationDecision::Waiting
+        );
     }
 
     #[test]

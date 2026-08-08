@@ -2275,7 +2275,7 @@ pub async fn upsert_cohort_pr_reconciliation(
     .bind(&record.observation.head_sha)
     .bind(enum_to_str(&record.observation.state)?)
     .bind(enum_to_str(&record.observation.source)?)
-    .bind(record.observation.observed_at.to_rfc3339())
+    .bind(record.observation.observed_at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true))
     .bind(record.observation.merged_at.map(|value| value.to_rfc3339()))
     .bind(mismatch_kind)
     .bind(mismatch_detail)
@@ -4110,6 +4110,7 @@ mod tests {
         );
 
         record.observation.state = ObservedPullRequestState::Merged;
+        record.observation.observed_at = fixed_dt() + chrono::Duration::milliseconds(100);
         record.observation.merged_at = Some(fixed_dt());
         record.completed_at = Some(fixed_dt());
         upsert_cohort_pr_reconciliation(&pool, &record)
@@ -4124,7 +4125,7 @@ mod tests {
 
         let mut stale = record.clone();
         stale.observation.state = ObservedPullRequestState::Open;
-        stale.observation.observed_at = fixed_dt() - chrono::Duration::seconds(1);
+        stale.observation.observed_at = fixed_dt();
         stale.observation.merged_at = None;
         stale.completed_at = None;
         assert!(
