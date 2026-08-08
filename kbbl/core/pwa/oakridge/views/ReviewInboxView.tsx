@@ -1,9 +1,11 @@
+import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { StatusBadge } from "../components/atoms/StatusBadge";
+import { GateResumeForm } from "../GateResumeForm";
 import { useInboxAdmission } from "../hooks/useInboxAdmission";
 import { useReviewInbox } from "../hooks/useReviewInbox";
-import type { CohortLifecycle, ReviewInboxItem } from "../types";
+import type { CohortLifecycle, ParkedGate, ReviewInboxItem } from "../types";
 
 interface ReviewInboxViewProps {
   onSelectRun: (id: string) => void;
@@ -34,6 +36,34 @@ function itemPriority(item: ReviewInboxItem): number {
   if (item.state === "actionable") return 0;
   if (item.state === "blocked") return 1;
   return 2;
+}
+
+function InboxGateAction({ item }: { item: ReviewInboxItem }) {
+  const [open, setOpen] = useState(false);
+  if (!item.gate_id || !item.artifact_revision_id || item.resume_actions.length === 0) return null;
+  const gate: ParkedGate = {
+    id: item.gate_id,
+    gate_type: item.kind === "merge_confirmation" ? "merge_confirmation" : "artifact_approval",
+    gate_step: item.kind === "merge_confirmation" ? "merge_confirmation" : "artifact_approval",
+    run_id: item.run_id,
+    stage_name: item.stage_name,
+    unit_id: item.unit_id,
+    repository_key: item.repository_key,
+    artifact_revision_id: item.artifact_revision_id,
+    worktree: null,
+    resume_actions: item.resume_actions,
+    pr_url: item.pr_url,
+  };
+
+  return open ? (
+    <div className="basis-full" data-testid="or-inbox-gate-form">
+      <GateResumeForm gate={gate} onDone={() => setOpen(false)} />
+    </div>
+  ) : (
+    <button type="button" className="rounded-md border border-[var(--accent-blue)] bg-[var(--accent-blue)] px-3 py-1.5 text-sm text-white" onClick={() => setOpen(true)} data-testid="or-inbox-advance-btn">
+      Review and advance
+    </button>
+  );
 }
 
 export function ReviewInboxView({ onSelectRun, onSelectArtifact }: ReviewInboxViewProps) {
@@ -80,6 +110,7 @@ export function ReviewInboxView({ onSelectRun, onSelectArtifact }: ReviewInboxVi
                 {item.blocked_by.length > 0 && <div className="text-sm text-amber-500" data-testid="or-review-inbox-blocked">Blocked by: {item.blocked_by.join(", ")}</div>}
                 <div className="flex flex-wrap gap-2">
                   {item.kind === "admission" && item.state === "actionable" && <button type="button" className="rounded-md border border-[var(--accent-blue)] px-3 py-1.5 text-sm text-[var(--accent-blue)] disabled:opacity-50" disabled={isAdmitting} onClick={() => admission.mutate({ stageId: item.stage_instance_id, unitId: item.unit_id })} data-testid="or-inbox-admit-btn">{isAdmitting ? "Admitting…" : "Admit build"}</button>}
+                  {item.state === "actionable" && <InboxGateAction item={item} />}
                   {artifactId && <button type="button" className="rounded-md border border-[var(--accent-blue)] px-3 py-1.5 text-sm text-[var(--accent-blue)]" onClick={() => onSelectArtifact(artifactId)} data-testid="or-inbox-artifact-link">Review artifact</button>}
                   <button type="button" className="rounded-md border border-[var(--border-muted)] px-3 py-1.5 text-sm text-[var(--text-secondary)]" onClick={() => onSelectRun(item.run_id)} data-testid="or-inbox-run-link">Open run</button>
                   {item.pr_url && <a className="rounded-md border border-[var(--border-muted)] px-3 py-1.5 text-sm text-[var(--text-secondary)]" href={item.pr_url} target="_blank" rel="noopener noreferrer">Open PR</a>}

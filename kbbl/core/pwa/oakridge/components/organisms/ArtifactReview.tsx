@@ -79,7 +79,7 @@ interface ArtifactReviewProps {
 
 export function ArtifactReview({ artifactId, onBack }: ArtifactReviewProps) {
   const query = useArtifact(artifactId);
-  const [selectedRevIdx, setSelectedRevIdx] = useState<number>(0);
+  const [selectedRevIdx, setSelectedRevIdx] = useState<number | null>(null);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
   const [showGateForm, setShowGateForm] = useState(true);
 
@@ -91,7 +91,9 @@ export function ArtifactReview({ artifactId, onBack }: ArtifactReviewProps) {
   const threadsQuery = useThreads(artifactId, commentable);
   const reviewItemsQuery = useReviewItems(artifactId, hasReviewItems);
   const revisions = query.data?.revisions ?? [];
-  const revIdx = Math.min(selectedRevIdx, Math.max(0, revisions.length - 1));
+  const revIdx = selectedRevIdx === null
+    ? Math.max(0, revisions.length - 1)
+    : Math.min(selectedRevIdx, Math.max(0, revisions.length - 1));
   const revision = revisions[revIdx] as ArtifactRevision | undefined;
   const gatesQuery = useRunGates(query.data?.run_id ?? "", Boolean(query.data?.run_id));
   const gates = Array.isArray(gatesQuery.data) ? gatesQuery.data : [];
@@ -102,6 +104,10 @@ export function ArtifactReview({ artifactId, onBack }: ArtifactReviewProps) {
   useEffect(() => {
     setShowGateForm(true);
   }, [artifactGate?.id]);
+
+  useEffect(() => {
+    setSelectedRevIdx(null);
+  }, [artifactId]);
 
   const postThread = usePostThread(artifactId);
   const postMessage = usePostMessage(artifactId, selectedThreadId ?? "");
