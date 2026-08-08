@@ -679,6 +679,7 @@ async fn waiting_for_kbbl_parks_and_reattaches() {
             fan_out_prompt_plan: None,
             resolved_fan_out_over: None,
             resolved_fan_out_workdirs: std::collections::HashMap::new(),
+            resolved_fan_out_worktrees: std::collections::HashMap::new(),
             fan_out_context: serde_json::Value::Null,
             workdir: workdir.clone(),
             session_name: format!("delegated-{}", si_id.0),

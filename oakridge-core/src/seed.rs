@@ -8,6 +8,7 @@ const DEV_FLOW_V2_JSON: &str = include_str!("../examples/dev_flow_v2.json");
 const DEV_FLOW_V4_JSON: &str = include_str!("../examples/dev_flow_v4.json");
 const DEV_FLOW_V5_JSON: &str = include_str!("../examples/dev_flow_v5.json");
 const DEV_FLOW_V6_JSON: &str = include_str!("../examples/dev_flow_v6.json");
+const DEV_FLOW_V7_JSON: &str = include_str!("../examples/dev_flow_v7.json");
 
 pub async fn seed_builtin_workflow_defs(
     pool: &SqlitePool,
@@ -21,6 +22,7 @@ pub async fn seed_builtin_workflow_defs(
         ("dev_flow_v4.json", DEV_FLOW_V4_JSON),
         ("dev_flow_v5.json", DEV_FLOW_V5_JSON),
         ("dev_flow_v6.json", DEV_FLOW_V6_JSON),
+        ("dev_flow_v7.json", DEV_FLOW_V7_JSON),
     ] {
         let def: WorkflowDef = serde_json::from_str(json_str).map_err(|e| {
             crate::Error::Validation(format!("failed to parse built-in {}: {}", label, e))
