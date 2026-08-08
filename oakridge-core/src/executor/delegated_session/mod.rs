@@ -202,11 +202,44 @@ fn materialize_fan_out_units(
             .cloned()
             .unwrap_or_else(|| config.workdir.clone());
 
-        let worktree = config
-            .resolved_fan_out_worktrees
-            .get(&unit_id)
-            .cloned()
-            .or_else(|| config.worktree.clone());
+        let worktree = if let Some(identity) = config.resolved_fan_out_worktrees.get(&unit_id) {
+            Some(identity.clone())
+        } else if let Some(template) = &fan_out.worktree {
+            Some(WorktreeIdentity {
+                branch_name: resolve_worktree_template_value(
+                    &template.branch_name,
+                    &HashMap::new(),
+                    &config.fan_out_context,
+                    item,
+                    &unit_id,
+                    stage_instance_id,
+                )?,
+                worktree_subdir: resolve_worktree_template_value(
+                    &template.worktree_subdir,
+                    &HashMap::new(),
+                    &config.fan_out_context,
+                    item,
+                    &unit_id,
+                    stage_instance_id,
+                )?,
+                base_ref: template
+                    .base_ref
+                    .as_ref()
+                    .map(|base| {
+                        resolve_worktree_template_value(
+                            base,
+                            &HashMap::new(),
+                            &config.fan_out_context,
+                            item,
+                            &unit_id,
+                            stage_instance_id,
+                        )
+                    })
+                    .transpose()?,
+            })
+        } else {
+            config.worktree.clone()
+        };
         units.push(MaterializedFanOutUnit {
             unit_id,
             params: item.clone(),
