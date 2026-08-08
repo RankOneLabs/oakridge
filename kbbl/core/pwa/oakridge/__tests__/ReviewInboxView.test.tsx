@@ -27,12 +27,12 @@ const inbox: ReviewInbox = {
 afterEach(() => vi.restoreAllMocks());
 
 describe("ReviewInboxView", () => {
-  it("renders actionable work and every cohort lifecycle", async () => {
+  it("puts actionable work first without duplicating it in progress", async () => {
     renderInbox(inbox);
     expect(await screen.findAllByTestId("or-review-inbox-item")).toHaveLength(2);
-    expect(screen.getAllByTestId("or-cohort-lifecycle-card")).toHaveLength(2);
-    expect(screen.getByText("Waiting for admission")).toBeTruthy();
-    expect(screen.getAllByText("Artifact review")).toHaveLength(2);
+    expect(screen.queryAllByTestId("or-cohort-lifecycle-card")).toHaveLength(0);
+    expect(screen.getByText("Ready to start")).toBeTruthy();
+    expect(screen.getByText("Artifact ready for review")).toBeTruthy();
   });
 
   it("navigates directly to the reviewed artifact and its run", async () => {
@@ -73,22 +73,31 @@ describe("ReviewInboxView", () => {
     });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     render(<QueryClientProvider client={client}><ReviewInboxView onSelectRun={() => {}} onSelectArtifact={() => {}} /></QueryClientProvider>);
-    fireEvent.click(await screen.findByTestId("or-inbox-advance-btn"));
-    fireEvent.change(screen.getByTestId("or-resume-comment"), { target: { value: "Artifact is ready" } });
-    fireEvent.click(screen.getByTestId("or-resume-submit"));
+    fireEvent.click(await screen.findByTestId("or-decision-approve"));
     await waitFor(() => expect(fetchMock.mock.calls.some(([input, init]) => init?.method === "POST" && String(input).includes("/gates/stage-build%3Aweb/resume"))).toBe(true));
-    await waitFor(() => expect(screen.queryByTestId("or-inbox-advance-btn")).toBeNull());
+    const request = fetchMock.mock.calls.find(([, init]) => init?.method === "POST")?.[1] as RequestInit;
+    expect(JSON.parse(String(request.body))).toMatchObject({ action: "approve", operator_comment: "Approve artifact", feedback: "" });
+    await waitFor(() => expect(screen.queryByTestId("or-decision-approve")).toBeNull());
     expect(fetchMock.mock.calls.filter(([, init]) => init?.method !== "POST").length).toBeGreaterThanOrEqual(2);
   });
 
-  it("uses unique form control ids when multiple gate actions are open", async () => {
-    renderInbox({
+  it("requires and submits actionable feedback when requesting changes", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => init?.method === "POST"
+      ? json({ gate_id: "stage-build:web", resumed: true })
+      : json({
       cohorts: [],
-      items: [inbox.items[1], { ...inbox.items[1], id: "review-api", unit_id: "api", title: "Review API", gate_id: "stage-build:api" }],
-    });
-    for (const button of await screen.findAllByTestId("or-inbox-advance-btn")) fireEvent.click(button);
-    const commentFields = screen.getAllByTestId("or-resume-comment") as HTMLTextAreaElement[];
-    expect(new Set(commentFields.map((field) => field.id)).size).toBe(2);
+      items: [inbox.items[1]],
+    }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><ReviewInboxView onSelectRun={() => {}} onSelectArtifact={() => {}} /></QueryClientProvider>);
+    fireEvent.click(await screen.findByTestId("or-decision-request_revision"));
+    const send = screen.getByRole("button", { name: "Send feedback" }) as HTMLButtonElement;
+    expect(send.disabled).toBe(true);
+    fireEvent.change(document.querySelector(".or-decision-feedback textarea")!, { target: { value: "Explain the recovery path." } });
+    fireEvent.click(send);
+    await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(true));
+    const request = fetchMock.mock.calls.find(([, init]) => init?.method === "POST")?.[1] as RequestInit;
+    expect(JSON.parse(String(request.body))).toMatchObject({ action: "request_revision", feedback: "Explain the recovery path." });
   });
 
   it("shows blockers without offering admission", async () => {
@@ -99,7 +108,7 @@ describe("ReviewInboxView", () => {
 
   it("names every lifecycle state in operator language", async () => {
     const states: CohortLifecycle[] = ["waiting_admission", "building", "artifact_review", "revision_requested", "merge_confirmation", "assessing", "complete", "failed"];
-    const labels = ["Waiting for admission", "Building", "Artifact review", "Revision requested", "Merge confirmation", "Assessing", "Done", "Failed"];
+    const labels = ["Ready to start", "Building", "Waiting for your review", "Changes requested", "Waiting for merge confirmation", "Checking the result", "Needs recovery"];
     renderInbox({
       items: [],
       cohorts: states.map((lifecycle, index) => ({
@@ -112,7 +121,8 @@ describe("ReviewInboxView", () => {
     });
     await screen.findByTestId("or-review-inbox");
     for (const label of labels) expect(screen.getByText(label)).toBeTruthy();
-    expect(screen.getByText("Cohort lifecycle (8 total · 7 active)")).toBeTruthy();
+    fireEvent.click(screen.getByText("Finished recently (1)"));
+    expect(screen.getByText("Finished")).toBeTruthy();
   });
 
   it("labels merge-confirmation work distinctly from artifact review", async () => {
@@ -123,9 +133,11 @@ describe("ReviewInboxView", () => {
         id: "merge-web",
         kind: "merge_confirmation",
         lifecycle: "merge_confirmation",
+        resume_actions: ["confirm_merged"],
       }],
     });
 
-    expect((await screen.findAllByText("Merge confirmation")).length).toBeGreaterThanOrEqual(1);
+    expect(await screen.findByText("Confirm the merged pull request")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Confirm merge" })).toBeTruthy();
   });
 });

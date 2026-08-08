@@ -15,7 +15,7 @@ import { formatRelative } from "../../../lib/time";
 import { ThreadSidebar } from "../../../review/shared/ThreadSidebar";
 import { ThreadView } from "../../../review/shared/ThreadView";
 import type { Thread, Message } from "../../../review/shared/types";
-import { GateResumeForm } from "../../GateResumeForm";
+import { GateDecisionActions } from "../../GateDecisionActions";
 import { ArtifactReviewShell } from "./ArtifactReviewShell";
 
 // JSON pretty-print fallback — retained from ArtifactDetailView
@@ -81,7 +81,6 @@ export function ArtifactReview({ artifactId, onBack }: ArtifactReviewProps) {
   const query = useArtifact(artifactId);
   const [selectedRevIdx, setSelectedRevIdx] = useState<number | null>(null);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
-  const [showGateForm, setShowGateForm] = useState(true);
 
   // Collab data — loaded only when the artifact has relevant capabilities
   const caps = query.data?.capabilities ?? null;
@@ -100,10 +99,6 @@ export function ArtifactReview({ artifactId, onBack }: ArtifactReviewProps) {
   const artifactGate = revision
     ? gates.find((gate) => gate.artifact_revision_id === revision.id)
     : undefined;
-
-  useEffect(() => {
-    setShowGateForm(true);
-  }, [artifactGate?.id]);
 
   useEffect(() => {
     setSelectedRevIdx(null);
@@ -298,18 +293,9 @@ export function ArtifactReview({ artifactId, onBack }: ArtifactReviewProps) {
       ) : undefined;
 
   const gateActions = artifactGate ? (
-    <section className="or-artifact-detail__collab" data-testid="or-artifact-gate-actions">
-      {showGateForm ? (
-        <GateResumeForm
-          gate={artifactGate}
-          actionLabels={artifact.review?.action_labels}
-          onDone={() => setShowGateForm(false)}
-        />
-      ) : (
-        <button type="button" className="or-btn or-btn--primary" onClick={() => setShowGateForm(true)}>
-          Review gate
-        </button>
-      )}
+    <section className="or-artifact-decision-bar" data-testid="or-artifact-gate-actions">
+      <div><strong>{artifactGate.gate_type === "merge_confirmation" ? "Confirm the merge" : "Make your decision"}</strong><p>{artifactGate.gate_type === "merge_confirmation" ? "Verify the pull request is merged, then continue the cohort." : "Approve this artifact or send clear changes back to the builder."}</p></div>
+      <GateDecisionActions gate={artifactGate} actionLabels={artifact.review?.action_labels} />
     </section>
   ) : undefined;
 
