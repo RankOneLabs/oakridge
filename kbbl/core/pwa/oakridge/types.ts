@@ -82,6 +82,48 @@ export interface EpicProfileConfig {
   repositories: EpicRepositoryConfig[];
 }
 
+export type EpicLifecycleState = "draft" | "active" | "final_integration" | "completed" | "failed";
+export type FinalMergeState = "pending" | "pull_request_open" | "awaiting_confirmation" | "merged" | "closed_without_merge";
+
+export interface PullRequestReference {
+  number: number;
+  url: string;
+  head_branch: string;
+  base_branch: string;
+}
+
+export interface EpicRepositoryBinding {
+  repository_key: RepositoryKey;
+  repository_path: string;
+  base_branch: string;
+  epic_branch: string;
+  forge_repository: ForgeRepositoryIdentity | null;
+  final_pull_request: PullRequestReference | null;
+  final_merge_state: FinalMergeState;
+}
+
+export interface EpicWorkflowProfile {
+  id: string;
+  workflow_run_id: string;
+  title: string;
+  slug: string;
+  lifecycle_state: EpicLifecycleState;
+  final_merge_policy: FinalMergePolicy;
+  repositories: EpicRepositoryBinding[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConfirmFinalPullRequestRequest {
+  idempotency_key: string;
+  operator_comment?: string;
+}
+
+export interface FinalPullRequestResponse {
+  outcome: "waiting" | "completed" | "already_completed" | "mismatch" | "ignored_stale" | "awaiting_external_confirmation";
+  profile: EpicWorkflowProfile;
+}
+
 export interface CreateRunRequest {
   workflow_def_id: string;
   project_id: string | null;
@@ -163,6 +205,7 @@ export interface RunDetail {
   parked_count: number;
   updated_at: string;
   is_stuck: boolean;
+  epic_profile?: EpicWorkflowProfile | null;
 }
 
 export interface ArtifactRevision {
