@@ -1,7 +1,9 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::types::{ForgeProvider, ForgeRepositoryIdentity, StageInstanceId, WorkflowRunId};
+use crate::types::{
+    EpicWorkflowProfileId, ForgeProvider, ForgeRepositoryIdentity, StageInstanceId, WorkflowRunId,
+};
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -78,6 +80,19 @@ pub struct CohortPullRequestReconciliation {
     pub updated_at: DateTime<Utc>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct FinalPullRequestReconciliation {
+    pub epic_profile_id: EpicWorkflowProfileId,
+    pub repository_key: String,
+    pub observation: PullRequestObservation,
+    pub mismatch: Option<PullRequestMismatch>,
+    pub merged_evidence_at: Option<DateTime<Utc>>,
+    pub confirmation_idempotency_key: Option<String>,
+    pub operator_comment: Option<String>,
+    pub confirmed_at: Option<DateTime<Utc>>,
+    pub updated_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReconciliationDecision {
     Waiting,
@@ -117,7 +132,10 @@ fn github_pull_request_urls_match(left: &str, right: &str) -> bool {
         github_pull_request_identity(left),
         github_pull_request_identity(right),
     ) {
-        (Some((left_owner, left_name, left_number)), Some((right_owner, right_name, right_number))) => {
+        (
+            Some((left_owner, left_name, left_number)),
+            Some((right_owner, right_name, right_number)),
+        ) => {
             left_number == right_number
                 && github_repository_identity_matches(
                     &left_owner,

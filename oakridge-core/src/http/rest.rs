@@ -17,18 +17,18 @@ use crate::executor::delegated_session::{
 };
 use crate::executor::ResumePayload;
 use crate::reconciliation::{
-    github_pull_request_identity, github_repository_identity_matches, reconcile_pull_request, CohortPullRequestReconciliation,
-    ExpectedCohortPullRequest, PullRequestMismatch, PullRequestMismatchKind,
-    PullRequestObservation, ReconciliationDecision,
+    github_pull_request_identity, github_repository_identity_matches, reconcile_pull_request,
+    CohortPullRequestReconciliation, ExpectedCohortPullRequest, FinalPullRequestReconciliation,
+    PullRequestMismatch, PullRequestMismatchKind, PullRequestObservation, ReconciliationDecision,
 };
 use crate::registry::artifact_type::{ArtifactCapabilities, ArtifactReviewDescriptor};
 use crate::scheduler::DecisionError;
 use crate::types::{
     Artifact, ArtifactId, EpicLifecycleState, EpicRepositoryBinding, EpicWorkflowProfile,
-    EpicWorkflowProfileId, FinalMergePolicy, GateDecision, GateDecisionAudit, GateDecisionAuditId,
-    GateOutcome, InputDelivery, InputSlot, OutputSlot, PrSummaryBody, Project, ProjectId,
-    RunStatus, StageInstance, StageInstanceId, StageOperatorRole, StageStatus, UnitStatus,
-    WorkflowDef, WorkflowDefId, WorkflowGraph, WorkflowRun, WorkflowRunId,
+    EpicWorkflowProfileId, FinalMergePolicy, FinalMergeState, GateDecision, GateDecisionAudit,
+    GateDecisionAuditId, GateOutcome, InputDelivery, InputSlot, OutputSlot, PrSummaryBody, Project,
+    ProjectId, RunStatus, StageInstance, StageInstanceId, StageOperatorRole, StageStatus,
+    UnitStatus, WorkflowDef, WorkflowDefId, WorkflowGraph, WorkflowRun, WorkflowRunId,
 };
 
 use super::AppState;
@@ -149,7 +149,7 @@ fn epic_profile_from_config(
         workflow_run_id: run_id,
         title: config.title,
         slug: config.slug,
-        lifecycle_state: EpicLifecycleState::Draft,
+        lifecycle_state: EpicLifecycleState::Active,
         final_merge_policy: config.final_merge_policy,
         repositories: config
             .repositories
@@ -934,6 +934,29 @@ pub struct ReconcileCohortPullRequestResponse {
     pub reconciliation: CohortPullRequestReconciliation,
 }
 
+#[derive(Serialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReconcileFinalPullRequestOutcome {
+    Waiting,
+    Completed,
+    AlreadyCompleted,
+    AwaitingExternalConfirmation,
+    Mismatch,
+    IgnoredStale,
+}
+
+#[derive(Serialize)]
+pub struct ReconcileFinalPullRequestResponse {
+    pub outcome: ReconcileFinalPullRequestOutcome,
+    pub profile: EpicWorkflowProfile,
+}
+
+#[derive(Deserialize)]
+pub struct ConfirmFinalPullRequestRequest {
+    pub idempotency_key: String,
+    pub operator_comment: Option<String>,
+}
+
 pub async fn reconcile_cohort_pull_request(
     State(state): State<AppState>,
     Path((run_uuid, unit_id)): Path<(Uuid, String)>,
@@ -1087,18 +1110,16 @@ pub async fn reconcile_cohort_pull_request(
         completed_at: None,
         updated_at: now,
     };
-    let persisted =
-        queries::upsert_cohort_pr_reconciliation(&state.pool, &reconciliation).await?;
+    let persisted = queries::upsert_cohort_pr_reconciliation(&state.pool, &reconciliation).await?;
     if !persisted {
-        let reconciliation = queries::get_cohort_pr_reconciliation(
-            &state.pool,
-            &build_stage.id,
-            &unit_id,
-        )
-        .await?
-        .ok_or_else(|| {
-            AppError::Internal("monotonic PR reconciliation write lost its durable row".into())
-        })?;
+        let reconciliation =
+            queries::get_cohort_pr_reconciliation(&state.pool, &build_stage.id, &unit_id)
+                .await?
+                .ok_or_else(|| {
+                    AppError::Internal(
+                        "monotonic PR reconciliation write lost its durable row".into(),
+                    )
+                })?;
         return Ok(Json(ReconcileCohortPullRequestResponse {
             outcome: ReconcileCohortPullRequestOutcome::IgnoredStale,
             reconciliation,
@@ -1137,6 +1158,260 @@ pub async fn reconcile_cohort_pull_request(
     Ok(Json(ReconcileCohortPullRequestResponse {
         outcome,
         reconciliation,
+    }))
+}
+
+async fn require_final_integration_eligible(
+    state: &AppState,
+    run_id: WorkflowRunId,
+) -> Result<(), AppError> {
+    let run = queries::get_workflow_run_by_id(&state.pool, &run_id).await?;
+    let definition = queries::get_workflow_def_by_id(&state.pool, &run.workflow_def_id).await?;
+    let stages = queries::list_stage_instances_for_run(&state.pool, &run_id).await?;
+    for role in [StageOperatorRole::Build, StageOperatorRole::Assessment] {
+        let stage = stages
+            .iter()
+            .find(|stage| {
+                definition
+                    .graph
+                    .stages
+                    .get(&stage.stage_key)
+                    .is_some_and(|node| node.operator_role == Some(role))
+            })
+            .ok_or_else(|| AppError::Conflict(format!("run has no {role:?}-role stage")))?;
+        let units = queries::list_session_units_for_stage(&state.pool, &stage.id).await?;
+        if units.is_empty() || units.iter().any(|unit| unit.status != UnitStatus::Done) {
+            return Err(AppError::Conflict(
+                "final integration requires every build cohort and assessment to be complete"
+                    .into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn recompute_epic_lifecycle(profile: &mut EpicWorkflowProfile) {
+    profile.lifecycle_state = if profile
+        .repositories
+        .iter()
+        .all(|repository| repository.final_merge_state == FinalMergeState::Merged)
+    {
+        EpicLifecycleState::Completed
+    } else {
+        EpicLifecycleState::FinalIntegration
+    };
+    profile.updated_at = Utc::now();
+}
+
+pub async fn reconcile_final_pull_request(
+    State(state): State<AppState>,
+    Path((run_uuid, repository_key)): Path<(Uuid, String)>,
+    Json(body): Json<ReconcileCohortPullRequestRequest>,
+) -> Result<Json<ReconcileFinalPullRequestResponse>, AppError> {
+    let run_id = WorkflowRunId(run_uuid);
+    require_final_integration_eligible(&state, run_id).await?;
+    let mut profile = queries::get_epic_workflow_profile(&state.pool, &run_id).await?;
+    let repository = profile
+        .repositories
+        .iter_mut()
+        .find(|repository| repository.repository_key == repository_key)
+        .ok_or_else(|| AppError::Conflict("repository is not bound to the Epic".into()))?;
+    if repository.final_merge_state == FinalMergeState::Merged {
+        return Ok(Json(ReconcileFinalPullRequestResponse {
+            outcome: ReconcileFinalPullRequestOutcome::AlreadyCompleted,
+            profile,
+        }));
+    }
+    let forge = repository.forge_repository.clone().ok_or_else(|| {
+        AppError::Conflict("Epic repository has no durable forge identity".into())
+    })?;
+    let (url_owner, url_name, number) = github_pull_request_identity(&body.observation.url)
+        .ok_or_else(|| {
+            AppError::Conflict("observation URL is not a canonical GitHub PR URL".into())
+        })?;
+    let reference = if repository.final_merge_state == FinalMergeState::PullRequestOpen {
+        repository.final_pull_request.clone().ok_or_else(|| {
+            AppError::Internal("open final merge state has no pull request identity".into())
+        })?
+    } else {
+        crate::types::PullRequestReference {
+            number,
+            url: body.observation.url.clone(),
+            head_branch: repository.epic_branch.clone(),
+            base_branch: repository.base_branch.clone(),
+        }
+    };
+    let expected = ExpectedCohortPullRequest {
+        workflow_run_id: run_id,
+        stage_instance_id: StageInstanceId(Uuid::nil()),
+        unit_id: "final-integration".into(),
+        repository_key: repository_key.clone(),
+        repository: forge.clone(),
+        number: reference.number,
+        url: reference.url.clone(),
+        head_branch: repository.epic_branch.clone(),
+        base_branch: repository.base_branch.clone(),
+    };
+    let previous =
+        queries::get_final_pr_reconciliation(&state.pool, &profile.id, &repository_key).await?;
+    let decision =
+        if !github_repository_identity_matches(&url_owner, &url_name, &forge.owner, &forge.name) {
+            ReconciliationDecision::Mismatch(PullRequestMismatch {
+                kind: PullRequestMismatchKind::RepositoryMismatch,
+                detail: "final pull request URL does not belong to the Epic repository binding"
+                    .into(),
+            })
+        } else {
+            let previous_cohort = previous
+                .as_ref()
+                .map(|record| CohortPullRequestReconciliation {
+                    workflow_run_id: run_id,
+                    stage_instance_id: StageInstanceId(Uuid::nil()),
+                    unit_id: "final-integration".into(),
+                    repository_key: repository_key.clone(),
+                    observation: record.observation.clone(),
+                    mismatch: record.mismatch.clone(),
+                    completed_at: record.confirmed_at,
+                    updated_at: record.updated_at,
+                });
+            reconcile_pull_request(&expected, &body.observation, previous_cohort.as_ref())
+        };
+    if matches!(decision, ReconciliationDecision::IgnoreStale(_)) {
+        return Ok(Json(ReconcileFinalPullRequestResponse {
+            outcome: ReconcileFinalPullRequestOutcome::IgnoredStale,
+            profile,
+        }));
+    }
+    let mismatch = match &decision {
+        ReconciliationDecision::Mismatch(value) => Some(value.clone()),
+        _ => None,
+    };
+    let merged_evidence_at = matches!(decision, ReconciliationDecision::Complete)
+        .then_some(body.observation.merged_at)
+        .flatten();
+    let record = FinalPullRequestReconciliation {
+        epic_profile_id: profile.id,
+        repository_key: repository_key.clone(),
+        observation: body.observation,
+        mismatch,
+        merged_evidence_at,
+        confirmation_idempotency_key: previous
+            .as_ref()
+            .and_then(|value| value.confirmation_idempotency_key.clone()),
+        operator_comment: previous
+            .as_ref()
+            .and_then(|value| value.operator_comment.clone()),
+        confirmed_at: previous.as_ref().and_then(|value| value.confirmed_at),
+        updated_at: Utc::now(),
+    };
+    if !queries::upsert_final_pr_reconciliation(&state.pool, &record).await? {
+        return Ok(Json(ReconcileFinalPullRequestResponse {
+            outcome: ReconcileFinalPullRequestOutcome::IgnoredStale,
+            profile,
+        }));
+    }
+    let should_register_reference = !matches!(
+        record.mismatch.as_ref().map(|mismatch| &mismatch.kind),
+        Some(
+            PullRequestMismatchKind::MissingRepositoryIdentity
+                | PullRequestMismatchKind::RepositoryMismatch
+                | PullRequestMismatchKind::PullRequestMismatch
+                | PullRequestMismatchKind::HeadBranchMismatch
+                | PullRequestMismatchKind::BaseBranchMismatch
+        )
+    );
+    if should_register_reference {
+        repository.final_pull_request = Some(reference);
+    }
+    repository.final_merge_state = match decision {
+        ReconciliationDecision::Waiting => FinalMergeState::PullRequestOpen,
+        ReconciliationDecision::Mismatch(_)
+            if matches!(
+                record.mismatch.as_ref().map(|mismatch| &mismatch.kind),
+                Some(PullRequestMismatchKind::ClosedWithoutMerge)
+            ) =>
+        {
+            FinalMergeState::ClosedWithoutMerge
+        }
+        ReconciliationDecision::Mismatch(_) => repository.final_merge_state,
+        ReconciliationDecision::Complete
+            if profile.final_merge_policy == FinalMergePolicy::Guarded =>
+        {
+            FinalMergeState::Merged
+        }
+        ReconciliationDecision::Complete => FinalMergeState::AwaitingConfirmation,
+        ReconciliationDecision::IgnoreStale(_) => unreachable!(),
+    };
+    let outcome = match decision {
+        ReconciliationDecision::Waiting => ReconcileFinalPullRequestOutcome::Waiting,
+        ReconciliationDecision::Mismatch(_) => ReconcileFinalPullRequestOutcome::Mismatch,
+        ReconciliationDecision::Complete
+            if profile.final_merge_policy == FinalMergePolicy::Guarded =>
+        {
+            ReconcileFinalPullRequestOutcome::Completed
+        }
+        ReconciliationDecision::Complete => {
+            ReconcileFinalPullRequestOutcome::AwaitingExternalConfirmation
+        }
+        ReconciliationDecision::IgnoreStale(_) => unreachable!(),
+    };
+    recompute_epic_lifecycle(&mut profile);
+    queries::update_epic_final_integration(&state.pool, &profile).await?;
+    Ok(Json(ReconcileFinalPullRequestResponse { outcome, profile }))
+}
+
+pub async fn confirm_final_pull_request(
+    State(state): State<AppState>,
+    Path((run_uuid, repository_key)): Path<(Uuid, String)>,
+    Json(body): Json<ConfirmFinalPullRequestRequest>,
+) -> Result<Json<ReconcileFinalPullRequestResponse>, AppError> {
+    if body.idempotency_key.trim().is_empty() {
+        return Err(AppError::Conflict(
+            "idempotency_key must not be empty".into(),
+        ));
+    }
+    let run_id = WorkflowRunId(run_uuid);
+    require_final_integration_eligible(&state, run_id).await?;
+    let mut profile = queries::get_epic_workflow_profile(&state.pool, &run_id).await?;
+    if profile.final_merge_policy != FinalMergePolicy::ExternalConfirmation {
+        return Err(AppError::Conflict(
+            "explicit confirmation is only valid for external_confirmation policy".into(),
+        ));
+    }
+    let mut record =
+        queries::get_final_pr_reconciliation(&state.pool, &profile.id, &repository_key)
+            .await?
+            .ok_or_else(|| {
+                AppError::Conflict("final pull request has no durable merged evidence".into())
+            })?;
+    if record.merged_evidence_at.is_none() {
+        return Err(AppError::Conflict(
+            "final pull request has no durable merged evidence".into(),
+        ));
+    }
+    if let Some(existing) = &record.confirmation_idempotency_key {
+        if existing != &body.idempotency_key {
+            return Err(AppError::Conflict(
+                "final pull request was confirmed with a different idempotency key".into(),
+            ));
+        }
+    }
+    record.confirmation_idempotency_key = Some(body.idempotency_key);
+    record.operator_comment = body.operator_comment;
+    record.confirmed_at.get_or_insert_with(Utc::now);
+    record.updated_at = Utc::now();
+    queries::upsert_final_pr_reconciliation(&state.pool, &record).await?;
+    let repository = profile
+        .repositories
+        .iter_mut()
+        .find(|repository| repository.repository_key == repository_key)
+        .ok_or_else(|| AppError::Conflict("repository is not bound to the Epic".into()))?;
+    repository.final_merge_state = FinalMergeState::Merged;
+    recompute_epic_lifecycle(&mut profile);
+    queries::update_epic_final_integration(&state.pool, &profile).await?;
+    Ok(Json(ReconcileFinalPullRequestResponse {
+        outcome: ReconcileFinalPullRequestOutcome::Completed,
+        profile,
     }))
 }
 
@@ -3431,7 +3706,7 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(profile["lifecycle_state"], "draft");
+        assert_eq!(profile["lifecycle_state"], "active");
         assert_eq!(profile["repositories"][0]["base_branch"], "develop");
 
         let operator_run = tokio::time::timeout(Duration::from_secs(1), async {

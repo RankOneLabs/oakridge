@@ -251,6 +251,7 @@ pub enum FinalMergeState {
     #[default]
     Pending,
     PullRequestOpen,
+    AwaitingConfirmation,
     Merged,
     ClosedWithoutMerge,
 }
@@ -416,6 +417,7 @@ impl EpicWorkflowProfile {
             let state_matches_metadata = match repository.final_merge_state {
                 FinalMergeState::Pending => repository.final_pull_request.is_none(),
                 FinalMergeState::PullRequestOpen
+                | FinalMergeState::AwaitingConfirmation
                 | FinalMergeState::Merged
                 | FinalMergeState::ClosedWithoutMerge => repository.final_pull_request.is_some(),
             };
