@@ -18,6 +18,8 @@ import type { RepositoryInputDraft } from "../../types";
 import { validateRepositoryInputs } from "../../repository-inputs";
 import { RoleModelPicker } from "../molecules/RoleModelPicker";
 import { initialSelectionForRole } from "../../lib/runtime-selection";
+import { buildEpicProfile } from "../../lib/launch-config";
+import { RepositoryLaunchFields } from "../molecules/RepositoryLaunchFields";
 
 const secondaryButtonClass =
   "inline-flex items-center gap-1.5 rounded-md border border-[var(--border-muted)] bg-transparent px-3 py-1.5 text-sm text-[var(--text-secondary)] hover:border-[var(--border-hover)]";
@@ -50,8 +52,9 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
     [runtimeDescriptors],
   );
 
+  const [epicTitle, setEpicTitle] = useState("");
   const [briefNotes, setBriefNotes] = useState("");
-  const [repositories, setRepositories] = useState<RepositoryInputDraft[]>([{ key: "repo", path: "" }]);
+  const [repositories, setRepositories] = useState<RepositoryInputDraft[]>([{ key: "repo", path: "", forge_owner: "", forge_name: "", base_branch: "main" }]);
   const [projectId, setProjectId] = useState<string>("");
   const [workflowDefId, setWorkflowDefId] = useState<string>("");
   const [plannerSelection, setPlannerSelection] = useState<RuntimeModelSelection>(() =>
@@ -98,7 +101,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
     if (project) {
       const key = project.name.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-") || "repo";
       setRepositories((current) => [
-        { key, path: project.repo_dir },
+        { ...current[0], key, path: project.repo_dir },
         ...current.slice(1),
       ]);
     }
@@ -114,6 +117,8 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
     const repositoryResult = validateRepositoryInputs(repositories);
     if (!repositoryResult.ok) { setError(repositoryResult.error.detail); return; }
     const normalizedRepositories = repositoryResult.repositories;
+    const epicProfile = buildEpicProfile(epicTitle, normalizedRepositories);
+    if (!epicProfile) { setError("Epic title must include a letter or number."); return; }
     if (!briefNotes.trim()) { setError("Brief notes are required."); return; }
     if (!coreUrl) { setError("oakridge core URL is not configured."); return; }
     try {
@@ -122,7 +127,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
         project_id: projectId || null,
         context: {
           brief_notes: briefNotes.trim(),
-          repositories: normalizedRepositories,
+          repositories: normalizedRepositories.map(({ key, path }) => ({ key, path })),
           worktree_path: normalizedRepositories[0].path,
           oakridge_url: coreUrl,
           planner_runtime: plannerSelection.runtime,
@@ -132,6 +137,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
           worker_model: workerSelection.model,
           ...(workerSelection.effort ? { worker_effort: workerSelection.effort } : {}),
         },
+        epic_profile: epicProfile,
       });
       onCreated(result.id);
     } catch (err) {
@@ -147,6 +153,10 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
       </header>
 
       <form className="flex flex-col gap-4" onSubmit={(e) => { void onSubmit(e); }}>
+        <label className="flex flex-col gap-1">
+          <span className={fieldLabelClass}>Epic title</span>
+          <input type="text" className={inputClass} value={epicTitle} onChange={(event) => setEpicTitle(event.target.value)} disabled={pending} placeholder="Ship account recovery" required />
+        </label>
         <label className="flex flex-col gap-1">
           <span className={fieldLabelClass}>Workflow Definition</span>
           <select
@@ -183,56 +193,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
           </select>
         </label>
 
-        <fieldset className="flex flex-col gap-2 rounded-md border border-[var(--border-subtle)] p-3">
-          <div className="flex items-center justify-between gap-3">
-            <legend className={fieldLabelClass}>Repositories</legend>
-            <button
-              type="button"
-              className={secondaryButtonClass}
-              disabled={pending}
-              onClick={() => setRepositories((current) => [...current, { key: "", path: "" }])}
-            >
-              + Repository
-            </button>
-          </div>
-          {repositories.map((repository, index) => (
-            <div className="grid grid-cols-[minmax(7rem,0.35fr)_1fr_auto] gap-2" key={index}>
-              <input
-                type="text"
-                className={inputClass}
-                value={repository.key}
-                onChange={(event) => setRepositories((current) => current.map((item, itemIndex) =>
-                  itemIndex === index ? { ...item, key: event.target.value } : item
-                ))}
-                disabled={pending}
-                placeholder="api"
-                aria-label={`Repository ${index + 1} key`}
-                required
-              />
-              <input
-                type="text"
-                className={inputClass}
-                value={repository.path}
-                onChange={(event) => setRepositories((current) => current.map((item, itemIndex) =>
-                  itemIndex === index ? { ...item, path: event.target.value } : item
-                ))}
-                disabled={pending}
-                placeholder="/absolute/path/to/repo"
-                aria-label={`Repository ${index + 1} path`}
-                required
-              />
-              <button
-                type="button"
-                className={secondaryButtonClass}
-                disabled={pending || repositories.length === 1}
-                onClick={() => setRepositories((current) => current.filter((_, itemIndex) => itemIndex !== index))}
-                aria-label={`Remove repository ${index + 1}`}
-              >
-                Remove
-              </button>
-            </div>
-          ))}
-        </fieldset>
+        <RepositoryLaunchFields repositories={repositories} setRepositories={setRepositories} disabled={pending} />
 
         <label className="flex flex-col gap-1">
           <span className={fieldLabelClass}>Brief Notes</span>
@@ -247,7 +208,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
           />
         </label>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="or-role-grid">
           <RoleModelPicker
             role="planner"
             selection={plannerSelection}

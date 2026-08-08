@@ -4,21 +4,21 @@ import { validateRepositoryInputs } from "./repository-inputs";
 describe("validateRepositoryInputs", () => {
   it("normalizes multiple keyed repositories", () => {
     expect(validateRepositoryInputs([
-      { key: " api ", path: " /repos/api " },
-      { key: "web", path: "/repos/web" },
+      { key: " api ", path: " /repos/api ", forge_owner: " acme ", forge_name: " api ", base_branch: " main " },
+      { key: "web", path: "/repos/web", forge_owner: "acme", forge_name: "web", base_branch: "main" },
     ])).toEqual({
       ok: true,
       repositories: [
-        { key: "api", path: "/repos/api" },
-        { key: "web", path: "/repos/web" },
+        { key: "api", path: "/repos/api", forge_owner: "acme", forge_name: "api", base_branch: "main" },
+        { key: "web", path: "/repos/web", forge_owner: "acme", forge_name: "web", base_branch: "main" },
       ],
     });
   });
 
   it("rejects duplicate keys", () => {
     expect(validateRepositoryInputs([
-      { key: "api", path: "/repos/one" },
-      { key: "api", path: "/repos/two" },
+      { key: "api", path: "/repos/one", forge_owner: "acme", forge_name: "one", base_branch: "main" },
+      { key: "api", path: "/repos/two", forge_owner: "acme", forge_name: "two", base_branch: "main" },
     ])).toEqual({
       ok: false,
       error: {
@@ -31,13 +31,30 @@ describe("validateRepositoryInputs", () => {
 
   it("rejects relative paths", () => {
     expect(validateRepositoryInputs([
-      { key: "api", path: "repos/api" },
+      { key: "api", path: "repos/api", forge_owner: "acme", forge_name: "api", base_branch: "main" },
     ])).toEqual({
       ok: false,
       error: {
         operation: "validate_repository_inputs",
         repository: 0,
         detail: "Repository paths must be absolute.",
+      },
+    });
+  });
+
+  it("requires durable GitHub identity and base branch", () => {
+    expect(validateRepositoryInputs([{
+      key: "api",
+      path: "/repos/api",
+      forge_owner: "",
+      forge_name: "api",
+      base_branch: "main",
+    }])).toEqual({
+      ok: false,
+      error: {
+        operation: "validate_repository_inputs",
+        repository: 0,
+        detail: "Every repository needs a key, local path, GitHub owner/name, and base branch.",
       },
     });
   });

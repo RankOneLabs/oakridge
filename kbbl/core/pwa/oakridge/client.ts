@@ -27,7 +27,6 @@ import type {
   ReviewInbox,
   CohortLifecycleSummary,
   ReviewInboxItem,
-  AdmitStageUnitResponse,
 } from "./types";
 import { parseRepositoryKey } from "./repository-inputs";
 
@@ -147,13 +146,6 @@ export function fetchRuns(filter?: string): Promise<RunSummary[]> {
 
 export function fetchRun(id: string): Promise<RunDetail> {
   return oakridgeGet<RawRunDetail>(`/runs/${encodeURIComponent(id)}`).then(parseRunDetail);
-}
-
-export function admitStageUnit(stageId: string, unitId: string, idempotencyKey: string): Promise<AdmitStageUnitResponse> {
-  return oakridgePost<AdmitStageUnitResponse>(
-    `/stages/${encodeURIComponent(stageId)}/units/${encodeURIComponent(unitId)}/admit`,
-    { idempotency_key: idempotencyKey },
-  );
 }
 
 export function fetchRunGates(runId: string): Promise<ParkedGate[]> {
