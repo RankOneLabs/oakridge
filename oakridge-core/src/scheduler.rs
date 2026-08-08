@@ -12,7 +12,7 @@ use uuid::Uuid;
 use crate::db::queries;
 use crate::events::{EventBus, SubstrateEvent};
 use crate::executor::delegated_session::config::{
-    DelegatedSessionConfig, DelegatedSessionDefConfig,
+    DelegatedSessionConfig, DelegatedSessionDefConfig, RevisionTarget,
 };
 use crate::executor::prompt_config::SlotBinding;
 use crate::executor::{ExecutorEvent, ResumePayload, StageContext, StageHandle};
@@ -64,6 +64,21 @@ impl std::fmt::Display for DecisionError {
 }
 
 impl std::error::Error for DecisionError {}
+
+fn upstream_handoff_role(
+    node: &crate::types::StageNodeDef,
+) -> Result<Option<crate::types::StageOperatorRole>, serde_json::Error> {
+    if node.stage_type != "delegated_session" {
+        return Ok(None);
+    }
+    let config = serde_json::from_value::<DelegatedSessionDefConfig>(node.config.clone())?;
+    Ok(config
+        .output_gate
+        .as_ref()
+        .is_some_and(|gate| gate.revision_target == RevisionTarget::UpstreamHandoff)
+        .then_some(node.operator_role)
+        .flatten())
+}
 
 // ── RunHandle ─────────────────────────────────────────────────────────────────
 
@@ -1041,8 +1056,8 @@ impl RunTask {
                     ..
                 },
                 Some(node),
-            ) => node
-                .operator_role
+            ) => upstream_handoff_role(node)
+                .map_err(|error| DecisionError::Internal(error.into()))?
                 .map(|role| (role, decision.clone(), *against_artifact_id)),
             _ => None,
         };
@@ -2542,6 +2557,37 @@ mod tests {
     use uuid::Uuid;
 
     // ── helpers ───────────────────────────────────────────────────────────────
+
+    #[test]
+    fn upstream_handoff_correlation_requires_explicit_revision_target() {
+        let node = |revision_target: &str| StageNodeDef {
+            operator_role: Some(StageOperatorRole::Assessment),
+            stage_type: "delegated_session".into(),
+            config: json!({
+                "runtime": "codex",
+                "prompt_template_path": "unused.md",
+                "slot_bindings": {},
+                "workdir": {"from": "literal", "value": "/tmp"},
+                "session_name": "test",
+                "model": null,
+                "pre_authorized_tools": [],
+                "yolo": false,
+                "output_gate": {
+                    "output": "assessment",
+                    "steps": [{"type": "artifact_approval", "actions": ["approve"]}],
+                    "revision_target": revision_target
+                }
+            }),
+            inputs: vec![],
+            outputs: vec![],
+        };
+
+        assert_eq!(upstream_handoff_role(&node("self_stage")).unwrap(), None);
+        assert_eq!(
+            upstream_handoff_role(&node("upstream_handoff")).unwrap(),
+            Some(StageOperatorRole::Assessment)
+        );
+    }
 
     async fn make_pool() -> Arc<SqlitePool> {
         let path = format!("/tmp/oakridge_sched_test_{}.db", Uuid::new_v4());

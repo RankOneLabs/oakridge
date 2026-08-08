@@ -181,11 +181,23 @@ async fn emit_handler(
             downstream_role: handoff.downstream_role,
             approved_wait_kind: handoff.approved_wait.kind.clone(),
         };
+        let wait_state = match serde_json::to_value(wait_state) {
+            Ok(value) => value,
+            Err(error) => {
+                tracing::error!(
+                    stage_instance_id = %stage_instance_id.0,
+                    unit_id = %unit_id,
+                    error = %error,
+                    "failed to serialize downstream wait state"
+                );
+                return internal_error();
+            }
+        };
         if queries::set_session_unit_gate_state(
             live_session.ctx.pool(),
             &stage_instance_id,
             &unit_id,
-            Some(serde_json::to_value(wait_state).unwrap()),
+            Some(wait_state),
         )
         .await
         .is_err()
