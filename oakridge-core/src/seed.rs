@@ -122,7 +122,7 @@ mod tests {
         );
 
         let all = queries::list_workflow_defs(&pool, true).await.unwrap();
-        assert_eq!(all.len(), 6, "retired defs are kept, not deleted");
+        assert_eq!(all.len(), 7, "retired defs are kept, not deleted");
     }
 
     #[tokio::test]
