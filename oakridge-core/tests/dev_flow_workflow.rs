@@ -441,7 +441,9 @@ fn dev_flow_v6_remains_loadable_without_git_topology_bindings() {
 
 #[test]
 fn dev_flow_v8_gates_briefs_and_preserves_repository_epic_topology() {
-    use oakridge_core::executor::delegated_session::config::{Bindable, DelegatedGateKind};
+    use oakridge_core::executor::delegated_session::config::{
+        Bindable, DelegatedGateKind, RevisionTarget,
+    };
     use oakridge_core::executor::prompt_config::SlotBinding;
 
     let def = load_dev_flow_v8();
@@ -460,15 +462,30 @@ fn dev_flow_v8_gates_briefs_and_preserves_repository_epic_topology() {
     assert_eq!(gate.steps[0].gate_type, DelegatedGateKind::ArtifactApproval);
 
     let build = &def.graph.stages["build"];
-    let brief_input = build.inputs.iter().find(|input| input.name == "brief").unwrap();
+    let brief_input = build
+        .inputs
+        .iter()
+        .find(|input| input.name == "brief")
+        .unwrap();
     assert_eq!(brief_input.artifact_type, "dev.build_brief");
-    assert_eq!(brief_input.delivery, oakridge_core::types::InputDelivery::UnitComplete);
+    assert_eq!(
+        brief_input.delivery,
+        oakridge_core::types::InputDelivery::UnitComplete
+    );
     let build_config: DelegatedSessionDefConfig =
         serde_json::from_value(build.config.clone()).unwrap();
     assert_eq!(build_config.prompt_template_path, "dev-flow/build_v2.md");
+    assert!(build_config.output_gate.is_none());
+    let handoff = build_config.output_handoff.as_ref().unwrap();
+    assert_eq!(handoff.output, "build_result");
+    assert_eq!(handoff.downstream_role, StageOperatorRole::Assessment);
+    assert_eq!(handoff.approved_wait.kind, "github_review");
     let fan_out = build_config.fan_out.unwrap();
     assert!(!fan_out.manual_admission);
-    assert_eq!(fan_out.depends_on_path.as_deref(), Some("/artifact/depends_on"));
+    assert_eq!(
+        fan_out.depends_on_path.as_deref(),
+        Some("/artifact/depends_on")
+    );
     assert_eq!(
         fan_out.worktree.unwrap().base_ref,
         Some(Bindable::Bound(SlotBinding::ContextLookup {
@@ -477,6 +494,20 @@ fn dev_flow_v8_gates_briefs_and_preserves_repository_epic_topology() {
             item_key_path: "/artifact/repository_key".into(),
             value_path: "/epic_branch".into(),
         }))
+    );
+
+    let assessor_config: DelegatedSessionDefConfig =
+        serde_json::from_value(def.graph.stages["assessor"].config.clone()).unwrap();
+    let assessment_gate = assessor_config.output_gate.unwrap();
+    assert_eq!(assessment_gate.output, "assessment");
+    assert_eq!(assessment_gate.steps.len(), 1);
+    assert_eq!(
+        assessment_gate.steps[0].gate_type,
+        DelegatedGateKind::ArtifactApproval
+    );
+    assert_eq!(
+        assessment_gate.revision_target,
+        RevisionTarget::UpstreamHandoff
     );
 }
 

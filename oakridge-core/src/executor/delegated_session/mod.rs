@@ -391,7 +391,12 @@ async fn inherited_producer_workdir(
     let producer_unit_id = producer_unit_id_for_consumer(artifact.label.as_deref(), unit_id)?;
     let producer_unit =
         queries::get_session_unit(pool, &artifact.stage_instance_id, &producer_unit_id).await?;
-    if !matches!(producer_unit.status, UnitStatus::Done) {
+    let is_handoff_wait = producer_unit
+        .gate_state
+        .as_ref()
+        .and_then(|value| serde_json::from_value::<DownstreamWaitState>(value.clone()).ok())
+        .is_some_and(|state| matches!(state, DownstreamWaitState::AwaitingDownstream { artifact_id: waiting, .. } if waiting == artifact_id));
+    if !matches!(producer_unit.status, UnitStatus::Done) && !is_handoff_wait {
         anyhow::bail!("producer unit '{}' is not complete", producer_unit_id);
     }
     producer_unit
@@ -454,6 +459,29 @@ pub enum DelegatedGate {
     MergeConfirmation,
 }
 
+/// Durable non-human lifecycle wait owned by workflow orchestration. It does
+/// not deserialize as `DelegatedGateState`, so generic gate APIs cannot mistake
+/// a downstream or external-system wait for an operator action.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DownstreamWaitState {
+    AwaitingDownstream {
+        artifact_id: crate::types::ArtifactId,
+        downstream_role: crate::types::StageOperatorRole,
+        approved_wait_kind: String,
+    },
+    AwaitingExternal {
+        artifact_id: crate::types::ArtifactId,
+        external_kind: String,
+        decision_artifact_id: crate::types::ArtifactId,
+    },
+    RevisionInProgress {
+        artifact_id: crate::types::ArtifactId,
+        downstream_role: crate::types::StageOperatorRole,
+        decision_artifact_id: crate::types::ArtifactId,
+    },
+}
+
 impl DelegatedGate {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -492,6 +520,8 @@ pub struct DelegatedGateState {
     pub steps: Vec<config::OutputGateStep>,
     #[serde(default = "default_true")]
     pub requires_zero_open_review_items: bool,
+    #[serde(default)]
+    pub revision_target: config::RevisionTarget,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub worktree_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -551,6 +581,7 @@ impl DelegatedGateState {
             step_index: 0,
             steps: policy.steps,
             requires_zero_open_review_items: policy.requires_zero_open_review_items,
+            revision_target: policy.revision_target,
             worktree_path,
             worktree_branch,
             worktree_base_ref,
@@ -1785,8 +1816,25 @@ impl StageType for DelegatedSessionStage {
                 );
             }
         }
-        if def.gate_output.is_some() && def.output_gate.is_some() {
-            anyhow::bail!("gate_output and output_gate are mutually exclusive");
+        let configured_terminal_outputs = usize::from(def.gate_output.is_some())
+            + usize::from(def.output_gate.is_some())
+            + usize::from(def.output_handoff.is_some());
+        if configured_terminal_outputs > 1 {
+            anyhow::bail!("gate_output, output_gate, and output_handoff are mutually exclusive");
+        }
+        if let Some(handoff) = &def.output_handoff {
+            if def.fan_out.is_none() {
+                anyhow::bail!("output_handoff requires fan_out");
+            }
+            if handoff.approved_wait.kind.trim().is_empty() {
+                anyhow::bail!("output_handoff approved_wait.kind must not be empty");
+            }
+            if !output_slots.iter().any(|slot| slot.name == handoff.output) {
+                anyhow::bail!(
+                    "output_handoff output '{}' does not match any declared output slot",
+                    handoff.output
+                );
+            }
         }
         if let Some(policy) = &def.output_gate {
             if !output_slots.iter().any(|slot| slot.name == policy.output) {
@@ -2104,6 +2152,7 @@ impl StageType for DelegatedSessionStage {
             // knows which slot triggers parking vs. just storing an artifact.
             gate_output: def.gate_output,
             output_gate: def.output_gate,
+            output_handoff: def.output_handoff,
         };
 
         Ok(serde_json::to_value(config)?)
@@ -2430,6 +2479,9 @@ impl StageHandle for DelegatedSessionHandle {
             crate::executor::ResumePayload::FeedbackArtifact { artifact } => {
                 self.resume_feedback_artifact(artifact).await
             }
+            crate::executor::ResumePayload::UpstreamRevisionRequested { .. } => {
+                anyhow::bail!("cohort revision routing requires a fan-out delegated session")
+            }
             crate::executor::ResumePayload::UnitInputAvailable { .. } => {
                 anyhow::bail!("unit input delivery requires a fan-out delegated session")
             }
@@ -2532,10 +2584,55 @@ impl DelegatedSessionHandle {
                     if existing.source_artifact_id == Some(artifact.id) {
                         return Ok(());
                     }
-                    anyhow::bail!(
-                        "incremental unit '{}' already exists from another artifact",
-                        unit_id
-                    );
+                    let session = self
+                        .live_sessions
+                        .lock()
+                        .unwrap()
+                        .get(&(self.stage_instance_id, unit_id.clone()))
+                        .cloned()
+                        .ok_or_else(|| anyhow::anyhow!(
+                            "incremental unit '{}' cannot accept a revised source without a live session",
+                            unit_id
+                        ))?;
+                    self.send_kbbl_input(
+                        &session.sid,
+                        format!(
+                            "The upstream unit emitted revised artifact {}:\n{}\n\nRe-run your work against this revision and emit a replacement result.",
+                            artifact.id.0,
+                            serde_json::to_string_pretty(&artifact.body)
+                                .unwrap_or_else(|_| artifact.body.to_string())
+                        ),
+                    )
+                    .await?;
+                    queries::set_session_unit_source_artifact_id(
+                        scheduler.ctx.pool(),
+                        &self.stage_instance_id,
+                        &unit_id,
+                        artifact.id,
+                    )
+                    .await?;
+                    queries::clear_session_unit_artifact_id(
+                        scheduler.ctx.pool(),
+                        &self.stage_instance_id,
+                        &unit_id,
+                    )
+                    .await?;
+                    queries::set_session_unit_gate_state(
+                        scheduler.ctx.pool(),
+                        &self.stage_instance_id,
+                        &unit_id,
+                        None,
+                    )
+                    .await?;
+                    queries::set_session_unit_status(
+                        scheduler.ctx.pool(),
+                        &self.stage_instance_id,
+                        &unit_id,
+                        UnitStatus::Running,
+                        None,
+                    )
+                    .await?;
+                    return scheduler.recompute_aggregate().await;
                 }
                 let params = serde_json::json!({
                     "unit_id": unit_id,
@@ -2722,6 +2819,74 @@ impl DelegatedSessionHandle {
                 .await?;
                 scheduler.recompute_aggregate().await
             }
+            crate::executor::ResumePayload::UpstreamRevisionRequested {
+                unit_id,
+                feedback,
+                assessment_artifact_id,
+            } => {
+                let unit = queries::get_session_unit(
+                    scheduler.ctx.pool(),
+                    &self.stage_instance_id,
+                    &unit_id,
+                )
+                .await?;
+                let wait_state = unit.gate_state.as_ref().and_then(|value| {
+                    serde_json::from_value::<DownstreamWaitState>(value.clone()).ok()
+                });
+                match wait_state {
+                    Some(DownstreamWaitState::AwaitingDownstream {
+                        artifact_id,
+                        downstream_role,
+                        ..
+                    }) => {
+                        queries::set_session_unit_gate_state(
+                            scheduler.ctx.pool(),
+                            &self.stage_instance_id,
+                            &unit_id,
+                            Some(serde_json::to_value(
+                                DownstreamWaitState::RevisionInProgress {
+                                    artifact_id,
+                                    downstream_role,
+                                    decision_artifact_id: assessment_artifact_id,
+                                },
+                            )?),
+                        )
+                        .await?;
+                    }
+                    Some(DownstreamWaitState::RevisionInProgress {
+                        decision_artifact_id,
+                        ..
+                    }) if decision_artifact_id == assessment_artifact_id => return Ok(()),
+                    _ => anyhow::bail!(
+                        "upstream unit '{}' is not awaiting this downstream review",
+                        unit_id
+                    ),
+                }
+                let session = self
+                    .live_sessions
+                    .lock()
+                    .unwrap()
+                    .get(&(self.stage_instance_id, unit_id.clone()))
+                    .cloned()
+                    .ok_or_else(|| anyhow::anyhow!("builder unit '{}' is not live", unit_id))?;
+                self.send_kbbl_input(
+                    &session.sid,
+                    format!(
+                        "Assessment {} requested implementation revisions:\n{}\n\nUpdate the implementation in this same worktree and emit a revised build result.",
+                        assessment_artifact_id.0, feedback
+                    ),
+                )
+                .await?;
+                queries::set_session_unit_status(
+                    scheduler.ctx.pool(),
+                    &self.stage_instance_id,
+                    &unit_id,
+                    UnitStatus::Running,
+                    None,
+                )
+                .await?;
+                scheduler.recompute_aggregate().await
+            }
             crate::executor::ResumePayload::GateDecision {
                 decision,
                 against_artifact_id,
@@ -2837,6 +3002,21 @@ impl DelegatedSessionHandle {
                             scheduler.recompute_aggregate().await
                         }
                         crate::types::GateOutcome::Fail | crate::types::GateOutcome::Rerun => {
+                            if gate_state.revision_target == config::RevisionTarget::UpstreamHandoff
+                            {
+                                let rerun_state = DelegatedGateState {
+                                    revision_count: gate_state.revision_count.saturating_add(1),
+                                    ..gate_state
+                                };
+                                queries::set_session_unit_gate_state(
+                                    scheduler.ctx.pool(),
+                                    &self.stage_instance_id,
+                                    &unit.unit_id,
+                                    Some(serde_json::to_value(rerun_state)?),
+                                )
+                                .await?;
+                                return scheduler.recompute_aggregate().await;
+                            }
                             let session = self
                                 .live_sessions
                                 .lock()
@@ -3473,6 +3653,7 @@ mod tests {
             }),
             gate_output: None,
             output_gate: None,
+            output_handoff: None,
         }
     }
 
@@ -3509,6 +3690,7 @@ mod tests {
             step_index: 0,
             steps: vec![],
             requires_zero_open_review_items: true,
+            revision_target: config::RevisionTarget::SelfStage,
             worktree_path: Some("/work/wt/abc".into()),
             worktree_branch: Some("cohort/e/1-foo".into()),
             worktree_base_ref: Some("abc123".into()),
@@ -3595,7 +3777,8 @@ mod tests {
         let config = fan_out_config(
             json!([
                 {"id": "a", "name": "a", "depends_on": []},
-                {"id": "b", "name": "b", "depends_on": []}
+                {"id": "b", "name": "b", "depends_on": []},
+                {"id": "c", "name": "c", "depends_on": []}
             ]),
             Some("/depends_on"),
         );
@@ -3645,12 +3828,20 @@ mod tests {
                     actions: vec!["approve".into()],
                 }],
                 requires_zero_open_review_items: false,
+                revision_target: config::RevisionTarget::SelfStage,
             },
         ))
+        .unwrap();
+        let revision_marker = serde_json::to_value(DownstreamWaitState::RevisionInProgress {
+            artifact_id: parked_artifact.id,
+            downstream_role: crate::types::StageOperatorRole::Assessment,
+            decision_artifact_id: ArtifactId(Uuid::new_v4()),
+        })
         .unwrap();
         for (unit_id, status, gate_state) in [
             ("a", UnitStatus::Parked, Some(waiting_marker)),
             ("b", UnitStatus::Parked, Some(parked_gate)),
+            ("c", UnitStatus::Running, Some(revision_marker.clone())),
         ] {
             queries::upsert_session_unit(
                 &pool,
@@ -3704,7 +3895,9 @@ mod tests {
         assert_eq!(units[0].status, UnitStatus::Running);
         assert!(units[0].gate_state.is_none());
         assert_eq!(units[1].status, UnitStatus::Parked);
-        assert_eq!(stage.live_sessions.lock().unwrap().len(), 2);
+        assert_eq!(units[2].status, UnitStatus::Running);
+        assert_eq!(units[2].gate_state, Some(revision_marker));
+        assert_eq!(stage.live_sessions.lock().unwrap().len(), 3);
         assert!(capture
             .lock()
             .unwrap()
@@ -3922,6 +4115,7 @@ mod tests {
                 actions: vec!["approve".into(), "request_revision".into()],
             }],
             requires_zero_open_review_items: true,
+            revision_target: config::RevisionTarget::SelfStage,
         });
         let config_value = serde_json::to_value(&config).unwrap();
         let (run_id, stage_instance_id) =
@@ -4116,6 +4310,7 @@ mod tests {
             step_index: 1,
             steps: vec![],
             requires_zero_open_review_items: true,
+            revision_target: config::RevisionTarget::SelfStage,
             worktree_path: None,
             worktree_branch: None,
             worktree_base_ref: None,

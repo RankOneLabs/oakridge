@@ -2037,6 +2037,54 @@ pub async fn set_session_unit_artifact_id(
     Ok(())
 }
 
+pub async fn set_session_unit_source_artifact_id(
+    pool: &SqlitePool,
+    stage_instance_id: &StageInstanceId,
+    unit_id: &str,
+    artifact_id: ArtifactId,
+) -> crate::Result<()> {
+    let result = sqlx::query(
+        "UPDATE stage_session_units SET source_artifact_id = ?, updated_at = ? \
+         WHERE stage_instance_id = ? AND unit_id = ?",
+    )
+    .bind(artifact_id.0.to_string())
+    .bind(Utc::now().to_rfc3339())
+    .bind(stage_instance_id.0.to_string())
+    .bind(unit_id)
+    .execute(pool)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(crate::Error::NotFound {
+            entity: "session_unit".into(),
+            id: format!("{}:{}", stage_instance_id.0, unit_id),
+        });
+    }
+    Ok(())
+}
+
+pub async fn clear_session_unit_artifact_id(
+    pool: &SqlitePool,
+    stage_instance_id: &StageInstanceId,
+    unit_id: &str,
+) -> crate::Result<()> {
+    let result = sqlx::query(
+        "UPDATE stage_session_units SET artifact_id = NULL, updated_at = ? \
+         WHERE stage_instance_id = ? AND unit_id = ?",
+    )
+    .bind(Utc::now().to_rfc3339())
+    .bind(stage_instance_id.0.to_string())
+    .bind(unit_id)
+    .execute(pool)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(crate::Error::NotFound {
+            entity: "session_unit".into(),
+            id: format!("{}:{}", stage_instance_id.0, unit_id),
+        });
+    }
+    Ok(())
+}
+
 // ── Collab row structs ────────────────────────────────────────────────────────
 
 #[derive(sqlx::FromRow)]

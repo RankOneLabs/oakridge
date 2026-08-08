@@ -166,6 +166,54 @@ async fn emit_handler(
         );
     }
 
+    if live_session
+        .config
+        .output_handoff
+        .as_ref()
+        .is_some_and(|handoff| handoff.output == output_name)
+    {
+        let Some(scheduler) = &live_session.unit_scheduler else {
+            return internal_error();
+        };
+        let handoff = live_session.config.output_handoff.as_ref().unwrap();
+        let wait_state = super::DownstreamWaitState::AwaitingDownstream {
+            artifact_id: artifact.id,
+            downstream_role: handoff.downstream_role,
+            approved_wait_kind: handoff.approved_wait.kind.clone(),
+        };
+        if queries::set_session_unit_gate_state(
+            live_session.ctx.pool(),
+            &stage_instance_id,
+            &unit_id,
+            Some(serde_json::to_value(wait_state).unwrap()),
+        )
+        .await
+        .is_err()
+            || queries::set_session_unit_status(
+                live_session.ctx.pool(),
+                &stage_instance_id,
+                &unit_id,
+                UnitStatus::Parked,
+                None,
+            )
+            .await
+            .is_err()
+            || live_session
+                .ctx
+                .unit_completed(unit_id.clone(), artifact.clone())
+                .await
+                .is_err()
+            || scheduler.recompute_aggregate().await.is_err()
+        {
+            return internal_error();
+        }
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!({ "artifact_id": artifact.id.0.to_string() })),
+        )
+            .into_response();
+    }
+
     // Determine whether this output slot is the designated gate output.
     // If gate_output is configured, only that slot parks the unit; other slots
     // store artifacts without changing stage status (auxiliary outputs).
