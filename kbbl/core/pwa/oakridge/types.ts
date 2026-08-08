@@ -73,10 +73,12 @@ export interface EpicRepositoryConfig {
   forge_repository: ForgeRepositoryIdentity;
 }
 
+export type FinalMergePolicy = "guarded" | "external_confirmation";
+
 export interface EpicProfileConfig {
   title: string;
   slug: string;
-  final_merge_policy: "guarded" | "external_confirmation";
+  final_merge_policy: FinalMergePolicy;
   repositories: EpicRepositoryConfig[];
 }
 

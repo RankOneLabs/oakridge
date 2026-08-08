@@ -5,7 +5,7 @@ import type { RepositoryKey } from "../types";
 
 describe("buildEpicProfile", () => {
   it("builds the durable forge repository contract expected by CreateWorkflowRun", () => {
-    expect(buildEpicProfile(" Full parity! ", [{
+    expect(buildEpicProfile(" Full parity! ", "guarded", [{
       key: "oakridge" as RepositoryKey,
       path: "/code/oakridge",
       forge_owner: "acme",
@@ -25,6 +25,17 @@ describe("buildEpicProfile", () => {
   });
 
   it("rejects a title that cannot produce a durable slug", () => {
-    expect(buildEpicProfile("!!!", [])).toBeNull();
+    expect(buildEpicProfile("!!!", "guarded", [])).toBeNull();
+  });
+
+  it("preserves external confirmation as an explicit operator choice", () => {
+    const profile = buildEpicProfile("External integration", "external_confirmation", [{
+      key: "oakridge" as RepositoryKey,
+      path: "/code/oakridge",
+      forge_owner: "acme",
+      forge_name: "oakridge",
+      base_branch: "main",
+    }]);
+    expect(profile?.final_merge_policy).toBe("external_confirmation");
   });
 });

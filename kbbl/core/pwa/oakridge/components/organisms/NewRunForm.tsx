@@ -14,7 +14,7 @@ import { useOakridgeConfig } from "../../hooks/useOakridgeConfig";
 import { useProjects } from "../../hooks/useProjects";
 import { useWorkflowDefs } from "../../hooks/useWorkflowDefs";
 import { useCreateRun } from "../../hooks/useCreateRun";
-import type { RepositoryInputDraft } from "../../types";
+import type { FinalMergePolicy, RepositoryInputDraft } from "../../types";
 import { validateRepositoryInputs } from "../../repository-inputs";
 import { RoleModelPicker } from "../molecules/RoleModelPicker";
 import { initialSelectionForRole } from "../../lib/runtime-selection";
@@ -53,6 +53,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
   );
 
   const [epicTitle, setEpicTitle] = useState("");
+  const [finalMergePolicy, setFinalMergePolicy] = useState<FinalMergePolicy>("guarded");
   const [briefNotes, setBriefNotes] = useState("");
   const [repositories, setRepositories] = useState<RepositoryInputDraft[]>([{ key: "repo", path: "", forge_owner: "", forge_name: "", base_branch: "main" }]);
   const [projectId, setProjectId] = useState<string>("");
@@ -117,7 +118,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
     const repositoryResult = validateRepositoryInputs(repositories);
     if (!repositoryResult.ok) { setError(repositoryResult.error.detail); return; }
     const normalizedRepositories = repositoryResult.repositories;
-    const epicProfile = buildEpicProfile(epicTitle, normalizedRepositories);
+    const epicProfile = buildEpicProfile(epicTitle, finalMergePolicy, normalizedRepositories);
     if (!epicProfile) { setError("Epic title must include a letter or number."); return; }
     if (!briefNotes.trim()) { setError("Brief notes are required."); return; }
     if (!coreUrl) { setError("oakridge core URL is not configured."); return; }
@@ -156,6 +157,14 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
         <label className="flex flex-col gap-1">
           <span className={fieldLabelClass}>Epic title</span>
           <input type="text" className={inputClass} value={epicTitle} onChange={(event) => setEpicTitle(event.target.value)} disabled={pending} placeholder="Ship account recovery" required />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className={fieldLabelClass}>Final merge policy</span>
+          <select className={inputClass} value={finalMergePolicy} onChange={(event) => setFinalMergePolicy(event.target.value === "external_confirmation" ? "external_confirmation" : "guarded")} disabled={pending}>
+            <option value="guarded">Guarded — Oakridge verifies the final merge</option>
+            <option value="external_confirmation">External confirmation — another system confirms it</option>
+          </select>
+          <span className="text-xs leading-relaxed text-[var(--text-muted)]">Choose guarded for normal GitHub workflows. External confirmation leaves final integration completion to an outside operator or system.</span>
         </label>
         <label className="flex flex-col gap-1">
           <span className={fieldLabelClass}>Workflow Definition</span>
