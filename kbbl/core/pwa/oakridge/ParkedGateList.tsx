@@ -18,6 +18,12 @@ interface GateCardProps {
   onNavigateArtifact?: (artifactRevisionId: string) => void;
 }
 
+function gateTypeLabel(gateType: string): string {
+  if (gateType === "artifact_approval") return "Artifact review";
+  if (gateType === "merge_confirmation") return "Merge confirmation";
+  return "Operator decision";
+}
+
 function GateCard({ gate, onNavigateRun, onNavigateArtifact }: GateCardProps) {
   return (
     <div
@@ -25,7 +31,7 @@ function GateCard({ gate, onNavigateRun, onNavigateArtifact }: GateCardProps) {
       data-testid="or-gate-card"
     >
       <div className="flex flex-wrap items-center gap-2.5">
-        <span className={chipClass} data-testid="or-gate-type">{gate.gate_type === "merge_confirmation" ? "Merge confirmation" : "Artifact review"}</span>
+        <span className={chipClass} data-testid="or-gate-type">{gateTypeLabel(gate.gate_type)}</span>
         <span className="text-sm text-[var(--text-secondary)]" data-testid="or-gate-stage">
           {gate.stage_name}
         </span>

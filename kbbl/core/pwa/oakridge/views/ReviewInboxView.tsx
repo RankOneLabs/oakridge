@@ -57,6 +57,7 @@ function workLabel(item: ReviewInboxItem): string {
 function WorkItem({ item, onSelectRun, onSelectArtifact }: { item: ReviewInboxItem; onSelectRun: (id: string) => void; onSelectArtifact: (id: string) => void }) {
   const admission = useInboxAdmission();
   const gate = itemToGate(item);
+  const artifactRevisionId = item.artifact_revision_id;
   const isAdmitting = admission.isPending && admission.variables?.stageId === item.stage_instance_id && admission.variables.unitId === item.unit_id;
 
   return (
@@ -67,7 +68,7 @@ function WorkItem({ item, onSelectRun, onSelectArtifact }: { item: ReviewInboxIt
         <p>{item.repository_key || item.workflow_name}</p>
         {item.blocked_by.length > 0 && <div className="or-work-item__blocker" data-testid="or-review-inbox-blocked">Waiting on {item.blocked_by.join(", ")}</div>}
         <div className="or-work-item__links">
-          {item.artifact_revision_id && <button type="button" onClick={() => onSelectArtifact(item.artifact_revision_id!)} data-testid="or-inbox-artifact-link">Open full review</button>}
+          {artifactRevisionId && <button type="button" onClick={() => onSelectArtifact(artifactRevisionId)} data-testid="or-inbox-artifact-link">Open full review</button>}
           <button type="button" onClick={() => onSelectRun(item.run_id)} data-testid="or-inbox-run-link">View run details</button>
           {item.pr_url && <a href={item.pr_url} target="_blank" rel="noopener noreferrer">Open pull request</a>}
         </div>

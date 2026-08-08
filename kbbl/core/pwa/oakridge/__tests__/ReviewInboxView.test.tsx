@@ -93,7 +93,7 @@ describe("ReviewInboxView", () => {
     fireEvent.click(await screen.findByTestId("or-decision-request_revision"));
     const send = screen.getByRole("button", { name: "Send feedback" }) as HTMLButtonElement;
     expect(send.disabled).toBe(true);
-    fireEvent.change(document.querySelector(".or-decision-feedback textarea")!, { target: { value: "Explain the recovery path." } });
+    fireEvent.change(screen.getByLabelText("What needs to change?"), { target: { value: "Explain the recovery path." } });
     fireEvent.click(send);
     await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(true));
     const request = fetchMock.mock.calls.find(([, init]) => init?.method === "POST")?.[1] as RequestInit;

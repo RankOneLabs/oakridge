@@ -341,7 +341,7 @@ describe("GlobalParkedGateList", () => {
     wrap(<GlobalParkedGateList onNavigateRun={() => {}} />);
 
     expect(await screen.findByTestId("or-gate-type")).toBeTruthy();
-    expect(screen.getByTestId("or-gate-type").textContent).toBe("Artifact review");
+    expect(screen.getByTestId("or-gate-type").textContent).toBe("Operator decision");
     expect(screen.getByTestId("or-gate-stage").textContent).toBe("approve");
     expect(screen.getByTestId("or-gate-branch").textContent).toBe("cohort/v2_readiness/3-foo");
     expect(screen.getByTestId("or-gate-path").textContent).toBe("/home/steve/codes/rol/oakridge");

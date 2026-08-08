@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useResumeGate } from "./hooks/useResumeGate";
 import type { ParkedGate } from "./types";
@@ -27,29 +27,49 @@ function successMessage(action: string): string {
   return "Decision recorded. The cohort can continue.";
 }
 
-export function GateDecisionActions({ gate, actionLabels = {}, onComplete }: GateDecisionActionsProps) {
+export function GateDecisionActions(props: GateDecisionActionsProps) {
+  return <GateDecisionActionsForGate key={props.gate.id} {...props} />;
+}
+
+function GateDecisionActionsForGate({ gate, actionLabels = {}, onComplete }: GateDecisionActionsProps) {
   const mutation = useResumeGate(gate.id, gate.run_id);
   const [feedbackAction, setFeedbackAction] = useState<string | null>(null);
   const [feedback, setFeedback] = useState("");
   const [completedAction, setCompletedAction] = useState<string | null>(null);
   const requestKeys = useRef(new Map<string, string>());
+  const isActive = useRef(true);
+
+  useEffect(() => {
+    return () => { isActive.current = false; };
+  }, []);
 
   const submit = (action: string, decisionFeedback?: string) => {
     if (!gate.artifact_revision_id) return;
-    let key = requestKeys.current.get(action);
+    const feedbackValue = decisionFeedback?.trim() ?? "";
+    const gateStep = gate.gate_step ?? gate.gate_type;
+    const operatorComment = actionLabels[action] ?? actionLabel(action);
+    const requestIdentity = JSON.stringify({
+      action,
+      artifact_revision_id: gate.artifact_revision_id,
+      feedback: feedbackValue,
+      gate_step: gateStep,
+      operator_comment: operatorComment,
+    });
+    let key = requestKeys.current.get(requestIdentity);
     if (!key) {
       key = crypto.randomUUID();
-      requestKeys.current.set(action, key);
+      requestKeys.current.set(requestIdentity, key);
     }
     mutation.mutate({
       idempotency_key: key,
       artifact_revision_id: gate.artifact_revision_id,
-      gate_step: gate.gate_step ?? gate.gate_type,
+      gate_step: gateStep,
       action,
-      operator_comment: actionLabels[action] ?? actionLabel(action),
-      feedback: decisionFeedback?.trim() ?? "",
+      operator_comment: operatorComment,
+      feedback: feedbackValue,
     }, {
       onSuccess: () => {
+        if (!isActive.current) return;
         setCompletedAction(action);
         setFeedbackAction(null);
         onComplete?.();
