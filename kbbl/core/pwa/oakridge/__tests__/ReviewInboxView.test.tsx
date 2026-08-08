@@ -61,15 +61,34 @@ describe("ReviewInboxView", () => {
   });
 
   it("advances an artifact gate directly from the inbox", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => init?.method === "POST"
-      ? json({ gate_id: "stage-build:web", resumed: true })
-      : json(inbox));
+    let resumed = false;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      if (init?.method === "POST") {
+        resumed = true;
+        return json({ gate_id: "stage-build:web", resumed: true });
+      }
+      return json(resumed
+        ? { ...inbox, items: inbox.items.filter((item) => item.id !== "review-web") }
+        : inbox);
+    });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     render(<QueryClientProvider client={client}><ReviewInboxView onSelectRun={() => {}} onSelectArtifact={() => {}} /></QueryClientProvider>);
     fireEvent.click(await screen.findByTestId("or-inbox-advance-btn"));
     fireEvent.change(screen.getByTestId("or-resume-comment"), { target: { value: "Artifact is ready" } });
     fireEvent.click(screen.getByTestId("or-resume-submit"));
     await waitFor(() => expect(fetchMock.mock.calls.some(([input, init]) => init?.method === "POST" && String(input).includes("/gates/stage-build%3Aweb/resume"))).toBe(true));
+    await waitFor(() => expect(screen.queryByTestId("or-inbox-advance-btn")).toBeNull());
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method !== "POST").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("uses unique form control ids when multiple gate actions are open", async () => {
+    renderInbox({
+      cohorts: [],
+      items: [inbox.items[1], { ...inbox.items[1], id: "review-api", unit_id: "api", title: "Review API", gate_id: "stage-build:api" }],
+    });
+    for (const button of await screen.findAllByTestId("or-inbox-advance-btn")) fireEvent.click(button);
+    const commentFields = screen.getAllByTestId("or-resume-comment") as HTMLTextAreaElement[];
+    expect(new Set(commentFields.map((field) => field.id)).size).toBe(2);
   });
 
   it("shows blockers without offering admission", async () => {

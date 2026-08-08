@@ -57,7 +57,7 @@ function InboxGateAction({ item }: { item: ReviewInboxItem }) {
 
   return open ? (
     <div className="basis-full" data-testid="or-inbox-gate-form">
-      <GateResumeForm gate={gate} onDone={() => setOpen(false)} />
+      <GateResumeForm gate={gate} idPrefix={`or-inbox-${item.id}`} onDone={() => setOpen(false)} />
     </div>
   ) : (
     <button type="button" className="rounded-md border border-[var(--accent-blue)] bg-[var(--accent-blue)] px-3 py-1.5 text-sm text-white" onClick={() => setOpen(true)} data-testid="or-inbox-advance-btn">
