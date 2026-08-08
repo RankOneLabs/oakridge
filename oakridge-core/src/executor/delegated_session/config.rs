@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::executor::prompt_config::SlotBinding;
-use crate::types::OutputSlot;
+use crate::types::{OutputSlot, StageOperatorRole};
 
 // ── Bindable ──────────────────────────────────────────────────────────────────
 
@@ -179,6 +179,10 @@ pub struct DelegatedSessionDefConfig {
     /// retained for loading existing workflow definitions.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_gate: Option<OutputGateConfig>,
+    /// Output whose emit hands a unit to a correlated downstream operator role
+    /// without creating a human gate or marking dependencies complete.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_handoff: Option<OutputHandoffConfig>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -187,6 +191,16 @@ pub struct OutputGateConfig {
     pub steps: Vec<OutputGateStep>,
     #[serde(default)]
     pub requires_zero_open_review_items: bool,
+    #[serde(default)]
+    pub revision_target: RevisionTarget,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RevisionTarget {
+    #[default]
+    SelfStage,
+    UpstreamHandoff,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -194,6 +208,19 @@ pub struct OutputGateStep {
     #[serde(rename = "type")]
     pub gate_type: DelegatedGateKind,
     pub actions: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct OutputHandoffConfig {
+    pub output: String,
+    pub downstream_role: StageOperatorRole,
+    pub approved_wait: ExternalWaitDescriptor,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ExternalWaitDescriptor {
+    /// Stable workflow-owned external boundary, for example `github_review`.
+    pub kind: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -218,6 +245,7 @@ impl OutputGateConfig {
                 },
             ],
             requires_zero_open_review_items: true,
+            revision_target: RevisionTarget::SelfStage,
         }
     }
 }
@@ -273,6 +301,8 @@ pub struct DelegatedSessionConfig {
     pub gate_output: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub output_gate: Option<OutputGateConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_handoff: Option<OutputHandoffConfig>,
 }
 
 /// Prompt material that cannot be recovered from a rendered fan-out prompt.
@@ -344,6 +374,7 @@ mod tests {
             fan_out: None,
             gate_output: None,
             output_gate: None,
+            output_handoff: None,
         };
 
         let value = serde_json::to_value(&def).unwrap();
@@ -412,6 +443,7 @@ mod tests {
             fan_out: None,
             gate_output: None,
             output_gate: None,
+            output_handoff: None,
         };
 
         let value = serde_json::to_value(&cfg).unwrap();

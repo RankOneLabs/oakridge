@@ -281,6 +281,7 @@ fn delegated_workflow_def(
         fan_out: None,
         gate_output: None,
         output_gate: None,
+        output_handoff: None,
     };
 
     stages.insert(
@@ -695,6 +696,7 @@ async fn waiting_for_kbbl_parks_and_reattaches() {
             fan_out: None,
             gate_output: None,
             output_gate: None,
+            output_handoff: None,
         };
         serde_json::to_value(cfg).unwrap()
     };

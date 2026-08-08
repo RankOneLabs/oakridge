@@ -115,7 +115,7 @@
           "model": {"from":"context","path":"/worker_model"},
           "effort": {"from":"context","path":"/worker_effort"},
           "pre_authorized_tools": [], "yolo": false,
-          "output_gate": {"output":"build_result","steps":[{"type":"artifact_approval","actions":["approve","request_revision"]},{"type":"merge_confirmation","actions":["confirm_merged","closed_without_merge"]}],"requires_zero_open_review_items":false},
+          "output_handoff": {"output":"build_result","downstream_role":"assessment","approved_wait":{"kind":"github_review"}},
           "fan_out": {
             "over": {"from":"input","input_name":"brief","path":null},
             "unit_id_path": "/unit_id", "depends_on_path": "/artifact/depends_on", "max_parallel": 4,
@@ -155,6 +155,7 @@
           "model": {"from":"context","path":"/planner_model"},
           "effort": {"from":"context","path":"/planner_effort"},
           "pre_authorized_tools": [], "yolo": false,
+          "output_gate": {"output":"assessment","steps":[{"type":"artifact_approval","actions":["approve","request_revision"]}],"requires_zero_open_review_items":false,"revision_target":"upstream_handoff"},
           "fan_out": {"over":{"from":"input","input_name":"build_result"},"unit_id_path":"/unit_id","depends_on_path":null,"max_parallel":4,"item_bindings":{"REPOSITORY_KEY":{"from":"item","path":"/artifact/repository_key"}},"inherit_worktree_from":"build_result"}
         },
         "inputs": [{"name":"build_result","artifact_type":"dev.build_result","delivery":"unit_complete"},{"name":"plan","artifact_type":"dev.plan"}],

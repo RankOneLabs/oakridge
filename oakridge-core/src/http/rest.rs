@@ -338,6 +338,7 @@ pub enum OperatorCohortLifecycleState {
     RevisionRequested,
     MergeConfirmation,
     Assessing,
+    GithubReview,
     Complete,
     Failed,
 }
@@ -587,6 +588,18 @@ pub(crate) fn validate_workflow_graph(
             let gate_output = producer_config
                 .gate_output
                 .as_deref()
+                .or_else(|| {
+                    producer_config
+                        .output_gate
+                        .as_ref()
+                        .map(|gate| gate.output.as_str())
+                })
+                .or_else(|| {
+                    producer_config
+                        .output_handoff
+                        .as_ref()
+                        .map(|handoff| handoff.output.as_str())
+                })
                 .or_else(|| producer.outputs.first().map(|slot| slot.name.as_str()));
             if gate_output != Some(edge.from.slot.as_str()) {
                 return Err(crate::Error::Validation(format!(
@@ -608,6 +621,43 @@ pub(crate) fn validate_workflow_graph(
         }
     }
 
+    validate_output_handoffs(graph)?;
+    Ok(())
+}
+
+fn validate_output_handoffs(graph: &WorkflowGraph) -> crate::Result<()> {
+    for (stage_key, node) in &graph.stages {
+        let Ok(config) = serde_json::from_value::<
+            crate::executor::delegated_session::config::DelegatedSessionDefConfig,
+        >(node.config.clone()) else {
+            continue;
+        };
+        if let Some(handoff) = config.output_handoff {
+            let matches: Vec<_> = graph
+                .edges
+                .iter()
+                .filter(|edge| {
+                    edge.from.stage == *stage_key
+                        && edge.from.slot == handoff.output
+                        && graph.stages.get(&edge.to.stage).is_some_and(|target| {
+                            target.operator_role == Some(handoff.downstream_role)
+                                && target.inputs.iter().any(|input| {
+                                    input.name == edge.to.slot
+                                        && input.delivery == InputDelivery::UnitComplete
+                                })
+                        })
+                })
+                .collect();
+            if matches.len() != 1 {
+                return Err(crate::Error::Validation(format!(
+                    "stage '{}' output_handoff must have exactly one unit_complete edge to role {:?}; found {}",
+                    stage_key,
+                    handoff.downstream_role,
+                    matches.len()
+                )));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -1335,6 +1385,25 @@ fn derive_cohort_lifecycle(input: CohortLifecycleInput<'_>) -> OperatorCohortLif
         return OperatorCohortLifecycleState::Assessing;
     }
 
+    if let Some(wait) = input.build.gate_state.as_ref().and_then(|value| {
+        serde_json::from_value::<crate::executor::delegated_session::DownstreamWaitState>(
+            value.clone(),
+        )
+        .ok()
+    }) {
+        return match wait {
+            crate::executor::delegated_session::DownstreamWaitState::AwaitingDownstream {
+                ..
+            } => OperatorCohortLifecycleState::Assessing,
+            crate::executor::delegated_session::DownstreamWaitState::AwaitingExternal {
+                ..
+            } => OperatorCohortLifecycleState::GithubReview,
+            crate::executor::delegated_session::DownstreamWaitState::RevisionInProgress {
+                ..
+            } => OperatorCohortLifecycleState::RevisionRequested,
+        };
+    }
+
     let gate = active_unit_gate(input.build);
     match cohort_gate_kind(gate.as_ref()) {
         Some(DelegatedGate::ArtifactApproval) => {
@@ -1406,8 +1475,7 @@ async fn units_by_stage(
     units: Vec<crate::types::SessionUnit>,
 ) -> Result<HashMap<StageInstanceId, Vec<OperatorStageUnit>>, crate::Error> {
     let mut by_stage: HashMap<StageInstanceId, Vec<OperatorStageUnit>> = HashMap::new();
-    let mut raw_by_stage: HashMap<StageInstanceId, Vec<crate::types::SessionUnit>> =
-        HashMap::new();
+    let mut raw_by_stage: HashMap<StageInstanceId, Vec<crate::types::SessionUnit>> = HashMap::new();
     for unit in units {
         raw_by_stage
             .entry(unit.stage_instance_id)
@@ -1554,11 +1622,26 @@ pub async fn get_operator_review_inbox(
     let mut items = Vec::new();
 
     for run in runs {
+        let workflow_run = queries::get_workflow_run_by_id(&state.pool, &run.run_id).await?;
+        let definition =
+            queries::get_workflow_def_by_id(&state.pool, &workflow_run.workflow_def_id).await?;
         let stages = queries::list_stage_instances_for_run(&state.pool, &run.run_id).await?;
-        let Some(build_stage) = stages.iter().find(|stage| stage.stage_key == "build") else {
+        let role_for = |stage: &&StageInstance| {
+            definition
+                .graph
+                .stages
+                .get(&stage.stage_key)
+                .and_then(|node| node.operator_role)
+        };
+        let Some(build_stage) = stages
+            .iter()
+            .find(|stage| role_for(stage) == Some(StageOperatorRole::Build))
+        else {
             continue;
         };
-        let assessment_stage = stages.iter().find(|stage| stage.stage_key == "assessor");
+        let assessment_stage = stages
+            .iter()
+            .find(|stage| role_for(stage) == Some(StageOperatorRole::Assessment));
         let build_units =
             queries::list_session_units_for_stage(&state.pool, &build_stage.id).await?;
         let assessment_units = match assessment_stage {
@@ -1587,7 +1670,9 @@ pub async fn get_operator_review_inbox(
                 .iter()
                 .find(|unit| unit.unit_id == build.unit_id);
             let latest_decision = decisions.iter().rev().find(|decision| {
-                decision.stage_instance_id == build_stage.id && decision.unit_id == build.unit_id
+                (decision.stage_instance_id == build_stage.id
+                    || assessment_stage.is_some_and(|stage| decision.stage_instance_id == stage.id))
+                    && decision.unit_id == build.unit_id
             });
             let is_admitted = admitted.contains(build.unit_id.as_str());
             let blocked_by: Vec<_> = build
@@ -1605,14 +1690,18 @@ pub async fn get_operator_review_inbox(
                 admission_eligible: blocked_by.is_empty(),
                 latest_decision,
             });
-            let gate = active_unit_gate(build);
+            let gate_owner = assessment
+                .filter(|unit| active_unit_gate(unit).is_some())
+                .map(|unit| (assessment_stage.unwrap().id, unit))
+                .unwrap_or((build_stage.id, build));
+            let gate = active_unit_gate(gate_owner.1);
             let artifact_revision_id = gate
                 .as_ref()
                 .map(|gate| gate.artifact_id.0.to_string())
                 .or_else(|| build.artifact_id.map(|id| id.0.to_string()));
             let gate_id = gate
                 .as_ref()
-                .map(|_| format!("{}:{}", build_stage.id.0, build.unit_id));
+                .map(|_| format!("{}:{}", gate_owner.0 .0, build.unit_id));
             let cohort = OperatorCohortLifecycle {
                 id: format!("{}:{}", run.run_id.0, build.unit_id),
                 run_id: run.run_id.0.to_string(),
@@ -1624,7 +1713,13 @@ pub async fn get_operator_review_inbox(
                 title: value_string_at(build.params.as_ref(), "/title"),
                 lifecycle,
                 completion: OperatorCohortCompletion {
-                    build_complete: matches!(build.status, crate::types::UnitStatus::Done),
+                    build_complete: matches!(build.status, crate::types::UnitStatus::Done)
+                        || build.gate_state.as_ref().is_some_and(|value| {
+                            serde_json::from_value::<
+                                crate::executor::delegated_session::DownstreamWaitState,
+                            >(value.clone())
+                            .is_ok()
+                        }),
                     assessment_complete: assessment
                         .is_some_and(|unit| matches!(unit.status, crate::types::UnitStatus::Done)),
                 },
@@ -2786,7 +2881,7 @@ mod tests {
     use crate::executor::{EmitArgs, ResumePayload, StageContext, StageHandle};
     use crate::registry::{ArtifactTypeDef, ArtifactTypeRegistry, StageTypeRegistry};
     use crate::scheduler::Coordinator;
-    use crate::types::{SessionUnit, StageNodeDef, StageStatus, UnitStatus};
+    use crate::types::{Edge, EdgeEndpoint, SessionUnit, StageNodeDef, StageStatus, UnitStatus};
     use async_trait::async_trait;
     use axum::body::Body;
     use axum::http::Request;
@@ -3120,7 +3215,28 @@ mod tests {
             name: "operator-wf".into(),
             version: 1,
             graph: WorkflowGraph {
-                stages: HashMap::new(),
+                stages: HashMap::from([
+                    (
+                        "build".into(),
+                        StageNodeDef {
+                            stage_type: "delegated_session".into(),
+                            operator_role: Some(StageOperatorRole::Build),
+                            config: json!({}),
+                            inputs: vec![],
+                            outputs: vec![],
+                        },
+                    ),
+                    (
+                        "assessor".into(),
+                        StageNodeDef {
+                            stage_type: "delegated_session".into(),
+                            operator_role: Some(StageOperatorRole::Assessment),
+                            config: json!({}),
+                            inputs: vec![],
+                            outputs: vec![],
+                        },
+                    ),
+                ]),
                 edges: vec![],
             },
             created_at: now,
@@ -3160,6 +3276,7 @@ mod tests {
             step_index: 0,
             steps: vec![],
             requires_zero_open_review_items: true,
+            revision_target: crate::executor::delegated_session::config::RevisionTarget::SelfStage,
             worktree_path: Some("/worktrees/v2/build".into()),
             worktree_branch: Some("cohort/v2/1-build".into()),
             worktree_base_ref: Some("abc123".into()),
@@ -3303,6 +3420,8 @@ mod tests {
                 step_index: 1,
                 steps: vec![],
                 requires_zero_open_review_items: true,
+                revision_target:
+                    crate::executor::delegated_session::config::RevisionTarget::SelfStage,
                 worktree_path: Some(format!("/worktrees/{unit_id}")),
                 worktree_branch: Some(format!("cohort/build/{unit_id}")),
                 worktree_base_ref: Some("main".into()),
@@ -3358,7 +3477,28 @@ mod tests {
             name: "review-inbox".into(),
             version: 1,
             graph: WorkflowGraph {
-                stages: HashMap::new(),
+                stages: HashMap::from([
+                    (
+                        "build".into(),
+                        StageNodeDef {
+                            stage_type: "delegated_session".into(),
+                            operator_role: Some(StageOperatorRole::Build),
+                            config: json!({}),
+                            inputs: vec![],
+                            outputs: vec![],
+                        },
+                    ),
+                    (
+                        "assessor".into(),
+                        StageNodeDef {
+                            stage_type: "delegated_session".into(),
+                            operator_role: Some(StageOperatorRole::Assessment),
+                            config: json!({}),
+                            inputs: vec![],
+                            outputs: vec![],
+                        },
+                    ),
+                ]),
                 edges: vec![],
             },
             created_at: now,
@@ -3429,6 +3569,7 @@ mod tests {
             step_index: 0,
             steps: vec![],
             requires_zero_open_review_items: false,
+            revision_target: crate::executor::delegated_session::config::RevisionTarget::SelfStage,
             worktree_path: None,
             worktree_branch: None,
             worktree_base_ref: None,
@@ -3707,6 +3848,7 @@ mod tests {
             step_index: 0,
             steps: vec![],
             requires_zero_open_review_items: false,
+            revision_target: crate::executor::delegated_session::config::RevisionTarget::SelfStage,
             worktree_path: None,
             worktree_branch: None,
             worktree_base_ref: None,
@@ -3716,6 +3858,68 @@ mod tests {
             review_inbox_kind_for_gate(&gate),
             OperatorReviewInboxKind::MergeConfirmation
         );
+    }
+
+    #[test]
+    fn output_handoff_requires_one_role_matched_incremental_edge() {
+        let producer = StageNodeDef {
+            stage_type: "delegated_session".into(),
+            operator_role: Some(StageOperatorRole::Build),
+            config: json!({
+                "runtime": "codex",
+                "prompt_template_path": "build.md",
+                "slot_bindings": {},
+                "workdir": {"from": "literal", "value": "/tmp"},
+                "session_name": "build",
+                "fan_out": {"over": {"from": "literal", "value": "[]"}, "unit_id_path": "/id"},
+                "output_handoff": {
+                    "output": "result",
+                    "downstream_role": "assessment",
+                    "approved_wait": {"kind": "github_review"}
+                }
+            }),
+            inputs: vec![],
+            outputs: vec![OutputSlot {
+                name: "result".into(),
+                artifact_type: "result".into(),
+            }],
+        };
+        let consumer = |key: &str| StageNodeDef {
+            stage_type: "delegated_session".into(),
+            operator_role: Some(StageOperatorRole::Assessment),
+            config: json!({}),
+            inputs: vec![InputSlot {
+                name: key.into(),
+                artifact_type: "result".into(),
+                optional: false,
+                collect: false,
+                delivery: InputDelivery::UnitComplete,
+            }],
+            outputs: vec![],
+        };
+        let edge = |target: &str| Edge {
+            from: EdgeEndpoint {
+                stage: "build_any_name".into(),
+                slot: "result".into(),
+            },
+            to: EdgeEndpoint {
+                stage: target.into(),
+                slot: target.into(),
+            },
+        };
+        let mut graph = WorkflowGraph {
+            stages: HashMap::from([
+                ("build_any_name".into(), producer),
+                ("check_one".into(), consumer("check_one")),
+                ("check_two".into(), consumer("check_two")),
+            ]),
+            edges: vec![],
+        };
+        assert!(validate_output_handoffs(&graph).is_err());
+        graph.edges.push(edge("check_one"));
+        assert!(validate_output_handoffs(&graph).is_ok());
+        graph.edges.push(edge("check_two"));
+        assert!(validate_output_handoffs(&graph).is_err());
     }
 
     #[test]
@@ -3902,6 +4106,8 @@ mod tests {
                 step_index: usize::from(action == "approve"),
                 steps: vec![],
                 requires_zero_open_review_items: false,
+                revision_target:
+                    crate::executor::delegated_session::config::RevisionTarget::SelfStage,
                 worktree_path: None,
                 worktree_branch: None,
                 worktree_base_ref: None,
@@ -4029,6 +4235,7 @@ mod tests {
                 actions: vec!["approve".into(), "request_revision".into()],
             }],
             requires_zero_open_review_items: false,
+            revision_target: crate::executor::delegated_session::config::RevisionTarget::SelfStage,
             worktree_path: None,
             worktree_branch: None,
             worktree_base_ref: None,
