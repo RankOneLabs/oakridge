@@ -18,10 +18,12 @@ export function RepositoryLaunchFields({ repositories, setRepositories, disabled
 
   return (
     <fieldset className="flex flex-col gap-2 rounded-md border border-[var(--border-subtle)] p-3">
-      <div className="flex items-center justify-between gap-3">
-        <legend className="mb-1 block text-xs font-medium text-[var(--text-muted)]">Repositories</legend>
+      <legend className="mb-1 w-full text-xs font-medium text-[var(--text-muted)]">
+        <span className="flex items-center justify-between gap-3">
+          <span>Repositories</span>
         <button type="button" className={secondaryButtonClass} disabled={disabled} onClick={() => setRepositories((current) => [...current, { key: "", path: "", forge_owner: "", forge_name: "", base_branch: "main" }])}>+ Repository</button>
-      </div>
+        </span>
+      </legend>
       {repositories.map((repository, index) => (
         <div className="or-repository-fields" key={index}>
           <input type="text" className={inputClass} value={repository.key} onChange={(event) => update(index, { key: event.target.value })} disabled={disabled} placeholder="Key (api)" aria-label={`Repository ${index + 1} key`} required />

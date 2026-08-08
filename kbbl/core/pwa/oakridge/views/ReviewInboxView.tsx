@@ -112,7 +112,8 @@ export function ReviewInboxView({ onSelectRun, onSelectArtifact }: ReviewInboxVi
   const visibleItems = query.data.items.filter((item) => item.kind !== "admission");
   const actionable = visibleItems.filter((item) => item.state === "actionable" || item.kind === "pull_request_mismatch");
   const blocked = visibleItems.filter((item) => item.state === "blocked" && item.kind !== "pull_request_mismatch");
-  const cohortFor = (item: ReviewInboxItem) => query.data.cohorts.find((cohort) => cohortKey(cohort.run_id, cohort.unit_id) === cohortKey(item.run_id, item.unit_id));
+  const cohortsByKey = new Map(query.data.cohorts.map((cohort) => [cohortKey(cohort.run_id, cohort.unit_id), cohort]));
+  const cohortFor = (item: ReviewInboxItem) => cohortsByKey.get(cohortKey(item.run_id, item.unit_id));
   const attentionKeys = new Set([...actionable, ...blocked].map((item) => cohortKey(item.run_id, item.unit_id)));
   const underway = query.data.cohorts.filter((cohort) => cohort.lifecycle !== "complete" && !attentionKeys.has(cohortKey(cohort.run_id, cohort.unit_id)));
   const finished = query.data.cohorts.filter((cohort) => cohort.lifecycle === "complete");

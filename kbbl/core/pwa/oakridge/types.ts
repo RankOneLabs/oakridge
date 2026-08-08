@@ -336,7 +336,7 @@ export interface PullRequestMismatch {
 }
 
 export interface CohortPullRequestReconciliation {
-  repository_key: string;
+  repository_key: RepositoryKey;
   observation: PullRequestObservation;
   mismatch: PullRequestMismatch | null;
   completed_at: string | null;

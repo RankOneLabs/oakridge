@@ -27,6 +27,7 @@ import type {
   ReviewInbox,
   CohortLifecycleSummary,
   ReviewInboxItem,
+  CohortPullRequestReconciliation,
 } from "./types";
 import { parseRepositoryKey } from "./repository-inputs";
 
@@ -36,7 +37,11 @@ type RawStageUnit = Omit<StageUnit, "repository_key"> & { repository_key?: strin
 type RawStageDetail = Omit<StageDetail, "units"> & { units?: RawStageUnit[] };
 type RawRunDetail = Omit<RunDetail, "stages"> & { stages: RawStageDetail[] };
 type RawParkedGate = Omit<ParkedGate, "repository_key"> & { repository_key?: string | null };
-type RawCohortLifecycleSummary = Omit<CohortLifecycleSummary, "repository_key"> & { repository_key?: string | null };
+type RawCohortPullRequestReconciliation = Omit<CohortPullRequestReconciliation, "repository_key"> & { repository_key: string };
+type RawCohortLifecycleSummary = Omit<CohortLifecycleSummary, "repository_key" | "pull_request_reconciliation"> & {
+  repository_key?: string | null;
+  pull_request_reconciliation?: RawCohortPullRequestReconciliation | null;
+};
 type RawReviewInboxItem = Omit<ReviewInboxItem, "repository_key"> & { repository_key?: string | null };
 interface RawReviewInbox {
   cohorts: RawCohortLifecycleSummary[];
@@ -45,6 +50,12 @@ interface RawReviewInbox {
 
 function parseOptionalRepositoryKey(value: string | null | undefined) {
   if (value == null) return value;
+  const key = parseRepositoryKey(value);
+  if (!key) throw new Error("oakridge response contained an empty repository key");
+  return key;
+}
+
+function parseRequiredRepositoryKey(value: string) {
   const key = parseRepositoryKey(value);
   if (!key) throw new Error("oakridge response contained an empty repository key");
   return key;
@@ -75,6 +86,12 @@ function parseReviewInbox(inbox: RawReviewInbox): ReviewInbox {
     cohorts: inbox.cohorts.map((cohort) => ({
       ...cohort,
       repository_key: parseOptionalRepositoryKey(cohort.repository_key),
+      pull_request_reconciliation: cohort.pull_request_reconciliation
+        ? {
+            ...cohort.pull_request_reconciliation,
+            repository_key: parseRequiredRepositoryKey(cohort.pull_request_reconciliation.repository_key),
+          }
+        : cohort.pull_request_reconciliation,
     })),
     items: inbox.items.map((item) => ({
       ...item,
