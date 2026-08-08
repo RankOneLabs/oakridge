@@ -8,6 +8,7 @@ import { useResolveThread } from "../../hooks/useResolveThread";
 import { useReviewItems } from "../../hooks/useReviewItems";
 import { useRunGates } from "../../hooks/useRunGates";
 import { usePatchReviewItem } from "../../hooks/usePatchReviewItem";
+import { useAtomEdit } from "../../hooks/useAtomEdit";
 import { resolveViewer } from "../../artifactRegistry";
 import { ReviewItemsChecklist } from "../../ReviewItemsChecklist";
 import type { ArtifactRevision, ArtifactReviewDescriptor } from "../../types";
@@ -94,11 +95,11 @@ export function ArtifactReview({ artifactId, onBack }: ArtifactReviewProps) {
     ? Math.max(0, revisions.length - 1)
     : Math.min(selectedRevIdx, Math.max(0, revisions.length - 1));
   const revision = revisions[revIdx] as ArtifactRevision | undefined;
+  const atomEdit = useAtomEdit(revision?.id ?? artifactId, artifactId);
   const gatesQuery = useRunGates(query.data?.run_id ?? "", Boolean(query.data?.run_id));
   const gates = Array.isArray(gatesQuery.data) ? gatesQuery.data : [];
-  const artifactGate = revision
-    ? gates.find((gate) => gate.artifact_revision_id === revision.id)
-    : undefined;
+  const revisionIds = new Set(revisions.map((candidate) => candidate.id));
+  const artifactGate = gates.find((gate) => gate.artifact_revision_id !== null && revisionIds.has(gate.artifact_revision_id));
 
   useEffect(() => {
     setSelectedRevIdx(null);
@@ -250,7 +251,20 @@ export function ArtifactReview({ artifactId, onBack }: ArtifactReviewProps) {
           </div>
 
           {Viewer ? (
-            <Viewer body={revision.body} descriptor={artifact.review} />
+            <Viewer
+              body={revision.body}
+              descriptor={artifact.review}
+              edit={caps?.atom_editable ? {
+                enabled: revIdx === revisions.length - 1,
+                isPending: atomEdit.isPending,
+                onEdit: (anchor, previousValue, newValue) => atomEdit.mutate({
+                  anchor,
+                  prev_value: previousValue,
+                  new_value: newValue,
+                  author: "operator",
+                }),
+              } : undefined}
+            />
           ) : (
             <JsonRevisionPanel revision={revision} descriptor={artifact.review} />
           )}
@@ -292,10 +306,11 @@ export function ArtifactReview({ artifactId, onBack }: ArtifactReviewProps) {
         </section>
       ) : undefined;
 
-  const gateActions = artifactGate ? (
+  const isLatestRevision = revision !== undefined && revIdx === revisions.length - 1;
+  const gateActions = artifactGate && isLatestRevision ? (
     <section className="or-artifact-decision-bar" data-testid="or-artifact-gate-actions">
       <div><strong>{artifactGate.gate_type === "merge_confirmation" ? "Confirm the merge" : "Make your decision"}</strong><p>{artifactGate.gate_type === "merge_confirmation" ? "Verify the pull request is merged, then continue the cohort." : "Approve this artifact or send clear changes back to the builder."}</p></div>
-      <GateDecisionActions gate={artifactGate} actionLabels={artifact.review?.action_labels} />
+      <GateDecisionActions gate={artifactGate} artifactRevisionId={revision.id} actionLabels={artifact.review?.action_labels} />
     </section>
   ) : undefined;
 

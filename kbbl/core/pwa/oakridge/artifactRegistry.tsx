@@ -5,10 +5,16 @@ import { PlanViewer } from "./viewers/PlanViewer";
 import { BuildResultViewer } from "./viewers/BuildResultViewer";
 import { AssessmentViewer } from "./viewers/AssessmentViewer";
 import { PrSummaryViewer } from "./viewers/PrSummaryViewer";
+import { BuildBriefViewer } from "./viewers/BuildBriefViewer";
 
 export interface ViewerProps {
   body: unknown;
   descriptor?: ArtifactReviewDescriptor | null;
+  edit?: {
+    enabled: boolean;
+    isPending: boolean;
+    onEdit: (anchor: string, previousValue: unknown, newValue: unknown) => void;
+  };
 }
 
 interface RegistryEntry {
@@ -18,6 +24,7 @@ interface RegistryEntry {
 const REGISTRY: Record<string, RegistryEntry> = {
   "dev-spec-analysis-viewer": { Viewer: SpecAnalysisViewer },
   "dev-plan-viewer": { Viewer: PlanViewer },
+  "dev-build-brief-viewer": { Viewer: BuildBriefViewer },
   "dev-build-result-viewer": { Viewer: BuildResultViewer },
   "dev-assessment-viewer": { Viewer: AssessmentViewer },
   "dev-pr-summary-viewer": { Viewer: PrSummaryViewer },

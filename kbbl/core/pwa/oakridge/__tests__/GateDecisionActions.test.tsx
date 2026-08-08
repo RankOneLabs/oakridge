@@ -21,10 +21,10 @@ function gate(id: string, revision: string): ParkedGate {
   };
 }
 
-function wrapper(client: QueryClient, value: ParkedGate, onComplete = vi.fn()) {
+function wrapper(client: QueryClient, value: ParkedGate, onComplete = vi.fn(), artifactRevisionId?: string) {
   return (
     <QueryClientProvider client={client}>
-      <GateDecisionActions gate={value} onComplete={onComplete} />
+      <GateDecisionActions gate={value} artifactRevisionId={artifactRevisionId} onComplete={onComplete} />
     </QueryClientProvider>
   );
 }
@@ -32,6 +32,22 @@ function wrapper(client: QueryClient, value: ParkedGate, onComplete = vi.fn()) {
 afterEach(() => vi.restoreAllMocks());
 
 describe("GateDecisionActions", () => {
+  it("submits the latest edited artifact revision", async () => {
+    let requestBody: { artifact_revision_id: string } | undefined;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body)) as { artifact_revision_id: string };
+      return new Response(JSON.stringify({ gate_id: "gate-a", resumed: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    render(wrapper(client, gate("gate-a", "revision-root"), vi.fn(), "revision-edited"));
+
+    fireEvent.click(screen.getByTestId("or-decision-approve"));
+    await waitFor(() => expect(requestBody?.artifact_revision_id).toBe("revision-edited"));
+  });
+
   it("resets decision state on a gate switch and ignores the previous gate response", async () => {
     let resolveRequest: ((response: Response) => void) | undefined;
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise<Response>((resolve) => { resolveRequest = resolve; }));
