@@ -1,12 +1,9 @@
-import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useGates } from "./hooks/useGates";
 import { useRunGates } from "./hooks/useRunGates";
 import type { ParkedGate } from "./types";
-import { GateResumeForm } from "./GateResumeForm";
+import { GateDecisionActions } from "./GateDecisionActions";
 
-const primaryButtonClass =
-  "inline-flex items-center gap-1.5 rounded-md border border-[var(--accent-blue)] bg-[var(--accent-blue)] px-3 py-1.5 text-sm text-white disabled:cursor-not-allowed disabled:border-[var(--border-muted)] disabled:bg-[var(--border-muted)] disabled:text-[var(--text-fainter)]";
 const secondaryButtonClass =
   "inline-flex items-center gap-1.5 rounded-md border border-[var(--border-muted)] bg-transparent px-3 py-1.5 text-sm text-[var(--text-secondary)] hover:border-[var(--border-hover)]";
 const chipClass =
@@ -21,16 +18,20 @@ interface GateCardProps {
   onNavigateArtifact?: (artifactRevisionId: string) => void;
 }
 
-function GateCard({ gate, onNavigateRun, onNavigateArtifact }: GateCardProps) {
-  const [showResume, setShowResume] = useState(false);
+function gateTypeLabel(gateType: string): string {
+  if (gateType === "artifact_approval") return "Artifact review";
+  if (gateType === "merge_confirmation") return "Merge confirmation";
+  return "Operator decision";
+}
 
+function GateCard({ gate, onNavigateRun, onNavigateArtifact }: GateCardProps) {
   return (
     <div
       className="flex flex-col gap-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-4"
       data-testid="or-gate-card"
     >
       <div className="flex flex-wrap items-center gap-2.5">
-        <span className={chipClass} data-testid="or-gate-type">{gate.gate_type}</span>
+        <span className={chipClass} data-testid="or-gate-type">{gateTypeLabel(gate.gate_type)}</span>
         <span className="text-sm text-[var(--text-secondary)]" data-testid="or-gate-stage">
           {gate.stage_name}
         </span>
@@ -100,20 +101,7 @@ function GateCard({ gate, onNavigateRun, onNavigateArtifact }: GateCardProps) {
         </div>
       )}
 
-      {!showResume && (
-        <button
-          type="button"
-          className={primaryButtonClass}
-          onClick={() => setShowResume(true)}
-          data-testid="or-gate-resume-btn"
-        >
-          Resume gate
-        </button>
-      )}
-
-      {showResume && (
-        <GateResumeForm gate={gate} onDone={() => setShowResume(false)} />
-      )}
+      <GateDecisionActions gate={gate} />
     </div>
   );
 }
@@ -125,7 +113,7 @@ export function GlobalParkedGateList({ onNavigateRun, onNavigateArtifact }: { on
   return (
     <div className="flex flex-col gap-3" data-testid="or-global-gate-list">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="m-0 text-lg font-semibold text-[var(--text-primary)]">Parked Gates</h2>
+        <h2 className="m-0 text-lg font-semibold text-[var(--text-primary)]">Needs attention</h2>
         <button
           type="button"
           className={secondaryButtonClass}
@@ -151,7 +139,7 @@ export function GlobalParkedGateList({ onNavigateRun, onNavigateArtifact }: { on
 
       {query.data && query.data.length === 0 && (
         <div className="py-6 text-sm text-[var(--text-muted)]" data-testid="or-gate-list-empty">
-          No parked gates.
+          Nothing needs a decision.
         </div>
       )}
 
@@ -170,7 +158,7 @@ export function RunParkedGateList({ runId }: { runId: string }) {
 
   return (
     <div className="mt-6 flex flex-col gap-3" data-testid="or-run-gate-list">
-      <h3 className="mb-2 mt-0 text-sm font-semibold text-[var(--text-secondary)]">Parked Gates</h3>
+      <h3 className="mb-2 mt-0 text-sm font-semibold text-[var(--text-secondary)]">Needs attention</h3>
       {query.data.map((gate: ParkedGate) => (
         <GateCard key={gate.id} gate={gate} />
       ))}

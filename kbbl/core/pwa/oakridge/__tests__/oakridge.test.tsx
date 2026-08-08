@@ -6,7 +6,6 @@ import type { ReactElement } from "react";
 import { RunListView } from "../views/RunListView";
 import { RunDetailView } from "../views/RunDetailView";
 import { ArtifactReviewView } from "../views/ArtifactReviewView";
-import { GateResumeForm } from "../GateResumeForm";
 import { GlobalParkedGateList } from "../ParkedGateList";
 import type { RunSummary, RunDetail, ArtifactDetail, ParkedGate } from "../types";
 
@@ -342,7 +341,7 @@ describe("GlobalParkedGateList", () => {
     wrap(<GlobalParkedGateList onNavigateRun={() => {}} />);
 
     expect(await screen.findByTestId("or-gate-type")).toBeTruthy();
-    expect(screen.getByTestId("or-gate-type").textContent).toBe("operator_approval");
+    expect(screen.getByTestId("or-gate-type").textContent).toBe("Operator decision");
     expect(screen.getByTestId("or-gate-stage").textContent).toBe("approve");
     expect(screen.getByTestId("or-gate-branch").textContent).toBe("cohort/v2_readiness/3-foo");
     expect(screen.getByTestId("or-gate-path").textContent).toBe("/home/steve/codes/rol/oakridge");
@@ -369,80 +368,6 @@ describe("GlobalParkedGateList", () => {
     wrap(<GlobalParkedGateList onNavigateRun={() => {}} onNavigateArtifact={onNavigateArtifact} />);
     fireEvent.click(await screen.findByTestId("or-gate-artifact-link"));
     expect(onNavigateArtifact).toHaveBeenCalledWith("rev-abc");
-  });
-});
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Gate resume form
-// ──────────────────────────────────────────────────────────────────────────────
-
-describe("GateResumeForm", () => {
-  it("submit is disabled when operator comment is empty", () => {
-    wrap(<GateResumeForm gate={PARKED_GATE_FIXTURE} onDone={() => {}} />);
-    const btn = screen.getByTestId("or-resume-submit") as HTMLButtonElement;
-    expect(btn.disabled).toBe(true);
-  });
-
-  it("submit is enabled when operator comment is filled in", async () => {
-    wrap(<GateResumeForm gate={PARKED_GATE_FIXTURE} onDone={() => {}} />);
-    fireEvent.change(screen.getByTestId("or-resume-comment"), {
-      target: { value: "Looks good" },
-    });
-    const btn = screen.getByTestId("or-resume-submit") as HTMLButtonElement;
-    expect(btn.disabled).toBe(false);
-  });
-
-  it("calls resume endpoint and invokes onDone on success", async () => {
-    const onDone = vi.fn();
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ gate_id: "gate-1", resumed: true }));
-    wrap(<GateResumeForm gate={PARKED_GATE_FIXTURE} onDone={onDone} />);
-
-    fireEvent.change(screen.getByTestId("or-resume-comment"), {
-      target: { value: "LGTM — approving build" },
-    });
-    fireEvent.change(screen.getByTestId("or-resume-feedback"), {
-      target: { value: "No further feedback" },
-    });
-    fireEvent.click(screen.getByTestId("or-resume-submit"));
-
-    await waitFor(() => expect(onDone).toHaveBeenCalled());
-    const request = vi.mocked(globalThis.fetch).mock.calls[0]?.[1] as RequestInit;
-    expect(JSON.parse(String(request.body))).toMatchObject({
-      artifact_revision_id: PARKED_GATE_FIXTURE.artifact_revision_id,
-      gate_step: PARKED_GATE_FIXTURE.gate_type,
-      idempotency_key: expect.any(String),
-      action: PARKED_GATE_FIXTURE.resume_actions[0],
-      operator_comment: "LGTM — approving build",
-    });
-  });
-
-  it("shows error message when resume fails", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ error: "gate already resumed" }, 409));
-    wrap(<GateResumeForm gate={PARKED_GATE_FIXTURE} onDone={() => {}} />);
-
-    fireEvent.change(screen.getByTestId("or-resume-comment"), {
-      target: { value: "approving" },
-    });
-    fireEvent.click(screen.getByTestId("or-resume-submit"));
-
-    expect(await screen.findByTestId("or-resume-error")).toBeTruthy();
-  });
-
-  it("reuses the idempotency key when the same operator action is retried", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(json({ error: "temporary failure" }, 503))
-      .mockResolvedValueOnce(json({ gate_id: "gate-1", resumed: true }));
-    wrap(<GateResumeForm gate={PARKED_GATE_FIXTURE} onDone={() => {}} />);
-
-    fireEvent.change(screen.getByTestId("or-resume-comment"), { target: { value: "approved" } });
-    fireEvent.click(screen.getByTestId("or-resume-submit"));
-    expect(await screen.findByTestId("or-resume-error")).toBeTruthy();
-    fireEvent.click(screen.getByTestId("or-resume-submit"));
-
-    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(2));
-    const first = JSON.parse(String((fetchSpy.mock.calls[0]?.[1] as RequestInit).body));
-    const second = JSON.parse(String((fetchSpy.mock.calls[1]?.[1] as RequestInit).body));
-    expect(second.idempotency_key).toBe(first.idempotency_key);
   });
 });
 
@@ -496,14 +421,10 @@ describe("ArtifactReviewView", () => {
 
     await waitFor(() => expect(screen.getByTestId("or-artifact-detail").getAttribute("data-review-layout")).toBe("report"));
     expect(await screen.findByTestId("or-artifact-gate-actions")).toBeTruthy();
-    expect(screen.getByTestId("or-resume-action-static").textContent).toContain("Approve discrepancy report");
+    expect(screen.getByTestId("or-decision-approve").textContent).toContain("Approve discrepancy report");
     const sections = Array.from(screen.getByTestId("or-descriptor-sections").querySelectorAll("[data-artifact-section]"));
     expect(sections.map((section) => section.getAttribute("data-artifact-section"))).toEqual(["summary", "details"]);
 
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(screen.queryByTestId("or-resume-form")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Review gate" }));
-    expect(screen.getByTestId("or-resume-form")).toBeTruthy();
   });
 
   it("loads run-scoped gates and only offers actions for the selected revision", async () => {
