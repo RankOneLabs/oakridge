@@ -1082,7 +1082,23 @@ pub async fn reconcile_cohort_pull_request(
         completed_at: None,
         updated_at: now,
     };
-    queries::upsert_cohort_pr_reconciliation(&state.pool, &reconciliation).await?;
+    let persisted =
+        queries::upsert_cohort_pr_reconciliation(&state.pool, &reconciliation).await?;
+    if !persisted {
+        let reconciliation = queries::get_cohort_pr_reconciliation(
+            &state.pool,
+            &build_stage.id,
+            &unit_id,
+        )
+        .await?
+        .ok_or_else(|| {
+            AppError::Internal("monotonic PR reconciliation write lost its durable row".into())
+        })?;
+        return Ok(Json(ReconcileCohortPullRequestResponse {
+            outcome: ReconcileCohortPullRequestOutcome::IgnoredStale,
+            reconciliation,
+        }));
+    }
     let outcome = match decision {
         ReconciliationDecision::Waiting => ReconcileCohortPullRequestOutcome::Waiting,
         ReconciliationDecision::Mismatch(_) => ReconcileCohortPullRequestOutcome::Mismatch,

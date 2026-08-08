@@ -2233,7 +2233,7 @@ pub async fn list_cohort_pr_reconciliations_for_run(
 pub async fn upsert_cohort_pr_reconciliation(
     pool: &SqlitePool,
     record: &CohortPullRequestReconciliation,
-) -> crate::Result<()> {
+) -> crate::Result<bool> {
     let mismatch_kind = record
         .mismatch
         .as_ref()
@@ -2243,7 +2243,7 @@ pub async fn upsert_cohort_pr_reconciliation(
         .mismatch
         .as_ref()
         .map(|mismatch| mismatch.detail.as_str());
-    sqlx::query(
+    let result = sqlx::query(
         "INSERT INTO cohort_pull_request_reconciliation \
          (workflow_run_id, stage_instance_id, unit_id, repository_key, provider, owner, name, \
           pr_number, pr_url, head_branch, base_branch, head_sha, observed_state, \
@@ -2258,7 +2258,8 @@ pub async fn upsert_cohort_pr_reconciliation(
           merged_at=excluded.merged_at, mismatch_kind=excluded.mismatch_kind, \
           mismatch_detail=excluded.mismatch_detail, completed_at=COALESCE( \
             cohort_pull_request_reconciliation.completed_at, excluded.completed_at), \
-          updated_at=excluded.updated_at",
+          updated_at=excluded.updated_at \
+         WHERE excluded.observed_at >= cohort_pull_request_reconciliation.observed_at",
     )
     .bind(record.workflow_run_id.0.to_string())
     .bind(record.stage_instance_id.0.to_string())
@@ -2282,7 +2283,7 @@ pub async fn upsert_cohort_pr_reconciliation(
     .bind(record.updated_at.to_rfc3339())
     .execute(pool)
     .await?;
-    Ok(())
+    Ok(result.rows_affected() > 0)
 }
 
 // ── Collab row structs ────────────────────────────────────────────────────────
@@ -4118,7 +4119,25 @@ mod tests {
             list_cohort_pr_reconciliations_for_run(&pool, &run.id)
                 .await
                 .unwrap(),
-            vec![record]
+            vec![record.clone()]
+        );
+
+        let mut stale = record.clone();
+        stale.observation.state = ObservedPullRequestState::Open;
+        stale.observation.observed_at = fixed_dt() - chrono::Duration::seconds(1);
+        stale.observation.merged_at = None;
+        stale.completed_at = None;
+        assert!(
+            !upsert_cohort_pr_reconciliation(&pool, &stale)
+                .await
+                .unwrap(),
+            "the database must reject an older observation atomically"
+        );
+        assert_eq!(
+            get_cohort_pr_reconciliation(&pool, &stage.id, "api")
+                .await
+                .unwrap(),
+            Some(record)
         );
     }
 }
