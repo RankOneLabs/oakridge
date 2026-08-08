@@ -399,12 +399,16 @@ impl EpicWorkflowProfile {
 
 fn is_valid_git_branch_name(branch: &str) -> bool {
     !branch.is_empty()
-        && !branch.starts_with('.')
+        && branch != "@"
         && !branch.starts_with('/')
         && !branch.ends_with('.')
         && !branch.ends_with('/')
-        && !branch.ends_with(".lock")
         && !branch.contains("..")
+        && branch.split('/').all(|component| {
+            !component.is_empty()
+                && !component.starts_with('.')
+                && !component.ends_with(".lock")
+        })
         && !branch.contains("@{")
         && !branch.chars().any(|character| {
             character.is_control() || character.is_whitespace() || "~^:?*[\\".contains(character)
@@ -1022,6 +1026,18 @@ mod tests {
             ..profile.repositories[0].clone()
         });
         assert!(profile.validate().is_err());
+    }
+
+    #[test]
+    fn epic_profile_rejects_git_invalid_branch_components() {
+        for branch in ["epic/.hidden", "epic/a.lock/b", "a//b", "@"] {
+            let mut profile = valid_epic_profile();
+            profile.repositories[0].epic_branch = branch.into();
+            assert!(
+                profile.validate().is_err(),
+                "branch {branch:?} must be rejected"
+            );
+        }
     }
 
     #[test]

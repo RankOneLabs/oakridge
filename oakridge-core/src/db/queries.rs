@@ -654,12 +654,13 @@ pub async fn get_epic_workflow_profile(
     run_id: &WorkflowRunId,
 ) -> crate::Result<EpicWorkflowProfile> {
     let run_id_string = run_id.0.to_string();
+    let mut transaction = pool.begin().await?;
     let row = sqlx::query_as::<_, EpicWorkflowProfileRow>(
         "SELECT id, workflow_run_id, title, slug, lifecycle_state, final_merge_policy, created_at, updated_at \
          FROM epic_workflow_profile WHERE workflow_run_id = ?",
     )
     .bind(&run_id_string)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *transaction)
     .await?
     .ok_or_else(|| crate::Error::NotFound {
         entity: "epic_workflow_profile".into(),
@@ -672,8 +673,9 @@ pub async fn get_epic_workflow_profile(
          FROM epic_repository_binding WHERE epic_profile_id = ? ORDER BY repository_key",
     )
     .bind(&profile_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *transaction)
     .await?;
+    transaction.commit().await?;
     Ok(EpicWorkflowProfile {
         id: EpicWorkflowProfileId(parse_uuid(&profile_id)?),
         workflow_run_id: WorkflowRunId(parse_uuid(&row.workflow_run_id)?),

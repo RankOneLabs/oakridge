@@ -3057,17 +3057,20 @@ mod tests {
         assert_eq!(profile["lifecycle_state"], "draft");
         assert_eq!(profile["repositories"][0]["base_branch"], "develop");
 
-        let mut operator_run = Value::Null;
-        for _ in 0..20 {
-            let app = crate::http::router(state.clone());
-            let (status, candidate) = req(app, "GET", &format!("/runs/{run_id}"), None).await;
-            assert_eq!(status, StatusCode::OK);
-            operator_run = candidate;
-            if !operator_run["stages"].as_array().unwrap().is_empty() {
-                break;
+        let operator_run = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let app = crate::http::router(state.clone());
+                let (status, candidate) =
+                    req(app, "GET", &format!("/runs/{run_id}"), None).await;
+                assert_eq!(status, StatusCode::OK);
+                if !candidate["stages"].as_array().unwrap().is_empty() {
+                    return candidate;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
             }
-            tokio::task::yield_now().await;
-        }
+        })
+        .await
+        .expect("operator stage was not created within 1 second");
         assert_eq!(operator_run["stages"][0]["operator_role"], "assessment");
         assert_eq!(operator_run["epic_profile"]["slug"], "full-parity");
     }
