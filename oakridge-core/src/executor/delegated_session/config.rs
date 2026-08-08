@@ -50,10 +50,12 @@ pub struct WorktreeIdentity {
 /// Per-unit worktree template; {{UNIT_ID}} and {{STAGE_INSTANCE_ID}} are substituted.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct WorktreeTemplate {
-    pub branch_name: String,
-    pub worktree_subdir: String,
+    /// Branch to create for the unit. A literal preserves the original template
+    /// form; a binding can select repository-specific topology from run context.
+    pub branch_name: Bindable,
+    pub worktree_subdir: Bindable,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub base_ref: Option<String>,
+    pub base_ref: Option<Bindable>,
 }
 
 // ── FanOut ────────────────────────────────────────────────────────────────────
@@ -241,6 +243,11 @@ pub struct DelegatedSessionConfig {
     /// Workdirs resolved from `fan_out.workdir`, keyed by materialized unit id.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub resolved_fan_out_workdirs: HashMap<String, PathBuf>,
+    /// Repository-aware worktree identities resolved while activation inputs and
+    /// immutable run context are available. Persisting these keeps retries from
+    /// silently selecting a different base branch.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub resolved_fan_out_worktrees: HashMap<String, WorktreeIdentity>,
     /// Immutable run context retained for bindings on units delivered after activation.
     #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
     pub fan_out_context: serde_json::Value,
@@ -389,6 +396,7 @@ mod tests {
             fan_out_prompt_plan: None,
             resolved_fan_out_over: None,
             resolved_fan_out_workdirs: HashMap::new(),
+            resolved_fan_out_worktrees: HashMap::new(),
             fan_out_context: serde_json::Value::Null,
             workdir: PathBuf::from("/workspace/abc"),
             session_name: "s1".into(),
@@ -434,9 +442,9 @@ mod tests {
             },
             workdir: None,
             worktree: Some(WorktreeTemplate {
-                branch_name: "cohort/{{UNIT_ID}}".into(),
-                worktree_subdir: "wt/{{UNIT_ID}}".into(),
-                base_ref: Some("main".into()),
+                branch_name: Bindable::Literal("cohort/{{UNIT_ID}}".into()),
+                worktree_subdir: Bindable::Literal("wt/{{UNIT_ID}}".into()),
+                base_ref: Some(Bindable::Literal("main".into())),
             }),
             inherit_worktree_from: None,
         };

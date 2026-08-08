@@ -86,6 +86,25 @@ fn substitute_unit_template(
         .replace(STAGE_INSTANCE_ID_SENTINEL, &stage_instance_id.0.to_string())
 }
 
+fn resolve_worktree_template_value(
+    value: &Bindable,
+    inputs: &HashMap<String, ResolvedInput>,
+    run_context: &Value,
+    item: &Value,
+    unit_id: &str,
+    stage_instance_id: StageInstanceId,
+) -> anyhow::Result<String> {
+    let value = match value {
+        Bindable::Literal(value) => value.clone(),
+        Bindable::Bound(binding) => resolve_binding(binding, inputs, run_context, Some(item))?,
+    };
+    let value = substitute_unit_template(&value, unit_id, stage_instance_id);
+    if value.trim().is_empty() {
+        anyhow::bail!("worktree topology value must be a non-empty string");
+    }
+    Ok(value)
+}
+
 /// Validate and render the entire fan-out DAG without side effects.  This must
 /// finish successfully before unit rows are written or kbbl sessions are made.
 fn materialize_fan_out_units(
@@ -166,7 +185,12 @@ fn materialize_fan_out_units(
         for (slot_name, binding) in &fan_out.item_bindings {
             slot_values.insert(
                 slot_name.clone(),
-                resolve_binding(binding, &HashMap::new(), &Value::Null, Some(item))?,
+                resolve_binding(
+                    binding,
+                    &HashMap::new(),
+                    &config.fan_out_context,
+                    Some(item),
+                )?,
             );
         }
         slot_values.insert("UNIT_ID".into(), unit_id.clone());
@@ -178,24 +202,43 @@ fn materialize_fan_out_units(
             .cloned()
             .unwrap_or_else(|| config.workdir.clone());
 
-        let worktree = match &fan_out.worktree {
-            Some(template) => Some(WorktreeIdentity {
-                branch_name: substitute_unit_template(
+        let worktree = if let Some(identity) = config.resolved_fan_out_worktrees.get(&unit_id) {
+            Some(identity.clone())
+        } else if let Some(template) = &fan_out.worktree {
+            Some(WorktreeIdentity {
+                branch_name: resolve_worktree_template_value(
                     &template.branch_name,
+                    &HashMap::new(),
+                    &config.fan_out_context,
+                    item,
                     &unit_id,
                     stage_instance_id,
-                ),
-                worktree_subdir: substitute_unit_template(
+                )?,
+                worktree_subdir: resolve_worktree_template_value(
                     &template.worktree_subdir,
+                    &HashMap::new(),
+                    &config.fan_out_context,
+                    item,
                     &unit_id,
                     stage_instance_id,
-                ),
+                )?,
                 base_ref: template
                     .base_ref
                     .as_ref()
-                    .map(|base| substitute_unit_template(base, &unit_id, stage_instance_id)),
-            }),
-            None => config.worktree.clone(),
+                    .map(|base| {
+                        resolve_worktree_template_value(
+                            base,
+                            &HashMap::new(),
+                            &config.fan_out_context,
+                            item,
+                            &unit_id,
+                            stage_instance_id,
+                        )
+                    })
+                    .transpose()?,
+            })
+        } else {
+            config.worktree.clone()
         };
         units.push(MaterializedFanOutUnit {
             unit_id,
@@ -273,7 +316,12 @@ fn materialize_persisted_unit(
     for (slot_name, binding) in &fan_out.item_bindings {
         slot_values.insert(
             slot_name.clone(),
-            resolve_binding(binding, &HashMap::new(), &Value::Null, Some(&params))?,
+            resolve_binding(
+                binding,
+                &HashMap::new(),
+                &config.fan_out_context,
+                Some(&params),
+            )?,
         );
     }
     slot_values.insert("UNIT_ID".into(), unit.unit_id.clone());
@@ -1937,6 +1985,65 @@ impl StageType for DelegatedSessionStage {
             }
             _ => HashMap::new(),
         };
+        let resolved_fan_out_worktrees = match (&def.fan_out, &resolved_fan_out_over) {
+            (Some(fan_out), Some(Value::Array(items))) => {
+                let mut worktrees = HashMap::new();
+                if let Some(template) = &fan_out.worktree {
+                    for item in items {
+                        let unit_id = item
+                            .pointer(&fan_out.unit_id_path)
+                            .and_then(Value::as_str)
+                            .filter(|id| !id.is_empty())
+                            .ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "fan_out unit_id at '{}' must be a non-empty string",
+                                    fan_out.unit_id_path
+                                )
+                            })?;
+                        let branch_name = resolve_worktree_template_value(
+                            &template.branch_name,
+                            inputs,
+                            run_context,
+                            item,
+                            unit_id,
+                            stage_instance_id,
+                        )?;
+                        let worktree_subdir = resolve_worktree_template_value(
+                            &template.worktree_subdir,
+                            inputs,
+                            run_context,
+                            item,
+                            unit_id,
+                            stage_instance_id,
+                        )?;
+                        let base_ref = template
+                            .base_ref
+                            .as_ref()
+                            .map(|base| {
+                                resolve_worktree_template_value(
+                                    base,
+                                    inputs,
+                                    run_context,
+                                    item,
+                                    unit_id,
+                                    stage_instance_id,
+                                )
+                            })
+                            .transpose()?;
+                        worktrees.insert(
+                            unit_id.to_owned(),
+                            WorktreeIdentity {
+                                branch_name,
+                                worktree_subdir,
+                                base_ref,
+                            },
+                        );
+                    }
+                }
+                worktrees
+            }
+            _ => HashMap::new(),
+        };
         let sid_str = stage_instance_id.0.to_string();
         let workdir_str = resolve_binding(&def.workdir, inputs, run_context, None)?
             .replace(STAGE_INSTANCE_ID_SENTINEL, &sid_str);
@@ -1979,6 +2086,7 @@ impl StageType for DelegatedSessionStage {
             fan_out_prompt_plan,
             resolved_fan_out_over,
             resolved_fan_out_workdirs,
+            resolved_fan_out_worktrees,
             fan_out_context: run_context.clone(),
             workdir: PathBuf::from(workdir_str),
             session_name: def
@@ -2479,26 +2587,51 @@ impl DelegatedSessionHandle {
                         })
                         .transpose()?
                 };
-                let worktree = scheduler
-                    .fan_out
-                    .worktree
-                    .as_ref()
-                    .filter(|_| scheduler.fan_out.inherit_worktree_from.is_none())
-                    .map(|template| WorktreeIdentity {
-                        branch_name: substitute_unit_template(
+                let worktree = if scheduler.fan_out.inherit_worktree_from.is_some() {
+                    None
+                } else if let Some(identity) = scheduler
+                    .config
+                    .resolved_fan_out_worktrees
+                    .get(&unit_id)
+                    .cloned()
+                {
+                    Some(identity)
+                } else if let Some(template) = scheduler.fan_out.worktree.as_ref() {
+                    Some(WorktreeIdentity {
+                        branch_name: resolve_worktree_template_value(
                             &template.branch_name,
+                            &HashMap::new(),
+                            &scheduler.config.fan_out_context,
+                            &params,
                             &unit_id,
                             self.stage_instance_id,
-                        ),
-                        worktree_subdir: substitute_unit_template(
+                        )?,
+                        worktree_subdir: resolve_worktree_template_value(
                             &template.worktree_subdir,
+                            &HashMap::new(),
+                            &scheduler.config.fan_out_context,
+                            &params,
                             &unit_id,
                             self.stage_instance_id,
-                        ),
-                        base_ref: template.base_ref.as_ref().map(|base| {
-                            substitute_unit_template(base, &unit_id, self.stage_instance_id)
-                        }),
-                    });
+                        )?,
+                        base_ref: template
+                            .base_ref
+                            .as_ref()
+                            .map(|base| {
+                                resolve_worktree_template_value(
+                                    base,
+                                    &HashMap::new(),
+                                    &scheduler.config.fan_out_context,
+                                    &params,
+                                    &unit_id,
+                                    self.stage_instance_id,
+                                )
+                            })
+                            .transpose()?,
+                    })
+                } else {
+                    None
+                };
                 let now = chrono::Utc::now();
                 queries::upsert_session_unit(
                     scheduler.ctx.pool(),
@@ -3308,6 +3441,7 @@ mod tests {
             }),
             resolved_fan_out_over: Some(over),
             resolved_fan_out_workdirs: HashMap::new(),
+            resolved_fan_out_worktrees: HashMap::new(),
             fan_out_context: Value::Null,
             workdir: PathBuf::from("/work"),
             session_name: "session".into(),
@@ -3331,9 +3465,9 @@ mod tests {
                 )]),
                 workdir: None,
                 worktree: Some(config::WorktreeTemplate {
-                    branch_name: "run/{{STAGE_INSTANCE_ID}}/{{UNIT_ID}}".into(),
-                    worktree_subdir: "units/{{UNIT_ID}}".into(),
-                    base_ref: Some("base/{{STAGE_INSTANCE_ID}}".into()),
+                    branch_name: Bindable::Literal("run/{{STAGE_INSTANCE_ID}}/{{UNIT_ID}}".into()),
+                    worktree_subdir: Bindable::Literal("units/{{UNIT_ID}}".into()),
+                    base_ref: Some(Bindable::Literal("base/{{STAGE_INSTANCE_ID}}".into())),
                 }),
                 inherit_worktree_from: None,
             }),
@@ -4275,6 +4409,131 @@ mod tests {
                 "/repos/00000000-0000-0000-0000-000000000043"
             ))
         );
+    }
+
+    #[tokio::test]
+    async fn build_config_resolves_non_main_multi_repository_git_topology_per_unit() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("topology.md"),
+            "{{UNIT_ID}} {{EXPECTED_PR_BASE}} {{EXPECTED_FINAL_BASE}}",
+        )
+        .unwrap();
+        let stage = DelegatedSessionStage::new(
+            dir.path().to_path_buf(),
+            KbblClient::new("http://127.0.0.1:8080/").unwrap(),
+        );
+        let stage_instance_id =
+            StageInstanceId(uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000044").unwrap());
+        let repository_lookup = |value_path: &str| {
+            json!({
+                "from": "context_lookup",
+                "collection_path": "/repositories",
+                "collection_key_path": "/key",
+                "item_key_path": "/repository_key",
+                "value_path": value_path
+            })
+        };
+        let config = stage
+            .build_config(
+                &json!({
+                    "runtime": "codex",
+                    "prompt_template_path": "topology.md",
+                    "slot_bindings": {
+                        "UNIT_ID": {"from": "literal", "value": "0"},
+                        "EXPECTED_PR_BASE": {"from": "literal", "value": ""},
+                        "EXPECTED_FINAL_BASE": {"from": "literal", "value": ""}
+                    },
+                    "workdir": {"from": "literal", "value": "/work"},
+                    "session_name": "topology",
+                    "fan_out": {
+                        "over": {"from": "literal", "value": "[{\"id\":\"api\",\"repository_key\":\"server\"},{\"id\":\"web\",\"repository_key\":\"client\"}]"},
+                        "unit_id_path": "/id",
+                        "item_bindings": {
+                            "EXPECTED_PR_BASE": repository_lookup("/epic_branch"),
+                            "EXPECTED_FINAL_BASE": repository_lookup("/base_branch")
+                        },
+                        "workdir": repository_lookup("/path"),
+                        "worktree": {
+                            "branch_name": "cohort/{{STAGE_INSTANCE_ID}}/{{UNIT_ID}}",
+                            "worktree_subdir": "{{STAGE_INSTANCE_ID}}/{{UNIT_ID}}",
+                            "base_ref": repository_lookup("/epic_branch")
+                        }
+                    }
+                }),
+                &HashMap::new(),
+                &[],
+                stage_instance_id,
+                &json!({"repositories": [
+                    {"key":"server", "path":"/repos/server", "base_branch":"release/2026-q3", "epic_branch":"epic/full-parity"},
+                    {"key":"client", "path":"/repos/client", "base_branch":"develop", "epic_branch":"epic/full-parity"}
+                ]}),
+            )
+            .await
+            .unwrap();
+        let config: DelegatedSessionConfig = serde_json::from_value(config).unwrap();
+        assert_eq!(
+            config.resolved_fan_out_worktrees["api"].base_ref.as_deref(),
+            Some("epic/full-parity")
+        );
+        assert_eq!(
+            config.resolved_fan_out_worktrees["web"].base_ref.as_deref(),
+            Some("epic/full-parity")
+        );
+        assert_eq!(
+            config.resolved_fan_out_workdirs["api"],
+            PathBuf::from("/repos/server")
+        );
+        let units =
+            materialize_fan_out_units(&config, config.fan_out.as_ref().unwrap(), stage_instance_id)
+                .unwrap();
+        assert!(units
+            .iter()
+            .find(|unit| unit.unit_id == "api")
+            .unwrap()
+            .rendered_prompt
+            .contains("release/2026-q3"));
+        assert!(units
+            .iter()
+            .find(|unit| unit.unit_id == "web")
+            .unwrap()
+            .rendered_prompt
+            .contains("develop"));
+    }
+
+    #[tokio::test]
+    async fn build_config_rejects_repository_without_epic_branch() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("topology.md"), "{{UNIT_ID}}").unwrap();
+        let stage = DelegatedSessionStage::new(
+            dir.path().to_path_buf(),
+            KbblClient::new("http://127.0.0.1:8080/").unwrap(),
+        );
+        let result = stage.build_config(
+            &json!({
+                "runtime": "codex",
+                "prompt_template_path": "topology.md",
+                "slot_bindings": {"UNIT_ID": {"from":"literal", "value":"0"}},
+                "workdir": {"from":"literal", "value":"/work"},
+                "session_name": "topology",
+                "fan_out": {
+                    "over": {"from":"literal", "value":"[{\"id\":\"api\",\"repository_key\":\"server\"}]"},
+                    "unit_id_path":"/id",
+                    "worktree": {
+                        "branch_name":"cohort/{{UNIT_ID}}",
+                        "worktree_subdir":"{{UNIT_ID}}",
+                        "base_ref": {
+                            "from":"context_lookup", "collection_path":"/repositories",
+                            "collection_key_path":"/key", "item_key_path":"/repository_key",
+                            "value_path":"/epic_branch"
+                        }
+                    }
+                }
+            }),
+            &HashMap::new(), &[], StageInstanceId(uuid::Uuid::new_v4()),
+            &json!({"repositories":[{"key":"server", "path":"/repos/server", "base_branch":"develop"}]})
+        ).await;
+        assert!(result.unwrap_err().to_string().contains("/epic_branch"));
     }
 
     #[tokio::test]

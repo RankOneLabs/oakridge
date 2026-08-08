@@ -22,7 +22,7 @@ use oakridge_core::executor::delegated_session::{
 };
 use oakridge_core::registry::register_dev_flow_types;
 use oakridge_core::registry::stage_type::StageType;
-use oakridge_core::types::{StageInstanceId, WorkflowDef};
+use oakridge_core::types::{StageInstanceId, StageOperatorRole, WorkflowDef};
 use oakridge_core::{boot, Config};
 
 fn manifest_dir() -> PathBuf {
@@ -55,6 +55,14 @@ fn load_dev_flow_v5() -> WorkflowDef {
 
 fn load_dev_flow_v6() -> WorkflowDef {
     let path = manifest_dir().join("examples/dev_flow_v6.json");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
+    serde_json::from_str(&text)
+        .unwrap_or_else(|e| panic!("failed to parse {}: {e}", path.display()))
+}
+
+fn load_dev_flow_v7() -> WorkflowDef {
+    let path = manifest_dir().join("examples/dev_flow_v7.json");
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
     serde_json::from_str(&text)
@@ -373,6 +381,54 @@ fn dev_flow_v6_build_requires_manual_cohort_admission() {
     let stage = def.graph.stages.get("build").unwrap();
     let config: DelegatedSessionDefConfig = serde_json::from_value(stage.config.clone()).unwrap();
     assert!(config.fan_out.unwrap().manual_admission);
+}
+
+#[test]
+fn dev_flow_v7_requires_repository_epic_topology_for_cohort_worktrees_and_prs() {
+    use oakridge_core::executor::delegated_session::config::Bindable;
+    use oakridge_core::executor::prompt_config::SlotBinding;
+
+    let def = load_dev_flow_v7();
+    assert_eq!(def.version, 7);
+    assert_eq!(
+        def.graph.stages["spec_analyzer"].operator_role,
+        Some(StageOperatorRole::Spec)
+    );
+    assert_eq!(
+        def.graph.stages["plan_writer"].operator_role,
+        Some(StageOperatorRole::Plan)
+    );
+    let stage = def.graph.stages.get("build").unwrap();
+    assert_eq!(stage.operator_role, Some(StageOperatorRole::Build));
+    assert_eq!(
+        def.graph.stages["assessor"].operator_role,
+        Some(StageOperatorRole::Assessment)
+    );
+    let config: DelegatedSessionDefConfig = serde_json::from_value(stage.config.clone()).unwrap();
+    assert_eq!(config.prompt_template_path, "dev-flow/build_v2.md");
+    let fan_out = config.fan_out.unwrap();
+    let worktree = fan_out.worktree.unwrap();
+    assert_eq!(
+        worktree.base_ref,
+        Some(Bindable::Bound(SlotBinding::ContextLookup {
+            collection_path: "/repositories".into(),
+            collection_key_path: "/key".into(),
+            item_key_path: "/repository_key".into(),
+            value_path: "/epic_branch".into(),
+        }))
+    );
+    assert!(matches!(
+        fan_out.item_bindings.get("EXPECTED_FINAL_BASE"),
+        Some(SlotBinding::ContextLookup { value_path, .. }) if value_path == "/base_branch"
+    ));
+}
+
+#[test]
+fn dev_flow_v6_remains_loadable_without_git_topology_bindings() {
+    let def = load_dev_flow_v6();
+    let stage = def.graph.stages.get("build").unwrap();
+    let config: DelegatedSessionDefConfig = serde_json::from_value(stage.config.clone()).unwrap();
+    assert!(config.fan_out.unwrap().worktree.unwrap().base_ref.is_none());
 }
 
 // ── Prompt file existence + root containment ──────────────────────────────────
