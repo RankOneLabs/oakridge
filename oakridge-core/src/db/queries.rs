@@ -5,8 +5,9 @@
 // Run from the oakridge-core directory.
 
 use crate::types::{
-    Artifact, ArtifactId, GateDecisionAudit, GateDecisionAuditId, GateDecisionAuditInsert,
-    GateDecisionAuditStatus, Project, ProjectId, RunStatus, StageInstance, StageInstanceId,
+    Artifact, ArtifactId, EpicRepositoryBinding, EpicWorkflowProfile, EpicWorkflowProfileId,
+    GateDecisionAudit, GateDecisionAuditId, GateDecisionAuditInsert, GateDecisionAuditStatus,
+    Project, ProjectId, PullRequestReference, RunStatus, StageInstance, StageInstanceId,
     StageStatus, WorkflowDef, WorkflowDefId, WorkflowRun, WorkflowRunId,
 };
 use chrono::{DateTime, Utc};
@@ -44,6 +45,31 @@ struct WorkflowRunRow {
     version: i64,
     created_at: String,
     updated_at: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct EpicWorkflowProfileRow {
+    id: String,
+    workflow_run_id: String,
+    title: String,
+    slug: String,
+    lifecycle_state: String,
+    final_merge_policy: String,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct EpicRepositoryBindingRow {
+    repository_key: String,
+    repository_path: String,
+    base_branch: String,
+    epic_branch: String,
+    final_merge_state: String,
+    final_pr_number: Option<i64>,
+    final_pr_url: Option<String>,
+    final_pr_head_branch: Option<String>,
+    final_pr_base_branch: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -179,6 +205,42 @@ fn row_to_workflow_run(r: WorkflowRunRow) -> crate::Result<WorkflowRun> {
         version: r.version as i32,
         created_at: parse_dt(&r.created_at)?,
         updated_at: parse_dt(&r.updated_at)?,
+    })
+}
+
+fn row_to_epic_repository_binding(
+    row: EpicRepositoryBindingRow,
+) -> crate::Result<EpicRepositoryBinding> {
+    let final_pull_request = match (
+        row.final_pr_number,
+        row.final_pr_url,
+        row.final_pr_head_branch,
+        row.final_pr_base_branch,
+    ) {
+        (None, None, None, None) => None,
+        (Some(number), Some(url), Some(head_branch), Some(base_branch)) => {
+            Some(PullRequestReference {
+                number: u64::try_from(number).map_err(|_| {
+                    crate::Error::Validation(format!("invalid pull request number {number}"))
+                })?,
+                url,
+                head_branch,
+                base_branch,
+            })
+        }
+        _ => {
+            return Err(crate::Error::Validation(
+                "partial final pull request metadata in database".into(),
+            ))
+        }
+    };
+    Ok(EpicRepositoryBinding {
+        repository_key: row.repository_key,
+        repository_path: row.repository_path.into(),
+        base_branch: row.base_branch,
+        epic_branch: row.epic_branch,
+        final_pull_request,
+        final_merge_state: str_to_enum(row.final_merge_state)?,
     })
 }
 
@@ -470,6 +532,44 @@ pub async fn insert_workflow_run(pool: &SqlitePool, r: &WorkflowRun) -> crate::R
     Ok(())
 }
 
+/// Atomically create a generic workflow run and its optional typed Epic
+/// projection. The coordinator must only be started after this commits.
+pub async fn insert_workflow_run_with_epic_profile(
+    pool: &SqlitePool,
+    run: &WorkflowRun,
+    profile: Option<&EpicWorkflowProfile>,
+) -> crate::Result<()> {
+    if let Some(profile) = profile {
+        profile.validate()?;
+        if profile.workflow_run_id != run.id {
+            return Err(crate::Error::Validation(
+                "Epic profile must reference the workflow run being created".into(),
+            ));
+        }
+    }
+    let mut transaction = pool.begin().await?;
+    sqlx::query(
+        "INSERT INTO workflow_run \
+         (id, workflow_def_id, project_id, status, context, version, created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(run.id.0.to_string())
+    .bind(run.workflow_def_id.0.to_string())
+    .bind(run.project_id.map(|project_id| project_id.0.to_string()))
+    .bind(enum_to_str(&run.status)?)
+    .bind(serde_json::to_string(&run.context)?)
+    .bind(i64::from(run.version))
+    .bind(run.created_at.to_rfc3339())
+    .bind(run.updated_at.to_rfc3339())
+    .execute(&mut *transaction)
+    .await?;
+    if let Some(profile) = profile {
+        insert_epic_profile_rows(&mut transaction, profile).await?;
+    }
+    transaction.commit().await?;
+    Ok(())
+}
+
 pub async fn get_workflow_run_by_id(
     pool: &SqlitePool,
     id: &WorkflowRunId,
@@ -488,6 +588,119 @@ pub async fn get_workflow_run_by_id(
         id: id_str,
     })?;
     row_to_workflow_run(row)
+}
+
+/// Insert the one-to-one Epic projection and its repository bindings in the
+/// caller's transaction.
+async fn insert_epic_profile_rows(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    profile: &EpicWorkflowProfile,
+) -> crate::Result<()> {
+    sqlx::query(
+        "INSERT INTO epic_workflow_profile \
+         (id, workflow_run_id, title, slug, lifecycle_state, final_merge_policy, created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(profile.id.0.to_string())
+    .bind(profile.workflow_run_id.0.to_string())
+    .bind(&profile.title)
+    .bind(&profile.slug)
+    .bind(enum_to_str(&profile.lifecycle_state)?)
+    .bind(enum_to_str(&profile.final_merge_policy)?)
+    .bind(profile.created_at.to_rfc3339())
+    .bind(profile.updated_at.to_rfc3339())
+    .execute(&mut **transaction)
+    .await?;
+
+    let profile_id = profile.id.0.to_string();
+    for repository in &profile.repositories {
+        let repository_path = repository.repository_path.to_string_lossy().into_owned();
+        let (pr_number, pr_url, pr_head, pr_base) = repository
+            .final_pull_request
+            .as_ref()
+            .map(|pull_request| {
+                (
+                    Some(pull_request.number as i64),
+                    Some(pull_request.url.as_str()),
+                    Some(pull_request.head_branch.as_str()),
+                    Some(pull_request.base_branch.as_str()),
+                )
+            })
+            .unwrap_or((None, None, None, None));
+        sqlx::query(
+            "INSERT INTO epic_repository_binding \
+             (epic_profile_id, repository_key, repository_path, base_branch, epic_branch, \
+              final_merge_state, final_pr_number, final_pr_url, final_pr_head_branch, \
+              final_pr_base_branch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&profile_id)
+        .bind(&repository.repository_key)
+        .bind(repository_path)
+        .bind(&repository.base_branch)
+        .bind(&repository.epic_branch)
+        .bind(enum_to_str(&repository.final_merge_state)?)
+        .bind(pr_number)
+        .bind(pr_url)
+        .bind(pr_head)
+        .bind(pr_base)
+        .execute(&mut **transaction)
+        .await?;
+    }
+    Ok(())
+}
+
+pub async fn get_epic_workflow_profile(
+    pool: &SqlitePool,
+    run_id: &WorkflowRunId,
+) -> crate::Result<EpicWorkflowProfile> {
+    let run_id_string = run_id.0.to_string();
+    let mut transaction = pool.begin().await?;
+    let row = sqlx::query_as::<_, EpicWorkflowProfileRow>(
+        "SELECT id, workflow_run_id, title, slug, lifecycle_state, final_merge_policy, created_at, updated_at \
+         FROM epic_workflow_profile WHERE workflow_run_id = ?",
+    )
+    .bind(&run_id_string)
+    .fetch_optional(&mut *transaction)
+    .await?
+    .ok_or_else(|| crate::Error::NotFound {
+        entity: "epic_workflow_profile".into(),
+        id: run_id_string,
+    })?;
+    let profile_id = row.id.clone();
+    let repository_rows = sqlx::query_as::<_, EpicRepositoryBindingRow>(
+        "SELECT repository_key, repository_path, base_branch, epic_branch, final_merge_state, \
+         final_pr_number, final_pr_url, final_pr_head_branch, final_pr_base_branch \
+         FROM epic_repository_binding WHERE epic_profile_id = ? ORDER BY repository_key",
+    )
+    .bind(&profile_id)
+    .fetch_all(&mut *transaction)
+    .await?;
+    transaction.commit().await?;
+    Ok(EpicWorkflowProfile {
+        id: EpicWorkflowProfileId(parse_uuid(&profile_id)?),
+        workflow_run_id: WorkflowRunId(parse_uuid(&row.workflow_run_id)?),
+        title: row.title,
+        slug: row.slug,
+        lifecycle_state: str_to_enum(row.lifecycle_state)?,
+        final_merge_policy: str_to_enum(row.final_merge_policy)?,
+        repositories: repository_rows
+            .into_iter()
+            .map(row_to_epic_repository_binding)
+            .collect::<crate::Result<Vec<_>>>()?,
+        created_at: parse_dt(&row.created_at)?,
+        updated_at: parse_dt(&row.updated_at)?,
+    })
+}
+
+pub async fn find_epic_workflow_profile(
+    pool: &SqlitePool,
+    run_id: &WorkflowRunId,
+) -> crate::Result<Option<EpicWorkflowProfile>> {
+    match get_epic_workflow_profile(pool, run_id).await {
+        Ok(profile) => Ok(Some(profile)),
+        Err(crate::Error::NotFound { .. }) => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 pub async fn update_workflow_run_status(
@@ -2171,6 +2384,59 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn workflow_run_and_epic_profile_are_created_atomically_and_round_trip() {
+        let pool = make_test_pool().await;
+        let definition = test_workflow_def();
+        insert_workflow_def(&pool, &definition).await.unwrap();
+        let run = test_run(definition.id);
+        let profile = EpicWorkflowProfile {
+            id: EpicWorkflowProfileId(run.id.0),
+            workflow_run_id: run.id,
+            title: "Parity".into(),
+            slug: "parity".into(),
+            lifecycle_state: crate::types::EpicLifecycleState::Draft,
+            final_merge_policy: crate::types::FinalMergePolicy::Guarded,
+            repositories: vec![EpicRepositoryBinding {
+                repository_key: "oakridge".into(),
+                repository_path: "/repos/oakridge".into(),
+                base_branch: "develop".into(),
+                epic_branch: "epic/parity".into(),
+                final_pull_request: None,
+                final_merge_state: crate::types::FinalMergeState::Pending,
+            }],
+            created_at: fixed_dt(),
+            updated_at: fixed_dt(),
+        };
+
+        insert_workflow_run_with_epic_profile(&pool, &run, Some(&profile))
+            .await
+            .unwrap();
+
+        assert_eq!(get_workflow_run_by_id(&pool, &run.id).await.unwrap(), run);
+        assert_eq!(
+            get_epic_workflow_profile(&pool, &run.id).await.unwrap(),
+            profile
+        );
+
+        let second_run = test_run(definition.id);
+        let conflicting_profile = EpicWorkflowProfile {
+            workflow_run_id: second_run.id,
+            ..profile
+        };
+        assert!(insert_workflow_run_with_epic_profile(
+            &pool,
+            &second_run,
+            Some(&conflicting_profile)
+        )
+        .await
+        .is_err());
+        assert!(matches!(
+            get_workflow_run_by_id(&pool, &second_run.id).await,
+            Err(crate::Error::NotFound { .. })
+        ));
+    }
+
     fn test_stage(run_id: WorkflowRunId) -> StageInstance {
         StageInstance {
             id: StageInstanceId(Uuid::new_v4()),
@@ -2328,6 +2594,7 @@ mod tests {
                     m.insert(
                         "s1".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "llm".into(),
                             config: json!({"model": "gpt-4"}),
                             inputs: vec![],

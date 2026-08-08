@@ -286,6 +286,7 @@ fn delegated_workflow_def(
     stages.insert(
         "delegate".into(),
         StageNodeDef {
+            operator_role: None,
             stage_type: "delegated_session".into(),
             config: serde_json::to_value(def_config).unwrap(),
             inputs: vec![],

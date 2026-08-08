@@ -202,6 +202,7 @@ async fn stage_for_key(
 fn fan_out_definition() -> WorkflowDef {
     let mut stages = HashMap::new();
     stages.insert("build".into(), StageNodeDef {
+        operator_role: None,
         stage_type: "delegated_session".into(),
         config: json!({
             "runtime": "claude-code",
@@ -242,6 +243,7 @@ fn collect_definition() -> WorkflowDef {
     stages.insert(
         "producer".into(),
         StageNodeDef {
+            operator_role: None,
             stage_type: "delegated_session".into(),
             config: json!({
                 "runtime": "claude-code",
@@ -268,6 +270,7 @@ fn collect_definition() -> WorkflowDef {
     stages.insert(
         "collector".into(),
         StageNodeDef {
+            operator_role: None,
             stage_type: "delegated_session".into(),
             config: json!({
                 "runtime": "claude-code",
@@ -317,6 +320,7 @@ fn incremental_definition() -> WorkflowDef {
     definition.graph.stages.insert(
         "assessor".into(),
         StageNodeDef {
+            operator_role: None,
             stage_type: "delegated_session".into(),
             config: json!({
                 "runtime": "claude-code",

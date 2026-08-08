@@ -2583,6 +2583,7 @@ mod tests {
                     m.insert(
                         "A".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: stage_type.into(),
                             config: json!({}),
                             inputs: vec![],
@@ -2679,6 +2680,7 @@ mod tests {
                     m.insert(
                         "A".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "st_a".into(),
                             config: json!({ "mode": "fresh" }),
                             inputs: vec![],
@@ -2736,6 +2738,7 @@ mod tests {
                     m.insert(
                         "A".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "st_a".into(),
                             config: json!({}),
                             inputs: vec![],
@@ -2748,6 +2751,7 @@ mod tests {
                     m.insert(
                         "B".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "st_b".into(),
                             config: json!({}),
                             inputs: vec![InputSlot {
@@ -2869,6 +2873,7 @@ mod tests {
                     m.insert(
                         "A".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "st_a".into(),
                             config: json!({}),
                             inputs: vec![InputSlot {
@@ -2887,6 +2892,7 @@ mod tests {
                     m.insert(
                         "B".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "st_b".into(),
                             config: json!({}),
                             inputs: vec![InputSlot {
@@ -3023,6 +3029,7 @@ mod tests {
                     m.insert(
                         "A".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "st_a".into(),
                             config: json!({}),
                             inputs: vec![],
@@ -3131,6 +3138,7 @@ mod tests {
                     m.insert(
                         "A".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "st_a".into(),
                             config: json!({}),
                             inputs: vec![],
@@ -3259,6 +3267,7 @@ mod tests {
                     m.insert(
                         "A".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "st_a".into(),
                             config: json!({}),
                             inputs: vec![],
@@ -3361,6 +3370,7 @@ mod tests {
                     m.insert(
                         "A".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "st_a".into(),
                             config: json!({}),
                             inputs: vec![],
@@ -3370,6 +3380,7 @@ mod tests {
                     m.insert(
                         "B".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "st_a".into(),
                             config: json!({}),
                             inputs: vec![],
@@ -3538,6 +3549,7 @@ mod tests {
                     m.insert(
                         "A".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "missing_type".into(),
                             config: json!({}),
                             inputs: vec![],
@@ -3587,6 +3599,7 @@ mod tests {
                     m.insert(
                         "A".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "st_a".into(),
                             config: json!({}),
                             inputs: vec![],
@@ -3706,6 +3719,7 @@ mod tests {
                     m.insert(
                         "A".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "missing_type".into(),
                             config: json!({}),
                             inputs: vec![],
@@ -3785,6 +3799,7 @@ mod tests {
                     m.insert(
                         "A".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "missing_type".into(),
                             config: json!({}),
                             inputs: vec![],
@@ -3910,6 +3925,7 @@ mod tests {
                     m.insert(
                         "A".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "noop".into(),
                             config: json!({}),
                             inputs: vec![],
@@ -4010,6 +4026,7 @@ mod tests {
                     m.insert(
                         "A".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "noop".into(),
                             config: json!({}),
                             inputs: vec![],
@@ -4090,6 +4107,7 @@ mod tests {
                     m.insert(
                         "A".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "retry_stage".into(),
                             config: json!({}),
                             inputs: vec![],
@@ -4260,6 +4278,7 @@ mod tests {
                     m.insert(
                         "A".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "noop".into(),
                             config: json!({}),
                             inputs: vec![],

@@ -25,6 +25,9 @@ pub struct ProjectId(pub Uuid);
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GateDecisionAuditId(pub Uuid);
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EpicWorkflowProfileId(pub Uuid);
+
 // --- String aliases ---
 
 pub type StageKey = String;
@@ -124,6 +127,21 @@ pub enum GateOutcome {
     Rerun,
 }
 
+/// Stable semantic role used by operator surfaces and dev-flow policy.
+///
+/// Stage keys remain workflow-local identifiers and must not be interpreted as
+/// lifecycle roles by consumers.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum StageOperatorRole {
+    Spec,
+    Plan,
+    Brief,
+    Build,
+    Assessment,
+    FinalIntegration,
+}
+
 // --- Workflow-definition graph types ---
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -161,6 +179,9 @@ pub struct Edge {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct StageNodeDef {
     pub stage_type: StageTypeId,
+    /// Optional for compatibility with generic and pre-role workflow definitions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operator_role: Option<StageOperatorRole>,
     pub config: Value,
     pub inputs: Vec<InputSlot>,
     pub outputs: Vec<OutputSlot>,
@@ -205,6 +226,372 @@ pub struct WorkflowRun {
     pub version: i32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FinalMergePolicy {
+    Guarded,
+    ExternalConfirmation,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EpicLifecycleState {
+    Draft,
+    Active,
+    FinalIntegration,
+    Completed,
+    Failed,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum FinalMergeState {
+    #[default]
+    Pending,
+    PullRequestOpen,
+    Merged,
+    ClosedWithoutMerge,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct PullRequestReference {
+    pub number: u64,
+    pub url: String,
+    pub head_branch: String,
+    pub base_branch: String,
+}
+
+/// One repository participating in a dev-flow Epic.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct EpicRepositoryBinding {
+    pub repository_key: String,
+    pub repository_path: PathBuf,
+    pub base_branch: String,
+    pub epic_branch: String,
+    pub final_pull_request: Option<PullRequestReference>,
+    pub final_merge_state: FinalMergeState,
+}
+
+/// Typed dev-flow projection linked one-to-one to the generic workflow run.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct EpicWorkflowProfile {
+    pub id: EpicWorkflowProfileId,
+    pub workflow_run_id: WorkflowRunId,
+    pub title: String,
+    pub slug: String,
+    pub lifecycle_state: EpicLifecycleState,
+    pub final_merge_policy: FinalMergePolicy,
+    pub repositories: Vec<EpicRepositoryBinding>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl EpicWorkflowProfile {
+    pub fn validate(&self) -> crate::Result<()> {
+        use std::collections::HashSet;
+
+        if self.title.trim().is_empty() || self.slug.trim().is_empty() {
+            return Err(crate::Error::Validation(
+                "epic title and slug must be non-empty".into(),
+            ));
+        }
+        let slug_is_valid = self.slug.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_')
+        }) && !self.slug.starts_with(['-', '_'])
+            && !self.slug.ends_with(['-', '_']);
+        if !slug_is_valid {
+            return Err(crate::Error::Validation(
+                "epic slug must contain lowercase ASCII letters, digits, hyphens, or underscores"
+                    .into(),
+            ));
+        }
+        if self.repositories.is_empty() {
+            return Err(crate::Error::Validation(
+                "an Epic must bind at least one repository".into(),
+            ));
+        }
+        let mut keys = HashSet::new();
+        let mut paths = HashSet::new();
+        let mut epic_branches = HashSet::new();
+        for repository in &self.repositories {
+            if repository.repository_key.trim().is_empty()
+                || repository.repository_path.as_os_str().is_empty()
+                || repository.base_branch.trim().is_empty()
+                || repository.epic_branch.trim().is_empty()
+            {
+                return Err(crate::Error::Validation(
+                    "repository key, path, base branch, and epic branch must be non-empty".into(),
+                ));
+            }
+            if !repository.repository_path.is_absolute() {
+                return Err(crate::Error::Validation(format!(
+                    "repository {} path must be absolute",
+                    repository.repository_key
+                )));
+            }
+            if !is_valid_git_branch_name(&repository.base_branch)
+                || !is_valid_git_branch_name(&repository.epic_branch)
+            {
+                return Err(crate::Error::Validation(format!(
+                    "repository {} has an invalid base or epic branch",
+                    repository.repository_key
+                )));
+            }
+            if repository.base_branch == repository.epic_branch {
+                return Err(crate::Error::Validation(format!(
+                    "repository {} has identical base and epic branches",
+                    repository.repository_key
+                )));
+            }
+            if !keys.insert(repository.repository_key.as_str()) {
+                return Err(crate::Error::Validation(format!(
+                    "duplicate repository key {}",
+                    repository.repository_key
+                )));
+            }
+            if !paths.insert(repository.repository_path.as_path()) {
+                return Err(crate::Error::Validation(format!(
+                    "duplicate repository path {}",
+                    repository.repository_path.display()
+                )));
+            }
+            if !epic_branches.insert((
+                repository.repository_path.as_path(),
+                repository.epic_branch.as_str(),
+            )) {
+                return Err(crate::Error::Validation(format!(
+                    "duplicate epic branch {} for repository path {}",
+                    repository.epic_branch,
+                    repository.repository_path.display()
+                )));
+            }
+            if let Some(pull_request) = &repository.final_pull_request {
+                if pull_request.number == 0
+                    || pull_request.number > i64::MAX as u64
+                    || pull_request.url.trim().is_empty()
+                    || pull_request.head_branch != repository.epic_branch
+                    || pull_request.base_branch != repository.base_branch
+                {
+                    return Err(crate::Error::Validation(format!(
+                        "final pull request does not match repository {} binding",
+                        repository.repository_key
+                    )));
+                }
+            }
+            let state_matches_metadata = match repository.final_merge_state {
+                FinalMergeState::Pending => repository.final_pull_request.is_none(),
+                FinalMergeState::PullRequestOpen
+                | FinalMergeState::Merged
+                | FinalMergeState::ClosedWithoutMerge => repository.final_pull_request.is_some(),
+            };
+            if !state_matches_metadata {
+                return Err(crate::Error::Validation(format!(
+                    "repository {} final merge state does not match pull request metadata",
+                    repository.repository_key
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+fn is_valid_git_branch_name(branch: &str) -> bool {
+    !branch.is_empty()
+        && branch != "@"
+        && !branch.starts_with('/')
+        && !branch.ends_with('.')
+        && !branch.ends_with('/')
+        && !branch.contains("..")
+        && branch.split('/').all(|component| {
+            !component.is_empty()
+                && !component.starts_with('.')
+                && !component.ends_with(".lock")
+        })
+        && !branch.contains("@{")
+        && !branch.chars().any(|character| {
+            character.is_control() || character.is_whitespace() || "~^:?*[\\".contains(character)
+        })
+}
+
+// --- Strict dev-flow artifact contracts ---
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FindingSeverity {
+    Blocking,
+    Warning,
+    Info,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct SpecFinding {
+    pub id: String,
+    pub description: String,
+    pub severity: FindingSeverity,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RequirementStatus {
+    Implementable,
+    Blocked,
+    Ambiguous,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct SpecRequirement {
+    pub id: String,
+    pub description: String,
+    pub status: RequirementStatus,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct DevRisk {
+    pub description: String,
+    pub mitigation: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct SpecAnalysisBody {
+    pub summary: String,
+    pub source_spec_refs: Vec<String>,
+    pub findings: Vec<SpecFinding>,
+    pub requirements: Vec<SpecRequirement>,
+    pub risks: Vec<DevRisk>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct PlanCohort {
+    pub id: String,
+    pub repository_key: Option<String>,
+    pub title: String,
+    pub scope: String,
+    pub depends_on: Vec<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub files_in_scope: Vec<String>,
+    #[serde(default)]
+    pub decisions: Vec<String>,
+    #[serde(default)]
+    pub acceptance_criteria: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct PlanScope {
+    #[serde(default)]
+    pub in_scope: Vec<String>,
+    #[serde(default)]
+    pub out_of_scope: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct PlanBody {
+    pub summary: String,
+    pub cohorts: Vec<PlanCohort>,
+    pub dependency_order: Vec<String>,
+    pub scope: PlanScope,
+    pub acceptance_criteria: Vec<String>,
+    pub risks: Vec<DevRisk>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct TestEvidence {
+    #[serde(default)]
+    pub passed: u64,
+    #[serde(default)]
+    pub failed: u64,
+    #[serde(default)]
+    pub output: Option<String>,
+    #[serde(default)]
+    pub summary: Option<String>,
+    /// Legacy v1/v2 evidence key retained as a typed compatibility field.
+    #[serde(default)]
+    pub cargo_test_output: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct DelegatedBuildMetadata {
+    #[serde(default)]
+    pub cohort_id: Option<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub branch: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct BuildIssue {
+    pub description: String,
+    pub severity: FindingSeverity,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct BuildResultBody {
+    pub repository_key: Option<String>,
+    pub summary: String,
+    pub changed_files: Vec<String>,
+    pub tests: TestEvidence,
+    pub delegated_session_metadata: Option<DelegatedBuildMetadata>,
+    pub known_issues: Vec<BuildIssue>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AssessmentVerdict {
+    Pass,
+    PassWithNotes,
+    Fail,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CriterionStatus {
+    Met,
+    NotMet,
+    Partial,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct AssessmentFinding {
+    #[serde(default)]
+    pub criterion: Option<String>,
+    #[serde(default)]
+    pub status: Option<CriterionStatus>,
+    #[serde(default)]
+    pub evidence: Option<String>,
+    /// Legacy assessment findings used a single description field.
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct AssessmentBody {
+    pub verdict: AssessmentVerdict,
+    pub findings: Vec<AssessmentFinding>,
+    pub test_evidence: Option<TestEvidence>,
+    pub recommended_next_actions: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct PrSummaryBody {
+    pub pr_url: String,
+    pub branch: String,
+    pub summary: String,
+    pub review_status: Option<PrReviewStatus>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PrReviewStatus {
+    Draft,
+    Ready,
+    ChangesRequested,
+    Approved,
+    Merged,
+    Closed,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -510,6 +897,7 @@ mod tests {
                     m.insert(
                         "stage1".to_string(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "llm".to_string(),
                             config: json!({"model": "gpt-4"}),
                             inputs: vec![InputSlot {
@@ -607,6 +995,99 @@ mod tests {
         let v = serde_json::to_value(&a).unwrap();
         let back: Artifact = serde_json::from_value(v).unwrap();
         assert_eq!(a, back);
+    }
+
+    fn valid_epic_profile() -> EpicWorkflowProfile {
+        EpicWorkflowProfile {
+            id: EpicWorkflowProfileId(test_uuid()),
+            workflow_run_id: WorkflowRunId(test_uuid()),
+            title: "Typed parity".into(),
+            slug: "typed-parity".into(),
+            lifecycle_state: EpicLifecycleState::Draft,
+            final_merge_policy: FinalMergePolicy::Guarded,
+            repositories: vec![EpicRepositoryBinding {
+                repository_key: "oakridge".into(),
+                repository_path: "/repos/oakridge".into(),
+                base_branch: "develop".into(),
+                epic_branch: "epic/typed-parity".into(),
+                final_pull_request: None,
+                final_merge_state: FinalMergeState::Pending,
+            }],
+            created_at: now(),
+            updated_at: now(),
+        }
+    }
+
+    #[test]
+    fn epic_profile_rejects_duplicate_repository_keys() {
+        let mut profile = valid_epic_profile();
+        profile.repositories.push(EpicRepositoryBinding {
+            repository_path: "/repos/other".into(),
+            ..profile.repositories[0].clone()
+        });
+        assert!(profile.validate().is_err());
+    }
+
+    #[test]
+    fn epic_profile_rejects_git_invalid_branch_components() {
+        for branch in ["epic/.hidden", "epic/a.lock/b", "a//b", "@"] {
+            let mut profile = valid_epic_profile();
+            profile.repositories[0].epic_branch = branch.into();
+            assert!(
+                profile.validate().is_err(),
+                "branch {branch:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn epic_profile_requires_pr_metadata_to_match_binding_and_state() {
+        let mut profile = valid_epic_profile();
+        profile.repositories[0].final_merge_state = FinalMergeState::PullRequestOpen;
+        assert!(profile.validate().is_err());
+
+        profile.repositories[0].final_pull_request = Some(PullRequestReference {
+            number: 42,
+            url: "https://example.test/pull/42".into(),
+            head_branch: "wrong-head".into(),
+            base_branch: "develop".into(),
+        });
+        assert!(profile.validate().is_err());
+
+        profile.repositories[0]
+            .final_pull_request
+            .as_mut()
+            .unwrap()
+            .head_branch = "epic/typed-parity".into();
+        assert!(profile.validate().is_ok());
+    }
+
+    #[test]
+    fn strict_artifact_contracts_accept_v6_prompt_shapes() {
+        let plan: PlanBody = serde_json::from_value(json!({
+            "summary": "plan",
+            "cohorts": [{
+                "id": "a", "repository_key": "oakridge", "title": "A",
+                "scope": "Implement A", "depends_on": [], "description": null,
+                "files_in_scope": ["src/a.rs"], "decisions": ["typed"],
+                "acceptance_criteria": ["tests pass"]
+            }],
+            "dependency_order": ["a"],
+            "scope": {"in_scope": ["A"], "out_of_scope": []},
+            "acceptance_criteria": ["tests pass"],
+            "risks": [{"description": "risk", "mitigation": "test"}]
+        }))
+        .unwrap();
+        assert_eq!(plan.cohorts[0].repository_key.as_deref(), Some("oakridge"));
+
+        let assessment: AssessmentBody = serde_json::from_value(json!({
+            "verdict": "pass",
+            "findings": [{"criterion": "tests pass", "status": "met", "evidence": "cargo test"}],
+            "test_evidence": {"passed": 1, "failed": 0, "summary": "green"},
+            "recommended_next_actions": []
+        }))
+        .unwrap();
+        assert_eq!(assessment.verdict, AssessmentVerdict::Pass);
     }
 
     #[test]

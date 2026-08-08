@@ -19,10 +19,11 @@ use crate::executor::ResumePayload;
 use crate::registry::artifact_type::{ArtifactCapabilities, ArtifactReviewDescriptor};
 use crate::scheduler::DecisionError;
 use crate::types::{
-    Artifact, ArtifactId, GateDecision, GateDecisionAudit, GateDecisionAuditId, GateOutcome,
-    InputDelivery, InputSlot, OutputSlot, Project, ProjectId, RunStatus, StageInstance,
-    StageInstanceId, StageStatus, WorkflowDef, WorkflowDefId, WorkflowGraph, WorkflowRun,
-    WorkflowRunId,
+    Artifact, ArtifactId, EpicLifecycleState, EpicRepositoryBinding, EpicWorkflowProfile,
+    EpicWorkflowProfileId, FinalMergePolicy, GateDecision, GateDecisionAudit, GateDecisionAuditId,
+    GateOutcome, InputDelivery, InputSlot, OutputSlot, Project, ProjectId, RunStatus,
+    StageInstance, StageInstanceId, StageOperatorRole, StageStatus, WorkflowDef, WorkflowDefId,
+    WorkflowGraph, WorkflowRun, WorkflowRunId,
 };
 
 use super::AppState;
@@ -112,6 +113,55 @@ pub struct CreateWorkflowRun {
     pub workflow_def_id: WorkflowDefId,
     pub project_id: Option<ProjectId>,
     pub context: Option<Value>,
+    pub epic_profile: Option<EpicProfileConfig>,
+}
+
+#[derive(Deserialize)]
+pub struct EpicProfileConfig {
+    pub title: String,
+    pub slug: String,
+    pub final_merge_policy: FinalMergePolicy,
+    pub repositories: Vec<EpicRepositoryConfig>,
+}
+
+#[derive(Deserialize)]
+pub struct EpicRepositoryConfig {
+    pub repository_key: String,
+    pub repository_path: PathBuf,
+    pub base_branch: String,
+    pub epic_branch: Option<String>,
+}
+
+fn epic_profile_from_config(
+    run_id: WorkflowRunId,
+    config: EpicProfileConfig,
+    now: chrono::DateTime<Utc>,
+) -> EpicWorkflowProfile {
+    let derived_branch = format!("epic/{}", config.slug);
+    EpicWorkflowProfile {
+        id: EpicWorkflowProfileId(run_id.0),
+        workflow_run_id: run_id,
+        title: config.title,
+        slug: config.slug,
+        lifecycle_state: EpicLifecycleState::Draft,
+        final_merge_policy: config.final_merge_policy,
+        repositories: config
+            .repositories
+            .into_iter()
+            .map(|repository| EpicRepositoryBinding {
+                repository_key: repository.repository_key,
+                repository_path: repository.repository_path,
+                base_branch: repository.base_branch,
+                epic_branch: repository
+                    .epic_branch
+                    .unwrap_or_else(|| derived_branch.clone()),
+                final_pull_request: None,
+                final_merge_state: crate::types::FinalMergeState::Pending,
+            })
+            .collect(),
+        created_at: now,
+        updated_at: now,
+    }
 }
 
 #[derive(Deserialize)]
@@ -133,6 +183,7 @@ pub struct RunDetail {
     #[serde(flatten)]
     pub run: WorkflowRun,
     pub stage_instances: Vec<StageInstance>,
+    pub epic_profile: Option<EpicWorkflowProfile>,
 }
 
 #[derive(Serialize)]
@@ -196,6 +247,8 @@ pub struct OperatorStageDetail {
     pub name: String,
     #[serde(rename = "type")]
     pub stage_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operator_role: Option<StageOperatorRole>,
     pub status: String,
     pub artifacts: Vec<OperatorStageArtifact>,
     pub delegated_kbbl_sid: Option<String>,
@@ -212,6 +265,7 @@ pub struct OperatorRunDetail {
     pub parked_count: usize,
     pub updated_at: String,
     pub is_stuck: bool,
+    pub epic_profile: Option<EpicWorkflowProfile>,
 }
 
 #[derive(Serialize)]
@@ -656,11 +710,19 @@ pub async fn create_workflow_run(
 ) -> Result<(StatusCode, Json<WorkflowRun>), AppError> {
     let def = queries::get_workflow_def_by_id(&state.pool, &body.workflow_def_id).await?;
     validate_workflow_graph(&state.stage_registry, &state.artifact_registry, &def.graph)?;
+    let run_id = WorkflowRunId(Uuid::new_v4());
+    let now = Utc::now();
+    let epic_profile = body
+        .epic_profile
+        .map(|config| epic_profile_from_config(run_id, config, now));
+    if let Some(profile) = &epic_profile {
+        profile.validate()?;
+    }
     let caller_context = body
         .context
         .unwrap_or_else(|| Value::Object(Default::default()));
 
-    let merged_context = if let Some(project_id) = body.project_id {
+    let mut merged_context = if let Some(project_id) = body.project_id {
         let project = queries::get_project_by_id(&state.pool, &project_id).await?;
         // repo_dir came in as a String via CreateProject and round-trips through PathBuf,
         // so to_str() is always Some here.
@@ -695,9 +757,34 @@ pub async fn create_workflow_run(
         caller_context
     };
 
-    let now = Utc::now();
+    if let Some(profile) = &epic_profile {
+        let Value::Object(context) = &mut merged_context else {
+            return Err(crate::Error::Validation(
+                "context must be a JSON object when epic_profile is set".into(),
+            )
+            .into());
+        };
+        context.insert(
+            "repositories".into(),
+            Value::Array(
+                profile
+                    .repositories
+                    .iter()
+                    .map(|repository| {
+                        json!({
+                            "key": repository.repository_key,
+                            "path": repository.repository_path,
+                            "base_branch": repository.base_branch,
+                            "epic_branch": repository.epic_branch,
+                        })
+                    })
+                    .collect(),
+            ),
+        );
+    }
+
     let run = WorkflowRun {
-        id: WorkflowRunId(Uuid::new_v4()),
+        id: run_id,
         workflow_def_id: body.workflow_def_id,
         project_id: body.project_id,
         status: RunStatus::Pending,
@@ -707,7 +794,8 @@ pub async fn create_workflow_run(
         updated_at: now,
     };
 
-    queries::insert_workflow_run(&state.pool, &run).await?;
+    queries::insert_workflow_run_with_epic_profile(&state.pool, &run, epic_profile.as_ref())
+        .await?;
     if let Err(start_err) = state.coordinator.start_run(run.id).await {
         match queries::mark_workflow_run_failed_if_pending(&state.pool, &run.id).await {
             Ok(true) => {}
@@ -747,10 +835,21 @@ pub async fn get_workflow_run(
     let run_id = WorkflowRunId(id);
     let run = queries::get_workflow_run_by_id(&state.pool, &run_id).await?;
     let stage_instances = queries::list_stage_instances_for_run(&state.pool, &run_id).await?;
+    let epic_profile = queries::find_epic_workflow_profile(&state.pool, &run_id).await?;
     Ok(Json(RunDetail {
         run,
         stage_instances,
+        epic_profile,
     }))
+}
+
+pub async fn get_epic_workflow_profile(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<EpicWorkflowProfile>, AppError> {
+    Ok(Json(
+        queries::get_epic_workflow_profile(&state.pool, &WorkflowRunId(id)).await?,
+    ))
 }
 
 pub async fn cancel_workflow_run(
@@ -1349,6 +1448,7 @@ async fn units_by_stage(
 
 fn operator_stage(
     stage: StageInstance,
+    operator_role: Option<StageOperatorRole>,
     artifacts_by_stage: &HashMap<StageInstanceId, Vec<OperatorStageArtifact>>,
     units_by_stage: &HashMap<StageInstanceId, Vec<OperatorStageUnit>>,
 ) -> OperatorStageDetail {
@@ -1357,6 +1457,7 @@ fn operator_stage(
         stage_instance_id: stage.id.0.to_string(),
         name: stage.stage_key.clone(),
         stage_type: stage.stage_type.clone(),
+        operator_role,
         status: operator_stage_status(stage.status),
         artifacts: artifacts_by_stage
             .get(&stage.id)
@@ -1419,10 +1520,20 @@ pub async fn get_operator_run(
         .iter()
         .any(|s| s.parked_reason.as_deref() == Some("stuck_timeout"));
     let current_status = operator_run_status(&run, parked_count);
+    let operator_roles: HashMap<_, _> = def
+        .graph
+        .stages
+        .iter()
+        .map(|(key, stage)| (key.clone(), stage.operator_role))
+        .collect();
     let stage_details = stages
         .into_iter()
-        .map(|stage| operator_stage(stage, &artifacts_by_stage, &units_by_stage))
+        .map(|stage| {
+            let operator_role = operator_roles.get(&stage.stage_key).copied().flatten();
+            operator_stage(stage, operator_role, &artifacts_by_stage, &units_by_stage)
+        })
         .collect();
+    let epic_profile = queries::find_epic_workflow_profile(&state.pool, &run_id).await?;
     Ok(Json(OperatorRunDetail {
         id: run.id.0.to_string(),
         workflow_name: def.name,
@@ -1431,6 +1542,7 @@ pub async fn get_operator_run(
         parked_count,
         updated_at: run.updated_at.to_rfc3339(),
         is_stuck,
+        epic_profile,
     }))
 }
 
@@ -2878,6 +2990,91 @@ mod tests {
         })
     }
 
+    #[tokio::test]
+    async fn create_run_atomically_projects_typed_epic_profile_and_stage_role() {
+        let state = make_state(vec![Arc::new(ImmediateStage)]).await;
+        let app = crate::http::router(state.clone());
+        let (status, definition) = req(
+            app,
+            "POST",
+            "/workflow_defs",
+            Some(json!({
+                "name": format!("role-profile-{}", Uuid::new_v4()),
+                "version": 1,
+                "graph": {
+                    "stages": {
+                        "quality_check": {
+                            "stage_type": "immediate",
+                            "operator_role": "assessment",
+                            "config": {}, "inputs": [], "outputs": []
+                        }
+                    },
+                    "edges": []
+                }
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+
+        let app = crate::http::router(state.clone());
+        let (status, run) = req(
+            app,
+            "POST",
+            "/workflow_runs",
+            Some(json!({
+                "workflow_def_id": definition["id"],
+                "context": {"repositories": [{"key": "caller-value"}]},
+                "epic_profile": {
+                    "title": "Full parity",
+                    "slug": "full-parity",
+                    "final_merge_policy": "guarded",
+                    "repositories": [{
+                        "repository_key": "oakridge",
+                        "repository_path": "/repos/oakridge",
+                        "base_branch": "develop"
+                    }]
+                }
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{run}");
+        assert_eq!(run["context"]["repositories"][0]["key"], "oakridge");
+        assert_eq!(
+            run["context"]["repositories"][0]["epic_branch"],
+            "epic/full-parity"
+        );
+
+        let run_id = run["id"].as_str().unwrap();
+        let app = crate::http::router(state.clone());
+        let (status, profile) = req(
+            app,
+            "GET",
+            &format!("/workflow_runs/{run_id}/epic_profile"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(profile["lifecycle_state"], "draft");
+        assert_eq!(profile["repositories"][0]["base_branch"], "develop");
+
+        let operator_run = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let app = crate::http::router(state.clone());
+                let (status, candidate) =
+                    req(app, "GET", &format!("/runs/{run_id}"), None).await;
+                assert_eq!(status, StatusCode::OK);
+                if !candidate["stages"].as_array().unwrap().is_empty() {
+                    return candidate;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("operator stage was not created within 1 second");
+        assert_eq!(operator_run["stages"][0]["operator_role"], "assessment");
+        assert_eq!(operator_run["epic_profile"]["slug"], "full-parity");
+    }
+
     // ── Tests ─────────────────────────────────────────────────────────────────
 
     #[tokio::test]
@@ -4119,6 +4316,7 @@ mod tests {
                     stages.insert(
                         "s1".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "retry_stage".into(),
                             config: json!({}),
                             inputs: vec![],
