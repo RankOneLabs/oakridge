@@ -32,6 +32,13 @@ CREATE TABLE epic_repository_binding (
             AND length(trim(final_pr_url)) > 0
             AND length(trim(final_pr_head_branch)) > 0
             AND length(trim(final_pr_base_branch)) > 0)
+    ),
+    CHECK (
+        (forge_provider IS NULL AND forge_owner IS NULL AND forge_name IS NULL)
+        OR
+        (forge_provider IS NOT NULL AND length(trim(forge_provider)) > 0
+            AND forge_owner IS NOT NULL AND length(trim(forge_owner)) > 0
+            AND forge_name IS NOT NULL AND length(trim(forge_name)) > 0)
     )
 );
 

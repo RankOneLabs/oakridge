@@ -1192,17 +1192,17 @@ async fn require_final_integration_eligible(
     Ok(())
 }
 
-fn recompute_epic_lifecycle(profile: &mut EpicWorkflowProfile) {
-    profile.lifecycle_state = if profile
-        .repositories
-        .iter()
-        .all(|repository| repository.final_merge_state == FinalMergeState::Merged)
-    {
-        EpicLifecycleState::Completed
-    } else {
-        EpicLifecycleState::FinalIntegration
-    };
-    profile.updated_at = Utc::now();
+fn final_confirmation_write_error(error: crate::Error) -> AppError {
+    match error {
+        crate::Error::Db(sqlx::Error::Database(ref database_error))
+            if database_error.kind() == sqlx::error::ErrorKind::UniqueViolation =>
+        {
+            AppError::Conflict(
+                "confirmation idempotency key was already used for another repository".into(),
+            )
+        }
+        other => AppError::Domain(other),
+    }
 }
 
 pub async fn reconcile_final_pull_request(
@@ -1305,12 +1305,6 @@ pub async fn reconcile_final_pull_request(
         confirmed_at: previous.as_ref().and_then(|value| value.confirmed_at),
         updated_at: Utc::now(),
     };
-    if !queries::upsert_final_pr_reconciliation(&state.pool, &record).await? {
-        return Ok(Json(ReconcileFinalPullRequestResponse {
-            outcome: ReconcileFinalPullRequestOutcome::IgnoredStale,
-            profile,
-        }));
-    }
     let should_register_reference = !matches!(
         record.mismatch.as_ref().map(|mismatch| &mismatch.kind),
         Some(
@@ -1356,8 +1350,14 @@ pub async fn reconcile_final_pull_request(
         }
         ReconciliationDecision::IgnoreStale(_) => unreachable!(),
     };
-    recompute_epic_lifecycle(&mut profile);
-    queries::update_epic_final_integration(&state.pool, &profile).await?;
+    if !queries::apply_final_pr_reconciliation(&state.pool, &record, repository).await? {
+        let profile = queries::get_epic_workflow_profile(&state.pool, &run_id).await?;
+        return Ok(Json(ReconcileFinalPullRequestResponse {
+            outcome: ReconcileFinalPullRequestOutcome::IgnoredStale,
+            profile,
+        }));
+    }
+    profile = queries::get_epic_workflow_profile(&state.pool, &run_id).await?;
     Ok(Json(ReconcileFinalPullRequestResponse { outcome, profile }))
 }
 
@@ -1401,19 +1401,21 @@ pub async fn confirm_final_pull_request(
     record.operator_comment = body.operator_comment;
     record.confirmed_at.get_or_insert_with(Utc::now);
     record.updated_at = Utc::now();
-    if !queries::upsert_final_pr_reconciliation(&state.pool, &record).await? {
-        return Err(AppError::Conflict(
-            "confirmation raced with newer final pull request evidence; refresh and retry".into(),
-        ));
-    }
     let repository = profile
         .repositories
         .iter_mut()
         .find(|repository| repository.repository_key == repository_key)
         .ok_or_else(|| AppError::Conflict("repository is not bound to the Epic".into()))?;
     repository.final_merge_state = FinalMergeState::Merged;
-    recompute_epic_lifecycle(&mut profile);
-    queries::update_epic_final_integration(&state.pool, &profile).await?;
+    if !queries::apply_final_pr_reconciliation(&state.pool, &record, repository)
+        .await
+        .map_err(final_confirmation_write_error)?
+    {
+        return Err(AppError::Conflict(
+            "confirmation raced with newer final pull request evidence; refresh and retry".into(),
+        ));
+    }
+    profile = queries::get_epic_workflow_profile(&state.pool, &run_id).await?;
     Ok(Json(ReconcileFinalPullRequestResponse {
         outcome: ReconcileFinalPullRequestOutcome::Completed,
         profile,
