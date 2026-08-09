@@ -28,6 +28,10 @@ import type {
   CohortLifecycleSummary,
   ReviewInboxItem,
   CohortPullRequestReconciliation,
+  ConfirmFinalPullRequestRequest,
+  EpicWorkflowProfile,
+  FinalPullRequestResponse,
+  RepositoryKey,
 } from "./types";
 import { parseRepositoryKey } from "./repository-inputs";
 
@@ -35,7 +39,13 @@ const API = "/oakridge/api";
 
 type RawStageUnit = Omit<StageUnit, "repository_key"> & { repository_key?: string | null };
 type RawStageDetail = Omit<StageDetail, "units"> & { units?: RawStageUnit[] };
-type RawRunDetail = Omit<RunDetail, "stages"> & { stages: RawStageDetail[] };
+type RawEpicWorkflowProfile = Omit<EpicWorkflowProfile, "repositories"> & {
+  repositories: Array<Omit<EpicWorkflowProfile["repositories"][number], "repository_key"> & { repository_key: string }>;
+};
+type RawRunDetail = Omit<RunDetail, "stages" | "epic_profile"> & {
+  stages: RawStageDetail[];
+  epic_profile?: RawEpicWorkflowProfile | null;
+};
 type RawParkedGate = Omit<ParkedGate, "repository_key"> & { repository_key?: string | null };
 type RawCohortPullRequestReconciliation = Omit<CohortPullRequestReconciliation, "repository_key"> & { repository_key: string };
 type RawCohortLifecycleSummary = Omit<CohortLifecycleSummary, "repository_key" | "pull_request_reconciliation"> & {
@@ -71,6 +81,15 @@ function parseRunDetail(run: RawRunDetail): RunDetail {
         repository_key: parseOptionalRepositoryKey(unit.repository_key),
       })),
     })),
+    epic_profile: run.epic_profile
+      ? {
+          ...run.epic_profile,
+          repositories: run.epic_profile.repositories.map((repository) => ({
+            ...repository,
+            repository_key: parseRequiredRepositoryKey(repository.repository_key),
+          })),
+        }
+      : run.epic_profile,
   };
 }
 
@@ -238,6 +257,17 @@ export function deleteRun(runId: string): Promise<void> {
 
 export function retryStuckStage(stageInstanceId: string): Promise<unknown> {
   return oakridgePost<unknown>(`/stage_instances/${encodeURIComponent(stageInstanceId)}/retry_stuck`, {});
+}
+
+export function confirmFinalPullRequest(
+  runId: string,
+  repositoryKey: RepositoryKey,
+  request: ConfirmFinalPullRequestRequest,
+): Promise<FinalPullRequestResponse> {
+  return oakridgePost(
+    `/workflow_runs/${encodeURIComponent(runId)}/final_pull_requests/${encodeURIComponent(repositoryKey)}/confirm`,
+    request,
+  );
 }
 
 export function fetchArtifactTypes(): Promise<ArtifactTypeDescriptor[]> {

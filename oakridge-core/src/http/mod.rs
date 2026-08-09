@@ -263,6 +263,14 @@ pub fn router(state: AppState) -> Router {
             post(rest::reconcile_cohort_pull_request),
         )
         .route(
+            "/workflow_runs/:id/final_pull_requests/:repository_key/observations",
+            post(rest::reconcile_final_pull_request),
+        )
+        .route(
+            "/workflow_runs/:id/final_pull_requests/:repository_key/confirm",
+            post(rest::confirm_final_pull_request),
+        )
+        .route(
             "/workflow_runs/:id/artifacts",
             get(rest::list_run_artifacts),
         )
