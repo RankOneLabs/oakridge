@@ -487,6 +487,17 @@ fn dev_flow_v8_gates_briefs_and_preserves_repository_epic_topology() {
         Some("/artifact/depends_on")
     );
     assert_eq!(
+        fan_out.item_bindings.get("COHORT_FILES"),
+        Some(&SlotBinding::Item {
+            path: "/artifact/files_in_scope".into(),
+        })
+    );
+    assert!(
+        std::fs::read_to_string(manifest_dir().join("prompts/dev-flow/build_v2.md"))
+            .unwrap()
+            .contains("{{COHORT_FILES}}")
+    );
+    assert_eq!(
         fan_out.worktree.unwrap().base_ref,
         Some(Bindable::Bound(SlotBinding::ContextLookup {
             collection_path: "/repositories".into(),

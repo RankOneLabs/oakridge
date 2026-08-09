@@ -1094,7 +1094,9 @@ pub async fn reconcile_cohort_pull_request(
         _ => None,
     };
     if matches!(decision, ReconciliationDecision::IgnoreStale(_)) {
-        let reconciliation = previous.expect("stale requires previous reconciliation");
+        let reconciliation = previous.ok_or_else(|| {
+            AppError::Internal("stale reconciliation decision had no previous observation".into())
+        })?;
         return Ok(Json(ReconcileCohortPullRequestResponse {
             outcome: ReconcileCohortPullRequestOutcome::IgnoredStale,
             reconciliation,
@@ -2136,18 +2138,29 @@ pub async fn get_operator_review_inbox(
     let runs = queries::list_operator_run_summaries(&state.pool, Some(false)).await?;
     let mut cohorts = Vec::new();
     let mut items = Vec::new();
+    let mut definitions = HashMap::new();
 
     for run in runs {
         let workflow_run = queries::get_workflow_run_by_id(&state.pool, &run.run_id).await?;
-        let definition =
-            queries::get_workflow_def_by_id(&state.pool, &workflow_run.workflow_def_id).await?;
+        if !definitions.contains_key(&workflow_run.workflow_def_id) {
+            let definition =
+                queries::get_workflow_def_by_id(&state.pool, &workflow_run.workflow_def_id).await?;
+            definitions.insert(workflow_run.workflow_def_id, definition);
+        }
+        let definition = definitions
+            .get(&workflow_run.workflow_def_id)
+            .ok_or_else(|| AppError::Internal("cached workflow definition disappeared".into()))?;
         let stages = queries::list_stage_instances_for_run(&state.pool, &run.run_id).await?;
         let role_for = |stage: &&StageInstance| {
             definition
                 .graph
                 .stages
                 .get(&stage.stage_key)
-                .and_then(|node| node.operator_role)
+                .and_then(|node| {
+                    node.operator_role.or_else(|| {
+                        (stage.stage_key == "build").then_some(StageOperatorRole::Build)
+                    })
+                })
         };
         let Some(build_stage) = stages
             .iter()
@@ -4344,7 +4357,7 @@ mod tests {
                         "build".into(),
                         StageNodeDef {
                             stage_type: "delegated_session".into(),
-                            operator_role: Some(StageOperatorRole::Build),
+                            operator_role: None,
                             config: json!({}),
                             inputs: vec![],
                             outputs: vec![],

@@ -61,6 +61,7 @@
             "REPOSITORY_KEY": {"from":"literal","value":""},
             "COHORT_TITLE": {"from":"literal","value":""},
             "COHORT_SCOPE": {"from":"literal","value":""},
+            "COHORT_FILES": {"from":"literal","value":""},
             "COHORT_DESCRIPTION": {"from":"literal","value":""},
             "COHORT_DEPENDS_ON": {"from":"literal","value":""},
             "COHORT_FILES": {"from":"literal","value":""},
@@ -126,6 +127,7 @@
               "EXPECTED_FINAL_BASE": {"from":"context_lookup","collection_path":"/repositories","collection_key_path":"/key","item_key_path":"/artifact/repository_key","value_path":"/base_branch"},
               "COHORT_TITLE": {"from":"item","path":"/artifact/title"},
               "COHORT_SCOPE": {"from":"item","path":"/artifact/goal"},
+              "COHORT_FILES": {"from":"item","path":"/artifact/files_in_scope"},
               "COHORT_DESCRIPTION": {"from":"item","path":"/artifact/next_action"},
               "COHORT_DECISIONS": {"from":"item","path":"/artifact/decisions_made"},
               "COHORT_ACCEPTANCE": {"from":"item","path":"/artifact/acceptance_criteria"}

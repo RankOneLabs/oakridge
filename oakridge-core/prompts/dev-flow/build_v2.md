@@ -10,6 +10,7 @@ You are the build agent. Your job is to implement exactly one cohort of the plan
 **Configured final integration base:** {{EXPECTED_FINAL_BASE}}
 **Title:** {{COHORT_TITLE}}
 **Scope:** {{COHORT_SCOPE}}
+**Files in scope:** {{COHORT_FILES}}
 **Description:** {{COHORT_DESCRIPTION}}
 **Key decisions:** {{COHORT_DECISIONS}}
 **Acceptance criteria:** {{COHORT_ACCEPTANCE}}

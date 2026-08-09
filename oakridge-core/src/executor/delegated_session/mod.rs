@@ -105,6 +105,56 @@ fn resolve_worktree_template_value(
     Ok(value)
 }
 
+fn resolve_incremental_unit_worktree(
+    config: &DelegatedSessionConfig,
+    fan_out: &FanOut,
+    params: &Value,
+    unit_id: &str,
+    stage_instance_id: StageInstanceId,
+) -> anyhow::Result<Option<WorktreeIdentity>> {
+    if fan_out.inherit_worktree_from.is_some() {
+        return Ok(None);
+    }
+    if let Some(identity) = config.resolved_fan_out_worktrees.get(unit_id) {
+        return Ok(Some(identity.clone()));
+    }
+    if let Some(template) = fan_out.worktree.as_ref() {
+        return Ok(Some(WorktreeIdentity {
+            branch_name: resolve_worktree_template_value(
+                &template.branch_name,
+                &HashMap::new(),
+                &config.fan_out_context,
+                params,
+                unit_id,
+                stage_instance_id,
+            )?,
+            worktree_subdir: resolve_worktree_template_value(
+                &template.worktree_subdir,
+                &HashMap::new(),
+                &config.fan_out_context,
+                params,
+                unit_id,
+                stage_instance_id,
+            )?,
+            base_ref: template
+                .base_ref
+                .as_ref()
+                .map(|base| {
+                    resolve_worktree_template_value(
+                        base,
+                        &HashMap::new(),
+                        &config.fan_out_context,
+                        params,
+                        unit_id,
+                        stage_instance_id,
+                    )
+                })
+                .transpose()?,
+        }));
+    }
+    Ok(config.worktree.clone())
+}
+
 /// Validate and render the entire fan-out DAG without side effects.  This must
 /// finish successfully before unit rows are written or kbbl sessions are made.
 fn materialize_fan_out_units(
@@ -2687,51 +2737,13 @@ impl DelegatedSessionHandle {
                         })
                         .transpose()?
                 };
-                let worktree = if scheduler.fan_out.inherit_worktree_from.is_some() {
-                    None
-                } else if let Some(identity) = scheduler
-                    .config
-                    .resolved_fan_out_worktrees
-                    .get(&unit_id)
-                    .cloned()
-                {
-                    Some(identity)
-                } else if let Some(template) = scheduler.fan_out.worktree.as_ref() {
-                    Some(WorktreeIdentity {
-                        branch_name: resolve_worktree_template_value(
-                            &template.branch_name,
-                            &HashMap::new(),
-                            &scheduler.config.fan_out_context,
-                            &params,
-                            &unit_id,
-                            self.stage_instance_id,
-                        )?,
-                        worktree_subdir: resolve_worktree_template_value(
-                            &template.worktree_subdir,
-                            &HashMap::new(),
-                            &scheduler.config.fan_out_context,
-                            &params,
-                            &unit_id,
-                            self.stage_instance_id,
-                        )?,
-                        base_ref: template
-                            .base_ref
-                            .as_ref()
-                            .map(|base| {
-                                resolve_worktree_template_value(
-                                    base,
-                                    &HashMap::new(),
-                                    &scheduler.config.fan_out_context,
-                                    &params,
-                                    &unit_id,
-                                    self.stage_instance_id,
-                                )
-                            })
-                            .transpose()?,
-                    })
-                } else {
-                    None
-                };
+                let worktree = resolve_incremental_unit_worktree(
+                    &scheduler.config,
+                    &scheduler.fan_out,
+                    &params,
+                    &unit_id,
+                    self.stage_instance_id,
+                )?;
                 let now = chrono::Utc::now();
                 queries::upsert_session_unit(
                     scheduler.ctx.pool(),
@@ -2836,12 +2848,21 @@ impl DelegatedSessionHandle {
                 let wait_state = unit.gate_state.as_ref().and_then(|value| {
                     serde_json::from_value::<DownstreamWaitState>(value.clone()).ok()
                 });
-                match wait_state {
+                let session = match wait_state {
                     Some(DownstreamWaitState::AwaitingDownstream {
                         artifact_id,
                         downstream_role,
                         ..
                     }) => {
+                        let session = self
+                            .live_sessions
+                            .lock()
+                            .unwrap()
+                            .get(&(self.stage_instance_id, unit_id.clone()))
+                            .cloned()
+                            .ok_or_else(|| {
+                                anyhow::anyhow!("builder unit '{}' is not live", unit_id)
+                            })?;
                         queries::set_session_unit_gate_state(
                             scheduler.ctx.pool(),
                             &self.stage_instance_id,
@@ -2855,6 +2876,7 @@ impl DelegatedSessionHandle {
                             )?),
                         )
                         .await?;
+                        session
                     }
                     Some(DownstreamWaitState::RevisionInProgress {
                         decision_artifact_id,
@@ -2864,14 +2886,7 @@ impl DelegatedSessionHandle {
                         "upstream unit '{}' is not awaiting this downstream review",
                         unit_id
                     ),
-                }
-                let session = self
-                    .live_sessions
-                    .lock()
-                    .unwrap()
-                    .get(&(self.stage_instance_id, unit_id.clone()))
-                    .cloned()
-                    .ok_or_else(|| anyhow::anyhow!("builder unit '{}' is not live", unit_id))?;
+                };
                 self.send_kbbl_input(
                     &session.sid,
                     format!(
@@ -3807,6 +3822,29 @@ mod tests {
             units[1].worktree.as_ref().unwrap().worktree_subdir,
             "units/b"
         );
+    }
+
+    #[test]
+    fn incremental_unit_uses_stage_worktree_when_fan_out_has_no_override() {
+        let stage_id = StageInstanceId(Uuid::new_v4());
+        let mut config = fan_out_config(json!([]), None);
+        config.fan_out.as_mut().unwrap().worktree = None;
+        config.worktree = Some(WorktreeIdentity {
+            branch_name: "epic/work".into(),
+            worktree_subdir: "epic-work".into(),
+            base_ref: Some("main".into()),
+        });
+
+        let worktree = resolve_incremental_unit_worktree(
+            &config,
+            config.fan_out.as_ref().unwrap(),
+            &json!({"artifact": {}}),
+            "cohort-a",
+            stage_id,
+        )
+        .unwrap();
+
+        assert_eq!(worktree, config.worktree);
     }
 
     #[test]
