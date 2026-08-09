@@ -100,13 +100,7 @@ export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelect
                     Blocked by: {blockedBy.length > 0 ? blockedBy.join(", ") : "dependencies not yet complete"}
                   </div>
                 ) : (
-                  <button
-                    type="button"
-                    className="rounded-md border border-[var(--accent-blue)] px-3 py-1.5 text-sm text-[var(--accent-blue)] disabled:opacity-50"
-                    onClick={() => onAdmit(unit.unit_id)}
-                    disabled={admitting || unit.admission_eligible !== true}
-                    data-testid="or-admit-unit-btn"
-                  >
+                  <button type="button" className="rounded-md border border-[var(--accent-blue)] px-3 py-1.5 text-sm text-[var(--accent-blue)] disabled:opacity-50" onClick={() => onAdmit(unit.unit_id)} disabled={admitting} data-testid="or-admit-unit-btn">
                     {admitting ? "Admitting…" : "Admit build"}
                   </button>
                 )}

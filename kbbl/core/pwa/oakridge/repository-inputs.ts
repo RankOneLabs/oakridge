@@ -6,8 +6,14 @@ export interface RepositoryInputError {
   detail: string;
 }
 
+export interface ValidatedRepositoryInput extends RepositoryInput {
+  forge_owner: string;
+  forge_name: string;
+  base_branch: string;
+}
+
 export type RepositoryInputResult =
-  | { ok: true; repositories: RepositoryInput[] }
+  | { ok: true; repositories: ValidatedRepositoryInput[] }
   | { ok: false; error: RepositoryInputError };
 
 function repositoryError(
@@ -26,13 +32,16 @@ export function validateRepositoryInputs(inputs: RepositoryInputDraft[]): Reposi
   const repositories = inputs.map((repository) => ({
     key: parseRepositoryKey(repository.key),
     path: repository.path.trim(),
+    forge_owner: repository.forge_owner.trim(),
+    forge_name: repository.forge_name.trim(),
+    base_branch: repository.base_branch.trim(),
   }));
   if (repositories.length === 0) {
     return repositoryError(null, "Add at least one repository.");
   }
-  const incompleteIndex = repositories.findIndex((repository) => !repository.key || !repository.path);
+  const incompleteIndex = repositories.findIndex((repository) => !repository.key || !repository.path || !repository.forge_owner || !repository.forge_name || !repository.base_branch);
   if (incompleteIndex !== -1) {
-    return repositoryError(incompleteIndex, "Every repository needs a key and path.");
+    return repositoryError(incompleteIndex, "Every repository needs a key, local path, GitHub owner/name, and base branch.");
   }
   const relativeIndex = repositories.findIndex((repository) => !repository.path.startsWith("/"));
   if (relativeIndex !== -1) {
@@ -44,5 +53,5 @@ export function validateRepositoryInputs(inputs: RepositoryInputDraft[]): Reposi
     );
     return repositoryError(duplicate?.key ?? null, "Repository keys must be unique.");
   }
-  return { ok: true, repositories: repositories as RepositoryInput[] };
+  return { ok: true, repositories: repositories as ValidatedRepositoryInput[] };
 }

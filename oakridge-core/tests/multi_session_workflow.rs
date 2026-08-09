@@ -174,6 +174,41 @@ async fn pass_gate(app: &Router, stage_id: StageInstanceId, artifact_id: Artifac
     }
 }
 
+async fn decide_artifact_gate(
+    app: &Router,
+    stage_id: StageInstanceId,
+    artifact_id: ArtifactId,
+    outcome: &str,
+    feedback: Option<&str>,
+) {
+    let payload = json!({
+        "kind": "gate_decision",
+        "decision": {"outcome": outcome, "comment": null, "feedback": feedback},
+        "against_artifact_id": artifact_id.0,
+        "against_gate_step": "artifact_approval",
+    });
+    for _ in 0..64 {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/stage_instances/{}/resume", stage_id.0))
+                    .header("content-type", "application/json")
+                    .body(Body::from(payload.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        if response.status().is_success() {
+            return;
+        }
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        tokio::task::yield_now().await;
+    }
+    panic!("artifact gate did not become routable");
+}
+
 async fn yield_scheduler() {
     for _ in 0..16 {
         tokio::task::yield_now().await;
@@ -202,6 +237,7 @@ async fn stage_for_key(
 fn fan_out_definition() -> WorkflowDef {
     let mut stages = HashMap::new();
     stages.insert("build".into(), StageNodeDef {
+        operator_role: None,
         stage_type: "delegated_session".into(),
         config: json!({
             "runtime": "claude-code",
@@ -242,6 +278,7 @@ fn collect_definition() -> WorkflowDef {
     stages.insert(
         "producer".into(),
         StageNodeDef {
+            operator_role: None,
             stage_type: "delegated_session".into(),
             config: json!({
                 "runtime": "claude-code",
@@ -268,6 +305,7 @@ fn collect_definition() -> WorkflowDef {
     stages.insert(
         "collector".into(),
         StageNodeDef {
+            operator_role: None,
             stage_type: "delegated_session".into(),
             config: json!({
                 "runtime": "claude-code",
@@ -317,6 +355,7 @@ fn incremental_definition() -> WorkflowDef {
     definition.graph.stages.insert(
         "assessor".into(),
         StageNodeDef {
+            operator_role: None,
             stage_type: "delegated_session".into(),
             config: json!({
                 "runtime": "claude-code",
@@ -353,6 +392,236 @@ fn incremental_definition() -> WorkflowDef {
     assert_eq!(consumer.stage_type, "delegated_session");
     definition.graph.edges[0].to.stage = "assessor".into();
     definition
+}
+
+fn assessment_lifecycle_definition() -> WorkflowDef {
+    let mut definition = incremental_definition();
+    let producer = definition.graph.stages.get_mut("producer").unwrap();
+    producer.operator_role = Some(StageOperatorRole::Build);
+    let config = producer.config.as_object_mut().unwrap();
+    config.remove("gate_output");
+    config["fan_out"]["over"] = json!({
+        "from": "literal",
+        "value": r#"[{"id":"a","depends_on":[]},{"id":"b","depends_on":["a"]}]"#
+    });
+    config["fan_out"]["depends_on_path"] = json!("/depends_on");
+    config.insert(
+        "output_handoff".into(),
+        json!({
+            "output": "result",
+            "downstream_role": "assessment",
+            "approved_wait": {"kind": "github_review"}
+        }),
+    );
+    let assessor = definition.graph.stages.get_mut("assessor").unwrap();
+    assessor.operator_role = Some(StageOperatorRole::Assessment);
+    let config = assessor.config.as_object_mut().unwrap();
+    config.remove("gate_output");
+    config.insert(
+        "output_gate".into(),
+        json!({
+            "output": "assessment",
+            "steps": [{"type": "artifact_approval", "actions": ["approve", "request_revision"]}],
+            "requires_zero_open_review_items": false,
+            "revision_target": "upstream_handoff"
+        }),
+    );
+    definition
+}
+
+#[tokio::test]
+async fn assessment_gate_revises_matching_builder_then_waits_for_external_review() {
+    let prompts = tempfile::tempdir().unwrap();
+    std::fs::write(prompts.path().join("unit.md"), "Build {{UNIT_ID}}").unwrap();
+    std::fs::write(
+        prompts.path().join("assess.md"),
+        "Assess {{UNIT_ID}} {{RESULT}}",
+    )
+    .unwrap();
+    let prompt_dir = prompts.path().to_path_buf();
+    let (base_url, mut inputs, fake_task) = fake_kbbl().await;
+    let db_url = format!(
+        "sqlite:///tmp/oakridge-assessment-lifecycle-{}.db",
+        Uuid::new_v4()
+    );
+    let (app, _coordinator) = boot(
+        Config {
+            port: 0,
+            bind_addr: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            db_url: db_url.clone(),
+            pwa_dir: PathBuf::from("/tmp"),
+            cors_origins: vec![],
+            auth_policy: oakridge_core::config::AuthPolicy::Loopback,
+            stage_timeout_secs: 3600,
+            stuck_sweep_interval_secs: 3600,
+        },
+        move |stages: &mut StageTypeRegistry, artifacts: &mut ArtifactTypeRegistry| {
+            artifacts.register(ArtifactTypeDef {
+                id: "result".into(),
+                validate: |_| Ok(()),
+                component_id: "result".into(),
+                capabilities: Default::default(),
+                anchor_schema: None,
+                review_items_extractor: None,
+            });
+            stages.register(Arc::new(DelegatedSessionStage::new(
+                prompt_dir,
+                KbblClient::new(base_url).unwrap(),
+            )));
+        },
+    )
+    .await
+    .unwrap();
+    let pool = db::init_pool(&db_url).await.unwrap();
+    let definition = assessment_lifecycle_definition();
+    queries::insert_workflow_def(&pool, &definition)
+        .await
+        .unwrap();
+    let run: WorkflowRun = serde_json::from_value(
+        json_request(
+            &app,
+            "POST",
+            "/workflow_runs".into(),
+            json!({"workflow_def_id": definition.id, "project_id": null, "context": {}}),
+        )
+        .await,
+    )
+    .unwrap();
+
+    let builder_a = tokio::time::timeout(std::time::Duration::from_secs(3), inputs.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        inputs.try_recv().is_err(),
+        "dependent builder started before upstream completion"
+    );
+    let build_stage = stage_for_key(&pool, run.id, "producer").await;
+    let first_build = emit(&app, build_stage.id, "a", "result", json!({"marker": "v1"})).await;
+    let assessor_input =
+        match tokio::time::timeout(std::time::Duration::from_secs(3), inputs.recv()).await {
+            Ok(Some(input)) => input,
+            other => panic!(
+                "assessor handoff failed: {other:?}; stages={:?}; build_units={:?}",
+                queries::list_stage_instances_for_run(&pool, &run.id)
+                    .await
+                    .unwrap(),
+                queries::list_session_units_for_stage(&pool, &build_stage.id)
+                    .await
+                    .unwrap()
+            ),
+        };
+    assert!(assessor_input.text.contains("v1"));
+    assert!(
+        inputs.try_recv().is_err(),
+        "assessment handoff unlocked a dependent builder"
+    );
+    let assessment_stage = stage_for_key(&pool, run.id, "assessor").await;
+    let assessment_unit = queries::get_session_unit(&pool, &assessment_stage.id, "a")
+        .await
+        .unwrap();
+    let build_unit = queries::get_session_unit(&pool, &build_stage.id, "a")
+        .await
+        .unwrap();
+    assert_eq!(assessment_unit.workdir_path, build_unit.worktree_path);
+    assert_eq!(assessment_unit.source_artifact_id, Some(first_build));
+    assert_eq!(build_unit.status, UnitStatus::Parked);
+
+    let first_assessment = emit(
+        &app,
+        assessment_stage.id,
+        "a",
+        "assessment",
+        json!({"verdict": "fail", "findings": []}),
+    )
+    .await;
+    let interrupted_transition = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/stage_instances/{}/resume", assessment_stage.id.0))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "kind": "gate_decision",
+                        "decision": {"outcome": "rerun", "comment": null, "feedback": "fix the implementation"},
+                        "against_artifact_id": first_assessment.0,
+                        "against_gate_step": "not_the_current_step"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(!interrupted_transition.status().is_success());
+    let revision_request = tokio::time::timeout(std::time::Duration::from_secs(3), inputs.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(revision_request.sid, builder_a.sid);
+    assert!(revision_request.text.contains("fix the implementation"));
+
+    decide_artifact_gate(
+        &app,
+        assessment_stage.id,
+        first_assessment,
+        "rerun",
+        Some("fix the implementation"),
+    )
+    .await;
+    assert!(
+        inputs.try_recv().is_err(),
+        "reconciling the decision resent revision feedback"
+    );
+
+    let revised_build = emit(&app, build_stage.id, "a", "result", json!({"marker": "v2"})).await;
+    let revised_assessor_input =
+        tokio::time::timeout(std::time::Duration::from_secs(3), inputs.recv())
+            .await
+            .unwrap()
+            .unwrap();
+    assert_eq!(revised_assessor_input.sid, assessor_input.sid);
+    assert!(revised_assessor_input.text.contains("v2"));
+    let stale_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/stage_instances/{}/resume", assessment_stage.id.0))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "kind": "gate_decision",
+                        "decision": {"outcome": "pass", "comment": null, "feedback": null},
+                        "against_artifact_id": first_assessment.0,
+                        "against_gate_step": "artifact_approval"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stale_response.status(), StatusCode::CONFLICT);
+    let revised_assessment = emit(
+        &app,
+        assessment_stage.id,
+        "a",
+        "assessment",
+        json!({"verdict": "pass", "findings": []}),
+    )
+    .await;
+    decide_artifact_gate(&app, assessment_stage.id, revised_assessment, "pass", None).await;
+
+    let build_unit = queries::get_session_unit(&pool, &build_stage.id, "a")
+        .await
+        .unwrap();
+    assert_eq!(build_unit.status, UnitStatus::Parked);
+    assert_eq!(build_unit.artifact_id, Some(revised_build));
+    assert_eq!(build_unit.gate_state.unwrap()["kind"], "awaiting_external");
+    fake_task.abort();
 }
 
 #[tokio::test]

@@ -281,11 +281,13 @@ fn delegated_workflow_def(
         fan_out: None,
         gate_output: None,
         output_gate: None,
+        output_handoff: None,
     };
 
     stages.insert(
         "delegate".into(),
         StageNodeDef {
+            operator_role: None,
             stage_type: "delegated_session".into(),
             config: serde_json::to_value(def_config).unwrap(),
             inputs: vec![],
@@ -678,6 +680,7 @@ async fn waiting_for_kbbl_parks_and_reattaches() {
             fan_out_prompt_plan: None,
             resolved_fan_out_over: None,
             resolved_fan_out_workdirs: std::collections::HashMap::new(),
+            resolved_fan_out_worktrees: std::collections::HashMap::new(),
             fan_out_context: serde_json::Value::Null,
             workdir: workdir.clone(),
             session_name: format!("delegated-{}", si_id.0),
@@ -693,6 +696,7 @@ async fn waiting_for_kbbl_parks_and_reattaches() {
             fan_out: None,
             gate_output: None,
             output_gate: None,
+            output_handoff: None,
         };
         serde_json::to_value(cfg).unwrap()
     };

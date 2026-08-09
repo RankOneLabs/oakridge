@@ -138,6 +138,7 @@ async fn stuck_sweep_and_retry_via_http() {
                 m.insert(
                     "A".into(),
                     StageNodeDef {
+                        operator_role: None,
                         stage_type: "retry_observed".into(),
                         config: serde_json::json!({}),
                         inputs: vec![],
@@ -265,6 +266,7 @@ async fn retry_stuck_on_running_stage_returns_409() {
                 m.insert(
                     "A".into(),
                     StageNodeDef {
+                        operator_role: None,
                         stage_type: "noop".into(),
                         config: serde_json::json!({}),
                         inputs: vec![],

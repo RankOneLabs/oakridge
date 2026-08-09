@@ -67,6 +67,17 @@ impl ArtifactTypeDef {
                     "risks",
                 ],
             ),
+            "dev-build-brief-viewer" => (
+                "document",
+                &[
+                    "goal",
+                    "files_in_scope",
+                    "decisions_made",
+                    "approaches_rejected",
+                    "acceptance_criteria",
+                    "next_action",
+                ],
+            ),
             "dev-build-result-viewer" => (
                 "report",
                 &["summary", "changed_files", "tests", "known_issues"],

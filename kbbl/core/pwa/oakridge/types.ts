@@ -45,10 +45,16 @@ export interface CreateRunContext {
 }
 
 export type RepositoryKey = string & { readonly __brand: "RepositoryKey" };
+export type CohortId = string & { readonly __brand: "CohortId" };
+export type EpicProfileId = string & { readonly __brand: "EpicProfileId" };
+export type WorkflowRunId = string & { readonly __brand: "WorkflowRunId" };
 
 export interface RepositoryInputDraft {
   key: string;
   path: string;
+  forge_owner: string;
+  forge_name: string;
+  base_branch: string;
 }
 
 export interface RepositoryInput {
@@ -56,10 +62,92 @@ export interface RepositoryInput {
   path: string;
 }
 
+export interface ForgeRepositoryIdentity {
+  provider: "github";
+  owner: string;
+  name: string;
+}
+
+export interface EpicRepositoryConfig {
+  repository_key: RepositoryKey;
+  repository_path: string;
+  base_branch: string;
+  epic_branch?: string | null;
+  forge_repository: ForgeRepositoryIdentity;
+}
+
+export type FinalMergePolicy = "guarded" | "external_confirmation";
+
+export interface EpicProfileConfig {
+  title: string;
+  slug: string;
+  final_merge_policy: FinalMergePolicy;
+  repositories: EpicRepositoryConfig[];
+}
+
+export type EpicLifecycleState = "draft" | "active" | "final_integration" | "completed" | "failed";
+export type FinalMergeState = "pending" | "pull_request_open" | "awaiting_confirmation" | "merged" | "closed_without_merge";
+
+export interface PullRequestReference {
+  number: number;
+  url: string;
+  head_branch: string;
+  base_branch: string;
+}
+
+export interface EpicRepositoryBinding {
+  repository_key: RepositoryKey;
+  repository_path: string;
+  base_branch: string;
+  epic_branch: string;
+  forge_repository: ForgeRepositoryIdentity | null;
+  final_pull_request: PullRequestReference | null;
+  final_merge_state: FinalMergeState;
+}
+
+export interface EpicWorkflowProfile {
+  id: EpicProfileId;
+  workflow_run_id: WorkflowRunId;
+  title: string;
+  slug: string;
+  lifecycle_state: EpicLifecycleState;
+  final_merge_policy: FinalMergePolicy;
+  repositories: EpicRepositoryBinding[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConfirmFinalPullRequestRequest {
+  idempotency_key: string;
+  operator_comment?: string;
+}
+
+type FinalPullRequestOutcome =
+  | "waiting"
+  | "completed"
+  | "already_completed"
+  | "mismatch"
+  | "ignored_stale"
+  | "awaiting_external_confirmation";
+
+export type FinalPullRequestResponse = {
+  [Outcome in FinalPullRequestOutcome]: {
+    outcome: Outcome;
+    profile: EpicWorkflowProfile;
+  };
+}[FinalPullRequestOutcome];
+
+export interface AdmitStageUnitResponse {
+  stage_instance_id: string;
+  unit_id: string;
+  admitted: boolean;
+}
+
 export interface CreateRunRequest {
   workflow_def_id: string;
   project_id: string | null;
   context: CreateRunContext;
+  epic_profile: EpicProfileConfig;
 }
 
 export type RunStatus = "running" | "parked" | "failed" | "complete" | "cancelled";
@@ -136,12 +224,7 @@ export interface RunDetail {
   parked_count: number;
   updated_at: string;
   is_stuck: boolean;
-}
-
-export interface AdmitStageUnitResponse {
-  stage_instance_id: string;
-  unit_id: string;
-  admitted: boolean;
+  epic_profile?: EpicWorkflowProfile | null;
 }
 
 export interface ArtifactRevision {
@@ -222,6 +305,8 @@ export type CohortLifecycle =
   | "revision_requested"
   | "merge_confirmation"
   | "assessing"
+  | "github_review"
+  | "pull_request_mismatch"
   | "complete"
   | "failed";
 
@@ -254,6 +339,7 @@ export interface CohortLifecycleSummary {
   gate_id?: string | null;
   gate_url?: string | null;
   pr_url?: string | null;
+  pull_request_reconciliation?: CohortPullRequestReconciliation | null;
   updated_at: string;
 }
 
@@ -263,6 +349,7 @@ export type ReviewInboxItemKind =
   | "merge_confirmation"
   | "cohort_blocked"
   | "cohort_failed"
+  | "pull_request_mismatch"
   | "gate_decision";
 
 export type ReviewInboxItemState = "actionable" | "blocked" | "completed";
@@ -292,6 +379,30 @@ export interface ReviewInboxItem {
 export interface ReviewInbox {
   cohorts: CohortLifecycleSummary[];
   items: ReviewInboxItem[];
+}
+
+export interface PullRequestObservation {
+  owner: string;
+  name: string;
+  number: number;
+  url: string;
+  head_branch: string;
+  base_branch: string;
+  state: "open" | "merged" | "closed_unmerged";
+  observed_at: string;
+}
+
+export interface PullRequestMismatch {
+  kind: "missing_repository_identity" | "repository_mismatch" | "pull_request_mismatch" | "head_branch_mismatch" | "base_branch_mismatch" | "closed_without_merge" | "stale_observation";
+  detail: string;
+}
+
+export interface CohortPullRequestReconciliation {
+  repository_key: RepositoryKey;
+  observation: PullRequestObservation;
+  mismatch: PullRequestMismatch | null;
+  completed_at: string | null;
+  updated_at: string;
 }
 
 // ── Collab types ──────────────────────────────────────────────────────────────

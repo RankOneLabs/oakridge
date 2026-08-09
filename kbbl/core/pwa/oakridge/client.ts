@@ -27,7 +27,14 @@ import type {
   ReviewInbox,
   CohortLifecycleSummary,
   ReviewInboxItem,
+  CohortPullRequestReconciliation,
+  ConfirmFinalPullRequestRequest,
+  EpicWorkflowProfile,
+  FinalPullRequestResponse,
+  RepositoryKey,
   AdmitStageUnitResponse,
+  EpicProfileId,
+  WorkflowRunId,
 } from "./types";
 import { parseRepositoryKey } from "./repository-inputs";
 
@@ -35,53 +42,141 @@ const API = "/oakridge/api";
 
 type RawStageUnit = Omit<StageUnit, "repository_key"> & { repository_key?: string | null };
 type RawStageDetail = Omit<StageDetail, "units"> & { units?: RawStageUnit[] };
-type RawRunDetail = Omit<RunDetail, "stages"> & { stages: RawStageDetail[] };
+type RawEpicWorkflowProfile = Omit<EpicWorkflowProfile, "id" | "workflow_run_id" | "repositories"> & {
+  id: string;
+  workflow_run_id: string;
+  repositories: Array<Omit<EpicWorkflowProfile["repositories"][number], "repository_key"> & { repository_key: string }>;
+};
+type RawRunDetail = Omit<RunDetail, "stages" | "epic_profile"> & {
+  stages: RawStageDetail[];
+  epic_profile?: RawEpicWorkflowProfile | null;
+};
 type RawParkedGate = Omit<ParkedGate, "repository_key"> & { repository_key?: string | null };
-type RawCohortLifecycleSummary = Omit<CohortLifecycleSummary, "repository_key"> & { repository_key?: string | null };
+type RawCohortPullRequestReconciliation = Omit<CohortPullRequestReconciliation, "repository_key"> & { repository_key: string };
+type RawCohortLifecycleSummary = Omit<CohortLifecycleSummary, "repository_key" | "pull_request_reconciliation"> & {
+  repository_key?: string | null;
+  pull_request_reconciliation?: RawCohortPullRequestReconciliation | null;
+};
 type RawReviewInboxItem = Omit<ReviewInboxItem, "repository_key"> & { repository_key?: string | null };
 interface RawReviewInbox {
   cohorts: RawCohortLifecycleSummary[];
   items: RawReviewInboxItem[];
 }
 
-function parseOptionalRepositoryKey(value: string | null | undefined) {
-  if (value == null) return value;
+type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
+
+interface ResponseParseError {
+  operation: string;
+  detail: string;
+}
+
+const ok = <T>(value: T): Result<T, ResponseParseError> => ({ ok: true, value });
+const err = (operation: string, detail: string): Result<never, ResponseParseError> => ({ ok: false, error: { operation, detail } });
+
+function parseOptionalRepositoryKey(value: string | null | undefined): Result<RepositoryKey | null | undefined, ResponseParseError> {
+  if (value == null) return ok(value);
   const key = parseRepositoryKey(value);
-  if (!key) throw new Error("oakridge response contained an empty repository key");
-  return key;
+  return key ? ok(key) : err("parse repository key", "response contained an empty repository key");
 }
 
-function parseRunDetail(run: RawRunDetail): RunDetail {
-  return {
+function parseRequiredRepositoryKey(value: string): Result<RepositoryKey, ResponseParseError> {
+  const key = parseRepositoryKey(value);
+  return key ? ok(key) : err("parse repository key", "response contained an empty repository key");
+}
+
+function parseEpicProfile(value: unknown): Result<EpicWorkflowProfile, ResponseParseError> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return err("parse epic profile", "response was not an object");
+  const candidate = value as Partial<RawEpicWorkflowProfile>;
+  if (typeof candidate.id !== "string" || !candidate.id.trim()) return err("parse epic profile", "response contained an empty epic profile id");
+  if (typeof candidate.workflow_run_id !== "string" || !candidate.workflow_run_id.trim()) return err("parse epic profile", "response contained an empty workflow run id");
+  if (!Array.isArray(candidate.repositories)) return err("parse epic profile", "response contained no repository bindings");
+  const profile = candidate as RawEpicWorkflowProfile;
+  const repositories = [];
+  for (const repository of profile.repositories) {
+    if (!repository || typeof repository !== "object" || typeof repository.repository_key !== "string") {
+      return err("parse epic profile", "response contained an invalid repository binding");
+    }
+    const key = parseRequiredRepositoryKey(repository.repository_key);
+    if (!key.ok) return key;
+    repositories.push({ ...repository, repository_key: key.value });
+  }
+  return ok({
+    ...profile,
+    id: profile.id as EpicProfileId,
+    workflow_run_id: profile.workflow_run_id as WorkflowRunId,
+    repositories,
+  });
+}
+
+function parseRunDetail(run: RawRunDetail): Result<RunDetail, ResponseParseError> {
+  const stages: StageDetail[] = [];
+  for (const stage of run.stages) {
+    const units: StageUnit[] = [];
+    for (const unit of stage.units ?? []) {
+      const repositoryKey = parseOptionalRepositoryKey(unit.repository_key);
+      if (!repositoryKey.ok) return repositoryKey;
+      units.push({ ...unit, repository_key: repositoryKey.value });
+    }
+    stages.push({ ...stage, units: stage.units ? units : stage.units });
+  }
+  const epicProfile = run.epic_profile ? parseEpicProfile(run.epic_profile) : ok(run.epic_profile);
+  if (!epicProfile.ok) return epicProfile;
+  return ok({
     ...run,
-    stages: run.stages.map((stage) => ({
-      ...stage,
-      units: stage.units?.map((unit) => ({
-        ...unit,
-        repository_key: parseOptionalRepositoryKey(unit.repository_key),
-      })),
-    })),
-  };
+    stages,
+    epic_profile: epicProfile.value,
+  });
 }
 
-function parseParkedGates(gates: RawParkedGate[]): ParkedGate[] {
-  return gates.map((gate) => ({
-    ...gate,
-    repository_key: parseOptionalRepositoryKey(gate.repository_key),
-  }));
+function parseParkedGates(gates: RawParkedGate[]): Result<ParkedGate[], ResponseParseError> {
+  const parsed: ParkedGate[] = [];
+  for (const gate of gates) {
+    const repositoryKey = parseOptionalRepositoryKey(gate.repository_key);
+    if (!repositoryKey.ok) return repositoryKey;
+    parsed.push({ ...gate, repository_key: repositoryKey.value });
+  }
+  return ok(parsed);
 }
 
-function parseReviewInbox(inbox: RawReviewInbox): ReviewInbox {
-  return {
-    cohorts: inbox.cohorts.map((cohort) => ({
-      ...cohort,
-      repository_key: parseOptionalRepositoryKey(cohort.repository_key),
-    })),
-    items: inbox.items.map((item) => ({
-      ...item,
-      repository_key: parseOptionalRepositoryKey(item.repository_key),
-    })),
-  };
+function parseReviewInbox(inbox: RawReviewInbox): Result<ReviewInbox, ResponseParseError> {
+  const cohorts: CohortLifecycleSummary[] = [];
+  for (const cohort of inbox.cohorts) {
+    const repositoryKey = parseOptionalRepositoryKey(cohort.repository_key);
+    if (!repositoryKey.ok) return repositoryKey;
+    let reconciliation: CohortPullRequestReconciliation | null | undefined = cohort.pull_request_reconciliation == null
+      ? cohort.pull_request_reconciliation
+      : undefined;
+    if (cohort.pull_request_reconciliation) {
+      const reconciliationKey = parseRequiredRepositoryKey(cohort.pull_request_reconciliation.repository_key);
+      if (!reconciliationKey.ok) return reconciliationKey;
+      reconciliation = { ...cohort.pull_request_reconciliation, repository_key: reconciliationKey.value };
+    }
+    cohorts.push({ ...cohort, repository_key: repositoryKey.value, pull_request_reconciliation: reconciliation });
+  }
+  const items: ReviewInboxItem[] = [];
+  for (const item of inbox.items) {
+    const repositoryKey = parseOptionalRepositoryKey(item.repository_key);
+    if (!repositoryKey.ok) return repositoryKey;
+    items.push({ ...item, repository_key: repositoryKey.value });
+  }
+  return ok({ cohorts, items });
+}
+
+const FINAL_OUTCOMES = new Set(["waiting", "completed", "already_completed", "mismatch", "ignored_stale", "awaiting_external_confirmation"]);
+
+function parseFinalPullRequestResponse(value: unknown): Result<FinalPullRequestResponse, ResponseParseError> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return err("parse final pull request response", "response was not an object");
+  const raw = value as { outcome?: unknown; profile?: unknown };
+  if (typeof raw.outcome !== "string" || !FINAL_OUTCOMES.has(raw.outcome)) return err("parse final pull request response", "response contained an unknown outcome");
+  if (!raw.profile || typeof raw.profile !== "object" || Array.isArray(raw.profile)) return err("parse final pull request response", "response contained no epic profile");
+  const profile = parseEpicProfile(raw.profile);
+  if (!profile.ok) return profile;
+  return ok({ outcome: raw.outcome, profile: profile.value } as FinalPullRequestResponse);
+}
+
+function unwrapResponse<T>(path: string, result: Result<T, ResponseParseError>): T {
+  if (result.ok) return result.value;
+  throw new Error(`oakridge ${path}: ${result.error.operation}: ${result.error.detail}`);
 }
 
 async function oakridgeGet<T>(path: string): Promise<T> {
@@ -146,26 +241,25 @@ export function fetchRuns(filter?: string): Promise<RunSummary[]> {
 }
 
 export function fetchRun(id: string): Promise<RunDetail> {
-  return oakridgeGet<RawRunDetail>(`/runs/${encodeURIComponent(id)}`).then(parseRunDetail);
-}
-
-export function admitStageUnit(stageId: string, unitId: string, idempotencyKey: string): Promise<AdmitStageUnitResponse> {
-  return oakridgePost<AdmitStageUnitResponse>(
-    `/stages/${encodeURIComponent(stageId)}/units/${encodeURIComponent(unitId)}/admit`,
-    { idempotency_key: idempotencyKey },
-  );
+  const path = `/runs/${encodeURIComponent(id)}`;
+  return oakridgeGet<RawRunDetail>(path).then((value) => unwrapResponse(path, parseRunDetail(value)));
 }
 
 export function fetchRunGates(runId: string): Promise<ParkedGate[]> {
-  return oakridgeGet<RawParkedGate[]>(`/runs/${encodeURIComponent(runId)}/gates`).then(parseParkedGates);
+  const path = `/runs/${encodeURIComponent(runId)}/gates`;
+  return oakridgeGet<RawParkedGate[]>(path).then((value) => unwrapResponse(path, parseParkedGates(value)));
 }
 
 export function fetchGates(): Promise<ParkedGate[]> {
-  return oakridgeGet<RawParkedGate[]>("/gates").then(parseParkedGates);
+  return oakridgeGet<RawParkedGate[]>("/gates").then((value) => unwrapResponse("/gates", parseParkedGates(value)));
 }
 
 export function fetchReviewInbox(): Promise<ReviewInbox> {
-  return oakridgeGet<RawReviewInbox>("/review_inbox").then(parseReviewInbox);
+  return oakridgeGet<RawReviewInbox>("/review_inbox").then((value) => unwrapResponse("/review_inbox", parseReviewInbox(value)));
+}
+
+export function admitStageUnit(stageId: string, unitId: string, idempotencyKey: string): Promise<AdmitStageUnitResponse> {
+  return oakridgePost(`/stages/${encodeURIComponent(stageId)}/units/${encodeURIComponent(unitId)}/admit`, { idempotency_key: idempotencyKey });
 }
 
 export function fetchArtifact(id: string): Promise<ArtifactDetail> {
@@ -229,6 +323,18 @@ export function deleteRun(runId: string): Promise<void> {
 
 export function retryStuckStage(stageInstanceId: string): Promise<unknown> {
   return oakridgePost<unknown>(`/stage_instances/${encodeURIComponent(stageInstanceId)}/retry_stuck`, {});
+}
+
+export function confirmFinalPullRequest(
+  runId: string,
+  repositoryKey: RepositoryKey,
+  request: ConfirmFinalPullRequestRequest,
+): Promise<FinalPullRequestResponse> {
+  const path = `/workflow_runs/${encodeURIComponent(runId)}/final_pull_requests/${encodeURIComponent(repositoryKey)}/confirm`;
+  return oakridgePost<unknown>(
+    path,
+    request,
+  ).then((value) => unwrapResponse(path, parseFinalPullRequestResponse(value)));
 }
 
 export function fetchArtifactTypes(): Promise<ArtifactTypeDescriptor[]> {

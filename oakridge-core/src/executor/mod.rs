@@ -16,8 +16,8 @@ use uuid::Uuid;
 use crate::db::queries;
 use crate::registry::ArtifactTypeRegistry;
 use crate::types::{
-    Artifact, ArtifactId, ArtifactTypeId, GateDecision, ResolvedInput, StageInstanceId, StageInstanceSummary,
-    StageStatus, WorkflowRunId,
+    Artifact, ArtifactId, ArtifactTypeId, GateDecision, ResolvedInput, StageInstanceId,
+    StageInstanceSummary, StageStatus, WorkflowRunId,
 };
 
 // ── Event ─────────────────────────────────────────────────────────────────────
@@ -359,7 +359,8 @@ impl StageContext {
             let revision_id = match artifact.parent_artifact_id {
                 None => artifact.id.0.to_string(),
                 Some(_) => {
-                    match crate::db::queries::get_artifact_chain_root_id(&self.db, &artifact.id).await
+                    match crate::db::queries::get_artifact_chain_root_id(&self.db, &artifact.id)
+                        .await
                     {
                         Ok(root_id) => root_id,
                         Err(e) => {
@@ -589,6 +590,21 @@ pub enum ResumePayload {
     FeedbackArtifact {
         /// The feedback artifact.
         artifact: Artifact,
+    },
+    /// Assessment revision feedback routed to the matching upstream builder
+    /// unit. This is distinct from ordinary graph feedback because the builder
+    /// is intentionally parked after handing work to assessment.
+    UpstreamRevisionRequested {
+        unit_id: String,
+        feedback: String,
+        assessment_artifact_id: ArtifactId,
+    },
+    /// A verified external-system observation completes a correlated fan-out
+    /// unit that was durably waiting after downstream approval.
+    ExternalWaitCompleted {
+        unit_id: String,
+        external_kind: String,
+        correlation_id: String,
     },
     /// A new upstream unit is available to an already-live fan-out stage.
     UnitInputAvailable {
@@ -1445,7 +1461,11 @@ mod tests {
         let items = queries::list_review_items_for_artifact(&pool, &revision_id)
             .await
             .unwrap();
-        assert_eq!(items.len(), 1, "extractor must have materialized one review item");
+        assert_eq!(
+            items.len(),
+            1,
+            "extractor must have materialized one review item"
+        );
         assert_eq!(items[0].anchor, "/x");
         assert_eq!(items[0].claim, "x must be positive");
         assert_eq!(items[0].status, crate::collab::ReviewItemStatus::Open);

@@ -12,14 +12,14 @@ use uuid::Uuid;
 use crate::db::queries;
 use crate::events::{EventBus, SubstrateEvent};
 use crate::executor::delegated_session::config::{
-    DelegatedSessionConfig, DelegatedSessionDefConfig,
+    DelegatedSessionConfig, DelegatedSessionDefConfig, RevisionTarget,
 };
 use crate::executor::prompt_config::SlotBinding;
 use crate::executor::{ExecutorEvent, ResumePayload, StageContext, StageHandle};
 use crate::registry::{ArtifactTypeRegistry, StageTypeRegistry};
 use crate::types::{
-    Artifact, InputDelivery, ResolvedInput, RunStatus, StageInstance, StageInstanceId, StageInstanceSummary,
-    StageKey, StageStatus, StageTypeId, WorkflowDef, WorkflowRunId,
+    Artifact, InputDelivery, ResolvedInput, RunStatus, StageInstance, StageInstanceId,
+    StageInstanceSummary, StageKey, StageStatus, StageTypeId, WorkflowDef, WorkflowRunId,
 };
 
 // ── Control messages ──────────────────────────────────────────────────────────
@@ -64,6 +64,21 @@ impl std::fmt::Display for DecisionError {
 }
 
 impl std::error::Error for DecisionError {}
+
+fn upstream_handoff_role(
+    node: &crate::types::StageNodeDef,
+) -> Result<Option<crate::types::StageOperatorRole>, serde_json::Error> {
+    if node.stage_type != "delegated_session" {
+        return Ok(None);
+    }
+    let config = serde_json::from_value::<DelegatedSessionDefConfig>(node.config.clone())?;
+    Ok(config
+        .output_gate
+        .as_ref()
+        .is_some_and(|gate| gate.revision_target == RevisionTarget::UpstreamHandoff)
+        .then_some(node.operator_role)
+        .flatten())
+}
 
 // ── RunHandle ─────────────────────────────────────────────────────────────────
 
@@ -583,7 +598,10 @@ impl RunTask {
                 .or_default()
                 .insert(unit_id.clone(), artifact.clone());
             if let Some((stage_instance_id, status)) = self.index.get(&edge.to.stage).cloned() {
-                if matches!(status, StageStatus::Pending | StageStatus::Running | StageStatus::Parked) {
+                if matches!(
+                    status,
+                    StageStatus::Pending | StageStatus::Running | StageStatus::Parked
+                ) {
                     if let Some(handle) = self.handles.get(&stage_instance_id) {
                         if let Err(err) = handle
                             .resume(ResumePayload::UnitInputAvailable {
@@ -622,10 +640,7 @@ impl RunTask {
     /// activation. Delegated fan-out stages release all unit artifacts only
     /// when the aggregate reaches Done; activating after the first insert would
     /// give collection consumers a timing-dependent partial input.
-    async fn propagate_artifacts(
-        &mut self,
-        artifacts: Vec<(StageKey, Artifact, String)>,
-    ) {
+    async fn propagate_artifacts(&mut self, artifacts: Vec<(StageKey, Artifact, String)>) {
         let mut deliveries = Vec::new();
         for (producer_key, artifact, output_name) in artifacts {
             let edges: Vec<_> = self
@@ -633,9 +648,7 @@ impl RunTask {
                 .graph
                 .edges
                 .iter()
-                .filter(|edge| {
-                    edge.from.stage == producer_key && edge.from.slot == output_name
-                })
+                .filter(|edge| edge.from.stage == producer_key && edge.from.slot == output_name)
                 .cloned()
                 .collect();
             for edge in edges {
@@ -763,9 +776,7 @@ impl RunTask {
 
         let artifacts = latest_by_output_and_unit
             .into_iter()
-            .map(|((output_name, _unit_id), artifact)| {
-                (stage_key.clone(), artifact, output_name)
-            })
+            .map(|((output_name, _unit_id), artifact)| (stage_key.clone(), artifact, output_name))
             .collect();
         self.propagate_artifacts(artifacts).await;
     }
@@ -979,6 +990,8 @@ impl RunTask {
         let resume_kind = match &payload {
             ResumePayload::GateDecision { .. } => "gate_decision",
             ResumePayload::FeedbackArtifact { .. } => "feedback_artifact",
+            ResumePayload::UpstreamRevisionRequested { .. } => "upstream_revision_requested",
+            ResumePayload::ExternalWaitCompleted { .. } => "external_wait_completed",
             ResumePayload::UnitInputAvailable { .. } => "unit_input_available",
             ResumePayload::UnitInputExhausted { .. } => "unit_input_exhausted",
             ResumePayload::Executor { .. } => "executor",
@@ -1036,6 +1049,20 @@ impl RunTask {
             )));
         }
 
+        let correlated_handoff_decision = match (&payload, self.def.graph.stages.get(&stage_key)) {
+            (
+                ResumePayload::GateDecision {
+                    decision,
+                    against_artifact_id,
+                    ..
+                },
+                Some(node),
+            ) => upstream_handoff_role(node)
+                .map_err(|error| DecisionError::Internal(error.into()))?
+                .map(|role| (role, decision.clone(), *against_artifact_id)),
+            _ => None,
+        };
+
         let handle = match self.handles.get(&stage_instance_id) {
             Some(handle) => handle,
             None => {
@@ -1045,6 +1072,146 @@ impl RunTask {
                 )));
             }
         };
+
+        if let Some((downstream_role, decision, assessment_artifact_id)) =
+            correlated_handoff_decision
+        {
+            let downstream_units =
+                queries::list_session_units_for_stage(&self.db, &stage_instance_id)
+                    .await
+                    .map_err(|error| DecisionError::Internal(anyhow::Error::new(error)))?;
+            let downstream_unit = downstream_units
+                .into_iter()
+                .find(|unit| unit.artifact_id == Some(assessment_artifact_id))
+                .ok_or_else(|| {
+                    DecisionError::Conflict(format!(
+                        "review artifact {} is not the current output of a downstream unit",
+                        assessment_artifact_id.0
+                    ))
+                })?;
+            let unit_id = downstream_unit.unit_id;
+            let handoff_artifact_id = downstream_unit.source_artifact_id.ok_or_else(|| {
+                DecisionError::Conflict(format!(
+                    "downstream unit '{}' has no durable source-artifact provenance",
+                    unit_id
+                ))
+            })?;
+            let handoff_artifact = queries::get_artifact_by_id(&self.db, &handoff_artifact_id)
+                .await
+                .map_err(|error| DecisionError::Internal(anyhow::Error::new(error)))?;
+            let upstream_key = self
+                .index
+                .iter()
+                .find(|(_, (id, _))| *id == handoff_artifact.stage_instance_id)
+                .map(|(key, _)| key.clone())
+                .ok_or_else(|| {
+                    DecisionError::Conflict("handoff artifact producer is not active".into())
+                })?;
+            let upstream_node = self.def.graph.stages.get(&upstream_key).ok_or_else(|| {
+                DecisionError::Conflict("handoff artifact producer is not defined".into())
+            })?;
+            let upstream_config =
+                serde_json::from_value::<DelegatedSessionDefConfig>(upstream_node.config.clone())
+                    .map_err(|error| DecisionError::Internal(error.into()))?;
+            let handoff = upstream_config.output_handoff.ok_or_else(|| {
+                DecisionError::Conflict("artifact producer has no output handoff policy".into())
+            })?;
+            let has_exact_edge = self.def.graph.edges.iter().any(|edge| {
+                edge.from.stage == upstream_key
+                    && edge.from.slot == handoff.output
+                    && edge.to.stage == stage_key
+            });
+            if handoff.downstream_role != downstream_role || !has_exact_edge {
+                return Err(DecisionError::Conflict(
+                    "artifact provenance does not match the configured role handoff".into(),
+                ));
+            }
+            let approved_wait_kind = handoff.approved_wait.kind;
+            {
+                let (upstream_id, _) = self.index.get(&upstream_key).cloned().ok_or_else(|| {
+                    DecisionError::Conflict(format!(
+                        "correlated upstream stage '{}' is not active",
+                        upstream_key
+                    ))
+                })?;
+                let upstream_unit = queries::get_session_unit(&self.db, &upstream_id, &unit_id)
+                    .await
+                    .map_err(|error| DecisionError::Internal(anyhow::Error::new(error)))?;
+                let wait_state = upstream_unit.gate_state.as_ref().and_then(|value| {
+                    serde_json::from_value::<
+                            crate::executor::delegated_session::DownstreamWaitState,
+                        >(value.clone())
+                        .ok()
+                });
+                let parked_artifact_id = match (wait_state, decision.outcome) {
+                    (Some(crate::executor::delegated_session::DownstreamWaitState::AwaitingDownstream {
+                        artifact_id,
+                        downstream_role: expected_role,
+                        ..
+                    }), _) if expected_role == downstream_role && artifact_id == handoff_artifact_id => artifact_id,
+                    (Some(crate::executor::delegated_session::DownstreamWaitState::AwaitingExternal {
+                        artifact_id,
+                        decision_artifact_id,
+                        ..
+                    }), crate::types::GateOutcome::Pass)
+                        if artifact_id == handoff_artifact_id
+                            && decision_artifact_id == assessment_artifact_id => artifact_id,
+                    (Some(crate::executor::delegated_session::DownstreamWaitState::RevisionInProgress {
+                        artifact_id,
+                        downstream_role: expected_role,
+                        decision_artifact_id,
+                    }), crate::types::GateOutcome::Fail | crate::types::GateOutcome::Rerun)
+                        if expected_role == downstream_role
+                            && artifact_id == handoff_artifact_id
+                            && decision_artifact_id == assessment_artifact_id => artifact_id,
+                    _ => {
+                        return Err(DecisionError::Conflict(format!(
+                            "upstream unit '{}' is not awaiting role {:?}",
+                            unit_id, downstream_role
+                        )))
+                    }
+                };
+                match decision.outcome {
+                    crate::types::GateOutcome::Pass => {
+                        let wait = crate::executor::delegated_session::DownstreamWaitState::AwaitingExternal {
+                            artifact_id: parked_artifact_id,
+                            external_kind: approved_wait_kind,
+                            decision_artifact_id: assessment_artifact_id,
+                        };
+                        queries::set_session_unit_gate_state(
+                            &self.db,
+                            &upstream_id,
+                            &unit_id,
+                            Some(serde_json::to_value(wait).map_err(|error| {
+                                DecisionError::Internal(anyhow::Error::new(error))
+                            })?),
+                        )
+                        .await
+                        .map_err(|error| DecisionError::Internal(anyhow::Error::new(error)))?;
+                    }
+                    crate::types::GateOutcome::Fail | crate::types::GateOutcome::Rerun => {
+                        let feedback =
+                            decision.feedback.or(decision.comment).unwrap_or_else(|| {
+                                "Assessment requested implementation revisions.".into()
+                            });
+                        let upstream_handle = self.handles.get(&upstream_id).ok_or_else(|| {
+                            DecisionError::Conflict(format!(
+                                "correlated upstream stage '{}' has no active handle",
+                                upstream_key
+                            ))
+                        })?;
+                        upstream_handle
+                            .resume(ResumePayload::UpstreamRevisionRequested {
+                                unit_id,
+                                feedback,
+                                assessment_artifact_id,
+                            })
+                            .await
+                            .map_err(|error| DecisionError::Internal(error.into()))?;
+                    }
+                }
+            }
+        }
 
         handle
             .resume(payload)
@@ -2392,6 +2559,37 @@ mod tests {
 
     // ── helpers ───────────────────────────────────────────────────────────────
 
+    #[test]
+    fn upstream_handoff_correlation_requires_explicit_revision_target() {
+        let node = |revision_target: &str| StageNodeDef {
+            operator_role: Some(StageOperatorRole::Assessment),
+            stage_type: "delegated_session".into(),
+            config: json!({
+                "runtime": "codex",
+                "prompt_template_path": "unused.md",
+                "slot_bindings": {},
+                "workdir": {"from": "literal", "value": "/tmp"},
+                "session_name": "test",
+                "model": null,
+                "pre_authorized_tools": [],
+                "yolo": false,
+                "output_gate": {
+                    "output": "assessment",
+                    "steps": [{"type": "artifact_approval", "actions": ["approve"]}],
+                    "revision_target": revision_target
+                }
+            }),
+            inputs: vec![],
+            outputs: vec![],
+        };
+
+        assert_eq!(upstream_handoff_role(&node("self_stage")).unwrap(), None);
+        assert_eq!(
+            upstream_handoff_role(&node("upstream_handoff")).unwrap(),
+            Some(StageOperatorRole::Assessment)
+        );
+    }
+
     async fn make_pool() -> Arc<SqlitePool> {
         let path = format!("/tmp/oakridge_sched_test_{}.db", Uuid::new_v4());
         Arc::new(
@@ -2583,6 +2781,7 @@ mod tests {
                     m.insert(
                         "A".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: stage_type.into(),
                             config: json!({}),
                             inputs: vec![],
@@ -2679,6 +2878,7 @@ mod tests {
                     m.insert(
                         "A".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "st_a".into(),
                             config: json!({ "mode": "fresh" }),
                             inputs: vec![],
@@ -2736,6 +2936,7 @@ mod tests {
                     m.insert(
                         "A".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "st_a".into(),
                             config: json!({}),
                             inputs: vec![],
@@ -2748,6 +2949,7 @@ mod tests {
                     m.insert(
                         "B".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "st_b".into(),
                             config: json!({}),
                             inputs: vec![InputSlot {
@@ -2869,6 +3071,7 @@ mod tests {
                     m.insert(
                         "A".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "st_a".into(),
                             config: json!({}),
                             inputs: vec![InputSlot {
@@ -2887,6 +3090,7 @@ mod tests {
                     m.insert(
                         "B".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "st_b".into(),
                             config: json!({}),
                             inputs: vec![InputSlot {
@@ -3023,6 +3227,7 @@ mod tests {
                     m.insert(
                         "A".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "st_a".into(),
                             config: json!({}),
                             inputs: vec![],
@@ -3131,6 +3336,7 @@ mod tests {
                     m.insert(
                         "A".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "st_a".into(),
                             config: json!({}),
                             inputs: vec![],
@@ -3259,6 +3465,7 @@ mod tests {
                     m.insert(
                         "A".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "st_a".into(),
                             config: json!({}),
                             inputs: vec![],
@@ -3361,6 +3568,7 @@ mod tests {
                     m.insert(
                         "A".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "st_a".into(),
                             config: json!({}),
                             inputs: vec![],
@@ -3370,6 +3578,7 @@ mod tests {
                     m.insert(
                         "B".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "st_a".into(),
                             config: json!({}),
                             inputs: vec![],
@@ -3538,6 +3747,7 @@ mod tests {
                     m.insert(
                         "A".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "missing_type".into(),
                             config: json!({}),
                             inputs: vec![],
@@ -3587,6 +3797,7 @@ mod tests {
                     m.insert(
                         "A".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "st_a".into(),
                             config: json!({}),
                             inputs: vec![],
@@ -3706,6 +3917,7 @@ mod tests {
                     m.insert(
                         "A".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "missing_type".into(),
                             config: json!({}),
                             inputs: vec![],
@@ -3785,6 +3997,7 @@ mod tests {
                     m.insert(
                         "A".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "missing_type".into(),
                             config: json!({}),
                             inputs: vec![],
@@ -3910,6 +4123,7 @@ mod tests {
                     m.insert(
                         "A".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "noop".into(),
                             config: json!({}),
                             inputs: vec![],
@@ -4010,6 +4224,7 @@ mod tests {
                     m.insert(
                         "A".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "noop".into(),
                             config: json!({}),
                             inputs: vec![],
@@ -4090,6 +4305,7 @@ mod tests {
                     m.insert(
                         "A".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "retry_stage".into(),
                             config: json!({}),
                             inputs: vec![],
@@ -4260,6 +4476,7 @@ mod tests {
                     m.insert(
                         "A".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "noop".into(),
                             config: json!({}),
                             inputs: vec![],

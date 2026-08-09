@@ -4,6 +4,7 @@ pub mod db;
 pub mod events;
 pub mod executor;
 pub mod http;
+pub mod reconciliation;
 pub mod registry;
 pub mod scheduler;
 pub mod seed;

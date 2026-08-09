@@ -4,10 +4,17 @@
 //     cargo sqlx prepare
 // Run from the oakridge-core directory.
 
+use crate::reconciliation::{
+    CohortPullRequestReconciliation, FinalPullRequestReconciliation, ObservedPullRequestState,
+    PullRequestMismatch, PullRequestMismatchKind, PullRequestObservation,
+    PullRequestObservationSource,
+};
 use crate::types::{
-    Artifact, ArtifactId, GateDecisionAudit, GateDecisionAuditId, GateDecisionAuditInsert,
-    GateDecisionAuditStatus, Project, ProjectId, RunStatus, StageInstance, StageInstanceId,
-    StageStatus, WorkflowDef, WorkflowDefId, WorkflowRun, WorkflowRunId,
+    Artifact, ArtifactId, EpicRepositoryBinding, EpicWorkflowProfile, EpicWorkflowProfileId,
+    ForgeProvider, ForgeRepositoryIdentity, GateDecisionAudit, GateDecisionAuditId,
+    GateDecisionAuditInsert, GateDecisionAuditStatus, Project, ProjectId, PullRequestReference,
+    RunStatus, StageInstance, StageInstanceId, StageStatus, WorkflowDef, WorkflowDefId,
+    WorkflowRun, WorkflowRunId,
 };
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -43,6 +50,58 @@ struct WorkflowRunRow {
     context: Option<String>,
     version: i64,
     created_at: String,
+    updated_at: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct EpicWorkflowProfileRow {
+    id: String,
+    workflow_run_id: String,
+    title: String,
+    slug: String,
+    lifecycle_state: String,
+    final_merge_policy: String,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct EpicRepositoryBindingRow {
+    repository_key: String,
+    repository_path: String,
+    base_branch: String,
+    epic_branch: String,
+    forge_provider: Option<String>,
+    forge_owner: Option<String>,
+    forge_name: Option<String>,
+    final_merge_state: String,
+    final_pr_number: Option<i64>,
+    final_pr_url: Option<String>,
+    final_pr_head_branch: Option<String>,
+    final_pr_base_branch: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
+struct CohortPullRequestReconciliationRow {
+    workflow_run_id: String,
+    stage_instance_id: String,
+    unit_id: String,
+    repository_key: String,
+    provider: String,
+    owner: String,
+    name: String,
+    pr_number: i64,
+    pr_url: String,
+    head_branch: String,
+    base_branch: String,
+    head_sha: Option<String>,
+    observed_state: String,
+    observation_source: String,
+    observed_at: String,
+    merged_at: Option<String>,
+    mismatch_kind: Option<String>,
+    mismatch_detail: Option<String>,
+    completed_at: Option<String>,
     updated_at: String,
 }
 
@@ -179,6 +238,96 @@ fn row_to_workflow_run(r: WorkflowRunRow) -> crate::Result<WorkflowRun> {
         version: r.version as i32,
         created_at: parse_dt(&r.created_at)?,
         updated_at: parse_dt(&r.updated_at)?,
+    })
+}
+
+fn row_to_epic_repository_binding(
+    row: EpicRepositoryBindingRow,
+) -> crate::Result<EpicRepositoryBinding> {
+    let final_pull_request = match (
+        row.final_pr_number,
+        row.final_pr_url,
+        row.final_pr_head_branch,
+        row.final_pr_base_branch,
+    ) {
+        (None, None, None, None) => None,
+        (Some(number), Some(url), Some(head_branch), Some(base_branch)) => {
+            Some(PullRequestReference {
+                number: u64::try_from(number).map_err(|_| {
+                    crate::Error::Validation(format!("invalid pull request number {number}"))
+                })?,
+                url,
+                head_branch,
+                base_branch,
+            })
+        }
+        _ => {
+            return Err(crate::Error::Validation(
+                "partial final pull request metadata in database".into(),
+            ))
+        }
+    };
+    Ok(EpicRepositoryBinding {
+        repository_key: row.repository_key,
+        repository_path: row.repository_path.into(),
+        base_branch: row.base_branch,
+        epic_branch: row.epic_branch,
+        forge_repository: match (row.forge_provider, row.forge_owner, row.forge_name) {
+            (None, None, None) => None,
+            (Some(provider), Some(owner), Some(name)) => Some(ForgeRepositoryIdentity {
+                provider: str_to_enum::<ForgeProvider>(provider)?,
+                owner,
+                name,
+            }),
+            _ => {
+                return Err(crate::Error::Validation(
+                    "partial forge repository identity in database".into(),
+                ))
+            }
+        },
+        final_pull_request,
+        final_merge_state: str_to_enum(row.final_merge_state)?,
+    })
+}
+
+fn row_to_cohort_pr_reconciliation(
+    row: CohortPullRequestReconciliationRow,
+) -> crate::Result<CohortPullRequestReconciliation> {
+    let mismatch = match (row.mismatch_kind, row.mismatch_detail) {
+        (None, None) => None,
+        (Some(kind), Some(detail)) => Some(PullRequestMismatch {
+            kind: str_to_enum::<PullRequestMismatchKind>(kind)?,
+            detail,
+        }),
+        _ => {
+            return Err(crate::Error::Validation(
+                "partial PR mismatch state in database".into(),
+            ))
+        }
+    };
+    Ok(CohortPullRequestReconciliation {
+        workflow_run_id: WorkflowRunId(parse_uuid(&row.workflow_run_id)?),
+        stage_instance_id: StageInstanceId(parse_uuid(&row.stage_instance_id)?),
+        unit_id: row.unit_id,
+        repository_key: row.repository_key,
+        observation: PullRequestObservation {
+            provider: str_to_enum::<ForgeProvider>(row.provider)?,
+            owner: row.owner,
+            name: row.name,
+            number: u64::try_from(row.pr_number)
+                .map_err(|_| crate::Error::Validation("invalid persisted PR number".into()))?,
+            url: row.pr_url,
+            head_branch: row.head_branch,
+            base_branch: row.base_branch,
+            head_sha: row.head_sha,
+            state: str_to_enum::<ObservedPullRequestState>(row.observed_state)?,
+            source: str_to_enum::<PullRequestObservationSource>(row.observation_source)?,
+            observed_at: parse_dt(&row.observed_at)?,
+            merged_at: row.merged_at.as_deref().map(parse_dt).transpose()?,
+        },
+        mismatch,
+        completed_at: row.completed_at.as_deref().map(parse_dt).transpose()?,
+        updated_at: parse_dt(&row.updated_at)?,
     })
 }
 
@@ -470,6 +619,44 @@ pub async fn insert_workflow_run(pool: &SqlitePool, r: &WorkflowRun) -> crate::R
     Ok(())
 }
 
+/// Atomically create a generic workflow run and its optional typed Epic
+/// projection. The coordinator must only be started after this commits.
+pub async fn insert_workflow_run_with_epic_profile(
+    pool: &SqlitePool,
+    run: &WorkflowRun,
+    profile: Option<&EpicWorkflowProfile>,
+) -> crate::Result<()> {
+    if let Some(profile) = profile {
+        profile.validate()?;
+        if profile.workflow_run_id != run.id {
+            return Err(crate::Error::Validation(
+                "Epic profile must reference the workflow run being created".into(),
+            ));
+        }
+    }
+    let mut transaction = pool.begin().await?;
+    sqlx::query(
+        "INSERT INTO workflow_run \
+         (id, workflow_def_id, project_id, status, context, version, created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(run.id.0.to_string())
+    .bind(run.workflow_def_id.0.to_string())
+    .bind(run.project_id.map(|project_id| project_id.0.to_string()))
+    .bind(enum_to_str(&run.status)?)
+    .bind(serde_json::to_string(&run.context)?)
+    .bind(i64::from(run.version))
+    .bind(run.created_at.to_rfc3339())
+    .bind(run.updated_at.to_rfc3339())
+    .execute(&mut *transaction)
+    .await?;
+    if let Some(profile) = profile {
+        insert_epic_profile_rows(&mut transaction, profile).await?;
+    }
+    transaction.commit().await?;
+    Ok(())
+}
+
 pub async fn get_workflow_run_by_id(
     pool: &SqlitePool,
     id: &WorkflowRunId,
@@ -488,6 +675,304 @@ pub async fn get_workflow_run_by_id(
         id: id_str,
     })?;
     row_to_workflow_run(row)
+}
+
+/// Insert the one-to-one Epic projection and its repository bindings in the
+/// caller's transaction.
+async fn insert_epic_profile_rows(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    profile: &EpicWorkflowProfile,
+) -> crate::Result<()> {
+    sqlx::query(
+        "INSERT INTO epic_workflow_profile \
+         (id, workflow_run_id, title, slug, lifecycle_state, final_merge_policy, created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(profile.id.0.to_string())
+    .bind(profile.workflow_run_id.0.to_string())
+    .bind(&profile.title)
+    .bind(&profile.slug)
+    .bind(enum_to_str(&profile.lifecycle_state)?)
+    .bind(enum_to_str(&profile.final_merge_policy)?)
+    .bind(profile.created_at.to_rfc3339())
+    .bind(profile.updated_at.to_rfc3339())
+    .execute(&mut **transaction)
+    .await?;
+
+    let profile_id = profile.id.0.to_string();
+    for repository in &profile.repositories {
+        let repository_path = repository.repository_path.to_string_lossy().into_owned();
+        let (pr_number, pr_url, pr_head, pr_base) = repository
+            .final_pull_request
+            .as_ref()
+            .map(|pull_request| {
+                (
+                    Some(pull_request.number as i64),
+                    Some(pull_request.url.as_str()),
+                    Some(pull_request.head_branch.as_str()),
+                    Some(pull_request.base_branch.as_str()),
+                )
+            })
+            .unwrap_or((None, None, None, None));
+        sqlx::query(
+            "INSERT INTO epic_repository_binding \
+             (epic_profile_id, repository_key, repository_path, base_branch, epic_branch, \
+              final_merge_state, final_pr_number, final_pr_url, final_pr_head_branch, \
+              final_pr_base_branch, forge_provider, forge_owner, forge_name) \
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&profile_id)
+        .bind(&repository.repository_key)
+        .bind(repository_path)
+        .bind(&repository.base_branch)
+        .bind(&repository.epic_branch)
+        .bind(enum_to_str(&repository.final_merge_state)?)
+        .bind(pr_number)
+        .bind(pr_url)
+        .bind(pr_head)
+        .bind(pr_base)
+        .bind(
+            repository
+                .forge_repository
+                .as_ref()
+                .map(|forge| enum_to_str(&forge.provider))
+                .transpose()?,
+        )
+        .bind(
+            repository
+                .forge_repository
+                .as_ref()
+                .map(|forge| forge.owner.as_str()),
+        )
+        .bind(
+            repository
+                .forge_repository
+                .as_ref()
+                .map(|forge| forge.name.as_str()),
+        )
+        .execute(&mut **transaction)
+        .await?;
+    }
+    Ok(())
+}
+
+pub async fn get_epic_workflow_profile(
+    pool: &SqlitePool,
+    run_id: &WorkflowRunId,
+) -> crate::Result<EpicWorkflowProfile> {
+    let run_id_string = run_id.0.to_string();
+    let mut transaction = pool.begin().await?;
+    let row = sqlx::query_as::<_, EpicWorkflowProfileRow>(
+        "SELECT id, workflow_run_id, title, slug, lifecycle_state, final_merge_policy, created_at, updated_at \
+         FROM epic_workflow_profile WHERE workflow_run_id = ?",
+    )
+    .bind(&run_id_string)
+    .fetch_optional(&mut *transaction)
+    .await?
+    .ok_or_else(|| crate::Error::NotFound {
+        entity: "epic_workflow_profile".into(),
+        id: run_id_string,
+    })?;
+    let profile_id = row.id.clone();
+    let repository_rows = sqlx::query_as::<_, EpicRepositoryBindingRow>(
+        "SELECT repository_key, repository_path, base_branch, epic_branch, forge_provider, \
+         forge_owner, forge_name, final_merge_state, final_pr_number, final_pr_url, \
+         final_pr_head_branch, final_pr_base_branch \
+         FROM epic_repository_binding WHERE epic_profile_id = ? ORDER BY repository_key",
+    )
+    .bind(&profile_id)
+    .fetch_all(&mut *transaction)
+    .await?;
+    transaction.commit().await?;
+    Ok(EpicWorkflowProfile {
+        id: EpicWorkflowProfileId(parse_uuid(&profile_id)?),
+        workflow_run_id: WorkflowRunId(parse_uuid(&row.workflow_run_id)?),
+        title: row.title,
+        slug: row.slug,
+        lifecycle_state: str_to_enum(row.lifecycle_state)?,
+        final_merge_policy: str_to_enum(row.final_merge_policy)?,
+        repositories: repository_rows
+            .into_iter()
+            .map(row_to_epic_repository_binding)
+            .collect::<crate::Result<Vec<_>>>()?,
+        created_at: parse_dt(&row.created_at)?,
+        updated_at: parse_dt(&row.updated_at)?,
+    })
+}
+
+pub async fn find_epic_workflow_profile(
+    pool: &SqlitePool,
+    run_id: &WorkflowRunId,
+) -> crate::Result<Option<EpicWorkflowProfile>> {
+    match get_epic_workflow_profile(pool, run_id).await {
+        Ok(profile) => Ok(Some(profile)),
+        Err(crate::Error::NotFound { .. }) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+pub async fn get_final_pr_reconciliation(
+    pool: &SqlitePool,
+    profile_id: &EpicWorkflowProfileId,
+    repository_key: &str,
+) -> crate::Result<Option<FinalPullRequestReconciliation>> {
+    let row = sqlx::query_as::<_, (String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, String)>(
+        "SELECT observation_json, mismatch_json, merged_evidence_at, confirmation_idempotency_key, operator_comment, confirmed_at, updated_at \
+         FROM final_pull_request_reconciliation WHERE epic_profile_id = ? AND repository_key = ?",
+    )
+    .bind(profile_id.0.to_string())
+    .bind(repository_key)
+    .fetch_optional(pool)
+    .await?;
+    row.map(
+        |(
+            observation,
+            mismatch,
+            merged_evidence_at,
+            confirmation_key,
+            operator_comment,
+            confirmed_at,
+            updated_at,
+        )| {
+            Ok(FinalPullRequestReconciliation {
+                epic_profile_id: *profile_id,
+                repository_key: repository_key.to_owned(),
+                observation: serde_json::from_str(&observation)?,
+                mismatch: mismatch
+                    .map(|value| serde_json::from_str(&value))
+                    .transpose()?,
+                merged_evidence_at: merged_evidence_at
+                    .map(|value| parse_dt(&value))
+                    .transpose()?,
+                confirmation_idempotency_key: confirmation_key,
+                operator_comment,
+                confirmed_at: confirmed_at.map(|value| parse_dt(&value)).transpose()?,
+                updated_at: parse_dt(&updated_at)?,
+            })
+        },
+    )
+    .transpose()
+}
+
+/// Atomically records monotonic final-PR evidence and updates only its repository
+/// projection. Returns false when a newer (or conflicting equal-time) observation
+/// already won the race.
+pub async fn apply_final_pr_reconciliation(
+    pool: &SqlitePool,
+    record: &FinalPullRequestReconciliation,
+    repository: &EpicRepositoryBinding,
+) -> crate::Result<bool> {
+    if record.repository_key != repository.repository_key {
+        return Err(crate::Error::Validation(
+            "final PR reconciliation repository does not match its Epic binding".into(),
+        ));
+    }
+    let mut transaction = pool.begin().await?;
+    let result = sqlx::query(
+        "INSERT INTO final_pull_request_reconciliation \
+         (epic_profile_id, repository_key, observation_json, mismatch_json, observed_at, merged_evidence_at, confirmation_idempotency_key, operator_comment, confirmed_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+         ON CONFLICT(epic_profile_id, repository_key) DO UPDATE SET \
+         observation_json=excluded.observation_json, mismatch_json=excluded.mismatch_json, observed_at=excluded.observed_at, \
+         merged_evidence_at=excluded.merged_evidence_at, confirmation_idempotency_key=COALESCE(excluded.confirmation_idempotency_key, confirmation_idempotency_key), \
+         operator_comment=COALESCE(excluded.operator_comment, operator_comment), confirmed_at=COALESCE(excluded.confirmed_at, confirmed_at), updated_at=excluded.updated_at \
+         WHERE excluded.observed_at > final_pull_request_reconciliation.observed_at \
+            OR (excluded.observed_at = final_pull_request_reconciliation.observed_at \
+                AND excluded.observation_json = final_pull_request_reconciliation.observation_json)",
+    )
+    .bind(record.epic_profile_id.0.to_string())
+    .bind(&record.repository_key)
+    .bind(serde_json::to_string(&record.observation)?)
+    .bind(record.mismatch.as_ref().map(serde_json::to_string).transpose()?)
+    .bind(record.observation.observed_at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true))
+    .bind(record.merged_evidence_at.map(|value| value.to_rfc3339()))
+    .bind(&record.confirmation_idempotency_key)
+    .bind(&record.operator_comment)
+    .bind(record.confirmed_at.map(|value| value.to_rfc3339()))
+    .bind(record.updated_at.to_rfc3339())
+    .execute(&mut *transaction)
+    .await?;
+    if result.rows_affected() == 0 {
+        transaction.rollback().await?;
+        return Ok(false);
+    }
+
+    let (number, url, head, base) = repository
+        .final_pull_request
+        .as_ref()
+        .map(|pull_request| {
+            (
+                Some(pull_request.number as i64),
+                Some(pull_request.url.as_str()),
+                Some(pull_request.head_branch.as_str()),
+                Some(pull_request.base_branch.as_str()),
+            )
+        })
+        .unwrap_or((None, None, None, None));
+    let profile_id = record.epic_profile_id.0.to_string();
+    let final_merge_state = enum_to_str(&repository.final_merge_state)?;
+    let binding_result = sqlx::query(
+        "UPDATE epic_repository_binding SET final_merge_state=?, final_pr_number=?, \
+         final_pr_url=?, final_pr_head_branch=?, final_pr_base_branch=? \
+         WHERE epic_profile_id=? AND repository_key=? \
+         AND CASE final_merge_state \
+             WHEN 'pending' THEN 0 WHEN 'pull_request_open' THEN 1 \
+             WHEN 'closed_without_merge' THEN 1 WHEN 'awaiting_confirmation' THEN 2 \
+             WHEN 'merged' THEN 3 END \
+             <= CASE ? \
+             WHEN 'pending' THEN 0 WHEN 'pull_request_open' THEN 1 \
+             WHEN 'closed_without_merge' THEN 1 WHEN 'awaiting_confirmation' THEN 2 \
+             WHEN 'merged' THEN 3 END",
+    )
+    .bind(&final_merge_state)
+    .bind(number)
+    .bind(url)
+    .bind(head)
+    .bind(base)
+    .bind(&profile_id)
+    .bind(&repository.repository_key)
+    .bind(&final_merge_state)
+    .execute(&mut *transaction)
+    .await?;
+    if binding_result.rows_affected() == 0 {
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM epic_repository_binding \
+             WHERE epic_profile_id=? AND repository_key=?)",
+        )
+        .bind(&profile_id)
+        .bind(&repository.repository_key)
+        .fetch_one(&mut *transaction)
+        .await?;
+        if exists {
+            transaction.rollback().await?;
+            return Ok(false);
+        }
+        return Err(crate::Error::NotFound {
+            entity: "epic_repository_binding".into(),
+            id: format!("{profile_id}:{}", repository.repository_key),
+        });
+    }
+
+    let updated_at = record
+        .updated_at
+        .to_rfc3339_opts(chrono::SecondsFormat::Nanos, true);
+    sqlx::query(
+        "UPDATE epic_workflow_profile \
+         SET lifecycle_state = CASE \
+             WHEN NOT EXISTS (SELECT 1 FROM epic_repository_binding \
+                 WHERE epic_profile_id = ? AND final_merge_state != 'merged') \
+             THEN 'completed' ELSE 'final_integration' END, \
+             updated_at=CASE WHEN julianday(updated_at) < julianday(?) THEN ? ELSE updated_at END \
+         WHERE id=?",
+    )
+    .bind(&profile_id)
+    .bind(&updated_at)
+    .bind(&updated_at)
+    .bind(&profile_id)
+    .execute(&mut *transaction)
+    .await?;
+    transaction.commit().await?;
+    Ok(true)
 }
 
 pub async fn update_workflow_run_status(
@@ -1824,6 +2309,148 @@ pub async fn set_session_unit_artifact_id(
     Ok(())
 }
 
+pub async fn set_session_unit_source_artifact_id(
+    pool: &SqlitePool,
+    stage_instance_id: &StageInstanceId,
+    unit_id: &str,
+    artifact_id: ArtifactId,
+) -> crate::Result<()> {
+    let result = sqlx::query(
+        "UPDATE stage_session_units SET source_artifact_id = ?, updated_at = ? \
+         WHERE stage_instance_id = ? AND unit_id = ?",
+    )
+    .bind(artifact_id.0.to_string())
+    .bind(Utc::now().to_rfc3339())
+    .bind(stage_instance_id.0.to_string())
+    .bind(unit_id)
+    .execute(pool)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(crate::Error::NotFound {
+            entity: "session_unit".into(),
+            id: format!("{}:{}", stage_instance_id.0, unit_id),
+        });
+    }
+    Ok(())
+}
+
+pub async fn clear_session_unit_artifact_id(
+    pool: &SqlitePool,
+    stage_instance_id: &StageInstanceId,
+    unit_id: &str,
+) -> crate::Result<()> {
+    let result = sqlx::query(
+        "UPDATE stage_session_units SET artifact_id = NULL, updated_at = ? \
+         WHERE stage_instance_id = ? AND unit_id = ?",
+    )
+    .bind(Utc::now().to_rfc3339())
+    .bind(stage_instance_id.0.to_string())
+    .bind(unit_id)
+    .execute(pool)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(crate::Error::NotFound {
+            entity: "session_unit".into(),
+            id: format!("{}:{}", stage_instance_id.0, unit_id),
+        });
+    }
+    Ok(())
+}
+
+pub async fn get_cohort_pr_reconciliation(
+    pool: &SqlitePool,
+    stage_instance_id: &StageInstanceId,
+    unit_id: &str,
+) -> crate::Result<Option<CohortPullRequestReconciliation>> {
+    let row = sqlx::query_as::<_, CohortPullRequestReconciliationRow>(
+        "SELECT workflow_run_id, stage_instance_id, unit_id, repository_key, provider, owner, \
+         name, pr_number, pr_url, head_branch, base_branch, head_sha, observed_state, \
+         observation_source, observed_at, merged_at, mismatch_kind, mismatch_detail, \
+         completed_at, updated_at FROM cohort_pull_request_reconciliation \
+         WHERE stage_instance_id = ? AND unit_id = ?",
+    )
+    .bind(stage_instance_id.0.to_string())
+    .bind(unit_id)
+    .fetch_optional(pool)
+    .await?;
+    row.map(row_to_cohort_pr_reconciliation).transpose()
+}
+
+pub async fn list_cohort_pr_reconciliations_for_run(
+    pool: &SqlitePool,
+    run_id: &WorkflowRunId,
+) -> crate::Result<Vec<CohortPullRequestReconciliation>> {
+    sqlx::query_as::<_, CohortPullRequestReconciliationRow>(
+        "SELECT workflow_run_id, stage_instance_id, unit_id, repository_key, provider, owner, \
+         name, pr_number, pr_url, head_branch, base_branch, head_sha, observed_state, \
+         observation_source, observed_at, merged_at, mismatch_kind, mismatch_detail, \
+         completed_at, updated_at FROM cohort_pull_request_reconciliation \
+         WHERE workflow_run_id = ? ORDER BY stage_instance_id, unit_id",
+    )
+    .bind(run_id.0.to_string())
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .map(row_to_cohort_pr_reconciliation)
+    .collect()
+}
+
+pub async fn upsert_cohort_pr_reconciliation(
+    pool: &SqlitePool,
+    record: &CohortPullRequestReconciliation,
+) -> crate::Result<bool> {
+    let mismatch_kind = record
+        .mismatch
+        .as_ref()
+        .map(|mismatch| enum_to_str(&mismatch.kind))
+        .transpose()?;
+    let mismatch_detail = record
+        .mismatch
+        .as_ref()
+        .map(|mismatch| mismatch.detail.as_str());
+    let result = sqlx::query(
+        "INSERT INTO cohort_pull_request_reconciliation \
+         (workflow_run_id, stage_instance_id, unit_id, repository_key, provider, owner, name, \
+          pr_number, pr_url, head_branch, base_branch, head_sha, observed_state, \
+          observation_source, observed_at, merged_at, mismatch_kind, mismatch_detail, \
+          completed_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+         ON CONFLICT(stage_instance_id, unit_id) DO UPDATE SET \
+          repository_key=excluded.repository_key, provider=excluded.provider, owner=excluded.owner, \
+          name=excluded.name, pr_number=excluded.pr_number, pr_url=excluded.pr_url, \
+          head_branch=excluded.head_branch, base_branch=excluded.base_branch, \
+          head_sha=excluded.head_sha, observed_state=excluded.observed_state, \
+          observation_source=excluded.observation_source, observed_at=excluded.observed_at, \
+          merged_at=excluded.merged_at, mismatch_kind=excluded.mismatch_kind, \
+          mismatch_detail=excluded.mismatch_detail, completed_at=COALESCE( \
+            cohort_pull_request_reconciliation.completed_at, excluded.completed_at), \
+          updated_at=excluded.updated_at \
+         WHERE excluded.observed_at >= cohort_pull_request_reconciliation.observed_at",
+    )
+    .bind(record.workflow_run_id.0.to_string())
+    .bind(record.stage_instance_id.0.to_string())
+    .bind(&record.unit_id)
+    .bind(&record.repository_key)
+    .bind(enum_to_str(&record.observation.provider)?)
+    .bind(&record.observation.owner)
+    .bind(&record.observation.name)
+    .bind(i64::try_from(record.observation.number).map_err(|_| crate::Error::Validation("PR number exceeds SQLite range".into()))?)
+    .bind(&record.observation.url)
+    .bind(&record.observation.head_branch)
+    .bind(&record.observation.base_branch)
+    .bind(&record.observation.head_sha)
+    .bind(enum_to_str(&record.observation.state)?)
+    .bind(enum_to_str(&record.observation.source)?)
+    .bind(record.observation.observed_at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true))
+    .bind(record.observation.merged_at.map(|value| value.to_rfc3339()))
+    .bind(mismatch_kind)
+    .bind(mismatch_detail)
+    .bind(record.completed_at.map(|value| value.to_rfc3339()))
+    .bind(record.updated_at.to_rfc3339())
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
+}
+
 // ── Collab row structs ────────────────────────────────────────────────────────
 
 #[derive(sqlx::FromRow)]
@@ -2171,6 +2798,370 @@ mod tests {
         }
     }
 
+    fn test_epic_profile(run: &WorkflowRun, repository_keys: &[&str]) -> EpicWorkflowProfile {
+        EpicWorkflowProfile {
+            id: EpicWorkflowProfileId(run.id.0),
+            workflow_run_id: run.id,
+            title: "Parity".into(),
+            slug: "parity".into(),
+            lifecycle_state: crate::types::EpicLifecycleState::FinalIntegration,
+            final_merge_policy: crate::types::FinalMergePolicy::ExternalConfirmation,
+            repositories: repository_keys
+                .iter()
+                .map(|key| EpicRepositoryBinding {
+                    repository_key: (*key).into(),
+                    repository_path: format!("/repos/{key}").into(),
+                    forge_repository: Some(ForgeRepositoryIdentity {
+                        provider: ForgeProvider::Github,
+                        owner: "acme".into(),
+                        name: (*key).into(),
+                    }),
+                    base_branch: "main".into(),
+                    epic_branch: "epic/parity".into(),
+                    final_pull_request: None,
+                    final_merge_state: crate::types::FinalMergeState::Pending,
+                })
+                .collect(),
+            created_at: fixed_dt(),
+            updated_at: fixed_dt(),
+        }
+    }
+
+    fn final_pr_record(
+        profile: &EpicWorkflowProfile,
+        repository_key: &str,
+        observed_at: DateTime<Utc>,
+    ) -> FinalPullRequestReconciliation {
+        FinalPullRequestReconciliation {
+            epic_profile_id: profile.id,
+            repository_key: repository_key.into(),
+            observation: PullRequestObservation {
+                provider: ForgeProvider::Github,
+                owner: "acme".into(),
+                name: repository_key.into(),
+                number: 91,
+                url: format!("https://github.com/acme/{repository_key}/pull/91"),
+                head_branch: "epic/parity".into(),
+                base_branch: "main".into(),
+                head_sha: Some("abc123".into()),
+                state: ObservedPullRequestState::Merged,
+                source: PullRequestObservationSource::Webhook,
+                observed_at,
+                merged_at: Some(observed_at),
+            },
+            mismatch: None,
+            merged_evidence_at: Some(observed_at),
+            confirmation_idempotency_key: None,
+            operator_comment: None,
+            confirmed_at: None,
+            updated_at: observed_at,
+        }
+    }
+
+    async fn insert_test_epic(
+        pool: &SqlitePool,
+        repository_keys: &[&str],
+    ) -> (WorkflowRun, EpicWorkflowProfile) {
+        let definition = test_workflow_def();
+        insert_workflow_def(pool, &definition).await.unwrap();
+        let run = test_run(definition.id);
+        let profile = test_epic_profile(&run, repository_keys);
+        insert_workflow_run_with_epic_profile(pool, &run, Some(&profile))
+            .await
+            .unwrap();
+        (run, profile)
+    }
+
+    #[tokio::test]
+    async fn workflow_run_and_epic_profile_are_created_atomically_and_round_trip() {
+        let pool = make_test_pool().await;
+        let definition = test_workflow_def();
+        insert_workflow_def(&pool, &definition).await.unwrap();
+        let run = test_run(definition.id);
+        let profile = EpicWorkflowProfile {
+            id: EpicWorkflowProfileId(run.id.0),
+            workflow_run_id: run.id,
+            title: "Parity".into(),
+            slug: "parity".into(),
+            lifecycle_state: crate::types::EpicLifecycleState::Draft,
+            final_merge_policy: crate::types::FinalMergePolicy::Guarded,
+            repositories: vec![EpicRepositoryBinding {
+                repository_key: "oakridge".into(),
+                repository_path: "/repos/oakridge".into(),
+                forge_repository: Some(ForgeRepositoryIdentity {
+                    provider: ForgeProvider::Github,
+                    owner: "acme".into(),
+                    name: "oakridge".into(),
+                }),
+                base_branch: "develop".into(),
+                epic_branch: "epic/parity".into(),
+                final_pull_request: None,
+                final_merge_state: crate::types::FinalMergeState::Pending,
+            }],
+            created_at: fixed_dt(),
+            updated_at: fixed_dt(),
+        };
+
+        insert_workflow_run_with_epic_profile(&pool, &run, Some(&profile))
+            .await
+            .unwrap();
+
+        assert_eq!(get_workflow_run_by_id(&pool, &run.id).await.unwrap(), run);
+        assert_eq!(
+            get_epic_workflow_profile(&pool, &run.id).await.unwrap(),
+            profile
+        );
+
+        let second_run = test_run(definition.id);
+        let conflicting_profile = EpicWorkflowProfile {
+            workflow_run_id: second_run.id,
+            ..profile
+        };
+        assert!(insert_workflow_run_with_epic_profile(
+            &pool,
+            &second_run,
+            Some(&conflicting_profile)
+        )
+        .await
+        .is_err());
+        assert!(matches!(
+            get_workflow_run_by_id(&pool, &second_run.id).await,
+            Err(crate::Error::NotFound { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn final_pull_request_confirmation_survives_database_reopen() {
+        let path = format!("/tmp/oakridge_final_pr_{}.db", Uuid::new_v4());
+        let url = format!("sqlite:{path}");
+        let pool = crate::db::init_pool(&url).await.unwrap();
+        let definition = test_workflow_def();
+        insert_workflow_def(&pool, &definition).await.unwrap();
+        let run = test_run(definition.id);
+        let profile = EpicWorkflowProfile {
+            id: EpicWorkflowProfileId(run.id.0),
+            workflow_run_id: run.id,
+            title: "Parity".into(),
+            slug: "parity".into(),
+            lifecycle_state: crate::types::EpicLifecycleState::FinalIntegration,
+            final_merge_policy: crate::types::FinalMergePolicy::ExternalConfirmation,
+            repositories: vec![EpicRepositoryBinding {
+                repository_key: "api".into(),
+                repository_path: "/repos/api".into(),
+                forge_repository: Some(ForgeRepositoryIdentity {
+                    provider: ForgeProvider::Github,
+                    owner: "acme".into(),
+                    name: "api".into(),
+                }),
+                base_branch: "main".into(),
+                epic_branch: "epic/parity".into(),
+                final_pull_request: None,
+                final_merge_state: crate::types::FinalMergeState::Pending,
+            }],
+            created_at: fixed_dt(),
+            updated_at: fixed_dt(),
+        };
+        insert_workflow_run_with_epic_profile(&pool, &run, Some(&profile))
+            .await
+            .unwrap();
+        let record = FinalPullRequestReconciliation {
+            epic_profile_id: profile.id,
+            repository_key: "api".into(),
+            observation: PullRequestObservation {
+                provider: ForgeProvider::Github,
+                owner: "acme".into(),
+                name: "api".into(),
+                number: 91,
+                url: "https://github.com/acme/api/pull/91".into(),
+                head_branch: "epic/parity".into(),
+                base_branch: "main".into(),
+                head_sha: Some("abc123".into()),
+                state: ObservedPullRequestState::Merged,
+                source: PullRequestObservationSource::Webhook,
+                observed_at: fixed_dt(),
+                merged_at: Some(fixed_dt()),
+            },
+            mismatch: None,
+            merged_evidence_at: Some(fixed_dt()),
+            confirmation_idempotency_key: Some("confirmation-1".into()),
+            operator_comment: Some("verified externally".into()),
+            confirmed_at: Some(fixed_dt()),
+            updated_at: fixed_dt(),
+        };
+        assert!(
+            apply_final_pr_reconciliation(&pool, &record, &profile.repositories[0])
+                .await
+                .unwrap()
+        );
+        pool.close().await;
+
+        let reopened = crate::db::init_pool(&url).await.unwrap();
+        assert_eq!(
+            get_final_pr_reconciliation(&reopened, &profile.id, "api")
+                .await
+                .unwrap(),
+            Some(record)
+        );
+    }
+
+    #[tokio::test]
+    async fn epic_forge_identity_is_all_null_or_all_present() {
+        let pool = make_test_pool().await;
+        let (_, profile) = insert_test_epic(&pool, &["api"]).await;
+        let result = sqlx::query(
+            "UPDATE epic_repository_binding SET forge_owner = NULL \
+             WHERE epic_profile_id = ? AND repository_key = 'api'",
+        )
+        .bind(profile.id.0.to_string())
+        .execute(&pool)
+        .await;
+
+        assert!(result.is_err(), "partial forge identity must be rejected");
+    }
+
+    #[tokio::test]
+    async fn final_reconciliation_updates_repositories_without_stale_snapshot_regression() {
+        let pool = make_test_pool().await;
+        let (run, profile) = insert_test_epic(&pool, &["api", "web"]).await;
+        let mut api = profile.repositories[0].clone();
+        api.final_merge_state = crate::types::FinalMergeState::Merged;
+        let mut web = profile.repositories[1].clone();
+        web.final_merge_state = crate::types::FinalMergeState::Merged;
+
+        let api_record = final_pr_record(&profile, "api", fixed_dt());
+        let web_record =
+            final_pr_record(&profile, "web", fixed_dt() + chrono::Duration::seconds(1));
+        let (api_result, web_result) = tokio::join!(
+            apply_final_pr_reconciliation(&pool, &api_record, &api),
+            apply_final_pr_reconciliation(&pool, &web_record, &web),
+        );
+        assert!(api_result.unwrap());
+        assert!(web_result.unwrap());
+
+        let persisted = get_epic_workflow_profile(&pool, &run.id).await.unwrap();
+        assert!(persisted.repositories.iter().all(
+            |repository| repository.final_merge_state == crate::types::FinalMergeState::Merged
+        ));
+        assert_eq!(
+            persisted.lifecycle_state,
+            crate::types::EpicLifecycleState::Completed
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_final_reconciliation_rolls_back_repository_projection() {
+        let pool = make_test_pool().await;
+        let (run, profile) = insert_test_epic(&pool, &["api"]).await;
+        let mut merged = profile.repositories[0].clone();
+        merged.final_merge_state = crate::types::FinalMergeState::Merged;
+        let newer_at = fixed_dt() + chrono::Duration::seconds(2);
+        assert!(apply_final_pr_reconciliation(
+            &pool,
+            &final_pr_record(&profile, "api", newer_at),
+            &merged,
+        )
+        .await
+        .unwrap());
+
+        let mut stale_binding = profile.repositories[0].clone();
+        stale_binding.final_merge_state = crate::types::FinalMergeState::PullRequestOpen;
+        assert!(!apply_final_pr_reconciliation(
+            &pool,
+            &final_pr_record(&profile, "api", fixed_dt()),
+            &stale_binding,
+        )
+        .await
+        .unwrap());
+
+        let persisted = get_epic_workflow_profile(&pool, &run.id).await.unwrap();
+        assert_eq!(
+            persisted.repositories[0].final_merge_state,
+            crate::types::FinalMergeState::Merged
+        );
+    }
+
+    #[tokio::test]
+    async fn final_merge_state_cannot_regress_on_newer_inconsistent_evidence() {
+        let pool = make_test_pool().await;
+        let (run, profile) = insert_test_epic(&pool, &["api"]).await;
+        let mut merged = profile.repositories[0].clone();
+        merged.final_merge_state = crate::types::FinalMergeState::Merged;
+        apply_final_pr_reconciliation(
+            &pool,
+            &final_pr_record(&profile, "api", fixed_dt()),
+            &merged,
+        )
+        .await
+        .unwrap();
+
+        let mut inconsistent_record =
+            final_pr_record(&profile, "api", fixed_dt() + chrono::Duration::seconds(1));
+        inconsistent_record.observation.state = ObservedPullRequestState::Open;
+        inconsistent_record.observation.merged_at = None;
+        inconsistent_record.merged_evidence_at = None;
+        let mut regressed_binding = profile.repositories[0].clone();
+        regressed_binding.final_merge_state = crate::types::FinalMergeState::PullRequestOpen;
+        assert!(
+            !apply_final_pr_reconciliation(&pool, &inconsistent_record, &regressed_binding,)
+                .await
+                .unwrap()
+        );
+
+        let persisted = get_epic_workflow_profile(&pool, &run.id).await.unwrap();
+        assert_eq!(
+            persisted.repositories[0].final_merge_state,
+            crate::types::FinalMergeState::Merged
+        );
+        assert_eq!(
+            get_final_pr_reconciliation(&pool, &profile.id, "api")
+                .await
+                .unwrap()
+                .unwrap()
+                .observation
+                .state,
+            ObservedPullRequestState::Merged
+        );
+    }
+
+    #[tokio::test]
+    async fn duplicate_confirmation_key_rolls_back_reconciliation_and_projection() {
+        let pool = make_test_pool().await;
+        let (run, profile) = insert_test_epic(&pool, &["api", "web"]).await;
+        let mut api_record = final_pr_record(&profile, "api", fixed_dt());
+        api_record.confirmation_idempotency_key = Some("confirmation-1".into());
+        api_record.confirmed_at = Some(fixed_dt());
+        let mut api = profile.repositories[0].clone();
+        api.final_merge_state = crate::types::FinalMergeState::Merged;
+        apply_final_pr_reconciliation(&pool, &api_record, &api)
+            .await
+            .unwrap();
+
+        let mut web_record =
+            final_pr_record(&profile, "web", fixed_dt() + chrono::Duration::seconds(1));
+        web_record.confirmation_idempotency_key = Some("confirmation-1".into());
+        web_record.confirmed_at = Some(web_record.observation.observed_at);
+        let mut web = profile.repositories[1].clone();
+        web.final_merge_state = crate::types::FinalMergeState::Merged;
+        assert!(apply_final_pr_reconciliation(&pool, &web_record, &web)
+            .await
+            .is_err());
+
+        assert!(get_final_pr_reconciliation(&pool, &profile.id, "web")
+            .await
+            .unwrap()
+            .is_none());
+        let persisted = get_epic_workflow_profile(&pool, &run.id).await.unwrap();
+        assert_eq!(
+            persisted
+                .repositories
+                .iter()
+                .find(|repository| repository.repository_key == "web")
+                .unwrap()
+                .final_merge_state,
+            crate::types::FinalMergeState::Pending
+        );
+    }
+
     fn test_stage(run_id: WorkflowRunId) -> StageInstance {
         StageInstance {
             id: StageInstanceId(Uuid::new_v4()),
@@ -2328,6 +3319,7 @@ mod tests {
                     m.insert(
                         "s1".into(),
                         StageNodeDef {
+                            operator_role: None,
                             stage_type: "llm".into(),
                             config: json!({"model": "gpt-4"}),
                             inputs: vec![],
@@ -3543,5 +4535,81 @@ mod tests {
         let summaries2 = list_operator_run_summaries(&pool, None).await.unwrap();
         let s2 = summaries2.iter().find(|s| s.run_id == run.id).unwrap();
         assert!(s2.is_stuck, "stuck_timeout parked stage must set is_stuck");
+    }
+
+    #[tokio::test]
+    async fn cohort_pull_request_reconciliation_round_trips_and_upserts() {
+        let pool = make_test_pool().await;
+        let def = test_workflow_def();
+        insert_workflow_def(&pool, &def).await.unwrap();
+        let run = test_run(def.id);
+        insert_workflow_run(&pool, &run).await.unwrap();
+        let stage = test_stage(run.id);
+        insert_stage_instance(&pool, &stage).await.unwrap();
+
+        let mut record = CohortPullRequestReconciliation {
+            workflow_run_id: run.id,
+            stage_instance_id: stage.id,
+            unit_id: "api".into(),
+            repository_key: "api".into(),
+            observation: PullRequestObservation {
+                provider: ForgeProvider::Github,
+                owner: "acme".into(),
+                name: "api".into(),
+                number: 42,
+                url: "https://github.com/acme/api/pull/42".into(),
+                head_branch: "cohort/api".into(),
+                base_branch: "epic/parity".into(),
+                head_sha: Some("deadbeef".into()),
+                state: ObservedPullRequestState::Open,
+                source: PullRequestObservationSource::Poll,
+                observed_at: fixed_dt(),
+                merged_at: None,
+            },
+            mismatch: None,
+            completed_at: None,
+            updated_at: fixed_dt(),
+        };
+        upsert_cohort_pr_reconciliation(&pool, &record)
+            .await
+            .unwrap();
+        assert_eq!(
+            get_cohort_pr_reconciliation(&pool, &stage.id, "api")
+                .await
+                .unwrap(),
+            Some(record.clone())
+        );
+
+        record.observation.state = ObservedPullRequestState::Merged;
+        record.observation.observed_at = fixed_dt() + chrono::Duration::milliseconds(100);
+        record.observation.merged_at = Some(fixed_dt());
+        record.completed_at = Some(fixed_dt());
+        upsert_cohort_pr_reconciliation(&pool, &record)
+            .await
+            .unwrap();
+        assert_eq!(
+            list_cohort_pr_reconciliations_for_run(&pool, &run.id)
+                .await
+                .unwrap(),
+            vec![record.clone()]
+        );
+
+        let mut stale = record.clone();
+        stale.observation.state = ObservedPullRequestState::Open;
+        stale.observation.observed_at = fixed_dt();
+        stale.observation.merged_at = None;
+        stale.completed_at = None;
+        assert!(
+            !upsert_cohort_pr_reconciliation(&pool, &stale)
+                .await
+                .unwrap(),
+            "the database must reject an older observation atomically"
+        );
+        assert_eq!(
+            get_cohort_pr_reconciliation(&pool, &stage.id, "api")
+                .await
+                .unwrap(),
+            Some(record)
+        );
     }
 }

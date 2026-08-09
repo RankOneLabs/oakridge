@@ -16,11 +16,11 @@ use tower_http::trace::TraceLayer;
 pub use crate::config::{AuthPolicy, Config};
 use crate::db;
 use crate::events::EventBus;
-use crate::seed;
 use crate::executor::delegated_lbc_run::DelegatedLbcRunStage;
 use crate::executor::delegated_session::{kbbl_client::KbblClient, DelegatedSessionStage};
 use crate::registry::{register_dev_flow_types, ArtifactTypeRegistry, StageTypeRegistry};
 use crate::scheduler::Coordinator;
+use crate::seed;
 
 // ---- control auth middleware -----------------------------------------------
 
@@ -241,10 +241,35 @@ pub fn router(state: AppState) -> Router {
             "/workflow_runs",
             post(rest::create_workflow_run).get(rest::list_workflow_runs),
         )
-        .route("/workflow_runs/:id", get(rest::get_workflow_run).delete(rest::delete_workflow_run))
+        .route(
+            "/workflow_runs/:id",
+            get(rest::get_workflow_run).delete(rest::delete_workflow_run),
+        )
         .route("/workflow_runs/:id/cancel", post(rest::cancel_workflow_run))
-        .route("/workflow_runs/:id/archive", post(rest::archive_workflow_run))
-        .route("/workflow_runs/:id/unarchive", post(rest::unarchive_workflow_run))
+        .route(
+            "/workflow_runs/:id/archive",
+            post(rest::archive_workflow_run),
+        )
+        .route(
+            "/workflow_runs/:id/unarchive",
+            post(rest::unarchive_workflow_run),
+        )
+        .route(
+            "/workflow_runs/:id/epic_profile",
+            get(rest::get_epic_workflow_profile),
+        )
+        .route(
+            "/workflow_runs/:id/cohorts/:unit_id/pull_request_observations",
+            post(rest::reconcile_cohort_pull_request),
+        )
+        .route(
+            "/workflow_runs/:id/final_pull_requests/:repository_key/observations",
+            post(rest::reconcile_final_pull_request),
+        )
+        .route(
+            "/workflow_runs/:id/final_pull_requests/:repository_key/confirm",
+            post(rest::confirm_final_pull_request),
+        )
         .route(
             "/workflow_runs/:id/artifacts",
             get(rest::list_run_artifacts),

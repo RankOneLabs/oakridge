@@ -23,13 +23,13 @@ kbbl-owned dev-flow (Epic → Spec → Plan → Build → Assess), see
 
 | v1 Concept | v2 Mapping | Phase 2 Status |
 | --- | --- | --- |
-| **Epic** | project + workflow context (run carries repo and task metadata) | partial — v2 has no named Epic entity; project ties a repo to runs |
+| **Epic** | typed Epic profile attached to the workflow run | runnable — the profile owns repository bindings, the shared Epic branch, lifecycle, and final-merge policy |
 | **Spec** | input brief + `dev.spec_analysis` artifact | runnable — discrepancies and review items are handled on the configurable artifact review page before approval |
 | **Plan** | `dev.plan` artifact + descriptor-driven plan viewer and approval gate | runnable — the plan viewer renders cohort dependency edges and the approved plan drives build fan-out |
-| **Cohort** | a fanned `stage_session_units` row keyed by plan cohort id | runnable — each cohort has a brief, dependency-aware manual admission, session/worktree, lifecycle state, and independent gates |
-| **Brief** | the scoped cohort fields in `dev.plan` and the build prompt bindings | runnable — title, repository, scope, description, decisions, and acceptance criteria are shown before admission and passed to the worker |
-| **Assessment** | per-cohort `dev.assessment` artifact emitted by `assessor` | runnable — assessment progress and cohort completion appear in the lifecycle inbox |
-| **PR merge** | per-cohort PR + explicit merge-confirmation gate | runnable operator handoff — v2 displays PR URL/branch/worktree and records `confirm_merged` or `closed_without_merge`; merging remains external |
+| **Cohort** | dependency-linked brief, build, assessment, and PR reconciliation units keyed by plan cohort id | runnable — approved briefs admit automatically when dependencies complete; each cohort has an isolated branch/worktree and lifecycle |
+| **Brief** | per-cohort `dev.build_brief` artifact | runnable — every generated brief is reviewed and approved in Oakridge before its build becomes eligible |
+| **Assessment** | per-cohort `dev.assessment` artifact emitted after the build | runnable — approval is required before the cohort advances to GitHub review |
+| **PR merge** | exact per-cohort PR observation against the configured Epic branch | runnable — a trusted observation of the expected PR merged into the Epic branch automatically completes the cohort and unblocks dependents; Oakridge does not perform the merge |
 
 ## What You Will Run
 
@@ -310,14 +310,10 @@ inbox events):
 | `worktree.base_ref` | string | Base ref used at creation |
 
 In the kbbl PWA oakridge surface, each stage row shows `worktree.branch` and
-`worktree.path` when available. The parked gate panel also surfaces these fields
-so the operator can confirm the correct branch and path before approving a
-merge-confirmation gate.
-
-**Blind merge confirmation is explicitly out of bounds.** When a stage reaches
-the merge-confirmation gate, the branch and path must be visible before the
-operator clicks pass. If the operator cannot see the branch and path, do not
-approve the gate.
+`worktree.path` when available. Cohort lifecycle cards also show the expected PR
+and any reconciliation mismatch. A cohort completes only when the observed PR
+identity, head branch, and configured Epic base all match; there is no manual
+cohort merge-confirmation button.
 
 ## Effort Setting
 
@@ -474,43 +470,27 @@ curl -sX POST "$CORE/executors/delegated_session/<stage_instance_id>/units/0/emi
   -d '{"result":"done","notes":"artifact body is workflow-specific JSON"}'
 ```
 
-After emit, oakridge-core parks the stage for artifact approval. Approve it:
+After emit, oakridge-core parks the unit for its configured artifact approval.
+Read the composite gate id from `GET /workflow_runs/:id/gates`, then approve the
+exact displayed revision:
 
 ```bash
-curl -sX POST "$CORE/stage_instances/<stage_instance_id>/resume" \
+curl -sX POST "$CORE/gates/<stage_instance_id>:0/resume" \
   -H 'content-type: application/json' \
   -d '{
-    "kind": "gate_decision",
-    "decision": {
-      "outcome": "pass",
-      "comment": null,
-      "feedback": null
-    },
-    "against_artifact_id": "<artifact_id>"
+    "idempotency_key": "<new-uuid-retained-for-retries>",
+    "artifact_revision_id": "<exact-displayed-revision-id>",
+    "gate_step": "artifact_approval",
+    "action": "approve",
+    "operator_comment": "Reviewed",
+    "feedback": null
   }'
 ```
 
-The first pass moves the stage to merge confirmation. At the merge-confirmation
-gate, verify that the displayed branch and worktree path match what you expect
-before approving. Approve after the operator confirms the change is merged or
-otherwise accepted:
-
-```bash
-curl -sX POST "$CORE/stage_instances/<stage_instance_id>/resume" \
-  -H 'content-type: application/json' \
-  -d '{
-    "kind": "gate_decision",
-    "decision": {
-      "outcome": "pass",
-      "comment": null,
-      "feedback": null
-    },
-    "against_artifact_id": "<artifact_id>"
-  }'
-```
-
-The stage then reaches `done`, oakridge-core stops the kbbl session
-best-effort, and the run completes by scheduler quiescence.
+The configured workflow transition then runs. In dev-flow v8 this may admit the
+next stage automatically or move a cohort to GitHub review; PR merge state is
+advanced only through the typed reconciliation endpoints, never by passing an
+artifact gate.
 
 For changes-needed feedback, send a failing or rerun gate decision. The
 delegated-session executor forwards the feedback into the same live kbbl
@@ -590,7 +570,7 @@ best-effort and is also recorded in `terminal_meta`.
 
 ## Run The Dev-Flow Workflow
 
-The dev-flow workflow is a four-stage `delegated_session` pipeline. Its bundled
+The dev-flow workflow is a five-stage `delegated_session` pipeline. Its bundled
 definitions preserve old runs while the newest definition carries the complete
 operator workflow:
 
@@ -602,28 +582,32 @@ operator workflow:
 - `oakridge-core/examples/dev_flow_v5.json` (version 5) binds each
   stage's **runtime** from run context alongside its model and effort, so the
   planner and worker roles can target different runtimes.
-- `oakridge-core/examples/dev_flow_v6.json` (version 6, default) adds
-  configurable artifact actions, one-step spec/plan approval, manual build
-  admission, cohort briefs, and explicit merge outcomes.
+- `oakridge-core/examples/dev_flow_v6.json` (version 6) preserves the former
+  manual-admission and merge-confirmation workflow for existing runs.
+- `oakridge-core/examples/dev_flow_v7.json` (version 7) introduces typed Epic
+  repository topology and per-cohort PR reconciliation.
+- `oakridge-core/examples/dev_flow_v8.json` (version 8, default) adds separately
+  approved build briefs and per-cohort assessment approval before GitHub review.
 
 ### Workflow graph
 
-```
-spec_analyzer → plan_writer → build → assessor
+```text
+spec_analyzer → plan_writer → brief_writer → build → assessor
 ```
 
 | Stage | Output artifact | Description |
 | --- | --- | --- |
 | `spec_analyzer` | `dev.spec_analysis` | Reads the codebase and the brief; catalogs requirements, findings, and risks. |
 | `plan_writer` | `dev.plan` | Converts the spec analysis into an ordered implementation plan. |
+| `brief_writer` | `dev.build_brief` | Produces one separately approved implementation brief per plan cohort. |
 | `build` | `dev.pr_summary`, `dev.build_result` | Implements the plan in one independently gated unit per cohort. |
 | `assessor` | `dev.assessment` | Evaluates each cohort's build result against the plan's acceptance criteria. |
 
-Each stage is a `delegated_session` with typed artifacts. In v6, spec and plan
-have one `artifact_approval` step with `approve` and `request_revision`; each
-build cohort has `artifact_approval` followed by `merge_confirmation`, whose
-actions are `confirm_merged` and `closed_without_merge`. Version 1 retains the
-implicit unit id `"0"` and single-session behavior.
+Each stage is a `delegated_session` with typed artifacts. In v8, spec and plan
+have `artifact_approval` gates; plan approval materializes one build-brief unit
+per cohort. Brief approval makes the matching build eligible, build completion
+starts its assessor, and assessment approval advances the cohort to GitHub
+review. Version 1 retains the implicit unit id `"0"` and single-session behavior.
 
 In version 3, `plan_writer` emits a repository-bound `cohorts` array and `build` materializes one
 unit per cohort. Each build unit has its own kbbl session, branch, worktree,
@@ -655,20 +639,20 @@ Unlike `model` and `effort`, a bound `runtime` has **no default**: if the launch
 context omits it, the stage fails at config-build time naming the missing
 pointer, rather than silently running on the wrong runtime.
 
-Version 6 retains those runtime bindings. Its build fan-out sets
-`manual_admission: true`, so an eligible cohort waits for an operator after its
-dependencies complete instead of starting immediately. Admission is durable
-and idempotent; refreshing or retrying the same request does not start a second
-session.
+Version 8 retains those runtime bindings. Build admission is automatic once the
+cohort brief is approved and every `depends_on` cohort has completed by merging
+its exact PR into the configured Epic branch. Independent eligible cohorts may
+start concurrently up to `fan_out.max_parallel`; durable scheduling prevents a
+refresh or repeated event from starting a second session.
 
 ### Role context keys
 
 | Key | Consumed by | Required |
 | --- | --- | --- |
-| `planner_runtime` | `spec_analyzer`, `plan_writer`, `assessor` | yes (v5/v6) |
+| `planner_runtime` | `spec_analyzer`, `plan_writer`, `brief_writer`, `assessor` | yes (v5+) |
 | `planner_model` | same | no — falls back to the runtime default |
 | `planner_effort` | same | no — falls back to the runtime default |
-| `worker_runtime` | `build` | yes (v5/v6) |
+| `worker_runtime` | `build` | yes (v5+) |
 | `worker_model` | `build` | no — falls back to the runtime default |
 | `worker_effort` | `build` | no — falls back to the runtime default |
 
@@ -682,12 +666,12 @@ session.
 ### Select the workflow definition
 
 oakridge-core seeds the bundled dev-flow definitions on startup. In the kbbl
-PWA, choose **New Run** and select `dev-flow v6` (the newest version is selected
+PWA, choose **New Run** and select `dev-flow v8` (the newest version is selected
 by default). The Planner and Worker pickers each choose a runtime, a model, and
 an effort; all three are sent with the run.
 
 Older versions are retired automatically when a new built-in version is first
-seeded, so only v6 appears in the picker. They are archived, not deleted — every
+seeded, so only v8 appears in the picker. They are archived, not deleted — every
 existing run still resolves its definition. To bring one back, tick **Show
 retired** on the Workflow Definitions screen and choose **Restore** (or
 `POST /workflow_defs/:id/unarchive`); the seed will not re-retire it on later
@@ -703,7 +687,7 @@ CORE=http://127.0.0.1:8790
 
 curl -sX POST "$CORE/workflow_defs" \
   -H 'content-type: application/json' \
-  -d "$(jq '{name,version,graph}' oakridge-core/examples/dev_flow_v6.json)"
+  -d "$(jq '{name,version,graph}' oakridge-core/examples/dev_flow_v8.json)"
 ```
 
 Save the returned `id` as `DEV_FLOW_DEF_ID`. Use `dev_flow.json` instead when
@@ -736,11 +720,11 @@ curl -sX POST "$CORE/workflow_runs" \
 `brief_notes` and the complete keyed repository list are passed into the
 `spec_analyzer` and `plan_writer` prompts. Each planned cohort selects one key.
 
-`planner_runtime` and `worker_runtime` are required by versions 5 and 6 — omitting
+`planner_runtime` and `worker_runtime` are required by versions 5 and later — omitting
 either fails the corresponding stage at config-build time. Drop all six
 role keys when running the version 1 or 3 definitions, which pin their runtime.
 
-### Complete v6 operator workflow
+### Complete v8 operator workflow
 
 Use the PWA for the normal path; the API remains available for automation.
 
@@ -754,24 +738,25 @@ Use the PWA for the normal path; the API remains available for automation.
    `depends_on` edges. Approve only when repository keys, scope, dependencies,
    decisions, and acceptance criteria are correct. This is a one-step gate;
    approval materializes build units exactly once.
-3. Open **Review inbox**. A build cohort appears as **Waiting for admission**.
-   Inspect its brief and blockers. **Admit build** is offered only after every
-   dependency is complete. Admission starts that cohort's kbbl session and
-   worktree; independent eligible cohorts may be admitted in parallel.
-4. Follow the cohort through **Building** to **Artifact review**. Open its
-   artifact, review the descriptor-selected sections and any discussion or
-   checklist items, then choose **Approve** or **Request revision**. Revision
-   feedback returns to the same delegated session; review the latest child
-   artifact before approving.
-5. At **Merge confirmation**, inspect the displayed PR URL, branch, and
-   worktree. After the external PR operation, record **Confirm merged** or
-   **Closed without merge**. Either explicit terminal outcome completes the
-   build cohort and releases eligible dependents; Oakridge never merges the PR
-   itself.
-6. The matching assessor starts from the completed builder worktree. Track
-   **Assessing** and final **Done** state in **Review inbox**. The cohort card
-   separately reports build and assessment completion. When every cohort and
-   assessment is complete, the workflow run reaches `done`.
+3. Review each emitted `dev.build_brief`. Approve only when its repository,
+   scope, decisions, and acceptance criteria are correct. An approved brief is
+   admitted automatically as soon as all cohort dependencies are complete;
+   independent eligible cohorts may build in parallel.
+4. Follow the cohort through **Building** and then review its `dev.assessment`.
+   Choose **Approve assessment** only when the implementation satisfies the
+   brief, or request a revision with actionable feedback. The cohort cannot
+   advance to GitHub review until this assessment gate is approved.
+5. Review the cohort PR in GitHub and merge it into the exact Epic branch shown
+   by Oakridge. A trusted poller, webhook adapter, or manual recheck submits the
+   PR observation; Oakridge verifies the forge repository, PR identity, head,
+   base, merged state, and timestamp. A matching merge automatically completes
+   the cohort and releases eligible dependent builds. Oakridge never clicks the
+   GitHub merge button itself.
+6. After all cohorts complete, the Epic enters **Final integration**. Merge each
+   repository's Epic PR into its configured base branch. Guarded policy accepts
+   exact merged evidence automatically; external-confirmation policy additionally
+   requires the explicit operator confirmation shown in run detail. The Epic is
+   complete only after every repository binding completes this final step.
 
 Gate mutations include a client-generated idempotency key, exact artifact
 revision, gate step, action, comment, and optional feedback. Durable pending
@@ -836,30 +821,29 @@ Fanned stages expand into unit rows. Each unit row shows its own status,
 session, worktree, and emitted artifacts; N>1 state is authoritative on these
 unit rows rather than mirrored onto the parent stage row.
 
-The run detail also shows a **Refresh** button and the parked gate panel (see
-below). A pending manually admitted build unit includes its cohort brief,
-dependency blockers, and **Admit build** action.
+The run detail also shows a **Refresh** button, the parked artifact gates, and
+the typed Epic profile. During final integration it shows one repository card
+with expected branches, observed final PR state, reconciliation mismatches, and
+the external-confirmation action when that policy is configured.
 
 ### Review inbox (`#oakridge/review-inbox`)
 
-This is the cross-run operator queue. **Needs attention** combines eligible
-build admissions, artifact gates, merge decisions, blocked cohorts, and failed
-cohorts. Artifact items link straight to the review page; admission items can
-be admitted in place. **Cohort lifecycle** tracks every cohort through Waiting
-for admission, Building, Artifact review, Revision requested, Merge
-confirmation, Assessing, Done, or Failed, with separate build and assessment
-completion indicators.
+This is the cross-run operator queue. **Needs attention** combines artifact
+gates, PR-reconciliation mismatches, blocked cohorts, and failed cohorts.
+Artifact items link straight to the review page. **Cohort lifecycle** tracks
+every cohort through Brief review, Waiting on dependencies, Building,
+Assessment review, GitHub review, PR mismatch, Done, or Failed, with separate
+build and assessment completion indicators.
 
 ### Parked gate panel
 
 When any stage in the run is parked, the gate panel renders below the stage
 table. Each parked gate shows:
-- Gate type (artifact approval vs. merge confirmation)
+- Gate type and current artifact-approval step
 - Stage name and artifact revision id
-- Worktree branch and path (when present) — **read before approving a
-  merge-confirmation gate**
-- Only the actions configured for the current step: **Approve** / **Request
-  revision**, or **Confirm merged** / **Closed without merge** in dev-flow v6
+- Worktree branch and path when present
+- Only the actions configured for the current artifact: **Approve** / **Request
+  revision** (including the per-cohort brief and assessment gates in v8)
 
 The `id` field on each gate returned by `GET /parked` and `GET /runs/:id/gates` is a
 **composite gate id** with the form `"{stage_instance_uuid}:{unit_id}"`. For a
@@ -973,14 +957,11 @@ for the detailed recovery states.
 
 ## Deliberate boundaries
 
-The runnable v2 operator flow still leaves these operations outside Oakridge:
+The runnable v2 operator flow deliberately leaves these operations outside Oakridge:
 
-- **PR merge** — the seeded v2 build agent opens one PR per cohort and emits a
-  `dev.pr_summary`; oakridge-core surfaces the matching PR URL and worktree at
-  the unit's merge-confirmation gate. The operator completes the merge itself.
-- **Full epic lifecycle management** — v1 Epics carry archive, delete, and status
-  transitions. v2 uses workflow runs and cohort lifecycle states rather than a
-  separately named Epic entity.
+- **GitHub merge execution** — Oakridge validates observations and advances its
+  lifecycle, but a human or external GitHub automation performs cohort-to-Epic
+  and final Epic-to-base merges.
 - **Automatic retry of failed work** — delegated sessions reattach after a
   coordinator restart, including independent fan-out units. A failed unit is
   not automatically rerun; the operator uses targeted `retry_stuck` or fails

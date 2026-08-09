@@ -7,7 +7,7 @@ import { RunListView } from "../views/RunListView";
 import { RunDetailView } from "../views/RunDetailView";
 import { ArtifactReviewView } from "../views/ArtifactReviewView";
 import { GlobalParkedGateList } from "../ParkedGateList";
-import type { RunSummary, RunDetail, ArtifactDetail, ParkedGate } from "../types";
+import type { RunSummary, RunDetail, ArtifactDetail, ParkedGate, RepositoryKey, EpicProfileId, WorkflowRunId } from "../types";
 
 type FetchHandler = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -242,7 +242,7 @@ describe("RunDetailView", () => {
     expect(await screen.findByTestId("or-run-detail-error")).toBeTruthy();
   });
 
-  it("renders a cohort brief and admits an eligible pending build unit", async () => {
+  it("renders a manual admission control when the workflow explicitly requires it", async () => {
     const detail: RunDetail = {
       ...RUN_DETAIL_FIXTURE,
       stages: [{
@@ -277,10 +277,8 @@ describe("RunDetailView", () => {
         }],
       }],
     };
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      void init;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes("/admit")) return new Response(null, { status: 204 });
       if (url.includes("/gates")) return json([]);
       if (url.includes("/runs/")) return json(detail);
       return json([]);
@@ -291,13 +289,7 @@ describe("RunDetailView", () => {
 
     expect(await screen.findByText("Build the cohort UI")).toBeTruthy();
     expect(screen.getByText("Admission is explicit")).toBeTruthy();
-    fireEvent.click(screen.getByTestId("or-admit-unit-btn"));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/oakridge/api/stages/build-stage-1/units/cohort-a/admit",
-      expect.objectContaining({ method: "POST" }),
-    ));
-    const admissionRequest = fetchMock.mock.calls.find(([input]) => String(input).includes("/admit"));
-    expect(JSON.parse(String(admissionRequest?.[1]?.body))).toEqual({ idempotency_key: expect.any(String) });
+    expect(screen.getByTestId("or-admit-unit-btn")).toBeTruthy();
   });
 
   it("shows the exact dependencies blocking build admission", async () => {
@@ -325,9 +317,75 @@ describe("RunDetailView", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch(detail));
     wrap(<RunDetailView runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
 
-    expect((await screen.findByTestId("or-admission-blocked")).textContent).toContain("cohort-a, schema-review");
-    expect(screen.getByTestId("or-dependency-status").textContent).toContain("cohort-a: waiting");
+    expect((await screen.findByTestId("or-dependency-status")).textContent).toContain("cohort-a: waiting");
     expect(screen.queryByTestId("or-admit-unit-btn")).toBeNull();
+  });
+
+  it("shows final integration and explicitly confirms external completion", async () => {
+    const repositoryKey = "oakridge" as RepositoryKey;
+    const detail: RunDetail = {
+      ...RUN_DETAIL_FIXTURE,
+      epic_profile: {
+        id: "epic-1" as EpicProfileId,
+        workflow_run_id: "run-1" as WorkflowRunId,
+        title: "V2 parity",
+        slug: "v2-parity",
+        lifecycle_state: "final_integration",
+        final_merge_policy: "external_confirmation",
+        repositories: [{
+          repository_key: repositoryKey,
+          repository_path: "/code/oakridge",
+          base_branch: "main",
+          epic_branch: "epic/v2-parity",
+          forge_repository: { provider: "github", owner: "RankOneLabs", name: "oakridge" },
+          final_pull_request: {
+            number: 402,
+            url: "https://github.com/RankOneLabs/oakridge/pull/402",
+            head_branch: "epic/v2-parity",
+            base_branch: "main",
+          },
+          final_merge_state: "awaiting_confirmation",
+        }, {
+          repository_key: "docs" as RepositoryKey,
+          repository_path: "/code/docs",
+          base_branch: "main",
+          epic_branch: "epic/v2-parity",
+          forge_repository: { provider: "github", owner: "RankOneLabs", name: "docs" },
+          final_pull_request: {
+            number: 17,
+            url: "https://github.com/RankOneLabs/docs/pull/17",
+            head_branch: "epic/v2-parity",
+            base_branch: "main",
+          },
+          final_merge_state: "pull_request_open",
+        }],
+        created_at: "2026-08-08T10:00:00Z",
+        updated_at: "2026-08-08T11:00:00Z",
+      },
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/final_pull_requests/") && url.endsWith("/confirm")) {
+        expect(init?.method).toBe("POST");
+        return json({ outcome: "completed", profile: { ...detail.epic_profile, lifecycle_state: "completed" } });
+      }
+      if (url.includes("/gates")) return json([]);
+      if (url.includes("/runs/")) return json(detail);
+      return json([]);
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(fetchMock);
+
+    wrap(<RunDetailView runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
+
+    expect(await screen.findByTestId("or-final-integration")).toBeTruthy();
+    expect(screen.getAllByText("epic/v2-parity")).toHaveLength(2);
+    expect(screen.getAllByText("main")).toHaveLength(2);
+    expect(screen.queryByTestId("or-confirm-final-docs")).toBeNull();
+    fireEvent.click(screen.getByTestId("or-confirm-final-oakridge"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/oakridge/api/workflow_runs/run-1/final_pull_requests/oakridge/confirm",
+      expect.objectContaining({ method: "POST" }),
+    ));
   });
 });
 

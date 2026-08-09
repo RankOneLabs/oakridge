@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::executor::prompt_config::SlotBinding;
-use crate::types::OutputSlot;
+use crate::types::{OutputSlot, StageOperatorRole};
 
 // ── Bindable ──────────────────────────────────────────────────────────────────
 
@@ -50,10 +50,12 @@ pub struct WorktreeIdentity {
 /// Per-unit worktree template; {{UNIT_ID}} and {{STAGE_INSTANCE_ID}} are substituted.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct WorktreeTemplate {
-    pub branch_name: String,
-    pub worktree_subdir: String,
+    /// Branch to create for the unit. A literal preserves the original template
+    /// form; a binding can select repository-specific topology from run context.
+    pub branch_name: Bindable,
+    pub worktree_subdir: Bindable,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub base_ref: Option<String>,
+    pub base_ref: Option<Bindable>,
 }
 
 // ── FanOut ────────────────────────────────────────────────────────────────────
@@ -177,6 +179,10 @@ pub struct DelegatedSessionDefConfig {
     /// retained for loading existing workflow definitions.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_gate: Option<OutputGateConfig>,
+    /// Output whose emit hands a unit to a correlated downstream operator role
+    /// without creating a human gate or marking dependencies complete.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_handoff: Option<OutputHandoffConfig>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -185,6 +191,16 @@ pub struct OutputGateConfig {
     pub steps: Vec<OutputGateStep>,
     #[serde(default)]
     pub requires_zero_open_review_items: bool,
+    #[serde(default)]
+    pub revision_target: RevisionTarget,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RevisionTarget {
+    #[default]
+    SelfStage,
+    UpstreamHandoff,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -192,6 +208,19 @@ pub struct OutputGateStep {
     #[serde(rename = "type")]
     pub gate_type: DelegatedGateKind,
     pub actions: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct OutputHandoffConfig {
+    pub output: String,
+    pub downstream_role: StageOperatorRole,
+    pub approved_wait: ExternalWaitDescriptor,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ExternalWaitDescriptor {
+    /// Stable workflow-owned external boundary, for example `github_review`.
+    pub kind: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -216,6 +245,7 @@ impl OutputGateConfig {
                 },
             ],
             requires_zero_open_review_items: true,
+            revision_target: RevisionTarget::SelfStage,
         }
     }
 }
@@ -241,6 +271,11 @@ pub struct DelegatedSessionConfig {
     /// Workdirs resolved from `fan_out.workdir`, keyed by materialized unit id.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub resolved_fan_out_workdirs: HashMap<String, PathBuf>,
+    /// Repository-aware worktree identities resolved while activation inputs and
+    /// immutable run context are available. Persisting these keeps retries from
+    /// silently selecting a different base branch.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub resolved_fan_out_worktrees: HashMap<String, WorktreeIdentity>,
     /// Immutable run context retained for bindings on units delivered after activation.
     #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
     pub fan_out_context: serde_json::Value,
@@ -266,6 +301,8 @@ pub struct DelegatedSessionConfig {
     pub gate_output: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub output_gate: Option<OutputGateConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_handoff: Option<OutputHandoffConfig>,
 }
 
 /// Prompt material that cannot be recovered from a rendered fan-out prompt.
@@ -337,6 +374,7 @@ mod tests {
             fan_out: None,
             gate_output: None,
             output_gate: None,
+            output_handoff: None,
         };
 
         let value = serde_json::to_value(&def).unwrap();
@@ -389,6 +427,7 @@ mod tests {
             fan_out_prompt_plan: None,
             resolved_fan_out_over: None,
             resolved_fan_out_workdirs: HashMap::new(),
+            resolved_fan_out_worktrees: HashMap::new(),
             fan_out_context: serde_json::Value::Null,
             workdir: PathBuf::from("/workspace/abc"),
             session_name: "s1".into(),
@@ -404,6 +443,7 @@ mod tests {
             fan_out: None,
             gate_output: None,
             output_gate: None,
+            output_handoff: None,
         };
 
         let value = serde_json::to_value(&cfg).unwrap();
@@ -434,9 +474,9 @@ mod tests {
             },
             workdir: None,
             worktree: Some(WorktreeTemplate {
-                branch_name: "cohort/{{UNIT_ID}}".into(),
-                worktree_subdir: "wt/{{UNIT_ID}}".into(),
-                base_ref: Some("main".into()),
+                branch_name: Bindable::Literal("cohort/{{UNIT_ID}}".into()),
+                worktree_subdir: Bindable::Literal("wt/{{UNIT_ID}}".into()),
+                base_ref: Some(Bindable::Literal("main".into())),
             }),
             inherit_worktree_from: None,
         };

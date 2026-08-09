@@ -10,6 +10,7 @@ import type { StageDetail } from "../../types";
 import { RunParkedGateList } from "../../ParkedGateList";
 import { RunStageRow, RunUnitRow } from "../molecules/RunStageRows";
 import { StatusBadge } from "../atoms/StatusBadge";
+import { FinalIntegrationPanel } from "./FinalIntegrationPanel";
 
 const secondaryButtonClass =
   "inline-flex items-center gap-1.5 rounded-md border border-[var(--border-muted)] bg-transparent px-3 py-1.5 text-sm text-[var(--text-secondary)] hover:border-[var(--border-hover)]";
@@ -146,6 +147,8 @@ export function RunDetail({ runId, onBack, onSelectArtifact }: RunDetailProps) {
           </button>
         </div>
       </header>
+
+      {run.epic_profile && <FinalIntegrationPanel runId={runId} profile={run.epic_profile} />}
 
       <section className="flex flex-col">
         <h3 className="mb-3 mt-0 text-sm font-semibold text-[var(--text-secondary)]">Stages</h3>
