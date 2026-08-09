@@ -8,8 +8,8 @@ interface RepositoryLaunchFieldsProps {
   disabled: boolean;
 }
 
-const secondaryButtonClass = "inline-flex items-center gap-1.5 rounded-md border border-[var(--border-muted)] bg-transparent px-3 py-1.5 text-sm text-[var(--text-secondary)] hover:border-[var(--border-hover)]";
-const inputClass = "w-full rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-3 py-1.5 text-sm text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none";
+const secondaryButtonClass = "or-secondary-button";
+const inputClass = "or-form-input";
 
 export function RepositoryLaunchFields({ repositories, setRepositories, disabled }: RepositoryLaunchFieldsProps) {
   const update = (index: number, patch: Partial<RepositoryInputDraft>) => {
@@ -17,9 +17,9 @@ export function RepositoryLaunchFields({ repositories, setRepositories, disabled
   };
 
   return (
-    <fieldset className="flex flex-col gap-2 rounded-md border border-[var(--border-subtle)] p-3">
-      <legend className="mb-1 w-full text-xs font-medium text-[var(--text-muted)]">
-        <span className="flex items-center justify-between gap-3">
+    <fieldset className="or-repository-launch">
+      <legend className="or-repository-launch__legend">
+        <span className="or-repository-launch__heading">
           <span>Repositories</span>
         <button type="button" className={secondaryButtonClass} disabled={disabled} onClick={() => setRepositories((current) => [...current, { key: "", path: "", forge_owner: "", forge_name: "", base_branch: "main" }])}>+ Repository</button>
         </span>

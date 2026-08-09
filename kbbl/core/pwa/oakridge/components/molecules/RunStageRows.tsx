@@ -45,11 +45,15 @@ interface RunUnitRowProps {
   unit: StageUnit;
   unitArtifacts: StageDetail["artifacts"];
   onSelectArtifact?: (artifactId: string) => void;
+  onAdmit: (unitId: string) => void;
+  admitting: boolean;
+  admissionError?: string;
 }
 
-export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelectArtifact }: RunUnitRowProps) {
+export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelectArtifact, onAdmit, admitting, admissionError }: RunUnitRowProps) {
   const blockedBy = unit.admission_blocked_by ?? [];
   const dependencies = unit.params?.depends_on ?? [];
+  const needsAdmission = unit.status === "pending" && unit.admission_required === true && unit.admitted !== true;
   return (
     <Fragment>
     <tr className={stageRowClass(unit.status)} data-testid="or-stage-row">
@@ -62,12 +66,13 @@ export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelect
       <td className={tableCellClass}><div className="flex items-center gap-2">
         <StatusBadge status={unit.status} />
         {unit.gate && <span className="rounded border border-amber-400 px-1.5 py-0.5 text-xs text-amber-400">{unit.gate}</span>}
+        {unit.admission_required && unit.admitted && <span className="text-xs text-emerald-500" data-testid="or-unit-admitted">Admitted</span>}
       </div></td>
       <ArtifactCell artifacts={unitArtifacts} onSelectArtifact={onSelectArtifact} />
       <SessionCell sid={unit.sid} />
       <WorktreeCell worktree={unit.worktree} />
     </tr>
-    {unit.params && (
+    {(unit.params || needsAdmission) && (
       <tr data-testid="or-cohort-detail-row">
         <td colSpan={6} className={`${tableCellClass} bg-[var(--bg-surface)]`}>
           <div className="flex flex-col gap-3">
@@ -86,6 +91,20 @@ export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelect
                     </span>
                   );
                 })}
+              </div>
+            )}
+            {needsAdmission && (
+              <div className="flex flex-wrap items-center gap-3" data-testid="or-unit-admission">
+                {blockedBy.length > 0 || unit.admission_eligible !== true ? (
+                  <div className="text-sm text-amber-500" data-testid="or-admission-blocked">
+                    Blocked by: {blockedBy.length > 0 ? blockedBy.join(", ") : "dependencies not yet complete"}
+                  </div>
+                ) : (
+                  <button type="button" className="rounded-md border border-[var(--accent-blue)] px-3 py-1.5 text-sm text-[var(--accent-blue)] disabled:opacity-50" onClick={() => onAdmit(unit.unit_id)} disabled={admitting} data-testid="or-admit-unit-btn">
+                    {admitting ? "Admitting…" : "Admit build"}
+                  </button>
+                )}
+                {admissionError && <span role="alert" className="text-sm text-red-500">{admissionError}</span>}
               </div>
             )}
           </div>

@@ -25,4 +25,8 @@ describe("isBuildBrief", () => {
       decisions_made: [{ decision: "Missing rationale" }],
     })).toBe(false);
   });
+
+  test.each(["cohort_id", "repository_key"] as const)("rejects an empty %s", (field) => {
+    expect(isBuildBrief({ ...validBrief, [field]: "   " })).toBe(false);
+  });
 });

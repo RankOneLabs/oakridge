@@ -5,6 +5,7 @@ import { useRetryStuck } from "../../hooks/useRetryStuck";
 import { useArchiveRun } from "../../hooks/useArchiveRun";
 import { useUnarchiveRun } from "../../hooks/useUnarchiveRun";
 import { useDeleteRun } from "../../hooks/useDeleteRun";
+import { useAdmitStageUnit } from "../../hooks/useAdmitStageUnit";
 import type { StageDetail } from "../../types";
 import { RunParkedGateList } from "../../ParkedGateList";
 import { RunStageRow, RunUnitRow } from "../molecules/RunStageRows";
@@ -38,6 +39,7 @@ export function RunDetail({ runId, onBack, onSelectArtifact }: RunDetailProps) {
   const archiveMutation = useArchiveRun(runId);
   const unarchiveMutation = useUnarchiveRun(runId);
   const deleteMutation = useDeleteRun(runId);
+  const admitMutation = useAdmitStageUnit(runId);
 
   const onRefresh = () => {
     void qc.invalidateQueries({ queryKey: ["oakridge", "run", runId] });
@@ -178,6 +180,13 @@ export function RunDetail({ runId, onBack, onSelectArtifact }: RunDetailProps) {
                         unit={unit}
                         unitArtifacts={unitArtifacts}
                         onSelectArtifact={onSelectArtifact}
+                        onAdmit={(unitId) => void admitMutation.mutate({ stageId: stage.stage_instance_id, unitId })}
+                        admitting={admitMutation.isPending && admitMutation.variables?.stageId === stage.stage_instance_id && admitMutation.variables.unitId === unit.unit_id}
+                        admissionError={admitMutation.isError
+                          && admitMutation.variables?.stageId === stage.stage_instance_id
+                          && admitMutation.variables.unitId === unit.unit_id
+                          ? (admitMutation.error instanceof Error ? admitMutation.error.message : "Admission failed")
+                          : undefined}
                       />
                     );
                   });

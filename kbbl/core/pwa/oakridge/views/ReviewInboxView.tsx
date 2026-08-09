@@ -2,6 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import { GateDecisionActions } from "../GateDecisionActions";
 import { useReviewInbox } from "../hooks/useReviewInbox";
+import { useAdmitStageUnit } from "../hooks/useAdmitStageUnit";
 import type { CohortLifecycle, CohortLifecycleSummary, ParkedGate, ReviewInboxItem } from "../types";
 
 interface ReviewInboxViewProps {
@@ -10,7 +11,7 @@ interface ReviewInboxViewProps {
 }
 
 const LIFECYCLE_LABELS: Record<CohortLifecycle, string> = {
-  waiting_admission: "Brief approved · queued",
+  waiting_admission: "Brief approved · queued automatically",
   building: "Building",
   artifact_review: "Waiting for your review",
   revision_requested: "Changes requested",
@@ -29,6 +30,9 @@ function cohortKey(runId: string, unitId: string): string {
 function lifecycleLabel(cohort: CohortLifecycleSummary): string {
   if (cohort.lifecycle === "complete" && cohort.pull_request_reconciliation?.completed_at) {
     return "Merged · complete";
+  }
+  if (cohort.lifecycle === "waiting_admission" && cohort.admission.required && !cohort.admission.admitted) {
+    return cohort.admission.eligible ? "Brief approved · awaiting admission" : "Brief approved · waiting on dependencies";
   }
   return LIFECYCLE_LABELS[cohort.lifecycle];
 }
@@ -84,11 +88,27 @@ function WorkItem({ item, cohort, onSelectRun, onSelectArtifact }: { item: Revie
       </div>
       <div className="or-work-item__decision">
         {gate && <GateDecisionActions gate={gate} />}
+        {!gate && item.kind === "admission" && cohort && <AdmissionAction item={item} cohort={cohort} />}
         {!gate && item.kind === "pull_request_mismatch" && <><p>{mismatch?.detail ?? "The observed pull request does not match this cohort’s durable configuration."}</p><p>Correct the pull request repository or branches, then Oakridge will reconcile it automatically.</p></>}
-        {!gate && item.kind !== "pull_request_mismatch" && <p>{item.kind === "cohort_failed" ? "Open the run to inspect the failure and retry the work." : "This work will continue automatically when its dependencies finish."}</p>}
+        {!gate && item.kind !== "pull_request_mismatch" && item.kind !== "admission" && <p>{item.kind === "cohort_failed" ? "Open the run to inspect the failure and retry the work." : "This work will continue automatically when its dependencies finish."}</p>}
       </div>
     </article>
   );
+}
+
+function AdmissionAction({ item, cohort }: { item: ReviewInboxItem; cohort: CohortLifecycleSummary }) {
+  const admission = useAdmitStageUnit(item.run_id);
+  if (!cohort.admission.required || cohort.admission.admitted) return null;
+  if (!cohort.admission.eligible) {
+    return <p>Waiting on {cohort.admission.blocked_by.length > 0 ? cohort.admission.blocked_by.join(", ") : "dependencies to complete"}.</p>;
+  }
+  return <>
+    <p>This legacy workflow requires an explicit operator admission before the cohort starts.</p>
+    <button type="button" onClick={() => admission.mutate({ stageId: item.stage_instance_id, unitId: item.unit_id })} disabled={admission.isPending} data-testid="or-inbox-admit-btn">
+      {admission.isPending ? "Admitting…" : "Admit build"}
+    </button>
+    {admission.isError && <p role="alert">{admission.error instanceof Error ? admission.error.message : "Admission failed"}</p>}
+  </>;
 }
 
 function ProgressRow({ cohort, onSelectRun }: { cohort: CohortLifecycleSummary; onSelectRun: (id: string) => void }) {
@@ -109,11 +129,11 @@ export function ReviewInboxView({ onSelectRun, onSelectArtifact }: ReviewInboxVi
   if (query.isError) return <div role="alert" className="or-review-state or-review-state--error" data-testid="or-review-inbox-error">{query.error instanceof Error ? query.error.message : "Could not load review work."}</div>;
   if (query.isPending || !query.data) return <div className="or-review-state" data-testid="or-review-inbox-loading">Loading review work…</div>;
 
-  const visibleItems = query.data.items.filter((item) => item.kind !== "admission");
-  const actionable = visibleItems.filter((item) => item.state === "actionable" || item.kind === "pull_request_mismatch");
-  const blocked = visibleItems.filter((item) => item.state === "blocked" && item.kind !== "pull_request_mismatch");
   const cohortsByKey = new Map(query.data.cohorts.map((cohort) => [cohortKey(cohort.run_id, cohort.unit_id), cohort]));
   const cohortFor = (item: ReviewInboxItem) => cohortsByKey.get(cohortKey(item.run_id, item.unit_id));
+  const visibleItems = query.data.items.filter((item) => item.kind !== "admission" || cohortFor(item)?.admission.required === true);
+  const actionable = visibleItems.filter((item) => item.state === "actionable" || item.kind === "pull_request_mismatch");
+  const blocked = visibleItems.filter((item) => item.state === "blocked" && item.kind !== "pull_request_mismatch");
   const attentionKeys = new Set([...actionable, ...blocked].map((item) => cohortKey(item.run_id, item.unit_id)));
   const underway = query.data.cohorts.filter((cohort) => cohort.lifecycle !== "complete" && !attentionKeys.has(cohortKey(cohort.run_id, cohort.unit_id)));
   const finished = query.data.cohorts.filter((cohort) => cohort.lifecycle === "complete");

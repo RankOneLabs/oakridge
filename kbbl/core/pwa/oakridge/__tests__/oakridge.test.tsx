@@ -7,7 +7,7 @@ import { RunListView } from "../views/RunListView";
 import { RunDetailView } from "../views/RunDetailView";
 import { ArtifactReviewView } from "../views/ArtifactReviewView";
 import { GlobalParkedGateList } from "../ParkedGateList";
-import type { RunSummary, RunDetail, ArtifactDetail, ParkedGate, RepositoryKey } from "../types";
+import type { RunSummary, RunDetail, ArtifactDetail, ParkedGate, RepositoryKey, EpicProfileId, WorkflowRunId } from "../types";
 
 type FetchHandler = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -242,7 +242,7 @@ describe("RunDetailView", () => {
     expect(await screen.findByTestId("or-run-detail-error")).toBeTruthy();
   });
 
-  it("renders a cohort brief without a manual admission control", async () => {
+  it("renders a manual admission control when the workflow explicitly requires it", async () => {
     const detail: RunDetail = {
       ...RUN_DETAIL_FIXTURE,
       stages: [{
@@ -289,7 +289,7 @@ describe("RunDetailView", () => {
 
     expect(await screen.findByText("Build the cohort UI")).toBeTruthy();
     expect(screen.getByText("Admission is explicit")).toBeTruthy();
-    expect(screen.queryByTestId("or-admit-unit-btn")).toBeNull();
+    expect(screen.getByTestId("or-admit-unit-btn")).toBeTruthy();
   });
 
   it("shows the exact dependencies blocking build admission", async () => {
@@ -326,8 +326,8 @@ describe("RunDetailView", () => {
     const detail: RunDetail = {
       ...RUN_DETAIL_FIXTURE,
       epic_profile: {
-        id: "epic-1",
-        workflow_run_id: "run-1",
+        id: "epic-1" as EpicProfileId,
+        workflow_run_id: "run-1" as WorkflowRunId,
         title: "V2 parity",
         slug: "v2-parity",
         lifecycle_state: "final_integration",

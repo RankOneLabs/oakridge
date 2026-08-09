@@ -1,3 +1,5 @@
+import type { CohortId, RepositoryKey } from "../types";
+
 export interface BriefDecision {
   decision: string;
   rationale: string;
@@ -10,8 +12,8 @@ export interface RejectedApproach {
 
 /** Mirrors the registered oakridge-core `dev.build_brief` artifact body. */
 export interface BuildBrief {
-  cohort_id: string;
-  repository_key: string;
+  cohort_id: CohortId;
+  repository_key: RepositoryKey;
   title: string;
   depends_on: string[];
   goal: string;
@@ -30,7 +32,9 @@ export function isBuildBrief(value: unknown): value is BuildBrief {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const brief = value as Partial<BuildBrief>;
   return typeof brief.cohort_id === "string"
+    && brief.cohort_id.trim().length > 0
     && typeof brief.repository_key === "string"
+    && brief.repository_key.trim().length > 0
     && typeof brief.title === "string"
     && isStringArray(brief.depends_on)
     && typeof brief.goal === "string"

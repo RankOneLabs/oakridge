@@ -32,9 +32,10 @@ afterEach(() => vi.restoreAllMocks());
 describe("ReviewInboxView", () => {
   it("puts actionable work first without duplicating it in progress", async () => {
     renderInbox(inbox);
-    expect(await screen.findAllByTestId("or-review-inbox-item")).toHaveLength(1);
-    expect(screen.queryAllByTestId("or-cohort-lifecycle-card")).toHaveLength(1);
+    expect(await screen.findAllByTestId("or-review-inbox-item")).toHaveLength(2);
+    expect(screen.queryAllByTestId("or-cohort-lifecycle-card")).toHaveLength(0);
     expect(screen.getByText("Artifact ready for review")).toBeTruthy();
+    expect(screen.getByTestId("or-inbox-admit-btn")).toBeTruthy();
   });
 
   it("navigates directly to the reviewed artifact and its run", async () => {
@@ -91,9 +92,19 @@ describe("ReviewInboxView", () => {
     expect(screen.queryByTestId("or-inbox-admit-btn")).toBeNull();
   });
 
+  it("keeps automatic workflows action-free while naming their queued state", async () => {
+    const automatic = {
+      ...inbox.cohorts[0],
+      admission: { required: false, admitted: true, eligible: true, blocked_by: [] },
+    };
+    renderInbox({ cohorts: [automatic], items: [inbox.items[0]] });
+    expect(await screen.findByText("Brief approved · queued automatically")).toBeTruthy();
+    expect(screen.queryByTestId("or-inbox-admit-btn")).toBeNull();
+  });
+
   it("names every lifecycle state in operator language", async () => {
     const states: CohortLifecycle[] = ["waiting_admission", "building", "artifact_review", "revision_requested", "merge_confirmation", "assessing", "github_review", "pull_request_mismatch", "complete", "failed"];
-    const labels = ["Brief approved · queued", "Building", "Waiting for your review", "Changes requested", "Waiting for merge confirmation", "Checking the result", "Waiting for GitHub review or merge", "Pull request needs attention", "Needs recovery"];
+    const labels = ["Brief approved · awaiting admission", "Building", "Waiting for your review", "Changes requested", "Waiting for merge confirmation", "Checking the result", "Waiting for GitHub review or merge", "Pull request needs attention", "Needs recovery"];
     renderInbox({
       items: [],
       cohorts: states.map((lifecycle, index) => ({

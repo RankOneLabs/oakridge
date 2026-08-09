@@ -591,7 +591,7 @@ operator workflow:
 
 ### Workflow graph
 
-```
+```text
 spec_analyzer → plan_writer → brief_writer → build → assessor
 ```
 

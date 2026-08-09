@@ -45,6 +45,9 @@ export interface CreateRunContext {
 }
 
 export type RepositoryKey = string & { readonly __brand: "RepositoryKey" };
+export type CohortId = string & { readonly __brand: "CohortId" };
+export type EpicProfileId = string & { readonly __brand: "EpicProfileId" };
+export type WorkflowRunId = string & { readonly __brand: "WorkflowRunId" };
 
 export interface RepositoryInputDraft {
   key: string;
@@ -103,8 +106,8 @@ export interface EpicRepositoryBinding {
 }
 
 export interface EpicWorkflowProfile {
-  id: string;
-  workflow_run_id: string;
+  id: EpicProfileId;
+  workflow_run_id: WorkflowRunId;
   title: string;
   slug: string;
   lifecycle_state: EpicLifecycleState;
@@ -119,9 +122,25 @@ export interface ConfirmFinalPullRequestRequest {
   operator_comment?: string;
 }
 
-export interface FinalPullRequestResponse {
-  outcome: "waiting" | "completed" | "already_completed" | "mismatch" | "ignored_stale" | "awaiting_external_confirmation";
-  profile: EpicWorkflowProfile;
+type FinalPullRequestOutcome =
+  | "waiting"
+  | "completed"
+  | "already_completed"
+  | "mismatch"
+  | "ignored_stale"
+  | "awaiting_external_confirmation";
+
+export type FinalPullRequestResponse = {
+  [Outcome in FinalPullRequestOutcome]: {
+    outcome: Outcome;
+    profile: EpicWorkflowProfile;
+  };
+}[FinalPullRequestOutcome];
+
+export interface AdmitStageUnitResponse {
+  stage_instance_id: string;
+  unit_id: string;
+  admitted: boolean;
 }
 
 export interface CreateRunRequest {
