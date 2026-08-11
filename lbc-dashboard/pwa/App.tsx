@@ -5,7 +5,7 @@
  * top-level sections that reuse the same task catalog and task selection
  * state so a newly created task can be launched immediately.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { EmptyMessage } from "./components/atoms/EmptyMessage";
 import { TabButton } from "./components/atoms/TabButton";
@@ -29,18 +29,30 @@ import { useGraders } from "./hooks/useGraders";
 import { useHashSelection } from "./hooks/useHashSelection";
 import { useTasks } from "./hooks/useTasks";
 import type { Tab, CellArchiveFilter } from "./lib/types";
+import {
+  readStoredTheme,
+  writeStoredTheme,
+  type DashboardTheme,
+} from "./lib/themeStorage";
 
 type DashboardSection = "launch" | "tasks" | "graders";
-type DashboardTheme = "light" | "dark";
 
-const THEME_STORAGE_KEY = "lbc-dashboard.theme";
+interface InitialThemeSelection {
+  theme: DashboardTheme;
+  canPersist: boolean;
+}
 
-function initialTheme(): DashboardTheme {
-  const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
-  if (stored === "light" || stored === "dark") return stored;
-  return window.matchMedia("(prefers-color-scheme: dark)").matches
-    ? "dark"
-    : "light";
+function initialTheme(): InitialThemeSelection {
+  const storedTheme = readStoredTheme(window.localStorage);
+  if (storedTheme.ok && storedTheme.value !== null) {
+    return { theme: storedTheme.value, canPersist: true };
+  }
+  return {
+    theme: window.matchMedia("(prefers-color-scheme: dark)").matches
+      ? "dark"
+      : "light",
+    canPersist: storedTheme.ok,
+  };
 }
 
 const SECTION_LABELS: Array<{ key: DashboardSection; label: string }> = [
@@ -50,7 +62,9 @@ const SECTION_LABELS: Array<{ key: DashboardSection; label: string }> = [
 ];
 
 export function App() {
-  const [theme, setTheme] = useState<DashboardTheme>(initialTheme);
+  const [initialThemeSelection] = useState<InitialThemeSelection>(initialTheme);
+  const [theme, setTheme] = useState<DashboardTheme>(initialThemeSelection.theme);
+  const canPersistTheme = useRef(initialThemeSelection.canPersist);
   const [archiveFilter, setArchiveFilter] =
     useState<CellArchiveFilter>("default");
   const { cells, refresh: refreshCells } = useCells(archiveFilter);
@@ -87,7 +101,13 @@ export function App() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+    document
+      .querySelector<HTMLMetaElement>('meta[name="theme-color"]')
+      ?.setAttribute("content", theme === "dark" ? "#0c100f" : "#f1f4ef");
+    if (canPersistTheme.current) {
+      const result = writeStoredTheme(window.localStorage, theme);
+      if (!result.ok) canPersistTheme.current = false;
+    }
   }, [theme]);
 
   useEffect(() => {

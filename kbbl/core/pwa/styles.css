@@ -4989,7 +4989,7 @@ body {
 
 html,
 body {
-  font-family: "Manrope", "Avenir Next", Inter, ui-sans-serif, system-ui, sans-serif;
+  font-family: Manrope, "Avenir Next", Inter, ui-sans-serif, system-ui, sans-serif;
   background:
     radial-gradient(circle at 82% -10%, rgb(71 113 79 / 18%), transparent 34rem),
     var(--bg-app);
@@ -5073,7 +5073,7 @@ a:focus-visible {
 .section-kicker,
 .inbox-review-heading {
   color: var(--accent-blue);
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-family: SFMono-Regular, Consolas, "Liberation Mono", monospace;
   font-size: 0.65rem;
   font-weight: 600;
   letter-spacing: 0.14em;
@@ -5161,7 +5161,7 @@ a:focus-visible {
 }
 
 .inbox-review-heading {
-  margin-bottom: 0.75rem;
+  margin: 0 0 0.75rem;
 }
 
 .inbox-review-list {
@@ -5202,7 +5202,7 @@ a:focus-visible {
 .inbox-review-card time {
   flex: 0 0 auto;
   color: var(--text-muted);
-  font-family: "SFMono-Regular", Consolas, monospace;
+  font-family: SFMono-Regular, Consolas, monospace;
   font-size: 0.7rem;
 }
 
@@ -5270,7 +5270,7 @@ a:focus-visible {
   height: 1.9rem;
   border: 1px solid #7ac786;
   color: var(--accent-blue);
-  font-family: "SFMono-Regular", Consolas, monospace;
+  font-family: SFMono-Regular, Consolas, monospace;
   font-size: 0.75rem;
   font-style: normal;
   transform: rotate(45deg);

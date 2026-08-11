@@ -89,11 +89,11 @@
 
   body {
     margin: 0;
-    color: rgb(28 25 23);
+    color: var(--color-stone-950);
     background:
       radial-gradient(circle at 80% 0, color-mix(in srgb, var(--color-sky-100) 70%, transparent), transparent 38rem),
       var(--color-stone-100);
-    font-family: "Manrope", "Avenir Next", Inter, ui-sans-serif, system-ui, sans-serif;
+    font-family: Manrope, "Avenir Next", Inter, ui-sans-serif, system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }
@@ -134,7 +134,7 @@
   place-items: center;
   border: 1px solid var(--color-sky-600);
   color: var(--color-sky-700);
-  font-family: "SFMono-Regular", Consolas, monospace;
+  font-family: SFMono-Regular, Consolas, monospace;
   font-size: 0.75rem;
   transform: rotate(45deg);
 }

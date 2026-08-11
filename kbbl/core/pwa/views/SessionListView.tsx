@@ -201,9 +201,9 @@ export function SessionListView({
 
       {pendingPlanCards.length > 0 && (
         <section className="inbox-review-section">
-          <div className="inbox-review-heading">
+          <h2 className="inbox-review-heading">
             Pending plans
-          </div>
+          </h2>
           <ul className="inbox-review-list">
             {pendingPlanCards.map((p) => (
               <li key={p.id}>
@@ -213,7 +213,7 @@ export function SessionListView({
                   className="inbox-review-card"
                 >
                   <span>Plan {p.id.slice(0, 8)}</span>
-                  <time>
+                  <time dateTime={p.created_at}>
                     {p.created_at.slice(0, 10)}
                   </time>
                 </button>
@@ -225,9 +225,9 @@ export function SessionListView({
 
       {pendingBriefCards.length > 0 && (
         <section className="inbox-review-section">
-          <div className="inbox-review-heading">
+          <h2 className="inbox-review-heading">
             Pending briefs
-          </div>
+          </h2>
           <ul className="inbox-review-list">
             {pendingBriefCards.map((b) => (
               <li key={b.id}>
@@ -239,7 +239,7 @@ export function SessionListView({
                   <span>
                     {b.goal.length > 60 ? `${b.goal.slice(0, 60)}…` : b.goal}
                   </span>
-                  <time>
+                  <time dateTime={b.created_at}>
                     {b.created_at.slice(0, 10)}
                   </time>
                 </button>
