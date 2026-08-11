@@ -125,7 +125,10 @@ export function Sidebar({ sessions, onSelectSession }: SidebarProps) {
   return (
     <aside className="app-sidebar">
       <div className="sidebar-header">
-        <span className="sidebar-title">Projects</span>
+        <div className="sidebar-brand">
+          <span className="sidebar-brand-mark">K</span>
+          <span><strong>kbbl</strong><small>operator console</small></span>
+        </div>
         <button
           type="button"
           className="sidebar-toggle"
@@ -138,6 +141,7 @@ export function Sidebar({ sessions, onSelectSession }: SidebarProps) {
       </div>
 
       <div className="sidebar-actions">
+        <span className="sidebar-title">Workspace</span>
         <button
           type="button"
           className="sidebar-action"

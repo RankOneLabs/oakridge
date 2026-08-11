@@ -3,7 +3,23 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>lbc-dashboard</title>
+    <meta name="theme-color" content="#0c100f" />
+    <title>Legit Biz Club · Oakridge</title>
+    <script>
+      try {
+        var storedTheme = localStorage.getItem("lbc-dashboard.theme");
+        var resolvedTheme =
+          storedTheme === "light" || storedTheme === "dark"
+            ? storedTheme
+            : matchMedia("(prefers-color-scheme: dark)").matches
+              ? "dark"
+              : "light";
+        document.documentElement.dataset.theme = resolvedTheme;
+        document
+          .querySelector('meta[name="theme-color"]')
+          .setAttribute("content", resolvedTheme === "dark" ? "#0c100f" : "#f1f4ef");
+      } catch (error) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

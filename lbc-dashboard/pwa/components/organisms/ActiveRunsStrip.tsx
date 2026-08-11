@@ -12,20 +12,20 @@ export function ActiveRunsStrip() {
 
   if (runs.length === 0) {
     return (
-      <p className="px-4 py-2 text-sm italic text-stone-400">No runs yet.</p>
+      <p className="mx-auto max-w-[1600px] px-5 pb-6 text-sm text-stone-400">No runs yet.</p>
     );
   }
 
   const sorted = [...runs].sort((a, b) => b.started_ms - a.started_ms);
 
   return (
-    <ul className="flex flex-wrap gap-2 px-4 pb-3">
+    <ul className="mx-auto flex max-w-[1600px] flex-wrap gap-2 px-5 pb-6">
       {sorted.map((run) => {
         const condLabel = conditionName(run.condition.kind, run.condition.n);
         return (
           <li
             key={run.runId}
-            className="flex items-center gap-2 rounded border border-stone-200 bg-stone-50 px-3 py-1.5 text-sm"
+            className="flex items-center gap-2 rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm"
           >
             <span className="font-medium text-stone-700">
               {run.task} × {condLabel}

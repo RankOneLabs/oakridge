@@ -167,8 +167,8 @@ export function LaunchForm({
   }
 
   return (
-    <div className="flex flex-wrap gap-6 px-4 pb-4 pt-2">
-      <div className="flex flex-col gap-1">
+    <div className="mx-auto grid max-w-[1600px] gap-5 px-5 py-6 md:grid-cols-2 xl:grid-cols-[minmax(18rem,1.4fr)_1fr_1fr_.7fr_auto]">
+      <div className="flex flex-col gap-2 rounded-xl border border-stone-200 bg-stone-50 p-4">
         <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">
           Task
         </label>
@@ -217,7 +217,7 @@ export function LaunchForm({
         )}
       </div>
 
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col gap-2 rounded-xl border border-stone-200 bg-stone-50 p-4">
         <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">
           Models
         </label>
@@ -275,7 +275,7 @@ export function LaunchForm({
         </div>
       </div>
 
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col gap-2 rounded-xl border border-stone-200 bg-stone-50 p-4">
         <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">
           Condition
         </label>
@@ -308,7 +308,7 @@ export function LaunchForm({
         </div>
       </div>
 
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col gap-2 rounded-xl border border-stone-200 bg-stone-50 p-4">
         <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">
           Grade
         </label>
@@ -328,14 +328,14 @@ export function LaunchForm({
         )}
       </div>
 
-      <div className="flex flex-col justify-end gap-1.5">
+      <div className="flex min-w-32 flex-col justify-end gap-2">
         {!result.ok && selectedTaskName !== null && (
           <p className="text-xs text-red-500">{result.error}</p>
         )}
         {warning !== null && <p className="text-xs text-amber-600">⚠ {warning}</p>}
         {launchError !== null && <p className="text-xs text-red-500">{launchError}</p>}
         <button
-          className="rounded bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"
+          className="min-h-12 rounded-lg bg-sky-600 px-5 py-2 text-sm font-bold text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"
           disabled={
             is_pending ||
             selectedTask === null ||

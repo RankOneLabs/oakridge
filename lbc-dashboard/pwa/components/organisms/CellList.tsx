@@ -41,10 +41,10 @@ export function CellList({
   onDelete: (id: CellId) => void;
 }) {
   return (
-    <aside className="w-72 overflow-auto border-r border-stone-300 bg-stone-50 py-3">
-      <div className="mx-4 mb-3 flex items-center justify-between">
-        <h2 className="text-xs uppercase tracking-wide text-stone-600">
-          cells
+    <aside className="w-80 shrink-0 overflow-auto border-r border-stone-200 bg-stone-50 py-4 max-md:w-64">
+      <div className="mx-4 mb-4 flex items-center justify-between">
+        <h2 className="text-[10px] font-semibold uppercase tracking-[0.18em] text-stone-500">
+          Study cells
         </h2>
         <div role="group" aria-label="Archive filter" className="flex gap-0.5">
           {FILTER_OPTIONS.map((opt) => (
@@ -53,7 +53,7 @@ export function CellList({
               type="button"
               aria-pressed={filter === opt.value}
               onClick={() => onFilterChange(opt.value)}
-              className={`rounded px-1.5 py-0.5 text-[10px] ${
+              className={`rounded-full px-2 py-1 text-[10px] ${
                 filter === opt.value
                   ? "bg-sky-600 text-white"
                   : "text-stone-500 hover:bg-stone-200"
