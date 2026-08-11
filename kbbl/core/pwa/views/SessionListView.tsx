@@ -147,10 +147,16 @@ export function SessionListView({
       <Sidebar sessions={sidebarSessions} onSelectSession={onSelect} />
       <div className="app app-list">
       <header className="top-bar">
-        <span className={`status status-${inboxStatus}`}>{inboxStatus}</span>
-        <span className="event-count">
-          {sorted.length} {sorted.length === 1 ? "session" : "sessions"}
-        </span>
+        <div className="workspace-heading">
+          <span className="workspace-eyebrow">Operator workspace</span>
+          <strong>Sessions</strong>
+        </div>
+        <div className="workspace-status">
+          <span className={`status status-${inboxStatus}`}>{inboxStatus}</span>
+          <span className="event-count">
+            {sorted.length} {sorted.length === 1 ? "session" : "sessions"}
+          </span>
+        </div>
         <button
           type="button"
           className="theme-toggle"
@@ -163,6 +169,13 @@ export function SessionListView({
           {theme === "dark" ? "LIGHT" : "DARK"}
         </button>
       </header>
+      <div className="session-list-intro">
+        <div>
+          <p className="section-kicker">Command center</p>
+          <h1>Start, resume, and review your work.</h1>
+          <p>Keep active agent sessions and pending decisions in one readable queue.</p>
+        </div>
+      </div>
       <div className="session-list-actions">
         <NewSessionForm
           defaultWorkdir={defaultWorkdir}
@@ -187,46 +200,22 @@ export function SessionListView({
       )}
 
       {pendingPlanCards.length > 0 && (
-        <section style={{ padding: "8px 12px" }}>
-          <div
-            style={{
-              fontSize: 12,
-              fontWeight: 600,
-              opacity: 0.7,
-              marginBottom: 6,
-              textTransform: "uppercase",
-              letterSpacing: "0.04em",
-            }}
-          >
+        <section className="inbox-review-section">
+          <div className="inbox-review-heading">
             Pending plans
           </div>
-          <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 4 }}>
+          <ul className="inbox-review-list">
             {pendingPlanCards.map((p) => (
               <li key={p.id}>
                 <button
                   type="button"
                   onClick={() => { window.location.hash = `plan/${p.id}`; }}
-                  style={{
-                    width: "100%",
-                    textAlign: "left",
-                    padding: "6px 10px",
-                    borderRadius: 4,
-                    border: "1px solid var(--border, #444)",
-                    background: "var(--surface-raised, #1e1e1e)",
-                    cursor: "pointer",
-                    fontSize: 13,
-                  }}
+                  className="inbox-review-card"
                 >
-                  <span style={{ fontWeight: 500 }}>Plan {p.id.slice(0, 8)}</span>
-                  <span
-                    style={{
-                      marginLeft: 8,
-                      fontSize: 11,
-                      opacity: 0.5,
-                    }}
-                  >
+                  <span>Plan {p.id.slice(0, 8)}</span>
+                  <time>
                     {p.created_at.slice(0, 10)}
-                  </span>
+                  </time>
                 </button>
               </li>
             ))}
@@ -235,48 +224,24 @@ export function SessionListView({
       )}
 
       {pendingBriefCards.length > 0 && (
-        <section style={{ padding: "8px 12px" }}>
-          <div
-            style={{
-              fontSize: 12,
-              fontWeight: 600,
-              opacity: 0.7,
-              marginBottom: 6,
-              textTransform: "uppercase",
-              letterSpacing: "0.04em",
-            }}
-          >
+        <section className="inbox-review-section">
+          <div className="inbox-review-heading">
             Pending briefs
           </div>
-          <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 4 }}>
+          <ul className="inbox-review-list">
             {pendingBriefCards.map((b) => (
               <li key={b.id}>
                 <button
                   type="button"
                   onClick={() => { window.location.hash = `brief/${b.id}`; }}
-                  style={{
-                    width: "100%",
-                    textAlign: "left",
-                    padding: "6px 10px",
-                    borderRadius: 4,
-                    border: "1px solid var(--border, #444)",
-                    background: "var(--surface-raised, #1e1e1e)",
-                    cursor: "pointer",
-                    fontSize: 13,
-                  }}
+                  className="inbox-review-card"
                 >
-                  <span style={{ fontWeight: 500 }}>
+                  <span>
                     {b.goal.length > 60 ? `${b.goal.slice(0, 60)}…` : b.goal}
                   </span>
-                  <span
-                    style={{
-                      marginLeft: 8,
-                      fontSize: 11,
-                      opacity: 0.5,
-                    }}
-                  >
+                  <time>
                     {b.created_at.slice(0, 10)}
-                  </span>
+                  </time>
                 </button>
               </li>
             ))}

@@ -46,8 +46,9 @@ export function CellPanel({
 
   return (
     <>
-      <header className="border-b border-stone-300 bg-white px-6 py-4">
-        <h1 className="m-0 text-xl">
+      <header className="border-b border-stone-200 bg-white px-8 py-6">
+        <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-600">Selected study</div>
+        <h1 className="m-0 text-2xl font-medium tracking-[-0.03em] text-stone-950">
           {detail
             ? `${detail.target_name} × ${detail.condition_name}`
             : "…"}
@@ -75,7 +76,7 @@ export function CellPanel({
             })}
           </div>
         )}
-        <nav className="mt-3 flex gap-4 border-b border-transparent">
+        <nav className="mt-5 flex gap-5 overflow-x-auto border-b border-transparent">
           {TABS.map((t) => (
             <TabButton
               key={t}
@@ -86,7 +87,7 @@ export function CellPanel({
           ))}
         </nav>
       </header>
-      <section className="flex-1 overflow-auto p-6">
+      <section className="flex-1 overflow-auto bg-stone-50 p-8 max-md:p-4">
         {tab === "events" && (
           <EventsView events={events} runMetadata={runMetadata} />
         )}

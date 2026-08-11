@@ -1,6 +1,85 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
 
+:root {
+  color-scheme: light;
+  --color-stone-50: #f7faf7;
+  --color-stone-100: #f1f4ef;
+  --color-stone-200: #dce3dd;
+  --color-stone-300: #c5d0c7;
+  --color-stone-400: #8d9a91;
+  --color-stone-500: #66736b;
+  --color-stone-600: #4b5850;
+  --color-stone-700: #344139;
+  --color-stone-800: #243029;
+  --color-stone-900: #17211b;
+  --color-stone-950: #0b120e;
+  --color-sky-50: #eaf6ec;
+  --color-sky-100: #d7eedb;
+  --color-sky-600: #2f8543;
+  --color-sky-700: #247238;
+  --color-indigo-50: #edf6ef;
+  --color-indigo-200: #c8e2cd;
+  --color-indigo-600: #367f46;
+  --color-indigo-700: #286b38;
+  --color-indigo-800: #20572f;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-stone-50: #101512;
+  --color-stone-100: #0c100f;
+  --color-stone-200: #29312d;
+  --color-stone-300: #35413b;
+  --color-stone-400: #7f8b83;
+  --color-stone-500: #98a29b;
+  --color-stone-600: #aeb8b1;
+  --color-stone-700: #c8d0ca;
+  --color-stone-800: #dce3de;
+  --color-stone-900: #e9eee9;
+  --color-stone-950: #f4f7f4;
+  --color-sky-50: #18271c;
+  --color-sky-100: #203426;
+  --color-sky-600: #8ada98;
+  --color-sky-700: #a8f0b4;
+  --color-indigo-50: #18271c;
+  --color-indigo-200: #35513b;
+  --color-indigo-600: #8ada98;
+  --color-indigo-700: #a8f0b4;
+  --color-indigo-800: #c4f6cc;
+  --color-emerald-50: #17261b;
+  --color-emerald-100: #203426;
+  --color-emerald-600: #7dd890;
+  --color-emerald-700: #a8f0b4;
+  --color-amber-50: #2d2615;
+  --color-amber-100: #3a3118;
+  --color-amber-200: #5c4d24;
+  --color-amber-800: #f1ce75;
+  --color-orange-50: #302218;
+  --color-orange-100: #442d1c;
+  --color-orange-200: #694326;
+  --color-orange-800: #f2b77f;
+  --color-red-50: #301a19;
+  --color-red-100: #442220;
+  --color-red-200: #683431;
+  --color-red-600: #ff9188;
+  --color-red-700: #ffaaa3;
+  --color-rose-50: #301a20;
+  --color-rose-100: #44222b;
+  --color-rose-200: #68343f;
+  --color-rose-700: #ff9baa;
+}
+
+:root[data-theme="dark"] .bg-white,
+:root[data-theme="dark"] .bg-white\/90 {
+  background-color: #131816;
+}
+
+:root[data-theme="dark"] pre.bg-stone-950 {
+  background-color: #090d0b;
+  color: #e9eee9;
+}
+
 @layer base {
   html,
   body,
@@ -12,8 +91,9 @@
     margin: 0;
     color: rgb(28 25 23);
     background:
-      radial-gradient(circle at top, rgba(15, 23, 42, 0.05), transparent 42%),
-      linear-gradient(180deg, rgb(250 250 249) 0%, rgb(245 245 244) 100%);
+      radial-gradient(circle at 80% 0, color-mix(in srgb, var(--color-sky-100) 70%, transparent), transparent 38rem),
+      var(--color-stone-100);
+    font-family: "Manrope", "Avenir Next", Inter, ui-sans-serif, system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }
@@ -23,5 +103,82 @@
   select,
   textarea {
     font: inherit;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease;
+  }
+
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible {
+    outline: 2px solid var(--color-sky-600);
+    outline-offset: 2px;
+  }
+}
+
+.dashboard-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+.brand-mark {
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  border: 1px solid var(--color-sky-600);
+  color: var(--color-sky-700);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.75rem;
+  transform: rotate(45deg);
+}
+
+.theme-switch {
+  min-width: 4.25rem;
+  min-height: 2.5rem;
+  padding: 0.4rem 0.8rem;
+  border: 1px solid var(--color-stone-300);
+  border-radius: 999px;
+  background: var(--color-stone-50);
+  color: var(--color-stone-600);
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
+.theme-switch:hover {
+  border-color: var(--color-stone-400);
+  color: var(--color-stone-900);
+}
+
+.launch-workspace {
+  background-image: linear-gradient(90deg, color-mix(in srgb, var(--color-stone-200) 30%, transparent) 1px, transparent 1px);
+  background-size: 3rem 100%;
+}
+
+.prose {
+  --tw-prose-body: var(--color-stone-700);
+  --tw-prose-headings: var(--color-stone-950);
+  --tw-prose-links: var(--color-sky-700);
+  --tw-prose-bold: var(--color-stone-900);
+  --tw-prose-code: var(--color-stone-900);
+  --tw-prose-pre-bg: var(--color-stone-950);
+  --tw-prose-borders: var(--color-stone-300);
+}
+
+@media (max-width: 700px) {
+  .dashboard-header > div {
+    padding-block: 0.85rem;
+  }
+
+  .dashboard-header nav {
+    order: 3;
+    width: 100%;
   }
 }

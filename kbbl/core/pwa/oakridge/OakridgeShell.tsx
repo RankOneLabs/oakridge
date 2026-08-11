@@ -161,7 +161,7 @@ function OakridgeShellInner({ route, onBack, onNavigate }: OakridgeShellInnerPro
         >
           ← kbbl
         </button>
-        <span className="or-shell__breadcrumb">oakridge</span>
+        <span className="or-shell__brand"><i>O</i><span><strong>oakridge</strong><small>workflow operations</small></span></span>
         <button
           type="button"
           className={`or-shell__nav-item ${route.sub === "runs" ? "or-shell__nav-item--active" : ""}`}

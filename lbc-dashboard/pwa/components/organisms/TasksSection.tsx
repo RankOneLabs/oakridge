@@ -559,10 +559,11 @@ export function TasksSection({
   }
 
   return (
-    <section className="space-y-6 p-4">
+    <section className="mx-auto w-full max-w-[1600px] space-y-10 px-5 py-10">
       <div className="flex items-end justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-semibold text-stone-950">Tasks</h2>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-600">Task catalog</div>
+          <h2 className="text-4xl font-medium tracking-[-0.04em] text-stone-950">Design the work.</h2>
           <p className="text-sm text-stone-500">
             Inspect built-in and local tasks, then save new local tasks directly from the dashboard.
           </p>

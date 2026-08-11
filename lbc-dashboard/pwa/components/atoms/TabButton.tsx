@@ -16,9 +16,9 @@ export function TabButton({
     <button
       type="button"
       onClick={onClick}
-      className={`cursor-pointer border-b-2 bg-transparent py-1.5 text-sm text-stone-700 ${
+      className={`cursor-pointer border-b-2 bg-transparent py-2 text-sm text-stone-600 transition-colors hover:text-stone-950 ${
         selected
-          ? "border-sky-700 font-bold"
+          ? "border-sky-700 font-semibold text-stone-950"
           : "border-transparent font-normal"
       }`}
     >
