@@ -810,6 +810,7 @@ pub async fn create_workflow_run(
         .map(|config| epic_profile_from_config(run_id, config, now));
     if let Some(profile) = &epic_profile {
         profile.validate()?;
+        state.epic_branch_preflight.ensure(profile).await?;
     }
     let caller_context = body
         .context
@@ -3638,6 +3639,7 @@ mod tests {
             artifact_registry,
             coordinator,
             bus,
+            epic_branch_preflight: Arc::new(crate::epic_branch::NoopEpicBranchPreflight),
         }
     }
 
@@ -6240,6 +6242,7 @@ mod tests {
             artifact_registry,
             coordinator,
             bus,
+            epic_branch_preflight: Arc::new(crate::epic_branch::NoopEpicBranchPreflight),
         }
     }
 

@@ -456,7 +456,13 @@ fn dev_flow_v8_gates_briefs_and_preserves_repository_epic_topology() {
 
     let brief_config: DelegatedSessionDefConfig =
         serde_json::from_value(def.graph.stages["brief_writer"].config.clone()).unwrap();
-    assert_eq!(brief_config.fan_out.unwrap().unit_id_path, "/id");
+    let brief_fan_out = brief_config.fan_out.unwrap();
+    assert_eq!(brief_fan_out.unit_id_path, "/id");
+    assert_eq!(
+        brief_fan_out.session_mode,
+        oakridge_core::executor::delegated_session::config::FanOutSessionMode::Shared
+    );
+    assert!(brief_fan_out.item_bindings.is_empty());
     let gate = brief_config.output_gate.unwrap();
     assert_eq!(gate.output, "brief");
     assert_eq!(gate.steps[0].gate_type, DelegatedGateKind::ArtifactApproval);
@@ -520,6 +526,21 @@ fn dev_flow_v8_gates_briefs_and_preserves_repository_epic_topology() {
         assessment_gate.revision_target,
         RevisionTarget::UpstreamHandoff
     );
+}
+
+#[test]
+fn v2_planning_prompts_define_topology_and_discrepancy_preconditions() {
+    let prompts = manifest_dir().join("prompts/dev-flow");
+    let analyzer = std::fs::read_to_string(prompts.join("spec_analyzer_v2.md")).unwrap();
+    assert!(analyzer.contains("requested changes as requirements, not discrepancies"));
+    assert!(analyzer.contains("incompatible with the current"));
+
+    let planner = std::fs::read_to_string(prompts.join("plan_writer_v2.md")).unwrap();
+    assert!(planner.contains("created from the latest remote tip"));
+    assert!(planner.contains("Repository topology is a run-creation invariant"));
+    assert!(planner.contains("Do not create,"));
+    assert!(planner.contains("rebase, reset, or otherwise repair"));
+    assert!(planner.contains("before-to-after difference is the work"));
 }
 
 // ── Prompt file existence + root containment ──────────────────────────────────

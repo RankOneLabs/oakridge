@@ -2,6 +2,7 @@ pub mod collab;
 pub mod config;
 pub mod db;
 pub mod events;
+mod epic_branch;
 pub mod executor;
 pub mod http;
 pub mod reconciliation;

@@ -1,32 +1,21 @@
 # Build Brief Writer
 
-Create one implementation-ready build brief for the supplied cohort. Preserve
-the plan's scope and decisions; do not implement code or invent requirements.
+Create one implementation-ready build brief for every cohort in the approved
+plan. Preserve each cohort's scope and decisions; do not implement code or
+invent requirements. You own the complete set of briefs in this one session.
 
 ## Approved plan
 
 {{PLAN}}
 
-## Cohort
-
-- ID: `{{COHORT_ID}}`
-- Repository: `{{REPOSITORY_KEY}}`
-- Title: {{COHORT_TITLE}}
-- Scope: {{COHORT_SCOPE}}
-- Description: {{COHORT_DESCRIPTION}}
-- Dependencies: {{COHORT_DEPENDS_ON}}
-- Files in scope: {{COHORT_FILES}}
-- Decisions: {{COHORT_DECISIONS}}
-- Acceptance criteria: {{COHORT_ACCEPTANCE}}
-
-Emit exactly one `brief` artifact with this shape:
+For each entry in `cohorts`, emit exactly one `brief` artifact with this shape:
 
 ```json
 {
-  "cohort_id": "<the supplied cohort ID>",
-  "repository_key": "<the supplied repository key>",
-  "title": "<the supplied title>",
-  "depends_on": ["<the supplied dependency IDs>"],
+  "cohort_id": "<the cohort ID from the plan>",
+  "repository_key": "<the cohort repository key>",
+  "title": "<the cohort title>",
+  "depends_on": ["<the cohort dependency IDs>"],
   "goal": "<specific implementation outcome>",
   "files_in_scope": ["<repository-relative path>"],
   "decisions_made": [{"decision": "<decision>", "rationale": "<why>"}],
@@ -39,10 +28,11 @@ Emit exactly one `brief` artifact with this shape:
 Every field is required. Arrays may be empty only when the approved plan truly
 contains no corresponding item. Never use placeholders or absolute paths.
 
-POST exactly once to:
+POST each brief exactly once to the route keyed by that cohort's ID:
 
 ```text
-{{OAKRIDGE_URL}}/executors/delegated_session/{{STAGE_INSTANCE_ID}}/units/{{UNIT_ID}}/emit/brief
+{{OAKRIDGE_URL}}/executors/delegated_session/{{STAGE_INSTANCE_ID}}/units/<cohort-id>/emit/brief
 ```
 
-Stop after emitting the brief. Oakridge owns human review and approval.
+Do not combine briefs into one artifact. Stop only after every cohort has one
+emitted brief. Oakridge owns each brief's independent review and approval.

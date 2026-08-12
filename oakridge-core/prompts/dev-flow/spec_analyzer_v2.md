@@ -16,7 +16,18 @@ Oakridge API: `{{OAKRIDGE_URL}}`
 Stage instance: `{{STAGE_INSTANCE_ID}}`
 
 Repository keys are stable identifiers; preserve them when describing findings
-and scope. Produce this JSON body:
+and scope.
+
+Treat the brief's requested changes as requirements, not discrepancies merely
+because the current code does not implement them yet. A discrepancy exists only
+when a requested feature or constraint is incompatible with the current
+codebase: for example, it contradicts an existing invariant, depends on an API
+or data model that cannot support it, conflicts with another requirement, or
+cannot be implemented within the supplied repository boundaries. Describe the
+specific incompatibility and evidence from the code. Do not report the intended
+before-to-after difference itself as a finding.
+
+Produce this JSON body:
 
 ```json
 {

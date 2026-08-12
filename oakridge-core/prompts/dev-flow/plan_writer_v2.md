@@ -20,6 +20,20 @@ Each cohort must operate in exactly one repository and must set
 repositories. Never invent a repository key or put an absolute path in a
 cohort.
 
+Repository topology is a run-creation invariant. Before planning begins, every
+supplied Epic branch must already have been created from the latest remote tip
+of its configured base branch (`main` when `base_branch` is `main`). Treat the
+supplied `base_branch` and `epic_branch` values as authoritative. Do not create,
+rebase, reset, or otherwise repair an Epic branch from this planner session. If
+the supplied topology does not satisfy that precondition, record a blocking risk
+instead of planning around stale or unknown ancestry.
+
+The spec analysis may identify genuine discrepancies between requested features
+and the current code. Preserve those incompatibilities and their resolutions in
+the plan. Do not reinterpret the ordinary fact that code must change to satisfy
+the brief as a discrepancy: that before-to-after difference is the work being
+planned.
+
 Emit the standard `dev.plan` shape. Every cohort must include:
 
 ```json

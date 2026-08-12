@@ -302,7 +302,7 @@ fn materialize_fan_out_units(
 
     for unit in &units {
         for dependency in &unit.depends_on {
-            if !unit_ids.contains(dependency) {
+            if !config.fan_out_accepts_incremental_units && !unit_ids.contains(dependency) {
                 anyhow::bail!(
                     "fan_out unit '{}' depends on unknown unit '{}'",
                     unit.unit_id,
@@ -314,7 +314,14 @@ fn materialize_fan_out_units(
     // Kahn's algorithm: a closed graph that cannot consume all nodes has a cycle.
     let mut remaining: HashMap<&str, usize> = units
         .iter()
-        .map(|unit| (unit.unit_id.as_str(), unit.depends_on.len()))
+        .map(|unit| {
+            let known_dependency_count = unit
+                .depends_on
+                .iter()
+                .filter(|dependency| unit_ids.contains(dependency.as_str()))
+                .count();
+            (unit.unit_id.as_str(), known_dependency_count)
+        })
         .collect();
     let mut ready: Vec<&str> = remaining
         .iter()
@@ -791,6 +798,17 @@ impl UnitScheduler {
         let units =
             queries::list_session_units_for_stage(self.ctx.pool(), &self.ctx.stage_instance_id)
                 .await?;
+        if self.fan_out.session_mode == config::FanOutSessionMode::Shared {
+            let pending = units
+                .iter()
+                .filter(|unit| matches!(unit.status, UnitStatus::Pending))
+                .cloned()
+                .collect::<Vec<_>>();
+            if !pending.is_empty() {
+                self.launch_shared_session(&pending).await?;
+            }
+            return self.recompute_aggregate().await;
+        }
         let mut running = units
             .iter()
             .filter(|unit| matches!(unit.status, UnitStatus::Running | UnitStatus::Parked))
@@ -834,6 +852,171 @@ impl UnitScheduler {
             }
         }
         self.recompute_aggregate().await
+    }
+
+    async fn launch_shared_session(
+        self: &Arc<Self>,
+        units: &[crate::types::SessionUnit],
+    ) -> anyhow::Result<()> {
+        if self
+            .live_sessions
+            .lock()
+            .unwrap()
+            .keys()
+            .any(|(stage_id, _)| *stage_id == self.ctx.stage_instance_id)
+        {
+            return Ok(());
+        }
+        let snapshot = self
+            .kbbl_client
+            .create_session(CreateSessionRequest {
+                workdir: self.config.workdir.display().to_string(),
+                name: substitute_unit_template(
+                    &self.config.session_name,
+                    "all",
+                    self.ctx.stage_instance_id,
+                ),
+                artifact_id: self.ctx.stage_instance_id.0.to_string(),
+                runtime: self.config.runtime.clone(),
+                model: self.config.model.clone(),
+                effort: self.config.effort.clone(),
+                worktree: self.config.worktree.clone(),
+            })
+            .await?;
+        let external_ref = serde_json::to_string(&DelegatedExternalRef {
+            sid: snapshot.sid.clone(),
+            worktree_path: snapshot.worktree_path.clone(),
+            worktree_branch: snapshot.worktree_branch.clone(),
+            worktree_base_ref: snapshot.worktree_base_ref.clone(),
+        })?;
+        for unit in units {
+            queries::set_session_unit_external_ref(
+                self.ctx.pool(),
+                &self.ctx.stage_instance_id,
+                &unit.unit_id,
+                Some(external_ref.clone()),
+                snapshot.worktree_branch.clone(),
+                snapshot.worktree_path.clone(),
+                snapshot.worktree_base_ref.clone(),
+            )
+            .await?;
+            queries::set_session_unit_status(
+                self.ctx.pool(),
+                &self.ctx.stage_instance_id,
+                &unit.unit_id,
+                UnitStatus::Running,
+                None,
+            )
+            .await?;
+        }
+        let cancelled = Arc::new(AtomicBool::new(false));
+        {
+            let mut sessions = self.live_sessions.lock().unwrap();
+            for unit in units {
+                sessions.insert(
+                    (self.ctx.stage_instance_id, unit.unit_id.clone()),
+                    LiveSession {
+                        cancelled: cancelled.clone(),
+                        ctx: self.ctx.clone(),
+                        unit_id: unit.unit_id.clone(),
+                        sid: snapshot.sid.clone(),
+                        config: self.config.clone(),
+                        worktree_path: snapshot.worktree_path.clone(),
+                        worktree_branch: snapshot.worktree_branch.clone(),
+                        worktree_base_ref: snapshot.worktree_base_ref.clone(),
+                        unit_scheduler: Some(self.clone()),
+                    },
+                );
+            }
+        }
+        let setup = async {
+            if self.config.yolo {
+                self.kbbl_client
+                    .set_yolo(&snapshot.sid, SetYoloRequest { enabled: true })
+                    .await?;
+            }
+            self.kbbl_client
+                .send_input(
+                    &snapshot.sid,
+                    SendInputRequest {
+                        text: self.config.rendered_prompt.clone(),
+                    },
+                )
+                .await?;
+            Ok::<(), anyhow::Error>(())
+        }
+        .await;
+        if let Err(error) = setup {
+            cancelled.store(true, Ordering::SeqCst);
+            self.remove_shared_live_session(&snapshot.sid);
+            let _ = self.kbbl_client.stop_session(&snapshot.sid).await;
+            return Err(error);
+        }
+        self.spawn_shared_observer(snapshot.sid, cancelled);
+        Ok(())
+    }
+
+    fn remove_shared_live_session(&self, sid: &str) {
+        self.live_sessions
+            .lock()
+            .unwrap()
+            .retain(|(stage_id, _), session| {
+                *stage_id != self.ctx.stage_instance_id || session.sid != sid
+            });
+    }
+
+    fn spawn_shared_observer(self: &Arc<Self>, sid: String, cancelled: Arc<AtomicBool>) {
+        let scheduler = self.clone();
+        tokio::spawn(async move {
+            let mut last_seen = -1;
+            loop {
+                sleep(Duration::from_millis(OBSERVER_POLL_INTERVAL_MS)).await;
+                if cancelled.load(Ordering::SeqCst) {
+                    return;
+                }
+                let outcome = scheduler
+                    .kbbl_client
+                    .read_events_since(&sid, last_seen)
+                    .await;
+                match outcome {
+                    Ok(response) if response.session_id == sid => {
+                        let failure = failure_reason_from_events(&sid, &response.events);
+                        if failure.is_some() || has_clean_exit(&response.events) {
+                            let units = queries::list_session_units_for_stage(
+                                scheduler.ctx.pool(),
+                                &scheduler.ctx.stage_instance_id,
+                            )
+                            .await
+                            .unwrap_or_default();
+                            let running_units = units
+                                .iter()
+                                .filter(|unit| matches!(unit.status, UnitStatus::Running))
+                                .collect::<Vec<_>>();
+                            if failure.is_none() && running_units.is_empty() {
+                                // Every artifact was emitted. Keep the shared
+                                // session addressable for independent revision
+                                // requests while its unit gates remain parked.
+                                return;
+                            }
+                            for unit in running_units {
+                                let reason = failure.clone().unwrap_or_else(|| {
+                                    "shared session ended without emitting this unit".into()
+                                });
+                                scheduler.mark_failed(&unit.unit_id, reason).await;
+                            }
+                            break;
+                        }
+                        if let Some(next) = latest_event_id(&response.events) {
+                            last_seen = next;
+                        }
+                    }
+                    Ok(_) => break,
+                    Err(err) if is_retryable_observer_error(&err) => continue,
+                    Err(_) => break,
+                }
+            }
+            scheduler.remove_shared_live_session(&sid);
+        });
     }
 
     async fn retry_unit(self: &Arc<Self>, unit_id: &str) -> anyhow::Result<()> {
@@ -882,6 +1065,63 @@ impl UnitScheduler {
         let units =
             queries::list_session_units_for_stage(self.ctx.pool(), &self.ctx.stage_instance_id)
                 .await?;
+        if self.fan_out.session_mode == config::FanOutSessionMode::Shared {
+            let live = units
+                .iter()
+                .filter(|unit| {
+                    matches!(unit.status, UnitStatus::Running | UnitStatus::Parked)
+                        && unit.external_ref.is_some()
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            if live.is_empty() {
+                return self.recompute_aggregate().await;
+            }
+            let external =
+                DelegatedExternalRef::parse(live[0].external_ref.as_deref().expect("filtered"));
+            let response = self
+                .kbbl_client
+                .read_events_since(&external.sid, -1)
+                .await?;
+            if response.session_id != external.sid {
+                anyhow::bail!("kbbl responded for a different shared session");
+            }
+            if has_clean_exit(&response.events)
+                && live
+                    .iter()
+                    .any(|unit| matches!(unit.status, UnitStatus::Running))
+            {
+                for unit in live
+                    .iter()
+                    .filter(|unit| matches!(unit.status, UnitStatus::Running))
+                {
+                    self.mark_session_ended_without_emit(&unit.unit_id).await;
+                }
+                return self.recompute_aggregate().await;
+            }
+            let cancelled = Arc::new(AtomicBool::new(false));
+            {
+                let mut sessions = self.live_sessions.lock().unwrap();
+                for unit in &live {
+                    sessions.insert(
+                        (self.ctx.stage_instance_id, unit.unit_id.clone()),
+                        LiveSession {
+                            cancelled: cancelled.clone(),
+                            ctx: self.ctx.clone(),
+                            unit_id: unit.unit_id.clone(),
+                            sid: external.sid.clone(),
+                            config: self.config.clone(),
+                            worktree_path: external.worktree_path.clone(),
+                            worktree_branch: external.worktree_branch.clone(),
+                            worktree_base_ref: external.worktree_base_ref.clone(),
+                            unit_scheduler: Some(self.clone()),
+                        },
+                    );
+                }
+            }
+            self.spawn_shared_observer(external.sid, cancelled);
+            return self.recompute_aggregate().await;
+        }
         for mut unit in units.into_iter().filter(|unit| {
             matches!(unit.status, UnitStatus::Running | UnitStatus::Parked)
                 && unit.external_ref.is_some()
@@ -1947,6 +2187,19 @@ impl StageType for DelegatedSessionStage {
             }
         }
         if let Some(fan_out) = &def.fan_out {
+            if fan_out.session_mode == config::FanOutSessionMode::Shared {
+                if fan_out.depends_on_path.is_some()
+                    || fan_out.manual_admission
+                    || !fan_out.item_bindings.is_empty()
+                    || fan_out.workdir.is_some()
+                    || fan_out.worktree.is_some()
+                    || fan_out.inherit_worktree_from.is_some()
+                {
+                    anyhow::bail!(
+                        "shared fan_out sessions require immediately available units and stage-level prompt/workdir configuration"
+                    );
+                }
+            }
             if let Some(input_name) = &fan_out.inherit_worktree_from {
                 if fan_out.workdir.is_some() {
                     anyhow::bail!("fan_out cannot combine inherit_worktree_from with workdir");
@@ -2193,6 +2446,7 @@ impl StageType for DelegatedSessionStage {
             rendered_prompt,
             fan_out_prompt_plan,
             resolved_fan_out_over,
+            fan_out_accepts_incremental_units: inherited_input_name.is_some(),
             resolved_fan_out_workdirs,
             resolved_fan_out_worktrees,
             fan_out_context: run_context.clone(),
@@ -2596,6 +2850,27 @@ impl StageHandle for DelegatedSessionHandle {
 }
 
 impl DelegatedSessionHandle {
+    async fn release_unit_session(&self, unit_id: &str) {
+        let removed = self
+            .live_sessions
+            .lock()
+            .unwrap()
+            .remove(&(self.stage_instance_id, unit_id.to_owned()));
+        let Some(session) = removed else { return };
+        let is_still_shared =
+            self.live_sessions
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|((stage_id, _), candidate)| {
+                    *stage_id == self.stage_instance_id && candidate.sid == session.sid
+                });
+        if !is_still_shared {
+            session.cancelled.store(true, Ordering::SeqCst);
+            let _ = self.kbbl_client.stop_session(&session.sid).await;
+        }
+    }
+
     async fn resume_fan_out(
         &self,
         scheduler: &Arc<UnitScheduler>,
@@ -2972,15 +3247,7 @@ impl DelegatedSessionHandle {
                     .ctx
                     .unit_completed(unit_id.clone(), completed_artifact)
                     .await?;
-                let removed_session = self
-                    .live_sessions
-                    .lock()
-                    .unwrap()
-                    .remove(&(self.stage_instance_id, unit_id));
-                if let Some(session) = removed_session {
-                    session.cancelled.store(true, Ordering::SeqCst);
-                    let _ = self.kbbl_client.stop_session(&session.sid).await;
-                }
+                self.release_unit_session(&unit_id).await;
                 scheduler.recompute_aggregate().await?;
                 scheduler.admit().await
             }
@@ -3086,15 +3353,7 @@ impl DelegatedSessionHandle {
                                     .ctx
                                     .unit_completed(unit.unit_id.clone(), completed_artifact)
                                     .await?;
-                                let removed_session = self
-                                    .live_sessions
-                                    .lock()
-                                    .unwrap()
-                                    .remove(&(self.stage_instance_id, unit.unit_id.clone()));
-                                if let Some(session) = removed_session {
-                                    session.cancelled.store(true, Ordering::SeqCst);
-                                    let _ = self.kbbl_client.stop_session(&session.sid).await;
-                                }
+                                self.release_unit_session(&unit.unit_id).await;
                             }
                             scheduler.recompute_aggregate().await
                         }
@@ -3177,16 +3436,7 @@ impl DelegatedSessionHandle {
                                 .ctx
                                 .unit_completed(unit.unit_id.clone(), completed_artifact)
                                 .await?;
-                            let removed_session = {
-                                self.live_sessions
-                                    .lock()
-                                    .unwrap()
-                                    .remove(&(self.stage_instance_id, unit.unit_id.clone()))
-                            };
-                            if let Some(session) = removed_session {
-                                session.cancelled.store(true, Ordering::SeqCst);
-                                let _ = self.kbbl_client.stop_session(&session.sid).await;
-                            }
+                            self.release_unit_session(&unit.unit_id).await;
                             scheduler.recompute_aggregate().await?;
                             scheduler.admit().await
                         }
@@ -3717,6 +3967,7 @@ mod tests {
                 inherited_input_bindings: HashMap::new(),
             }),
             resolved_fan_out_over: Some(over),
+            fan_out_accepts_incremental_units: false,
             resolved_fan_out_workdirs: HashMap::new(),
             resolved_fan_out_worktrees: HashMap::new(),
             fan_out_context: Value::Null,
@@ -3731,6 +3982,7 @@ mod tests {
             fan_out: Some(FanOut {
                 over: SlotBinding::Literal { value: "[]".into() },
                 unit_id_path: "/id".into(),
+                session_mode: config::FanOutSessionMode::PerUnit,
                 depends_on_path: depends_on_path.map(str::to_owned),
                 max_parallel: 2,
                 manual_admission: false,
@@ -4391,6 +4643,90 @@ mod tests {
                 "unexpected error: {err}"
             );
         }
+    }
+
+    #[test]
+    fn incremental_fan_out_waits_for_dependencies_delivered_later() {
+        let stage_id = StageInstanceId(Uuid::new_v4());
+        let mut config = fan_out_config(
+            json!([{"id": "dependent", "name": "dependent", "depends_on": ["foundation"]}]),
+            Some("/depends_on"),
+        );
+        config.fan_out_accepts_incremental_units = true;
+
+        let units =
+            materialize_fan_out_units(&config, config.fan_out.as_ref().unwrap(), stage_id).unwrap();
+
+        assert_eq!(units.len(), 1);
+        assert_eq!(units[0].depends_on, vec!["foundation"]);
+    }
+
+    #[tokio::test]
+    async fn shared_fan_out_launches_one_session_for_multiple_durable_units() {
+        let (base_url, capture, join) = spawn_kbbl_mock().await;
+        let pool = make_pool().await;
+        let mut config = fan_out_config(
+            json!([
+                {"id": "a", "name": "a", "depends_on": []},
+                {"id": "b", "name": "b", "depends_on": []}
+            ]),
+            None,
+        );
+        let fan_out = config.fan_out.as_mut().unwrap();
+        fan_out.session_mode = config::FanOutSessionMode::Shared;
+        fan_out.item_bindings.clear();
+        fan_out.worktree = None;
+        config.rendered_prompt = "Write every brief".into();
+        config.fan_out_prompt_plan.as_mut().unwrap().raw_template = "Write every brief".into();
+        let config_value = serde_json::to_value(&config).unwrap();
+        let (run_id, stage_instance_id) =
+            setup_stage_instance(&pool, config_value.clone(), None).await;
+        let stage =
+            DelegatedSessionStage::new(PathBuf::from("/tmp"), KbblClient::new(base_url).unwrap());
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        let ctx = StageContext::new(
+            crate::types::StageInstanceSummary {
+                stage_instance_id,
+                workflow_run_id: run_id,
+                stage_key: "brief_writer".into(),
+                status: StageStatus::Pending,
+                parked_reason: None,
+                parked_meta: None,
+                terminal_meta: None,
+                external_ref: None,
+            },
+            config_value,
+            HashMap::new(),
+            tx,
+            pool.clone(),
+            Arc::new(ArtifactTypeRegistry::new()),
+        );
+
+        let handle = stage.execute(ctx).await.unwrap();
+        let units = queries::list_session_units_for_stage(&pool, &stage_instance_id)
+            .await
+            .unwrap();
+        assert_eq!(units.len(), 2);
+        assert!(units.iter().all(|unit| unit.status == UnitStatus::Running));
+        assert_eq!(units[0].external_ref, units[1].external_ref);
+        let requests = capture.lock().unwrap();
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.path == "/sessions")
+                .count(),
+            1
+        );
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.path.ends_with("/input"))
+                .count(),
+            1
+        );
+        drop(requests);
+        handle.cancel().await.unwrap();
+        join.abort();
     }
 
     #[test]

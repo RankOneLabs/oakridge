@@ -55,40 +55,17 @@
           "prompt_template_path": "dev-flow/brief_writer.md",
           "slot_bindings": {
             "PLAN": {"from":"input","input_name":"plan","path":null},
-            "OAKRIDGE_URL": {"from":"context","path":"/oakridge_url"},
-            "UNIT_ID": {"from":"literal","value":"0"},
-            "COHORT_ID": {"from":"literal","value":""},
-            "REPOSITORY_KEY": {"from":"literal","value":""},
-            "COHORT_TITLE": {"from":"literal","value":""},
-            "COHORT_SCOPE": {"from":"literal","value":""},
-            "COHORT_FILES": {"from":"literal","value":""},
-            "COHORT_DESCRIPTION": {"from":"literal","value":""},
-            "COHORT_DEPENDS_ON": {"from":"literal","value":""},
-            "COHORT_FILES": {"from":"literal","value":""},
-            "COHORT_DECISIONS": {"from":"literal","value":""},
-            "COHORT_ACCEPTANCE": {"from":"literal","value":""}
+            "OAKRIDGE_URL": {"from":"context","path":"/oakridge_url"}
           },
-          "workdir": {"from":"literal","value":"/"},
-          "session_name": "brief-writer-{{STAGE_INSTANCE_ID}}-{{UNIT_ID}}",
+          "workdir": {"from":"context","path":"/repositories/0/path"},
+          "session_name": "brief-writer-{{STAGE_INSTANCE_ID}}",
           "model": {"from":"context","path":"/planner_model"},
           "effort": {"from":"context","path":"/planner_effort"},
           "pre_authorized_tools": [], "yolo": false,
           "output_gate": {"output":"brief","steps":[{"type":"artifact_approval","actions":["approve","request_revision"]}],"requires_zero_open_review_items":false},
           "fan_out": {
             "over": {"from":"input","input_name":"plan","path":"/cohorts"},
-            "unit_id_path": "/id", "depends_on_path": null, "max_parallel": 4,
-            "item_bindings": {
-              "COHORT_ID": {"from":"item","path":"/id"},
-              "REPOSITORY_KEY": {"from":"item","path":"/repository_key"},
-              "COHORT_TITLE": {"from":"item","path":"/title"},
-              "COHORT_SCOPE": {"from":"item","path":"/scope"},
-              "COHORT_DESCRIPTION": {"from":"item","path":"/description"},
-              "COHORT_DEPENDS_ON": {"from":"item","path":"/depends_on"},
-              "COHORT_FILES": {"from":"item","path":"/files_in_scope"},
-              "COHORT_DECISIONS": {"from":"item","path":"/decisions"},
-              "COHORT_ACCEPTANCE": {"from":"item","path":"/acceptance_criteria"}
-            },
-            "workdir": {"from":"context_lookup","collection_path":"/repositories","collection_key_path":"/key","item_key_path":"/repository_key","value_path":"/path"}
+            "unit_id_path": "/id", "session_mode": "shared"
           }
         },
         "inputs": [{"name":"plan","artifact_type":"dev.plan"}],

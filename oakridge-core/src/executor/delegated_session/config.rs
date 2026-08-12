@@ -60,14 +60,28 @@ pub struct WorktreeTemplate {
 
 // ── FanOut ────────────────────────────────────────────────────────────────────
 
-/// Fan-out configuration for multi-unit stages. When present, the stage spawns
-/// one kbbl session per item in the resolved array. Absent → N=1 implicit unit.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FanOutSessionMode {
+    /// Each durable unit is handled by an independent delegated session.
+    #[default]
+    PerUnit,
+    /// One delegated session handles every durable unit in the stage. Artifacts,
+    /// gates, and downstream delivery remain keyed by unit_id.
+    Shared,
+}
+
+/// Fan-out configuration for multi-unit stages. Units are always durable and
+/// independently gated; `session_mode` controls how delegated sessions produce
+/// their artifacts. Absent → N=1 implicit unit.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct FanOut {
     /// Binding that resolves to a JSON array of items. Each item becomes a unit.
     pub over: SlotBinding,
     /// RFC-6901 pointer into each item to extract the unit_id (must be a string).
     pub unit_id_path: String,
+    #[serde(default)]
+    pub session_mode: FanOutSessionMode,
     /// Optional RFC-6901 pointer to extract depends_on array; absent = fully parallel.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub depends_on_path: Option<String>,
@@ -268,6 +282,10 @@ pub struct DelegatedSessionConfig {
     /// complete unit graph before admitting any session.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub resolved_fan_out_over: Option<serde_json::Value>,
+    /// The selected input is delivered one producer unit at a time. Its initial
+    /// collection is therefore only a prefix of the eventual dependency graph.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fan_out_accepts_incremental_units: bool,
     /// Workdirs resolved from `fan_out.workdir`, keyed by materialized unit id.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub resolved_fan_out_workdirs: HashMap<String, PathBuf>,
@@ -426,6 +444,7 @@ mod tests {
             rendered_prompt: "do the thing".into(),
             fan_out_prompt_plan: None,
             resolved_fan_out_over: None,
+            fan_out_accepts_incremental_units: false,
             resolved_fan_out_workdirs: HashMap::new(),
             resolved_fan_out_worktrees: HashMap::new(),
             fan_out_context: serde_json::Value::Null,
@@ -459,6 +478,7 @@ mod tests {
                 path: None,
             },
             unit_id_path: "/id".into(),
+            session_mode: FanOutSessionMode::PerUnit,
             depends_on_path: Some("/depends_on".into()),
             max_parallel: 4,
             manual_admission: false,
@@ -493,6 +513,7 @@ mod tests {
         });
         let fan_out: FanOut = serde_json::from_value(json).unwrap();
         assert_eq!(fan_out.max_parallel, 8);
+        assert_eq!(fan_out.session_mode, FanOutSessionMode::PerUnit);
         assert!(!fan_out.manual_admission);
         assert!(fan_out.depends_on_path.is_none());
         assert!(fan_out.item_bindings.is_empty());
