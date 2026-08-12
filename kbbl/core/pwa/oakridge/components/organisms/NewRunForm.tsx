@@ -15,7 +15,7 @@ import { useProjects } from "../../hooks/useProjects";
 import { useWorkflowDefs } from "../../hooks/useWorkflowDefs";
 import { useCreateRun } from "../../hooks/useCreateRun";
 import type { FinalMergePolicy, RepositoryInputDraft } from "../../types";
-import { validateRepositoryInputs } from "../../repository-inputs";
+import { repositoryDraftFromProject, validateRepositoryInputs } from "../../repository-inputs";
 import { RoleModelPicker } from "../molecules/RoleModelPicker";
 import { initialSelectionForRole } from "../../lib/runtime-selection";
 import { buildEpicProfile } from "../../lib/launch-config";
@@ -96,9 +96,8 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
     if (!projectId) return;
     const project = projectsQuery.data?.find((p) => p.id === projectId);
     if (project) {
-      const key = project.name.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-") || "repo";
       setRepositories((current) => [
-        { ...current[0], key, path: project.repo_dir },
+        repositoryDraftFromProject(project, current[0]),
         ...current.slice(1),
       ]);
     }

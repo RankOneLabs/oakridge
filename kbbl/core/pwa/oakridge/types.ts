@@ -14,6 +14,8 @@ export interface Project {
   name: string;
   repo_dir: string;
   created_at: string;
+  forge_repository?: ForgeRepositoryIdentity | null;
+  base_branch?: string | null;
 }
 
 export interface WorkflowDefSummary {

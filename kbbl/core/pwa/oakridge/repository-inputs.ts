@@ -1,4 +1,19 @@
-import type { RepositoryInput, RepositoryInputDraft, RepositoryKey } from "./types";
+import type { Project, RepositoryInput, RepositoryInputDraft, RepositoryKey } from "./types";
+
+export function repositoryDraftFromProject(
+  project: Project,
+  current: RepositoryInputDraft,
+): RepositoryInputDraft {
+  const key = project.name.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-") || "repo";
+  return {
+    ...current,
+    key,
+    path: project.repo_dir,
+    forge_owner: project.forge_repository?.owner ?? current.forge_owner,
+    forge_name: project.forge_repository?.name ?? current.forge_name,
+    base_branch: project.base_branch ?? current.base_branch,
+  };
+}
 
 export interface RepositoryInputError {
   operation: "validate_repository_inputs";

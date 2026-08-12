@@ -6,6 +6,7 @@ pub mod executor;
 pub mod http;
 pub mod reconciliation;
 pub mod registry;
+pub mod repository_identity;
 pub mod scheduler;
 pub mod seed;
 pub mod types;
