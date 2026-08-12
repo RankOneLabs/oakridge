@@ -32,10 +32,10 @@ export function WorkflowDefList({ onNew, onSelect, onClone }: WorkflowDefListPro
     : [];
 
   return (
-    <div data-testid="or-def-list">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <h2 className="m-0 text-lg font-semibold text-[var(--text-primary)]">Workflow Definitions</h2>
-        <div className="flex items-center gap-3">
+    <div className="or-page or-page--wide" data-testid="or-def-list">
+      <div className="or-page-header">
+        <div><span className="or-page-kicker">Reusable orchestration</span><h2 className="or-page-title">Workflows</h2><p className="or-page-summary">Inspect versioned definitions or compose a new execution graph.</p></div>
+        <div className="or-page-actions">
           <label className="flex items-center gap-1.5 text-sm text-[var(--text-secondary)]">
             <input
               type="checkbox"
@@ -93,7 +93,7 @@ export function WorkflowDefList({ onNew, onSelect, onClone }: WorkflowDefListPro
       )}
 
       {grouped.length > 0 && (
-        <table className="w-full border-collapse text-sm" aria-label="Workflow definitions">
+        <table className="or-data-table w-full border-collapse text-sm" aria-label="Workflow definitions">
           <thead>
             <tr>
               <th className={tableHeaderClass}>Name</th>

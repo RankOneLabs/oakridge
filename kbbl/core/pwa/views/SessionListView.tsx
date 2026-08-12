@@ -159,6 +159,14 @@ export function SessionListView({
         </div>
         <button
           type="button"
+          className="workspace-nav-link"
+          onClick={() => { window.location.hash = "oakridge"; }}
+        >
+          <span>Oakridge</span>
+          <small>Workflows</small>
+        </button>
+        <button
+          type="button"
           className="theme-toggle"
           onClick={onToggleTheme}
           title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}

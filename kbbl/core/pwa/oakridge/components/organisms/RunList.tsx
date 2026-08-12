@@ -24,9 +24,6 @@ const tableHeaderClass =
   "border-b border-[var(--border-subtle)] px-3 py-2 text-left text-xs font-semibold uppercase text-[var(--text-muted)]";
 const tableCellClass =
   "border-b border-[var(--border-subtle)] px-3 py-2.5 align-middle";
-const chipBaseClass =
-  "inline-block rounded border bg-[var(--bg-surface)] px-2 py-0.5 text-xs font-medium";
-
 function displayStatus(run: RunSummary): RunDisplayStatus {
   if (run.is_failed || run.status === "failed") return "failed";
   if (run.is_stuck) return "stuck";
@@ -34,21 +31,11 @@ function displayStatus(run: RunSummary): RunDisplayStatus {
 }
 
 function statusRowClass(status: RunDisplayStatus): string {
-  const base = "cursor-pointer transition-colors hover:bg-[var(--bg-elevated)]";
-  if (status === "failed") return `${base} opacity-80`;
-  if (status === "stuck") return `${base} border-l-2 border-l-amber-400`;
-  if (status === "parked") return `${base} border-l-2 border-l-amber-500`;
-  if (status === "complete") return `${base} opacity-90`;
-  return base;
+  return `or-run-row or-run-row--${status}`;
 }
 
 function statusChipClass(status: RunDisplayStatus): string {
-  if (status === "failed") return `${chipBaseClass} border-red-500 text-red-500`;
-  if (status === "stuck") return `${chipBaseClass} border-amber-400 text-amber-400`;
-  if (status === "parked") return `${chipBaseClass} border-amber-500 text-amber-500`;
-  if (status === "complete") return `${chipBaseClass} border-emerald-500 text-emerald-500`;
-  if (status === "running") return `${chipBaseClass} border-blue-500 text-blue-500`;
-  return `${chipBaseClass} border-[var(--border-muted)] text-[var(--text-muted)]`;
+  return `or-chip or-chip--${status}`;
 }
 
 interface RunListProps {
@@ -80,16 +67,16 @@ export function RunList({ onSelectRun, onNewRun, onNewProject, onReviewInbox, on
   const visibleRuns = applyTabFilter(query.data ?? [], activeTab);
 
   return (
-    <div data-testid="or-run-list">
+    <div className="or-page or-page--wide" data-testid="or-run-list">
       {onSelectArtifact && <div className="mb-6">
         <GlobalParkedGateList
           onNavigateRun={onSelectRun}
           onNavigateArtifact={onSelectArtifact}
         />
       </div>}
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <h2 className="m-0 text-lg font-semibold text-[var(--text-primary)]">Workflow Runs</h2>
-        <div className="flex items-center gap-2">
+      <div className="or-page-header">
+        <div><span className="or-page-kicker">Workflow operations</span><h2 className="or-page-title">Runs</h2><p className="or-page-summary">Monitor active work, review parked decisions, and inspect completed workflows.</p></div>
+        <div className="or-page-actions">
           {onReviewInbox && <button
             type="button"
             className={secondaryButtonClass}
@@ -168,7 +155,7 @@ export function RunList({ onSelectRun, onNewRun, onNewProject, onReviewInbox, on
       )}
 
       {visibleRuns.length > 0 && (
-        <table className="w-full border-collapse text-sm" aria-label="Workflow runs">
+        <table className="or-data-table w-full border-collapse text-sm" aria-label="Workflow runs">
           <thead>
             <tr>
               <th className={tableHeaderClass}>Workflow</th>

@@ -35,13 +35,13 @@ export function CreateProjectForm({ onBack, onCreated }: CreateProjectFormProps)
   };
 
   return (
-    <div className="flex flex-col gap-5" data-testid="or-create-project">
-      <header className="flex items-center gap-4">
+    <div className="or-page or-page--form" data-testid="or-create-project">
+      <header className="or-page-header or-page-header--back">
         <button type="button" className={secondaryButtonClass} onClick={onBack}>Back</button>
-        <h2 className="m-0 text-lg font-semibold text-[var(--text-primary)]">Create Project</h2>
+        <div><span className="or-page-kicker">Repository context</span><h2 className="or-page-title">Create project</h2><p className="or-page-summary">Register a repository so workflow runs can target it consistently.</p></div>
       </header>
 
-      <form className="flex flex-col gap-4" onSubmit={(e) => { void onSubmit(e); }}>
+      <form className="or-form-card flex flex-col gap-4" onSubmit={(e) => { void onSubmit(e); }}>
         <label className="flex flex-col gap-1">
           <span className={fieldLabelClass}>Name</span>
           <input
