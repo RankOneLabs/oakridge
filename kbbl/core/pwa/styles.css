@@ -5556,7 +5556,7 @@ a:focus-visible {
   gap: 0.6rem;
 }
 
-.or-shell button {
+:where(.or-shell) :where(button) {
   min-height: 2.5rem;
   padding: 0.45rem 0.8rem;
   border: 1px solid var(--border-muted);
@@ -5568,9 +5568,9 @@ a:focus-visible {
   font-size: 0.85rem;
 }
 
-.or-shell button:hover:not(:disabled) { border-color: var(--border-hover); color: var(--text-primary); }
-.or-shell button:disabled { cursor: not-allowed; opacity: 0.5; }
-.or-shell button.or-shell__back, .or-shell button.or-shell__nav-item, .or-shell button.or-link, .or-shell button.or-def-list__link { min-height: 0; }
+:where(.or-shell) :where(button:hover:not(:disabled)) { border-color: var(--border-hover); color: var(--text-primary); }
+:where(.or-shell) :where(button:disabled) { cursor: not-allowed; opacity: 0.5; }
+:where(.or-shell) :where(button.or-shell__back, button.or-shell__nav-item, button.or-link, button.or-def-list__link) { min-height: 0; }
 
 .or-page-actions button[data-testid="or-new-run-btn"],
 .or-page-actions button[data-testid="or-def-new-btn"],
@@ -6027,6 +6027,9 @@ a:focus-visible {
 .or-run-row { cursor: pointer; transition: background 0.1s; }
 .or-run-row:hover { background: var(--bg-elevated); }
 .or-run-row--failed  td { opacity: 0.8; }
+.or-run-row--stuck td:first-child { border-left: 2px solid #fbbf24; }
+.or-run-row--parked td:first-child { border-left: 2px solid #f59e0b; }
+.or-run-row--complete td { opacity: 0.9; }
 .or-run-row__name    { font-weight: 500; }
 .or-run-row__updated { color: var(--text-muted); font-size: 0.8125rem; white-space: nowrap; }
 
