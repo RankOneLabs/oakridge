@@ -197,7 +197,7 @@ export function RunDetail({ runId, onBack, onSelectArtifact }: RunDetailProps) {
                           && retryMutation.variables.unitId === unit.unit_id
                           ? (retryMutation.error instanceof Error ? retryMutation.error.message : "Retry failed")
                           : undefined}
-                        canRetry={run.is_stuck && stage.status === "parked"}
+                        canRetry={stage.status === "parked"}
                       />
                     );
                   });
