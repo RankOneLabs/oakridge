@@ -325,7 +325,7 @@ describe("RunDetailView", () => {
     const detail: RunDetail = {
       ...RUN_DETAIL_FIXTURE,
       status: "parked",
-      is_stuck: true,
+      is_stuck: false,
       stages: [{
         stage_instance_id: "build-stage-1", name: "build", type: "delegated_session",
         status: "parked", artifacts: [], delegated_kbbl_sid: null, worktree: null,
@@ -352,14 +352,14 @@ describe("RunDetailView", () => {
     ));
   });
 
-  it("does not offer unit retry when the parked run is not stuck", async () => {
+  it("does not offer unit retry when the failed unit's stage is not parked", async () => {
     const detail: RunDetail = {
       ...RUN_DETAIL_FIXTURE,
-      status: "parked",
+      status: "running",
       is_stuck: false,
       stages: [{
         stage_instance_id: "build-stage-1", name: "build", type: "delegated_session",
-        status: "parked", artifacts: [], delegated_kbbl_sid: null, worktree: null,
+        status: "running", artifacts: [], delegated_kbbl_sid: null, worktree: null,
         units: [{
           unit_id: "cohort-a", repository_key: "oakridge" as RepositoryKey, sid: null, worktree: null,
           status: "failed", gate: null, params: { title: "Failed build" },
