@@ -325,6 +325,7 @@ describe("RunDetailView", () => {
     const detail: RunDetail = {
       ...RUN_DETAIL_FIXTURE,
       status: "parked",
+      is_stuck: true,
       stages: [{
         stage_instance_id: "build-stage-1", name: "build", type: "delegated_session",
         status: "parked", artifacts: [], delegated_kbbl_sid: null, worktree: null,
@@ -349,6 +350,27 @@ describe("RunDetailView", () => {
       "/oakridge/api/stage_instances/build-stage-1/retry_stuck",
       expect.objectContaining({ body: JSON.stringify({ unit_id: "cohort-a" }) }),
     ));
+  });
+
+  it("does not offer unit retry when the parked run is not stuck", async () => {
+    const detail: RunDetail = {
+      ...RUN_DETAIL_FIXTURE,
+      status: "parked",
+      is_stuck: false,
+      stages: [{
+        stage_instance_id: "build-stage-1", name: "build", type: "delegated_session",
+        status: "parked", artifacts: [], delegated_kbbl_sid: null, worktree: null,
+        units: [{
+          unit_id: "cohort-a", repository_key: "oakridge" as RepositoryKey, sid: null, worktree: null,
+          status: "failed", gate: null, params: { title: "Failed build" },
+        }],
+      }],
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(makeFetch(detail));
+    wrap(<RunDetailView runId="run-1" onBack={() => {}} onSelectArtifact={() => {}} />);
+
+    await screen.findByText("Failed build");
+    expect(screen.queryByTestId("or-retry-unit-btn")).toBeNull();
   });
 
   it("shows final integration and explicitly confirms external completion", async () => {

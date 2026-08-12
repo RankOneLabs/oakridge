@@ -74,8 +74,9 @@ async function tryResolveBaseRef(workdir: string, ref: string): Promise<Resolved
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([
+  const [stdout, , exitCode] = await Promise.all([
     new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
     proc.exited,
   ]);
   return exitCode === 0 ? { ref, sha: stdout.trim() } : null;
@@ -91,7 +92,7 @@ async function resolveBaseRef(workdir: string, requestedRef: string): Promise<Re
     if (resolved) return resolved;
   }
   throw new Error(
-    `git could not resolve worktree base ${requestedRef} or its fetched origin-tracking ref in ${workdir}`,
+    `git could not resolve worktree base ${requestedRef} in ${workdir}; tried: ${candidates.join(", ")}`,
   );
 }
 
