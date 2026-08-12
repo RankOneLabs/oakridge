@@ -2,11 +2,9 @@ import { useState } from "react";
 import { useWorkflowDefs } from "../../hooks/useWorkflowDefs";
 import { useSetWorkflowDefArchived } from "../../hooks/useSetWorkflowDefArchived";
 import type { WorkflowDefSummary } from "../../types";
-
-const secondaryButtonClass =
-  "inline-flex items-center gap-1.5 rounded-md border border-[var(--border-muted)] bg-transparent px-3 py-1.5 text-sm text-[var(--text-secondary)] hover:border-[var(--border-hover)]";
-const primaryButtonClass =
-  "inline-flex items-center gap-1.5 rounded-md bg-[var(--accent-blue)] px-4 py-2 text-sm font-medium text-white hover:opacity-90";
+import { Button } from "../atoms/Button";
+import { FeedbackMessage } from "../atoms/FeedbackMessage";
+import { PageHeader } from "../molecules/PageHeader";
 const tableHeaderClass =
   "border-b border-[var(--border-subtle)] px-3 py-2 text-left text-xs font-semibold uppercase text-[var(--text-muted)]";
 const tableCellClass =
@@ -33,9 +31,11 @@ export function WorkflowDefList({ onNew, onSelect, onClone }: WorkflowDefListPro
 
   return (
     <div className="or-page or-page--wide" data-testid="or-def-list">
-      <div className="or-page-header">
-        <div><span className="or-page-kicker">Reusable orchestration</span><h2 className="or-page-title">Workflows</h2><p className="or-page-summary">Inspect versioned definitions or compose a new execution graph.</p></div>
-        <div className="or-page-actions">
+      <PageHeader
+        eyebrow="Reusable orchestration"
+        title="Workflows"
+        summary="Inspect versioned definitions or compose a new execution graph."
+        actions={<>
           <label className="flex items-center gap-1.5 text-sm text-[var(--text-secondary)]">
             <input
               type="checkbox"
@@ -45,51 +45,34 @@ export function WorkflowDefList({ onNew, onSelect, onClone }: WorkflowDefListPro
             />
             Show retired
           </label>
-          <button
-            type="button"
-            className={primaryButtonClass}
-            onClick={onNew}
-            data-testid="or-def-new-btn"
-          >
+          <Button variant="primary" onClick={onNew} data-testid="or-def-new-btn">
             + New Definition
-          </button>
-        </div>
-      </div>
+          </Button>
+        </>}
+      />
 
       {query.isError && (
-        <div
-          className="rounded-md border border-[var(--danger-card-border)] bg-[var(--danger-bg)] px-4 py-3 text-sm text-[var(--danger-fg)]"
-          role="alert"
-          data-testid="or-def-list-error"
-        >
+        <FeedbackMessage tone="danger" testId="or-def-list-error">
           {query.error instanceof Error ? query.error.message : "Failed to load workflow definitions"}
-        </div>
+        </FeedbackMessage>
       )}
 
       {/* Retire/restore failures would otherwise be invisible: the mutation just
           re-enables the button and the row keeps its old state. */}
       {setArchived.isError && (
-        <div
-          className="rounded-md border border-[var(--danger-card-border)] bg-[var(--danger-bg)] px-4 py-3 text-sm text-[var(--danger-fg)]"
-          role="alert"
-          data-testid="or-def-archive-error"
-        >
+        <FeedbackMessage tone="danger" testId="or-def-archive-error">
           {setArchived.error instanceof Error
             ? setArchived.error.message
             : "Failed to change the retired state of this definition"}
-        </div>
+        </FeedbackMessage>
       )}
 
       {query.isPending && !query.data && (
-        <div className="py-6 text-sm text-[var(--text-muted)]" data-testid="or-def-list-loading">
-          Loading definitions…
-        </div>
+        <FeedbackMessage testId="or-def-list-loading">Loading definitions…</FeedbackMessage>
       )}
 
       {query.data && query.data.length === 0 && (
-        <div className="py-6 text-sm text-[var(--text-muted)]" data-testid="or-def-list-empty">
-          No workflow definitions found. Create one to get started.
-        </div>
+        <FeedbackMessage testId="or-def-list-empty">No workflow definitions found. Create one to get started.</FeedbackMessage>
       )}
 
       {grouped.length > 0 && (
@@ -131,20 +114,14 @@ export function WorkflowDefList({ onNew, onSelect, onClone }: WorkflowDefListPro
                 </td>
                 <td className={tableCellClass}>
                   <div className="or-def-list__actions">
-                    <button type="button" className={secondaryButtonClass} onClick={() => onSelect(def)}>
-                      View
-                    </button>
-                    <button
-                      type="button"
-                      className={secondaryButtonClass}
+                    <Button onClick={() => onSelect(def)}>View</Button>
+                    <Button
                       onClick={() => onClone(def)}
                       data-testid="or-def-clone-btn"
                     >
                       Clone to new version
-                    </button>
-                    <button
-                      type="button"
-                      className={secondaryButtonClass}
+                    </Button>
+                    <Button
                       onClick={() =>
                         setArchived.mutate({ defId: def.id, archived: !def.archived })
                       }
@@ -152,7 +129,7 @@ export function WorkflowDefList({ onNew, onSelect, onClone }: WorkflowDefListPro
                       data-testid="or-def-archive-btn"
                     >
                       {def.archived ? "Restore" : "Retire"}
-                    </button>
+                    </Button>
                   </div>
                 </td>
               </tr>

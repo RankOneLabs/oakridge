@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 
 // Follow KBBL_PORT so running the server on a non-default port doesn't break
 // dev-mode API routing. Matches the env var the gate script reads.
@@ -8,7 +9,7 @@ const backendTarget = `http://localhost:${process.env.KBBL_PORT ?? "8788"}`;
 // Dev: Vite on :5173 with proxy for server endpoints.
 // Build: emits to pwa/dist, Hono serves statically from the same process.
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   server: {
     proxy: {
       // Top-level API routes used by the session list + inbox + CRUD.

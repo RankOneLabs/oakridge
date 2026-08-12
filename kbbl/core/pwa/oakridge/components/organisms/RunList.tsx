@@ -4,6 +4,9 @@ import { useRuns } from "../../hooks/useRuns";
 import type { RunSummary } from "../../types";
 import { formatRelative } from "../../../lib/time";
 import { GlobalParkedGateList } from "../../ParkedGateList";
+import { Button } from "../atoms/Button";
+import { FeedbackMessage } from "../atoms/FeedbackMessage";
+import { PageHeader } from "../molecules/PageHeader";
 
 type FilterTab = "all" | "active" | "parked" | "complete" | "archived";
 
@@ -18,8 +21,6 @@ function applyTabFilter(runs: RunSummary[], tab: FilterTab): RunSummary[] {
 
 type RunDisplayStatus = "failed" | "stuck" | RunSummary["status"];
 
-const secondaryButtonClass =
-  "inline-flex items-center gap-1.5 rounded-md border border-[var(--border-muted)] bg-transparent px-3 py-1.5 text-sm text-[var(--text-secondary)] hover:border-[var(--border-hover)]";
 const tableHeaderClass =
   "border-b border-[var(--border-subtle)] px-3 py-2 text-left text-xs font-semibold uppercase text-[var(--text-muted)]";
 const tableCellClass =
@@ -74,43 +75,19 @@ export function RunList({ onSelectRun, onNewRun, onNewProject, onReviewInbox, on
           onNavigateArtifact={onSelectArtifact}
         />
       </div>}
-      <div className="or-page-header">
-        <div><span className="or-page-kicker">Workflow operations</span><h2 className="or-page-title">Runs</h2><p className="or-page-summary">Monitor active work, review parked decisions, and inspect completed workflows.</p></div>
-        <div className="or-page-actions">
-          {onReviewInbox && <button
-            type="button"
-            className={secondaryButtonClass}
-            onClick={onReviewInbox}
-            data-testid="or-review-inbox-btn"
-          >
-            Review inbox
-          </button>}
-          <button
-            type="button"
-            className={secondaryButtonClass}
-            onClick={onNewProject}
-            data-testid="or-new-project-btn"
-          >
-            + Project
-          </button>
-          <button
-            type="button"
-            className={secondaryButtonClass}
-            onClick={onNewRun}
-            data-testid="or-new-run-btn"
-          >
-            + New Run
-          </button>
-          <button
-            type="button"
-            className={secondaryButtonClass}
-            onClick={onRefresh}
-            aria-label="Refresh runs"
-          >
-            Refresh
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        eyebrow="Workflow operations"
+        title="Runs"
+        summary="Monitor active work, review parked decisions, and inspect completed workflows."
+        actions={
+          <>
+            {onReviewInbox && <Button onClick={onReviewInbox} data-testid="or-review-inbox-btn">Review inbox</Button>}
+            <Button onClick={onNewProject} data-testid="or-new-project-btn">+ Project</Button>
+            <Button onClick={onNewRun} data-testid="or-new-run-btn">+ New Run</Button>
+            <Button onClick={onRefresh} aria-label="Refresh runs">Refresh</Button>
+          </>
+        }
+      />
 
       <div className="mb-3 flex gap-1 border-b border-[var(--border-subtle)]" role="tablist">
         {FILTER_TABS.map((tab) => (
@@ -133,25 +110,17 @@ export function RunList({ onSelectRun, onNewRun, onNewProject, onReviewInbox, on
       </div>
 
       {query.isError && (
-        <div
-          className="rounded-md border border-[var(--danger-card-border)] bg-[var(--danger-bg)] px-4 py-3 text-sm text-[var(--danger-fg)]"
-          role="alert"
-          data-testid="or-run-list-error"
-        >
+        <FeedbackMessage tone="danger" testId="or-run-list-error">
           {query.error instanceof Error ? query.error.message : "Failed to load runs"}
-        </div>
+        </FeedbackMessage>
       )}
 
       {query.isPending && !query.data && (
-        <div className="py-6 text-sm text-[var(--text-muted)]" data-testid="or-run-list-loading">
-          Loading runs…
-        </div>
+        <FeedbackMessage testId="or-run-list-loading">Loading runs…</FeedbackMessage>
       )}
 
       {query.data && visibleRuns.length === 0 && (
-        <div className="py-6 text-sm text-[var(--text-muted)]" data-testid="or-run-list-empty">
-          No workflow runs found.
-        </div>
+        <FeedbackMessage testId="or-run-list-empty">No workflow runs found.</FeedbackMessage>
       )}
 
       {visibleRuns.length > 0 && (
