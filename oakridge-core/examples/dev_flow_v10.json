@@ -124,7 +124,7 @@
           "prompt_template_path": "dev-flow/assessor_v2.md",
           "slot_bindings": {
             "BUILD_RESULT": {"from":"input","input_name":"build_result","path":null},
-            "PLAN": {"from":"input","input_name":"plan","path":null},
+            "BRIEF": {"from":"input","input_name":"brief","path":null},
             "OAKRIDGE_URL": {"from":"context","path":"/oakridge_url"},
             "UNIT_ID": {"from":"literal","value":"0"},
             "REPOSITORY_KEY": {"from":"literal","value":""}

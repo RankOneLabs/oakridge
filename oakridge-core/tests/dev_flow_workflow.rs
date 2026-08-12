@@ -572,6 +572,11 @@ fn dev_flow_v10_assesses_only_the_matching_cohort_brief() {
     let config: DelegatedSessionDefConfig =
         serde_json::from_value(assessor.config.clone()).unwrap();
     assert_eq!(config.prompt_template_path, "dev-flow/assessor_v2.md");
+    assert_eq!(
+        serde_json::to_value(&config.slot_bindings["BRIEF"]).unwrap(),
+        json!({"from": "input", "input_name": "brief", "path": null})
+    );
+    assert!(!config.slot_bindings.contains_key("PLAN"));
     assert!(assessor.inputs.iter().any(|input| {
         input.name == "brief"
             && input.artifact_type == "dev.build_brief"
