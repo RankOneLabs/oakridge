@@ -321,8 +321,10 @@ export function deleteRun(runId: string): Promise<void> {
   return oakridgeDelete(`/workflow_runs/${encodeURIComponent(runId)}`);
 }
 
-export function retryStuckStage(stageInstanceId: string): Promise<unknown> {
-  return oakridgePost<unknown>(`/stage_instances/${encodeURIComponent(stageInstanceId)}/retry_stuck`, {});
+export function retryStuckStage(stageInstanceId: string, unitId?: string): Promise<unknown> {
+  return oakridgePost<unknown>(`/stage_instances/${encodeURIComponent(stageInstanceId)}/retry_stuck`, {
+    unit_id: unitId,
+  });
 }
 
 export function confirmFinalPullRequest(
