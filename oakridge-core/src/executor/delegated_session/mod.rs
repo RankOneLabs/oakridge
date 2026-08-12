@@ -690,6 +690,7 @@ pub struct DelegatedSessionStage {
     pub prompts_dir: PathBuf,
     pub kbbl_client: Arc<KbblClient>,
     live_sessions: LiveSessions,
+    shared_launch_locks: Arc<Mutex<HashMap<StageInstanceId, Arc<AsyncMutex<()>>>>>,
 }
 
 impl DelegatedSessionStage {
@@ -698,6 +699,7 @@ impl DelegatedSessionStage {
             prompts_dir,
             kbbl_client: Arc::new(kbbl_client),
             live_sessions: Arc::new(Mutex::new(HashMap::new())),
+            shared_launch_locks: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -728,6 +730,7 @@ pub(crate) struct UnitScheduler {
     kbbl_client: Arc<KbblClient>,
     live_sessions: LiveSessions,
     admission_lock: AsyncMutex<()>,
+    shared_launch_lock: Arc<AsyncMutex<()>>,
 }
 
 impl UnitScheduler {
@@ -737,6 +740,7 @@ impl UnitScheduler {
         fan_out: FanOut,
         kbbl_client: Arc<KbblClient>,
         live_sessions: LiveSessions,
+        shared_launch_lock: Arc<AsyncMutex<()>>,
     ) -> Arc<Self> {
         Arc::new(Self {
             ctx,
@@ -745,6 +749,7 @@ impl UnitScheduler {
             kbbl_client,
             live_sessions,
             admission_lock: AsyncMutex::new(()),
+            shared_launch_lock,
         })
     }
 
@@ -858,6 +863,10 @@ impl UnitScheduler {
         self: &Arc<Self>,
         units: &[crate::types::SessionUnit],
     ) -> anyhow::Result<()> {
+        // More than one coordinator edge can execute the same stage concurrently.
+        // Serialize the check and external create across every scheduler instance
+        // for this stage; the scheduler-local admission lock is not sufficient.
+        let _launch_guard = self.shared_launch_lock.lock().await;
         if self
             .live_sessions
             .lock()
@@ -865,6 +874,15 @@ impl UnitScheduler {
             .keys()
             .any(|(stage_id, _)| *stage_id == self.ctx.stage_instance_id)
         {
+            return Ok(());
+        }
+        let persisted_units =
+            queries::list_session_units_for_stage(self.ctx.pool(), &self.ctx.stage_instance_id)
+                .await?;
+        if persisted_units.iter().any(|unit| {
+            unit.external_ref.is_some()
+                && matches!(unit.status, UnitStatus::Running | UnitStatus::Parked)
+        }) {
             return Ok(());
         }
         let snapshot = self
@@ -2569,12 +2587,20 @@ impl StageType for DelegatedSessionStage {
                     .await?;
                 }
             }
+            let shared_launch_lock = self
+                .shared_launch_locks
+                .lock()
+                .unwrap()
+                .entry(ctx.stage_instance_id)
+                .or_insert_with(|| Arc::new(AsyncMutex::new(())))
+                .clone();
             let scheduler = UnitScheduler::new(
                 ctx.clone(),
                 config.clone(),
                 fan_out,
                 self.kbbl_client.clone(),
                 self.live_sessions.clone(),
+                shared_launch_lock,
             );
             scheduler.recover_live_units().await?;
             scheduler.admit().await?;
@@ -4731,7 +4757,11 @@ mod tests {
             Arc::new(ArtifactTypeRegistry::new()),
         );
 
-        let handle = stage.execute(ctx).await.unwrap();
+        // Duplicate coordinator deliveries for the same stage must still have
+        // exactly one owner for the shared external session.
+        let (first, second) = tokio::join!(stage.execute(ctx.clone()), stage.execute(ctx));
+        let handle = first.unwrap();
+        let duplicate_handle = second.unwrap();
         let units = queries::list_session_units_for_stage(&pool, &stage_instance_id)
             .await
             .unwrap();
@@ -4755,6 +4785,7 @@ mod tests {
         );
         drop(requests);
         handle.cancel().await.unwrap();
+        duplicate_handle.cancel().await.unwrap();
         join.abort();
     }
 
