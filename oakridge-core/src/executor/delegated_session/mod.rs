@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
+    Arc, Mutex, Weak,
 };
 
 use async_trait::async_trait;
@@ -686,10 +686,39 @@ fn validate_delegated_def(def: &DelegatedSessionDefConfig) -> anyhow::Result<()>
     Ok(())
 }
 
+/// Lower the workflow-level single-session artifact contract onto the existing
+/// durable unit machinery. This translation is internal: artifact cardinality
+/// never becomes session cardinality in a workflow definition.
+fn normalize_artifact_collection(def: &mut DelegatedSessionDefConfig) -> anyhow::Result<()> {
+    if def.artifacts.is_some() && def.fan_out.is_some() {
+        anyhow::bail!("artifacts and fan_out are mutually exclusive");
+    }
+    let Some(artifacts) = def.artifacts.take() else {
+        return Ok(());
+    };
+    if artifacts.id_path.trim().is_empty() {
+        anyhow::bail!("artifacts.id_path must not be empty");
+    }
+    def.fan_out = Some(FanOut {
+        over: artifacts.over,
+        unit_id_path: artifacts.id_path,
+        session_mode: config::FanOutSessionMode::Shared,
+        depends_on_path: None,
+        max_parallel: 1,
+        manual_admission: false,
+        item_bindings: HashMap::new(),
+        workdir: None,
+        worktree: None,
+        inherit_worktree_from: None,
+    });
+    Ok(())
+}
+
 pub struct DelegatedSessionStage {
     pub prompts_dir: PathBuf,
     pub kbbl_client: Arc<KbblClient>,
     live_sessions: LiveSessions,
+    shared_launch_locks: Arc<Mutex<HashMap<StageInstanceId, Weak<AsyncMutex<()>>>>>,
 }
 
 impl DelegatedSessionStage {
@@ -698,7 +727,19 @@ impl DelegatedSessionStage {
             prompts_dir,
             kbbl_client: Arc::new(kbbl_client),
             live_sessions: Arc::new(Mutex::new(HashMap::new())),
+            shared_launch_locks: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    fn shared_launch_lock(&self, stage_instance_id: StageInstanceId) -> Arc<AsyncMutex<()>> {
+        let mut locks = self.shared_launch_locks.lock().unwrap();
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        if let Some(lock) = locks.get(&stage_instance_id).and_then(Weak::upgrade) {
+            return lock;
+        }
+        let lock = Arc::new(AsyncMutex::new(()));
+        locks.insert(stage_instance_id, Arc::downgrade(&lock));
+        lock
     }
 }
 
@@ -728,6 +769,7 @@ pub(crate) struct UnitScheduler {
     kbbl_client: Arc<KbblClient>,
     live_sessions: LiveSessions,
     admission_lock: AsyncMutex<()>,
+    shared_launch_lock: Arc<AsyncMutex<()>>,
 }
 
 impl UnitScheduler {
@@ -737,6 +779,7 @@ impl UnitScheduler {
         fan_out: FanOut,
         kbbl_client: Arc<KbblClient>,
         live_sessions: LiveSessions,
+        shared_launch_lock: Arc<AsyncMutex<()>>,
     ) -> Arc<Self> {
         Arc::new(Self {
             ctx,
@@ -745,6 +788,7 @@ impl UnitScheduler {
             kbbl_client,
             live_sessions,
             admission_lock: AsyncMutex::new(()),
+            shared_launch_lock,
         })
     }
 
@@ -858,6 +902,10 @@ impl UnitScheduler {
         self: &Arc<Self>,
         units: &[crate::types::SessionUnit],
     ) -> anyhow::Result<()> {
+        // More than one coordinator edge can execute the same stage concurrently.
+        // Serialize the check and external create across every scheduler instance
+        // for this stage; the scheduler-local admission lock is not sufficient.
+        let _launch_guard = self.shared_launch_lock.lock().await;
         if self
             .live_sessions
             .lock()
@@ -865,6 +913,15 @@ impl UnitScheduler {
             .keys()
             .any(|(stage_id, _)| *stage_id == self.ctx.stage_instance_id)
         {
+            return Ok(());
+        }
+        let persisted_units =
+            queries::list_session_units_for_stage(self.ctx.pool(), &self.ctx.stage_instance_id)
+                .await?;
+        if persisted_units.iter().any(|unit| {
+            unit.external_ref.is_some()
+                && matches!(unit.status, UnitStatus::Running | UnitStatus::Parked)
+        }) {
             return Ok(());
         }
         let snapshot = self
@@ -2119,7 +2176,8 @@ impl StageType for DelegatedSessionStage {
         input_slots: &[InputSlot],
         output_slots: &[OutputSlot],
     ) -> anyhow::Result<()> {
-        let def: DelegatedSessionDefConfig = serde_json::from_value(def_config.clone())?;
+        let mut def: DelegatedSessionDefConfig = serde_json::from_value(def_config.clone())?;
+        normalize_artifact_collection(&mut def)?;
         load_template(&self.prompts_dir, &def.prompt_template_path)?;
         validate_delegated_def(&def)?;
 
@@ -2274,7 +2332,8 @@ impl StageType for DelegatedSessionStage {
         stage_instance_id: StageInstanceId,
         run_context: &Value,
     ) -> anyhow::Result<Value> {
-        let def: DelegatedSessionDefConfig = serde_json::from_value(def_config.clone())?;
+        let mut def: DelegatedSessionDefConfig = serde_json::from_value(def_config.clone())?;
+        normalize_artifact_collection(&mut def)?;
         let template = load_template(&self.prompts_dir, &def.prompt_template_path)?;
 
         let inherited_input_name = def
@@ -2569,12 +2628,14 @@ impl StageType for DelegatedSessionStage {
                     .await?;
                 }
             }
+            let shared_launch_lock = self.shared_launch_lock(ctx.stage_instance_id);
             let scheduler = UnitScheduler::new(
                 ctx.clone(),
                 config.clone(),
                 fan_out,
                 self.kbbl_client.clone(),
                 self.live_sessions.clone(),
+                shared_launch_lock,
             );
             scheduler.recover_live_units().await?;
             scheduler.admit().await?;
@@ -4675,6 +4736,49 @@ mod tests {
     }
 
     #[test]
+    fn artifact_collection_is_one_session_with_many_durable_artifact_identities() {
+        let mut def: DelegatedSessionDefConfig = serde_json::from_value(json!({
+            "runtime": "codex",
+            "prompt_template_path": "brief.md",
+            "slot_bindings": {},
+            "workdir": {"from": "literal", "value": "/work"},
+            "session_name": "brief-writer",
+            "artifacts": {
+                "over": {"from": "input", "input_name": "plan", "path": "/cohorts"},
+                "id_path": "/id"
+            }
+        }))
+        .unwrap();
+
+        normalize_artifact_collection(&mut def).unwrap();
+
+        assert!(def.artifacts.is_none());
+        let execution = def.fan_out.unwrap();
+        assert_eq!(execution.session_mode, config::FanOutSessionMode::Shared);
+        assert_eq!(execution.unit_id_path, "/id");
+        assert!(execution.item_bindings.is_empty());
+        assert!(execution.worktree.is_none());
+    }
+
+    #[test]
+    fn shared_launch_locks_prune_completed_stage_entries() {
+        let stage = DelegatedSessionStage::new(
+            PathBuf::from("/tmp"),
+            KbblClient::new("http://127.0.0.1:1").unwrap(),
+        );
+        let completed_stage = StageInstanceId(Uuid::new_v4());
+        let completed_lock = stage.shared_launch_lock(completed_stage);
+        assert_eq!(stage.shared_launch_locks.lock().unwrap().len(), 1);
+        drop(completed_lock);
+
+        let active_stage = StageInstanceId(Uuid::new_v4());
+        let _active_lock = stage.shared_launch_lock(active_stage);
+        let locks = stage.shared_launch_locks.lock().unwrap();
+        assert_eq!(locks.len(), 1);
+        assert!(locks.contains_key(&active_stage));
+    }
+
+    #[test]
     fn incremental_fan_out_waits_for_dependencies_delivered_later() {
         let stage_id = StageInstanceId(Uuid::new_v4());
         let mut config = fan_out_config(
@@ -4731,7 +4835,11 @@ mod tests {
             Arc::new(ArtifactTypeRegistry::new()),
         );
 
-        let handle = stage.execute(ctx).await.unwrap();
+        // Duplicate coordinator deliveries for the same stage must still have
+        // exactly one owner for the shared external session.
+        let (first, second) = tokio::join!(stage.execute(ctx.clone()), stage.execute(ctx));
+        let handle = first.unwrap();
+        let duplicate_handle = second.unwrap();
         let units = queries::list_session_units_for_stage(&pool, &stage_instance_id)
             .await
             .unwrap();
@@ -4755,6 +4863,7 @@ mod tests {
         );
         drop(requests);
         handle.cancel().await.unwrap();
+        duplicate_handle.cancel().await.unwrap();
         join.abort();
     }
 
@@ -6092,6 +6201,10 @@ mod tests {
         let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
         let artifact_id =
             ArtifactId(Uuid::parse_str(payload["artifact_id"].as_str().unwrap()).unwrap());
+        let revised_artifact = queries::get_artifact_by_id(&pool, &artifact_id)
+            .await
+            .unwrap();
+        assert_eq!(revised_artifact.parent_artifact_id, Some(root_artifact_id));
 
         let stale = handle
             .resume(ResumePayload::GateDecision {

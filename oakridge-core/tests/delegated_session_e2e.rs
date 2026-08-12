@@ -279,6 +279,7 @@ fn delegated_workflow_def(
         pre_authorized_tools: vec![],
         yolo: true,
         fan_out: None,
+        artifacts: None,
         gate_output: None,
         output_gate: None,
         output_handoff: None,
