@@ -98,6 +98,7 @@ pub struct AppState {
     pub artifact_registry: Arc<ArtifactTypeRegistry>,
     pub coordinator: Arc<Coordinator>,
     pub bus: Arc<EventBus>,
+    pub(crate) epic_branch_preflight: Arc<dyn crate::epic_branch::EpicBranchPreflight>,
 }
 
 /// Register built-in stage and artifact types.
@@ -178,6 +179,7 @@ where
         artifact_registry: artifact_reg,
         coordinator: coordinator.clone(),
         bus,
+        epic_branch_preflight: Arc::new(crate::epic_branch::GitEpicBranchPreflight),
     };
 
     let static_fallback =

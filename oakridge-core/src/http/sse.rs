@@ -494,6 +494,7 @@ mod tests {
             artifact_registry,
             coordinator,
             bus,
+            epic_branch_preflight: Arc::new(crate::epic_branch::NoopEpicBranchPreflight),
         }
     }
 
