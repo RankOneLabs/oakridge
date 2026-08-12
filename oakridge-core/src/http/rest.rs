@@ -5,6 +5,7 @@ use axum::{
     Json,
 };
 use chrono::Utc;
+use futures::{stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -22,6 +23,7 @@ use crate::reconciliation::{
     PullRequestMismatch, PullRequestMismatchKind, PullRequestObservation, ReconciliationDecision,
 };
 use crate::registry::artifact_type::{ArtifactCapabilities, ArtifactReviewDescriptor};
+use crate::repository_identity::resolve_local_repository_identity;
 use crate::scheduler::DecisionError;
 use crate::types::{
     Artifact, ArtifactId, EpicLifecycleState, EpicRepositoryBinding, EpicWorkflowProfile,
@@ -104,6 +106,30 @@ impl From<anyhow::Error> for AppError {
 pub struct CreateProject {
     pub name: String,
     pub repo_dir: String,
+}
+
+#[derive(Serialize)]
+pub struct ProjectView {
+    pub id: ProjectId,
+    pub name: String,
+    pub repo_dir: PathBuf,
+    pub created_at: chrono::DateTime<Utc>,
+    pub forge_repository: Option<crate::types::ForgeRepositoryIdentity>,
+    pub base_branch: Option<String>,
+}
+
+async fn project_view(project: Project) -> ProjectView {
+    let identity = resolve_local_repository_identity(&project.repo_dir).await;
+    ProjectView {
+        id: project.id,
+        name: project.name,
+        repo_dir: project.repo_dir,
+        created_at: project.created_at,
+        forge_repository: identity
+            .as_ref()
+            .map(|value| value.forge_repository.clone()),
+        base_branch: identity.and_then(|value| value.base_branch),
+    }
 }
 
 #[derive(Deserialize)]
@@ -677,7 +703,7 @@ fn validate_output_handoffs(graph: &WorkflowGraph) -> crate::Result<()> {
 pub async fn create_project(
     State(state): State<AppState>,
     Json(body): Json<CreateProject>,
-) -> Result<(StatusCode, Json<Project>), AppError> {
+) -> Result<(StatusCode, Json<ProjectView>), AppError> {
     let project = Project {
         id: ProjectId(Uuid::new_v4()),
         name: body.name,
@@ -685,20 +711,26 @@ pub async fn create_project(
         created_at: Utc::now(),
     };
     queries::insert_project(&state.pool, &project).await?;
-    Ok((StatusCode::CREATED, Json(project)))
+    Ok((StatusCode::CREATED, Json(project_view(project).await)))
 }
 
-pub async fn list_projects(State(state): State<AppState>) -> Result<Json<Vec<Project>>, AppError> {
+pub async fn list_projects(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<ProjectView>>, AppError> {
     let projects = queries::list_projects(&state.pool).await?;
-    Ok(Json(projects))
+    let views = stream::iter(projects.into_iter().map(project_view))
+        .buffered(8)
+        .collect()
+        .await;
+    Ok(Json(views))
 }
 
 pub async fn get_project(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-) -> Result<Json<Project>, AppError> {
+) -> Result<Json<ProjectView>, AppError> {
     let project = queries::get_project_by_id(&state.pool, &ProjectId(id)).await?;
-    Ok(Json(project))
+    Ok(Json(project_view(project).await))
 }
 
 // ── WorkflowDef handlers ──────────────────────────────────────────────────────

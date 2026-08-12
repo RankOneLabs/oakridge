@@ -2041,6 +2041,16 @@ impl StageType for DelegatedSessionStage {
                 render_values.insert(slot_name.clone(), format!("{{{{{slot_name}}}}}"));
             }
         }
+        // Fan-out item bindings are resolved only after the collection has been
+        // expanded. Preserve their template slots during the base render even
+        // when they have no redundant placeholder in `slot_bindings`.
+        if let Some(fan_out) = &def.fan_out {
+            for slot_name in fan_out.item_bindings.keys() {
+                render_values
+                    .entry(slot_name.clone())
+                    .or_insert_with(|| format!("{{{{{slot_name}}}}}"));
+            }
+        }
         let rendered_prompt = render_template(&template, &render_values)?;
         let fan_out_prompt_plan = def.fan_out.as_ref().map(|_| FanOutPromptPlan {
             raw_template: template.clone(),
@@ -4745,9 +4755,7 @@ mod tests {
                     "runtime": "codex",
                     "prompt_template_path": "topology.md",
                     "slot_bindings": {
-                        "UNIT_ID": {"from": "literal", "value": "0"},
-                        "EXPECTED_PR_BASE": {"from": "literal", "value": ""},
-                        "EXPECTED_FINAL_BASE": {"from": "literal", "value": ""}
+                        "UNIT_ID": {"from": "literal", "value": "0"}
                     },
                     "workdir": {"from": "literal", "value": "/work"},
                     "session_name": "topology",
