@@ -20,14 +20,10 @@ import { RoleModelPicker } from "../molecules/RoleModelPicker";
 import { initialSelectionForRole } from "../../lib/runtime-selection";
 import { buildEpicProfile } from "../../lib/launch-config";
 import { RepositoryLaunchFields } from "../molecules/RepositoryLaunchFields";
-
-const secondaryButtonClass =
-  "inline-flex items-center gap-1.5 rounded-md border border-[var(--border-muted)] bg-transparent px-3 py-1.5 text-sm text-[var(--text-secondary)] hover:border-[var(--border-hover)]";
-const primaryButtonClass =
-  "inline-flex items-center gap-1.5 rounded-md bg-[var(--accent-blue)] px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50";
-const fieldLabelClass = "block text-xs font-medium text-[var(--text-muted)] mb-1";
-const inputClass =
-  "w-full rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-3 py-1.5 text-sm text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none";
+import { Button } from "../atoms/Button";
+import { FeedbackMessage } from "../atoms/FeedbackMessage";
+import { FormField, formControlClass } from "../molecules/FormField";
+import { PageHeader } from "../molecules/PageHeader";
 
 
 interface NewRunFormProps {
@@ -148,28 +144,26 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
 
   return (
     <div className="or-page or-page--form" data-testid="or-new-run-form">
-      <header className="or-page-header or-page-header--back">
-        <button type="button" className={secondaryButtonClass} onClick={onBack}>Back</button>
-        <div><span className="or-page-kicker">New execution</span><h2 className="or-page-title">Start a workflow run</h2><p className="or-page-summary">Choose the workflow, repositories, operating brief, and agent roles.</p></div>
-      </header>
+      <PageHeader
+        backAction={<Button onClick={onBack}>Back</Button>}
+        eyebrow="New execution"
+        title="Start a workflow run"
+        summary="Choose the workflow, repositories, operating brief, and agent roles."
+      />
 
       <form className="or-form-card flex flex-col gap-4" onSubmit={(e) => { void onSubmit(e); }}>
-        <label className="flex flex-col gap-1">
-          <span className={fieldLabelClass}>Epic title</span>
-          <input type="text" className={inputClass} value={epicTitle} onChange={(event) => setEpicTitle(event.target.value)} disabled={pending} placeholder="Ship account recovery" required />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className={fieldLabelClass}>Final merge policy</span>
-          <select className={inputClass} value={finalMergePolicy} onChange={(event) => setFinalMergePolicy(event.target.value === "external_confirmation" ? "external_confirmation" : "guarded")} disabled={pending}>
+        <FormField label="Epic title">
+          <input type="text" className={formControlClass} value={epicTitle} onChange={(event) => setEpicTitle(event.target.value)} disabled={pending} placeholder="Ship account recovery" required />
+        </FormField>
+        <FormField label="Final merge policy" hint="Choose guarded for normal GitHub workflows. External confirmation leaves final integration completion to an outside operator or system.">
+          <select className={formControlClass} value={finalMergePolicy} onChange={(event) => setFinalMergePolicy(event.target.value === "external_confirmation" ? "external_confirmation" : "guarded")} disabled={pending}>
             <option value="guarded">Guarded — Oakridge verifies the final merge</option>
             <option value="external_confirmation">External confirmation — another system confirms it</option>
           </select>
-          <span className="text-xs leading-relaxed text-[var(--text-muted)]">Choose guarded for normal GitHub workflows. External confirmation leaves final integration completion to an outside operator or system.</span>
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className={fieldLabelClass}>Workflow Definition</span>
+        </FormField>
+        <FormField label="Workflow Definition">
           <select
-            className={inputClass}
+            className={formControlClass}
             value={workflowDefId}
             onChange={(e) => setWorkflowDefId(e.target.value)}
             disabled={pending || defsQuery.isPending}
@@ -185,12 +179,11 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
               </option>
             ))}
           </select>
-        </label>
+        </FormField>
 
-        <label className="flex flex-col gap-1">
-          <span className={fieldLabelClass}>Project (optional)</span>
+        <FormField label="Project (optional)">
           <select
-            className={inputClass}
+            className={formControlClass}
             value={projectId}
             onChange={(e) => setProjectId(e.target.value)}
             disabled={pending || projectsQuery.isPending}
@@ -200,14 +193,13 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
               <option key={p.id} value={p.id}>{p.name}</option>
             ))}
           </select>
-        </label>
+        </FormField>
 
         <RepositoryLaunchFields repositories={repositories} setRepositories={setRepositories} disabled={pending} />
 
-        <label className="flex flex-col gap-1">
-          <span className={fieldLabelClass}>Brief Notes</span>
+        <FormField label="Brief Notes">
           <textarea
-            className={`${inputClass} min-h-24 resize-y`}
+            className={`${formControlClass} min-h-24 resize-y`}
             value={briefNotes}
             onChange={(e) => setBriefNotes(e.target.value)}
             disabled={pending}
@@ -215,7 +207,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
             required
             rows={4}
           />
-        </label>
+        </FormField>
 
         <div className="or-role-grid">
           <RoleModelPicker
@@ -238,22 +230,13 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
           />
         </div>
 
-        {error && (
-          <div
-            className="rounded-md border border-[var(--danger-card-border)] bg-[var(--danger-bg)] px-4 py-3 text-sm text-[var(--danger-fg)]"
-            role="alert"
-          >
-            {error}
-          </div>
-        )}
+        {error && <FeedbackMessage tone="danger">{error}</FeedbackMessage>}
 
         <div className="flex justify-end gap-3">
-          <button type="button" className={secondaryButtonClass} onClick={onBack} disabled={pending}>
-            Cancel
-          </button>
-          <button type="submit" className={primaryButtonClass} disabled={pending || !workflowDefId}>
+          <Button onClick={onBack} disabled={pending}>Cancel</Button>
+          <Button type="submit" variant="primary" disabled={pending || !workflowDefId}>
             {pending ? "Starting…" : "Start Run"}
-          </button>
+          </Button>
         </div>
       </form>
     </div>
