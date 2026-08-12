@@ -85,6 +85,14 @@ fn load_dev_flow_v9() -> WorkflowDef {
         .unwrap_or_else(|e| panic!("failed to parse {}: {e}", path.display()))
 }
 
+fn load_dev_flow_v10() -> WorkflowDef {
+    let path = manifest_dir().join("examples/dev_flow_v10.json");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
+    serde_json::from_str(&text)
+        .unwrap_or_else(|e| panic!("failed to parse {}: {e}", path.display()))
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct RecordedRequest {
     method: Method,
@@ -550,6 +558,45 @@ fn dev_flow_v9_installs_single_session_brief_writer_as_a_new_definition() {
     let artifacts = config.artifacts.unwrap();
     assert_eq!(artifacts.id_path, "/id");
     assert_eq!(config.session_name, "brief-writer-{{STAGE_INSTANCE_ID}}");
+}
+
+#[test]
+fn dev_flow_v10_assesses_only_the_matching_cohort_brief() {
+    let previous = load_dev_flow_v9();
+    let def = load_dev_flow_v10();
+    assert_eq!(def.name, "dev-flow");
+    assert_eq!(def.version, 10);
+    assert_ne!(def.id, previous.id);
+
+    let assessor = &def.graph.stages["assessor"];
+    let config: DelegatedSessionDefConfig =
+        serde_json::from_value(assessor.config.clone()).unwrap();
+    assert_eq!(config.prompt_template_path, "dev-flow/assessor_v2.md");
+    assert!(assessor.inputs.iter().any(|input| {
+        input.name == "brief"
+            && input.artifact_type == "dev.build_brief"
+            && input.delivery == oakridge_core::types::InputDelivery::UnitComplete
+    }));
+    assert!(!assessor.inputs.iter().any(|input| input.name == "plan"));
+    assert!(def.graph.edges.iter().any(|edge| {
+        edge.from.stage == "brief_writer"
+            && edge.from.slot == "brief"
+            && edge.to.stage == "assessor"
+            && edge.to.slot == "brief"
+    }));
+    assert!(!def
+        .graph
+        .edges
+        .iter()
+        .any(|edge| { edge.from.stage == "plan_writer" && edge.to.stage == "assessor" }));
+
+    let prompt =
+        std::fs::read_to_string(manifest_dir().join("prompts/dev-flow/assessor_v2.md")).unwrap();
+    assert!(prompt.contains("Assess only the cohort identified"));
+    assert!(prompt.contains("Do not assess plan-level acceptance criteria or any other cohort"));
+    assert!(prompt.contains("Work belonging to dependent or later cohorts is intentionally absent"));
+    assert!(prompt.contains("{{BRIEF}}"));
+    assert!(!prompt.contains("{{PLAN}}"));
 }
 
 #[test]
