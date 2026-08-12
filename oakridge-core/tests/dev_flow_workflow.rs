@@ -77,6 +77,14 @@ fn load_dev_flow_v8() -> WorkflowDef {
         .unwrap_or_else(|e| panic!("failed to parse {}: {e}", path.display()))
 }
 
+fn load_dev_flow_v9() -> WorkflowDef {
+    let path = manifest_dir().join("examples/dev_flow_v9.json");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
+    serde_json::from_str(&text)
+        .unwrap_or_else(|e| panic!("failed to parse {}: {e}", path.display()))
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct RecordedRequest {
     method: Method,
@@ -526,6 +534,22 @@ fn dev_flow_v8_gates_briefs_and_preserves_repository_epic_topology() {
         assessment_gate.revision_target,
         RevisionTarget::UpstreamHandoff
     );
+}
+
+#[test]
+fn dev_flow_v9_installs_single_session_brief_writer_as_a_new_definition() {
+    let previous = load_dev_flow_v8();
+    let def = load_dev_flow_v9();
+    assert_eq!(def.name, "dev-flow");
+    assert_eq!(def.version, 9);
+    assert_ne!(def.id, previous.id);
+
+    let config: DelegatedSessionDefConfig =
+        serde_json::from_value(def.graph.stages["brief_writer"].config.clone()).unwrap();
+    assert!(config.fan_out.is_none());
+    let artifacts = config.artifacts.unwrap();
+    assert_eq!(artifacts.id_path, "/id");
+    assert_eq!(config.session_name, "brief-writer-{{STAGE_INSTANCE_ID}}");
 }
 
 #[test]

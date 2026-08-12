@@ -109,6 +109,18 @@ pub struct FanOut {
     pub inherit_worktree_from: Option<String>,
 }
 
+/// Independently addressable artifacts produced by one delegated session.
+///
+/// Collection items establish artifact/review identity only. They never affect
+/// session cardinality: a stage with `artifacts` always launches one session.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct ArtifactCollection {
+    /// Binding that resolves to the artifact identity source collection.
+    pub over: SlotBinding,
+    /// RFC-6901 pointer into each item containing its stable artifact label.
+    pub id_path: String,
+}
+
 fn default_max_parallel() -> usize {
     8
 }
@@ -184,6 +196,10 @@ pub struct DelegatedSessionDefConfig {
     /// unit (unit_id="0") preserving today's single-session behavior.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fan_out: Option<FanOut>,
+    /// Multiple independently reviewable artifacts owned by this one session.
+    /// Mutually exclusive with `fan_out`, whose items are executable sessions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifacts: Option<ArtifactCollection>,
     /// The output slot whose emit triggers the approval gate and parks the unit.
     /// When absent, defaults to the first declared output slot. Auxiliary outputs
     /// (those not named here) are stored as artifacts without parking.
@@ -390,6 +406,7 @@ mod tests {
             pre_authorized_tools: vec!["Bash".into()],
             yolo: false,
             fan_out: None,
+            artifacts: None,
             gate_output: None,
             output_gate: None,
             output_handoff: None,

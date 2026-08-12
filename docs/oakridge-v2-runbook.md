@@ -487,7 +487,7 @@ curl -sX POST "$CORE/gates/<stage_instance_id>:0/resume" \
   }'
 ```
 
-The configured workflow transition then runs. In dev-flow v8 this may admit the
+The configured workflow transition then runs. In dev-flow v9 this may admit the
 next stage automatically or move a cohort to GitHub review; PR merge state is
 advanced only through the typed reconciliation endpoints, never by passing an
 artifact gate.
@@ -586,8 +586,10 @@ operator workflow:
   manual-admission and merge-confirmation workflow for existing runs.
 - `oakridge-core/examples/dev_flow_v7.json` (version 7) introduces typed Epic
   repository topology and per-cohort PR reconciliation.
-- `oakridge-core/examples/dev_flow_v8.json` (version 8, default) adds separately
+- `oakridge-core/examples/dev_flow_v8.json` (version 8) adds separately
   approved build briefs and per-cohort assessment approval before GitHub review.
+- `oakridge-core/examples/dev_flow_v9.json` (version 9, default) defines brief
+  writing as one session that owns a collection of cohort-keyed artifacts.
 
 ### Workflow graph
 
@@ -603,9 +605,10 @@ spec_analyzer → plan_writer → brief_writer → build → assessor
 | `build` | `dev.pr_summary`, `dev.build_result` | Implements the plan in one independently gated unit per cohort. |
 | `assessor` | `dev.assessment` | Evaluates each cohort's build result against the plan's acceptance criteria. |
 
-Each stage is a `delegated_session` with typed artifacts. In v8, spec and plan
-have `artifact_approval` gates; plan approval materializes one build-brief unit
-per cohort. Brief approval makes the matching build eligible, build completion
+Each stage is a `delegated_session` with typed artifacts. In v9, spec and plan
+have `artifact_approval` gates; plan approval launches one brief-writer session.
+That session creates or revises independently gated, cohort-keyed brief artifacts;
+artifact count never controls brief-writer session count. Brief approval makes the matching build eligible, build completion
 starts its assessor, and assessment approval advances the cohort to GitHub
 review. Version 1 retains the implicit unit id `"0"` and single-session behavior.
 
@@ -666,12 +669,12 @@ refresh or repeated event from starting a second session.
 ### Select the workflow definition
 
 oakridge-core seeds the bundled dev-flow definitions on startup. In the kbbl
-PWA, choose **New Run** and select `dev-flow v8` (the newest version is selected
+PWA, choose **New Run** and select `dev-flow v9` (the newest version is selected
 by default). The Planner and Worker pickers each choose a runtime, a model, and
 an effort; all three are sent with the run.
 
 Older versions are retired automatically when a new built-in version is first
-seeded, so only v8 appears in the picker. They are archived, not deleted — every
+seeded, so only v9 appears in the picker. They are archived, not deleted — every
 existing run still resolves its definition. To bring one back, tick **Show
 retired** on the Workflow Definitions screen and choose **Restore** (or
 `POST /workflow_defs/:id/unarchive`); the seed will not re-retire it on later
@@ -687,7 +690,7 @@ CORE=http://127.0.0.1:8790
 
 curl -sX POST "$CORE/workflow_defs" \
   -H 'content-type: application/json' \
-  -d "$(jq '{name,version,graph}' oakridge-core/examples/dev_flow_v8.json)"
+  -d "$(jq '{name,version,graph}' oakridge-core/examples/dev_flow_v9.json)"
 ```
 
 Save the returned `id` as `DEV_FLOW_DEF_ID`. Use `dev_flow.json` instead when
@@ -724,7 +727,7 @@ curl -sX POST "$CORE/workflow_runs" \
 either fails the corresponding stage at config-build time. Drop all six
 role keys when running the version 1 or 3 definitions, which pin their runtime.
 
-### Complete v8 operator workflow
+### Complete v9 operator workflow
 
 Use the PWA for the normal path; the API remains available for automation.
 
@@ -843,7 +846,7 @@ table. Each parked gate shows:
 - Stage name and artifact revision id
 - Worktree branch and path when present
 - Only the actions configured for the current artifact: **Approve** / **Request
-  revision** (including the per-cohort brief and assessment gates in v8)
+  revision** (including the per-cohort brief and assessment gates in v9)
 
 The `id` field on each gate returned by `GET /parked` and `GET /runs/:id/gates` is a
 **composite gate id** with the form `"{stage_instance_uuid}:{unit_id}"`. For a

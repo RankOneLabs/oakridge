@@ -124,6 +124,20 @@ async fn emit_handler(
         }
     };
 
+    // Re-emitting the same session output for the same artifact identity is an
+    // update, not an unrelated artifact. Link it to the current tip so revision
+    // history belongs to the artifact regardless of how the session was reached.
+    let parent_artifact_id = queries::get_latest_artifact_by_stage_output_and_label(
+        live_session.ctx.pool(),
+        &stage_instance_id,
+        &output_name,
+        &unit_id,
+    )
+    .await
+    .ok()
+    .flatten()
+    .map(|artifact| artifact.id);
+
     let artifact = match live_session
         .ctx
         .emit(EmitArgs {
@@ -133,7 +147,7 @@ async fn emit_handler(
             // label carries the unit id (spec §3.5) so per-unit artifacts group by
             // unit; N=1 uses "0". Downstream unit-artifact filtering keys off this.
             label: Some(unit_id.clone()),
-            parent_artifact_id: None,
+            parent_artifact_id,
         })
         .await
     {
