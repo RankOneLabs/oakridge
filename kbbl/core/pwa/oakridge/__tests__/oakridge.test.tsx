@@ -329,12 +329,12 @@ describe("RunDetailView", () => {
         stage_instance_id: "build-stage-1", name: "build", type: "delegated_session",
         status: "parked", artifacts: [], delegated_kbbl_sid: null, worktree: null,
         units: [{
-          unit_id: "cohort-a", repository_key: "oakridge", sid: null, worktree: null,
+          unit_id: "cohort-a", repository_key: "oakridge" as RepositoryKey, sid: null, worktree: null,
           status: "failed", gate: null, params: { title: "Failed build" },
         }],
       }],
     };
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/retry_stuck")) return json({}, 202);
       if (url.includes("/gates")) return json([]);
