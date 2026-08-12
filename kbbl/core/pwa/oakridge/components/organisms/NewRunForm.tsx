@@ -147,13 +147,13 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
   };
 
   return (
-    <div className="flex flex-col gap-5" data-testid="or-new-run-form">
-      <header className="flex items-center gap-4">
+    <div className="or-page or-page--form" data-testid="or-new-run-form">
+      <header className="or-page-header or-page-header--back">
         <button type="button" className={secondaryButtonClass} onClick={onBack}>Back</button>
-        <h2 className="m-0 text-lg font-semibold text-[var(--text-primary)]">New Workflow Run</h2>
+        <div><span className="or-page-kicker">New execution</span><h2 className="or-page-title">Start a workflow run</h2><p className="or-page-summary">Choose the workflow, repositories, operating brief, and agent roles.</p></div>
       </header>
 
-      <form className="flex flex-col gap-4" onSubmit={(e) => { void onSubmit(e); }}>
+      <form className="or-form-card flex flex-col gap-4" onSubmit={(e) => { void onSubmit(e); }}>
         <label className="flex flex-col gap-1">
           <span className={fieldLabelClass}>Epic title</span>
           <input type="text" className={inputClass} value={epicTitle} onChange={(event) => setEpicTitle(event.target.value)} disabled={pending} placeholder="Ship account recovery" required />

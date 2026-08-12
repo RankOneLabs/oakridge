@@ -166,12 +166,12 @@ export function WorkflowDefEditor({ cloneFromId, onBack, onCreated }: WorkflowDe
   }
 
   return (
-    <div className="flex flex-col gap-4" data-testid="or-def-editor">
-      <header className="flex items-center gap-4">
+    <div className="or-page or-page--wide" data-testid="or-def-editor">
+      <header className="or-page-header or-page-header--back">
         <button type="button" className={secondaryButtonClass} onClick={onBack}>
           Back
         </button>
-        <h2 className="m-0 text-lg font-semibold text-[var(--text-primary)]">{title}</h2>
+        <div><span className="or-page-kicker">Workflow authoring</span><h2 className="or-page-title">{title}</h2><p className="or-page-summary">Define typed stages, bindings, transitions, and fan-out behavior.</p></div>
       </header>
 
       <div className="grid grid-cols-[minmax(0,1fr)_360px] items-start gap-6">

@@ -48,7 +48,7 @@ export function RunDetail({ runId, onBack, onSelectArtifact }: RunDetailProps) {
 
   if (query.isError) {
     return (
-      <div className="flex flex-col gap-5" data-testid="or-run-detail">
+      <div className="or-page or-page--wide" data-testid="or-run-detail">
         <button type="button" className={secondaryButtonClass} onClick={onBack}>Back</button>
         <div
           className="rounded-md border border-[var(--danger-card-border)] bg-[var(--danger-bg)] px-4 py-3 text-sm text-[var(--danger-fg)]"
@@ -63,7 +63,7 @@ export function RunDetail({ runId, onBack, onSelectArtifact }: RunDetailProps) {
 
   if (query.isPending || !query.data) {
     return (
-      <div className="flex flex-col gap-5" data-testid="or-run-detail">
+      <div className="or-page or-page--wide" data-testid="or-run-detail">
         <button type="button" className={secondaryButtonClass} onClick={onBack}>Back</button>
         <div className="py-6 text-sm text-[var(--text-muted)]">Loading run…</div>
       </div>
@@ -75,11 +75,12 @@ export function RunDetail({ runId, onBack, onSelectArtifact }: RunDetailProps) {
   const canCancel = run.status === "running" || run.status === "parked";
 
   return (
-    <div className="flex flex-col gap-5" data-testid="or-run-detail">
-      <header className="flex items-start gap-4">
+    <div className="or-page or-page--wide" data-testid="or-run-detail">
+      <header className="or-page-header or-page-header--back">
         <button type="button" className={secondaryButtonClass} onClick={onBack}>Back</button>
         <div className="flex-1">
-          <h2 className="mb-1.5 mt-0 text-lg font-semibold text-[var(--text-primary)]" data-testid="or-run-detail-title">
+          <span className="or-page-kicker">Live workflow</span>
+          <h2 className="or-page-title" data-testid="or-run-detail-title">
             {run.workflow_name}
           </h2>
           <div className="flex flex-wrap gap-2">
