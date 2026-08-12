@@ -965,6 +965,19 @@ impl UnitScheduler {
             });
     }
 
+    async fn fail_running_shared_units(self: &Arc<Self>, reason: String) {
+        let units =
+            queries::list_session_units_for_stage(self.ctx.pool(), &self.ctx.stage_instance_id)
+                .await
+                .unwrap_or_default();
+        for unit in units
+            .iter()
+            .filter(|unit| matches!(unit.status, UnitStatus::Running))
+        {
+            self.mark_failed(&unit.unit_id, reason.clone()).await;
+        }
+    }
+
     fn spawn_shared_observer(self: &Arc<Self>, sid: String, cancelled: Arc<AtomicBool>) {
         let scheduler = self.clone();
         tokio::spawn(async move {
@@ -1010,9 +1023,25 @@ impl UnitScheduler {
                             last_seen = next;
                         }
                     }
-                    Ok(_) => break,
+                    Ok(response) => {
+                        scheduler
+                            .fail_running_shared_units(format!(
+                                "kbbl responded for shared session '{}' with session '{}'",
+                                sid, response.session_id
+                            ))
+                            .await;
+                        break;
+                    }
                     Err(err) if is_retryable_observer_error(&err) => continue,
-                    Err(_) => break,
+                    Err(err) => {
+                        scheduler
+                            .fail_running_shared_units(format!(
+                                "shared session '{}' observer failed: {}",
+                                sid, err
+                            ))
+                            .await;
+                        break;
+                    }
                 }
             }
             scheduler.remove_shared_live_session(&sid);

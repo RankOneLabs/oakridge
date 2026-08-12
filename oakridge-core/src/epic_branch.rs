@@ -3,6 +3,7 @@ use std::sync::OnceLock;
 
 use tokio::process::Command;
 use tokio::sync::Mutex;
+use tokio::time::{timeout, Duration};
 
 use crate::types::{EpicRepositoryBinding, EpicWorkflowProfile};
 
@@ -25,6 +26,7 @@ impl EpicBranchPreflight for NoopEpicBranchPreflight {
 }
 
 static EPIC_BRANCH_PREFLIGHT: OnceLock<Mutex<()>> = OnceLock::new();
+const GIT_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct GitOutput {
@@ -34,12 +36,24 @@ struct GitOutput {
 }
 
 async fn git(repository_path: &Path, args: &[&str]) -> crate::Result<GitOutput> {
-    let output = Command::new("git")
+    let mut command = Command::new("git");
+    command
         .arg("-C")
         .arg(repository_path)
         .args(args)
-        .output()
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_SSH_COMMAND", "ssh -oBatchMode=yes")
+        .kill_on_drop(true);
+    let output = timeout(GIT_COMMAND_TIMEOUT, command.output())
         .await
+        .map_err(|_| {
+            crate::Error::Validation(format!(
+                "git {:?} timed out after {} seconds in {}",
+                args,
+                GIT_COMMAND_TIMEOUT.as_secs(),
+                repository_path.display()
+            ))
+        })?
         .map_err(|error| {
             crate::Error::Validation(format!(
                 "failed to run git in {}: {error}",
