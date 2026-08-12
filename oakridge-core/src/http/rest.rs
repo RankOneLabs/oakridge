@@ -5,6 +5,7 @@ use axum::{
     Json,
 };
 use chrono::Utc;
+use futures::{stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -717,10 +718,10 @@ pub async fn list_projects(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<ProjectView>>, AppError> {
     let projects = queries::list_projects(&state.pool).await?;
-    let mut views = Vec::with_capacity(projects.len());
-    for project in projects {
-        views.push(project_view(project).await);
-    }
+    let views = stream::iter(projects.into_iter().map(project_view))
+        .buffered(8)
+        .collect()
+        .await;
     Ok(Json(views))
 }
 

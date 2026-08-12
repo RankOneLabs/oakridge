@@ -1,8 +1,12 @@
 use std::path::Path;
+use std::time::Duration;
 
 use tokio::process::Command;
+use tokio::time::timeout;
 
 use crate::types::{ForgeProvider, ForgeRepositoryIdentity};
+
+const GIT_COMMAND_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalRepositoryIdentity {
@@ -30,13 +34,17 @@ pub fn github_identity_from_remote(remote: &str) -> Option<ForgeRepositoryIdenti
 }
 
 async fn git_output(repository_path: &Path, args: &[&str]) -> Option<String> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(repository_path)
-        .args(args)
-        .output()
-        .await
-        .ok()?;
+    let output = timeout(
+        GIT_COMMAND_TIMEOUT,
+        Command::new("git")
+            .arg("-C")
+            .arg(repository_path)
+            .args(args)
+            .output(),
+    )
+    .await
+    .ok()?
+    .ok()?;
     if !output.status.success() {
         return None;
     }
