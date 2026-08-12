@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
+    Arc, Mutex, Weak,
 };
 
 use async_trait::async_trait;
@@ -718,7 +718,7 @@ pub struct DelegatedSessionStage {
     pub prompts_dir: PathBuf,
     pub kbbl_client: Arc<KbblClient>,
     live_sessions: LiveSessions,
-    shared_launch_locks: Arc<Mutex<HashMap<StageInstanceId, Arc<AsyncMutex<()>>>>>,
+    shared_launch_locks: Arc<Mutex<HashMap<StageInstanceId, Weak<AsyncMutex<()>>>>>,
 }
 
 impl DelegatedSessionStage {
@@ -729,6 +729,17 @@ impl DelegatedSessionStage {
             live_sessions: Arc::new(Mutex::new(HashMap::new())),
             shared_launch_locks: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    fn shared_launch_lock(&self, stage_instance_id: StageInstanceId) -> Arc<AsyncMutex<()>> {
+        let mut locks = self.shared_launch_locks.lock().unwrap();
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        if let Some(lock) = locks.get(&stage_instance_id).and_then(Weak::upgrade) {
+            return lock;
+        }
+        let lock = Arc::new(AsyncMutex::new(()));
+        locks.insert(stage_instance_id, Arc::downgrade(&lock));
+        lock
     }
 }
 
@@ -2617,13 +2628,7 @@ impl StageType for DelegatedSessionStage {
                     .await?;
                 }
             }
-            let shared_launch_lock = self
-                .shared_launch_locks
-                .lock()
-                .unwrap()
-                .entry(ctx.stage_instance_id)
-                .or_insert_with(|| Arc::new(AsyncMutex::new(())))
-                .clone();
+            let shared_launch_lock = self.shared_launch_lock(ctx.stage_instance_id);
             let scheduler = UnitScheduler::new(
                 ctx.clone(),
                 config.clone(),
@@ -4753,6 +4758,24 @@ mod tests {
         assert_eq!(execution.unit_id_path, "/id");
         assert!(execution.item_bindings.is_empty());
         assert!(execution.worktree.is_none());
+    }
+
+    #[test]
+    fn shared_launch_locks_prune_completed_stage_entries() {
+        let stage = DelegatedSessionStage::new(
+            PathBuf::from("/tmp"),
+            KbblClient::new("http://127.0.0.1:1").unwrap(),
+        );
+        let completed_stage = StageInstanceId(Uuid::new_v4());
+        let completed_lock = stage.shared_launch_lock(completed_stage);
+        assert_eq!(stage.shared_launch_locks.lock().unwrap().len(), 1);
+        drop(completed_lock);
+
+        let active_stage = StageInstanceId(Uuid::new_v4());
+        let _active_lock = stage.shared_launch_lock(active_stage);
+        let locks = stage.shared_launch_locks.lock().unwrap();
+        assert_eq!(locks.len(), 1);
+        assert!(locks.contains_key(&active_stage));
     }
 
     #[test]

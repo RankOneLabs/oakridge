@@ -127,16 +127,26 @@ async fn emit_handler(
     // Re-emitting the same session output for the same artifact identity is an
     // update, not an unrelated artifact. Link it to the current tip so revision
     // history belongs to the artifact regardless of how the session was reached.
-    let parent_artifact_id = queries::get_latest_artifact_by_stage_output_and_label(
+    let parent_artifact_id = match queries::get_latest_artifact_by_stage_output_and_label(
         live_session.ctx.pool(),
         &stage_instance_id,
         &output_name,
         &unit_id,
     )
     .await
-    .ok()
-    .flatten()
-    .map(|artifact| artifact.id);
+    {
+        Ok(artifact) => artifact.map(|artifact| artifact.id),
+        Err(error) => {
+            tracing::warn!(
+                stage_instance_id = %stage_instance_id.0,
+                unit_id,
+                output_name,
+                error = %error,
+                "failed to resolve current artifact tip; emitting an unlinked artifact"
+            );
+            None
+        }
+    };
 
     let artifact = match live_session
         .ctx
