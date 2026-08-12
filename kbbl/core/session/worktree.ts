@@ -63,6 +63,39 @@ export class WorktreeCreateError extends Error {
   }
 }
 
+interface ResolvedBaseRef {
+  ref: string;
+  sha: string;
+}
+
+async function tryResolveBaseRef(workdir: string, ref: string): Promise<ResolvedBaseRef | null> {
+  const proc = Bun.spawn({
+    cmd: ["git", "-C", workdir, "rev-parse", "--verify", `${ref}^{commit}`],
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  return exitCode === 0 ? { ref, sha: stdout.trim() } : null;
+}
+
+/** Resolve an explicit base locally, accepting its fetched origin-tracking ref. */
+async function resolveBaseRef(workdir: string, requestedRef: string): Promise<ResolvedBaseRef> {
+  const candidates = requestedRef.startsWith("origin/")
+    ? [requestedRef]
+    : [requestedRef, `origin/${requestedRef}`];
+  for (const candidate of candidates) {
+    const resolved = await tryResolveBaseRef(workdir, candidate);
+    if (resolved) return resolved;
+  }
+  throw new Error(
+    `git could not resolve worktree base ${requestedRef} in ${workdir}; tried: ${candidates.join(", ")}`,
+  );
+}
+
 /**
  * Returns true if `path` is inside a git working tree. Bare repos return
  * false: kbbl operates on tracked files via CC, which needs a working
@@ -183,23 +216,9 @@ export async function createWorktree(
   let worktreeBaseRef: string;
   let gitBase: string;
   if (opts.baseRef) {
-    const revProc = Bun.spawn({
-      cmd: ["git", "-C", opts.workdir, "rev-parse", opts.baseRef],
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [revOut, revErr, revCode] = await Promise.all([
-      new Response(revProc.stdout).text(),
-      new Response(revProc.stderr).text(),
-      revProc.exited,
-    ]);
-    if (revCode !== 0) {
-      throw new Error(
-        `git rev-parse ${opts.baseRef} failed in ${opts.workdir} (exit ${revCode}): ${revErr.trim()}`,
-      );
-    }
-    worktreeBaseRef = revOut.trim();
-    gitBase = opts.baseRef;
+    const resolved = await resolveBaseRef(opts.workdir, opts.baseRef);
+    worktreeBaseRef = resolved.sha;
+    gitBase = resolved.ref;
   } else {
     worktreeBaseRef = await resolveHead(opts.workdir);
     gitBase = worktreeBaseRef;

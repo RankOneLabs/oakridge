@@ -225,6 +225,28 @@ describe("createWorktree — identity and baseRef opts", () => {
     expect(wtHead).toBe(firstCommitSha);
   });
 
+  test("baseRef resolves a fetched remote-only epic branch", async () => {
+    const bareDir = join(tmpRoot, "remote-only.git");
+    await git(tmpRoot, "init", "--bare", bareDir);
+    await git(repoDir, "remote", "add", "origin", bareDir);
+    await git(repoDir, "push", "origin", "HEAD:refs/heads/epic/remote-only");
+    await git(repoDir, "fetch", "origin", "+refs/heads/epic/remote-only:refs/remotes/origin/epic/remote-only");
+
+    const expectedSha = (await git(repoDir, "rev-parse", "origin/epic/remote-only")).trim();
+    await expect(git(repoDir, "rev-parse", "--verify", "epic/remote-only")).rejects.toThrow();
+
+    const created = await createWorktree({
+      workdir: repoDir,
+      worktreesRoot,
+      oakridgeSid: "remoteonlybase12",
+      identity: { branchName: "cohort/remote-only", worktreeSubdir: "remote-only" },
+      baseRef: "epic/remote-only",
+    });
+
+    expect(created.worktreeBaseRef).toBe(expectedSha);
+    expect((await git(created.worktreePath, "rev-parse", "HEAD")).trim()).toBe(expectedSha);
+  });
+
   test("resumeDepth > 0 with identity: -r<n> appended to slug branch, dir unchanged", async () => {
     const sid = "resumeid123456789";
     const created = await createWorktree({

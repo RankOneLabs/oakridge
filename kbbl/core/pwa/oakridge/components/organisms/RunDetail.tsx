@@ -188,6 +188,16 @@ export function RunDetail({ runId, onBack, onSelectArtifact }: RunDetailProps) {
                           && admitMutation.variables.unitId === unit.unit_id
                           ? (admitMutation.error instanceof Error ? admitMutation.error.message : "Admission failed")
                           : undefined}
+                        onRetry={(unitId) => void retryMutation.mutate({ stageInstanceId: stage.stage_instance_id, unitId })}
+                        retrying={retryMutation.isPending
+                          && retryMutation.variables?.stageInstanceId === stage.stage_instance_id
+                          && retryMutation.variables.unitId === unit.unit_id}
+                        retryError={retryMutation.isError
+                          && retryMutation.variables?.stageInstanceId === stage.stage_instance_id
+                          && retryMutation.variables.unitId === unit.unit_id
+                          ? (retryMutation.error instanceof Error ? retryMutation.error.message : "Retry failed")
+                          : undefined}
+                        canRetry={run.is_stuck && stage.status === "parked"}
                       />
                     );
                   });
@@ -197,10 +207,10 @@ export function RunDetail({ runId, onBack, onSelectArtifact }: RunDetailProps) {
                     key={stage.name}
                     stage={stage}
                     canRetry={run.is_stuck}
-                    onRetry={(sid) => void retryMutation.mutate(sid)}
+                    onRetry={(sid) => void retryMutation.mutate({ stageInstanceId: sid })}
                     retrying={
                       retryMutation.isPending &&
-                      retryMutation.variables === stage.stage_instance_id
+                      retryMutation.variables?.stageInstanceId === stage.stage_instance_id
                     }
                     onSelectArtifact={onSelectArtifact}
                   />,

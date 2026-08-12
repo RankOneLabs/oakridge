@@ -48,9 +48,13 @@ interface RunUnitRowProps {
   onAdmit: (unitId: string) => void;
   admitting: boolean;
   admissionError?: string;
+  onRetry: (unitId: string) => void;
+  retrying: boolean;
+  retryError?: string;
+  canRetry: boolean;
 }
 
-export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelectArtifact, onAdmit, admitting, admissionError }: RunUnitRowProps) {
+export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelectArtifact, onAdmit, admitting, admissionError, onRetry, retrying, retryError, canRetry }: RunUnitRowProps) {
   const blockedBy = unit.admission_blocked_by ?? [];
   const dependencies = unit.params?.depends_on ?? [];
   const needsAdmission = unit.status === "pending" && unit.admission_required === true && unit.admitted !== true;
@@ -67,6 +71,8 @@ export function RunUnitRow({ stageName, stageType, unit, unitArtifacts, onSelect
         <StatusBadge status={unit.status} />
         {unit.gate && <span className="rounded border border-amber-400 px-1.5 py-0.5 text-xs text-amber-400">{unit.gate}</span>}
         {unit.admission_required && unit.admitted && <span className="text-xs text-emerald-500" data-testid="or-unit-admitted">Admitted</span>}
+        {canRetry && unit.status === "failed" && <button type="button" className="rounded border border-red-500 px-2 py-0.5 text-xs text-red-500 hover:bg-red-500 hover:text-white disabled:opacity-50" onClick={() => onRetry(unit.unit_id)} disabled={retrying} data-testid="or-retry-unit-btn">{retrying ? "Retrying…" : "Retry"}</button>}
+        {retryError && <span role="alert" className="text-xs text-red-500">{retryError}</span>}
       </div></td>
       <ArtifactCell artifacts={unitArtifacts} onSelectArtifact={onSelectArtifact} />
       <SessionCell sid={unit.sid} />
