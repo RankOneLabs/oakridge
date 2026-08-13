@@ -85,8 +85,8 @@ fn load_dev_flow_v9() -> WorkflowDef {
         .unwrap_or_else(|e| panic!("failed to parse {}: {e}", path.display()))
 }
 
-fn load_dev_flow_v10() -> WorkflowDef {
-    let path = manifest_dir().join("examples/dev_flow_v10.json");
+fn load_dev_flow_v11() -> WorkflowDef {
+    let path = manifest_dir().join("examples/dev_flow_v11.json");
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
     serde_json::from_str(&text)
@@ -561,11 +561,11 @@ fn dev_flow_v9_installs_single_session_brief_writer_as_a_new_definition() {
 }
 
 #[test]
-fn dev_flow_v10_assesses_only_the_matching_cohort_brief() {
+fn dev_flow_v11_assesses_only_the_matching_cohort_brief() {
     let previous = load_dev_flow_v9();
-    let def = load_dev_flow_v10();
+    let def = load_dev_flow_v11();
     assert_eq!(def.name, "dev-flow");
-    assert_eq!(def.version, 10);
+    assert_eq!(def.version, 11);
     assert_ne!(def.id, previous.id);
 
     let brief_writer = &def.graph.stages["brief_writer"];
