@@ -148,8 +148,17 @@ mod tests {
             "only the newest built-in should reach the launcher"
         );
 
-        let all = queries::list_workflow_defs(&pool, true).await.unwrap();
-        assert_eq!(all.len(), 10, "retired defs are kept, not deleted");
+        let dev_flow_definitions: Vec<_> = queries::list_workflow_defs(&pool, true)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|definition| definition.name == "dev-flow")
+            .collect();
+        assert_eq!(
+            dev_flow_definitions.len(),
+            9,
+            "retired dev-flow defs are kept, not deleted"
+        );
     }
 
     #[tokio::test]
