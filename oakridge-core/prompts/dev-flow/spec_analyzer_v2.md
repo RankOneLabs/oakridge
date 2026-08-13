@@ -45,10 +45,15 @@ Produce this JSON body:
 }
 ```
 
-POST exactly once to:
+PUT the JSON body to:
 
-```text
-{{OAKRIDGE_URL}}/executors/delegated_session/{{STAGE_INSTANCE_ID}}/units/0/emit/spec_analysis
+```http
+PUT {{OAKRIDGE_URL}}/executors/delegated_session/{{STAGE_INSTANCE_ID}}/units/0/emit/spec_analysis
+Content-Type: application/json
+
+<the JSON body above>
 ```
+
+If the request or response transport fails, retry the same PUT with the same JSON body.
 
 Do not plan or implement. Empty arrays are valid.

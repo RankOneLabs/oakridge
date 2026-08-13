@@ -29,14 +29,14 @@ Stage instance: `{{STAGE_INSTANCE_ID}}`
    - `pass` — every cohort criterion is met and there are no blocking integration issues.
    - `pass_with_notes` — criteria are met but there are warnings or minor gaps.
    - `fail` — one or more criteria are unmet, a build is missing, or a blocking issue exists.
-6. Emit the artifact exactly once and stop.
+6. Save the artifact with the idempotent PUT below and stop after Oakridge confirms it.
 
 ## Emit the artifact
 
 This is a single-session stage, so use unit `0`:
 
 ```http
-POST {{OAKRIDGE_URL}}/executors/delegated_session/{{STAGE_INSTANCE_ID}}/units/0/emit/assessment
+PUT {{OAKRIDGE_URL}}/executors/delegated_session/{{STAGE_INSTANCE_ID}}/units/0/emit/assessment
 Content-Type: application/json
 
 {
@@ -54,6 +54,7 @@ Content-Type: application/json
 ```
 
 `test_evidence` is optional. `recommended_next_actions` should be empty when the verdict is `pass`.
+If the request or response transport fails, retry the same PUT with the same JSON body.
 
 ## Constraints
 

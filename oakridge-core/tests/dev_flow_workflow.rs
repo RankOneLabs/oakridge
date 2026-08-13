@@ -628,6 +628,44 @@ fn v2_planning_prompts_define_topology_and_discrepancy_preconditions() {
     assert!(planner.contains("before-to-after difference is the work"));
 }
 
+#[test]
+fn active_v2_prompts_use_retryable_output_updates() {
+    let prompts = manifest_dir().join("prompts/dev-flow");
+    for prompt_name in [
+        "spec_analyzer_v2.md",
+        "plan_writer_v2.md",
+        "brief_writer.md",
+        "build_v2.md",
+        "build_batch_assessment.md",
+        "assessor_v2.md",
+        "assessor_batch.md",
+    ] {
+        let prompt = std::fs::read_to_string(prompts.join(prompt_name)).unwrap();
+        assert!(
+            prompt.contains("PUT"),
+            "{prompt_name} must describe output emission as a PUT"
+        );
+        assert!(
+            prompt.contains("retry the same PUT"),
+            "{prompt_name} must tell the agent how to recover from transport failure"
+        );
+        assert!(
+            !prompt.contains("POST {{OAKRIDGE_URL}}/executors/delegated_session"),
+            "{prompt_name} must not use non-idempotent POST for a stable output resource"
+        );
+        assert!(
+            !prompt.contains("POST exactly once"),
+            "{prompt_name} must not strand a session after one failed transport attempt"
+        );
+    }
+
+    for prompt_name in ["build_v2.md", "build_batch_assessment.md"] {
+        let prompt = std::fs::read_to_string(prompts.join(prompt_name)).unwrap();
+        assert!(prompt.contains("a test failure must not strand the workflow"));
+        assert!(!prompt.contains("until all subgoals are committed and tests pass"));
+    }
+}
+
 // ── Prompt file existence + root containment ──────────────────────────────────
 
 #[test]

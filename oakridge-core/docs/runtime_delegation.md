@@ -22,7 +22,8 @@ The stage uses kbbl as the runtime owner:
 Workflow completion remains domain-driven:
 
 1. The delegated agent emits an artifact to
-   `POST /executors/delegated_session/:stage_instance_id/emit/:output_name`.
+   `PUT /executors/delegated_session/:stage_instance_id/units/:unit_id/emit/:output_name`
+   (`unit_id` is `0` for a non-fan-out stage). Identical retries are idempotent.
 2. `oakridge-core` parks the stage for artifact approval.
 3. A needs-changes `GateDecision` is forwarded to the same live kbbl session with
    `POST /:sid/input`.

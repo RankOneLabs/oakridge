@@ -33,12 +33,12 @@ Repository: `{{REPOSITORY_KEY}}`
    - `pass` — all cohort acceptance criteria are met and there are no blocking known issues.
    - `pass_with_notes` — cohort criteria are met but there are warnings or minor gaps.
    - `fail` — one or more cohort acceptance criteria are not met, or a blocking known issue exists.
-5. Emit the artifact exactly once and stop.
+5. Save the artifact with the idempotent PUT below and stop after Oakridge confirms it.
 
 ## Emit the artifact
 
 ```http
-POST {{OAKRIDGE_URL}}/executors/delegated_session/{{STAGE_INSTANCE_ID}}/units/{{UNIT_ID}}/emit/assessment
+PUT {{OAKRIDGE_URL}}/executors/delegated_session/{{STAGE_INSTANCE_ID}}/units/{{UNIT_ID}}/emit/assessment
 Content-Type: application/json
 
 {
@@ -56,6 +56,7 @@ Content-Type: application/json
 ```
 
 `test_evidence` is optional. `recommended_next_actions` should be empty when the verdict is `pass`.
+If the request or response transport fails, retry the same PUT with the same JSON body.
 
 ## Constraints
 
