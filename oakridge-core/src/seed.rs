@@ -12,6 +12,8 @@ const DEV_FLOW_V7_JSON: &str = include_str!("../examples/dev_flow_v7.json");
 const DEV_FLOW_V8_JSON: &str = include_str!("../examples/dev_flow_v8.json");
 const DEV_FLOW_V9_JSON: &str = include_str!("../examples/dev_flow_v9.json");
 const DEV_FLOW_V11_JSON: &str = include_str!("../examples/dev_flow_v11.json");
+const DEV_FLOW_BATCH_ASSESSMENT_JSON: &str =
+    include_str!("../examples/dev_flow_batch_assessment.json");
 
 pub async fn seed_builtin_workflow_defs(
     pool: &SqlitePool,
@@ -29,6 +31,10 @@ pub async fn seed_builtin_workflow_defs(
         ("dev_flow_v8.json", DEV_FLOW_V8_JSON),
         ("dev_flow_v9.json", DEV_FLOW_V9_JSON),
         ("dev_flow_v11.json", DEV_FLOW_V11_JSON),
+        (
+            "dev_flow_batch_assessment.json",
+            DEV_FLOW_BATCH_ASSESSMENT_JSON,
+        ),
     ] {
         let def: WorkflowDef = serde_json::from_str(json_str).map_err(|e| {
             crate::Error::Validation(format!("failed to parse built-in {}: {}", label, e))
@@ -131,7 +137,11 @@ mod tests {
         let pool = seed_into_fresh_pool().await;
 
         let active = queries::list_workflow_defs(&pool, false).await.unwrap();
-        let versions: Vec<i32> = active.iter().map(|d| d.version).collect();
+        let versions: Vec<i32> = active
+            .iter()
+            .filter(|definition| definition.name == "dev-flow")
+            .map(|definition| definition.version)
+            .collect();
         assert_eq!(
             versions,
             vec![11],
@@ -139,7 +149,7 @@ mod tests {
         );
 
         let all = queries::list_workflow_defs(&pool, true).await.unwrap();
-        assert_eq!(all.len(), 9, "retired defs are kept, not deleted");
+        assert_eq!(all.len(), 10, "retired defs are kept, not deleted");
     }
 
     #[tokio::test]
@@ -189,7 +199,12 @@ mod tests {
             .await
             .unwrap();
 
-        let active = queries::list_workflow_defs(&pool, false).await.unwrap();
+        let active: Vec<_> = queries::list_workflow_defs(&pool, false)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|definition| definition.name == "dev-flow")
+            .collect();
         assert_eq!(active.len(), 1);
         assert_eq!(active[0].version, 11);
         let config: crate::executor::delegated_session::config::DelegatedSessionDefConfig =
@@ -233,7 +248,12 @@ mod tests {
             .await
             .unwrap();
 
-        let active = queries::list_workflow_defs(&pool, false).await.unwrap();
+        let active: Vec<_> = queries::list_workflow_defs(&pool, false)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|definition| definition.name == "dev-flow")
+            .collect();
         assert_eq!(active.len(), 1);
         assert_eq!(active[0].version, 11);
         crate::http::rest::validate_workflow_graph(
@@ -247,6 +267,35 @@ mod tests {
             .await
             .unwrap();
         assert!(persisted_v10.archived);
+    }
+
+    #[tokio::test]
+    async fn batch_assessment_flow_is_seeded_as_an_additional_valid_definition() {
+        let pool = seed_into_fresh_pool().await;
+        let (stage_reg, artifact_reg) = builtin_registries();
+
+        let definition = queries::get_workflow_def_by_name_version(
+            &pool,
+            "dev-flow-batch-assessment",
+            1,
+        )
+        .await
+        .unwrap()
+        .expect("batch assessment workflow should be seeded");
+
+        crate::http::rest::validate_workflow_graph(
+            &stage_reg,
+            &artifact_reg,
+            &definition.graph,
+        )
+        .unwrap();
+        let assessor = &definition.graph.stages["assessor"];
+        assert!(assessor.inputs.iter().all(|input| {
+            input.collect && input.delivery == crate::types::InputDelivery::ProducerComplete
+        }));
+        let config: crate::executor::delegated_session::config::DelegatedSessionDefConfig =
+            serde_json::from_value(assessor.config.clone()).unwrap();
+        assert!(config.fan_out.is_none());
     }
 
     #[tokio::test]
