@@ -568,6 +568,15 @@ fn dev_flow_v10_assesses_only_the_matching_cohort_brief() {
     assert_eq!(def.version, 10);
     assert_ne!(def.id, previous.id);
 
+    let brief_writer = &def.graph.stages["brief_writer"];
+    let brief_writer_config: DelegatedSessionDefConfig =
+        serde_json::from_value(brief_writer.config.clone()).unwrap();
+    assert_eq!(
+        serde_json::to_value(&brief_writer_config.slot_bindings["PLAN"]).unwrap(),
+        json!({"from": "input", "input_name": "plan", "path": null})
+    );
+    assert!(!brief_writer_config.slot_bindings.contains_key("BRIEF"));
+
     let assessor = &def.graph.stages["assessor"];
     let config: DelegatedSessionDefConfig =
         serde_json::from_value(assessor.config.clone()).unwrap();
