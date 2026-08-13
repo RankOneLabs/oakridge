@@ -40,11 +40,9 @@ pub async fn seed_builtin_workflow_defs(
         // drifted example (unknown stage/artifact type, invalid def_config) is
         // surfaced at boot instead of silently failing later at run creation.
         //
-        // This warns rather than aborts: boot() runs with a caller-provided type
-        // registry (embedders and tests may register a minimal set), so a built-in
-        // def whose types aren't registered in this process just isn't runnable
-        // here — that shouldn't take down boot. A genuinely malformed def is still
-        // rejected when a run is created (create_workflow_run validates too).
+        // Boot may run with a caller-provided registry that intentionally omits
+        // built-in types. In that case, leave the incompatible definition out of
+        // storage rather than admitting a definition that cannot be used.
         if let Err(e) = crate::http::rest::validate_workflow_graph(
             stage_registry,
             artifact_registry,
@@ -53,8 +51,9 @@ pub async fn seed_builtin_workflow_defs(
             tracing::warn!(
                 def = %label,
                 "built-in workflow def failed validation against the registered types \
-                 and will not be runnable in this process: {e}"
+                 and will not be seeded: {e}"
             );
+            continue;
         }
 
         // Attempt the insert unconditionally so concurrent boots are safe: if two
@@ -100,13 +99,19 @@ mod tests {
     use super::*;
     use crate::registry::{ArtifactTypeRegistry, StageTypeRegistry};
 
+    fn builtin_registries() -> (StageTypeRegistry, ArtifactTypeRegistry) {
+        let mut stage_registry = StageTypeRegistry::new();
+        let mut artifact_registry = ArtifactTypeRegistry::new();
+        crate::http::register_types(&mut stage_registry, &mut artifact_registry);
+        (stage_registry, artifact_registry)
+    }
+
     async fn seed_into_fresh_pool() -> SqlitePool {
         let path = format!("/tmp/oakridge_seed_test_{}.db", uuid::Uuid::new_v4());
         let pool = crate::db::init_pool(&format!("sqlite:{}", path))
             .await
             .unwrap();
-        let stage_reg = StageTypeRegistry::new();
-        let artifact_reg = ArtifactTypeRegistry::new();
+        let (stage_reg, artifact_reg) = builtin_registries();
         seed_builtin_workflow_defs(&pool, &stage_reg, &artifact_reg)
             .await
             .unwrap();
@@ -115,6 +120,14 @@ mod tests {
 
     #[tokio::test]
     async fn seeding_retires_every_superseded_dev_flow_version() {
+        let (stage_registry, artifact_registry) = builtin_registries();
+        let latest: WorkflowDef = serde_json::from_str(DEV_FLOW_V10_JSON).unwrap();
+        crate::http::rest::validate_workflow_graph(
+            &stage_registry,
+            &artifact_registry,
+            &latest.graph,
+        )
+        .unwrap();
         let pool = seed_into_fresh_pool().await;
 
         let active = queries::list_workflow_defs(&pool, false).await.unwrap();
@@ -145,8 +158,7 @@ mod tests {
 
         // A second boot re-runs the seed; every insert now hits the unique
         // constraint, so nothing should re-archive.
-        let stage_reg = StageTypeRegistry::new();
-        let artifact_reg = ArtifactTypeRegistry::new();
+        let (stage_reg, artifact_reg) = builtin_registries();
         seed_builtin_workflow_defs(&pool, &stage_reg, &artifact_reg)
             .await
             .unwrap();
@@ -172,8 +184,7 @@ mod tests {
         let v8: WorkflowDef = serde_json::from_str(DEV_FLOW_V8_JSON).unwrap();
         queries::insert_workflow_def(&pool, &v8).await.unwrap();
 
-        let stage_reg = StageTypeRegistry::new();
-        let artifact_reg = ArtifactTypeRegistry::new();
+        let (stage_reg, artifact_reg) = builtin_registries();
         seed_builtin_workflow_defs(&pool, &stage_reg, &artifact_reg)
             .await
             .unwrap();
@@ -185,5 +196,29 @@ mod tests {
             serde_json::from_value(active[0].graph.stages["brief_writer"].config.clone()).unwrap();
         assert!(config.fan_out.is_none());
         assert_eq!(config.artifacts.unwrap().id_path, "/id");
+    }
+
+    #[tokio::test]
+    async fn invalid_builtin_definitions_are_not_persisted() {
+        let path = format!(
+            "/tmp/oakridge_invalid_seed_test_{}.db",
+            uuid::Uuid::new_v4()
+        );
+        let pool = crate::db::init_pool(&format!("sqlite:{}", path))
+            .await
+            .unwrap();
+
+        seed_builtin_workflow_defs(
+            &pool,
+            &StageTypeRegistry::new(),
+            &ArtifactTypeRegistry::new(),
+        )
+        .await
+        .unwrap();
+
+        assert!(queries::list_workflow_defs(&pool, true)
+            .await
+            .unwrap()
+            .is_empty());
     }
 }

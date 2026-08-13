@@ -616,9 +616,11 @@ pub(crate) fn validate_workflow_graph(
                 serde_json::from_value(consumer.config.clone()).map_err(|err| {
                     crate::Error::Validation(format!("stage '{}' config invalid: {}", edge.to.stage, err))
                 })?;
-            if producer_config.fan_out.is_none() || consumer_config.fan_out.is_none() {
+            let producer_emits_units =
+                producer_config.fan_out.is_some() || producer_config.artifacts.is_some();
+            if !producer_emits_units || consumer_config.fan_out.is_none() {
                 return Err(crate::Error::Validation(format!(
-                    "edge '{}.{}' -> '{}.{}' uses unit_complete delivery but both stages must configure fan_out",
+                    "edge '{}.{}' -> '{}.{}' uses unit_complete delivery but the producer must configure fan_out or artifacts and the consumer must configure fan_out",
                     edge.from.stage, edge.from.slot, edge.to.stage, edge.to.slot
                 )));
             }
@@ -644,14 +646,24 @@ pub(crate) fn validate_workflow_graph(
                     edge.from.stage, edge.from.slot
                 )));
             }
-            let fans_over_input = matches!(
-                consumer_config.fan_out.as_ref().map(|fan_out| &fan_out.over),
-                Some(crate::executor::prompt_config::SlotBinding::Input { input_name, path: None })
-                    if input_name == &edge.to.slot
-            );
-            if !fans_over_input {
+            let fan_out_input = consumer_config.fan_out.as_ref().and_then(|fan_out| {
+                match &fan_out.over {
+                    crate::executor::prompt_config::SlotBinding::Input {
+                        input_name,
+                        path: None,
+                    } => Some(input_name.as_str()),
+                    _ => None,
+                }
+            });
+            let fans_over_unit_input = fan_out_input.is_some_and(|input_name| {
+                consumer.inputs.iter().any(|candidate| {
+                    candidate.name == input_name
+                        && candidate.delivery == InputDelivery::UnitComplete
+                })
+            });
+            if !fans_over_unit_input {
                 return Err(crate::Error::Validation(format!(
-                    "edge '{}.{}' uses unit_complete delivery but consumer fan_out.over does not select that whole input",
+                    "edge '{}.{}' uses unit_complete delivery but consumer fan_out.over does not select a whole unit_complete input",
                     edge.to.stage, edge.to.slot
                 )));
             }

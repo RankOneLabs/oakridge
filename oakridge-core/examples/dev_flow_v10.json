@@ -54,7 +54,7 @@
           "runtime": {"from":"context","path":"/planner_runtime"},
           "prompt_template_path": "dev-flow/brief_writer.md",
           "slot_bindings": {
-            "BRIEF": {"from":"input","input_name":"brief","path":null},
+            "PLAN": {"from":"input","input_name":"plan","path":null},
             "OAKRIDGE_URL": {"from":"context","path":"/oakridge_url"}
           },
           "workdir": {"from":"context","path":"/repositories/0/path"},
