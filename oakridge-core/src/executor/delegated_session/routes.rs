@@ -152,6 +152,25 @@ async fn emit_handler(
         .as_ref()
         .filter(|artifact| artifact.body == body)
     {
+        // The original response may have been lost after artifact persistence but
+        // before the unit linkage was written. An identical retry must heal that
+        // best-effort projection as well as return the durable artifact identity.
+        if let Err(error) = queries::set_session_unit_artifact_id(
+            live_session.ctx.pool(),
+            &stage_instance_id,
+            &unit_id,
+            artifact.id,
+        )
+        .await
+        {
+            tracing::warn!(
+                stage_instance_id = %stage_instance_id.0,
+                unit_id = %unit_id,
+                artifact_id = %artifact.id.0,
+                error = %error,
+                "idempotent emit retry could not repair unit artifact linkage"
+            );
+        }
         return (
             StatusCode::OK,
             Json(serde_json::json!({ "artifact_id": artifact.id.0.to_string() })),

@@ -5968,7 +5968,11 @@ mod tests {
 
         // A client may not receive the first response. Retrying the stable output
         // resource with the same representation returns the original artifact and
-        // does not create another revision or replay the gate transition.
+        // does not create another revision or replay the gate transition. Simulate
+        // the first attempt losing its best-effort unit projection as well.
+        queries::clear_session_unit_artifact_id(&pool, &si_id, "0")
+            .await
+            .unwrap();
         let retry = Request::builder()
             .method("PUT")
             .uri(format!("/{}/units/0/emit/out", si_id.0))
@@ -5982,6 +5986,16 @@ mod tests {
             .unwrap();
         let retry_payload: serde_json::Value = serde_json::from_slice(&retry_body).unwrap();
         assert_eq!(retry_payload["artifact_id"], artifact_id);
+        assert_eq!(
+            queries::get_session_unit(&pool, &si_id, "0")
+                .await
+                .unwrap()
+                .artifact_id
+                .unwrap()
+                .0
+                .to_string(),
+            artifact_id
+        );
         assert_eq!(
             queries::list_artifacts_for_run(&pool, &run_id, None)
                 .await
