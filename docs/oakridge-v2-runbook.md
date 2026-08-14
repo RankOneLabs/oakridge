@@ -223,16 +223,16 @@ Implement this task:
 Emit the result artifact to oakridge-core when complete.
 ```
 
-The delegated agent must eventually POST an artifact to:
+The delegated agent must eventually PUT an artifact to:
 
 ```http
-POST /executors/delegated_session/:stage_instance_id/units/:unit_id/emit/:output_name
+PUT /executors/delegated_session/:stage_instance_id/units/:unit_id/emit/:output_name
 ```
 
 For the current single-session case (no `fan_out` config), `unit_id` is always `0`:
 
 ```http
-POST /executors/delegated_session/<stage_instance_id>/units/0/emit/<output_name>
+PUT /executors/delegated_session/<stage_instance_id>/units/0/emit/<output_name>
 ```
 
 The `/units/:unit_id/` segment is required in all cases. The implicit-unit constant `"0"` is
@@ -465,12 +465,14 @@ The delegated agent emits the declared output artifact. For the N=1 implicit-uni
 case (no `fan_out` config), the unit id is always `0`:
 
 ```bash
-curl -sX POST "$CORE/executors/delegated_session/<stage_instance_id>/units/0/emit/out" \
+curl -sX PUT "$CORE/executors/delegated_session/<stage_instance_id>/units/0/emit/out" \
   -H 'content-type: application/json' \
   -d '{"result":"done","notes":"artifact body is workflow-specific JSON"}'
 ```
 
 After emit, oakridge-core parks the unit for its configured artifact approval.
+The stage/unit/output URL is idempotent: retrying the same PUT body returns the
+existing artifact id, while a changed body creates a linked revision.
 Read the composite gate id from `GET /workflow_runs/:id/gates`, then approve the
 exact displayed revision:
 
@@ -918,7 +920,7 @@ siblings continue; otherwise it remains running.
 The emit route now includes a `units/:unit_id` segment:
 
 ```http
-POST /executors/delegated_session/:stage_instance_id/units/:unit_id/emit/:output_name
+PUT /executors/delegated_session/:stage_instance_id/units/:unit_id/emit/:output_name
 ```
 
 Artifacts emitted through this route are labeled with `unit_id`, which preserves

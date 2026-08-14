@@ -53,10 +53,15 @@ Emit the standard `dev.plan` shape. Every cohort must include:
 The top-level object also requires `summary`, `dependency_order`, `scope` with
 `in_scope` and `out_of_scope`, `acceptance_criteria`, and `risks`.
 
-POST exactly once to:
+PUT the JSON body to:
 
-```text
-{{OAKRIDGE_URL}}/executors/delegated_session/{{STAGE_INSTANCE_ID}}/units/0/emit/plan
+```http
+PUT {{OAKRIDGE_URL}}/executors/delegated_session/{{STAGE_INSTANCE_ID}}/units/0/emit/plan
+Content-Type: application/json
+
+<the complete dev.plan JSON body described above>
 ```
+
+If the request or response transport fails, retry the same PUT with the same JSON body.
 
 Plan only; do not implement.

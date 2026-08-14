@@ -122,7 +122,7 @@ per-service tokens).
 | `GET /workflow_runs/:id/artifacts` | `200` | Filter: `?artifact_type=`. |
 | `GET /stage_instances/:id` | `200` | `404` when missing. |
 | `POST /stage_instances/:id/resume` | `202` | Body tagged `ResumePayload` (`{"kind":"gate_decision",...}`, `{"kind":"feedback_artifact",...}`, or `{"kind":"executor","payload":...}`); resumes a parked stage. Requires `Authorization: Bearer <token>` on non-loopback binds. |
-| `POST /executors/delegated_session/:stage_instance_id/emit/:output_name` | `200` | Delegated agents emit declared output artifacts directly to oakridge-core. Returns `{ "artifact_id": "..." }`. |
+| `PUT /executors/delegated_session/:stage_instance_id/units/:unit_id/emit/:output_name` | `200` | Creates or updates the unit's declared output artifact. Identical retries return the existing artifact id; changed bodies create a linked revision. `unit_id` is `0` for non-fan-out stages. Legacy `POST` remains accepted. |
 | `GET /artifacts/:id` | `200` | Returns the revision chain, root-first. |
 | `GET /parked` | `200` | All currently parked stage instances. |
 

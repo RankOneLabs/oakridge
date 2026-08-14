@@ -28,7 +28,7 @@ pub(crate) fn emit_routes(kbbl_client: Arc<KbblClient>, live_sessions: LiveSessi
     Router::new()
         .route(
             "/:stage_instance_id/units/:unit_id/emit/:output_name",
-            post(emit_handler),
+            post(emit_handler).put(emit_handler),
         )
         .with_state(RouteState {
             _kbbl_client: kbbl_client,
@@ -124,10 +124,11 @@ async fn emit_handler(
         }
     };
 
-    // Re-emitting the same session output for the same artifact identity is an
-    // update, not an unrelated artifact. Link it to the current tip so revision
-    // history belongs to the artifact regardless of how the session was reached.
-    let parent_artifact_id = match queries::get_latest_artifact_by_stage_output_and_label(
+    // The stage/unit/output tuple is a stable resource identity. PUT retries with
+    // the same representation must be safe: if the first response was lost, return
+    // the artifact already stored instead of creating a duplicate revision or
+    // replaying the gate transition.
+    let current_artifact = match queries::get_latest_artifact_by_stage_output_and_label(
         live_session.ctx.pool(),
         &stage_instance_id,
         &output_name,
@@ -135,7 +136,7 @@ async fn emit_handler(
     )
     .await
     {
-        Ok(artifact) => artifact.map(|artifact| artifact.id),
+        Ok(artifact) => artifact,
         Err(error) => {
             tracing::warn!(
                 stage_instance_id = %stage_instance_id.0,
@@ -147,6 +148,38 @@ async fn emit_handler(
             None
         }
     };
+    if let Some(artifact) = current_artifact
+        .as_ref()
+        .filter(|artifact| artifact.body == body)
+    {
+        // The original response may have been lost after artifact persistence but
+        // before the unit linkage was written. An identical retry must heal that
+        // best-effort projection as well as return the durable artifact identity.
+        if let Err(error) = queries::set_session_unit_artifact_id(
+            live_session.ctx.pool(),
+            &stage_instance_id,
+            &unit_id,
+            artifact.id,
+        )
+        .await
+        {
+            tracing::warn!(
+                stage_instance_id = %stage_instance_id.0,
+                unit_id = %unit_id,
+                artifact_id = %artifact.id.0,
+                error = %error,
+                "idempotent emit retry could not repair unit artifact linkage"
+            );
+        }
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!({ "artifact_id": artifact.id.0.to_string() })),
+        )
+            .into_response();
+    }
+
+    // A changed representation is a new revision of the same logical resource.
+    let parent_artifact_id = current_artifact.map(|artifact| artifact.id);
 
     let artifact = match live_session
         .ctx

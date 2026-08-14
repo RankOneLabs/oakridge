@@ -5934,13 +5934,29 @@ mod tests {
 
         let handle = stage.execute(ctx).await.unwrap();
         let app = stage.http_routes().unwrap();
+        let malformed_request = Request::builder()
+            .method("PUT")
+            .uri(format!("/{}/units/0/emit/out", si_id.0))
+            .header("content-type", "application/json")
+            .body(Body::empty())
+            .unwrap();
+        let malformed_response = app.clone().oneshot(malformed_request).await.unwrap();
+        assert_eq!(malformed_response.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            queries::list_artifacts_for_run(&pool, &run_id, None)
+                .await
+                .unwrap()
+                .is_empty(),
+            "a body transport failure must not consume the output resource"
+        );
+
         let request = Request::builder()
-            .method("POST")
+            .method("PUT")
             .uri(format!("/{}/units/0/emit/out", si_id.0))
             .header("content-type", "application/json")
             .body(Body::from(r#"{"content":"draft"}"#))
             .unwrap();
-        let response = app.oneshot(request).await.unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
 
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
@@ -5949,6 +5965,44 @@ mod tests {
         let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
         let artifact_id = payload["artifact_id"].as_str().unwrap().to_string();
         assert!(!artifact_id.is_empty());
+
+        // A client may not receive the first response. Retrying the stable output
+        // resource with the same representation returns the original artifact and
+        // does not create another revision or replay the gate transition. Simulate
+        // the first attempt losing its best-effort unit projection as well.
+        queries::clear_session_unit_artifact_id(&pool, &si_id, "0")
+            .await
+            .unwrap();
+        let retry = Request::builder()
+            .method("PUT")
+            .uri(format!("/{}/units/0/emit/out", si_id.0))
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"content":"draft"}"#))
+            .unwrap();
+        let retry_response = app.oneshot(retry).await.unwrap();
+        assert_eq!(retry_response.status(), StatusCode::OK);
+        let retry_body = axum::body::to_bytes(retry_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let retry_payload: serde_json::Value = serde_json::from_slice(&retry_body).unwrap();
+        assert_eq!(retry_payload["artifact_id"], artifact_id);
+        assert_eq!(
+            queries::get_session_unit(&pool, &si_id, "0")
+                .await
+                .unwrap()
+                .artifact_id
+                .unwrap()
+                .0
+                .to_string(),
+            artifact_id
+        );
+        assert_eq!(
+            queries::list_artifacts_for_run(&pool, &run_id, None)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
 
         let si = queries::get_stage_instance_by_id(&pool, &si_id)
             .await
