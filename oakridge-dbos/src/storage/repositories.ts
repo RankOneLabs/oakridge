@@ -7,13 +7,22 @@ import type { ArtifactEmission, ArtifactEmissionDelivery, ArtifactRevision, Emit
 import type { CompiledOutputContract } from "../domain/compiled-workflow";
 import type { ArtifactEnvelope } from "../domain/execution";
 import type { ExecutionRequest, ExecutorTerminalObservation, ExternalExecutionReference } from "../domain/execution";
-import type { CancellationExecutionTarget, UnitRerunTarget } from "../domain/rerun";
+import type { CancellationExecutionTarget, CancellationWaitTarget, UnitRerunTarget } from "../domain/rerun";
+import type { CreateProject, Project } from "../domain/projects";
+import type { CreateWorkflowRunResult, DeleteRunResult, PendingRunLaunch, PersistWorkflowRunLaunch, SetRunArchiveResult, WorkflowRunLaunchRecord, WorkflowRunListFilter } from "../domain/runs";
 
 export interface WorkflowDefinitionRepository {
   insert_immutable(definition: WorkflowDefinition): Promise<WorkflowDefinition>;
   find_by_id(id: WorkflowDefinitionId): Promise<WorkflowDefinition | null>;
   find_by_name_version(name: string, version: number): Promise<WorkflowDefinition | null>;
-  list(): Promise<readonly WorkflowDefinition[]>;
+  list(include_archived?: boolean): Promise<readonly WorkflowDefinition[]>;
+  set_archived(id: WorkflowDefinitionId, archived: boolean): Promise<WorkflowDefinition | null>;
+}
+
+export interface ProjectRepository {
+  insert(project: CreateProject): Promise<Project>;
+  list(): Promise<readonly Project[]>;
+  find_by_id(id: import("../domain/primitives").ProjectId): Promise<Project | null>;
 }
 
 export interface WorkflowRunLaunch {
@@ -30,6 +39,14 @@ export interface WorkflowRunRecord extends WorkflowRunLaunch {
 export interface WorkflowRunRepository {
   insert_launch(launch: WorkflowRunLaunch): Promise<void>;
   find_by_id(id: WorkflowRunId): Promise<WorkflowRunRecord | null>;
+  create_with_initial_attempt(input: PersistWorkflowRunLaunch): Promise<CreateWorkflowRunResult>;
+  find_launch_by_id(id: WorkflowRunId): Promise<WorkflowRunLaunchRecord | null>;
+  list(filter?: WorkflowRunListFilter): Promise<readonly WorkflowRunLaunchRecord[]>;
+  set_archived(id: WorkflowRunId, archived: boolean): Promise<SetRunArchiveResult>;
+  delete_terminal(id: WorkflowRunId): Promise<DeleteRunResult>;
+  claim_pending_launches(worker_id: string, claimed_at: string, claimed_until: string, limit: number): Promise<readonly PendingRunLaunch[]>;
+  mark_launch_delivered(id: string, worker_id: string, delivered_at: string): Promise<void>;
+  mark_launch_failed(id: string, worker_id: string, error: string, next_attempt_at: string): Promise<void>;
 }
 
 export interface WorkflowAttempt {
@@ -62,6 +79,10 @@ export interface StageInstanceRepository {
   find_by_id(id: StageInstanceId): Promise<StageInstance | null>;
 }
 
+export interface StageAdmissionTargetRepository {
+  find_coordinator_workflow_id(stage_instance_id: StageInstanceId): Promise<string | null>;
+}
+
 export interface ArtifactRevisionRepository {
   emit_revision(id: ArtifactId, emission: ArtifactEmission, created_at: string, delivery: ArtifactEmissionDelivery): Promise<EmitArtifactRevisionResult>;
   withdraw(request: WithdrawArtifactRequest): Promise<WithdrawArtifactResult>;
@@ -70,6 +91,10 @@ export interface ArtifactRevisionRepository {
   find_current(stage_instance_id: StageInstanceId, execution_id: string, unit_id: string, output_name: string): Promise<ArtifactRevision | null>;
   list_chain(chain_id: ArtifactId): Promise<readonly ArtifactRevision[]>;
   find_by_id(id: ArtifactId): Promise<ArtifactRevision | null>;
+}
+
+export interface RunArtifactReadRepository {
+  list_effective_for_run(run_id: WorkflowRunId): Promise<readonly ArtifactRevision[]>;
 }
 
 export interface ArtifactNotificationRepository {
@@ -112,6 +137,7 @@ export interface RerunTargetRepository {
 
 export interface CancellationTargetRepository {
   list_for_attempt(root_workflow_id: string): Promise<readonly CancellationExecutionTarget[]>;
+  terminalize_pending_waits(root_workflow_id: string, actor: string, reason: string, withdrawn_at: string): Promise<readonly CancellationWaitTarget[]>;
   finish_started_stages(root_workflow_id: string, ended_at: string, reason: string | null): Promise<void>;
 }
 

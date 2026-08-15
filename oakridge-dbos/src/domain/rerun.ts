@@ -19,3 +19,7 @@ export interface CancellationExecutionTarget {
   readonly executor_type: string;
   readonly external_reference: ExternalExecutionReference | null;
 }
+
+export type CancellationWaitTarget =
+  | { readonly kind: "gate"; readonly workflow_id: string }
+  | { readonly kind: "handoff"; readonly workflow_id: string };

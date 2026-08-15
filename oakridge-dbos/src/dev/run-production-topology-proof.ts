@@ -49,6 +49,7 @@ registerProductionTopologyServices({
   async start_stage() {}, async finish_stage() {}, async record_execution(input) {
     await proofServiceSql.query("INSERT INTO public.oakridge_proof_execution (workflow_id, request) VALUES ($1, $2::jsonb) ON CONFLICT (workflow_id) DO NOTHING", [input.execution_workflow_id, input.request]);
   },
+  async replace_execution_projection() {},
   async load_resume_artifacts() { return []; },
 });
 

@@ -44,6 +44,12 @@ export interface WorkflowDefinition {
   readonly archived: boolean;
 }
 
+export interface CreateWorkflowDefinition {
+  readonly name: string;
+  readonly version: number;
+  readonly graph: WorkflowGraph;
+}
+
 export type StageOutcome =
   | { readonly kind: "succeeded" }
   | { readonly kind: "failed"; readonly code: string; readonly detail: string }

@@ -31,7 +31,7 @@ export type EmitArtifactRevisionResult = Result<{
   readonly superseded_artifact_id: ArtifactId | null;
 }, {
   readonly operation: "emit_artifact_revision";
-  readonly kind: "idempotency_conflict" | "release_conflict" | "invariant_conflict";
+  readonly kind: "idempotency_conflict" | "release_conflict" | "invariant_conflict" | "execution_closed";
   readonly artifact_id: ArtifactId;
   readonly detail: string;
 }>;

@@ -40,11 +40,12 @@ export const rerunStage = async (request: StageRerunRequest, dependencies: Stage
   const attempts = await dependencies.attempts.list_for_run(request.run_id);
   const parent = attempts[attempts.length - 1];
   if (!parent) throw new Error(`workflow run '${request.run_id}' has no DBOS attempt`);
+  await dependencies.supersede_attempt(parent.root_workflow_id);
+  const createdAt = dependencies.now();
   await dependencies.dbos.start_run(rootWorkflowId, { run_id: request.run_id, workflow_definition_id: definition.id,
     workflow_definition_version: definition.version, context: run.context, resume_from_stage: request.stage_key,
-    created_at: dependencies.now(), forked_from_root_workflow_id: parent.root_workflow_id }, request.application_version);
+    created_at: createdAt, forked_from_root_workflow_id: parent.root_workflow_id }, request.application_version);
   await dependencies.attempts.insert({ root_workflow_id: rootWorkflowId, run_id: request.run_id,
-    forked_from_root_workflow_id: parent.root_workflow_id, created_at: dependencies.now() });
-  await dependencies.supersede_attempt(parent.root_workflow_id);
+    forked_from_root_workflow_id: parent.root_workflow_id, created_at: createdAt });
   return { root_workflow_id: rootWorkflowId };
 };
