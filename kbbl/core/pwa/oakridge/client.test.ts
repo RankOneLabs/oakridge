@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { confirmFinalPullRequest, createRun, fetchRun } from "./client";
 import { parseRepositoryKey } from "./repository-inputs";
+import type { CreateRunRequest, RepositoryKey } from "./types";
 
 function json(body: unknown): Response {
   return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -9,10 +10,24 @@ function json(body: unknown): Response {
 
 afterEach(() => vi.restoreAllMocks());
 
+const createRunRequest = (): CreateRunRequest => ({
+  workflow_def_id: "definition-1",
+  project_id: null,
+  context: {
+    brief_notes: "Build it", repositories: [{ key: "repo" as RepositoryKey, path: "/repo" }], worktree_path: "/repo",
+    oakridge_url: "http://oakridge", planner_runtime: "claude-code", planner_model: "sonnet",
+    worker_runtime: "claude-code", worker_model: "sonnet",
+  },
+  epic_profile: {
+    title: "Build it", slug: "build-it", final_merge_policy: "guarded",
+    repositories: [{ repository_key: "repo" as RepositoryKey, repository_path: "/repo", base_branch: "main", forge_repository: { provider: "github", owner: "acme", name: "repo" } }],
+  },
+});
+
 describe("Oakridge response parsing", () => {
   it("sends the caller-owned run idempotency key", async () => {
     const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ id: "run-1" }));
-    await createRun({ workflow_def_id: "definition-1", project_id: null, context: {}, epic_profile: null }, "launch-1");
+    await createRun(createRunRequest(), "launch-1");
     expect(fetch).toHaveBeenCalledWith("/oakridge/api/workflow_runs", expect.objectContaining({ headers: expect.objectContaining({ "Idempotency-Key": "launch-1" }) }));
   });
 
