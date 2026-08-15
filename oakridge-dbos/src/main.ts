@@ -14,7 +14,7 @@ import { createProductionTopologyServices } from "./runtime/production-services"
 import { seedBuiltins } from "./seed/seed-builtins";
 import { PostgresArtifactRevisionRepository, PostgresCancellationTargetRepository, PostgresExecutionArtifactContextRepository, PostgresExecutionProjectionRepository, PostgresResumeArtifactRepository, PostgresRerunTargetRepository, PostgresStageAdmissionTargetRepository, PostgresStageInstanceRepository, PostgresWorkflowAttemptRepository, PostgresWorkflowRunRepository } from "./storage/postgres-domain";
 import { PostgresOperatorProjectionRepository } from "./storage/postgres-operators";
-import { PostgresCollaborationRepository, PostgresGateDecisionAuditRepository } from "./storage/postgres-policy";
+import { PostgresCollaborationRepository, PostgresFinalPullRequestRepository, PostgresGateDecisionAuditRepository } from "./storage/postgres-policy";
 import { PostgresWorkflowDefinitionRepository } from "./storage/postgres-workflow-definitions";
 import { PostgresProjectRepository } from "./storage/postgres-projects";
 import { GitProjectRepositoryIdentityResolver } from "./runtime/project-identity";
@@ -55,6 +55,7 @@ const rerunTargets = new PostgresRerunTargetRepository(sql);
 const cancellationTargets = new PostgresCancellationTargetRepository(sql);
 const audits = new PostgresGateDecisionAuditRepository(sql);
 const collaboration = new PostgresCollaborationRepository(sql);
+const finalPullRequests = new PostgresFinalPullRequestRepository(sql);
 const projections = new PostgresOperatorProjectionRepository(sql);
 const now = () => new Date().toISOString();
 const dbosRuns = new DbosStageRerunClient(client);
@@ -107,6 +108,7 @@ const app = createApp({
   admission: { targets: admissionTargets, get_admission_state: getStageAdmissionState, send_stage_command: sendStageCommand },
   run_lifecycle: { runs },
   domain_reads: { stages, artifacts },
+  final_pull_requests: { final_pull_requests: finalPullRequests, now },
   artifact_callback: { contexts, artifacts, dispatch_notifications: dispatchNotifications },
   artifact_withdraw: { contexts, artifacts, dispatch_notifications: dispatchNotifications },
   gate_resume: { contexts, artifacts, collaboration, audits, get_gate_state: getGateWorkflowState, send_gate_command: sendGateWorkflowCommand,

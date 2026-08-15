@@ -10,6 +10,8 @@ import type { ExecutionRequest, ExecutorTerminalObservation, ExternalExecutionRe
 import type { CancellationExecutionTarget, CancellationWaitTarget, UnitRerunTarget } from "../domain/rerun";
 import type { CreateProject, Project } from "../domain/projects";
 import type { CreateWorkflowRunResult, DeleteRunResult, PendingRunLaunch, PersistWorkflowRunLaunch, SetRunArchiveResult, WorkflowRunLaunchRecord, WorkflowRunListFilter } from "../domain/runs";
+import type { ConfirmFinalPullRequestRequest, FinalPullRequestDomainError, FinalPullRequestProjection, PullRequestObservation } from "../domain/final-pull-request";
+import type { Result } from "../domain/primitives";
 
 export interface WorkflowDefinitionRepository {
   insert_immutable(definition: WorkflowDefinition): Promise<WorkflowDefinition>;
@@ -151,6 +153,25 @@ export interface GateDecisionAuditRepository {
 export interface EpicWorkflowProfileRepository {
   insert(profile: EpicWorkflowProfile): Promise<void>;
   find_by_id(id: EpicWorkflowProfileId): Promise<EpicWorkflowProfile | null>;
+}
+
+export interface PersistFinalPullRequestObservation {
+  readonly run_id: WorkflowRunId;
+  readonly repository_key: string;
+  readonly observation: PullRequestObservation;
+  readonly updated_at: string;
+}
+
+export interface PersistFinalPullRequestConfirmation {
+  readonly run_id: WorkflowRunId;
+  readonly repository_key: string;
+  readonly request: ConfirmFinalPullRequestRequest;
+  readonly confirmed_at: string;
+}
+
+export interface FinalPullRequestRepository {
+  observe(input: PersistFinalPullRequestObservation): Promise<Result<FinalPullRequestProjection, FinalPullRequestDomainError>>;
+  confirm(input: PersistFinalPullRequestConfirmation): Promise<Result<FinalPullRequestProjection, FinalPullRequestDomainError>>;
 }
 
 export interface CollaborationRepository {
