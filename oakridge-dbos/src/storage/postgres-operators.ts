@@ -61,8 +61,10 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
        FROM dbos.workflow_events event
        CROSS JOIN LATERAL (SELECT event.value::jsonb AS value) state
        JOIN oakridge.stage_instance stage ON stage.id = (state.value->>'stage_instance_id')::uuid
+       JOIN oakridge.artifact artifact ON artifact.id = (state.value->>'artifact_revision_id')::uuid
        WHERE event.key = 'gate-state'
          AND state.value->>'status' = 'pending'
+         AND artifact.lifecycle_state = 'current'
          AND stage.attempt_root_workflow_id = (
            SELECT attempt.root_workflow_id FROM oakridge.workflow_attempt attempt
            WHERE attempt.run_id = stage.run_id ORDER BY attempt.created_at DESC LIMIT 1)
@@ -104,7 +106,8 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
          FROM dbos.workflow_events event
          CROSS JOIN LATERAL (SELECT event.value::jsonb AS value) state
          JOIN oakridge.stage_instance stage ON stage.id = (state.value->>'stage_instance_id')::uuid
-         WHERE event.key = 'gate-state' AND state.value->>'status' = 'pending' AND stage.run_id = run.id
+         JOIN oakridge.artifact artifact ON artifact.id = (state.value->>'artifact_revision_id')::uuid
+         WHERE event.key = 'gate-state' AND state.value->>'status' = 'pending' AND artifact.lifecycle_state = 'current' AND stage.run_id = run.id
            AND stage.attempt_root_workflow_id = root.root_workflow_id
        ) gates ON true
        WHERE ($1::boolean IS NULL OR run.archived = $1::boolean)
@@ -130,7 +133,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     const rows = await this.sql.query<{ readonly cursor: string }>(
       `SELECT concat_ws(':',
          COALESCE((SELECT max(updated_at)::text FROM dbos.workflow_status), '0'),
-         COALESCE((SELECT max(created_at)::text FROM oakridge.artifact), '0'),
+         COALESCE((SELECT max(lifecycle_updated_at)::text FROM oakridge.artifact), '0'),
          COALESCE((SELECT max(created_at)::text FROM oakridge.gate_decision_audit), '0'),
          COALESCE((SELECT max(updated_at)::text FROM oakridge.executor_projection), '0'),
          COALESCE((SELECT max(updated_at)::text FROM oakridge.epic_workflow_profile), '0'),
@@ -153,7 +156,8 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
            SELECT 1 FROM dbos.workflow_events event
            CROSS JOIN LATERAL (SELECT event.value::jsonb AS value) state
            JOIN oakridge.stage_instance stage ON stage.id = (state.value->>'stage_instance_id')::uuid
-           WHERE event.key = 'gate-state' AND state.value->>'status' = 'pending'
+           JOIN oakridge.artifact artifact ON artifact.id = (state.value->>'artifact_revision_id')::uuid
+           WHERE event.key = 'gate-state' AND state.value->>'status' = 'pending' AND artifact.lifecycle_state = 'current'
              AND stage.attempt_root_workflow_id = attempt.root_workflow_id
          ) AS has_pending_gate
        ) gates ON true
@@ -168,13 +172,13 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     const stageRows = await this.sql.query<StageProjectionRow>(
       `SELECT stage.id::text AS stage_instance_id, stage.stage_key AS name, stage.stage_type,
               stage.stage_contract->>'operator_role' AS operator_role, status.status AS dbos_status,
-              EXISTS (SELECT 1 FROM dbos.workflow_events event CROSS JOIN LATERAL (SELECT event.value::jsonb AS value) state WHERE event.key = 'gate-state' AND state.value->>'status' = 'pending' AND state.value->>'stage_instance_id' = stage.id::text) AS has_pending_gate
+              EXISTS (SELECT 1 FROM dbos.workflow_events event CROSS JOIN LATERAL (SELECT event.value::jsonb AS value) state JOIN oakridge.artifact artifact ON artifact.id = (state.value->>'artifact_revision_id')::uuid WHERE event.key = 'gate-state' AND state.value->>'status' = 'pending' AND artifact.lifecycle_state = 'current' AND state.value->>'stage_instance_id' = stage.id::text) AS has_pending_gate
        FROM oakridge.stage_instance stage JOIN dbos.workflow_status status ON status.workflow_uuid = stage.coordinator_workflow_id
        WHERE stage.run_id = $1 AND stage.attempt_root_workflow_id = $2 ORDER BY stage.started_at`, [id, summary.current_attempt_root_workflow_id]);
     const unitRows = await this.sql.query<UnitProjectionRow>(
       `SELECT projection.stage_instance_id::text, projection.unit_id, projection.unit_parameters AS params,
               projection.external_reference, status.status AS dbos_status,
-              EXISTS (SELECT 1 FROM dbos.workflow_events event CROSS JOIN LATERAL (SELECT event.value::jsonb AS value) state WHERE event.key = 'gate-state' AND state.value->>'status' = 'pending' AND state.value->>'stage_instance_id' = projection.stage_instance_id::text AND state.value->>'unit_id' = projection.unit_id) AS has_pending_gate
+              EXISTS (SELECT 1 FROM dbos.workflow_events event CROSS JOIN LATERAL (SELECT event.value::jsonb AS value) state JOIN oakridge.artifact artifact ON artifact.id = (state.value->>'artifact_revision_id')::uuid WHERE event.key = 'gate-state' AND state.value->>'status' = 'pending' AND artifact.lifecycle_state = 'current' AND state.value->>'stage_instance_id' = projection.stage_instance_id::text AND state.value->>'unit_id' = projection.unit_id) AS has_pending_gate
        FROM oakridge.executor_projection projection
        JOIN oakridge.stage_instance stage ON stage.id = projection.stage_instance_id
        JOIN dbos.workflow_status status ON status.workflow_uuid = projection.execution_workflow_id
@@ -182,7 +186,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     const artifactRows = await this.sql.query<StageArtifactRow>(
       `SELECT DISTINCT ON (artifact.stage_instance_id, artifact.execution_id, artifact.unit_id, artifact.output_name)
               artifact.stage_instance_id::text, artifact.id::text, artifact.artifact_type AS type_id, artifact.version, artifact.label
-       FROM oakridge.artifact artifact WHERE artifact.run_id = $1
+       FROM oakridge.artifact artifact WHERE artifact.run_id = $1 AND artifact.lifecycle_state IN ('current', 'released')
        ORDER BY artifact.stage_instance_id, artifact.execution_id, artifact.unit_id, artifact.output_name, artifact.version DESC`, [id]);
     const profileRows = await this.sql.query<EpicProfileRow>(
       `SELECT id::text, workflow_run_id::text, title, slug, lifecycle_state, final_merge_policy,
@@ -202,12 +206,13 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     const attemptRows = await this.sql.query<AttemptProjectionRow>(
       `SELECT attempt.root_workflow_id, attempt.forked_from_root_workflow_id,
               status.status AS dbos_status, attempt.created_at::text,
-              count(event.workflow_uuid) FILTER (WHERE (event.value::jsonb)->>'status' = 'pending')::text AS parked_count
+              count(event.workflow_uuid) FILTER (WHERE (event.value::jsonb)->>'status' = 'pending' AND gate_artifact.lifecycle_state = 'current')::text AS parked_count
        FROM oakridge.workflow_attempt attempt
        JOIN dbos.workflow_status status ON status.workflow_uuid = attempt.root_workflow_id
        LEFT JOIN oakridge.stage_instance stage ON stage.attempt_root_workflow_id = attempt.root_workflow_id
        LEFT JOIN dbos.workflow_events event ON event.key = 'gate-state'
          AND (event.value::jsonb)->>'stage_instance_id' = stage.id::text
+       LEFT JOIN oakridge.artifact gate_artifact ON gate_artifact.id = ((event.value::jsonb)->>'artifact_revision_id')::uuid
        WHERE attempt.run_id = $1
        GROUP BY attempt.root_workflow_id, attempt.forked_from_root_workflow_id, status.status, attempt.created_at
        ORDER BY attempt.created_at`, [id]);
@@ -279,6 +284,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
        LEFT JOIN LATERAL (
          SELECT candidate.* FROM oakridge.artifact candidate
          WHERE candidate.stage_instance_id = stage.id AND candidate.execution_id = projection.execution_id AND candidate.unit_id = projection.unit_id
+           AND candidate.lifecycle_state IN ('current', 'released')
          ORDER BY candidate.version DESC LIMIT 1
        ) artifact ON true
        LEFT JOIN LATERAL (

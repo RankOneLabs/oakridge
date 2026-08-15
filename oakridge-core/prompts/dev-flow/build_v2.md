@@ -39,6 +39,8 @@ After all commits are complete, use the gated-review MCP tools to publish the br
 
 ## Emit the artifacts
 
+Use PUT as the canonical idempotent operation. Reuse the same `Idempotency-Key` only when retrying the identical body; a changed body intentionally supersedes the prior unreleased revision. Do not emit speculative duplicates. If the current artifact is wrong, withdraw it with `POST {{OAKRIDGE_URL}}/artifacts/<artifact_id>/withdraw` and `{"actor":"executor","reason":"<why>"}`, then stop only after Oakridge confirms the typed result.
+
 Emit **in this order** (both calls must complete before stopping):
 
 ### 1. PR summary (emit first)

@@ -8,6 +8,7 @@ test("pending gates are projected directly from published DBOS events", async ()
   const executor: SqlExecutor = { query: async <Row>(statement: string) => { sql = statement; return [{ run_id: "run-1", stage_name: "build", stage_instance_id: "stage-1", unit_id: "web", artifact_revision_id: "artifact-1", gate_step: "artifact_approval", actions: ["approve", "request_revision"] }] as Row[]; } };
   const gates = await new PostgresOperatorProjectionRepository(executor).list_pending_gates();
   expect(sql).toContain("FROM dbos.workflow_events");
+  expect(sql).toContain("artifact.lifecycle_state = 'current'");
   expect(gates).toEqual([expect.objectContaining({ id: "stage-1:web", gate_step: "artifact_approval", resume_actions: ["approve", "request_revision"] })]);
 });
 

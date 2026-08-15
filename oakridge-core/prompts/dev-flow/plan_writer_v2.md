@@ -53,6 +53,8 @@ Emit the standard `dev.plan` shape. Every cohort must include:
 The top-level object also requires `summary`, `dependency_order`, `scope` with
 `in_scope` and `out_of_scope`, `acceptance_criteria`, and `risks`.
 
+Use PUT as the canonical idempotent operation. Reuse the same `Idempotency-Key` only when retrying the identical body; a changed body intentionally supersedes the prior unreleased revision. Do not emit speculative duplicates. If the current artifact is wrong, withdraw it with `POST {{OAKRIDGE_URL}}/artifacts/<artifact_id>/withdraw` and `{"actor":"executor","reason":"<why>"}`, then stop only after Oakridge confirms the typed result.
+
 PUT the JSON body to:
 
 ```http

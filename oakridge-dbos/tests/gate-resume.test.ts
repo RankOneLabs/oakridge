@@ -12,7 +12,7 @@ const artifactId = "artifact-1" as ArtifactId;
 const artifact: ArtifactRevision = {
   id: artifactId, chain_id: artifactId, run_id: "run-1" as WorkflowRunId, stage_instance_id: stageId,
   execution_id: executionId, unit_id: unitId, output_name: "result", artifact_type: "dev.result",
-  label: null, body: { done: true }, version: 1, parent_artifact_id: null, created_at: "2026-08-14T12:00:00.000Z",
+  label: null, body: { done: true }, version: 1, parent_artifact_id: null, lifecycle: { kind: "current" }, created_at: "2026-08-14T12:00:00.000Z",
 };
 const body = { idempotency_key: "decision-1", artifact_revision_id: artifactId, gate_step: "artifact_approval", action: "approve", operator_comment: "looks good" };
 
@@ -22,7 +22,7 @@ const fixture = (options: { readonly open_items?: number; readonly tip?: Artifac
   let applied: GateDecisionAuditId | null = null;
   const dependencies: GateResumeDependencies = {
     contexts: { find_for_emit: async () => ({ run_id: artifact.run_id, stage_key: "review", operator_role: "assessment", stage_instance_id: stageId, execution_id: executionId, unit_id: unitId, executor_type: "delegated_session", execution_workflow_id: "execution-workflow-1", inputs: [], outputs: [{ name: "result", artifact_type: "dev.result", release: { kind: "gate", steps: [{ type: "artifact_approval", actions: ["approve", "request_revision"] }], requires_zero_open_review_items: true, revision_target: "self_stage" } }] }) },
-    artifacts: { emit_revision: async () => artifact, find_by_id: async () => artifact, find_tip: async () => options.tip === undefined ? artifact : options.tip, list_chain: async () => [artifact] },
+    artifacts: { emit_revision: async () => ({ ok: true, value: { kind: "unchanged", artifact, superseded_artifact_id: null } }), withdraw: async () => ({ kind: "not_found", artifact_id: artifact.id }), mark_released: async () => ({ kind: "released", artifact }), find_by_id: async () => artifact, find_tip: async () => options.tip === undefined ? artifact : options.tip, find_current: async () => options.tip === undefined ? artifact : options.tip, list_chain: async () => [artifact] },
     collaboration: {
       insert_thread_with_message: async (thread, message) => ({ thread_id: thread.id, message_id: message.id }),
       insert_thread: async (value) => value.id, insert_message: async (value) => value.id, insert_review_item: async (value) => value.id,
@@ -58,9 +58,11 @@ test("gate resume audits and sends an idempotent command to the exact DBOS gate 
 });
 
 test("gate resume rejects a stale artifact revision", async () => {
-  const response = await decide(fixture({ tip: { ...artifact, id: "artifact-2" as ArtifactId, version: 2, parent_artifact_id: artifactId } }).app);
+  const stale = { ...artifact, lifecycle: { kind: "superseded" as const, superseded_by_artifact_id: "artifact-2" as ArtifactId } };
+  const subject = fixture(); subject.dependencies.artifacts.find_by_id = async () => stale;
+  const response = await decide(createGateResumeApp(subject.dependencies));
   expect(response.status).toBe(409);
-  expect(await response.json()).toEqual({ error: "reviewed artifact revision is stale" });
+  expect(await response.json()).toEqual({ error: "reviewed artifact revision is not current", code: "superseded" });
 });
 
 test("gate resume rejects an action outside the configured step", async () => {
@@ -92,11 +94,11 @@ test("a pending audit reconciles the crash after DBOS consumed the command", asy
     unit_id: unitId, artifact_chain_id: artifactId, artifact_revision_id: artifactId, gate_step: "artifact_approval", action: "approve",
     operator_comment: "looks good", feedback: null, idempotency_key: "decision-1", created_at: artifact.created_at, applied_at: null,
   };
-  const subject = fixture({ existing, tip: { ...artifact, id: "artifact-2" as ArtifactId, version: 2, parent_artifact_id: artifactId } });
+  const subject = fixture({ existing });
   const app = createGateResumeApp({ ...subject.dependencies, get_gate_state: async () => ({ status: "closed", action: "approve", stage_instance_id: stageId, execution_id: executionId, unit_id: unitId, artifact_revision_id: artifactId, gate_step: "artifact_approval", actions: ["approve", "request_revision"] }) });
   const response = await decide(app);
   expect(response.status).toBe(202);
-  expect(subject.sent).toHaveLength(1);
+  expect(subject.sent).toHaveLength(0);
   expect(subject.applied()).toBe(existing.id);
 });
 

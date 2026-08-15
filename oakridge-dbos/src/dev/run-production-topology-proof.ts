@@ -78,7 +78,7 @@ try {
       await Promise.all((execution.request.expected_artifacts ?? []).map(async (expected) => {
         const artifact: ArtifactRevision = { id: crypto.randomUUID() as ArtifactId, chain_id: crypto.randomUUID() as ArtifactId, run_id: "proof" as WorkflowRunId,
           stage_instance_id: execution.request.stage_instance_id, execution_id: execution.request.execution_id, unit_id: expected.unit_id, output_name: expected.output_name,
-          artifact_type: expected.artifact_type, label: expected.unit_id, body: artifactBody(execution.request, expected.unit_id), version: 1, parent_artifact_id: null, created_at: new Date().toISOString() };
+          artifact_type: expected.artifact_type, label: expected.unit_id, body: artifactBody(execution.request, expected.unit_id), version: 1, parent_artifact_id: null, lifecycle: { kind: "current" }, created_at: new Date().toISOString() };
         await sendProofMessage(execution.workflow_id, { kind: "artifact_emitted", release: { kind: "released", artifact } }, `proof:${artifact.id}`);
       }));
       console.error(`proof emitted ${execution.workflow_id}`);

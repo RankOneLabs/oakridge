@@ -1,13 +1,11 @@
 import type { ArtifactId, StageInstanceId, UnitId, WorkflowRunId } from "../domain/primitives";
-import type { ArtifactEmission, ArtifactRevision } from "../domain/artifacts";
+import type { ArtifactEmission, ArtifactEmissionDelivery, ArtifactLifecycleNotification, ArtifactRevision, EmitArtifactRevisionResult, PendingArtifactNotification, ReleaseArtifactResult, WithdrawArtifactRequest, WithdrawArtifactResult } from "../domain/artifacts";
 import type { StageInstance, StageOutcome } from "../domain/workflow";
 import type {
-  ArtifactRepository,
   ArtifactRevisionRepository,
   ExecutionArtifactContextRepository,
   ExecutionArtifactContext,
   ExecutionProjectionRepository,
-  InsertArtifact,
   StageInstanceRepository,
   StartStageInstance,
   WorkflowRunLaunch,
@@ -19,7 +17,7 @@ import type {
   ResumeArtifactRepository,
   CancellationTargetRepository,
 } from "./repositories";
-import type { ExecutionId, JsonValue } from "../domain/primitives";
+import { err, ok, type ExecutionId, type JsonValue } from "../domain/primitives";
 import type { ExecutionRequest, ExecutorTerminalObservation, ExternalExecutionReference } from "../domain/execution";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 import type { CancellationExecutionTarget, UnitRerunTarget } from "../domain/rerun";
@@ -140,29 +138,6 @@ export class PostgresStageInstanceRepository implements StageInstanceRepository 
   }
 }
 
-interface ArtifactIdentityRow { readonly id: string; readonly emission_payload_hash: string }
-
-export class PostgresArtifactRepository implements ArtifactRepository {
-  constructor(private readonly sql: SqlExecutor) {}
-
-  async insert_idempotent(input: InsertArtifact): Promise<ArtifactId> {
-    const rows = await this.sql.query<ArtifactIdentityRow>(
-      `INSERT INTO oakridge.artifact
-         (id, run_id, stage_instance_id, execution_id, unit_id, output_name,
-          artifact_type, body, version, emission_idempotency_key, emission_payload_hash)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, 1, $9, $10)
-       ON CONFLICT (stage_instance_id, execution_id, unit_id, output_name, emission_idempotency_key)
-       DO UPDATE SET id = oakridge.artifact.id
-       RETURNING id, emission_payload_hash`,
-      [input.id, input.run_id, input.stage_instance_id, input.execution_id, input.unit_id, input.output_name, input.artifact_type, input.body, input.emission_idempotency_key, input.emission_payload_hash],
-    );
-    const row = rows[0];
-    if (!row) throw new Error("artifact insert returned no identity");
-    if (row.emission_payload_hash !== input.emission_payload_hash) throw new Error("artifact idempotency key was reused with a different payload");
-    return row.id as ArtifactId;
-  }
-}
-
 interface ArtifactRow {
   readonly id: string;
   readonly chain_id: string;
@@ -177,6 +152,12 @@ interface ArtifactRow {
   readonly version: number;
   readonly parent_artifact_id: string | null;
   readonly emission_payload_hash: string;
+  readonly lifecycle_state: "current" | "superseded" | "withdrawn" | "released";
+  readonly superseded_by_artifact_id: string | null;
+  readonly withdrawn_actor: string | null;
+  readonly withdrawn_reason: string | null;
+  readonly withdrawn_at: string | null;
+  readonly released_at: string | null;
   readonly created_at: string;
 }
 
@@ -186,23 +167,60 @@ const artifactColumns = `id,
     UNION ALL SELECT parent.id, parent.parent_artifact_id FROM oakridge.artifact parent JOIN ancestors child ON parent.id = child.parent_artifact_id
   ) SELECT id FROM ancestors WHERE parent_artifact_id IS NULL LIMIT 1), id) AS chain_id,
   run_id, stage_instance_id, execution_id, unit_id, output_name, artifact_type,
-  label, body, version, parent_artifact_id, emission_payload_hash, created_at::text`;
+  label, body, version, parent_artifact_id, emission_payload_hash, lifecycle_state,
+  superseded_by_artifact_id, withdrawn_actor, withdrawn_reason,
+  withdrawn_at::text, released_at::text, created_at::text`;
+
+const decodeArtifactLifecycle = (row: ArtifactRow): ArtifactRevision["lifecycle"] => {
+  if (row.lifecycle_state === "current") return { kind: "current" };
+  if (row.lifecycle_state === "superseded" && row.superseded_by_artifact_id) {
+    return { kind: "superseded", superseded_by_artifact_id: row.superseded_by_artifact_id as ArtifactId };
+  }
+  if (row.lifecycle_state === "withdrawn" && row.withdrawn_actor && row.withdrawn_reason && row.withdrawn_at) {
+    return { kind: "withdrawn", actor: row.withdrawn_actor, reason: row.withdrawn_reason, withdrawn_at: row.withdrawn_at };
+  }
+  if (row.lifecycle_state === "released" && row.released_at) return { kind: "released", released_at: row.released_at };
+  throw new Error(`artifact '${row.id}' has invalid lifecycle metadata for '${row.lifecycle_state}'`);
+};
 
 const decodeArtifact = (row: ArtifactRow): ArtifactRevision => ({
   id: row.id as ArtifactRevision["id"], chain_id: row.chain_id as ArtifactRevision["chain_id"],
   run_id: row.run_id as ArtifactRevision["run_id"], stage_instance_id: row.stage_instance_id as ArtifactRevision["stage_instance_id"],
   execution_id: row.execution_id as ArtifactRevision["execution_id"], unit_id: row.unit_id as ArtifactRevision["unit_id"],
   output_name: row.output_name, artifact_type: row.artifact_type, label: row.label, body: row.body,
-  version: row.version, parent_artifact_id: row.parent_artifact_id as ArtifactRevision["parent_artifact_id"], created_at: row.created_at,
+  version: row.version, parent_artifact_id: row.parent_artifact_id as ArtifactRevision["parent_artifact_id"],
+  lifecycle: decodeArtifactLifecycle(row), created_at: row.created_at,
 });
 
 export class PostgresArtifactRevisionRepository implements ArtifactRevisionRepository {
   constructor(private readonly sql: TransactionalSqlExecutor) {}
 
-  async emit_revision(id: ArtifactId, emission: ArtifactEmission, created_at: string): Promise<ArtifactRevision> {
+  async emit_revision(id: ArtifactId, emission: ArtifactEmission, created_at: string, delivery: ArtifactEmissionDelivery): Promise<EmitArtifactRevisionResult> {
     return this.sql.transaction(async (transaction) => {
       const resourceKey = `${emission.stage_instance_id}:${emission.execution_id}:${emission.unit_id}:${emission.output_name}`;
       await transaction.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [resourceKey]);
+      const replayRows = await transaction.query<ArtifactRow>(
+        `SELECT ${artifactColumns} FROM oakridge.artifact artifact
+         WHERE artifact.id = (
+           SELECT replay.artifact_id FROM oakridge.artifact_emission_idempotency replay
+           WHERE replay.stage_instance_id = $1 AND replay.execution_id = $2 AND replay.unit_id = $3
+             AND replay.output_name = $4 AND replay.idempotency_key = $5
+         )`,
+        [emission.stage_instance_id, emission.execution_id, emission.unit_id, emission.output_name, emission.idempotency_key],
+      );
+      const replay = replayRows[0];
+      if (replay) {
+        if (replay.emission_payload_hash !== emission.payload_hash) return err({ operation: "emit_artifact_revision", kind: "idempotency_conflict", artifact_id: replay.id as ArtifactId, detail: "artifact idempotency key was reused with a different payload" });
+        return ok({ kind: "unchanged", artifact: decodeArtifact(replay), superseded_artifact_id: replay.parent_artifact_id as ArtifactId | null });
+      }
+      const effectiveRows = await transaction.query<ArtifactRow>(
+        `SELECT ${artifactColumns} FROM oakridge.artifact artifact
+         WHERE stage_instance_id = $1 AND execution_id = $2 AND unit_id = $3 AND output_name = $4
+           AND lifecycle_state IN ('current', 'released')`,
+        [emission.stage_instance_id, emission.execution_id, emission.unit_id, emission.output_name],
+      );
+      const effective = effectiveRows[0];
+      if (effective?.lifecycle_state === "released") return err({ operation: "emit_artifact_revision", kind: "release_conflict", artifact_id: effective.id as ArtifactId, detail: "released artifact cannot be revised; rerun the execution" });
       const tips = await transaction.query<ArtifactRow>(
         `SELECT ${artifactColumns} FROM oakridge.artifact artifact
          WHERE stage_instance_id = $1 AND execution_id = $2 AND unit_id = $3 AND output_name = $4
@@ -210,7 +228,13 @@ export class PostgresArtifactRevisionRepository implements ArtifactRevisionRepos
         [emission.stage_instance_id, emission.execution_id, emission.unit_id, emission.output_name],
       );
       const tip = tips[0];
-      if (tip?.emission_payload_hash === emission.payload_hash) return decodeArtifact(tip);
+      if (effective?.lifecycle_state === "current" && tip?.id !== effective.id) {
+        return err({ operation: "emit_artifact_revision", kind: "invariant_conflict", artifact_id: effective.id as ArtifactId, detail: "effective artifact is not the latest chain revision" });
+      }
+      if (effective?.lifecycle_state === "current" && effective.emission_payload_hash === emission.payload_hash) {
+        await this.recordEmissionKey(transaction, emission, effective.id as ArtifactId, created_at);
+        return ok({ kind: "unchanged", artifact: decodeArtifact(effective), superseded_artifact_id: effective.parent_artifact_id as ArtifactId | null });
+      }
       const version = (tip?.version ?? 0) + 1;
       const rows = await transaction.query<ArtifactRow>(
         `INSERT INTO oakridge.artifact
@@ -221,12 +245,97 @@ export class PostgresArtifactRevisionRepository implements ArtifactRevisionRepos
         [id, emission.run_id, emission.stage_instance_id, emission.execution_id, emission.unit_id, emission.output_name, emission.artifact_type, emission.body, emission.label, version, tip?.id ?? null, emission.idempotency_key, emission.payload_hash, created_at],
       );
       if (!rows[0]) throw new Error("artifact revision insert returned no row");
-      return decodeArtifact(rows[0]);
+      await this.recordEmissionKey(transaction, emission, id, created_at);
+      if (effective?.lifecycle_state === "current") {
+        await transaction.query(
+          `UPDATE oakridge.artifact
+           SET lifecycle_state = 'superseded', superseded_by_artifact_id = $2, superseded_at = $3::timestamptz,
+               lifecycle_updated_at = $3::timestamptz
+           WHERE id = $1 AND lifecycle_state = 'current'`,
+          [effective.id, id, created_at],
+        );
+      }
+      const artifact = decodeArtifact(rows[0]);
+      const supersededArtifactId = effective?.lifecycle_state === "current" ? effective.id as ArtifactId : null;
+      const release = delivery.release.kind === "gate"
+        ? { kind: "waiting_gate" as const, artifact, gate_steps: delivery.release.steps }
+        : delivery.release.kind === "handoff"
+          ? { kind: "waiting_handoff" as const, artifact, downstream_role: delivery.release.downstream_role, external_wait_kind: delivery.release.external_wait_kind }
+          : { kind: "released" as const, artifact };
+      const notification: ArtifactLifecycleNotification = supersededArtifactId
+        ? { kind: "artifact_replaced", invalidated_artifact_id: supersededArtifactId, release }
+        : { kind: "artifact_emitted", release };
+      const notificationKey = supersededArtifactId
+        ? `artifact:${supersededArtifactId}:replaced-by:${artifact.id}`
+        : `artifact:${artifact.id}:${release.kind}`;
+      await this.enqueueNotification(transaction, delivery.target_workflow_id, notification, notificationKey, created_at);
+      return ok({ kind: "emitted", artifact, superseded_artifact_id: supersededArtifactId });
+    });
+  }
+
+  async withdraw(request: WithdrawArtifactRequest): Promise<WithdrawArtifactResult> {
+    return this.sql.transaction(async (transaction) => {
+      const rows = await transaction.query<ArtifactRow>(`SELECT ${artifactColumns} FROM oakridge.artifact artifact WHERE id = $1`, [request.artifact_id]);
+      const found = rows[0];
+      if (!found) return { kind: "not_found", artifact_id: request.artifact_id };
+      const resourceKey = `${found.stage_instance_id}:${found.execution_id}:${found.unit_id}:${found.output_name}`;
+      await transaction.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [resourceKey]);
+      const lockedRows = await transaction.query<ArtifactRow>(`SELECT ${artifactColumns} FROM oakridge.artifact artifact WHERE id = $1 FOR UPDATE`, [request.artifact_id]);
+      const artifact = lockedRows[0];
+      if (!artifact) return { kind: "not_found", artifact_id: request.artifact_id };
+      if (artifact.lifecycle_state === "withdrawn") return { kind: "already_withdrawn", artifact: decodeArtifact(artifact) };
+      if (artifact.lifecycle_state === "released") return { kind: "release_conflict", artifact_id: request.artifact_id, released_at: artifact.released_at! };
+      if (artifact.lifecycle_state !== "current") {
+        const current = await transaction.query<{ readonly id: string }>(
+          `SELECT id::text FROM oakridge.artifact WHERE stage_instance_id = $1 AND execution_id = $2 AND unit_id = $3 AND output_name = $4 AND lifecycle_state = 'current'`,
+          [artifact.stage_instance_id, artifact.execution_id, artifact.unit_id, artifact.output_name],
+        );
+        return { kind: "not_current", artifact_id: request.artifact_id, current_artifact_id: current[0]?.id as ArtifactId ?? null };
+      }
+      const updated = await transaction.query<ArtifactRow>(
+        `UPDATE oakridge.artifact SET lifecycle_state = 'withdrawn', withdrawn_actor = $2,
+           withdrawn_reason = $3, withdrawn_at = $4::timestamptz, lifecycle_updated_at = $4::timestamptz
+         WHERE id = $1 AND lifecycle_state = 'current' RETURNING ${artifactColumns}`,
+        [request.artifact_id, request.actor, request.reason, request.withdrawn_at],
+      );
+      if (!updated[0]) throw new Error(`artifact '${request.artifact_id}' changed during withdrawal`);
+      const withdrawn = decodeArtifact(updated[0]);
+      await this.enqueueNotification(transaction, request.target_workflow_id, {
+        kind: "artifact_invalidated", artifact_id: withdrawn.id, output_name: withdrawn.output_name,
+        reason: "withdrawn", replacement_artifact_revision_id: null,
+      }, `artifact:${withdrawn.id}:withdrawn`, request.withdrawn_at);
+      return { kind: "withdrawn", artifact: withdrawn };
+    });
+  }
+
+  async mark_released(id: ArtifactId, released_at: string): Promise<ReleaseArtifactResult> {
+    return this.sql.transaction(async (transaction) => {
+      const foundRows = await transaction.query<ArtifactRow>(`SELECT ${artifactColumns} FROM oakridge.artifact artifact WHERE id = $1`, [id]);
+      const found = foundRows[0];
+      if (!found) return { kind: "not_current", artifact_id: id };
+      const resourceKey = `${found.stage_instance_id}:${found.execution_id}:${found.unit_id}:${found.output_name}`;
+      await transaction.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [resourceKey]);
+      const rows = await transaction.query<ArtifactRow>(`SELECT ${artifactColumns} FROM oakridge.artifact artifact WHERE id = $1 FOR UPDATE`, [id]);
+      const artifact = rows[0];
+      if (!artifact || artifact.lifecycle_state === "superseded" || artifact.lifecycle_state === "withdrawn") return { kind: "not_current", artifact_id: id };
+      if (artifact.lifecycle_state === "released") return { kind: "already_released", artifact: decodeArtifact(artifact) };
+      const updated = await transaction.query<ArtifactRow>(
+        `UPDATE oakridge.artifact SET lifecycle_state = 'released', released_at = $2::timestamptz, lifecycle_updated_at = $2::timestamptz
+         WHERE id = $1 AND lifecycle_state = 'current' RETURNING ${artifactColumns}`,
+        [id, released_at],
+      );
+      if (!updated[0]) return { kind: "not_current", artifact_id: id };
+      return { kind: "released", artifact: decodeArtifact(updated[0]) };
     });
   }
 
   async find_tip(stage_instance_id: StageInstanceId, execution_id: string, unit_id: string, output_name: string): Promise<ArtifactRevision | null> {
     const rows = await this.sql.query<ArtifactRow>(`SELECT ${artifactColumns} FROM oakridge.artifact artifact WHERE stage_instance_id = $1 AND execution_id = $2 AND unit_id = $3 AND output_name = $4 ORDER BY version DESC LIMIT 1`, [stage_instance_id, execution_id, unit_id, output_name]);
+    return rows[0] ? decodeArtifact(rows[0]) : null;
+  }
+
+  async find_current(stage_instance_id: StageInstanceId, execution_id: string, unit_id: string, output_name: string): Promise<ArtifactRevision | null> {
+    const rows = await this.sql.query<ArtifactRow>(`SELECT ${artifactColumns} FROM oakridge.artifact artifact WHERE stage_instance_id = $1 AND execution_id = $2 AND unit_id = $3 AND output_name = $4 AND lifecycle_state = 'current'`, [stage_instance_id, execution_id, unit_id, output_name]);
     return rows[0] ? decodeArtifact(rows[0]) : null;
   }
 
@@ -243,6 +352,72 @@ export class PostgresArtifactRevisionRepository implements ArtifactRevisionRepos
   async find_by_id(id: ArtifactId): Promise<ArtifactRevision | null> {
     const rows = await this.sql.query<ArtifactRow>(`SELECT ${artifactColumns} FROM oakridge.artifact artifact WHERE id = $1`, [id]);
     return rows[0] ? decodeArtifact(rows[0]) : null;
+  }
+
+  async claim_pending_notifications(workerId: string, claimedAt: string, claimedUntil: string, limit: number): Promise<readonly PendingArtifactNotification[]> {
+    return this.sql.query<PendingArtifactNotification>(
+      `WITH candidates AS (
+         SELECT candidate.id
+         FROM oakridge.command_outbox candidate
+         WHERE candidate.command_type = 'artifact_notification'
+           AND candidate.delivered_at IS NULL
+           AND candidate.next_attempt_at <= $2::timestamptz
+           AND (candidate.claimed_until IS NULL OR candidate.claimed_until <= $2::timestamptz)
+           AND NOT EXISTS (
+             SELECT 1 FROM oakridge.command_outbox earlier
+             WHERE earlier.command_type = 'artifact_notification'
+               AND earlier.target_workflow_id = candidate.target_workflow_id
+               AND earlier.delivered_at IS NULL
+               AND earlier.sequence_id < candidate.sequence_id
+           )
+         ORDER BY candidate.sequence_id
+         FOR UPDATE SKIP LOCKED
+         LIMIT $4
+       )
+       UPDATE oakridge.command_outbox notification
+       SET claimed_by = $1, claimed_until = $3::timestamptz,
+           attempt_count = notification.attempt_count + 1
+       FROM candidates
+       WHERE notification.id = candidates.id
+       RETURNING notification.id::text, notification.target_workflow_id,
+                 notification.payload AS message, notification.idempotency_key`,
+      [workerId, claimedAt, claimedUntil, limit]);
+  }
+
+  async mark_notification_delivered(id: string, workerId: string, delivered_at: string): Promise<void> {
+    await this.sql.query(
+      `UPDATE oakridge.command_outbox SET delivered_at = $3::timestamptz, claimed_by = NULL,
+         claimed_until = NULL, last_error = NULL
+       WHERE id = $1::uuid AND command_type = 'artifact_notification'
+         AND delivered_at IS NULL AND claimed_by = $2`, [id, workerId, delivered_at]);
+  }
+
+  async mark_notification_failed(id: string, workerId: string, error: string, nextAttemptAt: string): Promise<void> {
+    await this.sql.query(
+      `UPDATE oakridge.command_outbox SET claimed_by = NULL, claimed_until = NULL,
+         last_error = $3, next_attempt_at = $4::timestamptz
+       WHERE id = $1::uuid AND command_type = 'artifact_notification'
+         AND delivered_at IS NULL AND claimed_by = $2`, [id, workerId, error, nextAttemptAt]);
+  }
+
+  private async enqueueNotification(transaction: SqlExecutor, targetWorkflowId: string, message: ArtifactLifecycleNotification, idempotencyKey: string, createdAt: string): Promise<void> {
+    await transaction.query(
+      `INSERT INTO oakridge.command_outbox
+         (id, command_type, idempotency_key, target_workflow_id, payload, created_at)
+       VALUES (md5($1)::uuid, 'artifact_notification', $1, $2, $3::jsonb, $4::timestamptz)
+       ON CONFLICT (idempotency_key) DO NOTHING`,
+      [idempotencyKey, targetWorkflowId, message, createdAt],
+    );
+  }
+
+  private async recordEmissionKey(transaction: SqlExecutor, emission: ArtifactEmission, artifactId: ArtifactId, createdAt: string): Promise<void> {
+    await transaction.query(
+      `INSERT INTO oakridge.artifact_emission_idempotency
+         (stage_instance_id, execution_id, unit_id, output_name, idempotency_key, payload_hash, artifact_id, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::timestamptz)`,
+      [emission.stage_instance_id, emission.execution_id, emission.unit_id, emission.output_name,
+        emission.idempotency_key, emission.payload_hash, artifactId, createdAt],
+    );
   }
 }
 
@@ -362,10 +537,14 @@ export class PostgresResumeArtifactRepository implements ResumeArtifactRepositor
               artifact.stage_instance_id::text, artifact.execution_id, artifact.unit_id,
               artifact.output_name, artifact.artifact_type, artifact.label, artifact.body,
               artifact.version, artifact.parent_artifact_id::text, artifact.emission_payload_hash,
+              artifact.lifecycle_state, artifact.superseded_by_artifact_id::text,
+              artifact.withdrawn_actor, artifact.withdrawn_reason,
+              artifact.withdrawn_at::text, artifact.released_at::text,
               artifact.created_at::text, stage.stage_key
        FROM oakridge.artifact artifact
        JOIN oakridge.stage_instance stage ON stage.id = artifact.stage_instance_id
        WHERE artifact.run_id = $1 AND stage.stage_key = ANY($2::text[])
+         AND artifact.lifecycle_state IN ('current', 'released')
        ORDER BY stage.stage_key, artifact.unit_id, artifact.output_name, artifact.created_at DESC, artifact.version DESC`,
       [run_id, stage_keys],
     );

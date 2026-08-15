@@ -37,6 +37,8 @@ Repository: `{{REPOSITORY_KEY}}`
 
 ## Emit the artifact
 
+Use PUT as the canonical idempotent operation. Reuse the same `Idempotency-Key` only when retrying the identical body; a changed body intentionally supersedes the prior unreleased revision. Do not emit speculative duplicates. If the current artifact is wrong, withdraw it with `POST {{OAKRIDGE_URL}}/artifacts/<artifact_id>/withdraw` and `{"actor":"executor","reason":"<why>"}`, then stop only after Oakridge confirms the typed result.
+
 ```http
 PUT {{OAKRIDGE_URL}}/executors/delegated_session/{{STAGE_INSTANCE_ID}}/units/{{UNIT_ID}}/emit/assessment
 Content-Type: application/json

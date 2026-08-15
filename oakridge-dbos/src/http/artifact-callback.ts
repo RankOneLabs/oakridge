@@ -1,21 +1,18 @@
 import { createHash, randomUUID } from "node:crypto";
 
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 
 import { releaseStateForArtifact, validateArtifactEmission } from "../contracts/evaluate-artifacts";
-import type { ArtifactEmission, ArtifactReleaseState } from "../domain/artifacts";
+import type { ArtifactEmission, ArtifactLifecycleNotification } from "../domain/artifacts";
 import type { ArtifactId, JsonValue, StageInstanceId, UnitId } from "../domain/primitives";
 import type { ArtifactRevisionRepository, ExecutionArtifactContextRepository } from "../storage/repositories";
 
-export interface ArtifactWorkflowMessage {
-  readonly kind: "artifact_emitted";
-  readonly release: ArtifactReleaseState;
-}
+export type ArtifactWorkflowMessage = ArtifactLifecycleNotification;
 
 export interface ArtifactCallbackDependencies {
   readonly contexts: ExecutionArtifactContextRepository;
   readonly artifacts: ArtifactRevisionRepository;
-  send_to_workflow(workflow_id: string, message: ArtifactWorkflowMessage, idempotency_key: string): Promise<void>;
+  dispatch_notifications(): Promise<number>;
 }
 
 const isJsonValue = (value: unknown): value is JsonValue => {
@@ -26,7 +23,7 @@ const isJsonValue = (value: unknown): value is JsonValue => {
 
 export const createArtifactCallbackApp = (dependencies: ArtifactCallbackDependencies): Hono => {
   const app = new Hono();
-  app.put("/executors/:executorType/:stageInstanceId/units/:unitId/emit/:outputName", async (context) => {
+  const emit = async (context: Context) => {
     const stageInstanceId = context.req.param("stageInstanceId") as StageInstanceId;
     const unitId = context.req.param("unitId") as UnitId;
     const execution = await dependencies.contexts.find_for_emit(stageInstanceId, unitId);
@@ -44,15 +41,19 @@ export const createArtifactCallbackApp = (dependencies: ArtifactCallbackDependen
     };
     const validation = validateArtifactEmission(emission, execution.outputs);
     if (!validation.ok) return context.json({ error: validation.error.detail }, 400);
-    let artifact;
+    let result;
     try {
-      artifact = await dependencies.artifacts.emit_revision(randomUUID() as ArtifactId, emission, new Date().toISOString());
+      result = await dependencies.artifacts.emit_revision(randomUUID() as ArtifactId, emission, new Date().toISOString(), { target_workflow_id: execution.execution_workflow_id, release: validation.value.release });
     } catch (error) {
-      return context.json({ error: error instanceof Error ? error.message : String(error) }, 409);
+      return context.json({ error: error instanceof Error ? error.message : String(error) }, 500);
     }
+    if (!result.ok) return context.json({ error: result.error.detail, code: result.error.kind, artifact_id: result.error.artifact_id }, result.error.kind === "invariant_conflict" ? 500 : 409);
+    const artifact = result.value.artifact;
     const release = releaseStateForArtifact(artifact, validation.value);
-    await dependencies.send_to_workflow(execution.execution_workflow_id, { kind: "artifact_emitted", release }, `artifact:${artifact.id}:${release.kind}`);
-    return context.json({ artifact_id: artifact.id, version: artifact.version, release: release.kind });
-  });
+    await dependencies.dispatch_notifications();
+    return context.json({ artifact_id: artifact.id, chain_id: artifact.chain_id, version: artifact.version, state: artifact.lifecycle.kind, release: release.kind, replaced_artifact_id: result.value.superseded_artifact_id });
+  };
+  app.put("/executors/:executorType/:stageInstanceId/units/:unitId/emit/:outputName", emit);
+  app.post("/executors/:executorType/:stageInstanceId/units/:unitId/emit/:outputName", emit);
   return app;
 };

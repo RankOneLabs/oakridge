@@ -1,5 +1,4 @@
 import type { ArtifactWorkflowMessage } from "./artifact-callback";
-import type { ArtifactReleaseState, ArtifactRevision } from "../domain/artifacts";
 import type { GateWorkflowState, HandoffWorkflowState } from "./gate-resume";
 import type { GateCommand } from "../workflows/gate";
 import type { HandoffCommand } from "../workflows/handoff";
@@ -18,10 +17,6 @@ const client = (): DbosTransportClient => {
 
 export const sendArtifactWorkflowMessage = async (workflow_id: string, message: ArtifactWorkflowMessage, idempotency_key: string): Promise<void> => {
   await client().send(workflow_id, message, "execution-event", idempotency_key);
-};
-
-export const notifyArtifactRevision = async (workflow_id: string, revision: ArtifactRevision, release: ArtifactReleaseState): Promise<void> => {
-  await sendArtifactWorkflowMessage(workflow_id, { kind: "artifact_emitted", release }, `artifact:${revision.id}:${release.kind}`);
 };
 
 export const getGateWorkflowState = async (workflow_id: string): Promise<GateWorkflowState | null> =>

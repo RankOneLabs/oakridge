@@ -33,6 +33,8 @@ Stage instance: `{{STAGE_INSTANCE_ID}}`
 
 ## Emit the artifact
 
+Use PUT as the canonical idempotent operation. Reuse the same `Idempotency-Key` only when retrying the identical body; a changed body intentionally supersedes the prior unreleased revision. Do not emit speculative duplicates. If the current artifact is wrong, withdraw it with `POST {{OAKRIDGE_URL}}/artifacts/<artifact_id>/withdraw` and `{"actor":"executor","reason":"<why>"}`, then stop only after Oakridge confirms the typed result.
+
 This is a single-session stage, so use unit `0`:
 
 ```http

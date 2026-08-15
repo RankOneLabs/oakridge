@@ -1,6 +1,6 @@
 import type { ArtifactEmission, ArtifactReleaseState, ArtifactRevision, ExecutionContractState } from "../domain/artifacts";
 import type { CompiledOutputContract } from "../domain/compiled-workflow";
-import type { ExpectedArtifactContract } from "../domain/execution";
+import type { ExecutorTerminalObservation, ExpectedArtifactContract } from "../domain/execution";
 import { err, ok, type Result } from "../domain/primitives";
 
 export interface ArtifactContractError {
@@ -34,3 +34,6 @@ export const evaluateExecutionArtifactContract = (outputs: readonly CompiledOutp
   if (missingOutputs.length > 0) return { kind: "waiting_artifacts", missing_outputs: missingOutputs };
   return { kind: "satisfied", artifacts: outputs.map((output) => releasedByOutput.get(output.name)).filter((artifact): artifact is ArtifactRevision => artifact !== undefined) };
 };
+
+export const shouldAwaitArtifactRelease = (contract: ExecutionContractState, observation: ExecutorTerminalObservation): boolean =>
+  contract.kind === "waiting_artifacts" && observation.kind === "succeeded";

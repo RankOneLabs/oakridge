@@ -23,6 +23,12 @@ const outputGateSchema = z.object({
   })).min(1),
   requires_zero_open_review_items: z.boolean().default(false),
   revision_target: z.enum(["self_stage", "upstream_handoff"]).default("self_stage"),
+}).superRefine((gate, context) => {
+  const seen = new Set<string>();
+  for (const step of gate.steps) {
+    if (seen.has(step.type)) context.addIssue({ code: "custom", message: `output_gate step type '${step.type}' must be unique` });
+    seen.add(step.type);
+  }
 });
 
 export const delegatedSessionDefinitionSchema = z.object({

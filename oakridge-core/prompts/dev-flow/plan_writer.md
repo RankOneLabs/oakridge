@@ -27,10 +27,12 @@ Stage instance: `{{STAGE_INSTANCE_ID}}`
 
 ## Emit the artifact
 
+Use PUT as the canonical idempotent operation. Reuse the same `Idempotency-Key` only when retrying the identical body; a changed body intentionally supersedes the prior unreleased revision. Do not emit speculative duplicates. If the current artifact is wrong, withdraw it with `POST {{OAKRIDGE_URL}}/artifacts/<artifact_id>/withdraw` and `{"actor":"executor","reason":"<why>"}`, then stop only after Oakridge confirms the typed result.
+
 POST exactly once and then stop:
 
 ```http
-POST {{OAKRIDGE_URL}}/executors/delegated_session/{{STAGE_INSTANCE_ID}}/units/0/emit/plan
+PUT {{OAKRIDGE_URL}}/executors/delegated_session/{{STAGE_INSTANCE_ID}}/units/0/emit/plan
 Content-Type: application/json
 
 {
@@ -65,4 +67,4 @@ Content-Type: application/json
 - Plan only what the spec analysis requirements describe. Do not expand scope.
 - Each cohort must be independently committable — it must leave tests passing and typecheck clean.
 - If a requirement was marked `blocked` or `ambiguous` and you cannot resolve it by reading the code, mark the cohort as a risk rather than guessing product behavior.
-- Do not start implementing. Your only output is the artifact POST.
+- Do not start implementing. Your only output is the artifact PUT.
