@@ -66,6 +66,7 @@ export const createCollaborationApp = (dependencies: CollaborationHttpDependenci
   app.post("/artifacts/:id/threads", async (http) => {
     const artifact = await dependencies.artifacts.find_by_id(http.req.param("id") as ArtifactId);
     if (!artifact) return http.json({ error: "artifact not found" }, 404);
+    if (!isMutable(artifact)) return http.json({ error: "artifact revision is not current", code: artifact.lifecycle.kind }, 409);
     if (!dependencies.policy_for_artifact_type(artifact.artifact_type)?.commentable) return http.json({ error: `artifact type '${artifact.artifact_type}' does not support 'commentable'` }, 400);
     const body = await objectBody(http.req.raw); const text = nonempty(body?.body); const author = nonempty(body?.author);
     if (!body || !text || !author || (body.anchor !== undefined && body.anchor !== null && typeof body.anchor !== "string")) return http.json({ error: "body and author are required; anchor must be a string or null" }, 400);
@@ -143,6 +144,7 @@ export const createCollaborationApp = (dependencies: CollaborationHttpDependenci
   app.post("/artifacts/:id/review_items", async (http) => {
     const artifact = await dependencies.artifacts.find_by_id(http.req.param("id") as ArtifactId);
     if (!artifact) return http.json({ error: "artifact not found" }, 404);
+    if (!isMutable(artifact)) return http.json({ error: "artifact revision is not current", code: artifact.lifecycle.kind }, 409);
     if (!dependencies.policy_for_artifact_type(artifact.artifact_type)?.review_items) return http.json({ error: `artifact type '${artifact.artifact_type}' does not support 'review_items'` }, 400);
     const body = await objectBody(http.req.raw); const anchor = nonempty(body?.anchor); const claim = nonempty(body?.claim); const reality = nonempty(body?.reality);
     if (!anchor || !claim || !reality) return http.json({ error: "anchor, claim, and reality are required" }, 400);
