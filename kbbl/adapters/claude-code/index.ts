@@ -142,6 +142,8 @@ export interface CreateClaudeCodeRuntimeOpts {
   dataDir: string;
 }
 
+export const supportsProcOrphanFencing = (platform: NodeJS.Platform = process.platform): boolean => platform === "linux";
+
 /** CC-specific session handle backed by a bun-pty process. */
 interface CcHandle {
   readonly sessionId: string;
@@ -554,6 +556,7 @@ export async function createClaudeCodeRuntime(
     },
 
     async fenceOrphan(reference) {
+      if (!supportsProcOrphanFencing()) return "unverifiable";
       const cmdlinePath = `/proc/${reference.processId}/cmdline`;
       let cmdline: string;
       try {
