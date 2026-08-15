@@ -130,6 +130,7 @@ export interface ExecutionProjectionRepository {
   record(request: ExecutionRequest, execution_workflow_id: string, parameters: JsonValue): Promise<void>;
   attach_external(execution_id: ExecutionId, reference: ExternalExecutionReference): Promise<void>;
   record_terminal(execution_id: ExecutionId, observation: ExecutorTerminalObservation): Promise<void>;
+  find_external(execution_id: ExecutionId): Promise<{ readonly executor_type: string; readonly external_reference: ExternalExecutionReference } | null>;
 }
 
 export interface RerunTargetRepository {

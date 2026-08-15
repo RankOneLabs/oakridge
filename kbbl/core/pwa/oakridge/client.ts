@@ -189,10 +189,12 @@ async function oakridgeGet<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-async function oakridgePost<T>(path: string, body: unknown): Promise<T> {
+interface OakridgePostOptions { readonly idempotency_key?: string }
+
+async function oakridgePost<T>(path: string, body: unknown, options: OakridgePostOptions = {}): Promise<T> {
   const res = await fetch(`${API}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(options.idempotency_key ? { "Idempotency-Key": options.idempotency_key } : {}) },
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -301,8 +303,8 @@ export function createWorkflowDef(body: WorkflowDefInput): Promise<WorkflowDefFu
   return oakridgePost<WorkflowDefFull>("/workflow_defs", body);
 }
 
-export function createRun(body: CreateRunRequest): Promise<RunSummary> {
-  return oakridgePost<RunSummary>("/workflow_runs", body);
+export function createRun(body: CreateRunRequest, idempotencyKey: string): Promise<RunSummary> {
+  return oakridgePost<RunSummary>("/workflow_runs", body, { idempotency_key: idempotencyKey });
 }
 
 export function cancelRun(runId: string): Promise<unknown> {
@@ -363,8 +365,8 @@ export function postMessage(
   return oakridgePost(`/threads/${encodeURIComponent(threadId)}/messages`, req);
 }
 
-export function pingThread(threadId: string): Promise<{ ok: boolean }> {
-  return oakridgePost(`/threads/${encodeURIComponent(threadId)}/ping`, {});
+export function pingThread(threadId: string, idempotencyKey: string): Promise<{ ok: boolean }> {
+  return oakridgePost(`/threads/${encodeURIComponent(threadId)}/ping`, {}, { idempotency_key: idempotencyKey });
 }
 
 export function resolveThread(threadId: string): Promise<{ thread_id: string; status: string }> {

@@ -1,6 +1,7 @@
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
 import type { ExecutionRequest, ExecutorAdapter, ExecutorTerminalObservation, ExternalExecutionReference } from "../domain/execution";
+import type { CollaborationPingRequest, CollaborationPingState } from "../domain/collaboration";
 import type { ArtifactReleaseState, ArtifactRevision, ExecutionContractState, ReleaseArtifactResult } from "../domain/artifacts";
 import type { CompiledOutputContract } from "../domain/compiled-workflow";
 import { evaluateExecutionArtifactContract, shouldAwaitArtifactRelease } from "../contracts/evaluate-artifacts";
@@ -93,12 +94,24 @@ const fenceExecutorStep = DBOS.registerStep(async (input: FenceExecutorInput): P
 
 export const executorFenceWorkflow = DBOS.registerWorkflow(async (input: FenceExecutorInput): Promise<void> => fenceExecutorStep(input), { name: "oakridgeExecutorFenceWorkflow" });
 
+const deliverCollaborationInputStep = DBOS.registerStep(async (input: CollaborationPingRequest): Promise<void> => {
+  const adapter = adapters.get(input.executor_type);
+  if (!adapter) throw new Error(`executor adapter '${input.executor_type}' is not registered`);
+  await adapter.deliver_input(input.execution_id, `collaboration:${input.thread_id}:${input.request_id}`, input.prompt, input.external_reference);
+}, { name: "oakridgeDeliverCollaborationInputStep", retriesAllowed: true });
+
+export const collaborationResponderWorkflow = DBOS.registerWorkflow(async (input: CollaborationPingRequest): Promise<void> => {
+  await DBOS.setEvent("collaboration-ping-state", { kind: "delivering", thread_id: input.thread_id, request_id: input.request_id } satisfies CollaborationPingState);
+  await deliverCollaborationInputStep(input);
+  await DBOS.setEvent("collaboration-ping-state", { kind: "delivered", thread_id: input.thread_id, request_id: input.request_id } satisfies CollaborationPingState);
+}, { name: "oakridgeCollaborationResponderWorkflow" });
+
 interface RevisionRequestInput { readonly request: ExecutionRequest; readonly external_reference: ExternalExecutionReference; readonly delivery_key: string; readonly feedback: string }
 const requestRevisionStep = DBOS.registerStep(async (input: RevisionRequestInput): Promise<void> => {
   const adapter = adapters.get(input.request.executor_type);
   if (!adapter) throw new Error(`executor adapter '${input.request.executor_type}' is not registered`);
   const currentReference = await adapter.start_or_attach(input.request);
-  await adapter.request_revision(input.request.execution_id, input.delivery_key, input.feedback, currentReference);
+  await adapter.deliver_input(input.request.execution_id, input.delivery_key, input.feedback, currentReference);
 }, { name: "oakridgeRequestExecutorRevisionStep", retriesAllowed: true });
 
 type ExecutionWorkflowMessage =

@@ -19,6 +19,7 @@ import { PostgresWorkflowDefinitionRepository } from "./storage/postgres-workflo
 import { PostgresProjectRepository } from "./storage/postgres-projects";
 import { GitProjectRepositoryIdentityResolver } from "./runtime/project-identity";
 import { dispatchRunLaunches } from "./runtime/run-launch-notifications";
+import { DbosCollaborationPingClient } from "./runtime/collaboration-ping";
 import { PgPostgresExecutor } from "./storage/sql-executor";
 import { registerArtifactLifecycleObserver, registerExecutionProjectionObserver, registerExecutorAdapter } from "./workflows/executor-topology";
 import { registerProductionTopologyServices } from "./workflows/production-topology";
@@ -60,6 +61,7 @@ const projections = new PostgresOperatorProjectionRepository(sql);
 const now = () => new Date().toISOString();
 const dbosRuns = new DbosStageRerunClient(client);
 const dbosCancellation = new DbosCancellationClient(client);
+const collaborationPings = new DbosCollaborationPingClient(client, applicationVersion);
 const cancellation = { attempts, targets: cancellationTargets, dbos: dbosCancellation, now };
 
 registerDbosTransportClient(client);
@@ -114,7 +116,8 @@ const app = createApp({
   gate_resume: { contexts, artifacts, collaboration, audits, get_gate_state: getGateWorkflowState, send_gate_command: sendGateWorkflowCommand,
     get_handoff_state: getHandoffWorkflowState, send_handoff_command: sendHandoffWorkflowCommand },
   handoff_complete: { artifacts, contexts, get_handoff_state: getHandoffWorkflowState, send_handoff_command: sendHandoffWorkflowCommand },
-  collaboration: { artifacts, contexts, collaboration, policy_for_artifact_type: collaborationPolicy, dispatch_notifications: dispatchNotifications },
+  collaboration: { artifacts, contexts, executions, collaboration, policy_for_artifact_type: collaborationPolicy,
+    ping_thread: (input) => collaborationPings.enqueue(input), dispatch_notifications: dispatchNotifications },
   operator_projections: projections,
   artifact_detail: { artifacts, stages, audits, presentation_for_type: presentation, artifact_types: DEV_FLOW_ARTIFACT_TYPES },
   run_launch: { definitions, projects, runs, projections, dispatch_launches: dispatchLaunches, application_version: applicationVersion, now },

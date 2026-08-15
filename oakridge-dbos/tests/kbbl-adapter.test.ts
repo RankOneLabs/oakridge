@@ -48,13 +48,13 @@ test("kbbl adapter observes terminal mechanism state without completing an Oakri
   expect(await adapter.observe_terminal(executionId)).toEqual({ kind: "succeeded", metadata: { session_id: "session-1", exit_code: 0 } });
 });
 
-test("kbbl adapter wraps revision feedback as session input", async () => {
+test("kbbl adapter delivers workflow input through a persisted session", async () => {
   const calls: Array<{ url: string; body: BodyInit | null | undefined }> = [];
   const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "build", fetch: async (input, init) => {
     calls.push({ url: String(input), body: init?.body });
     return new Response("{}", { status: 200 });
   } });
-  await adapter.request_revision("execution-1" as ExecutionId, "revision-1", "Please address the assessment.", { kind: "kbbl_session", session_id: "session-1" });
+  await adapter.deliver_input("execution-1" as ExecutionId, "revision-1", "Please address the assessment.", { kind: "kbbl_session", session_id: "session-1" });
   expect(calls).toEqual([{ url: "http://kbbl/sessions/resumable/session-1/input/revision-1", body: JSON.stringify({ text: "Please address the assessment." }) }]);
 });
 

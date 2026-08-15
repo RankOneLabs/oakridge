@@ -2,10 +2,10 @@ import { createHash, randomUUID } from "node:crypto";
 
 import { Hono } from "hono";
 
-import type { CollaborationMessage, CollaborationThread, MessageId, ReviewItem, ReviewItemId, ReviewItemStatus, ThreadId, ThreadStatus } from "../domain/collaboration";
+import { renderCollaborationPingPrompt, type CollaborationMessage, type CollaborationPingAccepted, type CollaborationPingRequestId, type CollaborationThread, type MessageId, type ReviewItem, type ReviewItemId, type ReviewItemStatus, type ThreadId, type ThreadStatus } from "../domain/collaboration";
 import type { ArtifactId, JsonValue } from "../domain/primitives";
 import type { ArtifactRevision } from "../domain/artifacts";
-import type { ArtifactRevisionRepository, CollaborationRepository, ExecutionArtifactContextRepository } from "../storage/repositories";
+import type { ArtifactRevisionRepository, CollaborationRepository, ExecutionArtifactContextRepository, ExecutionProjectionRepository } from "../storage/repositories";
 
 export interface ArtifactCollaborationPolicy {
   readonly commentable: boolean;
@@ -19,7 +19,8 @@ export interface CollaborationHttpDependencies {
   readonly contexts: ExecutionArtifactContextRepository;
   readonly collaboration: CollaborationRepository;
   readonly policy_for_artifact_type: (artifact_type: string) => ArtifactCollaborationPolicy | null;
-  readonly ping_thread?: (thread_id: ThreadId) => Promise<void>;
+  readonly executions: Pick<ExecutionProjectionRepository, "find_external">;
+  readonly ping_thread: (input: import("../domain/collaboration").CollaborationPingRequest) => Promise<CollaborationPingAccepted>;
   readonly dispatch_notifications: () => Promise<number>;
   readonly now?: () => string;
   readonly new_id?: () => string;
@@ -101,8 +102,20 @@ export const createCollaborationApp = (dependencies: CollaborationHttpDependenci
     const threadRevision = await dependencies.artifacts.find_by_id(thread.revision_id);
     if (!threadRevision || !isMutable(threadRevision)) return http.json({ error: "thread artifact revision is not current", code: threadRevision?.lifecycle.kind ?? "not_found" }, 409);
     if (thread.status !== "open") return http.json({ error: "cannot ping a resolved thread" }, 400);
-    if (dependencies.ping_thread) await dependencies.ping_thread(threadId);
-    return http.json({ ok: true });
+    const threads = await dependencies.collaboration.list_threads(thread.artifact_id);
+    const fullThread = threads.find((candidate) => candidate.id === threadId);
+    if (!fullThread || !fullThread.messages.length) return http.json({ error: "thread has no durable messages" }, 409);
+    const requestId = (http.req.header("idempotency-key")?.trim() || randomUUID()) as CollaborationPingRequestId;
+    const context = await dependencies.contexts.find_for_emit(threadRevision.stage_instance_id, threadRevision.unit_id);
+    if (!context || context.execution_id !== threadRevision.execution_id) return http.json({ error: "thread execution context is unavailable" }, 409);
+    const execution = await dependencies.executions.find_external(context.execution_id);
+    if (!execution) return http.json({ error: "thread executor is not attached" }, 409);
+    const accepted = await dependencies.ping_thread({
+      thread_id: threadId, request_id: requestId, execution_id: context.execution_id,
+      executor_type: execution.executor_type, external_reference: execution.external_reference,
+      prompt: renderCollaborationPingPrompt(fullThread),
+    });
+    return http.json({ ok: true, ...accepted }, 202);
   });
   app.post("/artifacts/:id/edits", async (http) => {
     const artifact = await dependencies.artifacts.find_by_id(http.req.param("id") as ArtifactId);
