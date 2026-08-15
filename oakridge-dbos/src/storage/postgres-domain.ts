@@ -81,14 +81,13 @@ export class PostgresWorkflowRunRepository implements WorkflowRunRepository {
                 AND run.project_id IS NOT DISTINCT FROM $3::uuid
                 AND run.context = $4::jsonb
                 AND attempt.root_workflow_id = $5
-                AND run.archived = $6
-                AND run.created_at = $7::timestamptz AS immutable_matches
+                AND run.created_at = $6::timestamptz AS immutable_matches
          FROM oakridge.workflow_run run
          LEFT JOIN oakridge.workflow_attempt attempt ON attempt.run_id = run.id
            AND attempt.forked_from_root_workflow_id IS NULL
          WHERE run.id = $1`,
         [input.run.id, input.run.workflow_definition_id, input.run.project_id, input.run.context,
-          input.run.root_workflow_id, input.run.archived, input.run.created_at],
+          input.run.root_workflow_id, input.run.created_at],
       );
       const existing = existingRows[0];
       if (existing) {
@@ -449,7 +448,7 @@ export class PostgresArtifactRevisionRepository implements ArtifactRevisionRepos
       const resourceKey = `${emission.stage_instance_id}:${emission.execution_id}:${emission.unit_id}:${emission.output_name}`;
       await transaction.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [resourceKey]);
       const stages = await transaction.query<{ readonly ended_at: string | null }>(
-        "SELECT ended_at::text FROM oakridge.stage_instance WHERE id = $1", [emission.stage_instance_id]);
+        "SELECT ended_at::text FROM oakridge.stage_instance WHERE id = $1 FOR SHARE", [emission.stage_instance_id]);
       if (!stages[0] || stages[0].ended_at !== null) return err({ operation: "emit_artifact_revision", kind: "execution_closed", artifact_id: id, detail: "stage execution is closed" });
       const replayRows = await transaction.query<ArtifactRow>(
         `SELECT ${artifactColumns} FROM oakridge.artifact artifact

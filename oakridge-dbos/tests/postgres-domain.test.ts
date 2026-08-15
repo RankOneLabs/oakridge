@@ -84,6 +84,18 @@ test("workflow run creation replays only when run, profile, attempt, and launch 
   const result = await new PostgresWorkflowRunRepository(sql).create_with_initial_attempt(launch);
   expect(result).toEqual({ ok: true, value: { kind: "replayed", run: launch.run, epic_profile: null } });
   expect(sql.calls.some((call) => call.statement.includes("INSERT INTO oakridge.workflow_run"))).toBe(false);
+  expect(sql.calls[2]?.parameters).toEqual([
+    launch.run.id, launch.run.workflow_definition_id, launch.run.project_id, launch.run.context,
+    launch.run.root_workflow_id, launch.run.created_at,
+  ]);
+});
+
+test("workflow run launch replay ignores mutable archive state", async () => {
+  const existing = { ...launch.run, archived: true, immutable_matches: true };
+  const sql = new TransactionStubSql([[], [{ archived: false, version: 2 }], [existing], [{ exists: false }], [{ matches: true }], []]);
+  const result = await new PostgresWorkflowRunRepository(sql).create_with_initial_attempt(launch);
+  expect(result).toEqual({ ok: true, value: { kind: "replayed", run: { ...launch.run, archived: true }, epic_profile: null } });
+  expect(sql.calls[2]?.statement).not.toContain("run.archived =");
 });
 
 test("workflow run replay rejects conflicting immutable launch data", async () => {
@@ -170,9 +182,11 @@ test("artifact revision rejects an idempotency key reused with another payload",
 });
 
 test("artifact emission rejects a stage closed by durable cancellation", async () => {
-  const repository = new PostgresArtifactRevisionRepository(new TransactionStubSql([[], [{ ended_at: "2026-08-14T00:00:01Z" }]]));
+  const sql = new TransactionStubSql([[], [{ ended_at: "2026-08-14T00:00:01Z" }]]);
+  const repository = new PostgresArtifactRevisionRepository(sql);
   const result = await repository.emit_revision("unused" as ArtifactId, { run_id: "run" as WorkflowRunId, stage_instance_id: "stage" as StageInstanceId, execution_id: "execution" as ExecutionId, unit_id: "0" as UnitId, output_name: "result", artifact_type: "dev.result", label: null, body: {}, idempotency_key: "late", payload_hash: "late" }, "2026-08-14T00:00:02Z", { target_workflow_id: "execution-workflow", release: { kind: "immediate" } });
   expect(result).toEqual({ ok: false, error: expect.objectContaining({ kind: "execution_closed" }) });
+  expect(sql.calls[1]?.statement).toContain("FOR SHARE");
 });
 
 test("attempt cancellation withdraws pending artifacts and returns exact active DBOS waits", async () => {
