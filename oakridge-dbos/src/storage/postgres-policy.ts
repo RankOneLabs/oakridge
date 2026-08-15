@@ -1,8 +1,9 @@
 import type { CollaborationMessage, CollaborationThread, CollaborationThreadWithMessages, MessageId, ReviewItem, ReviewItemId, ReviewItemStatus, ThreadId, ThreadStatus } from "../domain/collaboration";
 import type { EpicWorkflowProfile, EpicWorkflowProfileId } from "../domain/epic";
+import { confirmFinalPullRequest, observeFinalPullRequest, type FinalPullRequestDomainError, type FinalPullRequestReconciliation } from "../domain/final-pull-request";
 import type { GateDecisionAudit, GateDecisionAuditId } from "../domain/gates";
 import type { ArtifactId, ExecutionId, StageInstanceId, UnitId, WorkflowRunId } from "../domain/primitives";
-import type { CollaborationRepository, EpicWorkflowProfileRepository, GateDecisionAuditRepository } from "./repositories";
+import type { CollaborationRepository, EpicWorkflowProfileRepository, FinalPullRequestRepository, GateDecisionAuditRepository, PersistFinalPullRequestConfirmation, PersistFinalPullRequestObservation } from "./repositories";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 
 interface GateAuditRow {
@@ -71,6 +72,174 @@ export class PostgresEpicWorkflowProfileRepository implements EpicWorkflowProfil
   async find_by_id(id: EpicWorkflowProfileId): Promise<EpicWorkflowProfile | null> {
     const rows = await this.sql.query<EpicWorkflowProfile>("SELECT * FROM oakridge.epic_workflow_profile WHERE id = $1", [id]);
     return rows[0] ?? null;
+  }
+}
+
+interface EpicProfileRow extends Omit<EpicWorkflowProfile, "id" | "workflow_run_id"> {
+  readonly id: string;
+  readonly workflow_run_id: string;
+}
+
+interface FinalPullRequestReconciliationRow extends Omit<FinalPullRequestReconciliation, "epic_profile_id"> {
+  readonly epic_profile_id: string;
+}
+
+const decodeEpicProfile = (row: EpicProfileRow): EpicWorkflowProfile => ({
+  ...row,
+  id: row.id as EpicWorkflowProfileId,
+  workflow_run_id: row.workflow_run_id as WorkflowRunId,
+});
+
+const decodeFinalPullRequestReconciliation = (row: FinalPullRequestReconciliationRow): FinalPullRequestReconciliation => ({
+  ...row,
+  epic_profile_id: row.epic_profile_id as EpicWorkflowProfileId,
+});
+
+const profileNotFound = (operation: FinalPullRequestDomainError["operation"], run_id: WorkflowRunId): FinalPullRequestDomainError => ({
+  operation,
+  kind: "profile_not_found",
+  detail: `workflow run '${run_id}' has no Epic profile`,
+});
+
+export class PostgresFinalPullRequestRepository implements FinalPullRequestRepository {
+  constructor(private readonly sql: TransactionalSqlExecutor) {}
+
+  async observe(input: PersistFinalPullRequestObservation): Promise<ReturnType<typeof observeFinalPullRequest>> {
+    return this.sql.transaction(async (transaction) => {
+      const profile = await this.lockProfile(transaction, input.run_id);
+      if (!profile) return { ok: false, error: profileNotFound("observe_final_pull_request", input.run_id) };
+      const previous = await this.lockReconciliation(transaction, profile.id, input.repository_key);
+      const isEligible = await this.isFinalIntegrationEligible(transaction, input.run_id);
+      const result = observeFinalPullRequest({
+        profile,
+        repository_key: input.repository_key,
+        observation: input.observation,
+        previous,
+        is_final_integration_eligible: isEligible,
+        updated_at: input.updated_at,
+      });
+      if (!result.ok || result.value.outcome === "already_completed" || result.value.outcome === "ignored_stale") return result;
+      const reconciliation = result.value.reconciliation;
+      if (!reconciliation) throw new Error("final pull request observation produced no reconciliation");
+      const written = await transaction.query<{ readonly epic_profile_id: string }>(
+        `INSERT INTO oakridge.final_pull_request_reconciliation
+           (epic_profile_id, repository_key, observation, mismatch, observed_at,
+            merged_evidence_at, confirmation_idempotency_key, operator_comment, confirmed_at, updated_at)
+         VALUES ($1,$2,$3::jsonb,$4::jsonb,$5::timestamptz,$6::timestamptz,$7,$8,$9::timestamptz,$10::timestamptz)
+         ON CONFLICT (epic_profile_id, repository_key) DO UPDATE SET
+           observation = EXCLUDED.observation, mismatch = EXCLUDED.mismatch,
+           observed_at = EXCLUDED.observed_at,
+           merged_evidence_at = COALESCE(EXCLUDED.merged_evidence_at, oakridge.final_pull_request_reconciliation.merged_evidence_at),
+           updated_at = EXCLUDED.updated_at
+         WHERE EXCLUDED.observed_at > oakridge.final_pull_request_reconciliation.observed_at
+            OR (EXCLUDED.observed_at = oakridge.final_pull_request_reconciliation.observed_at
+                AND EXCLUDED.observation = oakridge.final_pull_request_reconciliation.observation)
+         RETURNING epic_profile_id::text`,
+        [reconciliation.epic_profile_id, reconciliation.repository_key, reconciliation.observation,
+          reconciliation.mismatch, reconciliation.observation.observed_at, reconciliation.merged_evidence_at,
+          reconciliation.confirmation_idempotency_key, reconciliation.operator_comment,
+          reconciliation.confirmed_at, reconciliation.updated_at],
+      );
+      if (!written[0]) return { ok: true, value: { outcome: "ignored_stale", profile, reconciliation: previous } };
+      await this.updateProfile(transaction, result.value.profile);
+      return result;
+    });
+  }
+
+  async confirm(input: PersistFinalPullRequestConfirmation): Promise<ReturnType<typeof confirmFinalPullRequest>> {
+    return this.sql.transaction(async (transaction) => {
+      const profile = await this.lockProfile(transaction, input.run_id);
+      if (!profile) return { ok: false, error: profileNotFound("confirm_final_pull_request", input.run_id) };
+      const reused = await transaction.query<{ readonly repository_key: string }>(
+        `SELECT repository_key FROM oakridge.final_pull_request_reconciliation
+         WHERE epic_profile_id = $1 AND confirmation_idempotency_key = $2 FOR UPDATE`,
+        [profile.id, input.request.idempotency_key],
+      );
+      if (reused[0] && reused[0].repository_key !== input.repository_key) {
+        return { ok: false, error: { operation: "confirm_final_pull_request", kind: "idempotency_conflict", detail: "confirmation idempotency key was already used for another repository" } };
+      }
+      const previous = await this.lockReconciliation(transaction, profile.id, input.repository_key);
+      if (previous?.confirmation_idempotency_key === input.request.idempotency_key && previous.confirmed_at !== null) {
+        return { ok: true, value: { outcome: "already_completed", profile, reconciliation: previous } };
+      }
+      const isEligible = await this.isFinalIntegrationEligible(transaction, input.run_id);
+      const result = confirmFinalPullRequest({
+        profile,
+        repository_key: input.repository_key,
+        reconciliation: previous,
+        request: input.request,
+        is_final_integration_eligible: isEligible,
+        confirmed_at: input.confirmed_at,
+      });
+      if (!result.ok) return result;
+      const reconciliation = result.value.reconciliation;
+      if (!reconciliation) throw new Error("final pull request confirmation produced no reconciliation");
+      const updated = await transaction.query<{ readonly epic_profile_id: string }>(
+        `UPDATE oakridge.final_pull_request_reconciliation
+         SET confirmation_idempotency_key = $3,
+             operator_comment = CASE WHEN confirmation_idempotency_key IS NULL THEN $4 ELSE operator_comment END,
+             confirmed_at = COALESCE(confirmed_at, $5::timestamptz),
+             updated_at = GREATEST(updated_at, $5::timestamptz)
+         WHERE epic_profile_id = $1 AND repository_key = $2 AND merged_evidence_at IS NOT NULL
+           AND (confirmation_idempotency_key IS NULL OR confirmation_idempotency_key = $3)
+         RETURNING epic_profile_id::text`,
+        [profile.id, input.repository_key, input.request.idempotency_key,
+          input.request.operator_comment ?? null, input.confirmed_at],
+      );
+      if (!updated[0]) return { ok: false, error: { operation: "confirm_final_pull_request", kind: "idempotency_conflict", detail: "final pull request confirmation raced with newer durable state" } };
+      await this.updateProfile(transaction, result.value.profile);
+      return result;
+    });
+  }
+
+  private async lockProfile(transaction: SqlExecutor, run_id: WorkflowRunId): Promise<EpicWorkflowProfile | null> {
+    const rows = await transaction.query<EpicProfileRow>(
+      `SELECT id::text, workflow_run_id::text, title, slug, lifecycle_state, final_merge_policy,
+              repositories, created_at::text, updated_at::text
+       FROM oakridge.epic_workflow_profile WHERE workflow_run_id = $1 FOR UPDATE`, [run_id]);
+    return rows[0] ? decodeEpicProfile(rows[0]) : null;
+  }
+
+  private async lockReconciliation(transaction: SqlExecutor, profile_id: EpicWorkflowProfileId, repository_key: string): Promise<FinalPullRequestReconciliation | null> {
+    const rows = await transaction.query<FinalPullRequestReconciliationRow>(
+      `SELECT epic_profile_id::text, repository_key, observation, mismatch,
+              merged_evidence_at::text, confirmation_idempotency_key, operator_comment,
+              confirmed_at::text, updated_at::text
+       FROM oakridge.final_pull_request_reconciliation
+       WHERE epic_profile_id = $1 AND repository_key = $2 FOR UPDATE`, [profile_id, repository_key]);
+    return rows[0] ? decodeFinalPullRequestReconciliation(rows[0]) : null;
+  }
+
+  private async isFinalIntegrationEligible(transaction: SqlExecutor, run_id: WorkflowRunId): Promise<boolean> {
+    const rows = await transaction.query<{ readonly stage_key: string; readonly operator_role: "build" | "assessment"; readonly ended_at: string | null; readonly outcome: { readonly kind?: string } | null }>(
+      `WITH current_attempt AS (
+         SELECT root_workflow_id FROM oakridge.workflow_attempt
+         WHERE run_id = $1 ORDER BY created_at DESC, root_workflow_id DESC LIMIT 1
+       ), required_stage AS (
+         SELECT entry.key AS stage_key, entry.value->>'operator_role' AS operator_role
+         FROM oakridge.workflow_run run
+         JOIN oakridge.workflow_definition definition ON definition.id = run.workflow_definition_id
+         CROSS JOIN LATERAL jsonb_each(definition.definition->'graph'->'stages') entry
+         WHERE run.id = $1 AND entry.value->>'operator_role' IN ('build', 'assessment')
+       )
+       SELECT required.stage_key, required.operator_role,
+              stage.ended_at::text, stage.outcome
+       FROM required_stage required
+       CROSS JOIN current_attempt attempt
+       LEFT JOIN oakridge.stage_instance stage
+         ON stage.run_id = $1 AND stage.stage_key = required.stage_key
+        AND stage.attempt_root_workflow_id = attempt.root_workflow_id`, [run_id]);
+    const roles = new Set(rows.map((row) => row.operator_role));
+    return roles.has("build") && roles.has("assessment")
+      && rows.every((row) => row.ended_at !== null && row.outcome?.kind === "succeeded");
+  }
+
+  private async updateProfile(transaction: SqlExecutor, profile: EpicWorkflowProfile): Promise<void> {
+    await transaction.query(
+      `UPDATE oakridge.epic_workflow_profile
+       SET lifecycle_state = $2, repositories = $3::jsonb, updated_at = $4::timestamptz
+       WHERE id = $1`,
+      [profile.id, profile.lifecycle_state, profile.repositories, profile.updated_at]);
   }
 }
 
