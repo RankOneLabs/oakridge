@@ -174,7 +174,7 @@ export const observeFinalPullRequest = (
   } else if (input.observation.head_branch !== repository.epic_branch) {
     finding = mismatch("head_branch_mismatch", "observed pull request head branch does not match the cohort branch");
   } else if (input.observation.base_branch !== repository.base_branch) {
-    finding = mismatch("base_branch_mismatch", "observed pull request base branch is not the repository epic branch");
+    finding = mismatch("base_branch_mismatch", "observed pull request base branch does not match the repository base branch");
   } else if (input.observation.state === "closed_unmerged") {
     finding = mismatch("closed_without_merge", "pull request closed without merging into the epic branch");
   } else if (input.observation.state === "merged" && input.observation.merged_at === null) {

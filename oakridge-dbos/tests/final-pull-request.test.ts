@@ -57,6 +57,17 @@ test("observation rejects mismatched identity and ignores older durable evidence
   expect(stale).toEqual({ ok: true, value: { outcome: "ignored_stale", profile: profile(), reconciliation: previous } });
 });
 
+test("base branch mismatch identifies the repository base branch", () => {
+  const result = observeFinalPullRequest({
+    profile: profile(), repository_key: "api", observation: observation({ base_branch: "release" }),
+    previous: null, is_final_integration_eligible: true, updated_at: "2026-08-15T01:01:00Z",
+  });
+  expect(result.ok && result.value.reconciliation?.mismatch).toEqual({
+    kind: "base_branch_mismatch",
+    detail: "observed pull request base branch does not match the repository base branch",
+  });
+});
+
 test("staleness compares instants rather than timestamp string formatting", () => {
   const previous = reconciliation({ observation: observation({ observed_at: "2026-08-15T02:00:00-07:00" }) });
   const stale = observeFinalPullRequest({
