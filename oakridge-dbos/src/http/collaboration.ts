@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 
 import { Hono } from "hono";
 
-import { renderCollaborationPingPrompt, type CollaborationMessage, type CollaborationPingAccepted, type CollaborationPingRequestId, type CollaborationThread, type MessageId, type ReviewItem, type ReviewItemId, type ReviewItemStatus, type ThreadId, type ThreadStatus } from "../domain/collaboration";
+import { renderCollaborationPingPrompt, validateCollaborationPingRequestId, type CollaborationMessage, type CollaborationPingAccepted, type CollaborationThread, type MessageId, type ReviewItem, type ReviewItemId, type ReviewItemStatus, type ThreadId, type ThreadStatus } from "../domain/collaboration";
 import type { ArtifactId, JsonValue } from "../domain/primitives";
 import type { ArtifactRevision } from "../domain/artifacts";
 import type { ArtifactRevisionRepository, CollaborationRepository, ExecutionArtifactContextRepository, ExecutionProjectionRepository } from "../storage/repositories";
@@ -105,7 +105,9 @@ export const createCollaborationApp = (dependencies: CollaborationHttpDependenci
     const threads = await dependencies.collaboration.list_threads(thread.artifact_id);
     const fullThread = threads.find((candidate) => candidate.id === threadId);
     if (!fullThread || !fullThread.messages.length) return http.json({ error: "thread has no durable messages" }, 409);
-    const requestId = (http.req.header("idempotency-key")?.trim() || randomUUID()) as CollaborationPingRequestId;
+    const requestIdResult = validateCollaborationPingRequestId(http.req.header("idempotency-key") ?? randomUUID());
+    if (requestIdResult.kind === "invalid") return http.json({ error: requestIdResult.detail }, 400);
+    const requestId = requestIdResult.request_id;
     const context = await dependencies.contexts.find_for_emit(threadRevision.stage_instance_id, threadRevision.unit_id);
     if (!context || context.execution_id !== threadRevision.execution_id) return http.json({ error: "thread execution context is unavailable" }, 409);
     const execution = await dependencies.executions.find_external(context.execution_id);

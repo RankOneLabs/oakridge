@@ -58,6 +58,12 @@ test("kbbl adapter delivers workflow input through a persisted session", async (
   expect(calls).toEqual([{ url: "http://kbbl/sessions/resumable/session-1/input/revision-1", body: JSON.stringify({ text: "Please address the assessment." }) }]);
 });
 
+test("kbbl adapter reports generalized input delivery failures", async () => {
+  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "build", fetch: async () => new Response("unavailable", { status: 503 }) });
+  await expect(adapter.deliver_input("execution-1" as ExecutionId, "input-1", "Please respond.", { kind: "kbbl_session", session_id: "session-1" }))
+    .rejects.toThrow("kbbl input delivery failed (503): unavailable");
+});
+
 test("kbbl cancellation fences a persisted session reference after process recovery", async () => {
   const urls: string[] = [];
   const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "build", fetch: async (input) => {

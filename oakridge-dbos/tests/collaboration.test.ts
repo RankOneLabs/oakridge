@@ -53,6 +53,14 @@ test("ping durably targets the attached executor using the latest thread message
   expect(subject.pingRequests[0]).toEqual(expect.objectContaining({ thread_id: "id-1", request_id: "ping-request-1", execution_id: "execution-1", executor_type: "delegated_session", external_reference: { kind: "kbbl_session", session_id: "session-1" }, prompt: expect.stringContaining("operator: Please explain") }));
 });
 
+test("ping rejects an unsafe durable request identity", async () => {
+  const subject = fixture();
+  await subject.app.request("/artifacts/artifact-2/threads", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ body: "Please explain", author: "operator" }) });
+  const response = await subject.app.request("/threads/id-1/ping", { method: "POST", headers: { "idempotency-key": "unsafe/request" } });
+  expect(response.status).toBe(400);
+  expect(subject.pingRequests).toEqual([]);
+});
+
 test("review items stay attached to the chain and can be resolved", async () => {
   const subject = fixture();
   const created = await subject.app.request("/artifacts/artifact-2/review_items", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ anchor: "/tests", claim: "Tests pass", reality: "One fails" }) });

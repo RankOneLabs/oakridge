@@ -119,6 +119,6 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
     const response = await this.fetch(`${this.options.base_url}/sessions/resumable/${encodeURIComponent(sessionId)}/input/${encodeURIComponent(delivery_key)}`, {
       method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: input }),
     });
-    if (!response.ok) throw new Error(`kbbl revision delivery failed (${response.status}): ${await response.text()}`);
+    if (!response.ok) throw new Error(`kbbl input delivery failed (${response.status}): ${await response.text()}`);
   }
 }

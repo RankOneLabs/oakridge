@@ -32,6 +32,15 @@ export type CollaborationPingState =
   | { readonly kind: "delivering"; readonly thread_id: ThreadId; readonly request_id: CollaborationPingRequestId }
   | { readonly kind: "delivered"; readonly thread_id: ThreadId; readonly request_id: CollaborationPingRequestId };
 
+export type CollaborationPingRequestIdValidation =
+  | { readonly kind: "valid"; readonly request_id: CollaborationPingRequestId }
+  | { readonly kind: "invalid"; readonly detail: string };
+
+export const validateCollaborationPingRequestId = (value: string): CollaborationPingRequestIdValidation =>
+  /^[A-Za-z0-9._:-]{1,128}$/.test(value)
+    ? { kind: "valid", request_id: value as CollaborationPingRequestId }
+    : { kind: "invalid", detail: "Idempotency-Key must be 1-128 letters, numbers, dots, underscores, colons, or hyphens" };
+
 export const renderCollaborationPingPrompt = (thread: CollaborationThreadWithMessages): string => {
   const anchor = thread.anchor ? ` at ${thread.anchor}` : "";
   const transcript = thread.messages.map((message) => `${message.author}: ${message.body}`).join("\n\n");
