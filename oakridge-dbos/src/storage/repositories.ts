@@ -3,7 +3,7 @@ import type { StageInstance, StageOutcome, WorkflowDefinition } from "../domain/
 import type { EpicWorkflowProfile, EpicWorkflowProfileId } from "../domain/epic";
 import type { GateDecisionAudit, GateDecisionAuditId } from "../domain/gates";
 import type { CollaborationMessage, CollaborationThread, CollaborationThreadWithMessages, MessageId, ReviewItem, ReviewItemId, ReviewItemStatus, ThreadId, ThreadStatus } from "../domain/collaboration";
-import type { ArtifactEmission, ArtifactRevision } from "../domain/artifacts";
+import type { ArtifactEmission, ArtifactEmissionDelivery, ArtifactRevision, EmitArtifactRevisionResult, PendingArtifactNotification, ReleaseArtifactResult, WithdrawArtifactRequest, WithdrawArtifactResult } from "../domain/artifacts";
 import type { CompiledOutputContract } from "../domain/compiled-workflow";
 import type { ArtifactEnvelope } from "../domain/execution";
 import type { ExecutionRequest, ExecutorTerminalObservation, ExternalExecutionReference } from "../domain/execution";
@@ -62,28 +62,20 @@ export interface StageInstanceRepository {
   find_by_id(id: StageInstanceId): Promise<StageInstance | null>;
 }
 
-export interface InsertArtifact {
-  readonly id: ArtifactId;
-  readonly run_id: WorkflowRunId;
-  readonly stage_instance_id: StageInstanceId;
-  readonly execution_id: string;
-  readonly unit_id: string;
-  readonly output_name: string;
-  readonly artifact_type: string;
-  readonly body: JsonValue;
-  readonly emission_idempotency_key: string;
-  readonly emission_payload_hash: string;
-}
-
-export interface ArtifactRepository {
-  insert_idempotent(input: InsertArtifact): Promise<ArtifactId>;
-}
-
 export interface ArtifactRevisionRepository {
-  emit_revision(id: ArtifactId, emission: ArtifactEmission, created_at: string): Promise<ArtifactRevision>;
+  emit_revision(id: ArtifactId, emission: ArtifactEmission, created_at: string, delivery: ArtifactEmissionDelivery): Promise<EmitArtifactRevisionResult>;
+  withdraw(request: WithdrawArtifactRequest): Promise<WithdrawArtifactResult>;
+  mark_released(id: ArtifactId, released_at: string): Promise<ReleaseArtifactResult>;
   find_tip(stage_instance_id: StageInstanceId, execution_id: string, unit_id: string, output_name: string): Promise<ArtifactRevision | null>;
+  find_current(stage_instance_id: StageInstanceId, execution_id: string, unit_id: string, output_name: string): Promise<ArtifactRevision | null>;
   list_chain(chain_id: ArtifactId): Promise<readonly ArtifactRevision[]>;
   find_by_id(id: ArtifactId): Promise<ArtifactRevision | null>;
+}
+
+export interface ArtifactNotificationRepository {
+  claim_pending_notifications(worker_id: string, claimed_at: string, claimed_until: string, limit: number): Promise<readonly PendingArtifactNotification[]>;
+  mark_notification_delivered(id: string, worker_id: string, delivered_at: string): Promise<void>;
+  mark_notification_failed(id: string, worker_id: string, error: string, next_attempt_at: string): Promise<void>;
 }
 
 export interface ResumeArtifactRepository {

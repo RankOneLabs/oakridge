@@ -34,11 +34,13 @@ export const createArtifactDetailApp = (dependencies: ArtifactDetailDependencies
     for (const revision of chain) {
       const decision = await dependencies.audits.find_for_revision(revision.id);
       const status: OperatorArtifactRevision["status"] = !decision ? "draft" : passActions.has(decision.action) ? "approved" : "rejected";
-      revisions.push({ id: revision.id, status, created_at: revision.created_at, body: revision.body, validation: {} });
+      revisions.push({ id: revision.id, status, lifecycle: revision.lifecycle.kind, created_at: revision.created_at, body: revision.body, validation: {} });
     }
     const presentation = dependencies.presentation_for_type(requested.artifact_type);
     const detail: OperatorArtifactDetail = {
-      id: requested.id, type_id: requested.artifact_type, component_id: presentation?.component_id ?? null,
+      id: requested.id, requested_revision_id: requested.id,
+      current_revision_id: chain.find((revision) => revision.lifecycle.kind === "current")?.id ?? null,
+      type_id: requested.artifact_type, component_id: presentation?.component_id ?? null,
       capabilities: presentation?.capabilities ?? null, anchor_schema: presentation?.anchor_schema ?? null, review: presentation?.review ?? null,
       run_id: requested.run_id, producing_stage: stage.stage_key, label: requested.label, revisions,
     };

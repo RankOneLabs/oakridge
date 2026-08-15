@@ -2,6 +2,7 @@ import { Hono } from "hono";
 
 import type { WorkflowDefinitionRepository } from "../storage/repositories";
 import { createArtifactCallbackApp, type ArtifactCallbackDependencies } from "./artifact-callback";
+import { createArtifactWithdrawApp, type ArtifactWithdrawDependencies } from "./artifact-withdraw";
 import { createGateResumeApp, type GateResumeDependencies } from "./gate-resume";
 import { createHandoffCompleteApp, type HandoffCompleteDependencies } from "./handoff-complete";
 import { createCollaborationApp, type CollaborationHttpDependencies } from "./collaboration";
@@ -16,6 +17,7 @@ import type { LaunchRunDependencies } from "../runtime/launch-run";
 export interface OakridgeHttpDependencies {
   readonly definitions: WorkflowDefinitionRepository;
   readonly artifact_callback: ArtifactCallbackDependencies;
+  readonly artifact_withdraw: ArtifactWithdrawDependencies;
   readonly gate_resume: GateResumeDependencies;
   readonly handoff_complete: HandoffCompleteDependencies;
   readonly collaboration: CollaborationHttpDependencies;
@@ -33,6 +35,7 @@ export const createApp = (dependencies: OakridgeHttpDependencies): Hono => {
     return definition ? context.json(definition) : context.json({ error: "workflow definition not found" }, 404);
   });
   app.route("/", createArtifactCallbackApp(dependencies.artifact_callback));
+  app.route("/", createArtifactWithdrawApp(dependencies.artifact_withdraw));
   app.route("/", createGateResumeApp(dependencies.gate_resume));
   app.route("/", createHandoffCompleteApp(dependencies.handoff_complete));
   app.route("/", createCollaborationApp(dependencies.collaboration));

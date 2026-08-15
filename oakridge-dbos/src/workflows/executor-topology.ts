@@ -1,11 +1,11 @@
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
 import type { ExecutionRequest, ExecutorAdapter, ExecutorTerminalObservation, ExternalExecutionReference } from "../domain/execution";
-import type { ArtifactReleaseState, ExecutionContractState } from "../domain/artifacts";
+import type { ArtifactReleaseState, ArtifactRevision, ExecutionContractState, ReleaseArtifactResult } from "../domain/artifacts";
 import type { CompiledOutputContract } from "../domain/compiled-workflow";
-import { evaluateExecutionArtifactContract } from "../contracts/evaluate-artifacts";
+import { evaluateExecutionArtifactContract, shouldAwaitArtifactRelease } from "../contracts/evaluate-artifacts";
 import { durableGateWorkflow, type GateCommand, type GateWaitInput } from "./gate";
-import { durableHandoffWorkflow, type HandoffResult } from "./handoff";
+import { durableHandoffWorkflow, type HandoffCommand, type HandoffResult } from "./handoff";
 
 export interface ExecutorMechanismResult {
   readonly external_reference: ExternalExecutionReference;
@@ -19,6 +19,25 @@ export interface ExecutionProjectionObserver {
 }
 let projectionObserver: ExecutionProjectionObserver | null = null;
 export const registerExecutionProjectionObserver = (observer: ExecutionProjectionObserver): void => { projectionObserver = observer; };
+
+export interface ArtifactLifecycleObserver {
+  find_by_id(id: ArtifactRevision["id"]): Promise<ArtifactRevision | null>;
+  mark_released(id: ArtifactRevision["id"], released_at: string): Promise<ReleaseArtifactResult>;
+}
+let artifactLifecycleObserver: ArtifactLifecycleObserver | null = null;
+export const registerArtifactLifecycleObserver = (observer: ArtifactLifecycleObserver): void => { artifactLifecycleObserver = observer; };
+
+const loadCurrentArtifactStep = DBOS.registerStep(async (id: ArtifactRevision["id"]): Promise<ArtifactRevision | null> => {
+  const artifact = await artifactLifecycleObserver?.find_by_id(id) ?? null;
+  return artifact?.lifecycle.kind === "current" ? artifact : null;
+}, { name: "oakridgeLoadCurrentArtifactStep", retriesAllowed: true });
+
+const markArtifactReleasedStep = DBOS.registerStep(async (id: ArtifactRevision["id"]): Promise<ArtifactRevision | null> => {
+  if (!artifactLifecycleObserver) throw new Error("artifact lifecycle observer is not registered");
+  const result = await artifactLifecycleObserver.mark_released(id, new Date().toISOString());
+  if (result.kind === "released" || result.kind === "already_released") return result.artifact;
+  return null;
+}, { name: "oakridgeMarkArtifactReleasedStep", retriesAllowed: true });
 
 export const registerExecutorAdapter = (adapter: ExecutorAdapter): void => {
   if (adapters.has(adapter.executor_type)) throw new Error(`executor adapter '${adapter.executor_type}' is already registered`);
@@ -84,18 +103,21 @@ const requestRevisionStep = DBOS.registerStep(async (input: RevisionRequestInput
 
 type ExecutionWorkflowMessage =
   | { readonly kind: "artifact_emitted"; readonly release: ArtifactReleaseState }
+  | { readonly kind: "artifact_replaced"; readonly invalidated_artifact_id: ArtifactRevision["id"]; readonly release: ArtifactReleaseState }
+  | { readonly kind: "artifact_invalidated"; readonly artifact_id: ArtifactRevision["id"]; readonly output_name: string; readonly reason: "superseded" | "withdrawn"; readonly replacement_artifact_revision_id: ArtifactRevision["id"] | null }
   | { readonly kind: "artifact_released"; readonly artifact: ArtifactReleaseState["artifact"] }
-  | { readonly kind: "gate_rejected"; readonly artifact: ArtifactReleaseState["artifact"]; readonly command: GateCommand }
+  | { readonly kind: "gate_rejected"; readonly artifact: ArtifactReleaseState["artifact"]; readonly command: Extract<GateCommand, { readonly kind: "decision" }> }
   | { readonly kind: "handoff_revision_requested"; readonly result: Extract<HandoffResult, { kind: "revision_requested" }> }
   | { readonly kind: "executor_terminal"; readonly observation: ExecutorTerminalObservation };
 
 interface GateRelayInput { readonly parent_workflow_id: string; readonly request: ExecutionRequest; readonly release: Extract<ArtifactReleaseState, { kind: "waiting_gate" }> }
 const gateRelayWorkflow = DBOS.registerWorkflow(async (input: GateRelayInput): Promise<GateCommand> => {
-  let lastCommand: GateCommand | null = null;
+  let lastCommand: Extract<GateCommand, { kind: "decision" }> | null = null;
   for (const gateStep of input.release.gate_steps) {
     const gateInput: GateWaitInput = { stage_instance_id: input.request.stage_instance_id, execution_id: input.request.execution_id, unit_id: input.request.unit_id, artifact_revision_id: input.release.artifact.id, gate_step: gateStep.type, actions: gateStep.actions };
     const gate = await DBOS.startWorkflow(durableGateWorkflow, { workflowID: `${DBOS.workflowID}:wait:${gateStep.type}` })(gateInput);
     const command = await gate.getResult();
+    if (command.kind !== "decision") return command;
     lastCommand = command;
     const isPass = command.action === "pass" || command.action === "approve" || command.action === "confirm_merged" || command.action === "closed_without_merge";
     if (!isPass) {
@@ -116,20 +138,53 @@ export const artifactContractExecutionWorkflow = DBOS.registerWorkflow(async (in
   if (!workflowId) throw new Error("execution workflow requires a DBOS workflow ID");
   const externalReference = await startExecutorStep(input.request);
   await DBOS.startWorkflow(terminalObserverWorkflow, { workflowID: `${workflowId}:terminal` })({ request: input.request, external_reference: externalReference, parent_workflow_id: workflowId });
-  const releases: ArtifactReleaseState[] = [];
+  let releases: ArtifactReleaseState[] = [];
+  let terminalObservation: ExecutorTerminalObservation | null = null;
+  const closeReleaseWaits = async (artifactId: ArtifactRevision["id"], outputName: string, reason: "superseded" | "withdrawn", replacementId: ArtifactRevision["id"] | null): Promise<void> => {
+    releases = releases.filter((candidate) => candidate.artifact.id !== artifactId);
+    const gateControl: GateCommand = reason === "superseded" && replacementId
+      ? { kind: "supersede", replacement_artifact_revision_id: replacementId }
+      : { kind: "withdraw" };
+    for (const output of input.outputs) {
+      if (output.name !== outputName) continue;
+      if (output.release.kind === "gate") {
+        for (const step of output.release.steps) {
+          await DBOS.send(`${workflowId}:gate:${artifactId}:wait:${step.type}`, gateControl, "gate-command", `artifact:${artifactId}:${reason}:${step.type}`);
+        }
+      } else if (output.release.kind === "handoff") {
+        const handoffControl: HandoffCommand = reason === "superseded" && replacementId
+          ? { kind: "supersede", replacement_artifact_revision_id: replacementId }
+          : { kind: "withdraw" };
+        await DBOS.send(`${workflowId}:handoff:${artifactId}`, handoffControl, "handoff-command", `artifact:${artifactId}:${reason}`);
+      }
+    }
+  };
+  const acceptEmission = async (release: ArtifactReleaseState): Promise<void> => {
+    const currentArtifact = await loadCurrentArtifactStep(release.artifact.id);
+    if (!currentArtifact) return;
+    releases = releases.filter((candidate) => candidate.artifact.output_name !== currentArtifact.output_name);
+    if (release.kind === "waiting_gate") {
+      await DBOS.startWorkflow(gateRelayWorkflow, { workflowID: `${workflowId}:gate:${release.artifact.id}` })({ parent_workflow_id: workflowId, request: input.request, release });
+    } else if (release.kind === "waiting_handoff") {
+      await DBOS.startWorkflow(durableHandoffWorkflow, { workflowID: `${workflowId}:handoff:${release.artifact.id}` })({ ...release, parent_workflow_id: workflowId });
+    } else {
+      const released = await markArtifactReleasedStep(currentArtifact.id);
+      if (released) releases.push({ kind: "released", artifact: released });
+    }
+  };
   for (;;) {
     const message = await DBOS.recv<ExecutionWorkflowMessage>("execution-event", { timeoutSeconds: 86_400 });
     if (!message) continue;
     if (message.kind === "artifact_emitted") {
-      if (message.release.kind === "waiting_gate") {
-        await DBOS.startWorkflow(gateRelayWorkflow, { workflowID: `${workflowId}:gate:${message.release.artifact.id}` })({ parent_workflow_id: workflowId, request: input.request, release: message.release });
-      } else if (message.release.kind === "waiting_handoff") {
-        await DBOS.startWorkflow(durableHandoffWorkflow, { workflowID: `${workflowId}:handoff:${message.release.artifact.id}` })({ ...message.release, parent_workflow_id: workflowId });
-      } else {
-        releases.push(message.release);
-      }
+      await acceptEmission(message.release);
+    } else if (message.kind === "artifact_replaced") {
+      await closeReleaseWaits(message.invalidated_artifact_id, message.release.artifact.output_name, "superseded", message.release.artifact.id);
+      await acceptEmission(message.release);
+    } else if (message.kind === "artifact_invalidated") {
+      await closeReleaseWaits(message.artifact_id, message.output_name, message.reason, message.replacement_artifact_revision_id);
     } else if (message.kind === "artifact_released") {
-      releases.push({ kind: "released", artifact: message.artifact });
+      const released = await markArtifactReleasedStep(message.artifact.id);
+      if (released) releases.push({ kind: "released", artifact: released });
     } else if (message.kind === "gate_rejected") {
       if (message.command.action === "rerun" || message.command.action === "request_revision") {
         await requestRevisionStep({ request: input.request, external_reference: externalReference, delivery_key: `gate:${message.artifact.id}:${message.command.gate_step}`, feedback: `Revise '${message.artifact.output_name}' after gate '${message.command.gate_step}'.` });
@@ -140,13 +195,17 @@ export const artifactContractExecutionWorkflow = DBOS.registerWorkflow(async (in
       await requestRevisionStep({ request: input.request, external_reference: externalReference, delivery_key: `handoff:${message.result.artifact.id}:${message.result.decision_artifact_id}`, feedback: message.result.feedback ?? "Assessment requested implementation revisions." });
       continue;
     } else {
+      terminalObservation = message.observation;
       const contract = evaluateExecutionArtifactContract(input.outputs, releases, input.request.expected_artifacts);
-      return { external_reference: externalReference, contract, terminal_observation: message.observation };
+      if (!shouldAwaitArtifactRelease(contract, message.observation)) {
+        return { external_reference: externalReference, contract, terminal_observation: message.observation };
+      }
+      continue;
     }
     const contract = evaluateExecutionArtifactContract(input.outputs, releases, input.request.expected_artifacts);
     if (contract.kind === "satisfied") {
-      await fenceExecutorStep({ execution_id: input.request.execution_id, executor_type: input.request.executor_type, external_reference: externalReference });
-      return { external_reference: externalReference, contract, terminal_observation: null };
+      if (!terminalObservation) await fenceExecutorStep({ execution_id: input.request.execution_id, executor_type: input.request.executor_type, external_reference: externalReference });
+      return { external_reference: externalReference, contract, terminal_observation: terminalObservation };
     }
   }
 }, { name: "oakridgeArtifactContractExecutionWorkflow" });

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 
 import type { ArtifactId, ExecutionId, StageInstanceId, UnitId, WorkflowRunId } from "../src/domain/primitives";
-import { PostgresArtifactRepository, PostgresArtifactRevisionRepository, PostgresExecutionProjectionRepository, PostgresStageInstanceRepository, PostgresWorkflowAttemptRepository } from "../src/storage/postgres-domain";
+import { PostgresArtifactRevisionRepository, PostgresExecutionProjectionRepository, PostgresResumeArtifactRepository, PostgresStageInstanceRepository, PostgresWorkflowAttemptRepository } from "../src/storage/postgres-domain";
 import type { SqlExecutor, TransactionalSqlExecutor } from "../src/storage/sql-executor";
 
 class StubSql implements SqlExecutor {
@@ -23,60 +23,46 @@ class TransactionStubSql implements TransactionalSqlExecutor {
   transaction<Value>(operation: (transaction: SqlExecutor) => Promise<Value>): Promise<Value> { return operation(this); }
 }
 
-test("artifact retry returns the existing identity when the payload hash matches", async () => {
-  const artifactId = "ef2b47a4-d1bd-44ee-840a-e4f7b27570db" as ArtifactId;
-  const sql = new StubSql([{ id: artifactId, emission_payload_hash: "same" }]);
-  const repository = new PostgresArtifactRepository(sql);
-  const result = await repository.insert_idempotent({
-    id: artifactId,
-    run_id: "0d9ac045-f7e4-48a0-9b86-bd7cd2cf5f93" as WorkflowRunId,
-    stage_instance_id: "fe412d1f-f740-4036-a69b-e623906bb8f3" as StageInstanceId,
-    execution_id: "execution-1",
-    unit_id: "0",
-    output_name: "result",
-    artifact_type: "dev.build_result",
-    body: { summary: "done" },
-    emission_idempotency_key: "emit-1",
-    emission_payload_hash: "same",
-  });
-  expect(result).toBe(artifactId);
-  expect(sql.calls).toHaveLength(1);
-});
-
-test("artifact retry rejects a reused key with a different payload", async () => {
-  const sql = new StubSql([{ id: "artifact-existing", emission_payload_hash: "old" }]);
-  const repository = new PostgresArtifactRepository(sql);
-  expect(repository.insert_idempotent({
-    id: "artifact-new" as ArtifactId,
-    run_id: "run" as WorkflowRunId,
-    stage_instance_id: "stage" as StageInstanceId,
-    execution_id: "execution-1",
-    unit_id: "0",
-    output_name: "result",
-    artifact_type: "result",
-    body: { summary: "changed" },
-    emission_idempotency_key: "emit-1",
-    emission_payload_hash: "new",
-  })).rejects.toThrow("different payload");
-});
-
 test("artifact revision retry returns the current tip for an identical representation", async () => {
-  const tip = { id: "revision-1", chain_id: "revision-1", run_id: "run", stage_instance_id: "stage", execution_id: "execution", unit_id: "0", output_name: "result", artifact_type: "dev.result", label: null, body: { done: true }, version: 1, parent_artifact_id: null, emission_payload_hash: "same", created_at: "2026-08-14T00:00:00Z" };
+  const tip = { id: "revision-1", chain_id: "revision-1", run_id: "run", stage_instance_id: "stage", execution_id: "execution", unit_id: "0", output_name: "result", artifact_type: "dev.result", label: null, body: { done: true }, version: 1, parent_artifact_id: null, emission_payload_hash: "same", lifecycle_state: "current", superseded_by_artifact_id: null, withdrawn_actor: null, withdrawn_reason: null, withdrawn_at: null, released_at: null, created_at: "2026-08-14T00:00:00Z" };
   const sql = new TransactionStubSql([[], [tip]]);
   const repository = new PostgresArtifactRevisionRepository(sql);
-  const revision = await repository.emit_revision("unused" as ArtifactId, { run_id: "run" as WorkflowRunId, stage_instance_id: "stage" as StageInstanceId, execution_id: "execution" as ExecutionId, unit_id: "0" as UnitId, output_name: "result", artifact_type: "dev.result", label: null, body: { done: true }, idempotency_key: "emit-retry", payload_hash: "same" }, "2026-08-14T00:00:01Z");
-  expect(revision.id).toBe("revision-1" as ArtifactId);
+  const revision = await repository.emit_revision("unused" as ArtifactId, { run_id: "run" as WorkflowRunId, stage_instance_id: "stage" as StageInstanceId, execution_id: "execution" as ExecutionId, unit_id: "0" as UnitId, output_name: "result", artifact_type: "dev.result", label: null, body: { done: true }, idempotency_key: "emit-retry", payload_hash: "same" }, "2026-08-14T00:00:01Z", { target_workflow_id: "execution-workflow", release: { kind: "immediate" } });
+  expect(revision.ok && revision.value.artifact.id).toBe("revision-1" as ArtifactId);
   expect(sql.calls).toHaveLength(2);
 });
 
+test("artifact revision rejects an idempotency key reused with another payload", async () => {
+  const replay = { id: "revision-1", chain_id: "revision-1", run_id: "run", stage_instance_id: "stage", execution_id: "execution", unit_id: "0", output_name: "result", artifact_type: "dev.result", label: null, body: { done: true }, version: 1, parent_artifact_id: null, emission_payload_hash: "old", lifecycle_state: "current", superseded_by_artifact_id: null, withdrawn_actor: null, withdrawn_reason: null, withdrawn_at: null, released_at: null, created_at: "2026-08-14T00:00:00Z" };
+  const repository = new PostgresArtifactRevisionRepository(new TransactionStubSql([[], [replay]]));
+  const result = await repository.emit_revision("unused" as ArtifactId, { run_id: "run" as WorkflowRunId, stage_instance_id: "stage" as StageInstanceId, execution_id: "execution" as ExecutionId, unit_id: "0" as UnitId, output_name: "result", artifact_type: "dev.result", label: null, body: { done: "changed" }, idempotency_key: "emit-1", payload_hash: "new" }, "2026-08-14T00:00:01Z", { target_workflow_id: "execution-workflow", release: { kind: "immediate" } });
+  expect(result).toEqual({ ok: false, error: expect.objectContaining({ kind: "idempotency_conflict", artifact_id: "revision-1" }) });
+});
+
 test("a changed representation inserts the next parent-linked revision", async () => {
-  const tip = { id: "revision-1", chain_id: "revision-1", run_id: "run", stage_instance_id: "stage", execution_id: "execution", unit_id: "0", output_name: "result", artifact_type: "dev.result", label: null, body: { done: true }, version: 1, parent_artifact_id: null, emission_payload_hash: "old", created_at: "2026-08-14T00:00:00Z" };
+  const tip = { id: "revision-1", chain_id: "revision-1", run_id: "run", stage_instance_id: "stage", execution_id: "execution", unit_id: "0", output_name: "result", artifact_type: "dev.result", label: null, body: { done: true }, version: 1, parent_artifact_id: null, emission_payload_hash: "old", lifecycle_state: "current", superseded_by_artifact_id: null, withdrawn_actor: null, withdrawn_reason: null, withdrawn_at: null, released_at: null, created_at: "2026-08-14T00:00:00Z" };
   const inserted = { ...tip, id: "revision-2", body: { done: "better" }, version: 2, parent_artifact_id: "revision-1", emission_payload_hash: "new", created_at: "2026-08-14T00:00:01Z" };
-  const sql = new TransactionStubSql([[], [tip], [inserted]]);
+  const sql = new TransactionStubSql([[], [], [tip], [tip], [inserted], [], [], []]);
   const repository = new PostgresArtifactRevisionRepository(sql);
-  const revision = await repository.emit_revision("revision-2" as ArtifactId, { run_id: "run" as WorkflowRunId, stage_instance_id: "stage" as StageInstanceId, execution_id: "execution" as ExecutionId, unit_id: "0" as UnitId, output_name: "result", artifact_type: "dev.result", label: null, body: { done: "better" }, idempotency_key: "emit-2", payload_hash: "new" }, "2026-08-14T00:00:01Z");
-  expect(revision.parent_artifact_id).toBe("revision-1" as ArtifactId);
-  expect(sql.calls[2]?.parameters.slice(9, 12)).toEqual([2, "revision-1", "emit-2"]);
+  const revision = await repository.emit_revision("revision-2" as ArtifactId, { run_id: "run" as WorkflowRunId, stage_instance_id: "stage" as StageInstanceId, execution_id: "execution" as ExecutionId, unit_id: "0" as UnitId, output_name: "result", artifact_type: "dev.result", label: null, body: { done: "better" }, idempotency_key: "emit-2", payload_hash: "new" }, "2026-08-14T00:00:01Z", { target_workflow_id: "execution-workflow", release: { kind: "immediate" } });
+  expect(revision.ok && revision.value.artifact.parent_artifact_id).toBe("revision-1" as ArtifactId);
+  expect(sql.calls[4]?.parameters.slice(9, 12)).toEqual([2, "revision-1", "emit-2"]);
+  expect(sql.calls.filter((call) => call.statement.includes("command_outbox"))).toHaveLength(1);
+});
+
+test("resume artifacts decode nonempty lifecycle rows and exclude historical revisions", async () => {
+  const sql = new StubSql([{ id: "revision-2", chain_id: "revision-1", run_id: "run", stage_instance_id: "stage", execution_id: "execution", unit_id: "0", output_name: "result", artifact_type: "dev.result", label: null, body: { done: true }, version: 2, parent_artifact_id: "revision-1", emission_payload_hash: "same", lifecycle_state: "released", superseded_by_artifact_id: null, withdrawn_actor: null, withdrawn_reason: null, withdrawn_at: null, released_at: "2026-08-14T00:00:02Z", created_at: "2026-08-14T00:00:01Z", stage_key: "build" }]);
+  const artifacts = await new PostgresResumeArtifactRepository(sql).list_latest_for_stages("run" as WorkflowRunId, ["build"]);
+  expect(artifacts).toEqual([expect.objectContaining({ id: "revision-2", stage_key: "build", lifecycle: { kind: "released", released_at: "2026-08-14T00:00:02Z" } })]);
+  expect(sql.calls[0]?.statement).toContain("artifact.lifecycle_state IN ('current', 'released')");
+});
+
+test("artifact notification claims are leased and preserve per-workflow ordering", async () => {
+  const sql = new StubSql([]);
+  await new PostgresArtifactRevisionRepository(sql as unknown as TransactionalSqlExecutor).claim_pending_notifications("worker-1", "2026-08-14T00:00:00Z", "2026-08-14T00:00:30Z", 100);
+  expect(sql.calls[0]?.statement).toContain("FOR UPDATE SKIP LOCKED");
+  expect(sql.calls[0]?.statement).toContain("earlier.target_workflow_id = candidate.target_workflow_id");
+  expect(sql.calls[0]?.parameters).toEqual(["worker-1", "2026-08-14T00:00:00Z", "2026-08-14T00:00:30Z", 100]);
 });
 
 test("stage finish decodes a finished Oakridge lifecycle", async () => {

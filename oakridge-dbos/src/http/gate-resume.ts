@@ -16,14 +16,15 @@ import type { GateCommand, GateWaitInput } from "../workflows/gate";
 import type { HandoffCommand } from "../workflows/handoff";
 
 export interface GateWorkflowState extends GateWaitInput {
-  readonly status: "pending" | "closed";
+  readonly status: "pending" | "closed" | "superseded" | "withdrawn";
   readonly action?: string;
 }
 
 export interface HandoffWorkflowState {
-  readonly status: "awaiting_downstream" | "awaiting_external" | "revision_requested" | "released";
+  readonly status: "awaiting_downstream" | "awaiting_external" | "revision_requested" | "released" | "superseded" | "withdrawn";
   readonly artifact_id: ArtifactId;
   readonly downstream_role?: string;
+  readonly decision_artifact_id?: string;
 }
 
 export interface GateResumeDependencies {
@@ -79,9 +80,9 @@ const sameDecision = (audit: GateDecisionAudit, request: GateResumeRequest, stag
 const gateWorkflowId = (execution_workflow_id: string, artifact_id: ArtifactId, gate_step: string): string =>
   `${execution_workflow_id}:gate:${artifact_id}:wait:${gate_step}`;
 
-interface ResolvedHandoffTarget { readonly workflow_id: string; readonly source_artifact_id: ArtifactId }
+interface ResolvedHandoffTarget { readonly workflow_id: string; readonly source_artifact_id: ArtifactId; readonly should_send: boolean }
 
-const resolveHandoffTarget = async (dependencies: GateResumeDependencies, context: ExecutionArtifactContext, requires_pending_state: boolean): Promise<ResolvedHandoffTarget | null> => {
+const resolveHandoffTarget = async (dependencies: GateResumeDependencies, context: ExecutionArtifactContext, consumed_decision_artifact_id: ArtifactId | null): Promise<ResolvedHandoffTarget | null> => {
   for (const input of context.inputs) {
     const source = await dependencies.artifacts.find_by_id(input.artifact_id);
     if (!source) continue;
@@ -90,9 +91,11 @@ const resolveHandoffTarget = async (dependencies: GateResumeDependencies, contex
     const release = producer.outputs.find((output) => output.name === source.output_name)?.release;
     if (release?.kind !== "handoff" || release.downstream_role !== context.operator_role) continue;
     const workflow_id = `${producer.execution_workflow_id}:handoff:${source.id}`;
-    if (!requires_pending_state) return { workflow_id, source_artifact_id: source.id };
     const state = await dependencies.get_handoff_state(workflow_id);
-    if (state?.status === "awaiting_downstream" && state.artifact_id === source.id && state.downstream_role === context.operator_role) return { workflow_id, source_artifact_id: source.id };
+    if (state?.status === "awaiting_downstream" && state.artifact_id === source.id && state.downstream_role === context.operator_role) return { workflow_id, source_artifact_id: source.id, should_send: true };
+    if (consumed_decision_artifact_id && state?.artifact_id === source.id && state.decision_artifact_id === consumed_decision_artifact_id && ["awaiting_external", "revision_requested", "released"].includes(state.status)) {
+      return { workflow_id, source_artifact_id: source.id, should_send: false };
+    }
   }
   return null;
 };
@@ -121,31 +124,25 @@ export const createGateResumeApp = (dependencies: GateResumeDependencies): Hono 
     if (!artifact || artifact.stage_instance_id !== stageId || artifact.execution_id !== context.execution_id || artifact.unit_id !== unitId) {
       return http.json({ error: "artifact revision does not belong to this gate unit" }, 409);
     }
+    if (artifact.lifecycle.kind !== "current") return http.json({ error: "reviewed artifact revision is not current", code: artifact.lifecycle.kind }, 409);
     const gate = findGateOutput(context, artifact.output_name);
     if (!gate) return http.json({ error: "artifact output does not have a gate release" }, 409);
     const step = gate.steps.find((candidate) => candidate.type === request.gate_step);
     if (!step) return http.json({ error: "reviewed gate step is stale" }, 409);
     if (!step.actions.includes(request.action)) return http.json({ error: `action '${request.action}' is not allowed for the current gate step` }, 400);
     const workflowId = gateWorkflowId(context.execution_workflow_id, artifact.id, request.gate_step);
-    if (existing) {
-      const handoffTarget = gate.revision_target === "upstream_handoff" ? await resolveHandoffTarget(dependencies, context, false) : null;
-      if (gate.revision_target === "upstream_handoff" && !handoffTarget) return http.json({ error: "artifact provenance does not match the recorded upstream handoff" }, 409);
-      await dependencies.send_gate_command(workflowId, { action: request.action, artifact_revision_id: artifact.id, gate_step: request.gate_step }, request.idempotency_key);
-      if (handoffTarget) await dependencies.send_handoff_command(handoffTarget.workflow_id, { kind: "downstream_decision", action: request.action, decision_artifact_id: artifact.id, feedback: request.feedback ?? request.operator_comment }, request.idempotency_key);
-      await dependencies.audits.mark_applied(existing.id, (dependencies.now ?? (() => new Date().toISOString()))());
-      return http.json({ gate_id: compositeId, resumed: true }, 202);
-    }
-    const tip = await dependencies.artifacts.find_tip(stageId, context.execution_id, unitId, artifact.output_name);
-    if (!tip || tip.id !== artifact.id) return http.json({ error: "reviewed artifact revision is stale" }, 409);
+    const current = await dependencies.artifacts.find_current(stageId, context.execution_id, unitId, artifact.output_name);
+    if (!current || current.id !== artifact.id) return http.json({ error: "reviewed artifact revision is stale" }, 409);
     if (gate.requires_zero_open_review_items && await dependencies.collaboration.count_open_review_items(artifact.id) > 0) {
       return http.json({ error: "artifact revision has open review items" }, 409);
     }
 
     const state = await dependencies.get_gate_state(workflowId);
-    if (!state || state.status !== "pending" || state.artifact_revision_id !== artifact.id || state.gate_step !== request.gate_step) {
+    const wasConsumed = Boolean(existing && state?.status === "closed" && state.action === request.action && state.artifact_revision_id === artifact.id && state.gate_step === request.gate_step);
+    if (!wasConsumed && (!state || state.status !== "pending" || state.artifact_revision_id !== artifact.id || state.gate_step !== request.gate_step)) {
       return http.json({ error: "reviewed artifact revision or gate step is not pending" }, 409);
     }
-    const handoffTarget = gate.revision_target === "upstream_handoff" ? await resolveHandoffTarget(dependencies, context, true) : null;
+    const handoffTarget = gate.revision_target === "upstream_handoff" ? await resolveHandoffTarget(dependencies, context, existing ? artifact.id : null) : null;
     if (gate.revision_target === "upstream_handoff" && !handoffTarget) return http.json({ error: "artifact provenance does not match a pending upstream handoff" }, 409);
     const now = (dependencies.now ?? (() => new Date().toISOString()))();
     const audit: GateDecisionAudit = {
@@ -155,9 +152,9 @@ export const createGateResumeApp = (dependencies: GateResumeDependencies): Hono 
       action: request.action, operator_comment: request.operator_comment, feedback: request.feedback ?? null,
       idempotency_key: request.idempotency_key, created_at: now, applied_at: null,
     };
-    const auditId = await dependencies.audits.insert_idempotent(audit);
-    await dependencies.send_gate_command(workflowId, { action: request.action, artifact_revision_id: artifact.id, gate_step: request.gate_step }, request.idempotency_key);
-    if (handoffTarget) await dependencies.send_handoff_command(handoffTarget.workflow_id, { kind: "downstream_decision", action: request.action, decision_artifact_id: artifact.id, feedback: request.feedback ?? request.operator_comment }, request.idempotency_key);
+    const auditId = existing?.id ?? await dependencies.audits.insert_idempotent(audit);
+    if (!wasConsumed) await dependencies.send_gate_command(workflowId, { kind: "decision", action: request.action, artifact_revision_id: artifact.id, gate_step: request.gate_step }, request.idempotency_key);
+    if (handoffTarget?.should_send) await dependencies.send_handoff_command(handoffTarget.workflow_id, { kind: "downstream_decision", action: request.action, decision_artifact_id: artifact.id, feedback: request.feedback ?? request.operator_comment }, request.idempotency_key);
     await dependencies.audits.mark_applied(auditId, (dependencies.now ?? (() => new Date().toISOString()))());
     return http.json({ gate_id: compositeId, resumed: true }, 202);
   });

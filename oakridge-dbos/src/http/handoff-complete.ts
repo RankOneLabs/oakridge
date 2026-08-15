@@ -33,6 +33,7 @@ export const createHandoffCompleteApp = (dependencies: HandoffCompleteDependenci
     const artifactId = http.req.param("artifactId") as ArtifactId;
     const artifact = await dependencies.artifacts.find_by_id(artifactId);
     if (!artifact) return http.json({ error: "handoff artifact not found" }, 404);
+    if (artifact.lifecycle.kind !== "current") return http.json({ error: "handoff artifact is not current", code: artifact.lifecycle.kind }, 409);
     const producer = await dependencies.contexts.find_for_emit(artifact.stage_instance_id, artifact.unit_id);
     const release = producer?.outputs.find((output) => output.name === artifact.output_name)?.release;
     if (!producer || release?.kind !== "handoff") return http.json({ error: "artifact is not a configured output handoff" }, 409);

@@ -6,7 +6,8 @@ import type { ArtifactId, ExecutionId, StageInstanceId, UnitId, WorkflowRunId } 
 import { createCollaborationApp } from "../src/http/collaboration";
 import type { CollaborationRepository } from "../src/storage/repositories";
 
-const artifact: ArtifactRevision = { id: "artifact-2" as ArtifactId, chain_id: "artifact-1" as ArtifactId, run_id: "run-1" as WorkflowRunId, stage_instance_id: "stage-1" as StageInstanceId, execution_id: "execution-1" as ExecutionId, unit_id: "unit-1" as UnitId, output_name: "result", artifact_type: "dev.result", label: null, body: {}, version: 2, parent_artifact_id: "artifact-1" as ArtifactId, created_at: "2026-08-14T12:00:00Z" };
+const artifact: ArtifactRevision = { id: "artifact-2" as ArtifactId, chain_id: "artifact-1" as ArtifactId, run_id: "run-1" as WorkflowRunId, stage_instance_id: "stage-1" as StageInstanceId, execution_id: "execution-1" as ExecutionId, unit_id: "unit-1" as UnitId, output_name: "result", artifact_type: "dev.result", label: null, body: {}, version: 2, parent_artifact_id: "artifact-1" as ArtifactId, lifecycle: { kind: "current" }, created_at: "2026-08-14T12:00:00Z" };
+const unusedMethods = { withdraw: async () => ({ kind: "not_found" as const, artifact_id: artifact.id }), mark_released: async () => ({ kind: "released" as const, artifact }), find_current: async () => artifact, list_pending_notifications: async () => [], mark_notification_delivered: async () => {} };
 
 const fixture = () => {
   const threads: CollaborationThread[] = []; const messages: CollaborationMessage[] = []; const items: ReviewItem[] = [];
@@ -23,7 +24,7 @@ const fixture = () => {
     count_open_review_items: async (revision) => items.filter((item) => item.revision_id === revision && item.status === "open").length,
   };
   const contexts = { find_for_emit: async () => ({ run_id: artifact.run_id, stage_key: "review", operator_role: null, stage_instance_id: artifact.stage_instance_id, execution_id: artifact.execution_id, unit_id: artifact.unit_id, executor_type: "delegated_session", execution_workflow_id: "execution-workflow", inputs: [], outputs: [{ name: "result", artifact_type: "dev.result", release: { kind: "gate" as const, steps: [{ type: "artifact_approval", actions: ["approve"] }], requires_zero_open_review_items: false, revision_target: "self_stage" as const } }] }) };
-  const app = createCollaborationApp({ artifacts: { emit_revision: async (id, emission, created_at) => emitted = { ...artifact, ...emission, id, chain_id: artifact.chain_id, version: 3, parent_artifact_id: artifact.id, created_at }, find_by_id: async () => artifact, find_tip: async () => artifact, list_chain: async () => [artifact] }, contexts, collaboration: repository, policy_for_artifact_type: () => ({ commentable: true, review_items: true, atom_editable: true, anchor_schema: ["/summary"] }), notify_artifact_revision: async () => {}, now: () => "2026-08-14T12:30:00Z", new_id: () => `id-${++sequence}` });
+  const app = createCollaborationApp({ artifacts: { emit_revision: async (id, emission, created_at) => { const next = { ...artifact, ...emission, id, chain_id: artifact.chain_id, version: 3, parent_artifact_id: artifact.id, lifecycle: { kind: "current" as const }, created_at }; emitted = next; return { ok: true, value: { kind: "emitted", artifact: next, superseded_artifact_id: artifact.id } }; }, ...unusedMethods, find_by_id: async () => artifact, find_tip: async () => artifact, list_chain: async () => [artifact] }, contexts, collaboration: repository, policy_for_artifact_type: () => ({ commentable: true, review_items: true, atom_editable: true, anchor_schema: ["/summary"] }), dispatch_notifications: async () => 0, now: () => "2026-08-14T12:30:00Z", new_id: () => `id-${++sequence}` });
   return { app, repository, threads, messages, items, emitted: () => emitted };
 };
 
@@ -31,7 +32,7 @@ test("thread creation atomically creates its first message against the artifact 
   const subject = fixture();
   const response = await subject.app.request("/artifacts/artifact-2/threads", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ anchor: "/summary", body: "Check this", author: "operator" }) });
   expect(response.status).toBe(201);
-  expect(subject.threads[0]).toEqual(expect.objectContaining({ artifact_id: "artifact-2", revision_id: "artifact-1", anchor: "/summary" }));
+  expect(subject.threads[0]).toEqual(expect.objectContaining({ artifact_id: "artifact-1", revision_id: "artifact-2", anchor: "/summary" }));
   expect(subject.messages[0]).toEqual(expect.objectContaining({ thread_id: "id-1", body: "Check this" }));
 });
 
@@ -48,12 +49,12 @@ test("review items stay attached to the chain and can be resolved", async () => 
   const created = await subject.app.request("/artifacts/artifact-2/review_items", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ anchor: "/tests", claim: "Tests pass", reality: "One fails" }) });
   expect(created.status).toBe(201);
   const patched = await subject.app.request("/review_items/id-1", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ status: "resolved", resolution: "Fixed" }) });
-  expect(await patched.json()).toEqual(expect.objectContaining({ revision_id: "artifact-1", status: "resolved", resolution: "Fixed" }));
+  expect(await patched.json()).toEqual(expect.objectContaining({ revision_id: "artifact-2", status: "resolved", resolution: "Fixed" }));
 });
 
 test("artifact capability policy rejects unsupported collaboration", async () => {
   const subject = fixture();
-  const app = createCollaborationApp({ artifacts: { emit_revision: async () => artifact, find_by_id: async () => artifact, find_tip: async () => artifact, list_chain: async () => [artifact] }, contexts: { find_for_emit: async () => null }, collaboration: subject.repository, policy_for_artifact_type: () => ({ commentable: false, review_items: false }), notify_artifact_revision: async () => {} });
+  const app = createCollaborationApp({ artifacts: { emit_revision: async () => ({ ok: true, value: { kind: "unchanged", artifact, superseded_artifact_id: null } }), ...unusedMethods, find_by_id: async () => artifact, find_tip: async () => artifact, list_chain: async () => [artifact] }, contexts: { find_for_emit: async () => null }, collaboration: subject.repository, policy_for_artifact_type: () => ({ commentable: false, review_items: false }), dispatch_notifications: async () => 0 });
   const response = await app.request("/artifacts/artifact-2/threads");
   expect(response.status).toBe(400);
 });
@@ -63,14 +64,26 @@ test("atom edit uses optimistic concurrency and creates a parent-linked revision
   const editableArtifact = { ...artifact, body: { summary: "before" } };
   const notifications: unknown[] = [];
   const app = createCollaborationApp({
-    artifacts: { emit_revision: async (id, emission, created_at) => ({ ...editableArtifact, ...emission, id, chain_id: artifact.chain_id, version: 3, parent_artifact_id: artifact.id, created_at }), find_by_id: async () => editableArtifact, find_tip: async () => editableArtifact, list_chain: async () => [editableArtifact] },
+    artifacts: { emit_revision: async (id, emission, created_at) => ({ ok: true, value: { kind: "emitted", artifact: { ...editableArtifact, ...emission, id, chain_id: artifact.chain_id, version: 3, parent_artifact_id: artifact.id, lifecycle: { kind: "current" }, created_at }, superseded_artifact_id: artifact.id } }), ...unusedMethods, find_by_id: async () => editableArtifact, find_tip: async () => editableArtifact, find_current: async () => editableArtifact, list_chain: async () => [editableArtifact] },
     contexts: { find_for_emit: async () => ({ run_id: artifact.run_id, stage_key: "review", operator_role: null, stage_instance_id: artifact.stage_instance_id, execution_id: artifact.execution_id, unit_id: artifact.unit_id, executor_type: "delegated_session", execution_workflow_id: "execution-workflow", inputs: [], outputs: [{ name: "result", artifact_type: "dev.result", release: { kind: "gate", steps: [{ type: "artifact_approval", actions: ["approve"] }], requires_zero_open_review_items: false, revision_target: "self_stage" } }] }) },
-    collaboration: subject.repository, policy_for_artifact_type: () => ({ commentable: true, review_items: true, atom_editable: true, anchor_schema: ["/summary"] }), notify_artifact_revision: async (workflow, revision, release) => { notifications.push({ workflow, revision, release }); }, new_id: () => "artifact-3", now: () => "2026-08-14T13:00:00Z",
+    collaboration: subject.repository, policy_for_artifact_type: () => ({ commentable: true, review_items: true, atom_editable: true, anchor_schema: ["/summary"] }), dispatch_notifications: async () => { notifications.push("dispatched"); return 1; }, new_id: () => "artifact-3", now: () => "2026-08-14T13:00:00Z",
   });
   const response = await app.request("/artifacts/artifact-2/edits", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ anchor: "/summary", prev_value: "before", new_value: "after", author: "operator" }) });
   expect(response.status).toBe(201);
   expect(await response.json()).toEqual({ artifact_id: "artifact-3" });
-  expect(notifications).toEqual([expect.objectContaining({ workflow: "execution-workflow", release: expect.objectContaining({ kind: "waiting_gate" }) })]);
+  expect(notifications).toEqual(["dispatched"]);
+});
+
+test("collaboration mutations reject a superseded artifact revision", async () => {
+  const subject = fixture();
+  const stale = { ...artifact, lifecycle: { kind: "superseded" as const, superseded_by_artifact_id: "artifact-3" as ArtifactId } };
+  const app = createCollaborationApp({ artifacts: { emit_revision: async () => ({ ok: true, value: { kind: "unchanged", artifact: stale, superseded_artifact_id: null } }), ...unusedMethods, find_by_id: async () => stale, find_tip: async () => stale, find_current: async () => null, list_chain: async () => [stale] }, contexts: { find_for_emit: async () => null }, collaboration: subject.repository, policy_for_artifact_type: () => ({ commentable: true, review_items: true, atom_editable: true }), dispatch_notifications: async () => 0 });
+  const edit = await app.request("/artifacts/artifact-2/edits", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ anchor: "/summary", prev_value: "before", new_value: "after", author: "operator" }) });
+  expect(edit.status).toBe(409);
+  expect(await edit.json()).toEqual({ error: "artifact revision is not current", code: "superseded" });
+  const thread = await app.request("/artifacts/artifact-2/threads", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ body: "stale", author: "operator" }) });
+  const item = await app.request("/artifacts/artifact-2/review_items", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ anchor: "/summary", claim: "old", reality: "stale" }) });
+  expect([thread.status, item.status]).toEqual([409, 409]);
 });
 
 test("atom edit rejects a stale previous value", async () => {

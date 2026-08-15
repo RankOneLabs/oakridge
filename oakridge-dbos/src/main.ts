@@ -5,7 +5,8 @@ import { DBOS, DBOSClient } from "@dbos-inc/dbos-sdk";
 import { KbblExecutorAdapter } from "./adapters/kbbl";
 import { DEV_FLOW_ARTIFACT_TYPES, findArtifactType } from "./domain/artifact-types";
 import { createApp } from "./http/app";
-import { getGateWorkflowState, getHandoffWorkflowState, notifyArtifactRevision, registerDbosTransportClient, sendArtifactWorkflowMessage, sendGateWorkflowCommand, sendHandoffWorkflowCommand } from "./http/dbos-transport";
+import { getGateWorkflowState, getHandoffWorkflowState, registerDbosTransportClient, sendArtifactWorkflowMessage, sendGateWorkflowCommand, sendHandoffWorkflowCommand } from "./http/dbos-transport";
+import { dispatchArtifactNotifications } from "./runtime/artifact-notifications";
 import { cancelAttempt } from "./runtime/cancel-run";
 import { DbosCancellationClient } from "./runtime/dbos-cancellation-client";
 import { DbosStageRerunClient } from "./runtime/dbos-stage-rerun-client";
@@ -16,7 +17,7 @@ import { PostgresOperatorProjectionRepository } from "./storage/postgres-operato
 import { PostgresCollaborationRepository, PostgresGateDecisionAuditRepository } from "./storage/postgres-policy";
 import { PostgresWorkflowDefinitionRepository } from "./storage/postgres-workflow-definitions";
 import { PgPostgresExecutor } from "./storage/sql-executor";
-import { registerExecutionProjectionObserver, registerExecutorAdapter } from "./workflows/executor-topology";
+import { registerArtifactLifecycleObserver, registerExecutionProjectionObserver, registerExecutorAdapter } from "./workflows/executor-topology";
 import { registerProductionTopologyServices } from "./workflows/production-topology";
 
 const required = (name: string): string => {
@@ -56,11 +57,20 @@ const cancellation = { attempts, targets: cancellationTargets, dbos: dbosCancell
 registerDbosTransportClient(client);
 registerExecutorAdapter(new KbblExecutorAdapter({ base_url: kbblBaseUrl, executor_function_identity: applicationVersion }));
 registerExecutionProjectionObserver(executions);
+registerArtifactLifecycleObserver(artifacts);
 registerProductionTopologyServices(createProductionTopologyServices({ definitions, runs, attempts, stages, executions, resume_artifacts: resumeArtifacts,
   load_prompt_template: (path) => readFile(path, "utf8") }));
 
 await seedBuiltins(definitions);
 await DBOS.launch();
+const dispatchNotifications = () => dispatchArtifactNotifications(artifacts, { send: sendArtifactWorkflowMessage });
+await dispatchNotifications();
+let isDispatchingNotifications = false;
+const notificationTimer = setInterval(() => {
+  if (isDispatchingNotifications) return;
+  isDispatchingNotifications = true;
+  void dispatchNotifications().catch((error: unknown) => console.error("artifact notification dispatch failed", error)).finally(() => { isDispatchingNotifications = false; });
+}, 1_000);
 
 const presentation = (artifactType: string) => {
   const definition = findArtifactType(artifactType);
@@ -74,11 +84,12 @@ const collaborationPolicy = (artifactType: string) => {
 };
 const app = createApp({
   definitions,
-  artifact_callback: { contexts, artifacts, send_to_workflow: sendArtifactWorkflowMessage },
+  artifact_callback: { contexts, artifacts, dispatch_notifications: dispatchNotifications },
+  artifact_withdraw: { contexts, artifacts, dispatch_notifications: dispatchNotifications },
   gate_resume: { contexts, artifacts, collaboration, audits, get_gate_state: getGateWorkflowState, send_gate_command: sendGateWorkflowCommand,
     get_handoff_state: getHandoffWorkflowState, send_handoff_command: sendHandoffWorkflowCommand },
   handoff_complete: { artifacts, contexts, get_handoff_state: getHandoffWorkflowState, send_handoff_command: sendHandoffWorkflowCommand },
-  collaboration: { artifacts, contexts, collaboration, policy_for_artifact_type: collaborationPolicy, notify_artifact_revision: notifyArtifactRevision },
+  collaboration: { artifacts, contexts, collaboration, policy_for_artifact_type: collaborationPolicy, dispatch_notifications: dispatchNotifications },
   operator_projections: projections,
   artifact_detail: { artifacts, stages, audits, presentation_for_type: presentation, artifact_types: DEV_FLOW_ARTIFACT_TYPES },
   run_launch: { definitions, dbos: dbosRuns, now },
@@ -95,6 +106,7 @@ const server = Bun.serve({ port, fetch: app.fetch });
 console.log(`Oakridge DBOS backend listening on ${server.url}`);
 
 const shutdown = async () => {
+  clearInterval(notificationTimer);
   server.stop();
   await DBOS.shutdown();
   await client.destroy();

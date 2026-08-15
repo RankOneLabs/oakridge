@@ -100,7 +100,7 @@ export class PostgresCollaborationRepository implements CollaborationRepository 
     return rows[0] ?? null;
   }
   async list_threads(chain_id: ArtifactId): Promise<readonly CollaborationThreadWithMessages[]> {
-    const threads = await this.sql.query<CollaborationThread>("SELECT id, artifact_id, revision_id, anchor, status, created_at::text FROM oakridge.collaboration_thread WHERE revision_id = $1 ORDER BY created_at", [chain_id]);
+    const threads = await this.sql.query<CollaborationThread>("SELECT id, artifact_id, revision_id, anchor, status, created_at::text FROM oakridge.collaboration_thread WHERE artifact_id = $1 ORDER BY created_at", [chain_id]);
     const result: CollaborationThreadWithMessages[] = [];
     for (const thread of threads) {
       const messages = await this.sql.query<CollaborationMessage>("SELECT id, thread_id, body, author, created_at::text FROM oakridge.collaboration_message WHERE thread_id = $1 ORDER BY created_at", [thread.id]);
@@ -116,7 +116,7 @@ export class PostgresCollaborationRepository implements CollaborationRepository 
     return rows[0] ?? null;
   }
   async list_review_items(chain_id: ArtifactId): Promise<readonly ReviewItem[]> {
-    return this.sql.query<ReviewItem>("SELECT id, artifact_id, revision_id, anchor, claim, reality, status, resolution, created_at::text FROM oakridge.review_item WHERE revision_id = $1 ORDER BY created_at", [chain_id]);
+    return this.sql.query<ReviewItem>("SELECT id, artifact_id, revision_id, anchor, claim, reality, status, resolution, created_at::text FROM oakridge.review_item WHERE artifact_id = $1 ORDER BY created_at", [chain_id]);
   }
   async update_review_item(id: ReviewItemId, status: ReviewItemStatus, resolution: string | null): Promise<void> {
     await this.sql.query("UPDATE oakridge.review_item SET status = $2, resolution = $3 WHERE id = $1", [id, status, resolution]);

@@ -28,6 +28,8 @@ For each entry in `cohorts`, save one `brief` artifact with this shape:
 Every field is required. Arrays may be empty only when the approved plan truly
 contains no corresponding item. Never use placeholders or absolute paths.
 
+Use PUT as the canonical idempotent operation. Reuse the same `Idempotency-Key` only when retrying the identical body; a changed body intentionally supersedes the prior unreleased revision. Do not emit speculative duplicates. If the current artifact is wrong, withdraw it with `POST {{OAKRIDGE_URL}}/artifacts/<artifact_id>/withdraw` and `{"actor":"executor","reason":"<why>"}`, then stop only after Oakridge confirms the typed result.
+
 PUT each brief to the route keyed by that cohort's ID:
 
 ```text
