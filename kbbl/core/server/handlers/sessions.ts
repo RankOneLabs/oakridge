@@ -5,6 +5,7 @@ import { stat } from "node:fs/promises";
 import {
   MAX_ARTIFACT_ID_LENGTH,
   type ArtifactId,
+  type SessionId,
   readJsonlOrEmpty,
   type EnvelopeEvent,
 } from "../../session/session";
@@ -16,6 +17,7 @@ import {
   type WorktreeCreateIdentity,
 } from "../../session/session-manager";
 import type { AgentRuntime, RuntimeId, RuntimeRegistry } from "../../runtime";
+import { ResumableInputConflictError, SessionKeyConflictError, type ResumableInputDeliveryKey, type ResumableSessionKey, type ResumableSessionStartSpec } from "../../session/resumable-session";
 import { isValidSid } from "./per-sid";
 
 // Fallback allowlist used when no RuntimeRegistry is wired (legacy / test mode).
@@ -355,6 +357,84 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
     if (!runtime) return false;
     return runtime.descriptor.efforts.some((e) => e.value === value);
   }
+
+  app.put("/sessions/resumable/:sessionKey", async (c) => {
+    const rawKey = c.req.param("sessionKey").trim();
+    if (rawKey.length === 0 || rawKey.length > 300) return c.json({ error: "session key must be 1-300 characters" }, 400);
+    let raw: unknown;
+    try {
+      raw = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid json" }, 400);
+    }
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return c.json({ error: "json body must be an object" }, 400);
+    const body = raw as {
+      initial_prompt?: unknown; workdir?: unknown; name?: unknown; artifact_id?: unknown;
+      runtime?: unknown; model?: unknown; effort?: unknown; worktree?: unknown;
+    };
+    if (typeof body.initial_prompt !== "string" || body.initial_prompt.trim() === "") return c.json({ error: "initial_prompt must be a non-empty string" }, 400);
+    if (typeof body.workdir !== "string") return c.json({ error: "workdir must be a string" }, 400);
+    const workdirError = await validateWorkdir(body.workdir);
+    if (workdirError) return c.json({ error: workdirError }, 400);
+    if (body.name !== undefined && (typeof body.name !== "string" || body.name.trim().length > 80)) return c.json({ error: "name must be a string of at most 80 characters" }, 400);
+    if (body.artifact_id !== undefined && (typeof body.artifact_id !== "string" || body.artifact_id.trim() === "" || body.artifact_id.trim().length > MAX_ARTIFACT_ID_LENGTH)) return c.json({ error: `artifact_id must be 1-${MAX_ARTIFACT_ID_LENGTH} characters` }, 400);
+    if (body.runtime !== undefined && (!isRuntimeId(body.runtime) || (registry ? !registry.runtimes.has(body.runtime) : body.runtime !== "claude-code"))) return c.json({ error: "runtime is not registered" }, 400);
+    const selectedRuntimeId = isRuntimeId(body.runtime) ? body.runtime : registry?.defaultId ?? "claude-code";
+    const selectedRuntime = runtimeForId(selectedRuntimeId);
+    if (body.model !== undefined && (typeof body.model !== "string" || !isAllowedModelForRuntime(selectedRuntime, body.model))) return c.json({ error: "model is not allowed for runtime" }, 400);
+    if (body.effort !== undefined && (typeof body.effort !== "string" || !isAllowedEffortForRuntime(selectedRuntime, body.effort))) return c.json({ error: "effort is not allowed for runtime" }, 400);
+    let worktree: ResumableSessionStartSpec["worktree"];
+    if (body.worktree !== undefined) {
+      if (typeof body.worktree !== "object" || body.worktree === null || Array.isArray(body.worktree)) return c.json({ error: "worktree must be an object" }, 400);
+      const value = body.worktree as { branch_name?: unknown; worktree_subdir?: unknown; base_ref?: unknown };
+      if (typeof value.branch_name !== "string" || typeof value.worktree_subdir !== "string" || (value.base_ref !== undefined && typeof value.base_ref !== "string")) return c.json({ error: "worktree fields are invalid" }, 400);
+      worktree = { branch_name: value.branch_name, worktree_subdir: value.worktree_subdir, ...(typeof value.base_ref === "string" ? { base_ref: value.base_ref } : {}) };
+    }
+    const startSpec: ResumableSessionStartSpec = {
+      initial_prompt: body.initial_prompt,
+      workdir: resolve(body.workdir),
+      ...(typeof body.name === "string" ? { name: body.name.trim() } : {}),
+      ...(typeof body.artifact_id === "string" ? { artifact_id: body.artifact_id.trim() } : {}),
+      runtime: selectedRuntimeId,
+      ...(typeof body.model === "string" ? { model: body.model } : {}),
+      ...(typeof body.effort === "string" ? { effort: body.effort } : {}),
+      ...(worktree ? { worktree } : {}),
+    };
+    try {
+      const result = await manager.ensureResumableSession(rawKey as ResumableSessionKey, startSpec);
+      return c.json(result, result.kind === "started" ? 201 : 200);
+    } catch (error) {
+      if (error instanceof SessionKeyConflictError) return c.json({ error: error.message }, 409);
+      if (error instanceof NonGitWorkdirError) return c.json({ error: error.message }, 400);
+      console.error(`kbbl: ensure resumable session failed: ${error instanceof Error ? error.message : String(error)}`);
+      return c.json({ error: "failed to ensure resumable session" }, 503);
+    }
+  });
+
+  app.get("/sessions/resumable/:sid/terminal", async (c) => {
+    const sid = c.req.param("sid");
+    if (!isValidSid(sid)) return c.json({ error: "invalid sid" }, 400);
+    const terminal = await manager.waitForResumableSessionTerminal(sid as SessionId);
+    return terminal ? c.json(terminal) : c.json({ error: "session not found" }, 404);
+  });
+
+  app.put("/sessions/resumable/:sid/input/:deliveryKey", async (c) => {
+    const sid = c.req.param("sid");
+    const deliveryKey = c.req.param("deliveryKey").trim();
+    if (!isValidSid(sid)) return c.json({ error: "invalid sid" }, 400);
+    if (deliveryKey.length === 0 || deliveryKey.length > 300) return c.json({ error: "delivery key must be 1-300 characters" }, 400);
+    let raw: unknown;
+    try { raw = await c.req.json(); } catch { return c.json({ error: "invalid json" }, 400); }
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw) || !("text" in raw) || typeof raw.text !== "string" || raw.text.trim() === "") return c.json({ error: "text must be a non-empty string" }, 400);
+    try {
+      const receipt = await manager.deliverResumableInput(sid as SessionId, deliveryKey as ResumableInputDeliveryKey, raw.text.trim());
+      return c.json({ accepted: true, delivery_key: receipt.delivery_key, status: receipt.status });
+    } catch (error) {
+      if (error instanceof ResumableInputConflictError) return c.json({ error: error.message }, 409);
+      console.error(`kbbl: resumable input delivery failed: ${error instanceof Error ? error.message : String(error)}`);
+      return c.json({ error: "failed to deliver resumable input" }, 503);
+    }
+  });
 
   app.get("/sessions", async (c) => {
     const inMemory = manager.listSnapshots();

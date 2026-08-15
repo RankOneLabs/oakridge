@@ -31,6 +31,7 @@ import {
   type ArtifactId,
   type EnvelopeEvent,
   type ResultUsage,
+  type SessionId,
   type SessionEndReason,
   type SessionSnapshot,
   type SessionStatus,
@@ -48,6 +49,7 @@ import {
   resolveRepoTopLevel,
 } from "./worktree";
 import type { RuntimeId, RuntimeRegistry } from "../runtime";
+import { FilesystemResumableInputInbox, FilesystemResumableSessionClaims, sessionIdForKey, type EnsureResumableSessionResult, type ResumableInputDeliveryKey, type ResumableInputReceipt, type ResumableSessionKey, type ResumableSessionStartSpec, type ResumableSessionTerminalResult } from "./resumable-session";
 
 export interface SessionManagerOpts {
   sessionsDir: string;
@@ -202,6 +204,8 @@ export interface CreateSessionOpts {
    * naming against HEAD.
    */
   worktreeIdentity?: WorktreeCreateIdentity;
+  /** Reserved for an idempotent external session claim. */
+  sessionId?: SessionId;
 }
 
 /**
@@ -319,9 +323,31 @@ export class SessionManager {
    */
   private archivedScanPromise: Promise<void> | null = null;
   private readonly pendingLifecycle = new Set<Promise<void>>();
+  private readonly resumableClaims: FilesystemResumableSessionClaims;
+  private readonly resumableSessionChains = new Map<ResumableSessionKey, Promise<unknown>>();
+  private readonly resumableInputInbox: FilesystemResumableInputInbox;
+  private readonly resumableInputChains = new Map<ResumableInputDeliveryKey, Promise<unknown>>();
 
   constructor(opts: SessionManagerOpts) {
     this.opts = opts;
+    this.resumableClaims = new FilesystemResumableSessionClaims(opts.sessionsDir);
+    this.resumableInputInbox = new FilesystemResumableInputInbox(opts.sessionsDir);
+  }
+
+  async deliverResumableInput(sessionId: SessionId, deliveryKey: ResumableInputDeliveryKey, text: string): Promise<ResumableInputReceipt> {
+    const previous = this.resumableInputChains.get(deliveryKey) ?? Promise.resolve();
+    const result = previous.then(async () => {
+      const receipt = await this.resumableInputInbox.enqueue(deliveryKey, text);
+      if (receipt.status === "delivered") return receipt;
+      const session = this.sessions.get(sessionId);
+      if (!session) throw new Error(`session '${sessionId}' is not live`);
+      await session.writeInput(text);
+      return this.resumableInputInbox.markDelivered(receipt);
+    });
+    const tail = result.then(() => undefined, () => undefined);
+    this.resumableInputChains.set(deliveryKey, tail);
+    void tail.then(() => { if (this.resumableInputChains.get(deliveryKey) === tail) this.resumableInputChains.delete(deliveryKey); });
+    return result;
   }
 
   private async ensureWorktreesDirSafeForRepo(workdir: string): Promise<void> {
@@ -359,7 +385,7 @@ export class SessionManager {
         ? opts.runtime
         : this.opts.registry?.defaultId ?? "claude-code";
 
-    const oakridgeSid = newSessionId();
+    const oakridgeSid = opts.sessionId ?? newSessionId();
     // Server-side fallback so requests without a usable name still produce a
     // human-readable session name. `name` is optional in practice, and
     // resume/default client flows may omit it, so this can run for normal
@@ -687,6 +713,73 @@ export class SessionManager {
 
   get(oakridgeSid: string): Session | undefined {
     return this.sessions.get(oakridgeSid);
+  }
+
+  async ensureResumableSession(sessionKey: ResumableSessionKey, startSpec: ResumableSessionStartSpec): Promise<EnsureResumableSessionResult> {
+    const previous = this.resumableSessionChains.get(sessionKey) ?? Promise.resolve();
+    const result = previous.then(() => this.ensureResumableSessionUnlocked(sessionKey, startSpec));
+    const tail = result.then(() => undefined, () => undefined);
+    this.resumableSessionChains.set(sessionKey, tail);
+    void tail.then(() => {
+      if (this.resumableSessionChains.get(sessionKey) === tail) this.resumableSessionChains.delete(sessionKey);
+    });
+    return result;
+  }
+
+  private async ensureResumableSessionUnlocked(sessionKey: ResumableSessionKey, startSpec: ResumableSessionStartSpec): Promise<EnsureResumableSessionResult> {
+    let { claim, is_new } = await this.resumableClaims.claim(sessionKey, startSpec);
+    const current = this.sessions.get(claim.session_id);
+    if (current) {
+      return current.status === "ended"
+        ? { kind: "terminal", session: current.snapshot() }
+        : { kind: "attached", session: current.snapshot() };
+    }
+    if (!is_new) {
+      const archived = await loadArchivedSnapshot(claim.session_id, join(this.opts.sessionsDir, `${claim.session_id}.jsonl`), this.opts.registry);
+      if (archived && archived.endReason !== null) return { kind: "terminal", session: archived };
+      if (archived) {
+        const runtime = this.opts.registry?.runtimes.get(archived.runtimeId);
+        const orphanReference = await loadOrphanRuntimeReference(join(this.opts.sessionsDir, `${claim.session_id}.jsonl`));
+        if (!runtime?.fenceOrphan || !orphanReference) throw new Error(`kbbl: orphaned session ${claim.session_id} cannot be safely fenced`);
+        const fenceResult = await runtime.fenceOrphan(orphanReference);
+        if (fenceResult === "unverifiable") throw new Error(`kbbl: orphaned session ${claim.session_id} could not be verified for fencing`);
+        claim = await this.resumableClaims.advanceOrphan(claim);
+      }
+    }
+    const predecessorId = claim.generation > 0 ? sessionIdForKey(sessionKey, claim.generation - 1) : null;
+    const predecessor = predecessorId ? await loadArchivedSnapshot(predecessorId, join(this.opts.sessionsDir, `${predecessorId}.jsonl`), this.opts.registry) : null;
+    const canResume = predecessor?.runtimeSid !== null && predecessor?.runtimeSid !== undefined && predecessor.worktreePath !== null;
+    const resumeWorkdir = canResume ? predecessor.worktreePath : null;
+    const resumeRuntimeSid = canResume ? predecessor.runtimeSid : null;
+    const resumeParentSid = canResume ? predecessor.sid : null;
+    const session = await this.create({
+      sessionId: claim.session_id,
+      workdir: resumeWorkdir ?? startSpec.workdir,
+      name: startSpec.name,
+      artifactId: startSpec.artifact_id as ArtifactId | undefined,
+      runtime: startSpec.runtime,
+      model: startSpec.model,
+      effort: startSpec.effort,
+      parentCcSid: resumeRuntimeSid ?? undefined,
+      parentOakridgeSid: resumeParentSid ?? undefined,
+      worktreeIdentity: startSpec.worktree ? {
+        branchName: startSpec.worktree.branch_name,
+        worktreeSubdir: startSpec.worktree.worktree_subdir,
+        baseRef: startSpec.worktree.base_ref,
+      } : undefined,
+    });
+    await session.writeInput(startSpec.initial_prompt, { internal: true });
+    return { kind: "started", session: session.snapshot() };
+  }
+
+  async waitForResumableSessionTerminal(sessionId: SessionId): Promise<ResumableSessionTerminalResult | null> {
+    const current = this.sessions.get(sessionId);
+    if (current) {
+      const exitCode = await current.waitForEnd();
+      return { session: current.snapshot(), exit_code: exitCode };
+    }
+    const archived = await loadArchivedSnapshot(sessionId, join(this.opts.sessionsDir, `${sessionId}.jsonl`), this.opts.registry);
+    return archived ? { session: archived, exit_code: null } : null;
   }
 
   /**
@@ -1380,6 +1473,21 @@ export class SessionManager {
     }
     this.lastActivityFlushAt.delete(sid);
   }
+}
+
+async function loadOrphanRuntimeReference(jsonlPath: string): Promise<import("../runtime").OrphanedRuntimeReference | null> {
+  const contents = await readJsonlOrEmpty(jsonlPath);
+  let runtimeSid: string | null = null;
+  let processId: number | null = null;
+  for (const line of contents.split("\n")) {
+    if (!line.trim()) continue;
+    let event: EnvelopeEvent;
+    try { event = JSON.parse(line) as EnvelopeEvent; } catch { continue; }
+    const payload = payloadObject(event.payload);
+    if (event.type === "cc_session_id_observed" && typeof payload.cc_session_id === "string") runtimeSid = payload.cc_session_id;
+    if (event.type === "runtime_process_observed" && typeof payload.process_id === "number") processId = payload.process_id;
+  }
+  return runtimeSid !== null && processId !== null ? { runtimeSid, processId } : null;
 }
 
 /**

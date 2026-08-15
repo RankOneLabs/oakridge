@@ -26,7 +26,8 @@
     "kbbl/core/**/*.tsx",
     "kbbl/adapters/**/*.ts",
     "lbc-dashboard/**/*.ts",
-    "lbc-dashboard/**/*.tsx"
+    "lbc-dashboard/**/*.tsx",
+    "oakridge-dbos/**/*.ts"
   ],
   "exclude": [
     "node_modules",

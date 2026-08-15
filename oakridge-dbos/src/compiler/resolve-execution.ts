@@ -1,0 +1,124 @@
+import type { MaterializedExecutionUnit } from "../domain/compiled-workflow";
+import type { Bindable, DelegatedSessionDefinitionConfig, ResolvedExecutorConfig, SlotBinding } from "../domain/delegated-session";
+import type { ArtifactEnvelope } from "../domain/execution";
+import { err, ok, type JsonValue, type Result, type StageInstanceId } from "../domain/primitives";
+
+export interface ResolveExecutionError { readonly operation: "resolve_execution"; readonly detail: string }
+export interface BindingEnvironment {
+  readonly inputs: Readonly<Record<string, ArtifactEnvelope | readonly ArtifactEnvelope[]>>;
+  readonly context: JsonValue;
+  readonly item: JsonValue | null;
+}
+export interface ResolveDelegatedExecutionInput {
+  readonly definition: DelegatedSessionDefinitionConfig;
+  readonly environment: BindingEnvironment;
+  readonly unit: MaterializedExecutionUnit;
+  readonly stage_instance_id: StageInstanceId;
+  readonly prompt_template: string;
+}
+
+const pointer = (value: JsonValue, path: string): JsonValue | undefined => {
+  if (path === "") return value;
+  if (!path.startsWith("/")) return undefined;
+  let current: JsonValue | undefined = value;
+  for (const token of path.slice(1).split("/").map((part) => part.replaceAll("~1", "/").replaceAll("~0", "~"))) {
+    if (Array.isArray(current)) {
+      if (!/^\d+$/.test(token)) return undefined;
+      current = current[Number(token)];
+    } else if (current !== null && typeof current === "object") current = (current as Readonly<Record<string, JsonValue>>)[token];
+    else return undefined;
+  }
+  return current;
+};
+
+const stringify = (value: JsonValue): string => typeof value === "string" ? value : value === null ? "null" : typeof value === "object" ? JSON.stringify(value) : String(value);
+const inputBindingValue = (input: ArtifactEnvelope | readonly ArtifactEnvelope[]): JsonValue => Array.isArray(input)
+  ? input.map((artifact) => ({ unit_id: artifact.unit_id, artifact: artifact.body }))
+  : (input as ArtifactEnvelope).body;
+
+export const resolveBindingValue = (binding: SlotBinding, environment: BindingEnvironment): Result<JsonValue, ResolveExecutionError> => {
+  if (binding.from === "literal") return ok(binding.value);
+  if (binding.from === "input") {
+    const input = environment.inputs[binding.input_name];
+    if (!input) return err({ operation: "resolve_execution", detail: `input '${binding.input_name}' not found` });
+    const source = inputBindingValue(input);
+    const value = binding.path == null ? source : pointer(source, binding.path);
+    return value === undefined ? err({ operation: "resolve_execution", detail: `input pointer '${binding.path}' not found` }) : ok(value);
+  }
+  const resolved = resolveBinding(binding, environment);
+  return resolved.ok ? ok(resolved.value) : resolved;
+};
+
+export const resolveBinding = (binding: SlotBinding, environment: BindingEnvironment): Result<string, ResolveExecutionError> => {
+  if (binding.from === "literal") return ok(binding.value);
+  if (binding.from === "input") {
+    const input = environment.inputs[binding.input_name];
+    if (!input) return err({ operation: "resolve_execution", detail: `input '${binding.input_name}' not found` });
+    const source = inputBindingValue(input);
+    const value = binding.path == null ? source : pointer(source, binding.path);
+    return value === undefined ? err({ operation: "resolve_execution", detail: `input pointer '${binding.path}' not found` }) : ok(stringify(value));
+  }
+  if (binding.from === "context") {
+    const value = pointer(environment.context, binding.path);
+    return value === undefined ? err({ operation: "resolve_execution", detail: `context pointer '${binding.path}' not found` }) : ok(stringify(value));
+  }
+  if (binding.from === "item") {
+    if (environment.item === null) return err({ operation: "resolve_execution", detail: "item binding used outside fan-out" });
+    const value = pointer(environment.item, binding.path);
+    return value === undefined ? err({ operation: "resolve_execution", detail: `item pointer '${binding.path}' not found` }) : ok(stringify(value));
+  }
+  if (environment.item === null) return err({ operation: "resolve_execution", detail: "context lookup used outside fan-out" });
+  const itemKey = pointer(environment.item, binding.item_key_path);
+  const collection = pointer(environment.context, binding.collection_path);
+  if (typeof itemKey !== "string" || itemKey.length === 0) return err({ operation: "resolve_execution", detail: `context lookup item key '${binding.item_key_path}' must be a non-empty string` });
+  if (!Array.isArray(collection)) return err({ operation: "resolve_execution", detail: `context lookup collection '${binding.collection_path}' must be an array` });
+  const matches = collection.filter((entry) => pointer(entry, binding.collection_key_path) === itemKey);
+  if (matches.length !== 1) return err({ operation: "resolve_execution", detail: `context lookup key '${itemKey}' matched ${matches.length} entries` });
+  const value = pointer(matches[0] as JsonValue, binding.value_path);
+  return value === undefined ? err({ operation: "resolve_execution", detail: `context lookup value '${binding.value_path}' not found` }) : ok(stringify(value));
+};
+
+const resolveBindable = (value: Bindable | undefined, environment: BindingEnvironment): Result<string | null, ResolveExecutionError> => {
+  if (value === undefined) return ok(null);
+  return typeof value === "string" ? ok(value) : resolveBinding(value, environment);
+};
+
+export const renderPrompt = (template: string, slots: Readonly<Record<string, string>>): Result<string, ResolveExecutionError> => {
+  let missing: string | null = null;
+  const rendered = template.replace(/\{\{([^{}]+)\}\}/g, (_match, key: string) => {
+    const value = slots[key];
+    if (value === undefined) { missing = key; return ""; }
+    return value;
+  });
+  return missing ? err({ operation: "resolve_execution", detail: `template slot '{{${missing}}}' has no binding` }) : ok(rendered);
+};
+
+export const resolveDelegatedExecution = (input: ResolveDelegatedExecutionInput): Result<ResolvedExecutorConfig, ResolveExecutionError> => {
+  const environment = { ...input.environment, item: input.unit.parameters };
+  const slots: Record<string, string> = { UNIT_ID: input.unit.unit_id, STAGE_INSTANCE_ID: input.stage_instance_id };
+  for (const [name, binding] of Object.entries(input.definition.slot_bindings)) {
+    const value = resolveBinding(binding, environment);
+    if (!value.ok) return value;
+    slots[name] = value.value;
+  }
+  for (const [name, binding] of Object.entries(input.definition.fan_out?.item_bindings ?? {})) {
+    const value = resolveBinding(binding, environment);
+    if (!value.ok) return value;
+    slots[name] = value.value;
+  }
+  const prompt = renderPrompt(input.prompt_template, slots);
+  if (!prompt.ok) return prompt;
+  const runtime = resolveBindable(input.definition.runtime, environment);
+  const model = resolveBindable(input.definition.model, environment);
+  const effort = resolveBindable(input.definition.effort, environment);
+  const workdirBinding = input.definition.fan_out?.workdir ?? input.definition.workdir;
+  const workdir = resolveBinding(workdirBinding, environment);
+  if (!runtime.ok) return runtime;
+  if (!model.ok) return model;
+  if (!effort.ok) return effort;
+  if (!workdir.ok) return workdir;
+  if (runtime.value !== "claude-code" && runtime.value !== "codex") return err({ operation: "resolve_execution", detail: `unsupported delegated runtime '${runtime.value}'` });
+  return ok({ executor_type: "delegated_session", runtime: runtime.value, rendered_prompt: prompt.value, workdir: workdir.value,
+    session_name: input.definition.session_name.replaceAll("{{UNIT_ID}}", input.unit.unit_id).replaceAll("{{STAGE_INSTANCE_ID}}", input.stage_instance_id),
+    model: model.value, effort: effort.value, executor_options: { pre_authorized_tools: input.definition.pre_authorized_tools ?? [], yolo: input.definition.yolo ?? false } });
+};
