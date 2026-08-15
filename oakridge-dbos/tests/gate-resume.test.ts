@@ -65,6 +65,14 @@ test("gate resume rejects a stale artifact revision", async () => {
   expect(await response.json()).toEqual({ error: "reviewed artifact revision is not current", code: "superseded" });
 });
 
+test("gate resume rejects an artifact withdrawn by durable cancellation", async () => {
+  const withdrawn = { ...artifact, lifecycle: { kind: "withdrawn" as const, actor: "workflow_cancellation", reason: "cancelled", withdrawn_at: "2026-08-14T12:01:00Z" } };
+  const subject = fixture(); subject.dependencies.artifacts.find_by_id = async () => withdrawn;
+  const response = await decide(createGateResumeApp(subject.dependencies));
+  expect(response.status).toBe(409);
+  expect(await response.json()).toEqual({ error: "reviewed artifact revision is not current", code: "withdrawn" });
+});
+
 test("gate resume rejects an action outside the configured step", async () => {
   const response = await decide(fixture().app, { ...body, action: "reject" });
   expect(response.status).toBe(400);

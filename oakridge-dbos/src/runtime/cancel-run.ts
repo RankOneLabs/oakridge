@@ -1,25 +1,19 @@
 import type { WorkflowRunId } from "../domain/primitives";
-import type { CancellationTargetRepository, WorkflowAttemptRepository } from "../storage/repositories";
-import type { CancellationExecutionTarget } from "../domain/rerun";
+import type { WorkflowAttemptRepository } from "../storage/repositories";
 
 export interface CancellationDbosClient {
-  fence_execution(workflow_id: string, target: CancellationExecutionTarget): Promise<void>;
-  cancel_workflow(workflow_id: string, cancel_children: boolean): Promise<void>;
+  cancel_attempt(control_workflow_id: string, root_workflow_id: string, reason: string | null, requested_at: string): Promise<void>;
 }
 
 export interface CancelRunDependencies {
   readonly attempts: WorkflowAttemptRepository;
-  readonly targets: CancellationTargetRepository;
   readonly dbos: CancellationDbosClient;
   readonly now: () => string;
 }
 
-export const cancelAttempt = async (root_workflow_id: string, dependencies: Omit<CancelRunDependencies, "attempts">,
+export const cancelAttempt = async (root_workflow_id: string, dependencies: Pick<CancelRunDependencies, "dbos" | "now">,
   reason: string | null = null): Promise<void> => {
-  const targets = await dependencies.targets.list_for_attempt(root_workflow_id);
-  await Promise.all(targets.map((target) => dependencies.dbos.fence_execution(`${root_workflow_id}:cancel:${target.execution_id}`, target)));
-  await dependencies.dbos.cancel_workflow(root_workflow_id, true);
-  await dependencies.targets.finish_started_stages(root_workflow_id, dependencies.now(), reason);
+  await dependencies.dbos.cancel_attempt(`oakridge-cancel:${root_workflow_id}`, root_workflow_id, reason, dependencies.now());
 };
 
 export const cancelRun = async (run_id: WorkflowRunId, dependencies: CancelRunDependencies, reason: string | null = null): Promise<{ readonly root_workflow_id: string }> => {

@@ -59,7 +59,6 @@ export const createCollaborationApp = (dependencies: CollaborationHttpDependenci
   app.get("/artifacts/:id/threads", async (http) => {
     const artifact = await dependencies.artifacts.find_by_id(http.req.param("id") as ArtifactId);
     if (!artifact) return http.json({ error: "artifact not found" }, 404);
-    if (!isMutable(artifact)) return http.json({ error: "artifact revision is not current", code: artifact.lifecycle.kind }, 409);
     if (!dependencies.policy_for_artifact_type(artifact.artifact_type)?.commentable) return http.json({ error: `artifact type '${artifact.artifact_type}' does not support 'commentable'` }, 400);
     return http.json(await dependencies.collaboration.list_threads(artifact.chain_id));
   });
@@ -137,7 +136,6 @@ export const createCollaborationApp = (dependencies: CollaborationHttpDependenci
   app.get("/artifacts/:id/review_items", async (http) => {
     const artifact = await dependencies.artifacts.find_by_id(http.req.param("id") as ArtifactId);
     if (!artifact) return http.json({ error: "artifact not found" }, 404);
-    if (!isMutable(artifact)) return http.json({ error: "artifact revision is not current", code: artifact.lifecycle.kind }, 409);
     if (!dependencies.policy_for_artifact_type(artifact.artifact_type)?.review_items) return http.json({ error: `artifact type '${artifact.artifact_type}' does not support 'review_items'` }, 400);
     return http.json(await dependencies.collaboration.list_review_items(artifact.chain_id));
   });

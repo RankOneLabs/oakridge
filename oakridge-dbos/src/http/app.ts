@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 
-import type { WorkflowDefinitionRepository } from "../storage/repositories";
 import { createArtifactCallbackApp, type ArtifactCallbackDependencies } from "./artifact-callback";
 import { createArtifactWithdrawApp, type ArtifactWithdrawDependencies } from "./artifact-withdraw";
 import { createGateResumeApp, type GateResumeDependencies } from "./gate-resume";
@@ -13,9 +12,16 @@ import { createInvalidationEventApp } from "./invalidation-events";
 import { createRerunApp, type RerunHttpDependencies } from "./rerun";
 import { createRunLaunchApp } from "./run-launch";
 import type { LaunchRunDependencies } from "../runtime/launch-run";
+import { createConfigurationApp, type ConfigurationHttpDependencies } from "./configuration";
+import { createAdmissionApp, type AdmissionHttpDependencies } from "./admission";
+import { createRunLifecycleApp, type RunLifecycleHttpDependencies } from "./run-lifecycle";
+import { createDomainReadApp, type DomainReadHttpDependencies } from "./domain-reads";
 
 export interface OakridgeHttpDependencies {
-  readonly definitions: WorkflowDefinitionRepository;
+  readonly configuration: ConfigurationHttpDependencies;
+  readonly admission: AdmissionHttpDependencies;
+  readonly run_lifecycle: RunLifecycleHttpDependencies;
+  readonly domain_reads: DomainReadHttpDependencies;
   readonly artifact_callback: ArtifactCallbackDependencies;
   readonly artifact_withdraw: ArtifactWithdrawDependencies;
   readonly gate_resume: GateResumeDependencies;
@@ -29,11 +35,10 @@ export interface OakridgeHttpDependencies {
 
 export const createApp = (dependencies: OakridgeHttpDependencies): Hono => {
   const app = new Hono();
-  app.get("/workflow_defs", async (context) => context.json(await dependencies.definitions.list()));
-  app.get("/workflow_defs/:id", async (context) => {
-    const definition = await dependencies.definitions.find_by_id(context.req.param("id") as Parameters<WorkflowDefinitionRepository["find_by_id"]>[0]);
-    return definition ? context.json(definition) : context.json({ error: "workflow definition not found" }, 404);
-  });
+  app.route("/", createConfigurationApp(dependencies.configuration));
+  app.route("/", createAdmissionApp(dependencies.admission));
+  app.route("/", createRunLifecycleApp(dependencies.run_lifecycle));
+  app.route("/", createDomainReadApp(dependencies.domain_reads));
   app.route("/", createArtifactCallbackApp(dependencies.artifact_callback));
   app.route("/", createArtifactWithdrawApp(dependencies.artifact_withdraw));
   app.route("/", createGateResumeApp(dependencies.gate_resume));

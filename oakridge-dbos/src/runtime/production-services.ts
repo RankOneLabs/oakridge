@@ -1,5 +1,5 @@
 import { compileWorkflowDefinition } from "../compiler/compile-workflow";
-import type { WorkflowDefinitionRepository, StageInstanceRepository, ExecutionProjectionRepository, ResumeArtifactRepository, WorkflowAttemptRepository, WorkflowRunRepository } from "../storage/repositories";
+import type { WorkflowDefinitionRepository, StageInstanceRepository, ExecutionProjectionRepository, ResumeArtifactRepository, RerunTargetRepository, WorkflowAttemptRepository, WorkflowRunRepository } from "../storage/repositories";
 import type { ProductionTopologyServices } from "../workflows/production-topology";
 
 export interface ProductionServiceDependencies {
@@ -8,6 +8,7 @@ export interface ProductionServiceDependencies {
   readonly attempts: WorkflowAttemptRepository;
   readonly stages: StageInstanceRepository;
   readonly executions: ExecutionProjectionRepository;
+  readonly rerun_targets: RerunTargetRepository;
   readonly resume_artifacts: ResumeArtifactRepository;
   readonly load_prompt_template: (path: string) => Promise<string>;
 }
@@ -34,5 +35,6 @@ export const createProductionTopologyServices = (dependencies: ProductionService
   },
   async finish_stage(input) { await dependencies.stages.finish(input.stage_instance_id, input.ended_at, input.outcome); },
   async record_execution(input) { await dependencies.executions.record(input.request, input.execution_workflow_id, input.parameters); },
+  async replace_execution_projection(input) { await dependencies.rerun_targets.replace_execution_workflow(input.execution_id, input.replacement_workflow_id); },
   load_resume_artifacts(run_id, stage_keys) { return dependencies.resume_artifacts.list_latest_for_stages(run_id, stage_keys); },
 });

@@ -29,6 +29,11 @@ export const rerunUnit = async (request: UnitRerunRequest, targets: RerunTargetR
       state.replacement_execution_workflow_id === replacementId && target.execution_workflow_id === replacementId) {
     return { replacement_execution_workflow_id: replacementId };
   }
+  if (state?.status === "waiting" && state.unit_id === request.unit_id && target.execution_workflow_id === replacementId) {
+    const replacement = await dbos.getWorkflow(replacementId);
+    if (replacement?.forkedFrom === state.failed_execution_workflow_id) return { replacement_execution_workflow_id: replacementId };
+    throw new Error(`rerun workflow ID '${replacementId}' does not match the waiting execution`);
+  }
   if (!state || state.status !== "waiting" || state.unit_id !== request.unit_id || state.failed_execution_workflow_id !== target.execution_workflow_id) {
     throw new Error(`execution unit '${request.stage_instance_id}:${request.unit_id}' is not waiting for rerun`);
   }
@@ -41,6 +46,5 @@ export const rerunUnit = async (request: UnitRerunRequest, targets: RerunTargetR
   const command: StageCommand = { kind: "replace_execution", unit_id: request.unit_id,
     failed_execution_workflow_id: target.execution_workflow_id, replacement_execution_workflow_id: replacementId };
   await dbos.send(target.stage_coordinator_workflow_id, command, "stage-command", `rerun:${request.rerun_id}`);
-  await targets.replace_execution_workflow(target.execution_id, replacementId);
   return { replacement_execution_workflow_id: replacementId };
 };

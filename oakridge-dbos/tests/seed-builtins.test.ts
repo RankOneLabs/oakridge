@@ -12,6 +12,7 @@ test("seeds unmodified v11 through the immutable repository boundary", async () 
     async find_by_id(_id: WorkflowDefinitionId) { return null; },
     async find_by_name_version(_name: string, _version: number) { return null; },
     async list() { return inserted; },
+    async set_archived() { return null; },
   };
   await seedBuiltins(repository);
   expect(inserted).toHaveLength(1);

@@ -84,6 +84,8 @@ test("collaboration mutations reject a superseded artifact revision", async () =
   const thread = await app.request("/artifacts/artifact-2/threads", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ body: "stale", author: "operator" }) });
   const item = await app.request("/artifacts/artifact-2/review_items", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ anchor: "/summary", claim: "old", reality: "stale" }) });
   expect([thread.status, item.status]).toEqual([409, 409]);
+  expect((await app.request("/artifacts/artifact-2/threads")).status).toBe(200);
+  expect((await app.request("/artifacts/artifact-2/review_items")).status).toBe(200);
 });
 
 test("atom edit rejects a stale previous value", async () => {

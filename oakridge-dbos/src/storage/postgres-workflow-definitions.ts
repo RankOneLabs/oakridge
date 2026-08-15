@@ -21,7 +21,7 @@ export class PostgresWorkflowDefinitionRepository implements WorkflowDefinitionR
        VALUES ($1, $2, $3, $4::jsonb, $5, $6::timestamptz)
        ON CONFLICT (name, version) DO UPDATE
          SET name = EXCLUDED.name
-         WHERE oakridge.workflow_definition.definition = EXCLUDED.definition
+         WHERE oakridge.workflow_definition.definition - 'archived' = EXCLUDED.definition - 'archived'
        RETURNING definition`,
       [definition.id, definition.name, definition.version, definition, definition.archived, definition.created_at],
     );
@@ -46,11 +46,22 @@ export class PostgresWorkflowDefinitionRepository implements WorkflowDefinitionR
     return rows[0] ? decodeDefinition(rows[0]) : null;
   }
 
-  async list(): Promise<readonly WorkflowDefinition[]> {
+  async list(include_archived = false): Promise<readonly WorkflowDefinition[]> {
     const rows = await this.sql.query<DefinitionRow>(
-      "SELECT definition FROM oakridge.workflow_definition ORDER BY name, version DESC",
-      [],
+      "SELECT definition FROM oakridge.workflow_definition WHERE $1::boolean OR NOT archived ORDER BY name, version DESC",
+      [include_archived],
     );
     return rows.map(decodeDefinition);
+  }
+
+  async set_archived(id: WorkflowDefinitionId, archived: boolean): Promise<WorkflowDefinition | null> {
+    const rows = await this.sql.query<DefinitionRow>(
+      `UPDATE oakridge.workflow_definition
+       SET archived = $2, definition = jsonb_set(definition, '{archived}', to_jsonb($2::boolean), true)
+       WHERE id = $1
+       RETURNING definition`,
+      [id, archived],
+    );
+    return rows[0] ? decodeDefinition(rows[0]) : null;
   }
 }
