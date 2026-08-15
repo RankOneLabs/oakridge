@@ -3,6 +3,7 @@
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -25,6 +26,7 @@ import type {
 } from "../runtime";
 import { createRuntimeRegistry } from "../runtime";
 import type { EnvelopeEvent } from "./session";
+import { FilesystemResumableSessionClaims, type ResumableInputDeliveryKey, type ResumableSessionKey } from "./resumable-session";
 
 let tmpRoot: string;
 let sessionsDir: string;
@@ -177,6 +179,79 @@ describe("SessionManager onRuntimeSessionObserved/onRuntimeSessionEnded", () => 
 });
 
 describe("SessionManager.create with registry", () => {
+  test("ensureResumableSession admits one live runtime and sends the initial prompt once", async () => {
+    let release: (() => void) | null = null;
+    const stopped = new Promise<void>((resolve) => { release = resolve; });
+    const sent: string[] = [];
+    const runtime = makeNoopRuntime();
+    runtime.events = async function* () {
+      await stopped;
+      yield { type: "completed", result: { code: 0 } };
+    };
+    runtime.send = async (_handle, input) => { sent.push(input); };
+    runtime.terminate = async () => { release?.(); };
+    const manager = new SessionManager({
+      sessionsDir,
+      handoffsDir: join(tmpRoot, "handoffs"),
+      worktreesDir,
+      registry: createRuntimeRegistry([runtime]),
+      config: KbblConfigSchema.parse({}),
+    });
+    const key = "execution-1:executor-step" as ResumableSessionKey;
+    const startSpec = { initial_prompt: "Build exactly once", workdir: repoDir, runtime: "claude-code" as const };
+    const results = await Promise.all(Array.from({ length: 20 }, () => manager.ensureResumableSession(key, startSpec)));
+    expect(results.filter((result) => result.kind === "started")).toHaveLength(1);
+    expect(new Set(results.map((result) => result.session.sid)).size).toBe(1);
+    expect(sent).toEqual(["Build exactly once"]);
+    await manager.endAll();
+  });
+
+  test("deliverResumableInput dispatches one runtime input for concurrent DBOS retries", async () => {
+    let release: (() => void) | null = null;
+    const stopped = new Promise<void>((resolve) => { release = resolve; });
+    const sent: string[] = [];
+    const runtime = makeNoopRuntime();
+    runtime.events = async function* () { await stopped; yield { type: "completed", result: { code: 0 } }; };
+    runtime.send = async (_handle, input) => { sent.push(input); };
+    runtime.terminate = async () => { release?.(); };
+    const manager = new SessionManager({ sessionsDir, handoffsDir: join(tmpRoot, "handoffs"), worktreesDir, registry: createRuntimeRegistry([runtime]), config: KbblConfigSchema.parse({}) });
+    const session = await manager.create({ workdir: repoDir });
+    const key = "execution-1:revision-1" as ResumableInputDeliveryKey;
+    const receipts = await Promise.all(Array.from({ length: 20 }, () => manager.deliverResumableInput(session.oakridgeSid, key, "Revise the build")));
+    expect(sent).toEqual(["Revise the build"]);
+    expect(receipts.every((receipt) => receipt.status === "delivered")).toBe(true);
+    await manager.endAll();
+  });
+
+  test("ensureResumableSession advances a crash orphan and resumes its runtime context", async () => {
+    const key = "execution-orphan:executor-step" as ResumableSessionKey;
+    const startSpec = { initial_prompt: "Continue the build", workdir: repoDir, runtime: "claude-code" as const };
+    const store = new FilesystemResumableSessionClaims(sessionsDir);
+    const { claim } = await store.claim(key, startSpec);
+    const now = new Date().toISOString();
+    const events: EnvelopeEvent[] = [
+      { id: 1, type: "session_started", ts: now, payload: { workdir: repoDir, projectWorkdir: repoDir, worktreePath: repoDir, worktreeBranch: "main", runtimeId: "claude-code", name: "orphan" } },
+      { id: 2, type: "cc_session_id_observed", ts: now, payload: { cc_session_id: "cc-orphan-runtime" } },
+      { id: 3, type: "runtime_process_observed", ts: now, payload: { process_id: 4242 } },
+    ];
+    await writeFile(join(sessionsDir, `${claim.session_id}.jsonl`), `${events.map((event) => JSON.stringify(event)).join("\n")}\n`);
+    const spawnConfigs: RuntimeConfig[] = [];
+    let release: (() => void) | null = null;
+    const stopped = new Promise<void>((resolve) => { release = resolve; });
+    const runtime = makeNoopRuntime();
+    runtime.reconstructSnapshot = () => ({ runtimeSid: "cc-orphan-runtime", yoloMode: false, allowedTools: [], lastResultUsage: null, initialObservedModel: null, observedModel: null });
+    runtime.fenceOrphan = async (reference) => reference.processId === 4242 && reference.runtimeSid === "cc-orphan-runtime" ? "fenced" : "unverifiable";
+    runtime.spawn = async (config) => { spawnConfigs.push(config); return { sessionId: "replacement" }; };
+    runtime.events = async function* () { await stopped; yield { type: "completed", result: { code: 0 } }; };
+    runtime.terminate = async () => { release?.(); };
+    const manager = new SessionManager({ sessionsDir, handoffsDir: join(tmpRoot, "handoffs"), worktreesDir, registry: createRuntimeRegistry([runtime]), config: KbblConfigSchema.parse({}) });
+    const result = await manager.ensureResumableSession(key, startSpec);
+    expect(result.kind).toBe("started");
+    expect(result.session.sid).not.toBe(claim.session_id);
+    expect(spawnConfigs[0]?.runtimeSpecific?.parentCcSid).toBe("cc-orphan-runtime");
+    await manager.endAll();
+  });
+
   test("uses registry runtime when provided (noop-complete case)", async () => {
     const runtime = makeNoopRuntime();
     const registry: RuntimeRegistry = createRuntimeRegistry([runtime]);

@@ -799,6 +799,9 @@ export class Session {
       model: this.model,
       effort: this.effort,
     });
+    if (typeof handle.processId === "number") {
+      await this.emit("runtime_process_observed", { process_id: handle.processId });
+    }
     if (handle.runtimeSid) await this.observeRuntimeSessionId(handle.runtimeSid);
     if (handle.resolvedModel) await this.observeRuntimeModel(handle.resolvedModel);
 

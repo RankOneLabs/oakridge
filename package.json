@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Multi-agent workspace built on jig and kbbl.",
-  "workspaces": ["kbbl", "lbc-dashboard"],
+  "workspaces": ["kbbl", "lbc-dashboard", "oakridge-dbos"],
   "scripts": {
     "oakridge": "./scripts/oakridge-start",
     "typecheck": "bunx tsc --noEmit"

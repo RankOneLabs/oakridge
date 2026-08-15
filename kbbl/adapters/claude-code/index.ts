@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import * as pty from "bun-pty";
 
 import type { EnvelopeEvent, Session, SpawnCmd } from "../../core/session/session";
@@ -141,6 +141,8 @@ export interface CreateClaudeCodeRuntimeOpts {
   /** Directory where the generated settings.json lives. */
   dataDir: string;
 }
+
+export const supportsProcOrphanFencing = (platform: NodeJS.Platform = process.platform): boolean => platform === "linux";
 
 /** CC-specific session handle backed by a bun-pty process. */
 interface CcHandle {
@@ -550,7 +552,34 @@ export async function createClaudeCodeRuntime(
         handle.notifyExit?.();
       });
 
-      return { sessionId: oakridgeSid, runtimeSid: ccSessionId };
+      return { sessionId: oakridgeSid, runtimeSid: ccSessionId, processId: ptyProc.pid };
+    },
+
+    async fenceOrphan(reference) {
+      if (!supportsProcOrphanFencing()) return "unverifiable";
+      const cmdlinePath = `/proc/${reference.processId}/cmdline`;
+      let cmdline: string;
+      try {
+        cmdline = await readFile(cmdlinePath, "utf8");
+      } catch (error) {
+        if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return "already_exited";
+        return "unverifiable";
+      }
+      const args = cmdline.split("\0");
+      const sessionFlag = args.findIndex((argument) => argument === "--session-id");
+      if (sessionFlag < 0 || args[sessionFlag + 1] !== reference.runtimeSid) return "unverifiable";
+      try {
+        process.kill(reference.processId, "SIGTERM");
+      } catch (error) {
+        if (error && typeof error === "object" && "code" in error && error.code === "ESRCH") return "already_exited";
+        return "unverifiable";
+      }
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        try { process.kill(reference.processId, 0); } catch { return "fenced"; }
+      }
+      try { process.kill(reference.processId, "SIGKILL"); } catch { return "fenced"; }
+      return "fenced";
     },
 
     // --- AgentRuntime.terminate ---

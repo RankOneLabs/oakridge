@@ -109,7 +109,14 @@ export type SessionHandle = {
   readonly runtimeSid?: string | null;
   /** model the runtime resolved during spawn, when available */
   readonly resolvedModel?: string | null;
+  /** OS process id when the runtime owns a directly fenceable subprocess. */
+  readonly processId?: number | null;
 };
+
+export interface OrphanedRuntimeReference {
+  readonly runtimeSid: string;
+  readonly processId: number;
+}
 
 export type ArchiveRef = string;
 
@@ -193,6 +200,7 @@ export interface AgentRuntime {
 
   spawn(config: RuntimeConfig): Promise<SessionHandle>;
   terminate(handle: SessionHandle): Promise<void>;
+  fenceOrphan?(reference: OrphanedRuntimeReference): Promise<"fenced" | "already_exited" | "unverifiable">;
 
   // --- streams ---
 

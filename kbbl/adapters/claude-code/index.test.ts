@@ -12,9 +12,16 @@ import {
   ccTranscriptPath,
   claudeCommandStartsTurn,
   createClaudeCodeRuntime,
+  supportsProcOrphanFencing,
   formatClaudeCommandInput,
 } from "./index";
 import type { EnvelopeEvent } from "../../core/session/session";
+
+test("orphan fencing is verifiable only on Linux procfs platforms", () => {
+  expect(supportsProcOrphanFencing("linux")).toBe(true);
+  expect(supportsProcOrphanFencing("darwin")).toBe(false);
+  expect(supportsProcOrphanFencing("win32")).toBe(false);
+});
 
 let tmpRoot: string;
 let dataDir: string;

@@ -11,6 +11,7 @@ import { WorkflowDefDetailView } from "./views/WorkflowDefDetailView";
 import { ReviewInboxView } from "./views/ReviewInboxView";
 import type { OakridgeSubRoute } from "../lib/hash";
 import type { WorkflowDefSummary } from "./types";
+import { useOakridgeInvalidationStream } from "./hooks/useOakridgeInvalidationStream";
 
 // The oakridge shell gets its own QueryClient so it doesn't collide with the
 // main app's client when mounted independently under the oakridge hash route.
@@ -24,6 +25,7 @@ interface OakridgeShellInnerProps {
 
 function OakridgeShellInner({ route, onBack, onNavigate }: OakridgeShellInnerProps) {
   const configQuery = useOakridgeConfig();
+  useOakridgeInvalidationStream(configQuery.data?.available === true);
 
   // Show loading while the availability check is in flight
   if (configQuery.isPending) {

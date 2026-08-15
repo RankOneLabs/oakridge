@@ -1,0 +1,56 @@
+import type { WorkflowDefinitionId } from "../domain/primitives";
+import type { WorkflowDefinition } from "../domain/workflow";
+import { parseWorkflowDefinition } from "../validation/workflow-definition";
+import type { WorkflowDefinitionRepository } from "./repositories";
+import type { SqlExecutor } from "./sql-executor";
+
+interface DefinitionRow { readonly definition: unknown }
+
+const decodeDefinition = (row: DefinitionRow): WorkflowDefinition => {
+  const parsed = parseWorkflowDefinition(row.definition);
+  if (!parsed.ok) throw new Error(`stored workflow definition is invalid: ${parsed.error.detail}`);
+  return parsed.value;
+};
+
+export class PostgresWorkflowDefinitionRepository implements WorkflowDefinitionRepository {
+  constructor(private readonly sql: SqlExecutor) {}
+
+  async insert_immutable(definition: WorkflowDefinition): Promise<WorkflowDefinition> {
+    const rows = await this.sql.query<DefinitionRow>(
+      `INSERT INTO oakridge.workflow_definition (id, name, version, definition, archived, created_at)
+       VALUES ($1, $2, $3, $4::jsonb, $5, $6::timestamptz)
+       ON CONFLICT (name, version) DO UPDATE
+         SET name = EXCLUDED.name
+         WHERE oakridge.workflow_definition.definition = EXCLUDED.definition
+       RETURNING definition`,
+      [definition.id, definition.name, definition.version, definition, definition.archived, definition.created_at],
+    );
+    const row = rows[0];
+    if (!row) throw new Error(`workflow definition ${definition.name}@${definition.version} conflicts with immutable stored content`);
+    return decodeDefinition(row);
+  }
+
+  async find_by_id(id: WorkflowDefinitionId): Promise<WorkflowDefinition | null> {
+    const rows = await this.sql.query<DefinitionRow>(
+      "SELECT definition FROM oakridge.workflow_definition WHERE id = $1",
+      [id],
+    );
+    return rows[0] ? decodeDefinition(rows[0]) : null;
+  }
+
+  async find_by_name_version(name: string, version: number): Promise<WorkflowDefinition | null> {
+    const rows = await this.sql.query<DefinitionRow>(
+      "SELECT definition FROM oakridge.workflow_definition WHERE name = $1 AND version = $2",
+      [name, version],
+    );
+    return rows[0] ? decodeDefinition(rows[0]) : null;
+  }
+
+  async list(): Promise<readonly WorkflowDefinition[]> {
+    const rows = await this.sql.query<DefinitionRow>(
+      "SELECT definition FROM oakridge.workflow_definition ORDER BY name, version DESC",
+      [],
+    );
+    return rows.map(decodeDefinition);
+  }
+}
