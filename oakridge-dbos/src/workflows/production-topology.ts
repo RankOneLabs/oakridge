@@ -166,6 +166,25 @@ export const selectStageAdmissionState = (
   }),
 });
 
+export type RerunWaitDisposition =
+  | { readonly kind: "resolve"; readonly command: Extract<StageCommand, { readonly kind: "replace_execution" }> }
+  | { readonly kind: "defer" }
+  | { readonly kind: "apply" };
+
+/**
+ * A unit waiting for rerun must not swallow the rest of the stage's traffic:
+ * `DBOS.recv` dequeues, so anything this wait discards is lost rather than
+ * redelivered. Stage-shaping commands are applied in place, and a rerun aimed
+ * at another unit is held for the wait that names it.
+ */
+export const selectRerunWaitDisposition = (command: StageCommand, unitId: UnitId, activeExecutionWorkflowId: string): RerunWaitDisposition => {
+  if (command.kind !== "replace_execution") return { kind: "apply" };
+  if (command.unit_id !== unitId || command.failed_execution_workflow_id !== activeExecutionWorkflowId) return { kind: "defer" };
+  return { kind: "resolve", command };
+};
+
+type StageCommandEffect = { readonly kind: "applied" } | { readonly kind: "unhandled" } | { readonly kind: "terminal"; readonly outcome: StageOutcome };
+
 export const productionStageWorkflow = DBOS.registerWorkflow(async (input: StageWorkflowInput): Promise<StageWorkflowResult> => {
   const coordinatorId = DBOS.workflowID;
   if (!coordinatorId) throw new Error("stage coordinator requires a workflow ID");
@@ -203,42 +222,50 @@ export const productionStageWorkflow = DBOS.registerWorkflow(async (input: Stage
     await DBOS.closeStream("stage-output");
     return { stage_instance_id: input.stage_instance_id, outcome, artifacts, execution_workflow_ids: executionWorkflowIds };
   };
+  // Reruns aimed at a unit other than the one currently waiting are parked here
+  // instead of being dropped on the floor by the wait that received them.
+  const deferredCommands: StageCommand[] = [];
+  const applyStageCommand = async (command: StageCommand): Promise<StageCommandEffect> => {
+    if (command.kind === "abandon_stage") return { kind: "terminal", outcome: { kind: "cancelled", reason: command.reason } };
+    if (command.kind === "admit_unit") {
+      const admission = selectStageAdmissionState(input.stage_instance_id, plans.map((plan) => plan.unit), admitted, released, isManualAdmission);
+      const unit = admission.units.find((candidate) => candidate.unit_id === command.unit_id);
+      if (admission.manual_admission && unit?.eligible) admitted.add(command.unit_id);
+      return { kind: "applied" };
+    }
+    if (command.kind === "input_closed") {
+      openIncrementalInputs.delete(command.input_name);
+      if (openIncrementalInputs.size === 0 && input.compiled_stage.materialization.kind === "fan_out") {
+        const closed = closeIncrementalMaterialization(incremental, { unit_id_path: input.compiled_stage.materialization.unit_id_path, depends_on_path: input.compiled_stage.materialization.depends_on_path });
+        if (!closed.ok) return { kind: "terminal", outcome: { kind: "failed", code: "invalid_incremental_materialization", detail: closed.error.detail } };
+        incremental = closed.value;
+      }
+      return { kind: "applied" };
+    }
+    if (command.kind !== "input_released") return { kind: "unhandled" };
+    if (input.compiled_stage.materialization.kind !== "fan_out") return { kind: "terminal", outcome: { kind: "failed", code: "unexpected_incremental_input", detail: `stage '${input.stage_key}' is not fan-out` } };
+    const parameters = { unit_id: command.artifact.unit_id, artifact: command.artifact.body } as const;
+    const appended = appendIncrementalUnit(incremental, parameters, { unit_id_path: input.compiled_stage.materialization.unit_id_path, depends_on_path: input.compiled_stage.materialization.depends_on_path });
+    if (!appended.ok) return { kind: "terminal", outcome: { kind: "failed", code: "invalid_incremental_materialization", detail: appended.error.detail } };
+    incremental = appended.value;
+    const unit = incremental.units[incremental.units.length - 1];
+    if (!unit) throw new Error("appended incremental unit disappeared");
+    const existingInput = accumulatedInputs[command.input_name];
+    const existingArtifacts = existingInput === undefined ? [] : Array.isArray(existingInput) ? existingInput : [existingInput as ArtifactEnvelope];
+    accumulatedInputs[command.input_name] = [...existingArtifacts, command.artifact];
+    plans.push(await planUnitStep({ stage: input.compiled_stage, stage_instance_id: input.stage_instance_id, inputs: accumulatedInputs, context: input.context, unit }));
+    if (!input.compiled_stage.materialization.manual_admission) admitted.add(unit.unit_id);
+    return { kind: "applied" };
+  };
   const maxParallel = input.compiled_stage.materialization.kind === "fan_out" ? input.compiled_stage.materialization.max_parallel : 1;
   while (!incremental.is_closed || released.size < plans.length) {
     await DBOS.setEvent("stage-admission-state", selectStageAdmissionState(input.stage_instance_id, plans.map((plan) => plan.unit), admitted, released, isManualAdmission));
     const ready = selectReadyUnits(plans.map((plan) => plan.unit), released, admitted, new Set(), maxParallel);
     if (ready.length === 0) {
-      const command = await DBOS.recv<StageCommand>("stage-command", { timeoutSeconds: 86_400 });
+      const command = deferredCommands.shift() ?? await DBOS.recv<StageCommand>("stage-command", { timeoutSeconds: 86_400 });
       if (!command) continue;
-      if (command.kind === "admit_unit") {
-        const admission = selectStageAdmissionState(input.stage_instance_id, plans.map((plan) => plan.unit), admitted, released, isManualAdmission);
-        const unit = admission.units.find((candidate) => candidate.unit_id === command.unit_id);
-        if (admission.manual_admission && unit?.eligible) admitted.add(command.unit_id);
-        continue;
-      }
-      if (command.kind === "input_closed") {
-        openIncrementalInputs.delete(command.input_name);
-        if (openIncrementalInputs.size === 0 && input.compiled_stage.materialization.kind === "fan_out") {
-          const closed = closeIncrementalMaterialization(incremental, { unit_id_path: input.compiled_stage.materialization.unit_id_path, depends_on_path: input.compiled_stage.materialization.depends_on_path });
-          if (!closed.ok) return complete({ kind: "failed", code: "invalid_incremental_materialization", detail: closed.error.detail });
-          incremental = closed.value;
-        }
-        continue;
-      }
-      if (command.kind === "abandon_stage") return complete({ kind: "cancelled", reason: command.reason });
-      if (command.kind !== "input_released") continue;
-      if (input.compiled_stage.materialization.kind !== "fan_out") return complete({ kind: "failed", code: "unexpected_incremental_input", detail: `stage '${input.stage_key}' is not fan-out` });
-      const parameters = { unit_id: command.artifact.unit_id, artifact: command.artifact.body } as const;
-      const appended = appendIncrementalUnit(incremental, parameters, { unit_id_path: input.compiled_stage.materialization.unit_id_path, depends_on_path: input.compiled_stage.materialization.depends_on_path });
-      if (!appended.ok) return complete({ kind: "failed", code: "invalid_incremental_materialization", detail: appended.error.detail });
-      incremental = appended.value;
-      const unit = incremental.units[incremental.units.length - 1];
-      if (!unit) throw new Error("appended incremental unit disappeared");
-      const existingInput = accumulatedInputs[command.input_name];
-      const existingArtifacts = existingInput === undefined ? [] : Array.isArray(existingInput) ? existingInput : [existingInput as ArtifactEnvelope];
-      accumulatedInputs[command.input_name] = [...existingArtifacts, command.artifact];
-      plans.push(await planUnitStep({ stage: input.compiled_stage, stage_instance_id: input.stage_instance_id, inputs: accumulatedInputs, context: input.context, unit }));
-      if (!input.compiled_stage.materialization.manual_admission) admitted.add(unit.unit_id);
+      const effect = await applyStageCommand(command);
+      if (effect.kind === "terminal") return complete(effect.outcome);
       continue;
     }
     const handles = [];
@@ -261,15 +288,27 @@ export const productionStageWorkflow = DBOS.registerWorkflow(async (input: Stage
         await DBOS.setEvent("stage-rerun-state", { status: "waiting", stage_instance_id: input.stage_instance_id, unit_id: unitId,
           failed_execution_workflow_id: activeWorkflowId, code: failure.kind === "failed" ? failure.code : "cancelled",
           detail: failure.kind === "failed" ? failure.detail : failure.kind === "cancelled" ? failure.reason : null } satisfies StageRerunState);
-        const command = await DBOS.recv<StageCommand>("stage-command", { timeoutSeconds: 86_400 });
-        if (!command) continue;
-        if (command.kind === "abandon_stage") return complete({ kind: "cancelled", reason: command.reason });
-        if (command.kind !== "replace_execution" || command.unit_id !== unitId || command.failed_execution_workflow_id !== activeWorkflowId) continue;
+        const replay = deferredCommands.splice(0, deferredCommands.length);
+        let resolution: Extract<StageCommand, { readonly kind: "replace_execution" }> | null = null;
+        let terminalOutcome: StageOutcome | null = null;
+        while (!resolution && !terminalOutcome) {
+          const command = replay.shift() ?? await DBOS.recv<StageCommand>("stage-command", { timeoutSeconds: 86_400 });
+          if (!command) continue;
+          const disposition = selectRerunWaitDisposition(command, unitId, activeWorkflowId);
+          if (disposition.kind === "resolve") resolution = disposition.command;
+          else if (disposition.kind === "defer") deferredCommands.push(command);
+          else {
+            const effect = await applyStageCommand(command);
+            if (effect.kind === "terminal") terminalOutcome = effect.outcome;
+          }
+        }
+        if (terminalOutcome) return complete(terminalOutcome);
+        if (!resolution) continue;
         const activePlan = plans.find((candidate) => candidate.unit.unit_id === unitId);
         if (!activePlan) throw new Error(`execution plan '${unitId}' disappeared during rerun`);
         await replaceExecutionProjectionStep({ execution_id: activePlan.request.execution_id,
-          replacement_workflow_id: command.replacement_execution_workflow_id });
-        activeWorkflowId = command.replacement_execution_workflow_id;
+          replacement_workflow_id: resolution.replacement_execution_workflow_id });
+        activeWorkflowId = resolution.replacement_execution_workflow_id;
         executionWorkflowIds[unitId] = activeWorkflowId;
         result = await DBOS.retrieveWorkflow<ArtifactContractExecutionResult>(activeWorkflowId).getResult();
         failure = terminalFailure(unitId, result.contract, result);
