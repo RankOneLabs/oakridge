@@ -135,13 +135,18 @@ const app = createApp({
 const server = Bun.serve({ hostname: host, port, fetch: app.fetch });
 console.log(`Oakridge DBOS backend listening on ${server.url}`);
 
-const shutdown = async () => {
-  clearInterval(notificationTimer);
-  clearInterval(launchTimer);
-  server.stop();
-  await DBOS.shutdown();
-  await client.destroy();
-  await sql.close();
+let shutdownPromise: Promise<void> | null = null;
+const shutdown = (): Promise<void> => {
+  if (shutdownPromise) return shutdownPromise;
+  shutdownPromise = (async () => {
+    clearInterval(notificationTimer);
+    clearInterval(launchTimer);
+    server.stop();
+    await DBOS.shutdown();
+    await client.destroy();
+    await sql.close();
+  })();
+  return shutdownPromise;
 };
 process.once("SIGINT", shutdown);
 process.once("SIGTERM", shutdown);
