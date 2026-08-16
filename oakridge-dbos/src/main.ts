@@ -34,6 +34,7 @@ const required = (name: string): string => {
 const databaseUrl = required("DBOS_SYSTEM_DATABASE_URL");
 const applicationVersion = required("DBOS_APPLICATION_VERSION");
 const kbblBaseUrl = required("KBBL_BASE_URL");
+const host = process.env.OAKRIDGE_DBOS_HOST?.trim() || "127.0.0.1";
 const port = Number(process.env.PORT ?? "3001");
 if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error("PORT must be a valid TCP port");
 
@@ -131,7 +132,7 @@ const app = createApp({
   },
 });
 
-const server = Bun.serve({ port, fetch: app.fetch });
+const server = Bun.serve({ hostname: host, port, fetch: app.fetch });
 console.log(`Oakridge DBOS backend listening on ${server.url}`);
 
 const shutdown = async () => {

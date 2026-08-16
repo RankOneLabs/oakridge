@@ -1,147 +1,121 @@
 # oakridge
-<!-- ci-probe: cohort-5 triage -->
 
-Multi-agent workspace built on jig (separate repo, agent kit), kbbl (operator
-surface for CLI coding agents), and oakridge-core (workflow orchestration that can
-delegate agent execution to kbbl).
+Oakridge is a workflow-first orchestration system for agent-driven software
+work. DBOS owns durable execution, recovery, fan-out/fan-in, and waits;
+Oakridge owns workflow definitions, stages, artifact contracts, review policy,
+executor adapters, and operator projections. kbbl provides the operator PWA and
+the current interactive Claude Code executor.
 
 ## Layout
 
 ```text
 oakridge/
-├── kbbl/                  # operator surface for CLI coding agents
-├── lbc-dashboard/         # read-only dashboard for legit-biz-club study runs
-├── oakridge-core/         # workflow substrate with kbbl delegated execution
-├── legit-biz-club/        # workspace layer (v1, complete)
-├── docs/                  # reference documentation
-└── phase0/                # archived: legacy multi-agent proof-of-concept (not active)
+├── oakridge-dbos/         # TypeScript domain backend and DBOS workflows
+├── kbbl/                  # operator PWA and interactive agent sessions
+├── oakridge-core/         # retired Rust v2 reference; not started in production
+├── legit-biz-club/        # future headless-agent integration surface
+├── lbc-dashboard/         # read-only legit-biz-club study dashboard
+├── docs/                  # operator documentation
+└── comms/                 # design records and archived specifications
 ```
 
-## Sub-packages
-
-- **kbbl** — the operator surface. Drives one or more CLI coding agents
-  (`claude-code` by default, `codex` opt-in) from a tablet- or phone-friendly PWA
-  over Tailscale. Standalone; works without the workflow layer. See
-  `kbbl/README.md`.
-- **lbc-dashboard** — read-only dashboard for `legit-biz-club` study runs.
-  Bun + Hono + React + Tailwind. Reads `.run/` sidecars written by legit-biz-club.
-  See `lbc-dashboard/README.md`.
-- **oakridge-core** — the workflow substrate. Its bundled `delegated_session` stage
-  starts and controls kbbl sessions for workflow runs while preserving direct kbbl
-  session launching. See `oakridge-core/README.md`.
-- **legit-biz-club** — the workspace layer (multi-agent collaboration over a shared artifact). v1 build complete — all five phases (foundation, incremental coordination, convergence, evals + memory commit, study harness) shipped on `main`. Python library; no CLI. See `legit-biz-club/README.md`.
-- **phase0** — archived legacy reference material. An early proof-of-concept
-  multi-agent experiment; not an active write surface. Kept for historical reference
-  only.
+`StageInstance` is deliberately execution-agnostic: it starts and finishes.
+Executors are adapters beneath DBOS workflows. The current adapter uses kbbl;
+the boundary also permits a future headless legit-biz-club adapter without
+changing workflow or stage semantics.
 
 ## Quick start
 
-For the operator surface (Claude Code sessions over Tailscale):
+Prerequisites: Bun, Git, and either Docker or an existing PostgreSQL database.
 
 ```bash
 bun install
-./kbbl/scripts/kbbl-start /path/to/your/repo
-```
-
-Defaults to `127.0.0.1:8788`. See `kbbl/README.md` for tablet/phone exposure, dev mode, compaction config, and security posture.
-
-For Oakridge v2 workflow-driven sessions, start the complete local stack from
-the repository root:
-
-```bash
 bun run oakridge
 ```
 
-Open `http://127.0.0.1:8788/#oakridge`. The launcher builds the kbbl PWA,
-starts kbbl and oakridge-core with their integration configured, and stops both
-when you press Ctrl-C. The bundled multi-repository dev-flow definition is seeded
-automatically; choose **New Run**, select `dev-flow v6`, add the repositories
-the brief spans, enter the brief, and start the run.
+Open <http://127.0.0.1:8788/#oakridge>. The command:
 
-For access from another device on a trusted LAN or tailnet, prefer a control
-token:
+1. creates or starts a persistent `oakridge-postgres` container when
+   `DBOS_SYSTEM_DATABASE_URL` is unset;
+2. applies Oakridge domain migrations;
+3. starts the DBOS backend on `127.0.0.1:8790`;
+4. rebuilds and starts kbbl on `127.0.0.1:8788`; and
+5. stops DBOS and kbbl together on Ctrl-C.
+
+The PostgreSQL container and `oakridge-postgres-data` volume remain running and
+persistent across application restarts. The bundled `dev-flow v11` definition
+is seeded automatically.
+
+To use an existing PostgreSQL database instead of managed Docker:
+
+```bash
+export DBOS_SYSTEM_DATABASE_URL=postgres://user:password@127.0.0.1:5432/oakridge
+bun run oakridge
+```
+
+`DBOS_APPLICATION_VERSION` defaults to the current Git commit. Override it only
+when deliberately operating DBOS application-version routing. Do not reuse a
+version after changing durable workflow operation order.
+
+### Remote operator access
+
+The browser only needs kbbl. Keep DBOS on loopback and expose kbbl on a trusted
+LAN or tailnet:
 
 ```bash
 export OAKRIDGE_CONTROL_TOKEN="$(openssl rand -hex 32)"
-./scripts/oakridge-start --host=0.0.0.0
+bun run oakridge -- --host=0.0.0.0
 ```
 
-Open `http://<machine-ip-or-tailnet-name>:8788/#oakridge`. The core remains on
-loopback and kbbl proxies its API, so port 8790 does not need LAN exposure. For
-a temporary unauthenticated development bind, the explicit escape hatch is:
+Open `http://<machine-ip-or-tailnet-name>:8788/#oakridge`. For a temporary
+unauthenticated development bind on a trusted network only:
 
 ```bash
-ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1 \
-  ./scripts/oakridge-start --host=0.0.0.0
+ALLOW_INSECURE_NON_LOOPBACK_CONTROL=1 bun run oakridge -- --host=0.0.0.0
 ```
 
-That mode exposes control actions to every client that can reach port 8788; do
-not use it on an untrusted network. After startup, verify the browser route and
-same-origin core proxy with:
+### Separate services
+
+For debugging, first start PostgreSQL and apply migrations, then run:
 
 ```bash
-./scripts/oakridge-browser-smoke http://<machine-ip-or-tailnet-name>:8788
+# Terminal 1 — DBOS backend
+cd oakridge-dbos
+export DBOS_SYSTEM_DATABASE_URL=postgres://oakridge:oakridge@127.0.0.1:54329/oakridge
+export DBOS_APPLICATION_VERSION="$(git rev-parse HEAD)"
+export KBBL_BASE_URL=http://127.0.0.1:8788
+export OAKRIDGE_DBOS_HOST=127.0.0.1
+export PORT=8790
+bun run migrate
+bun run start
+
+# Terminal 2 — kbbl and the PWA
+OAKRIDGE_CORE_BASE_URL=http://127.0.0.1:8790 ./kbbl/scripts/kbbl-start
 ```
 
-To run the services separately for debugging:
-
-```bash
-# Terminal 1
-OAKRIDGE_CORE_BASE_URL=http://127.0.0.1:8790 \
-  ./kbbl/scripts/kbbl-start /path/to/your/repo
-
-# Terminal 2
-cd oakridge-core
-KBBL_API_BASE_URL=http://127.0.0.1:8788 \
-cargo run
-```
-
-When starting them separately, also set
-`OAKRIDGE_CORE_BASE_URL=http://127.0.0.1:8790` on the kbbl process to enable
-the Oakridge PWA. oakridge-core reads the kbbl base URL from
-`KBBL_API_BASE_URL`.
-
-The combined launcher requires Bash 4.3 or newer because it supervises both
-services with `wait -n`. Set `OAKRIDGE_CORE_BIND` and `OAKRIDGE_CORE_PORT` to
-change the local core listener; the launcher derives kbbl's core URL from those
-same values.
-
-For the full Oakridge v2 runtime-delegation operator guide, including both
-interactive `delegated_session` and headless `delegated_lbc_run` examples, see
-`docs/oakridge-v2-runbook.md`.
+`OAKRIDGE_CORE_BASE_URL` is a retained kbbl configuration name; its upstream is
+now the DBOS backend, not the retired Rust service.
 
 ## Development
 
 ```bash
-bun install                # installs deps across all sub-packages
-bun run typecheck          # typecheck across the repo
+bun install
+bun run typecheck
+cd oakridge-dbos && bun test
+cd ../kbbl && bun run test:all
 ```
 
-### Agent-context files
+See [the v2 operator runbook](docs/oakridge-v2-runbook.md) for lifecycle,
+upgrade, recovery, and troubleshooting details. The DBOS replacement decisions
+are recorded in [the backend replacement spec](comms/oakridge-dbos-backend-replacement-spec.md).
 
-Per-package `CLAUDE.md` and `AGENTS.md` are generated by
-[catagents](https://github.com/cirsteve/catagents) from sources under
-`.catagents/`. Each source emits both basenames at the mirrored path
-(default `--target=both`), so Claude Code, Codex, and any other tool
-that reads either filename get the same conventions. Outputs may include
-tool-specific naming where a standard references concrete tool calls.
+## Agent-context files
 
-Setup once per machine: clone catagents as a sibling of this repo (so
-that `../catagents/` from this repo's root resolves to the catagents
-checkout). The `.catagents/standards` symlink in this repo is relative
-(`../../catagents/standards`); if your layout differs, re-point it.
+Per-package `CLAUDE.md` and `AGENTS.md` files are generated by
+[catagents](https://github.com/cirsteve/catagents) from `.catagents/` sources.
+Rebuild and check them with:
 
 ```bash
-catagents              # rebuild every <pkg>/{CLAUDE,AGENTS}.md
-catagents --check      # diff against committed outputs (exit 2 on drift; intended for CI)
+catagents
+catagents --check
 ```
-
-Both `.catagents/` sources and the generated `<pkg>/{CLAUDE,AGENTS}.md`
-files are committed.
-
-## Trajectory
-
-The architectural direction (multi-agent collaboration over a shared artifact,
-runtime-agnostic operator surface, jig as the agent substrate) lives in internal
-architecture memos that are not currently checked in. Stable operator guidance
-and follow-up notes live under `docs/`.

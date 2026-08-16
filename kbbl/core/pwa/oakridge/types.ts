@@ -1,6 +1,5 @@
 // View-model types for the oakridge operator surface.
-// These are typed at the PWA boundary — they do not copy oakridge-core
-// internal Rust domain models wholesale but cover what the UI needs.
+// These are typed at the PWA boundary and cover what the operator UI needs.
 
 import type { RuntimeId } from "../../runtime";
 

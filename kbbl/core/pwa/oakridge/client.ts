@@ -1,4 +1,4 @@
-// API client for the oakridge-core proxy at /oakridge/api/*.
+// API client for the Oakridge backend proxy at /oakridge/api/*.
 // All paths are same-origin relative so the PWA needs no CORS config.
 
 import type {
