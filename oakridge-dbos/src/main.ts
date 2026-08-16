@@ -84,7 +84,11 @@ await DBOS.launch();
 // every invocation in the same in-flight set so shutdown cannot close the SQL
 // pool while a request-triggered dispatcher is still using it.
 const inFlightDispatches = new Set<Promise<unknown>>();
+let isDispatchClosing = false;
 const trackDispatch = <T>(operation: () => Promise<T>): Promise<T> => {
+  if (isDispatchClosing) {
+    return Promise.reject(new Error("Oakridge is shutting down; durable dispatch remains queued"));
+  }
   const pending = operation();
   inFlightDispatches.add(pending);
   void pending.finally(() => inFlightDispatches.delete(pending)).catch(() => undefined);
@@ -164,10 +168,11 @@ let shutdownPromise: Promise<void> | null = null;
 const shutdown = (): Promise<void> => {
   if (shutdownPromise) return shutdownPromise;
   shutdownPromise = (async () => {
+    isDispatchClosing = true;
     clearInterval(notificationTimer);
     clearInterval(launchTimer);
     server.stop();
-    await Promise.all([...inFlightDispatches]);
+    await Promise.allSettled([...inFlightDispatches]);
     await DBOS.shutdown();
     await client.destroy();
     await sql.close();
