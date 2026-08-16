@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 
-import { evaluateExecutionArtifactContract, releaseStateForArtifact, shouldAwaitArtifactRelease, validateArtifactEmission } from "../src/contracts/evaluate-artifacts";
-import type { ArtifactEmission, ArtifactRevision } from "../src/domain/artifacts";
+import { evaluateExecutionArtifactContract, releaseStateForArtifact, shouldAwaitArtifactRelease, validateArtifactEmission, withoutReleaseFor, withRelease } from "../src/contracts/evaluate-artifacts";
+import type { ArtifactEmission, ArtifactReleaseState, ArtifactRevision } from "../src/domain/artifacts";
 import type { CompiledOutputContract } from "../src/domain/compiled-workflow";
 import type { ArtifactId, ExecutionId, StageInstanceId, UnitId, WorkflowRunId } from "../src/domain/primitives";
 
@@ -35,6 +35,27 @@ test("one artifact-collection executor waits for every checkpointed runtime arti
   ];
   expect(evaluateExecutionArtifactContract(contracts, [{ kind: "released", artifact: first }], expected)).toEqual({ kind: "waiting_artifacts", missing_outputs: ["b:result"] });
   expect(evaluateExecutionArtifactContract(contracts, [{ kind: "released", artifact: first }, { kind: "released", artifact: second }], expected)).toEqual({ kind: "satisfied", artifacts: [first, second] });
+});
+
+const brief = (unit: string, id: string): ArtifactRevision => ({ ...artifact, id: id as ArtifactId, unit_id: unit as UnitId, output_name: "brief", artifact_type: "dev.brief" });
+const briefContracts: readonly CompiledOutputContract[] = [{ name: "brief", artifact_type: "dev.brief", release: { kind: "immediate" } }];
+const briefExpected = ["a", "b", "c"].map((unit) => ({ unit_id: unit as UnitId, output_name: "brief", artifact_type: "dev.brief" }));
+
+test("revising one collection artifact leaves its released siblings released", () => {
+  let releases: readonly ArtifactReleaseState[] = [];
+  for (const unit of ["a", "b", "c"]) releases = withRelease(releases, brief(unit, `brief-${unit}`));
+  expect(evaluateExecutionArtifactContract(briefContracts, releases, briefExpected).kind).toBe("satisfied");
+
+  releases = withoutReleaseFor(releases, brief("a", "brief-a-v2"));
+  expect(evaluateExecutionArtifactContract(briefContracts, releases, briefExpected)).toEqual({ kind: "waiting_artifacts", missing_outputs: ["a:brief"] });
+
+  releases = withRelease(releases, brief("a", "brief-a-v2"));
+  expect(evaluateExecutionArtifactContract(briefContracts, releases, briefExpected).kind).toBe("satisfied");
+});
+
+test("re-releasing an artifact replaces its prior release state rather than duplicating it", () => {
+  const released = brief("a", "brief-a");
+  expect(withRelease(withRelease([], released), released)).toEqual([{ kind: "released", artifact: released }]);
 });
 
 test("successful executor termination does not bypass a pending artifact gate", () => {

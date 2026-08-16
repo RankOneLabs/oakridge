@@ -4,7 +4,7 @@ import type { ExecutionRequest, ExecutorAdapter, ExecutorTerminalObservation, Ex
 import type { CollaborationPingRequest, CollaborationPingState } from "../domain/collaboration";
 import type { ArtifactReleaseState, ArtifactRevision, ExecutionContractState, ReleaseArtifactResult } from "../domain/artifacts";
 import type { CompiledOutputContract } from "../domain/compiled-workflow";
-import { evaluateExecutionArtifactContract, shouldAwaitArtifactRelease } from "../contracts/evaluate-artifacts";
+import { evaluateExecutionArtifactContract, shouldAwaitArtifactRelease, withoutReleaseFor, withRelease } from "../contracts/evaluate-artifacts";
 import { durableGateWorkflow, type GateCommand, type GateWaitInput } from "./gate";
 import { durableHandoffWorkflow, type HandoffCommand, type HandoffResult } from "./handoff";
 
@@ -151,10 +151,10 @@ export const artifactContractExecutionWorkflow = DBOS.registerWorkflow(async (in
   if (!workflowId) throw new Error("execution workflow requires a DBOS workflow ID");
   const externalReference = await startExecutorStep(input.request);
   await DBOS.startWorkflow(terminalObserverWorkflow, { workflowID: `${workflowId}:terminal` })({ request: input.request, external_reference: externalReference, parent_workflow_id: workflowId });
-  let releases: ArtifactReleaseState[] = [];
+  let releases: readonly ArtifactReleaseState[] = [];
   let terminalObservation: ExecutorTerminalObservation | null = null;
   const closeReleaseWaits = async (artifactId: ArtifactRevision["id"], outputName: string, reason: "superseded" | "withdrawn", replacementId: ArtifactRevision["id"] | null): Promise<void> => {
-    releases = releases.filter((candidate) => candidate.artifact.id !== artifactId);
+    releases = releases.filter((candidate: ArtifactReleaseState) => candidate.artifact.id !== artifactId);
     const gateControl: GateCommand = reason === "superseded" && replacementId
       ? { kind: "supersede", replacement_artifact_revision_id: replacementId }
       : { kind: "withdraw" };
@@ -175,14 +175,14 @@ export const artifactContractExecutionWorkflow = DBOS.registerWorkflow(async (in
   const acceptEmission = async (release: ArtifactReleaseState): Promise<void> => {
     const currentArtifact = await loadCurrentArtifactStep(release.artifact.id);
     if (!currentArtifact) return;
-    releases = releases.filter((candidate) => candidate.artifact.output_name !== currentArtifact.output_name);
+    releases = withoutReleaseFor(releases, currentArtifact);
     if (release.kind === "waiting_gate") {
       await DBOS.startWorkflow(gateRelayWorkflow, { workflowID: `${workflowId}:gate:${release.artifact.id}` })({ parent_workflow_id: workflowId, request: input.request, release });
     } else if (release.kind === "waiting_handoff") {
       await DBOS.startWorkflow(durableHandoffWorkflow, { workflowID: `${workflowId}:handoff:${release.artifact.id}` })({ ...release, parent_workflow_id: workflowId });
     } else {
       const released = await markArtifactReleasedStep(currentArtifact.id);
-      if (released) releases.push({ kind: "released", artifact: released });
+      if (released) releases = withRelease(releases, released);
     }
   };
   for (;;) {
@@ -197,7 +197,7 @@ export const artifactContractExecutionWorkflow = DBOS.registerWorkflow(async (in
       await closeReleaseWaits(message.artifact_id, message.output_name, message.reason, message.replacement_artifact_revision_id);
     } else if (message.kind === "artifact_released") {
       const released = await markArtifactReleasedStep(message.artifact.id);
-      if (released) releases.push({ kind: "released", artifact: released });
+      if (released) releases = withRelease(releases, released);
     } else if (message.kind === "gate_rejected") {
       if (message.command.action === "rerun" || message.command.action === "request_revision") {
         await requestRevisionStep({ request: input.request, external_reference: externalReference, delivery_key: `gate:${message.artifact.id}:${message.command.gate_step}`, feedback: `Revise '${message.artifact.output_name}' after gate '${message.command.gate_step}'.` });

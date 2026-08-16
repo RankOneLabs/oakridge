@@ -1,7 +1,7 @@
 import type { ArtifactEmission, ArtifactReleaseState, ArtifactRevision, ExecutionContractState } from "../domain/artifacts";
 import type { CompiledOutputContract } from "../domain/compiled-workflow";
 import type { ExecutorTerminalObservation, ExpectedArtifactContract } from "../domain/execution";
-import { err, ok, type Result } from "../domain/primitives";
+import { err, ok, type Result, type UnitId } from "../domain/primitives";
 
 export interface ArtifactContractError {
   readonly operation: "evaluate_artifact_contract";
@@ -22,12 +22,27 @@ export const releaseStateForArtifact = (artifact: ArtifactRevision, output: Comp
   return { kind: "released", artifact };
 };
 
+/**
+ * An artifact_collection execution emits many artifacts under one output name,
+ * one per collection id, so release state is only unique per unit and output.
+ * Contract evaluation and release bookkeeping must agree on this key: keying
+ * bookkeeping by output name alone drops a collection's already-released
+ * siblings and the contract can never be satisfied again.
+ */
+export const artifactReleaseKey = (artifact: { readonly unit_id: UnitId; readonly output_name: string }): string => `${artifact.unit_id}:${artifact.output_name}`;
+
+export const withoutReleaseFor = (releases: readonly ArtifactReleaseState[], artifact: ArtifactRevision): readonly ArtifactReleaseState[] =>
+  releases.filter((candidate) => artifactReleaseKey(candidate.artifact) !== artifactReleaseKey(artifact));
+
+export const withRelease = (releases: readonly ArtifactReleaseState[], artifact: ArtifactRevision): readonly ArtifactReleaseState[] =>
+  [...withoutReleaseFor(releases, artifact), { kind: "released", artifact }];
+
 export const evaluateExecutionArtifactContract = (outputs: readonly CompiledOutputContract[], releases: readonly ArtifactReleaseState[], expectedArtifacts?: readonly ExpectedArtifactContract[]): ExecutionContractState => {
   if (expectedArtifacts) {
-    const released = new Map(releases.filter((release): release is Extract<ArtifactReleaseState, { kind: "released" }> => release.kind === "released").map((release) => [`${release.artifact.unit_id}:${release.artifact.output_name}`, release.artifact]));
-    const missing = expectedArtifacts.filter((expected) => !released.has(`${expected.unit_id}:${expected.output_name}`));
-    if (missing.length > 0) return { kind: "waiting_artifacts", missing_outputs: missing.map((expected) => `${expected.unit_id}:${expected.output_name}`).sort() };
-    return { kind: "satisfied", artifacts: expectedArtifacts.map((expected) => released.get(`${expected.unit_id}:${expected.output_name}`)).filter((artifact): artifact is ArtifactRevision => artifact !== undefined) };
+    const released = new Map(releases.filter((release): release is Extract<ArtifactReleaseState, { kind: "released" }> => release.kind === "released").map((release) => [artifactReleaseKey(release.artifact), release.artifact]));
+    const missing = expectedArtifacts.filter((expected) => !released.has(artifactReleaseKey(expected)));
+    if (missing.length > 0) return { kind: "waiting_artifacts", missing_outputs: missing.map((expected) => artifactReleaseKey(expected)).sort() };
+    return { kind: "satisfied", artifacts: expectedArtifacts.map((expected) => released.get(artifactReleaseKey(expected))).filter((artifact): artifact is ArtifactRevision => artifact !== undefined) };
   }
   const releasedByOutput = new Map(releases.filter((release): release is Extract<ArtifactReleaseState, { kind: "released" }> => release.kind === "released").map((release) => [release.artifact.output_name, release.artifact]));
   const missingOutputs = outputs.filter((output) => !releasedByOutput.has(output.name)).map((output) => output.name).sort();
