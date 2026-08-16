@@ -137,7 +137,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
         },
         epic_profile: epicProfile,
       };
-      pendingLaunch.current = selectRunLaunchIdentity(pendingLaunch.current, request, crypto.randomUUID);
+      pendingLaunch.current = selectRunLaunchIdentity(pendingLaunch.current, request, () => crypto.randomUUID());
       const result = await createRun.mutateAsync({ request, idempotency_key: pendingLaunch.current.idempotency_key });
       pendingLaunch.current = null;
       onCreated(result.id);
