@@ -109,7 +109,12 @@ stop_services() {
   [ -z "$kbbl_pid" ] || wait "$kbbl_pid" 2>/dev/null || true
   [ -z "$dbos_pid" ] || wait "$dbos_pid" 2>/dev/null || true
 }
-trap stop_services INT TERM EXIT
+stop_from_signal() {
+  stop_services
+  exit 0
+}
+trap stop_from_signal INT TERM
+trap stop_services EXIT
 
 echo "oakridge: applying domain migrations"
 (cd "$DBOS_ROOT" && DBOS_SYSTEM_DATABASE_URL="$DBOS_SYSTEM_DATABASE_URL" bun run migrate)
