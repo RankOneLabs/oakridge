@@ -82,6 +82,11 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
     const config = parseResolvedConfig(request.resolved_config);
     const inheritedSessionId = request.workspace_source?.external_reference.kind === "kbbl_session"
       ? request.workspace_source.external_reference.session_id : null;
+    // Definition-time validation should have caught this; failing here keeps the
+    // message actionable instead of surfacing as an opaque kbbl 400.
+    if (config.worktree && inheritedSessionId) {
+      throw new Error(`execution ${request.execution_id} resolves its own worktree and inherits one from ${inheritedSessionId}; these are mutually exclusive`);
+    }
     const sessionKey = `${request.execution_id}:${this.options.executor_function_identity}`;
     const response = await this.fetch(`${this.options.base_url}/sessions/resumable/${encodeURIComponent(sessionKey)}`, {
       method: "PUT",

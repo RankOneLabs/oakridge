@@ -64,6 +64,10 @@ export const delegatedSessionDefinitionSchema = z.object({
   }).optional(),
 }).superRefine((config, context) => {
   if (config.fan_out && config.artifacts) context.addIssue({ code: "custom", message: "fan_out and artifacts are mutually exclusive" });
+  // A unit either cuts its own worktree or inherits an upstream one. Sending
+  // both downstream is rejected by kbbl at session-ensure time (400), so catch
+  // the authoring mistake here rather than mid-stage.
+  if (config.fan_out?.worktree && config.fan_out.inherit_worktree_from) context.addIssue({ code: "custom", message: "fan_out.worktree and fan_out.inherit_worktree_from are mutually exclusive" });
   const terminalPolicies = [config.gate_output, config.output_gate, config.output_handoff].filter(Boolean);
   if (terminalPolicies.length > 1) context.addIssue({ code: "custom", message: "gate_output, output_gate, and output_handoff are mutually exclusive" });
 });

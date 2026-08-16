@@ -65,6 +65,23 @@ test("kbbl adapter requests a fresh session inheriting the producer workspace", 
   expect(body).toEqual({ initial_prompt: "Assess", workdir: "/repo", name: "assessor", runtime: "claude-code", inherit_worktree_from: "build-session" });
 });
 
+test("kbbl adapter refuses to both cut and inherit a worktree", async () => {
+  let called = false;
+  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl.test", executor_function_identity: "assessor-v1", fetch: async () => {
+    called = true;
+    return Response.json({ kind: "started", session: { sid: "session-1", status: "live", endReason: null } }, { status: 201 });
+  } });
+  const request: ExecutionRequest = {
+    execution_id: "conflicted-execution" as ExecutionId, stage_instance_id: "assessment-stage" as StageInstanceId, unit_id: "web" as UnitId,
+    executor_type: "delegated_session", resolved_config: { runtime: "claude-code", rendered_prompt: "Assess", workdir: "/repo", session_name: "assessor", model: null, effort: null,
+      worktree: { branchName: "cohort/web", worktreeSubdir: "web" } },
+    inputs: [], declared_outputs: [], workspace_source: { execution_id: "build-execution" as ExecutionId,
+      external_reference: { kind: "kbbl_session", session_id: "build-session" } },
+  };
+  await expect(adapter.start_or_attach(request)).rejects.toThrow("mutually exclusive");
+  expect(called).toBe(false);
+});
+
 test("kbbl adapter delivers workflow input through a persisted session", async () => {
   const calls: Array<{ url: string; body: BodyInit | null | undefined }> = [];
   const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "build", fetch: async (input, init) => {
