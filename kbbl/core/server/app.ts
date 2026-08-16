@@ -89,7 +89,7 @@ export interface CreateAppDeps {
    */
   authPolicy?: AuthPolicy;
   /**
-   * Token injected into proxied oakridge-core write requests.
+   * Token injected into proxied Oakridge backend write requests.
    * Falls back to OAKRIDGE_CONTROL_TOKEN when OAKRIDGE_CORE_CONTROL_TOKEN
    * is not set. Undefined when no token is configured.
    */
@@ -278,13 +278,13 @@ export function createApp(deps: CreateAppDeps): Hono {
   // to the PWA.
   mountArtifactStreamRoutes(app, { bus: artifactEventBus });
 
-  // ---- oakridge-core proxy ----
+  // ---- Oakridge backend proxy ----
   //
   // GET /oakridge/config → { available: boolean } (PWA availability check)
   // ALL /oakridge/api/* → proxied to OAKRIDGE_CORE_BASE_URL (same-origin CORS avoidance)
   // Write requests are validated against kbbl auth (via the global middleware
-  // above) before reaching this handler; the handler then injects the core
-  // control token so oakridge-core's own auth gate is satisfied.
+  // above) before reaching this handler; the handler then injects the retained
+  // core control token for backend compatibility.
   mountOakridgeProxyRoutes(app, {
     baseUrl: process.env.OAKRIDGE_CORE_BASE_URL,
     coreControlToken,

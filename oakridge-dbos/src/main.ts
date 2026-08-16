@@ -34,6 +34,7 @@ const required = (name: string): string => {
 const databaseUrl = required("DBOS_SYSTEM_DATABASE_URL");
 const applicationVersion = required("DBOS_APPLICATION_VERSION");
 const kbblBaseUrl = required("KBBL_BASE_URL");
+const host = process.env.OAKRIDGE_DBOS_HOST?.trim() || "127.0.0.1";
 const port = Number(process.env.PORT ?? "3001");
 if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error("PORT must be a valid TCP port");
 
@@ -82,17 +83,19 @@ const dispatchNotifications = () => dispatchArtifactNotifications(artifacts, { s
 const dispatchLaunches = () => dispatchRunLaunches(runs, dbosRuns);
 await dispatchNotifications();
 await dispatchLaunches();
-let isDispatchingNotifications = false;
+let notificationDispatch: Promise<unknown> | null = null;
 const notificationTimer = setInterval(() => {
-  if (isDispatchingNotifications) return;
-  isDispatchingNotifications = true;
-  void dispatchNotifications().catch((error: unknown) => console.error("artifact notification dispatch failed", error)).finally(() => { isDispatchingNotifications = false; });
+  if (notificationDispatch) return;
+  notificationDispatch = dispatchNotifications()
+    .catch((error: unknown) => { console.error("artifact notification dispatch failed", error); })
+    .finally(() => { notificationDispatch = null; });
 }, 1_000);
-let isDispatchingLaunches = false;
+let launchDispatch: Promise<unknown> | null = null;
 const launchTimer = setInterval(() => {
-  if (isDispatchingLaunches) return;
-  isDispatchingLaunches = true;
-  void dispatchLaunches().catch((error: unknown) => console.error("run launch dispatch failed", error)).finally(() => { isDispatchingLaunches = false; });
+  if (launchDispatch) return;
+  launchDispatch = dispatchLaunches()
+    .catch((error: unknown) => { console.error("run launch dispatch failed", error); })
+    .finally(() => { launchDispatch = null; });
 }, 1_000);
 
 const presentation = (artifactType: string) => {
@@ -131,16 +134,22 @@ const app = createApp({
   },
 });
 
-const server = Bun.serve({ port, fetch: app.fetch });
+const server = Bun.serve({ hostname: host, port, fetch: app.fetch });
 console.log(`Oakridge DBOS backend listening on ${server.url}`);
 
-const shutdown = async () => {
-  clearInterval(notificationTimer);
-  clearInterval(launchTimer);
-  server.stop();
-  await DBOS.shutdown();
-  await client.destroy();
-  await sql.close();
+let shutdownPromise: Promise<void> | null = null;
+const shutdown = (): Promise<void> => {
+  if (shutdownPromise) return shutdownPromise;
+  shutdownPromise = (async () => {
+    clearInterval(notificationTimer);
+    clearInterval(launchTimer);
+    server.stop();
+    await Promise.all([notificationDispatch, launchDispatch]);
+    await DBOS.shutdown();
+    await client.destroy();
+    await sql.close();
+  })();
+  return shutdownPromise;
 };
 process.once("SIGINT", shutdown);
 process.once("SIGTERM", shutdown);

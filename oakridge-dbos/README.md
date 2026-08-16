@@ -7,13 +7,25 @@ artifact contracts, review policy, executor adapters, and operator read models.
 
 ## Run locally
 
+The normal entry point is the repository-level launcher:
+
+```bash
+bun run oakridge
+```
+
+It manages local PostgreSQL when needed, applies migrations, and supervises this
+backend with kbbl. Use the commands below only when running the backend
+separately for debugging.
+
 The backend and DBOS use the same PostgreSQL database. Oakridge tables live in
 the `oakridge` schema; DBOS manages its own system schema.
 
 ```bash
 export DBOS_SYSTEM_DATABASE_URL=postgres://oakridge:oakridge@localhost:5432/oakridge
 export DBOS_APPLICATION_VERSION="$(git rev-parse HEAD)"
-export KBBL_BASE_URL=http://127.0.0.1:3000
+export KBBL_BASE_URL=http://127.0.0.1:8788
+export OAKRIDGE_DBOS_HOST=127.0.0.1
+export PORT=8790
 
 bun run migrate
 bun run start
@@ -42,7 +54,6 @@ bun test
 bun run typecheck
 ```
 
-The production-topology harness is
-`src/dev/run-production-topology-proof.ts`. Cutover still requires completing
-that live PostgreSQL proof, the kbbl hard-kill exercise, and the workflow-version
-drain exercise documented in `../comms/oakridge-dbos-backend-replacement-spec.md`.
+The historical spike harnesses under `src/dev/` remain useful as narrow proofs;
+the production entry point is `src/main.ts`. Operational guidance, including
+application-version drain behavior, is in `../docs/oakridge-v2-runbook.md`.

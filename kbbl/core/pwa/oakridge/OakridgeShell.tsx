@@ -36,13 +36,13 @@ function OakridgeShellInner({ route, onBack, onNavigate }: OakridgeShellInnerPro
     );
   }
 
-  // Show unavailable state when OAKRIDGE_CORE_BASE_URL is unset
+  // Show unavailable state when the retained OAKRIDGE_CORE_BASE_URL setting is unset.
   if (!configQuery.data?.available) {
     return (
       <div className="or-shell" data-testid="or-shell">
         <button type="button" className="or-btn or-btn--secondary" onClick={onBack}>← Back</button>
         <div className="or-unavailable" data-testid="or-unavailable">
-          <h2>oakridge-core not configured</h2>
+          <h2>Oakridge backend not configured</h2>
           <p>
             Set <code>OAKRIDGE_CORE_BASE_URL</code> on the kbbl server to enable
             workflow run inspection.

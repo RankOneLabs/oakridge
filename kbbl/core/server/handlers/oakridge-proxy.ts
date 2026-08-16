@@ -4,7 +4,7 @@ export interface OakridgeProxyDeps {
   baseUrl: string | undefined;
   /**
    * Token injected as Authorization: Bearer <token> into proxied write
-   * requests to oakridge-core. Falls back to OAKRIDGE_CONTROL_TOKEN when
+   * requests to the Oakridge backend. Falls back to OAKRIDGE_CONTROL_TOKEN when
    * OAKRIDGE_CORE_CONTROL_TOKEN is not set. Undefined when no token is
    * configured (core runs without auth, typically on a loopback bind).
    */
@@ -14,7 +14,7 @@ export interface OakridgeProxyDeps {
 const OAKRIDGE_PROXY_TIMEOUT_MS = 30_000;
 
 export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): void {
-  // Config: tells the PWA whether oakridge-core is reachable without
+  // Config: tells the PWA whether the Oakridge backend is configured without
   // attempting a proxy request that would block the page.
   app.get("/oakridge/config", (c) => {
     const available = typeof deps.baseUrl === "string" && deps.baseUrl.length > 0;
@@ -36,9 +36,8 @@ export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): vo
     // Only forward safe, non-sensitive headers. Strip credentials (cookie,
     // authorization) and hop-by-hop headers (connection, transfer-encoding,
     // upgrade, keep-alive, proxy-*) so kbbl session material is never leaked
-    // to the oakridge-core upstream. The core control token is then injected
-    // server-side for write requests so oakridge-core's own auth gate is
-    // satisfied without the browser ever seeing the core secret.
+    // to the Oakridge upstream. The retained core control token is then
+    // injected server-side without the browser ever seeing the secret.
     const BLOCKED_HEADERS = new Set([
       "host", "content-length", "cookie", "authorization",
       "connection", "transfer-encoding", "upgrade", "keep-alive",

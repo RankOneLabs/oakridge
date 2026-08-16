@@ -1,8 +1,8 @@
 # agent-dev-flow: operator guide
 
-> Current branch note: this is the kbbl-owned task-tracker guide, not the
-> oakridge-core v2 runtime-delegation flow. For the oakridge-core-centered v2
-> runbook, use [`oakridge-v2-runbook.md`](oakridge-v2-runbook.md).
+> Historical surface note: this documents kbbl's session-first v1 task tracker,
+> not the workflow-first DBOS backend. For current Oakridge v2 operations, use
+> [`oakridge-v2-runbook.md`](oakridge-v2-runbook.md).
 
 The end-to-end loop lives entirely inside kbbl. A `kbbl-start` server hosts
 the task tracker, the review primitive, the orchestrator state machine, and the
