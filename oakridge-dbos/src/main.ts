@@ -83,17 +83,19 @@ const dispatchNotifications = () => dispatchArtifactNotifications(artifacts, { s
 const dispatchLaunches = () => dispatchRunLaunches(runs, dbosRuns);
 await dispatchNotifications();
 await dispatchLaunches();
-let isDispatchingNotifications = false;
+let notificationDispatch: Promise<unknown> | null = null;
 const notificationTimer = setInterval(() => {
-  if (isDispatchingNotifications) return;
-  isDispatchingNotifications = true;
-  void dispatchNotifications().catch((error: unknown) => console.error("artifact notification dispatch failed", error)).finally(() => { isDispatchingNotifications = false; });
+  if (notificationDispatch) return;
+  notificationDispatch = dispatchNotifications()
+    .catch((error: unknown) => { console.error("artifact notification dispatch failed", error); })
+    .finally(() => { notificationDispatch = null; });
 }, 1_000);
-let isDispatchingLaunches = false;
+let launchDispatch: Promise<unknown> | null = null;
 const launchTimer = setInterval(() => {
-  if (isDispatchingLaunches) return;
-  isDispatchingLaunches = true;
-  void dispatchLaunches().catch((error: unknown) => console.error("run launch dispatch failed", error)).finally(() => { isDispatchingLaunches = false; });
+  if (launchDispatch) return;
+  launchDispatch = dispatchLaunches()
+    .catch((error: unknown) => { console.error("run launch dispatch failed", error); })
+    .finally(() => { launchDispatch = null; });
 }, 1_000);
 
 const presentation = (artifactType: string) => {
@@ -142,6 +144,7 @@ const shutdown = (): Promise<void> => {
     clearInterval(notificationTimer);
     clearInterval(launchTimer);
     server.stop();
+    await Promise.all([notificationDispatch, launchDispatch]);
     await DBOS.shutdown();
     await client.destroy();
     await sql.close();
