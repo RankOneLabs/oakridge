@@ -54,8 +54,9 @@ test("workflow run creation persists run, initial attempt, and deterministic lau
   ]);
   expect(sql.calls[4]?.parameters).toEqual([
     launch.run.id, launch.run.workflow_definition_id, launch.run.project_id, launch.run.context,
-    launch.run.root_workflow_id, false, launch.run.created_at,
+    false, launch.run.created_at,
   ]);
+  expect(sql.calls[4]?.statement).not.toContain("root_workflow_id");
   expect(sql.calls[6]?.parameters).toEqual([
     `run:${launch.run.id}:launch:${launch.run.root_workflow_id}`,
     launch.run.root_workflow_id,
