@@ -79,8 +79,25 @@ registerProductionTopologyServices(createProductionTopologyServices({ definition
 
 await seedBuiltins(definitions);
 await DBOS.launch();
-const dispatchNotifications = () => dispatchArtifactNotifications(artifacts, { send: sendArtifactWorkflowMessage });
-const dispatchLaunches = () => dispatchRunLaunches(runs, dbosRuns);
+
+// HTTP handlers and the periodic workers share these dispatch functions. Keep
+// every invocation in the same in-flight set so shutdown cannot close the SQL
+// pool while a request-triggered dispatcher is still using it.
+const inFlightDispatches = new Set<Promise<unknown>>();
+let isDispatchClosing = false;
+const trackDispatch = <T>(operation: () => Promise<T>): Promise<T> => {
+  if (isDispatchClosing) {
+    return Promise.reject(new Error("Oakridge is shutting down; durable dispatch remains queued"));
+  }
+  const pending = operation();
+  inFlightDispatches.add(pending);
+  void pending.finally(() => inFlightDispatches.delete(pending)).catch(() => undefined);
+  return pending;
+};
+const dispatchNotifications = () => trackDispatch(
+  () => dispatchArtifactNotifications(artifacts, { send: sendArtifactWorkflowMessage }),
+);
+const dispatchLaunches = () => trackDispatch(() => dispatchRunLaunches(runs, dbosRuns));
 await dispatchNotifications();
 await dispatchLaunches();
 let notificationDispatch: Promise<unknown> | null = null;
@@ -134,17 +151,28 @@ const app = createApp({
   },
 });
 
-const server = Bun.serve({ hostname: host, port, fetch: app.fetch });
+const server = Bun.serve({
+  hostname: host,
+  port,
+  idleTimeout: 255,
+  fetch(request, bunServer) {
+    if (new URL(request.url).pathname === "/events") {
+      bunServer.timeout(request, 0);
+    }
+    return app.fetch(request);
+  },
+});
 console.log(`Oakridge DBOS backend listening on ${server.url}`);
 
 let shutdownPromise: Promise<void> | null = null;
 const shutdown = (): Promise<void> => {
   if (shutdownPromise) return shutdownPromise;
   shutdownPromise = (async () => {
+    isDispatchClosing = true;
     clearInterval(notificationTimer);
     clearInterval(launchTimer);
     server.stop();
-    await Promise.all([notificationDispatch, launchDispatch]);
+    await Promise.allSettled([...inFlightDispatches]);
     await DBOS.shutdown();
     await client.destroy();
     await sql.close();

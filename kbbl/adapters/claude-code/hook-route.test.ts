@@ -70,6 +70,7 @@ function makeHookDeps(
     manager: makeFakeManager(session, ccSid),
     getBunServer: () => ({
       requestIP: () => ({ address: "127.0.0.1", family: "IPv4", port: 0 }),
+      timeout: () => {},
     }) as unknown as import("bun").Server<unknown>,
     subagentCounts: new Map<string, number>(),
     turnTrackers: turnTrackers ?? new Map<string, CcTurnTracker>(),
@@ -191,6 +192,27 @@ describe("hookPermissionHandler: yolo auto-approves", () => {
 
     const event = emitted.find((e) => e.type === "permission_auto_approved");
     expect(event).toMatchObject({ payload: { reason: "yolo" } });
+  });
+});
+
+describe("hookPermissionHandler: durable transport wait", () => {
+  test("disables Bun's request deadline for approval hooks", async () => {
+    const { session } = makeFakeSession({ yolo: true });
+    const observed = { timeoutSeconds: null as number | null };
+    const deps = makeHookDeps(session);
+    deps.getBunServer = () => ({
+      requestIP: () => ({ address: "127.0.0.1", family: "IPv4", port: 0 }),
+      timeout: (_request: Request, seconds: number) => { observed.timeoutSeconds = seconds; },
+    }) as unknown as import("bun").Server<unknown>;
+
+    await hookPermissionHandler(deps)(makeCtx({
+      hook_event_name: "PermissionRequest",
+      session_id: CC_SID,
+      tool_name: "Read",
+      tool_use_id: "tu-timeout",
+    }) as never);
+
+    expect(observed.timeoutSeconds).toBe(0);
   });
 });
 

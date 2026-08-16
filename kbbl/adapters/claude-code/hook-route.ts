@@ -257,6 +257,12 @@ export function hookPermissionHandler(deps: HookHandlerDeps) {
       return c.text("forbidden", 403);
     }
 
+    // A human approval may legitimately remain open for hours. Bun's default
+    // per-request deadline aborts the hook after ten seconds and Bun 1.3.10 can
+    // crash while tearing down that timed-out request. This route owns the
+    // durable approval lifecycle, so disable the transport deadline here.
+    bunServer.timeout(c.req.raw, 0);
+
     let raw: unknown;
     try {
       raw = await c.req.json();

@@ -301,7 +301,17 @@ try {
     port,
     hostname: host,
     idleTimeout: 255,
-    fetch: app.fetch,
+    fetch(request, server) {
+      // Bun's request deadline also applies while a streaming handler is
+      // producing its initial response. Oakridge's invalidation feed is an
+      // intentionally unbounded SSE request, so opt it out explicitly. Without
+      // this, the browser reconnect loop can eventually trigger Bun 1.3.x's
+      // timeout/crash path even though the stream sends heartbeats.
+      if (new URL(request.url).pathname === "/oakridge/api/events") {
+        server.timeout(request, 0);
+      }
+      return app.fetch(request);
+    },
   });
 } catch (err) {
   const msg = err instanceof Error ? err.message : String(err);
