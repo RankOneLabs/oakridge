@@ -119,17 +119,19 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
     if (!epicProfile) { setError("Epic title must include a letter or number."); return; }
     if (!briefNotes.trim()) { setError("Brief notes are required."); return; }
     if (!coreUrl) { setError("oakridge core URL is not configured."); return; }
+    const contextResult = buildRunExecutionContext({
+      brief_notes: briefNotes.trim(),
+      repositories: normalizedRepositories.map(({ key, path }) => ({ key, path })),
+      oakridge_url: coreUrl,
+      planner: plannerSelection,
+      worker: workerSelection,
+    });
+    if (!contextResult.ok) { setError(contextResult.error.detail); return; }
     try {
       const request = {
         workflow_def_id: workflowDefId,
         project_id: projectId || null,
-        context: buildRunExecutionContext({
-          brief_notes: briefNotes.trim(),
-          repositories: normalizedRepositories.map(({ key, path }) => ({ key, path })),
-          oakridge_url: coreUrl,
-          planner: plannerSelection,
-          worker: workerSelection,
-        }),
+        context: contextResult.value,
         epic_profile: epicProfile,
       };
       pendingLaunch.current = selectRunLaunchIdentity(pendingLaunch.current, request, () => crypto.randomUUID());
