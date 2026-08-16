@@ -104,10 +104,10 @@ export class PostgresWorkflowRunRepository implements WorkflowRunRepository {
 
       await transaction.query(
         `INSERT INTO oakridge.workflow_run
-           (id, workflow_definition_id, project_id, context, root_workflow_id, archived, created_at)
-         VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7::timestamptz)`,
+           (id, workflow_definition_id, project_id, context, archived, created_at)
+         VALUES ($1,$2,$3,$4::jsonb,$5,$6::timestamptz)`,
         [input.run.id, input.run.workflow_definition_id, input.run.project_id, input.run.context,
-          input.run.root_workflow_id, input.run.archived, input.run.created_at],
+          input.run.archived, input.run.created_at],
       );
       if (input.epic_profile) await this.insertProfile(transaction, input.epic_profile);
       await transaction.query(
