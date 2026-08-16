@@ -206,6 +206,34 @@ describe("SessionManager.create with registry", () => {
     await manager.endAll();
   });
 
+  test("assessor session inherits committed build work through a fresh child worktree", async () => {
+    let release: (() => void) | null = null;
+    const stopped = new Promise<void>((resolve) => { release = resolve; });
+    const runtime = makeNoopRuntime();
+    runtime.events = async function* () { await stopped; yield { type: "completed", result: { code: 0 } }; };
+    runtime.terminate = async () => { release?.(); };
+    const manager = new SessionManager({ sessionsDir, handoffsDir: join(tmpRoot, "handoffs"), worktreesDir,
+      registry: createRuntimeRegistry([runtime]), config: KbblConfigSchema.parse({}) });
+    const build = await manager.ensureResumableSession("build:unit:web" as ResumableSessionKey,
+      { initial_prompt: "Build", workdir: repoDir, runtime: "claude-code" });
+    const buildWorktree = build.session.worktreePath;
+    if (!buildWorktree) throw new Error("build session did not create a worktree");
+    await Bun.write(join(buildWorktree, "built.txt"), "built\n");
+    for (const command of [["git", "-C", buildWorktree, "add", "built.txt"], ["git", "-C", buildWorktree, "commit", "-q", "-m", "build"]]) {
+      const process = Bun.spawn({ cmd: command, stdout: "pipe", stderr: "pipe" });
+      if (await process.exited !== 0) throw new Error(await new Response(process.stderr).text());
+    }
+    const assessment = await manager.ensureResumableSession("assessment:unit:web" as ResumableSessionKey,
+      { initial_prompt: "Assess", workdir: repoDir, runtime: "claude-code", inherit_worktree_from: build.session.sid as import("./types").SessionId });
+    expect(assessment.session.parentOakridgeSid).toBe(build.session.sid);
+    expect(assessment.session.parentCcSid).toBeNull();
+    expect(assessment.session.worktreePath).not.toBe(build.session.worktreePath);
+    const assessmentWorktree = assessment.session.worktreePath;
+    if (!assessmentWorktree) throw new Error("assessment session did not create a worktree");
+    expect(await Bun.file(join(assessmentWorktree, "built.txt")).text()).toBe("built\n");
+    await manager.endAll();
+  });
+
   test("deliverResumableInput dispatches one runtime input for concurrent DBOS retries", async () => {
     let release: (() => void) | null = null;
     const stopped = new Promise<void>((resolve) => { release = resolve; });

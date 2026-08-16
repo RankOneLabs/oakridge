@@ -7,6 +7,7 @@ export interface ArtifactEnvelope {
   readonly output_name: string;
   readonly unit_id: UnitId;
   readonly body: JsonValue;
+  readonly producer_execution_id?: ExecutionId;
 }
 
 export interface OutputContract { readonly name: string; readonly artifact_type: ArtifactTypeId; readonly required: boolean }
@@ -21,6 +22,7 @@ export interface ExecutionRequest {
   readonly inputs: readonly ArtifactEnvelope[];
   readonly declared_outputs: readonly OutputContract[];
   readonly expected_artifacts?: readonly ExpectedArtifactContract[];
+  readonly workspace_source?: { readonly execution_id: ExecutionId; readonly external_reference: ExternalExecutionReference };
 }
 
 export type ExternalExecutionReference =

@@ -112,7 +112,22 @@ export const resolveDelegatedExecution = (input: ResolveDelegatedExecutionInput)
   if (!effort.ok) return effort;
   if (!workdir.ok) return workdir;
   if (runtime.value !== "claude-code" && runtime.value !== "codex") return err({ operation: "resolve_execution", detail: `unsupported delegated runtime '${runtime.value}'` });
+  const worktreeTemplate = input.definition.fan_out?.worktree;
+  const substituteIdentity = (value: string): string => value.replaceAll("{{UNIT_ID}}", input.unit.unit_id).replaceAll("{{STAGE_INSTANCE_ID}}", input.stage_instance_id);
+  let worktree: ResolvedExecutorConfig["worktree"];
+  if (worktreeTemplate) {
+    const branchName = resolveBindable(worktreeTemplate.branch_name, environment);
+    const worktreeSubdir = resolveBindable(worktreeTemplate.worktree_subdir, environment);
+    const baseRef = resolveBindable(worktreeTemplate.base_ref, environment);
+    if (!branchName.ok) return branchName;
+    if (!worktreeSubdir.ok) return worktreeSubdir;
+    if (!baseRef.ok) return baseRef;
+    if (!branchName.value || !worktreeSubdir.value) return err({ operation: "resolve_execution", detail: "worktree branch name and subdirectory must resolve to non-empty strings" });
+    worktree = { branchName: substituteIdentity(branchName.value), worktreeSubdir: substituteIdentity(worktreeSubdir.value),
+      ...(baseRef.value ? { baseRef: substituteIdentity(baseRef.value) } : {}) };
+  }
   return ok({ executor_type: "delegated_session", runtime: runtime.value, rendered_prompt: prompt.value, workdir: workdir.value,
-    session_name: input.definition.session_name.replaceAll("{{UNIT_ID}}", input.unit.unit_id).replaceAll("{{STAGE_INSTANCE_ID}}", input.stage_instance_id),
-    model: model.value, effort: effort.value, executor_options: { pre_authorized_tools: input.definition.pre_authorized_tools ?? [], yolo: input.definition.yolo ?? false } });
+    session_name: substituteIdentity(input.definition.session_name),
+    model: model.value, effort: effort.value, ...(worktree ? { worktree } : {}),
+    executor_options: { pre_authorized_tools: input.definition.pre_authorized_tools ?? [], yolo: input.definition.yolo ?? false } });
 };

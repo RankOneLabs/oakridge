@@ -7,7 +7,7 @@ import { appendIncrementalUnit, closeIncrementalMaterialization, emptyIncrementa
 import type { ArtifactRevision, ExecutionContractState } from "../domain/artifacts";
 import type { CompiledStageContract, CompiledWorkflowDefinition, MaterializedExecutionUnit } from "../domain/compiled-workflow";
 import type { DelegatedSessionDefinitionConfig } from "../domain/delegated-session";
-import type { ArtifactEnvelope, ExecutionRequest } from "../domain/execution";
+import type { ArtifactEnvelope, ExecutionRequest, ExternalExecutionReference } from "../domain/execution";
 import type { ExecutionId, JsonValue, StageCoordinatorWorkflowId, StageInstanceId, UnitId, WorkflowDefinitionId, WorkflowRunId } from "../domain/primitives";
 import type { StageOutcome } from "../domain/workflow";
 import type { StageRerunState } from "../domain/rerun";
@@ -50,6 +50,7 @@ export interface ProductionTopologyServices {
   ensure_run(input: RunWorkflowInput & { readonly root_workflow_id: string }): Promise<void>;
   load_compiled_definition(id: WorkflowDefinitionId, version: number): Promise<CompiledWorkflowDefinition>;
   load_prompt_template(path: string): Promise<string>;
+  find_external_reference(execution_id: ExecutionId): Promise<ExternalExecutionReference | null>;
   start_stage(input: StartStageInput): Promise<void>;
   finish_stage(input: FinishStageInput): Promise<void>;
   record_execution(input: RecordExecutionInput): Promise<void>;
@@ -73,6 +74,13 @@ const replaceExecutionProjectionStep = DBOS.registerStep(async (input: ReplaceEx
 const loadResumeArtifactsStep = DBOS.registerStep(async (input: { readonly run_id: WorkflowRunId; readonly stage_keys: readonly string[] }) => topologyServices().load_resume_artifacts(input.run_id, input.stage_keys), { name: "oakridgeLoadResumeArtifactsStep", retriesAllowed: true });
 
 const envelopes = (inputs: StageInputSet): readonly ArtifactEnvelope[] => Object.values(inputs).flatMap((value) => Array.isArray(value) ? value : [value as ArtifactEnvelope]);
+export const selectInputsForUnit = (inputs: StageInputSet, unit: MaterializedExecutionUnit, isFanOut: boolean): StageInputSet => {
+  if (!isFanOut) return inputs;
+  return Object.fromEntries(Object.entries(inputs).map(([name, value]) => {
+    if (!Array.isArray(value)) return [name, value];
+    return [name, value.filter((artifact) => artifact.unit_id === unit.unit_id)];
+  }));
+};
 const jsonPointer = (value: JsonValue, path: string): JsonValue | undefined => {
   let current: JsonValue | undefined = value;
   for (const token of path.split("/").slice(1).map((part) => part.replaceAll("~1", "/").replaceAll("~0", "~"))) {
@@ -99,11 +107,24 @@ const resolveExecutionPlans = async (input: PlanStageStepInput, units: readonly 
   const template = await topologyServices().load_prompt_template(definition.prompt_template_path);
   const plans: PlannedExecution[] = [];
   for (const unit of units) {
-    const resolved = resolveDelegatedExecution({ definition, environment, unit, stage_instance_id: input.stage_instance_id, prompt_template: template });
+    const unitInputs = selectInputsForUnit(input.inputs, unit, input.stage.materialization.kind === "fan_out");
+    const resolved = resolveDelegatedExecution({ definition, environment: { ...environment, inputs: unitInputs }, unit, stage_instance_id: input.stage_instance_id, prompt_template: template });
     if (!resolved.ok) throw new Error(`${resolved.error.operation}:${resolved.error.detail}`);
+    let workspaceSource: ExecutionRequest["workspace_source"];
+    const inheritFrom = definition.fan_out?.inherit_worktree_from;
+    if (inheritFrom) {
+      const inheritedInput = unitInputs[inheritFrom];
+      const candidates = inheritedInput === undefined ? [] : Array.isArray(inheritedInput) ? inheritedInput : [inheritedInput as ArtifactEnvelope];
+      const source = candidates.length === 1 ? candidates[0] : null;
+      if (!source?.producer_execution_id) throw new Error(`workspace input '${inheritFrom}' for unit '${unit.unit_id}' has no unique producer execution`);
+      const externalReference = await topologyServices().find_external_reference(source.producer_execution_id);
+      if (!externalReference) throw new Error(`workspace source execution '${source.producer_execution_id}' has no external reference`);
+      workspaceSource = { execution_id: source.producer_execution_id, external_reference: externalReference };
+    }
     plans.push({ unit, request: { execution_id: `${input.stage_instance_id}:${unit.unit_id}` as ExecutionId, stage_instance_id: input.stage_instance_id, unit_id: unit.unit_id,
-      executor_type: input.stage.executor.executor_type, resolved_config: resolved.value as unknown as JsonValue, inputs: envelopes(input.inputs),
-      declared_outputs: input.stage.outputs.map((output) => ({ name: output.name, artifact_type: output.artifact_type, required: true })), expected_artifacts: expectedArtifacts(input.stage, unit) } });
+      executor_type: input.stage.executor.executor_type, resolved_config: resolved.value as unknown as JsonValue, inputs: envelopes(unitInputs),
+      declared_outputs: input.stage.outputs.map((output) => ({ name: output.name, artifact_type: output.artifact_type, required: true })), expected_artifacts: expectedArtifacts(input.stage, unit),
+      ...(workspaceSource ? { workspace_source: workspaceSource } : {}) } });
   }
   return plans;
 };
@@ -291,7 +312,8 @@ const stageInputs = (stageKey: string, definition: CompiledWorkflowDefinition, o
   for (const edge of definition.edges.filter((candidate) => candidate.consumer_stage === stageKey)) {
     const artifacts = outputs.get(`${edge.producer_stage}:${edge.producer_output}`) ?? [];
     const input = stage.inputs.find((candidate) => candidate.name === edge.consumer_input);
-    const values = artifacts.map((artifact) => ({ artifact_id: artifact.id, artifact_type: artifact.artifact_type, output_name: artifact.output_name, unit_id: artifact.unit_id, body: artifact.body }));
+    const values = artifacts.map((artifact) => ({ artifact_id: artifact.id, artifact_type: artifact.artifact_type, output_name: artifact.output_name, unit_id: artifact.unit_id, body: artifact.body,
+      producer_execution_id: artifact.execution_id }));
     const requiresCollection = edge.delivery === "unit_complete" || input?.collect === true || (stage.materialization.kind === "fan_out" && stage.materialization.over.from === "input" && stage.materialization.over.input_name === edge.consumer_input);
     if (requiresCollection) result[edge.consumer_input] = values;
     else if (values[0]) result[edge.consumer_input] = values[0];
@@ -350,7 +372,8 @@ export const productionRunWorkflow = DBOS.registerWorkflow(async (input: RunWork
       outputs.set(key, [...(outputs.get(key) ?? []), signal.artifact]);
       for (const edge of definition.edges.filter((candidate) => candidate.producer_stage === signal.stage_key && candidate.producer_output === signal.artifact.output_name && candidate.delivery === "unit_complete" && started.has(candidate.consumer_stage) && !finished.has(candidate.consumer_stage))) {
         const target = stageWorkflowIds[edge.consumer_stage];
-        if (target) await DBOS.send(target, { kind: "input_released", input_name: edge.consumer_input, artifact: { artifact_id: signal.artifact.id, artifact_type: signal.artifact.artifact_type, output_name: signal.artifact.output_name, unit_id: signal.artifact.unit_id, body: signal.artifact.body } } satisfies StageCommand, "stage-command", `${signal.artifact.id}:${edge.consumer_input}`);
+        if (target) await DBOS.send(target, { kind: "input_released", input_name: edge.consumer_input, artifact: { artifact_id: signal.artifact.id, artifact_type: signal.artifact.artifact_type, output_name: signal.artifact.output_name, unit_id: signal.artifact.unit_id, body: signal.artifact.body,
+          producer_execution_id: signal.artifact.execution_id } } satisfies StageCommand, "stage-command", `${signal.artifact.id}:${edge.consumer_input}`);
       }
       continue;
     }

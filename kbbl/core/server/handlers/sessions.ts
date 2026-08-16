@@ -370,7 +370,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
     if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return c.json({ error: "json body must be an object" }, 400);
     const body = raw as {
       initial_prompt?: unknown; workdir?: unknown; name?: unknown; artifact_id?: unknown;
-      runtime?: unknown; model?: unknown; effort?: unknown; worktree?: unknown;
+      runtime?: unknown; model?: unknown; effort?: unknown; worktree?: unknown; inherit_worktree_from?: unknown;
     };
     if (typeof body.initial_prompt !== "string" || body.initial_prompt.trim() === "") return c.json({ error: "initial_prompt must be a non-empty string" }, 400);
     if (typeof body.workdir !== "string") return c.json({ error: "workdir must be a string" }, 400);
@@ -390,6 +390,8 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       if (typeof value.branch_name !== "string" || typeof value.worktree_subdir !== "string" || (value.base_ref !== undefined && typeof value.base_ref !== "string")) return c.json({ error: "worktree fields are invalid" }, 400);
       worktree = { branch_name: value.branch_name, worktree_subdir: value.worktree_subdir, ...(typeof value.base_ref === "string" ? { base_ref: value.base_ref } : {}) };
     }
+    if (body.inherit_worktree_from !== undefined && (typeof body.inherit_worktree_from !== "string" || body.inherit_worktree_from.trim() === "")) return c.json({ error: "inherit_worktree_from must be a non-empty session id" }, 400);
+    if (worktree && body.inherit_worktree_from !== undefined) return c.json({ error: "worktree cannot be combined with inherit_worktree_from" }, 400);
     const startSpec: ResumableSessionStartSpec = {
       initial_prompt: body.initial_prompt,
       workdir: resolve(body.workdir),
@@ -399,6 +401,7 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       ...(typeof body.model === "string" ? { model: body.model } : {}),
       ...(typeof body.effort === "string" ? { effort: body.effort } : {}),
       ...(worktree ? { worktree } : {}),
+      ...(typeof body.inherit_worktree_from === "string" ? { inherit_worktree_from: body.inherit_worktree_from as import("../../session/types").SessionId } : {}),
     };
     try {
       const result = await manager.ensureResumableSession(rawKey as ResumableSessionKey, startSpec);

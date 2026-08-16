@@ -28,6 +28,7 @@ export const createProductionTopologyServices = (dependencies: ProductionService
     return compiled.value;
   },
   load_prompt_template: dependencies.load_prompt_template,
+  async find_external_reference(execution_id) { return (await dependencies.executions.find_external(execution_id))?.external_reference ?? null; },
   async start_stage(input) {
     await dependencies.stages.start({ id: input.stage_instance_id, run_id: input.run_id, stage_key: input.stage.stage_key, stage_type: input.stage.stage_type,
       stage_contract: input.stage as unknown as import("../domain/primitives").JsonValue, attempt_root_workflow_id: input.attempt_root_workflow_id,

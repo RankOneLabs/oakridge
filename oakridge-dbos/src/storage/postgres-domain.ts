@@ -739,16 +739,17 @@ export class PostgresExecutionProjectionRepository implements ExecutionProjectio
          unit_parameters = EXCLUDED.unit_parameters,
          input_artifacts = EXCLUDED.input_artifacts,
          updated_at = now()`,
-      [request.execution_id, execution_workflow_id, request.stage_instance_id, request.unit_id, request.executor_type, parameters, request.inputs],
+      [request.execution_id, execution_workflow_id, request.stage_instance_id, request.unit_id, request.executor_type,
+        JSON.stringify(parameters), JSON.stringify(request.inputs)],
     );
   }
 
   async attach_external(execution_id: ExecutionId, reference: ExternalExecutionReference): Promise<void> {
-    await this.sql.query("UPDATE oakridge.executor_projection SET external_reference = $2::jsonb, updated_at = now() WHERE execution_id = $1", [execution_id, reference]);
+    await this.sql.query("UPDATE oakridge.executor_projection SET external_reference = $2::jsonb, updated_at = now() WHERE execution_id = $1", [execution_id, JSON.stringify(reference)]);
   }
 
   async record_terminal(execution_id: ExecutionId, observation: ExecutorTerminalObservation): Promise<void> {
-    await this.sql.query("UPDATE oakridge.executor_projection SET terminal_observation = $2::jsonb, updated_at = now() WHERE execution_id = $1", [execution_id, observation]);
+    await this.sql.query("UPDATE oakridge.executor_projection SET terminal_observation = $2::jsonb, updated_at = now() WHERE execution_id = $1", [execution_id, JSON.stringify(observation)]);
   }
 
   async find_external(execution_id: ExecutionId): Promise<{ readonly executor_type: string; readonly external_reference: ExternalExecutionReference } | null> {

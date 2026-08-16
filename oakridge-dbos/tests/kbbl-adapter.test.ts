@@ -19,13 +19,15 @@ test("kbbl adapter derives a stable session key from execution and function iden
     stage_instance_id: "stage-1" as StageInstanceId,
     unit_id: "unit-1" as UnitId,
     executor_type: "delegated_session",
-    resolved_config: { runtime: "claude-code", rendered_prompt: "Build", workdir: "/repo", session_name: "builder", model: null, effort: null, artifact_id: null },
+    resolved_config: { runtime: "claude-code", rendered_prompt: "Build", workdir: "/repo", session_name: "builder", model: null, effort: null, artifact_id: null,
+      worktree: { branchName: "cohort/stage-1/unit-1", worktreeSubdir: "stage-1/unit-1", baseRef: "epic/test" } },
     inputs: [],
     declared_outputs: [],
   };
   expect(await adapter.start_or_attach(request)).toEqual({ kind: "kbbl_session", session_id: "session-1" });
   expect(calls[0]?.url).toEndWith("/sessions/resumable/execution-1%3Aexecutor-step-v1");
-  expect(calls[0]?.body).toEqual({ initial_prompt: "Build", workdir: "/repo", name: "builder", runtime: "claude-code" });
+  expect(calls[0]?.body).toEqual({ initial_prompt: "Build", workdir: "/repo", name: "builder", runtime: "claude-code",
+    worktree: { branch_name: "cohort/stage-1/unit-1", worktree_subdir: "stage-1/unit-1", base_ref: "epic/test" } });
 });
 
 test("kbbl adapter observes terminal mechanism state without completing an Oakridge stage", async () => {
@@ -46,6 +48,21 @@ test("kbbl adapter observes terminal mechanism state without completing an Oakri
     inputs: [], declared_outputs: [],
   });
   expect(await adapter.observe_terminal(executionId)).toEqual({ kind: "succeeded", metadata: { session_id: "session-1", exit_code: 0 } });
+});
+
+test("kbbl adapter requests a fresh session inheriting the producer workspace", async () => {
+  let body: unknown = null;
+  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl.test", executor_function_identity: "assessor-v1", fetch: async (_input, init) => {
+    body = JSON.parse(String(init?.body));
+    return Response.json({ kind: "started", session: { sid: "assessment-session", status: "live", endReason: null } }, { status: 201 });
+  } });
+  await adapter.start_or_attach({
+    execution_id: "assessment-execution" as ExecutionId, stage_instance_id: "assessment-stage" as StageInstanceId, unit_id: "web" as UnitId,
+    executor_type: "delegated_session", resolved_config: { runtime: "claude-code", rendered_prompt: "Assess", workdir: "/repo", session_name: "assessor", model: null, effort: null },
+    inputs: [], declared_outputs: [], workspace_source: { execution_id: "build-execution" as ExecutionId,
+      external_reference: { kind: "kbbl_session", session_id: "build-session" } },
+  });
+  expect(body).toEqual({ initial_prompt: "Assess", workdir: "/repo", name: "assessor", runtime: "claude-code", inherit_worktree_from: "build-session" });
 });
 
 test("kbbl adapter delivers workflow input through a persisted session", async () => {
