@@ -18,7 +18,7 @@ import type { FinalMergePolicy, RepositoryInputDraft } from "../../types";
 import { repositoryDraftFromProject, validateRepositoryInputs } from "../../repository-inputs";
 import { RoleModelPicker } from "../molecules/RoleModelPicker";
 import { initialSelectionForRole } from "../../lib/runtime-selection";
-import { buildEpicProfile } from "../../lib/launch-config";
+import { buildEpicProfile, buildRunExecutionContext } from "../../lib/launch-config";
 import { selectRunLaunchIdentity, type PendingRunLaunchIdentity } from "../../lib/run-launch-idempotency";
 import { RepositoryLaunchFields } from "../molecules/RepositoryLaunchFields";
 import { Button } from "../atoms/Button";
@@ -119,22 +119,19 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
     if (!epicProfile) { setError("Epic title must include a letter or number."); return; }
     if (!briefNotes.trim()) { setError("Brief notes are required."); return; }
     if (!coreUrl) { setError("oakridge core URL is not configured."); return; }
+    const contextResult = buildRunExecutionContext({
+      brief_notes: briefNotes.trim(),
+      repositories: normalizedRepositories.map(({ key, path }) => ({ key, path })),
+      oakridge_url: coreUrl,
+      planner: plannerSelection,
+      worker: workerSelection,
+    });
+    if (!contextResult.ok) { setError(contextResult.error.detail); return; }
     try {
       const request = {
         workflow_def_id: workflowDefId,
         project_id: projectId || null,
-        context: {
-          brief_notes: briefNotes.trim(),
-          repositories: normalizedRepositories.map(({ key, path }) => ({ key, path })),
-          worktree_path: normalizedRepositories[0].path,
-          oakridge_url: coreUrl,
-          planner_runtime: plannerSelection.runtime,
-          planner_model: plannerSelection.model,
-          ...(plannerSelection.effort ? { planner_effort: plannerSelection.effort } : {}),
-          worker_runtime: workerSelection.runtime,
-          worker_model: workerSelection.model,
-          ...(workerSelection.effort ? { worker_effort: workerSelection.effort } : {}),
-        },
+        context: contextResult.value,
         epic_profile: epicProfile,
       };
       pendingLaunch.current = selectRunLaunchIdentity(pendingLaunch.current, request, () => crypto.randomUUID());

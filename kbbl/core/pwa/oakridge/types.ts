@@ -39,10 +39,10 @@ export interface CreateRunContext {
   oakridge_url: string;
   planner_runtime: RuntimeId;
   planner_model: string;
-  planner_effort?: string;
+  planner_effort: string | null;
   worker_runtime: RuntimeId;
   worker_model: string;
-  worker_effort?: string;
+  worker_effort: string | null;
 }
 
 export type RepositoryKey = string & { readonly __brand: "RepositoryKey" };

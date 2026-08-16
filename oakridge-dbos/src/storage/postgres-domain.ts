@@ -844,16 +844,16 @@ export class PostgresCancellationTargetRepository implements CancellationTargetR
       const waits = await transaction.query<{ readonly kind: "gate" | "handoff"; readonly workflow_id: string }>(
         `SELECT 'gate'::text AS kind, event.workflow_uuid AS workflow_id
          FROM dbos.workflow_events event
-         JOIN oakridge.artifact artifact ON artifact.id = ((event.value::jsonb)->>'artifact_revision_id')::uuid
+         JOIN oakridge.artifact artifact ON artifact.id = (COALESCE((event.value::jsonb)->'json', event.value::jsonb)->>'artifact_revision_id')::uuid
          JOIN oakridge.stage_instance stage ON stage.id = artifact.stage_instance_id
-         WHERE event.key = 'gate-state' AND (event.value::jsonb)->>'status' = 'pending'
+         WHERE event.key = 'gate-state' AND COALESCE((event.value::jsonb)->'json', event.value::jsonb)->>'status' = 'pending'
            AND artifact.lifecycle_state = 'current' AND stage.attempt_root_workflow_id = $1
          UNION ALL
          SELECT 'handoff'::text AS kind, event.workflow_uuid AS workflow_id
          FROM dbos.workflow_events event
-         JOIN oakridge.artifact artifact ON artifact.id = ((event.value::jsonb)->>'artifact_id')::uuid
+         JOIN oakridge.artifact artifact ON artifact.id = (COALESCE((event.value::jsonb)->'json', event.value::jsonb)->>'artifact_id')::uuid
          JOIN oakridge.stage_instance stage ON stage.id = artifact.stage_instance_id
-         WHERE event.key = 'handoff-state' AND (event.value::jsonb)->>'status' IN ('awaiting_downstream', 'awaiting_external')
+         WHERE event.key = 'handoff-state' AND COALESCE((event.value::jsonb)->'json', event.value::jsonb)->>'status' IN ('awaiting_downstream', 'awaiting_external')
            AND artifact.lifecycle_state = 'current' AND stage.attempt_root_workflow_id = $1`, [root_workflow_id]);
       const rows = await transaction.query<{ readonly id: string }>(
         `UPDATE oakridge.artifact artifact

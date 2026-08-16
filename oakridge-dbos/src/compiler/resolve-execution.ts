@@ -45,27 +45,14 @@ export const resolveBindingValue = (binding: SlotBinding, environment: BindingEn
     const value = binding.path == null ? source : pointer(source, binding.path);
     return value === undefined ? err({ operation: "resolve_execution", detail: `input pointer '${binding.path}' not found` }) : ok(value);
   }
-  const resolved = resolveBinding(binding, environment);
-  return resolved.ok ? ok(resolved.value) : resolved;
-};
-
-export const resolveBinding = (binding: SlotBinding, environment: BindingEnvironment): Result<string, ResolveExecutionError> => {
-  if (binding.from === "literal") return ok(binding.value);
-  if (binding.from === "input") {
-    const input = environment.inputs[binding.input_name];
-    if (!input) return err({ operation: "resolve_execution", detail: `input '${binding.input_name}' not found` });
-    const source = inputBindingValue(input);
-    const value = binding.path == null ? source : pointer(source, binding.path);
-    return value === undefined ? err({ operation: "resolve_execution", detail: `input pointer '${binding.path}' not found` }) : ok(stringify(value));
-  }
   if (binding.from === "context") {
     const value = pointer(environment.context, binding.path);
-    return value === undefined ? err({ operation: "resolve_execution", detail: `context pointer '${binding.path}' not found` }) : ok(stringify(value));
+    return value === undefined ? err({ operation: "resolve_execution", detail: `context pointer '${binding.path}' not found` }) : ok(value);
   }
   if (binding.from === "item") {
     if (environment.item === null) return err({ operation: "resolve_execution", detail: "item binding used outside fan-out" });
     const value = pointer(environment.item, binding.path);
-    return value === undefined ? err({ operation: "resolve_execution", detail: `item pointer '${binding.path}' not found` }) : ok(stringify(value));
+    return value === undefined ? err({ operation: "resolve_execution", detail: `item pointer '${binding.path}' not found` }) : ok(value);
   }
   if (environment.item === null) return err({ operation: "resolve_execution", detail: "context lookup used outside fan-out" });
   const itemKey = pointer(environment.item, binding.item_key_path);
@@ -75,12 +62,19 @@ export const resolveBinding = (binding: SlotBinding, environment: BindingEnviron
   const matches = collection.filter((entry) => pointer(entry, binding.collection_key_path) === itemKey);
   if (matches.length !== 1) return err({ operation: "resolve_execution", detail: `context lookup key '${itemKey}' matched ${matches.length} entries` });
   const value = pointer(matches[0] as JsonValue, binding.value_path);
-  return value === undefined ? err({ operation: "resolve_execution", detail: `context lookup value '${binding.value_path}' not found` }) : ok(stringify(value));
+  return value === undefined ? err({ operation: "resolve_execution", detail: `context lookup value '${binding.value_path}' not found` }) : ok(value);
+};
+
+export const resolveBinding = (binding: SlotBinding, environment: BindingEnvironment): Result<string, ResolveExecutionError> => {
+  const value = resolveBindingValue(binding, environment);
+  return value.ok ? ok(stringify(value.value)) : value;
 };
 
 const resolveBindable = (value: Bindable | undefined, environment: BindingEnvironment): Result<string | null, ResolveExecutionError> => {
   if (value === undefined) return ok(null);
-  return typeof value === "string" ? ok(value) : resolveBinding(value, environment);
+  if (typeof value === "string") return ok(value);
+  const resolved = resolveBindingValue(value, environment);
+  return resolved.ok ? ok(resolved.value === null ? null : stringify(resolved.value)) : resolved;
 };
 
 export const renderPrompt = (template: string, slots: Readonly<Record<string, string>>): Result<string, ResolveExecutionError> => {

@@ -7,8 +7,8 @@ const request = (notes: string): CreateRunRequest => ({
   workflow_def_id: "definition-1", project_id: null,
   context: {
     brief_notes: notes, repositories: [{ key: "repo" as RepositoryKey, path: "/repo" }], worktree_path: "/repo",
-    oakridge_url: "http://oakridge", planner_runtime: "claude-code", planner_model: "sonnet",
-    worker_runtime: "claude-code", worker_model: "sonnet",
+    oakridge_url: "http://oakridge", planner_runtime: "claude-code", planner_model: "sonnet", planner_effort: null,
+    worker_runtime: "claude-code", worker_model: "sonnet", worker_effort: null,
   },
   epic_profile: {
     title: "Build it", slug: "build-it", final_merge_policy: "guarded",
