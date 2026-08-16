@@ -113,12 +113,12 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
     if (!response.ok && response.status !== 404) throw new Error(`kbbl cancellation failed (${response.status}): ${await response.text()}`);
   }
 
-  async request_revision(execution_id: ExecutionId, delivery_key: string, feedback: string, external_reference?: ExternalExecutionReference): Promise<void> {
+  async deliver_input(execution_id: ExecutionId, delivery_key: string, input: string, external_reference?: ExternalExecutionReference): Promise<void> {
     const sessionId = external_reference?.kind === "kbbl_session" ? external_reference.session_id : this.sessionsByExecution.get(execution_id);
     if (!sessionId) throw new Error(`no kbbl session is associated with execution ${execution_id}`);
     const response = await this.fetch(`${this.options.base_url}/sessions/resumable/${encodeURIComponent(sessionId)}/input/${encodeURIComponent(delivery_key)}`, {
-      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: feedback }),
+      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: input }),
     });
-    if (!response.ok) throw new Error(`kbbl revision delivery failed (${response.status}): ${await response.text()}`);
+    if (!response.ok) throw new Error(`kbbl input delivery failed (${response.status}): ${await response.text()}`);
   }
 }

@@ -37,6 +37,6 @@ export interface ExecutorAdapter {
   readonly executor_type: string;
   start_or_attach(request: ExecutionRequest): Promise<ExternalExecutionReference>;
   observe_terminal(execution_id: ExecutionId, external_reference?: ExternalExecutionReference): Promise<ExecutorTerminalObservation>;
-  request_revision(execution_id: ExecutionId, delivery_key: string, feedback: string, external_reference?: ExternalExecutionReference): Promise<void>;
+  deliver_input(execution_id: ExecutionId, delivery_key: string, input: string, external_reference?: ExternalExecutionReference): Promise<void>;
   cancel_or_fence(execution_id: ExecutionId, external_reference?: ExternalExecutionReference): Promise<void>;
 }

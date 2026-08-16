@@ -750,6 +750,15 @@ export class PostgresExecutionProjectionRepository implements ExecutionProjectio
   async record_terminal(execution_id: ExecutionId, observation: ExecutorTerminalObservation): Promise<void> {
     await this.sql.query("UPDATE oakridge.executor_projection SET terminal_observation = $2::jsonb, updated_at = now() WHERE execution_id = $1", [execution_id, observation]);
   }
+
+  async find_external(execution_id: ExecutionId): Promise<{ readonly executor_type: string; readonly external_reference: ExternalExecutionReference } | null> {
+    const rows = await this.sql.query<{ readonly executor_type: string; readonly external_reference: ExternalExecutionReference | null }>(
+      "SELECT executor_type, external_reference FROM oakridge.executor_projection WHERE execution_id = $1",
+      [execution_id],
+    );
+    const row = rows[0];
+    return row?.external_reference ? { executor_type: row.executor_type, external_reference: row.external_reference } : null;
+  }
 }
 
 export class PostgresRerunTargetRepository implements RerunTargetRepository {

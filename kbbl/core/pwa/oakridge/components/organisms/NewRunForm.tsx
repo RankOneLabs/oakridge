@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   defaultRuntimeIdForConfig,
   runtimeDescriptorsForConfig,
@@ -19,6 +19,7 @@ import { repositoryDraftFromProject, validateRepositoryInputs } from "../../repo
 import { RoleModelPicker } from "../molecules/RoleModelPicker";
 import { initialSelectionForRole } from "../../lib/runtime-selection";
 import { buildEpicProfile } from "../../lib/launch-config";
+import { selectRunLaunchIdentity, type PendingRunLaunchIdentity } from "../../lib/run-launch-idempotency";
 import { RepositoryLaunchFields } from "../molecules/RepositoryLaunchFields";
 import { Button } from "../atoms/Button";
 import { FeedbackMessage } from "../atoms/FeedbackMessage";
@@ -36,6 +37,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
   const projectsQuery = useProjects();
   const defsQuery = useWorkflowDefs();
   const createRun = useCreateRun();
+  const pendingLaunch = useRef<PendingRunLaunchIdentity | null>(null);
 
   const serverConfig = useServerConfig();
   const runtimeDescriptors = useMemo(() => runtimeDescriptorsForConfig(serverConfig), [serverConfig]);
@@ -118,7 +120,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
     if (!briefNotes.trim()) { setError("Brief notes are required."); return; }
     if (!coreUrl) { setError("oakridge core URL is not configured."); return; }
     try {
-      const result = await createRun.mutateAsync({
+      const request = {
         workflow_def_id: workflowDefId,
         project_id: projectId || null,
         context: {
@@ -134,7 +136,10 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
           ...(workerSelection.effort ? { worker_effort: workerSelection.effort } : {}),
         },
         epic_profile: epicProfile,
-      });
+      };
+      pendingLaunch.current = selectRunLaunchIdentity(pendingLaunch.current, request, crypto.randomUUID);
+      const result = await createRun.mutateAsync({ request, idempotency_key: pendingLaunch.current.idempotency_key });
+      pendingLaunch.current = null;
       onCreated(result.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create run");

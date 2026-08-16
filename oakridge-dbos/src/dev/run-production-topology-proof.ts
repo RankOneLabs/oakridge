@@ -36,7 +36,7 @@ const adapter: ExecutorAdapter = {
   executor_type: "delegated_session",
   async start_or_attach() { return { kind: "none" }; },
   observe_terminal(executionId) { return new Promise((resolve) => terminalResolvers.set(executionId, () => resolve({ kind: "succeeded", metadata: {} }))); },
-  async request_revision() {},
+  async deliver_input() {},
   async cancel_or_fence(executionId) { terminalResolvers.get(executionId)?.(); },
 };
 
