@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 
 import { DBOS, DBOSClient } from "@dbos-inc/dbos-sdk";
 
@@ -19,6 +19,7 @@ import { PostgresWorkflowDefinitionRepository } from "./storage/postgres-workflo
 import { PostgresProjectRepository } from "./storage/postgres-projects";
 import { GitProjectRepositoryIdentityResolver } from "./runtime/project-identity";
 import { dispatchRunLaunches } from "./runtime/run-launch-notifications";
+import { createPromptTemplateLoader } from "./runtime/prompt-template";
 import { DbosCollaborationPingClient } from "./runtime/collaboration-ping";
 import { PgPostgresExecutor } from "./storage/sql-executor";
 import { registerArtifactLifecycleObserver, registerExecutionProjectionObserver, registerExecutorAdapter } from "./workflows/executor-topology";
@@ -64,6 +65,7 @@ const dbosRuns = new DbosStageRerunClient(client);
 const dbosCancellation = new DbosCancellationClient(client);
 const collaborationPings = new DbosCollaborationPingClient(client, applicationVersion);
 const cancellation = { attempts, targets: cancellationTargets, dbos: dbosCancellation, now };
+const promptTemplates = createPromptTemplateLoader(resolve(import.meta.dir, "../../oakridge-core/prompts"));
 
 registerDbosTransportClient(client);
 registerExecutorAdapter(new KbblExecutorAdapter({ base_url: kbblBaseUrl, executor_function_identity: applicationVersion }));
@@ -75,7 +77,7 @@ registerCancellationControlServices({
   finish_started_stages: (root, at, reason) => cancellationTargets.finish_started_stages(root, at, reason),
 });
 registerProductionTopologyServices(createProductionTopologyServices({ definitions, runs, attempts, stages, executions, rerun_targets: rerunTargets, resume_artifacts: resumeArtifacts,
-  load_prompt_template: (path) => readFile(path, "utf8") }));
+  load_prompt_template: (path) => promptTemplates.load(path) }));
 
 await seedBuiltins(definitions);
 await DBOS.launch();
