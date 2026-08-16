@@ -262,6 +262,24 @@ test("execution projection records only domain links and optional executor metad
   expect(sql.calls.some((call) => call.statement.includes("status"))).toBe(false);
 });
 
+test("execution projection serializes JSON arrays and objects before the PostgreSQL boundary", async () => {
+  const sql = new StubSql([]);
+  const repository = new PostgresExecutionProjectionRepository(sql);
+  const inputs = [{ artifact_id: "artifact-1" as ArtifactId, artifact_type: "dev.spec_analysis", output_name: "spec_analysis", unit_id: "0" as UnitId, body: { findings: [] } }];
+  await repository.record({
+    execution_id: "execution" as ExecutionId,
+    stage_instance_id: "stage" as StageInstanceId,
+    unit_id: "0" as UnitId,
+    executor_type: "delegated_session",
+    resolved_config: {},
+    inputs,
+    declared_outputs: [],
+  }, "root:stage:plan_writer:unit:0", { repository_key: "web" });
+
+  expect(sql.calls[0]?.parameters[5]).toBe(JSON.stringify({ repository_key: "web" }));
+  expect(sql.calls[0]?.parameters[6]).toBe(JSON.stringify(inputs));
+});
+
 test("workflow attempts persist DBOS fork lineage separately from the logical run", async () => {
   const sql = new StubSql([]);
   const repository = new PostgresWorkflowAttemptRepository(sql);

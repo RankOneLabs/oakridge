@@ -20,6 +20,7 @@ export interface ResumableSessionStartSpec {
     readonly worktree_subdir: string;
     readonly base_ref?: string;
   };
+  readonly inherit_worktree_from?: SessionId;
 }
 
 export interface ResumableSessionClaim {

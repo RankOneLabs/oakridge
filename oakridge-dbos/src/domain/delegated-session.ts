@@ -66,5 +66,6 @@ export interface ResolvedExecutorConfig {
   readonly session_name: string;
   readonly model: string | null;
   readonly effort: string | null;
+  readonly worktree?: WorktreeIdentity;
   readonly executor_options: JsonValue;
 }

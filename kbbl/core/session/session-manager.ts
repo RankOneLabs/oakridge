@@ -752,16 +752,20 @@ export class SessionManager {
     const resumeWorkdir = canResume ? predecessor.worktreePath : null;
     const resumeRuntimeSid = canResume ? predecessor.runtimeSid : null;
     const resumeParentSid = canResume ? predecessor.sid : null;
+    const inheritedWorkspace = startSpec.inherit_worktree_from
+      ? await this.lookupWorktreeForRemove(startSpec.inherit_worktree_from)
+      : null;
+    if (startSpec.inherit_worktree_from && !inheritedWorkspace) throw new Error(`kbbl: source session ${startSpec.inherit_worktree_from} has no retained worktree`);
     const session = await this.create({
       sessionId: claim.session_id,
-      workdir: resumeWorkdir ?? startSpec.workdir,
+      workdir: inheritedWorkspace?.worktreePath ?? resumeWorkdir ?? startSpec.workdir,
       name: startSpec.name,
       artifactId: startSpec.artifact_id as ArtifactId | undefined,
       runtime: startSpec.runtime,
       model: startSpec.model,
       effort: startSpec.effort,
       parentCcSid: resumeRuntimeSid ?? undefined,
-      parentOakridgeSid: resumeParentSid ?? undefined,
+      parentOakridgeSid: startSpec.inherit_worktree_from ?? resumeParentSid ?? undefined,
       worktreeIdentity: startSpec.worktree ? {
         branchName: startSpec.worktree.branch_name,
         worktreeSubdir: startSpec.worktree.worktree_subdir,

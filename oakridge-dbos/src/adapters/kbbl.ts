@@ -9,6 +9,7 @@ interface KbblResolvedConfig {
   readonly model: string | null;
   readonly effort: string | null;
   readonly artifact_id: string | null;
+  readonly worktree: { readonly branchName: string; readonly worktreeSubdir: string; readonly baseRef?: string } | null;
 }
 
 interface KbblSessionSummary {
@@ -38,7 +39,15 @@ const parseResolvedConfig = (value: JsonValue): KbblResolvedConfig => {
   const model = typeof value.model === "string" ? value.model : null;
   const effort = typeof value.effort === "string" ? value.effort : null;
   const artifactId = typeof value.artifact_id === "string" ? value.artifact_id : null;
-  return { runtime, rendered_prompt: renderedPrompt, workdir, session_name: sessionName, model, effort, artifact_id: artifactId };
+  const rawWorktree = value.worktree;
+  let worktree: KbblResolvedConfig["worktree"] = null;
+  if (rawWorktree !== undefined) {
+    if (!isObject(rawWorktree) || typeof rawWorktree.branchName !== "string" || typeof rawWorktree.worktreeSubdir !== "string"
+      || (rawWorktree.baseRef !== undefined && typeof rawWorktree.baseRef !== "string")) throw new Error("kbbl resolved worktree config is invalid");
+    worktree = { branchName: rawWorktree.branchName, worktreeSubdir: rawWorktree.worktreeSubdir,
+      ...(typeof rawWorktree.baseRef === "string" ? { baseRef: rawWorktree.baseRef } : {}) };
+  }
+  return { runtime, rendered_prompt: renderedPrompt, workdir, session_name: sessionName, model, effort, artifact_id: artifactId, worktree };
 };
 
 const parseEnsureResponse = (value: unknown): EnsureSessionResponse => {
@@ -71,6 +80,13 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
 
   async start_or_attach(request: ExecutionRequest): Promise<ExternalExecutionReference> {
     const config = parseResolvedConfig(request.resolved_config);
+    const inheritedSessionId = request.workspace_source?.external_reference.kind === "kbbl_session"
+      ? request.workspace_source.external_reference.session_id : null;
+    // Definition-time validation should have caught this; failing here keeps the
+    // message actionable instead of surfacing as an opaque kbbl 400.
+    if (config.worktree && inheritedSessionId) {
+      throw new Error(`execution ${request.execution_id} resolves its own worktree and inherits one from ${inheritedSessionId}; these are mutually exclusive`);
+    }
     const sessionKey = `${request.execution_id}:${this.options.executor_function_identity}`;
     const response = await this.fetch(`${this.options.base_url}/sessions/resumable/${encodeURIComponent(sessionKey)}`, {
       method: "PUT",
@@ -83,6 +99,9 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
         ...(config.model ? { model: config.model } : {}),
         ...(config.effort ? { effort: config.effort } : {}),
         ...(config.artifact_id ? { artifact_id: config.artifact_id } : {}),
+        ...(config.worktree ? { worktree: { branch_name: config.worktree.branchName, worktree_subdir: config.worktree.worktreeSubdir,
+          ...(config.worktree.baseRef ? { base_ref: config.worktree.baseRef } : {}) } } : {}),
+        ...(inheritedSessionId ? { inherit_worktree_from: inheritedSessionId } : {}),
       }),
     });
     if (!response.ok) throw new Error(`kbbl ensure-session failed (${response.status}): ${await response.text()}`);
