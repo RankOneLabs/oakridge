@@ -906,13 +906,44 @@ impl UnitScheduler {
         // Serialize the check and external create across every scheduler instance
         // for this stage; the scheduler-local admission lock is not sufficient.
         let _launch_guard = self.shared_launch_lock.lock().await;
-        if self
+        let existing_session = self
             .live_sessions
             .lock()
             .unwrap()
-            .keys()
-            .any(|(stage_id, _)| *stage_id == self.ctx.stage_instance_id)
-        {
+            .iter()
+            .find(|((stage_id, _), _)| *stage_id == self.ctx.stage_instance_id)
+            .map(|(_, session)| session.clone());
+        if let Some(session) = existing_session {
+            // A duplicate coordinator can materialize the same units after the
+            // owner has launched them, temporarily replacing their durable rows
+            // with Pending state. Restore the one shared session as authority
+            // before acknowledging the duplicate delivery.
+            let external_ref = serde_json::to_string(&DelegatedExternalRef {
+                sid: session.sid,
+                worktree_path: session.worktree_path.clone(),
+                worktree_branch: session.worktree_branch.clone(),
+                worktree_base_ref: session.worktree_base_ref.clone(),
+            })?;
+            for unit in units {
+                queries::set_session_unit_external_ref(
+                    self.ctx.pool(),
+                    &self.ctx.stage_instance_id,
+                    &unit.unit_id,
+                    Some(external_ref.clone()),
+                    session.worktree_branch.clone(),
+                    session.worktree_path.clone(),
+                    session.worktree_base_ref.clone(),
+                )
+                .await?;
+                queries::set_session_unit_status(
+                    self.ctx.pool(),
+                    &self.ctx.stage_instance_id,
+                    &unit.unit_id,
+                    UnitStatus::Running,
+                    None,
+                )
+                .await?;
+            }
             return Ok(());
         }
         let persisted_units =

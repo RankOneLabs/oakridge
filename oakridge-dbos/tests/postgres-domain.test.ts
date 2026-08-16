@@ -76,6 +76,7 @@ test("workflow run creation atomically includes an optional Epic profile", async
   const result = await new PostgresWorkflowRunRepository(sql).create_with_initial_attempt({ ...launch, epic_profile: epic });
   expect(result.ok && result.value.epic_profile).toEqual(epic);
   expect(sql.calls[5]?.statement).toContain("INSERT INTO oakridge.epic_workflow_profile");
+  expect(sql.calls[5]?.parameters[6]).toBe(JSON.stringify(epic.repositories));
   expect(sql.calls[6]?.statement).toContain("INSERT INTO oakridge.workflow_attempt");
 });
 

@@ -68,7 +68,7 @@ test("final PR observation locks domain state and atomically preserves sibling r
   expect(sql.calls[0]?.statement).toContain("FOR UPDATE");
   expect(sql.calls[2]?.statement).toContain("jsonb_each(definition.definition->'graph'->'stages')");
   expect(sql.calls[3]?.statement).toContain("EXCLUDED.observed_at >");
-  const persistedRepositories = sql.calls[4]?.parameters[2] as EpicWorkflowProfile["repositories"];
+  const persistedRepositories = JSON.parse(sql.calls[4]?.parameters[2] as string) as EpicWorkflowProfile["repositories"];
   expect(persistedRepositories).toEqual([
     expect.objectContaining({ repository_key: "oakridge", final_merge_state: "merged", final_pull_request: expect.objectContaining({ number: 418 }) }),
     repository("kbbl", "merged"),

@@ -66,7 +66,7 @@ export class PostgresEpicWorkflowProfileRepository implements EpicWorkflowProfil
       `INSERT INTO oakridge.epic_workflow_profile
        (id, workflow_run_id, title, slug, lifecycle_state, final_merge_policy, repositories, created_at, updated_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::timestamptz,$9::timestamptz)`,
-      [profile.id, profile.workflow_run_id, profile.title, profile.slug, profile.lifecycle_state, profile.final_merge_policy, profile.repositories, profile.created_at, profile.updated_at],
+      [profile.id, profile.workflow_run_id, profile.title, profile.slug, profile.lifecycle_state, profile.final_merge_policy, JSON.stringify(profile.repositories), profile.created_at, profile.updated_at],
     );
   }
   async find_by_id(id: EpicWorkflowProfileId): Promise<EpicWorkflowProfile | null> {
@@ -239,7 +239,7 @@ export class PostgresFinalPullRequestRepository implements FinalPullRequestRepos
       `UPDATE oakridge.epic_workflow_profile
        SET lifecycle_state = $2, repositories = $3::jsonb, updated_at = $4::timestamptz
        WHERE id = $1`,
-      [profile.id, profile.lifecycle_state, profile.repositories, profile.updated_at]);
+      [profile.id, profile.lifecycle_state, JSON.stringify(profile.repositories), profile.updated_at]);
   }
 }
 

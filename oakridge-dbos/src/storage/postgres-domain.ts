@@ -254,7 +254,7 @@ export class PostgresWorkflowRunRepository implements WorkflowRunRepository {
               AND created_at = $8::timestamptz AND updated_at = $9::timestamptz AS matches
        FROM oakridge.epic_workflow_profile WHERE workflow_run_id = $1`,
       [input.run.id, profile.id, profile.title, profile.slug, profile.lifecycle_state, profile.final_merge_policy,
-        profile.repositories, profile.created_at, profile.updated_at]);
+        JSON.stringify(profile.repositories), profile.created_at, profile.updated_at]);
     return rows[0]?.matches === true;
   }
 
@@ -278,7 +278,7 @@ export class PostgresWorkflowRunRepository implements WorkflowRunRepository {
          (id, workflow_run_id, title, slug, lifecycle_state, final_merge_policy, repositories, created_at, updated_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::timestamptz,$9::timestamptz)`,
       [profile.id, profile.workflow_run_id, profile.title, profile.slug, profile.lifecycle_state,
-        profile.final_merge_policy, profile.repositories, profile.created_at, profile.updated_at]);
+        profile.final_merge_policy, JSON.stringify(profile.repositories), profile.created_at, profile.updated_at]);
   }
 
   async insert_launch(launch: WorkflowRunLaunch): Promise<void> {
