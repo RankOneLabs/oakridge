@@ -8,6 +8,7 @@ test("pending gates are projected directly from published DBOS events", async ()
   const executor: SqlExecutor = { query: async <Row>(statement: string) => { sql = statement; return [{ run_id: "run-1", stage_name: "build", stage_instance_id: "stage-1", unit_id: "web", artifact_revision_id: "artifact-1", gate_step: "artifact_approval", actions: ["approve", "request_revision"] }] as Row[]; } };
   const gates = await new PostgresOperatorProjectionRepository(executor).list_pending_gates();
   expect(sql).toContain("FROM dbos.workflow_events");
+  expect(sql).toContain("COALESCE((event.value::jsonb)->'json', event.value::jsonb)");
   expect(sql).toContain("artifact.lifecycle_state = 'current'");
   expect(gates).toEqual([expect.objectContaining({ id: "stage-1:web", gate_step: "artifact_approval", resume_actions: ["approve", "request_revision"] })]);
 });
@@ -36,7 +37,9 @@ test("application version inventory identifies old versions that still own gated
 });
 
 test("run detail derives stages and units from DBOS child workflows", async () => {
+  const statements: string[] = [];
   const executor: SqlExecutor = { query: async <Row>(sql: string) => {
+    statements.push(sql);
     if (sql.includes("FROM oakridge.workflow_run run")) return [{ id: "run-1", workflow_name: "dev-flow", root_workflow_id: "root-2", dbos_status: "PENDING", current_stage: "build", parked_count: "1", updated_at_epoch_ms: "1786737600000", archived: false }] as Row[];
     if (sql.includes("FROM oakridge.stage_instance stage JOIN")) return [{ stage_instance_id: "stage-1", name: "build", stage_type: "delegated_session", operator_role: null, dbos_status: "PENDING", has_pending_gate: true }] as Row[];
     if (sql.includes("stage-admission-state") && sql.includes("stage.run_id = $1")) return [{ stage_instance_id: "stage-1", unit_id: "web", params: { title: "Web" }, external_reference: { kind: "kbbl_session", session_id: "session-1" }, dbos_status: "PENDING", has_pending_gate: true, admission_required: true, admitted: false, admission_eligible: true, admission_blocked_by: [] }] as Row[];
@@ -45,6 +48,7 @@ test("run detail derives stages and units from DBOS child workflows", async () =
     return [{ stage_instance_id: "stage-1", id: "artifact-1", type_id: "dev.build_result", version: 1, label: "web" }] as Row[];
   } };
   const detail = await new PostgresOperatorProjectionRepository(executor).get_run("run-1" as WorkflowRunId);
+  expect(statements.filter((sql) => sql.includes("workflow_events")).every((sql) => sql.includes("->'json'"))).toBe(true);
   expect(detail).toEqual(expect.objectContaining({ current_attempt_root_workflow_id: "root-2", status: "parked",
     attempts: [expect.objectContaining({ root_workflow_id: "root-1", status: "failed" }), expect.objectContaining({ root_workflow_id: "root-2", forked_from_root_workflow_id: "root-1", status: "parked" })],
     epic_profile: expect.objectContaining({ id: "epic-1", lifecycle_state: "active" }), stages: [expect.objectContaining({ name: "build", status: "parked", delegated_kbbl_sid: "session-1", units: [expect.objectContaining({ unit_id: "web", status: "parked", admission_required: true, admitted: false, admission_eligible: true })] })] }));

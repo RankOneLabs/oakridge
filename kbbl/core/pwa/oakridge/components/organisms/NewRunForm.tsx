@@ -18,7 +18,7 @@ import type { FinalMergePolicy, RepositoryInputDraft } from "../../types";
 import { repositoryDraftFromProject, validateRepositoryInputs } from "../../repository-inputs";
 import { RoleModelPicker } from "../molecules/RoleModelPicker";
 import { initialSelectionForRole } from "../../lib/runtime-selection";
-import { buildEpicProfile } from "../../lib/launch-config";
+import { buildEpicProfile, buildRunExecutionContext } from "../../lib/launch-config";
 import { selectRunLaunchIdentity, type PendingRunLaunchIdentity } from "../../lib/run-launch-idempotency";
 import { RepositoryLaunchFields } from "../molecules/RepositoryLaunchFields";
 import { Button } from "../atoms/Button";
@@ -123,18 +123,13 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
       const request = {
         workflow_def_id: workflowDefId,
         project_id: projectId || null,
-        context: {
+        context: buildRunExecutionContext({
           brief_notes: briefNotes.trim(),
           repositories: normalizedRepositories.map(({ key, path }) => ({ key, path })),
-          worktree_path: normalizedRepositories[0].path,
           oakridge_url: coreUrl,
-          planner_runtime: plannerSelection.runtime,
-          planner_model: plannerSelection.model,
-          ...(plannerSelection.effort ? { planner_effort: plannerSelection.effort } : {}),
-          worker_runtime: workerSelection.runtime,
-          worker_model: workerSelection.model,
-          ...(workerSelection.effort ? { worker_effort: workerSelection.effort } : {}),
-        },
+          planner: plannerSelection,
+          worker: workerSelection,
+        }),
         epic_profile: epicProfile,
       };
       pendingLaunch.current = selectRunLaunchIdentity(pendingLaunch.current, request, () => crypto.randomUUID());
