@@ -10,7 +10,11 @@ OAKRIDGE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DBOS_ROOT="$OAKRIDGE_ROOT/oakridge-dbos"
 DBOS_HOST="${OAKRIDGE_DBOS_HOST:-127.0.0.1}"
 DBOS_PORT="${OAKRIDGE_DBOS_PORT:-8790}"
-DBOS_URL="http://${DBOS_HOST}:${DBOS_PORT}"
+DBOS_URL_HOST="$DBOS_HOST"
+if [[ "$DBOS_URL_HOST" == *:* ]] && [[ "$DBOS_URL_HOST" != \[*\] ]]; then
+  DBOS_URL_HOST="[$DBOS_URL_HOST]"
+fi
+DBOS_URL="http://${DBOS_URL_HOST}:${DBOS_PORT}"
 POSTGRES_CONTAINER="${OAKRIDGE_POSTGRES_CONTAINER:-oakridge-postgres}"
 POSTGRES_PORT="${OAKRIDGE_POSTGRES_PORT:-54329}"
 POSTGRES_IMAGE="${OAKRIDGE_POSTGRES_IMAGE:-postgres:16}"
@@ -29,9 +33,16 @@ for arg in "$@"; do
     if [[ -n "$arg" && "$arg" != -* ]]; then KBBL_DISPLAY_PORT="$arg"; KBBL_INTERNAL_PORT="$arg"; continue; fi
   fi
   if [ "$arg" = "--host" ]; then next_is_host=1
-  elif [[ "$arg" == --host=* ]]; then KBBL_DISPLAY_HOST="${arg#--host=}"
+  elif [[ "$arg" == --host=* ]]; then
+    value="${arg#--host=}"
+    if [ -z "$value" ]; then echo "oakridge: --host requires a non-empty value" >&2; exit 1; fi
+    KBBL_DISPLAY_HOST="$value"
   elif [ "$arg" = "--port" ]; then next_is_port=1
-  elif [[ "$arg" == --port=* ]]; then KBBL_DISPLAY_PORT="${arg#--port=}"; KBBL_INTERNAL_PORT="$KBBL_DISPLAY_PORT"
+  elif [[ "$arg" == --port=* ]]; then
+    value="${arg#--port=}"
+    if [ -z "$value" ]; then echo "oakridge: --port requires a non-empty value" >&2; exit 1; fi
+    KBBL_DISPLAY_PORT="$value"
+    KBBL_INTERNAL_PORT="$value"
   fi
 done
 
