@@ -44,6 +44,7 @@ function snap(over: Partial<SessionSnapshot>): SessionSnapshot {
     initialObservedModel: over.initialObservedModel ?? null,
     observedModel: over.observedModel ?? null,
     endReason: over.endReason ?? null,
+    exitCode: over.exitCode ?? null,
     successorSid: over.successorSid ?? null,
   };
 }

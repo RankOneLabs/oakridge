@@ -3,6 +3,7 @@ import type { OperatorApplicationVersionInventory, OperatorCohortLifecycle, Oper
 import type { SqlExecutor } from "./sql-executor";
 import { selectRunStatus, selectStageStatus } from "../operators/select-status";
 import type { EpicWorkflowProfile } from "../domain/epic";
+import type { StageOutcome } from "../domain/workflow";
 
 interface GateProjectionRow {
   readonly run_id: string;
@@ -24,9 +25,9 @@ export interface OperatorProjectionRepository {
   list_application_versions(): Promise<readonly OperatorApplicationVersionInventory[]>;
 }
 
-interface RunProjectionRow { readonly id: string; readonly workflow_name: string; readonly root_workflow_id: string; readonly dbos_status: string; readonly current_stage: string | null; readonly parked_count: string; readonly updated_at_epoch_ms: string; readonly archived: boolean }
-interface AttemptProjectionRow { readonly root_workflow_id: string; readonly forked_from_root_workflow_id: string | null; readonly dbos_status: string; readonly created_at: string; readonly parked_count: string }
-interface StageProjectionRow { readonly stage_instance_id: string; readonly name: string; readonly stage_type: string; readonly operator_role: string | null; readonly dbos_status: string; readonly has_pending_gate: boolean }
+interface RunProjectionRow { readonly id: string; readonly workflow_name: string; readonly root_workflow_id: string; readonly dbos_status: string; readonly current_stage: string | null; readonly parked_count: string; readonly updated_at_epoch_ms: string; readonly outcome: StageOutcome | null; readonly is_stuck: boolean; readonly archived: boolean }
+interface AttemptProjectionRow { readonly root_workflow_id: string; readonly forked_from_root_workflow_id: string | null; readonly dbos_status: string; readonly created_at: string; readonly parked_count: string; readonly outcome: StageOutcome | null }
+interface StageProjectionRow { readonly stage_instance_id: string; readonly name: string; readonly stage_type: string; readonly operator_role: string | null; readonly dbos_status: string; readonly has_pending_gate: boolean; readonly outcome: StageOutcome | null }
 interface UnitProjectionRow { readonly stage_instance_id: string; readonly unit_id: string; readonly params: OperatorStageUnit["params"]; readonly external_reference: { readonly kind?: string; readonly session_id?: string } | null; readonly dbos_status: string; readonly has_pending_gate: boolean; readonly admission_required: boolean; readonly admitted: boolean; readonly admission_eligible: boolean; readonly admission_blocked_by: readonly string[] }
 interface StageArtifactRow { readonly stage_instance_id: string; readonly id: string; readonly type_id: string; readonly version: number; readonly label: string | null }
 interface EpicProfileRow extends Omit<EpicWorkflowProfile, "id" | "workflow_run_id"> { readonly id: string; readonly workflow_run_id: string }
@@ -46,8 +47,23 @@ const decodeGate = (row: GateProjectionRow): OperatorParkedGate => ({
   pr_url: null,
 });
 
+/**
+ * How long a live run may make no recorded progress before the projection
+ * reports it stuck. Matches the Rust core's `stage_timeout_secs` default, which
+ * this backend replaced.
+ */
+export const DEFAULT_STALL_THRESHOLD_SECONDS = 3600;
+
+export interface OperatorProjectionOptions {
+  readonly stall_threshold_seconds?: number;
+}
+
 export class PostgresOperatorProjectionRepository implements OperatorProjectionRepository {
-  constructor(private readonly sql: SqlExecutor) {}
+  private readonly stallThresholdSeconds: number;
+
+  constructor(private readonly sql: SqlExecutor, options: OperatorProjectionOptions = {}) {
+    this.stallThresholdSeconds = options.stall_threshold_seconds ?? DEFAULT_STALL_THRESHOLD_SECONDS;
+  }
 
   async list_pending_gates(run_id?: WorkflowRunId): Promise<readonly OperatorParkedGate[]> {
     const rows = await this.sql.query<GateProjectionRow>(
@@ -84,11 +100,13 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
               current_stage.stage_key AS current_stage,
               COALESCE(gates.parked_count, 0)::text AS parked_count,
               GREATEST(root.updated_at, COALESCE(current_stage.updated_at_epoch_ms, 0))::text AS updated_at_epoch_ms,
+              root.outcome,
+              COALESCE(stuck.is_stuck, false) AS is_stuck,
               run.archived
        FROM oakridge.workflow_run run
        JOIN oakridge.workflow_definition definition ON definition.id = run.workflow_definition_id
        JOIN LATERAL (
-         SELECT attempt.root_workflow_id, status.status, status.updated_at
+         SELECT attempt.root_workflow_id, status.status, status.updated_at, attempt.outcome
          FROM oakridge.workflow_attempt attempt
          JOIN dbos.workflow_status status ON status.workflow_uuid = attempt.root_workflow_id
          WHERE attempt.run_id = run.id
@@ -102,6 +120,35 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
          ORDER BY stage.started_at DESC LIMIT 1
        ) current_stage ON true
        LEFT JOIN LATERAL (
+         SELECT root.outcome IS NULL AND (EXISTS (
+           -- A unit is parked waiting for an operator to authorise a rerun.
+           SELECT 1
+           FROM oakridge.stage_instance stage
+           JOIN dbos.workflow_events event
+             ON event.workflow_uuid = stage.coordinator_workflow_id AND event.key = 'stage-rerun-state'
+           CROSS JOIN LATERAL (SELECT COALESCE((event.value::jsonb)->'json', event.value::jsonb) AS value) rerun
+           WHERE stage.run_id = run.id AND stage.attempt_root_workflow_id = root.root_workflow_id
+             AND rerun.value->>'status' = 'waiting'
+         ) OR EXISTS (
+           -- A terminal observer died, so this unit's completion can never be
+           -- reported and its execution workflow waits forever.
+           SELECT 1
+           FROM oakridge.stage_instance stage
+           JOIN oakridge.executor_projection projection ON projection.stage_instance_id = stage.id
+           JOIN dbos.workflow_status observer
+             ON observer.workflow_uuid = projection.execution_workflow_id || ':terminal'
+           WHERE stage.run_id = run.id AND stage.attempt_root_workflow_id = root.root_workflow_id
+             AND observer.status IN ('ERROR', 'MAX_RECOVERY_ATTEMPTS_EXCEEDED')
+         ) OR (
+           -- Nothing has advanced this run for longer than the stall window.
+           -- Catches the stalls that produce no error and no rerun state at
+           -- all: a coordinator that stopped between steps, or a backend that
+           -- is not running to recover it.
+           GREATEST(root.updated_at, COALESCE(current_stage.updated_at_epoch_ms, 0))
+             < (extract(epoch FROM now()) - $2::double precision) * 1000
+         )) AS is_stuck
+       ) stuck ON true
+       LEFT JOIN LATERAL (
          SELECT count(*) AS parked_count
          FROM dbos.workflow_events event
          CROSS JOIN LATERAL (SELECT COALESCE((event.value::jsonb)->'json', event.value::jsonb) AS value) state
@@ -112,12 +159,12 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
        ) gates ON true
        WHERE ($1::boolean IS NULL OR run.archived = $1::boolean)
        ORDER BY root.updated_at DESC`,
-      [filter === "all" ? null : filter === "archived"],
+      [filter === "all" ? null : filter === "archived", this.stallThresholdSeconds],
     );
     return rows.map((row) => {
       const parked_count = Number(row.parked_count);
-      const status = selectRunStatus(row.dbos_status, parked_count);
-      return { id: row.id as WorkflowRunId, workflow_name: row.workflow_name, current_attempt_root_workflow_id: row.root_workflow_id, status, current_stage: row.current_stage, parked_count, updated_at: new Date(Number(row.updated_at_epoch_ms)).toISOString(), is_stuck: false, is_failed: status === "failed", archived: row.archived };
+      const status = selectRunStatus(row.dbos_status, parked_count, row.outcome);
+      return { id: row.id as WorkflowRunId, workflow_name: row.workflow_name, current_attempt_root_workflow_id: row.root_workflow_id, status, current_stage: row.current_stage, parked_count, updated_at: new Date(Number(row.updated_at_epoch_ms)).toISOString(), is_stuck: row.is_stuck, is_failed: status === "failed", archived: row.archived };
     });
   }
 
@@ -171,7 +218,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
     if (!summary) return null;
     const stageRows = await this.sql.query<StageProjectionRow>(
       `SELECT stage.id::text AS stage_instance_id, stage.stage_key AS name, stage.stage_type,
-              stage.stage_contract->>'operator_role' AS operator_role, status.status AS dbos_status,
+              stage.stage_contract->>'operator_role' AS operator_role, status.status AS dbos_status, stage.outcome,
               EXISTS (SELECT 1 FROM dbos.workflow_events event CROSS JOIN LATERAL (SELECT COALESCE((event.value::jsonb)->'json', event.value::jsonb) AS value) state JOIN oakridge.artifact artifact ON artifact.id = (state.value->>'artifact_revision_id')::uuid WHERE event.key = 'gate-state' AND state.value->>'status' = 'pending' AND artifact.lifecycle_state = 'current' AND state.value->>'stage_instance_id' = stage.id::text) AS has_pending_gate
        FROM oakridge.stage_instance stage JOIN dbos.workflow_status status ON status.workflow_uuid = stage.coordinator_workflow_id
        WHERE stage.run_id = $1 AND stage.attempt_root_workflow_id = $2 ORDER BY stage.started_at`, [id, summary.current_attempt_root_workflow_id]);
@@ -208,12 +255,12 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
       }));
       const artifacts: OperatorStageArtifact[] = artifactRows.filter((artifact) => artifact.stage_instance_id === stage.stage_instance_id).map((artifact) => ({ id: artifact.id as ArtifactId, type_id: artifact.type_id, version: artifact.version, label: artifact.label }));
       const delegated = units.find((unit) => unit.sid)?.sid ?? null;
-      return { stage_instance_id: stage.stage_instance_id as import("../domain/primitives").StageInstanceId, name: stage.name, type: stage.stage_type, operator_role: stage.operator_role, status: selectStageStatus(stage.dbos_status, stage.has_pending_gate), artifacts, delegated_kbbl_sid: delegated, worktree: null, units };
+      return { stage_instance_id: stage.stage_instance_id as import("../domain/primitives").StageInstanceId, name: stage.name, type: stage.stage_type, operator_role: stage.operator_role, status: selectStageStatus(stage.dbos_status, stage.has_pending_gate, stage.outcome), artifacts, delegated_kbbl_sid: delegated, worktree: null, units };
     });
     const profile = profileRows[0];
     const attemptRows = await this.sql.query<AttemptProjectionRow>(
       `SELECT attempt.root_workflow_id, attempt.forked_from_root_workflow_id,
-              status.status AS dbos_status, attempt.created_at::text,
+              status.status AS dbos_status, attempt.created_at::text, attempt.outcome,
               count(event.workflow_uuid) FILTER (WHERE COALESCE((event.value::jsonb)->'json', event.value::jsonb)->>'status' = 'pending' AND gate_artifact.lifecycle_state = 'current')::text AS parked_count
        FROM oakridge.workflow_attempt attempt
        JOIN dbos.workflow_status status ON status.workflow_uuid = attempt.root_workflow_id
@@ -222,11 +269,11 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
          AND COALESCE((event.value::jsonb)->'json', event.value::jsonb)->>'stage_instance_id' = stage.id::text
        LEFT JOIN oakridge.artifact gate_artifact ON gate_artifact.id = (COALESCE((event.value::jsonb)->'json', event.value::jsonb)->>'artifact_revision_id')::uuid
        WHERE attempt.run_id = $1
-       GROUP BY attempt.root_workflow_id, attempt.forked_from_root_workflow_id, status.status, attempt.created_at
+       GROUP BY attempt.root_workflow_id, attempt.forked_from_root_workflow_id, status.status, attempt.created_at, attempt.outcome
        ORDER BY attempt.created_at`, [id]);
     const attempts: OperatorWorkflowAttempt[] = attemptRows.map((attempt) => ({ root_workflow_id: attempt.root_workflow_id,
       forked_from_root_workflow_id: attempt.forked_from_root_workflow_id,
-      status: selectRunStatus(attempt.dbos_status, Number(attempt.parked_count)), created_at: attempt.created_at }));
+      status: selectRunStatus(attempt.dbos_status, Number(attempt.parked_count), attempt.outcome), created_at: attempt.created_at }));
     const epic_profile: EpicWorkflowProfile | null = profile ? {
       ...profile,
       id: profile.id as EpicWorkflowProfile["id"],

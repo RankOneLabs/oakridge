@@ -1,5 +1,14 @@
-import type { ExecutionRequest, ExecutorAdapter, ExecutorTerminalObservation, ExternalExecutionReference } from "../domain/execution";
+import type { ExecutionRequest, ExecutorAdapter, ExecutorObservationAttempt, ExecutorTerminalObservation, ExternalExecutionReference } from "../domain/execution";
 import type { ExecutionId, JsonValue } from "../domain/primitives";
+
+/**
+ * How long kbbl may hold one observation request open. Well under kbbl's own
+ * 255s socket deadline, so a poll always returns an answer rather than being
+ * severed mid-flight and burning the step's retry budget.
+ */
+const DEFAULT_OBSERVE_WAIT_MS = 25_000;
+
+const terminal = (observation: ExecutorTerminalObservation): ExecutorObservationAttempt => ({ kind: "terminal", observation });
 
 interface KbblResolvedConfig {
   readonly runtime: "claude-code" | "codex";
@@ -66,6 +75,7 @@ const parseEnsureResponse = (value: unknown): EnsureSessionResponse => {
 export interface KbblExecutorAdapterOptions {
   readonly base_url: string;
   readonly executor_function_identity: string;
+  readonly observe_wait_ms?: number;
   readonly fetch?: FetchLike;
 }
 
@@ -110,19 +120,27 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
     return { kind: "kbbl_session", session_id: ensured.session.sid };
   }
 
-  async observe_terminal(execution_id: ExecutionId, external_reference?: ExternalExecutionReference): Promise<ExecutorTerminalObservation> {
+  async observe_terminal(execution_id: ExecutionId, external_reference?: ExternalExecutionReference): Promise<ExecutorObservationAttempt> {
     const sessionId = external_reference?.kind === "kbbl_session" ? external_reference.session_id : this.sessionsByExecution.get(execution_id);
-    if (!sessionId) return { kind: "failed", code: "session_not_ensured", detail: `no kbbl session is associated with execution ${execution_id}` };
-    const response = await this.fetch(`${this.options.base_url}/sessions/resumable/${encodeURIComponent(sessionId)}/terminal`);
-    if (!response.ok) return { kind: "failed", code: "terminal_observation_failed", detail: `kbbl terminal observation failed (${response.status}): ${await response.text()}` };
+    if (!sessionId) return terminal({ kind: "failed", code: "session_not_ensured", detail: `no kbbl session is associated with execution ${execution_id}` });
+    const url = `${this.options.base_url}/sessions/resumable/${encodeURIComponent(sessionId)}/terminal?wait_ms=${this.options.observe_wait_ms ?? DEFAULT_OBSERVE_WAIT_MS}`;
+    const response = await this.fetch(url);
+    if (response.status === 202) return { kind: "pending" };
+    if (!response.ok) return terminal({ kind: "failed", code: "terminal_observation_failed", detail: `kbbl terminal observation failed (${response.status}): ${await response.text()}` });
     const raw = await response.json();
     if (typeof raw !== "object" || raw === null || !("session" in raw) || typeof raw.session !== "object" || raw.session === null || !("endReason" in raw.session)) {
-      return { kind: "failed", code: "invalid_terminal_response", detail: "kbbl returned an invalid terminal response" };
+      return terminal({ kind: "failed", code: "invalid_terminal_response", detail: "kbbl returned an invalid terminal response" });
     }
-    if (raw.session.endReason === "user_closed") return { kind: "cancelled", detail: "kbbl session was closed" };
+    if (raw.session.endReason === "user_closed") return terminal({ kind: "cancelled", detail: "kbbl session was closed" });
     const exitCode = "exit_code" in raw && typeof raw.exit_code === "number" ? raw.exit_code : null;
-    if (exitCode !== null && exitCode !== 0) return { kind: "failed", code: "executor_exit_nonzero", detail: `kbbl runtime exited with code ${exitCode}` };
-    return { kind: "succeeded", metadata: { session_id: sessionId, exit_code: exitCode } };
+    // Success must be positively established. A session whose exit code kbbl
+    // cannot report — it crashed before writing one, or predates exit-code
+    // reconstruction — is reported as failed, not assumed clean: treating an
+    // unknown code as success strands the execution waiting for artifacts a
+    // dead runtime will never emit, with nothing visible to the operator.
+    if (exitCode === null) return terminal({ kind: "failed", code: "exit_unknown", detail: `kbbl session ${sessionId} ended without a recorded exit code` });
+    if (exitCode !== 0) return terminal({ kind: "failed", code: "executor_exit_nonzero", detail: `kbbl runtime exited with code ${exitCode}` });
+    return terminal({ kind: "succeeded", metadata: { session_id: sessionId, exit_code: exitCode } });
   }
 
   async cancel_or_fence(execution_id: ExecutionId, external_reference?: ExternalExecutionReference): Promise<void> {

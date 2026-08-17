@@ -35,10 +35,21 @@ export type ExecutorTerminalObservation =
   | { readonly kind: "failed"; readonly code: string; readonly detail: string }
   | { readonly kind: "cancelled"; readonly detail: string | null };
 
+/**
+ * One bounded attempt to observe an execution's terminal state. Adapters wait
+ * only as long as their transport safely allows and report `pending` when the
+ * executor is still running, so the observer workflow — not a single long-lived
+ * HTTP request — owns the unbounded wait. `ExecutorTerminalObservation` stays
+ * terminal-only: contract evaluation and projections never see `pending`.
+ */
+export type ExecutorObservationAttempt =
+  | { readonly kind: "pending" }
+  | { readonly kind: "terminal"; readonly observation: ExecutorTerminalObservation };
+
 export interface ExecutorAdapter {
   readonly executor_type: string;
   start_or_attach(request: ExecutionRequest): Promise<ExternalExecutionReference>;
-  observe_terminal(execution_id: ExecutionId, external_reference?: ExternalExecutionReference): Promise<ExecutorTerminalObservation>;
+  observe_terminal(execution_id: ExecutionId, external_reference?: ExternalExecutionReference): Promise<ExecutorObservationAttempt>;
   deliver_input(execution_id: ExecutionId, delivery_key: string, input: string, external_reference?: ExternalExecutionReference): Promise<void>;
   cancel_or_fence(execution_id: ExecutionId, external_reference?: ExternalExecutionReference): Promise<void>;
 }

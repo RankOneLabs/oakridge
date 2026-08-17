@@ -62,6 +62,7 @@ export interface WorkflowAttemptRepository {
   insert(attempt: WorkflowAttempt): Promise<void>;
   find_by_root_workflow_id(root_workflow_id: string): Promise<WorkflowAttempt | null>;
   list_for_run(run_id: WorkflowRunId): Promise<readonly WorkflowAttempt[]>;
+  finish(root_workflow_id: string, ended_at: string, outcome: StageOutcome): Promise<void>;
 }
 
 export interface StartStageInstance {

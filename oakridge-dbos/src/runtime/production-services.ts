@@ -35,6 +35,7 @@ export const createProductionTopologyServices = (dependencies: ProductionService
       coordinator_workflow_id: input.coordinator_workflow_id, started_at: input.started_at });
   },
   async finish_stage(input) { await dependencies.stages.finish(input.stage_instance_id, input.ended_at, input.outcome); },
+  async finish_run(input) { await dependencies.attempts.finish(input.attempt_root_workflow_id, input.ended_at, input.outcome); },
   async record_execution(input) { await dependencies.executions.record(input.request, input.execution_workflow_id, input.parameters); },
   async replace_execution_projection(input) { await dependencies.rerun_targets.replace_execution_workflow(input.execution_id, input.replacement_workflow_id); },
   load_resume_artifacts(run_id, stage_keys) { return dependencies.resume_artifacts.list_latest_for_stages(run_id, stage_keys); },

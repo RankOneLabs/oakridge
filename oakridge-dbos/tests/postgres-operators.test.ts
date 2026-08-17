@@ -15,10 +15,40 @@ test("pending gates are projected directly from published DBOS events", async ()
 
 test("run list derives parked state by joining root status with DBOS gate events", async () => {
   let params: readonly unknown[] = [];
-  const executor: SqlExecutor = { query: async <Row>(_sql: string, values: readonly unknown[]) => { params = values; return [{ id: "run-1", workflow_name: "dev-flow", root_workflow_id: "root-2", dbos_status: "PENDING", current_stage: "build", parked_count: "2", updated_at_epoch_ms: "1786737600000", archived: false }] as Row[]; } };
+  const executor: SqlExecutor = { query: async <Row>(_sql: string, values: readonly unknown[]) => { params = values; return [{ id: "run-1", workflow_name: "dev-flow", root_workflow_id: "root-2", dbos_status: "PENDING", current_stage: "build", parked_count: "2", updated_at_epoch_ms: "1786737600000", outcome: null, is_stuck: false, archived: false }] as Row[]; } };
   const runs = await new PostgresOperatorProjectionRepository(executor).list_runs("active");
-  expect(params).toEqual([false]);
+  expect(params).toEqual([false, 3600]);
   expect(runs).toEqual([expect.objectContaining({ id: "run-1", current_attempt_root_workflow_id: "root-2", status: "parked", current_stage: "build", parked_count: 2, is_failed: false })]);
+});
+
+test("a run whose workflow returned a failure projects as failed, not complete", async () => {
+  const executor: SqlExecutor = { query: async <Row>() => [{ id: "run-1", workflow_name: "dev-flow", root_workflow_id: "root-1", dbos_status: "SUCCESS", current_stage: null, parked_count: "0",
+    updated_at_epoch_ms: "1786737600000", outcome: { kind: "failed", code: "required_output_missing", detail: "unit 'web' is missing: plan" }, is_stuck: false, archived: false }] as Row[] };
+  const runs = await new PostgresOperatorProjectionRepository(executor).list_runs("active");
+  expect(runs[0]).toEqual(expect.objectContaining({ status: "failed", is_failed: true }));
+});
+
+test("run list projects stuck state from the query rather than hardcoding false", async () => {
+  const executor: SqlExecutor = { query: async <Row>() => [{ id: "run-1", workflow_name: "dev-flow", root_workflow_id: "root-1", dbos_status: "PENDING", current_stage: "build", parked_count: "0",
+    updated_at_epoch_ms: "1786737600000", outcome: null, is_stuck: true, archived: false }] as Row[] };
+  const runs = await new PostgresOperatorProjectionRepository(executor).list_runs("active");
+  expect(runs[0]?.is_stuck).toBe(true);
+});
+
+test("stuck detection covers rerun waits, dead terminal observers, and stalled progress", async () => {
+  let sql = "";
+  const executor: SqlExecutor = { query: async <Row>(statement: string) => { sql = statement; return [] as Row[]; } };
+  await new PostgresOperatorProjectionRepository(executor).list_runs("active");
+  expect(sql).toContain("'stage-rerun-state'");
+  expect(sql).toContain("|| ':terminal'");
+  expect(sql).toContain("extract(epoch FROM now())");
+});
+
+test("the stall window is configurable and passed as a query parameter", async () => {
+  let params: readonly unknown[] = [];
+  const executor: SqlExecutor = { query: async <Row>(_sql: string, values: readonly unknown[]) => { params = values; return [] as Row[]; } };
+  await new PostgresOperatorProjectionRepository(executor, { stall_threshold_seconds: 120 }).list_runs("all");
+  expect(params).toEqual([null, 120]);
 });
 
 test("run archive is domain state and never mutates DBOS workflow status", async () => {

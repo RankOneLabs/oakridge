@@ -44,6 +44,7 @@ interface PlanUnitStepInput extends PlanStageStepInput { readonly unit: Material
 export interface RecordExecutionInput { readonly request: ExecutionRequest; readonly execution_workflow_id: string; readonly parameters: JsonValue }
 export interface StartStageInput { readonly run_id: WorkflowRunId; readonly attempt_root_workflow_id: string; readonly stage_instance_id: StageInstanceId; readonly stage: CompiledStageContract; readonly coordinator_workflow_id: StageCoordinatorWorkflowId; readonly started_at: string }
 export interface FinishStageInput { readonly stage_instance_id: StageInstanceId; readonly outcome: StageOutcome; readonly ended_at: string }
+export interface FinishRunInput { readonly attempt_root_workflow_id: string; readonly outcome: StageOutcome; readonly ended_at: string }
 export interface ReplaceExecutionProjectionInput { readonly execution_id: ExecutionId; readonly replacement_workflow_id: string }
 
 export interface ProductionTopologyServices {
@@ -53,6 +54,7 @@ export interface ProductionTopologyServices {
   find_external_reference(execution_id: ExecutionId): Promise<ExternalExecutionReference | null>;
   start_stage(input: StartStageInput): Promise<void>;
   finish_stage(input: FinishStageInput): Promise<void>;
+  finish_run(input: FinishRunInput): Promise<void>;
   record_execution(input: RecordExecutionInput): Promise<void>;
   replace_execution_projection(input: ReplaceExecutionProjectionInput): Promise<void>;
   load_resume_artifacts(run_id: WorkflowRunId, stage_keys: readonly string[]): Promise<readonly (ArtifactRevision & { readonly stage_key: string })[]>;
@@ -69,6 +71,7 @@ const loadCompiledDefinitionStep = DBOS.registerStep(async (input: RunWorkflowIn
 const ensureRunStep = DBOS.registerStep(async (input: RunWorkflowInput & { readonly root_workflow_id: string }): Promise<void> => topologyServices().ensure_run(input), { name: "oakridgeEnsureRunStep", retriesAllowed: true });
 const startStageStep = DBOS.registerStep(async (input: StartStageInput): Promise<void> => topologyServices().start_stage(input), { name: "oakridgeStartStageInstanceStep", retriesAllowed: true });
 const finishStageStep = DBOS.registerStep(async (input: FinishStageInput): Promise<void> => topologyServices().finish_stage(input), { name: "oakridgeFinishStageInstanceStep", retriesAllowed: true });
+const finishRunStep = DBOS.registerStep(async (input: FinishRunInput): Promise<void> => topologyServices().finish_run(input), { name: "oakridgeFinishRunAttemptStep", retriesAllowed: true });
 const recordExecutionStep = DBOS.registerStep(async (input: RecordExecutionInput): Promise<void> => topologyServices().record_execution(input), { name: "oakridgeRecordExecutionProjectionStep", retriesAllowed: true });
 const replaceExecutionProjectionStep = DBOS.registerStep(async (input: ReplaceExecutionProjectionInput): Promise<void> => topologyServices().replace_execution_projection(input), { name: "oakridgeReplaceExecutionProjectionStep", retriesAllowed: true });
 const loadResumeArtifactsStep = DBOS.registerStep(async (input: { readonly run_id: WorkflowRunId; readonly stage_keys: readonly string[] }) => topologyServices().load_resume_artifacts(input.run_id, input.stage_keys), { name: "oakridgeLoadResumeArtifactsStep", retriesAllowed: true });
@@ -427,5 +430,10 @@ export const productionRunWorkflow = DBOS.registerWorkflow(async (input: RunWork
       if (target) await DBOS.send(target, { kind: "input_closed", input_name: edge.consumer_input } satisfies StageCommand, "stage-command", `closed:${signal.result.stage_instance_id}:${edge.consumer_input}`);
     }
   }
+  // The outcome is returned as a value, so DBOS records this workflow as
+  // SUCCESS whether the run succeeded or failed. Persisting it to the domain
+  // gives projections a result axis to read alongside DBOS's liveness axis —
+  // without it, a failed run is indistinguishable from a completed one.
+  await finishRunStep({ attempt_root_workflow_id: rootId, outcome: terminal, ended_at: new Date(await DBOS.now()).toISOString() });
   return { run_id: input.run_id, outcome: terminal, stage_workflow_ids: stageWorkflowIds };
 }, { name: "oakridgeProductionRunWorkflow" });

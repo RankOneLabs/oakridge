@@ -1,6 +1,6 @@
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
-import type { ExecutionRequest, ExecutorAdapter, ExecutorTerminalObservation, ExternalExecutionReference } from "../domain/execution";
+import type { ExecutionRequest, ExecutorAdapter, ExecutorObservationAttempt, ExecutorTerminalObservation, ExternalExecutionReference } from "../domain/execution";
 import type { CollaborationPingRequest, CollaborationPingState } from "../domain/collaboration";
 import type { ArtifactReleaseState, ArtifactRevision, ExecutionContractState, ReleaseArtifactResult } from "../domain/artifacts";
 import type { CompiledOutputContract } from "../domain/compiled-workflow";
@@ -49,8 +49,12 @@ const runExecutorMechanismStep = DBOS.registerStep(async (request: ExecutionRequ
   const adapter = adapters.get(request.executor_type);
   if (!adapter) throw new Error(`executor adapter '${request.executor_type}' is not registered`);
   const externalReference = await adapter.start_or_attach(request);
-  const terminalObservation = await adapter.observe_terminal(request.execution_id);
-  return { external_reference: externalReference, terminal_observation: terminalObservation };
+  const attempt = await adapter.observe_terminal(request.execution_id);
+  // Dev-proof path only. It has no durable loop to own a bounded poll, so an
+  // adapter that answers `pending` here is a wiring error rather than a state
+  // to wait through — the production path is terminalObserverWorkflow.
+  if (attempt.kind === "pending") throw new Error(`executor adapter '${request.executor_type}' returned a pending observation to the single-shot mechanism step`);
+  return { external_reference: externalReference, terminal_observation: attempt.observation };
 }, { name: "oakridgeRunExecutorMechanismStep", retriesAllowed: true });
 
 /**
@@ -71,18 +75,33 @@ const startExecutorStep = DBOS.registerStep(async (request: ExecutionRequest): P
 }, { name: "oakridgeStartExecutorStep", retriesAllowed: true });
 
 interface ObserveExecutorInput { readonly request: ExecutionRequest; readonly external_reference: ExternalExecutionReference; readonly parent_workflow_id: string }
-const observeExecutorStep = DBOS.registerStep(async (input: ObserveExecutorInput): Promise<ExecutorTerminalObservation> => {
+const observeExecutorStep = DBOS.registerStep(async (input: ObserveExecutorInput): Promise<ExecutorObservationAttempt> => {
   const adapter = adapters.get(input.request.executor_type);
   if (!adapter) throw new Error(`executor adapter '${input.request.executor_type}' is not registered`);
-  const observation = await adapter.observe_terminal(input.request.execution_id, input.external_reference);
-  await projectionObserver?.record_terminal(input.request.execution_id, observation);
-  return observation;
+  const attempt = await adapter.observe_terminal(input.request.execution_id, input.external_reference);
+  if (attempt.kind === "terminal") await projectionObserver?.record_terminal(input.request.execution_id, attempt.observation);
+  return attempt;
 }, { name: "oakridgeObserveExecutorStep", retriesAllowed: true });
 
+/** Backoff between observation polls while the executor is still running. */
+const OBSERVE_POLL_INTERVAL_SECONDS = 5;
+
+/**
+ * Owns the unbounded wait for an executor to finish, as a durable loop of
+ * bounded observations rather than one long-lived request. Each step is short,
+ * so its retry budget covers transient network failure instead of being spent
+ * on a socket the transport was always going to sever; and a backend restart
+ * mid-wait simply resumes polling.
+ */
 const terminalObserverWorkflow = DBOS.registerWorkflow(async (input: ObserveExecutorInput): Promise<ExecutorTerminalObservation> => {
-  const observation = await observeExecutorStep(input);
-  await DBOS.send(input.parent_workflow_id, { kind: "executor_terminal", observation } satisfies ExecutionWorkflowMessage, "execution-event", `terminal:${input.request.execution_id}`);
-  return observation;
+  for (;;) {
+    const attempt = await observeExecutorStep(input);
+    if (attempt.kind === "terminal") {
+      await DBOS.send(input.parent_workflow_id, { kind: "executor_terminal", observation: attempt.observation } satisfies ExecutionWorkflowMessage, "execution-event", `terminal:${input.request.execution_id}`);
+      return attempt.observation;
+    }
+    await DBOS.sleepSeconds(OBSERVE_POLL_INTERVAL_SECONDS);
+  }
 }, { name: "oakridgeTerminalObserverWorkflow" });
 
 interface FenceExecutorInput { readonly execution_id: ExecutionRequest["execution_id"]; readonly executor_type: string; readonly external_reference?: ExternalExecutionReference }
