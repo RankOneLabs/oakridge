@@ -39,7 +39,7 @@ test("stuck detection covers rerun waits, dead terminal observers, and stalled p
   let sql = "";
   const executor: SqlExecutor = { query: async <Row>(statement: string) => { sql = statement; return [] as Row[]; } };
   await new PostgresOperatorProjectionRepository(executor).list_runs("active");
-  expect(sql).toContain("'stage-rerun-state'");
+  expect(sql).toContain("'stage-rerun-state:%'");
   expect(sql).toContain("|| ':terminal'");
   expect(sql).toContain("extract(epoch FROM now())");
 });

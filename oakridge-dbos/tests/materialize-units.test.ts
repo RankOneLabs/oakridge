@@ -7,8 +7,10 @@ test("materializes runtime cardinality and selects only dependency-ready sibling
   expect(result.ok).toBe(true);
   if (!result.ok) return;
   const admitted = new Set(result.value.map((unit) => unit.unit_id));
-  expect(selectReadyUnits(result.value, new Set(), admitted, new Set(), 2).map((unit) => String(unit.unit_id))).toEqual(["a", "c"]);
-  expect(selectReadyUnits(result.value, new Set(["a" as UnitId]), admitted, new Set(), 2).map((unit) => String(unit.unit_id))).toContain("b");
+  const window = { admitted, launched: new Set<UnitId>(), running_count: 0, max_parallel: 2 };
+  expect(selectReadyUnits(result.value, { ...window, released: new Set() }).map((unit) => String(unit.unit_id))).toEqual(["a", "c"]);
+  const afterA = new Set(["a" as UnitId]);
+  expect(selectReadyUnits(result.value, { ...window, released: afterA, launched: afterA }).map((unit) => String(unit.unit_id))).toContain("b");
 });
 
 test("incremental graph holds unknown siblings until arrival and validates on close", () => {

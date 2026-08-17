@@ -81,9 +81,29 @@ export const materializeBatch = (items: readonly JsonValue[], spec: Materializat
   return ok(units);
 };
 
-export const selectReadyUnits = (units: readonly MaterializedExecutionUnit[], released: ReadonlySet<UnitId>, admitted: ReadonlySet<UnitId>, running: ReadonlySet<UnitId>, maxParallel: number): readonly MaterializedExecutionUnit[] => {
-  const capacity = Math.max(0, maxParallel - running.size);
-  return units.filter((unit) => admitted.has(unit.unit_id) && !released.has(unit.unit_id) && !running.has(unit.unit_id) && unit.depends_on.every((dependency) => released.has(dependency))).slice(0, capacity);
+/**
+ * What a stage may start right now.
+ *
+ * `launched` and `running_count` are deliberately different populations.
+ * `launched` is every unit that has already been started at least once —
+ * released ones included, and one parked waiting for an operator to authorise a
+ * rerun — so nothing is ever started twice. `running_count` counts only units
+ * with a live execution, so a parked unit keeps its place in the graph without
+ * holding the window shut behind it.
+ */
+export interface UnitLaunchWindow {
+  readonly released: ReadonlySet<UnitId>;
+  readonly admitted: ReadonlySet<UnitId>;
+  readonly launched: ReadonlySet<UnitId>;
+  readonly running_count: number;
+  readonly max_parallel: number;
+}
+
+export const selectReadyUnits = (units: readonly MaterializedExecutionUnit[], window: UnitLaunchWindow): readonly MaterializedExecutionUnit[] => {
+  const capacity = Math.max(0, window.max_parallel - window.running_count);
+  return units
+    .filter((unit) => window.admitted.has(unit.unit_id) && !window.launched.has(unit.unit_id) && unit.depends_on.every((dependency) => window.released.has(dependency)))
+    .slice(0, capacity);
 };
 
 export interface IncrementalMaterialization {
