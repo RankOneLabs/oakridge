@@ -224,13 +224,13 @@ export const artifactContractExecutionWorkflow = DBOS.registerWorkflow(async (in
       continue;
     } else {
       terminalObservation = message.observation;
-      const contract = evaluateExecutionArtifactContract(input.outputs, releases, input.request.expected_artifacts);
+      const contract = evaluateExecutionArtifactContract(releases, input.request.expected_artifacts);
       if (!shouldAwaitArtifactRelease(contract, message.observation, releases)) {
         return { external_reference: externalReference, contract, terminal_observation: message.observation };
       }
       continue;
     }
-    const contract = evaluateExecutionArtifactContract(input.outputs, releases, input.request.expected_artifacts);
+    const contract = evaluateExecutionArtifactContract(releases, input.request.expected_artifacts);
     if (contract.kind === "satisfied") {
       if (!terminalObservation) await fenceExecutorStep({ execution_id: input.request.execution_id, executor_type: input.request.executor_type, external_reference: externalReference });
       return { external_reference: externalReference, contract, terminal_observation: terminalObservation };

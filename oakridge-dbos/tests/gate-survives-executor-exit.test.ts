@@ -29,7 +29,7 @@ const expected = [{ unit_id: "0" as UnitId, output_name: "plan", artifact_type: 
 const parked: readonly ArtifactReleaseState[] = [{ kind: "waiting_gate", artifact: artifact("plan"), gate_steps: gateOutput.release.kind === "gate" ? gateOutput.release.steps : [] }];
 
 const contractFor = (releases: readonly ArtifactReleaseState[]) =>
-  evaluateExecutionArtifactContract([gateOutput], releases, expected);
+  evaluateExecutionArtifactContract(releases, expected);
 
 test("an artifact parked at a gate keeps the execution waiting after its agent exits", () => {
   const contract = contractFor(parked);
@@ -59,7 +59,7 @@ test("a satisfied contract never waits", () => {
 
 test("a partially released collection does not wait on the outputs that were never emitted", () => {
   const twoExpected = [...expected, { unit_id: "0" as UnitId, output_name: "notes", artifact_type: "dev.plan" }];
-  const contract = evaluateExecutionArtifactContract([gateOutput], parked, twoExpected);
+  const contract = evaluateExecutionArtifactContract(parked, twoExpected);
   expect(shouldAwaitArtifactRelease(contract, { kind: "cancelled", detail: "closed" }, parked)).toBe(false);
 });
 
@@ -92,4 +92,20 @@ test("an unsatisfied contract still names what the unit is missing", () => {
   const waiting = { kind: "waiting_artifacts", missing_outputs: ["0:plan"] } as const;
   expect(terminalFailure("0" as UnitId, waiting, { ...resultWith(null), contract: waiting }))
     .toEqual({ kind: "failed", code: "required_output_missing", detail: "unit '0' is missing: 0:plan" });
+});
+
+/**
+ * Contract evaluation used to key `missing_outputs` two different ways — by
+ * `unit:output` when given an expected list, by bare output name when not — so
+ * a caller comparing against the wrong space matched nothing and silently did
+ * the opposite of what it intended. `shouldAwaitArtifactRelease` was that
+ * caller. One key space now, produced and consumed by the same builder.
+ */
+test("what a contract reports missing is keyed the same way the waiting check reads it", () => {
+  const contract = contractFor(parked);
+  expect(contract.kind).toBe("waiting_artifacts");
+  if (contract.kind !== "waiting_artifacts") return;
+  expect(contract.missing_outputs).toEqual(["0:plan"]);
+  // The key the waiting check builds from a parked release must be that string.
+  expect(shouldAwaitArtifactRelease(contract, { kind: "cancelled", detail: "closed" }, parked)).toBe(true);
 });

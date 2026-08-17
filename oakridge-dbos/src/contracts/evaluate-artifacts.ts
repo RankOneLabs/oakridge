@@ -37,17 +37,22 @@ export const withoutReleaseFor = (releases: readonly ArtifactReleaseState[], art
 export const withRelease = (releases: readonly ArtifactReleaseState[], artifact: ArtifactRevision): readonly ArtifactReleaseState[] =>
   [...withoutReleaseFor(releases, artifact), { kind: "released", artifact }];
 
-export const evaluateExecutionArtifactContract = (outputs: readonly CompiledOutputContract[], releases: readonly ArtifactReleaseState[], expectedArtifacts?: readonly ExpectedArtifactContract[]): ExecutionContractState => {
-  if (expectedArtifacts) {
-    const released = new Map(releases.filter((release): release is Extract<ArtifactReleaseState, { kind: "released" }> => release.kind === "released").map((release) => [artifactReleaseKey(release.artifact), release.artifact]));
-    const missing = expectedArtifacts.filter((expected) => !released.has(artifactReleaseKey(expected)));
-    if (missing.length > 0) return { kind: "waiting_artifacts", missing_outputs: missing.map((expected) => artifactReleaseKey(expected)).sort() };
-    return { kind: "satisfied", artifacts: expectedArtifacts.map((expected) => released.get(artifactReleaseKey(expected))).filter((artifact): artifact is ArtifactRevision => artifact !== undefined) };
-  }
-  const releasedByOutput = new Map(releases.filter((release): release is Extract<ArtifactReleaseState, { kind: "released" }> => release.kind === "released").map((release) => [release.artifact.output_name, release.artifact]));
-  const missingOutputs = outputs.filter((output) => !releasedByOutput.has(output.name)).map((output) => output.name).sort();
-  if (missingOutputs.length > 0) return { kind: "waiting_artifacts", missing_outputs: missingOutputs };
-  return { kind: "satisfied", artifacts: outputs.map((output) => releasedByOutput.get(output.name)).filter((artifact): artifact is ArtifactRevision => artifact !== undefined) };
+/**
+ * What a unit still owes.
+ *
+ * Keyed by `artifactReleaseKey` throughout — `unit:output`, not output name.
+ * This used to fall back to keying by output name alone when no expected list
+ * was supplied, which meant the function returned two incompatible key spaces
+ * depending on an optional argument, and a caller comparing against the wrong
+ * one silently matched nothing. The expected list is what an artifact_collection
+ * needs anyway, since it emits many artifacts under one output name, so there
+ * is no case the fallback served.
+ */
+export const evaluateExecutionArtifactContract = (releases: readonly ArtifactReleaseState[], expectedArtifacts: readonly ExpectedArtifactContract[]): ExecutionContractState => {
+  const released = new Map(releases.filter((release): release is Extract<ArtifactReleaseState, { kind: "released" }> => release.kind === "released").map((release) => [artifactReleaseKey(release.artifact), release.artifact]));
+  const missing = expectedArtifacts.filter((expected) => !released.has(artifactReleaseKey(expected)));
+  if (missing.length > 0) return { kind: "waiting_artifacts", missing_outputs: missing.map((expected) => artifactReleaseKey(expected)).sort() };
+  return { kind: "satisfied", artifacts: expectedArtifacts.map((expected) => released.get(artifactReleaseKey(expected))).filter((artifact): artifact is ArtifactRevision => artifact !== undefined) };
 };
 
 /**
@@ -68,7 +73,7 @@ export const evaluateExecutionArtifactContract = (outputs: readonly CompiledOutp
 export const shouldAwaitArtifactRelease = (
   contract: ExecutionContractState,
   observation: ExecutorTerminalObservation,
-  releases: readonly ArtifactReleaseState[] = [],
+  releases: readonly ArtifactReleaseState[],
 ): boolean => {
   if (contract.kind !== "waiting_artifacts") return false;
   if (observation.kind === "succeeded") return true;
