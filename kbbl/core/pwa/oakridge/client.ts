@@ -201,7 +201,7 @@ export function selectFailureDetail(body: unknown, fallback: string): string {
 async function oakridgeGet<T>(path: string): Promise<T> {
   const res = await fetch(`${API}${path}`);
   if (!res.ok) {
-    const body = await res.json().catch(() => null) as { error?: string } | null;
+    const body = await res.json().catch(() => null) as unknown;
     const detail = selectFailureDetail(body, `oakridge ${path}: ${res.status}`);
     throw new Error(detail);
   }
@@ -217,7 +217,7 @@ async function oakridgePost<T>(path: string, body: unknown, options: OakridgePos
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    const b = await res.json().catch(() => null) as { error?: string } | null;
+    const b = await res.json().catch(() => null) as unknown;
     const detail = selectFailureDetail(b, `oakridge POST ${path}: ${res.status}`);
     throw new Error(detail);
   }
@@ -230,7 +230,7 @@ async function oakridgePost<T>(path: string, body: unknown, options: OakridgePos
 async function oakridgeDelete(path: string): Promise<void> {
   const res = await fetch(`${API}${path}`, { method: "DELETE" });
   if (!res.ok) {
-    const b = await res.json().catch(() => null) as { error?: string } | null;
+    const b = await res.json().catch(() => null) as unknown;
     const detail = selectFailureDetail(b, `oakridge DELETE ${path}: ${res.status}`);
     throw new Error(detail);
   }
@@ -243,7 +243,7 @@ async function oakridgePatch<T>(path: string, body: unknown): Promise<T> {
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    const b = await res.json().catch(() => null) as { error?: string } | null;
+    const b = await res.json().catch(() => null) as unknown;
     const detail = selectFailureDetail(b, `oakridge PATCH ${path}: ${res.status}`);
     throw new Error(detail);
   }

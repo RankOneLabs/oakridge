@@ -12,7 +12,7 @@
  * The `fenced_by` query parameter is the contract between the two packages;
  * `oakridge-dbos/tests/kbbl-adapter.test.ts` pins the other end of it.
  */
-import { expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
 import { Hono } from "hono";
 
 import { mountSessionsRoutes } from "./sessions";
@@ -36,6 +36,17 @@ interface Closed {
 }
 
 /**
+ * The stub Oakridge must outlive each request, since the route awaits the hold
+ * lookup — but not the test that started it. Stopping them here keeps the
+ * suite from accumulating listeners it never closes.
+ */
+const stubs: ReturnType<typeof Bun.serve>[] = [];
+afterEach(() => {
+  for (const stub of stubs) stub.stop(true);
+  stubs.length = 0;
+});
+
+/**
  * A kbbl whose Oakridge reports the session as held by `HOLDER`, with a
  * session that records whether it was actually closed.
  */
@@ -55,6 +66,7 @@ const guardedApp = (): { app: Hono; closed: Closed } => {
   oakridge.get("/session_holds/:sid", (c) =>
     c.req.param("sid") === SID ? c.json({ held: true, hold }) : c.json({ held: false, hold: null }));
   const oakridgeServer = Bun.serve({ port: 0, fetch: oakridge.fetch });
+  stubs.push(oakridgeServer);
 
   const app = new Hono();
   mountSessionsRoutes(app, {
@@ -63,9 +75,7 @@ const guardedApp = (): { app: Hono; closed: Closed } => {
     sessionsDir: "/tmp/kbbl-test",
     oakridgeBaseUrl: `http://127.0.0.1:${oakridgeServer.port}`,
   });
-  // The route awaits the hold lookup, so the stub must outlive the request;
-  // callers stop it by letting the process exit.
-  return { app: Object.assign(app, { stop: () => oakridgeServer.stop(true) }), closed };
+  return { app, closed };
 };
 
 test("an operator close is refused while a live unit still depends on the session", async () => {
