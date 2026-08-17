@@ -2,7 +2,15 @@ import { Hono } from "hono";
 import { z } from "zod";
 
 import type { ProjectId, WorkflowDefinitionId } from "../domain/primitives";
-import { CompatibleRunLaunchError, launchCompatibleRun, type LaunchRunDependencies } from "../runtime/launch-run";
+import { launchCompatibleRun, type LaunchRunDependencies, type RunLaunchFailureKind } from "../runtime/launch-run";
+
+/** The HTTP reading of a launch failure — one place, exhaustive over the union. */
+const selectRunLaunchStatus = (kind: RunLaunchFailureKind): 400 | 404 | 409 | 503 => {
+  if (kind === "definition_not_found" || kind === "project_not_found") return 404;
+  if (kind === "invalid_context") return 400;
+  if (kind === "projection_unavailable") return 503;
+  return 409;
+};
 
 const forgeRepository = z.object({ provider: z.literal("github"), owner: z.string().min(1), name: z.string().min(1) });
 const epicProfile = z.object({
@@ -22,17 +30,11 @@ export const createRunLaunchApp = (dependencies: LaunchRunDependencies): Hono =>
   app.post("/workflow_runs", async (context) => {
     const parsed = launchSchema.safeParse(await context.req.json().catch(() => null));
     if (!parsed.success) return context.json({ error: "invalid workflow launch" }, 400);
-    try {
-      const summary = await launchCompatibleRun({ workflow_def_id: parsed.data.workflow_def_id as WorkflowDefinitionId,
-        project_id: parsed.data.project_id as ProjectId | null, context: parsed.data.context,
-        epic_profile: parsed.data.epic_profile, idempotency_key: context.req.header("idempotency-key")?.trim() || null }, dependencies);
-      return context.json(summary, 201);
-    } catch (error) {
-      if (!(error instanceof CompatibleRunLaunchError)) return context.json({ error: error instanceof Error ? error.message : "workflow launch failed" }, 500);
-      const status = error.kind === "definition_not_found" || error.kind === "project_not_found" ? 404
-        : error.kind === "invalid_context" ? 400 : error.kind === "projection_unavailable" ? 503 : 409;
-      return context.json({ error: error.message, code: error.kind }, status);
-    }
+    const launched = await launchCompatibleRun({ workflow_def_id: parsed.data.workflow_def_id as WorkflowDefinitionId,
+      project_id: parsed.data.project_id as ProjectId | null, context: parsed.data.context,
+      epic_profile: parsed.data.epic_profile, idempotency_key: context.req.header("idempotency-key")?.trim() || null }, dependencies);
+    if (!launched.ok) return context.json({ error: launched.error.detail, code: launched.error.kind }, selectRunLaunchStatus(launched.error.kind));
+    return context.json(launched.value, 201);
   });
   return app;
 };

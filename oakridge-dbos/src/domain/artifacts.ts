@@ -2,6 +2,19 @@ import type { ArtifactId, ExecutionId, JsonValue, Result, StageInstanceId, UnitI
 import type { ArtifactTypeId } from "./workflow";
 import type { OutputReleaseContract } from "./compiled-workflow";
 
+/**
+ * Where an artifact sits in the run graph — the natural key of its revision
+ * chain. `ArtifactRevision` satisfies it structurally, so a caller holding a
+ * revision passes the revision itself rather than unpacking four fields whose
+ * order nothing checks.
+ */
+export interface ArtifactCoordinate {
+  readonly stage_instance_id: StageInstanceId;
+  readonly execution_id: ExecutionId;
+  readonly unit_id: UnitId;
+  readonly output_name: string;
+}
+
 export interface ArtifactRevision {
   readonly id: ArtifactId;
   readonly chain_id: ArtifactId;

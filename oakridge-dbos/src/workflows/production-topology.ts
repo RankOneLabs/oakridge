@@ -425,7 +425,19 @@ export const productionRunWorkflow = DBOS.registerWorkflow(async (input: RunWork
   if (!rootId) throw new Error("root workflow requires a workflow ID");
   await ensureRunStep({ ...input, root_workflow_id: rootId });
   const definition = await loadCompiledDefinitionStep(input);
-  const ancestors = input.resume_from_stage ? selectAncestorStages(definition, input.resume_from_stage) : [];
+  let ancestors: readonly string[] = [];
+  if (input.resume_from_stage) {
+    const selected = selectAncestorStages(definition, input.resume_from_stage);
+    // Recorded as a failed run rather than thrown: a run that dies here leaves
+    // no outcome for the operator surface to read, so the resume looks stuck
+    // rather than rejected.
+    if (!selected.ok) {
+      const outcome: StageOutcome = { kind: "failed", code: "invalid_resume_stage", detail: selected.error.detail };
+      await finishRunStep({ attempt_root_workflow_id: rootId, outcome, ended_at: new Date(await DBOS.now()).toISOString() });
+      return { run_id: input.run_id, outcome, stage_workflow_ids: {} };
+    }
+    ancestors = selected.value;
+  }
   const started = new Set<string>(ancestors);
   const finished = new Set<string>(ancestors);
   const outputs = new Map<string, readonly ArtifactRevision[]>();

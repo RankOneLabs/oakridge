@@ -128,7 +128,7 @@ export const createCollaborationApp = (dependencies: CollaborationHttpDependenci
     const body = await objectBody(http.req.raw); const anchor = nonempty(body?.anchor); const author = nonempty(body?.author);
     if (!anchor || !author || !isJsonValue(body?.prev_value) || !isJsonValue(body?.new_value)) return http.json({ error: "anchor, author, prev_value, and new_value are required" }, 400);
     if (policy.anchor_schema && !anchorAllowed(anchor, policy.anchor_schema)) return http.json({ error: `anchor '${anchor}' is not in the artifact anchor schema` }, 400);
-    const current = await dependencies.artifacts.find_current(artifact.stage_instance_id, artifact.execution_id, artifact.unit_id, artifact.output_name);
+    const current = await dependencies.artifacts.find_current(artifact);
     if (!current || current.id !== artifact.id) return http.json({ error: "concurrent edit: artifact revision is stale" }, 409);
     const edited = editJsonPointer(artifact.body, anchor, body.prev_value, body.new_value);
     if (!edited) return http.json({ error: `prev_value mismatch or anchor '${anchor}' was not found` }, 409);

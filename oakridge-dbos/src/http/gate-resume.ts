@@ -131,7 +131,7 @@ export const createGateResumeApp = (dependencies: GateResumeDependencies): Hono 
     if (!step) return http.json({ error: "reviewed gate step is stale" }, 409);
     if (!step.actions.includes(request.action)) return http.json({ error: `action '${request.action}' is not allowed for the current gate step` }, 400);
     const workflowId = gateWorkflowId(context.execution_workflow_id, artifact.id, request.gate_step);
-    const current = await dependencies.artifacts.find_current(stageId, context.execution_id, unitId, artifact.output_name);
+    const current = await dependencies.artifacts.find_current({ stage_instance_id: stageId, execution_id: context.execution_id, unit_id: unitId, output_name: artifact.output_name });
     if (!current || current.id !== artifact.id) return http.json({ error: "reviewed artifact revision is stale" }, 409);
     if (gate.requires_zero_open_review_items && await dependencies.collaboration.count_open_review_items(artifact.id) > 0) {
       return http.json({ error: "artifact revision has open review items" }, 409);

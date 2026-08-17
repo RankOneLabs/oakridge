@@ -1,5 +1,5 @@
 import type { ArtifactId, StageInstanceId, UnitId, WorkflowRunId } from "../domain/primitives";
-import type { ArtifactEmission, ArtifactEmissionDelivery, ArtifactLifecycleNotification, ArtifactRevision, EmitArtifactRevisionResult, PendingArtifactNotification, ReleaseArtifactResult, WithdrawArtifactRequest, WithdrawArtifactResult } from "../domain/artifacts";
+import type { ArtifactCoordinate, ArtifactEmission, ArtifactEmissionDelivery, ArtifactLifecycleNotification, ArtifactRevision, EmitArtifactRevisionResult, PendingArtifactNotification, ReleaseArtifactResult, WithdrawArtifactRequest, WithdrawArtifactResult } from "../domain/artifacts";
 import type { StageInstance, StageOutcome } from "../domain/workflow";
 import type {
   ArtifactRevisionRepository,
@@ -443,6 +443,10 @@ const artifactColumns = `id,
   superseded_by_artifact_id, withdrawn_actor, withdrawn_reason,
   withdrawn_at::text, released_at::text, created_at::text`;
 
+/** Bind order for the four coordinate columns, in one place so it cannot drift. */
+const artifactCoordinateParameters = (coordinate: ArtifactCoordinate): readonly unknown[] =>
+  [coordinate.stage_instance_id, coordinate.execution_id, coordinate.unit_id, coordinate.output_name];
+
 const decodeArtifactLifecycle = (row: ArtifactRow): ArtifactRevision["lifecycle"] => {
   if (row.lifecycle_state === "current") return { kind: "current" };
   if (row.lifecycle_state === "superseded" && row.superseded_by_artifact_id) {
@@ -604,13 +608,13 @@ export class PostgresArtifactRevisionRepository implements ArtifactRevisionRepos
     });
   }
 
-  async find_tip(stage_instance_id: StageInstanceId, execution_id: string, unit_id: string, output_name: string): Promise<ArtifactRevision | null> {
-    const rows = await this.sql.query<ArtifactRow>(`SELECT ${artifactColumns} FROM oakridge.artifact artifact WHERE stage_instance_id = $1 AND execution_id = $2 AND unit_id = $3 AND output_name = $4 ORDER BY version DESC LIMIT 1`, [stage_instance_id, execution_id, unit_id, output_name]);
+  async find_tip(coordinate: ArtifactCoordinate): Promise<ArtifactRevision | null> {
+    const rows = await this.sql.query<ArtifactRow>(`SELECT ${artifactColumns} FROM oakridge.artifact artifact WHERE stage_instance_id = $1 AND execution_id = $2 AND unit_id = $3 AND output_name = $4 ORDER BY version DESC LIMIT 1`, artifactCoordinateParameters(coordinate));
     return rows[0] ? decodeArtifact(rows[0]) : null;
   }
 
-  async find_current(stage_instance_id: StageInstanceId, execution_id: string, unit_id: string, output_name: string): Promise<ArtifactRevision | null> {
-    const rows = await this.sql.query<ArtifactRow>(`SELECT ${artifactColumns} FROM oakridge.artifact artifact WHERE stage_instance_id = $1 AND execution_id = $2 AND unit_id = $3 AND output_name = $4 AND lifecycle_state = 'current'`, [stage_instance_id, execution_id, unit_id, output_name]);
+  async find_current(coordinate: ArtifactCoordinate): Promise<ArtifactRevision | null> {
+    const rows = await this.sql.query<ArtifactRow>(`SELECT ${artifactColumns} FROM oakridge.artifact artifact WHERE stage_instance_id = $1 AND execution_id = $2 AND unit_id = $3 AND output_name = $4 AND lifecycle_state = 'current'`, artifactCoordinateParameters(coordinate));
     return rows[0] ? decodeArtifact(rows[0]) : null;
   }
 

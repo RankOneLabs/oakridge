@@ -5,7 +5,7 @@ import type { StageInstanceId, UnitId } from "../domain/primitives";
 import type { RerunDbosClient } from "../runtime/unit-rerun";
 import { rerunUnit } from "../runtime/unit-rerun";
 import type { RerunTargetRepository, StageInstanceRepository } from "../storage/repositories";
-import { rerunStage, type StageRerunDependencies } from "../runtime/stage-rerun";
+import { describeStageRerunError, isMissingStageRerunTarget, rerunStage, type StageRerunDependencies } from "../runtime/stage-rerun";
 import type { WorkflowRunId } from "../domain/primitives";
 import { cancelRun, type CancelRunDependencies } from "../runtime/cancel-run";
 import { retryStuck } from "../runtime/retry-stuck";
@@ -38,13 +38,11 @@ export const createRerunApp = (dependencies: RerunHttpDependencies): Hono => {
   app.post("/workflow_runs/:run_id/stages/:stage_key/rerun", async (context) => {
     const parsed = bodySchema.safeParse(await context.req.json().catch(() => null));
     if (!parsed.success) return context.json({ error: "invalid rerun request" }, 400);
-    try {
-      const result = await rerunStage({ run_id: context.req.param("run_id") as WorkflowRunId,
-        stage_key: context.req.param("stage_key"), ...parsed.data }, dependencies.stage_rerun);
-      return context.json(result, 202);
-    } catch (error) {
-      return context.json({ error: error instanceof Error ? error.message : "rerun failed" }, 409);
-    }
+    const result = await rerunStage({ run_id: context.req.param("run_id") as WorkflowRunId,
+      stage_key: context.req.param("stage_key"), ...parsed.data }, dependencies.stage_rerun);
+    if (result.ok) return context.json(result.value, 202);
+    return context.json({ error: describeStageRerunError(result.error), code: result.error.kind },
+      isMissingStageRerunTarget(result.error) ? 404 : 409);
   });
   app.post("/workflow_runs/:run_id/cancel", async (context) => {
     try {
