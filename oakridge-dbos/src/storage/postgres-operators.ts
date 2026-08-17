@@ -3,6 +3,7 @@ import type { OperatorApplicationVersionInventory, OperatorCohortLifecycle, Oper
 import type { SqlExecutor } from "./sql-executor";
 import { selectRunStatus, selectStageStatus } from "../operators/select-status";
 import type { EpicWorkflowProfile } from "../domain/epic";
+import { STAGE_RERUN_STATE_KEY_PREFIX } from "../domain/rerun";
 import type { StageOutcome } from "../domain/workflow";
 
 interface GateProjectionRow {
@@ -125,7 +126,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
            SELECT 1
            FROM oakridge.stage_instance stage
            JOIN dbos.workflow_events event
-             ON event.workflow_uuid = stage.coordinator_workflow_id AND event.key = 'stage-rerun-state'
+             ON event.workflow_uuid = stage.coordinator_workflow_id AND event.key LIKE '${STAGE_RERUN_STATE_KEY_PREFIX}%'
            CROSS JOIN LATERAL (SELECT COALESCE((event.value::jsonb)->'json', event.value::jsonb) AS value) rerun
            WHERE stage.run_id = run.id AND stage.attempt_root_workflow_id = root.root_workflow_id
              AND rerun.value->>'status' = 'waiting'

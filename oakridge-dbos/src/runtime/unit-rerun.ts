@@ -1,4 +1,4 @@
-import type { StageRerunState } from "../domain/rerun";
+import { stageRerunStateKey, type StageRerunState } from "../domain/rerun";
 import type { StageInstanceId, UnitId } from "../domain/primitives";
 import type { RerunTargetRepository } from "../storage/repositories";
 import type { StageCommand } from "../workflows/production-topology";
@@ -24,17 +24,16 @@ export const rerunUnit = async (request: UnitRerunRequest, targets: RerunTargetR
   const target = await targets.find_unit_target(request.stage_instance_id, request.unit_id);
   if (!target) throw new Error(`execution unit '${request.stage_instance_id}:${request.unit_id}' was not found`);
   const replacementId = `oakridge-unit-rerun:${request.stage_instance_id}:${request.unit_id}:${request.rerun_id}`;
-  const state = await dbos.getEvent<StageRerunState>(target.stage_coordinator_workflow_id, "stage-rerun-state", { timeoutSeconds: 0 });
-  if (state?.status === "resumed" && state.unit_id === request.unit_id &&
-      state.replacement_execution_workflow_id === replacementId && target.execution_workflow_id === replacementId) {
+  const state = await dbos.getEvent<StageRerunState>(target.stage_coordinator_workflow_id, stageRerunStateKey(request.unit_id), { timeoutSeconds: 0 });
+  if (state?.status === "resumed" && state.replacement_execution_workflow_id === replacementId && target.execution_workflow_id === replacementId) {
     return { replacement_execution_workflow_id: replacementId };
   }
-  if (state?.status === "waiting" && state.unit_id === request.unit_id && target.execution_workflow_id === replacementId) {
+  if (state?.status === "waiting" && target.execution_workflow_id === replacementId) {
     const replacement = await dbos.getWorkflow(replacementId);
     if (replacement?.forkedFrom === state.failed_execution_workflow_id) return { replacement_execution_workflow_id: replacementId };
     throw new Error(`rerun workflow ID '${replacementId}' does not match the waiting execution`);
   }
-  if (!state || state.status !== "waiting" || state.unit_id !== request.unit_id || state.failed_execution_workflow_id !== target.execution_workflow_id) {
+  if (!state || state.status !== "waiting" || state.failed_execution_workflow_id !== target.execution_workflow_id) {
     throw new Error(`execution unit '${request.stage_instance_id}:${request.unit_id}' is not waiting for rerun`);
   }
   const existing = await dbos.getWorkflow(replacementId);

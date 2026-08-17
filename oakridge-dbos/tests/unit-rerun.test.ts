@@ -33,6 +33,17 @@ test("unit rerun forks only the failed execution child and returns it to the dur
   expect(calls.some((call) => call.startsWith("project:"))).toBe(false);
 });
 
+test("unit rerun reads the rerun state published for its own unit, not the stage's last failure", async () => {
+  const keys: string[] = [];
+  const repository: RerunTargetRepository = { async find_unit_target() { return target; }, async replace_execution_workflow() {} };
+  const dbos: RerunDbosClient = {
+    async getEvent(_workflowId, key) { keys.push(key); return null; },
+    async getWorkflow() { return undefined; }, async forkWorkflow() { throw new Error("must not fork"); }, async send() { throw new Error("must not send"); },
+  };
+  await expect(rerunUnit({ stage_instance_id: stageId, unit_id: unitId, rerun_id: "operator-command-1" }, repository, dbos)).rejects.toThrow("not waiting for rerun");
+  expect(keys).toEqual(["stage-rerun-state:web"]);
+});
+
 test("unit rerun retry returns the same replacement after the stage has resumed", async () => {
   const replacement = "oakridge-unit-rerun:stage-1:web:operator-command-1";
   const resumedTarget = { ...target, execution_workflow_id: replacement };
