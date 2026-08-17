@@ -37,18 +37,46 @@ export const withoutReleaseFor = (releases: readonly ArtifactReleaseState[], art
 export const withRelease = (releases: readonly ArtifactReleaseState[], artifact: ArtifactRevision): readonly ArtifactReleaseState[] =>
   [...withoutReleaseFor(releases, artifact), { kind: "released", artifact }];
 
-export const evaluateExecutionArtifactContract = (outputs: readonly CompiledOutputContract[], releases: readonly ArtifactReleaseState[], expectedArtifacts?: readonly ExpectedArtifactContract[]): ExecutionContractState => {
-  if (expectedArtifacts) {
-    const released = new Map(releases.filter((release): release is Extract<ArtifactReleaseState, { kind: "released" }> => release.kind === "released").map((release) => [artifactReleaseKey(release.artifact), release.artifact]));
-    const missing = expectedArtifacts.filter((expected) => !released.has(artifactReleaseKey(expected)));
-    if (missing.length > 0) return { kind: "waiting_artifacts", missing_outputs: missing.map((expected) => artifactReleaseKey(expected)).sort() };
-    return { kind: "satisfied", artifacts: expectedArtifacts.map((expected) => released.get(artifactReleaseKey(expected))).filter((artifact): artifact is ArtifactRevision => artifact !== undefined) };
-  }
-  const releasedByOutput = new Map(releases.filter((release): release is Extract<ArtifactReleaseState, { kind: "released" }> => release.kind === "released").map((release) => [release.artifact.output_name, release.artifact]));
-  const missingOutputs = outputs.filter((output) => !releasedByOutput.has(output.name)).map((output) => output.name).sort();
-  if (missingOutputs.length > 0) return { kind: "waiting_artifacts", missing_outputs: missingOutputs };
-  return { kind: "satisfied", artifacts: outputs.map((output) => releasedByOutput.get(output.name)).filter((artifact): artifact is ArtifactRevision => artifact !== undefined) };
+/**
+ * What a unit still owes.
+ *
+ * Keyed by `artifactReleaseKey` throughout — `unit:output`, not output name.
+ * This used to fall back to keying by output name alone when no expected list
+ * was supplied, which meant the function returned two incompatible key spaces
+ * depending on an optional argument, and a caller comparing against the wrong
+ * one silently matched nothing. The expected list is what an artifact_collection
+ * needs anyway, since it emits many artifacts under one output name, so there
+ * is no case the fallback served.
+ */
+export const evaluateExecutionArtifactContract = (releases: readonly ArtifactReleaseState[], expectedArtifacts: readonly ExpectedArtifactContract[]): ExecutionContractState => {
+  const released = new Map(releases.filter((release): release is Extract<ArtifactReleaseState, { kind: "released" }> => release.kind === "released").map((release) => [artifactReleaseKey(release.artifact), release.artifact]));
+  const missing = expectedArtifacts.filter((expected) => !released.has(artifactReleaseKey(expected)));
+  if (missing.length > 0) return { kind: "waiting_artifacts", missing_outputs: missing.map((expected) => artifactReleaseKey(expected)).sort() };
+  return { kind: "satisfied", artifacts: expectedArtifacts.map((expected) => released.get(artifactReleaseKey(expected))).filter((artifact): artifact is ArtifactRevision => artifact !== undefined) };
 };
 
-export const shouldAwaitArtifactRelease = (contract: ExecutionContractState, observation: ExecutorTerminalObservation): boolean =>
-  contract.kind === "waiting_artifacts" && observation.kind === "succeeded";
+/**
+ * Whether an execution should keep waiting now that its executor has finished.
+ *
+ * The executor's liveness is the wrong axis, and using it alone was the defect:
+ * an agent that emits a gated artifact and exits is doing exactly what it is
+ * supposed to do, yet its execution abandoned the artifact the moment the
+ * session went away. What actually matters is whether anything is still capable
+ * of releasing the outstanding outputs.
+ *
+ * An artifact parked in a gate or a handoff is not missing. Its wait workflow is
+ * alive and will deliver a decision whenever the reviewer makes one — which is
+ * the entire point of a gate, and reviewers work at human pace. An output with
+ * nothing emitted against it is different: only an agent could ever produce it,
+ * and that agent has gone.
+ */
+export const shouldAwaitArtifactRelease = (
+  contract: ExecutionContractState,
+  observation: ExecutorTerminalObservation,
+  releases: readonly ArtifactReleaseState[],
+): boolean => {
+  if (contract.kind !== "waiting_artifacts") return false;
+  if (observation.kind === "succeeded") return true;
+  const awaitingDecision = new Set(releases.filter((release) => release.kind !== "released").map((release) => artifactReleaseKey(release.artifact)));
+  return contract.missing_outputs.length > 0 && contract.missing_outputs.every((output) => awaitingDecision.has(output));
+};

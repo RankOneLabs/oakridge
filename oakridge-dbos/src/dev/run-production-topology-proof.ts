@@ -101,8 +101,8 @@ try {
     for (const execution of pending) {
       if (emitted.has(execution.workflow_id)) continue;
       emitted.add(execution.workflow_id);
-      console.error(`proof emitting ${execution.workflow_id} (${execution.request.expected_artifacts?.length ?? 0} artifacts)`);
-      for (const expected of execution.request.expected_artifacts ?? []) {
+      console.error(`proof emitting ${execution.workflow_id} (${execution.request.expected_artifacts.length} artifacts)`);
+      for (const expected of execution.request.expected_artifacts) {
         const artifact: ArtifactRevision = { id: crypto.randomUUID() as ArtifactId, chain_id: crypto.randomUUID() as ArtifactId, run_id: "proof" as WorkflowRunId,
           stage_instance_id: execution.request.stage_instance_id, execution_id: execution.request.execution_id, unit_id: expected.unit_id, output_name: expected.output_name,
           artifact_type: expected.artifact_type, label: expected.unit_id, body: artifactBody(execution.request, expected.unit_id), version: 1, parent_artifact_id: null, lifecycle: { kind: "current" }, created_at: new Date().toISOString() };

@@ -17,6 +17,7 @@ import type {
   RerunTargetRepository,
   ResumeArtifactRepository,
   CancellationTargetRepository,
+  SessionHoldRepository,
 } from "./repositories";
 import { err, ok, type ExecutionId, type JsonValue } from "../domain/primitives";
 import type { ExecutionRequest, ExecutorTerminalObservation, ExternalExecutionReference } from "../domain/execution";
@@ -25,6 +26,7 @@ import { superjsonValue } from "./sql-fragments";
 import type { CancellationExecutionTarget, CancellationWaitTarget, UnitRerunTarget } from "../domain/rerun";
 import type { CreateWorkflowRunResult, DeleteRunResult, PendingRunLaunch, PersistWorkflowRunLaunch, RunLaunchCommand, SetRunArchiveResult, WorkflowRunLaunchRecord, WorkflowRunListFilter } from "../domain/runs";
 import type { EpicWorkflowProfile } from "../domain/epic";
+import type { SessionHold } from "../domain/session-hold";
 
 interface StageRow {
   readonly id: string;
@@ -884,6 +886,37 @@ export class PostgresResumeArtifactRepository implements ResumeArtifactRepositor
       [run_id, stage_keys],
     );
     return rows.map((row) => ({ ...decodeArtifact(row), stage_key: row.stage_key }));
+  }
+}
+
+export class PostgresSessionHoldRepository implements SessionHoldRepository {
+  constructor(private readonly sql: SqlExecutor) {}
+
+  /**
+   * Held while the execution workflow is still running. A workflow that has
+   * returned — success, failure, or cancellation — has stopped waiting on the
+   * session, so closing it can no longer strand anything.
+   */
+  async find_session_hold(session_id: string): Promise<SessionHold | null> {
+    const rows = await this.sql.query<{
+      readonly execution_id: string; readonly execution_workflow_id: string; readonly run_id: string;
+      readonly stage_instance_id: string; readonly stage_key: string; readonly unit_id: string;
+    }>(
+      `SELECT projection.execution_id, projection.execution_workflow_id, stage.run_id::text,
+              projection.stage_instance_id::text, stage.stage_key, projection.unit_id
+       FROM oakridge.executor_projection projection
+       JOIN oakridge.stage_instance stage ON stage.id = projection.stage_instance_id
+       JOIN dbos.workflow_status execution ON execution.workflow_uuid = projection.execution_workflow_id
+       WHERE projection.external_reference->>'session_id' = $1
+         AND execution.status = 'PENDING'
+       ORDER BY projection.updated_at DESC
+       LIMIT 1`,
+      [session_id]);
+    const row = rows[0];
+    if (!row) return null;
+    return { session_id, execution_id: row.execution_id as ExecutionId, execution_workflow_id: row.execution_workflow_id,
+      run_id: row.run_id as WorkflowRunId, stage_instance_id: row.stage_instance_id as StageInstanceId,
+      stage_key: row.stage_key, unit_id: row.unit_id as UnitId };
   }
 }
 

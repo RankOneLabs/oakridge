@@ -19,6 +19,7 @@ import {
 import type { AgentRuntime, RuntimeId, RuntimeRegistry } from "../../runtime";
 import { ResumableInputConflictError, SessionKeyConflictError, selectTerminalWaitMs, type ResumableInputDeliveryKey, type ResumableSessionKey, type ResumableSessionStartSpec } from "../../session/resumable-session";
 import { isValidSid } from "./per-sid";
+import { findSessionHold, sessionHoldRefusal } from "../session-hold";
 
 // Fallback allowlist used when no RuntimeRegistry is wired (legacy / test mode).
 // Mirrors the CC adapter's ALLOWED_MODELS; kept here so core has no adapter import.
@@ -322,6 +323,12 @@ export interface SessionsRouteDeps {
    * to LEGACY_ALLOWED_MODELS (the CC adapter's static allowlist).
    */
   registry?: RuntimeRegistry;
+  /**
+   * Oakridge base URL, used to ask whether a session is still held by a live
+   * execution before honouring a close. Absent when Oakridge is not configured,
+   * in which case no session is ever held.
+   */
+  oakridgeBaseUrl?: string;
 }
 
 /**
@@ -329,7 +336,7 @@ export interface SessionsRouteDeps {
  * on the given Hono app.
  */
 export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
-  const { manager, defaultWorkdir, sessionsDir, registry } = deps;
+  const { manager, defaultWorkdir, sessionsDir, registry, oakridgeBaseUrl } = deps;
 
   function runtimeForId(runtimeId: RuntimeId): AgentRuntime | null {
     return registry?.runtimes.get(runtimeId) ?? null;
@@ -959,6 +966,14 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
       purgeParam !== "false" &&
       purgeParam !== "no" &&
       purgeParam !== "off";
+    // A close is refused while a live execution still depends on this session.
+    // `?force=1` is the deliberate override for an operator who means it.
+    const forceParam = c.req.query("force")?.toLowerCase();
+    const force = forceParam !== undefined && forceParam !== "" && forceParam !== "0" && forceParam !== "false" && forceParam !== "no" && forceParam !== "off";
+    if (!force) {
+      const hold = await findSessionHold(sid, { baseUrl: oakridgeBaseUrl });
+      if (hold) return c.json(sessionHoldRefusal(hold), 409);
+    }
     if (purge) {
       manager.get(sid)?.markEndReason("user_closed");
       let removed: boolean;

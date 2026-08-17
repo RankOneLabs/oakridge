@@ -13,7 +13,7 @@ import { DbosCancellationClient } from "./runtime/dbos-cancellation-client";
 import { DbosStageRerunClient } from "./runtime/dbos-stage-rerun-client";
 import { createProductionTopologyServices } from "./runtime/production-services";
 import { seedBuiltins } from "./seed/seed-builtins";
-import { PostgresArtifactRevisionRepository, PostgresCancellationTargetRepository, PostgresExecutionArtifactContextRepository, PostgresExecutionProjectionRepository, PostgresResumeArtifactRepository, PostgresRerunTargetRepository, PostgresStageAdmissionTargetRepository, PostgresStageInstanceRepository, PostgresWorkflowAttemptRepository, PostgresWorkflowRunRepository } from "./storage/postgres-domain";
+import { PostgresArtifactRevisionRepository, PostgresCancellationTargetRepository, PostgresExecutionArtifactContextRepository, PostgresExecutionProjectionRepository, PostgresResumeArtifactRepository, PostgresRerunTargetRepository, PostgresSessionHoldRepository, PostgresStageAdmissionTargetRepository, PostgresStageInstanceRepository, PostgresWorkflowAttemptRepository, PostgresWorkflowRunRepository } from "./storage/postgres-domain";
 import { DEFAULT_STALL_THRESHOLD_SECONDS, PostgresOperatorProjectionRepository } from "./storage/postgres-operators";
 import { PostgresCollaborationRepository, PostgresFinalPullRequestRepository, PostgresGateDecisionAuditRepository } from "./storage/postgres-policy";
 import { PostgresWorkflowDefinitionRepository } from "./storage/postgres-workflow-definitions";
@@ -65,6 +65,7 @@ const executions = new PostgresExecutionProjectionRepository(sql);
 const resumeArtifacts = new PostgresResumeArtifactRepository(sql);
 const rerunTargets = new PostgresRerunTargetRepository(sql);
 const cancellationTargets = new PostgresCancellationTargetRepository(sql);
+const sessionHolds = new PostgresSessionHoldRepository(sql);
 const audits = new PostgresGateDecisionAuditRepository(sql);
 const collaboration = new PostgresCollaborationRepository(sql);
 const finalPullRequests = new PostgresFinalPullRequestRepository(sql);
@@ -154,7 +155,7 @@ const app = createApp({
   configuration: { projects, definitions, project_identity: projectIdentity, now },
   admission: { targets: admissionTargets, get_admission_state: getStageAdmissionState, send_stage_command: sendStageCommand },
   run_lifecycle: { runs },
-  domain_reads: { stages, artifacts },
+  domain_reads: { stages, artifacts, session_holds: sessionHolds },
   final_pull_requests: { final_pull_requests: finalPullRequests, now },
   artifact_callback: { contexts, artifacts, dispatch_notifications: dispatchNotifications },
   artifact_withdraw: { contexts, artifacts, dispatch_notifications: dispatchNotifications },

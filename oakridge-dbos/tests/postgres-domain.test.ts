@@ -292,7 +292,7 @@ test("stage finish decodes a finished Oakridge lifecycle", async () => {
 test("execution projection records only domain links and optional executor metadata", async () => {
   const sql = new StubSql([]);
   const repository = new PostgresExecutionProjectionRepository(sql);
-  await repository.record({ execution_id: "execution" as ExecutionId, stage_instance_id: "stage" as StageInstanceId, unit_id: "web" as UnitId, executor_type: "delegated_session", resolved_config: {}, inputs: [], declared_outputs: [] }, "root:stage:build:unit:web", { repository_key: "web" });
+  await repository.record({ execution_id: "execution" as ExecutionId, stage_instance_id: "stage" as StageInstanceId, unit_id: "web" as UnitId, executor_type: "delegated_session", resolved_config: {}, inputs: [], declared_outputs: [], expected_artifacts: [] }, "root:stage:build:unit:web", { repository_key: "web" });
   await repository.attach_external("execution" as ExecutionId, { kind: "kbbl_session", session_id: "session-1" });
   await repository.record_terminal("execution" as ExecutionId, { kind: "succeeded", metadata: {} });
   expect(sql.calls[0]?.statement).toContain("INSERT INTO oakridge.executor_projection");
@@ -312,7 +312,7 @@ test("execution projection serializes JSON arrays and objects before the Postgre
     executor_type: "delegated_session",
     resolved_config: {},
     inputs,
-    declared_outputs: [],
+    declared_outputs: [], expected_artifacts: [],
   }, "root:stage:plan_writer:unit:0", { repository_key: "web" });
 
   expect(sql.calls[0]?.parameters[5]).toBe(JSON.stringify({ repository_key: "web" }));

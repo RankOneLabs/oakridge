@@ -21,7 +21,13 @@ export interface ExecutionRequest {
   readonly resolved_config: JsonValue;
   readonly inputs: readonly ArtifactEnvelope[];
   readonly declared_outputs: readonly OutputContract[];
-  readonly expected_artifacts?: readonly ExpectedArtifactContract[];
+  /**
+   * Every artifact this execution must release before its unit is satisfied.
+   * Required: contract evaluation keys on `unit:output`, and an
+   * artifact_collection emits many artifacts under one output name, so the
+   * declared outputs alone cannot say what is outstanding.
+   */
+  readonly expected_artifacts: readonly ExpectedArtifactContract[];
   readonly workspace_source?: { readonly execution_id: ExecutionId; readonly external_reference: ExternalExecutionReference };
 }
 

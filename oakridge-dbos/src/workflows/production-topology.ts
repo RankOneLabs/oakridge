@@ -140,10 +140,25 @@ const planUnitStep = DBOS.registerStep(async (input: PlanUnitStepInput): Promise
   return plan;
 }, { name: "oakridgePlanIncrementalExecutionStep", retriesAllowed: true });
 
-const terminalFailure = (unit: UnitId, contract: ExecutionContractState, result: ArtifactContractExecutionResult): StageOutcome | null => {
+/**
+ * Whether a finished execution failed its unit.
+ *
+ * A satisfied contract is not undone by the executor having been cancelled
+ * afterwards. The execution fences its own executor the moment the contract is
+ * satisfied, and that fence closes the agent session, which the terminal
+ * observer then reports as `cancelled` — so this branch was a race with our own
+ * cleanup. It only ever passed because the workflow usually returned in the
+ * milliseconds before the observation landed; when the order flipped, a unit
+ * that had produced everything it owed was reported cancelled.
+ *
+ * A `failed` observation is deliberately still honoured on a satisfied
+ * contract. Cancellation is something the system does to a finished executor;
+ * a non-zero exit is the executor saying something went wrong, and that
+ * deserves an operator's eyes rather than being assumed benign.
+ */
+export const terminalFailure = (unit: UnitId, contract: ExecutionContractState, result: ArtifactContractExecutionResult): StageOutcome | null => {
   if (contract.kind !== "satisfied") return { kind: "failed", code: "required_output_missing", detail: `unit '${unit}' is missing: ${contract.missing_outputs.join(", ")}` };
   if (result.terminal_observation?.kind === "failed") return { kind: "failed", code: result.terminal_observation.code, detail: result.terminal_observation.detail };
-  if (result.terminal_observation?.kind === "cancelled") return { kind: "cancelled", reason: result.terminal_observation.detail };
   return null;
 };
 

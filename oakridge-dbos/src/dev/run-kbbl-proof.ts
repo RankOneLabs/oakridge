@@ -31,6 +31,7 @@ const request: ExecutionRequest = {
   },
   inputs: [],
   declared_outputs: [],
+  expected_artifacts: [],
 };
 
 await DBOS.launch();

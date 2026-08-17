@@ -8,6 +8,7 @@ import type { CompiledOutputContract } from "../domain/compiled-workflow";
 import type { ArtifactEnvelope } from "../domain/execution";
 import type { ExecutionRequest, ExecutorTerminalObservation, ExternalExecutionReference } from "../domain/execution";
 import type { CancellationExecutionTarget, CancellationWaitTarget, UnitRerunTarget } from "../domain/rerun";
+import type { SessionHold } from "../domain/session-hold";
 import type { CreateProject, Project } from "../domain/projects";
 import type { CreateWorkflowRunResult, DeleteRunResult, PendingRunLaunch, PersistWorkflowRunLaunch, SetRunArchiveResult, WorkflowRunLaunchRecord, WorkflowRunListFilter } from "../domain/runs";
 import type { ConfirmFinalPullRequestRequest, FinalPullRequestDomainError, FinalPullRequestProjection, PullRequestObservation } from "../domain/final-pull-request";
@@ -141,6 +142,11 @@ export interface ExecutionProjectionRepository {
 export interface RerunTargetRepository {
   find_unit_target(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<UnitRerunTarget | null>;
   replace_execution_workflow(execution_id: ExecutionId, replacement_workflow_id: string): Promise<void>;
+}
+
+export interface SessionHoldRepository {
+  /** The live execution holding this agent session, if any. */
+  find_session_hold(session_id: string): Promise<SessionHold | null>;
 }
 
 export interface CancellationTargetRepository {
