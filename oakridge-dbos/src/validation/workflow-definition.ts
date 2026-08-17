@@ -5,6 +5,7 @@ import type { WorkflowDefinitionId } from "../domain/primitives";
 import type { FanOutDefinition } from "../domain/delegated-session";
 import type { InputSlot, WorkflowDefinition } from "../domain/workflow";
 import { delegatedSessionDefinitionSchema } from "./delegated-session";
+import { readOwn } from "../domain/records";
 
 const inputSlotSchema = z.object({
   name: z.string().min(1),
@@ -79,8 +80,8 @@ const validateGraphReferences = (definition: WorkflowDefinition): Result<Workflo
     if (violation) return err({ operation: "validate_workflow_graph", detail: violation });
   }
   for (const edge of definition.graph.edges) {
-    const producer = definition.graph.stages[edge.from.stage];
-    const consumer = definition.graph.stages[edge.to.stage];
+    const producer = readOwn(definition.graph.stages, edge.from.stage);
+    const consumer = readOwn(definition.graph.stages, edge.to.stage);
     if (!producer || !consumer) {
       return err({ operation: "validate_workflow_graph", detail: `edge references unknown stage: ${edge.from.stage} -> ${edge.to.stage}` });
     }

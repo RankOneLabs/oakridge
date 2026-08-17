@@ -4,6 +4,7 @@ import { err, ok, type JsonValue, type Result } from "../domain/primitives";
 import type { StageNodeDefinition, WorkflowDefinition } from "../domain/workflow";
 import { delegatedSessionDefinitionSchema } from "../validation/delegated-session";
 import { selectBuiltInGateDisposition } from "../domain/gates";
+import { readOwn } from "../domain/records";
 
 export interface CompileWorkflowError {
   readonly operation: "compile_workflow";
@@ -106,12 +107,12 @@ export const compileWorkflowDefinition = (definition: WorkflowDefinition, regist
     stages[stageKey] = compiled.value;
   }
   const edges: CompiledEdge[] = definition.graph.edges.map((edge) => {
-    const consumer = stages[edge.to.stage];
+    const consumer = readOwn(stages, edge.to.stage);
     const input = consumer?.inputs.find((candidate) => candidate.name === edge.to.slot);
     if (!input) throw new Error(`validated edge input disappeared: ${edge.to.stage}.${edge.to.slot}`);
     return { producer_stage: edge.from.stage, producer_output: edge.from.slot, consumer_stage: edge.to.stage, consumer_input: edge.to.slot, delivery: input.delivery };
   });
-  const blockedByRequiredEdge = new Set(edges.filter((edge) => !stages[edge.consumer_stage]?.inputs.find((input) => input.name === edge.consumer_input)?.optional).map((edge) => edge.consumer_stage));
+  const blockedByRequiredEdge = new Set(edges.filter((edge) => !readOwn(stages, edge.consumer_stage)?.inputs.find((input) => input.name === edge.consumer_input)?.optional).map((edge) => edge.consumer_stage));
   const source_stages = Object.keys(stages).filter((stageKey) => !blockedByRequiredEdge.has(stageKey)).sort();
   return ok({ stages, edges, source_stages });
 };

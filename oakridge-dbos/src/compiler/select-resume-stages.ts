@@ -1,5 +1,6 @@
 import type { CompiledWorkflowDefinition } from "../domain/compiled-workflow";
 import { err, ok, type Result } from "../domain/primitives";
+import { hasOwn } from "../domain/records";
 
 export interface ResumeStageSelectionError {
   readonly operation: "select_ancestor_stages";
@@ -14,7 +15,7 @@ export interface ResumeStageSelectionError {
  * outcome instead of recording why it could not start.
  */
 export const selectAncestorStages = (definition: CompiledWorkflowDefinition, stage_key: string): Result<readonly string[], ResumeStageSelectionError> => {
-  if (!definition.stages[stage_key]) return err({ operation: "select_ancestor_stages", stage_key, detail: `resume stage '${stage_key}' does not exist` });
+  if (!hasOwn(definition.stages, stage_key)) return err({ operation: "select_ancestor_stages", stage_key, detail: `resume stage '${stage_key}' does not exist` });
   const ancestors = new Set<string>();
   const visit = (consumer: string): void => {
     for (const edge of definition.edges.filter((candidate) => candidate.consumer_stage === consumer)) {

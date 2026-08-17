@@ -2,6 +2,9 @@ import { Hono } from "hono";
 import type { WorkflowRunId } from "../domain/primitives";
 import type { OperatorProjectionRepository } from "../storage/postgres-operators";
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const parseRunId = (raw: string): WorkflowRunId | null => UUID.test(raw) ? raw as WorkflowRunId : null;
+
 export const createOperatorProjectionApp = (projections: OperatorProjectionRepository): Hono => {
   const app = new Hono();
   app.get("/gates", async (http) => http.json(await projections.list_pending_gates()));
@@ -11,7 +14,12 @@ export const createOperatorProjectionApp = (projections: OperatorProjectionRepos
     return http.json(await projections.list_runs(filter));
   });
   app.get("/runs/:id", async (http) => {
-    const run = await projections.get_run(http.req.param("id") as WorkflowRunId);
+    // The summary query binds this as $3::uuid, so a malformed id reaches
+    // Postgres as a cast error and surfaces as a 500. A run id that cannot
+    // exist is a 404 like any other.
+    const id = parseRunId(http.req.param("id"));
+    if (!id) return http.json({ error: "run not found" }, 404);
+    const run = await projections.get_run(id);
     return run ? http.json(run) : http.json({ error: "run not found" }, 404);
   });
   app.get("/review_inbox", async (http) => http.json(await projections.get_review_inbox()));

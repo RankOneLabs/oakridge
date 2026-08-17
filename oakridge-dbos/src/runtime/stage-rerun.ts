@@ -1,6 +1,7 @@
 import { err, ok, type Result, type WorkflowDefinitionId, type WorkflowRunId } from "../domain/primitives";
 import type { WorkflowAttemptRepository, WorkflowDefinitionRepository, WorkflowRunRepository } from "../storage/repositories";
 import type { RunWorkflowInput } from "../workflows/production-topology";
+import { hasOwn } from "../domain/records";
 
 export interface StageRerunDbosClient {
   start_run(workflow_id: string, input: RunWorkflowInput, application_version?: string): Promise<void>;
@@ -60,7 +61,7 @@ export const rerunStage = async (request: StageRerunRequest, dependencies: Stage
   if (!run) return err({ kind: "run_not_found", run_id: request.run_id });
   const definition = await dependencies.definitions.find_by_id(run.workflow_definition_id);
   if (!definition) return err({ kind: "definition_not_found", workflow_definition_id: run.workflow_definition_id });
-  if (!definition.graph.stages[request.stage_key]) return err({ kind: "stage_not_found", stage_key: request.stage_key });
+  if (!hasOwn(definition.graph.stages, request.stage_key)) return err({ kind: "stage_not_found", stage_key: request.stage_key });
   const existing = await dependencies.attempts.find_by_root_workflow_id(rootWorkflowId);
   if (existing) {
     if (existing.run_id !== request.run_id) return err({ kind: "rerun_id_belongs_to_another_run", rerun_id: request.rerun_id });
