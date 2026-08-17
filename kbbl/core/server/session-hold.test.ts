@@ -6,7 +6,9 @@
  */
 import { expect, test } from "bun:test";
 
-import { findSessionHold, sessionHoldRefusal, type SessionHold } from "./session-hold";
+import {
+  findSessionHold, isTruthyFlag, selectCloseAuthority, selectCloseRefusal, sessionHoldRefusal, type SessionHold,
+} from "./session-hold";
 
 const hold: SessionHold = {
   session_id: "session-1", execution_id: "stage-1:0", execution_workflow_id: "root:stage:plan_writer:unit:0",
@@ -59,4 +61,52 @@ test("the refusal names the work the close would have stranded", () => {
   expect(refusal.error).toContain("plan_writer");
   expect(refusal.error).toContain("run-1");
   expect(refusal.hold).toEqual(hold);
+});
+
+/**
+ * The guard's whole purpose is to refuse closes arriving from outside the
+ * execution that owns the session. Oakridge fencing its own unit is the
+ * opposite case, and it arrives through the same endpoint — so treating it
+ * like an operator deadlocks the run against itself: uncancellable because it
+ * is still active, still active because its session will not close.
+ */
+test("an execution fencing the session it holds is not refused", () => {
+  expect(selectCloseRefusal({ kind: "execution_fence", execution_id: hold.execution_id }, hold)).toBeNull();
+});
+
+test("an execution may not fence a session some other execution holds", () => {
+  const refusal = selectCloseRefusal({ kind: "execution_fence", execution_id: "stage-9:3" }, hold);
+  expect(refusal?.code).toBe("session_held_by_execution");
+});
+
+test("an operator close is refused while a unit still depends on the session", () => {
+  expect(selectCloseRefusal({ kind: "operator" }, hold)?.code).toBe("session_held_by_execution");
+});
+
+test("an operator who has seen the refusal and asked again gets through", () => {
+  expect(selectCloseRefusal({ kind: "operator_override" }, hold)).toBeNull();
+});
+
+test("a session nothing holds closes for anyone", () => {
+  for (const authority of [{ kind: "operator" } as const, { kind: "operator_override" } as const, { kind: "execution_fence", execution_id: "x" } as const]) {
+    expect(selectCloseRefusal(authority, null)).toBeNull();
+  }
+});
+
+test("an explicit override outranks a fence marker on the same request", () => {
+  expect(selectCloseAuthority({ force: "1", fenced_by: "stage-9:3" })).toEqual({ kind: "operator_override" });
+});
+
+test("a request carrying neither marker is an ordinary operator close", () => {
+  expect(selectCloseAuthority({ force: undefined, fenced_by: undefined })).toEqual({ kind: "operator" });
+  expect(selectCloseAuthority({ force: "false", fenced_by: "" })).toEqual({ kind: "operator" });
+});
+
+test("a fence marker names the execution doing the fencing", () => {
+  expect(selectCloseAuthority({ force: undefined, fenced_by: "stage-1:0" })).toEqual({ kind: "execution_fence", execution_id: "stage-1:0" });
+});
+
+test("a flag spelled falsely is not read as set", () => {
+  for (const raw of ["0", "false", "FALSE", "no", "off", "", undefined]) expect(isTruthyFlag(raw)).toBe(false);
+  for (const raw of ["1", "true", "yes", "on", "anything"]) expect(isTruthyFlag(raw)).toBe(true);
 });

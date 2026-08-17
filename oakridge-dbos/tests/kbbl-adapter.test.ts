@@ -124,14 +124,48 @@ test("kbbl adapter reports generalized input delivery failures", async () => {
     .rejects.toThrow("kbbl input delivery failed (503): unavailable");
 });
 
+const recordingAdapter = (urls: string[], status = 204) =>
+  new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "build", fetch: async (input) => {
+    urls.push(String(input));
+    return new Response(status === 204 ? null : "held", { status });
+  } });
+
 test("kbbl cancellation fences a persisted session reference after process recovery", async () => {
   const urls: string[] = [];
-  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "build", fetch: async (input) => {
-    urls.push(String(input));
-    return new Response(null, { status: 204 });
-  } });
-  await adapter.cancel_or_fence("execution-after-restart" as ExecutionId, { kind: "kbbl_session", session_id: "session-persisted" });
-  expect(urls).toEqual(["http://kbbl/sessions/session-persisted"]);
+  await recordingAdapter(urls).cancel_or_fence("execution-after-restart" as ExecutionId, { kind: "kbbl_session", session_id: "session-persisted" });
+  expect(urls).toEqual(["http://kbbl/sessions/session-persisted?fenced_by=execution-after-restart"]);
+});
+
+/**
+ * kbbl refuses a close that would abandon a live unit, and a cancelled run
+ * stops its agent through exactly this call. Unless the fence names the
+ * execution that holds the session, that guard fires on the owner's own
+ * teardown and the run deadlocks against itself: it cannot be cancelled while
+ * it is active, and it stays active because its session will not close.
+ */
+test("the fence names the execution holding the session so the hold guard lets it through", async () => {
+  const urls: string[] = [];
+  await recordingAdapter(urls).cancel_or_fence("012c6027:0" as ExecutionId, { kind: "kbbl_session", session_id: "db26174d" });
+  expect(urls[0]).toContain("fenced_by=012c6027%3A0");
+});
+
+test("ids are escaped rather than spliced into the query string raw", async () => {
+  const urls: string[] = [];
+  await recordingAdapter(urls).cancel_or_fence("a b&c:0" as ExecutionId, { kind: "kbbl_session", session_id: "s/1" });
+  expect(urls[0]).toBe("http://kbbl/sessions/s%2F1?fenced_by=a%20b%26c%3A0");
+});
+
+/** An already-gone session is the outcome the fence wanted. */
+test("an unknown session is treated as already fenced", async () => {
+  const urls: string[] = [];
+  await recordingAdapter(urls, 404).cancel_or_fence("execution-1" as ExecutionId, { kind: "kbbl_session", session_id: "session-1" });
+  expect(urls).toHaveLength(1);
+});
+
+/** A fence that fails quietly leaves a live agent running against a stopped run. */
+test("a refused fence is raised rather than swallowed", async () => {
+  await expect(recordingAdapter([], 409).cancel_or_fence("execution-1" as ExecutionId, { kind: "kbbl_session", session_id: "session-1" }))
+    .rejects.toThrow("kbbl cancellation failed (409)");
 });
 
 const buildRequest: ExecutionRequest = {

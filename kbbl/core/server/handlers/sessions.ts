@@ -19,7 +19,7 @@ import {
 import type { AgentRuntime, RuntimeId, RuntimeRegistry } from "../../runtime";
 import { ResumableInputConflictError, SessionKeyConflictError, selectTerminalWaitMs, type ResumableInputDeliveryKey, type ResumableSessionKey, type ResumableSessionStartSpec } from "../../session/resumable-session";
 import { isValidSid } from "./per-sid";
-import { findSessionHold, sessionHoldRefusal } from "../session-hold";
+import { findSessionHold, isTruthyFlag, selectCloseAuthority, selectCloseRefusal } from "../session-hold";
 
 // Fallback allowlist used when no RuntimeRegistry is wired (legacy / test mode).
 // Mirrors the CC adapter's ALLOWED_MODELS; kept here so core has no adapter import.
@@ -953,26 +953,15 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
     if (!isValidSid(sid)) return c.json({ error: "invalid sid" }, 400);
     // ?purge=true is a hard delete (drop map entry + delete JSONL). Without
     // it, the existing abort-only semantic is preserved so the PWA's Stop
-    // button keeps the ended transcript visible. Treat any non-falsy value
-    // as truthy ("1", "true", "yes") to match common URL convention.
-    // Lowercase once so falsy variants like ?purge=False / FALSE / NO are
-    // recognized — without this, mixed-case spellings would unexpectedly
-    // trigger a hard delete.
-    const purgeParam = c.req.query("purge")?.toLowerCase();
-    const purge =
-      purgeParam !== undefined &&
-      purgeParam !== "" &&
-      purgeParam !== "0" &&
-      purgeParam !== "false" &&
-      purgeParam !== "no" &&
-      purgeParam !== "off";
-    // A close is refused while a live execution still depends on this session.
-    // `?force=1` is the deliberate override for an operator who means it.
-    const forceParam = c.req.query("force")?.toLowerCase();
-    const force = forceParam !== undefined && forceParam !== "" && forceParam !== "0" && forceParam !== "false" && forceParam !== "no" && forceParam !== "off";
-    if (!force) {
-      const hold = await findSessionHold(sid, { baseUrl: oakridgeBaseUrl });
-      if (hold) return c.json(sessionHoldRefusal(hold), 409);
+    // button keeps the ended transcript visible.
+    const purge = isTruthyFlag(c.req.query("purge"));
+    // A close is refused while a live execution still depends on this session
+    // — unless it is that execution fencing itself, or an operator who has
+    // seen the refusal and asked again.
+    const authority = selectCloseAuthority({ force: c.req.query("force"), fenced_by: c.req.query("fenced_by") });
+    if (authority.kind !== "operator_override") {
+      const refusal = selectCloseRefusal(authority, await findSessionHold(sid, { baseUrl: oakridgeBaseUrl }));
+      if (refusal) return c.json(refusal, 409);
     }
     if (purge) {
       manager.get(sid)?.markEndReason("user_closed");
