@@ -11,7 +11,7 @@ import { join } from "node:path";
 
 import { KbblConfigSchema } from "../config";
 import { SessionManager } from "./session-manager";
-import { selectTerminalWaitMs, TERMINAL_WAIT_MS_DEFAULT, TERMINAL_WAIT_MS_MAX } from "./resumable-session";
+import { selectTerminalWaitMs, TERMINAL_WAIT_MS_DEFAULT, TERMINAL_WAIT_MS_MAX, type ResumableSessionKey } from "./resumable-session";
 import type { SessionId } from "./types";
 import type { SpawnCmd } from "./session";
 
@@ -141,4 +141,41 @@ test("wait_ms is clamped to a value that stays inside the server's idle timeout"
   expect(selectTerminalWaitMs("-5")).toBe(TERMINAL_WAIT_MS_DEFAULT);
   expect(selectTerminalWaitMs("nonsense")).toBe(TERMINAL_WAIT_MS_DEFAULT);
   expect(TERMINAL_WAIT_MS_MAX).toBeLessThan(255_000);
+});
+
+test("advancing a claimed key hands the next ensure a fresh session id", async () => {
+  const manager = makeManager(["sleep", "30"]);
+  const key = "execution-1:v1" as ResumableSessionKey;
+  const first = await manager.ensureResumableSession(key, { initial_prompt: "go", workdir: repoDir });
+  const advanced = await manager.advanceResumableSession(key);
+  expect(advanced.kind).toBe("advanced");
+  if (advanced.kind !== "advanced") return;
+  expect(advanced.previous_session_id).toBe(first.session.sid as SessionId);
+  expect(advanced.session_id).not.toBe(first.session.sid);
+  expect(advanced.generation).toBe(1);
+  await manager.endAll();
+});
+
+test("advancing a key nobody ever claimed reports not found rather than minting one", async () => {
+  expect(await makeManager().advanceResumableSession("never-claimed" as ResumableSessionKey)).toEqual({ kind: "not_found" });
+});
+
+test("advancing twice moves one generation at a time, never skipping", async () => {
+  const manager = makeManager(["sleep", "30"]);
+  const key = "execution-2:v1" as ResumableSessionKey;
+  await manager.ensureResumableSession(key, { initial_prompt: "go", workdir: repoDir });
+  await manager.advanceResumableSession(key);
+  const second = await manager.advanceResumableSession(key);
+  expect(second.kind === "advanced" && second.generation).toBe(2);
+  await manager.endAll();
+});
+
+test("a live session is ended before its key is advanced past it", async () => {
+  const manager = makeManager(["sleep", "30"]);
+  const key = "execution-3:v1" as ResumableSessionKey;
+  const started = await manager.ensureResumableSession(key, { initial_prompt: "go", workdir: repoDir });
+  expect(started.session.status).not.toBe("ended");
+  await manager.advanceResumableSession(key);
+  expect(manager.get(started.session.sid)?.snapshot().status).toBe("ended");
+  await manager.endAll();
 });

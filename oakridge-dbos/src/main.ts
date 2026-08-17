@@ -5,6 +5,7 @@ import { DBOS, DBOSClient } from "@dbos-inc/dbos-sdk";
 import { KbblExecutorAdapter } from "./adapters/kbbl";
 import { DEV_FLOW_ARTIFACT_TYPES, findArtifactType } from "./domain/artifact-types";
 import { createApp } from "./http/app";
+import { selectControlPlaneAccess } from "./http/control-auth";
 import { getGateWorkflowState, getHandoffWorkflowState, getStageAdmissionState, registerDbosTransportClient, sendArtifactWorkflowMessage, sendGateWorkflowCommand, sendHandoffWorkflowCommand, sendStageCommand } from "./http/dbos-transport";
 import { dispatchArtifactNotifications } from "./runtime/artifact-notifications";
 import { cancelAttempt } from "./runtime/cancel-run";
@@ -38,6 +39,12 @@ const kbblBaseUrl = required("KBBL_BASE_URL");
 const host = process.env.OAKRIDGE_DBOS_HOST?.trim() || "127.0.0.1";
 const port = Number(process.env.PORT ?? "3001");
 if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error("PORT must be a valid TCP port");
+const controlAccess = selectControlPlaneAccess({
+  host,
+  token: process.env.OAKRIDGE_CONTROL_TOKEN,
+  allow_insecure_non_loopback: process.env.ALLOW_INSECURE_NON_LOOPBACK_CONTROL === "1",
+});
+if (controlAccess.kind === "refused") throw new Error(controlAccess.detail);
 const stallThresholdSeconds = Number(process.env.OAKRIDGE_STALL_THRESHOLD_SECONDS ?? String(DEFAULT_STALL_THRESHOLD_SECONDS));
 if (!Number.isFinite(stallThresholdSeconds) || stallThresholdSeconds <= 0) throw new Error("OAKRIDGE_STALL_THRESHOLD_SECONDS must be a positive number of seconds");
 
@@ -153,6 +160,7 @@ const app = createApp({
     stage_rerun: { runs, attempts, definitions, dbos: dbosRuns, now,
       supersede_attempt: (root) => cancelAttempt(root, { dbos: dbosCancellation, now }, "superseded by stage rerun") },
   },
+  ...(controlAccess.kind === "token_required" ? { control_token: controlAccess.token } : {}),
 });
 
 const server = Bun.serve({

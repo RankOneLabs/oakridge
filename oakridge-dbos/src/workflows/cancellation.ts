@@ -27,20 +27,42 @@ const finishCancelledStagesStep = DBOS.registerStep(async (input: CancellationCo
   controlServices().finish_started_stages(input.root_workflow_id, input.requested_at, input.reason),
 { name: "oakridgeFinishCancelledStagesStep", retriesAllowed: true });
 
-export const cancellationControlWorkflow = DBOS.registerWorkflow(async (input: CancellationControlInput): Promise<CancellationControlResult> => {
-  await DBOS.setEvent("cancellation-state", { status: "fencing", ...input });
+/** Progress notification, so a caller can publish its own state event. */
+export type AttemptContainmentPhase = "fencing" | "closing_domain" | "terminalizing_waits";
+
+/**
+ * Stop everything an attempt still has running: fence its executors, close its
+ * unfinished stages in the domain, and withdraw the gate and handoff waits that
+ * would otherwise sit pending forever.
+ *
+ * Shared by operator cancellation and by a run ending because one of its stages
+ * failed. The siblings of a failed stage are in exactly the position of a
+ * cancelled run's stages — nothing downstream will ever consume their output —
+ * and leaving them alone kept their delegated sessions running, and billing,
+ * with no stage record ever written for them.
+ *
+ * Callers cancel their own workflows afterwards: an operator cancels the
+ * attempt root, while a run failing from the inside cancels its stage
+ * coordinators, because it cannot cancel the workflow it is running in.
+ */
+export const containAttempt = async (input: CancellationControlInput, announce: (phase: AttemptContainmentPhase) => Promise<void>): Promise<number> => {
+  await announce("fencing");
   const targets = await loadCancellationTargetsStep(input.root_workflow_id);
   const fences = [];
   for (const target of targets) {
     fences.push(await DBOS.startWorkflow(executorFenceWorkflow, { workflowID: `${DBOS.workflowID}:fence:${target.execution_id}` })({
       execution_id: target.execution_id, executor_type: target.executor_type,
-      ...(target.external_reference ? { external_reference: target.external_reference } : {}),
+      // An execution that never reached an executor has nothing to fence, and
+      // says so; the adapter must never have to guess from in-process memory.
+      external_reference: target.external_reference ?? { kind: "none" },
     }));
   }
   for (const fence of await DBOS.waitAll(fences)) await fence.getResult();
-  await DBOS.setEvent("cancellation-state", { status: "closing_domain", ...input });
+  await announce("closing_domain");
+  // Only stages with no recorded end are touched, so a stage that already
+  // finished — including the one whose failure started this — keeps its outcome.
   await finishCancelledStagesStep(input);
-  await DBOS.setEvent("cancellation-state", { status: "terminalizing_waits", ...input });
+  await announce("terminalizing_waits");
   const waits = await terminalizeCancellationWaitsStep(input);
   for (const wait of waits) await DBOS.send(wait.workflow_id, { kind: "withdraw" }, wait.kind === "gate" ? "gate-command" : "handoff-command", `${DBOS.workflowID}:${wait.kind}:${wait.workflow_id}:withdraw`);
   for (const wait of waits) {
@@ -51,8 +73,13 @@ export const cancellationControlWorkflow = DBOS.registerWorkflow(async (input: C
       throw new Error(`cancellation wait '${wait.workflow_id}' completed without a terminal event`);
     }
   }
+  return targets.length;
+};
+
+export const cancellationControlWorkflow = DBOS.registerWorkflow(async (input: CancellationControlInput): Promise<CancellationControlResult> => {
+  const fenced = await containAttempt(input, async (status) => { await DBOS.setEvent("cancellation-state", { status, ...input }); });
   await DBOS.setEvent("cancellation-state", { status: "cancelling", ...input });
   await DBOS.cancelWorkflow(input.root_workflow_id, { cancelChildren: true });
   await DBOS.setEvent("cancellation-state", { status: "complete", ...input });
-  return { root_workflow_id: input.root_workflow_id, fenced_execution_count: targets.length };
+  return { root_workflow_id: input.root_workflow_id, fenced_execution_count: fenced };
 }, { name: "oakridgeCancellationControlWorkflow" });

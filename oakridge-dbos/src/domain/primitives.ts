@@ -10,6 +10,16 @@ export type RootWorkflowId = Brand<string, "RootWorkflowId">;
 export type StageCoordinatorWorkflowId = Brand<string, "StageCoordinatorWorkflowId">;
 export type UnitId = Brand<string, "UnitId">;
 
+/**
+ * One attempt at an execution — the ID of the workflow running it. A rerun
+ * forks that workflow under a new ID, so this changes per attempt while staying
+ * stable across step retries and recovery of the same attempt. That is exactly
+ * the identity an external executor session must be keyed on: the execution id
+ * alone is shared by every attempt, so keying on it makes a rerun re-attach to
+ * the session that already died.
+ */
+export type ExecutionAttemptId = Brand<string, "ExecutionAttemptId">;
+
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | readonly JsonValue[] | { readonly [key: string]: JsonValue };
 
