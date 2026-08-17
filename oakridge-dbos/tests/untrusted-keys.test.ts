@@ -117,6 +117,7 @@ test("no domain read route queries on a malformed id", async () => {
   const app = new Hono().route("/", createDomainReadApp({
     stages: refuseEveryCall("stages") as never,
     artifacts: refuseEveryCall("artifacts") as never,
+    session_holds: refuseEveryCall("session_holds") as never,
   }));
   for (const id of MALFORMED) {
     const encoded = encodeURIComponent(id);

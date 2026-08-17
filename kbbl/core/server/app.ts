@@ -231,7 +231,7 @@ export function createApp(deps: CreateAppDeps): Hono {
   });
 
   // ---- sessions CRUD ----
-  mountSessionsRoutes(app, { manager, defaultWorkdir, sessionsDir, registry });
+  mountSessionsRoutes(app, { manager, defaultWorkdir, sessionsDir, registry, oakridgeBaseUrl: process.env.OAKRIDGE_CORE_BASE_URL });
 
   // ---- local directory browser ----
   mountDirectoriesRoutes(app, { defaultWorkdir });
