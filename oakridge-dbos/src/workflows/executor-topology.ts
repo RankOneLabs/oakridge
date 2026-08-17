@@ -187,7 +187,10 @@ export const artifactContractExecutionWorkflow = DBOS.registerWorkflow(async (in
   const acceptEmission = async (release: ArtifactReleaseState): Promise<void> => {
     const currentArtifact = await loadCurrentArtifactStep(release.artifact.id);
     if (!currentArtifact) return;
-    releases = withoutReleaseFor(releases, currentArtifact);
+    // Pending waits stay in `releases`. Contract satisfaction still counts only
+    // released artifacts, but the execution has to be able to tell "parked in a
+    // gate" from "never emitted" once its executor is gone.
+    releases = [...withoutReleaseFor(releases, currentArtifact), release];
     if (release.kind === "waiting_gate") {
       await DBOS.startWorkflow(gateRelayWorkflow, { workflowID: gateRelayWorkflowId(workflowId, release.artifact.id) })({ parent_workflow_id: workflowId, request: input.request, release });
     } else if (release.kind === "waiting_handoff") {
@@ -222,7 +225,7 @@ export const artifactContractExecutionWorkflow = DBOS.registerWorkflow(async (in
     } else {
       terminalObservation = message.observation;
       const contract = evaluateExecutionArtifactContract(input.outputs, releases, input.request.expected_artifacts);
-      if (!shouldAwaitArtifactRelease(contract, message.observation)) {
+      if (!shouldAwaitArtifactRelease(contract, message.observation, releases)) {
         return { external_reference: externalReference, contract, terminal_observation: message.observation };
       }
       continue;

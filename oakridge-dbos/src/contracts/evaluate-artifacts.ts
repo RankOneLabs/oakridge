@@ -50,5 +50,28 @@ export const evaluateExecutionArtifactContract = (outputs: readonly CompiledOutp
   return { kind: "satisfied", artifacts: outputs.map((output) => releasedByOutput.get(output.name)).filter((artifact): artifact is ArtifactRevision => artifact !== undefined) };
 };
 
-export const shouldAwaitArtifactRelease = (contract: ExecutionContractState, observation: ExecutorTerminalObservation): boolean =>
-  contract.kind === "waiting_artifacts" && observation.kind === "succeeded";
+/**
+ * Whether an execution should keep waiting now that its executor has finished.
+ *
+ * The executor's liveness is the wrong axis, and using it alone was the defect:
+ * an agent that emits a gated artifact and exits is doing exactly what it is
+ * supposed to do, yet its execution abandoned the artifact the moment the
+ * session went away. What actually matters is whether anything is still capable
+ * of releasing the outstanding outputs.
+ *
+ * An artifact parked in a gate or a handoff is not missing. Its wait workflow is
+ * alive and will deliver a decision whenever the reviewer makes one — which is
+ * the entire point of a gate, and reviewers work at human pace. An output with
+ * nothing emitted against it is different: only an agent could ever produce it,
+ * and that agent has gone.
+ */
+export const shouldAwaitArtifactRelease = (
+  contract: ExecutionContractState,
+  observation: ExecutorTerminalObservation,
+  releases: readonly ArtifactReleaseState[] = [],
+): boolean => {
+  if (contract.kind !== "waiting_artifacts") return false;
+  if (observation.kind === "succeeded") return true;
+  const awaitingDecision = new Set(releases.filter((release) => release.kind !== "released").map((release) => artifactReleaseKey(release.artifact)));
+  return contract.missing_outputs.length > 0 && contract.missing_outputs.every((output) => awaitingDecision.has(output));
+};
