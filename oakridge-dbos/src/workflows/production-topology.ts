@@ -3,7 +3,7 @@ import { DBOS } from "@dbos-inc/dbos-sdk";
 import { materializeStage } from "../compiler/materialize-stage";
 import { resolveDelegatedExecution } from "../compiler/resolve-execution";
 import { selectAncestorStages } from "../compiler/select-resume-stages";
-import { appendIncrementalUnit, closeIncrementalMaterialization, emptyIncrementalMaterialization, selectReadyUnits, type IncrementalMaterialization } from "../compiler/materialize-units";
+import { appendIncrementalUnit, closeIncrementalMaterialization, emptyIncrementalMaterialization, isFanOutDriverInput, selectDriverArtifacts, selectReadyUnits, type IncrementalMaterialization } from "../compiler/materialize-units";
 import type { ArtifactRevision, ExecutionContractState } from "../domain/artifacts";
 import type { CompiledStageContract, CompiledWorkflowDefinition, MaterializedExecutionUnit } from "../domain/compiled-workflow";
 import type { DelegatedSessionDefinitionConfig } from "../domain/delegated-session";
@@ -197,18 +197,19 @@ export const productionStageWorkflow = DBOS.registerWorkflow(async (input: Stage
   if (input.open_incremental_inputs.length > 0) {
     if (input.compiled_stage.materialization.kind !== "fan_out") throw new Error(`incremental stage '${input.stage_key}' must use fan-out materialization`);
     incremental = emptyIncrementalMaterialization();
-    for (const inputName of input.open_incremental_inputs) {
-      const initial = input.inputs[inputName];
-      const initialArtifacts = initial === undefined ? [] : Array.isArray(initial) ? initial : [initial as ArtifactEnvelope];
-      for (const artifact of initialArtifacts) {
-        const parameters = { unit_id: artifact.unit_id, artifact: artifact.body } as const;
-        const appended = appendIncrementalUnit(incremental, parameters, { unit_id_path: input.compiled_stage.materialization.unit_id_path, depends_on_path: input.compiled_stage.materialization.depends_on_path });
-        if (!appended.ok) throw new Error(`${appended.error.operation}:${appended.error.detail}`);
-        incremental = appended.value;
-        const unit = incremental.units[incremental.units.length - 1];
-        if (!unit) throw new Error("initial incremental unit disappeared");
-        plans.push(await planUnitStep({ stage: input.compiled_stage, stage_instance_id: input.stage_instance_id, inputs: accumulatedInputs, context: input.context, unit }));
-      }
+    // Units come from the input the stage fans out over, and from nothing else.
+    // A stage can consume several incremental inputs — dev-flow's assessor takes
+    // both `build_result` (its driver) and `brief` — and minting from the
+    // non-drivers too either spawns a phantom unit per artifact or collides on
+    // `unit_id` and fails the stage before it launches anything.
+    for (const artifact of selectDriverArtifacts<ArtifactEnvelope>(input.compiled_stage.materialization, input.inputs)) {
+      const parameters = { unit_id: artifact.unit_id, artifact: artifact.body } as const;
+      const appended = appendIncrementalUnit(incremental, parameters, { unit_id_path: input.compiled_stage.materialization.unit_id_path, depends_on_path: input.compiled_stage.materialization.depends_on_path });
+      if (!appended.ok) throw new Error(`${appended.error.operation}:${appended.error.detail}`);
+      incremental = appended.value;
+      const unit = incremental.units[incremental.units.length - 1];
+      if (!unit) throw new Error("initial incremental unit disappeared");
+      plans.push(await planUnitStep({ stage: input.compiled_stage, stage_instance_id: input.stage_instance_id, inputs: accumulatedInputs, context: input.context, unit }));
     }
   } else {
     plans.push(...await planStageStep({ stage: input.compiled_stage, stage_instance_id: input.stage_instance_id, inputs: input.inputs, context: input.context }));
@@ -247,15 +248,18 @@ export const productionStageWorkflow = DBOS.registerWorkflow(async (input: Stage
     }
     if (command.kind !== "input_released") return { kind: "unhandled" };
     if (input.compiled_stage.materialization.kind !== "fan_out") return { kind: "terminal", outcome: { kind: "failed", code: "unexpected_incremental_input", detail: `stage '${input.stage_key}' is not fan-out` } };
+    // Every incremental artifact accumulates — units read all of their stage's
+    // inputs. Only the driver input goes on to mint a unit.
+    const existingInput = accumulatedInputs[command.input_name];
+    const existingArtifacts = existingInput === undefined ? [] : Array.isArray(existingInput) ? existingInput : [existingInput as ArtifactEnvelope];
+    accumulatedInputs[command.input_name] = [...existingArtifacts, command.artifact];
+    if (!isFanOutDriverInput(input.compiled_stage.materialization, command.input_name)) return { kind: "applied" };
     const parameters = { unit_id: command.artifact.unit_id, artifact: command.artifact.body } as const;
     const appended = appendIncrementalUnit(incremental, parameters, { unit_id_path: input.compiled_stage.materialization.unit_id_path, depends_on_path: input.compiled_stage.materialization.depends_on_path });
     if (!appended.ok) return { kind: "terminal", outcome: { kind: "failed", code: "invalid_incremental_materialization", detail: appended.error.detail } };
     incremental = appended.value;
     const unit = incremental.units[incremental.units.length - 1];
     if (!unit) throw new Error("appended incremental unit disappeared");
-    const existingInput = accumulatedInputs[command.input_name];
-    const existingArtifacts = existingInput === undefined ? [] : Array.isArray(existingInput) ? existingInput : [existingInput as ArtifactEnvelope];
-    accumulatedInputs[command.input_name] = [...existingArtifacts, command.artifact];
     plans.push(await planUnitStep({ stage: input.compiled_stage, stage_instance_id: input.stage_instance_id, inputs: accumulatedInputs, context: input.context, unit }));
     if (!input.compiled_stage.materialization.manual_admission) admitted.add(unit.unit_id);
     return { kind: "applied" };
@@ -356,7 +360,7 @@ const stageInputs = (stageKey: string, definition: CompiledWorkflowDefinition, o
     const input = stage.inputs.find((candidate) => candidate.name === edge.consumer_input);
     const values = artifacts.map((artifact) => ({ artifact_id: artifact.id, artifact_type: artifact.artifact_type, output_name: artifact.output_name, unit_id: artifact.unit_id, body: artifact.body,
       producer_execution_id: artifact.execution_id }));
-    const requiresCollection = edge.delivery === "unit_complete" || input?.collect === true || (stage.materialization.kind === "fan_out" && stage.materialization.over.from === "input" && stage.materialization.over.input_name === edge.consumer_input);
+    const requiresCollection = edge.delivery === "unit_complete" || input?.collect === true || isFanOutDriverInput(stage.materialization, edge.consumer_input);
     if (requiresCollection) result[edge.consumer_input] = values;
     else if (values[0]) result[edge.consumer_input] = values[0];
   }

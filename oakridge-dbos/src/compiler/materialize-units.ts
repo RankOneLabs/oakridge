@@ -1,5 +1,32 @@
-import type { MaterializedExecutionUnit } from "../domain/compiled-workflow";
+import type { MaterializationContract, MaterializedExecutionUnit } from "../domain/compiled-workflow";
 import { err, ok, type JsonValue, type Result, type UnitId } from "../domain/primitives";
+
+/**
+ * Whether an incrementally released input is the one a fan-out materializes
+ * over. Only the driver mints units; every other incremental input is an
+ * ordinary accumulated input that the units read. Without this distinction each
+ * `unit_complete` edge into the stage would spawn its own phantom unit per
+ * artifact — or collide on `unit_id` and fail the whole stage.
+ */
+export const isFanOutDriverInput = (materialization: MaterializationContract, input_name: string): boolean =>
+  materialization.kind === "fan_out" && materialization.over.from === "input" && materialization.over.input_name === input_name;
+
+/**
+ * The artifacts a fan-out stage mints its initial units from — those already
+ * delivered on its driver input. Dev-flow's assessor is the case that matters:
+ * it consumes `build_result` (its driver) and `brief` incrementally, and both
+ * carry the same `unit_id` per repository, so seeding from both collides on
+ * `unit_id` and fails the stage before it launches a single unit.
+ */
+export const selectDriverArtifacts = <Envelope>(
+  materialization: MaterializationContract,
+  inputs: Readonly<Record<string, Envelope | readonly Envelope[]>>,
+): readonly Envelope[] => {
+  if (materialization.kind !== "fan_out" || materialization.over.from !== "input") return [];
+  const delivered = inputs[materialization.over.input_name];
+  if (delivered === undefined) return [];
+  return Array.isArray(delivered) ? delivered : [delivered as Envelope];
+};
 
 export interface MaterializationSpec { readonly unit_id_path: string; readonly depends_on_path: string | null }
 export interface MaterializationError { readonly operation: "materialize_units"; readonly unit_id: string | null; readonly detail: string }
