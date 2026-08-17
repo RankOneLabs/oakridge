@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 
 import { compileWorkflowDefinition } from "../src/compiler/compile-workflow";
 import { materializeStage } from "../src/compiler/materialize-stage";
-import { selectReadyUnits } from "../src/compiler/materialize-units";
+import { appendIncrementalUnit, emptyIncrementalMaterialization, selectDriverArtifacts, selectReadyUnits, type IncrementalMaterialization } from "../src/compiler/materialize-units";
 import { resolveDelegatedExecution } from "../src/compiler/resolve-execution";
 import type { CompiledStageContract, MaterializedExecutionUnit } from "../src/domain/compiled-workflow";
 import type { DelegatedSessionDefinitionConfig } from "../src/domain/delegated-session";
@@ -116,4 +116,41 @@ test("seeded assessor pairs each build result with only its matching brief", asy
   expect(execution).toEqual({ ok: true, value: expect.objectContaining({ rendered_prompt: expect.stringContaining("ui works") }) });
   if (execution.ok) expect(execution.value.rendered_prompt).not.toContain("base works");
   expect(assessor.outputs[0]?.release).toEqual(expect.objectContaining({ kind: "gate", revision_target: "upstream_handoff" }));
+});
+
+test("seeded assessor mints one unit per build result, never one per brief", async () => {
+  const workflow = await loadCompiled();
+  const assessor = workflow.stages.assessor!;
+  // Briefs and build results carry the same unit_id per repository. Seeding
+  // units from both collides on unit_id and fails the stage before it launches.
+  const briefs = [envelope("brief-1", "dev.build_brief", "brief", "web", { repository_key: "oakridge" })];
+  const results = [envelope("result-1", "dev.build_result", "build_result", "web", { repository_key: "oakridge" })];
+  const driving = selectDriverArtifacts<ArtifactEnvelope>(assessor.materialization, { brief: briefs, build_result: results });
+  expect(driving).toEqual(results);
+});
+
+test("a fan-out driven by a non-input binding mints nothing rather than guessing an input", () => {
+  const materialization = { kind: "fan_out", over: { from: "context", path: "/repositories" }, unit_id_path: "/unit_id", depends_on_path: null, max_parallel: 1, manual_admission: false } as const;
+  expect(selectDriverArtifacts(materialization, { brief: [envelope("brief-1", "dev.build_brief", "brief", "web", {})] })).toEqual([]);
+});
+
+test("a scalar stage has no driver input, so nothing fans out of it", async () => {
+  const workflow = await loadCompiled();
+  const planWriter = workflow.stages.plan_writer!;
+  expect(planWriter.materialization.kind).toBe("scalar");
+  expect(selectDriverArtifacts(planWriter.materialization, { anything: [envelope("a", "t", "o", "u", {})] })).toEqual([]);
+});
+
+test("seeding from every incremental input collides on unit_id — the reason only the driver mints", async () => {
+  const workflow = await loadCompiled();
+  const assessor = workflow.stages.assessor!;
+  if (assessor.materialization.kind !== "fan_out") throw new Error("assessor must fan out");
+  const spec = { unit_id_path: assessor.materialization.unit_id_path, depends_on_path: assessor.materialization.depends_on_path };
+  const seed = (state: IncrementalMaterialization, artifact: ArtifactEnvelope) =>
+    appendIncrementalUnit(state, { unit_id: artifact.unit_id, artifact: artifact.body }, spec);
+  const brief = envelope("brief-1", "dev.build_brief", "brief", "web", { repository_key: "oakridge" });
+  const result = envelope("result-1", "dev.build_result", "build_result", "web", { repository_key: "oakridge" });
+  const first = seed(emptyIncrementalMaterialization(), brief);
+  if (!first.ok) throw new Error(first.error.detail);
+  expect(seed(first.value, result)).toEqual({ ok: false, error: expect.objectContaining({ unit_id: "web", detail: "duplicate unit_id" }) });
 });

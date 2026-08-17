@@ -88,8 +88,43 @@ test("workflow run creation replays only when run, profile, attempt, and launch 
   expect(sql.calls.some((call) => call.statement.includes("INSERT INTO oakridge.workflow_run"))).toBe(false);
   expect(sql.calls[2]?.parameters).toEqual([
     launch.run.id, launch.run.workflow_definition_id, launch.run.project_id, launch.run.context,
-    launch.run.root_workflow_id, launch.run.created_at,
+    launch.run.root_workflow_id,
   ]);
+});
+
+test("a launch is identified by its request, not by the timestamp the server stamped on it", async () => {
+  const existing = { ...launch.run, immutable_matches: true };
+  const sql = new TransactionStubSql([[], [{ archived: false, version: 2 }], [existing], [{ exists: false }], [{ matches: true }], []]);
+  // Two concurrent requests carrying one Idempotency-Key each stamp their own
+  // `now()`; the loser must replay the winner's run rather than 409.
+  const loser = { ...launch, run: { ...launch.run, created_at: "2026-08-15T12:00:09Z" } };
+  const result = await new PostgresWorkflowRunRepository(sql).create_with_initial_attempt(loser);
+  expect(result).toEqual({ ok: true, value: expect.objectContaining({ kind: "replayed" }) });
+  expect(sql.calls[2]?.statement).not.toContain("run.created_at =");
+  expect(sql.calls[2]?.parameters).not.toContain(loser.run.created_at);
+});
+
+test("the stored launch command is compared without the timestamp only the winner could have stamped", async () => {
+  const existing = { ...launch.run, immutable_matches: true };
+  const sql = new TransactionStubSql([[], [{ archived: false, version: 2 }], [existing], [{ exists: false }], [{ matches: true }], []]);
+  await new PostgresWorkflowRunRepository(sql).create_with_initial_attempt(launch);
+  const comparison = sql.calls.find((call) => call.statement.includes("FROM oakridge.command_outbox"));
+  expect(comparison?.statement).toContain("payload - 'created_at' = $3::jsonb");
+  expect(comparison?.parameters[2]).not.toHaveProperty("created_at");
+});
+
+test("an epic profile replays on its request fields, not on the timestamps it inherited", async () => {
+  const sql = new TransactionStubSql([[], [{ archived: false, version: 2 }], [{ ...launch.run, immutable_matches: true }], [{ matches: true }], [{ matches: true }], []]);
+  const profile = {
+    id: launch.run.id as unknown as import("../src/domain/epic").EpicWorkflowProfileId,
+    workflow_run_id: launch.run.id, title: "DBOS replacement", slug: "dbos-replacement",
+    lifecycle_state: "active" as const, final_merge_policy: "guarded" as const, repositories: [],
+    created_at: "2026-08-15T12:00:09Z", updated_at: "2026-08-15T12:00:09Z",
+  };
+  await new PostgresWorkflowRunRepository(sql).create_with_initial_attempt({ ...launch, epic_profile: profile });
+  const comparison = sql.calls.find((call) => call.statement.includes("FROM oakridge.epic_workflow_profile"));
+  expect(comparison?.statement).not.toContain("created_at =");
+  expect(comparison?.parameters).not.toContain(profile.created_at);
 });
 
 test("workflow run launch replay ignores mutable archive state", async () => {

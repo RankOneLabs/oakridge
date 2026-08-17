@@ -76,18 +76,22 @@ export class PostgresWorkflowRunRepository implements WorkflowRunRepository {
         readonly root_workflow_id: string; readonly archived: boolean; readonly created_at: string;
         readonly immutable_matches: boolean;
       }>(
+        // `created_at` is deliberately absent: it is stamped by whichever caller
+        // reaches the server first, not supplied by the request. Two concurrent
+        // launches carrying the same Idempotency-Key are the same launch even
+        // though each stamped its own `now()`, so comparing it would 409 the
+        // loser of a race that in fact succeeded.
         `SELECT ${this.launchColumns},
                 run.workflow_definition_id = $2::uuid
                 AND run.project_id IS NOT DISTINCT FROM $3::uuid
                 AND run.context = $4::jsonb
-                AND attempt.root_workflow_id = $5
-                AND run.created_at = $6::timestamptz AS immutable_matches
+                AND attempt.root_workflow_id = $5 AS immutable_matches
          FROM oakridge.workflow_run run
          LEFT JOIN oakridge.workflow_attempt attempt ON attempt.run_id = run.id
            AND attempt.forked_from_root_workflow_id IS NULL
          WHERE run.id = $1`,
         [input.run.id, input.run.workflow_definition_id, input.run.project_id, input.run.context,
-          input.run.root_workflow_id, input.run.created_at],
+          input.run.root_workflow_id],
       );
       const existing = existingRows[0];
       if (existing) {
@@ -116,10 +120,7 @@ export class PostgresWorkflowRunRepository implements WorkflowRunRepository {
          VALUES ($1,$2,NULL,$3::timestamptz)`,
         [input.run.root_workflow_id, input.run.id, input.run.created_at],
       );
-      const notification: RunLaunchCommand = { kind: "launch_run", run_id: input.run.id, workflow_definition_id: input.run.workflow_definition_id,
-        workflow_definition_version: input.workflow_definition_version,
-        root_workflow_id: input.run.root_workflow_id, context: input.run.context, created_at: input.run.created_at,
-        application_version: input.application_version };
+      const notification = this.launchCommand(input);
       const idempotencyKey = `run:${input.run.id}:launch:${input.run.root_workflow_id}`;
       await transaction.query(
         `INSERT INTO oakridge.command_outbox
@@ -248,28 +249,37 @@ export class PostgresWorkflowRunRepository implements WorkflowRunRepository {
       return rows[0]?.exists === false;
     }
     const profile = input.epic_profile;
+    // Timestamps are excluded for the same reason as on the run itself: the
+    // profile inherits the launch's server-stamped `created_at`, so a race
+    // between two identical requests would otherwise read as a conflict.
     const rows = await transaction.query<{ readonly matches: boolean }>(
       `SELECT id = $2::uuid AND title = $3 AND slug = $4 AND lifecycle_state = $5
-              AND final_merge_policy = $6 AND repositories = $7::jsonb
-              AND created_at = $8::timestamptz AND updated_at = $9::timestamptz AS matches
+              AND final_merge_policy = $6 AND repositories = $7::jsonb AS matches
        FROM oakridge.epic_workflow_profile WHERE workflow_run_id = $1`,
       [input.run.id, profile.id, profile.title, profile.slug, profile.lifecycle_state, profile.final_merge_policy,
-        JSON.stringify(profile.repositories), profile.created_at, profile.updated_at]);
+        JSON.stringify(profile.repositories)]);
     return rows[0]?.matches === true;
   }
 
   private async launchCommandMatches(transaction: SqlExecutor, input: PersistWorkflowRunLaunch): Promise<boolean> {
-    const expected: RunLaunchCommand = { kind: "launch_run", run_id: input.run.id, workflow_definition_id: input.run.workflow_definition_id,
-      workflow_definition_version: input.workflow_definition_version,
-      root_workflow_id: input.run.root_workflow_id, context: input.run.context, created_at: input.run.created_at,
-      application_version: input.application_version };
+    const { created_at: _stampedByTheWinner, ...expected } = this.launchCommand(input);
     const idempotencyKey = `run:${input.run.id}:launch:${input.run.root_workflow_id}`;
+    // The stored payload carries the winner's `created_at`; a replaying caller
+    // stamped its own. Comparing everything except that timestamp is what makes
+    // the two requests recognisably the same launch.
     const rows = await transaction.query<{ readonly matches: boolean }>(
       `SELECT command_type = 'run_launch' AND target_workflow_id = $2
-              AND payload = $3::jsonb AS matches
+              AND payload - 'created_at' = $3::jsonb AS matches
        FROM oakridge.command_outbox WHERE idempotency_key = $1`,
       [idempotencyKey, input.run.root_workflow_id, expected]);
     return rows[0]?.matches === true;
+  }
+
+  private launchCommand(input: PersistWorkflowRunLaunch): RunLaunchCommand {
+    return { kind: "launch_run", run_id: input.run.id, workflow_definition_id: input.run.workflow_definition_id,
+      workflow_definition_version: input.workflow_definition_version,
+      root_workflow_id: input.run.root_workflow_id, context: input.run.context, created_at: input.run.created_at,
+      application_version: input.application_version };
   }
 
   private async insertProfile(transaction: SqlExecutor, profile: EpicWorkflowProfile): Promise<void> {

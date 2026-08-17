@@ -13,6 +13,15 @@ export interface OakridgeProxyDeps {
 
 const OAKRIDGE_PROXY_TIMEOUT_MS = 30_000;
 
+/**
+ * Upstream paths that stream indefinitely. A request deadline severs these
+ * mid-stream, so they get none — `server.ts` already exempts the same path from
+ * Bun's idle timeout, and an exemption on one hop is worthless while the other
+ * hop still aborts at 30s. The upstream sends heartbeat comments, so a genuinely
+ * dead connection is still detected by the socket, not by a timer here.
+ */
+const STREAMING_UPSTREAM_PATHS: ReadonlySet<string> = new Set(["/events"]);
+
 export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): void {
   // Config: tells the PWA whether the Oakridge backend is configured without
   // attempting a proxy request that would block the page.
@@ -70,12 +79,17 @@ export function mountOakridgeProxyRoutes(app: Hono, deps: OakridgeProxyDeps): vo
         method,
         headers: forwardHeaders,
         body,
-        signal: AbortSignal.timeout(OAKRIDGE_PROXY_TIMEOUT_MS),
+        signal: STREAMING_UPSTREAM_PATHS.has(subPath) ? undefined : AbortSignal.timeout(OAKRIDGE_PROXY_TIMEOUT_MS),
       });
       const ct = upstream.headers.get("content-type") ?? "application/json";
+      const responseHeaders = new Headers({ "content-type": ct });
+      // Streams must not be cached anywhere on the way back to the browser;
+      // the upstream says so and dropping the header would lose that.
+      const cacheControl = upstream.headers.get("cache-control");
+      if (cacheControl) responseHeaders.set("cache-control", cacheControl);
       return new Response(upstream.body, {
         status: upstream.status,
-        headers: { "content-type": ct },
+        headers: responseHeaders,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

@@ -92,4 +92,44 @@ describe("oakridge proxy", () => {
     });
     expect(captured.authHeader).toBeNull();
   });
+
+  test("leaves the invalidation stream unbounded so the deadline cannot sever it", async () => {
+    let signal: AbortSignal | null | undefined = null;
+    globalThis.fetch = (async (_input, init) => {
+      signal = init?.signal;
+      return new Response("", { status: 200, headers: { "content-type": "text/event-stream" } });
+    }) as typeof fetch;
+
+    const app = new Hono();
+    mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test" });
+
+    await app.request("/oakridge/api/events");
+    expect(signal).toBeUndefined();
+  });
+
+  test("forwards the stream's no-cache directive instead of dropping it", async () => {
+    globalThis.fetch = (async (_input, _init) =>
+      new Response("", { status: 200, headers: { "content-type": "text/event-stream", "cache-control": "no-cache" } })) as typeof fetch;
+
+    const app = new Hono();
+    mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test" });
+
+    const res = await app.request("/oakridge/api/events");
+    expect(res.headers.get("cache-control")).toBe("no-cache");
+  });
+
+  test("forwards the client's last event id so a reconnect can resume", async () => {
+    const captured = { lastEventId: null as string | null };
+    globalThis.fetch = (async (_input, init) => {
+      const headers = init?.headers as Headers | undefined;
+      captured.lastEventId = headers?.get("last-event-id") ?? null;
+      return new Response("", { status: 200, headers: { "content-type": "text/event-stream" } });
+    }) as typeof fetch;
+
+    const app = new Hono();
+    mountOakridgeProxyRoutes(app, { baseUrl: "http://oakridge.test" });
+
+    await app.request("/oakridge/api/events", { headers: { "last-event-id": "cursor-7" } });
+    expect(captured.lastEventId).toBe("cursor-7");
+  });
 });
