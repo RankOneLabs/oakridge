@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { stageRerunStateKey, type StageRerunState } from "../domain/rerun";
 import type { RetryStuckRequest, RetryStuckResult } from "../domain/runs";
 import type { StageInstanceRepository, RerunTargetRepository } from "../storage/repositories";
-import { rerunStage, type StageRerunDependencies } from "./stage-rerun";
+import { describeStageRerunError, isMissingStageRerunTarget, rerunStage, type StageRerunDependencies } from "./stage-rerun";
 import { rerunUnit, type RerunDbosClient } from "./unit-rerun";
 
 export interface RetryStuckDependencies {
@@ -44,11 +44,7 @@ export const retryStuck = async (request: RetryStuckRequest, dependencies: Retry
     return failure(request, "not_stuck", `stage instance '${request.stage_instance_id}' is not terminal with a failed outcome`);
   }
   const rerunId = commandIdentity([request.stage_instance_id, stage.run_id, stage.stage_key]);
-  try {
-    await rerunStage({ run_id: stage.run_id, stage_key: stage.stage_key, rerun_id: rerunId }, dependencies.stage_rerun);
-    return { kind: "accepted_stage", stage_instance_id: request.stage_instance_id, unit_id: null };
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : "stage rerun conflicted";
-    return failure(request, detail.includes("was not found") || detail.includes("does not exist") ? "not_stuck" : "active_conflict", detail);
-  }
+  const rerun = await rerunStage({ run_id: stage.run_id, stage_key: stage.stage_key, rerun_id: rerunId }, dependencies.stage_rerun);
+  if (rerun.ok) return { kind: "accepted_stage", stage_instance_id: request.stage_instance_id, unit_id: null };
+  return failure(request, isMissingStageRerunTarget(rerun.error) ? "not_stuck" : "active_conflict", describeStageRerunError(rerun.error));
 };

@@ -3,7 +3,7 @@ import type { StageInstance, StageOutcome, WorkflowDefinition } from "../domain/
 import type { EpicWorkflowProfile, EpicWorkflowProfileId } from "../domain/epic";
 import type { GateDecisionAudit, GateDecisionAuditId } from "../domain/gates";
 import type { CollaborationMessage, CollaborationThread, CollaborationThreadWithMessages, MessageId, ReviewItem, ReviewItemId, ReviewItemStatus, ThreadId, ThreadStatus } from "../domain/collaboration";
-import type { ArtifactEmission, ArtifactEmissionDelivery, ArtifactRevision, EmitArtifactRevisionResult, PendingArtifactNotification, ReleaseArtifactResult, WithdrawArtifactRequest, WithdrawArtifactResult } from "../domain/artifacts";
+import type { ArtifactCoordinate, ArtifactEmission, ArtifactEmissionDelivery, ArtifactRevision, EmitArtifactRevisionResult, PendingArtifactNotification, ReleaseArtifactResult, WithdrawArtifactRequest, WithdrawArtifactResult } from "../domain/artifacts";
 import type { CompiledOutputContract } from "../domain/compiled-workflow";
 import type { ArtifactEnvelope } from "../domain/execution";
 import type { ExecutionRequest, ExecutorTerminalObservation, ExternalExecutionReference } from "../domain/execution";
@@ -90,14 +90,18 @@ export interface ArtifactRevisionRepository {
   emit_revision(id: ArtifactId, emission: ArtifactEmission, created_at: string, delivery: ArtifactEmissionDelivery): Promise<EmitArtifactRevisionResult>;
   withdraw(request: WithdrawArtifactRequest): Promise<WithdrawArtifactResult>;
   mark_released(id: ArtifactId, released_at: string): Promise<ReleaseArtifactResult>;
-  find_tip(stage_instance_id: StageInstanceId, execution_id: string, unit_id: string, output_name: string): Promise<ArtifactRevision | null>;
-  find_current(stage_instance_id: StageInstanceId, execution_id: string, unit_id: string, output_name: string): Promise<ArtifactRevision | null>;
+  find_tip(coordinate: ArtifactCoordinate): Promise<ArtifactRevision | null>;
+  find_current(coordinate: ArtifactCoordinate): Promise<ArtifactRevision | null>;
   list_chain(chain_id: ArtifactId): Promise<readonly ArtifactRevision[]>;
   find_by_id(id: ArtifactId): Promise<ArtifactRevision | null>;
 }
 
 export interface RunArtifactReadRepository {
   list_effective_for_run(run_id: WorkflowRunId): Promise<readonly ArtifactRevision[]>;
+}
+
+export interface CommandOutboxMaintenanceRepository {
+  purge_delivered_commands(delivered_before: string): Promise<number>;
 }
 
 export interface ArtifactNotificationRepository {

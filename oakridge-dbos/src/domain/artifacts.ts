@@ -1,6 +1,19 @@
 import type { ArtifactId, ExecutionId, JsonValue, Result, StageInstanceId, UnitId, WorkflowRunId } from "./primitives";
 import type { ArtifactTypeId } from "./workflow";
-import type { OutputReleaseContract } from "./compiled-workflow";
+import type { CompiledGateStep, OutputReleaseContract } from "./compiled-workflow";
+
+/**
+ * Where an artifact sits in the run graph — the natural key of its revision
+ * chain. `ArtifactRevision` satisfies it structurally, so a caller holding a
+ * revision passes the revision itself rather than unpacking four fields whose
+ * order nothing checks.
+ */
+export interface ArtifactCoordinate {
+  readonly stage_instance_id: StageInstanceId;
+  readonly execution_id: ExecutionId;
+  readonly unit_id: UnitId;
+  readonly output_name: string;
+}
 
 export interface ArtifactRevision {
   readonly id: ArtifactId;
@@ -76,7 +89,7 @@ export interface ArtifactEmissionDelivery {
 
 export type ArtifactReleaseState =
   | { readonly kind: "released"; readonly artifact: ArtifactRevision }
-  | { readonly kind: "waiting_gate"; readonly artifact: ArtifactRevision; readonly gate_steps: readonly { readonly type: string; readonly actions: readonly string[] }[] }
+  | { readonly kind: "waiting_gate"; readonly artifact: ArtifactRevision; readonly gate_steps: readonly CompiledGateStep[] }
   | { readonly kind: "waiting_handoff"; readonly artifact: ArtifactRevision; readonly downstream_role: string; readonly external_wait_kind: string };
 
 export type ArtifactLifecycleNotification =

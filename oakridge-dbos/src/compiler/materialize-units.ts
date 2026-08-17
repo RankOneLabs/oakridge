@@ -1,5 +1,6 @@
 import type { MaterializationContract, MaterializedExecutionUnit } from "../domain/compiled-workflow";
 import { err, ok, type JsonValue, type Result, type UnitId } from "../domain/primitives";
+import { readJsonPointer } from "../domain/json-pointer";
 
 /**
  * Whether an incrementally released input is the one a fan-out materializes
@@ -31,21 +32,11 @@ export const selectDriverArtifacts = <Envelope>(
 export interface MaterializationSpec { readonly unit_id_path: string; readonly depends_on_path: string | null }
 export interface MaterializationError { readonly operation: "materialize_units"; readonly unit_id: string | null; readonly detail: string }
 
-const pointer = (value: JsonValue, path: string): JsonValue | undefined => {
-  if (path === "") return value;
-  let current: JsonValue | undefined = value;
-  for (const token of path.split("/").slice(1).map((part) => part.replaceAll("~1", "/").replaceAll("~0", "~"))) {
-    if (Array.isArray(current)) current = current[Number(token)];
-    else if (current !== null && typeof current === "object") current = (current as { readonly [key: string]: JsonValue })[token];
-    else return undefined;
-  }
-  return current;
-};
 
 const parseUnit = (item: JsonValue, spec: MaterializationSpec): Result<MaterializedExecutionUnit, MaterializationError> => {
-  const id = pointer(item, spec.unit_id_path);
+  const id = readJsonPointer(item, spec.unit_id_path);
   if (typeof id !== "string" || id.length === 0) return err({ operation: "materialize_units", unit_id: null, detail: `unit_id at '${spec.unit_id_path}' must be a non-empty string` });
-  const rawDependencies = spec.depends_on_path === null ? [] : pointer(item, spec.depends_on_path);
+  const rawDependencies = spec.depends_on_path === null ? [] : readJsonPointer(item, spec.depends_on_path);
   if (!Array.isArray(rawDependencies) || rawDependencies.some((dependency) => typeof dependency !== "string" || dependency.length === 0)) return err({ operation: "materialize_units", unit_id: id, detail: "depends_on must be an array of non-empty strings" });
   const dependencies = rawDependencies as string[];
   if (dependencies.includes(id)) return err({ operation: "materialize_units", unit_id: id, detail: "unit cannot depend on itself" });

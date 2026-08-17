@@ -1,6 +1,7 @@
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
 import type { ArtifactRevision } from "../domain/artifacts";
+import { selectBuiltInGateDisposition } from "../domain/gates";
 
 export interface HandoffWaitInput {
   readonly artifact: ArtifactRevision;
@@ -34,8 +35,9 @@ export const durableHandoffWorkflow = DBOS.registerWorkflow(async (input: Handof
       return result;
     }
     if (decision.kind !== "downstream_decision") continue;
-    const isPass = decision.action === "pass" || decision.action === "approve" || decision.action === "confirm_merged" || decision.action === "closed_without_merge";
-    if (!isPass) {
+    // The decision was made against another stage's gate, so its step is not
+    // in hand here; the shared vocabulary is.
+    if (selectBuiltInGateDisposition(decision.action) !== "release") {
       const result: HandoffResult = { kind: "revision_requested", artifact: input.artifact, decision_artifact_id: decision.decision_artifact_id, feedback: decision.feedback };
       await DBOS.setEvent("handoff-state", { status: "revision_requested", artifact_id: input.artifact.id, decision_artifact_id: decision.decision_artifact_id });
       await DBOS.send(input.parent_workflow_id, { kind: "handoff_revision_requested", result }, "execution-event", `handoff:${input.artifact.id}:revision:${decision.decision_artifact_id}`);

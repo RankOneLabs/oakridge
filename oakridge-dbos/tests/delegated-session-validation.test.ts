@@ -17,6 +17,32 @@ const definition = {
   },
 };
 
+/**
+ * A gate action with no disposition used to validate and compile cleanly, then
+ * behave as a rejection at runtime — failing the stage with
+ * `required_output_missing` long after the definition was accepted.
+ */
+test("a gate action with no known disposition is refused at definition time", () => {
+  const result = delegatedSessionDefinitionSchema.safeParse({
+    ...definition,
+    output_gate: { output: "result", steps: [{ type: "artifact_approval" as const, actions: ["approve", "accept"] }] },
+  });
+  expect(result.success).toBe(false);
+  if (result.success) return;
+  expect(result.error.issues.map((issue) => issue.message).join("\n")).toContain("action 'accept' has no known disposition");
+});
+
+test("the built-in action vocabulary validates", () => {
+  const result = delegatedSessionDefinitionSchema.safeParse({
+    ...definition,
+    output_gate: { output: "result", steps: [
+      { type: "artifact_approval" as const, actions: ["approve", "request_revision"] },
+      { type: "merge_confirmation" as const, actions: ["confirm_merged", "closed_without_merge"] },
+    ] },
+  });
+  expect(result.success).toBe(true);
+});
+
 test("delegated session validation rejects duplicate durable gate step identities", () => {
   const result = delegatedSessionDefinitionSchema.safeParse(definition);
   expect(result.success).toBe(false);

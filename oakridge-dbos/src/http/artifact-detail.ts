@@ -4,6 +4,10 @@ import type { OperatorArtifactDetail, OperatorArtifactRevision } from "../domain
 import type { ArtifactTypeDefinition } from "../domain/artifact-types";
 import type { ArtifactId } from "../domain/primitives";
 import type { ArtifactRevisionRepository, GateDecisionAuditRepository, StageInstanceRepository } from "../storage/repositories";
+import { selectBuiltInGateDisposition } from "../domain/gates";
+
+/** An audit row records the action name only, so its disposition comes from the shared vocabulary. */
+const isReleaseAction = (action: string): boolean => selectBuiltInGateDisposition(action) === "release";
 
 export interface ArtifactTypePresentation {
   readonly component_id: string;
@@ -19,7 +23,6 @@ export interface ArtifactDetailDependencies {
   readonly artifact_types?: readonly ArtifactTypeDefinition[];
 }
 
-const passActions = new Set(["pass", "approve", "confirm_merged", "closed_without_merge"]);
 
 export const createArtifactDetailApp = (dependencies: ArtifactDetailDependencies): Hono => {
   const app = new Hono();
@@ -33,7 +36,7 @@ export const createArtifactDetailApp = (dependencies: ArtifactDetailDependencies
     const revisions: OperatorArtifactRevision[] = [];
     for (const revision of chain) {
       const decision = await dependencies.audits.find_for_revision(revision.id);
-      const status: OperatorArtifactRevision["status"] = !decision ? "draft" : passActions.has(decision.action) ? "approved" : "rejected";
+      const status: OperatorArtifactRevision["status"] = !decision ? "draft" : isReleaseAction(decision.action) ? "approved" : "rejected";
       revisions.push({ id: revision.id, status, lifecycle: revision.lifecycle.kind, created_at: revision.created_at, body: revision.body, validation: {} });
     }
     const presentation = dependencies.presentation_for_type(requested.artifact_type);

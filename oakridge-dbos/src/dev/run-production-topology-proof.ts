@@ -108,7 +108,7 @@ try {
           artifact_type: expected.artifact_type, label: expected.unit_id, body: artifactBody(execution.request, expected.unit_id), version: 1, parent_artifact_id: null, lifecycle: { kind: "current" }, created_at: new Date().toISOString() };
         artifactState.set(artifact.id, artifact);
         if (["spec_analysis", "plan", "brief", "assessment"].includes(expected.output_name)) {
-          await sendProofMessage(execution.workflow_id, { kind: "artifact_emitted", release: { kind: "waiting_gate", artifact, gate_steps: [{ type: "artifact_approval", actions: ["approve", "request_revision"] }] } }, `proof:${artifact.id}`);
+          await sendProofMessage(execution.workflow_id, { kind: "artifact_emitted", release: { kind: "waiting_gate", artifact, gate_steps: [{ type: "artifact_approval", actions: [{ name: "approve", disposition: "release" as const }, { name: "request_revision", disposition: "revise" as const }] }] } }, `proof:${artifact.id}`);
           const gateId = `${execution.workflow_id}:gate:${artifact.id}:wait:artifact_approval`;
           await awaitEventStatus(gateId, "gate-state", "pending");
           await sendProofMessage(gateId, { kind: "decision", action: "approve", artifact_revision_id: artifact.id, gate_step: "artifact_approval" }, `approve:${artifact.id}`, "gate-command");

@@ -18,6 +18,7 @@ import { createRunLifecycleApp, type RunLifecycleHttpDependencies } from "./run-
 import { createDomainReadApp, type DomainReadHttpDependencies } from "./domain-reads";
 import { createFinalPullRequestApp, type FinalPullRequestHttpDependencies } from "./final-pull-request";
 import { controlTokenMiddleware } from "./control-auth";
+import { sharedCursor } from "./shared-cursor";
 
 export interface OakridgeHttpDependencies {
   readonly configuration: ConfigurationHttpDependencies;
@@ -53,7 +54,7 @@ export const createApp = (dependencies: OakridgeHttpDependencies): Hono => {
   app.route("/", createCollaborationApp(dependencies.collaboration));
   app.route("/", createOperatorProjectionApp(dependencies.operator_projections));
   app.route("/", createArtifactDetailApp(dependencies.artifact_detail));
-  app.route("/", createInvalidationEventApp({ current_cursor: () => dependencies.operator_projections.get_invalidation_cursor() }));
+  app.route("/", createInvalidationEventApp({ current_cursor: sharedCursor(() => dependencies.operator_projections.get_invalidation_cursor()) }));
   app.route("/", createRerunApp(dependencies.rerun));
   app.route("/", createRunLaunchApp(dependencies.run_launch));
   return app;

@@ -13,6 +13,8 @@ import type { ExecutionId, JsonValue, StageCoordinatorWorkflowId, StageInstanceI
 import type { StageFailureOutcome, StageOutcome } from "../domain/workflow";
 import { stageRerunStateKey, type StageRerunState } from "../domain/rerun";
 import type { StageAdmissionState } from "../domain/runs";
+import { readJsonPointer } from "../domain/json-pointer";
+import { relayWorkflowId, stageCoordinatorWorkflowId, unitExecutionWorkflowId } from "../domain/workflow-ids";
 import { containAttempt } from "./cancellation";
 import { artifactContractExecutionWorkflow, type ArtifactContractExecutionResult } from "./executor-topology";
 
@@ -86,21 +88,12 @@ export const selectInputsForUnit = (inputs: StageInputSet, unit: MaterializedExe
     return [name, value.filter((artifact) => artifact.unit_id === unit.unit_id)];
   }));
 };
-const jsonPointer = (value: JsonValue, path: string): JsonValue | undefined => {
-  let current: JsonValue | undefined = value;
-  for (const token of path.split("/").slice(1).map((part) => part.replaceAll("~1", "/").replaceAll("~0", "~"))) {
-    if (Array.isArray(current)) current = current[Number(token)];
-    else if (current !== null && typeof current === "object") current = (current as Readonly<Record<string, JsonValue>>)[token];
-    else return undefined;
-  }
-  return current;
-};
 const expectedArtifacts = (stage: CompiledStageContract, unit: MaterializedExecutionUnit) => {
   if (stage.materialization.kind !== "artifact_collection") return stage.outputs.map((output) => ({ unit_id: unit.unit_id, output_name: output.name, artifact_type: output.artifact_type }));
   if (!Array.isArray(unit.parameters)) throw new Error("artifact collection parameters must be an array");
   const idPath = stage.materialization.id_path;
   return unit.parameters.flatMap((item) => {
-    const id = jsonPointer(item, idPath);
+    const id = readJsonPointer(item, idPath);
     if (typeof id !== "string" || id.length === 0) throw new Error(`artifact collection id at '${idPath}' must be a non-empty string`);
     return stage.outputs.map((output) => ({ unit_id: id as UnitId, output_name: output.name, artifact_type: output.artifact_type }));
   });
@@ -241,7 +234,7 @@ export const productionStageWorkflow = DBOS.registerWorkflow(async (input: Stage
 
   /** Adopt an execution as this unit's live attempt and start relaying its completion. */
   const watchExecution = async (unitId: UnitId, executionWorkflowId: string): Promise<void> => {
-    await DBOS.startWorkflow(stageUnitRelayWorkflow, { workflowID: `${executionWorkflowId}:relay` })(
+    await DBOS.startWorkflow(stageUnitRelayWorkflow, { workflowID: relayWorkflowId(executionWorkflowId) })(
       { coordinator_workflow_id: coordinatorId, unit_id: unitId, execution_workflow_id: executionWorkflowId });
     executionWorkflowIds[unitId] = executionWorkflowId;
     runtime.set(unitId, { kind: "running", execution_workflow_id: executionWorkflowId });
@@ -332,7 +325,7 @@ export const productionStageWorkflow = DBOS.registerWorkflow(async (input: Stage
     for (const unit of ready) {
       const plan = plans.find((candidate) => candidate.unit.unit_id === unit.unit_id);
       if (!plan) throw new Error(`execution plan '${unit.unit_id}' disappeared`);
-      const executionWorkflowId = `${coordinatorId}:unit:${unit.unit_id}`;
+      const executionWorkflowId = unitExecutionWorkflowId(coordinatorId, unit.unit_id);
       await recordExecutionStep({ request: plan.request, execution_workflow_id: executionWorkflowId, parameters: unit.parameters });
       await DBOS.startWorkflow(artifactContractExecutionWorkflow, { workflowID: executionWorkflowId })({ request: plan.request, outputs: input.compiled_stage.outputs });
       await watchExecution(unit.unit_id, executionWorkflowId);
@@ -425,7 +418,19 @@ export const productionRunWorkflow = DBOS.registerWorkflow(async (input: RunWork
   if (!rootId) throw new Error("root workflow requires a workflow ID");
   await ensureRunStep({ ...input, root_workflow_id: rootId });
   const definition = await loadCompiledDefinitionStep(input);
-  const ancestors = input.resume_from_stage ? selectAncestorStages(definition, input.resume_from_stage) : [];
+  let ancestors: readonly string[] = [];
+  if (input.resume_from_stage) {
+    const selected = selectAncestorStages(definition, input.resume_from_stage);
+    // Recorded as a failed run rather than thrown: a run that dies here leaves
+    // no outcome for the operator surface to read, so the resume looks stuck
+    // rather than rejected.
+    if (!selected.ok) {
+      const outcome: StageOutcome = { kind: "failed", code: "invalid_resume_stage", detail: selected.error.detail };
+      await finishRunStep({ attempt_root_workflow_id: rootId, outcome, ended_at: new Date(await DBOS.now()).toISOString() });
+      return { run_id: input.run_id, outcome, stage_workflow_ids: {} };
+    }
+    ancestors = selected.value;
+  }
   const started = new Set<string>(ancestors);
   const finished = new Set<string>(ancestors);
   const outputs = new Map<string, readonly ArtifactRevision[]>();
@@ -444,11 +449,11 @@ export const productionRunWorkflow = DBOS.registerWorkflow(async (input: RunWork
       const stage = definition.stages[stageKey];
       if (!stage) throw new Error(`compiled stage '${stageKey}' disappeared`);
       const stageInstanceId = await DBOS.randomUUID() as StageInstanceId;
-      const coordinatorId = `${rootId}:stage:${stageKey}` as StageCoordinatorWorkflowId;
+      const coordinatorId = stageCoordinatorWorkflowId(rootId, stageKey);
       const openIncrementalInputs = definition.edges.filter((edge) => edge.consumer_stage === stageKey && edge.delivery === "unit_complete" && !finished.has(edge.producer_stage)).map((edge) => edge.consumer_input);
       await startStageStep({ run_id: input.run_id, attempt_root_workflow_id: rootId, stage_instance_id: stageInstanceId, stage, coordinator_workflow_id: coordinatorId, started_at: new Date(await DBOS.now()).toISOString() });
       const handle = await DBOS.startWorkflow(productionStageWorkflow, { workflowID: coordinatorId })({ run_id: input.run_id, root_workflow_id: rootId, stage_instance_id: stageInstanceId, stage_key: stageKey, compiled_stage: stage, inputs: stageInputs(stageKey, definition, outputs), open_incremental_inputs: openIncrementalInputs, context: input.context });
-      await DBOS.startWorkflow(stageRelayWorkflow, { workflowID: `${coordinatorId}:relay` })({ root_workflow_id: rootId, stage_key: stageKey, handle_workflow_id: handle.workflowID });
+      await DBOS.startWorkflow(stageRelayWorkflow, { workflowID: relayWorkflowId(coordinatorId) })({ root_workflow_id: rootId, stage_key: stageKey, handle_workflow_id: handle.workflowID });
       stageWorkflowIds[stageKey] = coordinatorId;
       started.add(stageKey);
     }

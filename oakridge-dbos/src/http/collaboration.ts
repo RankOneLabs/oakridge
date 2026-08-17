@@ -3,7 +3,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { Hono } from "hono";
 
 import { renderCollaborationPingPrompt, validateCollaborationPingRequestId, type CollaborationMessage, type CollaborationPingAccepted, type CollaborationThread, type MessageId, type ReviewItem, type ReviewItemId, type ReviewItemStatus, type ThreadId, type ThreadStatus } from "../domain/collaboration";
-import type { ArtifactId, JsonValue } from "../domain/primitives";
+import { isJsonValue, type ArtifactId, type JsonValue } from "../domain/primitives";
+import { decodeJsonPointerSegment } from "../domain/json-pointer";
 import type { ArtifactRevision } from "../domain/artifacts";
 import type { ArtifactRevisionRepository, CollaborationRepository, ExecutionArtifactContextRepository, ExecutionProjectionRepository } from "../storage/repositories";
 
@@ -31,13 +32,11 @@ const objectBody = async (request: Request): Promise<Record<string, unknown> | n
   catch { return null; }
 };
 const nonempty = (value: unknown): string | null => typeof value === "string" && value.trim() ? value.trim() : null;
-const isJsonValue = (value: unknown): value is JsonValue => value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean" || (Array.isArray(value) ? value.every(isJsonValue) : typeof value === "object" && Object.values(value).every(isJsonValue));
 const anchorAllowed = (anchor: string, schema: readonly string[]): boolean => schema.some((prefix) => anchor === prefix || anchor.startsWith(`${prefix}/`));
-const decodePointerSegment = (segment: string): string => segment.replace(/~1/g, "/").replace(/~0/g, "~");
 const editJsonPointer = (body: JsonValue, pointer: string, previous: JsonValue, replacement: JsonValue): JsonValue | null => {
   if (!pointer.startsWith("/") || pointer === "/") return null;
   const clone = structuredClone(body) as JsonValue;
-  const segments = pointer.slice(1).split("/").map(decodePointerSegment);
+  const segments = pointer.slice(1).split("/").map(decodeJsonPointerSegment);
   let cursor: unknown = clone;
   for (const segment of segments.slice(0, -1)) {
     if (Array.isArray(cursor)) { const index = Number(segment); if (!Number.isInteger(index) || index < 0 || index >= cursor.length) return null; cursor = cursor[index]; }
@@ -128,7 +127,7 @@ export const createCollaborationApp = (dependencies: CollaborationHttpDependenci
     const body = await objectBody(http.req.raw); const anchor = nonempty(body?.anchor); const author = nonempty(body?.author);
     if (!anchor || !author || !isJsonValue(body?.prev_value) || !isJsonValue(body?.new_value)) return http.json({ error: "anchor, author, prev_value, and new_value are required" }, 400);
     if (policy.anchor_schema && !anchorAllowed(anchor, policy.anchor_schema)) return http.json({ error: `anchor '${anchor}' is not in the artifact anchor schema` }, 400);
-    const current = await dependencies.artifacts.find_current(artifact.stage_instance_id, artifact.execution_id, artifact.unit_id, artifact.output_name);
+    const current = await dependencies.artifacts.find_current(artifact);
     if (!current || current.id !== artifact.id) return http.json({ error: "concurrent edit: artifact revision is stale" }, 409);
     const edited = editJsonPointer(artifact.body, anchor, body.prev_value, body.new_value);
     if (!edited) return http.json({ error: `prev_value mismatch or anchor '${anchor}' was not found` }, 409);

@@ -1,5 +1,5 @@
 import type { ArtifactId, StageInstanceId, UnitId, WorkflowRunId } from "../domain/primitives";
-import type { ArtifactEmission, ArtifactEmissionDelivery, ArtifactLifecycleNotification, ArtifactRevision, EmitArtifactRevisionResult, PendingArtifactNotification, ReleaseArtifactResult, WithdrawArtifactRequest, WithdrawArtifactResult } from "../domain/artifacts";
+import type { ArtifactCoordinate, ArtifactEmission, ArtifactEmissionDelivery, ArtifactLifecycleNotification, ArtifactRevision, EmitArtifactRevisionResult, PendingArtifactNotification, ReleaseArtifactResult, WithdrawArtifactRequest, WithdrawArtifactResult } from "../domain/artifacts";
 import type { StageInstance, StageOutcome } from "../domain/workflow";
 import type {
   ArtifactRevisionRepository,
@@ -21,6 +21,7 @@ import type {
 import { err, ok, type ExecutionId, type JsonValue } from "../domain/primitives";
 import type { ExecutionRequest, ExecutorTerminalObservation, ExternalExecutionReference } from "../domain/execution";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
+import { superjsonValue } from "./sql-fragments";
 import type { CancellationExecutionTarget, CancellationWaitTarget, UnitRerunTarget } from "../domain/rerun";
 import type { CreateWorkflowRunResult, DeleteRunResult, PendingRunLaunch, PersistWorkflowRunLaunch, RunLaunchCommand, SetRunArchiveResult, WorkflowRunLaunchRecord, WorkflowRunListFilter } from "../domain/runs";
 import type { EpicWorkflowProfile } from "../domain/epic";
@@ -34,6 +35,34 @@ interface StageRow {
   readonly ended_at: string | null;
   readonly outcome: StageOutcome | null;
 }
+
+interface OutboxEnvelope {
+  readonly idempotency_key: string;
+  readonly target_workflow_id: string;
+  readonly created_at: string;
+}
+type OutboxCommand = OutboxEnvelope & (
+  | { readonly command_type: "run_launch"; readonly payload: RunLaunchCommand }
+  | { readonly command_type: "artifact_notification"; readonly payload: ArtifactLifecycleNotification }
+);
+
+/**
+ * Enqueue a command exactly once per idempotency key.
+ *
+ * This INSERT existed twice and had drifted: the notification copy carried
+ * `ON CONFLICT DO NOTHING` and the run-launch copy did not, so a duplicate
+ * launch enqueue raised a unique violation and failed the whole transaction
+ * where it should have replayed as a no-op. One statement, one behaviour.
+ */
+const enqueueCommand = async (transaction: SqlExecutor, command: OutboxCommand): Promise<void> => {
+  await transaction.query(
+    `INSERT INTO oakridge.command_outbox
+       (id, command_type, idempotency_key, target_workflow_id, payload, created_at)
+     VALUES (md5($1)::uuid, $5, $1, $2, $3::jsonb, $4::timestamptz)
+     ON CONFLICT (idempotency_key) DO NOTHING`,
+    [command.idempotency_key, command.target_workflow_id, command.payload, command.created_at, command.command_type],
+  );
+};
 
 const decodeStage = (row: StageRow): StageInstance => ({
   id: row.id as StageInstance["id"],
@@ -120,14 +149,9 @@ export class PostgresWorkflowRunRepository implements WorkflowRunRepository {
          VALUES ($1,$2,NULL,$3::timestamptz)`,
         [input.run.root_workflow_id, input.run.id, input.run.created_at],
       );
-      const notification = this.launchCommand(input);
-      const idempotencyKey = `run:${input.run.id}:launch:${input.run.root_workflow_id}`;
-      await transaction.query(
-        `INSERT INTO oakridge.command_outbox
-           (id, command_type, idempotency_key, target_workflow_id, payload, created_at)
-         VALUES (md5($1)::uuid, 'run_launch', $1, $2, $3::jsonb, $4::timestamptz)`,
-        [idempotencyKey, input.run.root_workflow_id, notification, input.run.created_at],
-      );
+      await enqueueCommand(transaction, { command_type: "run_launch", payload: this.launchCommand(input),
+        idempotency_key: `run:${input.run.id}:launch:${input.run.root_workflow_id}`,
+        target_workflow_id: input.run.root_workflow_id, created_at: input.run.created_at });
       return ok({ kind: "created", run: input.run, epic_profile: input.epic_profile });
     });
   }
@@ -433,15 +457,18 @@ interface ArtifactRow {
   readonly created_at: string;
 }
 
-const artifactColumns = `id,
-  COALESCE((WITH RECURSIVE ancestors AS (
-    SELECT root.id, root.parent_artifact_id FROM oakridge.artifact root WHERE root.id = artifact.id
-    UNION ALL SELECT parent.id, parent.parent_artifact_id FROM oakridge.artifact parent JOIN ancestors child ON parent.id = child.parent_artifact_id
-  ) SELECT id FROM ancestors WHERE parent_artifact_id IS NULL LIMIT 1), id) AS chain_id,
+// `chain_id` is a stored column: it is fixed when a revision is inserted, and
+// recomputing it per row meant a recursive CTE on every artifact read — four of
+// them inside emit_revision's lock-holding transaction.
+const artifactColumns = `id, chain_id,
   run_id, stage_instance_id, execution_id, unit_id, output_name, artifact_type,
   label, body, version, parent_artifact_id, emission_payload_hash, lifecycle_state,
   superseded_by_artifact_id, withdrawn_actor, withdrawn_reason,
   withdrawn_at::text, released_at::text, created_at::text`;
+
+/** Bind order for the four coordinate columns, in one place so it cannot drift. */
+const artifactCoordinateParameters = (coordinate: ArtifactCoordinate): readonly unknown[] =>
+  [coordinate.stage_instance_id, coordinate.execution_id, coordinate.unit_id, coordinate.output_name];
 
 const decodeArtifactLifecycle = (row: ArtifactRow): ArtifactRevision["lifecycle"] => {
   if (row.lifecycle_state === "current") return { kind: "current" };
@@ -513,11 +540,13 @@ export class PostgresArtifactRevisionRepository implements ArtifactRevisionRepos
       const version = (tip?.version ?? 0) + 1;
       const rows = await transaction.query<ArtifactRow>(
         `INSERT INTO oakridge.artifact
-           (id, run_id, stage_instance_id, execution_id, unit_id, output_name, artifact_type,
+           (id, chain_id, run_id, stage_instance_id, execution_id, unit_id, output_name, artifact_type,
             body, label, version, parent_artifact_id, emission_idempotency_key, emission_payload_hash, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13, $14::timestamptz)
+         VALUES ($1, $15, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13, $14::timestamptz)
          RETURNING ${artifactColumns}`,
-        [id, emission.run_id, emission.stage_instance_id, emission.execution_id, emission.unit_id, emission.output_name, emission.artifact_type, emission.body, emission.label, version, tip?.id ?? null, emission.idempotency_key, emission.payload_hash, created_at],
+        // A first revision roots its own chain; every later one inherits the root
+        // its parent already carries, so the walk never has to be repeated.
+        [id, emission.run_id, emission.stage_instance_id, emission.execution_id, emission.unit_id, emission.output_name, emission.artifact_type, emission.body, emission.label, version, tip?.id ?? null, emission.idempotency_key, emission.payload_hash, created_at, tip?.chain_id ?? id],
       );
       if (!rows[0]) throw new Error("artifact revision insert returned no row");
       await this.recordEmissionKey(transaction, emission, id, created_at);
@@ -604,13 +633,13 @@ export class PostgresArtifactRevisionRepository implements ArtifactRevisionRepos
     });
   }
 
-  async find_tip(stage_instance_id: StageInstanceId, execution_id: string, unit_id: string, output_name: string): Promise<ArtifactRevision | null> {
-    const rows = await this.sql.query<ArtifactRow>(`SELECT ${artifactColumns} FROM oakridge.artifact artifact WHERE stage_instance_id = $1 AND execution_id = $2 AND unit_id = $3 AND output_name = $4 ORDER BY version DESC LIMIT 1`, [stage_instance_id, execution_id, unit_id, output_name]);
+  async find_tip(coordinate: ArtifactCoordinate): Promise<ArtifactRevision | null> {
+    const rows = await this.sql.query<ArtifactRow>(`SELECT ${artifactColumns} FROM oakridge.artifact artifact WHERE stage_instance_id = $1 AND execution_id = $2 AND unit_id = $3 AND output_name = $4 ORDER BY version DESC LIMIT 1`, artifactCoordinateParameters(coordinate));
     return rows[0] ? decodeArtifact(rows[0]) : null;
   }
 
-  async find_current(stage_instance_id: StageInstanceId, execution_id: string, unit_id: string, output_name: string): Promise<ArtifactRevision | null> {
-    const rows = await this.sql.query<ArtifactRow>(`SELECT ${artifactColumns} FROM oakridge.artifact artifact WHERE stage_instance_id = $1 AND execution_id = $2 AND unit_id = $3 AND output_name = $4 AND lifecycle_state = 'current'`, [stage_instance_id, execution_id, unit_id, output_name]);
+  async find_current(coordinate: ArtifactCoordinate): Promise<ArtifactRevision | null> {
+    const rows = await this.sql.query<ArtifactRow>(`SELECT ${artifactColumns} FROM oakridge.artifact artifact WHERE stage_instance_id = $1 AND execution_id = $2 AND unit_id = $3 AND output_name = $4 AND lifecycle_state = 'current'`, artifactCoordinateParameters(coordinate));
     return rows[0] ? decodeArtifact(rows[0]) : null;
   }
 
@@ -667,6 +696,23 @@ export class PostgresArtifactRevisionRepository implements ArtifactRevisionRepos
       [workerId, claimedAt, claimedUntil, limit]);
   }
 
+  /**
+   * Drop commands that were delivered long enough ago to be of no further use.
+   *
+   * Delivered rows were never removed, so the outbox only ever grew — and the
+   * two pollers scanned it every second for the life of the deployment. The
+   * retention window is generous because these rows are the audit trail of what
+   * was dispatched; it is the unbounded growth that is the problem, not the
+   * rows themselves.
+   */
+  async purge_delivered_commands(delivered_before: string): Promise<number> {
+    const rows = await this.sql.query<{ readonly id: string }>(
+      `DELETE FROM oakridge.command_outbox
+       WHERE delivered_at IS NOT NULL AND delivered_at < $1::timestamptz
+       RETURNING id::text`, [delivered_before]);
+    return rows.length;
+  }
+
   async mark_notification_delivered(id: string, workerId: string, delivered_at: string): Promise<void> {
     await this.sql.query(
       `UPDATE oakridge.command_outbox SET delivered_at = $3::timestamptz, claimed_by = NULL,
@@ -684,13 +730,8 @@ export class PostgresArtifactRevisionRepository implements ArtifactRevisionRepos
   }
 
   private async enqueueNotification(transaction: SqlExecutor, targetWorkflowId: string, message: ArtifactLifecycleNotification, idempotencyKey: string, createdAt: string): Promise<void> {
-    await transaction.query(
-      `INSERT INTO oakridge.command_outbox
-         (id, command_type, idempotency_key, target_workflow_id, payload, created_at)
-       VALUES (md5($1)::uuid, 'artifact_notification', $1, $2, $3::jsonb, $4::timestamptz)
-       ON CONFLICT (idempotency_key) DO NOTHING`,
-      [idempotencyKey, targetWorkflowId, message, createdAt],
-    );
+    await enqueueCommand(transaction, { command_type: "artifact_notification", payload: message,
+      idempotency_key: idempotencyKey, target_workflow_id: targetWorkflowId, created_at: createdAt });
   }
 
   private async recordEmissionKey(transaction: SqlExecutor, emission: ArtifactEmission, artifactId: ArtifactId, createdAt: string): Promise<void> {
@@ -869,16 +910,16 @@ export class PostgresCancellationTargetRepository implements CancellationTargetR
       const waits = await transaction.query<{ readonly kind: "gate" | "handoff"; readonly workflow_id: string }>(
         `SELECT 'gate'::text AS kind, event.workflow_uuid AS workflow_id
          FROM dbos.workflow_events event
-         JOIN oakridge.artifact artifact ON artifact.id = (COALESCE((event.value::jsonb)->'json', event.value::jsonb)->>'artifact_revision_id')::uuid
+         JOIN oakridge.artifact artifact ON artifact.id = (${superjsonValue("event.value")}->>'artifact_revision_id')::uuid
          JOIN oakridge.stage_instance stage ON stage.id = artifact.stage_instance_id
-         WHERE event.key = 'gate-state' AND COALESCE((event.value::jsonb)->'json', event.value::jsonb)->>'status' = 'pending'
+         WHERE event.key = 'gate-state' AND ${superjsonValue("event.value")}->>'status' = 'pending'
            AND artifact.lifecycle_state = 'current' AND stage.attempt_root_workflow_id = $1
          UNION ALL
          SELECT 'handoff'::text AS kind, event.workflow_uuid AS workflow_id
          FROM dbos.workflow_events event
-         JOIN oakridge.artifact artifact ON artifact.id = (COALESCE((event.value::jsonb)->'json', event.value::jsonb)->>'artifact_id')::uuid
+         JOIN oakridge.artifact artifact ON artifact.id = (${superjsonValue("event.value")}->>'artifact_id')::uuid
          JOIN oakridge.stage_instance stage ON stage.id = artifact.stage_instance_id
-         WHERE event.key = 'handoff-state' AND COALESCE((event.value::jsonb)->'json', event.value::jsonb)->>'status' IN ('awaiting_downstream', 'awaiting_external')
+         WHERE event.key = 'handoff-state' AND ${superjsonValue("event.value")}->>'status' IN ('awaiting_downstream', 'awaiting_external')
            AND artifact.lifecycle_state = 'current' AND stage.attempt_root_workflow_id = $1`, [root_workflow_id]);
       const rows = await transaction.query<{ readonly id: string }>(
         `UPDATE oakridge.artifact artifact

@@ -17,7 +17,7 @@ test("run list derives parked state by joining root status with DBOS gate events
   let params: readonly unknown[] = [];
   const executor: SqlExecutor = { query: async <Row>(_sql: string, values: readonly unknown[]) => { params = values; return [{ id: "run-1", workflow_name: "dev-flow", root_workflow_id: "root-2", dbos_status: "PENDING", current_stage: "build", parked_count: "2", updated_at_epoch_ms: "1786737600000", outcome: null, is_stuck: false, archived: false }] as Row[]; } };
   const runs = await new PostgresOperatorProjectionRepository(executor).list_runs("active");
-  expect(params).toEqual([false, 3600]);
+  expect(params).toEqual([false, 3600, null]);
   expect(runs).toEqual([expect.objectContaining({ id: "run-1", current_attempt_root_workflow_id: "root-2", status: "parked", current_stage: "build", parked_count: 2, is_failed: false })]);
 });
 
@@ -48,7 +48,7 @@ test("the stall window is configurable and passed as a query parameter", async (
   let params: readonly unknown[] = [];
   const executor: SqlExecutor = { query: async <Row>(_sql: string, values: readonly unknown[]) => { params = values; return [] as Row[]; } };
   await new PostgresOperatorProjectionRepository(executor, { stall_threshold_seconds: 120 }).list_runs("all");
-  expect(params).toEqual([null, 120]);
+  expect(params).toEqual([null, 120, null]);
 });
 
 test("run archive is domain state and never mutates DBOS workflow status", async () => {

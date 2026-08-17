@@ -1,8 +1,9 @@
-import type { CompiledEdge, CompiledOutputContract, CompiledStageContract, CompiledWorkflowDefinition, MaterializationContract, OutputReleaseContract } from "../domain/compiled-workflow";
+import type { CompiledEdge, CompiledGateStep, CompiledOutputContract, CompiledStageContract, CompiledWorkflowDefinition, MaterializationContract, OutputReleaseContract } from "../domain/compiled-workflow";
 import type { DelegatedSessionDefinitionConfig } from "../domain/delegated-session";
 import { err, ok, type JsonValue, type Result } from "../domain/primitives";
 import type { StageNodeDefinition, WorkflowDefinition } from "../domain/workflow";
 import { delegatedSessionDefinitionSchema } from "../validation/delegated-session";
+import { selectBuiltInGateDisposition } from "../domain/gates";
 
 export interface CompileWorkflowError {
   readonly operation: "compile_workflow";
@@ -20,16 +21,23 @@ export interface StageTypeCompiler {
   compile(stage_key: string, config: JsonValue): Result<StageTypeCompilation, CompileWorkflowError>;
 }
 
+/**
+ * Resolve a step's declared action names to their dispositions. Definition
+ * validation has already rejected any name without one, so this is total.
+ */
+const compileGateStep = (step: { readonly type: string; readonly actions: readonly string[] }): CompiledGateStep =>
+  ({ type: step.type, actions: step.actions.map((name) => ({ name, disposition: selectBuiltInGateDisposition(name) })) });
+
 const outputRelease = (outputName: string, config: DelegatedSessionDefinitionConfig): OutputReleaseContract => {
   if (config.output_gate?.output === outputName) return {
     kind: "gate",
-    steps: config.output_gate.steps,
+    steps: config.output_gate.steps.map(compileGateStep),
     requires_zero_open_review_items: config.output_gate.requires_zero_open_review_items ?? false,
     revision_target: config.output_gate.revision_target ?? "self_stage",
   };
   if (config.gate_output === outputName) return {
     kind: "gate",
-    steps: [{ type: "artifact_approval", actions: ["approve", "request_revision"] }, { type: "merge_confirmation", actions: ["confirm_merged", "closed_without_merge"] }],
+    steps: [{ type: "artifact_approval", actions: ["approve", "request_revision"] }, { type: "merge_confirmation", actions: ["confirm_merged", "closed_without_merge"] }].map(compileGateStep),
     requires_zero_open_review_items: true,
     revision_target: "self_stage",
   };

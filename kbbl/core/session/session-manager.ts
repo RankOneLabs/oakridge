@@ -49,6 +49,7 @@ import {
   resolveRepoTopLevel,
 } from "./worktree";
 import type { RuntimeId, RuntimeRegistry } from "../runtime";
+import { serializeByKey } from "./serialize-by-key";
 import { FilesystemResumableInputInbox, FilesystemResumableSessionClaims, sessionIdForKey, type AdvanceResumableSessionResult, type EnsureResumableSessionResult, type ResumableInputDeliveryKey, type ResumableInputReceipt, type ResumableSessionKey, type ResumableSessionStartSpec, type ResumableSessionTerminalOutcome } from "./resumable-session";
 
 export interface SessionManagerOpts {
@@ -335,8 +336,7 @@ export class SessionManager {
   }
 
   async deliverResumableInput(sessionId: SessionId, deliveryKey: ResumableInputDeliveryKey, text: string): Promise<ResumableInputReceipt> {
-    const previous = this.resumableInputChains.get(deliveryKey) ?? Promise.resolve();
-    const result = previous.then(async () => {
+    return serializeByKey(this.resumableInputChains, deliveryKey, async () => {
       const receipt = await this.resumableInputInbox.enqueue(deliveryKey, text);
       if (receipt.status === "delivered") return receipt;
       const session = this.sessions.get(sessionId);
@@ -344,10 +344,6 @@ export class SessionManager {
       await session.writeInput(text);
       return this.resumableInputInbox.markDelivered(receipt);
     });
-    const tail = result.then(() => undefined, () => undefined);
-    this.resumableInputChains.set(deliveryKey, tail);
-    void tail.then(() => { if (this.resumableInputChains.get(deliveryKey) === tail) this.resumableInputChains.delete(deliveryKey); });
-    return result;
   }
 
   private async ensureWorktreesDirSafeForRepo(workdir: string): Promise<void> {
@@ -716,14 +712,7 @@ export class SessionManager {
   }
 
   async ensureResumableSession(sessionKey: ResumableSessionKey, startSpec: ResumableSessionStartSpec): Promise<EnsureResumableSessionResult> {
-    const previous = this.resumableSessionChains.get(sessionKey) ?? Promise.resolve();
-    const result = previous.then(() => this.ensureResumableSessionUnlocked(sessionKey, startSpec));
-    const tail = result.then(() => undefined, () => undefined);
-    this.resumableSessionChains.set(sessionKey, tail);
-    void tail.then(() => {
-      if (this.resumableSessionChains.get(sessionKey) === tail) this.resumableSessionChains.delete(sessionKey);
-    });
-    return result;
+    return serializeByKey(this.resumableSessionChains, sessionKey, () => this.ensureResumableSessionUnlocked(sessionKey, startSpec));
   }
 
   /**
@@ -742,14 +731,7 @@ export class SessionManager {
    * is the one thing the claim generation exists to prevent.
    */
   async advanceResumableSession(sessionKey: ResumableSessionKey): Promise<AdvanceResumableSessionResult> {
-    const previous = this.resumableSessionChains.get(sessionKey) ?? Promise.resolve();
-    const result = previous.then(() => this.advanceResumableSessionUnlocked(sessionKey));
-    const tail = result.then(() => undefined, () => undefined);
-    this.resumableSessionChains.set(sessionKey, tail);
-    void tail.then(() => {
-      if (this.resumableSessionChains.get(sessionKey) === tail) this.resumableSessionChains.delete(sessionKey);
-    });
-    return result;
+    return serializeByKey(this.resumableSessionChains, sessionKey, () => this.advanceResumableSessionUnlocked(sessionKey));
   }
 
   private async advanceResumableSessionUnlocked(sessionKey: ResumableSessionKey): Promise<AdvanceResumableSessionResult> {

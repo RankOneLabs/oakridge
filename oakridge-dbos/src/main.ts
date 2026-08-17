@@ -126,6 +126,20 @@ const launchTimer = setInterval(() => {
     .finally(() => { launchDispatch = null; });
 }, 1_000);
 
+// The outbox is polled every second by both dispatchers, so delivered rows left
+// in place turn a bounded working set into a table that only ever grows. Swept
+// on its own slow timer: the retention window keeps a day of dispatch history,
+// which is what an operator would want to look back at, and no more.
+const OUTBOX_RETENTION_MS = 24 * 60 * 60 * 1_000;
+const OUTBOX_PURGE_INTERVAL_MS = 60 * 60 * 1_000;
+let outboxPurge: Promise<unknown> | null = null;
+const outboxPurgeTimer = setInterval(() => {
+  if (outboxPurge) return;
+  outboxPurge = artifacts.purge_delivered_commands(new Date(Date.now() - OUTBOX_RETENTION_MS).toISOString())
+    .catch((error: unknown) => { console.error("command outbox purge failed", error); })
+    .finally(() => { outboxPurge = null; });
+}, OUTBOX_PURGE_INTERVAL_MS);
+
 const presentation = (artifactType: string) => {
   const definition = findArtifactType(artifactType);
   return definition ? { component_id: definition.component_id, capabilities: definition.capabilities,
@@ -183,6 +197,7 @@ const shutdown = (): Promise<void> => {
     isDispatchClosing = true;
     clearInterval(notificationTimer);
     clearInterval(launchTimer);
+    clearInterval(outboxPurgeTimer);
     server.stop();
     await Promise.allSettled([...inFlightDispatches]);
     await DBOS.shutdown();
