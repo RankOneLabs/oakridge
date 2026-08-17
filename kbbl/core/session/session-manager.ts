@@ -798,8 +798,13 @@ export class SessionManager {
         ? { kind: "terminal", result: { session: archived, exit_code: archived.exitCode } }
         : { kind: "not_found" };
     }
-    const ended = await waitWithDeadline(current.waitForEnd(), waitMs);
-    if (!ended) return { kind: "pending" };
+    // Terminality is a synchronous property of the session, not something only
+    // a wait can discover. Checking it first keeps `wait_ms=0` honest as a
+    // non-blocking poll: an already-ended session answers terminal rather than
+    // reporting pending because its deadline had already elapsed.
+    if (current.snapshot().status !== "ended" && !(await waitWithDeadline(current.waitForEnd(), waitMs))) {
+      return { kind: "pending" };
+    }
     const snapshot = current.snapshot();
     return { kind: "terminal", result: { session: snapshot, exit_code: snapshot.exitCode } };
   }

@@ -17,17 +17,35 @@ import type { SpawnCmd } from "./session";
 
 let tmpRoot: string;
 let sessionsDir: string;
+let repoDir: string;
 
-const noopSpawn = async (): Promise<SpawnCmd> => ({ cmd: ["true"], cwd: "/tmp", env: {} });
+/** `true` exits the moment it is spawned; `sleep` keeps a session live. */
+const spawning = (cmd: readonly string[]) => async (): Promise<SpawnCmd> => ({ cmd: [...cmd], cwd: "/tmp", env: {} });
 
-const makeManager = (): SessionManager =>
+const makeManager = (cmd: readonly string[] = ["true"]): SessionManager =>
   new SessionManager({
     sessionsDir,
     handoffsDir: join(tmpRoot, "handoffs"),
     worktreesDir: join(tmpRoot, "worktrees"),
-    buildSpawnCmd: noopSpawn,
+    buildSpawnCmd: spawning(cmd),
     config: KbblConfigSchema.parse({}),
   });
+
+/** Sessions require a git workdir — each one is spawned in its own worktree. */
+const gitInitRepo = async (dir: string): Promise<void> => {
+  const cmds = [
+    ["git", "-C", dir, "init", "-q", "-b", "main"],
+    ["git", "-C", dir, "config", "user.email", "test@example.com"],
+    ["git", "-C", dir, "config", "user.name", "test"],
+    ["git", "-C", dir, "config", "commit.gpgsign", "false"],
+    ["git", "-C", dir, "commit", "--allow-empty", "-q", "-m", "init"],
+  ];
+  for (const cmd of cmds) {
+    const proc = Bun.spawn({ cmd, stdout: "pipe", stderr: "pipe" });
+    const [stderr, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+    if (code !== 0) throw new Error(`${cmd.join(" ")} failed (exit ${code}): ${stderr}`);
+  }
+};
 
 /** Write a minimal archived session JSONL the snapshot loader can reconstruct. */
 const archiveSession = async (sid: string, events: readonly Record<string, unknown>[]): Promise<void> => {
@@ -38,10 +56,13 @@ const archiveSession = async (sid: string, events: readonly Record<string, unkno
   await writeFile(join(sessionsDir, `${sid}.jsonl`), `${lines.join("\n")}\n`);
 };
 
-beforeEach(() => {
+beforeEach(async () => {
   tmpRoot = mkdtempSync(join(tmpdir(), "kbbl-terminal-"));
   sessionsDir = join(tmpRoot, "sessions");
+  repoDir = join(tmpRoot, "repo");
   mkdirSync(sessionsDir, { recursive: true });
+  mkdirSync(repoDir, { recursive: true });
+  await gitInitRepo(repoDir);
 });
 
 afterEach(() => {
@@ -93,6 +114,24 @@ test("a successor chain that loops back on itself terminates instead of hanging"
   await archiveSession("loop-b", [{ type: "compact_completed", payload: { successor_sid: "loop-a" } }]);
   const outcome = await makeManager().waitForResumableSessionTerminal("loop-a" as SessionId, 0);
   expect(outcome.kind).toBe("not_found");
+});
+
+test("a zero wait is a non-blocking poll: a session already ended in memory reads terminal, not pending", async () => {
+  const manager = makeManager();
+  const session = await manager.create({ workdir: repoDir });
+  await manager.endAll();
+  const outcome = await manager.waitForResumableSessionTerminal(session.oakridgeSid as SessionId, 0);
+  expect(outcome.kind).toBe("terminal");
+  if (outcome.kind !== "terminal") return;
+  expect(outcome.result.session.status).toBe("ended");
+});
+
+test("a zero wait on a session that is still live reads pending", async () => {
+  const manager = makeManager(["sleep", "30"]);
+  const session = await manager.create({ workdir: repoDir });
+  const outcome = await manager.waitForResumableSessionTerminal(session.oakridgeSid as SessionId, 0);
+  expect(outcome.kind).toBe("pending");
+  await manager.endAll();
 });
 
 test("wait_ms is clamped to a value that stays inside the server's idle timeout", () => {
