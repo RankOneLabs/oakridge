@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 
-import type { ArtifactId } from "../domain/primitives";
+import { parseUuidId, type ArtifactId } from "../domain/primitives";
 import type { ArtifactRevisionRepository, ExecutionArtifactContextRepository } from "../storage/repositories";
 import type { HandoffWorkflowState } from "./gate-resume";
 import type { HandoffCommand } from "../workflows/handoff";
@@ -31,7 +31,8 @@ export const createHandoffCompleteApp = (dependencies: HandoffCompleteDependenci
     try { raw = await http.req.json(); } catch { return http.json({ error: "request body must be JSON" }, 400); }
     const request = parseRequest(raw);
     if (!request) return http.json({ error: "external_kind, correlation_id, and idempotency_key are required strings" }, 400);
-    const artifactId = http.req.param("artifactId") as ArtifactId;
+    const artifactId = parseUuidId<ArtifactId>(http.req.param("artifactId"));
+    if (!artifactId) return http.json({ error: "artifact not found" }, 404);
     const artifact = await dependencies.artifacts.find_by_id(artifactId);
     if (!artifact) return http.json({ error: "handoff artifact not found" }, 404);
     if (artifact.lifecycle.kind !== "current") return http.json({ error: "handoff artifact is not current", code: artifact.lifecycle.kind }, 409);

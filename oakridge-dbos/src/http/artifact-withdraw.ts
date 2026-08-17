@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 
-import type { ArtifactId } from "../domain/primitives";
+import { parseUuidId, type ArtifactId } from "../domain/primitives";
 import type { ArtifactRevisionRepository, ExecutionArtifactContextRepository } from "../storage/repositories";
 
 export interface ArtifactWithdrawDependencies {
@@ -27,7 +27,8 @@ export const createArtifactWithdrawApp = (dependencies: ArtifactWithdrawDependen
     try { raw = await http.req.json(); } catch { return http.json({ error: { code: "invalid_json", message: "request body must be JSON" } }, 400); }
     const body = parseWithdrawBody(raw);
     if (!body) return http.json({ error: { code: "invalid_withdrawal", message: "actor and reason are required strings" } }, 400);
-    const artifactId = http.req.param("id") as ArtifactId;
+    const artifactId = parseUuidId<ArtifactId>(http.req.param("id"));
+    if (!artifactId) return http.json({ error: "artifact not found" }, 404);
     const before = await dependencies.artifacts.find_by_id(artifactId);
     if (!before) return http.json({ kind: "not_found", artifact_id: artifactId }, 404);
     const execution = await dependencies.contexts.find_for_emit(before.stage_instance_id, before.unit_id);

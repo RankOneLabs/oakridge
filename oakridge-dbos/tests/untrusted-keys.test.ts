@@ -13,6 +13,7 @@ import { hasOwn, readOwn } from "../src/domain/records";
 import { selectBuiltInGateDisposition } from "../src/domain/gates";
 import type { WorkflowDefinitionId, WorkflowRunId } from "../src/domain/primitives";
 import type { WorkflowDefinition } from "../src/domain/workflow";
+import { createDomainReadApp } from "../src/http/domain-reads";
 import { createOperatorProjectionApp } from "../src/http/operator-projections";
 import type { OperatorProjectionRepository } from "../src/storage/postgres-operators";
 import { rerunStage, type StageRerunDependencies } from "../src/runtime/stage-rerun";
@@ -89,15 +90,38 @@ test("an inherited name is not a gate action", () => {
 });
 
 /**
- * `get_run` binds the id as `$3::uuid`, so a malformed path segment used to
- * reach Postgres as a cast error and surface as a 500 rather than a 404.
+ * These ids live in `uuid` columns, so a malformed one is not a lookup that
+ * finds nothing — Postgres rejects it while casting and the route answers 500
+ * for an id that simply cannot exist. Every route taking a uuid-shaped id must
+ * therefore reject it before the query, not after.
  */
-test("a malformed run id is not found rather than a database error", async () => {
-  const projections = {
-    async get_run() { throw new Error("must not query for an id that cannot exist"); },
-  } as unknown as OperatorProjectionRepository;
-  const app = new Hono().route("/", createOperatorProjectionApp(projections));
-  for (const id of ["not-a-uuid", "constructor", "'; DROP TABLE oakridge.artifact --"]) {
-    expect((await app.request(`/runs/${encodeURIComponent(id)}`)).status).toBe(404);
+// An empty segment never reaches a param handler — the route simply does not match.
+const MALFORMED = ["not-a-uuid", "constructor", "'; DROP TABLE oakridge.artifact --"] as const;
+
+const refuseEveryCall = (operation: string) => new Proxy({}, {
+  get: () => async () => { throw new Error(`${operation} must not be queried for an id that cannot exist`); },
+});
+
+test("no operator projection route queries on a malformed run id", async () => {
+  const app = new Hono().route("/", createOperatorProjectionApp(refuseEveryCall("projections") as OperatorProjectionRepository));
+  for (const id of MALFORMED) {
+    const encoded = encodeURIComponent(id);
+    expect((await app.request(`/runs/${encoded}`)).status).toBe(404);
+    expect((await app.request(`/runs/${encoded}/gates`)).status).toBe(200);
+    expect((await app.request(`/workflow_runs/${encoded}/archive`, { method: "POST" })).status).toBe(404);
+    expect((await app.request(`/workflow_runs/${encoded}/unarchive`, { method: "POST" })).status).toBe(404);
+  }
+});
+
+test("no domain read route queries on a malformed id", async () => {
+  const app = new Hono().route("/", createDomainReadApp({
+    stages: refuseEveryCall("stages") as never,
+    artifacts: refuseEveryCall("artifacts") as never,
+  }));
+  for (const id of MALFORMED) {
+    const encoded = encodeURIComponent(id);
+    expect((await app.request(`/stage_instances/${encoded}`)).status).toBe(404);
+    expect((await app.request(`/artifacts/${encoded}`)).status).toBe(404);
+    expect((await app.request(`/workflow_runs/${encoded}/artifacts`)).status).toBe(200);
   }
 });

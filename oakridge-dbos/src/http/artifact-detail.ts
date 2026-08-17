@@ -2,7 +2,7 @@ import { Hono } from "hono";
 
 import type { OperatorArtifactDetail, OperatorArtifactRevision } from "../domain/operator-projections";
 import type { ArtifactTypeDefinition } from "../domain/artifact-types";
-import type { ArtifactId } from "../domain/primitives";
+import { parseUuidId, type ArtifactId } from "../domain/primitives";
 import type { ArtifactRevisionRepository, GateDecisionAuditRepository, StageInstanceRepository } from "../storage/repositories";
 import { selectBuiltInGateDisposition } from "../domain/gates";
 
@@ -28,7 +28,8 @@ export const createArtifactDetailApp = (dependencies: ArtifactDetailDependencies
   const app = new Hono();
   app.get("/artifact_types", (http) => http.json(dependencies.artifact_types ?? []));
   app.get("/artifact_details/:id", async (http) => {
-    const requested = await dependencies.artifacts.find_by_id(http.req.param("id") as ArtifactId);
+    const requestedId = parseUuidId<ArtifactId>(http.req.param("id"));
+    const requested = requestedId && await dependencies.artifacts.find_by_id(requestedId);
     if (!requested) return http.json({ error: "artifact not found" }, 404);
     const stage = await dependencies.stages.find_by_id(requested.stage_instance_id);
     if (!stage) return http.json({ error: "producing stage not found" }, 404);

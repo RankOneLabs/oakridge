@@ -5,8 +5,8 @@ import type { ArtifactId, ExecutionId, StageInstanceId, UnitId, WorkflowRunId } 
 import { createHandoffCompleteApp, type HandoffCompleteDependencies } from "../src/http/handoff-complete";
 
 const artifact: ArtifactRevision = {
-  id: "build-artifact" as ArtifactId, chain_id: "build-artifact" as ArtifactId, run_id: "run-1" as WorkflowRunId,
-  stage_instance_id: "build-stage" as StageInstanceId, execution_id: "build-execution" as ExecutionId, unit_id: "unit-1" as UnitId,
+  id: "11111111-1111-4111-8111-111111111111" as ArtifactId, chain_id: "11111111-1111-4111-8111-111111111111" as ArtifactId, run_id: "22222222-2222-4222-8222-222222222222" as WorkflowRunId,
+  stage_instance_id: "33333333-3333-4333-8333-333333333333" as StageInstanceId, execution_id: "build-execution" as ExecutionId, unit_id: "unit-1" as UnitId,
   output_name: "build_result", artifact_type: "dev.build_result", label: null, body: {}, version: 1, parent_artifact_id: null, lifecycle: { kind: "current" }, created_at: "2026-08-14T12:00:00Z",
 };
 
@@ -21,13 +21,13 @@ const fixture = (state: "awaiting_external" | "awaiting_downstream" = "awaiting_
   return { app: createHandoffCompleteApp(dependencies), sent };
 };
 
-const complete = (app: ReturnType<typeof createHandoffCompleteApp>, external_kind = "github_review") => app.request("/handoffs/build-artifact/external-complete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ external_kind, correlation_id: "pr-review-42", idempotency_key: "github-review-42" }) });
+const complete = (app: ReturnType<typeof createHandoffCompleteApp>, external_kind = "github_review") => app.request("/handoffs/11111111-1111-4111-8111-111111111111/external-complete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ external_kind, correlation_id: "pr-review-42", idempotency_key: "github-review-42" }) });
 
 test("external completion releases the exact durable handoff wait idempotently", async () => {
   const subject = fixture();
   const response = await complete(subject.app);
   expect(response.status).toBe(202);
-  expect(subject.sent).toEqual([{ workflow_id: "build-workflow:handoff:build-artifact", key: "github-review-42", command: { kind: "external_completed", external_kind: "github_review", correlation_id: "pr-review-42" } }]);
+  expect(subject.sent).toEqual([{ workflow_id: "build-workflow:handoff:11111111-1111-4111-8111-111111111111", key: "github-review-42", command: { kind: "external_completed", external_kind: "github_review", correlation_id: "pr-review-42" } }]);
 });
 
 test("external completion rejects the wrong configured kind", async () => {

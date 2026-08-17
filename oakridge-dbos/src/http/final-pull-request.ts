@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 
-import type { WorkflowRunId } from "../domain/primitives";
+import { parseUuidId, type WorkflowRunId } from "../domain/primitives";
 import type { FinalPullRequestProjection } from "../domain/final-pull-request";
 import type { FinalPullRequestRepository } from "../storage/repositories";
 
@@ -42,8 +42,10 @@ export const createFinalPullRequestApp = (dependencies: FinalPullRequestHttpDepe
   app.post("/workflow_runs/:runId/final_pull_requests/:repositoryKey/observations", async (http) => {
     const parsed = observationSchema.safeParse(await http.req.json().catch(() => null));
     if (!parsed.success) return http.json({ error: "invalid final pull request observation" }, 400);
+    const runId = parseUuidId<WorkflowRunId>(http.req.param("runId"));
+    if (!runId) return http.json({ error: "workflow run was not found" }, 404);
     const result = await dependencies.final_pull_requests.observe({
-      run_id: http.req.param("runId") as WorkflowRunId,
+      run_id: runId,
       repository_key: http.req.param("repositoryKey"),
       observation: parsed.data.observation,
       updated_at: now(),
@@ -56,8 +58,10 @@ export const createFinalPullRequestApp = (dependencies: FinalPullRequestHttpDepe
   app.post("/workflow_runs/:runId/final_pull_requests/:repositoryKey/confirm", async (http) => {
     const parsed = confirmationSchema.safeParse(await http.req.json().catch(() => null));
     if (!parsed.success) return http.json({ error: "invalid final pull request confirmation" }, 400);
+    const runId = parseUuidId<WorkflowRunId>(http.req.param("runId"));
+    if (!runId) return http.json({ error: "workflow run was not found" }, 404);
     const result = await dependencies.final_pull_requests.confirm({
-      run_id: http.req.param("runId") as WorkflowRunId,
+      run_id: runId,
       repository_key: http.req.param("repositoryKey"),
       request: parsed.data,
       confirmed_at: now(),
