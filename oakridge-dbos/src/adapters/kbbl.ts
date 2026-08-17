@@ -168,7 +168,13 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
     // loudly rather than leave a live agent running unfenced.
     if (external_reference.kind === "none") return;
     const sessionId = sessionIdOf(external_reference, execution_id);
-    const response = await this.fetch(`${this.options.base_url}/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+    // Identify the fence as coming from the execution that holds the session.
+    // kbbl refuses closes that would abandon a live unit, and that guard must
+    // not fire on the owner's own teardown: a cancelled run reaches its agent
+    // through exactly this call, so an unqualified DELETE deadlocks the run
+    // against itself — uncancellable because it is still active.
+    const url = `${this.options.base_url}/sessions/${encodeURIComponent(sessionId)}?fenced_by=${encodeURIComponent(execution_id)}`;
+    const response = await this.fetch(url, { method: "DELETE" });
     if (!response.ok && response.status !== 404) throw new Error(`kbbl cancellation failed (${response.status}): ${await response.text()}`);
   }
 

@@ -68,3 +68,66 @@ export const sessionHoldRefusal = (hold: SessionHold) => ({
   code: "session_held_by_execution" as const,
   hold,
 });
+
+/**
+ * Who is asking for the close, which decides whether the hold guard applies.
+ *
+ * The guard exists to stop a close arriving from *outside* the execution that
+ * owns the session. Oakridge tearing down its own unit is the opposite case:
+ * the fence is how a cancelled run stops its agent, and it reaches kbbl through
+ * the very endpoint the guard protects. Left undistinguished, the two deadlock
+ * — the run cannot be cancelled until its session closes, and the session
+ * cannot close until the run is no longer active.
+ */
+export type SessionCloseAuthority =
+  /** A human closing a session from the UI. Fully guarded. */
+  | { readonly kind: "operator" }
+  /** A human who has been shown the refusal and asked again (`?force=1`). */
+  | { readonly kind: "operator_override" }
+  /** The execution that owns the session, fencing itself (`?fenced_by=`). */
+  | { readonly kind: "execution_fence"; readonly execution_id: string };
+
+/**
+ * The authority a close request carries.
+ *
+ * `force` wins over `fenced_by`: an operator who has explicitly overridden
+ * should not have their intent narrowed by a stale query param.
+ */
+export const selectCloseAuthority = (query: {
+  readonly force: string | undefined;
+  readonly fenced_by: string | undefined;
+}): SessionCloseAuthority => {
+  if (isTruthyFlag(query.force)) return { kind: "operator_override" };
+  if (query.fenced_by !== undefined && query.fenced_by !== "") {
+    return { kind: "execution_fence", execution_id: query.fenced_by };
+  }
+  return { kind: "operator" };
+};
+
+/**
+ * The refusal this close earns, or null when it may proceed.
+ *
+ * A fence is honoured only for the execution that actually holds the session.
+ * An id that does not match is not a teardown — it is one execution closing
+ * another's session, which is the accident the guard was built for.
+ */
+export const selectCloseRefusal = (
+  authority: SessionCloseAuthority,
+  hold: SessionHold | null,
+): ReturnType<typeof sessionHoldRefusal> | null => {
+  if (hold === null) return null;
+  if (authority.kind === "operator_override") return null;
+  if (authority.kind === "execution_fence" && authority.execution_id === hold.execution_id) return null;
+  return sessionHoldRefusal(hold);
+};
+
+/**
+ * A URL flag read by the common convention: present and not spelled falsely.
+ *
+ * Case-folded so `?force=False` is not read as an override.
+ */
+export const isTruthyFlag = (raw: string | undefined): boolean => {
+  if (raw === undefined) return false;
+  const value = raw.toLowerCase();
+  return value !== "" && value !== "0" && value !== "false" && value !== "no" && value !== "off";
+};
