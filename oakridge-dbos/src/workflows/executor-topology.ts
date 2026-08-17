@@ -128,12 +128,18 @@ type ExecutionWorkflowMessage =
 
 interface GateRelayInput { readonly parent_workflow_id: string; readonly request: ExecutionRequest; readonly release: Extract<ArtifactReleaseState, { kind: "waiting_gate" }> }
 const gateRelayWorkflow = DBOS.registerWorkflow(async (input: GateRelayInput): Promise<GateCommand> => {
+  // The waits this relay starts are addressed by the operator surface from the
+  // execution side, so their IDs must be exactly what it builds. Falling back to
+  // a placeholder would name a plausible-looking workflow that nothing listens
+  // on, and `DBOS.send` to it still returns success.
+  const relayId = DBOS.workflowID;
+  if (!relayId) throw new Error("gate relay requires a workflow ID");
   let lastCommand: Extract<GateCommand, { kind: "decision" }> | null = null;
   for (const gateStep of input.release.gate_steps) {
     // The wire shape stays a list of names; the disposition is decided here,
     // where the compiled step that declared it is in hand.
     const gateInput: GateWaitInput = { stage_instance_id: input.request.stage_instance_id, execution_id: input.request.execution_id, unit_id: input.request.unit_id, artifact_revision_id: input.release.artifact.id, gate_step: gateStep.type, actions: gateStep.actions.map((action) => action.name) };
-    const gate = await DBOS.startWorkflow(durableGateWorkflow, { workflowID: gateWaitWorkflowIdFromRelay(DBOS.workflowID ?? "", gateStep.type) })(gateInput);
+    const gate = await DBOS.startWorkflow(durableGateWorkflow, { workflowID: gateWaitWorkflowIdFromRelay(relayId, gateStep.type) })(gateInput);
     const command = await gate.getResult();
     if (command.kind !== "decision") return command;
     lastCommand = command;
