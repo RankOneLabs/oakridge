@@ -4,13 +4,14 @@ import { materializeStage } from "../compiler/materialize-stage";
 import { resolveDelegatedExecution } from "../compiler/resolve-execution";
 import { selectAncestorStages } from "../compiler/select-resume-stages";
 import { appendIncrementalUnit, closeIncrementalMaterialization, emptyIncrementalMaterialization, isFanOutDriverInput, selectDriverArtifacts, selectReadyUnits, type IncrementalMaterialization } from "../compiler/materialize-units";
+import { isAwaitingReplacementOf, isLiveExecution, isStageDrained, selectLaunchedUnits, selectReleasedUnits, selectRunningUnitCount, type UnitRuntime } from "./unit-runtime";
 import type { ArtifactRevision, ExecutionContractState } from "../domain/artifacts";
 import type { CompiledStageContract, CompiledWorkflowDefinition, MaterializedExecutionUnit } from "../domain/compiled-workflow";
 import type { DelegatedSessionDefinitionConfig } from "../domain/delegated-session";
 import type { ArtifactEnvelope, ExecutionRequest, ExternalExecutionReference } from "../domain/execution";
 import type { ExecutionId, JsonValue, StageCoordinatorWorkflowId, StageInstanceId, UnitId, WorkflowDefinitionId, WorkflowRunId } from "../domain/primitives";
 import type { StageOutcome } from "../domain/workflow";
-import type { StageRerunState } from "../domain/rerun";
+import { stageRerunStateKey, type StageRerunState } from "../domain/rerun";
 import type { StageAdmissionState } from "../domain/runs";
 import { containAttempt } from "./cancellation";
 import { artifactContractExecutionWorkflow, type ArtifactContractExecutionResult } from "./executor-topology";
@@ -170,24 +171,34 @@ export const selectStageAdmissionState = (
   }),
 });
 
-export type RerunWaitDisposition =
-  | { readonly kind: "resolve"; readonly command: Extract<StageCommand, { readonly kind: "replace_execution" }> }
-  | { readonly kind: "defer" }
-  | { readonly kind: "apply" };
+type StageCommandEffect = { readonly kind: "applied" } | { readonly kind: "unhandled" } | { readonly kind: "terminal"; readonly outcome: StageOutcome };
+
+interface UnitRelayInput { readonly coordinator_workflow_id: string; readonly unit_id: UnitId; readonly execution_workflow_id: string }
 
 /**
- * A unit waiting for rerun must not swallow the rest of the stage's traffic:
- * `DBOS.recv` dequeues, so anything this wait discards is lost rather than
- * redelivered. Stage-shaping commands are applied in place, and a rerun aimed
- * at another unit is held for the wait that names it.
+ * Turns one unit finishing into a message on its coordinator's inbox.
+ *
+ * The coordinator cannot await its executions directly: an await is not a
+ * `recv`, so for as long as it holds one it reads nothing, and a stage that
+ * reads nothing cannot admit a unit, accept the next incremental input, take a
+ * rerun, or notice it has been abandoned. Relaying completion through the same
+ * inbox as every command leaves the coordinator with exactly one thing to wait
+ * on, and lets it keep the parallelism window topped up as units land.
+ *
+ * An execution workflow that threw has no result to relay, so the error travels
+ * as a value; without it the relay would die here and the unit would wait
+ * forever for a signal that could never come.
  */
-export const selectRerunWaitDisposition = (command: StageCommand, unitId: UnitId, activeExecutionWorkflowId: string): RerunWaitDisposition => {
-  if (command.kind !== "replace_execution") return { kind: "apply" };
-  if (command.unit_id !== unitId || command.failed_execution_workflow_id !== activeExecutionWorkflowId) return { kind: "defer" };
-  return { kind: "resolve", command };
-};
-
-type StageCommandEffect = { readonly kind: "applied" } | { readonly kind: "unhandled" } | { readonly kind: "terminal"; readonly outcome: StageOutcome };
+const stageUnitRelayWorkflow = DBOS.registerWorkflow(async (input: UnitRelayInput): Promise<void> => {
+  let error: string | null = null;
+  try {
+    await DBOS.retrieveWorkflow<ArtifactContractExecutionResult>(input.execution_workflow_id).getResult();
+  } catch (cause) {
+    error = cause instanceof Error ? cause.message : String(cause);
+  }
+  await DBOS.send(input.coordinator_workflow_id, { kind: "unit_finished", unit_id: input.unit_id, execution_workflow_id: input.execution_workflow_id, error } satisfies StageSignal,
+    "stage-command", `finished:${input.execution_workflow_id}`);
+}, { name: "oakridgeProductionStageUnitRelayWorkflow" });
 
 export const productionStageWorkflow = DBOS.registerWorkflow(async (input: StageWorkflowInput): Promise<StageWorkflowResult> => {
   const coordinatorId = DBOS.workflowID;
@@ -217,23 +228,67 @@ export const productionStageWorkflow = DBOS.registerWorkflow(async (input: Stage
     incremental = { units: plans.map((plan) => plan.unit), is_closed: true };
   }
   const openIncrementalInputs = new Set(input.open_incremental_inputs);
-  const released = new Set<UnitId>();
+  const runtime = new Map<UnitId, UnitRuntime>();
   const isManualAdmission = input.compiled_stage.materialization.kind === "fan_out" && input.compiled_stage.materialization.manual_admission;
   const admitted = new Set<UnitId>(isManualAdmission ? [] : plans.map((plan) => plan.unit.unit_id));
   const executionWorkflowIds: Record<string, string> = {};
   const artifacts: ArtifactRevision[] = [];
   const complete = async (outcome: StageOutcome): Promise<StageWorkflowResult> => {
-    await DBOS.setEvent("stage-admission-state", selectStageAdmissionState(input.stage_instance_id, plans.map((plan) => plan.unit), admitted, released, isManualAdmission, "closed"));
+    await DBOS.setEvent("stage-admission-state", selectStageAdmissionState(input.stage_instance_id, plans.map((plan) => plan.unit), admitted, selectReleasedUnits(runtime), isManualAdmission, "closed"));
     await DBOS.closeStream("stage-output");
     return { stage_instance_id: input.stage_instance_id, outcome, artifacts, execution_workflow_ids: executionWorkflowIds };
   };
-  // Reruns aimed at a unit other than the one currently waiting are parked here
-  // instead of being dropped on the floor by the wait that received them.
-  const deferredCommands: StageCommand[] = [];
-  const applyStageCommand = async (command: StageCommand): Promise<StageCommandEffect> => {
+
+  /** Adopt an execution as this unit's live attempt and start relaying its completion. */
+  const watchExecution = async (unitId: UnitId, executionWorkflowId: string): Promise<void> => {
+    await DBOS.startWorkflow(stageUnitRelayWorkflow, { workflowID: `${executionWorkflowId}:relay` })(
+      { coordinator_workflow_id: coordinatorId, unit_id: unitId, execution_workflow_id: executionWorkflowId });
+    executionWorkflowIds[unitId] = executionWorkflowId;
+    runtime.set(unitId, { kind: "running", execution_workflow_id: executionWorkflowId });
+  };
+
+  /** Park a failed unit where an operator can find it, and free its slot. */
+  const parkForRerun = async (unitId: UnitId, executionWorkflowId: string, failure: StageOutcome): Promise<void> => {
+    runtime.set(unitId, { kind: "awaiting_rerun", execution_workflow_id: executionWorkflowId });
+    await DBOS.setEvent(stageRerunStateKey(unitId), { status: "waiting", stage_instance_id: input.stage_instance_id, unit_id: unitId,
+      failed_execution_workflow_id: executionWorkflowId, code: failure.kind === "failed" ? failure.code : "cancelled",
+      detail: failure.kind === "failed" ? failure.detail : failure.kind === "cancelled" ? failure.reason : null } satisfies StageRerunState);
+  };
+
+  const settleUnit = async (signal: UnitCompletionSignal): Promise<void> => {
+    // A thrown execution workflow is a failure like any other. Parking it keeps
+    // the operator's rerun path open rather than taking the coordinator — and
+    // with it every sibling unit still running — down alongside it.
+    if (signal.error !== null) return parkForRerun(signal.unit_id, signal.execution_workflow_id, { kind: "failed", code: "execution_workflow_error", detail: signal.error });
+    const result = await DBOS.retrieveWorkflow<ArtifactContractExecutionResult>(signal.execution_workflow_id).getResult();
+    const failure = terminalFailure(signal.unit_id, result.contract, result);
+    if (failure) return parkForRerun(signal.unit_id, signal.execution_workflow_id, failure);
+    if (result.contract.kind !== "satisfied") throw new Error("satisfied execution contract disappeared");
+    artifacts.push(...result.contract.artifacts);
+    runtime.set(signal.unit_id, { kind: "released" });
+    for (const artifact of result.contract.artifacts) await DBOS.writeStream("stage-output", artifact);
+  };
+
+  const applyStageCommand = async (command: StageSignal): Promise<StageCommandEffect> => {
+    if (command.kind === "unit_finished") {
+      // A relay for an execution the unit has since moved past — replaced by a
+      // rerun, or redelivered after release — must not settle it a second time.
+      if (isLiveExecution(runtime, command.unit_id, command.execution_workflow_id)) await settleUnit(command);
+      return { kind: "applied" };
+    }
+    if (command.kind === "replace_execution") {
+      if (!isAwaitingReplacementOf(runtime, command.unit_id, command.failed_execution_workflow_id)) return { kind: "applied" };
+      const plan = plans.find((candidate) => candidate.unit.unit_id === command.unit_id);
+      if (!plan) throw new Error(`execution plan '${command.unit_id}' disappeared during rerun`);
+      await replaceExecutionProjectionStep({ execution_id: plan.request.execution_id, replacement_workflow_id: command.replacement_execution_workflow_id });
+      await watchExecution(command.unit_id, command.replacement_execution_workflow_id);
+      await DBOS.setEvent(stageRerunStateKey(command.unit_id), { status: "resumed", stage_instance_id: input.stage_instance_id, unit_id: command.unit_id,
+        replacement_execution_workflow_id: command.replacement_execution_workflow_id } satisfies StageRerunState);
+      return { kind: "applied" };
+    }
     if (command.kind === "abandon_stage") return { kind: "terminal", outcome: { kind: "cancelled", reason: command.reason } };
     if (command.kind === "admit_unit") {
-      const admission = selectStageAdmissionState(input.stage_instance_id, plans.map((plan) => plan.unit), admitted, released, isManualAdmission);
+      const admission = selectStageAdmissionState(input.stage_instance_id, plans.map((plan) => plan.unit), admitted, selectReleasedUnits(runtime), isManualAdmission);
       const unit = admission.units.find((candidate) => candidate.unit_id === command.unit_id);
       if (admission.manual_admission && unit?.eligible) admitted.add(command.unit_id);
       return { kind: "applied" };
@@ -266,70 +321,29 @@ export const productionStageWorkflow = DBOS.registerWorkflow(async (input: Stage
     return { kind: "applied" };
   };
   const maxParallel = input.compiled_stage.materialization.kind === "fan_out" ? input.compiled_stage.materialization.max_parallel : 1;
-  while (!incremental.is_closed || released.size < plans.length) {
-    await DBOS.setEvent("stage-admission-state", selectStageAdmissionState(input.stage_instance_id, plans.map((plan) => plan.unit), admitted, released, isManualAdmission));
-    const ready = selectReadyUnits(plans.map((plan) => plan.unit), released, admitted, new Set(), maxParallel);
-    if (ready.length === 0) {
-      const command = deferredCommands.shift() ?? await DBOS.recv<StageCommand>("stage-command", { timeoutSeconds: 86_400 });
-      if (!command) continue;
-      const effect = await applyStageCommand(command);
-      if (effect.kind === "terminal") return complete(effect.outcome);
-      continue;
-    }
-    const handles = [];
+  // One durable loop: top the parallelism window up, publish what the operator
+  // can see, then wait on exactly one inbox. Units are started as slots free
+  // rather than in batches, so a slow unit no longer holds back the siblings
+  // queued behind it, and the stage stays responsive to commands throughout.
+  for (;;) {
+    const units = plans.map((plan) => plan.unit);
+    const ready = selectReadyUnits(units, { released: selectReleasedUnits(runtime), admitted, launched: selectLaunchedUnits(runtime),
+      running_count: selectRunningUnitCount(runtime), max_parallel: maxParallel });
     for (const unit of ready) {
       const plan = plans.find((candidate) => candidate.unit.unit_id === unit.unit_id);
       if (!plan) throw new Error(`execution plan '${unit.unit_id}' disappeared`);
       const executionWorkflowId = `${coordinatorId}:unit:${unit.unit_id}`;
-      executionWorkflowIds[unit.unit_id] = executionWorkflowId;
       await recordExecutionStep({ request: plan.request, execution_workflow_id: executionWorkflowId, parameters: unit.parameters });
-      handles.push(await DBOS.startWorkflow(artifactContractExecutionWorkflow, { workflowID: executionWorkflowId })({ request: plan.request, outputs: input.compiled_stage.outputs }));
+      await DBOS.startWorkflow(artifactContractExecutionWorkflow, { workflowID: executionWorkflowId })({ request: plan.request, outputs: input.compiled_stage.outputs });
+      await watchExecution(unit.unit_id, executionWorkflowId);
     }
-    const completed = await DBOS.waitAll(handles);
-    for (const handle of completed) {
-      const unitId = Object.entries(executionWorkflowIds).find(([, workflowId]) => workflowId === handle.workflowID)?.[0] as UnitId | undefined;
-      if (!unitId) throw new Error(`completed execution '${handle.workflowID}' has no checkpointed unit identity`);
-      let activeWorkflowId = handle.workflowID;
-      let result = await handle.getResult();
-      let failure = terminalFailure(unitId, result.contract, result);
-      while (failure) {
-        await DBOS.setEvent("stage-rerun-state", { status: "waiting", stage_instance_id: input.stage_instance_id, unit_id: unitId,
-          failed_execution_workflow_id: activeWorkflowId, code: failure.kind === "failed" ? failure.code : "cancelled",
-          detail: failure.kind === "failed" ? failure.detail : failure.kind === "cancelled" ? failure.reason : null } satisfies StageRerunState);
-        const replay = deferredCommands.splice(0, deferredCommands.length);
-        let resolution: Extract<StageCommand, { readonly kind: "replace_execution" }> | null = null;
-        let terminalOutcome: StageOutcome | null = null;
-        while (!resolution && !terminalOutcome) {
-          const command = replay.shift() ?? await DBOS.recv<StageCommand>("stage-command", { timeoutSeconds: 86_400 });
-          if (!command) continue;
-          const disposition = selectRerunWaitDisposition(command, unitId, activeWorkflowId);
-          if (disposition.kind === "resolve") resolution = disposition.command;
-          else if (disposition.kind === "defer") deferredCommands.push(command);
-          else {
-            const effect = await applyStageCommand(command);
-            if (effect.kind === "terminal") terminalOutcome = effect.outcome;
-          }
-        }
-        if (terminalOutcome) return complete(terminalOutcome);
-        if (!resolution) continue;
-        const activePlan = plans.find((candidate) => candidate.unit.unit_id === unitId);
-        if (!activePlan) throw new Error(`execution plan '${unitId}' disappeared during rerun`);
-        await replaceExecutionProjectionStep({ execution_id: activePlan.request.execution_id,
-          replacement_workflow_id: resolution.replacement_execution_workflow_id });
-        activeWorkflowId = resolution.replacement_execution_workflow_id;
-        executionWorkflowIds[unitId] = activeWorkflowId;
-        result = await DBOS.retrieveWorkflow<ArtifactContractExecutionResult>(activeWorkflowId).getResult();
-        failure = terminalFailure(unitId, result.contract, result);
-      }
-      await DBOS.setEvent("stage-rerun-state", { status: "resumed", stage_instance_id: input.stage_instance_id, unit_id: unitId,
-        replacement_execution_workflow_id: activeWorkflowId } satisfies StageRerunState);
-      if (result.contract.kind !== "satisfied") throw new Error("satisfied execution contract disappeared");
-      artifacts.push(...result.contract.artifacts);
-      released.add(unitId);
-      for (const artifact of result.contract.artifacts) await DBOS.writeStream("stage-output", artifact);
-    }
+    await DBOS.setEvent("stage-admission-state", selectStageAdmissionState(input.stage_instance_id, units, admitted, selectReleasedUnits(runtime), isManualAdmission));
+    if (isStageDrained(runtime, plans.length, incremental.is_closed)) return complete({ kind: "succeeded" });
+    const command = await DBOS.recv<StageSignal>("stage-command", { timeoutSeconds: 86_400 });
+    if (!command) continue;
+    const effect = await applyStageCommand(command);
+    if (effect.kind === "terminal") return complete(effect.outcome);
   }
-  return complete({ kind: "succeeded" });
 }, { name: "oakridgeProductionStageWorkflow" });
 
 /**
@@ -350,12 +364,19 @@ export const stageFailureReason = (stage_key: string, outcome: StageOutcome): st
 type RootSignal =
   | { readonly kind: "output_released"; readonly stage_key: string; readonly artifact: ArtifactRevision }
   | { readonly kind: "stage_finished"; readonly stage_key: string; readonly result: StageWorkflowResult };
+/** What the run workflow and the operator surface may ask of a stage. */
 export type StageCommand =
   | { readonly kind: "input_released"; readonly input_name: string; readonly artifact: ArtifactEnvelope }
   | { readonly kind: "input_closed"; readonly input_name: string }
   | { readonly kind: "admit_unit"; readonly unit_id: UnitId }
   | { readonly kind: "replace_execution"; readonly unit_id: UnitId; readonly failed_execution_workflow_id: string; readonly replacement_execution_workflow_id: string }
   | { readonly kind: "abandon_stage"; readonly reason: string | null };
+
+/** Posted by a stage's own unit relays, never by an operator. */
+export type UnitCompletionSignal = { readonly kind: "unit_finished"; readonly unit_id: UnitId; readonly execution_workflow_id: string; readonly error: string | null };
+
+/** Everything a stage coordinator dequeues from its single inbox. */
+export type StageSignal = StageCommand | UnitCompletionSignal;
 
 interface StageRelayInput { readonly root_workflow_id: string; readonly stage_key: string; readonly handle_workflow_id: string }
 const stageRelayWorkflow = DBOS.registerWorkflow(async (input: StageRelayInput): Promise<StageWorkflowResult> => {
@@ -443,10 +464,10 @@ export const productionRunWorkflow = DBOS.registerWorkflow(async (input: RunWork
     await finishStageStep({ stage_instance_id: signal.result.stage_instance_id, outcome: signal.result.outcome, ended_at: new Date(await DBOS.now()).toISOString() });
     if (signal.result.outcome.kind !== "succeeded") {
       terminal = signal.result.outcome;
-      // Siblings still running have nothing left to deliver into. Containing
-      // them here fences their delegated sessions and writes their stage
-      // records; without it they ran on unreconciled, and a coordinator sitting
-      // inside a batch would never even see an `abandon_stage` command.
+      // Siblings still running have nothing left to deliver into. Containment
+      // rather than an `abandon_stage` command, because only containment fences
+      // the delegated sessions themselves — a coordinator told to abandon would
+      // stop scheduling but leave its live agents running, and billing.
       const orphaned = selectOrphanedStageCoordinators(stageWorkflowIds, finished);
       if (orphaned.length > 0) {
         await containAttempt({ root_workflow_id: rootId, reason: stageFailureReason(signal.stage_key, terminal), requested_at: new Date(await DBOS.now()).toISOString() },
