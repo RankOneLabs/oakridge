@@ -134,6 +134,12 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
   }
 
   async observe_terminal(execution_id: ExecutionId, external_reference: ExternalExecutionReference): Promise<ExecutorObservationAttempt> {
+    // Reported as a failure rather than thrown, unlike `cancel_or_fence` below.
+    // This is the only path by which a unit can ever be reported terminal, and
+    // it runs inside a retrying step: throwing exhausts the retries, kills the
+    // terminal observer, and leaves the execution waiting on a message that can
+    // now never arrive — a silent stall an operator has to go hunting for.
+    // A named failure code parks the unit for rerun and says what happened.
     if (external_reference.kind !== "kbbl_session") return terminal({ kind: "failed", code: "session_not_ensured", detail: `no kbbl session is associated with execution ${execution_id}` });
     const sessionId = external_reference.session_id;
     const url = `${this.options.base_url}/sessions/resumable/${encodeURIComponent(sessionId)}/terminal?wait_ms=${this.options.observe_wait_ms ?? DEFAULT_OBSERVE_WAIT_MS}`;
