@@ -4,7 +4,7 @@ import { Hono, type Context } from "hono";
 
 import { releaseStateForArtifact, validateArtifactEmission } from "../contracts/evaluate-artifacts";
 import type { ArtifactEmission, ArtifactLifecycleNotification } from "../domain/artifacts";
-import type { ArtifactId, JsonValue, StageInstanceId, UnitId } from "../domain/primitives";
+import { isJsonValue, type ArtifactId, type StageInstanceId, type UnitId } from "../domain/primitives";
 import type { ArtifactRevisionRepository, ExecutionArtifactContextRepository } from "../storage/repositories";
 
 export type ArtifactWorkflowMessage = ArtifactLifecycleNotification;
@@ -14,12 +14,6 @@ export interface ArtifactCallbackDependencies {
   readonly artifacts: ArtifactRevisionRepository;
   dispatch_notifications(): Promise<number>;
 }
-
-const isJsonValue = (value: unknown): value is JsonValue => {
-  if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") return true;
-  if (Array.isArray(value)) return value.every(isJsonValue);
-  return typeof value === "object" && Object.values(value).every(isJsonValue);
-};
 
 export const createArtifactCallbackApp = (dependencies: ArtifactCallbackDependencies): Hono => {
   const app = new Hono();

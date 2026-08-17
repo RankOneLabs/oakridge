@@ -21,6 +21,7 @@ import type {
 import { err, ok, type ExecutionId, type JsonValue } from "../domain/primitives";
 import type { ExecutionRequest, ExecutorTerminalObservation, ExternalExecutionReference } from "../domain/execution";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
+import { superjsonValue } from "./sql-fragments";
 import type { CancellationExecutionTarget, CancellationWaitTarget, UnitRerunTarget } from "../domain/rerun";
 import type { CreateWorkflowRunResult, DeleteRunResult, PendingRunLaunch, PersistWorkflowRunLaunch, RunLaunchCommand, SetRunArchiveResult, WorkflowRunLaunchRecord, WorkflowRunListFilter } from "../domain/runs";
 import type { EpicWorkflowProfile } from "../domain/epic";
@@ -34,6 +35,34 @@ interface StageRow {
   readonly ended_at: string | null;
   readonly outcome: StageOutcome | null;
 }
+
+interface OutboxEnvelope {
+  readonly idempotency_key: string;
+  readonly target_workflow_id: string;
+  readonly created_at: string;
+}
+type OutboxCommand = OutboxEnvelope & (
+  | { readonly command_type: "run_launch"; readonly payload: RunLaunchCommand }
+  | { readonly command_type: "artifact_notification"; readonly payload: ArtifactLifecycleNotification }
+);
+
+/**
+ * Enqueue a command exactly once per idempotency key.
+ *
+ * This INSERT existed twice and had drifted: the notification copy carried
+ * `ON CONFLICT DO NOTHING` and the run-launch copy did not, so a duplicate
+ * launch enqueue raised a unique violation and failed the whole transaction
+ * where it should have replayed as a no-op. One statement, one behaviour.
+ */
+const enqueueCommand = async (transaction: SqlExecutor, command: OutboxCommand): Promise<void> => {
+  await transaction.query(
+    `INSERT INTO oakridge.command_outbox
+       (id, command_type, idempotency_key, target_workflow_id, payload, created_at)
+     VALUES (md5($1)::uuid, $5, $1, $2, $3::jsonb, $4::timestamptz)
+     ON CONFLICT (idempotency_key) DO NOTHING`,
+    [command.idempotency_key, command.target_workflow_id, command.payload, command.created_at, command.command_type],
+  );
+};
 
 const decodeStage = (row: StageRow): StageInstance => ({
   id: row.id as StageInstance["id"],
@@ -120,14 +149,9 @@ export class PostgresWorkflowRunRepository implements WorkflowRunRepository {
          VALUES ($1,$2,NULL,$3::timestamptz)`,
         [input.run.root_workflow_id, input.run.id, input.run.created_at],
       );
-      const notification = this.launchCommand(input);
-      const idempotencyKey = `run:${input.run.id}:launch:${input.run.root_workflow_id}`;
-      await transaction.query(
-        `INSERT INTO oakridge.command_outbox
-           (id, command_type, idempotency_key, target_workflow_id, payload, created_at)
-         VALUES (md5($1)::uuid, 'run_launch', $1, $2, $3::jsonb, $4::timestamptz)`,
-        [idempotencyKey, input.run.root_workflow_id, notification, input.run.created_at],
-      );
+      await enqueueCommand(transaction, { command_type: "run_launch", payload: this.launchCommand(input),
+        idempotency_key: `run:${input.run.id}:launch:${input.run.root_workflow_id}`,
+        target_workflow_id: input.run.root_workflow_id, created_at: input.run.created_at });
       return ok({ kind: "created", run: input.run, epic_profile: input.epic_profile });
     });
   }
@@ -688,13 +712,8 @@ export class PostgresArtifactRevisionRepository implements ArtifactRevisionRepos
   }
 
   private async enqueueNotification(transaction: SqlExecutor, targetWorkflowId: string, message: ArtifactLifecycleNotification, idempotencyKey: string, createdAt: string): Promise<void> {
-    await transaction.query(
-      `INSERT INTO oakridge.command_outbox
-         (id, command_type, idempotency_key, target_workflow_id, payload, created_at)
-       VALUES (md5($1)::uuid, 'artifact_notification', $1, $2, $3::jsonb, $4::timestamptz)
-       ON CONFLICT (idempotency_key) DO NOTHING`,
-      [idempotencyKey, targetWorkflowId, message, createdAt],
-    );
+    await enqueueCommand(transaction, { command_type: "artifact_notification", payload: message,
+      idempotency_key: idempotencyKey, target_workflow_id: targetWorkflowId, created_at: createdAt });
   }
 
   private async recordEmissionKey(transaction: SqlExecutor, emission: ArtifactEmission, artifactId: ArtifactId, createdAt: string): Promise<void> {
@@ -873,16 +892,16 @@ export class PostgresCancellationTargetRepository implements CancellationTargetR
       const waits = await transaction.query<{ readonly kind: "gate" | "handoff"; readonly workflow_id: string }>(
         `SELECT 'gate'::text AS kind, event.workflow_uuid AS workflow_id
          FROM dbos.workflow_events event
-         JOIN oakridge.artifact artifact ON artifact.id = (COALESCE((event.value::jsonb)->'json', event.value::jsonb)->>'artifact_revision_id')::uuid
+         JOIN oakridge.artifact artifact ON artifact.id = (${superjsonValue("event.value")}->>'artifact_revision_id')::uuid
          JOIN oakridge.stage_instance stage ON stage.id = artifact.stage_instance_id
-         WHERE event.key = 'gate-state' AND COALESCE((event.value::jsonb)->'json', event.value::jsonb)->>'status' = 'pending'
+         WHERE event.key = 'gate-state' AND ${superjsonValue("event.value")}->>'status' = 'pending'
            AND artifact.lifecycle_state = 'current' AND stage.attempt_root_workflow_id = $1
          UNION ALL
          SELECT 'handoff'::text AS kind, event.workflow_uuid AS workflow_id
          FROM dbos.workflow_events event
-         JOIN oakridge.artifact artifact ON artifact.id = (COALESCE((event.value::jsonb)->'json', event.value::jsonb)->>'artifact_id')::uuid
+         JOIN oakridge.artifact artifact ON artifact.id = (${superjsonValue("event.value")}->>'artifact_id')::uuid
          JOIN oakridge.stage_instance stage ON stage.id = artifact.stage_instance_id
-         WHERE event.key = 'handoff-state' AND COALESCE((event.value::jsonb)->'json', event.value::jsonb)->>'status' IN ('awaiting_downstream', 'awaiting_external')
+         WHERE event.key = 'handoff-state' AND ${superjsonValue("event.value")}->>'status' IN ('awaiting_downstream', 'awaiting_external')
            AND artifact.lifecycle_state = 'current' AND stage.attempt_root_workflow_id = $1`, [root_workflow_id]);
       const rows = await transaction.query<{ readonly id: string }>(
         `UPDATE oakridge.artifact artifact

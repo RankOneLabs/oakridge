@@ -13,6 +13,7 @@ import type { ExecutionId, JsonValue, StageCoordinatorWorkflowId, StageInstanceI
 import type { StageFailureOutcome, StageOutcome } from "../domain/workflow";
 import { stageRerunStateKey, type StageRerunState } from "../domain/rerun";
 import type { StageAdmissionState } from "../domain/runs";
+import { readJsonPointer } from "../domain/json-pointer";
 import { containAttempt } from "./cancellation";
 import { artifactContractExecutionWorkflow, type ArtifactContractExecutionResult } from "./executor-topology";
 
@@ -86,21 +87,12 @@ export const selectInputsForUnit = (inputs: StageInputSet, unit: MaterializedExe
     return [name, value.filter((artifact) => artifact.unit_id === unit.unit_id)];
   }));
 };
-const jsonPointer = (value: JsonValue, path: string): JsonValue | undefined => {
-  let current: JsonValue | undefined = value;
-  for (const token of path.split("/").slice(1).map((part) => part.replaceAll("~1", "/").replaceAll("~0", "~"))) {
-    if (Array.isArray(current)) current = current[Number(token)];
-    else if (current !== null && typeof current === "object") current = (current as Readonly<Record<string, JsonValue>>)[token];
-    else return undefined;
-  }
-  return current;
-};
 const expectedArtifacts = (stage: CompiledStageContract, unit: MaterializedExecutionUnit) => {
   if (stage.materialization.kind !== "artifact_collection") return stage.outputs.map((output) => ({ unit_id: unit.unit_id, output_name: output.name, artifact_type: output.artifact_type }));
   if (!Array.isArray(unit.parameters)) throw new Error("artifact collection parameters must be an array");
   const idPath = stage.materialization.id_path;
   return unit.parameters.flatMap((item) => {
-    const id = jsonPointer(item, idPath);
+    const id = readJsonPointer(item, idPath);
     if (typeof id !== "string" || id.length === 0) throw new Error(`artifact collection id at '${idPath}' must be a non-empty string`);
     return stage.outputs.map((output) => ({ unit_id: id as UnitId, output_name: output.name, artifact_type: output.artifact_type }));
   });

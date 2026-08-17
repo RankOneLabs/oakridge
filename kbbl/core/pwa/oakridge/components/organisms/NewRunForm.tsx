@@ -19,7 +19,7 @@ import { repositoryDraftFromProject, validateRepositoryInputs } from "../../repo
 import { RoleModelPicker } from "../molecules/RoleModelPicker";
 import { initialSelectionForRole } from "../../lib/runtime-selection";
 import { buildEpicProfile, buildRunExecutionContext } from "../../lib/launch-config";
-import { selectRunLaunchIdentity, type PendingRunLaunchIdentity } from "../../lib/run-launch-idempotency";
+import { selectRequestIdentity, type PendingRequestIdentity } from "../../lib/request-identity";
 import { RepositoryLaunchFields } from "../molecules/RepositoryLaunchFields";
 import { Button } from "../atoms/Button";
 import { FeedbackMessage } from "../atoms/FeedbackMessage";
@@ -37,7 +37,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
   const projectsQuery = useProjects();
   const defsQuery = useWorkflowDefs();
   const createRun = useCreateRun();
-  const pendingLaunch = useRef<PendingRunLaunchIdentity | null>(null);
+  const pendingLaunch = useRef<PendingRequestIdentity | null>(null);
 
   const serverConfig = useServerConfig();
   const runtimeDescriptors = useMemo(() => runtimeDescriptorsForConfig(serverConfig), [serverConfig]);
@@ -134,7 +134,7 @@ export function NewRunForm({ onBack, onCreated }: NewRunFormProps) {
         context: contextResult.value,
         epic_profile: epicProfile,
       };
-      pendingLaunch.current = selectRunLaunchIdentity(pendingLaunch.current, request, () => crypto.randomUUID());
+      pendingLaunch.current = selectRequestIdentity(pendingLaunch.current, JSON.stringify(request), () => crypto.randomUUID());
       const result = await createRun.mutateAsync({ request, idempotency_key: pendingLaunch.current.idempotency_key });
       pendingLaunch.current = null;
       onCreated(result.id);

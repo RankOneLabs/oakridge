@@ -50,8 +50,11 @@ test("workflow run creation persists run, initial attempt, and deterministic lau
     expect.stringContaining("FROM oakridge.project"),
     expect.stringContaining("INSERT INTO oakridge.workflow_run"),
     expect.stringContaining("INSERT INTO oakridge.workflow_attempt"),
-    expect.stringContaining("'run_launch'"),
+    expect.stringContaining("INSERT INTO oakridge.command_outbox"),
   ]);
+  // The launch enqueue must be idempotent like every other outbox command;
+  // it previously lacked the ON CONFLICT and raised on a duplicate key.
+  expect(sql.calls[6]?.statement).toContain("ON CONFLICT (idempotency_key) DO NOTHING");
   expect(sql.calls[4]?.parameters).toEqual([
     launch.run.id, launch.run.workflow_definition_id, launch.run.project_id, launch.run.context,
     false, launch.run.created_at,
@@ -62,6 +65,7 @@ test("workflow run creation persists run, initial attempt, and deterministic lau
     launch.run.root_workflow_id,
     expect.objectContaining({ kind: "launch_run", run_id: launch.run.id, workflow_definition_version: 2, application_version: "pr2-test" }),
     launch.run.created_at,
+    "run_launch",
   ]);
 });
 

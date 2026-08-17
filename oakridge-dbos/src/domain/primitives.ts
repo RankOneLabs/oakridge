@@ -23,6 +23,13 @@ export type ExecutionAttemptId = Brand<string, "ExecutionAttemptId">;
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | readonly JsonValue[] | { readonly [key: string]: JsonValue };
 
+/** Narrows parsed request bodies at the IO boundary; lives beside the type it guards. */
+export const isJsonValue = (value: unknown): value is JsonValue => {
+  if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") return true;
+  if (Array.isArray(value)) return value.every(isJsonValue);
+  return typeof value === "object" && Object.values(value as object).every(isJsonValue);
+};
+
 export type Result<Value, ErrorValue> =
   | { readonly ok: true; readonly value: Value }
   | { readonly ok: false; readonly error: ErrorValue };

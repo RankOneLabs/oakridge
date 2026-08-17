@@ -2,6 +2,7 @@ import type { MaterializedExecutionUnit } from "../domain/compiled-workflow";
 import type { Bindable, DelegatedSessionDefinitionConfig, ResolvedExecutorConfig, SlotBinding } from "../domain/delegated-session";
 import type { ArtifactEnvelope } from "../domain/execution";
 import { err, ok, type JsonValue, type Result, type StageInstanceId } from "../domain/primitives";
+import { readJsonPointer } from "../domain/json-pointer";
 
 export interface ResolveExecutionError { readonly operation: "resolve_execution"; readonly detail: string }
 export interface BindingEnvironment {
@@ -17,19 +18,6 @@ export interface ResolveDelegatedExecutionInput {
   readonly prompt_template: string;
 }
 
-const pointer = (value: JsonValue, path: string): JsonValue | undefined => {
-  if (path === "") return value;
-  if (!path.startsWith("/")) return undefined;
-  let current: JsonValue | undefined = value;
-  for (const token of path.slice(1).split("/").map((part) => part.replaceAll("~1", "/").replaceAll("~0", "~"))) {
-    if (Array.isArray(current)) {
-      if (!/^\d+$/.test(token)) return undefined;
-      current = current[Number(token)];
-    } else if (current !== null && typeof current === "object") current = (current as Readonly<Record<string, JsonValue>>)[token];
-    else return undefined;
-  }
-  return current;
-};
 
 const stringify = (value: JsonValue): string => typeof value === "string" ? value : value === null ? "null" : typeof value === "object" ? JSON.stringify(value) : String(value);
 const inputBindingValue = (input: ArtifactEnvelope | readonly ArtifactEnvelope[]): JsonValue => Array.isArray(input)
@@ -42,26 +30,26 @@ export const resolveBindingValue = (binding: SlotBinding, environment: BindingEn
     const input = environment.inputs[binding.input_name];
     if (!input) return err({ operation: "resolve_execution", detail: `input '${binding.input_name}' not found` });
     const source = inputBindingValue(input);
-    const value = binding.path == null ? source : pointer(source, binding.path);
+    const value = binding.path == null ? source : readJsonPointer(source, binding.path);
     return value === undefined ? err({ operation: "resolve_execution", detail: `input pointer '${binding.path}' not found` }) : ok(value);
   }
   if (binding.from === "context") {
-    const value = pointer(environment.context, binding.path);
+    const value = readJsonPointer(environment.context, binding.path);
     return value === undefined ? err({ operation: "resolve_execution", detail: `context pointer '${binding.path}' not found` }) : ok(value);
   }
   if (binding.from === "item") {
     if (environment.item === null) return err({ operation: "resolve_execution", detail: "item binding used outside fan-out" });
-    const value = pointer(environment.item, binding.path);
+    const value = readJsonPointer(environment.item, binding.path);
     return value === undefined ? err({ operation: "resolve_execution", detail: `item pointer '${binding.path}' not found` }) : ok(value);
   }
   if (environment.item === null) return err({ operation: "resolve_execution", detail: "context lookup used outside fan-out" });
-  const itemKey = pointer(environment.item, binding.item_key_path);
-  const collection = pointer(environment.context, binding.collection_path);
+  const itemKey = readJsonPointer(environment.item, binding.item_key_path);
+  const collection = readJsonPointer(environment.context, binding.collection_path);
   if (typeof itemKey !== "string" || itemKey.length === 0) return err({ operation: "resolve_execution", detail: `context lookup item key '${binding.item_key_path}' must be a non-empty string` });
   if (!Array.isArray(collection)) return err({ operation: "resolve_execution", detail: `context lookup collection '${binding.collection_path}' must be an array` });
-  const matches = collection.filter((entry) => pointer(entry, binding.collection_key_path) === itemKey);
+  const matches = collection.filter((entry) => readJsonPointer(entry, binding.collection_key_path) === itemKey);
   if (matches.length !== 1) return err({ operation: "resolve_execution", detail: `context lookup key '${itemKey}' matched ${matches.length} entries` });
-  const value = pointer(matches[0] as JsonValue, binding.value_path);
+  const value = readJsonPointer(matches[0] as JsonValue, binding.value_path);
   return value === undefined ? err({ operation: "resolve_execution", detail: `context lookup value '${binding.value_path}' not found` }) : ok(value);
 };
 
