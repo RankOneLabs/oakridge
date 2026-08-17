@@ -100,6 +100,10 @@ export interface RunArtifactReadRepository {
   list_effective_for_run(run_id: WorkflowRunId): Promise<readonly ArtifactRevision[]>;
 }
 
+export interface CommandOutboxMaintenanceRepository {
+  purge_delivered_commands(delivered_before: string): Promise<number>;
+}
+
 export interface ArtifactNotificationRepository {
   claim_pending_notifications(worker_id: string, claimed_at: string, claimed_until: string, limit: number): Promise<readonly PendingArtifactNotification[]>;
   mark_notification_delivered(id: string, worker_id: string, delivered_at: string): Promise<void>;

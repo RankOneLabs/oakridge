@@ -457,11 +457,10 @@ interface ArtifactRow {
   readonly created_at: string;
 }
 
-const artifactColumns = `id,
-  COALESCE((WITH RECURSIVE ancestors AS (
-    SELECT root.id, root.parent_artifact_id FROM oakridge.artifact root WHERE root.id = artifact.id
-    UNION ALL SELECT parent.id, parent.parent_artifact_id FROM oakridge.artifact parent JOIN ancestors child ON parent.id = child.parent_artifact_id
-  ) SELECT id FROM ancestors WHERE parent_artifact_id IS NULL LIMIT 1), id) AS chain_id,
+// `chain_id` is a stored column: it is fixed when a revision is inserted, and
+// recomputing it per row meant a recursive CTE on every artifact read — four of
+// them inside emit_revision's lock-holding transaction.
+const artifactColumns = `id, chain_id,
   run_id, stage_instance_id, execution_id, unit_id, output_name, artifact_type,
   label, body, version, parent_artifact_id, emission_payload_hash, lifecycle_state,
   superseded_by_artifact_id, withdrawn_actor, withdrawn_reason,
@@ -541,11 +540,13 @@ export class PostgresArtifactRevisionRepository implements ArtifactRevisionRepos
       const version = (tip?.version ?? 0) + 1;
       const rows = await transaction.query<ArtifactRow>(
         `INSERT INTO oakridge.artifact
-           (id, run_id, stage_instance_id, execution_id, unit_id, output_name, artifact_type,
+           (id, chain_id, run_id, stage_instance_id, execution_id, unit_id, output_name, artifact_type,
             body, label, version, parent_artifact_id, emission_idempotency_key, emission_payload_hash, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13, $14::timestamptz)
+         VALUES ($1, $15, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13, $14::timestamptz)
          RETURNING ${artifactColumns}`,
-        [id, emission.run_id, emission.stage_instance_id, emission.execution_id, emission.unit_id, emission.output_name, emission.artifact_type, emission.body, emission.label, version, tip?.id ?? null, emission.idempotency_key, emission.payload_hash, created_at],
+        // A first revision roots its own chain; every later one inherits the root
+        // its parent already carries, so the walk never has to be repeated.
+        [id, emission.run_id, emission.stage_instance_id, emission.execution_id, emission.unit_id, emission.output_name, emission.artifact_type, emission.body, emission.label, version, tip?.id ?? null, emission.idempotency_key, emission.payload_hash, created_at, tip?.chain_id ?? id],
       );
       if (!rows[0]) throw new Error("artifact revision insert returned no row");
       await this.recordEmissionKey(transaction, emission, id, created_at);
@@ -693,6 +694,23 @@ export class PostgresArtifactRevisionRepository implements ArtifactRevisionRepos
        RETURNING notification.id::text, notification.target_workflow_id,
                  notification.payload AS message, notification.idempotency_key`,
       [workerId, claimedAt, claimedUntil, limit]);
+  }
+
+  /**
+   * Drop commands that were delivered long enough ago to be of no further use.
+   *
+   * Delivered rows were never removed, so the outbox only ever grew — and the
+   * two pollers scanned it every second for the life of the deployment. The
+   * retention window is generous because these rows are the audit trail of what
+   * was dispatched; it is the unbounded growth that is the problem, not the
+   * rows themselves.
+   */
+  async purge_delivered_commands(delivered_before: string): Promise<number> {
+    const rows = await this.sql.query<{ readonly id: string }>(
+      `DELETE FROM oakridge.command_outbox
+       WHERE delivered_at IS NOT NULL AND delivered_at < $1::timestamptz
+       RETURNING id::text`, [delivered_before]);
+    return rows.length;
   }
 
   async mark_notification_delivered(id: string, workerId: string, delivered_at: string): Promise<void> {

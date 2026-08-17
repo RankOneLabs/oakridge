@@ -95,6 +95,15 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
   }
 
   async list_runs(filter: "active" | "archived" | "all" = "active"): Promise<readonly OperatorRunSummary[]> {
+    return this.listRunSummaries(filter, null);
+  }
+
+  /**
+   * One summary query for both the list and the single-run detail. `get_run`
+   * used to build every run's summary — stall detection, parked-gate counts and
+   * all — and then discard all but one with `.find()`.
+   */
+  private async listRunSummaries(filter: "active" | "archived" | "all", run_id: WorkflowRunId | null): Promise<readonly OperatorRunSummary[]> {
     const rows = await this.sql.query<RunProjectionRow>(
       `SELECT run.id::text,
               definition.name AS workflow_name,
@@ -161,8 +170,9 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
            AND stage.attempt_root_workflow_id = root.root_workflow_id
        ) gates ON true
        WHERE ($1::boolean IS NULL OR run.archived = $1::boolean)
+         AND ($3::uuid IS NULL OR run.id = $3::uuid)
        ORDER BY root.updated_at DESC`,
-      [filter === "all" ? null : filter === "archived", this.stallThresholdSeconds],
+      [filter === "all" ? null : filter === "archived", this.stallThresholdSeconds, run_id],
     );
     return rows.map((row) => {
       const parked_count = Number(row.parked_count);
@@ -217,7 +227,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
   }
 
   async get_run(id: WorkflowRunId): Promise<OperatorRunDetail | null> {
-    const summary = (await this.list_runs("all")).find((run) => run.id === id);
+    const summary = (await this.listRunSummaries("all", id))[0];
     if (!summary) return null;
     const stageRows = await this.sql.query<StageProjectionRow>(
       `SELECT stage.id::text AS stage_instance_id, stage.stage_key AS name, stage.stage_type,
