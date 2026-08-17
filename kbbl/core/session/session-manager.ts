@@ -49,7 +49,7 @@ import {
   resolveRepoTopLevel,
 } from "./worktree";
 import type { RuntimeId, RuntimeRegistry } from "../runtime";
-import { FilesystemResumableInputInbox, FilesystemResumableSessionClaims, sessionIdForKey, type EnsureResumableSessionResult, type ResumableInputDeliveryKey, type ResumableInputReceipt, type ResumableSessionKey, type ResumableSessionStartSpec, type ResumableSessionTerminalResult } from "./resumable-session";
+import { FilesystemResumableInputInbox, FilesystemResumableSessionClaims, sessionIdForKey, type EnsureResumableSessionResult, type ResumableInputDeliveryKey, type ResumableInputReceipt, type ResumableSessionKey, type ResumableSessionStartSpec, type ResumableSessionTerminalOutcome } from "./resumable-session";
 
 export interface SessionManagerOpts {
   sessionsDir: string;
@@ -776,14 +776,55 @@ export class SessionManager {
     return { kind: "started", session: session.snapshot() };
   }
 
-  async waitForResumableSessionTerminal(sessionId: SessionId): Promise<ResumableSessionTerminalResult | null> {
-    const current = this.sessions.get(sessionId);
-    if (current) {
-      const exitCode = await current.waitForEnd();
-      return { session: current.snapshot(), exit_code: exitCode };
+  /**
+   * Wait up to `waitMs` for a resumable session to reach a terminal state.
+   *
+   * Returns "pending" rather than blocking indefinitely: an unbounded wait here
+   * outlives the Bun server's per-request deadline, and the observer on the
+   * other side has no way to tell a severed socket from a still-running agent.
+   *
+   * A compacted session is not terminal work — compaction hands the run to a
+   * successor sid — so the chain is followed to the session actually doing the
+   * work before the wait begins.
+   */
+  async waitForResumableSessionTerminal(sessionId: SessionId, waitMs: number): Promise<ResumableSessionTerminalOutcome> {
+    const resolved = await this.resolveCompactionSuccessor(sessionId);
+    if (resolved.kind === "not_found") return resolved;
+    const { session_id: activeId, archived } = resolved;
+
+    const current = this.sessions.get(activeId);
+    if (!current) {
+      return archived
+        ? { kind: "terminal", result: { session: archived, exit_code: archived.exitCode } }
+        : { kind: "not_found" };
     }
-    const archived = await loadArchivedSnapshot(sessionId, join(this.opts.sessionsDir, `${sessionId}.jsonl`), this.opts.registry);
-    return archived ? { session: archived, exit_code: null } : null;
+    const ended = await waitWithDeadline(current.waitForEnd(), waitMs);
+    if (!ended) return { kind: "pending" };
+    const snapshot = current.snapshot();
+    return { kind: "terminal", result: { session: snapshot, exit_code: snapshot.exitCode } };
+  }
+
+  /**
+   * Walk the compaction successor chain to the session that inherited the work.
+   * Bounded by a visited set so a malformed chain degrades to the last sound
+   * link instead of looping forever.
+   */
+  private async resolveCompactionSuccessor(
+    sessionId: SessionId,
+  ): Promise<{ readonly kind: "resolved"; readonly session_id: SessionId; readonly archived: SessionSnapshot | null } | { readonly kind: "not_found" }> {
+    const visited = new Set<string>();
+    let activeId = sessionId;
+    for (;;) {
+      if (visited.has(activeId)) return { kind: "resolved", session_id: activeId, archived: null };
+      visited.add(activeId);
+      if (this.sessions.has(activeId)) return { kind: "resolved", session_id: activeId, archived: null };
+      const archived = await loadArchivedSnapshot(activeId, join(this.opts.sessionsDir, `${activeId}.jsonl`), this.opts.registry);
+      if (!archived) return activeId === sessionId ? { kind: "not_found" } : { kind: "resolved", session_id: activeId, archived: null };
+      if (archived.endReason !== "compacted" || archived.successorSid === null) {
+        return { kind: "resolved", session_id: activeId, archived };
+      }
+      activeId = archived.successorSid as SessionId;
+    }
   }
 
   /**
@@ -1565,6 +1606,24 @@ type ModelObservedPayload = { model?: unknown };
 type SystemInitPayload = { subtype?: unknown; model?: unknown };
 type AssistantPayload = { message?: unknown };
 
+/**
+ * Resolve to true when `pending` settles inside `waitMs`, false on deadline.
+ * The timer is always cleared, so a settled race leaves no handle keeping the
+ * event loop (or a test runner) alive.
+ */
+async function waitWithDeadline(pending: Promise<unknown>, waitMs: number): Promise<boolean> {
+  if (waitMs <= 0) return false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<false>((resolve) => {
+    timer = setTimeout(() => resolve(false), waitMs);
+  });
+  try {
+    return await Promise.race([pending.then(() => true), deadline]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 async function loadArchivedSnapshot(
   sid: string,
   jsonlPath: string,
@@ -1616,6 +1675,7 @@ async function loadArchivedSnapshot(
   let observedModel: string | null = null;
   let initialObservedModel: string | null = null;
   let endReason: SessionEndReason | null = null;
+  let exitCode: number | null = null;
   let successorSid: string | null = null;
   const events: EnvelopeEvent[] = [];
   for (const line of contents.split("\n")) {
@@ -1760,6 +1820,11 @@ async function loadArchivedSnapshot(
         // archived as "subprocess_exited" because no user_closed event is
         // written to the JSONL — endReason reconstruction is best-effort.
         if (endReason === null) endReason = "subprocess_exited";
+        // The exit code is recorded unconditionally, even when a preceding
+        // compact_completed owns endReason: it describes the process, not the
+        // session's terminal reason. Sessions archived before this field was
+        // read back stay null, which callers must treat as unknown.
+        if (typeof payload.code === "number") exitCode = payload.code;
         break;
       }
     }
@@ -1814,6 +1879,7 @@ async function loadArchivedSnapshot(
     initialObservedModel,
     observedModel,
     endReason,
+    exitCode,
     successorSid,
   };
 }

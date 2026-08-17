@@ -23,7 +23,7 @@ const terminalResolvers = new Map<ExecutionId, () => void>();
 const adapter: ExecutorAdapter = {
   executor_type: "delegated_session",
   async start_or_attach() { return { kind: "none" }; },
-  observe_terminal(executionId) { return new Promise((resolve) => terminalResolvers.set(executionId, () => resolve({ kind: "succeeded", metadata: {} }))); },
+  observe_terminal(executionId) { return new Promise((resolve) => terminalResolvers.set(executionId, () => resolve({ kind: "terminal", observation: { kind: "succeeded", metadata: {} } }))); },
   async deliver_input() {},
   async cancel_or_fence(executionId) { terminalResolvers.get(executionId)?.(); },
 };
@@ -47,6 +47,7 @@ registerArtifactLifecycleObserver({
 });
 registerProductionTopologyServices({
   async ensure_run() {},
+  async finish_run() {},
   async find_external_reference() { return { kind: "none" }; },
   async load_compiled_definition(id, version) {
     if (id !== definition.id || version !== definition.version) throw new Error("proof requested the wrong seeded definition");

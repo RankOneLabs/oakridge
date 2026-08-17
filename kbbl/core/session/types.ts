@@ -40,5 +40,11 @@ export interface SessionSnapshot {
   initialObservedModel: string | null;
   observedModel: string | null;
   endReason: SessionEndReason | null;
+  /**
+   * The runtime process's exit code, or null when it is not known — either the
+   * session is still running, or it predates exit-code reconstruction. Null on
+   * an ended session means "unknown", not "clean".
+   */
+  exitCode: number | null;
   successorSid: string | null;
 }

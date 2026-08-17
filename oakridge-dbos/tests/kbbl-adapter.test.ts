@@ -34,7 +34,7 @@ test("kbbl adapter observes terminal mechanism state without completing an Oakri
   const adapter = new KbblExecutorAdapter({
     base_url: "http://kbbl.test",
     executor_function_identity: "executor-step-v1",
-    fetch: async (input) => String(input).endsWith("/terminal")
+    fetch: async (input) => String(input).includes("/terminal")
       ? Response.json({ session: { sid: "session-1", status: "ended", endReason: "subprocess_exited" }, exit_code: 0 })
       : Response.json({ kind: "attached", session: { sid: "session-1", status: "live", endReason: null } }),
   });
@@ -47,7 +47,31 @@ test("kbbl adapter observes terminal mechanism state without completing an Oakri
     resolved_config: { runtime: "claude-code", rendered_prompt: "Build", workdir: "/repo", session_name: "builder", model: null, effort: null, artifact_id: null },
     inputs: [], declared_outputs: [],
   });
-  expect(await adapter.observe_terminal(executionId)).toEqual({ kind: "succeeded", metadata: { session_id: "session-1", exit_code: 0 } });
+  expect(await adapter.observe_terminal(executionId)).toEqual({ kind: "terminal", observation: { kind: "succeeded", metadata: { session_id: "session-1", exit_code: 0 } } });
+});
+
+test("kbbl adapter reports a still-running session as pending rather than terminal", async () => {
+  const urls: string[] = [];
+  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "build", observe_wait_ms: 25_000, fetch: async (input) => {
+    urls.push(String(input));
+    return Response.json({ pending: true }, { status: 202 });
+  } });
+  expect(await adapter.observe_terminal("execution-1" as ExecutionId, { kind: "kbbl_session", session_id: "session-1" })).toEqual({ kind: "pending" });
+  expect(urls).toEqual(["http://kbbl/sessions/resumable/session-1/terminal?wait_ms=25000"]);
+});
+
+test("kbbl adapter fails an ended session whose exit code kbbl cannot report", async () => {
+  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "build", fetch: async () =>
+    Response.json({ session: { sid: "session-1", status: "ended", endReason: "subprocess_exited" }, exit_code: null }) });
+  expect(await adapter.observe_terminal("execution-1" as ExecutionId, { kind: "kbbl_session", session_id: "session-1" }))
+    .toEqual({ kind: "terminal", observation: { kind: "failed", code: "exit_unknown", detail: "kbbl session session-1 ended without a recorded exit code" } });
+});
+
+test("kbbl adapter fails a session that exited non-zero", async () => {
+  const adapter = new KbblExecutorAdapter({ base_url: "http://kbbl", executor_function_identity: "build", fetch: async () =>
+    Response.json({ session: { sid: "session-1", status: "ended", endReason: "subprocess_exited" }, exit_code: 1 }) });
+  expect(await adapter.observe_terminal("execution-1" as ExecutionId, { kind: "kbbl_session", session_id: "session-1" }))
+    .toEqual({ kind: "terminal", observation: { kind: "failed", code: "executor_exit_nonzero", detail: "kbbl runtime exited with code 1" } });
 });
 
 test("kbbl adapter requests a fresh session inheriting the producer workspace", async () => {

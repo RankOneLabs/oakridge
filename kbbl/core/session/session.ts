@@ -234,6 +234,11 @@ export class Session {
   readonly effort: string | null;
 
   private _endReason: SessionEndReason | undefined;
+  // The runtime's process exit code, latched alongside the subprocess_exited
+  // event so a live snapshot and an archived one report the same thing. Stays
+  // null while the session is running; consumers must treat null on an ended
+  // session as "unknown", never as success.
+  private _exitCode: number | null = null;
   private _successorSid: string | null = null;
   private _compactor: Compactor | null = null;
   private _runtime: AgentRuntime | null = null;
@@ -658,6 +663,7 @@ export class Session {
       initialObservedModel: this._initialObservedModel,
       observedModel: this.observedModel,
       endReason: this._endReason ?? null,
+      exitCode: this._exitCode,
       successorSid: this._successorSid,
     };
   }
@@ -879,6 +885,7 @@ export class Session {
         ? (completedResult as { code: number }).code
         : 1;
 
+    this._exitCode = exitCode;
     try {
       await this.emit("subprocess_exited", {
         code: exitCode,
@@ -920,6 +927,7 @@ export class Session {
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      this._exitCode = -1;
       await this.emit("subprocess_exited", {
         code: -1,
         reason: `spawn failed: ${msg}`,
@@ -1007,6 +1015,7 @@ export class Session {
       // finalize() must run even if the exit emit throws (disk full, perm
       // error), otherwise pending approvals stay parked and the jsonl
       // writer is never ended.
+      this._exitCode = code;
       try {
         await this.emit("subprocess_exited", {
           code,

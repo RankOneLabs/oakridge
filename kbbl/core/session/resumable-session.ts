@@ -42,6 +42,28 @@ export interface ResumableSessionTerminalResult {
   readonly exit_code: number | null;
 }
 
+/**
+ * The result of one bounded wait for a resumable session to end. Observers poll
+ * with a deadline that stays well inside the HTTP transport's own timeout, so a
+ * still-running session answers `pending` rather than holding a socket open for
+ * the life of the agent.
+ */
+export type ResumableSessionTerminalOutcome =
+  | { readonly kind: "terminal"; readonly result: ResumableSessionTerminalResult }
+  | { readonly kind: "pending" }
+  | { readonly kind: "not_found" };
+
+/** Bounds for the `wait_ms` query parameter on the terminal-observation route. */
+export const TERMINAL_WAIT_MS_DEFAULT = 25_000;
+export const TERMINAL_WAIT_MS_MAX = 60_000;
+
+export const selectTerminalWaitMs = (raw: string | undefined): number => {
+  if (raw === undefined) return TERMINAL_WAIT_MS_DEFAULT;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) return TERMINAL_WAIT_MS_DEFAULT;
+  return Math.min(Math.trunc(parsed), TERMINAL_WAIT_MS_MAX);
+};
+
 export type ResumableInputDeliveryKey = string & { readonly __brand: "ResumableInputDeliveryKey" };
 export interface ResumableInputReceipt {
   readonly version: 1;

@@ -17,7 +17,7 @@ import {
   type WorktreeCreateIdentity,
 } from "../../session/session-manager";
 import type { AgentRuntime, RuntimeId, RuntimeRegistry } from "../../runtime";
-import { ResumableInputConflictError, SessionKeyConflictError, type ResumableInputDeliveryKey, type ResumableSessionKey, type ResumableSessionStartSpec } from "../../session/resumable-session";
+import { ResumableInputConflictError, SessionKeyConflictError, selectTerminalWaitMs, type ResumableInputDeliveryKey, type ResumableSessionKey, type ResumableSessionStartSpec } from "../../session/resumable-session";
 import { isValidSid } from "./per-sid";
 
 // Fallback allowlist used when no RuntimeRegistry is wired (legacy / test mode).
@@ -420,11 +420,17 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
     }
   });
 
+  // Bounded long-poll. `wait_ms` is capped well under the server's idle
+  // timeout so the socket is never severed mid-wait; a still-running session
+  // answers 202 and the observer polls again.
   app.get("/sessions/resumable/:sid/terminal", async (c) => {
     const sid = c.req.param("sid");
     if (!isValidSid(sid)) return c.json({ error: "invalid sid" }, 400);
-    const terminal = await manager.waitForResumableSessionTerminal(sid as SessionId);
-    return terminal ? c.json(terminal) : c.json({ error: "session not found" }, 404);
+    const waitMs = selectTerminalWaitMs(c.req.query("wait_ms"));
+    const outcome = await manager.waitForResumableSessionTerminal(sid as SessionId, waitMs);
+    if (outcome.kind === "not_found") return c.json({ error: "session not found" }, 404);
+    if (outcome.kind === "pending") return c.json({ pending: true }, 202);
+    return c.json(outcome.result);
   });
 
   app.put("/sessions/resumable/:sid/input/:deliveryKey", async (c) => {

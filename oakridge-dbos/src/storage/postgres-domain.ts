@@ -335,6 +335,20 @@ export class PostgresWorkflowAttemptRepository implements WorkflowAttemptReposit
       [run_id],
     );
   }
+
+  /**
+   * Record an attempt's terminal outcome. Idempotent by design: the run
+   * workflow's finishing step is replayable, and a recovered workflow must be
+   * able to write the same outcome again without raising.
+   */
+  async finish(root_workflow_id: string, ended_at: string, outcome: StageOutcome): Promise<void> {
+    await this.sql.query(
+      `UPDATE oakridge.workflow_attempt
+       SET ended_at = $2::timestamptz, outcome = $3::jsonb
+       WHERE root_workflow_id = $1 AND ended_at IS NULL`,
+      [root_workflow_id, ended_at, outcome],
+    );
+  }
 }
 
 export class PostgresStageInstanceRepository implements StageInstanceRepository {
