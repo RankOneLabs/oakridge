@@ -17,6 +17,7 @@ import { createAdmissionApp, type AdmissionHttpDependencies } from "./admission"
 import { createRunLifecycleApp, type RunLifecycleHttpDependencies } from "./run-lifecycle";
 import { createDomainReadApp, type DomainReadHttpDependencies } from "./domain-reads";
 import { createFinalPullRequestApp, type FinalPullRequestHttpDependencies } from "./final-pull-request";
+import { controlTokenMiddleware } from "./control-auth";
 
 export interface OakridgeHttpDependencies {
   readonly configuration: ConfigurationHttpDependencies;
@@ -33,10 +34,13 @@ export interface OakridgeHttpDependencies {
   readonly artifact_detail: ArtifactDetailDependencies;
   readonly rerun: RerunHttpDependencies;
   readonly run_launch: LaunchRunDependencies;
+  /** Bearer token required on state-changing requests; absent on a loopback bind. */
+  readonly control_token?: string;
 }
 
 export const createApp = (dependencies: OakridgeHttpDependencies): Hono => {
   const app = new Hono();
+  if (dependencies.control_token) app.use("*", controlTokenMiddleware(dependencies.control_token));
   app.route("/", createConfigurationApp(dependencies.configuration));
   app.route("/", createAdmissionApp(dependencies.admission));
   app.route("/", createRunLifecycleApp(dependencies.run_lifecycle));

@@ -37,6 +37,11 @@ export type EnsureResumableSessionResult =
   | { readonly kind: "started"; readonly session: SessionSnapshot }
   | { readonly kind: "terminal"; readonly session: SessionSnapshot };
 
+/** Outcome of forcing a key past a session it can no longer safely resume. */
+export type AdvanceResumableSessionResult =
+  | { readonly kind: "not_found" }
+  | { readonly kind: "advanced"; readonly previous_session_id: SessionId; readonly session_id: SessionId; readonly generation: number };
+
 export interface ResumableSessionTerminalResult {
   readonly session: SessionSnapshot;
   readonly exit_code: number | null;
@@ -133,7 +138,22 @@ export class FilesystemResumableSessionClaims {
     return { claim: existing, is_new: false };
   }
 
-  async advanceOrphan(claim: ResumableSessionClaim): Promise<ResumableSessionClaim> {
+  async read(session_key: ResumableSessionKey): Promise<ResumableSessionClaim | null> {
+    const claim_path = join(this.sessions_dir, "execution-claims", sha256(session_key), "claim.json");
+    try { return parseClaim(await readFile(claim_path, "utf8")); }
+    catch (error) {
+      if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return null;
+      throw error;
+    }
+  }
+
+  /**
+   * Move the key to its next generation. Compare-and-swap on the claim the
+   * caller read, so two callers racing to advance the same generation produce
+   * one new session rather than two. Used both when an orphan has been fenced
+   * and when an operator forces a wedged key forward.
+   */
+  async advance(claim: ResumableSessionClaim): Promise<ResumableSessionClaim> {
     const claim_dir = join(this.sessions_dir, "execution-claims", sha256(claim.session_key));
     const claim_path = join(claim_dir, "claim.json");
     const current = parseClaim(await readFile(claim_path, "utf8"));

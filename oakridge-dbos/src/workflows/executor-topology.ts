@@ -1,6 +1,7 @@
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
 import type { ExecutionRequest, ExecutorAdapter, ExecutorObservationAttempt, ExecutorTerminalObservation, ExternalExecutionReference } from "../domain/execution";
+import type { ExecutionAttemptId } from "../domain/primitives";
 import type { CollaborationPingRequest, CollaborationPingState } from "../domain/collaboration";
 import type { ArtifactReleaseState, ArtifactRevision, ExecutionContractState, ReleaseArtifactResult } from "../domain/artifacts";
 import type { CompiledOutputContract } from "../domain/compiled-workflow";
@@ -48,8 +49,9 @@ export const registerExecutorAdapter = (adapter: ExecutorAdapter): void => {
 const runExecutorMechanismStep = DBOS.registerStep(async (request: ExecutionRequest): Promise<ExecutorMechanismResult> => {
   const adapter = adapters.get(request.executor_type);
   if (!adapter) throw new Error(`executor adapter '${request.executor_type}' is not registered`);
-  const externalReference = await adapter.start_or_attach(request);
-  const attempt = await adapter.observe_terminal(request.execution_id);
+  const attemptId = (DBOS.workflowID ?? request.execution_id) as ExecutionAttemptId;
+  const externalReference = await adapter.start_or_attach(request, attemptId);
+  const attempt = await adapter.observe_terminal(request.execution_id, externalReference);
   // Dev-proof path only. It has no durable loop to own a bounded poll, so an
   // adapter that answers `pending` here is a wiring error rather than a state
   // to wait through — the production path is terminalObserverWorkflow.
@@ -66,11 +68,12 @@ export const executorBackedExecutionWorkflow = DBOS.registerWorkflow(async (requ
   return runExecutorMechanismStep(request);
 }, { name: "oakridgeExecutorBackedExecutionWorkflow" });
 
-const startExecutorStep = DBOS.registerStep(async (request: ExecutionRequest): Promise<ExternalExecutionReference> => {
-  const adapter = adapters.get(request.executor_type);
-  if (!adapter) throw new Error(`executor adapter '${request.executor_type}' is not registered`);
-  const reference = await adapter.start_or_attach(request);
-  await projectionObserver?.attach_external(request.execution_id, reference);
+interface StartExecutorInput { readonly request: ExecutionRequest; readonly attempt_id: ExecutionAttemptId }
+const startExecutorStep = DBOS.registerStep(async (input: StartExecutorInput): Promise<ExternalExecutionReference> => {
+  const adapter = adapters.get(input.request.executor_type);
+  if (!adapter) throw new Error(`executor adapter '${input.request.executor_type}' is not registered`);
+  const reference = await adapter.start_or_attach(input.request, input.attempt_id);
+  await projectionObserver?.attach_external(input.request.execution_id, reference);
   return reference;
 }, { name: "oakridgeStartExecutorStep", retriesAllowed: true });
 
@@ -104,7 +107,7 @@ const terminalObserverWorkflow = DBOS.registerWorkflow(async (input: ObserveExec
   }
 }, { name: "oakridgeTerminalObserverWorkflow" });
 
-interface FenceExecutorInput { readonly execution_id: ExecutionRequest["execution_id"]; readonly executor_type: string; readonly external_reference?: ExternalExecutionReference }
+interface FenceExecutorInput { readonly execution_id: ExecutionRequest["execution_id"]; readonly executor_type: string; readonly external_reference: ExternalExecutionReference }
 const fenceExecutorStep = DBOS.registerStep(async (input: FenceExecutorInput): Promise<void> => {
   const adapter = adapters.get(input.executor_type);
   if (!adapter) throw new Error(`executor adapter '${input.executor_type}' is not registered`);
@@ -125,11 +128,13 @@ export const collaborationResponderWorkflow = DBOS.registerWorkflow(async (input
   await DBOS.setEvent("collaboration-ping-state", { kind: "delivered", thread_id: input.thread_id, request_id: input.request_id } satisfies CollaborationPingState);
 }, { name: "oakridgeCollaborationResponderWorkflow" });
 
-interface RevisionRequestInput { readonly request: ExecutionRequest; readonly external_reference: ExternalExecutionReference; readonly delivery_key: string; readonly feedback: string }
+interface RevisionRequestInput { readonly request: ExecutionRequest; readonly attempt_id: ExecutionAttemptId; readonly external_reference: ExternalExecutionReference; readonly delivery_key: string; readonly feedback: string }
 const requestRevisionStep = DBOS.registerStep(async (input: RevisionRequestInput): Promise<void> => {
   const adapter = adapters.get(input.request.executor_type);
   if (!adapter) throw new Error(`executor adapter '${input.request.executor_type}' is not registered`);
-  const currentReference = await adapter.start_or_attach(input.request);
+  // Re-ensuring under this attempt's own key attaches to the session already
+  // running it, rather than starting a second agent for the same work.
+  const currentReference = await adapter.start_or_attach(input.request, input.attempt_id);
   await adapter.deliver_input(input.request.execution_id, input.delivery_key, input.feedback, currentReference);
 }, { name: "oakridgeRequestExecutorRevisionStep", retriesAllowed: true });
 
@@ -168,7 +173,8 @@ export interface ArtifactContractExecutionResult { readonly external_reference: 
 export const artifactContractExecutionWorkflow = DBOS.registerWorkflow(async (input: ArtifactContractExecutionInput): Promise<ArtifactContractExecutionResult> => {
   const workflowId = DBOS.workflowID;
   if (!workflowId) throw new Error("execution workflow requires a DBOS workflow ID");
-  const externalReference = await startExecutorStep(input.request);
+  const attemptId = workflowId as ExecutionAttemptId;
+  const externalReference = await startExecutorStep({ request: input.request, attempt_id: attemptId });
   await DBOS.startWorkflow(terminalObserverWorkflow, { workflowID: `${workflowId}:terminal` })({ request: input.request, external_reference: externalReference, parent_workflow_id: workflowId });
   let releases: readonly ArtifactReleaseState[] = [];
   let terminalObservation: ExecutorTerminalObservation | null = null;
@@ -219,12 +225,12 @@ export const artifactContractExecutionWorkflow = DBOS.registerWorkflow(async (in
       if (released) releases = withRelease(releases, released);
     } else if (message.kind === "gate_rejected") {
       if (message.command.action === "rerun" || message.command.action === "request_revision") {
-        await requestRevisionStep({ request: input.request, external_reference: externalReference, delivery_key: `gate:${message.artifact.id}:${message.command.gate_step}`, feedback: `Revise '${message.artifact.output_name}' after gate '${message.command.gate_step}'.` });
+        await requestRevisionStep({ request: input.request, attempt_id: attemptId, external_reference: externalReference, delivery_key: `gate:${message.artifact.id}:${message.command.gate_step}`, feedback: `Revise '${message.artifact.output_name}' after gate '${message.command.gate_step}'.` });
         continue;
       }
       return { external_reference: externalReference, contract: { kind: "waiting_artifacts", missing_outputs: [message.artifact.output_name] }, terminal_observation: { kind: "failed", code: "gate_rejected", detail: message.command.action } };
     } else if (message.kind === "handoff_revision_requested") {
-      await requestRevisionStep({ request: input.request, external_reference: externalReference, delivery_key: `handoff:${message.result.artifact.id}:${message.result.decision_artifact_id}`, feedback: message.result.feedback ?? "Assessment requested implementation revisions." });
+      await requestRevisionStep({ request: input.request, attempt_id: attemptId, external_reference: externalReference, delivery_key: `handoff:${message.result.artifact.id}:${message.result.decision_artifact_id}`, feedback: message.result.feedback ?? "Assessment requested implementation revisions." });
       continue;
     } else {
       terminalObservation = message.observation;

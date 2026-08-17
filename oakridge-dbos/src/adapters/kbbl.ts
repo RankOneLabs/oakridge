@@ -1,5 +1,5 @@
 import type { ExecutionRequest, ExecutorAdapter, ExecutorObservationAttempt, ExecutorTerminalObservation, ExternalExecutionReference } from "../domain/execution";
-import type { ExecutionId, JsonValue } from "../domain/primitives";
+import type { ExecutionAttemptId, ExecutionId, JsonValue } from "../domain/primitives";
 
 /**
  * How long kbbl may hold one observation request open. Well under kbbl's own
@@ -79,16 +79,30 @@ export interface KbblExecutorAdapterOptions {
   readonly fetch?: FetchLike;
 }
 
+/**
+ * The kbbl session one attempt owns. Keying on the attempt rather than the
+ * execution is what lets a rerun start a fresh agent: the execution id is
+ * shared by every attempt, so a rerun keyed on it resolved to the session that
+ * had already died and re-failed immediately. The application version stays in
+ * the key so a session never spans a backend version change.
+ */
+const sessionKeyFor = (attempt_id: ExecutionAttemptId, executor_function_identity: string): string =>
+  `${attempt_id}:${executor_function_identity}`;
+
+const sessionIdOf = (external_reference: ExternalExecutionReference, execution_id: ExecutionId): string => {
+  if (external_reference.kind !== "kbbl_session") throw new Error(`execution ${execution_id} has no kbbl session reference`);
+  return external_reference.session_id;
+};
+
 export class KbblExecutorAdapter implements ExecutorAdapter {
   readonly executor_type = "delegated_session";
   private readonly fetch: FetchLike;
-  private readonly sessionsByExecution = new Map<ExecutionId, string>();
 
   constructor(private readonly options: KbblExecutorAdapterOptions) {
     this.fetch = options.fetch ?? globalThis.fetch;
   }
 
-  async start_or_attach(request: ExecutionRequest): Promise<ExternalExecutionReference> {
+  async start_or_attach(request: ExecutionRequest, attempt_id: ExecutionAttemptId): Promise<ExternalExecutionReference> {
     const config = parseResolvedConfig(request.resolved_config);
     const inheritedSessionId = request.workspace_source?.external_reference.kind === "kbbl_session"
       ? request.workspace_source.external_reference.session_id : null;
@@ -97,7 +111,7 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
     if (config.worktree && inheritedSessionId) {
       throw new Error(`execution ${request.execution_id} resolves its own worktree and inherits one from ${inheritedSessionId}; these are mutually exclusive`);
     }
-    const sessionKey = `${request.execution_id}:${this.options.executor_function_identity}`;
+    const sessionKey = sessionKeyFor(attempt_id, this.options.executor_function_identity);
     const response = await this.fetch(`${this.options.base_url}/sessions/resumable/${encodeURIComponent(sessionKey)}`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
@@ -116,13 +130,18 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
     });
     if (!response.ok) throw new Error(`kbbl ensure-session failed (${response.status}): ${await response.text()}`);
     const ensured = parseEnsureResponse(await response.json());
-    this.sessionsByExecution.set(request.execution_id, ensured.session.sid);
     return { kind: "kbbl_session", session_id: ensured.session.sid };
   }
 
-  async observe_terminal(execution_id: ExecutionId, external_reference?: ExternalExecutionReference): Promise<ExecutorObservationAttempt> {
-    const sessionId = external_reference?.kind === "kbbl_session" ? external_reference.session_id : this.sessionsByExecution.get(execution_id);
-    if (!sessionId) return terminal({ kind: "failed", code: "session_not_ensured", detail: `no kbbl session is associated with execution ${execution_id}` });
+  async observe_terminal(execution_id: ExecutionId, external_reference: ExternalExecutionReference): Promise<ExecutorObservationAttempt> {
+    // Reported as a failure rather than thrown, unlike `cancel_or_fence` below.
+    // This is the only path by which a unit can ever be reported terminal, and
+    // it runs inside a retrying step: throwing exhausts the retries, kills the
+    // terminal observer, and leaves the execution waiting on a message that can
+    // now never arrive — a silent stall an operator has to go hunting for.
+    // A named failure code parks the unit for rerun and says what happened.
+    if (external_reference.kind !== "kbbl_session") return terminal({ kind: "failed", code: "session_not_ensured", detail: `no kbbl session is associated with execution ${execution_id}` });
+    const sessionId = external_reference.session_id;
     const url = `${this.options.base_url}/sessions/resumable/${encodeURIComponent(sessionId)}/terminal?wait_ms=${this.options.observe_wait_ms ?? DEFAULT_OBSERVE_WAIT_MS}`;
     const response = await this.fetch(url);
     if (response.status === 202) return { kind: "pending" };
@@ -143,16 +162,18 @@ export class KbblExecutorAdapter implements ExecutorAdapter {
     return terminal({ kind: "succeeded", metadata: { session_id: sessionId, exit_code: exitCode } });
   }
 
-  async cancel_or_fence(execution_id: ExecutionId, external_reference?: ExternalExecutionReference): Promise<void> {
-    const sessionId = external_reference?.kind === "kbbl_session" ? external_reference.session_id : this.sessionsByExecution.get(execution_id);
-    if (!sessionId) return;
+  async cancel_or_fence(execution_id: ExecutionId, external_reference: ExternalExecutionReference): Promise<void> {
+    // `none` is the honest answer for an execution that never reached an
+    // executor; anything else means the reference was lost, which must fail
+    // loudly rather than leave a live agent running unfenced.
+    if (external_reference.kind === "none") return;
+    const sessionId = sessionIdOf(external_reference, execution_id);
     const response = await this.fetch(`${this.options.base_url}/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
     if (!response.ok && response.status !== 404) throw new Error(`kbbl cancellation failed (${response.status}): ${await response.text()}`);
   }
 
-  async deliver_input(execution_id: ExecutionId, delivery_key: string, input: string, external_reference?: ExternalExecutionReference): Promise<void> {
-    const sessionId = external_reference?.kind === "kbbl_session" ? external_reference.session_id : this.sessionsByExecution.get(execution_id);
-    if (!sessionId) throw new Error(`no kbbl session is associated with execution ${execution_id}`);
+  async deliver_input(execution_id: ExecutionId, delivery_key: string, input: string, external_reference: ExternalExecutionReference): Promise<void> {
+    const sessionId = sessionIdOf(external_reference, execution_id);
     const response = await this.fetch(`${this.options.base_url}/sessions/resumable/${encodeURIComponent(sessionId)}/input/${encodeURIComponent(delivery_key)}`, {
       method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: input }),
     });

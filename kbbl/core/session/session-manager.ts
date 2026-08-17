@@ -49,7 +49,7 @@ import {
   resolveRepoTopLevel,
 } from "./worktree";
 import type { RuntimeId, RuntimeRegistry } from "../runtime";
-import { FilesystemResumableInputInbox, FilesystemResumableSessionClaims, sessionIdForKey, type EnsureResumableSessionResult, type ResumableInputDeliveryKey, type ResumableInputReceipt, type ResumableSessionKey, type ResumableSessionStartSpec, type ResumableSessionTerminalOutcome } from "./resumable-session";
+import { FilesystemResumableInputInbox, FilesystemResumableSessionClaims, sessionIdForKey, type AdvanceResumableSessionResult, type EnsureResumableSessionResult, type ResumableInputDeliveryKey, type ResumableInputReceipt, type ResumableSessionKey, type ResumableSessionStartSpec, type ResumableSessionTerminalOutcome } from "./resumable-session";
 
 export interface SessionManagerOpts {
   sessionsDir: string;
@@ -726,6 +726,44 @@ export class SessionManager {
     return result;
   }
 
+  /**
+   * Force a resumable key to its next generation so the next ensure starts a
+   * fresh session.
+   *
+   * The claim only advances by itself when an orphan can be positively fenced,
+   * which needs a runtime that can verify and kill the process it left behind.
+   * Not every runtime can: codex drives threads inside one shared app-server
+   * rather than owning a subprocess per session, so there is no PID to fence
+   * and the key would otherwise stay wedged forever with a manual purge as the
+   * only way out. This is that way out, made explicit and serialized against
+   * `ensureResumableSession` so it cannot race a concurrent claim.
+   *
+   * The live session, if any, is ended first — advancing past a running agent
+   * is the one thing the claim generation exists to prevent.
+   */
+  async advanceResumableSession(sessionKey: ResumableSessionKey): Promise<AdvanceResumableSessionResult> {
+    const previous = this.resumableSessionChains.get(sessionKey) ?? Promise.resolve();
+    const result = previous.then(() => this.advanceResumableSessionUnlocked(sessionKey));
+    const tail = result.then(() => undefined, () => undefined);
+    this.resumableSessionChains.set(sessionKey, tail);
+    void tail.then(() => {
+      if (this.resumableSessionChains.get(sessionKey) === tail) this.resumableSessionChains.delete(sessionKey);
+    });
+    return result;
+  }
+
+  private async advanceResumableSessionUnlocked(sessionKey: ResumableSessionKey): Promise<AdvanceResumableSessionResult> {
+    const claim = await this.resumableClaims.read(sessionKey);
+    if (!claim) return { kind: "not_found" };
+    const live = this.sessions.get(claim.session_id);
+    if (live && live.status !== "ended") {
+      live.markEndReason("user_closed");
+      await live.abort().catch(() => 1);
+    }
+    const advanced = await this.resumableClaims.advance(claim);
+    return { kind: "advanced", previous_session_id: claim.session_id, session_id: advanced.session_id, generation: advanced.generation };
+  }
+
   private async ensureResumableSessionUnlocked(sessionKey: ResumableSessionKey, startSpec: ResumableSessionStartSpec): Promise<EnsureResumableSessionResult> {
     let { claim, is_new } = await this.resumableClaims.claim(sessionKey, startSpec);
     const current = this.sessions.get(claim.session_id);
@@ -743,7 +781,7 @@ export class SessionManager {
         if (!runtime?.fenceOrphan || !orphanReference) throw new Error(`kbbl: orphaned session ${claim.session_id} cannot be safely fenced`);
         const fenceResult = await runtime.fenceOrphan(orphanReference);
         if (fenceResult === "unverifiable") throw new Error(`kbbl: orphaned session ${claim.session_id} could not be verified for fencing`);
-        claim = await this.resumableClaims.advanceOrphan(claim);
+        claim = await this.resumableClaims.advance(claim);
       }
     }
     const predecessorId = claim.generation > 0 ? sessionIdForKey(sessionKey, claim.generation - 1) : null;

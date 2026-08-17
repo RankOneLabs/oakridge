@@ -420,6 +420,23 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
     }
   });
 
+  // Escape hatch for a key whose session can no longer be resumed and whose
+  // runtime cannot fence what it left behind. Explicit, operator-driven, and
+  // never reachable by an ensure retry — advancing on its own would start a
+  // second agent for work that may still be running.
+  app.post("/sessions/resumable/:sessionKey/advance", async (c) => {
+    const rawKey = c.req.param("sessionKey").trim();
+    if (rawKey.length === 0 || rawKey.length > 300) return c.json({ error: "session key must be 1-300 characters" }, 400);
+    try {
+      const result = await manager.advanceResumableSession(rawKey as ResumableSessionKey);
+      if (result.kind === "not_found") return c.json({ error: "session key has never been claimed" }, 404);
+      return c.json(result);
+    } catch (error) {
+      console.error(`kbbl: advance resumable session failed: ${error instanceof Error ? error.message : String(error)}`);
+      return c.json({ error: "failed to advance resumable session" }, 503);
+    }
+  });
+
   // Bounded long-poll. `wait_ms` is capped well under the server's idle
   // timeout so the socket is never severed mid-wait; a still-running session
   // answers 202 and the observer polls again.

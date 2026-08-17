@@ -9,9 +9,10 @@ import type { CompiledStageContract, CompiledWorkflowDefinition, MaterializedExe
 import type { DelegatedSessionDefinitionConfig } from "../domain/delegated-session";
 import type { ArtifactEnvelope, ExecutionRequest, ExternalExecutionReference } from "../domain/execution";
 import type { ExecutionId, JsonValue, StageCoordinatorWorkflowId, StageInstanceId, UnitId, WorkflowDefinitionId, WorkflowRunId } from "../domain/primitives";
-import type { StageOutcome } from "../domain/workflow";
+import type { StageFailureOutcome, StageOutcome } from "../domain/workflow";
 import type { StageRerunState } from "../domain/rerun";
 import type { StageAdmissionState } from "../domain/runs";
+import { containAttempt } from "./cancellation";
 import { artifactContractExecutionWorkflow, type ArtifactContractExecutionResult } from "./executor-topology";
 
 export interface RunWorkflowInput {
@@ -331,6 +332,25 @@ export const productionStageWorkflow = DBOS.registerWorkflow(async (input: Stage
   return complete({ kind: "succeeded" });
 }, { name: "oakridgeProductionStageWorkflow" });
 
+/**
+ * The stage coordinators still running when a run ends early. A stage that has
+ * reported its outcome — including the one whose failure ended the run — is
+ * already finished and must keep the record it wrote; everything else started
+ * is an orphan whose delegated sessions are still alive.
+ */
+export const selectOrphanedStageCoordinators = (stage_workflow_ids: Readonly<Record<string, string>>, finished: ReadonlySet<string>): readonly string[] =>
+  Object.entries(stage_workflow_ids).filter(([stageKey]) => !finished.has(stageKey)).map(([, coordinatorId]) => coordinatorId);
+
+/**
+ * Why the siblings of a failed stage are being stopped, in one readable line.
+ * Narrowed to the outcomes that can end a run, so a success can never be
+ * described here as a cancellation.
+ */
+export const stageFailureReason = (stage_key: string, outcome: StageFailureOutcome): string =>
+  outcome.kind === "failed"
+    ? `stage '${stage_key}' failed: ${outcome.code}`
+    : `stage '${stage_key}' was cancelled${outcome.reason ? `: ${outcome.reason}` : ""}`;
+
 type RootSignal =
   | { readonly kind: "output_released"; readonly stage_key: string; readonly artifact: ArtifactRevision }
   | { readonly kind: "stage_finished"; readonly stage_key: string; readonly result: StageWorkflowResult };
@@ -427,6 +447,16 @@ export const productionRunWorkflow = DBOS.registerWorkflow(async (input: RunWork
     await finishStageStep({ stage_instance_id: signal.result.stage_instance_id, outcome: signal.result.outcome, ended_at: new Date(await DBOS.now()).toISOString() });
     if (signal.result.outcome.kind !== "succeeded") {
       terminal = signal.result.outcome;
+      // Siblings still running have nothing left to deliver into. Containing
+      // them here fences their delegated sessions and writes their stage
+      // records; without it they ran on unreconciled, and a coordinator sitting
+      // inside a batch would never even see an `abandon_stage` command.
+      const orphaned = selectOrphanedStageCoordinators(stageWorkflowIds, finished);
+      if (orphaned.length > 0) {
+        await containAttempt({ root_workflow_id: rootId, reason: stageFailureReason(signal.stage_key, terminal), requested_at: new Date(await DBOS.now()).toISOString() },
+          async () => undefined);
+        for (const coordinatorId of orphaned) await DBOS.cancelWorkflow(coordinatorId, { cancelChildren: true });
+      }
       break;
     }
     for (const edge of definition.edges.filter((candidate) => candidate.producer_stage === signal.stage_key && candidate.delivery === "unit_complete" && started.has(candidate.consumer_stage) && !finished.has(candidate.consumer_stage))) {
