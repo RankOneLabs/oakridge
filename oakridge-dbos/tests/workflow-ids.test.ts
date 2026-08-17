@@ -12,7 +12,7 @@ const artifact = "artifact-1" as ArtifactId;
 
 test("the run tree composes from root to unit execution", () => {
   const coordinator = stageCoordinatorWorkflowId(root, "build");
-  expect(coordinator).toBe("oakridge-run:run-1:attempt:initial:stage:build");
+  expect(String(coordinator)).toBe("oakridge-run:run-1:attempt:initial:stage:build");
   expect(unitExecutionWorkflowId(coordinator, "web" as UnitId)).toBe("oakridge-run:run-1:attempt:initial:stage:build:unit:web");
   expect(relayWorkflowId(coordinator)).toBe("oakridge-run:run-1:attempt:initial:stage:build:relay");
 });

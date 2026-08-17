@@ -7,7 +7,7 @@ const databaseUrl = process.env.DBOS_SYSTEM_DATABASE_URL;
 if (!databaseUrl) throw new Error("DBOS_SYSTEM_DATABASE_URL is required");
 
 DBOS.setConfig({ name: "oakridge-dbos-stub", systemDatabaseUrl: databaseUrl, applicationVersion: "cohort-b-stub", logLevel: "warn" });
-const { deliveryProofWorkflow } = await import("../workflows/delivery-topology");
+const { deliveryProofWorkflow } = await import("./delivery-topology");
 const units = materializeBatch(
   [{ id: "foundation", depends_on: [], delay_ms: Number(process.env.STUB_DELAY_MS ?? 0) }, { id: "api", depends_on: ["foundation"] }, { id: "ui", depends_on: ["foundation"] }],
   { unit_id_path: "/id", depends_on_path: "/depends_on" },

@@ -10,11 +10,6 @@ import { evaluateExecutionArtifactContract, shouldAwaitArtifactRelease, withoutR
 import { durableGateWorkflow, type GateCommand, type GateWaitInput } from "./gate";
 import { durableHandoffWorkflow, type HandoffCommand, type HandoffResult } from "./handoff";
 
-export interface ExecutorMechanismResult {
-  readonly external_reference: ExternalExecutionReference;
-  readonly terminal_observation: ExecutorTerminalObservation;
-}
-
 const adapters = new Map<string, ExecutorAdapter>();
 export interface ExecutionProjectionObserver {
   attach_external(execution_id: ExecutionRequest["execution_id"], reference: ExternalExecutionReference): Promise<void>;
@@ -42,32 +37,14 @@ const markArtifactReleasedStep = DBOS.registerStep(async (id: ArtifactRevision["
   return null;
 }, { name: "oakridgeMarkArtifactReleasedStep", retriesAllowed: true });
 
+/** Exposed for the dev proof harness, which drives one adapter without a run. */
+export const findExecutorAdapter = (executor_type: string): ExecutorAdapter | undefined => adapters.get(executor_type);
+
 export const registerExecutorAdapter = (adapter: ExecutorAdapter): void => {
   if (adapters.has(adapter.executor_type)) throw new Error(`executor adapter '${adapter.executor_type}' is already registered`);
   adapters.set(adapter.executor_type, adapter);
 };
 
-const runExecutorMechanismStep = DBOS.registerStep(async (request: ExecutionRequest): Promise<ExecutorMechanismResult> => {
-  const adapter = adapters.get(request.executor_type);
-  if (!adapter) throw new Error(`executor adapter '${request.executor_type}' is not registered`);
-  const attemptId = (DBOS.workflowID ?? request.execution_id) as ExecutionAttemptId;
-  const externalReference = await adapter.start_or_attach(request, attemptId);
-  const attempt = await adapter.observe_terminal(request.execution_id, externalReference);
-  // Dev-proof path only. It has no durable loop to own a bounded poll, so an
-  // adapter that answers `pending` here is a wiring error rather than a state
-  // to wait through — the production path is terminalObserverWorkflow.
-  if (attempt.kind === "pending") throw new Error(`executor adapter '${request.executor_type}' returned a pending observation to the single-shot mechanism step`);
-  return { external_reference: externalReference, terminal_observation: attempt.observation };
-}, { name: "oakridgeRunExecutorMechanismStep", retriesAllowed: true });
-
-/**
- * This workflow reports executor mechanism state only. Its successful return
- * does not satisfy an Oakridge unit or StageInstance; artifact-contract
- * evaluation remains the caller's next workflow operation.
- */
-export const executorBackedExecutionWorkflow = DBOS.registerWorkflow(async (request: ExecutionRequest): Promise<ExecutorMechanismResult> => {
-  return runExecutorMechanismStep(request);
-}, { name: "oakridgeExecutorBackedExecutionWorkflow" });
 
 interface StartExecutorInput { readonly request: ExecutionRequest; readonly attempt_id: ExecutionAttemptId }
 const startExecutorStep = DBOS.registerStep(async (input: StartExecutorInput): Promise<ExternalExecutionReference> => {

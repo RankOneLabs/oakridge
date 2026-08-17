@@ -10,7 +10,8 @@ const kbblUrl = process.env.KBBL_URL;
 if (!kbblUrl) throw new Error("KBBL_URL is required");
 
 DBOS.setConfig({ name: "oakridge-dbos-kbbl-proof", systemDatabaseUrl: databaseUrl, applicationVersion: "cohort-c-kbbl", logLevel: "warn" });
-const { executorBackedExecutionWorkflow, registerExecutorAdapter } = await import("../workflows/executor-topology");
+const { registerExecutorAdapter } = await import("../workflows/executor-topology");
+const { executorBackedExecutionWorkflow } = await import("./executor-mechanism");
 registerExecutorAdapter(new KbblExecutorAdapter({ base_url: kbblUrl, executor_function_identity: "oakridgeRunExecutorMechanismStep" }));
 
 const executionId = "cohort-c-live-execution" as ExecutionId;
