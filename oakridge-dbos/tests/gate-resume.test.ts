@@ -21,7 +21,7 @@ const fixture = (options: { readonly open_items?: number; readonly tip?: Artifac
   let inserted: GateDecisionAudit | null = null;
   let applied: GateDecisionAuditId | null = null;
   const dependencies: GateResumeDependencies = {
-    contexts: { find_for_emit: async () => ({ run_id: artifact.run_id, stage_key: "review", operator_role: "assessment", stage_instance_id: stageId, execution_id: executionId, unit_id: unitId, executor_type: "delegated_session", execution_workflow_id: "execution-workflow-1", inputs: [], outputs: [{ name: "result", artifact_type: "dev.result", release: { kind: "gate", steps: [{ type: "artifact_approval", actions: ["approve", "request_revision"] }], requires_zero_open_review_items: true, revision_target: "self_stage" } }] }) },
+    contexts: { find_for_emit: async () => ({ run_id: artifact.run_id, stage_key: "review", operator_role: "assessment", stage_instance_id: stageId, execution_id: executionId, unit_id: unitId, executor_type: "delegated_session", execution_workflow_id: "execution-workflow-1", inputs: [], outputs: [{ name: "result", artifact_type: "dev.result", release: { kind: "gate", steps: [{ type: "artifact_approval", actions: [{ name: "approve", disposition: "release" as const }, { name: "request_revision", disposition: "revise" as const }] }], requires_zero_open_review_items: true, revision_target: "self_stage" } }] }) },
     artifacts: { emit_revision: async () => ({ ok: true, value: { kind: "unchanged", artifact, superseded_artifact_id: null } }), withdraw: async () => ({ kind: "not_found", artifact_id: artifact.id }), mark_released: async () => ({ kind: "released", artifact }), find_by_id: async () => artifact, find_tip: async () => options.tip === undefined ? artifact : options.tip, find_current: async () => options.tip === undefined ? artifact : options.tip, list_chain: async () => [artifact] },
     collaboration: {
       insert_thread_with_message: async (thread, message) => ({ thread_id: thread.id, message_id: message.id }),
@@ -128,7 +128,7 @@ test("an assessment decision is also correlated to its exact upstream handoff ar
   subject.dependencies.contexts.find_for_emit = async (requestedStage) => requestedStage === stageId ? {
     run_id: artifact.run_id, stage_key: "assessment", operator_role: "assessment", stage_instance_id: stageId, execution_id: executionId,
     unit_id: unitId, executor_type: "delegated_session", execution_workflow_id: "assessment-workflow", inputs: [{ artifact_id: sourceId, artifact_type: "dev.build_result", output_name: "build_result", unit_id: unitId, body: source.body }],
-    outputs: [{ name: "result", artifact_type: "dev.result", release: { kind: "gate", steps: [{ type: "artifact_approval", actions: ["approve", "request_revision"] }], requires_zero_open_review_items: false, revision_target: "upstream_handoff" } }],
+    outputs: [{ name: "result", artifact_type: "dev.result", release: { kind: "gate", steps: [{ type: "artifact_approval", actions: [{ name: "approve", disposition: "release" as const }, { name: "request_revision", disposition: "revise" as const }] }], requires_zero_open_review_items: false, revision_target: "upstream_handoff" } }],
   } : {
     run_id: artifact.run_id, stage_key: "build", operator_role: null, stage_instance_id: source.stage_instance_id, execution_id: source.execution_id,
     unit_id: unitId, executor_type: "delegated_session", execution_workflow_id: "build-workflow", inputs: [],

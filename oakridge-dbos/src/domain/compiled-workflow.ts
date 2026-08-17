@@ -1,6 +1,7 @@
 import type { JsonValue, UnitId } from "./primitives";
 import type { ArtifactTypeId, InputDelivery, StageKey, StageOperatorRole, StageTypeId } from "./workflow";
 import type { DelegatedSessionDefinitionConfig, SlotBinding } from "./delegated-session";
+import type { GateAction } from "./gates";
 
 export interface CompiledInputContract {
   readonly name: string;
@@ -16,9 +17,11 @@ export interface CompiledOutputContract {
   readonly release: OutputReleaseContract;
 }
 
+export interface CompiledGateStep { readonly type: string; readonly actions: readonly GateAction[] }
+
 export type OutputReleaseContract =
   | { readonly kind: "immediate" }
-  | { readonly kind: "gate"; readonly steps: readonly { readonly type: string; readonly actions: readonly string[] }[]; readonly requires_zero_open_review_items: boolean; readonly revision_target: "self_stage" | "upstream_handoff" }
+  | { readonly kind: "gate"; readonly steps: readonly CompiledGateStep[]; readonly requires_zero_open_review_items: boolean; readonly revision_target: "self_stage" | "upstream_handoff" }
   | { readonly kind: "handoff"; readonly downstream_role: StageOperatorRole; readonly external_wait_kind: string };
 
 export type MaterializationContract =

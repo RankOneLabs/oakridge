@@ -9,6 +9,7 @@ import type { CompiledOutputContract } from "../domain/compiled-workflow";
 import { evaluateExecutionArtifactContract, shouldAwaitArtifactRelease, withoutReleaseFor, withRelease } from "../contracts/evaluate-artifacts";
 import { durableGateWorkflow, type GateCommand, type GateWaitInput } from "./gate";
 import { durableHandoffWorkflow, type HandoffCommand, type HandoffResult } from "./handoff";
+import { selectGateDisposition, type GateDisposition } from "../domain/gates";
 
 const adapters = new Map<string, ExecutorAdapter>();
 export interface ExecutionProjectionObserver {
@@ -121,7 +122,7 @@ type ExecutionWorkflowMessage =
   | { readonly kind: "artifact_replaced"; readonly invalidated_artifact_id: ArtifactRevision["id"]; readonly release: ArtifactReleaseState }
   | { readonly kind: "artifact_invalidated"; readonly artifact_id: ArtifactRevision["id"]; readonly output_name: string; readonly reason: "superseded" | "withdrawn"; readonly replacement_artifact_revision_id: ArtifactRevision["id"] | null }
   | { readonly kind: "artifact_released"; readonly artifact: ArtifactReleaseState["artifact"] }
-  | { readonly kind: "gate_rejected"; readonly artifact: ArtifactReleaseState["artifact"]; readonly command: Extract<GateCommand, { readonly kind: "decision" }> }
+  | { readonly kind: "gate_rejected"; readonly artifact: ArtifactReleaseState["artifact"]; readonly command: Extract<GateCommand, { readonly kind: "decision" }>; readonly disposition: GateDisposition }
   | { readonly kind: "handoff_revision_requested"; readonly result: Extract<HandoffResult, { kind: "revision_requested" }> }
   | { readonly kind: "executor_terminal"; readonly observation: ExecutorTerminalObservation };
 
@@ -129,14 +130,16 @@ interface GateRelayInput { readonly parent_workflow_id: string; readonly request
 const gateRelayWorkflow = DBOS.registerWorkflow(async (input: GateRelayInput): Promise<GateCommand> => {
   let lastCommand: Extract<GateCommand, { kind: "decision" }> | null = null;
   for (const gateStep of input.release.gate_steps) {
-    const gateInput: GateWaitInput = { stage_instance_id: input.request.stage_instance_id, execution_id: input.request.execution_id, unit_id: input.request.unit_id, artifact_revision_id: input.release.artifact.id, gate_step: gateStep.type, actions: gateStep.actions };
+    // The wire shape stays a list of names; the disposition is decided here,
+    // where the compiled step that declared it is in hand.
+    const gateInput: GateWaitInput = { stage_instance_id: input.request.stage_instance_id, execution_id: input.request.execution_id, unit_id: input.request.unit_id, artifact_revision_id: input.release.artifact.id, gate_step: gateStep.type, actions: gateStep.actions.map((action) => action.name) };
     const gate = await DBOS.startWorkflow(durableGateWorkflow, { workflowID: gateWaitWorkflowIdFromRelay(DBOS.workflowID ?? "", gateStep.type) })(gateInput);
     const command = await gate.getResult();
     if (command.kind !== "decision") return command;
     lastCommand = command;
-    const isPass = command.action === "pass" || command.action === "approve" || command.action === "confirm_merged" || command.action === "closed_without_merge";
-    if (!isPass) {
-      await DBOS.send(input.parent_workflow_id, { kind: "gate_rejected", artifact: input.release.artifact, command } satisfies ExecutionWorkflowMessage, "execution-event", `gate:${input.release.artifact.id}:${gateStep.type}:${command.action}`);
+    const disposition = selectGateDisposition(command.action, gateStep.actions);
+    if (disposition !== "release") {
+      await DBOS.send(input.parent_workflow_id, { kind: "gate_rejected", artifact: input.release.artifact, command, disposition } satisfies ExecutionWorkflowMessage, "execution-event", `gate:${input.release.artifact.id}:${gateStep.type}:${command.action}`);
       return command;
     }
   }
@@ -202,7 +205,7 @@ export const artifactContractExecutionWorkflow = DBOS.registerWorkflow(async (in
       const released = await markArtifactReleasedStep(message.artifact.id);
       if (released) releases = withRelease(releases, released);
     } else if (message.kind === "gate_rejected") {
-      if (message.command.action === "rerun" || message.command.action === "request_revision") {
+      if (message.disposition === "revise") {
         await requestRevisionStep({ request: input.request, attempt_id: attemptId, external_reference: externalReference, delivery_key: `gate:${message.artifact.id}:${message.command.gate_step}`, feedback: `Revise '${message.artifact.output_name}' after gate '${message.command.gate_step}'.` });
         continue;
       }

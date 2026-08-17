@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { BUILT_IN_GATE_DISPOSITIONS } from "../domain/gates";
 
 const slotBindingSchema = z.discriminatedUnion("from", [
   z.object({ from: z.literal("input"), input_name: z.string().min(1), path: z.string().nullable().default(null) }),
@@ -28,6 +29,13 @@ const outputGateSchema = z.object({
   for (const step of gate.steps) {
     if (seen.has(step.type)) context.addIssue({ code: "custom", message: `output_gate step type '${step.type}' must be unique` });
     seen.add(step.type);
+    // An action with no known disposition used to compile fine and then behave
+    // as a rejection at runtime, failing the stage with `required_output_missing`
+    // long after the definition that caused it was accepted.
+    for (const action of step.actions) {
+      if (BUILT_IN_GATE_DISPOSITIONS[action]) continue;
+      context.addIssue({ code: "custom", message: `output_gate step '${step.type}' action '${action}' has no known disposition; expected one of ${Object.keys(BUILT_IN_GATE_DISPOSITIONS).join(", ")}` });
+    }
   }
 });
 

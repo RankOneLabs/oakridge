@@ -25,7 +25,7 @@ const repositoryWith = (notifications: readonly PendingArtifactNotification[], d
 test("outbox dispatcher delivers replacement as one atomic workflow command", async () => {
   const oldId = "artifact-1" as ArtifactId; const nextId = "artifact-2" as ArtifactId;
   const notifications = [
-    pending("replace", { kind: "artifact_replaced", invalidated_artifact_id: oldId, release: { kind: "waiting_gate", artifact: revision(nextId), gate_steps: [{ type: "artifact_approval", actions: ["approve"] }] } }),
+    pending("replace", { kind: "artifact_replaced", invalidated_artifact_id: oldId, release: { kind: "waiting_gate", artifact: revision(nextId), gate_steps: [{ type: "artifact_approval", actions: [{ name: "approve", disposition: "release" as const }] }] } }),
   ];
   const delivered: string[] = []; const sent: string[] = [];
   const count = await dispatchArtifactNotifications(repositoryWith(notifications, delivered), { send: async (_workflow, message) => { sent.push(message.kind); } }, () => "2026-08-15T00:00:00Z");
