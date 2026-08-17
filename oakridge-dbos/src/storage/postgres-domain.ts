@@ -207,9 +207,9 @@ export class PostgresWorkflowRunRepository implements WorkflowRunRepository {
          LEFT JOIN oakridge.command_outbox command ON command.target_workflow_id IN (attempt.root_workflow_id, projection.execution_workflow_id)
          WHERE attempt.run_id = $1`, [id]);
       const blocker = blockers[0] ?? { active_attempts: "0", active_external: "0", pending_commands: "0" };
-      if (Number(blocker.active_external) > 0) return { kind: "external_execution_conflict", run_id: id, detail: "run still owns an unterminated external execution" };
-      if (Number(blocker.active_attempts) > 0) return { kind: "active_conflict", run_id: id, detail: "run has an active DBOS workflow attempt" };
-      if (Number(blocker.pending_commands) > 0) return { kind: "cancellation_pending", run_id: id, detail: "run still owns pending durable commands" };
+      if (Number(blocker.active_external) > 0) return { kind: "external_execution_conflict", run_id: id, detail: "run still owns a running agent session; cancel the run to fence it, then delete" };
+      if (Number(blocker.active_attempts) > 0) return { kind: "active_conflict", run_id: id, detail: "run is still active; cancel the run before deleting it" };
+      if (Number(blocker.pending_commands) > 0) return { kind: "cancellation_pending", run_id: id, detail: "run has undelivered commands still in flight; wait for them to drain, then delete" };
       await transaction.query(
         `DELETE FROM oakridge.command_outbox command
          WHERE command.target_workflow_id IN (
