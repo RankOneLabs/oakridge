@@ -4,6 +4,7 @@ import type { ArtifactId } from "../domain/primitives";
 import type { ArtifactRevisionRepository, ExecutionArtifactContextRepository } from "../storage/repositories";
 import type { HandoffWorkflowState } from "./gate-resume";
 import type { HandoffCommand } from "../workflows/handoff";
+import { handoffWorkflowId } from "../domain/workflow-ids";
 
 export interface HandoffCompleteDependencies {
   readonly artifacts: ArtifactRevisionRepository;
@@ -38,7 +39,7 @@ export const createHandoffCompleteApp = (dependencies: HandoffCompleteDependenci
     const release = producer?.outputs.find((output) => output.name === artifact.output_name)?.release;
     if (!producer || release?.kind !== "handoff") return http.json({ error: "artifact is not a configured output handoff" }, 409);
     if (release.external_wait_kind !== request.external_kind) return http.json({ error: "external completion kind does not match the handoff policy" }, 409);
-    const workflowId = `${producer.execution_workflow_id}:handoff:${artifact.id}`;
+    const workflowId = handoffWorkflowId(producer.execution_workflow_id, artifact.id);
     const state = await dependencies.get_handoff_state(workflowId);
     if (!state || state.status !== "awaiting_external" || state.artifact_id !== artifact.id) return http.json({ error: "handoff is not awaiting this external completion" }, 409);
     await dependencies.send_handoff_command(workflowId, { kind: "external_completed", external_kind: request.external_kind, correlation_id: request.correlation_id }, request.idempotency_key);

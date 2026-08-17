@@ -1,6 +1,7 @@
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
 import type { CancellationExecutionTarget, CancellationWaitTarget } from "../domain/rerun";
+import { executorFenceWorkflowId } from "../domain/workflow-ids";
 import { executorFenceWorkflow } from "./executor-topology";
 
 export interface CancellationControlInput { readonly root_workflow_id: string; readonly reason: string | null; readonly requested_at: string }
@@ -50,7 +51,7 @@ export const containAttempt = async (input: CancellationControlInput, announce: 
   const targets = await loadCancellationTargetsStep(input.root_workflow_id);
   const fences = [];
   for (const target of targets) {
-    fences.push(await DBOS.startWorkflow(executorFenceWorkflow, { workflowID: `${DBOS.workflowID}:fence:${target.execution_id}` })({
+    fences.push(await DBOS.startWorkflow(executorFenceWorkflow, { workflowID: executorFenceWorkflowId(DBOS.workflowID ?? "", target.execution_id) })({
       execution_id: target.execution_id, executor_type: target.executor_type,
       // An execution that never reached an executor has nothing to fence, and
       // says so; the adapter must never have to guess from in-process memory.

@@ -12,6 +12,7 @@ import type {
   ExecutionArtifactContextRepository,
   GateDecisionAuditRepository,
 } from "../storage/repositories";
+import { gateWaitWorkflowId, handoffWorkflowId } from "../domain/workflow-ids";
 import type { GateCommand, GateWaitInput } from "../workflows/gate";
 import type { HandoffCommand } from "../workflows/handoff";
 
@@ -77,9 +78,6 @@ const sameDecision = (audit: GateDecisionAudit, request: GateResumeRequest, stag
   audit.action === request.action && audit.operator_comment === request.operator_comment &&
   audit.feedback === (request.feedback ?? null);
 
-const gateWorkflowId = (execution_workflow_id: string, artifact_id: ArtifactId, gate_step: string): string =>
-  `${execution_workflow_id}:gate:${artifact_id}:wait:${gate_step}`;
-
 interface ResolvedHandoffTarget { readonly workflow_id: string; readonly source_artifact_id: ArtifactId; readonly should_send: boolean }
 
 const resolveHandoffTarget = async (dependencies: GateResumeDependencies, context: ExecutionArtifactContext, consumed_decision_artifact_id: ArtifactId | null): Promise<ResolvedHandoffTarget | null> => {
@@ -90,7 +88,7 @@ const resolveHandoffTarget = async (dependencies: GateResumeDependencies, contex
     if (!producer) continue;
     const release = producer.outputs.find((output) => output.name === source.output_name)?.release;
     if (release?.kind !== "handoff" || release.downstream_role !== context.operator_role) continue;
-    const workflow_id = `${producer.execution_workflow_id}:handoff:${source.id}`;
+    const workflow_id = handoffWorkflowId(producer.execution_workflow_id, source.id);
     const state = await dependencies.get_handoff_state(workflow_id);
     if (state?.status === "awaiting_downstream" && state.artifact_id === source.id && state.downstream_role === context.operator_role) return { workflow_id, source_artifact_id: source.id, should_send: true };
     if (consumed_decision_artifact_id && state?.artifact_id === source.id && state.decision_artifact_id === consumed_decision_artifact_id && ["awaiting_external", "revision_requested", "released"].includes(state.status)) {
@@ -130,7 +128,7 @@ export const createGateResumeApp = (dependencies: GateResumeDependencies): Hono 
     const step = gate.steps.find((candidate) => candidate.type === request.gate_step);
     if (!step) return http.json({ error: "reviewed gate step is stale" }, 409);
     if (!step.actions.includes(request.action)) return http.json({ error: `action '${request.action}' is not allowed for the current gate step` }, 400);
-    const workflowId = gateWorkflowId(context.execution_workflow_id, artifact.id, request.gate_step);
+    const workflowId = gateWaitWorkflowId(context.execution_workflow_id, artifact.id, request.gate_step);
     const current = await dependencies.artifacts.find_current({ stage_instance_id: stageId, execution_id: context.execution_id, unit_id: unitId, output_name: artifact.output_name });
     if (!current || current.id !== artifact.id) return http.json({ error: "reviewed artifact revision is stale" }, 409);
     if (gate.requires_zero_open_review_items && await dependencies.collaboration.count_open_review_items(artifact.id) > 0) {

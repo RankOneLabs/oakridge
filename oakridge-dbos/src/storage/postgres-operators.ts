@@ -5,6 +5,7 @@ import { selectRunStatus, selectStageStatus } from "../operators/select-status";
 import type { EpicWorkflowProfile } from "../domain/epic";
 import { STAGE_RERUN_STATE_KEY_PREFIX } from "../domain/rerun";
 import { superjsonValue, superjsonValueLateral } from "./sql-fragments";
+import { HANDOFF_INFIX, TERMINAL_OBSERVER_SUFFIX } from "../domain/workflow-ids";
 import type { StageOutcome } from "../domain/workflow";
 
 interface GateProjectionRow {
@@ -138,7 +139,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
            FROM oakridge.stage_instance stage
            JOIN oakridge.executor_projection projection ON projection.stage_instance_id = stage.id
            JOIN dbos.workflow_status observer
-             ON observer.workflow_uuid = projection.execution_workflow_id || ':terminal'
+             ON observer.workflow_uuid = projection.execution_workflow_id || '${TERMINAL_OBSERVER_SUFFIX}'
            WHERE stage.run_id = run.id AND stage.attempt_root_workflow_id = root.root_workflow_id
              AND observer.status IN ('ERROR', 'MAX_RECOVERY_ATTEMPTS_EXCEEDED')
          ) OR (
@@ -354,7 +355,7 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
        ) artifact ON true
        LEFT JOIN LATERAL (
          SELECT ${superjsonValue("event.value")} AS value FROM dbos.workflow_events event
-         WHERE event.key = 'handoff-state' AND event.workflow_uuid = projection.execution_workflow_id || ':handoff:' || artifact.id::text
+         WHERE event.key = 'handoff-state' AND event.workflow_uuid = projection.execution_workflow_id || '${HANDOFF_INFIX}' || artifact.id::text
        ) handoff ON true
        LEFT JOIN oakridge.cohort_pull_request_reconciliation reconciliation
          ON reconciliation.stage_instance_id = stage.id AND reconciliation.unit_id = projection.unit_id

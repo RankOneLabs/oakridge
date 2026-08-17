@@ -2,6 +2,7 @@ import { DBOS } from "@dbos-inc/dbos-sdk";
 
 import type { ExecutionRequest, ExecutorAdapter, ExecutorObservationAttempt, ExecutorTerminalObservation, ExternalExecutionReference } from "../domain/execution";
 import type { ExecutionAttemptId } from "../domain/primitives";
+import { gateRelayWorkflowId, gateWaitWorkflowId, gateWaitWorkflowIdFromRelay, handoffWorkflowId, terminalObserverWorkflowId } from "../domain/workflow-ids";
 import type { CollaborationPingRequest, CollaborationPingState } from "../domain/collaboration";
 import type { ArtifactReleaseState, ArtifactRevision, ExecutionContractState, ReleaseArtifactResult } from "../domain/artifacts";
 import type { CompiledOutputContract } from "../domain/compiled-workflow";
@@ -152,7 +153,7 @@ const gateRelayWorkflow = DBOS.registerWorkflow(async (input: GateRelayInput): P
   let lastCommand: Extract<GateCommand, { kind: "decision" }> | null = null;
   for (const gateStep of input.release.gate_steps) {
     const gateInput: GateWaitInput = { stage_instance_id: input.request.stage_instance_id, execution_id: input.request.execution_id, unit_id: input.request.unit_id, artifact_revision_id: input.release.artifact.id, gate_step: gateStep.type, actions: gateStep.actions };
-    const gate = await DBOS.startWorkflow(durableGateWorkflow, { workflowID: `${DBOS.workflowID}:wait:${gateStep.type}` })(gateInput);
+    const gate = await DBOS.startWorkflow(durableGateWorkflow, { workflowID: gateWaitWorkflowIdFromRelay(DBOS.workflowID ?? "", gateStep.type) })(gateInput);
     const command = await gate.getResult();
     if (command.kind !== "decision") return command;
     lastCommand = command;
@@ -175,7 +176,7 @@ export const artifactContractExecutionWorkflow = DBOS.registerWorkflow(async (in
   if (!workflowId) throw new Error("execution workflow requires a DBOS workflow ID");
   const attemptId = workflowId as ExecutionAttemptId;
   const externalReference = await startExecutorStep({ request: input.request, attempt_id: attemptId });
-  await DBOS.startWorkflow(terminalObserverWorkflow, { workflowID: `${workflowId}:terminal` })({ request: input.request, external_reference: externalReference, parent_workflow_id: workflowId });
+  await DBOS.startWorkflow(terminalObserverWorkflow, { workflowID: terminalObserverWorkflowId(workflowId) })({ request: input.request, external_reference: externalReference, parent_workflow_id: workflowId });
   let releases: readonly ArtifactReleaseState[] = [];
   let terminalObservation: ExecutorTerminalObservation | null = null;
   const closeReleaseWaits = async (artifactId: ArtifactRevision["id"], outputName: string, reason: "superseded" | "withdrawn", replacementId: ArtifactRevision["id"] | null): Promise<void> => {
@@ -187,13 +188,13 @@ export const artifactContractExecutionWorkflow = DBOS.registerWorkflow(async (in
       if (output.name !== outputName) continue;
       if (output.release.kind === "gate") {
         for (const step of output.release.steps) {
-          await DBOS.send(`${workflowId}:gate:${artifactId}:wait:${step.type}`, gateControl, "gate-command", `artifact:${artifactId}:${reason}:${step.type}`);
+          await DBOS.send(gateWaitWorkflowId(workflowId, artifactId, step.type), gateControl, "gate-command", `artifact:${artifactId}:${reason}:${step.type}`);
         }
       } else if (output.release.kind === "handoff") {
         const handoffControl: HandoffCommand = reason === "superseded" && replacementId
           ? { kind: "supersede", replacement_artifact_revision_id: replacementId }
           : { kind: "withdraw" };
-        await DBOS.send(`${workflowId}:handoff:${artifactId}`, handoffControl, "handoff-command", `artifact:${artifactId}:${reason}`);
+        await DBOS.send(handoffWorkflowId(workflowId, artifactId), handoffControl, "handoff-command", `artifact:${artifactId}:${reason}`);
       }
     }
   };
@@ -202,9 +203,9 @@ export const artifactContractExecutionWorkflow = DBOS.registerWorkflow(async (in
     if (!currentArtifact) return;
     releases = withoutReleaseFor(releases, currentArtifact);
     if (release.kind === "waiting_gate") {
-      await DBOS.startWorkflow(gateRelayWorkflow, { workflowID: `${workflowId}:gate:${release.artifact.id}` })({ parent_workflow_id: workflowId, request: input.request, release });
+      await DBOS.startWorkflow(gateRelayWorkflow, { workflowID: gateRelayWorkflowId(workflowId, release.artifact.id) })({ parent_workflow_id: workflowId, request: input.request, release });
     } else if (release.kind === "waiting_handoff") {
-      await DBOS.startWorkflow(durableHandoffWorkflow, { workflowID: `${workflowId}:handoff:${release.artifact.id}` })({ ...release, parent_workflow_id: workflowId });
+      await DBOS.startWorkflow(durableHandoffWorkflow, { workflowID: handoffWorkflowId(workflowId, release.artifact.id) })({ ...release, parent_workflow_id: workflowId });
     } else {
       const released = await markArtifactReleasedStep(currentArtifact.id);
       if (released) releases = withRelease(releases, released);
