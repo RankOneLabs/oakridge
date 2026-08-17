@@ -199,7 +199,9 @@ const shutdown = (): Promise<void> => {
     clearInterval(launchTimer);
     clearInterval(outboxPurgeTimer);
     server.stop();
-    await Promise.allSettled([...inFlightDispatches]);
+    // clearInterval stops the next purge from starting; it does not settle one
+    // already running, which would still be holding a connection when SQL closes.
+    await Promise.allSettled([...inFlightDispatches, ...(outboxPurge ? [outboxPurge] : [])]);
     await DBOS.shutdown();
     await client.destroy();
     await sql.close();

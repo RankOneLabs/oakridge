@@ -1,5 +1,22 @@
 export type Brand<Value, Name extends string> = Value & { readonly __brand: Name };
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Parse a path segment into a uuid-shaped branded id, or nothing.
+ *
+ * These ids are stored in `uuid` columns, so a malformed one is not a lookup
+ * that finds nothing — Postgres rejects the value while casting it, and the
+ * route answers 500 for what is simply an id that cannot exist. The brand is
+ * the caller's to name, exactly as the bare `as` casts this replaces did, but
+ * now the value has been checked before it carries the name.
+ *
+ * `UnitId` and `ExecutionId` are deliberately not covered: both are text
+ * columns, so any string is a legitimate lookup that finds nothing.
+ */
+export const parseUuidId = <Id extends string>(raw: string | undefined): Id | null =>
+  raw !== undefined && UUID_PATTERN.test(raw) ? raw as Id : null;
+
 export type WorkflowDefinitionId = Brand<string, "WorkflowDefinitionId">;
 export type WorkflowRunId = Brand<string, "WorkflowRunId">;
 export type StageInstanceId = Brand<string, "StageInstanceId">;

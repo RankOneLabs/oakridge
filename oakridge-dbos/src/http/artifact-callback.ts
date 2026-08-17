@@ -4,7 +4,7 @@ import { Hono, type Context } from "hono";
 
 import { releaseStateForArtifact, validateArtifactEmission } from "../contracts/evaluate-artifacts";
 import type { ArtifactEmission, ArtifactLifecycleNotification } from "../domain/artifacts";
-import { isJsonValue, type ArtifactId, type StageInstanceId, type UnitId } from "../domain/primitives";
+import { parseUuidId, isJsonValue, type ArtifactId, type StageInstanceId, type UnitId } from "../domain/primitives";
 import type { ArtifactRevisionRepository, ExecutionArtifactContextRepository } from "../storage/repositories";
 
 export type ArtifactWorkflowMessage = ArtifactLifecycleNotification;
@@ -18,7 +18,8 @@ export interface ArtifactCallbackDependencies {
 export const createArtifactCallbackApp = (dependencies: ArtifactCallbackDependencies): Hono => {
   const app = new Hono();
   const emit = async (context: Context) => {
-    const stageInstanceId = context.req.param("stageInstanceId") as StageInstanceId;
+    const stageInstanceId = parseUuidId<StageInstanceId>(context.req.param("stageInstanceId"));
+    if (!stageInstanceId) return context.json({ error: "execution unit not found" }, 404);
     const unitId = context.req.param("unitId") as UnitId;
     const execution = await dependencies.contexts.find_for_emit(stageInstanceId, unitId);
     if (!execution || execution.executor_type !== context.req.param("executorType")) return context.json({ error: "execution unit not found" }, 404);

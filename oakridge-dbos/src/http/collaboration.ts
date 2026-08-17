@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { Hono } from "hono";
 
 import { renderCollaborationPingPrompt, validateCollaborationPingRequestId, type CollaborationMessage, type CollaborationPingAccepted, type CollaborationThread, type MessageId, type ReviewItem, type ReviewItemId, type ReviewItemStatus, type ThreadId, type ThreadStatus } from "../domain/collaboration";
-import { isJsonValue, type ArtifactId, type JsonValue } from "../domain/primitives";
+import { parseUuidId, isJsonValue, type ArtifactId, type JsonValue } from "../domain/primitives";
 import { decodeJsonPointerSegment } from "../domain/json-pointer";
 import type { ArtifactRevision } from "../domain/artifacts";
 import type { ArtifactRevisionRepository, CollaborationRepository, ExecutionArtifactContextRepository, ExecutionProjectionRepository } from "../storage/repositories";
@@ -57,13 +57,15 @@ export const createCollaborationApp = (dependencies: CollaborationHttpDependenci
   const isMutable = (artifact: ArtifactRevision): boolean => artifact.lifecycle.kind === "current";
 
   app.get("/artifacts/:id/threads", async (http) => {
-    const artifact = await dependencies.artifacts.find_by_id(http.req.param("id") as ArtifactId);
+    const artifactId = parseUuidId<ArtifactId>(http.req.param("id"));
+    const artifact = artifactId && await dependencies.artifacts.find_by_id(artifactId);
     if (!artifact) return http.json({ error: "artifact not found" }, 404);
     if (!dependencies.policy_for_artifact_type(artifact.artifact_type)?.commentable) return http.json({ error: `artifact type '${artifact.artifact_type}' does not support 'commentable'` }, 400);
     return http.json(await dependencies.collaboration.list_threads(artifact.chain_id));
   });
   app.post("/artifacts/:id/threads", async (http) => {
-    const artifact = await dependencies.artifacts.find_by_id(http.req.param("id") as ArtifactId);
+    const artifactId = parseUuidId<ArtifactId>(http.req.param("id"));
+    const artifact = artifactId && await dependencies.artifacts.find_by_id(artifactId);
     if (!artifact) return http.json({ error: "artifact not found" }, 404);
     if (!isMutable(artifact)) return http.json({ error: "artifact revision is not current", code: artifact.lifecycle.kind }, 409);
     if (!dependencies.policy_for_artifact_type(artifact.artifact_type)?.commentable) return http.json({ error: `artifact type '${artifact.artifact_type}' does not support 'commentable'` }, 400);
@@ -76,7 +78,8 @@ export const createCollaborationApp = (dependencies: CollaborationHttpDependenci
     return http.json(result, 201);
   });
   app.post("/threads/:id/messages", async (http) => {
-    const threadId = http.req.param("id") as ThreadId; const thread = await dependencies.collaboration.find_thread(threadId);
+    const threadId = parseUuidId<ThreadId>(http.req.param("id"));
+    const thread = threadId && await dependencies.collaboration.find_thread(threadId);
     if (!thread) return http.json({ error: "thread not found" }, 404);
     const threadRevision = await dependencies.artifacts.find_by_id(thread.revision_id);
     if (!threadRevision || !isMutable(threadRevision)) return http.json({ error: "thread artifact revision is not current", code: threadRevision?.lifecycle.kind ?? "not_found" }, 409);
@@ -87,7 +90,8 @@ export const createCollaborationApp = (dependencies: CollaborationHttpDependenci
     return http.json({ message_id: await dependencies.collaboration.insert_message(message) }, 201);
   });
   app.patch("/threads/:id", async (http) => {
-    const threadId = http.req.param("id") as ThreadId; const thread = await dependencies.collaboration.find_thread(threadId); if (!thread) return http.json({ error: "thread not found" }, 404);
+    const threadId = parseUuidId<ThreadId>(http.req.param("id"));
+    const thread = threadId && await dependencies.collaboration.find_thread(threadId); if (!thread) return http.json({ error: "thread not found" }, 404);
     const threadRevision = await dependencies.artifacts.find_by_id(thread.revision_id);
     if (!threadRevision || !isMutable(threadRevision)) return http.json({ error: "thread artifact revision is not current", code: threadRevision?.lifecycle.kind ?? "not_found" }, 409);
     const body = await objectBody(http.req.raw); const status = body?.status;
@@ -96,7 +100,8 @@ export const createCollaborationApp = (dependencies: CollaborationHttpDependenci
     return http.json({ thread_id: threadId, status });
   });
   app.post("/threads/:id/ping", async (http) => {
-    const threadId = http.req.param("id") as ThreadId; const thread = await dependencies.collaboration.find_thread(threadId);
+    const threadId = parseUuidId<ThreadId>(http.req.param("id"));
+    const thread = threadId && await dependencies.collaboration.find_thread(threadId);
     if (!thread) return http.json({ error: "thread not found" }, 404);
     const threadRevision = await dependencies.artifacts.find_by_id(thread.revision_id);
     if (!threadRevision || !isMutable(threadRevision)) return http.json({ error: "thread artifact revision is not current", code: threadRevision?.lifecycle.kind ?? "not_found" }, 409);
@@ -119,7 +124,8 @@ export const createCollaborationApp = (dependencies: CollaborationHttpDependenci
     return http.json({ ok: true, ...accepted }, 202);
   });
   app.post("/artifacts/:id/edits", async (http) => {
-    const artifact = await dependencies.artifacts.find_by_id(http.req.param("id") as ArtifactId);
+    const artifactId = parseUuidId<ArtifactId>(http.req.param("id"));
+    const artifact = artifactId && await dependencies.artifacts.find_by_id(artifactId);
     if (!artifact) return http.json({ error: "artifact not found" }, 404);
     if (!isMutable(artifact)) return http.json({ error: "artifact revision is not current", code: artifact.lifecycle.kind }, 409);
     const policy = dependencies.policy_for_artifact_type(artifact.artifact_type);
@@ -148,13 +154,15 @@ export const createCollaborationApp = (dependencies: CollaborationHttpDependenci
     return http.json({ artifact_id: revision.id }, 201);
   });
   app.get("/artifacts/:id/review_items", async (http) => {
-    const artifact = await dependencies.artifacts.find_by_id(http.req.param("id") as ArtifactId);
+    const artifactId = parseUuidId<ArtifactId>(http.req.param("id"));
+    const artifact = artifactId && await dependencies.artifacts.find_by_id(artifactId);
     if (!artifact) return http.json({ error: "artifact not found" }, 404);
     if (!dependencies.policy_for_artifact_type(artifact.artifact_type)?.review_items) return http.json({ error: `artifact type '${artifact.artifact_type}' does not support 'review_items'` }, 400);
     return http.json(await dependencies.collaboration.list_review_items(artifact.chain_id));
   });
   app.post("/artifacts/:id/review_items", async (http) => {
-    const artifact = await dependencies.artifacts.find_by_id(http.req.param("id") as ArtifactId);
+    const artifactId = parseUuidId<ArtifactId>(http.req.param("id"));
+    const artifact = artifactId && await dependencies.artifacts.find_by_id(artifactId);
     if (!artifact) return http.json({ error: "artifact not found" }, 404);
     if (!isMutable(artifact)) return http.json({ error: "artifact revision is not current", code: artifact.lifecycle.kind }, 409);
     if (!dependencies.policy_for_artifact_type(artifact.artifact_type)?.review_items) return http.json({ error: `artifact type '${artifact.artifact_type}' does not support 'review_items'` }, 400);
@@ -164,7 +172,8 @@ export const createCollaborationApp = (dependencies: CollaborationHttpDependenci
     await dependencies.collaboration.insert_review_item(item); return http.json(item, 201);
   });
   app.patch("/review_items/:id", async (http) => {
-    const id = http.req.param("id") as ReviewItemId; const existingItem = await dependencies.collaboration.find_review_item(id); if (!existingItem) return http.json({ error: "review item not found" }, 404);
+    const id = parseUuidId<ReviewItemId>(http.req.param("id"));
+    const existingItem = id && await dependencies.collaboration.find_review_item(id); if (!existingItem) return http.json({ error: "review item not found" }, 404);
     const itemRevision = await dependencies.artifacts.find_by_id(existingItem.revision_id);
     if (!itemRevision || !isMutable(itemRevision)) return http.json({ error: "review-item artifact revision is not current", code: itemRevision?.lifecycle.kind ?? "not_found" }, 409);
     const body = await objectBody(http.req.raw); const status = body?.status;

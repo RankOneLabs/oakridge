@@ -1,4 +1,5 @@
 import type { ArtifactId, Brand, ExecutionId, StageInstanceId, UnitId, WorkflowRunId } from "./primitives";
+import { hasOwn, readOwn } from "./records";
 
 export type GateDecisionAuditId = Brand<string, "GateDecisionAuditId">;
 export type GateOutcome = "pass" | "fail" | "rerun";
@@ -41,9 +42,17 @@ export const BUILT_IN_GATE_DISPOSITIONS: Readonly<Record<string, GateDisposition
 export const selectGateDisposition = (action: string, declared: readonly GateAction[]): GateDisposition =>
   declared.find((candidate) => candidate.name === action)?.disposition ?? "terminal";
 
+/**
+ * Whether a name is genuinely in the vocabulary. A plain index answers truthily
+ * for `toString` and `constructor`, so an action named after an inherited
+ * property passed validation and then resolved to a `Function` wearing a
+ * `GateDisposition` type.
+ */
+export const isBuiltInGateAction = (action: string): boolean => hasOwn(BUILT_IN_GATE_DISPOSITIONS, action);
+
 /** For surfaces that hold a decision but not the step it was made against. */
 export const selectBuiltInGateDisposition = (action: string): GateDisposition =>
-  BUILT_IN_GATE_DISPOSITIONS[action] ?? "terminal";
+  readOwn(BUILT_IN_GATE_DISPOSITIONS, action) ?? "terminal";
 export interface GateDecision { readonly outcome: GateOutcome; readonly comment: string | null; readonly feedback: string | null }
 export interface GateDecisionAudit {
   readonly id: GateDecisionAuditId;

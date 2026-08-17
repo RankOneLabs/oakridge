@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "zod";
 
-import type { JsonValue, ProjectId, WorkflowDefinitionId } from "../domain/primitives";
+import { parseUuidId, type JsonValue, type ProjectId, type WorkflowDefinitionId } from "../domain/primitives";
 import type { CreateWorkflowDefinition, WorkflowGraph } from "../domain/workflow";
 import type { ProjectRepository, WorkflowDefinitionRepository } from "../storage/repositories";
 import type { ProjectRepositoryIdentityResolver } from "../domain/projects";
@@ -59,7 +59,8 @@ export const createConfigurationApp = (dependencies: ConfigurationHttpDependenci
     return http.json(await dependencies.definitions.list(includeArchived));
   });
   app.get("/workflow_defs/:id", async (http) => {
-    const definition = await dependencies.definitions.find_by_id(http.req.param("id") as WorkflowDefinitionId);
+    const definitionId = parseUuidId<WorkflowDefinitionId>(http.req.param("id"));
+    const definition = definitionId && await dependencies.definitions.find_by_id(definitionId);
     return definition ? http.json(definition) : http.json({ error: "workflow definition not found" }, 404);
   });
   app.post("/workflow_defs", async (http) => {
@@ -75,11 +76,13 @@ export const createConfigurationApp = (dependencies: ConfigurationHttpDependenci
     }
   });
   app.post("/workflow_defs/:id/archive", async (http) => {
-    const definition = await dependencies.definitions.set_archived(http.req.param("id") as WorkflowDefinitionId, true);
+    const definitionId = parseUuidId<WorkflowDefinitionId>(http.req.param("id"));
+    const definition = definitionId && await dependencies.definitions.set_archived(definitionId, true);
     return definition ? http.body(null, 204) : http.json({ error: "workflow definition not found" }, 404);
   });
   app.post("/workflow_defs/:id/unarchive", async (http) => {
-    const definition = await dependencies.definitions.set_archived(http.req.param("id") as WorkflowDefinitionId, false);
+    const definitionId = parseUuidId<WorkflowDefinitionId>(http.req.param("id"));
+    const definition = definitionId && await dependencies.definitions.set_archived(definitionId, false);
     return definition ? http.body(null, 204) : http.json({ error: "workflow definition not found" }, 404);
   });
   return app;

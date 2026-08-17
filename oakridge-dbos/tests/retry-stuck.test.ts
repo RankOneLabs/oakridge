@@ -5,12 +5,12 @@ import type { StageInstanceId, UnitId, WorkflowDefinitionId, WorkflowRunId } fro
 import type { WorkflowDefinition } from "../src/domain/workflow";
 import { createRerunApp, type RerunHttpDependencies } from "../src/http/rerun";
 
-const stageId = "stage-1" as StageInstanceId;
+const stageId = "11111111-1111-4111-8111-111111111111" as StageInstanceId;
 const unitId = "web" as UnitId;
-const runId = "run-1" as WorkflowRunId;
+const runId = "22222222-2222-4222-8222-222222222222" as WorkflowRunId;
 const stage = { id: stageId, run_id: runId, stage_key: "build", stage_type: "delegated_session", lifecycle: { kind: "started" as const, started_at: "2026-08-15T12:00:00Z" } };
 const target: UnitRerunTarget = { run_id: runId, stage_instance_id: stageId, unit_id: unitId, execution_id: "execution-1" as UnitRerunTarget["execution_id"], execution_workflow_id: "root:stage:build:unit:web", stage_coordinator_workflow_id: "root:stage:build" };
-const definition: WorkflowDefinition = { id: "definition-1" as WorkflowDefinitionId, name: "flow", version: 1, archived: false, created_at: "2026-08-15T12:00:00Z", graph: { stages: { build: { stage_type: "delegated_session", operator_role: "build", config: {}, inputs: [], outputs: [] } }, edges: [] } };
+const definition: WorkflowDefinition = { id: "33333333-3333-4333-8333-333333333333" as WorkflowDefinitionId, name: "flow", version: 1, archived: false, created_at: "2026-08-15T12:00:00Z", graph: { stages: { build: { stage_type: "delegated_session", operator_role: "build", config: {}, inputs: [], outputs: [] } }, edges: [] } };
 
 const fixture = (state: StageRerunState | null = { status: "waiting", stage_instance_id: stageId, unit_id: unitId, failed_execution_workflow_id: target.execution_workflow_id, code: "executor_failed", detail: "failed" }) => {
   const forks: string[] = [];
@@ -45,7 +45,7 @@ test("retry_stuck maps a unit to rerunUnit with a deterministic server-owned com
   const second = fixture();
   await retry(second.app, { unit_id: unitId });
   expect(second.forks).toEqual(first.forks);
-  expect(first.forks[0]).toMatch(/^oakridge-unit-rerun:stage-1:web:[a-f0-9]{32}$/);
+  expect(first.forks[0]).toMatch(/^oakridge-unit-rerun:11111111-1111-4111-8111-111111111111:web:[a-f0-9]{32}$/);
 });
 
 test("retry_stuck without a unit maps the persisted StageInstance to rerunStage", async () => {
@@ -55,21 +55,21 @@ test("retry_stuck without a unit maps the persisted StageInstance to rerunStage"
   expect(response.status).toBe(202);
   expect(await response.json()).toEqual({ kind: "accepted_stage", stage_instance_id: stageId, unit_id: null });
   expect(subject.started).toHaveLength(1);
-  expect(subject.started[0]).toMatch(/^oakridge-stage-rerun:run-1:build:[a-f0-9]{32}$/);
+  expect(subject.started[0]).toMatch(/^oakridge-stage-rerun:22222222-2222-4222-8222-222222222222:build:[a-f0-9]{32}$/);
 });
 
 test("unitless retry_stuck rejects a running stage instead of creating arbitrary work", async () => {
   const subject = fixture();
   const response = await retry(subject.app, {});
   expect(response.status).toBe(409);
-  expect(await response.json()).toEqual({ kind: "not_stuck", stage_instance_id: stageId, unit_id: null, detail: "stage instance 'stage-1' is not terminal with a failed outcome" });
+  expect(await response.json()).toEqual({ kind: "not_stuck", stage_instance_id: stageId, unit_id: null, detail: "stage instance '11111111-1111-4111-8111-111111111111' is not terminal with a failed outcome" });
   expect(subject.started).toEqual([]);
 });
 
 test("retry_stuck returns a typed conflict when the unit is not durably waiting", async () => {
   const response = await retry(fixture(null).app, { unit_id: unitId });
   expect(response.status).toBe(409);
-  expect(await response.json()).toEqual({ kind: "not_stuck", stage_instance_id: stageId, unit_id: unitId, detail: "execution unit 'stage-1:web' is not waiting for rerun" });
+  expect(await response.json()).toEqual({ kind: "not_stuck", stage_instance_id: stageId, unit_id: unitId, detail: "execution unit '11111111-1111-4111-8111-111111111111:web' is not waiting for rerun" });
 });
 
 test("retry_stuck validates the optional unit_id body", async () => {
