@@ -55,6 +55,9 @@ export type StageOutcome =
   | { readonly kind: "failed"; readonly code: string; readonly detail: string }
   | { readonly kind: "cancelled"; readonly reason: string | null };
 
+/** A stage outcome that ends the run it belongs to. */
+export type StageFailureOutcome = Exclude<StageOutcome, { readonly kind: "succeeded" }>;
+
 export type StageInstanceLifecycle =
   | { readonly kind: "pending" }
   | { readonly kind: "started"; readonly started_at: string }

@@ -10,7 +10,7 @@ import type { CompiledStageContract, CompiledWorkflowDefinition, MaterializedExe
 import type { DelegatedSessionDefinitionConfig } from "../domain/delegated-session";
 import type { ArtifactEnvelope, ExecutionRequest, ExternalExecutionReference } from "../domain/execution";
 import type { ExecutionId, JsonValue, StageCoordinatorWorkflowId, StageInstanceId, UnitId, WorkflowDefinitionId, WorkflowRunId } from "../domain/primitives";
-import type { StageOutcome } from "../domain/workflow";
+import type { StageFailureOutcome, StageOutcome } from "../domain/workflow";
 import { stageRerunStateKey, type StageRerunState } from "../domain/rerun";
 import type { StageAdmissionState } from "../domain/runs";
 import { containAttempt } from "./cancellation";
@@ -355,11 +355,15 @@ export const productionStageWorkflow = DBOS.registerWorkflow(async (input: Stage
 export const selectOrphanedStageCoordinators = (stage_workflow_ids: Readonly<Record<string, string>>, finished: ReadonlySet<string>): readonly string[] =>
   Object.entries(stage_workflow_ids).filter(([stageKey]) => !finished.has(stageKey)).map(([, coordinatorId]) => coordinatorId);
 
-/** Why the siblings of a failed stage are being stopped, in one readable line. */
-export const stageFailureReason = (stage_key: string, outcome: StageOutcome): string =>
+/**
+ * Why the siblings of a failed stage are being stopped, in one readable line.
+ * Narrowed to the outcomes that can end a run, so a success can never be
+ * described here as a cancellation.
+ */
+export const stageFailureReason = (stage_key: string, outcome: StageFailureOutcome): string =>
   outcome.kind === "failed"
     ? `stage '${stage_key}' failed: ${outcome.code}`
-    : `stage '${stage_key}' was cancelled${outcome.kind === "cancelled" && outcome.reason ? `: ${outcome.reason}` : ""}`;
+    : `stage '${stage_key}' was cancelled${outcome.reason ? `: ${outcome.reason}` : ""}`;
 
 type RootSignal =
   | { readonly kind: "output_released"; readonly stage_key: string; readonly artifact: ArtifactRevision }
