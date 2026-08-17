@@ -84,8 +84,9 @@ test("seeded build stage owns runtime cardinality, dependency readiness, and per
   if (!units.ok) return;
   expect(units.value.map((unit) => [String(unit.unit_id), unit.depends_on.map(String)])).toEqual([["foundation", []], ["web", ["foundation"]]]);
   const admitted = new Set(units.value.map((unit) => unit.unit_id));
-  expect(selectReadyUnits(units.value, new Set(), admitted, new Set(), 4).map((unit) => String(unit.unit_id))).toEqual(["foundation"]);
-  expect(selectReadyUnits(units.value, new Set(["foundation" as UnitId]), admitted, new Set(), 4).map((unit) => String(unit.unit_id))).toEqual(["web"]);
+  expect(selectReadyUnits(units.value, { released: new Set(), admitted, launched: new Set(), running_count: 0, max_parallel: 4 }).map((unit) => String(unit.unit_id))).toEqual(["foundation"]);
+  const afterFoundation = new Set(["foundation" as UnitId]);
+  expect(selectReadyUnits(units.value, { released: afterFoundation, admitted, launched: afterFoundation, running_count: 0, max_parallel: 4 }).map((unit) => String(unit.unit_id))).toEqual(["web"]);
 
   const web = units.value.find((unit) => unit.unit_id === "web")!;
   const webInputs = selectInputsForUnit({ brief: briefs }, web, true);

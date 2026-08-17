@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import type { StageRerunState } from "../domain/rerun";
+import { stageRerunStateKey, type StageRerunState } from "../domain/rerun";
 import type { RetryStuckRequest, RetryStuckResult } from "../domain/runs";
 import type { StageInstanceRepository, RerunTargetRepository } from "../storage/repositories";
 import { rerunStage, type StageRerunDependencies } from "./stage-rerun";
@@ -24,11 +24,11 @@ export const retryStuck = async (request: RetryStuckRequest, dependencies: Retry
   if (request.unit_id) {
     const target = await dependencies.targets.find_unit_target(request.stage_instance_id, request.unit_id);
     if (!target) return failure(request, "unit_not_found", `execution unit '${request.stage_instance_id}:${request.unit_id}' was not found`);
-    const state = await dependencies.dbos.getEvent<StageRerunState>(target.stage_coordinator_workflow_id, "stage-rerun-state", { timeoutSeconds: 0 });
-    if (state?.status === "resumed" && state.unit_id === request.unit_id && state.replacement_execution_workflow_id === target.execution_workflow_id) {
+    const state = await dependencies.dbos.getEvent<StageRerunState>(target.stage_coordinator_workflow_id, stageRerunStateKey(request.unit_id), { timeoutSeconds: 0 });
+    if (state?.status === "resumed" && state.replacement_execution_workflow_id === target.execution_workflow_id) {
       return { kind: "already_accepted", stage_instance_id: request.stage_instance_id, unit_id: request.unit_id };
     }
-    if (!state || state.status !== "waiting" || state.unit_id !== request.unit_id || state.failed_execution_workflow_id !== target.execution_workflow_id) {
+    if (!state || state.status !== "waiting" || state.failed_execution_workflow_id !== target.execution_workflow_id) {
       return failure(request, "not_stuck", `execution unit '${request.stage_instance_id}:${request.unit_id}' is not waiting for rerun`);
     }
     const rerunId = commandIdentity([request.stage_instance_id, request.unit_id, state.failed_execution_workflow_id]);

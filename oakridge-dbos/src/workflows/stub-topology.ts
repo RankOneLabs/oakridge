@@ -43,7 +43,7 @@ export const stubStageWorkflow = DBOS.registerWorkflow(
     const admitted = new Set(input.manually_admitted);
     const results: StubExecutionResult[] = [];
     while (released.size < input.units.length) {
-      const ready = selectReadyUnits(input.units, released, admitted, new Set(), input.max_parallel);
+      const ready = selectReadyUnits(input.units, { released, admitted, launched: released, running_count: 0, max_parallel: input.max_parallel });
       if (ready.length === 0) throw new Error("stage has unfinished units but no dependency-ready admitted work");
       const handles = [];
       for (const unit of ready) {
