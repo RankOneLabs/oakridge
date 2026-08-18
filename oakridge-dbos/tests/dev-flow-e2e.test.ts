@@ -1,5 +1,5 @@
 /**
- * The seeded dev flow, run end to end against a real DBOS runtime.
+ * The seeded dev flow, run end to end against the backend the process runs.
  *
  * Every other file in this suite stubs its collaborators one layer inside the
  * code under test. That catches a wrong implementation and is structurally
@@ -7,11 +7,12 @@
  * mocks, and neither ever runs the other. Every regression this project has
  * shipped has been at such a seam.
  *
- * These tests run the real thing — real workflows, real gates and handoffs,
- * real artifact-contract evaluation, real cancellation — and fake only the
- * agent, which a test cannot spawn. The second test additionally drives the
- * real kbbl HTTP routes, because the fence crossing that boundary is where a
- * run once deadlocked against itself.
+ * These tests run the real thing — the composition `main.ts` builds, real
+ * PostgreSQL repositories, the real HTTP routes on a real port, real workflows,
+ * real gates and handoffs, real artifact-contract evaluation, real
+ * cancellation. The agent is the only fake, and it is driven the way an agent
+ * drives Oakridge: by calling the emit route. Every operator action goes
+ * through the operator's own routes.
  *
  * Requires PostgreSQL; skipped when none is reachable. See
  * `tests/support/durable-database.ts`.
@@ -21,15 +22,18 @@ import { DBOS } from "@dbos-inc/dbos-sdk";
 import { Hono } from "hono";
 
 import { KbblExecutorAdapter } from "../src/adapters/kbbl";
-import type { ExecutionId, WorkflowRunId } from "../src/domain/primitives";
-import type { WorkflowDefinition } from "../src/domain/workflow";
+import type { ExecutionId } from "../src/domain/primitives";
 import { mountSessionsRoutes } from "../../kbbl/core/server/handlers/sessions";
 import type { SessionManager } from "../../kbbl/core/session/session-manager";
 import { findTestDatabaseUrl } from "./support/durable-database";
 import {
-  awaitLaunched, completableScenario, completeExecution, installHarness, neverFinishingScenario, runContext,
-  useCancellationTargets, useScenario, type HarnessArtifacts,
+  awaitCondition, installIntegrationRuntime, neverFinishingScenario, scriptedAgentScenario, useScenario,
+  type IntegrationRuntime, type ScriptedAgentScenario,
 } from "./support/dev-flow-harness";
+import {
+  completeExternalReview, decideGate, emitDeclaredArtifacts, launchRun, readReviewInbox, readRun,
+  type EmittedArtifact,
+} from "./support/dev-flow-driver";
 
 const databaseUrl = await findTestDatabaseUrl();
 /**
@@ -39,76 +43,132 @@ const databaseUrl = await findTestDatabaseUrl();
 if (!databaseUrl) console.warn("dev-flow e2e SKIPPED: no reachable PostgreSQL (set OAKRIDGE_TEST_DATABASE_URL)");
 const e2e = databaseUrl ? test : test.skip;
 
-let artifacts: HarnessArtifacts;
-let definition: WorkflowDefinition;
+let oakridge: IntegrationRuntime;
 
 beforeAll(async () => {
   if (!databaseUrl) return;
-  const installed = await installHarness();
-  definition = installed.definition;
-  artifacts = installed.artifacts;
-  DBOS.setConfig({
-    name: "oakridge-dev-flow-e2e",
-    systemDatabaseUrl: databaseUrl,
-    // Unique per run so a previous run's workflows are never recovered into
-    // this one, and concurrent runs on a shared database stay isolated.
-    applicationVersion: `e2e-${crypto.randomUUID()}`,
-    logLevel: "warn",
-  });
-  await DBOS.launch();
-});
+  oakridge = await installIntegrationRuntime(databaseUrl);
+}, 120_000);
 
 afterAll(async () => {
-  if (databaseUrl) await DBOS.shutdown();
+  if (databaseUrl) await oakridge.stop();
 }, 60_000);
 
-const startRun = async (rootId: string) => {
-  const { productionRunWorkflow } = await import("../src/workflows/production-topology");
-  return DBOS.startWorkflow(productionRunWorkflow, { workflowID: rootId })({
-    run_id: crypto.randomUUID() as WorkflowRunId,
-    workflow_definition_id: definition.id,
-    workflow_definition_version: definition.version,
-    context: runContext(),
-  });
-};
-
 /**
- * The whole flow: five stages, seven executions, every gate approved and every
- * handoff completed. Asserts the assessor's lineage as well as the outcome —
- * a run that finishes with the wrong inputs threaded through is not a pass.
+ * Everything the operator and the outside world owe a run, done as soon as it
+ * is owed.
+ *
+ * A gate is approved when it appears. A build result parked in a handoff is
+ * left alone — the assessor's approval is what resolves it, and supplying that
+ * decision here is precisely the shortcut that let the deadlock ship. Its
+ * `github_review` wait is completed afterwards, standing in for the participant
+ * that does not exist yet.
  */
-e2e("the seeded dev flow runs to completion through gates and handoffs", async () => {
-  const agents = completableScenario();
-  useScenario(agents);
+class RunDriver {
+  private readonly driven = new Set<string>();
+  private readonly gated: EmittedArtifact[] = [];
+  private readonly awaitingReview: EmittedArtifact[] = [];
+  private readonly parked: EmittedArtifact[] = [];
+  /** The last thing a route refused, so a timeout says what it was blocked on. */
+  private lastRefusal = "nothing refused yet";
 
-  const rootId = `e2e-complete-${crypto.randomUUID()}`;
-  const handle = await startRun(rootId);
+  constructor(private readonly base: string, private readonly agent: ScriptedAgentScenario, private readonly rootId: string) {}
 
-  const driven = new Set<string>();
-  const deadline = Date.now() + 60_000;
-  try {
-    while (driven.size < 7) {
-      if (Date.now() > deadline) throw new Error(`dev flow stalled after driving ${driven.size}/7 executions`);
-      for (const executionWorkflowId of [...artifacts.launched.keys()].filter((id) => id.startsWith(`${rootId}:`))) {
-        if (driven.has(executionWorkflowId)) continue;
-        driven.add(executionWorkflowId);
-        await completeExecution(databaseUrl!, artifacts, executionWorkflowId);
-        agents.succeed(artifacts.launched.get(executionWorkflowId)!.execution_id);
+  /** Execution workflow ids this driver has already run the agent for. */
+  get drivenExecutions(): ReadonlySet<string> { return this.driven; }
+  /** Every output that went into a handoff, whether or not it has come out. */
+  get parkedHandoffs(): readonly EmittedArtifact[] { return this.parked; }
+  get diagnosis(): string { return `driven ${this.driven.size}, gates pending ${this.gated.length}, handoffs open ${this.awaitingReview.length}, last refusal: ${this.lastRefusal}`; }
+
+  /**
+   * Runs the agent for every execution launched since the last call.
+   *
+   * `accept` narrows which executions the agent answers, so a test can leave a
+   * stage deliberately unserved and observe what the rest of the run does
+   * without it.
+   */
+  async driveNewExecutions(accept: (executionWorkflowId: string) => boolean = () => true): Promise<void> {
+    for (const [executionWorkflowId, request] of this.agent.launched) {
+      if (!executionWorkflowId.startsWith(`${this.rootId}:`) || this.driven.has(executionWorkflowId) || !accept(executionWorkflowId)) continue;
+      this.driven.add(executionWorkflowId);
+      const emitted = await emitDeclaredArtifacts(this.base, request);
+      for (const artifact of emitted) {
+        if (artifact.release === "waiting_gate") this.gated.push(artifact);
+        if (artifact.release === "waiting_handoff") { this.awaitingReview.push(artifact); this.parked.push(artifact); }
       }
-      await Bun.sleep(25);
+      this.agent.succeed(request.execution_id);
     }
-  } finally {
-    agents.releaseAll();
   }
 
-  const result = await handle.getResult();
-  expect(result.outcome.kind).toBe("succeeded");
-  expect(Object.keys(result.stage_workflow_ids)).toHaveLength(5);
-  expect(driven.size).toBe(7);
+  /** Approves every gate this driver has seen an artifact park in. */
+  async approvePendingGates(): Promise<void> {
+    while (this.gated.length > 0) {
+      const artifact = this.gated.shift();
+      if (artifact) await decideGate(this.base, artifact.artifact_id, "approve");
+    }
+  }
+
+  /**
+   * Tries once per open handoff. A handoff only becomes completable after the
+   * downstream stage has approved it, and that stage is driven by this same
+   * loop — so a refusal here means "not yet", and the attempt is retried on the
+   * next pass rather than blocking the work that unblocks it.
+   */
+  async completeReadyExternalReviews(): Promise<void> {
+    const stillOpen: EmittedArtifact[] = [];
+    for (const artifact of this.awaitingReview) {
+      const attempt = await completeExternalReview(this.base, artifact.artifact_id);
+      if (attempt.kind === "completed") continue;
+      this.lastRefusal = `${artifact.output_name}/${artifact.unit_id}: ${attempt.detail}`;
+      stillOpen.push(artifact);
+    }
+    this.awaitingReview.length = 0;
+    this.awaitingReview.push(...stillOpen);
+  }
+}
+
+/**
+ * The whole flow: five stages, seven executions, every gate approved through
+ * the operator's route and every handoff resolved by the stage that owes the
+ * decision. Asserts the assessor's lineage as well as the outcome — a run that
+ * finishes with the wrong inputs threaded through is not a pass.
+ *
+ * This is also the test that would have caught the deadlock. `build_result`
+ * releases through a handoff to the `assessment` role, so the assessor decides
+ * it; the run workflow used to learn of an artifact only once it was released,
+ * and used that same record both to decide a downstream stage was ready and to
+ * feed it. The assessor waited on a released build result and the build result
+ * waited on the assessor, and every run stopped at its first build unit with a
+ * pull request open and nothing left that could move.
+ */
+e2e("the seeded dev flow runs to completion through gates and handoffs", async () => {
+  const agent = scriptedAgentScenario();
+  useScenario(agent);
+
+  const run = await launchRun(oakridge.base_url, oakridge.definition.id);
+  const driver = new RunDriver(oakridge.base_url, agent, run.root_workflow_id);
+
+  try {
+    await awaitCondition(() => `the dev flow to finish (${driver.diagnosis})`, async () => {
+      await driver.driveNewExecutions();
+      await driver.approvePendingGates();
+      await driver.completeReadyExternalReviews();
+      const detail = await readRun(oakridge.base_url, run.run_id);
+      return detail.status === "complete" || detail.status === "failed" ? detail : null;
+    }, 180_000);
+  } finally {
+    agent.releaseAll();
+  }
+
+  const detail = await readRun(oakridge.base_url, run.run_id);
+  expect(detail.status).toBe("complete");
+  expect(detail.stages).toHaveLength(5);
+  expect(detail.stages.every((stage) => stage.status === "complete")).toBe(true);
+  expect(driver.drivenExecutions.size).toBe(7);
 
   // Each assessor must see exactly its own cohort's build, in the workspace
   // that produced it — not a sibling's, and not both.
-  const assessors = [...artifacts.launched.entries()].filter(([id]) => id.startsWith(`${rootId}:`) && id.includes(":stage:assessor:unit:"));
+  const assessors = [...agent.launched.entries()].filter(([id]) => id.startsWith(`${run.root_workflow_id}:`) && id.includes(":stage:assessor:unit:"));
   expect(assessors).toHaveLength(2);
   for (const [, request] of assessors) {
     const buildResult = request.inputs.find((input) => input.output_name === "build_result");
@@ -116,7 +176,124 @@ e2e("the seeded dev flow runs to completion through gates and handoffs", async (
     expect(request.inputs).toHaveLength(2);
     expect(new Set(request.inputs.map((input) => input.unit_id)).size).toBe(1);
   }
-}, 90_000);
+}, 240_000);
+
+/**
+ * Availability and acceptance, held apart.
+ *
+ * The assessor has to start on a build result that is still parked in its
+ * handoff, because the assessor is what resolves that handoff. Nothing here
+ * stands in for it: the build's `github_review` is never completed, so the
+ * build unit is never accepted, and the assessor still runs — on the artifact,
+ * in the workspace that produced it.
+ *
+ * The second cohort declares `depends_on` the first, and a dependency is
+ * satisfied by acceptance rather than availability, so exactly one build runs
+ * and one assessor follows it while that first handoff is still open. Both
+ * halves of the distinction are asserted at once.
+ */
+e2e("the assessor starts on a build result still parked in its handoff", async () => {
+  const agent = scriptedAgentScenario();
+  useScenario(agent);
+
+  const run = await launchRun(oakridge.base_url, oakridge.definition.id);
+  const driver = new RunDriver(oakridge.base_url, agent, run.root_workflow_id);
+  const isAssessor = (id: string): boolean => id.includes(":stage:assessor:unit:");
+
+  try {
+    // The assessor is deliberately left unserved: this test is about it having
+    // been *started*, on an artifact whose unit is not accepted and will not be
+    // while the test watches.
+    const assessorId = await awaitCondition(() => `an assessor to start (${driver.diagnosis})`, async () => {
+      await driver.driveNewExecutions((id) => !isAssessor(id));
+      await driver.approvePendingGates();
+      return [...agent.launched.keys()].find((id) => id.startsWith(`${run.root_workflow_id}:`) && isAssessor(id)) ?? null;
+    }, 120_000);
+
+    // spec_analyzer, plan_writer, brief_writer, and exactly one build.
+    expect(driver.drivenExecutions.size).toBe(4);
+    expect(driver.parkedHandoffs).toHaveLength(1);
+
+    const request = agent.launched.get(assessorId);
+    const buildResult = request?.inputs.find((input) => input.output_name === "build_result");
+    expect(buildResult).toBeDefined();
+    expect(buildResult?.artifact_id).toBe(driver.parkedHandoffs[0]!.artifact_id);
+    // The assessor reviews in the workspace that produced what it is reviewing.
+    expect(request?.workspace_source?.execution_id).toBe(buildResult?.producer_execution_id);
+
+    // Available downstream, and still unaccepted: the operator surface reports
+    // the cohort as under assessment rather than complete.
+    const inbox = await readReviewInbox(oakridge.base_url);
+    const cohort = inbox.cohorts.find((candidate) => candidate.run_id === run.run_id);
+    expect(cohort?.lifecycle).toBe("assessing");
+  } finally {
+    // This run is deliberately left mid-flight — a build parked in its handoff,
+    // an assessor just started — so it has to be torn down rather than awaited.
+    await DBOS.cancelWorkflow(run.root_workflow_id, { cancelChildren: true });
+    agent.releaseAll();
+  }
+}, 180_000);
+
+/**
+ * Where a revision request lands today — which is two places.
+ *
+ * The assessor's gate declares `revision_target: "upstream_handoff"`: a
+ * rejection is meant to send the *build* back to work. The build is indeed sent
+ * back, by the gate resume route, through the upstream handoff. But
+ * `revision_target` is compiled and validated and then read by nothing in the
+ * workflow layer — `gateRelayWorkflow` dispositions the action with
+ * `selectGateDisposition` alone — so the assessor is *also* told to revise its
+ * own assessment. One operator click wakes two agents, and one of them has
+ * nothing to do.
+ *
+ * This is asserted as it stands rather than as it should be, because the
+ * correction is a design decision and not a repair. Suppressing the assessor's
+ * delivery alone makes things worse: the gate relay returns on a revise
+ * disposition, so the wait that would release the assessment is gone, and the
+ * assessor's unit is left with neither a gate nor a reason to act. Keeping the
+ * gate open across a revision needs a second decision on the same artifact and
+ * step, and the operator surface addresses a gate wait by
+ * `{execution}:{artifact}:{step}` — an id with no room for a second round. The
+ * revision path is unbuilt, not merely misrouted.
+ *
+ * Change this test when that is settled; it will fail the moment it is.
+ */
+e2e("a revision requested on an assessment reaches the build — and wrongly wakes the assessor too", async () => {
+  const agent = scriptedAgentScenario();
+  useScenario(agent);
+
+  const run = await launchRun(oakridge.base_url, oakridge.definition.id);
+  const driver = new RunDriver(oakridge.base_url, agent, run.root_workflow_id);
+  const isAssessor = (id: string): boolean => id.includes(":stage:assessor:unit:");
+
+  try {
+    const assessorId = await awaitCondition(() => `an assessor to start (${driver.diagnosis})`, async () => {
+      await driver.driveNewExecutions((id) => !isAssessor(id));
+      await driver.approvePendingGates();
+      return [...agent.launched.keys()].find((id) => id.startsWith(`${run.root_workflow_id}:`) && isAssessor(id)) ?? null;
+    }, 120_000);
+
+    const assessorRequest = agent.launched.get(assessorId);
+    if (!assessorRequest) throw new Error("the assessor request disappeared");
+    const buildExecutionId = assessorRequest.inputs.find((input) => input.output_name === "build_result")?.producer_execution_id;
+    const [assessment] = await emitDeclaredArtifacts(oakridge.base_url, assessorRequest);
+    if (!assessment) throw new Error("the assessor emitted nothing");
+    expect(assessment.release).toBe("waiting_gate");
+
+    await decideGate(oakridge.base_url, assessment.artifact_id, "request_revision");
+
+    const delivered = await awaitCondition(() => `two revision deliveries (delivered: ${JSON.stringify(agent.deliveries)})`,
+      async () => (agent.deliveries.length >= 2 ? agent.deliveries.map((delivery) => delivery.execution_id) : null), 30_000);
+
+    // Correct: the build is sent back to work, through the upstream handoff.
+    expect(delivered).toContain(String(buildExecutionId));
+    // Wrong, and recorded so it cannot be lost: the assessor is woken too.
+    expect(delivered).toContain(String(assessorRequest.execution_id));
+  } finally {
+    await DBOS.cancelWorkflow(run.root_workflow_id, { cancelChildren: true });
+    agent.releaseAll();
+  }
+}, 180_000);
 
 /**
  * The regression this harness was built for.
@@ -129,8 +306,9 @@ e2e("the seeded dev flow runs to completion through gates and handoffs", async (
  * The run could not be cancelled while active and stayed active because its
  * session would not close.
  *
- * Both packages are real here. Only the agent process and the hold's storage
- * are faked.
+ * Both packages are real here, and so is the cancellation target projection
+ * the run reads to find what to fence. Only the agent process and the hold's
+ * storage are faked.
  */
 e2e("cancelling a run fences its delegated session through the real kbbl route", async () => {
   const SESSION_ID = "db26174d-21e2-40f4-af40-fc359c4e9604";
@@ -164,32 +342,35 @@ e2e("cancelling a run fences its delegated session through the real kbbl route",
   const kbblServer = Bun.serve({ port: 0, fetch: kbbl.fetch });
 
   const idle = neverFinishingScenario();
+  const launched = new Map<string, { readonly execution_id: ExecutionId }>();
   try {
     const kbblAdapter = new KbblExecutorAdapter({ base_url: `http://127.0.0.1:${kbblServer.port}`, executor_function_identity: "e2e" });
     useScenario({
       // The session exists in kbbl already; the run attaches to it.
-      async start_or_attach() { return { kind: "kbbl_session", session_id: SESSION_ID }; },
+      async start_or_attach(request, attempt_id) {
+        launched.set(attempt_id, { execution_id: request.execution_id });
+        heldByExecution = String(request.execution_id);
+        return { kind: "kbbl_session", session_id: SESSION_ID };
+      },
       observe_terminal: (id, reference) => idle.observe_terminal(id, reference),
       // The real adapter, over real HTTP, into the real route.
       cancel_or_fence: (id, reference) => kbblAdapter.cancel_or_fence(id, reference),
     });
 
-    const rootId = `e2e-cancel-${crypto.randomUUID()}`;
-    const handle = await startRun(rootId);
-
-    // Cancel once the first stage is genuinely running an execution.
-    const [executionWorkflowId] = await awaitLaunched(artifacts, rootId, (ids) => ids.length > 0);
-    const request = artifacts.launched.get(executionWorkflowId!)!;
-    heldByExecution = String(request.execution_id);
-    useCancellationTargets([{
-      execution_id: request.execution_id as ExecutionId,
-      executor_type: "delegated_session",
-      external_reference: { kind: "kbbl_session", session_id: SESSION_ID },
-    }]);
+    const run = await launchRun(oakridge.base_url, oakridge.definition.id);
+    // Cancel once the first stage is genuinely running an execution — and once
+    // its external reference has been projected, since that projection is what
+    // cancellation reads to find the session to fence.
+    await awaitCondition("the first execution to start", async () =>
+      [...launched.keys()].some((id) => id.startsWith(`${run.root_workflow_id}:`)) ? true : null);
+    await awaitCondition("the execution's session hold to be projected", async () => {
+      const detail = await readRun(oakridge.base_url, run.run_id);
+      return detail.stages.some((stage) => stage.delegated_kbbl_sid === SESSION_ID) ? true : null;
+    });
 
     const { cancellationControlWorkflow } = await import("../src/workflows/cancellation");
-    const cancellation = await DBOS.startWorkflow(cancellationControlWorkflow, { workflowID: `oakridge-cancel:${rootId}` })({
-      root_workflow_id: rootId, reason: "e2e cancellation", requested_at: new Date().toISOString(),
+    const cancellation = await DBOS.startWorkflow(cancellationControlWorkflow, { workflowID: `oakridge-cancel:${run.root_workflow_id}` })({
+      root_workflow_id: run.root_workflow_id, reason: "e2e cancellation", requested_at: new Date().toISOString(),
     });
 
     // The assertion: cancellation completes. Before the fix this rejected,
@@ -198,12 +379,9 @@ e2e("cancelling a run fences its delegated session through the real kbbl route",
     expect(result.fenced_execution_count).toBe(1);
     expect(closed).toEqual([SESSION_ID]);
     expect(refusals).toEqual([]);
-
-    await expect(handle.getResult()).rejects.toThrow();
   } finally {
     idle.releaseAll();
     kbblServer.stop(true);
     oakridgeServer.stop(true);
-    useCancellationTargets([]);
   }
-}, 90_000);
+}, 180_000);

@@ -10,6 +10,10 @@ import { evaluateExecutionArtifactContract, shouldAwaitArtifactRelease, withoutR
 import { durableGateWorkflow, type GateCommand, type GateWaitInput } from "./gate";
 import { durableHandoffWorkflow, type HandoffCommand, type HandoffResult } from "./handoff";
 import { selectGateDisposition, type GateDisposition } from "../domain/gates";
+import { selectOutputVisibility, type OutputVisibility } from "../domain/output-availability";
+// Type-only, so the cycle with the topology that starts this workflow is
+// erased at compile time and never exists at runtime.
+import type { StageSignal } from "./production-topology";
 
 const adapters = new Map<string, ExecutorAdapter>();
 export interface ExecutionProjectionObserver {
@@ -154,7 +158,20 @@ const gateRelayWorkflow = DBOS.registerWorkflow(async (input: GateRelayInput): P
   return lastCommand;
 }, { name: "oakridgeGateRelayWorkflow" });
 
-export interface ArtifactContractExecutionInput { readonly request: ExecutionRequest; readonly outputs: readonly CompiledOutputContract[] }
+export interface ArtifactContractExecutionInput {
+  readonly request: ExecutionRequest;
+  readonly outputs: readonly CompiledOutputContract[];
+  /**
+   * Where this execution publishes its outputs' availability.
+   *
+   * The execution is the only participant holding both an artifact and the
+   * output contract that dates its visibility, so it is the sole publisher on
+   * that axis. The coordinator is not reachable by convention from here — a
+   * rerun runs under an entirely different workflow ID than the unit it
+   * replaces — so it is carried.
+   */
+  readonly coordinator_workflow_id: string;
+}
 export interface ArtifactContractExecutionResult { readonly external_reference: ExternalExecutionReference; readonly contract: ExecutionContractState; readonly terminal_observation: ExecutorTerminalObservation | null }
 
 export const artifactContractExecutionWorkflow = DBOS.registerWorkflow(async (input: ArtifactContractExecutionInput): Promise<ArtifactContractExecutionResult> => {
@@ -184,6 +201,29 @@ export const artifactContractExecutionWorkflow = DBOS.registerWorkflow(async (in
       }
     }
   };
+  /**
+   * Publishes an artifact to the run. Called once per revision, at the moment
+   * its output contract makes it visible — never twice, because the two
+   * moments are mutually exclusive per output and the caller checks which one
+   * applies rather than deduplicating after the fact.
+   */
+  const publishAvailability = async (artifact: ArtifactRevision): Promise<void> => {
+    await DBOS.send(input.coordinator_workflow_id,
+      { kind: "unit_output_event", event: { kind: "output_available", unit_id: input.request.unit_id, artifact } } satisfies StageSignal,
+      "stage-command", `available:${artifact.id}`);
+  };
+  /**
+   * When an output becomes visible to the run, from the contract this execution
+   * was launched with. An output the stage never declared cannot be emitted —
+   * `validateArtifactEmission` refuses it at the callback — so a missing
+   * contract here is a broken invariant rather than a case to fall back on.
+   */
+  const visibilityOf = (outputName: string): OutputVisibility => {
+    const output = input.outputs.find((candidate) => candidate.name === outputName);
+    if (!output) throw new Error(`output '${outputName}' is not declared by this execution's contract`);
+    return selectOutputVisibility(output.release);
+  };
+
   const acceptEmission = async (release: ArtifactReleaseState): Promise<void> => {
     const currentArtifact = await loadCurrentArtifactStep(release.artifact.id);
     if (!currentArtifact) return;
@@ -195,9 +235,15 @@ export const artifactContractExecutionWorkflow = DBOS.registerWorkflow(async (in
       await DBOS.startWorkflow(gateRelayWorkflow, { workflowID: gateRelayWorkflowId(workflowId, release.artifact.id) })({ parent_workflow_id: workflowId, request: input.request, release });
     } else if (release.kind === "waiting_handoff") {
       await DBOS.startWorkflow(durableHandoffWorkflow, { workflowID: handoffWorkflowId(workflowId, release.artifact.id) })({ ...release, parent_workflow_id: workflowId });
+      // Visible on emission: the role that resolves this handoff is downstream,
+      // so it has to hold the artifact before it can decide anything about it.
+      await publishAvailability(release.artifact);
     } else {
       const released = await markArtifactReleasedStep(currentArtifact.id);
-      if (released) releases = withRelease(releases, released);
+      if (released) {
+        releases = withRelease(releases, released);
+        await publishAvailability(released);
+      }
     }
   };
   for (;;) {
@@ -212,7 +258,14 @@ export const artifactContractExecutionWorkflow = DBOS.registerWorkflow(async (in
       await closeReleaseWaits(message.artifact_id, message.output_name, message.reason, message.replacement_artifact_revision_id);
     } else if (message.kind === "artifact_released") {
       const released = await markArtifactReleasedStep(message.artifact.id);
-      if (released) releases = withRelease(releases, released);
+      if (released) {
+        releases = withRelease(releases, released);
+        // A gated output becomes visible here, at acceptance. A handoff's was
+        // published when it was emitted — the downstream role that just
+        // accepted it could not have decided otherwise — so it is not
+        // republished now.
+        if (visibilityOf(released.output_name) === "on_acceptance") await publishAvailability(released);
+      }
     } else if (message.kind === "gate_rejected") {
       if (message.disposition === "revise") {
         await requestRevisionStep({ request: input.request, attempt_id: attemptId, external_reference: externalReference, delivery_key: `gate:${message.artifact.id}:${message.command.gate_step}`, feedback: `Revise '${message.artifact.output_name}' after gate '${message.command.gate_step}'.` });

@@ -6,6 +6,7 @@ import { selectAncestorStages } from "../compiler/select-resume-stages";
 import { appendIncrementalUnit, closeIncrementalMaterialization, emptyIncrementalMaterialization, isFanOutDriverInput, selectDriverArtifacts, selectReadyUnits, type IncrementalMaterialization } from "../compiler/materialize-units";
 import { isAwaitingReplacementOf, isLiveExecution, isStageDrained, selectLaunchedUnits, selectReleasedUnits, selectRunningUnitCount, type UnitRuntime } from "./unit-runtime";
 import type { ArtifactRevision, ExecutionContractState } from "../domain/artifacts";
+import { withAvailableArtifact, withReplacedEnvelope, type StageOutputEvent } from "../domain/output-availability";
 import type { CompiledStageContract, CompiledWorkflowDefinition, MaterializedExecutionUnit } from "../domain/compiled-workflow";
 import type { DelegatedSessionDefinitionConfig } from "../domain/delegated-session";
 import type { ArtifactEnvelope, ExecutionRequest, ExternalExecutionReference } from "../domain/execution";
@@ -272,9 +273,10 @@ export const productionStageWorkflow = DBOS.registerWorkflow(async (input: Stage
     const failure = terminalFailure(signal.unit_id, result.contract, result);
     if (failure) return parkForRerun(signal.unit_id, signal.execution_workflow_id, failure);
     if (result.contract.kind !== "satisfied") throw new Error("satisfied execution contract disappeared");
+    // Acceptance only. What the run may consume was published by the execution
+    // as each output became visible, which for a handoff is long before this.
     artifacts.push(...result.contract.artifacts);
     runtime.set(signal.unit_id, { kind: "released" });
-    for (const artifact of result.contract.artifacts) await DBOS.writeStream("stage-output", artifact);
   };
 
   const applyStageCommand = async (command: StageSignal): Promise<StageCommandEffect> => {
@@ -282,6 +284,10 @@ export const productionStageWorkflow = DBOS.registerWorkflow(async (input: Stage
       // A relay for an execution the unit has since moved past — replaced by a
       // rerun, or redelivered after release — must not settle it a second time.
       if (isLiveExecution(runtime, command.unit_id, command.execution_workflow_id)) await settleUnit(command);
+      return { kind: "applied" };
+    }
+    if (command.kind === "unit_output_event") {
+      await DBOS.writeStream("stage-output", command.event);
       return { kind: "applied" };
     }
     if (command.kind === "replace_execution") {
@@ -313,11 +319,18 @@ export const productionStageWorkflow = DBOS.registerWorkflow(async (input: Stage
     if (command.kind !== "input_released") return { kind: "unhandled" };
     if (input.compiled_stage.materialization.kind !== "fan_out") return { kind: "terminal", outcome: { kind: "failed", code: "unexpected_incremental_input", detail: `stage '${input.stage_key}' is not fan-out` } };
     // Every incremental artifact accumulates — units read all of their stage's
-    // inputs. Only the driver input goes on to mint a unit.
+    // inputs. A later revision of one already delivered replaces it in place
+    // rather than accumulating beside it. Only the driver input goes on to mint
+    // a unit.
     const existingInput = accumulatedInputs[command.input_name];
     const existingArtifacts = existingInput === undefined ? [] : Array.isArray(existingInput) ? existingInput : [existingInput as ArtifactEnvelope];
-    accumulatedInputs[command.input_name] = [...existingArtifacts, command.artifact];
+    accumulatedInputs[command.input_name] = withReplacedEnvelope(existingArtifacts, command.artifact);
     if (!isFanOutDriverInput(input.compiled_stage.materialization, command.input_name)) return { kind: "applied" };
+    // A revision of a driver artifact updates the unit it already minted; it
+    // does not mint a second one under an id the stage already has. Re-running
+    // that unit against the revision is an operator rerun, not something the
+    // coordinator does on its own.
+    if (plans.some((candidate) => candidate.unit.unit_id === command.artifact.unit_id)) return { kind: "applied" };
     const parameters = { unit_id: command.artifact.unit_id, artifact: command.artifact.body } as const;
     const appended = appendIncrementalUnit(incremental, parameters, { unit_id_path: input.compiled_stage.materialization.unit_id_path, depends_on_path: input.compiled_stage.materialization.depends_on_path });
     if (!appended.ok) return { kind: "terminal", outcome: { kind: "failed", code: "invalid_incremental_materialization", detail: appended.error.detail } };
@@ -342,7 +355,7 @@ export const productionStageWorkflow = DBOS.registerWorkflow(async (input: Stage
       if (!plan) throw new Error(`execution plan '${unit.unit_id}' disappeared`);
       const executionWorkflowId = unitExecutionWorkflowId(coordinatorId, unit.unit_id);
       await recordExecutionStep({ request: plan.request, execution_workflow_id: executionWorkflowId, parameters: unit.parameters });
-      await DBOS.startWorkflow(artifactContractExecutionWorkflow, { workflowID: executionWorkflowId })({ request: plan.request, outputs: input.compiled_stage.outputs });
+      await DBOS.startWorkflow(artifactContractExecutionWorkflow, { workflowID: executionWorkflowId })({ request: plan.request, outputs: input.compiled_stage.outputs, coordinator_workflow_id: coordinatorId });
       await watchExecution(unit.unit_id, executionWorkflowId);
     }
     await DBOS.setEvent("stage-admission-state", selectStageAdmissionState(input.stage_instance_id, units, admitted, selectReleasedUnits(runtime), isManualAdmission));
@@ -373,8 +386,17 @@ export const stageFailureReason = (stage_key: string, outcome: StageFailureOutco
     ? `stage '${stage_key}' failed: ${outcome.code}`
     : `stage '${stage_key}' was cancelled${outcome.reason ? `: ${outcome.reason}` : ""}`;
 
+/**
+ * What a stage tells the run, on each of the two axes it reports.
+ *
+ * `stage_output` is availability: what the run may now consume from this stage.
+ * `stage_finished` is the stage's own lifecycle. They are deliberately separate
+ * messages because they are separate facts — an output can be available for as
+ * long as a downstream review takes before the unit that produced it is
+ * accepted, and a run that reads one where it means the other deadlocks.
+ */
 type RootSignal =
-  | { readonly kind: "output_released"; readonly stage_key: string; readonly artifact: ArtifactRevision }
+  | { readonly kind: "stage_output"; readonly stage_key: string; readonly event: StageOutputEvent }
   | { readonly kind: "stage_finished"; readonly stage_key: string; readonly result: StageWorkflowResult };
 /** What the run workflow and the operator surface may ask of a stage. */
 export type StageCommand =
@@ -387,13 +409,24 @@ export type StageCommand =
 /** Posted by a stage's own unit relays, never by an operator. */
 export type UnitCompletionSignal = { readonly kind: "unit_finished"; readonly unit_id: UnitId; readonly execution_workflow_id: string; readonly error: string | null };
 
+/**
+ * An availability change posted by one of the stage's own executions.
+ *
+ * The coordinator does not decide when an output becomes visible — the
+ * execution does, from the output contract — so this passes straight through
+ * onto the stage's output stream. Routing it through the coordinator's inbox
+ * rather than writing the stream directly keeps a single writer on the stream
+ * and orders availability ahead of the unit completion that follows it.
+ */
+export type UnitOutputEventSignal = { readonly kind: "unit_output_event"; readonly event: StageOutputEvent };
+
 /** Everything a stage coordinator dequeues from its single inbox. */
-export type StageSignal = StageCommand | UnitCompletionSignal;
+export type StageSignal = StageCommand | UnitCompletionSignal | UnitOutputEventSignal;
 
 interface StageRelayInput { readonly root_workflow_id: string; readonly stage_key: string; readonly handle_workflow_id: string }
 const stageRelayWorkflow = DBOS.registerWorkflow(async (input: StageRelayInput): Promise<StageWorkflowResult> => {
-  for await (const artifact of DBOS.readStream<ArtifactRevision>(input.handle_workflow_id, "stage-output")) {
-    await DBOS.send(input.root_workflow_id, { kind: "output_released", stage_key: input.stage_key, artifact } satisfies RootSignal, "root-signal", `${input.handle_workflow_id}:${artifact.id}`);
+  for await (const event of DBOS.readStream<StageOutputEvent>(input.handle_workflow_id, "stage-output")) {
+    await DBOS.send(input.root_workflow_id, { kind: "stage_output", stage_key: input.stage_key, event } satisfies RootSignal, "root-signal", `${input.handle_workflow_id}:${event.artifact.id}`);
   }
   const result = await DBOS.retrieveWorkflow<StageWorkflowResult>(input.handle_workflow_id).getResult();
   await DBOS.send(input.root_workflow_id, { kind: "stage_finished", stage_key: input.stage_key, result } satisfies RootSignal, "root-signal", `finished:${result.stage_instance_id}`);
@@ -408,7 +441,7 @@ const stageInputs = (stageKey: string, definition: CompiledWorkflowDefinition, o
     const artifacts = outputs.get(`${edge.producer_stage}:${edge.producer_output}`) ?? [];
     const input = stage.inputs.find((candidate) => candidate.name === edge.consumer_input);
     const values = artifacts.map((artifact) => ({ artifact_id: artifact.id, artifact_type: artifact.artifact_type, output_name: artifact.output_name, unit_id: artifact.unit_id, body: artifact.body,
-      producer_execution_id: artifact.execution_id }));
+      producer_execution_id: artifact.execution_id, chain_id: artifact.chain_id }));
     const requiresCollection = edge.delivery === "unit_complete" || input?.collect === true || isFanOutDriverInput(stage.materialization, edge.consumer_input);
     if (requiresCollection) result[edge.consumer_input] = values;
     else if (values[0]) result[edge.consumer_input] = values[0];
@@ -474,16 +507,21 @@ export const productionRunWorkflow = DBOS.registerWorkflow(async (input: RunWork
     }
     const signal = await DBOS.recv<RootSignal>("root-signal", { timeoutSeconds: 86_400 });
     if (!signal) continue;
-    if (signal.kind === "output_released") {
-      const key = `${signal.stage_key}:${signal.artifact.output_name}`;
-      outputs.set(key, [...(outputs.get(key) ?? []), signal.artifact]);
-      for (const edge of definition.edges.filter((candidate) => candidate.producer_stage === signal.stage_key && candidate.producer_output === signal.artifact.output_name && candidate.delivery === "unit_complete" && started.has(candidate.consumer_stage) && !finished.has(candidate.consumer_stage))) {
+    if (signal.kind === "stage_output") {
+      const artifact = signal.event.artifact;
+      const key = `${signal.stage_key}:${artifact.output_name}`;
+      outputs.set(key, withAvailableArtifact(outputs.get(key) ?? [], artifact));
+      for (const edge of definition.edges.filter((candidate) => candidate.producer_stage === signal.stage_key && candidate.producer_output === artifact.output_name && candidate.delivery === "unit_complete" && started.has(candidate.consumer_stage) && !finished.has(candidate.consumer_stage))) {
         const target = stageWorkflowIds[edge.consumer_stage];
-        if (target) await DBOS.send(target, { kind: "input_released", input_name: edge.consumer_input, artifact: { artifact_id: signal.artifact.id, artifact_type: signal.artifact.artifact_type, output_name: signal.artifact.output_name, unit_id: signal.artifact.unit_id, body: signal.artifact.body,
-          producer_execution_id: signal.artifact.execution_id } } satisfies StageCommand, "stage-command", `${signal.artifact.id}:${edge.consumer_input}`);
+        if (target) await DBOS.send(target, { kind: "input_released", input_name: edge.consumer_input, artifact: { artifact_id: artifact.id, artifact_type: artifact.artifact_type, output_name: artifact.output_name, unit_id: artifact.unit_id, body: artifact.body,
+          producer_execution_id: artifact.execution_id, chain_id: artifact.chain_id } } satisfies StageCommand, "stage-command", `${artifact.id}:${edge.consumer_input}`);
       }
       continue;
     }
+    // A signal this workflow does not recognise must not fall through to the
+    // branch that retires a stage — an unknown kind would finish a stage that
+    // is still running and take the rest of the run down with it.
+    if (signal.kind !== "stage_finished") continue;
     finished.add(signal.stage_key);
     await finishStageStep({ stage_instance_id: signal.result.stage_instance_id, outcome: signal.result.outcome, ended_at: new Date(await DBOS.now()).toISOString() });
     if (signal.result.outcome.kind !== "succeeded") {
