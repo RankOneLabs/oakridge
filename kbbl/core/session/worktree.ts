@@ -63,6 +63,22 @@ export class WorktreeCreateError extends Error {
   }
 }
 
+/**
+ * What git actually objected to, as one line an operator can act on.
+ *
+ * git writes several lines for a failed `worktree add`, the first of which
+ * names the cause — `fatal: invalid reference: epic/tiers-page`. A caller that
+ * discards this is left reporting only that something failed, which is how a
+ * missing epic branch reached an operator as an unexplained 503 three stages
+ * into a run.
+ *
+ * Safe to return over HTTP: it concerns the workdir the caller itself supplied.
+ */
+export const selectWorktreeFailureDetail = (error: WorktreeCreateError): string => {
+  const lines = error.stderr.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
+  return lines.find((line) => line.toLowerCase().startsWith("fatal:")) ?? lines[0] ?? error.message;
+};
+
 interface ResolvedBaseRef {
   ref: string;
   sha: string;

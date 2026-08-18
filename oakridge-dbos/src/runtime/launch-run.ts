@@ -5,6 +5,7 @@ import type { OperatorRunSummary } from "../domain/operator-projections";
 import { err, ok, type Result, type WorkflowRunId } from "../domain/primitives";
 import type { CreateWorkflowRunRequest } from "../domain/runs";
 import { createEpicProfile, prepareRunContext } from "./prepare-run-context";
+import { describeRepositoryPreconditionFailures, selectRepositoryPreconditions, type RepositoryPreconditionChecker } from "../domain/repository-preconditions";
 import type { OperatorProjectionRepository } from "../storage/postgres-operators";
 import type { ProjectRepository, WorkflowDefinitionRepository, WorkflowRunRepository } from "../storage/repositories";
 
@@ -21,6 +22,12 @@ export interface LaunchRunDependencies {
   readonly application_version: string | null;
   readonly now: () => string;
   readonly new_id?: () => string;
+  /**
+   * Verifies the repository state a run assumes. Optional so a caller with no
+   * repositories — or a test — need not supply one; when absent, nothing is
+   * checked and the previous behaviour stands.
+   */
+  readonly repository_preconditions?: RepositoryPreconditionChecker;
 }
 
 export type RunLaunchFailureKind =
@@ -29,6 +36,7 @@ export type RunLaunchFailureKind =
   | "project_not_found"
   | "invalid_context"
   | "idempotency_conflict"
+  | "repository_precondition_unmet"
   | "projection_unavailable";
 
 export interface RunLaunchError {
@@ -55,6 +63,16 @@ export const launchCompatibleRun = async (request: CompatibleRunLaunchRequest, d
   if (request.project_id && !project) return launchFailure("project_not_found", `project '${request.project_id}' was not found`);
   const prepared = prepareRunContext({ caller_context: request.context, project, epic_profile: request.epic_profile });
   if (!prepared.ok) return launchFailure("invalid_context", prepared.error.detail);
+
+  // Checked before anything is persisted. Nothing creates the epic branch, and
+  // the first stage that needs it is `build` — so without this a run burns
+  // three agent sessions and three operator approvals before failing on a
+  // branch that never existed. Skipped for a re-launch of an existing run,
+  // whose repositories were already accepted.
+  if (dependencies.repository_preconditions && !existing) {
+    const failures = await dependencies.repository_preconditions.check(selectRepositoryPreconditions(prepared.value));
+    if (failures.length > 0) return launchFailure("repository_precondition_unmet", describeRepositoryPreconditionFailures(failures));
+  }
 
   const createdAt = existing?.created_at ?? dependencies.now();
   const rootWorkflowId = `oakridge-run:${runId}:attempt:initial`;

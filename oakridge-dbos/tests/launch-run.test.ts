@@ -7,6 +7,7 @@ import { createRunLaunchApp } from "../src/http/run-launch";
 import { deterministicRunId, type LaunchRunDependencies } from "../src/runtime/launch-run";
 import { dispatchRunLaunches } from "../src/runtime/run-launch-notifications";
 import type { WorkflowRunRepository } from "../src/storage/repositories";
+import type { RepositoryPrecondition } from "../src/domain/repository-preconditions";
 
 const definition = { id: "ef2b47a4-d1bd-44ee-840a-e4f7b27570db" as WorkflowDefinitionId, name: "flow", version: 11,
   graph: { stages: {}, edges: [] }, archived: false, created_at: "2026-08-15T00:00:00Z" } as WorkflowDefinition;
@@ -14,7 +15,7 @@ const project = { id: "af2b47a4-d1bd-44ee-840a-e4f7b27570db" as ProjectId, name:
   forge_repository: null, base_branch: null, created_at: "2026-08-15T00:00:00Z" };
 const body = { workflow_def_id: definition.id, project_id: project.id, context: { brief_notes: "Replace orchestration" }, epic_profile: null };
 
-const mountedFixture = (options: { readonly archived?: boolean } = {}) => {
+const mountedFixture = (options: { readonly archived?: boolean; readonly repository_preconditions?: LaunchRunDependencies["repository_preconditions"] } = {}) => {
   let stored: PersistWorkflowRunLaunch | null = null;
   let dispatches = 0;
   const summary = { id: deterministicRunId("launch-1"), workflow_name: "flow", status: "running" as const,
@@ -36,6 +37,7 @@ const mountedFixture = (options: { readonly archived?: boolean } = {}) => {
     projections: { async list_runs() { return [{ ...summary, id: stored?.run.id ?? summary.id }]; } },
     async dispatch_launches() { dispatches += 1; return 1; },
     application_version: "pr2", now: () => "2026-08-15T00:00:00Z",
+    ...(options.repository_preconditions ? { repository_preconditions: options.repository_preconditions } : {}),
   } as unknown as LaunchRunDependencies;
   return { app: createRunLaunchApp(dependencies), stored: () => stored, dispatches: () => dispatches };
 };
@@ -92,4 +94,52 @@ test("run launch outbox worker starts DBOS before acknowledging its lease", asyn
   const count = await dispatchRunLaunches(repository, { async start_run(id, input, version) { calls.push(`dbos:${id}:${input.workflow_definition_version}:${version}`); } }, () => "2026-08-15T00:00:00Z");
   expect(count).toBe(1);
   expect(calls).toEqual(["claim", "dbos:root-1:11:pr2", "delivered"]);
+});
+
+/**
+ * The epic branch a run is configured with is created by nothing, and the
+ * first stage that needs it is `build`. Without this check a run burned three
+ * agent sessions and three operator approvals before failing on a branch that
+ * never existed — behind a session error naming neither branch nor repository.
+ */
+const epicBody = {
+  ...body,
+  epic_profile: {
+    title: "Tiers page", slug: "tiers-page", final_merge_policy: "guarded" as const,
+    repositories: [{ repository_key: "pipefitter", repository_path: "/repos/pipefitter", base_branch: "main", epic_branch: "epic/tiers-page" }],
+  },
+};
+
+test("a launch is refused when a repository lacks the branches the run assumes", async () => {
+  const subject = mountedFixture({ repository_preconditions: { async check() {
+    return [{ kind: "missing_ref" as const, repository_key: "pipefitter", repository_path: "/repos/pipefitter",
+      role: "epic_branch" as const, ref: "epic/tiers-page", create_from: "main" }];
+  } } });
+  const response = await request(subject.app, epicBody);
+  expect(response.status).toBe(400);
+  expect(await response.json()).toEqual(expect.objectContaining({ code: "repository_precondition_unmet",
+    error: expect.stringContaining("has no epic branch 'epic/tiers-page'") }));
+});
+
+/** A refused launch must leave nothing behind for the operator to clean up. */
+test("a refused launch persists no run and dispatches nothing", async () => {
+  const subject = mountedFixture({ repository_preconditions: { async check() {
+    return [{ kind: "not_a_git_repository" as const, repository_key: "pipefitter", repository_path: "/repos/pipefitter" }];
+  } } });
+  await request(subject.app, epicBody);
+  expect(subject.stored()).toBeNull();
+  expect(subject.dispatches()).toBe(0);
+});
+
+test("the checker is asked about the repositories the prepared context declares", async () => {
+  let asked: readonly RepositoryPrecondition[] = [];
+  const subject = mountedFixture({ repository_preconditions: { async check(repositories) { asked = repositories; return []; } } });
+  expect((await request(subject.app, epicBody)).status).toBe(201);
+  expect(asked).toEqual([{ repository_key: "pipefitter", repository_path: "/repos/pipefitter", base_branch: "main", epic_branch: "epic/tiers-page" }]);
+});
+
+test("a launch whose repositories check out proceeds", async () => {
+  const subject = mountedFixture({ repository_preconditions: { async check() { return []; } } });
+  expect((await request(subject.app, epicBody)).status).toBe(201);
+  expect(subject.stored()).not.toBeNull();
 });

@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import {
   WorktreeCreateError,
+  selectWorktreeFailureDetail,
   createWorktree,
   isGitRepo,
   isPathInside,
@@ -367,4 +368,27 @@ describe("isPathInside", () => {
   test("false when child is outside parent entirely", () => {
     expect(isPathInside("/x/y", "/a/b")).toBe(false);
   });
+});
+
+/**
+ * A failed `worktree add` writes several lines; the one naming the cause is
+ * git's `fatal:`. Discarding it is what turned a missing epic branch into an
+ * unexplained 503 three stages into a run, with git's actual complaint left in
+ * a terminal nobody was watching.
+ */
+test("the failure detail is git's own fatal line", () => {
+  const error = new WorktreeCreateError(
+    "git worktree add failed",
+    "Preparing worktree (new branch 'cohort/x')\nfatal: invalid reference: epic/tiers-page\n",
+  );
+  expect(selectWorktreeFailureDetail(error)).toBe("fatal: invalid reference: epic/tiers-page");
+});
+
+test("a stderr with no fatal line still yields its first meaningful line", () => {
+  expect(selectWorktreeFailureDetail(new WorktreeCreateError("failed", "\n  could not create directory  \nmore\n")))
+    .toBe("could not create directory");
+});
+
+test("an empty stderr falls back to the error's own message", () => {
+  expect(selectWorktreeFailureDetail(new WorktreeCreateError("git worktree add failed", "   \n  "))).toBe("git worktree add failed");
 });
