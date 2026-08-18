@@ -374,7 +374,6 @@ e2e("cancelling a run fences its delegated session through the real kbbl route",
 
     const run = await launchRun(oakridge.base_url, oakridge.definition.id);
     oakridge.started_runs.push(run.root_workflow_id);
-  oakridge.started_runs.push(run.root_workflow_id);
     // Cancel once the first stage is genuinely running an execution — and once
     // its external reference has been projected, since that projection is what
     // cancellation reads to find the session to fence.
