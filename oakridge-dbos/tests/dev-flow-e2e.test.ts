@@ -31,7 +31,7 @@ import {
   type IntegrationRuntime, type ScriptedAgentScenario,
 } from "./support/dev-flow-harness";
 import {
-  confirmCohortMerged, decideGate, emitDeclaredArtifacts, launchRun, mergedPullRequestObservation,
+  attemptGateDecision, confirmCohortMerged, decideGate, emitDeclaredArtifacts, launchRun, mergedPullRequestObservation,
   observeCohortPullRequest, readReviewInbox, readRun, type EmittedArtifact,
 } from "./support/dev-flow-driver";
 
@@ -260,30 +260,21 @@ e2e("the assessor starts on a build result still parked in its handoff", async (
 }, 180_000);
 
 /**
- * Where a revision request lands today — which is two places.
+ * A revision request the run cannot honour is refused, not accepted.
  *
  * The assessor's gate declares `revision_target: "upstream_handoff"`: a
- * rejection is meant to send the *build* back to work. The build is indeed sent
- * back, by the gate resume route, through the upstream handoff. But
- * `revision_target` is compiled and validated and then read by nothing in the
- * workflow layer — `gateRelayWorkflow` dispositions the action with
- * `selectGateDisposition` alone — so the assessor is *also* told to revise its
- * own assessment. One operator click wakes two agents, and one of them has
- * nothing to do.
+ * rejection is meant to send the *build* back to work. Nothing in the workflow
+ * layer reads that field — `gateRelayWorkflow` dispositions on the action alone
+ * — so accepting the decision wakes the build through the handoff *and* the
+ * assessor's own agent, and the approval of the revised assessment is then
+ * refused against a superseded handoff. The operator would have pressed a
+ * button and watched the run stop for no reason they could see.
  *
- * This is asserted as it stands rather than as it should be, because the
- * correction is a design decision and not a repair. Suppressing the assessor's
- * delivery alone makes things worse: the gate relay returns on a revise
- * disposition, so the wait that would release the assessment is gone, and the
- * assessor's unit is left with neither a gate nor a reason to act. Keeping the
- * gate open across a revision needs a second decision on the same artifact and
- * step, and the operator surface addresses a gate wait by
- * `{execution}:{artifact}:{step}` — an id with no room for a second round. The
- * revision path is unbuilt, not merely misrouted.
- *
- * Change this test when that is settled; it will fail the moment it is.
+ * Until the revision loop exists, the route says so. This asserts the refusal
+ * and that no agent was woken by it; when the loop lands, this test becomes the
+ * one that drives the round trip.
  */
-e2e("a revision requested on an assessment reaches the build — and wrongly wakes the assessor too", async () => {
+e2e("a revision request that would be routed upstream is refused rather than stranding the run", async () => {
   const agent = scriptedAgentScenario();
   useScenario(agent);
 
@@ -301,20 +292,18 @@ e2e("a revision requested on an assessment reaches the build — and wrongly wak
 
     const assessorRequest = agent.launched.get(assessorId);
     if (!assessorRequest) throw new Error("the assessor request disappeared");
-    const buildExecutionId = assessorRequest.inputs.find((input) => input.output_name === "build_result")?.producer_execution_id;
     const [assessment] = await emitDeclaredArtifacts(oakridge.base_url, assessorRequest);
     if (!assessment) throw new Error("the assessor emitted nothing");
     expect(assessment.release).toBe("waiting_gate");
 
-    await decideGate(oakridge.base_url, assessment.artifact_id, "request_revision");
+    const refusal = await attemptGateDecision(oakridge.base_url, assessment.artifact_id, "request_revision");
+    expect(refusal.status).toBe(409);
+    expect(refusal.code).toBe("upstream_revision_unsupported");
 
-    const delivered = await awaitCondition(() => `two revision deliveries (delivered: ${JSON.stringify(agent.deliveries)})`,
-      async () => (agent.deliveries.length >= 2 ? agent.deliveries.map((delivery) => delivery.execution_id) : null), 30_000);
-
-    // Correct: the build is sent back to work, through the upstream handoff.
-    expect(delivered).toContain(String(buildExecutionId));
-    // Wrong, and recorded so it cannot be lost: the assessor is woken too.
-    expect(delivered).toContain(String(assessorRequest.execution_id));
+    // Nothing was woken: not the build, and not the assessor either. A refusal
+    // that had already sent one of them back to work would be worse than none.
+    await Bun.sleep(500);
+    expect(agent.deliveries).toEqual([]);
   } finally {
     await DBOS.cancelWorkflow(run.root_workflow_id, { cancelChildren: true });
     agent.releaseAll();

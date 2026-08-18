@@ -221,3 +221,41 @@ test("an artifact from a different execution is still refused", async () => {
   expect(response.status).toBe(409);
   expect(await response.json()).toEqual({ error: "artifact revision does not belong to this gate unit" });
 });
+
+/**
+ * The revision loop behind `revision_target: "upstream_handoff"` does not
+ * exist yet, and accepting the decision anyway strands the run: the workflow
+ * layer never reads the field, so it wakes both the upstream unit and this one,
+ * and the approval of the revised artifact is then refused against a superseded
+ * handoff. Refusing here is what the operator can act on.
+ */
+test("gate resume refuses a revision request that would be routed upstream", async () => {
+  const subject = fixture();
+  subject.dependencies.contexts.find_for_emit = async () => ({
+    run_id: artifact.run_id, stage_key: "assessor", operator_role: "assessment", stage_instance_id: stageId,
+    execution_id: executionId, unit_id: unitId, executor_type: "delegated_session", execution_workflow_id: "execution-workflow-1",
+    inputs: [], outputs: [{ name: "result", artifact_type: "dev.result", release: { kind: "gate",
+      steps: [{ type: "artifact_approval", actions: [{ name: "approve", disposition: "release" as const }, { name: "request_revision", disposition: "revise" as const }] }],
+      requires_zero_open_review_items: false, revision_target: "upstream_handoff" } }],
+  });
+  const response = await decide(createGateResumeApp(subject.dependencies), { ...body, action: "request_revision" });
+  expect(response.status).toBe(409);
+  expect((await response.json() as { code: string }).code).toBe("upstream_revision_unsupported");
+  expect(subject.sent).toEqual([]);
+});
+
+test("gate resume still approves through an upstream handoff gate", async () => {
+  const subject = fixture();
+  subject.dependencies.contexts.find_for_emit = async () => ({
+    run_id: artifact.run_id, stage_key: "assessor", operator_role: "assessment", stage_instance_id: stageId,
+    execution_id: executionId, unit_id: unitId, executor_type: "delegated_session", execution_workflow_id: "execution-workflow-1",
+    inputs: [], outputs: [{ name: "result", artifact_type: "dev.result", release: { kind: "gate",
+      steps: [{ type: "artifact_approval", actions: [{ name: "approve", disposition: "release" as const }, { name: "request_revision", disposition: "revise" as const }] }],
+      requires_zero_open_review_items: false, revision_target: "upstream_handoff" } }],
+  });
+  // No upstream handoff is resolvable from an execution with no inputs, so the
+  // route refuses for that reason rather than the guard's — which is the point:
+  // the guard does not stand between an approval and its handoff.
+  const response = await decide(createGateResumeApp(subject.dependencies));
+  expect((await response.json() as { error: string }).error).toBe("artifact provenance does not match a pending upstream handoff");
+});

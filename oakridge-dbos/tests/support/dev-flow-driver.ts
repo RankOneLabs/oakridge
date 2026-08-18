@@ -96,6 +96,22 @@ export const decideGate = async (baseUrl: string, artifactId: ArtifactId, action
   return gate;
 };
 
+/** A gate decision the route refused, for a caller asserting the refusal. */
+export interface RefusedGateDecision { readonly status: number; readonly error: string; readonly code?: string }
+
+/** Posts a gate decision and reports the refusal rather than throwing on it. */
+export const attemptGateDecision = async (baseUrl: string, artifactId: ArtifactId, action: string): Promise<RefusedGateDecision> => {
+  const gate = await awaitPendingGate(baseUrl, artifactId);
+  const response = await fetch(`${baseUrl}/gates/${gate.id}/resume`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ idempotency_key: `${action}:${artifactId}`, artifact_revision_id: artifactId,
+      gate_step: gate.gate_step, action, operator_comment: `integration test ${action}` }),
+  });
+  const parsed = await response.json() as { readonly error?: string; readonly code?: string };
+  return { status: response.status, error: parsed.error ?? "", ...(parsed.code ? { code: parsed.code } : {}) };
+};
+
 /** What the cohort pull request route made of the evidence. */
 export type CohortPullRequestAttempt =
   | { readonly kind: "accepted"; readonly outcome: string }
