@@ -22,7 +22,7 @@ import { DBOS } from "@dbos-inc/dbos-sdk";
 import { Hono } from "hono";
 
 import { KbblExecutorAdapter } from "../src/adapters/kbbl";
-import type { ExecutionId } from "../src/domain/primitives";
+import type { ExecutionId, UnitId } from "../src/domain/primitives";
 import { mountSessionsRoutes } from "../../kbbl/core/server/handlers/sessions";
 import type { SessionManager } from "../../kbbl/core/session/session-manager";
 import { findTestDatabaseUrl } from "./support/durable-database";
@@ -31,9 +31,12 @@ import {
   type IntegrationRuntime, type ScriptedAgentScenario,
 } from "./support/dev-flow-harness";
 import {
-  completeExternalReview, decideGate, emitDeclaredArtifacts, launchRun, readReviewInbox, readRun,
-  type EmittedArtifact,
+  confirmCohortMerged, decideGate, emitDeclaredArtifacts, launchRun, mergedPullRequestObservation,
+  observeCohortPullRequest, readReviewInbox, readRun, type EmittedArtifact,
 } from "./support/dev-flow-driver";
+
+/** The epic branch the harness's run context declares its cohorts target. */
+const HARNESS_EPIC_BRANCH = "epic/harness";
 
 const databaseUrl = await findTestDatabaseUrl();
 /**
@@ -61,16 +64,21 @@ afterAll(async () => {
  * A gate is approved when it appears. A build result parked in a handoff is
  * left alone — the assessor's approval is what resolves it, and supplying that
  * decision here is precisely the shortcut that let the deadlock ship. Its
- * `github_review` wait is completed afterwards, standing in for the participant
- * that does not exist yet.
+ * `github_review` wait is closed the way an operator closes it, by confirming
+ * the merge through the cohort pull request route.
  */
+/** An output in a handoff, with the cohort id the operator surface addresses it by. */
+interface ParkedCohort extends EmittedArtifact { readonly cohort_id: string }
+
 class RunDriver {
   private readonly driven = new Set<string>();
   private readonly gated: EmittedArtifact[] = [];
-  private readonly awaitingReview: EmittedArtifact[] = [];
-  private readonly parked: EmittedArtifact[] = [];
+  private readonly awaitingReview: ParkedCohort[] = [];
+  private readonly parked: ParkedCohort[] = [];
   /** The last thing a route refused, so a timeout says what it was blocked on. */
   private lastRefusal = "nothing refused yet";
+  /** How many external reviews have been closed, which picks the next one's path. */
+  private closed = 0;
 
   constructor(private readonly base: string, private readonly agent: ScriptedAgentScenario, private readonly rootId: string) {}
 
@@ -94,7 +102,13 @@ class RunDriver {
       const emitted = await emitDeclaredArtifacts(this.base, request);
       for (const artifact of emitted) {
         if (artifact.release === "waiting_gate") this.gated.push(artifact);
-        if (artifact.release === "waiting_handoff") { this.awaitingReview.push(artifact); this.parked.push(artifact); }
+        if (artifact.release === "waiting_handoff") {
+          // A cohort is addressed the way a gate is, and that is what the
+          // operator surface hands out for the confirm-merged action.
+          const cohort = { ...artifact, cohort_id: `${request.stage_instance_id}:${artifact.unit_id}` };
+          this.awaitingReview.push(cohort);
+          this.parked.push(cohort);
+        }
       }
       this.agent.succeed(request.execution_id);
     }
@@ -109,18 +123,27 @@ class RunDriver {
   }
 
   /**
+   * Closing each cohort's `github_review` wait, once there is a wait to close.
+   *
+   * The first cohort is closed by a polled observation and the rest by the
+   * operator's confirm-merged button. Both are the same route and the same
+   * checks — running one of each proves the fallback is not a second, weaker
+   * path that only the tests exercise.
+   *
    * Tries once per open handoff. A handoff only becomes completable after the
    * downstream stage has approved it, and that stage is driven by this same
    * loop — so a refusal here means "not yet", and the attempt is retried on the
    * next pass rather than blocking the work that unblocks it.
    */
-  async completeReadyExternalReviews(): Promise<void> {
-    const stillOpen: EmittedArtifact[] = [];
-    for (const artifact of this.awaitingReview) {
-      const attempt = await completeExternalReview(this.base, artifact.artifact_id);
-      if (attempt.kind === "completed") continue;
-      this.lastRefusal = `${artifact.output_name}/${artifact.unit_id}: ${attempt.detail}`;
-      stillOpen.push(artifact);
+  async closeReadyReviews(): Promise<void> {
+    const stillOpen: ParkedCohort[] = [];
+    for (const cohort of this.awaitingReview) {
+      const attempt = this.closed === 0
+        ? await observeCohortPullRequest(this.base, cohort.cohort_id, mergedPullRequestObservation(cohort.unit_id as UnitId, HARNESS_EPIC_BRANCH))
+        : await confirmCohortMerged(this.base, cohort.cohort_id);
+      if (attempt.kind === "accepted" && attempt.outcome === "completed") { this.closed += 1; continue; }
+      this.lastRefusal = `${cohort.cohort_id}: ${attempt.kind === "accepted" ? attempt.outcome : attempt.detail}`;
+      stillOpen.push(cohort);
     }
     this.awaitingReview.length = 0;
     this.awaitingReview.push(...stillOpen);
@@ -146,13 +169,14 @@ e2e("the seeded dev flow runs to completion through gates and handoffs", async (
   useScenario(agent);
 
   const run = await launchRun(oakridge.base_url, oakridge.definition.id);
+  oakridge.started_runs.push(run.root_workflow_id);
   const driver = new RunDriver(oakridge.base_url, agent, run.root_workflow_id);
 
   try {
     await awaitCondition(() => `the dev flow to finish (${driver.diagnosis})`, async () => {
       await driver.driveNewExecutions();
       await driver.approvePendingGates();
-      await driver.completeReadyExternalReviews();
+      await driver.closeReadyReviews();
       const detail = await readRun(oakridge.base_url, run.run_id);
       return detail.status === "complete" || detail.status === "failed" ? detail : null;
     }, 180_000);
@@ -197,6 +221,7 @@ e2e("the assessor starts on a build result still parked in its handoff", async (
   useScenario(agent);
 
   const run = await launchRun(oakridge.base_url, oakridge.definition.id);
+  oakridge.started_runs.push(run.root_workflow_id);
   const driver = new RunDriver(oakridge.base_url, agent, run.root_workflow_id);
   const isAssessor = (id: string): boolean => id.includes(":stage:assessor:unit:");
 
@@ -263,6 +288,7 @@ e2e("a revision requested on an assessment reaches the build — and wrongly wak
   useScenario(agent);
 
   const run = await launchRun(oakridge.base_url, oakridge.definition.id);
+  oakridge.started_runs.push(run.root_workflow_id);
   const driver = new RunDriver(oakridge.base_url, agent, run.root_workflow_id);
   const isAssessor = (id: string): boolean => id.includes(":stage:assessor:unit:");
 
@@ -358,6 +384,8 @@ e2e("cancelling a run fences its delegated session through the real kbbl route",
     });
 
     const run = await launchRun(oakridge.base_url, oakridge.definition.id);
+    oakridge.started_runs.push(run.root_workflow_id);
+  oakridge.started_runs.push(run.root_workflow_id);
     // Cancel once the first stage is genuinely running an execution — and once
     // its external reference has been projected, since that projection is what
     // cancellation reads to find the session to fence.

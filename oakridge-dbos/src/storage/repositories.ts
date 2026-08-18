@@ -12,6 +12,7 @@ import type { SessionHold } from "../domain/session-hold";
 import type { CreateProject, Project } from "../domain/projects";
 import type { CreateWorkflowRunResult, DeleteRunResult, PendingRunLaunch, PersistWorkflowRunLaunch, SetRunArchiveResult, WorkflowRunLaunchRecord, WorkflowRunListFilter } from "../domain/runs";
 import type { ConfirmFinalPullRequestRequest, FinalPullRequestDomainError, FinalPullRequestProjection, PullRequestObservation } from "../domain/final-pull-request";
+import type { CohortPullRequestReconciliation } from "../domain/cohort-pull-request";
 import type { Result } from "../domain/primitives";
 
 export interface WorkflowDefinitionRepository {
@@ -165,6 +166,22 @@ export interface GateDecisionAuditRepository {
 export interface EpicWorkflowProfileRepository {
   insert(profile: EpicWorkflowProfile): Promise<void>;
   find_by_id(id: EpicWorkflowProfileId): Promise<EpicWorkflowProfile | null>;
+  /**
+   * A profile is created with its run's id, so the two lookups agree today —
+   * but that is an accident of the launch path, not a rule, and a caller
+   * holding a run should say so rather than rely on it.
+   */
+  find_by_run_id(run_id: WorkflowRunId): Promise<EpicWorkflowProfile | null>;
+}
+
+/**
+ * The durable record of whether a cohort's pull request merged, keyed by the
+ * unit that opened it. Written by whatever observed the forge — the poller, or
+ * an operator confirming by hand — and read by the operator projections.
+ */
+export interface CohortPullRequestRepository {
+  find(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<CohortPullRequestReconciliation | null>;
+  upsert(reconciliation: CohortPullRequestReconciliation): Promise<void>;
 }
 
 export interface PersistFinalPullRequestObservation {

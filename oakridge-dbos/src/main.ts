@@ -13,6 +13,7 @@ import { KbblExecutorAdapter } from "./adapters/kbbl";
 import { selectControlPlaneAccess } from "./http/control-auth";
 import { createOakridgeRuntime } from "./runtime/compose";
 import { GitRepositoryPreconditionChecker } from "./runtime/git-repository-preconditions";
+import { GithubPullRequestReader } from "./runtime/github-pull-requests";
 import { DEFAULT_STALL_THRESHOLD_SECONDS } from "./storage/postgres-operators";
 
 const required = (name: string): string => {
@@ -36,6 +37,13 @@ if (controlAccess.kind === "refused") throw new Error(controlAccess.detail);
 const stallThresholdSeconds = Number(process.env.OAKRIDGE_STALL_THRESHOLD_SECONDS ?? String(DEFAULT_STALL_THRESHOLD_SECONDS));
 if (!Number.isFinite(stallThresholdSeconds) || stallThresholdSeconds <= 0) throw new Error("OAKRIDGE_STALL_THRESHOLD_SECONDS must be a positive number of seconds");
 
+// Optional on purpose. Without a token nothing polls GitHub, and a cohort's
+// merge is confirmed by an operator through the same route the poller uses —
+// which is also the fallback when the token cannot see a given repository.
+const githubToken = process.env.OAKRIDGE_GITHUB_TOKEN?.trim();
+const pullRequestPollIntervalMs = Number(process.env.OAKRIDGE_PULL_REQUEST_POLL_SECONDS ?? "60") * 1_000;
+if (!Number.isFinite(pullRequestPollIntervalMs) || pullRequestPollIntervalMs < 5_000) throw new Error("OAKRIDGE_PULL_REQUEST_POLL_SECONDS must be at least 5 seconds");
+
 DBOS.setConfig({ name: "oakridge", systemDatabaseUrl: databaseUrl, applicationVersion });
 
 const runtime = await createOakridgeRuntime({
@@ -45,8 +53,10 @@ const runtime = await createOakridgeRuntime({
   prompt_template_directory: resolve(import.meta.dir, "../../oakridge-core/prompts"),
   stall_threshold_seconds: stallThresholdSeconds,
   repository_preconditions: new GitRepositoryPreconditionChecker(),
+  ...(githubToken ? { pull_request_reader: new GithubPullRequestReader({ token: githubToken }) } : {}),
   ...(controlAccess.kind === "token_required" ? { control_token: controlAccess.token } : {}),
 });
+if (!githubToken) console.warn("OAKRIDGE_GITHUB_TOKEN is unset: cohort pull requests are not polled, so merges must be confirmed by an operator");
 
 await runtime.seed_builtins();
 await DBOS.launch();
@@ -67,6 +77,22 @@ const launchTimer = setInterval(() => {
     .catch((error: unknown) => { console.error("run launch dispatch failed", error); })
     .finally(() => { launchDispatch = null; });
 }, 1_000);
+
+// A cohort's pull request merges at human pace and GitHub is rate limited, so
+// this sweeps far more slowly than the outbox dispatchers. Skipped entirely
+// when no reader is configured.
+let pullRequestPoll: Promise<unknown> | null = null;
+const pullRequestTimer = setInterval(() => {
+  if (pullRequestPoll) return;
+  pullRequestPoll = runtime.poll_pull_requests()
+    .then((outcomes) => {
+      for (const outcome of outcomes ?? []) {
+        if (outcome.resolution.kind === "refused") console.warn(`cohort ${outcome.stage_instance_id}:${outcome.unit_id} pull request refused: ${outcome.resolution.detail}`);
+      }
+    })
+    .catch((error: unknown) => { console.error("cohort pull request poll failed", error); })
+    .finally(() => { pullRequestPoll = null; });
+}, pullRequestPollIntervalMs);
 
 // The outbox is polled every second by both dispatchers, so delivered rows left
 // in place turn a bounded working set into a table that only ever grows. Swept
@@ -102,10 +128,11 @@ const shutdown = (): Promise<void> => {
     clearInterval(notificationTimer);
     clearInterval(launchTimer);
     clearInterval(outboxPurgeTimer);
+    clearInterval(pullRequestTimer);
     server.stop();
     // clearInterval stops the next purge from starting; it does not settle one
     // already running, which would still be holding a connection when SQL closes.
-    await Promise.allSettled(outboxPurge ? [outboxPurge] : []);
+    await Promise.allSettled([...(outboxPurge ? [outboxPurge] : []), ...(pullRequestPoll ? [pullRequestPoll] : [])]);
     await DBOS.shutdown();
     await runtime.close();
   })();

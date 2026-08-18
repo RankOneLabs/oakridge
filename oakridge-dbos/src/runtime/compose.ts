@@ -20,12 +20,14 @@ import { DEV_FLOW_ARTIFACT_TYPES, findArtifactType } from "../domain/artifact-ty
 import type { ExecutorAdapter } from "../domain/execution";
 import type { JsonValue } from "../domain/primitives";
 import type { RepositoryPreconditionChecker } from "../domain/repository-preconditions";
+import type { CohortPullRequestDependencies } from "./cohort-pull-request";
+import { pollCohortPullRequests, type CohortPollOutcome, type PullRequestReader } from "./github-pull-requests";
 import { createApp } from "../http/app";
 import { getGateWorkflowState, getHandoffWorkflowState, getStageAdmissionState, registerDbosTransportClient, sendArtifactWorkflowMessage, sendGateWorkflowCommand, sendHandoffWorkflowCommand, sendStageCommand } from "../http/dbos-transport";
 import { seedBuiltins } from "../seed/seed-builtins";
 import { PostgresArtifactRevisionRepository, PostgresCancellationTargetRepository, PostgresExecutionArtifactContextRepository, PostgresExecutionProjectionRepository, PostgresResumeArtifactRepository, PostgresRerunTargetRepository, PostgresSessionHoldRepository, PostgresStageAdmissionTargetRepository, PostgresStageInstanceRepository, PostgresWorkflowAttemptRepository, PostgresWorkflowRunRepository } from "../storage/postgres-domain";
 import { DEFAULT_STALL_THRESHOLD_SECONDS, PostgresOperatorProjectionRepository } from "../storage/postgres-operators";
-import { PostgresCollaborationRepository, PostgresFinalPullRequestRepository, PostgresGateDecisionAuditRepository } from "../storage/postgres-policy";
+import { PostgresCohortPullRequestRepository, PostgresCollaborationRepository, PostgresEpicWorkflowProfileRepository, PostgresFinalPullRequestRepository, PostgresGateDecisionAuditRepository } from "../storage/postgres-policy";
 import { PostgresProjectRepository } from "../storage/postgres-projects";
 import { PostgresWorkflowDefinitionRepository } from "../storage/postgres-workflow-definitions";
 import { PgPostgresExecutor } from "../storage/sql-executor";
@@ -61,6 +63,12 @@ export interface OakridgeRuntimeConfig {
    * copies wants.
    */
   readonly repository_preconditions?: RepositoryPreconditionChecker;
+  /**
+   * Reads the pull requests cohorts are waiting on. Absent when the backend has
+   * no credentials for the forge, in which case nothing polls and an operator
+   * confirms merges by hand through the same route.
+   */
+  readonly pull_request_reader?: PullRequestReader;
   readonly now?: () => string;
 }
 
@@ -74,6 +82,12 @@ export interface OakridgeRuntime {
   seed_builtins(): Promise<void>;
   /** Deletes delivered outbox rows older than the retention window. */
   purge_outbox(older_than: string): Promise<number>;
+  /**
+   * Asks the forge about every cohort parked on its pull request, and closes
+   * the waits whose pull requests have merged. Resolves to null when no reader
+   * is configured, which is a backend where merges are confirmed by hand.
+   */
+  poll_pull_requests(): Promise<readonly CohortPollOutcome[] | null>;
   /** Settles in-flight dispatch, then closes the SQL pool and DBOS client. */
   close(): Promise<void>;
 }
@@ -100,6 +114,8 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   const audits = new PostgresGateDecisionAuditRepository(sql);
   const collaboration = new PostgresCollaborationRepository(sql);
   const finalPullRequests = new PostgresFinalPullRequestRepository(sql);
+  const epicProfiles = new PostgresEpicWorkflowProfileRepository(sql);
+  const cohortReconciliations = new PostgresCohortPullRequestRepository(sql);
   const projections = new PostgresOperatorProjectionRepository(sql, { stall_threshold_seconds: config.stall_threshold_seconds ?? DEFAULT_STALL_THRESHOLD_SECONDS });
 
   const dbosRuns = new DbosStageRerunClient(client);
@@ -135,6 +151,16 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
   const dispatchNotifications = () => trackDispatch(() => dispatchArtifactNotifications(artifacts, { send: sendArtifactWorkflowMessage }));
   const dispatchLaunches = () => trackDispatch(() => dispatchRunLaunches(runs, dbosRuns));
 
+  const cohortPullRequests: CohortPullRequestDependencies = {
+    runs, epic_profiles: epicProfiles, contexts, artifacts, reconciliations: cohortReconciliations,
+    get_handoff_state: getHandoffWorkflowState, send_handoff_command: sendHandoffWorkflowCommand, now,
+  };
+  const pollPullRequests = (): Promise<readonly CohortPollOutcome[] | null> => {
+    const reader = config.pull_request_reader;
+    if (!reader) return Promise.resolve(null);
+    return trackDispatch(() => pollCohortPullRequests({ ...cohortPullRequests, reader, list_cohorts: () => projections.list_cohorts() }));
+  };
+
   const presentation = (artifactType: string) => {
     const definition = findArtifactType(artifactType);
     return definition ? { component_id: definition.component_id, capabilities: definition.capabilities,
@@ -157,6 +183,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     gate_resume: { contexts, artifacts, collaboration, audits, get_gate_state: getGateWorkflowState, send_gate_command: sendGateWorkflowCommand,
       get_handoff_state: getHandoffWorkflowState, send_handoff_command: sendHandoffWorkflowCommand },
     handoff_complete: { artifacts, contexts, get_handoff_state: getHandoffWorkflowState, send_handoff_command: sendHandoffWorkflowCommand },
+    cohort_pull_requests: cohortPullRequests,
     collaboration: { artifacts, contexts, executions, collaboration, policy_for_artifact_type: collaborationPolicy,
       ping_thread: (input) => collaborationPings.enqueue(input), dispatch_notifications: dispatchNotifications },
     operator_projections: projections,
@@ -177,6 +204,7 @@ export const createOakridgeRuntime = async (config: OakridgeRuntimeConfig): Prom
     dispatch_launches: dispatchLaunches,
     seed_builtins: () => seedBuiltins(definitions),
     purge_outbox: (olderThan) => artifacts.purge_delivered_commands(olderThan),
+    poll_pull_requests: pollPullRequests,
     async close() {
       isDispatchClosing = true;
       await Promise.allSettled([...inFlightDispatches]);

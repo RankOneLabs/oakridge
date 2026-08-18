@@ -167,6 +167,15 @@ export interface IntegrationRuntime {
   readonly base_url: string;
   readonly definition: WorkflowDefinition;
   readonly application_version: string;
+  /**
+   * Root workflows this file started, cancelled on teardown.
+   *
+   * A run left mid-flight keeps its executions parked in `recv`, and
+   * `DBOS.shutdown()` waits on them — so a test that fails its assertion is
+   * followed by a shutdown that times out, and the real failure scrolls away
+   * behind a hook error. Cancelling first keeps the first failure the loudest.
+   */
+  readonly started_runs: string[];
   stop(): Promise<void>;
 }
 
@@ -206,13 +215,18 @@ export const installIntegrationRuntime = async (databaseUrl: string): Promise<In
   await DBOS.launch();
 
   const server = Bun.serve({ port: 0, idleTimeout: 60, fetch: runtime.app.fetch });
+  const startedRuns: string[] = [];
 
   return {
     runtime,
     base_url: `http://127.0.0.1:${server.port}`,
     definition: loaded.value,
     application_version: applicationVersion,
+    started_runs: startedRuns,
     async stop() {
+      for (const rootWorkflowId of startedRuns) {
+        await DBOS.cancelWorkflow(rootWorkflowId, { cancelChildren: true }).catch(() => undefined);
+      }
       server.stop(true);
       await DBOS.shutdown();
       await runtime.close();
@@ -220,8 +234,12 @@ export const installIntegrationRuntime = async (databaseUrl: string): Promise<In
   };
 };
 
-/** The body a faked agent would have produced for a given stage. */
-export const artifactBody = (request: ExecutionRequest, unitId: UnitId): JsonValue => {
+/** A canonical GitHub pull request URL per cohort, so reconciliation has an identity to check. */
+export const cohortPullRequestUrl = (unitId: UnitId): string => `https://github.com/RankOneLabs/oakridge/pull/${unitId === "web" ? 2 : 1}`;
+export const cohortHeadBranch = (unitId: UnitId): string => `cohort/${unitId}`;
+
+/** The body a faked agent would have produced for a given output. */
+export const artifactBody = (request: ExecutionRequest, unitId: UnitId, outputName: string): JsonValue => {
   const session = (request.resolved_config as { readonly session_name?: string }).session_name ?? "";
   if (session.startsWith("spec-analyzer-")) return { requirements: [{ id: "R1", description: "harness" }] };
   if (session.startsWith("plan-writer-")) return { cohorts: [{ id: "foundation" }, { id: "web" }] };
@@ -230,8 +248,14 @@ export const artifactBody = (request: ExecutionRequest, unitId: UnitId): JsonVal
       next_action: "build", decisions_made: [], acceptance_criteria: ["passes"], depends_on: unitId === "web" ? ["foundation"] : [] };
   }
   if (session.startsWith("build-")) {
-    return { repository_key: "oakridge", summary: `built ${unitId}`, pr_url: "https://github.com/oakridge/oakridge/pull/1", branch: `cohort/${unitId}`,
-      base_branch: "epic/harness", changed_files: [], tests: { passed: 1, failed: 0, output: "ok" }, known_issues: [] };
+    // The two build outputs are genuinely different documents, and the pull
+    // request reconciler reads one of them — so the harness has to emit the
+    // right shape into the right slot rather than one body into both.
+    if (outputName === "pr_summary") {
+      return { pr_url: cohortPullRequestUrl(unitId), branch: cohortHeadBranch(unitId), summary: `built ${unitId}`, review_status: "ready" };
+    }
+    return { repository_key: "oakridge", summary: `built ${unitId}`, changed_files: [],
+      tests: { passed: 1, failed: 0, output: "ok" }, delegated_session_metadata: null, known_issues: [] };
   }
   return { verdict: "pass", findings: [], recommended_next_actions: [] };
 };

@@ -2,16 +2,16 @@
  * Everyone but the agent, talking to Oakridge the way they really do.
  *
  * The agent emits artifacts through the executor callback route. The operator
- * approves gates through the gate resume route. Whatever watches GitHub
- * completes a handoff's external wait through the handoff completion route.
- * Nothing here reaches around the HTTP surface into a workflow, because a
- * message a test can post but production cannot is exactly how a deadlock ships
- * green.
+ * approves gates through the gate resume route, and confirms a merge through
+ * the cohort pull request route — the same one the GitHub poller posts its
+ * observations to. Nothing here reaches around the HTTP surface into a
+ * workflow, because a message a test can post but production cannot is exactly
+ * how a deadlock ships green.
  */
 import type { OperatorParkedGate, OperatorRunDetail, OperatorRunSummary, OperatorReviewInbox } from "../../src/domain/operator-projections";
-import type { ArtifactId, JsonValue, WorkflowDefinitionId } from "../../src/domain/primitives";
+import type { ArtifactId, JsonValue, UnitId, WorkflowDefinitionId } from "../../src/domain/primitives";
 import type { ExecutionRequest } from "../../src/domain/execution";
-import { artifactBody, awaitCondition, runContext } from "./dev-flow-harness";
+import { artifactBody, awaitCondition, cohortHeadBranch, cohortPullRequestUrl, runContext } from "./dev-flow-harness";
 
 const EXECUTOR_TYPE = "delegated_session";
 
@@ -59,7 +59,7 @@ export const emitDeclaredArtifacts = async (baseUrl: string, request: ExecutionR
     const response = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json", "idempotency-key": `${request.execution_id}:${expected.unit_id}:${expected.output_name}` },
-      body: JSON.stringify(artifactBody(request, expected.unit_id) as JsonValue),
+      body: JSON.stringify(artifactBody(request, expected.unit_id, expected.output_name) as JsonValue),
     });
     const result = await readJson<EmitResponse>(response, `emit ${expected.output_name} for unit ${expected.unit_id}`);
     emitted.push({ artifact_id: result.artifact_id, output_name: expected.output_name, unit_id: expected.unit_id, release: result.release });
@@ -96,37 +96,54 @@ export const decideGate = async (baseUrl: string, artifactId: ArtifactId, action
   return gate;
 };
 
-/** Whether the handoff was ready for its external completion yet. */
-export type ExternalReviewAttempt =
-  | { readonly kind: "completed" }
-  | { readonly kind: "not_awaiting"; readonly detail: string };
+/** What the cohort pull request route made of the evidence. */
+export type CohortPullRequestAttempt =
+  | { readonly kind: "accepted"; readonly outcome: string }
+  | { readonly kind: "refused"; readonly detail: string };
+
+const postCohortEvidence = async (baseUrl: string, cohortId: string, body: unknown): Promise<CohortPullRequestAttempt> => {
+  const response = await fetch(`${baseUrl}/cohorts/${encodeURIComponent(cohortId)}/pull_request`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+  });
+  const text = await response.text();
+  if (response.ok) return { kind: "accepted", outcome: (JSON.parse(text) as { outcome: { kind: string } }).outcome.kind };
+  if (response.status !== 409) throw new Error(`cohort pull request evidence for ${cohortId} failed: ${response.status} ${text}`);
+  return { kind: "refused", detail: `${response.status} ${text}` };
+};
 
 /**
- * Completes a handoff's external wait — the `github_review` a build result
- * waits on once the assessor has approved it.
+ * The operator's fallback: confirm by hand that a cohort's pull request merged.
  *
- * One attempt, no waiting: the handoff only reaches `awaiting_external` once
+ * One attempt, no waiting. The handoff only reaches `awaiting_external` once
  * the assessor's decision has travelled to it, and the assessor cannot even
- * start until the caller has driven it. A helper that blocked here would stall
- * the very work it is waiting for. The idempotency key is stable, so a repeated
- * attempt after the first success is a no-op rather than a second completion.
+ * start until the caller has driven it — a helper that blocked here would stall
+ * the very work it is waiting for.
  *
- * Nothing in production makes this call. The route exists and is unit-tested;
- * no operator surface reaches it, and no reconciler observes GitHub on the
- * run's behalf. This function stands in for a participant that does not exist
- * yet — which is why it is here rather than hidden inside the system under
- * test, where it would read as a wait that completes itself.
+ * This is the same route the poller uses, and the confirmation is checked
+ * against the same expectations as a polled observation. Driving it from a test
+ * is not standing in for a missing participant any more: it is the button.
  */
-export const completeExternalReview = async (baseUrl: string, artifactId: ArtifactId): Promise<ExternalReviewAttempt> => {
-  const response = await fetch(`${baseUrl}/handoffs/${artifactId}/external-complete`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ external_kind: "github_review", correlation_id: `github:${artifactId}`, idempotency_key: `external:${artifactId}` }),
+export const confirmCohortMerged = async (baseUrl: string, cohortId: string): Promise<CohortPullRequestAttempt> =>
+  postCohortEvidence(baseUrl, cohortId, {
+    kind: "operator_confirmation", idempotency_key: `confirm-merged:${cohortId}`, operator_comment: "integration test confirmed the merge",
   });
-  if (response.ok) return { kind: "completed" };
-  const detail = `${response.status} ${await response.text()}`;
-  if (response.status !== 409) throw new Error(`external completion for ${artifactId} failed: ${detail}`);
-  return { kind: "not_awaiting", detail };
+
+/** The poller's path: report what the forge said about a cohort's pull request. */
+export const observeCohortPullRequest = async (baseUrl: string, cohortId: string, observation: unknown): Promise<CohortPullRequestAttempt> =>
+  postCohortEvidence(baseUrl, cohortId, { kind: "observation", observation });
+
+/**
+ * What `GithubPullRequestReader` would have produced for a merged cohort pull
+ * request, built from the same values the faked agent reported opening.
+ */
+export const mergedPullRequestObservation = (unitId: UnitId, baseBranch: string) => {
+  const url = cohortPullRequestUrl(unitId);
+  const number = Number(url.slice(url.lastIndexOf("/") + 1));
+  return {
+    provider: "github", owner: "RankOneLabs", name: "oakridge", number, url,
+    head_branch: cohortHeadBranch(unitId), base_branch: baseBranch, head_sha: "abc123",
+    state: "merged", source: "poll", observed_at: new Date().toISOString(), merged_at: new Date().toISOString(),
+  };
 };
 
 export const readRun = async (baseUrl: string, runId: OperatorRunSummary["id"]): Promise<OperatorRunDetail> =>
