@@ -5,38 +5,12 @@ import type {
   PullRequestReference,
 } from "./epic";
 import { err, ok, type Result } from "./primitives";
+import { parseGithubPullRequestIdentity, pullRequestMismatch, repositoriesMatch, type PullRequestMismatch, type PullRequestObservation } from "./pull-request";
 
-export type PullRequestObservationSource = "poll" | "webhook" | "manual_recheck";
-export type ObservedPullRequestState = "open" | "merged" | "closed_unmerged";
-
-export interface PullRequestObservation {
-  readonly provider: "github";
-  readonly owner: string;
-  readonly name: string;
-  readonly number: number;
-  readonly url: string;
-  readonly head_branch: string;
-  readonly base_branch: string;
-  readonly head_sha: string | null;
-  readonly state: ObservedPullRequestState;
-  readonly source: PullRequestObservationSource;
-  readonly observed_at: string;
-  readonly merged_at: string | null;
-}
-
-export type PullRequestMismatchKind =
-  | "missing_repository_identity"
-  | "repository_mismatch"
-  | "pull_request_mismatch"
-  | "head_branch_mismatch"
-  | "base_branch_mismatch"
-  | "closed_without_merge"
-  | "stale_observation";
-
-export interface PullRequestMismatch {
-  readonly kind: PullRequestMismatchKind;
-  readonly detail: string;
-}
+// The pull-request vocabulary is shared with cohort reconciliation; it is
+// re-exported here so existing callers keep one import path.
+export type { ObservedPullRequestState, PullRequestMismatch, PullRequestMismatchKind, PullRequestObservation, PullRequestObservationSource } from "./pull-request";
+export { parseGithubPullRequestIdentity } from "./pull-request";
 
 export interface FinalPullRequestReconciliation {
   readonly epic_profile_id: EpicWorkflowProfileId;
@@ -83,12 +57,6 @@ export interface FinalPullRequestDomainError {
   readonly detail: string;
 }
 
-interface FinalPullRequestIdentity {
-  readonly owner: string;
-  readonly name: string;
-  readonly number: number;
-}
-
 export interface ObserveFinalPullRequestInput {
   readonly profile: EpicWorkflowProfile;
   readonly repository_key: string;
@@ -106,18 +74,6 @@ export interface ConfirmFinalPullRequestInput {
   readonly is_final_integration_eligible: boolean;
   readonly confirmed_at: string;
 }
-
-export const parseGithubPullRequestIdentity = (url: string): FinalPullRequestIdentity | null => {
-  const match = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/([1-9][0-9]*)\/?$/.exec(url);
-  if (!match) return null;
-  return { owner: match[1]!, name: match[2]!, number: Number(match[3]) };
-};
-
-const repositoriesMatch = (leftOwner: string, leftName: string, rightOwner: string, rightName: string): boolean =>
-  leftOwner.toLocaleLowerCase("en-US") === rightOwner.toLocaleLowerCase("en-US")
-  && leftName.toLocaleLowerCase("en-US") === rightName.toLocaleLowerCase("en-US");
-
-const mismatch = (kind: PullRequestMismatchKind, detail: string): PullRequestMismatch => ({ kind, detail });
 
 const replaceRepository = (
   profile: EpicWorkflowProfile,
@@ -166,19 +122,19 @@ export const observeFinalPullRequest = (
   };
   let finding: PullRequestMismatch | null = null;
   if (!repositoriesMatch(urlIdentity.owner, urlIdentity.name, repository.forge_repository.owner, repository.forge_repository.name)) {
-    finding = mismatch("repository_mismatch", "final pull request URL does not belong to the Epic repository binding");
+    finding = pullRequestMismatch("repository_mismatch", "final pull request URL does not belong to the Epic repository binding");
   } else if (!repositoriesMatch(input.observation.owner, input.observation.name, repository.forge_repository.owner, repository.forge_repository.name)) {
-    finding = mismatch("repository_mismatch", "observed pull request belongs to another repository");
+    finding = pullRequestMismatch("repository_mismatch", "observed pull request belongs to another repository");
   } else if (!pullRequestReferencesMatch(reference, input.observation)) {
-    finding = mismatch("pull_request_mismatch", "observed pull request does not match the build's durable PR identity");
+    finding = pullRequestMismatch("pull_request_mismatch", "observed pull request does not match the build's durable PR identity");
   } else if (input.observation.head_branch !== repository.epic_branch) {
-    finding = mismatch("head_branch_mismatch", "observed pull request head branch does not match the cohort branch");
+    finding = pullRequestMismatch("head_branch_mismatch", "observed pull request head branch does not match the cohort branch");
   } else if (input.observation.base_branch !== repository.base_branch) {
-    finding = mismatch("base_branch_mismatch", "observed pull request base branch does not match the repository base branch");
+    finding = pullRequestMismatch("base_branch_mismatch", "observed pull request base branch does not match the repository base branch");
   } else if (input.observation.state === "closed_unmerged") {
-    finding = mismatch("closed_without_merge", "pull request closed without merging into the epic branch");
+    finding = pullRequestMismatch("closed_without_merge", "pull request closed without merging into the epic branch");
   } else if (input.observation.state === "merged" && input.observation.merged_at === null) {
-    finding = mismatch("pull_request_mismatch", "merged observation is missing merged_at evidence");
+    finding = pullRequestMismatch("pull_request_mismatch", "merged observation is missing merged_at evidence");
   }
 
   const hasMergedEvidence = finding === null && input.observation.state === "merged";

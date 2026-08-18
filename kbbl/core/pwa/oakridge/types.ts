@@ -299,6 +299,28 @@ export interface GateResumeResponse {
   resumed: boolean;
 }
 
+/**
+ * The operator confirming a cohort's pull request merged, when Oakridge cannot
+ * see the repository for itself. Mirrors the `operator_confirmation` half of
+ * `POST /cohorts/:cohortId/pull_request` in oakridge-dbos.
+ */
+export interface ConfirmCohortMergedRequest {
+  idempotency_key: string;
+  operator_comment: string;
+}
+
+export type CohortPullRequestOutcomeKind =
+  | "completed"
+  | "already_completed"
+  | "merged_not_awaiting"
+  | "waiting"
+  | "ignored_stale";
+
+export interface CohortPullRequestResponse {
+  cohort_id: string;
+  outcome: { kind: CohortPullRequestOutcomeKind };
+}
+
 export type CohortLifecycle =
   | "waiting_admission"
   | "building"
@@ -351,6 +373,7 @@ export type ReviewInboxItemKind =
   | "cohort_blocked"
   | "cohort_failed"
   | "pull_request_mismatch"
+  | "pull_request_merge"
   | "gate_decision";
 
 export type ReviewInboxItemState = "actionable" | "blocked" | "completed";

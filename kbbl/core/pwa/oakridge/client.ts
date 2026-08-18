@@ -2,6 +2,8 @@
 // All paths are same-origin relative so the PWA needs no CORS config.
 
 import type {
+  CohortPullRequestResponse,
+  ConfirmCohortMergedRequest,
   OakridgeConfig,
   Project,
   WorkflowDefSummary,
@@ -289,6 +291,18 @@ export function fetchArtifact(id: string): Promise<ArtifactDetail> {
 
 export function resumeGate(gateId: string, req: GateResumeRequest): Promise<GateResumeResponse> {
   return oakridgePost<GateResumeResponse>(`/gates/${encodeURIComponent(gateId)}/resume`, req);
+}
+
+/**
+ * Confirms a cohort's pull request merged, when Oakridge cannot see the
+ * repository for itself.
+ *
+ * This is the fallback behind the GitHub poller, not a second path: the backend
+ * checks a confirmation against the same expectations it checks a polled
+ * observation against, so this asserts only that the merge happened.
+ */
+export function confirmCohortMerged(cohortId: string, req: ConfirmCohortMergedRequest): Promise<CohortPullRequestResponse> {
+  return oakridgePost<CohortPullRequestResponse>(`/cohorts/${encodeURIComponent(cohortId)}/pull_request`, { kind: "operator_confirmation", ...req });
 }
 
 export function fetchProjects(): Promise<Project[]> {

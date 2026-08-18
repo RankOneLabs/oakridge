@@ -4,6 +4,7 @@ import { createArtifactCallbackApp, type ArtifactCallbackDependencies } from "./
 import { createArtifactWithdrawApp, type ArtifactWithdrawDependencies } from "./artifact-withdraw";
 import { createGateResumeApp, type GateResumeDependencies } from "./gate-resume";
 import { createHandoffCompleteApp, type HandoffCompleteDependencies } from "./handoff-complete";
+import { createCohortPullRequestApp, type CohortPullRequestHttpDependencies } from "./cohort-pull-request";
 import { createCollaborationApp, type CollaborationHttpDependencies } from "./collaboration";
 import { createOperatorProjectionApp } from "./operator-projections";
 import type { OperatorProjectionRepository } from "../storage/postgres-operators";
@@ -30,6 +31,7 @@ export interface OakridgeHttpDependencies {
   readonly artifact_withdraw: ArtifactWithdrawDependencies;
   readonly gate_resume: GateResumeDependencies;
   readonly handoff_complete: HandoffCompleteDependencies;
+  readonly cohort_pull_requests: CohortPullRequestHttpDependencies;
   readonly collaboration: CollaborationHttpDependencies;
   readonly operator_projections: OperatorProjectionRepository;
   readonly artifact_detail: ArtifactDetailDependencies;
@@ -51,6 +53,7 @@ export const createApp = (dependencies: OakridgeHttpDependencies): Hono => {
   app.route("/", createArtifactWithdrawApp(dependencies.artifact_withdraw));
   app.route("/", createGateResumeApp(dependencies.gate_resume));
   app.route("/", createHandoffCompleteApp(dependencies.handoff_complete));
+  app.route("/", createCohortPullRequestApp(dependencies.cohort_pull_requests));
   app.route("/", createCollaborationApp(dependencies.collaboration));
   app.route("/", createOperatorProjectionApp(dependencies.operator_projections));
   app.route("/", createArtifactDetailApp(dependencies.artifact_detail));

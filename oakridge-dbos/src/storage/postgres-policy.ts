@@ -1,9 +1,10 @@
 import type { CollaborationMessage, CollaborationThread, CollaborationThreadWithMessages, MessageId, ReviewItem, ReviewItemId, ReviewItemStatus, ThreadId, ThreadStatus } from "../domain/collaboration";
+import type { CohortPullRequestReconciliation } from "../domain/cohort-pull-request";
 import type { EpicWorkflowProfile, EpicWorkflowProfileId } from "../domain/epic";
 import { confirmFinalPullRequest, observeFinalPullRequest, type FinalPullRequestDomainError, type FinalPullRequestReconciliation } from "../domain/final-pull-request";
 import type { GateDecisionAudit, GateDecisionAuditId } from "../domain/gates";
 import type { ArtifactId, ExecutionId, StageInstanceId, UnitId, WorkflowRunId } from "../domain/primitives";
-import type { CollaborationRepository, EpicWorkflowProfileRepository, FinalPullRequestRepository, GateDecisionAuditRepository, PersistFinalPullRequestConfirmation, PersistFinalPullRequestObservation } from "./repositories";
+import type { CohortPullRequestRepository, CollaborationRepository, EpicWorkflowProfileRepository, FinalPullRequestRepository, GateDecisionAuditRepository, PersistFinalPullRequestConfirmation, PersistFinalPullRequestObservation } from "./repositories";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 
 interface GateAuditRow {
@@ -73,7 +74,71 @@ export class PostgresEpicWorkflowProfileRepository implements EpicWorkflowProfil
     const rows = await this.sql.query<EpicWorkflowProfile>("SELECT * FROM oakridge.epic_workflow_profile WHERE id = $1", [id]);
     return rows[0] ?? null;
   }
+  async find_by_run_id(run_id: WorkflowRunId): Promise<EpicWorkflowProfile | null> {
+    const rows = await this.sql.query<EpicProfileRow>(
+      `SELECT id::text, workflow_run_id::text, title, slug, lifecycle_state, final_merge_policy, repositories,
+              created_at::text, updated_at::text
+       FROM oakridge.epic_workflow_profile WHERE workflow_run_id = $1`, [run_id]);
+    return rows[0] ? decodeEpicProfile(rows[0]) : null;
+  }
 }
+
+/**
+ * Whether a cohort's pull request merged, one row per build unit.
+ *
+ * Upserted rather than inserted: observations arrive repeatedly — the poller
+ * runs on a timer — and each one supersedes the last for the same cohort. The
+ * write refuses to move a row backwards in time so a slow request cannot
+ * overwrite a fresher observation that beat it home.
+ */
+export class PostgresCohortPullRequestRepository implements CohortPullRequestRepository {
+  constructor(private readonly sql: SqlExecutor) {}
+
+  async find(stage_instance_id: StageInstanceId, unit_id: UnitId): Promise<CohortPullRequestReconciliation | null> {
+    const rows = await this.sql.query<CohortReconciliationRow>(
+      `SELECT workflow_run_id::text, stage_instance_id::text, unit_id, repository_key, observation, mismatch,
+              completed_at::text, updated_at::text
+       FROM oakridge.cohort_pull_request_reconciliation
+       WHERE stage_instance_id = $1 AND unit_id = $2`, [stage_instance_id, unit_id]);
+    return rows[0] ? decodeCohortReconciliation(rows[0]) : null;
+  }
+
+  async upsert(reconciliation: CohortPullRequestReconciliation): Promise<void> {
+    await this.sql.query(
+      `INSERT INTO oakridge.cohort_pull_request_reconciliation
+         (workflow_run_id, stage_instance_id, unit_id, repository_key, observation, mismatch, observed_at, completed_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7::timestamptz,$8::timestamptz,$9::timestamptz)
+       ON CONFLICT (stage_instance_id, unit_id) DO UPDATE SET
+         repository_key = EXCLUDED.repository_key,
+         observation = EXCLUDED.observation,
+         mismatch = EXCLUDED.mismatch,
+         observed_at = EXCLUDED.observed_at,
+         completed_at = COALESCE(oakridge.cohort_pull_request_reconciliation.completed_at, EXCLUDED.completed_at),
+         updated_at = EXCLUDED.updated_at
+       WHERE EXCLUDED.observed_at >= oakridge.cohort_pull_request_reconciliation.observed_at`,
+      [reconciliation.run_id, reconciliation.stage_instance_id, reconciliation.unit_id, reconciliation.repository_key,
+        JSON.stringify(reconciliation.observation), reconciliation.mismatch === null ? null : JSON.stringify(reconciliation.mismatch),
+        reconciliation.observation.observed_at, reconciliation.completed_at, reconciliation.updated_at],
+    );
+  }
+}
+
+interface CohortReconciliationRow extends Omit<CohortPullRequestReconciliation, "run_id" | "stage_instance_id" | "unit_id"> {
+  readonly workflow_run_id: string;
+  readonly stage_instance_id: string;
+  readonly unit_id: string;
+}
+
+const decodeCohortReconciliation = (row: CohortReconciliationRow): CohortPullRequestReconciliation => ({
+  run_id: row.workflow_run_id as WorkflowRunId,
+  stage_instance_id: row.stage_instance_id as StageInstanceId,
+  unit_id: row.unit_id as UnitId,
+  repository_key: row.repository_key,
+  observation: row.observation,
+  mismatch: row.mismatch,
+  completed_at: row.completed_at,
+  updated_at: row.updated_at,
+});
 
 interface EpicProfileRow extends Omit<EpicWorkflowProfile, "id" | "workflow_run_id"> {
   readonly id: string;

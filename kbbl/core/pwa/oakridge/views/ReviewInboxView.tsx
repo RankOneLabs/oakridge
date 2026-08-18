@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { GateDecisionActions } from "../GateDecisionActions";
 import { useReviewInbox } from "../hooks/useReviewInbox";
 import { useAdmitStageUnit } from "../hooks/useAdmitStageUnit";
+import { useConfirmCohortMerged } from "../hooks/useConfirmCohortMerged";
 import type { CohortLifecycle, CohortLifecycleSummary, ParkedGate, ReviewInboxItem } from "../types";
 
 interface ReviewInboxViewProps {
@@ -64,6 +65,7 @@ function workLabel(item: ReviewInboxItem): string {
     case "cohort_blocked": return "Waiting on another cohort";
     case "cohort_failed": return "Cohort needs recovery";
     case "pull_request_mismatch": return "Pull request needs attention";
+    case "pull_request_merge": return "Waiting for the pull request to merge";
     case "gate_decision": return "Decision recorded";
   }
 }
@@ -89,8 +91,9 @@ function WorkItem({ item, cohort, onSelectRun, onSelectArtifact }: { item: Revie
       <div className="or-work-item__decision">
         {gate && <GateDecisionActions gate={gate} />}
         {!gate && item.kind === "admission" && cohort && <AdmissionAction item={item} cohort={cohort} />}
+        {!gate && item.kind === "pull_request_merge" && <PullRequestMergeAction item={item} />}
         {!gate && item.kind === "pull_request_mismatch" && <><p>{mismatch?.detail ?? "The observed pull request does not match this cohort’s durable configuration."}</p><p>Correct the pull request repository or branches, then Oakridge will reconcile it automatically.</p></>}
-        {!gate && item.kind !== "pull_request_mismatch" && item.kind !== "admission" && <p>{item.kind === "cohort_failed" ? "Open the run to inspect the failure and retry the work." : "This work will continue automatically when its dependencies finish."}</p>}
+        {!gate && item.kind !== "pull_request_mismatch" && item.kind !== "pull_request_merge" && item.kind !== "admission" && <p>{item.kind === "cohort_failed" ? "Open the run to inspect the failure and retry the work." : "This work will continue automatically when its dependencies finish."}</p>}
       </div>
     </article>
   );
@@ -108,6 +111,32 @@ function AdmissionAction({ item, cohort }: { item: ReviewInboxItem; cohort: Coho
       {admission.isPending ? "Admitting…" : "Admit build"}
     </button>
     {admission.isError && <p role="alert">{admission.error instanceof Error ? admission.error.message : "Admission failed"}</p>}
+  </>;
+}
+
+/**
+ * The fallback behind the GitHub poller.
+ *
+ * Oakridge watches the pull request and closes this itself once it merges, so
+ * the button is for when it cannot see the repository — no token, a private
+ * fork, a merge the API does not reflect. The backend checks a confirmation
+ * against the same expectations as a polled observation, so this asserts the
+ * merge happened and nothing else.
+ */
+function PullRequestMergeAction({ item }: { item: ReviewInboxItem }) {
+  const confirmation = useConfirmCohortMerged(item.run_id);
+  const cohortId = `${item.stage_instance_id}:${item.unit_id}`;
+  return <>
+    <p>Oakridge is watching this pull request and will continue on its own once it merges.</p>
+    <button
+      type="button"
+      onClick={() => confirmation.mutate({ cohortId, operatorComment: "Operator confirmed the pull request merged" })}
+      disabled={confirmation.isPending}
+      data-testid="or-inbox-confirm-merged-btn"
+    >
+      {confirmation.isPending ? "Confirming…" : "It’s merged — continue"}
+    </button>
+    {confirmation.isError && <p role="alert">{confirmation.error instanceof Error ? confirmation.error.message : "Could not confirm the merge"}</p>}
   </>;
 }
 

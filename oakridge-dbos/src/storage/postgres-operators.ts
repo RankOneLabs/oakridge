@@ -23,6 +23,12 @@ export interface OperatorProjectionRepository {
   list_runs(filter?: "active" | "archived" | "all"): Promise<readonly OperatorRunSummary[]>;
   get_run(id: WorkflowRunId): Promise<OperatorRunDetail | null>;
   get_review_inbox(): Promise<OperatorReviewInbox>;
+  /**
+   * The raw cohort projection, without the review inbox's gate overlay. The
+   * pull-request poller wants the handoff's own state, not the operator-facing
+   * lifecycle the inbox blends a pending gate into.
+   */
+  list_cohorts(): Promise<readonly OperatorCohortSummary[]>;
   set_run_archived(id: WorkflowRunId, archived: boolean): Promise<boolean>;
   get_invalidation_cursor(): Promise<string>;
   list_application_versions(): Promise<readonly OperatorApplicationVersionInventory[]>;
@@ -329,10 +335,22 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
         artifact_revision_id: cohort.artifact_revision_id, artifact_url: cohort.artifact_url, gate_id: cohort.gate_id,
         gate_url: cohort.gate_url, resume_actions: [], blocked_by: cohort.admission.blocked_by, pr_url: cohort.pr_url, completed_at: null });
     }
+    // A cohort waiting on its pull request to merge is work, and it used to
+    // appear nowhere in this list — the run sat on an external wait that no
+    // surface offered a way to close. The poller normally closes it; the item
+    // is `actionable` because an operator has to be able to when it cannot.
+    for (const cohort of cohorts) {
+      if (cohort.lifecycle !== "github_review") continue;
+      items.push({ id: `${cohort.id}:pull_request_merge`, kind: "pull_request_merge", state: "actionable", run_id: cohort.run_id,
+        workflow_name: cohort.workflow_name, stage_instance_id: cohort.stage_instance_id, stage_name: cohort.stage_name,
+        unit_id: cohort.unit_id, repository_key: cohort.repository_key, title: cohort.title, lifecycle: cohort.lifecycle,
+        artifact_revision_id: cohort.artifact_revision_id, artifact_url: cohort.artifact_url, gate_id: null,
+        gate_url: null, resume_actions: ["confirm_merged"], blocked_by: [], pr_url: cohort.pr_url, completed_at: null });
+    }
     return { cohorts, items };
   }
 
-  private async list_cohorts(): Promise<readonly OperatorCohortSummary[]> {
+  async list_cohorts(): Promise<readonly OperatorCohortSummary[]> {
     const rows = await this.sql.query<CohortProjectionRow>(
       `SELECT stage.run_id::text, definition.name AS workflow_name, stage.id::text AS stage_instance_id,
               stage.stage_key AS stage_name, unit.value->>'unit_id' AS unit_id,

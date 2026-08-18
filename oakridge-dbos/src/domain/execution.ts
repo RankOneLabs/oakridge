@@ -8,6 +8,13 @@ export interface ArtifactEnvelope {
   readonly unit_id: UnitId;
   readonly body: JsonValue;
   readonly producer_execution_id?: ExecutionId;
+  /**
+   * The revision chain this artifact belongs to. A later revision of the same
+   * output arrives as a new `artifact_id` under the same chain, which is how a
+   * consumer recognises a replacement for something it already holds rather
+   * than a second artifact in a slot that has one.
+   */
+  readonly chain_id?: ArtifactId;
 }
 
 export interface OutputContract { readonly name: string; readonly artifact_type: ArtifactTypeId; readonly required: boolean }
