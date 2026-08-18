@@ -20,7 +20,17 @@
  */
 import { PgPostgresExecutor } from "../../src/storage/sql-executor";
 
-const DEV_STACK_SERVER_URL = "postgres://oakridge:oakridge@127.0.0.1:54329/oakridge";
+/**
+ * A connection to the dev stack's own database, used for two things and
+ * nothing else: checking that the server is up, and creating the test database
+ * beside it. Never to read or write a run.
+ *
+ * Named for what it connects to rather than what it is used to reach. This is
+ * the one URL in the suite that points at the database a person reads, and a
+ * reader who takes it for "just the server" is a `PgPostgresExecutor.connect`
+ * away from the accident this whole file exists to prevent.
+ */
+const DEV_STACK_ADMIN_URL = "postgres://oakridge:oakridge@127.0.0.1:54329/oakridge";
 /** Where a run's rows are allowed to land. Distinct from any database a person reads. */
 const TEST_DATABASE_NAME = "oakridge_e2e";
 
@@ -35,8 +45,8 @@ const TEST_DATABASE_NAME = "oakridge_e2e";
 export const findTestDatabaseUrl = async (): Promise<string | null> => {
   const configured = process.env.OAKRIDGE_TEST_DATABASE_URL;
   if (configured) return (await isReachable(configured)) ? configured : null;
-  if (!(await isReachable(DEV_STACK_SERVER_URL))) return null;
-  return ensureTestDatabase(DEV_STACK_SERVER_URL);
+  if (!(await isReachable(DEV_STACK_ADMIN_URL))) return null;
+  return ensureTestDatabase(DEV_STACK_ADMIN_URL);
 };
 
 /**
@@ -46,11 +56,11 @@ export const findTestDatabaseUrl = async (): Promise<string | null> => {
  * EXISTS`, so existence is checked first and a concurrent creator's duplicate
  * error is treated as success rather than raced over.
  */
-const ensureTestDatabase = async (serverUrl: string): Promise<string | null> => {
-  const url = new URL(serverUrl);
+const ensureTestDatabase = async (adminUrl: string): Promise<string | null> => {
+  const url = new URL(adminUrl);
   url.pathname = `/${TEST_DATABASE_NAME}`;
   const testUrl = url.toString();
-  const admin = PgPostgresExecutor.connect(serverUrl);
+  const admin = PgPostgresExecutor.connect(adminUrl);
   try {
     const existing = await admin.query<{ readonly name: string }>(
       "SELECT datname AS name FROM pg_database WHERE datname = $1", [TEST_DATABASE_NAME]);
