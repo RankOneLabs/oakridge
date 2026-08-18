@@ -63,6 +63,44 @@ export class WorktreeCreateError extends Error {
   }
 }
 
+/**
+ * An absolute path, quoted or bare, as git writes them into its diagnostics.
+ *
+ * The leading `/` must open a token — start of line, whitespace, or a quote —
+ * so that refs and branches, whose slashes are always interior
+ * (`epic/tiers-page`, `cohort/<stage>/<unit>`), are left alone. Matching a
+ * bare slash-led segment anywhere would swallow half of every ref name.
+ */
+const ABSOLUTE_PATH = /(^|[\s'"])\/[^\s'"]*/g;
+
+/**
+ * Git's diagnostic with server filesystem paths removed.
+ *
+ * The path in a `worktree add` failure is kbbl's own worktrees root, not
+ * anything the caller supplied — `fatal: '/var/lib/kbbl/worktrees/abc' already
+ * exists` discloses layout to anyone who can reach the API, and this server
+ * binds beyond loopback. The purge handler already withholds its JSONL path
+ * for exactly this reason.
+ *
+ * What makes the message actionable is the ref and branch names, and those
+ * survive: `fatal: invalid reference: epic/tiers-page` passes through whole.
+ */
+const withoutServerPaths = (line: string): string => line.replace(ABSOLUTE_PATH, "$1<path>");
+
+/**
+ * What git actually objected to, as one line an operator can act on.
+ *
+ * git writes several lines for a failed `worktree add`, the first of which
+ * names the cause — `fatal: invalid reference: epic/tiers-page`. A caller that
+ * discards this is left reporting only that something failed, which is how a
+ * missing epic branch reached an operator as an unexplained 503 three stages
+ * into a run.
+ */
+export const selectWorktreeFailureDetail = (error: WorktreeCreateError): string => {
+  const lines = error.stderr.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
+  return withoutServerPaths(lines.find((line) => line.toLowerCase().startsWith("fatal:")) ?? lines[0] ?? error.message);
+};
+
 interface ResolvedBaseRef {
   ref: string;
   sha: string;

@@ -18,6 +18,7 @@ import {
 } from "../../session/session-manager";
 import type { AgentRuntime, RuntimeId, RuntimeRegistry } from "../../runtime";
 import { ResumableInputConflictError, SessionKeyConflictError, selectTerminalWaitMs, type ResumableInputDeliveryKey, type ResumableSessionKey, type ResumableSessionStartSpec } from "../../session/resumable-session";
+import { WorktreeCreateError, selectWorktreeFailureDetail } from "../../session/worktree";
 import { isValidSid } from "./per-sid";
 import { findSessionHold, isTruthyFlag, selectCloseAuthority, selectCloseRefusal } from "../session-hold";
 
@@ -422,6 +423,13 @@ export function mountSessionsRoutes(app: Hono, deps: SessionsRouteDeps): void {
     } catch (error) {
       if (error instanceof SessionKeyConflictError) return c.json({ error: error.message }, 409);
       if (error instanceof NonGitWorkdirError) return c.json({ error: error.message }, 400);
+      // A worktree that could not be created is the caller's request being
+      // unsatisfiable — a base ref that does not exist, a branch already taken
+      // — not kbbl being unavailable. Reporting it as a bare 503 left the
+      // reason in a terminal log and the operator with nothing to act on.
+      if (error instanceof WorktreeCreateError) {
+        return c.json({ error: "worktree could not be created", code: "worktree_create_failed", detail: selectWorktreeFailureDetail(error) }, 422);
+      }
       console.error(`kbbl: ensure resumable session failed: ${error instanceof Error ? error.message : String(error)}`);
       return c.json({ error: "failed to ensure resumable session" }, 503);
     }

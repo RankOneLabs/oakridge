@@ -41,7 +41,6 @@ import { Compactor, type CompactReason } from "./compactor";
 import { COMPACT_PROMPT } from "./compact-prompt";
 import { parseHandoffMarkdown } from "./handoff-doc";
 import {
-  WorktreeCreateError,
   createWorktree,
   isGitRepo,
   isPathInside,
@@ -419,37 +418,31 @@ export class SessionManager {
         inheritedProjectWorkdir = meta.projectWorkdir;
       }
     }
-    let worktreePath: string;
-    let worktreeBranch: string;
-    let worktreeBaseRef: string;
-    try {
-      const { worktreeIdentity } = opts;
-      const created = await createWorktree({
-        workdir: opts.workdir,
-        worktreesRoot: this.opts.worktreesDir,
-        oakridgeSid,
-        resumeDepth,
-        ...(worktreeIdentity
-          ? {
-              identity: {
-                branchName: worktreeIdentity.branchName,
-                worktreeSubdir: worktreeIdentity.worktreeSubdir,
-              },
-              baseRef: worktreeIdentity.baseRef,
-            }
-          : {}),
-      });
-      worktreePath = created.worktreePath;
-      worktreeBranch = created.worktreeBranch;
-      worktreeBaseRef = created.worktreeBaseRef;
-    } catch (err) {
-      if (err instanceof WorktreeCreateError) {
-        throw new Error(
-          `worktree create failed: ${err.message}\n${err.stderr}`,
-        );
-      }
-      throw err;
-    }
+    const { worktreeIdentity } = opts;
+    // A `WorktreeCreateError` propagates with its type intact. It used to be
+    // rewrapped in a plain Error here, which erased the one thing a caller
+    // needed: the route's `instanceof` checks then all missed, so every
+    // worktree failure — a base ref that does not exist, a branch already
+    // taken — reached the operator as an unexplained 503, with git's actual
+    // complaint left in a terminal they may not be watching.
+    const created = await createWorktree({
+      workdir: opts.workdir,
+      worktreesRoot: this.opts.worktreesDir,
+      oakridgeSid,
+      resumeDepth,
+      ...(worktreeIdentity
+        ? {
+            identity: {
+              branchName: worktreeIdentity.branchName,
+              worktreeSubdir: worktreeIdentity.worktreeSubdir,
+            },
+            baseRef: worktreeIdentity.baseRef,
+          }
+        : {}),
+    });
+    const worktreePath = created.worktreePath;
+    const worktreeBranch = created.worktreeBranch;
+    const worktreeBaseRef = created.worktreeBaseRef;
     // Fresh session: opts.workdir IS the operator workdir.
     // Resume: inherit parent.projectWorkdir (which already points at the
     // original repo for both Phase-1 and pre-Phase-1 parents).

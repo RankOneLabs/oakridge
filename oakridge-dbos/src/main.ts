@@ -11,6 +11,7 @@ import { dispatchArtifactNotifications } from "./runtime/artifact-notifications"
 import { cancelAttempt } from "./runtime/cancel-run";
 import { DbosCancellationClient } from "./runtime/dbos-cancellation-client";
 import { DbosStageRerunClient } from "./runtime/dbos-stage-rerun-client";
+import { GitRepositoryPreconditionChecker } from "./runtime/git-repository-preconditions";
 import { createProductionTopologyServices } from "./runtime/production-services";
 import { seedBuiltins } from "./seed/seed-builtins";
 import { PostgresArtifactRevisionRepository, PostgresCancellationTargetRepository, PostgresExecutionArtifactContextRepository, PostgresExecutionProjectionRepository, PostgresResumeArtifactRepository, PostgresRerunTargetRepository, PostgresSessionHoldRepository, PostgresStageAdmissionTargetRepository, PostgresStageInstanceRepository, PostgresWorkflowAttemptRepository, PostgresWorkflowRunRepository } from "./storage/postgres-domain";
@@ -166,7 +167,8 @@ const app = createApp({
     ping_thread: (input) => collaborationPings.enqueue(input), dispatch_notifications: dispatchNotifications },
   operator_projections: projections,
   artifact_detail: { artifacts, stages, audits, presentation_for_type: presentation, artifact_types: DEV_FLOW_ARTIFACT_TYPES },
-  run_launch: { definitions, projects, runs, projections, dispatch_launches: dispatchLaunches, application_version: applicationVersion, now },
+  run_launch: { definitions, projects, runs, projections, dispatch_launches: dispatchLaunches, application_version: applicationVersion, now,
+    repository_preconditions: new GitRepositoryPreconditionChecker() },
   rerun: {
     stages,
     targets: rerunTargets,
