@@ -86,9 +86,14 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
        FROM dbos.workflow_events event
        ${superjsonValueLateral("event.value", "state")}
        JOIN oakridge.stage_instance stage ON stage.id = (state.value->>'stage_instance_id')::uuid
+       JOIN oakridge.workflow_run run ON run.id = stage.run_id
        JOIN oakridge.artifact artifact ON artifact.id = (state.value->>'artifact_revision_id')::uuid
        WHERE event.key = 'gate-state'
          AND state.value->>'status' = 'pending'
+         -- Archiving a run is the operator saying they are done with it. A gate
+         -- it left pending is not work they still owe, and listing it anyway is
+         -- how an inbox fills with decisions nobody intends to make.
+         AND run.archived = false
          AND artifact.lifecycle_state = 'current'
          AND stage.attempt_root_workflow_id = (
            SELECT attempt.root_workflow_id FROM oakridge.workflow_attempt attempt
@@ -387,9 +392,10 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
        ) handoff ON true
        LEFT JOIN oakridge.cohort_pull_request_reconciliation reconciliation
          ON reconciliation.stage_instance_id = stage.id AND reconciliation.unit_id = projection.unit_id
-       WHERE EXISTS (
-         SELECT 1 FROM jsonb_array_elements(stage.stage_contract->'outputs') AS output(value)
-         WHERE output.value->'release'->>'kind' = 'handoff')
+       WHERE run.archived = false
+         AND EXISTS (
+           SELECT 1 FROM jsonb_array_elements(stage.stage_contract->'outputs') AS output(value)
+           WHERE output.value->'release'->>'kind' = 'handoff')
        ORDER BY COALESCE(execution.updated_at, extract(epoch FROM stage.started_at) * 1000) DESC`, []);
     return rows.map((row) => {
       const lifecycle: OperatorCohortLifecycle = row.dbos_status === "ERROR" ? "failed" : row.reconciliation?.mismatch ? "pull_request_mismatch" : row.handoff_status === "released" ? "complete" : row.handoff_status === "awaiting_external" ? "github_review" : row.handoff_status === "revision_requested" ? "revision_requested" : row.handoff_status === "awaiting_downstream" ? "assessing" : "building";

@@ -106,3 +106,27 @@ test("cohort projection surfaces validated pull request mismatches as blocked in
   expect(inbox.cohorts).toEqual([expect.objectContaining({ lifecycle: "pull_request_mismatch", pr_url: "https://github.test/rol/web/pull/7", pull_request_reconciliation: reconciliation })]);
   expect(inbox.items).toEqual([expect.objectContaining({ kind: "pull_request_mismatch", state: "blocked", unit_id: "web" })]);
 });
+
+/**
+ * Archiving a run is the operator saying they are done with it.
+ *
+ * Neither projection excluded archived runs, so a run's leftover gates and its
+ * cohorts parked on an external review stayed in the work list after it was
+ * put away — and archiving, the one lever available for quieting them, did
+ * nothing. A dev database with a day of abandoned runs in it fills the inbox
+ * with decisions nobody intends to make.
+ */
+test("an archived run's pending gates are not the operator's work", async () => {
+  let sql = "";
+  const executor: SqlExecutor = { query: async <Row>(statement: string) => { sql = statement; return [] as Row[]; } };
+  await new PostgresOperatorProjectionRepository(executor).list_pending_gates();
+  expect(sql).toContain("JOIN oakridge.workflow_run run ON run.id = stage.run_id");
+  expect(sql).toContain("run.archived = false");
+});
+
+test("an archived run's cohorts are not the operator's work", async () => {
+  let sql = "";
+  const executor: SqlExecutor = { query: async <Row>(statement: string) => { sql = statement; return [] as Row[]; } };
+  await new PostgresOperatorProjectionRepository(executor).list_cohorts();
+  expect(sql).toContain("run.archived = false");
+});
