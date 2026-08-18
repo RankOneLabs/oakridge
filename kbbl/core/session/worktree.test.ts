@@ -392,3 +392,32 @@ test("a stderr with no fatal line still yields its first meaningful line", () =>
 test("an empty stderr falls back to the error's own message", () => {
   expect(selectWorktreeFailureDetail(new WorktreeCreateError("git worktree add failed", "   \n  "))).toBe("git worktree add failed");
 });
+
+/**
+ * The path git names in a `worktree add` failure is kbbl's own worktrees root,
+ * not anything the caller supplied, and this server binds beyond loopback —
+ * so the detail must not disclose filesystem layout. The purge handler already
+ * withholds its JSONL path for the same reason.
+ */
+test("server filesystem paths are removed from the failure detail", () => {
+  const error = new WorktreeCreateError(
+    "git worktree add failed",
+    "fatal: '/var/lib/kbbl/data/worktrees/f5aeeb42/spec' already exists\n",
+  );
+  const detail = selectWorktreeFailureDetail(error);
+  expect(detail).toBe("fatal: '<path>' already exists");
+  expect(detail).not.toContain("/var/lib");
+});
+
+/** Ref and branch names are what make the message actionable, so they stay. */
+test("refs and branch names survive path scrubbing", () => {
+  expect(selectWorktreeFailureDetail(new WorktreeCreateError("failed", "fatal: invalid reference: epic/tiers-page\n")))
+    .toBe("fatal: invalid reference: epic/tiers-page");
+  expect(selectWorktreeFailureDetail(new WorktreeCreateError("failed", "fatal: a branch named 'cohort/f5aeeb42/spec' already exists\n")))
+    .toBe("fatal: a branch named 'cohort/f5aeeb42/spec' already exists");
+});
+
+test("every path on a line is removed, not only the first", () => {
+  const detail = selectWorktreeFailureDetail(new WorktreeCreateError("failed", "fatal: cannot move /srv/a/b to /srv/c/d\n"));
+  expect(detail).toBe("fatal: cannot move <path> to <path>");
+});

@@ -82,3 +82,19 @@ test("an unrecognised failure is still an opaque 503", async () => {
   expect(response.status).toBe(503);
   expect(await response.json()).toEqual({ error: "failed to ensure resumable session" });
 });
+
+/**
+ * The path git names is kbbl's own worktrees root, not anything the caller
+ * supplied, and this server binds beyond loopback — so it must not reach the
+ * wire. Pinned here as well as at the transform, because the leak would be an
+ * HTTP response, not a return value.
+ */
+test("a worktree failure detail discloses no server filesystem layout", async () => {
+  const response = await ensureAgainst(new WorktreeCreateError(
+    "git worktree add failed",
+    "fatal: '/var/lib/kbbl/data/worktrees/f5aeeb42/spec' already exists\n",
+  ));
+  const body = await response.json() as { readonly detail: string };
+  expect(body.detail).toBe("fatal: '<path>' already exists");
+  expect(JSON.stringify(body)).not.toContain("/var/lib");
+});
