@@ -23,6 +23,7 @@ import { err, ok, type ExecutionId, type JsonValue } from "../domain/primitives"
 import type { ExecutionRequest, ExecutorTerminalObservation, ExternalExecutionReference } from "../domain/execution";
 import type { SqlExecutor, TransactionalSqlExecutor } from "./sql-executor";
 import { superjsonValue } from "./sql-fragments";
+import { releaseStateForArtifact } from "../contracts/evaluate-artifacts";
 import type { CancellationExecutionTarget, CancellationWaitTarget, UnitRerunTarget } from "../domain/rerun";
 import type { CreateWorkflowRunResult, DeleteRunResult, PendingRunLaunch, PersistWorkflowRunLaunch, RunLaunchCommand, SetRunArchiveResult, WorkflowRunLaunchRecord, WorkflowRunListFilter } from "../domain/runs";
 import type { EpicWorkflowProfile } from "../domain/epic";
@@ -563,11 +564,7 @@ export class PostgresArtifactRevisionRepository implements ArtifactRevisionRepos
       }
       const artifact = decodeArtifact(rows[0]);
       const supersededArtifactId = effective?.lifecycle_state === "current" ? effective.id as ArtifactId : null;
-      const release = delivery.release.kind === "gate"
-        ? { kind: "waiting_gate" as const, artifact, gate_steps: delivery.release.steps }
-        : delivery.release.kind === "handoff"
-          ? { kind: "waiting_handoff" as const, artifact, downstream_role: delivery.release.downstream_role, external_wait_kind: delivery.release.external_wait_kind }
-          : { kind: "released" as const, artifact };
+      const release = releaseStateForArtifact(artifact, delivery.release);
       const notification: ArtifactLifecycleNotification = supersededArtifactId
         ? { kind: "artifact_replaced", invalidated_artifact_id: supersededArtifactId, release }
         : { kind: "artifact_emitted", release };

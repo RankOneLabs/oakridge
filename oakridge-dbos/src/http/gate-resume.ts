@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 
 import type { CompiledOutputContract } from "../domain/compiled-workflow";
-import { selectGateDisposition, type GateDecisionAudit, type GateDecisionAuditId } from "../domain/gates";
+import type { GateDecisionAudit, GateDecisionAuditId } from "../domain/gates";
 import type { ArtifactId, StageInstanceId, UnitId } from "../domain/primitives";
 import type {
   ArtifactRevisionRepository,
@@ -82,8 +82,18 @@ interface ResolvedHandoffTarget { readonly workflow_id: string; readonly source_
 
 const resolveHandoffTarget = async (dependencies: GateResumeDependencies, context: ExecutionArtifactContext, consumed_decision_artifact_id: ArtifactId | null): Promise<ResolvedHandoffTarget | null> => {
   for (const input of context.inputs) {
-    const source = await dependencies.artifacts.find_by_id(input.artifact_id);
-    if (!source) continue;
+    const recorded = await dependencies.artifacts.find_by_id(input.artifact_id);
+    if (!recorded) continue;
+    // The recorded input is the revision this execution was *launched* with. If
+    // the upstream unit has revised it since, the handoff waiting on a decision
+    // belongs to the newer revision — the old one's handoff has already
+    // returned — so resolve to whatever is current at that coordinate. Without
+    // this, the second round of a revision loop looks for a decision on a
+    // superseded artifact and finds none.
+    const source = await dependencies.artifacts.find_current({
+      stage_instance_id: recorded.stage_instance_id, execution_id: recorded.execution_id,
+      unit_id: recorded.unit_id, output_name: recorded.output_name,
+    }) ?? recorded;
     const producer = await dependencies.contexts.find_for_emit(source.stage_instance_id, source.unit_id);
     if (!producer) continue;
     const release = producer.outputs.find((output) => output.name === source.output_name)?.release;
@@ -136,19 +146,6 @@ export const createGateResumeApp = (dependencies: GateResumeDependencies): Hono 
     const step = gate.steps.find((candidate) => candidate.type === request.gate_step);
     if (!step) return http.json({ error: "reviewed gate step is stale" }, 409);
     if (!step.actions.some((candidate) => candidate.name === request.action)) return http.json({ error: `action '${request.action}' is not allowed for the current gate step` }, 400);
-    // Refused rather than accepted, because accepting it strands the run.
-    //
-    // A gate whose `revision_target` is `upstream_handoff` means a rejection
-    // sends the *upstream* unit back to work. The workflow layer never reads
-    // that field — `gateRelayWorkflow` dispositions on the action alone — so
-    // this decision would wake the upstream unit through the handoff *and* this
-    // unit's own agent, and then the revised artifact's approval would find the
-    // superseded handoff and be refused. The operator would have pressed a
-    // button and watched the run stop for no visible reason. Until the revision
-    // loop exists, saying so is the kinder failure.
-    if (gate.revision_target === "upstream_handoff" && selectGateDisposition(request.action, step.actions) !== "release") {
-      return http.json({ error: `action '${request.action}' would send the upstream unit back to work, which is not implemented yet; the revised artifact could not be approved afterwards`, code: "upstream_revision_unsupported" }, 409);
-    }
     const workflowId = gateWaitWorkflowId(context.execution_workflow_id, artifact.id, request.gate_step);
     // Staleness is a question about this artifact's own coordinate, so it is
     // keyed by the artifact's unit rather than the gate's — they diverge for an

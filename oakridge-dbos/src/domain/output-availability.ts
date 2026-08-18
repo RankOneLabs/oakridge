@@ -80,10 +80,10 @@ export const withAvailableArtifact = (
  * a replacement is simply a new entry. That is the pre-existing behaviour and
  * no worse than it was; nothing silently matches the wrong chain.
  */
+export const envelopeIdentity = (envelope: ArtifactEnvelope): string => envelope.chain_id ?? envelope.artifact_id;
+
 export const withReplacedEnvelope = (
   existing: readonly ArtifactEnvelope[],
   envelope: ArtifactEnvelope,
-): readonly ArtifactEnvelope[] => {
-  const identity = (candidate: ArtifactEnvelope): string => candidate.chain_id ?? candidate.artifact_id;
-  return [...existing.filter((candidate) => identity(candidate) !== identity(envelope)), envelope];
-};
+): readonly ArtifactEnvelope[] =>
+  [...existing.filter((candidate) => envelopeIdentity(candidate) !== envelopeIdentity(envelope)), envelope];

@@ -1,5 +1,5 @@
 import type { ArtifactEmission, ArtifactReleaseState, ArtifactRevision, ExecutionContractState } from "../domain/artifacts";
-import type { CompiledOutputContract } from "../domain/compiled-workflow";
+import type { CompiledOutputContract, OutputReleaseContract } from "../domain/compiled-workflow";
 import type { ExecutorTerminalObservation, ExpectedArtifactContract } from "../domain/execution";
 import { err, ok, type Result, type UnitId } from "../domain/primitives";
 
@@ -16,9 +16,18 @@ export const validateArtifactEmission = (emission: ArtifactEmission, outputs: re
   return ok(output);
 };
 
-export const releaseStateForArtifact = (artifact: ArtifactRevision, output: CompiledOutputContract): ArtifactReleaseState => {
-  if (output.release.kind === "gate") return { kind: "waiting_gate", artifact, gate_steps: output.release.steps };
-  if (output.release.kind === "handoff") return { kind: "waiting_handoff", artifact, downstream_role: output.release.downstream_role, external_wait_kind: output.release.external_wait_kind };
+/**
+ * Where an artifact stands the moment it is emitted, from the policy alone.
+ *
+ * Takes the release contract rather than the whole output because it is called
+ * from the emit route *and* from the repository that writes the notification
+ * the workflow actually reads — and only one of those holds an output. The
+ * repository used to build this shape inline instead, which is how
+ * `revision_target` reached the wire on one path and not the other.
+ */
+export const releaseStateForArtifact = (artifact: ArtifactRevision, release: OutputReleaseContract): ArtifactReleaseState => {
+  if (release.kind === "gate") return { kind: "waiting_gate", artifact, gate_steps: release.steps, revision_target: release.revision_target };
+  if (release.kind === "handoff") return { kind: "waiting_handoff", artifact, downstream_role: release.downstream_role, external_wait_kind: release.external_wait_kind };
   return { kind: "released", artifact };
 };
 

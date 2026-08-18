@@ -31,7 +31,7 @@ import {
   type IntegrationRuntime, type ScriptedAgentScenario,
 } from "./support/dev-flow-harness";
 import {
-  attemptGateDecision, confirmCohortMerged, decideGate, emitDeclaredArtifacts, launchRun, mergedPullRequestObservation,
+  confirmCohortMerged, decideGate, emitDeclaredArtifacts, launchRun, mergedPullRequestObservation,
   observeCohortPullRequest, readReviewInbox, readRun, type EmittedArtifact,
 } from "./support/dev-flow-driver";
 
@@ -260,21 +260,21 @@ e2e("the assessor starts on a build result still parked in its handoff", async (
 }, 180_000);
 
 /**
- * A revision request the run cannot honour is refused, not accepted.
+ * A rejected build revises, and its assessment is decided again.
  *
  * The assessor's gate declares `revision_target: "upstream_handoff"`: a
- * rejection is meant to send the *build* back to work. Nothing in the workflow
- * layer reads that field — `gateRelayWorkflow` dispositions on the action alone
- * — so accepting the decision wakes the build through the handoff *and* the
- * assessor's own agent, and the approval of the revised assessment is then
- * refused against a superseded handoff. The operator would have pressed a
- * button and watched the run stop for no reason they could see.
+ * rejection asks the *build* for changes, not the assessor. Every step of that
+ * round trip is driven here through the real routes, because each one was
+ * broken in a different way and none of them had ever run:
  *
- * Until the revision loop exists, the route says so. This asserts the refusal
- * and that no agent was woken by it; when the loop lands, this test becomes the
- * one that drives the round trip.
+ * - the rejection reaches the build's agent and only the build's agent;
+ * - the build's revision becomes available to the assessor, which is asked to
+ *   look again rather than left holding a superseded artifact;
+ * - the assessor's re-emitted assessment opens a fresh gate;
+ * - approving *that* resolves the handoff on the revised build result, which
+ *   used to fail because the assessor's recorded input still named revision one.
  */
-e2e("a revision request that would be routed upstream is refused rather than stranding the run", async () => {
+e2e("a rejected build revises, and the reassessment releases it", async () => {
   const agent = scriptedAgentScenario();
   useScenario(agent);
 
@@ -292,23 +292,47 @@ e2e("a revision request that would be routed upstream is refused rather than str
 
     const assessorRequest = agent.launched.get(assessorId);
     if (!assessorRequest) throw new Error("the assessor request disappeared");
-    const [assessment] = await emitDeclaredArtifacts(oakridge.base_url, assessorRequest);
-    if (!assessment) throw new Error("the assessor emitted nothing");
-    expect(assessment.release).toBe("waiting_gate");
+    const buildInput = assessorRequest.inputs.find((input) => input.output_name === "build_result");
+    const buildExecutionWorkflowId = [...driver.drivenExecutions].find((id) => id.includes(":stage:build:unit:"));
+    const buildRequest = buildExecutionWorkflowId ? agent.launched.get(buildExecutionWorkflowId) : undefined;
+    if (!buildRequest || !buildInput) throw new Error("the build under assessment disappeared");
 
-    const refusal = await attemptGateDecision(oakridge.base_url, assessment.artifact_id, "request_revision");
-    expect(refusal.status).toBe(409);
-    expect(refusal.code).toBe("upstream_revision_unsupported");
+    const [firstAssessment] = await emitDeclaredArtifacts(oakridge.base_url, assessorRequest);
+    if (!firstAssessment) throw new Error("the assessor emitted nothing");
+    await decideGate(oakridge.base_url, firstAssessment.artifact_id, "request_revision");
 
-    // Nothing was woken: not the build, and not the assessor either. A refusal
-    // that had already sent one of them back to work would be worse than none.
-    await Bun.sleep(500);
-    expect(agent.deliveries).toEqual([]);
+    // The build is sent back to work, and nobody else is.
+    const rejection = await awaitCondition(() => `the build to be asked for a revision (delivered: ${JSON.stringify(agent.deliveries)})`,
+      async () => (agent.deliveries.length > 0 ? [...agent.deliveries] : null), 30_000);
+    expect(rejection.map((delivery) => delivery.execution_id)).toEqual([String(buildRequest.execution_id)]);
+
+    // The build revises. Its new build_result supersedes the one the assessor
+    // reviewed, and the assessor is asked to review the replacement.
+    const revisedBuild = await emitDeclaredArtifacts(oakridge.base_url, buildRequest, { revision: 2, outputs: ["build_result"] });
+    const revisedResult = revisedBuild.find((artifact) => artifact.output_name === "build_result");
+    expect(revisedResult?.release).toBe("waiting_handoff");
+    expect(revisedResult?.artifact_id).not.toBe(buildInput.artifact_id);
+
+    const reReview = await awaitCondition(() => `the assessor to be asked to review the revision (delivered: ${JSON.stringify(agent.deliveries)})`,
+      async () => agent.deliveries.find((delivery) => delivery.execution_id === String(assessorRequest.execution_id)) ?? null, 30_000);
+    expect(reReview.delivery_key).toContain(revisedResult?.artifact_id ?? "missing");
+
+    // The reassessment opens its own gate, and approving it releases the
+    // revised build result rather than the superseded one.
+    const [secondAssessment] = await emitDeclaredArtifacts(oakridge.base_url, assessorRequest, { revision: 2 });
+    expect(secondAssessment?.artifact_id).not.toBe(firstAssessment.artifact_id);
+    await decideGate(oakridge.base_url, secondAssessment!.artifact_id, "approve");
+
+    const cohortId = `${buildRequest.stage_instance_id}:${buildInput.unit_id}`;
+    await awaitCondition(`the revised build result to reach its external review`, async () => {
+      const attempt = await confirmCohortMerged(oakridge.base_url, cohortId);
+      return attempt.kind === "accepted" && attempt.outcome === "completed" ? true : null;
+    }, 60_000);
   } finally {
     await DBOS.cancelWorkflow(run.root_workflow_id, { cancelChildren: true });
     agent.releaseAll();
   }
-}, 180_000);
+}, 240_000);
 
 /**
  * The regression this harness was built for.
@@ -374,7 +398,6 @@ e2e("cancelling a run fences its delegated session through the real kbbl route",
 
     const run = await launchRun(oakridge.base_url, oakridge.definition.id);
     oakridge.started_runs.push(run.root_workflow_id);
-  oakridge.started_runs.push(run.root_workflow_id);
     // Cancel once the first stage is genuinely running an execution — and once
     // its external reference has been projected, since that projection is what
     // cancellation reads to find the session to fence.

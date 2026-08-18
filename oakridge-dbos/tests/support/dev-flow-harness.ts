@@ -238,10 +238,16 @@ export const installIntegrationRuntime = async (databaseUrl: string): Promise<In
 export const cohortPullRequestUrl = (unitId: UnitId): string => `https://github.com/RankOneLabs/oakridge/pull/${unitId === "web" ? 2 : 1}`;
 export const cohortHeadBranch = (unitId: UnitId): string => `cohort/${unitId}`;
 
-/** The body a faked agent would have produced for a given output. */
-export const artifactBody = (request: ExecutionRequest, unitId: UnitId, outputName: string): JsonValue => {
+/**
+ * The body a faked agent would have produced for a given output.
+ *
+ * `revision` distinguishes a re-emission from a replay: a revision carries the
+ * same identity and different content, which is exactly what the artifact
+ * repository keys a new version on.
+ */
+export const artifactBody = (request: ExecutionRequest, unitId: UnitId, outputName: string, revision = 1): JsonValue => {
   const session = (request.resolved_config as { readonly session_name?: string }).session_name ?? "";
-  if (session.startsWith("spec-analyzer-")) return { requirements: [{ id: "R1", description: "harness" }] };
+  if (session.startsWith("spec-analyzer-")) return { requirements: [{ id: "R1", description: `harness v${revision}` }] };
   if (session.startsWith("plan-writer-")) return { cohorts: [{ id: "foundation" }, { id: "web" }] };
   if (session.startsWith("brief-writer-")) {
     return { cohort_id: unitId, repository_key: "oakridge", title: String(unitId), goal: "harness", files_in_scope: [],
@@ -252,12 +258,12 @@ export const artifactBody = (request: ExecutionRequest, unitId: UnitId, outputNa
     // request reconciler reads one of them — so the harness has to emit the
     // right shape into the right slot rather than one body into both.
     if (outputName === "pr_summary") {
-      return { pr_url: cohortPullRequestUrl(unitId), branch: cohortHeadBranch(unitId), summary: `built ${unitId}`, review_status: "ready" };
+      return { pr_url: cohortPullRequestUrl(unitId), branch: cohortHeadBranch(unitId), summary: `built ${unitId} v${revision}`, review_status: "ready" };
     }
-    return { repository_key: "oakridge", summary: `built ${unitId}`, changed_files: [],
+    return { repository_key: "oakridge", summary: `built ${unitId} v${revision}`, changed_files: [],
       tests: { passed: 1, failed: 0, output: "ok" }, delegated_session_metadata: null, known_issues: [] };
   }
-  return { verdict: "pass", findings: [], recommended_next_actions: [] };
+  return { verdict: "pass", findings: [], recommended_next_actions: [], revision };
 };
 
 export const runContext = (oakridgeUrl: string) => ({
